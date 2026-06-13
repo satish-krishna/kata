@@ -2,8 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunSpec {
+    #[serde(default = "default_schema_version")]
     pub schema: u32,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -22,6 +23,24 @@ pub struct RunSpec {
     pub model: Model,
     #[serde(default)]
     pub leash: Leash,
+}
+
+impl Default for RunSpec {
+    fn default() -> Self {
+        Self {
+            schema: default_schema_version(),
+            name: String::new(),
+            description: None,
+            task: String::new(),
+            context: None,
+            workdir: String::new(),
+            identity: Identity::default(),
+            skills: Vec::new(),
+            plugins: BTreeMap::new(),
+            model: Model::default(),
+            leash: Leash::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -71,6 +90,8 @@ impl Default for Leash {
 }
 
 fn default_max_turns() -> u32 { 12 }
+
+fn default_schema_version() -> u32 { 1 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -219,5 +240,17 @@ isolation = "worktree"
     fn validate_passes_minimal() {
         let spec: RunSpec = toml::from_str(minimal_toml()).unwrap();
         assert!(validate(&spec).is_ok());
+    }
+
+    #[test]
+    fn schema_defaults_to_v1_when_omitted_or_default() {
+        // Programmatic default is a valid v1 spec, not schema 0.
+        let d = RunSpec { name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+        assert_eq!(d.schema, 1);
+        assert!(validate(&d).is_ok());
+
+        // A spec file that omits `schema` parses as v1.
+        let spec: RunSpec = toml::from_str("name = \"x\"\ntask = \"t\"\nworkdir = \"/w\"\n").unwrap();
+        assert_eq!(spec.schema, 1);
     }
 }
