@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::atomic::Ordering;
 
 #[derive(Parser)]
 #[command(name = "kata", version, about = "Run a single headless coding-agent kata")]
@@ -54,5 +55,34 @@ fn cmd_catalog() -> ExitCode {
     }
 }
 
-// Implemented in later tasks:
-fn cmd_run(_path: &std::path::Path) -> ExitCode { eprintln!("not implemented"); ExitCode::from(70) }
+fn cmd_run(path: &std::path::Path) -> ExitCode {
+    let spec = match kata_core::spec::load(path) {
+        Ok(s) => s,
+        Err(e) => { eprintln!("error: {e}"); return ExitCode::from(2); }
+    };
+    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    let roots = kata_core::catalog::DiscoveryRoots::defaults(&cwd);
+    let catalog = kata_core::catalog::discover(&roots);
+
+    let cancel = kata_core::run::CancelToken::new();
+    let flag = cancel.flag();
+    // Best-effort Ctrl-C -> cancel. Ignore error if a handler is already set.
+    let _ = ctrlc::set_handler(move || flag.store(true, Ordering::SeqCst));
+
+    let emit = |event: kata_core::event::KataEvent| {
+        // One JSON object per line on stdout.
+        if let Ok(line) = serde_json::to_string(&event) {
+            println!("{line}");
+        }
+    };
+
+    match kata_core::run::run(&spec, &catalog, &cancel, emit) {
+        Ok(outcome) => {
+            match u8::try_from(outcome.exit_code) {
+                Ok(c) => ExitCode::from(c),
+                Err(_) => ExitCode::FAILURE,
+            }
+        }
+        Err(e) => { eprintln!("error: {e}"); ExitCode::from(2) }
+    }
+}

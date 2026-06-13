@@ -10,6 +10,14 @@ fn write(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
     p
 }
 
+fn fake_claude() -> std::path::PathBuf {
+    // `kata` and `fake-claude` build into the same target dir.
+    let kata = std::path::PathBuf::from(env!("CARGO_BIN_EXE_kata"));
+    let dir = kata.parent().unwrap();
+    let name = if cfg!(windows) { "fake-claude.exe" } else { "fake-claude" };
+    dir.join(name)
+}
+
 #[test]
 fn validate_ok_exits_zero() {
     let tmp = tempfile::tempdir().unwrap();
@@ -54,4 +62,29 @@ fn catalog_emits_json_array() {
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let arr = v.as_array().unwrap();
     assert!(arr.iter().any(|e| e["name"] == "triage" && e["kind"] == "skill"));
+}
+
+#[test]
+fn run_streams_jsonl_events_and_exits_zero() {
+    let work = tempfile::tempdir().unwrap();
+    let spec = write(work.path(), "r.kata.toml",
+        &format!("schema = 1\nname = \"r\"\ntask = \"t\"\nworkdir = \"{}\"\n",
+            work.path().to_string_lossy().replace('\\', "/")));
+
+    let fake = fake_claude();
+    let out = kata()
+        .arg("run").arg(&spec)
+        .env("KATA_CLAUDE_BIN", &fake)
+        .env("KATA_FAKE_MODE", "ok")
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    let first: serde_json::Value = serde_json::from_str(lines.first().unwrap()).unwrap();
+    let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    assert_eq!(first["type"], "run.started");
+    assert_eq!(last["type"], "run.completed");
+    assert_eq!(last["exit_code"], 0);
 }
