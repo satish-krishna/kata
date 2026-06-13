@@ -37,6 +37,20 @@ impl DiscoveryRoots {
     }
 }
 
+/// Build discovery roots for the Workbench, scoped to an optional workdir.
+/// User scope (`~/.claude`) is always included; project scope
+/// (`<workdir>/.claude`) is included only when `workdir` is a non-blank path.
+/// When absent, `project_dir` points at a path that will not exist, so
+/// discovery yields user-scope entries only.
+pub fn roots_for_workdir(workdir: Option<&str>) -> DiscoveryRoots {
+    let home = dirs_home();
+    let project_dir = match workdir {
+        Some(w) if !w.trim().is_empty() => Path::new(w).join(".claude"),
+        _ => home.join(".kata-no-project-scope"),
+    };
+    DiscoveryRoots { user_dir: home.join(".claude"), project_dir }
+}
+
 fn dirs_home() -> PathBuf {
     // Avoid an extra dependency: HOME on unix, USERPROFILE on windows.
     std::env::var_os("HOME")
@@ -243,5 +257,22 @@ mod tests {
             project_dir: "/nonexistent/y".into(),
         };
         assert!(discover(&roots).is_empty());
+    }
+
+    #[test]
+    fn roots_for_workdir_uses_project_scope_when_workdir_given() {
+        let r = roots_for_workdir(Some("/tmp/proj"));
+        assert_eq!(r.project_dir, std::path::Path::new("/tmp/proj").join(".claude"));
+        assert!(r.user_dir.ends_with(".claude"));
+    }
+
+    #[test]
+    fn roots_for_workdir_falls_back_to_user_scope_only_when_absent() {
+        let r = roots_for_workdir(None);
+        // A path that will not exist, so discovery yields user-scope entries only.
+        assert!(r.project_dir.ends_with(".kata-no-project-scope"));
+
+        let blank = roots_for_workdir(Some("   "));
+        assert!(blank.project_dir.ends_with(".kata-no-project-scope"));
     }
 }
