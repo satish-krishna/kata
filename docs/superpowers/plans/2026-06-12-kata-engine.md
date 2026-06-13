@@ -926,14 +926,16 @@ mod tests {
     }
 
     #[test]
-    fn base_command_has_bare_print_streamjson_maxturns_bypass() {
+    fn base_command_has_bare_print_streamjson_verbose_bypass() {
         let inv = build_invocation(&spec(), &assembled_with(None, None));
         assert_eq!(inv.cwd, "/repo");
         assert!(inv.args.contains(&"--bare".to_string()));
         assert!(inv.args.contains(&"-p".to_string()));
         assert!(inv.args.windows(2).any(|w| w[0] == "--output-format" && w[1] == "stream-json"));
-        assert!(inv.args.windows(2).any(|w| w[0] == "--max-turns" && w[1] == "8"));
+        assert!(inv.args.contains(&"--verbose".to_string()));
         assert!(inv.args.contains(&"--dangerously-skip-permissions".to_string()));
+        // claude 2.1.x has no --max-turns flag; the engine enforces the cap instead
+        assert!(!inv.args.iter().any(|a| a == "--max-turns"));
         // no plugin dir, no system prompt, no model
         assert!(!inv.args.iter().any(|a| a == "--plugin-dir"));
         assert!(!inv.args.iter().any(|a| a == "--model"));
@@ -1045,11 +1047,12 @@ pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocati
         args.push(id.clone());
     }
 
-    args.push("--max-turns".into());
-    args.push(spec.leash.max_turns.to_string());
     args.push("--output-format".into());
     args.push("stream-json".into());
+    args.push("--verbose".into()); // claude requires --verbose with stream-json under --print
     args.push("--dangerously-skip-permissions".into());
+    // NOTE: claude 2.1.x has NO --max-turns flag; the turn cap is enforced
+    // engine-side in run.rs (kill the child when turns exceed leash.max_turns).
 
     let mut env = Vec::new();
     for cfg in spec.plugins.values() {
@@ -1300,7 +1303,7 @@ pub fn assemble(spec: &RunSpec, catalog: &[CatalogEntry]) -> Result<Assembled, A
 }
 ```
 
-> **Verification note (M0 finding):** the `skills/<name>/` layout under `--plugin-dir` matches the blog post's working example. Confirm the `plugins/<name>/` layout for whole plugins against `claude`'s plugin-dir loader during the Task 10 smoke test; if it differs, the only change is the `plugin_root.join(...)` path here.
+> **Verification note (M0 findings):** `--append-system-prompt-file` IS present in claude 2.1.176 (`--append-system-prompt[-file]`), so writing `system.txt` here and passing the file path is correct. The `skills/<name>/` layout under `--plugin-dir` matches the blog post's working example. Confirm the `plugins/<name>/` layout for whole plugins against `claude`'s plugin-dir loader during the Task 10 smoke test; if it differs, the only change is the `plugin_root.join(...)` path here.
 
 - [ ] **Step 6: Run tests to verify they pass**
 
@@ -1377,6 +1380,21 @@ mod tests {
         let p = parse_stream_line("not json");
         assert!(p.events.is_empty());
         assert!(p.result.is_none());
+    }
+
+    #[test]
+    fn parses_real_captured_fixture() {
+        // Grounds the parser in REAL claude output captured in Task 0.
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/stream-hello.jsonl");
+        let text = std::fs::read_to_string(path).unwrap();
+        let (mut saw_text, mut saw_result) = (false, false);
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+            let p = parse_stream_line(line);
+            if p.events.iter().any(|e| matches!(e, KataEvent::AssistantText { .. })) { saw_text = true; }
+            if p.result.is_some() { saw_result = true; }
+        }
+        assert!(saw_text, "should extract assistant text from real output");
+        assert!(saw_result, "should extract a result payload from real output");
     }
 
     #[test]
@@ -1603,6 +1621,15 @@ fn main() {
             let _ = out.flush();
             std::process::exit(1);
         }
+        "manyturns" => {
+            // Emit assistant turns on a slow drip so the engine's turn cap fires
+            // before the process finishes on its own.
+            for i in 1..=10 {
+                let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"turn {i}"}}]}}}}"#);
+                let _ = out.flush();
+                thread::sleep(Duration::from_millis(200));
+            }
+        }
         _ => {
             let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"hi"}}]}}}}"#);
             let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","name":"Bash","input":{{"command":"echo hi"}}}}]}}}}"#);
@@ -1620,6 +1647,7 @@ use kata_core::catalog::CatalogEntry;
 use kata_core::event::KataEvent;
 use kata_core::run::{run, CancelToken, RunError};
 use kata_core::spec::RunSpec;
+use serial_test::serial;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -1627,12 +1655,15 @@ fn base_spec(workdir: &str) -> RunSpec {
     RunSpec { schema: 1, name: "it".into(), task: "do".into(), workdir: workdir.into(), ..Default::default() }
 }
 
+// These tests mutate process-global env vars that run() reads, so each is marked
+// #[serial] — otherwise parallel tests clobber each other's KATA_FAKE_MODE.
 fn with_fake(mode: &str) {
     std::env::set_var("KATA_CLAUDE_BIN", env!("CARGO_BIN_EXE_fake-claude"));
     std::env::set_var("KATA_FAKE_MODE", mode);
 }
 
 #[test]
+#[serial]
 fn run_ok_streams_events_and_completes_zero() {
     with_fake("ok");
     let work = tempfile::tempdir().unwrap();
@@ -1655,6 +1686,7 @@ fn run_ok_streams_events_and_completes_zero() {
 }
 
 #[test]
+#[serial]
 fn run_invalid_spec_errors_before_spawn() {
     with_fake("ok");
     let mut spec = base_spec("/w");
@@ -1665,6 +1697,7 @@ fn run_invalid_spec_errors_before_spawn() {
 }
 
 #[test]
+#[serial]
 fn run_timeout_kills_child_and_reports_error() {
     with_fake("sleep");
     let work = tempfile::tempdir().unwrap();
@@ -1678,6 +1711,7 @@ fn run_timeout_kills_child_and_reports_error() {
 }
 
 #[test]
+#[serial]
 fn run_cancel_kills_child() {
     with_fake("sleep");
     let work = tempfile::tempdir().unwrap();
@@ -1693,14 +1727,31 @@ fn run_cancel_kills_child() {
     assert_eq!(outcome.exit_code, 130);
     assert!(events.iter().any(|e| matches!(e, KataEvent::RunCancelled)));
 }
+
+#[test]
+#[serial]
+fn run_max_turns_kills_child() {
+    with_fake("manyturns");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.leash.max_turns = 2;
+    let cancel = CancelToken::new();
+    let mut events = Vec::new();
+    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, |e| events.push(e)).unwrap();
+    assert_eq!(outcome.exit_code, 125);
+    assert!(events.iter().any(|e| matches!(e, KataEvent::Turn { n: 1 })));
+    assert!(events.iter().any(|e| matches!(e, KataEvent::Turn { n: 2 })));
+    assert!(!events.iter().any(|e| matches!(e, KataEvent::Turn { n } if *n >= 3)));
+    assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { .. })));
+}
 ```
 
-Add dev-dependency to `crates/kata-core/Cargo.toml`:
+Add dev-dependency to `crates/kata-core/Cargo.toml` (tempfile is already a normal dependency, so only `serial_test` is new):
 ```toml
 [dev-dependencies]
-tempfile.workspace = true
+serial_test = "3"
 ```
-(tempfile is already a normal dependency; this line is harmless but optional. Skip if it causes a duplicate-key error.)
+The `run_it` tests set process-global env vars (`KATA_CLAUDE_BIN`, `KATA_FAKE_MODE`) that `run()` reads, so each is annotated `#[serial]` to prevent parallel clobbering.
 
 - [ ] **Step 3: Run tests to verify they fail**
 
@@ -1782,8 +1833,8 @@ pub fn run<F: FnMut(KataEvent)>(
     cmd.args(&inv.args)
         .current_dir(&inv.cwd)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .env("KATA_FAKE_MODE", std::env::var("KATA_FAKE_MODE").unwrap_or_default());
+        .stderr(Stdio::piped());
+    // The child inherits the parent process environment by default.
     for (k, v) in &inv.env {
         cmd.env(k, v);
     }
@@ -1825,6 +1876,13 @@ pub fn run<F: FnMut(KataEvent)>(
                 if line.trim().is_empty() { continue; }
                 let parsed = crate::event::parse_stream_line(&line);
                 if parsed.is_assistant_message {
+                    // Engine-side leash: claude 2.1.x has no --max-turns flag, so the
+                    // turn cap is enforced here. Allow up to max_turns turns; if a turn
+                    // beyond the cap begins, stop and kill the child.
+                    if turns >= spec.leash.max_turns {
+                        termination = Some(Termination::MaxTurns);
+                        break;
+                    }
                     turns += 1;
                     emit(KataEvent::Turn { n: turns });
                 }
@@ -1849,6 +1907,10 @@ pub fn run<F: FnMut(KataEvent)>(
                 Termination::TimedOut => {
                     emit(KataEvent::RunError { message: format!("timed out after {}s", spec.leash.timeout_secs.unwrap_or(0)) });
                     124
+                }
+                Termination::MaxTurns => {
+                    emit(KataEvent::RunError { message: format!("reached max turns ({})", spec.leash.max_turns) });
+                    125
                 }
             }
         }
@@ -1878,6 +1940,7 @@ pub fn run<F: FnMut(KataEvent)>(
 enum Termination {
     Cancelled,
     TimedOut,
+    MaxTurns,
 }
 ```
 
@@ -2085,4 +2148,4 @@ git commit -m "test(cli): opt-in real-claude smoke test guards against flag drif
 
 **Type consistency:** `RunSpec`, `Identity`, `IdentityMode`, `PluginConfig`, `Model`, `Leash`, `Isolation` (Task 1) are reused verbatim in Tasks 5/6/8. `Assembled` defined in Task 5 (with `for_test`) and extended in Task 6 (`assemble` returns it with `_temp: Some`). `CatalogEntry`/`EntryKind` (Task 3) consumed in Task 6. `KataEvent`/`ResultPayload`/`Parsed`/`pump`/`parse_stream_line` (Task 7) consumed in Task 8. `CancelToken`/`RunError`/`RunOutcome`/`run` (Task 8) consumed in Task 9. Method/field names match across tasks.
 
-**Known verification points (flagged inline, isolated to one edit each):** exact `claude` flag spellings and the whole-plugin `--plugin-dir` layout — both confirmed by Task 10's real smoke test, each fixable in a single location (`command.rs` / `assemble.rs`).
+**M0 flag findings (confirmed against claude 2.1.176, folded into the plan):** `--append-system-prompt-file` and `--dangerously-skip-permissions` exist (kept). `--max-turns` does NOT exist — the turn cap is enforced engine-side in `run.rs` (kill on exceeding `leash.max_turns`, exit 125). `--verbose` is REQUIRED with `--output-format stream-json` and is added in `command.rs`. Remaining verification point: the whole-plugin `--plugin-dir` layout, confirmed by Task 10's smoke test and fixable solely in `assemble.rs`.
