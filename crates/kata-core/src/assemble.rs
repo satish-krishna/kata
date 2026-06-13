@@ -53,11 +53,20 @@ pub fn assemble(spec: &RunSpec, catalog: &[CatalogEntry]) -> Result<Assembled, A
     Ok(Assembled { plugin_dir, system_prompt_file, _temp: Some(temp) })
 }
 
+/// The disposable kit assembled for one run.
+///
+/// IMPORTANT: `plugin_dir` and `system_prompt_file` are paths INTO an owned
+/// temporary directory that is deleted when this value is dropped. They are
+/// only valid for the lifetime of this `Assembled`. Do not copy these paths
+/// out and use them after the value is dropped, or they will dangle.
 #[derive(Debug)]
 pub struct Assembled {
+    /// Path to the assembled `--plugin-dir`, or `None` if no skills/plugins
+    /// were selected. Valid only while this `Assembled` is alive.
     pub plugin_dir: Option<String>,
+    /// Path to the written `system.txt` (append mode only), or `None`.
+    /// Valid only while this `Assembled` is alive.
     pub system_prompt_file: Option<String>,
-    // RAII: when dropped, the temp directory and its contents are removed.
     #[allow(dead_code)]
     _temp: Option<TempDir>,
 }
