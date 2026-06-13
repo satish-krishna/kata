@@ -1,0 +1,16 @@
+[package]
+name = "kata-cli"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "kata"
+path = "src/main.rs"
+
+[dependencies]
+kata-core = { path = "../kata-core" }
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+ctrlc.workspace = true
