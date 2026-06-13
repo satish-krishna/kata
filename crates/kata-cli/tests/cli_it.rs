@@ -25,8 +25,9 @@ fn validate_bad_exits_nonzero_and_lists_errors() {
     let spec = write(tmp.path(), "bad.kata.toml",
         "schema = 1\nname = \"\"\ntask = \"\"\nworkdir = \"\"\n");
     let out = kata().arg("validate").arg(&spec).output().unwrap();
-    assert!(!out.status.success());
+    assert_eq!(out.status.code(), Some(1), "validation failure should exit 1");
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("name"));
     assert!(err.contains("task"));
+    assert!(err.contains("workdir"));
 }

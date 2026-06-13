@@ -19,6 +19,8 @@ enum Cmd {
     Run { spec: PathBuf },
 }
 
+// Exit codes: 0 = ok, 1 = validation failure, 2 = load/parse error,
+// 70 (EX_SOFTWARE) = subcommand not yet implemented.
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
