@@ -90,9 +90,10 @@ You reproduce, isolate, and report. You do not change production code.
 mode = "append"                  # "append" (keep Claude's safety+tool defaults) | "replace"
 
 # --- the curated kit (decision three) ---
-skills  = ["triage-flaky-test"]  # loose SKILL.md units, by name
-plugins = ["github-tools"]        # whole plugins, by name
+skills = ["triage-flaky-test"]   # loose SKILL.md units, by name
 
+# plugins is a table keyed by plugin name; the key's presence selects the plugin.
+# A plugin with no config is just an empty table: [plugins.doc-writer]
 [plugins.github-tools]           # per-plugin config (only MCP needs any)
 mcp = true                       # start the plugin's MCP servers (default true if it has any)
 env = ["GITHUB_TOKEN", "GH_HOST"] # NAMES forwarded from the runtime env; never values/secrets
