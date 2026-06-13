@@ -1,6 +1,9 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "ts", ts(rename_all = "lowercase"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EntryKind {
@@ -8,6 +11,8 @@ pub enum EntryKind {
     Plugin,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, Serialize)]
 pub struct CatalogEntry {
     pub kind: EntryKind,

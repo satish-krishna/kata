@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunSpec {
     #[serde(default = "default_schema_version")]
@@ -43,6 +45,8 @@ impl Default for RunSpec {
     }
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Identity {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -51,6 +55,9 @@ pub struct Identity {
     pub mode: IdentityMode,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "ts", ts(rename_all = "lowercase"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum IdentityMode {
@@ -59,6 +66,8 @@ pub enum IdentityMode {
     Replace,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct PluginConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -67,12 +76,16 @@ pub struct PluginConfig {
     pub env: Vec<String>,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Model {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Leash {
     #[serde(default = "default_max_turns")]
@@ -93,6 +106,9 @@ fn default_max_turns() -> u32 { 12 }
 
 fn default_schema_version() -> u32 { 1 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "ts", ts(rename_all = "lowercase"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Isolation {
