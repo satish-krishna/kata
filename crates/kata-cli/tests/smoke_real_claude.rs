@@ -23,7 +23,7 @@ fn real_claude_trivial_run_completes() {
         .unwrap();
 
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let last = stdout.lines().filter(|l| !l.trim().is_empty()).last().unwrap();
+    let last = stdout.lines().rfind(|l| !l.trim().is_empty()).unwrap();
     let v: serde_json::Value = serde_json::from_str(last).unwrap();
     assert_eq!(v["type"], "run.completed", "last event should be run.completed; stderr: {}", String::from_utf8_lossy(&out.stderr));
     // A genuine success: the run must not be an error and must exit 0. A rejected
