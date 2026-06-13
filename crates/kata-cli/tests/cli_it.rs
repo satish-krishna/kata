@@ -31,3 +31,27 @@ fn validate_bad_exits_nonzero_and_lists_errors() {
     assert!(err.contains("task"));
     assert!(err.contains("workdir"));
 }
+
+#[test]
+fn catalog_emits_json_array() {
+    // Point discovery at an isolated HOME so the test is deterministic.
+    let home = tempfile::tempdir().unwrap();
+    let skill = home.path().join(".claude").join("skills").join("triage");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(skill.join("SKILL.md"),
+        "---\nname: triage\ndescription: triage flaky tests\n---\n").unwrap();
+
+    let work = tempfile::tempdir().unwrap();
+    let out = kata()
+        .arg("catalog")
+        .current_dir(work.path())
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let arr = v.as_array().unwrap();
+    assert!(arr.iter().any(|e| e["name"] == "triage" && e["kind"] == "skill"));
+}

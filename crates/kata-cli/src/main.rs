@@ -44,6 +44,15 @@ fn cmd_validate(path: &std::path::Path) -> ExitCode {
     }
 }
 
+fn cmd_catalog() -> ExitCode {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    let roots = kata_core::catalog::DiscoveryRoots::defaults(&cwd);
+    let entries = kata_core::catalog::discover(&roots);
+    match serde_json::to_string_pretty(&entries) {
+        Ok(json) => { println!("{json}"); ExitCode::SUCCESS }
+        Err(e) => { eprintln!("error: {e}"); ExitCode::from(70) }
+    }
+}
+
 // Implemented in later tasks:
-fn cmd_catalog() -> ExitCode { eprintln!("not implemented"); ExitCode::from(70) }
 fn cmd_run(_path: &std::path::Path) -> ExitCode { eprintln!("not implemented"); ExitCode::from(70) }
