@@ -76,6 +76,8 @@ pub fn parse_stream_line(line: &str) -> Parsed {
                 for block in content {
                     if block.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
                         let ok = !block.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false);
+                        // TODO: claude tool_result carries a tool_use_id, not a
+                        // tool name; correlate it back to the tool.use to fill `name`.
                         out.events.push(KataEvent::ToolResult {
                             name: String::new(),
                             ok,
@@ -116,7 +118,18 @@ fn summarize_content(content: Option<&serde_json::Value>) -> String {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max { s.to_string() } else { format!("{}...", &s[..max]) }
+    if s.len() <= max {
+        return s.to_string();
+    }
+    // Walk back to the nearest char boundary at or before `max` bytes so we
+    // never slice through a multibyte character.
+    let boundary = s
+        .char_indices()
+        .map(|(i, _)| i)
+        .take_while(|&i| i <= max)
+        .last()
+        .unwrap_or(0);
+    format!("{}...", &s[..boundary])
 }
 
 /// Read `stream-json` lines from `reader`, emit normalized events via `emit`,
@@ -187,7 +200,7 @@ mod tests {
     #[test]
     fn unrecognized_line_yields_no_events() {
         let p = parse_stream_line(r#"{"type":"system","subtype":"init"}"#);
-        assert!(p.events.is_empty() || matches!(p.events[0], KataEvent::Log { .. }));
+        assert!(p.events.is_empty());
         assert!(p.result.is_none());
     }
 
@@ -226,5 +239,16 @@ mod tests {
         assert!(events.contains(&KataEvent::Turn { n: 1 }));
         assert!(events.contains(&KataEvent::Turn { n: 2 }));
         assert!(events.contains(&KataEvent::AssistantText { text: "a".into() }));
+    }
+
+    #[test]
+    fn truncate_does_not_panic_on_multibyte() {
+        // 100 three-byte chars = 300 bytes; a 200-byte cut lands mid-character.
+        let s = "あ".repeat(100);
+        let t = truncate(&s, 200);
+        assert!(t.ends_with("..."));
+        assert!(t.len() <= 203); // truncated bytes + the "..." suffix
+        // The prefix before "..." must be valid UTF-8 (no panic, no broken char).
+        assert!(t.trim_end_matches("...").chars().all(|c| c == 'あ'));
     }
 }
