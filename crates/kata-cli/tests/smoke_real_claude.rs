@@ -1,5 +1,7 @@
-//! Opt-in: only runs when KATA_SMOKE_REAL=1 and a real `claude` is on PATH.
-//! Catches drift between our flag set and the actual CLI. Costs tokens.
+//! Opt-in: only runs when KATA_SMOKE_REAL=1 and a real, AUTHENTICATED `claude`
+//! is on PATH (run `claude` once interactively to log in first). Catches drift
+//! between our flag set and the actual CLI by driving a trivial task to a
+//! genuinely successful completion. Costs tokens.
 use std::process::Command;
 
 #[test]
@@ -24,4 +26,9 @@ fn real_claude_trivial_run_completes() {
     let last = stdout.lines().filter(|l| !l.trim().is_empty()).last().unwrap();
     let v: serde_json::Value = serde_json::from_str(last).unwrap();
     assert_eq!(v["type"], "run.completed", "last event should be run.completed; stderr: {}", String::from_utf8_lossy(&out.stderr));
+    // A genuine success: the run must not be an error and must exit 0. A rejected
+    // flag or an unauthenticated claude still emits run.completed, so without
+    // these assertions the test would pass on a broken run.
+    assert_eq!(v["is_error"], false, "run.completed was an error (is claude logged in? did a flag change?); result: {}", v["result"]);
+    assert_eq!(v["exit_code"], 0, "expected exit 0; result: {}", v["result"]);
 }
