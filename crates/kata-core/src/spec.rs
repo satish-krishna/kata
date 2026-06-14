@@ -70,8 +70,10 @@ pub enum IdentityMode {
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct PluginConfig {
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<bool>,
+    #[cfg_attr(feature = "ts", ts(optional = nullable, as = "Option<Vec<String>>"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<String>,
 }
@@ -90,7 +92,7 @@ pub struct Model {
 pub struct Leash {
     #[serde(default = "default_max_turns")]
     pub max_turns: u32,
-    #[cfg_attr(feature = "ts", ts(as = "Option<u32>"))]
+    #[cfg_attr(feature = "ts", ts(optional = nullable, as = "Option<u32>"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
     #[serde(default)]
