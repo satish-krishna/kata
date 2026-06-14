@@ -76,7 +76,7 @@ pub struct PluginConfig {
     #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<bool>,
-    #[cfg_attr(feature = "ts", ts(optional = nullable, as = "Option<Vec<String>>"))]
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<String>,
 }
