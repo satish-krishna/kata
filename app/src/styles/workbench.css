@@ -26,7 +26,7 @@
   border-bottom: 1px solid var(--border-default);
 }
 .wb-brand { display: flex; align-items: center; gap: var(--space-3); flex: none; }
-.wb-seal { width: 26px; height: 26px; border-radius: var(--radius-xs); background: var(--accent); display: flex; align-items: center; justify-content: center; font-family: "Hiragino Mincho ProN","Yu Mincho",serif; font-size: 16px; color: #fbeee6; line-height: 1; }
+.wb-seal { width: 26px; height: 26px; border-radius: var(--radius-xs); background: var(--accent); display: flex; align-items: center; justify-content: center; font-family: "Hiragino Mincho ProN","Yu Mincho",serif; font-size: 16px; color: var(--text-primary); line-height: 1; }
 .wb-spec { display: flex; align-items: center; gap: var(--space-3); flex: none; }
 .wb-specname { background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); height: 28px; padding: 0 var(--space-3); font: var(--weight-semibold) var(--text-md)/1 var(--font-sans); color: var(--text-primary); width: 240px; }
 .wb-specname:hover { background: var(--surface-card); }

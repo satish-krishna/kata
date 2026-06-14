@@ -11,11 +11,17 @@ export const catalog = (workdir: string | null) =>
     ? invoke<CatalogEntry[]>("catalog", { workdir })
     : Promise.resolve(seedCatalog);
 
+const NO_BACKEND = "this action needs the Kata desktop app (Tauri backend unavailable)";
+
 export const loadSpec = (path: string) =>
-  invoke<RunSpec>("load_spec", { path });
+  inTauri()
+    ? invoke<RunSpec>("load_spec", { path })
+    : Promise.reject(new Error(NO_BACKEND));
 
 export const saveSpec = (path: string, spec: RunSpec) =>
-  invoke<void>("save_spec", { path, spec });
+  inTauri()
+    ? invoke<void>("save_spec", { path, spec })
+    : Promise.reject(new Error(NO_BACKEND));
 
 export const validateSpec = (spec: RunSpec) =>
   inTauri()
@@ -59,11 +65,13 @@ export async function cancelRun(): Promise<void> {
 
 const SPEC_FILTERS = [{ name: "Run-spec", extensions: ["toml", "json"] }];
 
-export const pickDirectory = () =>
-  open({ directory: true, multiple: false }) as Promise<string | null>;
+// Native file dialogs only exist under Tauri; in a plain browser these are
+// no-ops (return null) so Open/Save/Browse stay safe.
+export const pickDirectory = (): Promise<string | null> =>
+  inTauri() ? (open({ directory: true, multiple: false }) as Promise<string | null>) : Promise.resolve(null);
 
-export const pickOpenSpec = () =>
-  open({ multiple: false, filters: SPEC_FILTERS }) as Promise<string | null>;
+export const pickOpenSpec = (): Promise<string | null> =>
+  inTauri() ? (open({ multiple: false, filters: SPEC_FILTERS }) as Promise<string | null>) : Promise.resolve(null);
 
-export const pickSaveSpec = () =>
-  save({ filters: SPEC_FILTERS }) as Promise<string | null>;
+export const pickSaveSpec = (): Promise<string | null> =>
+  inTauri() ? (save({ filters: SPEC_FILTERS }) as Promise<string | null>) : Promise.resolve(null);
