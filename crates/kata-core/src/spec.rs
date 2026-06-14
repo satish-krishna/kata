@@ -90,6 +90,7 @@ pub struct Model {
 pub struct Leash {
     #[serde(default = "default_max_turns")]
     pub max_turns: u32,
+    #[cfg_attr(feature = "ts", ts(as = "Option<u32>"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
     #[serde(default)]
