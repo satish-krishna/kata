@@ -1,0 +1,61 @@
+/* ============================================================
+   KATA · SPACING, RADII, BORDERS, ELEVATION, MOTION
+   4px base grid. Tight, engineered radii (a craftsman's form is
+   precise, not bubbly). Borders do most of the structural work;
+   shadows are reserved for floating surfaces.
+   ============================================================ */
+:root {
+  /* ---- Spacing (4px grid) ---- */
+  --space-0:  0;
+  --space-px: 1px;
+  --space-1:  2px;
+  --space-2:  4px;
+  --space-3:  8px;
+  --space-4:  12px;
+  --space-5:  16px;
+  --space-6:  20px;
+  --space-7:  24px;
+  --space-8:  32px;
+  --space-9:  40px;
+  --space-10: 48px;
+  --space-12: 64px;
+  --space-14: 80px;
+  --space-16: 96px;
+
+  /* ---- Radii (restrained / precise) ---- */
+  --radius-xs:   3px;   /* tags, chips, kbd */
+  --radius-sm:   5px;   /* inputs, buttons */
+  --radius-md:   7px;   /* cards, rows */
+  --radius-lg:   10px;  /* panels, dialogs */
+  --radius-xl:   14px;  /* large containers */
+  --radius-full: 999px; /* dots, pills, avatars */
+
+  /* ---- Border widths ---- */
+  --border-width:        1px;
+  --border-width-thick:  1.5px;
+  --border-width-accent: 2px;
+
+  /* ---- Elevation (low-opacity, cool-black; dark UI keeps it subtle) ---- */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 2px 6px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.6);
+  --shadow-popover: 0 10px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--border-default);
+
+  /* Accent glow — for the live/running state and the primary action */
+  --glow-accent:  0 0 0 1px var(--accent-border), 0 4px 18px color-mix(in srgb, var(--accent) 30%, transparent);
+  --glow-running: 0 0 0 1px var(--accent-border), 0 0 16px color-mix(in srgb, var(--accent) 35%, transparent);
+
+  /* ---- Motion ---- */
+  --ease-out:   cubic-bezier(0.22, 0.61, 0.36, 1); /* @kind other */
+  --ease-in-out:cubic-bezier(0.65, 0, 0.35, 1);    /* @kind other */
+  --dur-fast:   110ms; /* @kind other */
+  --dur-base:   170ms; /* @kind other */
+  --dur-slow:   260ms; /* @kind other */
+
+  /* ---- Layout rails ---- */
+  --rail-toolbar:   48px;   /* fixed top toolbar */
+  --rail-statusbar: 32px;   /* fixed bottom status line */
+  --pane-min:       380px;  /* min compose-pane width */
+  --content-max:    1680px; /* readable cap on ultrawide */
+}

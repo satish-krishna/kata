@@ -1,0 +1,5 @@
+/* Kata typefaces — IBM Plex superfamily.
+   One disciplined family system: Plex Sans for UI, Plex Mono for specs/events/data.
+   Delivered from the Google Fonts CDN. To self-host, replace this @import with
+   local @font-face rules pointing at vendored .woff2 binaries. */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');

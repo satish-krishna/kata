@@ -1,0 +1,59 @@
+/* Run state store. Holds the observe-pane state machine and event buffer, and
+ * drives the run via the api bridge. Components read `runStore` reactively;
+ * the bridge (Tauri or browser fallback) feeds events in. */
+import type { RunSpec } from "../bindings/RunSpec";
+import type { KataEvent, StreamEvent, RunSummary, RunState } from "./events";
+import * as api from "./api";
+
+export const runStore = $state<{
+  state: RunState;
+  events: StreamEvent[];
+  summary: RunSummary | null;
+}>({ state: "idle", events: [], summary: null });
+
+let unlisten: (() => void) | null = null;
+
+function teardown() {
+  if (unlisten) {
+    unlisten();
+    unlisten = null;
+  }
+}
+
+function handle(ev: KataEvent) {
+  if (ev.type === "run.completed") {
+    runStore.summary = ev;
+    runStore.state = ev.is_error ? "error" : "success";
+    teardown();
+  } else {
+    runStore.events.push(ev);
+  }
+}
+
+export async function startRun(spec: RunSpec) {
+  if (runStore.state === "running") return;
+  teardown();
+  runStore.events = [];
+  runStore.summary = null;
+  runStore.state = "running";
+  unlisten = await api.onRunEvent(handle);
+  try {
+    await api.runSpec(spec);
+  } catch (e) {
+    runStore.events.push({ type: "log", level: "error", message: `run failed: ${e}` });
+    runStore.state = "error";
+    teardown();
+  }
+}
+
+export async function cancelRun() {
+  if (runStore.state !== "running") return;
+  await api.cancelRun();
+  runStore.events.push({
+    type: "log",
+    level: "warn",
+    message: "run.cancelled — engine trapped the signal, killed claude, cleaned up the plugin-dir + worktree",
+  });
+  runStore.state = "warning";
+  teardown();
+}

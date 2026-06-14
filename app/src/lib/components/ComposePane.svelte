@@ -2,71 +2,112 @@
   import type { RunSpec } from "../../bindings/RunSpec";
   import type { CatalogEntry } from "../../bindings/CatalogEntry";
   import KitChecklist from "./KitChecklist.svelte";
+  import Field from "./Field.svelte";
+  import Segmented from "./Segmented.svelte";
+  import Folder from "@lucide/svelte/icons/folder";
 
   let {
     spec,
     entries,
     onPickWorkdir,
   }: { spec: RunSpec; entries: CatalogEntry[]; onPickWorkdir: () => void } = $props();
+
+  let kitCount = $derived(spec.skills.length + Object.keys(spec.plugins).length);
+
+  // Integer-coerce the leash inputs (mirrors kata-core's expectations).
+  function onMaxTurns(e: Event) {
+    const n = Math.trunc(Number((e.currentTarget as HTMLInputElement).value));
+    spec.leash.max_turns = Number.isFinite(n) && n >= 1 ? n : 1;
+  }
+  function onTimeout(e: Event) {
+    const v = (e.currentTarget as HTMLInputElement).value.trim();
+    if (v === "") {
+      spec.leash.timeout_secs = null;
+      return;
+    }
+    const n = Math.trunc(Number(v));
+    spec.leash.timeout_secs = Number.isFinite(n) && n >= 0 ? n : null;
+  }
 </script>
 
-<div class="compose">
-  <label>Description<input bind:value={spec.description} /></label>
+<div class="wb-compose">
+  <Field label="Description" key="description">
+    <input class="k-input" placeholder="One line — what this form is for" bind:value={spec.description} />
+  </Field>
 
-  <label>Task<textarea rows="4" bind:value={spec.task}></textarea></label>
-  <label>Context<textarea rows="3" bind:value={spec.context}></textarea></label>
+  <section class="wb-section">
+    <div class="wb-section__head">
+      <span class="wb-section__title">Task</span>
+      <span class="wb-section__sub">the job, verbatim</span>
+    </div>
+    <Field label="Task" key="task">
+      <textarea class="k-textarea" rows="3" bind:value={spec.task}></textarea>
+    </Field>
+    <Field label="Context" key="context" hint="Appended after the task.">
+      <textarea class="k-textarea" rows="2" bind:value={spec.context}></textarea>
+    </Field>
+    <Field label="Workdir" key="workdir" hint="cwd for claude -p; the agent's file tools resolve here.">
+      <div class="wb-picker">
+        <input class="k-input k-input--mono" bind:value={spec.workdir} />
+        <button type="button" class="k-btn k-btn--secondary" onclick={onPickWorkdir}>
+          <Folder size={16} />Browse…
+        </button>
+      </div>
+    </Field>
+  </section>
 
-  <label>Workdir
-    <span class="picker">
-      <input bind:value={spec.workdir} />
-      <button onclick={onPickWorkdir}>Browse…</button>
-    </span>
-  </label>
+  <section class="wb-section">
+    <div class="wb-section__head">
+      <span class="wb-section__num">02 · TELL IT WHAT IT IS</span>
+      <span class="wb-section__title">Identity</span>
+    </div>
+    <Field label="System prompt" key="identity.system_prompt" hint="Empty = stay the default coding assistant.">
+      <textarea class="k-textarea" rows="2" bind:value={spec.identity.system_prompt}></textarea>
+    </Field>
+    <Field label="Mode" key="identity.mode">
+      <Segmented options={["append", "replace"] as const} bind:value={spec.identity.mode} ariaLabel="Identity mode" />
+    </Field>
+  </section>
 
-  <fieldset>
-    <legend>Identity</legend>
-    <label>System prompt<textarea rows="3" bind:value={spec.identity.system_prompt}></textarea></label>
-    <label>Mode
-      <select bind:value={spec.identity.mode}>
-        <option value="append">append</option>
-        <option value="replace">replace</option>
-      </select>
-    </label>
-  </fieldset>
-
-  <fieldset>
-    <legend>Kit</legend>
+  <section class="wb-section">
+    <div class="wb-section__head">
+      <span class="wb-section__num">03 · THE CURATED KIT</span>
+      <span class="wb-section__title">Kit</span>
+      <span class="wb-section__sub">{kitCount} selected</span>
+    </div>
     <KitChecklist {spec} {entries} />
-  </fieldset>
+  </section>
 
-  <label>Model id<input placeholder="(default)" bind:value={spec.model.id} /></label>
-
-  <fieldset>
-    <legend>Leash</legend>
-    <label>Max turns
-      <input type="number" min="1" step="1"
-        value={spec.leash.max_turns}
-        oninput={(e) => { const n = Math.trunc(Number(e.currentTarget.value)); spec.leash.max_turns = Number.isFinite(n) && n >= 1 ? n : 1; }} /></label>
-    <label>Timeout (secs, optional)
-      <input type="number" min="0" step="1"
-        value={spec.leash.timeout_secs ?? ""}
-        oninput={(e) => { const v = e.currentTarget.value.trim(); if (v === "") { spec.leash.timeout_secs = null; return; } const n = Math.trunc(Number(v)); spec.leash.timeout_secs = Number.isFinite(n) && n >= 0 ? n : null; }} />
-    </label>
-    <label>Isolation
-      <select bind:value={spec.leash.isolation}>
-        <option value="none">none</option>
-        <option value="worktree">worktree</option>
+  <section class="wb-section">
+    <div class="wb-section__head">
+      <span class="wb-section__title">Model</span>
+    </div>
+    <Field label="Model id" key="model.id" hint="Omit to use Claude's default.">
+      <select class="k-select" bind:value={spec.model.id}>
+        <option value="">(default)</option>
+        <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+        <option value="claude-opus-4-1">claude-opus-4-1</option>
+        <option value="claude-haiku-4-5">claude-haiku-4-5</option>
       </select>
-    </label>
-  </fieldset>
-</div>
+    </Field>
+  </section>
 
-<style>
-  .compose { display: flex; flex-direction: column; gap: 0.75rem; padding: 0.75rem; overflow-y: auto; }
-  label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
-  fieldset { display: flex; flex-direction: column; gap: 0.5rem; }
-  legend { font-weight: 600; }
-  .picker { display: flex; gap: 0.5rem; }
-  .picker input { flex: 1; }
-  input, textarea, select { font: inherit; padding: 0.3rem; }
-</style>
+  <section class="wb-section">
+    <div class="wb-section__head">
+      <span class="wb-section__num">04 · THE LEASH</span>
+      <span class="wb-section__title">Leash</span>
+      <span class="wb-section__sub">cap · contain · observe</span>
+    </div>
+    <div class="wb-grid-2">
+      <Field label="Max turns" key="max_turns" hint="Engine cap → exit 125.">
+        <input class="k-input" type="number" min="1" step="1" value={spec.leash.max_turns} oninput={onMaxTurns} />
+      </Field>
+      <Field label="Timeout (secs)" key="timeout_secs" hint="Wall-clock kill → exit 124.">
+        <input class="k-input" type="number" min="0" step="1" placeholder="(none)" value={spec.leash.timeout_secs ?? ""} oninput={onTimeout} />
+      </Field>
+    </div>
+    <Field label="Isolation" key="leash.isolation" hint="worktree contains writes in an ephemeral git worktree (reviewable as a diff).">
+      <Segmented options={["none", "worktree"] as const} bind:value={spec.leash.isolation} ariaLabel="Isolation" />
+    </Field>
+  </section>
+</div>

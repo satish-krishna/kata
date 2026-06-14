@@ -2,18 +2,31 @@
   import type { RunSpec } from "../bindings/RunSpec";
   import type { CatalogEntry } from "../bindings/CatalogEntry";
   import { defaultSpec, normalize, specEquals, draftFrom } from "$lib/spec";
+  import { inTauri, seedSpec } from "$lib/mock";
   import * as api from "$lib/api";
+  import { onMount } from "svelte";
   import Toolbar from "$lib/components/Toolbar.svelte";
   import ValidationBanner from "$lib/components/ValidationBanner.svelte";
   import ComposePane from "$lib/components/ComposePane.svelte";
+  import ObservePane from "$lib/components/ObservePane.svelte";
+  import { runStore, startRun, cancelRun } from "$lib/run.svelte";
+  import Terminal from "@lucide/svelte/icons/terminal";
+  import Hash from "@lucide/svelte/icons/hash";
+  import Folder from "@lucide/svelte/icons/folder";
+  import CheckCircle from "@lucide/svelte/icons/check-circle";
+  import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
 
-  let spec = $state<RunSpec>(defaultSpec());
-  let saved = $state<RunSpec>(defaultSpec()); // last-saved snapshot for dirty tracking
+  // Real Tauri app opens a blank New spec; browser dev/review seeds the example.
+  const initial = inTauri() ? defaultSpec() : seedSpec();
+  let spec = $state<RunSpec>(structuredClone(initial));
+  let saved = $state<RunSpec>(structuredClone(initial)); // last-saved snapshot for dirty tracking
   let currentPath = $state<string | null>(null);
   let entries = $state<CatalogEntry[]>([]);
   let errors = $state<string[]>([]);
 
   let dirty = $derived(!specEquals(spec, saved));
+  let valid = $derived(errors.length === 0);
+  let running = $derived(runStore.state === "running");
 
   // Re-fetch the kit when workdir changes (debounced).
   $effect(() => {
@@ -80,10 +93,6 @@
 
   async function onSave() {
     if (currentPath) return writeTo(currentPath);
-    return onSaveAs();
-  }
-
-  async function onSaveAs() {
     const path = await api.pickSaveSpec();
     if (path) await writeTo(path);
   }
@@ -92,25 +101,74 @@
     const dir = await api.pickDirectory();
     if (dir) spec.workdir = dir;
   }
+
+  // Run / Cancel — driven through the run store + Tauri event bridge.
+  function onRun() {
+    if (!valid || running) return;
+    startRun(normalize($state.snapshot(spec) as RunSpec));
+  }
+  function onCancel() {
+    cancelRun();
+  }
+
+  // Browser dev/review only: `?demo=run` auto-starts the scripted run so the
+  // Observe pane can be reviewed/screenshotted without a click. Never fires in
+  // the real Tauri app.
+  onMount(() => {
+    if (!inTauri() && new URLSearchParams(location.search).get("demo") === "run") onRun();
+  });
+
+  // ⌘↵ / Ctrl+↵ to run.
+  function onKeydown(e: KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      if (!running) onRun();
+    }
+  }
 </script>
 
-<main>
-  <Toolbar bind:name={spec.name} {dirty} {onNew} {onOpen} {onSave} {onSaveAs} />
-  <ValidationBanner {errors} />
-  <div class="panes">
-    <section class="left">
-      <ComposePane {spec} {entries} {onPickWorkdir} />
-    </section>
-    <section class="right">
-      <p class="placeholder">Observe pane — M6</p>
-    </section>
-  </div>
-</main>
+<svelte:window on:keydown={onKeydown} />
 
-<style>
-  main { display: flex; flex-direction: column; height: 100vh; font-family: system-ui, sans-serif; }
-  .panes { flex: 1; display: flex; min-height: 0; }
-  .left { flex: 1; min-width: 0; border-right: 1px solid #ccc; display: flex; }
-  .right { width: 320px; display: flex; align-items: center; justify-content: center; }
-  .placeholder { color: #aaa; }
-</style>
+<div class="wb">
+  <Toolbar
+    bind:name={spec.name}
+    {dirty}
+    {running}
+    canRun={valid}
+    {onNew}
+    {onOpen}
+    {onSave}
+    {onRun}
+    {onCancel}
+  />
+
+  <ValidationBanner {errors} />
+
+  <div class="wb-panes">
+    <div class="wb-pane wb-pane--compose">
+      <div class="wb-pane__head"><span class="kata-eyebrow">Compose · the run-spec</span></div>
+      <div class="wb-pane__body">
+        <ComposePane {spec} {entries} {onPickWorkdir} />
+      </div>
+    </div>
+
+    <div class="wb-pane wb-pane--observe">
+      <div class="wb-pane__head"><span class="kata-eyebrow">Observe · the run</span></div>
+      <ObservePane runState={runStore.state} events={runStore.events} {spec} summary={runStore.summary} />
+    </div>
+  </div>
+
+  <footer class="wb-statusbar">
+    <span class="wb-statusbar__item" class:wb-statusbar__ok={valid} class:wb-statusbar__err={!valid}>
+      {#if valid}
+        <CheckCircle size={13} /> spec is valid
+      {:else}
+        <AlertTriangle size={13} /> {errors.length} {errors.length === 1 ? "error" : "errors"}: {errors[0]}
+      {/if}
+    </span>
+    <div class="wb-statusbar__spacer"></div>
+    <span class="wb-statusbar__item"><Hash size={13} /> schema {spec.schema}</span>
+    <span class="wb-statusbar__item"><Folder size={13} /> {spec.workdir || "—"}</span>
+    <span class="wb-statusbar__item"><Terminal size={13} /> claude --bare -p</span>
+  </footer>
+</div>
