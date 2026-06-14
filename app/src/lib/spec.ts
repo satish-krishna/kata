@@ -16,7 +16,7 @@ export function defaultSpec(): RunSpec {
   };
 }
 
-const blankToNull = (s: string | null): string | null =>
+const blankToNull = (s: string | null | undefined): string | null =>
   s && s.trim() !== "" ? s : null;
 
 /** Convert blank optional text fields to null so saved specs omit them. */

@@ -4,4 +4,4 @@ import type { Leash } from "./Leash";
 import type { Model } from "./Model";
 import type { PluginConfig } from "./PluginConfig";
 
-export type RunSpec = { schema: number, name: string, description: string | null, task: string, context: string | null, workdir: string, identity: Identity, skills: Array<string>, plugins: { [key in string]?: PluginConfig }, model: Model, leash: Leash, };
+export type RunSpec = { schema: number, name: string, description?: string | null, task: string, context?: string | null, workdir: string, identity: Identity, skills: Array<string>, plugins: { [key in string]?: PluginConfig }, model: Model, leash: Leash, };

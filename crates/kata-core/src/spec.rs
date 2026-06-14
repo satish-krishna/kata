@@ -9,9 +9,11 @@ pub struct RunSpec {
     #[serde(default = "default_schema_version")]
     pub schema: u32,
     pub name: String,
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub task: String,
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
     pub workdir: String,
@@ -49,6 +51,7 @@ impl Default for RunSpec {
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Identity {
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(default)]
@@ -82,6 +85,7 @@ pub struct PluginConfig {
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Model {
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
 }
