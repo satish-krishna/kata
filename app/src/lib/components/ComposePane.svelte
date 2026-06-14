@@ -43,7 +43,10 @@
 
   <fieldset>
     <legend>Leash</legend>
-    <label>Max turns<input type="number" min="1" step="1" bind:value={spec.leash.max_turns} /></label>
+    <label>Max turns
+      <input type="number" min="1" step="1"
+        value={spec.leash.max_turns}
+        oninput={(e) => (spec.leash.max_turns = e.currentTarget.value === "" ? 1 : Number(e.currentTarget.value))} /></label>
     <label>Timeout (secs, optional)
       <input type="number" min="0" step="1"
         value={spec.leash.timeout_secs ?? ""}
