@@ -35,10 +35,11 @@ writes the same TOML/JSON the engine and CI consume.
 
 ```
 app/
-  src/                      # Svelte 5 (runes) + TypeScript + Vite, plain (no SvelteKit)
+  src/                      # SvelteKit (Svelte 5 runes) + TypeScript + Vite, adapter-static SPA (no SSR)
     bindings/               # ts-rs-generated types (RunSpec, CatalogEntry, ...) — checked in
-    lib/                    # presentational components + pure TS helpers
-    App.svelte              # two-pane shell; right pane is an M6 placeholder
+    lib/                    # pure TS helpers + presentational components (lib/components/)
+    routes/+page.svelte     # two-pane compose shell; right pane is an M6 placeholder
+    routes/+layout.ts       # ssr = false (SPA)
   src-tauri/                # Tauri v2 backend
     Cargo.toml              # depends on kata-core (path), tauri, tauri-plugin-dialog
     src/lib.rs              # #[tauri::command] wrappers over kata-core
@@ -49,8 +50,9 @@ The backend links `kata-core` (path dependency) for the spec **types** and for t
 
 ### Tech
 
-- Tauri v2; frontend TypeScript + Vite + **Svelte 5 (runes)**, plain (no SvelteKit
-  SSR — this is a desktop webview, not a server-rendered site).
+- Tauri v2; frontend TypeScript + Vite + **SvelteKit (Svelte 5 runes)** with
+  adapter-static in SPA mode (`ssr = false`) — a desktop webview, not a
+  server-rendered site.
 - File/directory pickers via `@tauri-apps/plugin-dialog`, called from the frontend
   directly, so the Rust backend stays limited to the four data commands.
 - Spec files canonical TOML; JSON accepted (same shape), per the parent design.
