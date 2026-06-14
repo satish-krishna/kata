@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { RunSpec } from "../bindings/RunSpec";
   import type { CatalogEntry } from "../bindings/CatalogEntry";
-  import { defaultSpec, normalize, specEquals } from "$lib/spec";
+  import { defaultSpec, normalize, specEquals, draftFrom } from "$lib/spec";
   import * as api from "$lib/api";
   import Toolbar from "$lib/components/Toolbar.svelte";
   import ValidationBanner from "$lib/components/ValidationBanner.svelte";
@@ -60,7 +60,7 @@
     if (!path) return;
     try {
       const loaded = await api.loadSpec(path);
-      spec = loaded;
+      spec = draftFrom(loaded);
       saved = $state.snapshot(spec) as RunSpec;
       currentPath = path;
     } catch (e) {

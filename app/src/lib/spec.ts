@@ -16,6 +16,27 @@ export function defaultSpec(): RunSpec {
   };
 }
 
+/** Build an editable draft from a loaded spec. Optional text fields that the
+ *  saved file omits (arriving as undefined/null) become "" so inputs never
+ *  render "undefined"/"null", and nested objects always carry their defaults. */
+export function draftFrom(loaded: RunSpec): RunSpec {
+  const d = defaultSpec();
+  return {
+    ...d,
+    ...loaded,
+    description: loaded.description ?? "",
+    context: loaded.context ?? "",
+    identity: {
+      mode: loaded.identity?.mode ?? "append",
+      system_prompt: loaded.identity?.system_prompt ?? "",
+    },
+    model: { id: loaded.model?.id ?? "" },
+    leash: { ...d.leash, ...loaded.leash },
+    skills: loaded.skills ?? [],
+    plugins: loaded.plugins ?? {},
+  };
+}
+
 const blankToNull = (s: string | null | undefined): string | null =>
   s && s.trim() !== "" ? s : null;
 

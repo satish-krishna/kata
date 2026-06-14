@@ -46,11 +46,11 @@
     <label>Max turns
       <input type="number" min="1" step="1"
         value={spec.leash.max_turns}
-        oninput={(e) => (spec.leash.max_turns = e.currentTarget.value === "" ? 1 : Number(e.currentTarget.value))} /></label>
+        oninput={(e) => { const n = Math.trunc(Number(e.currentTarget.value)); spec.leash.max_turns = Number.isFinite(n) && n >= 1 ? n : 1; }} /></label>
     <label>Timeout (secs, optional)
       <input type="number" min="0" step="1"
         value={spec.leash.timeout_secs ?? ""}
-        oninput={(e) => (spec.leash.timeout_secs = e.currentTarget.value === "" ? null : Number(e.currentTarget.value))} />
+        oninput={(e) => { const v = e.currentTarget.value.trim(); if (v === "") { spec.leash.timeout_secs = null; return; } const n = Math.trunc(Number(v)); spec.leash.timeout_secs = Number.isFinite(n) && n >= 0 ? n : null; }} />
     </label>
     <label>Isolation
       <select bind:value={spec.leash.isolation}>
