@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "app-scaffold",
+  "productName": "Kata Workbench",
   "version": "0.1.0",
-  "identifier": "com.psati.app-scaffold",
+  "identifier": "com.kata.workbench",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "app-scaffold",
+        "title": "Kata Workbench",
         "width": 800,
         "height": 600
       }
