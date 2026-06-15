@@ -11,6 +11,36 @@ pub enum AssembleError {
     NotFound(String),
 }
 
+/// One skill/plugin selected by a spec, resolved against the catalog.
+/// Shared by `assemble` (copies into a throwaway temp kit) and
+/// `bundle` (copies into a durable `.claude` tree + records provenance).
+#[derive(Debug, Clone)]
+pub struct ResolvedEntry {
+    pub kind: EntryKind,
+    pub name: String,
+    pub source: String,
+    pub path: std::path::PathBuf,
+}
+
+/// Map each skill/plugin name in `spec` to its catalog entry, in order
+/// (skills first, then plugins). Errors `NotFound` on the first miss.
+pub fn resolve(spec: &RunSpec, catalog: &[CatalogEntry]) -> Result<Vec<ResolvedEntry>, AssembleError> {
+    let mut out = Vec::new();
+    for name in &spec.skills {
+        let e = catalog.iter()
+            .find(|e| e.kind == EntryKind::Skill && &e.name == name)
+            .ok_or_else(|| AssembleError::NotFound(format!("skill '{name}'")))?;
+        out.push(ResolvedEntry { kind: e.kind, name: e.name.clone(), source: e.source.clone(), path: e.path.clone() });
+    }
+    for name in spec.plugins.keys() {
+        let e = catalog.iter()
+            .find(|e| e.kind == EntryKind::Plugin && &e.name == name)
+            .ok_or_else(|| AssembleError::NotFound(format!("plugin '{name}'")))?;
+        out.push(ResolvedEntry { kind: e.kind, name: e.name.clone(), source: e.source.clone(), path: e.path.clone() });
+    }
+    Ok(out)
+}
+
 pub fn assemble(spec: &RunSpec, catalog: &[CatalogEntry]) -> Result<Assembled, AssembleError> {
     let temp = tempfile::tempdir()?;
     let root = temp.path();
@@ -27,21 +57,14 @@ pub fn assemble(spec: &RunSpec, catalog: &[CatalogEntry]) -> Result<Assembled, A
 
     // Disposable plugin-dir: skills/<name>/ and plugins/<name>/.
     let plugin_root = root.join("plugindir");
-    let mut any = false;
-
-    for name in &spec.skills {
-        let entry = catalog.iter()
-            .find(|e| e.kind == EntryKind::Skill && &e.name == name)
-            .ok_or_else(|| AssembleError::NotFound(format!("skill '{name}'")))?;
-        copy_dir(&entry.path, &plugin_root.join("skills").join(name))?;
-        any = true;
-    }
-    for name in spec.plugins.keys() {
-        let entry = catalog.iter()
-            .find(|e| e.kind == EntryKind::Plugin && &e.name == name)
-            .ok_or_else(|| AssembleError::NotFound(format!("plugin '{name}'")))?;
-        copy_dir(&entry.path, &plugin_root.join("plugins").join(name))?;
-        any = true;
+    let resolved = resolve(spec, catalog)?;
+    let any = !resolved.is_empty();
+    for r in &resolved {
+        let sub = match r.kind {
+            EntryKind::Skill => "skills",
+            EntryKind::Plugin => "plugins",
+        };
+        copy_dir(&r.path, &plugin_root.join(sub).join(&r.name))?;
     }
 
     let plugin_dir = if any {
@@ -149,5 +172,27 @@ mod tests {
             PathBuf::from(a.plugin_dir.as_ref().unwrap())
         }; // a dropped here
         assert!(!dir.exists(), "temp plugin dir should be cleaned up on drop");
+    }
+
+    #[test]
+    fn resolve_returns_selected_entries_with_metadata() {
+        let (entry, _keep) = skill_entry("triage");
+        let mut spec = RunSpec { schema: 1, name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+        spec.skills = vec!["triage".into()];
+
+        let resolved = resolve(&spec, std::slice::from_ref(&entry)).unwrap();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].kind, EntryKind::Skill);
+        assert_eq!(resolved[0].name, "triage");
+        assert_eq!(resolved[0].source, "user");
+        assert_eq!(resolved[0].path, entry.path);
+    }
+
+    #[test]
+    fn resolve_missing_name_is_notfound() {
+        let mut spec = RunSpec { schema: 1, name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+        spec.skills = vec!["nope".into()];
+        let err = resolve(&spec, &[]).unwrap_err();
+        assert!(matches!(err, AssembleError::NotFound(_)));
     }
 }
