@@ -43,7 +43,7 @@ function Rail({ katas, history, selKata, selRun, onKata, onRun }) {
     <aside className="wb-pane wb-pane--rail">
       <div className="wb-rail__head"><span className="kata-eyebrow">Library</span></div>
       <div className="wb-rail__newbtn">
-        <Button variant="primary" block icon={<LIcon name="file-plus" size={14} />}>New kata<Kbd>⌘N</Kbd></Button>
+        <Button variant="primary" block icon={<LIcon name="file-plus" size={14} />}>New kata<Kbd>Ctrl N</Kbd></Button>
       </div>
       <div className="wb-pane__body">
         <div className="wb-rail__section">

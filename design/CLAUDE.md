@@ -2,7 +2,7 @@
 
 Copy this into `app/CLAUDE.md` (or merge into the repo-root `CLAUDE.md`) so every Claude Code
 session on the Workbench stays on-brand. The full system lives in
-`design_handoff_workbench_redesign/` (design tokens + component specs + prototypes).
+`design/` (design tokens + component specs + prototypes).
 
 ## Foundation
 - The app uses the **Kata design system**. Import `app/src/styles/styles.css` once (root layout);
@@ -32,6 +32,6 @@ session on the Workbench stays on-brand. The full system lives in
 ## Where things live
 - Tokens: `app/src/styles/tokens/{colors,typography,spacing}.css`
 - Component classes: `app/src/styles/components/components.css`
-- Per-component specs + the Svelte mapping table: `design_handoff_workbench_redesign/README.md`
-- Pixel reference: `design_handoff_workbench_redesign/prototype/` (don't copy its code — it's
+- Per-component specs + the Svelte mapping table: `design/README.md`
+- Pixel reference: `design/prototype/` (don't copy its code — it's
   HTML/React; recreate in Svelte).

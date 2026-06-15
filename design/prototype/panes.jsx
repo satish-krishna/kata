@@ -1,7 +1,7 @@
 /* Kata Workbench — panes & chrome (presentational). Reads primitives from
    the design-system bundle and the WBIcon set. Exposed on window. */
 const DS = window.KataDesignSystem_dd74c7;
-const { Button, IconButton, TextInput, Textarea, Select, SegmentedControl, Checkbox, Field, Badge, StatusDot, Kbd, KitItem, EventRow, SummaryStat, Card } = DS;
+const { Button, IconButton, TextInput, Textarea, Select, SegmentedControl, Checkbox, Field, Badge, StatusDot, Kbd, KitItem, EventRow, SummaryStat, Card, AskPanel } = DS;
 const Icon = window.WBIcon;
 
 /* ---------------- Toolbar ---------------- */
@@ -23,13 +23,13 @@ function Toolbar({ spec, setName, dirty, running, onRun, onCancel }) {
       <div className="wb-toolbar__group">
         <IconButton icon={<Icon name="file-plus" />} aria-label="New spec" title="New" />
         <IconButton icon={<Icon name="folder-open" />} aria-label="Open spec" title="Open" />
-        <IconButton icon={<Icon name="save" />} aria-label="Save spec" title="Save  ⌘S" />
+        <IconButton icon={<Icon name="save" />} aria-label="Save spec" title="Save (Ctrl+S)" />
         <IconButton icon={<Icon name="package" />} aria-label="Export bundle" title="Export bundle" />
       </div>
       <div className="wb-sep"></div>
       {running
         ? <Button variant="danger" icon={<Icon name="square" size={14} />} onClick={onCancel}>Cancel</Button>
-        : <Button variant="primary" icon={<Icon name="play" size={14} />} onClick={onRun}>Run<Kbd>⌘↵</Kbd></Button>}
+        : <Button variant="primary" icon={<Icon name="play" size={14} />} onClick={onRun}>Run<Kbd>Ctrl ↵</Kbd></Button>}
     </header>
   );
 }
@@ -198,15 +198,15 @@ function StreamRow({ ev }) {
   );
 }
 
-function ObservePane({ state, events, spec, summary }) {
+function ObservePane({ state, items, spec, summary, onAnswer }) {
   const streamRef = React.useRef(null);
   React.useEffect(() => {
     const el = streamRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [events.length, summary]);
+  }, [items, summary]);
 
   const statusLabel = {
-    idle: "Idle", running: "Running", success: "Completed", error: "Error", warning: "Stopped",
+    idle: "Idle", running: "Running", awaiting: "Awaiting your input", success: "Completed", error: "Error", warning: "Stopped",
   }[state];
 
   return (
@@ -221,13 +221,21 @@ function ObservePane({ state, events, spec, summary }) {
       </div>
 
       <div className="wb-stream" ref={streamRef}>
-        {events.length === 0 && !summary ? (
+        {items.length === 0 && !summary ? (
           <div className="wb-stream__empty">
             <Icon name="terminal" size={28} />
-            <p>Press <b style={{ color: "var(--accent-text)" }}>Run</b> to drive <code>claude -p</code> to completion. The normalized event stream renders here.</p>
+            <p>Press <b style={{ color: "var(--accent-text)" }}>Run</b> to drive <code>claude -p</code> to completion. The agent may pause to ask you a question — answer it to resume.</p>
           </div>
         ) : (
-          events.map((ev, i) => <StreamRow key={i} ev={ev} />)
+          items.map((it, i) =>
+            it.kind === "ask" ? (
+              <div key={i} style={{ padding: "8px 6px 4px" }}>
+                <AskPanel questions={it.questions} answered={it.answered} answers={it.answers} onSubmit={onAnswer} />
+              </div>
+            ) : (
+              <StreamRow key={i} ev={it.ev} />
+            )
+          )
         )}
       </div>
 

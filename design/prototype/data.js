@@ -1,6 +1,8 @@
 /* Kata Workbench — seed data: the default run-spec, a discovered catalog
    (shape of `kata catalog`), and a scripted KataEvent stream for the
-   triage-flaky-test example from the design spec. */
+   triage-flaky-test example — now with a human-in-the-loop checkpoint:
+   the run pauses on an intercepted AskUserQuestion and resumes on the
+   operator's answer. */
 (function () {
   const defaultSpec = {
     schema: 1,
@@ -28,37 +30,64 @@
     { kind: "plugin", name: "sentry", description: "read issues & stack traces", provides: ["skill:error-triage"], mcp_servers: ["sentry"] },
   ];
 
-  // Scripted normalized KataEvent stream (right pane). delay = ms after prev.
+  // ---- Pre-checkpoint events: the agent reproduces and isolates the cause,
+  //      then needs an operator decision. delay = ms after the previous event.
   const runScript = [
     { delay: 250, ev: { type: "log", level: "info", message: "assembled plugin-dir: 1 skill, 1 plugin" } },
-    { delay: 350, ev: { type: "log", level: "info", message: "worktree: ./.kata/wt-3f9a off main" } },
-    { delay: 500, ev: { type: "turn", n: 1 } },
-    { delay: 250, ev: { type: "assistant.text", text: "Reproducing the flake: I'll run the single test in a tight loop and watch for the failure mode." } },
+    { delay: 300, ev: { type: "log", level: "info", message: "worktree: ./.kata/wt-3f9a off main" } },
+    { delay: 450, ev: { type: "turn", n: 1 } },
+    { delay: 250, ev: { type: "assistant.text", text: "Reproducing the flake in a tight loop to watch the failure mode." } },
     { delay: 700, ev: { type: "tool.use", name: "Bash", input_summary: "for i in $(seq 1 30); do dotnet test --filter AuthTests.LoginExpiry; done" } },
-    { delay: 1300, ev: { type: "tool.result", name: "Bash", ok: true, summary: "27 passed / 3 failed — failures at iterations 8, 19, 26" } },
-    { delay: 500, ev: { type: "turn", n: 2 } },
-    { delay: 250, ev: { type: "assistant.text", text: "It fails ~1 in 10 locally. The failures share a timestamp boundary — this smells like a clock-skew race in token expiry." } },
-    { delay: 800, ev: { type: "tool.use", name: "Read", input_summary: "src/Auth/TokenValidator.cs" } },
-    { delay: 850, ev: { type: "tool.result", name: "Read", ok: true, summary: "TokenValidator.cs — 142 lines" } },
-    { delay: 500, ev: { type: "turn", n: 3 } },
-    { delay: 250, ev: { type: "assistant.text", text: "Found it. `IsExpired` compares `DateTime.UtcNow` against an expiry built with `DateTime.Now` upstream — across the DST/second boundary the two clocks disagree and the token reads as expired." } },
-    { delay: 800, ev: { type: "tool.use", name: "Bash", input_summary: "git -C ./.kata/wt-3f9a diff --stat" } },
-    { delay: 700, ev: { type: "tool.result", name: "Bash", ok: false, summary: "no changes — isolation only, as instructed" } },
-    { delay: 500, ev: { type: "turn", n: 4 } },
-    { delay: 250, ev: { type: "assistant.text", text: "Smallest repro: pin the system clock to 23:59:59.6 local and call LoginExpiry once — fails deterministically. Cause: mixed Now/UtcNow in token expiry. I did not change production code." } },
+    { delay: 1200, ev: { type: "tool.result", name: "Bash", ok: true, summary: "27 passed / 3 failed — failures at iterations 8, 19, 26" } },
+    { delay: 450, ev: { type: "turn", n: 2 } },
+    { delay: 250, ev: { type: "assistant.text", text: "Failures share a timestamp boundary — a clock-skew race in token expiry." } },
+    { delay: 750, ev: { type: "tool.use", name: "Read", input_summary: "src/Auth/TokenValidator.cs" } },
+    { delay: 800, ev: { type: "tool.result", name: "Read", ok: true, summary: "TokenValidator.cs — 142 lines" } },
+    { delay: 450, ev: { type: "turn", n: 3 } },
+    { delay: 250, ev: { type: "assistant.text", text: "Found it: IsExpired compares DateTime.UtcNow against an expiry built upstream with DateTime.Now — across the second boundary they disagree and the token reads as expired. Before I act, how should I proceed?" } },
+  ];
+
+  // ---- The intercepted AskUserQuestion (drives the run to `awaiting`).
+  const askQuestions = [
     {
-      delay: 600,
-      ev: {
-        type: "run.completed",
-        exit_code: 0,
-        is_error: false,
-        num_turns: 4,
-        cost_usd: 0.041,
-        duration_ms: 48120,
-        result: "Isolated AuthTests.LoginExpiry flake to a clock-skew race: TokenValidator.IsExpired mixes DateTime.Now (expiry) with DateTime.UtcNow (check). Deterministic repro: pin clock to 23:59:59.6 local. No production code changed.",
-      },
+      kind: "select",
+      header: "Next step",
+      question: "I've isolated the cause. How should I proceed from here?",
+      options: [
+        { label: "Just report", description: "No code changes — isolation only, as the identity prompt instructs." },
+        { label: "Write a failing test", description: "Add a deterministic repro test in the worktree." },
+        { label: "Attempt a fix", description: "Patch IsExpired in the worktree for review as a diff." },
+      ],
     },
   ];
 
-  window.WBData = { defaultSpec, catalog, runScript };
+  // ---- Resume + completion, branched on the operator's answer.
+  function resumeFor(answers) {
+    const next = answers[0][0];
+    const out = [{ delay: 350, ev: { type: "turn", n: 4 } }];
+    if (next === "Just report") {
+      out.push({ delay: 250, ev: { type: "assistant.text", text: "Reporting only, no code touched. Writing up the findings." } });
+      out.push({ delay: 700, ev: { type: "tool.use", name: "Bash", input_summary: "git -C ./.kata/wt-3f9a diff --stat" } });
+      out.push({ delay: 650, ev: { type: "tool.result", name: "Bash", ok: false, summary: "no changes — isolation only" } });
+      out.push({ delay: 550, ev: { type: "run.completed", exit_code: 0, is_error: false, num_turns: 4, cost_usd: 0.041, duration_ms: 48120,
+        result: "Isolated the flake to a clock-skew race in TokenValidator.IsExpired (mixed Now/UtcNow). Deterministic repro: pin clock to 23:59:59.6 local. No production code changed, per your call." } });
+    } else if (next === "Write a failing test") {
+      out.push({ delay: 250, ev: { type: "assistant.text", text: "Adding a deterministic repro test that pins the clock to the boundary — no production code changed." } });
+      out.push({ delay: 750, ev: { type: "tool.use", name: "Write", input_summary: "tests/Auth/LoginExpiryClockSkewTests.cs" } });
+      out.push({ delay: 700, ev: { type: "tool.result", name: "Write", ok: true, summary: "+38 lines · 1 file" } });
+      out.push({ delay: 550, ev: { type: "run.completed", exit_code: 0, is_error: false, num_turns: 5, cost_usd: 0.057, duration_ms: 71400,
+        result: "Added LoginExpiryClockSkewTests.cs (+38) in the worktree — a deterministic repro for the Now/UtcNow skew. No production code changed; review the diff." } });
+    } else {
+      out.push({ delay: 250, ev: { type: "assistant.text", text: "Patching IsExpired to use a single consistent clock source. Contained in the worktree for review." } });
+      out.push({ delay: 750, ev: { type: "tool.use", name: "Edit", input_summary: "src/Auth/TokenValidator.cs — IsExpired uses UtcNow on both sides" } });
+      out.push({ delay: 700, ev: { type: "tool.result", name: "Edit", ok: true, summary: "+3 −2 · 1 file" } });
+      out.push({ delay: 500, ev: { type: "tool.use", name: "Bash", input_summary: "dotnet test --filter AuthTests.LoginExpiry  # 30x" } });
+      out.push({ delay: 800, ev: { type: "tool.result", name: "Bash", ok: true, summary: "30 passed / 0 failed" } });
+      out.push({ delay: 550, ev: { type: "run.completed", exit_code: 0, is_error: false, num_turns: 6, cost_usd: 0.083, duration_ms: 98600,
+        result: "Patched TokenValidator.IsExpired (+3 −2) to use a consistent UtcNow clock; 30/30 passing in the worktree. Diff is contained for review, not merged." } });
+    }
+    return out;
+  }
+
+  window.WBData = { defaultSpec, catalog, runScript, askQuestions, resumeFor };
 })();
