@@ -1,5 +1,5 @@
 use crate::assemble::{resolve, AssembleError};
-use crate::catalog::{CatalogEntry, EntryKind};
+use crate::catalog::{CatalogEntry, DiscoveryRoots, EntryKind};
 use crate::fsutil::copy_dir;
 use crate::spec::RunSpec;
 use serde::{Deserialize, Serialize};
@@ -79,6 +79,23 @@ pub fn bundle(spec: &RunSpec, catalog: &[CatalogEntry], out: &Path, force: bool)
     Ok(())
 }
 
+/// True if `path` is a bundle directory: a dir containing the
+/// `kata-bundle.toml` marker. This is the sole disambiguator between a
+/// bundle directory and a plain spec-file path.
+pub fn is_bundle(path: &Path) -> bool {
+    path.is_dir() && path.join("kata-bundle.toml").is_file()
+}
+
+/// Discovery roots for running a bundle: the kit is discovered ONLY from
+/// the bundle's vendored `.claude`. The project scope is pointed at a
+/// path that will not exist, so discovery never leaks user/project entries.
+pub fn bundle_roots(bundle_dir: &Path) -> DiscoveryRoots {
+    DiscoveryRoots {
+        user_dir: bundle_dir.join(".claude"),
+        project_dir: bundle_dir.join(".kata-no-project-scope"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +159,26 @@ mod tests {
 
         bundle(&spec, std::slice::from_ref(&entry), out.path(), true).unwrap();
         assert!(out.path().join(".claude").join("skills").join("triage").join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn is_bundle_true_only_for_dir_with_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        // A plain dir is not a bundle.
+        assert!(!is_bundle(dir.path()));
+        // With the marker, it is.
+        fs::write(dir.path().join("kata-bundle.toml"), "tool_version = \"0\"\n").unwrap();
+        assert!(is_bundle(dir.path()));
+        // A file path is never a bundle.
+        let file = dir.path().join("kata-bundle.toml");
+        assert!(!is_bundle(&file));
+    }
+
+    #[test]
+    fn bundle_roots_point_user_at_bundle_claude_and_project_nowhere() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = bundle_roots(dir.path());
+        assert_eq!(roots.user_dir, dir.path().join(".claude"));
+        assert!(!roots.project_dir.exists(), "project scope must point at a nonexistent path");
     }
 }
