@@ -9,7 +9,7 @@ Replace the scripted stand-in in the Workbench's run bridge with the real engine
 ## Non-goals (explicit)
 
 - No human-in-the-loop. The run is observe-only by design: the engine drives `claude -p` headless with `--dangerously-skip-permissions`, so a run takes no mid-flight intervention. The only back-channel is a `cancel` line on stdin. Observe + steer / observe + approve are deferred to Phase 5 (M9) and build on this same stdin seam.
-- No frontend changes. The engine's `KataEvent` JSON tags (`run.started`, `log`, `assistant.text`, `tool.use`, `tool.result`, `turn`, `run.completed`, `run.error`, `run.cancelled`) already match the shapes the observe pane renders today. The store (`src/lib/run.svelte.ts`), the api bridge's frontend half (`src/lib/api.ts`), and the components stay as-is.
+- Minimal frontend change only. The engine's streaming `KataEvent` tags (`log`, `assistant.text`, `tool.use`, `tool.result`, `turn`, `run.completed`) already match what the observe pane renders. But the scripted stand-in never emitted three events the real engine does — `run.started` (meta), `run.error`, and `run.cancelled` — and the store treats only `run.completed` as terminal, so an errored or timed-out run would hang in "running". M6 extends the `KataEvent` union and the store's terminal handling to cover those three; the components, the api bridge, and the run-spec/event contract are otherwise unchanged. Status-line badges already come from the spec prop, so `run.started` carries no UI obligation.
 - No change to the run-spec format, the catalog, or the `kata run` event protocol. The contract is already in place; M6 only wires the GUI onto it.
 
 ## The existing contract (what M6 builds on)
@@ -34,7 +34,7 @@ ComposePane ──(RunSpec)──▶ run_spec command (Tauri backend, app/src-ta
                                 │           └─ if no terminal event seen → emit synthetic run.error
                                 │           └─ delete the temp spec file
                                 ▼
-                    kata://event ──▶ onRunEvent ──▶ runStore (unchanged, presentational)
+                    kata://event ──▶ onRunEvent ──▶ runStore (terminal handling extended)
 
 cancel_run command ──▶ child.write("cancel\n")  ──▶ kata stdin reader flips CancelToken
                                                        └─ engine kills claude, RAII-cleans, emits run.cancelled (130)
@@ -92,6 +92,10 @@ Delete `run_script()` and the scripted thread. `run_spec` becomes:
 ## Work area 4 — cancel command
 
 `cancel_run` writes `cancel\n` to the stored child's stdin. If the write fails (child already gone, or stdin closed), fall back to `child.kill()`. The engine then emits `run.cancelled` and exits 130; that event flows through the same relay. The frontend already shows an optimistic cancelled line and sets a warning state, so the engine's `run.cancelled` event arriving as an event row is acceptable redundancy (noted; not changed in M6).
+
+## Work area 5 — frontend terminal handling (`app/src/lib/events.ts`, `app/src/lib/run.svelte.ts`)
+
+Add `run.started`, `run.error`, and `run.cancelled` to the `KataEvent` union and redefine `StreamEvent` to exclude all three (plus `run.completed`) so the existing row-rendering switches stay exhaustive and untouched. A pure `terminalStateFor(ev): RunState | null` helper maps `run.completed` → success/error, `run.error` → error, `run.cancelled` → warning, else null — unit-tested in isolation. The store's `handle()` uses it: `run.started` is dropped (no row; badges come from the spec), `run.error` pushes an `error`-level log row before going terminal, and any terminal event sets the state and tears down the listener. This is the only frontend code that changes; components are untouched.
 
 ## Error and edge handling
 
