@@ -4,3 +4,4 @@ node_modules/
 dist/
 .DS_Store
 Thumbs.db
+app/src-tauri/binaries/

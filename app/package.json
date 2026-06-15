@@ -10,6 +10,9 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri",
+    "sidecar": "node scripts/stage-sidecar.mjs",
+    "tauri:dev": "node scripts/stage-sidecar.mjs && tauri dev",
+    "tauri:build": "node scripts/stage-sidecar.mjs --release && tauri build",
     "test": "vitest run"
   },
   "license": "MIT",
