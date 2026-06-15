@@ -48,14 +48,21 @@ fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) -> Result
     let tmp = std::env::temp_dir().join(format!("kata-workbench-run-{}.toml", std::process::id()));
     spec::save(&tmp, &spec).map_err(|e| e.to_string())?;
 
-    let (mut rx, child) = app
+    let spawn_result = app
         .shell()
         .sidecar("kata")
-        .map_err(|e| format!("sidecar kata: {e}"))?
-        .args(["run", &tmp.to_string_lossy()])
-        .current_dir(&spec.workdir) // engine discovers its catalog relative to cwd
-        .spawn()
-        .map_err(|e| format!("spawn kata: {e}"))?;
+        .and_then(|cmd| {
+            cmd.args(["run", &tmp.to_string_lossy()])
+                .current_dir(&spec.workdir) // engine discovers its catalog relative to cwd
+                .spawn()
+        });
+    let (mut rx, child) = match spawn_result {
+        Ok(pair) => pair,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("spawn kata: {e}"));
+        }
+    };
 
     *control.child.lock().unwrap() = Some(child);
     let child_slot = control.child.clone();
@@ -90,6 +97,7 @@ fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) -> Result
                     break;
                 }
                 CommandEvent::Error(err) => {
+                    terminal_seen = true;
                     let _ = app.emit(RUN_EVENT, json!({ "type": "run.error", "message": err }));
                 }
                 _ => {}
