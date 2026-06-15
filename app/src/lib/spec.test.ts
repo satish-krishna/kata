@@ -1,0 +1,63 @@
+import { describe, it, expect } from "vitest";
+import { defaultSpec, normalize, specEquals, draftFrom } from "./spec";
+
+describe("spec helpers", () => {
+  it("defaultSpec is a valid-shaped schema-1 draft", () => {
+    const s = defaultSpec();
+    expect(s.schema).toBe(1);
+    expect(s.leash.max_turns).toBe(12);
+    expect(s.leash.isolation).toBe("none");
+    expect(s.identity.mode).toBe("append");
+    expect(s.skills).toEqual([]);
+    expect(s.plugins).toEqual({});
+  });
+
+  it("normalize converts blank optionals to null", () => {
+    const s = defaultSpec();
+    s.description = "  ";
+    s.context = "";
+    s.identity.system_prompt = "   ";
+    s.model.id = "";
+    const n = normalize(s);
+    expect(n.description).toBeNull();
+    expect(n.context).toBeNull();
+    expect(n.identity.system_prompt).toBeNull();
+    expect(n.model.id).toBeNull();
+  });
+
+  it("normalize keeps non-blank optionals", () => {
+    const s = defaultSpec();
+    s.model.id = "claude-sonnet-4-6";
+    expect(normalize(s).model.id).toBe("claude-sonnet-4-6");
+  });
+
+  it("specEquals detects dirtiness", () => {
+    const a = defaultSpec();
+    const b = defaultSpec();
+    expect(specEquals(a, b)).toBe(true);
+    b.task = "changed";
+    expect(specEquals(a, b)).toBe(false);
+  });
+});
+
+describe("draftFrom", () => {
+  it("fills omitted optional text fields with empty strings", () => {
+    const loaded = { schema: 1, name: "x", task: "t", workdir: "/w", identity: { mode: "append" }, skills: [], plugins: {}, model: {}, leash: { max_turns: 8, isolation: "none" } } as any;
+    const draft = draftFrom(loaded);
+    expect(draft.description).toBe("");
+    expect(draft.context).toBe("");
+    expect(draft.identity.system_prompt).toBe("");
+    expect(draft.model.id).toBe("");
+    expect(draft.leash.timeout_secs).toBeNull();
+    expect(draft.leash.max_turns).toBe(8);
+  });
+
+  it("preserves populated values", () => {
+    const loaded = { ...defaultSpec(), description: "d", model: { id: "m" }, identity: { mode: "replace", system_prompt: "sp" } } as any;
+    const draft = draftFrom(loaded);
+    expect(draft.description).toBe("d");
+    expect(draft.model.id).toBe("m");
+    expect(draft.identity.mode).toBe("replace");
+    expect(draft.identity.system_prompt).toBe("sp");
+  });
+});

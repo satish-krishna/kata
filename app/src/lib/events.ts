@@ -1,0 +1,68 @@
+/* The normalized KataEvent protocol relayed by the engine (mirrors
+ * kata-core::event). The Tauri backend emits these over the `kata://event`
+ * channel; the Observe pane renders one EventRow per streaming event and a
+ * Summary block on `run.completed`. */
+
+export type KataEvent =
+  | { type: "log"; level?: string; message: string }
+  | { type: "turn"; n: number }
+  | { type: "assistant.text"; text: string }
+  | { type: "tool.use"; name: string; input_summary: string }
+  | { type: "tool.result"; name: string; ok: boolean; summary: string }
+  | {
+      type: "run.completed";
+      exit_code: number;
+      is_error: boolean;
+      num_turns: number;
+      cost_usd: number | null;
+      duration_ms: number;
+      result: string;
+    };
+
+/** The terminal event carrying the run summary. */
+export type RunSummary = Extract<KataEvent, { type: "run.completed" }>;
+/** Everything that renders as a row in the stream (all but the summary). */
+export type StreamEvent = Exclude<KataEvent, { type: "run.completed" }>;
+
+export type RunState = "idle" | "running" | "success" | "warning" | "error";
+
+export const STATUS_LABEL: Record<RunState, string> = {
+  idle: "Idle",
+  running: "Running",
+  success: "Completed",
+  error: "Error",
+  warning: "Stopped",
+};
+
+/** Uppercase gutter label for a stream row. */
+export function gutterFor(ev: StreamEvent): string {
+  switch (ev.type) {
+    case "assistant.text": return "assistant";
+    case "tool.use": return "tool";
+    case "tool.result": return "result";
+    case "turn": return `turn ${ev.n}`;
+    case "log": return "log";
+  }
+}
+
+/** EventRow variant suffix → `.k-event--<variant>`. */
+export function variantFor(ev: StreamEvent): string {
+  switch (ev.type) {
+    case "assistant.text": return "assistant";
+    case "tool.use": return "tooluse";
+    case "tool.result": return ev.ok ? "result-ok" : "result-err";
+    case "turn": return "turn";
+    case "log": return "log";
+  }
+}
+
+/** The textual body for a stream row (turn rows render a divider instead). */
+export function bodyFor(ev: StreamEvent): string {
+  switch (ev.type) {
+    case "assistant.text": return ev.text;
+    case "tool.use": return ev.input_summary;
+    case "tool.result": return ev.summary;
+    case "log": return ev.message;
+    case "turn": return "";
+  }
+}

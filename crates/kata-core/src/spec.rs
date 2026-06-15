@@ -2,14 +2,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunSpec {
     #[serde(default = "default_schema_version")]
     pub schema: u32,
     pub name: String,
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub task: String,
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
     pub workdir: String,
@@ -43,14 +47,20 @@ impl Default for RunSpec {
     }
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Identity {
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     #[serde(default)]
     pub mode: IdentityMode,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "ts", ts(rename_all = "lowercase"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum IdentityMode {
@@ -59,24 +69,34 @@ pub enum IdentityMode {
     Replace,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct PluginConfig {
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<bool>,
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<String>,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Model {
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Leash {
     #[serde(default = "default_max_turns")]
     pub max_turns: u32,
+    #[cfg_attr(feature = "ts", ts(optional = nullable, as = "Option<u32>"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
     #[serde(default)]
@@ -93,6 +113,9 @@ fn default_max_turns() -> u32 { 12 }
 
 fn default_schema_version() -> u32 { 1 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "ts", ts(rename_all = "lowercase"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Isolation {
@@ -107,6 +130,8 @@ pub enum SpecError {
     Io(String, std::io::Error),
     #[error("parsing TOML: {0}")]
     Toml(#[from] toml::de::Error),
+    #[error("serializing TOML: {0}")]
+    TomlSer(#[from] toml::ser::Error),
     #[error("parsing JSON: {0}")]
     Json(#[from] serde_json::Error),
 }
@@ -121,6 +146,21 @@ pub fn load(path: &Path) -> Result<RunSpec, SpecError> {
         toml::from_str(&text)?
     };
     Ok(spec)
+}
+
+/// Canonical TOML serialization of a spec.
+pub fn to_toml(spec: &RunSpec) -> Result<String, SpecError> {
+    Ok(toml::to_string(spec)?)
+}
+
+/// Save a spec to disk. `.json` writes pretty JSON; anything else writes TOML.
+pub fn save(path: &Path, spec: &RunSpec) -> Result<(), SpecError> {
+    let text = if path.extension().and_then(|e| e.to_str()) == Some("json") {
+        serde_json::to_string_pretty(spec)?
+    } else {
+        to_toml(spec)?
+    };
+    std::fs::write(path, text).map_err(|e| SpecError::Io(path.display().to_string(), e))
 }
 
 /// Pure structural validation (no filesystem access).
@@ -252,5 +292,53 @@ isolation = "worktree"
         // A spec file that omits `schema` parses as v1.
         let spec: RunSpec = toml::from_str("name = \"x\"\ntask = \"t\"\nworkdir = \"/w\"\n").unwrap();
         assert_eq!(spec.schema, 1);
+    }
+
+    fn full_spec() -> RunSpec {
+        let mut plugins = std::collections::BTreeMap::new();
+        plugins.insert(
+            "github-tools".to_string(),
+            PluginConfig { mcp: Some(true), env: vec!["GITHUB_TOKEN".into()] },
+        );
+        RunSpec {
+            schema: 1,
+            name: "triage".into(),
+            description: Some("desc".into()),
+            task: "do it".into(),
+            context: Some("ctx".into()),
+            workdir: "/repo".into(),
+            identity: Identity { system_prompt: Some("you triage".into()), mode: IdentityMode::Replace },
+            skills: vec!["triage-flaky-test".into()],
+            plugins,
+            model: Model { id: Some("claude-sonnet-4-6".into()) },
+            leash: Leash { max_turns: 8, timeout_secs: Some(600), isolation: Isolation::Worktree },
+        }
+    }
+
+    #[test]
+    fn save_then_load_round_trips_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("spec.toml");
+        let spec = full_spec();
+        save(&path, &spec).unwrap();
+        let again = load(&path).unwrap();
+        assert_eq!(spec, again);
+    }
+
+    #[test]
+    fn save_then_load_round_trips_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("spec.json");
+        let spec = full_spec();
+        save(&path, &spec).unwrap();
+        let again = load(&path).unwrap();
+        assert_eq!(spec, again);
+    }
+
+    #[test]
+    fn to_toml_emits_parseable_text() {
+        let text = to_toml(&full_spec()).unwrap();
+        let again: RunSpec = toml::from_str(&text).unwrap();
+        assert_eq!(again.name, "triage");
     }
 }

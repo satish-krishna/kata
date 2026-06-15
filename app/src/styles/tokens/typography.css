@@ -1,0 +1,63 @@
+/* ============================================================
+   KATA · TYPOGRAPHY
+   Two-member family system. Plex Sans carries the UI; Plex Mono
+   carries everything that is data: the spec (TOML), the event
+   stream, paths, models, exit codes, and uppercase micro-labels.
+   Dense desktop scale — 13px UI base.
+   ============================================================ */
+:root {
+  /* Families */
+  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Weights */
+  --weight-regular:  400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+
+  /* Type scale (px) — desktop UI */
+  --text-2xs: 10px;   /* micro mono labels (tracked) */
+  --text-xs:  11px;   /* eyebrows, tags, captions */
+  --text-sm:  12px;   /* secondary UI, dense rows */
+  --text-base:13px;   /* UI body — default */
+  --text-md:  14px;   /* emphasised body */
+  --text-lg:  16px;   /* section titles */
+  --text-xl:  20px;   /* pane / dialog headings */
+  --text-2xl: 26px;   /* big numbers, summary stats */
+  --text-3xl: 34px;   /* hero / wordmark */
+  --text-4xl: 46px;   /* display */
+
+  /* Line heights */
+  --leading-tight:   1.15;
+  --leading-snug:    1.3;
+  --leading-normal:  1.5;
+  --leading-relaxed: 1.65;
+  --leading-code:    1.55;
+
+  /* Letter spacing */
+  --tracking-tight:  -0.02em;
+  --tracking-snug:   -0.01em;
+  --tracking-normal: 0;
+  --tracking-wide:   0.04em;
+  --tracking-label:  0.12em;   /* uppercase mono micro-labels */
+
+  /* ---- Semantic roles ---- */
+  --font-display:  var(--weight-semibold) var(--text-3xl)/var(--leading-tight) var(--font-sans);
+  --font-heading:  var(--weight-semibold) var(--text-xl)/var(--leading-snug) var(--font-sans);
+  --font-title:    var(--weight-semibold) var(--text-lg)/var(--leading-snug) var(--font-sans);
+  --font-body:     var(--weight-regular) var(--text-base)/var(--leading-normal) var(--font-sans);
+  --font-body-md:  var(--weight-regular) var(--text-md)/var(--leading-normal) var(--font-sans);
+  --font-code:     var(--weight-regular) var(--text-base)/var(--leading-code) var(--font-mono);
+  --font-code-sm:  var(--weight-regular) var(--text-sm)/var(--leading-code) var(--font-mono);
+}
+
+/* Uppercase tracked mono micro-label — the recurring "engineering" eyebrow */
+.kata-eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}

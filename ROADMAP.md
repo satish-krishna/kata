@@ -42,11 +42,11 @@ The self-contained core. Headless and CI-usable today; Shokunin can integrate ag
 
 A Tauri v2 desktop app (TypeScript + Vite + Svelte). Layout A: compose the run-spec on the left, observe the run on the right. The backend links `kata-core` only for the spec types and SPAWNS the `kata` binary to run, so the GUI shares the engine's single execution path.
 
-- [ ] **M5 - Workbench left pane (compose).**
-  - [ ] Scaffold the Tauri v2 app under `app/` (frontend `src/`, Rust backend `src-tauri/`).
-  - [ ] Spec editor: task, context, workdir picker, identity (system prompt + append/replace), model, leash (max-turns, timeout, isolation).
-  - [ ] Kit checklist populated by calling `kata catalog`; tag entries skill/plugin; show a plugin's `provides` and, for MCP, the env-passthrough names.
-  - [ ] New / Open / Save / spec-name; round-trip a run-spec file to/from disk.
+- [x] **M5 - Workbench left pane (compose).** Tauri v2 app under `app/` (SvelteKit SPA frontend + `src-tauri` backend). The backend links `kata-core` in-process for catalog discovery, spec load/save, and validation (only `kata run` spawns the binary, in M6). Spec/catalog types are generated to TypeScript via `ts-rs`. Compose form (task, context, workdir picker, identity, model, leash) with a workdir-scoped Kit checklist (skill/plugin tags, plugin `provides` + MCP env-passthrough names), live validation, and New/Open/Save/Save As round-tripping a run-spec to disk.
+  - [x] Scaffold the Tauri v2 app under `app/` (SvelteKit SPA frontend `src/`, Rust backend `src-tauri/`).
+  - [x] Spec editor: task, context, workdir picker, identity (system prompt + append/replace), model, leash (max-turns, timeout, isolation).
+  - [x] Kit checklist populated by `kata-core` catalog discovery scoped to the workdir; tag entries skill/plugin; show a plugin's `provides` and, for MCP, the env-passthrough names.
+  - [x] New / Open / Save / spec-name; round-trip a run-spec file to/from disk.
 - [ ] **M6 - Workbench right pane (observe).**
   - [ ] Spawn `kata run`, relay the JSON-line `KataEvent` stream into the UI.
   - [ ] Live event view (text, tool calls, tool results, turns, logs) + status line (state, model, isolation badge).

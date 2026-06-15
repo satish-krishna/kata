@@ -1,0 +1,106 @@
+/* ============================================================
+   KATA · COLORS
+   Dark "sumi-ink" theme. Near-black warm neutrals, washi-paper
+   text, a single vermilion (hanko-seal) accent for action, and
+   an "andon stack-light" semantic set (green / amber / red) for
+   run status. Built for desktop screens, laptop → ultrawide.
+   ============================================================ */
+:root {
+  /* ---- Base neutral ramp (warm sumi grey, dark → light) ---- */
+  --ink-950: #0c0b0a;   /* app base, deepest */
+  --ink-900: #121110;   /* window chrome */
+  --ink-850: #17150f;
+  --ink-800: #1b1916;   /* raised surface / card */
+  --ink-750: #211e1a;   /* inset (inputs) */
+  --ink-700: #26221d;   /* hover surface */
+  --ink-600: #2e2a24;
+  --ink-500: #38332d;   /* default border */
+  --ink-400: #4a443c;   /* strong border */
+  --ink-300: #6b6359;
+  --ink-200: #837b70;   /* muted text */
+  --ink-100: #b3aba0;   /* secondary text */
+  --ink-050: #d7d0c6;
+  --ink-000: #ede7de;   /* primary text (washi paper) */
+
+  /* ---- Hanada azure accent ramp (縹 — bright signal blue) ---- */
+  --azure-700: #145e8c;
+  --azure-600: #1577bc;   /* press */
+  --azure-500: #1e92d8;   /* accent — the signature */
+  --azure-400: #3fa7e6;   /* hover */
+  --azure-300: #74c0ec;   /* accent text on dark */
+  --azure-200: #a7d8f2;
+
+  /* ---- Andon stack-light semantics ---- */
+  --jade-500:   #4fb477;   /* success — exit 0 */
+  --jade-300:   #7fd1a0;
+  --amber-500:  #e2a03f;   /* warning — leash trip / worktree */
+  --amber-300:  #f0c074;
+  --crimson-500:#f04458;   /* error — non-zero exit / is_error */
+  --crimson-300:#f7869a;
+
+  /* ============================================================
+     SEMANTIC ALIASES — reference these in components, not raw ramps
+     ============================================================ */
+
+  /* Surfaces */
+  --surface-app:     var(--ink-950);
+  --surface-chrome:  var(--ink-900);
+  --surface-panel:   var(--ink-850);
+  --surface-card:    var(--ink-800);
+  --surface-inset:   var(--ink-750);
+  --surface-hover:   var(--ink-700);
+  --surface-active:  var(--ink-600);
+
+  /* Text */
+  --text-primary:     var(--ink-000);
+  --text-secondary:   var(--ink-100);
+  --text-muted:       var(--ink-200);
+  --text-faint:       var(--ink-300);
+  --text-placeholder: var(--ink-300);
+  --text-on-accent:   #07121f;
+
+  /* Borders */
+  --border-subtle:  var(--ink-600);
+  --border-default: var(--ink-500);
+  --border-strong:  var(--ink-400);
+
+  /* Accent */
+  --accent:          var(--azure-500);
+  --accent-hover:    var(--azure-400);
+  --accent-press:    var(--azure-600);
+  --accent-text:     var(--azure-300);
+  --accent-subtle:   color-mix(in srgb, var(--azure-500) 14%, transparent);
+  --accent-border:   color-mix(in srgb, var(--azure-500) 42%, transparent);
+
+  /* Status — success */
+  --success:        var(--jade-500);
+  --success-text:   var(--jade-300);
+  --success-subtle: color-mix(in srgb, var(--jade-500) 15%, transparent);
+  --success-border: color-mix(in srgb, var(--jade-500) 40%, transparent);
+
+  /* Status — warning */
+  --warning:        var(--amber-500);
+  --warning-text:   var(--amber-300);
+  --warning-subtle: color-mix(in srgb, var(--amber-500) 15%, transparent);
+  --warning-border: color-mix(in srgb, var(--amber-500) 40%, transparent);
+
+  /* Status — error */
+  --error:          var(--crimson-500);
+  --error-text:     var(--crimson-300);
+  --error-subtle:   color-mix(in srgb, var(--crimson-500) 15%, transparent);
+  --error-border:   color-mix(in srgb, var(--crimson-500) 42%, transparent);
+
+  /* Tags — skill vs plugin (warm, on-brand; NOT the blue/purple default) */
+  --tag-skill-bg:     color-mix(in srgb, var(--jade-500) 16%, transparent);
+  --tag-skill-text:   var(--jade-300);
+  --tag-plugin-bg:    color-mix(in srgb, var(--amber-500) 16%, transparent);
+  --tag-plugin-text:  var(--amber-300);
+
+  /* Focus ring */
+  --focus-ring: 0 0 0 2px var(--surface-app), 0 0 0 4px var(--accent);
+
+  /* Selection */
+  --selection-bg: color-mix(in srgb, var(--azure-500) 28%, transparent);
+}
+
+::selection { background: var(--selection-bg); }
