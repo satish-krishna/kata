@@ -20,4 +20,8 @@ describe("terminalStateFor", () => {
     expect(terminalStateFor({ type: "assistant.text", text: "hi" })).toBeNull();
     expect(terminalStateFor({ type: "run.started", spec: "n", model: null, workdir: "/w", isolation: "none" })).toBeNull();
   });
+  it("accepts a null result on run.completed", () => {
+    const ev: KataEvent = { type: "run.completed", exit_code: 0, is_error: false, num_turns: 0, cost_usd: null, duration_ms: 0, result: null };
+    expect(terminalStateFor(ev)).toBe("success");
+  });
 });

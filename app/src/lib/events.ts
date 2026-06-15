@@ -17,7 +17,7 @@ export type KataEvent =
       num_turns: number;
       cost_usd: number | null;
       duration_ms: number;
-      result: string;
+      result: string | null;
     }
   | { type: "run.error"; message: string }
   | { type: "run.cancelled" };

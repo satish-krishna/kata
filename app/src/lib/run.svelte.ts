@@ -66,7 +66,7 @@ export async function cancelRun() {
   runStore.events.push({
     type: "log",
     level: "warn",
-    message: "run.cancelled — engine trapped the signal, killed claude, cleaned up the plugin-dir + worktree",
+    message: "run cancelled — engine stopped claude and cleaned up the plugin-dir",
   });
   runStore.state = "warning";
   teardown();
