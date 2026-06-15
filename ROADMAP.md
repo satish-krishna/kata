@@ -35,7 +35,6 @@ The self-contained core. Headless and CI-usable today; Shokunin can integrate ag
 - [ ] Correlate `tool.result` back to its `tool.use` via `tool_use_id` so `ToolResult.name` is populated (currently empty; see TODO in `event.rs`).
 - [ ] Harden `catalog::dirs_home` (it silently falls back to `.` when `HOME`/`USERPROFILE` are both unset).
 - [ ] Dedup catalog entries when the same skill/plugin name exists in both user and project scopes.
-- [ ] `kata bundle --force` should clear `<out>/.claude` (or the whole out dir) before re-vendoring, so re-bundling a spec that dropped a skill doesn't leave the old skill orphaned in the tree, drifting from the regenerated `kata-bundle.toml`. (Not a run-correctness bug — `assemble` only copies spec-selected entries — but the bundle tree/manifest can disagree.)
 
 ---
 

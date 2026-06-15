@@ -55,7 +55,13 @@ pub fn bundle(spec: &RunSpec, catalog: &[CatalogEntry], out: &Path, force: bool)
     // skills/plugins skips that loop entirely.
     std::fs::create_dir_all(out)?;
 
+    // Start from a clean kit tree. On a re-bundle (`--force` into an existing
+    // dir) this drops any skill/plugin no longer selected by the spec, so the
+    // vendored `.claude` never drifts from the regenerated manifest.
     let claude_root = out.join(".claude");
+    if claude_root.exists() {
+        std::fs::remove_dir_all(&claude_root)?;
+    }
     let mut entries = Vec::new();
     for r in &resolved {
         let sub = match r.kind {
@@ -159,6 +165,32 @@ mod tests {
 
         bundle(&spec, std::slice::from_ref(&entry), out.path(), true).unwrap();
         assert!(out.path().join(".claude").join("skills").join("triage").join("SKILL.md").is_file());
+    }
+
+    #[test]
+    fn force_rebundle_drops_a_removed_skill() {
+        let (old, _keep_old) = skill_entry("old");
+        let (new, _keep_new) = skill_entry("new");
+        let out = tempfile::tempdir().unwrap();
+
+        // First bundle selects "old".
+        let mut spec = RunSpec { schema: 1, name: "demo".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+        spec.skills = vec!["old".into()];
+        bundle(&spec, std::slice::from_ref(&old), out.path(), false).unwrap();
+        assert!(out.path().join(".claude").join("skills").join("old").join("SKILL.md").is_file());
+
+        // Re-bundle (force) now selects only "new": the stale "old" kit must be gone
+        // and the manifest must list only "new".
+        spec.skills = vec!["new".into()];
+        bundle(&spec, std::slice::from_ref(&new), out.path(), true).unwrap();
+        assert!(out.path().join(".claude").join("skills").join("new").join("SKILL.md").is_file());
+        assert!(!out.path().join(".claude").join("skills").join("old").exists(),
+            "a skill dropped from the spec must not linger in the vendored tree");
+
+        let manifest: BundleManifest =
+            toml::from_str(&fs::read_to_string(out.path().join("kata-bundle.toml")).unwrap()).unwrap();
+        assert_eq!(manifest.entry.len(), 1);
+        assert_eq!(manifest.entry[0].name, "new");
     }
 
     #[test]
