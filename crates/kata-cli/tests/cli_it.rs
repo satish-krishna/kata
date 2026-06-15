@@ -151,3 +151,49 @@ fn bundle_writes_self_contained_folder() {
     assert!(out.join("spec.toml").is_file());
     assert!(out.join("kata-bundle.toml").is_file());
 }
+
+#[test]
+fn run_from_bundle_is_hermetic_and_completes() {
+    // Author the bundle from a HOME that has the skill.
+    let home = tempfile::tempdir().unwrap();
+    let skill = home.path().join(".claude").join("skills").join("triage");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(skill.join("SKILL.md"),
+        "---\nname: triage\ndescription: triage flaky tests\n---\nbody\n").unwrap();
+
+    // workdir must exist at run time (it becomes the child's cwd).
+    let work = tempfile::tempdir().unwrap();
+    let spec = write(work.path(), "h.kata.toml",
+        &format!("schema = 1\nname = \"h\"\ntask = \"t\"\nworkdir = \"{}\"\nskills = [\"triage\"]\n",
+            work.path().to_string_lossy().replace('\\', "/")));
+
+    let bundle_dir = work.path().join("h-bundle");
+    let made = kata()
+        .arg("bundle").arg(&spec).arg("-o").arg(&bundle_dir)
+        .current_dir(work.path())
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "bundle stderr: {}", String::from_utf8_lossy(&made.stderr));
+
+    // Run the bundle with an EMPTY home -> proves the kit comes from the bundle.
+    let empty_home = tempfile::tempdir().unwrap();
+    let out = kata()
+        .arg("run").arg(&bundle_dir)
+        .env("KATA_CLAUDE_BIN", fake_claude())
+        .env("KATA_FAKE_MODE", "ok")
+        .env("HOME", empty_home.path())
+        .env("USERPROFILE", empty_home.path())
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "run stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    let first: serde_json::Value = serde_json::from_str(lines.first().unwrap()).unwrap();
+    let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    assert_eq!(first["type"], "run.started");
+    assert_eq!(last["type"], "run.completed");
+    assert_eq!(last["exit_code"], 0);
+}
