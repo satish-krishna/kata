@@ -28,7 +28,7 @@ The self-contained core. Headless and CI-usable today; Shokunin can integrate ag
 - [x] **M3 - Command construction + assembly.** Pure `build_invocation` pins the flag set (`--bare -p ... --output-format stream-json --verbose --dangerously-skip-permissions`, no `--max-turns`); `assemble` builds the disposable `--plugin-dir` with RAII temp cleanup.
 - [x] **M4 - Run orchestration.** `kata run` spawns claude, streams the normalized `KataEvent` protocol, enforces the leash (engine-side turn cap = exit 125, wall-clock timeout = 124, cancel = 130), cleans up. Offline `fake-claude` harness + opt-in real-claude smoke test.
 
-**Status:** implemented and reviewed on branch `engine-m0-m4` (42 tests, clippy clean, reproducible build). Not yet merged to `main`.
+**Status:** merged to `main` (#1) — 42 tests, clippy clean, reproducible build.
 
 ### Engine polish backlog (small, optional)
 - [ ] Unify the per-line handling shared by `event::pump` and the `run` loop into one `handle_line` to remove the documented duplication.
@@ -40,18 +40,18 @@ The self-contained core. Headless and CI-usable today; Shokunin can integrate ag
 
 ## Phase 2 - GUI (the Workbench)
 
-A Tauri v2 desktop app (TypeScript + Vite + Svelte). Layout A: compose the run-spec on the left, observe the run on the right. The backend links `kata-core` only for the spec types and SPAWNS the `kata` binary to run, so the GUI shares the engine's single execution path.
+A Tauri v2 desktop app (SvelteKit SPA + TypeScript). Layout A: compose the run-spec on the left, observe the run on the right. The backend links `kata-core` only for the spec types and SPAWNS the `kata` binary to run, so the GUI shares the engine's single execution path. The Workbench is styled with the Kata "sumi-ink" design system (see `design/README.md`, `app/CLAUDE.md`).
 
 - [x] **M5 - Workbench left pane (compose).** Tauri v2 app under `app/` (SvelteKit SPA frontend + `src-tauri` backend). The backend links `kata-core` in-process for catalog discovery, spec load/save, and validation (only `kata run` spawns the binary, in M6). Spec/catalog types are generated to TypeScript via `ts-rs`. Compose form (task, context, workdir picker, identity, model, leash) with a workdir-scoped Kit checklist (skill/plugin tags, plugin `provides` + MCP env-passthrough names), live validation, and New/Open/Save/Save As round-tripping a run-spec to disk.
   - [x] Scaffold the Tauri v2 app under `app/` (SvelteKit SPA frontend `src/`, Rust backend `src-tauri/`).
   - [x] Spec editor: task, context, workdir picker, identity (system prompt + append/replace), model, leash (max-turns, timeout, isolation).
   - [x] Kit checklist populated by `kata-core` catalog discovery scoped to the workdir; tag entries skill/plugin; show a plugin's `provides` and, for MCP, the env-passthrough names.
-  - [x] New / Open / Save / spec-name; round-trip a run-spec file to/from disk.
-- [ ] **M6 - Workbench right pane (observe).**
-  - [ ] Spawn `kata run`, relay the JSON-line `KataEvent` stream into the UI.
-  - [ ] Live event view (text, tool calls, tool results, turns, logs) + status line (state, model, isolation badge).
-  - [ ] Cancel button (kill the `kata` process; engine traps it and cleans up).
-  - [ ] Summary card on completion: exit code, turns, cost, duration, result.
+  - [x] New / Open / Save / spec-name; round-trip a run-spec file to/from disk. (PR #2 restyle: toolbar is New / Open / Save / Export, with Save handling save-as.)
+- [~] **M6 - Workbench right pane (observe).** UI shipped and styled in PR #2, wired to a minimal Tauri event bridge (`run_spec`/`cancel_run` relaying a scripted `KataEvent` stream over the `kata://event` channel). The remaining work is the real engine path: spawn the `kata` binary and relay its live JSON-line events.
+  - [~] Spawn `kata run`, relay the JSON-line `KataEvent` stream into the UI. (Command surface + `kata://event` channel in place with a scripted stand-in; real process spawn pending.)
+  - [x] Live event view (text, tool calls, tool results, turns, logs) + status line (state, model, isolation badge).
+  - [x] Cancel button (kill the `kata` process; engine traps it and cleans up). (UI + `cancel_run` wired; the real process kill lands with the spawn.)
+  - [x] Summary card on completion: exit code, turns, cost, duration, result.
 
 ---
 
@@ -64,7 +64,7 @@ A Tauri v2 desktop app (TypeScript + Vite + Svelte). Layout A: compose the run-s
 
 ## Phase 4 - Backlog / later (from the spec's open questions and Layout C)
 
-- [ ] Saved-katas + run-history rail in the Workbench (Layout C as an addition to Layout A).
+- [~] Saved-katas + run-history rail in the Workbench (Layout C as an addition to Layout A). Presentational rail + read-only run detail shipped at `/library` (PR #2) on fixtures; needs a run-history backend (e.g. `~/.kata/history`) and wired actions (re-run, open-in-compose, export).
 - [ ] First-class `PreToolUse` guard-hook field + UI (programmatic enforcement, the heir to the permission-theater argument). Plugin-borne hooks already run today; this makes a guard first-class.
 - [ ] MCP configuration surface (per-server config, secret references to a vault/dotenv) beyond the current env-name passthrough.
 - [ ] Named, reusable context presets droppable into specs.
