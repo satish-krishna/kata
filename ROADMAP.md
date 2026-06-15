@@ -69,7 +69,15 @@ A Tauri v2 desktop app (SvelteKit SPA + TypeScript). Layout A: compose the run-s
 - [ ] MCP configuration surface (per-server config, secret references to a vault/dotenv) beyond the current env-name passthrough.
 - [ ] Named, reusable context presets droppable into specs.
 - [ ] Cost-ceiling leash (kill on `cost_usd` budget) once cost is reliably present in stream-json.
-- [ ] Optional HITL modes deferred from v1: observe + approve (pause on tool calls), observe + steer (inject mid-run). Each is a real engine + protocol change; only if a need appears.
+
+---
+
+## Phase 5 - Observe and steer (human-in-the-loop)
+
+Deferred from the MVP, which is observe-only by design: the engine drives `claude -p` headless with `--dangerously-skip-permissions`, so a run takes no mid-flight intervention — you watch it and hold the leash. Once the Workbench MVP (M5 compose + M6 observe/run) ships, this is the first post-MVP track: turn the one-way observe pane into a two-way session. It builds directly on the cancel-only stdin channel M6 introduces (a `cancel` line to the `kata` process) — the same seam carries steering.
+
+- [ ] **M9 - Observe + steer.** Extend the run's stdin protocol beyond `cancel` (e.g. `steer: <text>`) so the operator can inject guidance mid-run; the engine relays it into the live `claude` session. The observe pane gains an input affordance and the run gains a "steering" state. A real engine + protocol change.
+- [ ] **Observe + approve (optional sibling).** Pause on tool calls and require operator approval before proceeding (the interactive heir to `--dangerously-skip-permissions`). Shares the same back-channel; ship only if a need appears.
 
 ---
 
