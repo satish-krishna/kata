@@ -2,6 +2,7 @@ use kata_core::catalog::{self, CatalogEntry};
 use kata_core::spec::{self, RunSpec};
 use serde_json::{json, Value};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
@@ -10,10 +11,20 @@ use tauri_plugin_shell::ShellExt;
 /// Channel the engine's normalized KataEvents are relayed on to the webview.
 const RUN_EVENT: &str = "kata://event";
 
-/// Handle to the in-flight `kata` child, so `cancel_run` can reach it.
+/// The in-flight `kata` child plus the id of the run that owns it. A stale
+/// reader task (a finished run still tearing down) must not clear a newer run's
+/// handle, so cleanup is guarded by this id. `id == 0` means no active run.
+#[derive(Default)]
+struct RunState {
+    id: u64,
+    child: Option<CommandChild>,
+}
+
+/// Shared run control: the active run's state plus a monotonic id source.
 #[derive(Default)]
 struct RunControl {
-    child: Arc<Mutex<Option<CommandChild>>>,
+    state: Arc<Mutex<RunState>>,
+    next_id: AtomicU64,
 }
 
 /// User skills/plugins plus the workdir's project scope (if any).
@@ -44,8 +55,14 @@ fn validate_spec(spec: RunSpec) -> Vec<String> {
 /// Returns once spawned; an async task drains stdout for the run's lifetime.
 #[tauri::command]
 fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) -> Result<(), String> {
-    // The engine reads a spec file; serialize this one to a per-process temp path.
-    let tmp = std::env::temp_dir().join(format!("kata-workbench-run-{}.toml", std::process::id()));
+    // Each run gets a unique id so its reader task only ever touches its own temp
+    // file and child handle. A new run can begin the moment a terminal event
+    // reaches the UI, before this run's sidecar has finished tearing down.
+    let id = control.next_id.fetch_add(1, Ordering::SeqCst) + 1;
+
+    // The engine reads a spec file; serialize this one to a per-run temp path.
+    let tmp =
+        std::env::temp_dir().join(format!("kata-workbench-run-{}-{}.toml", std::process::id(), id));
     spec::save(&tmp, &spec).map_err(|e| e.to_string())?;
 
     let spawn_result = app
@@ -64,8 +81,12 @@ fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) -> Result
         }
     };
 
-    *control.child.lock().unwrap() = Some(child);
-    let child_slot = control.child.clone();
+    {
+        let mut st = control.state.lock().unwrap();
+        st.id = id;
+        st.child = Some(child);
+    }
+    let state = control.state.clone();
 
     tauri::async_runtime::spawn(async move {
         let mut terminal_seen = false;
@@ -104,7 +125,13 @@ fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) -> Result
             }
         }
         let _ = std::fs::remove_file(&tmp);
-        *child_slot.lock().unwrap() = None;
+        // Only clear the handle if this run is still the active one; a newer run
+        // may have replaced it while this sidecar was tearing down.
+        let mut st = state.lock().unwrap();
+        if st.id == id {
+            st.child = None;
+            st.id = 0;
+        }
     });
 
     Ok(())
@@ -124,10 +151,10 @@ fn relay_log(app: &AppHandle, bytes: &[u8]) {
 /// hard kill if the stdin write fails (child already gone).
 #[tauri::command]
 fn cancel_run(control: State<RunControl>) {
-    let mut slot = control.child.lock().unwrap();
-    let still_alive = slot.as_mut().map(|c| c.write(b"cancel\n").is_ok()).unwrap_or(false);
+    let mut st = control.state.lock().unwrap();
+    let still_alive = st.child.as_mut().map(|c| c.write(b"cancel\n").is_ok()).unwrap_or(false);
     if !still_alive {
-        if let Some(child) = slot.take() {
+        if let Some(child) = st.child.take() {
             let _ = child.kill();
         }
     }
