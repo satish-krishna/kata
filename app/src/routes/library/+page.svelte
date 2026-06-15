@@ -63,7 +63,7 @@
     <aside class="wb-pane wb-pane--rail">
       <div class="wb-rail__head"><span class="kata-eyebrow">Library</span></div>
       <div class="wb-rail__newbtn">
-        <a href="/" class="k-btn k-btn--primary k-btn--block"><FilePlus size={14} />New kata<span class="k-kbd">⌘N</span></a>
+        <a href="/" class="k-btn k-btn--primary k-btn--block"><FilePlus size={14} />New kata<span class="k-kbd">Ctrl N</span></a>
       </div>
       <div class="wb-pane__body">
         <div class="wb-rail__section">

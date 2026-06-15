@@ -118,7 +118,7 @@
     if (!inTauri() && new URLSearchParams(location.search).get("demo") === "run") onRun();
   });
 
-  // ⌘↵ / Ctrl+↵ to run.
+  // Ctrl+↵ (or ⌘↵) to run.
   function onKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();

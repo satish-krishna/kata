@@ -46,7 +46,7 @@
   <div class="wb-toolbar__group">
     <button class="k-iconbtn" onclick={onNew} title="New" aria-label="New spec"><FilePlus size={16} /></button>
     <button class="k-iconbtn" onclick={onOpen} title="Open" aria-label="Open spec"><FolderOpen size={16} /></button>
-    <button class="k-iconbtn" onclick={onSave} title="Save  ⌘S" aria-label="Save spec"><Save size={16} /></button>
+    <button class="k-iconbtn" onclick={onSave} title="Save  Ctrl+S" aria-label="Save spec"><Save size={16} /></button>
     <button class="k-iconbtn" onclick={onExport} disabled={!onExport} title="Export bundle" aria-label="Export bundle"><Package size={16} /></button>
   </div>
   <div class="wb-sep"></div>
@@ -56,7 +56,7 @@
     </button>
   {:else}
     <button class="k-btn k-btn--primary" onclick={onRun} disabled={!canRun}>
-      <Play size={14} />Run<span class="k-kbd">⌘↵</span>
+      <Play size={14} />Run<span class="k-kbd">Ctrl ↵</span>
     </button>
   {/if}
 </header>
