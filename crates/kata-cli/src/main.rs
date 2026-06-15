@@ -90,12 +90,22 @@ fn cmd_bundle(spec_path: &std::path::Path, out: Option<&std::path::Path>, force:
 }
 
 fn cmd_run(path: &std::path::Path) -> ExitCode {
-    let spec = match kata_core::spec::load(path) {
-        Ok(s) => s,
-        Err(e) => { eprintln!("error: {e}"); return ExitCode::from(2); }
+    // A directory carrying the kata-bundle.toml marker is a bundle: load its
+    // spec and discover the kit ONLY from its vendored .claude (hermetic).
+    let (spec, roots) = if kata_core::bundle::is_bundle(path) {
+        let spec = match kata_core::spec::load(&path.join("spec.toml")) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("error: {e}"); return ExitCode::from(2); }
+        };
+        (spec, kata_core::bundle::bundle_roots(path))
+    } else {
+        let spec = match kata_core::spec::load(path) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("error: {e}"); return ExitCode::from(2); }
+        };
+        let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+        (spec, kata_core::catalog::DiscoveryRoots::defaults(&cwd))
     };
-    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
-    let roots = kata_core::catalog::DiscoveryRoots::defaults(&cwd);
     let catalog = kata_core::catalog::discover(&roots);
 
     let cancel = kata_core::run::CancelToken::new();
