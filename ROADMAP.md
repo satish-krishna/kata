@@ -47,10 +47,10 @@ A Tauri v2 desktop app (SvelteKit SPA + TypeScript). Layout A: compose the run-s
   - [x] Spec editor: task, context, workdir picker, identity (system prompt + append/replace), model, leash (max-turns, timeout, isolation).
   - [x] Kit checklist populated by `kata-core` catalog discovery scoped to the workdir; tag entries skill/plugin; show a plugin's `provides` and, for MCP, the env-passthrough names.
   - [x] New / Open / Save / spec-name; round-trip a run-spec file to/from disk. (PR #2 restyle: toolbar is New / Open / Save / Export, with Save handling save-as.)
-- [~] **M6 - Workbench right pane (observe).** UI shipped and styled in PR #2, wired to a minimal Tauri event bridge (`run_spec`/`cancel_run` relaying a scripted `KataEvent` stream over the `kata://event` channel). The remaining work is the real engine path: spawn the `kata` binary and relay its live JSON-line events.
-  - [~] Spawn `kata run`, relay the JSON-line `KataEvent` stream into the UI. (Command surface + `kata://event` channel in place with a scripted stand-in; real process spawn pending.)
+- [x] **M6 - Workbench right pane (observe).** Observe pane shipped and styled in PR #2; the real engine path landed in PR #4 — the Tauri backend stages `kata` as a sidecar, spawns `kata run` in the spec's workdir, and relays its live JSON-line `KataEvent` stream over the `kata://event` channel.
+  - [x] Spawn `kata run`, relay the JSON-line `KataEvent` stream into the UI. (PR #4: sidecar spawn + stdout/stderr relay; each run isolated by run id.)
   - [x] Live event view (text, tool calls, tool results, turns, logs) + status line (state, model, isolation badge).
-  - [x] Cancel button (kill the `kata` process; engine traps it and cleans up). (UI + `cancel_run` wired; the real process kill lands with the spawn.)
+  - [x] Cancel button (kill the `kata` process; engine traps it and cleans up). (PR #4: `cancel_run` writes a `cancel` line to the engine's stdin, with a hard-kill fallback.)
   - [x] Summary card on completion: exit code, turns, cost, duration, result.
 
 ---
