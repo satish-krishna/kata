@@ -3,6 +3,7 @@
  * the bridge (Tauri or browser fallback) feeds events in. */
 import type { RunSpec } from "../bindings/RunSpec";
 import type { KataEvent, StreamEvent, RunSummary, RunState } from "./events";
+import { terminalStateFor } from "./events";
 import * as api from "./api";
 
 export const runStore = $state<{
@@ -21,12 +22,25 @@ function teardown() {
 }
 
 function handle(ev: KataEvent) {
-  if (ev.type === "run.completed") {
-    runStore.summary = ev;
-    runStore.state = ev.is_error ? "error" : "success";
+  switch (ev.type) {
+    case "run.started":
+      return; // meta only; the status badges come from the spec
+    case "run.completed":
+      runStore.summary = ev;
+      break;
+    case "run.error":
+      runStore.events.push({ type: "log", level: "error", message: ev.message });
+      break;
+    case "run.cancelled":
+      break;
+    default:
+      runStore.events.push(ev); // streaming row
+      return;
+  }
+  const terminal = terminalStateFor(ev);
+  if (terminal) {
+    runStore.state = terminal;
     teardown();
-  } else {
-    runStore.events.push(ev);
   }
 }
 
