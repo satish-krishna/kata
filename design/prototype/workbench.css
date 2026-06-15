@@ -160,3 +160,15 @@
 .wb-detail__result { font: var(--font-code-sm); color: var(--text-secondary); line-height: 1.6; background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-5); }
 .wb-detail__streamhead { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-faint); }
 .wb-detail__stream { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); overflow: hidden; background: var(--surface-app); }
+
+/* ---------- HITL run console (spec recap rail) ---------- */
+.hitl-recap { padding: var(--space-6); display: flex; flex-direction: column; gap: var(--space-5); }
+.hitl-recap__field { display: flex; flex-direction: column; gap: var(--space-2); }
+.hitl-recap__field p { font: var(--text-sm)/1.5 var(--font-sans); color: var(--text-secondary); margin: 0; }
+.hitl-recap__field code { font: var(--font-code-sm); color: var(--text-secondary); word-break: break-all; }
+.hitl-recap__tags { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+.hitl-tagrow { display: inline-flex; align-items: center; gap: var(--space-2); }
+.hitl-tagrow code { font: var(--font-code-sm); font-size: 11px; color: var(--text-secondary); }
+.hitl-recap__note { display: flex; gap: var(--space-3); padding: var(--space-4); margin-top: var(--space-2); background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); font: var(--text-xs)/1.55 var(--font-sans); color: var(--text-muted); }
+.hitl-recap__note svg { flex: none; color: var(--accent-text); margin-top: 1px; }
+.hitl-recap__note code { font: var(--font-code-sm); font-size: 11px; color: var(--accent-text); }

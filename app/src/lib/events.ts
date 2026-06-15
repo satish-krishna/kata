@@ -4,6 +4,7 @@
  * Summary block on `run.completed`. */
 
 export type KataEvent =
+  | { type: "run.started"; spec: string; model: string | null; workdir: string; isolation: string }
   | { type: "log"; level?: string; message: string }
   | { type: "turn"; n: number }
   | { type: "assistant.text"; text: string }
@@ -16,13 +17,28 @@ export type KataEvent =
       num_turns: number;
       cost_usd: number | null;
       duration_ms: number;
-      result: string;
-    };
+      result: string | null;
+    }
+  | { type: "run.error"; message: string }
+  | { type: "run.cancelled" };
 
 /** The terminal event carrying the run summary. */
 export type RunSummary = Extract<KataEvent, { type: "run.completed" }>;
-/** Everything that renders as a row in the stream (all but the summary). */
-export type StreamEvent = Exclude<KataEvent, { type: "run.completed" }>;
+/** Everything that renders as a row in the stream (meta + terminal events excluded). */
+export type StreamEvent = Exclude<
+  KataEvent,
+  { type: "run.started" | "run.completed" | "run.error" | "run.cancelled" }
+>;
+
+/** Terminal run state for an event, or null if the event is a streaming row. */
+export function terminalStateFor(ev: KataEvent): RunState | null {
+  switch (ev.type) {
+    case "run.completed": return ev.is_error ? "error" : "success";
+    case "run.error": return "error";
+    case "run.cancelled": return "warning";
+    default: return null;
+  }
+}
 
 export type RunState = "idle" | "running" | "success" | "warning" | "error";
 

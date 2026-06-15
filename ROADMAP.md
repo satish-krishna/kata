@@ -47,10 +47,10 @@ A Tauri v2 desktop app (SvelteKit SPA + TypeScript). Layout A: compose the run-s
   - [x] Spec editor: task, context, workdir picker, identity (system prompt + append/replace), model, leash (max-turns, timeout, isolation).
   - [x] Kit checklist populated by `kata-core` catalog discovery scoped to the workdir; tag entries skill/plugin; show a plugin's `provides` and, for MCP, the env-passthrough names.
   - [x] New / Open / Save / spec-name; round-trip a run-spec file to/from disk. (PR #2 restyle: toolbar is New / Open / Save / Export, with Save handling save-as.)
-- [~] **M6 - Workbench right pane (observe).** UI shipped and styled in PR #2, wired to a minimal Tauri event bridge (`run_spec`/`cancel_run` relaying a scripted `KataEvent` stream over the `kata://event` channel). The remaining work is the real engine path: spawn the `kata` binary and relay its live JSON-line events.
-  - [~] Spawn `kata run`, relay the JSON-line `KataEvent` stream into the UI. (Command surface + `kata://event` channel in place with a scripted stand-in; real process spawn pending.)
+- [x] **M6 - Workbench right pane (observe).** Observe pane shipped and styled in PR #2; the real engine path landed in PR #4 — the Tauri backend stages `kata` as a sidecar, spawns `kata run` in the spec's workdir, and relays its live JSON-line `KataEvent` stream over the `kata://event` channel.
+  - [x] Spawn `kata run`, relay the JSON-line `KataEvent` stream into the UI. (PR #4: sidecar spawn + stdout/stderr relay; each run isolated by run id.)
   - [x] Live event view (text, tool calls, tool results, turns, logs) + status line (state, model, isolation badge).
-  - [x] Cancel button (kill the `kata` process; engine traps it and cleans up). (UI + `cancel_run` wired; the real process kill lands with the spawn.)
+  - [x] Cancel button (kill the `kata` process; engine traps it and cleans up). (PR #4: `cancel_run` writes a `cancel` line to the engine's stdin, with a hard-kill fallback.)
   - [x] Summary card on completion: exit code, turns, cost, duration, result.
 
 ---
@@ -69,7 +69,15 @@ A Tauri v2 desktop app (SvelteKit SPA + TypeScript). Layout A: compose the run-s
 - [ ] MCP configuration surface (per-server config, secret references to a vault/dotenv) beyond the current env-name passthrough.
 - [ ] Named, reusable context presets droppable into specs.
 - [ ] Cost-ceiling leash (kill on `cost_usd` budget) once cost is reliably present in stream-json.
-- [ ] Optional HITL modes deferred from v1: observe + approve (pause on tool calls), observe + steer (inject mid-run). Each is a real engine + protocol change; only if a need appears.
+
+---
+
+## Phase 5 - Observe and steer (human-in-the-loop)
+
+Deferred from the MVP, which is observe-only by design: the engine drives `claude -p` headless with `--dangerously-skip-permissions`, so a run takes no mid-flight intervention — you watch it and hold the leash. Once the Workbench MVP (M5 compose + M6 observe/run) ships, this is the first post-MVP track: turn the one-way observe pane into a two-way session. It builds directly on the cancel-only stdin channel M6 introduces (a `cancel` line to the `kata` process) — the same seam carries steering.
+
+- [ ] **M9 - Observe + steer.** Extend the run's stdin protocol beyond `cancel` (e.g. `steer: <text>`) so the operator can inject guidance mid-run; the engine relays it into the live `claude` session. The observe pane gains an input affordance and the run gains a "steering" state. A real engine + protocol change.
+- [ ] **Observe + approve (optional sibling).** Pause on tool calls and require operator approval before proceeding (the interactive heir to `--dangerously-skip-permissions`). Shares the same back-channel; ship only if a need appears.
 
 ---
 

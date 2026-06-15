@@ -2,45 +2,29 @@ use kata_core::catalog::{self, CatalogEntry};
 use kata_core::spec::{self, RunSpec};
 use serde_json::{json, Value};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
+use tauri_plugin_shell::ShellExt;
 
 /// Channel the engine's normalized KataEvents are relayed on to the webview.
 const RUN_EVENT: &str = "kata://event";
 
-/// Shared cancellation flag for the in-flight run.
+/// The in-flight `kata` child plus the id of the run that owns it. A stale
+/// reader task (a finished run still tearing down) must not clear a newer run's
+/// handle, so cleanup is guarded by this id. `id == 0` means no active run.
 #[derive(Default)]
-struct RunControl {
-    cancel: Arc<AtomicBool>,
+struct RunState {
+    id: u64,
+    child: Option<CommandChild>,
 }
 
-/// Scripted demo stream (delay_ms, event). Mirrors `runScript` in mock.ts so the
-/// packaged app and the browser dev fallback stream the same triage-flaky-test
-/// timeline. The full M6 engine (spawn `kata`, relay its JSON-lines) replaces
-/// this body; the command surface and event channel stay the same.
-fn run_script() -> Vec<(u64, Value)> {
-    vec![
-        (250, json!({ "type": "log", "level": "info", "message": "assembled plugin-dir: 1 skill, 1 plugin" })),
-        (350, json!({ "type": "log", "level": "info", "message": "worktree: ./.kata/wt-3f9a off main" })),
-        (500, json!({ "type": "turn", "n": 1 })),
-        (250, json!({ "type": "assistant.text", "text": "Reproducing the flake: I'll run the single test in a tight loop and watch for the failure mode." })),
-        (700, json!({ "type": "tool.use", "name": "Bash", "input_summary": "for i in $(seq 1 30); do dotnet test --filter AuthTests.LoginExpiry; done" })),
-        (1300, json!({ "type": "tool.result", "name": "Bash", "ok": true, "summary": "27 passed / 3 failed — failures at iterations 8, 19, 26" })),
-        (500, json!({ "type": "turn", "n": 2 })),
-        (250, json!({ "type": "assistant.text", "text": "It fails ~1 in 10 locally. The failures share a timestamp boundary — this smells like a clock-skew race in token expiry." })),
-        (800, json!({ "type": "tool.use", "name": "Read", "input_summary": "src/Auth/TokenValidator.cs" })),
-        (850, json!({ "type": "tool.result", "name": "Read", "ok": true, "summary": "TokenValidator.cs — 142 lines" })),
-        (500, json!({ "type": "turn", "n": 3 })),
-        (250, json!({ "type": "assistant.text", "text": "Found it. `IsExpired` compares `DateTime.UtcNow` against an expiry built with `DateTime.Now` upstream — across the DST/second boundary the two clocks disagree and the token reads as expired." })),
-        (800, json!({ "type": "tool.use", "name": "Bash", "input_summary": "git -C ./.kata/wt-3f9a diff --stat" })),
-        (700, json!({ "type": "tool.result", "name": "Bash", "ok": false, "summary": "no changes — isolation only, as instructed" })),
-        (500, json!({ "type": "turn", "n": 4 })),
-        (250, json!({ "type": "assistant.text", "text": "Smallest repro: pin the system clock to 23:59:59.6 local and call LoginExpiry once — fails deterministically. Cause: mixed Now/UtcNow in token expiry. I did not change production code." })),
-        (600, json!({ "type": "run.completed", "exit_code": 0, "is_error": false, "num_turns": 4, "cost_usd": 0.041, "duration_ms": 48120, "result": "Isolated AuthTests.LoginExpiry flake to a clock-skew race: TokenValidator.IsExpired mixes DateTime.Now (expiry) with DateTime.UtcNow (check). Deterministic repro: pin clock to 23:59:59.6 local. No production code changed." })),
-    ]
+/// Shared run control: the active run's state plus a monotonic id source.
+#[derive(Default)]
+struct RunControl {
+    state: Arc<Mutex<RunState>>,
+    next_id: AtomicU64,
 }
 
 /// User skills/plugins plus the workdir's project scope (if any).
@@ -66,35 +50,121 @@ fn validate_spec(spec: RunSpec) -> Vec<String> {
     spec::validate(&spec).err().unwrap_or_default()
 }
 
-/// Start a run: relay the engine's KataEvents to the webview over `kata://event`.
-/// Spawns a worker so the command returns immediately; the worker bails as soon
-/// as `cancel_run` flips the shared flag.
+/// Start a run: write the spec to a temp file, spawn `kata run` in the spec's
+/// workdir as a sidecar, and relay its JSON-line KataEvents over `kata://event`.
+/// Returns once spawned; an async task drains stdout for the run's lifetime.
 #[tauri::command]
-fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) {
-    let _ = &spec; // the M6 engine consumes this; the scripted relay does not.
-    control.cancel.store(false, Ordering::SeqCst);
-    let cancel = control.cancel.clone();
-    thread::spawn(move || {
-        for (delay, ev) in run_script() {
-            thread::sleep(Duration::from_millis(delay));
-            if cancel.load(Ordering::SeqCst) {
-                return;
+fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) -> Result<(), String> {
+    // Each run gets a unique id so its reader task only ever touches its own temp
+    // file and child handle. A new run can begin the moment a terminal event
+    // reaches the UI, before this run's sidecar has finished tearing down.
+    let id = control.next_id.fetch_add(1, Ordering::SeqCst) + 1;
+
+    // The engine reads a spec file; serialize this one to a per-run temp path.
+    let tmp =
+        std::env::temp_dir().join(format!("kata-workbench-run-{}-{}.toml", std::process::id(), id));
+    spec::save(&tmp, &spec).map_err(|e| e.to_string())?;
+
+    let spawn_result = app
+        .shell()
+        .sidecar("kata")
+        .and_then(|cmd| {
+            cmd.args(["run", &tmp.to_string_lossy()])
+                .current_dir(&spec.workdir) // engine discovers its catalog relative to cwd
+                .spawn()
+        });
+    let (mut rx, child) = match spawn_result {
+        Ok(pair) => pair,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("spawn kata: {e}"));
+        }
+    };
+
+    {
+        let mut st = control.state.lock().unwrap();
+        st.id = id;
+        st.child = Some(child);
+    }
+    let state = control.state.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let mut terminal_seen = false;
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+                    Ok(v) => {
+                        if let Some(t) = v.get("type").and_then(|t| t.as_str()) {
+                            if matches!(t, "run.completed" | "run.error" | "run.cancelled") {
+                                terminal_seen = true;
+                            }
+                        }
+                        let _ = app.emit(RUN_EVENT, v);
+                    }
+                    Err(_) => relay_log(&app, &bytes),
+                },
+                CommandEvent::Stderr(bytes) => relay_log(&app, &bytes),
+                CommandEvent::Terminated(payload) => {
+                    if !terminal_seen {
+                        let code = payload.code.unwrap_or(-1);
+                        let _ = app.emit(
+                            RUN_EVENT,
+                            json!({
+                                "type": "run.error",
+                                "message": format!("engine exited ({code}) without a result"),
+                            }),
+                        );
+                    }
+                    break;
+                }
+                CommandEvent::Error(err) => {
+                    terminal_seen = true;
+                    let _ = app.emit(RUN_EVENT, json!({ "type": "run.error", "message": err }));
+                }
+                _ => {}
             }
-            let _ = app.emit(RUN_EVENT, ev);
+        }
+        let _ = std::fs::remove_file(&tmp);
+        // Only clear the handle if this run is still the active one; a newer run
+        // may have replaced it while this sidecar was tearing down.
+        let mut st = state.lock().unwrap();
+        if st.id == id {
+            st.child = None;
+            st.id = 0;
         }
     });
+
+    Ok(())
 }
 
-/// Cancel the in-flight run; the worker stops before its next emit.
+/// Relay a non-JSON stdout/stderr line as a warn-level log event.
+fn relay_log(app: &AppHandle, bytes: &[u8]) {
+    let line = String::from_utf8_lossy(bytes);
+    let line = line.trim();
+    if !line.is_empty() {
+        let _ = app.emit(RUN_EVENT, json!({ "type": "log", "level": "warn", "message": line }));
+    }
+}
+
+/// Cancel the in-flight run: write a `cancel` line to the engine's stdin so it
+/// traps it, kills claude, cleans up, and emits run.cancelled. Falls back to a
+/// hard kill if the stdin write fails (child already gone).
 #[tauri::command]
 fn cancel_run(control: State<RunControl>) {
-    control.cancel.store(true, Ordering::SeqCst);
+    let mut st = control.state.lock().unwrap();
+    let still_alive = st.child.as_mut().map(|c| c.write(b"cancel\n").is_ok()).unwrap_or(false);
+    if !still_alive {
+        if let Some(child) = st.child.take() {
+            let _ = child.kill();
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
         .manage(RunControl::default())
         .invoke_handler(tauri::generate_handler![
             catalog,

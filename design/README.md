@@ -98,14 +98,38 @@ Ship these first. Copy `design_system/` into `app/src/` (e.g. `app/src/styles/`)
 
 **Layout:** Same toolbar/status-bar column. The pane row is a **fixed 320px rail** (`.wb-pane--rail`, `--surface-chrome`, right border) + a flexible **run-detail** view (`.wb-detail`, `--surface-panel`).
 
-- **Rail:** a `Library` eyebrow header, a full-width primary **New kata** button (`⌘N`), then two scrolling sections. **Saved katas** (`.wb-kata` rows): mono name + a status dot (last-run outcome), a truncated description, and a meta line (`worktree` / kit count / run count with icons). Active row gets an accent wash + border. **Recent runs** (`.wb-hist` rows): a state dot, kata name + `when · turns · cost` line, and an `exit N` badge toned by outcome.
+- **Rail:** a `Library` eyebrow header, a full-width primary **New kata** button (`Ctrl+N`), then two scrolling sections. **Saved katas** (`.wb-kata` rows): mono name + a status dot (last-run outcome), a truncated description, and a meta line (`worktree` / kit count / run count with icons). Active row gets an accent wash + border. **Recent runs** (`.wb-hist` rows): a state dot, kata name + `when · turns · cost` line, and an `exit N` badge toned by outcome.
 - **Run detail:** header with the kata name (Plex Sans 600 20px) + run id + a `StatusDot` showing `exit N`; a sub-line of `clock` / `hash` / `coins` / `cpu` meta; an action row (**Re-run** primary, **Open in compose** secondary, **Export bundle** ghost). Body: a 4-up SummaryStat grid, the result text in a card, then the **event log** rendered with the same `EventRow` component as the live pane. Empty state prompts to pick a row.
+
+### 3 — Human-in-the-loop (HITL) · the run can pause to ask
+
+**Purpose:** Let the agent ask the operator a question mid-run without breaking the headless model. **Reference:** the main Workbench (`prototype/index.html`) now folds a checkpoint into its run; `prototype/hitl.html` + `prototype/hitl.jsx` is the focused showcase of all three question kinds.
+
+**The mechanism:** when the agent calls the `AskUserQuestion` tool, Kata's harness **intercepts that one tool call at the edge** instead of executing it — it pauses the run, surfaces the question(s), waits, and feeds the operator's answer back as the tool *result*. The agent never knows a human was involved. HITL is a property of the leash, not a change to the agent.
+
+**New run state:** the lifecycle becomes `idle → running → awaiting → running → {success|warning|error}`. `awaiting` is its own andon signal — a **pulsing amber** `StatusDot` (`.k-status--awaiting`, class already in `components.css`). While awaiting, Run is replaced by **Cancel** and the status bar reads `paused — waiting on your answer`.
+
+**Event protocol extension** (on top of the existing `KataEvent` set):
+- `ask.requested` — payload `questions[]`, each `{ kind?, header, question, options?, multiSelect?, optional?, placeholder? }`. Drives the run to `awaiting` and renders the **AskPanel**.
+- `ask.answered` — `answers: string[][]` (chosen labels or typed text per question). Becomes the `tool.result` for the call; the run returns to `running`.
+
+**The AskPanel** (classes `.k-ask*` in `components.css`) renders inline at the bottom of the stream where the run paused:
+- An **amber banner** (`.k-ask__banner`: `awaiting your input` micro-label + the `AskUserQuestion` tool name) with a soft shadow, so it reads as an interactive surface above the flat event rows.
+- One block per question (`.k-ask__q`): uppercase mono header eyebrow + question text, then the input — by `kind`:
+  - **`confirm`** (`.k-ask__confirm` / `.k-ask__confirm-btn`) — a yes/no (or two-option) inline button pair; the chosen button takes the azure accent.
+  - **`select`** (`.k-ask__opts` / `.k-ask__opt`) — multiple choice; radio marks, or checkboxes when `multiSelect`. Selected option takes azure border + tint + filled mark; descriptions sit muted under each label.
+  - **`text`** (a `.k-textarea`) — a free-form typed answer; `optional: true` lets it be left blank.
+- A footer (`.k-ask__foot`): hint `the run is paused on the leash` + a primary **Send answer · resume** button, disabled until every required question is answered.
+- Once answered, the panel collapses to a **read-only resolved state** (`.k-ask--answered`): the banner turns jade (`answered · run resumed`), selections stay highlighted (text shows the typed answer in `.k-ask__answer`), and the stream continues below. The whole exchange stays in the permanent run log.
+
+> Use HITL for genuine operator-owned forks (scope, risky writes, "which did you mean") — not progress chatter. The amber pause should feel like an exception.
 
 ---
 
 ## Interactions & behavior
 
-- **Run** (button or **⌘↵ / Ctrl+↵**): clears the pane, sets state `running` (dot pulses, Cancel shows), then streams the normalized `KataEvent`s. In the real app this is the Tauri bridge: the backend **spawns the `kata` binary**, relays its JSON-lines events to the webview; the frontend stays presentational (per the spec's testing strategy). The prototype fakes this with a scripted timeline (`prototype/data.js`).
+- **Run** (button or **Ctrl+Enter** — this is a Windows desktop app; all shortcuts are Ctrl-based, shown as `Ctrl+Enter` / `Ctrl+S` / `Ctrl+N`): clears the pane, sets state `running` (dot pulses, Cancel shows), then streams the normalized `KataEvent`s. In the real app this is the Tauri bridge: the backend **spawns the `kata` binary**, relays its JSON-lines events to the webview; the frontend stays presentational (per the spec's testing strategy). The prototype fakes this with a scripted timeline (`prototype/data.js`).
+- **HITL checkpoint**: on an `ask.requested` event, set state `awaiting`, render the **AskPanel** at the bottom of the stream, and block until the operator submits. On submit, emit `ask.answered` (the answer becomes the tool result), set the panel to its answered state, and return to `running`. Cancel is still available while awaiting. See `prototype/hitl.js`.
 - **Cancel**: kills the run; the engine traps it, cleans up the plugin-dir + worktree, emits `run.cancelled`; UI goes to `warning`.
 - **On `run.completed`**: render the Summary block; state → `success` (exit 0) or `error` (non-zero).
 - **Live validation** (`prototype/app.jsx` `validate()`, mirrors the Rust): `name`, `task`, `workdir` required; `schema === 1`; `leash.max_turns >= 1`. Errors show in the banner + status bar; **Run is blocked** while invalid. Messages are lowercase and terse ("task is required").
@@ -131,13 +155,14 @@ Ship these first. Copy `design_system/` into `app/src/` (e.g. `app/src/styles/`)
 
 ## Files in this bundle
 
-- `design_system/` — **drop-in CSS.** `styles.css` (import this one), `fonts.css`, `base.css`, `tokens/{colors,typography,spacing}.css`, `components/components.css`. All class names referenced above are here.
-- `prototype/` — the reference designs:
+- `design_system/` — **drop-in CSS + the compiled component runtime.** `styles.css` (import this one), `fonts.css`, `base.css`, `tokens/{colors,typography,spacing}.css`, `components/components.css`, and `_ds_bundle.js` (defines `window.KataDesignSystem_dd74c7` with the 18 primitives — only needed to *run* the prototypes; the Svelte app doesn't use it). All class names referenced above are here.
+- `prototype/` — the reference designs. **These now run as-is** — open any `*.html` over a static server (`npx serve design/prototype`); they load `../design_system/styles.css` + `../design_system/_ds_bundle.js`:
   - `index.html` + `app.jsx` + `panes.jsx` — the Workbench (Layout A).
   - `library.html` + `library.jsx` — the Library (Layout C).
+  - `hitl.html` + `hitl.jsx` — the human-in-the-loop run console (the pause → answer → resume flow; uses the `AskPanel`).
   - `data.js`, `library-data.js` — fixtures (default spec, catalog, scripted streams, saved katas, history).
   - `icons.js` — the Lucide subset.
-  - `workbench.css` — **shell layout** (toolbar, panes, sections, rail, detail). Pair this with `components/components.css`. You can lift it almost verbatim into the Svelte app's global stylesheet.
+  - `workbench.css` — **shell layout** (toolbar, panes, sections, rail, detail, HITL recap). Pair this with `components/components.css`. You can lift it almost verbatim into the Svelte app's global stylesheet.
   - `README.md` — prototype-specific notes.
 
 ## Mapping onto the existing PR #2 Svelte files
@@ -152,5 +177,6 @@ Ship these first. Copy `design_system/` into `app/src/` (e.g. `app/src/styles/`)
 | `ValidationBanner.svelte` | Restyle to `.wb-banner--error`. |
 | **Observe pane (new — was the `— M6` placeholder)** | Build `.wb-status` + `.wb-stream` (EventRow per `KataEvent`) + `.wb-summary`. See `panes.jsx` `ObservePane`. |
 | **New: Library route** (`app/src/routes/library/+page.svelte`) | Build the rail + run detail from `prototype/library.jsx`. |
+| **Observe pane HITL** (extend the Observe pane) | When a relayed event is `ask.requested`, set state `awaiting` and render an `AskPanel` (`.k-ask*`) at the bottom of the stream; on submit emit `ask.answered` back over the Tauri bridge as the tool result, flip the panel to `.k-ask--answered`, and resume. See `prototype/hitl.jsx`. The `awaiting` `StatusDot` + amber pause are already in `components.css`. |
 
-**Watch-outs:** keep the 13px base (don't let it drift up to 14/16); inputs are the *inset* surface (darker than their card), not raised; cards have **no shadow** at rest; tags are warm (jade/amber), never blue/purple; one azure primary action per view. Build everything against the CSS variables so the pending accent decision is a single-file change.
+**Watch-outs:** keep the 13px base (don't let it drift up to 14/16); inputs are the *inset* surface (darker than their card), not raised; cards have **no shadow** at rest; tags are warm (jade/amber), never blue/purple; one azure primary action per view; keyboard shortcuts are Windows (Ctrl-based: `Ctrl+Enter` run, `Ctrl+S` save, `Ctrl+N` new). Build everything against the CSS variables so the accent stays a single-file change.

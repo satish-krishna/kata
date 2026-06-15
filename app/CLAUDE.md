@@ -26,5 +26,7 @@ Keep every session on the Workbench on-brand. The full system lives in `design/`
 
 ## Dev / review (browser without the native app)
 - `npm run dev` → `http://localhost:1420`. Tauri `invoke`/`listen` are unreachable in a plain browser, so `src/lib/api.ts` gates on `inTauri()` and falls back to fixtures in `src/lib/mock.ts`.
+- `npm run check` type-checks Svelte (svelte-kit sync + svelte-check); `npm test` runs the Vitest suite (`*.test.ts`).
 - `http://localhost:1420/?demo=run` auto-starts the scripted Observe-pane run (browser-only, never under Tauri) — useful for screenshots.
 - The run bridge (`run_spec`/`cancel_run` in `src-tauri/src/lib.rs`) relays `KataEvent`s over the `kata://event` channel; the frontend stays presentational (store: `src/lib/run.svelte.ts`).
+- The real engine path runs under Tauri only: `npm run tauri:dev` stages the `kata` sidecar (builds `kata-cli`, copies it to `src-tauri/binaries/kata-<target-triple>`) then launches the desktop app, which spawns `kata run` and relays its live JSON-lines. `npm run dev` (browser) keeps the scripted `mock.ts` timeline for screenshots. A real run needs an authenticated `claude` on PATH.

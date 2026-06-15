@@ -69,6 +69,22 @@ fn cmd_run(path: &std::path::Path) -> ExitCode {
     // Best-effort Ctrl-C -> cancel. Ignore error if a handler is already set.
     let _ = ctrlc::set_handler(move || flag.store(true, Ordering::SeqCst));
 
+    // GUI / programmatic cancel: a `cancel` line on stdin flips the same flag the
+    // ctrlc handler uses. EOF (plain CLI use closes stdin) is a no-op.
+    let stdin_flag = cancel.flag();
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        let stdin = std::io::stdin();
+        let mut line = String::new();
+        while stdin.lock().read_line(&mut line).unwrap_or(0) != 0 {
+            if line.trim() == "cancel" {
+                stdin_flag.store(true, Ordering::SeqCst);
+                break;
+            }
+            line.clear();
+        }
+    });
+
     let emit = |event: kata_core::event::KataEvent| {
         // One JSON object per line on stdout.
         if let Ok(line) = serde_json::to_string(&event) {

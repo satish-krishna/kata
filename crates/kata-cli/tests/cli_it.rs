@@ -88,3 +88,36 @@ fn run_streams_jsonl_events_and_exits_zero() {
     assert_eq!(last["type"], "run.completed");
     assert_eq!(last["exit_code"], 0);
 }
+
+#[test]
+fn run_cancel_via_stdin_exits_130() {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let work = tempfile::tempdir().unwrap();
+    let spec = write(work.path(), "c.kata.toml",
+        &format!("schema = 1\nname = \"c\"\ntask = \"t\"\nworkdir = \"{}\"\n\n[leash]\ntimeout_secs = 8\n",
+            work.path().to_string_lossy().replace('\\', "/")));
+
+    let fake = fake_claude();
+    let mut child = kata()
+        .arg("run").arg(&spec)
+        .env("KATA_CLAUDE_BIN", &fake)
+        .env("KATA_FAKE_MODE", "sleep")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Give the engine time to spawn fake-claude and enter its run loop.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    child.stdin.take().unwrap().write_all(b"cancel\n").unwrap();
+
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(130), "stdin cancel should exit 130");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.lines().any(|l| {
+        serde_json::from_str::<serde_json::Value>(l)
+            .map(|v| v["type"] == "run.cancelled").unwrap_or(false)
+    }), "expected a run.cancelled event, got:\n{stdout}");
+}
