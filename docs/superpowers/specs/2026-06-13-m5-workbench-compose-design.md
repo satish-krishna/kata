@@ -7,6 +7,8 @@ Milestone: M5 (Phase 2 — GUI / the Workbench)
 Parent design: `docs/superpowers/specs/2026-06-12-kata-launcher-design.md`
 Roadmap: `ROADMAP.md`
 
+> **Update (2026-06-15) — shipped + extended.** Implemented and merged on `feat/m5-workbench-compose`. The frontend is **SvelteKit (Svelte 5 runes) + adapter-static in SPA mode** (`ssr = false`), not plain Svelte+Vite — the architecture/tech sections below already reflect that. The branch also brings the **M6 right pane (Observe)** forward and restyles the whole Workbench to the Kata "sumi-ink" design system (see `design/README.md` and `app/CLAUDE.md`). Consequently a few M5-scope notes below are superseded: the right pane is no longer "an M6 placeholder", **Run** is wired (not disabled), and the toolbar is New / Open / Save / Export (no separate "Save As"). The rest of the M5 design — backend seam, ts-rs type sync, workdir-scoped kit, live validation, spec round-trip — shipped as written.
+
 ## What this is
 
 M5 scaffolds the Tauri v2 Workbench app and builds its **left pane**: composing,
