@@ -33,7 +33,7 @@ pub struct BundleManifest {
 pub struct ManifestEntry {
     pub kind: String,   // "skill" | "plugin"
     pub name: String,
-    pub source: String, // original scope: "user" | "project" | "plugin"
+    pub source: String, // original scope: "user" | "project"
     pub path: String,   // original absolute path
 }
 

@@ -68,14 +68,14 @@ tool_version = "<kata-cli version>"
 [[entry]]
 kind = "skill"        # "skill" | "plugin"
 name = "triage-flaky-test"
-source = "user"        # original scope: "user" | "project" | "plugin"
+source = "user"        # original scope: "user" | "project"
 path = "/Users/.../.claude/skills/triage-flaky-test"   # original absolute path
 
 [[entry]]
 kind = "plugin"
 name = "github-tools"
-source = "plugin"
-path = "/Users/.../.claude/plugins/github-tools"
+source = "project"     # scope is recorded for plugins too, not a constant "plugin"
+path = "/repo/.claude/plugins/github-tools"
 ```
 
 ## Running a bundle (consume)
