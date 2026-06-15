@@ -117,4 +117,30 @@ mod tests {
         assert_eq!(manifest.entry[0].name, "triage");
         assert_eq!(manifest.entry[0].source, "user");
     }
+
+    #[test]
+    fn errors_on_nonempty_out_without_force() {
+        let (entry, _keep) = skill_entry("triage");
+        let mut spec = RunSpec { schema: 1, name: "demo".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+        spec.skills = vec!["triage".into()];
+
+        let out = tempfile::tempdir().unwrap();
+        fs::write(out.path().join("preexisting.txt"), "keep me").unwrap();
+
+        let err = bundle(&spec, std::slice::from_ref(&entry), out.path(), false).unwrap_err();
+        assert!(matches!(err, BundleError::Exists(_)));
+    }
+
+    #[test]
+    fn force_overwrites_nonempty_out() {
+        let (entry, _keep) = skill_entry("triage");
+        let mut spec = RunSpec { schema: 1, name: "demo".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+        spec.skills = vec!["triage".into()];
+
+        let out = tempfile::tempdir().unwrap();
+        fs::write(out.path().join("preexisting.txt"), "keep me").unwrap();
+
+        bundle(&spec, std::slice::from_ref(&entry), out.path(), true).unwrap();
+        assert!(out.path().join(".claude").join("skills").join("triage").join("SKILL.md").is_file());
+    }
 }
