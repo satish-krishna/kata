@@ -18,6 +18,16 @@ enum Cmd {
     Catalog,
     /// Run a kata to completion, streaming JSON-line events.
     Run { spec: PathBuf },
+    /// Vendor a spec's skills/plugins into a portable bundle folder.
+    Bundle {
+        spec: PathBuf,
+        /// Output directory (default: ./<spec-name>-bundle).
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Overwrite a non-empty output directory.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 // Exit codes: 0 = ok, 1 = validation failure, 2 = load/parse error,
@@ -28,6 +38,7 @@ fn main() -> ExitCode {
         Cmd::Validate { spec } => cmd_validate(&spec),
         Cmd::Catalog => cmd_catalog(),
         Cmd::Run { spec } => cmd_run(&spec),
+        Cmd::Bundle { spec, out, force } => cmd_bundle(&spec, out.as_deref(), force),
     }
 }
 
@@ -52,6 +63,29 @@ fn cmd_catalog() -> ExitCode {
     match serde_json::to_string_pretty(&entries) {
         Ok(json) => { println!("{json}"); ExitCode::SUCCESS }
         Err(e) => { eprintln!("error: {e}"); ExitCode::from(70) }
+    }
+}
+
+fn cmd_bundle(spec_path: &std::path::Path, out: Option<&std::path::Path>, force: bool) -> ExitCode {
+    let spec = match kata_core::spec::load(spec_path) {
+        Ok(s) => s,
+        Err(e) => { eprintln!("error: {e}"); return ExitCode::from(2); }
+    };
+    if let Err(errs) = kata_core::spec::validate(&spec) {
+        for e in errs { eprintln!("error: {e}"); }
+        return ExitCode::from(1);
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    let roots = kata_core::catalog::DiscoveryRoots::defaults(&cwd);
+    let catalog = kata_core::catalog::discover(&roots);
+
+    let out_dir = out
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("{}-bundle", spec.name)));
+
+    match kata_core::bundle::bundle(&spec, &catalog, &out_dir, force) {
+        Ok(()) => { println!("bundled to {}", out_dir.display()); ExitCode::SUCCESS }
+        Err(e) => { eprintln!("error: {e}"); ExitCode::from(2) }
     }
 }
 

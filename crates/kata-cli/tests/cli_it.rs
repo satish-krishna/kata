@@ -121,3 +121,33 @@ fn run_cancel_via_stdin_exits_130() {
             .map(|v| v["type"] == "run.cancelled").unwrap_or(false)
     }), "expected a run.cancelled event, got:\n{stdout}");
 }
+
+#[test]
+fn bundle_writes_self_contained_folder() {
+    // Isolated HOME so discovery is deterministic.
+    let home = tempfile::tempdir().unwrap();
+    let skill = home.path().join(".claude").join("skills").join("triage");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(skill.join("SKILL.md"),
+        "---\nname: triage\ndescription: triage flaky tests\n---\nbody\n").unwrap();
+
+    let work = tempfile::tempdir().unwrap();
+    let spec = write(work.path(), "b.kata.toml",
+        &format!("schema = 1\nname = \"b\"\ntask = \"t\"\nworkdir = \"{}\"\nskills = [\"triage\"]\n",
+            work.path().to_string_lossy().replace('\\', "/")));
+
+    let out = work.path().join("b-bundle");
+    let result = kata()
+        .arg("bundle").arg(&spec)
+        .arg("-o").arg(&out)
+        .current_dir(work.path())
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .output()
+        .unwrap();
+
+    assert!(result.status.success(), "stderr: {}", String::from_utf8_lossy(&result.stderr));
+    assert!(out.join(".claude").join("skills").join("triage").join("SKILL.md").is_file());
+    assert!(out.join("spec.toml").is_file());
+    assert!(out.join("kata-bundle.toml").is_file());
+}
