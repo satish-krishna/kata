@@ -33,6 +33,8 @@ function handle(ev: KataEvent) {
       break;
     case "run.cancelled":
       break;
+    case "run.diff":
+      return; // meta only; the diff panel is a fast-follow
     default:
       runStore.events.push(ev); // streaming row
       return;

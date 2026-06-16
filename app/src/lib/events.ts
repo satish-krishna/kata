@@ -4,7 +4,7 @@
  * Summary block on `run.completed`. */
 
 export type KataEvent =
-  | { type: "run.started"; spec: string; model: string | null; workdir: string; isolation: string }
+  | { type: "run.started"; spec: string; model: string | null; workdir: string; isolation: string; worktree?: string | null; branch?: string | null }
   | { type: "log"; level?: string; message: string }
   | { type: "turn"; n: number }
   | { type: "assistant.text"; text: string }
@@ -19,6 +19,7 @@ export type KataEvent =
       duration_ms: number;
       result: string | null;
     }
+  | { type: "run.diff"; worktree: string; branch: string; files: { status: string; path: string }[]; insertions: number; deletions: number }
   | { type: "run.error"; message: string }
   | { type: "run.cancelled" };
 
@@ -27,7 +28,7 @@ export type RunSummary = Extract<KataEvent, { type: "run.completed" }>;
 /** Everything that renders as a row in the stream (meta + terminal events excluded). */
 export type StreamEvent = Exclude<
   KataEvent,
-  { type: "run.started" | "run.completed" | "run.error" | "run.cancelled" }
+  { type: "run.started" | "run.completed" | "run.error" | "run.cancelled" | "run.diff" }
 >;
 
 /** Terminal run state for an event, or null if the event is a streaming row. */

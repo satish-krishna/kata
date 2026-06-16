@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, test, expect } from "vitest";
 import { terminalStateFor, type KataEvent } from "./events";
 
 describe("terminalStateFor", () => {
@@ -24,4 +24,17 @@ describe("terminalStateFor", () => {
     const ev: KataEvent = { type: "run.completed", exit_code: 0, is_error: false, num_turns: 0, cost_usd: null, duration_ms: 0, result: null };
     expect(terminalStateFor(ev)).toBe("success");
   });
+});
+
+test("KataEvent union accepts run.diff and run.started worktree fields", () => {
+  const started: KataEvent = {
+    type: "run.started", spec: "s", model: null, workdir: "/w",
+    isolation: "worktree", worktree: "/home/u/.kata/worktrees/s-abc", branch: "kata/s-abc",
+  };
+  const diff: KataEvent = {
+    type: "run.diff", worktree: "/home/u/.kata/worktrees/s-abc", branch: "kata/s-abc",
+    files: [{ status: "A", path: "new.txt" }], insertions: 2, deletions: 0,
+  };
+  expect(started.type).toBe("run.started");
+  expect(diff.type).toBe("run.diff");
 });
