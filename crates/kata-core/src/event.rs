@@ -5,7 +5,16 @@ use std::io::BufRead;
 #[serde(tag = "type")]
 pub enum KataEvent {
     #[serde(rename = "run.started")]
-    RunStarted { spec: String, model: Option<String>, workdir: String, isolation: String },
+    RunStarted {
+        spec: String,
+        model: Option<String>,
+        workdir: String,
+        isolation: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        worktree: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
+    },
     #[serde(rename = "log")]
     Log { level: String, message: String },
     #[serde(rename = "assistant.text")]
@@ -286,5 +295,16 @@ mod tests {
         assert!(s.contains(r#""path":"src/run.rs""#));
         assert!(s.contains(r#""insertions":3"#));
         assert!(s.contains(r#""deletions":1"#));
+    }
+
+    #[test]
+    fn run_started_omits_worktree_fields_when_none() {
+        let e = KataEvent::RunStarted {
+            spec: "s".into(), model: None, workdir: "/w".into(),
+            isolation: "none".into(), worktree: None, branch: None,
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(!s.contains("worktree"), "absent worktree must not serialize: {s}");
+        assert!(!s.contains("branch"), "absent branch must not serialize: {s}");
     }
 }

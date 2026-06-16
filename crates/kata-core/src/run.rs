@@ -59,6 +59,8 @@ pub fn run<F: FnMut(KataEvent)>(
         model: spec.model.id.clone(),
         workdir: spec.workdir.clone(),
         isolation: isolation.to_string(),
+        worktree: None,
+        branch: None,
     });
     emit(KataEvent::Log {
         level: "info".into(),
