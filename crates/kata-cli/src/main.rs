@@ -18,6 +18,16 @@ enum Cmd {
     Catalog,
     /// Run a kata to completion, streaming JSON-line events.
     Run { spec: PathBuf },
+    /// Vendor a spec's skills/plugins into a portable bundle folder.
+    Bundle {
+        spec: PathBuf,
+        /// Output directory (default: ./<spec-name>-bundle).
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Reuse a non-empty output directory, replacing its vendored `.claude` kit.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 // Exit codes: 0 = ok, 1 = validation failure, 2 = load/parse error,
@@ -28,6 +38,7 @@ fn main() -> ExitCode {
         Cmd::Validate { spec } => cmd_validate(&spec),
         Cmd::Catalog => cmd_catalog(),
         Cmd::Run { spec } => cmd_run(&spec),
+        Cmd::Bundle { spec, out, force } => cmd_bundle(&spec, out.as_deref(), force),
     }
 }
 
@@ -55,13 +66,61 @@ fn cmd_catalog() -> ExitCode {
     }
 }
 
-fn cmd_run(path: &std::path::Path) -> ExitCode {
-    let spec = match kata_core::spec::load(path) {
+/// Sanitize a spec name into a filesystem-safe segment for the DEFAULT output
+/// directory. The spec name is only validated non-empty, so it may contain path
+/// separators (e.g. "../x") or other characters that would write the bundle
+/// outside the intended location; map anything outside `[A-Za-z0-9_-]` to '-',
+/// trim leading/trailing '-', and fall back to "bundle" if nothing remains. An
+/// explicit `-o` path is the caller's responsibility and is not sanitized.
+fn slug(name: &str) -> String {
+    let mapped: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let trimmed = mapped.trim_matches('-');
+    if trimmed.is_empty() { "bundle".to_string() } else { trimmed.to_string() }
+}
+
+fn cmd_bundle(spec_path: &std::path::Path, out: Option<&std::path::Path>, force: bool) -> ExitCode {
+    let spec = match kata_core::spec::load(spec_path) {
         Ok(s) => s,
         Err(e) => { eprintln!("error: {e}"); return ExitCode::from(2); }
     };
+    if let Err(errs) = kata_core::spec::validate(&spec) {
+        for e in errs { eprintln!("error: {e}"); }
+        return ExitCode::from(1);
+    }
     let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
     let roots = kata_core::catalog::DiscoveryRoots::defaults(&cwd);
+    let catalog = kata_core::catalog::discover(&roots);
+
+    let out_dir = out
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("{}-bundle", slug(&spec.name))));
+
+    match kata_core::bundle::bundle(&spec, &catalog, &out_dir, force) {
+        Ok(()) => { println!("bundled to {}", out_dir.display()); ExitCode::SUCCESS }
+        Err(e) => { eprintln!("error: {e}"); ExitCode::from(2) }
+    }
+}
+
+fn cmd_run(path: &std::path::Path) -> ExitCode {
+    // A directory carrying the kata-bundle.toml marker is a bundle: load its
+    // spec and discover the kit ONLY from its vendored .claude (hermetic).
+    let (spec, roots) = if kata_core::bundle::is_bundle(path) {
+        let spec = match kata_core::spec::load(&path.join("spec.toml")) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("error: {e}"); return ExitCode::from(2); }
+        };
+        (spec, kata_core::bundle::bundle_roots(path))
+    } else {
+        let spec = match kata_core::spec::load(path) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("error: {e}"); return ExitCode::from(2); }
+        };
+        let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+        (spec, kata_core::catalog::DiscoveryRoots::defaults(&cwd))
+    };
     let catalog = kata_core::catalog::discover(&roots);
 
     let cancel = kata_core::run::CancelToken::new();
@@ -100,5 +159,26 @@ fn cmd_run(path: &std::path::Path) -> ExitCode {
             }
         }
         Err(e) => { eprintln!("error: {e}"); ExitCode::from(2) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slug;
+
+    #[test]
+    fn slug_strips_path_separators_and_traversal() {
+        // "../x" must not survive as a path that escapes the cwd.
+        assert_eq!(slug("../x"), "x");
+        assert_eq!(slug("a/b"), "a-b");
+        assert_eq!(slug("a\\b"), "a-b");
+    }
+
+    #[test]
+    fn slug_preserves_safe_chars_and_falls_back_when_empty() {
+        assert_eq!(slug("triage-flaky_1"), "triage-flaky_1");
+        // A name with no safe characters collapses to the "bundle" fallback.
+        assert_eq!(slug("型"), "bundle");
+        assert_eq!(slug("..."), "bundle");
     }
 }

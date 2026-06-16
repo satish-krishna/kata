@@ -18,7 +18,7 @@ pub struct CatalogEntry {
     pub kind: EntryKind,
     pub name: String,
     pub description: String,
-    pub source: String, // "user" | "project" | "plugin"
+    pub source: String, // original scope: "user" | "project"
     pub path: PathBuf,
     pub provides: Vec<String>,
     pub mcp_servers: Vec<String>,
@@ -68,8 +68,8 @@ pub fn discover(roots: &DiscoveryRoots) -> Vec<CatalogEntry> {
     let mut out = Vec::new();
     discover_skills(&roots.user_dir, "user", &mut out);
     discover_skills(&roots.project_dir, "project", &mut out);
-    discover_plugins(&roots.user_dir, &mut out);
-    discover_plugins(&roots.project_dir, &mut out);
+    discover_plugins(&roots.user_dir, "user", &mut out);
+    discover_plugins(&roots.project_dir, "project", &mut out);
     out
 }
 
@@ -96,7 +96,7 @@ fn discover_skills(claude_dir: &Path, source: &str, out: &mut Vec<CatalogEntry>)
     }
 }
 
-fn discover_plugins(claude_dir: &Path, out: &mut Vec<CatalogEntry>) {
+fn discover_plugins(claude_dir: &Path, source: &str, out: &mut Vec<CatalogEntry>) {
     let plugins = claude_dir.join("plugins");
     let Ok(rd) = std::fs::read_dir(&plugins) else { return };
     for entry in rd.flatten() {
@@ -115,7 +115,7 @@ fn discover_plugins(claude_dir: &Path, out: &mut Vec<CatalogEntry>) {
             kind: EntryKind::Plugin,
             name,
             description,
-            source: "plugin".to_string(),
+            source: source.to_string(),
             provides: plugin_provides(&dir),
             mcp_servers: plugin_mcp_servers(&dir),
             path: dir,
@@ -253,6 +253,26 @@ mod tests {
         assert_eq!(p.kind, EntryKind::Plugin);
         assert_eq!(p.mcp_servers, vec!["srv"]);
         assert!(p.provides.iter().any(|s| s == "skill:inner"));
+    }
+
+    #[test]
+    fn plugin_source_reflects_discovery_scope() {
+        // Plugins carry their original scope ("user"/"project"), like skills,
+        // so a bundle's manifest records meaningful provenance.
+        let user = tempfile::tempdir().unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        make_plugin(user.path(), "user-plugin", "u", false);
+        make_plugin(proj.path(), "project-plugin", "p", false);
+
+        let roots = DiscoveryRoots {
+            user_dir: user.path().to_path_buf(),
+            project_dir: proj.path().to_path_buf(),
+        };
+        let entries = discover(&roots);
+        let u = entries.iter().find(|e| e.name == "user-plugin").unwrap();
+        let p = entries.iter().find(|e| e.name == "project-plugin").unwrap();
+        assert_eq!(u.source, "user");
+        assert_eq!(p.source, "project");
     }
 
     #[test]
