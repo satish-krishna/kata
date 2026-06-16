@@ -103,6 +103,13 @@ pub fn diff(wt: &Worktree) -> Result<DiffSummary, WorktreeError> {
 
     // Statuses for tracked changes (A/M/D/R...).
     let name_status = git(dir, &["diff", "HEAD", "--name-status"])?;
+    if !name_status.status.success() {
+        return Err(WorktreeError::Git {
+            cmd: "diff HEAD --name-status".into(),
+            status: name_status.status.code(),
+            stderr: String::from_utf8_lossy(&name_status.stderr).trim().to_string(),
+        });
+    }
     let mut files = Vec::new();
     let mut insertions = 0u32;
     let mut deletions = 0u32;
@@ -121,6 +128,13 @@ pub fn diff(wt: &Worktree) -> Result<DiffSummary, WorktreeError> {
 
     // Untracked (newly-created) files: status "A", insertions = line count.
     let untracked = git(dir, &["ls-files", "--others", "--exclude-standard"])?;
+    if !untracked.status.success() {
+        return Err(WorktreeError::Git {
+            cmd: "ls-files --others --exclude-standard".into(),
+            status: untracked.status.code(),
+            stderr: String::from_utf8_lossy(&untracked.stderr).trim().to_string(),
+        });
+    }
     for path in String::from_utf8_lossy(&untracked.stdout).lines() {
         let path = path.trim();
         if path.is_empty() {
