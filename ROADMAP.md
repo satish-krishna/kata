@@ -57,7 +57,7 @@ A Tauri v2 desktop app (SvelteKit SPA + TypeScript). Layout A: compose the run-s
 
 ## Phase 3 - Portability and containment
 
-- [x] **M7 - `kata bundle`.** Vendor the resolved skills/plugins for a spec into a self-contained folder (spec + copied `SKILL.md`s/plugins) so CI needs nothing pre-installed. Day-to-day specs stay reference-by-name. *(bundle produce + hermetic consume: `kata bundle <spec>` writes a `.claude`-shaped tree + `kata-bundle.toml` marker/manifest; `kata run <dir>` detects the marker and discovers the kit only from the bundle. Reuses the assemble resolution path. Workdir portability stayed out of scope as a general concern.)*
+- [x] **M7 - `kata bundle`.** Vendor the resolved skills/plugins for a spec into a self-contained folder (spec + copied `SKILL.md`s/plugins) so CI needs nothing pre-installed. Day-to-day specs stay reference-by-name. *(bundle produce + hermetic consume: `kata bundle <spec>` writes a `.claude`-shaped tree + `kata-bundle.toml` marker/manifest; `kata run <dir>` detects the marker and discovers the kit only from the bundle. Reuses the assemble resolution path. Workdir portability stayed out of scope as a general concern.)* **Status:** merged to `main` (#5) — incl. review hardening: symlink-safe `copy_dir`, sanitized default output name, `--force` replaces the vendored kit cleanly, and scope-accurate plugin provenance.
 - [ ] **M8 - Worktree isolation.** When `leash.isolation = "worktree"`, create an ephemeral git worktree off `workdir`, run there, and surface the result as a reviewable diff. (Today the engine labels isolation but still runs in `workdir`.)
 
 ---
