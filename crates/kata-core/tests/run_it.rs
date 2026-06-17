@@ -42,6 +42,24 @@ fn run_ok_streams_events_and_completes_zero() {
 
 #[test]
 #[serial]
+fn run_surfaces_child_stderr_as_log_events() {
+    with_fake("stderr");
+    let work = tempfile::tempdir().unwrap();
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(&base_spec(&work.path().to_string_lossy()), &[] as &[CatalogEntry], &cancel, |e| events.push(e)).unwrap();
+
+    assert_eq!(outcome.exit_code, 0);
+    assert!(
+        events.iter().any(|e| matches!(e,
+            KataEvent::Log { level, message }
+                if level == "warn" && message.contains("diagnostic from claude on stderr"))),
+        "expected a warn Log event carrying the child's stderr line, got {events:?}"
+    );
+}
+
+#[test]
+#[serial]
 fn run_invalid_spec_errors_before_spawn() {
     with_fake("ok");
     let mut spec = base_spec("/w");

@@ -114,22 +114,37 @@ pub fn run<F: FnMut(KataEvent)>(
     cmd.args(&inv.args)
         .current_dir(&cwd)
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
     // The child inherits the parent process environment by default.
     for (k, v) in &inv.env {
         cmd.env(k, v);
     }
     let mut child = cmd.spawn().map_err(|e| RunError::Spawn(e.to_string()))?;
     let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
 
-    // Reader thread -> channel of lines.
-    let (tx, rx) = mpsc::channel::<String>();
+    // Reader threads -> one channel of tagged lines. claude reports results on
+    // stdout (stream-json) but human-readable errors and prompts (e.g. "Not logged
+    // in") go to stderr; we drain stderr on its own thread so a chatty child can't
+    // deadlock on a full pipe, and surface each line as a warn-level log event.
+    let (tx, rx) = mpsc::channel::<ChildLine>();
+    let tx_err = tx.clone();
     let reader_handle = thread::spawn(move || {
         use std::io::BufRead;
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
             match line {
-                Ok(l) => { if tx.send(l).is_err() { break; } }
+                Ok(l) => { if tx.send(ChildLine::Out(l)).is_err() { break; } }
+                Err(_) => break,
+            }
+        }
+    });
+    let stderr_handle = thread::spawn(move || {
+        use std::io::BufRead;
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            match line {
+                Ok(l) => { if tx_err.send(ChildLine::Err(l)).is_err() { break; } }
                 Err(_) => break,
             }
         }
@@ -153,7 +168,7 @@ pub fn run<F: FnMut(KataEvent)>(
             }
         }
         match rx.recv_timeout(POLL) {
-            Ok(line) => {
+            Ok(ChildLine::Out(line)) => {
                 if line.trim().is_empty() { continue; }
                 let parsed = crate::event::parse_stream_line(&line);
                 if parsed.is_assistant_message {
@@ -170,8 +185,12 @@ pub fn run<F: FnMut(KataEvent)>(
                 for e in parsed.events { emit(e); }
                 if let Some(r) = parsed.result { result = Some(r); }
             }
+            Ok(ChildLine::Err(line)) => {
+                if line.trim().is_empty() { continue; }
+                emit(KataEvent::Log { level: "warn".into(), message: line });
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break, // child closed stdout
+            Err(mpsc::RecvTimeoutError::Disconnected) => break, // child closed both streams
         }
     }
 
@@ -227,7 +246,14 @@ pub fn run<F: FnMut(KataEvent)>(
     emit(terminal);
 
     let _ = reader_handle.join();
+    let _ = stderr_handle.join();
     Ok(RunOutcome { exit_code })
+}
+
+/// A line drained from the child, tagged by which stream it came from.
+enum ChildLine {
+    Out(String),
+    Err(String),
 }
 
 enum Termination {

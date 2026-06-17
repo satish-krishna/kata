@@ -1,7 +1,7 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr"
 use std::io::Write;
 use std::{thread, time::Duration};
 
@@ -30,6 +30,16 @@ fn main() {
                 let _ = out.flush();
                 thread::sleep(Duration::from_millis(200));
             }
+        }
+        "stderr" => {
+            // Write a human-readable diagnostic to stderr (as the real claude does
+            // for things like "Not logged in"), then complete normally on stdout.
+            let mut err = std::io::stderr();
+            let _ = writeln!(err, "diagnostic from claude on stderr");
+            let _ = err.flush();
+            let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"hi"}}]}}}}"#);
+            let _ = writeln!(out, r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#);
+            let _ = out.flush();
         }
         "writefile" => {
             // Write a file into cwd so a worktree-isolated run produces a real diff.
