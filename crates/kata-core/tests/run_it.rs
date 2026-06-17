@@ -158,6 +158,27 @@ fn worktree_isolation_runs_in_worktree_and_emits_diff() {
 
 #[test]
 #[serial]
+fn run_refuses_bare_run_with_unresolved_token_env() {
+    with_fake("ok");
+    std::env::remove_var("KATA_MISSING_TOKEN"); // ensure the referenced var is unset
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.auth.bare = true;
+    spec.auth.token_env = Some("KATA_MISSING_TOKEN".into());
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let err = run(&spec, &[] as &[CatalogEntry], &cancel, |e| events.push(e)).unwrap_err();
+
+    assert!(matches!(err, RunError::Auth(_)));
+    assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { .. })));
+    assert!(
+        !events.iter().any(|e| matches!(e, KataEvent::RunStarted { .. })),
+        "must refuse before run.started"
+    );
+}
+
+#[test]
+#[serial]
 fn worktree_isolation_refuses_non_repo() {
     with_fake("writefile");
     let work = tempfile::tempdir().unwrap(); // NOT a git repo

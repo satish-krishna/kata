@@ -26,6 +26,8 @@ pub enum RunError {
     Spawn(String),
     #[error("worktree isolation: {0}")]
     Worktree(String),
+    #[error("auth: {0}")]
+    Auth(String),
 }
 
 /// Cooperative cancellation shared with the run loop.
@@ -51,6 +53,21 @@ pub fn run<F: FnMut(KataEvent)>(
     validate(spec).map_err(RunError::Invalid)?;
     let assembled = assemble(spec, catalog)?;
     let inv = build_invocation(spec, &assembled);
+
+    // Fail fast: a bare run that references a token var it cannot resolve would
+    // reach the API unauthenticated. Refuse before creating a worktree or spawning.
+    if spec.auth.bare {
+        if let Some(name) = spec.auth.token_env.as_ref().filter(|n| !n.trim().is_empty()) {
+            let resolved = std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+            if resolved.is_none() {
+                let message = format!(
+                    "auth.token_env names '{name}', but it is unset or empty in the environment"
+                );
+                emit(KataEvent::RunError { message: message.clone() });
+                return Err(RunError::Auth(message));
+            }
+        }
+    }
 
     let isolation = match spec.leash.isolation {
         Isolation::None => "none",
