@@ -111,8 +111,13 @@ pub fn run<F: FnMut(KataEvent)>(
 
     let start = Instant::now();
     let mut cmd = Command::new(&inv.program);
+    // claude runs headless (`-p`): it never reads stdin, so give it a closed one.
+    // Inheriting the parent's stdin lets an unauthenticated claude block forever on
+    // an interactive login prompt instead of fast-failing. (Cancellation uses the
+    // *engine's* stdin, handled in kata-cli — not the child's.)
     cmd.args(&inv.args)
         .current_dir(&cwd)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     // The child inherits the parent process environment by default.

@@ -1,7 +1,7 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin"
 use std::io::Write;
 use std::{thread, time::Duration};
 
@@ -30,6 +30,18 @@ fn main() {
                 let _ = out.flush();
                 thread::sleep(Duration::from_millis(200));
             }
+        }
+        "blockstdin" => {
+            // Block until stdin reaches EOF, then complete. With an inherited,
+            // open-but-idle stdin this never returns on its own; with Stdio::null()
+            // the read EOFs immediately. Proves Kata hands claude a
+            // non-interactive stdin so it can't hang waiting for input.
+            use std::io::Read;
+            let mut buf = String::new();
+            let _ = std::io::stdin().read_to_string(&mut buf);
+            let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"hi"}}]}}}}"#);
+            let _ = writeln!(out, r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#);
+            let _ = out.flush();
         }
         "stderr" => {
             // Write a human-readable diagnostic to stderr (as the real claude does

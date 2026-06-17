@@ -60,6 +60,27 @@ fn run_surfaces_child_stderr_as_log_events() {
 
 #[test]
 #[serial]
+fn run_gives_child_noninteractive_stdin_so_it_cannot_block() {
+    // A child that reads stdin must not hang waiting for input it will never get.
+    // Kata gives claude a closed (null) stdin, so the read EOFs immediately and the
+    // run completes; without that, a blocked child would trip the leash timeout.
+    with_fake("blockstdin");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.leash.timeout_secs = Some(2); // guard: a stdin-blocked child times out (124)
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, |e| events.push(e)).unwrap();
+
+    assert_eq!(
+        outcome.exit_code, 0,
+        "child blocked on stdin (timed out) instead of completing; events={events:?}"
+    );
+    assert!(matches!(events.last().unwrap(), KataEvent::RunCompleted { exit_code: 0, .. }));
+}
+
+#[test]
+#[serial]
 fn run_invalid_spec_errors_before_spawn() {
     with_fake("ok");
     let mut spec = base_spec("/w");
