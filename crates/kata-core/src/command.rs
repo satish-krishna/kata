@@ -13,11 +13,12 @@ pub struct ClaudeInvocation {
 pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocation {
     let program = std::env::var("KATA_CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string());
 
-    let mut args: Vec<String> = vec![
-        "--bare".into(),
-        "-p".into(),
-        compose_prompt(spec),
-    ];
+    let mut args: Vec<String> = Vec::new();
+    if spec.auth.bare {
+        args.push("--bare".into());
+    }
+    args.push("-p".into());
+    args.push(compose_prompt(spec));
 
     if let Some(sp) = spec.identity.system_prompt.as_ref().filter(|s| !s.trim().is_empty()) {
         match spec.identity.mode {
@@ -56,6 +57,19 @@ pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocati
         for name in &cfg.env {
             if let Ok(val) = std::env::var(name) {
                 env.push((name.clone(), val));
+            }
+        }
+    }
+
+    // The empty room has no ambient credentials, so a bare run forwards the API
+    // key named by auth.token_env (resolved from the host env) as the standard
+    // ANTHROPIC_API_KEY. When not bare, claude uses the user's logged-in session.
+    if spec.auth.bare {
+        if let Some(name) = spec.auth.token_env.as_ref().filter(|n| !n.trim().is_empty()) {
+            if let Ok(val) = std::env::var(name) {
+                if !val.trim().is_empty() {
+                    env.push(("ANTHROPIC_API_KEY".into(), val));
+                }
             }
         }
     }
@@ -137,6 +151,36 @@ mod tests {
         let inv = build_invocation(&s, &assembled_with(Some("/tmp/kit"), None));
         assert!(inv.args.windows(2).any(|w| w[0] == "--plugin-dir" && w[1] == "/tmp/kit"));
         assert!(inv.args.windows(2).any(|w| w[0] == "--model" && w[1] == "claude-sonnet-4-6"));
+    }
+
+    #[test]
+    fn bare_flag_omitted_when_disabled() {
+        let mut s = spec();
+        s.auth.bare = false;
+        let inv = build_invocation(&s, &assembled_with(None, None));
+        assert!(!inv.args.contains(&"--bare".to_string()));
+    }
+
+    #[test]
+    fn forwards_token_env_as_api_key_when_bare() {
+        std::env::set_var("KATA_TEST_APIKEY", "sk-test-123");
+        let mut s = spec();
+        s.auth.bare = true;
+        s.auth.token_env = Some("KATA_TEST_APIKEY".into());
+        let inv = build_invocation(&s, &assembled_with(None, None));
+        assert!(inv.env.iter().any(|(k, v)| k == "ANTHROPIC_API_KEY" && v == "sk-test-123"));
+        std::env::remove_var("KATA_TEST_APIKEY");
+    }
+
+    #[test]
+    fn ignores_token_env_when_not_bare() {
+        std::env::set_var("KATA_TEST_APIKEY2", "sk-test-456");
+        let mut s = spec();
+        s.auth.bare = false;
+        s.auth.token_env = Some("KATA_TEST_APIKEY2".into());
+        let inv = build_invocation(&s, &assembled_with(None, None));
+        assert!(!inv.env.iter().any(|(k, _)| k == "ANTHROPIC_API_KEY"));
+        std::env::remove_var("KATA_TEST_APIKEY2");
     }
 
     #[test]

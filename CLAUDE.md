@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What Kata is
 
-Kata is a launcher for single, headless coding-agent runs. You compose a *run-spec* (one precise, reproducible form for a job) and Kata runs it by driving `claude -p` to completion and observing it. Kata never owns the agent loop — it rents it via `claude -p` and controls the edges: the empty room (`--bare`), retasking (an appended/replacing system prompt), a curated kit (a disposable `--plugin-dir`), and the leash (turn cap, wall-clock timeout, optional worktree isolation, exit code).
+Kata is a launcher for single, headless coding-agent runs. You compose a *run-spec* (one precise, reproducible form for a job) and Kata runs it by driving `claude -p` to completion and observing it. Kata never owns the agent loop — it rents it via `claude -p` and controls the edges: the empty room (`--bare`, default-on but switchable per run), retasking (an appended/replacing system prompt), a curated kit (a disposable `--plugin-dir`), and the leash (turn cap, wall-clock timeout, optional worktree isolation, exit code).
 
 The `kata` binary is the single execution path the GUI, the Shokunin orchestrator, and CI all share. `README.md` and `ROADMAP.md` carry the product vision and milestone status; design specs and plans live in `docs/superpowers/`.
 
