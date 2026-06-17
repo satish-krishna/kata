@@ -24,6 +24,8 @@ pub enum RunError {
     Assemble(#[from] AssembleError),
     #[error("spawning claude: {0}")]
     Spawn(String),
+    #[error("worktree isolation: {0}")]
+    Worktree(String),
 }
 
 /// Cooperative cancellation shared with the run loop.
@@ -52,13 +54,38 @@ pub fn run<F: FnMut(KataEvent)>(
 
     let isolation = match spec.leash.isolation {
         Isolation::None => "none",
-        Isolation::Worktree => "worktree", // worktree creation lands in a later milestone; cwd is workdir for now
+        Isolation::Worktree => "worktree",
+    };
+
+    // Worktree isolation: branch off HEAD into ~/.kata/worktrees and run there.
+    // Refuse (before spawning claude) if workdir is not a git repo.
+    let mut cwd = inv.cwd.clone();
+    let mut worktree: Option<crate::worktree::Worktree> = None;
+    if spec.leash.isolation == Isolation::Worktree {
+        match crate::worktree::create(&spec.workdir, &spec.name) {
+            Ok(wt) => {
+                cwd = wt.path.clone();
+                worktree = Some(wt);
+            }
+            Err(e) => {
+                let message = format!("worktree isolation failed for {}: {e}", spec.workdir);
+                emit(KataEvent::RunError { message: message.clone() });
+                return Err(RunError::Worktree(message));
+            }
+        }
+    }
+
+    let (wt_path, wt_branch) = match &worktree {
+        Some(wt) => (Some(wt.path.clone()), Some(wt.branch.clone())),
+        None => (None, None),
     };
     emit(KataEvent::RunStarted {
         spec: spec.name.clone(),
         model: spec.model.id.clone(),
         workdir: spec.workdir.clone(),
         isolation: isolation.to_string(),
+        worktree: wt_path,
+        branch: wt_branch,
     });
     emit(KataEvent::Log {
         level: "info".into(),
@@ -68,7 +95,7 @@ pub fn run<F: FnMut(KataEvent)>(
     let start = Instant::now();
     let mut cmd = Command::new(&inv.program);
     cmd.args(&inv.args)
-        .current_dir(&inv.cwd)
+        .current_dir(&cwd)
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     // The child inherits the parent process environment by default.
@@ -131,24 +158,19 @@ pub fn run<F: FnMut(KataEvent)>(
         }
     }
 
-    // Resolve the child + exit code.
-    let exit_code = match termination {
+    // Stop the child for any leashed termination, and decide the terminal event.
+    let (exit_code, terminal) = match termination {
         Some(term) => {
             let _ = child.kill();
             let _ = child.wait();
             match term {
-                Termination::Cancelled => {
-                    emit(KataEvent::RunCancelled);
-                    130
-                }
-                Termination::TimedOut => {
-                    emit(KataEvent::RunError { message: format!("timed out after {}s", spec.leash.timeout_secs.unwrap_or(0)) });
-                    124
-                }
-                Termination::MaxTurns => {
-                    emit(KataEvent::RunError { message: format!("reached max turns ({})", spec.leash.max_turns) });
-                    125
-                }
+                Termination::Cancelled => (130, KataEvent::RunCancelled),
+                Termination::TimedOut => (124, KataEvent::RunError {
+                    message: format!("timed out after {}s", spec.leash.timeout_secs.unwrap_or(0)),
+                }),
+                Termination::MaxTurns => (125, KataEvent::RunError {
+                    message: format!("reached max turns ({})", spec.leash.max_turns),
+                }),
             }
         }
         None => {
@@ -157,20 +179,37 @@ pub fn run<F: FnMut(KataEvent)>(
             let payload = result.unwrap_or(crate::event::ResultPayload {
                 num_turns: turns, cost_usd: None, is_error: code != 0, result: None,
             });
-            emit(KataEvent::RunCompleted {
+            (code, KataEvent::RunCompleted {
                 exit_code: code,
                 is_error: payload.is_error,
                 num_turns: payload.num_turns,
                 cost_usd: payload.cost_usd,
                 duration_ms: start.elapsed().as_millis() as u64,
                 result: payload.result,
-            });
-            code
+            })
         }
     };
 
+    // The child has exited; surface the worktree diff before the terminal event.
+    // A diff failure degrades to a warning — it never masks the run outcome.
+    if let Some(wt) = &worktree {
+        match crate::worktree::diff(wt) {
+            Ok(d) => emit(KataEvent::RunDiff {
+                worktree: wt.path.clone(),
+                branch: wt.branch.clone(),
+                files: d.files,
+                insertions: d.insertions,
+                deletions: d.deletions,
+            }),
+            Err(e) => emit(KataEvent::Log {
+                level: "warn".into(),
+                message: format!("worktree diff failed: {e}"),
+            }),
+        }
+    }
+    emit(terminal);
+
     let _ = reader_handle.join();
-    // `assembled` drops here -> temp dir cleaned up.
     Ok(RunOutcome { exit_code })
 }
 

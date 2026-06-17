@@ -5,7 +5,16 @@ use std::io::BufRead;
 #[serde(tag = "type")]
 pub enum KataEvent {
     #[serde(rename = "run.started")]
-    RunStarted { spec: String, model: Option<String>, workdir: String, isolation: String },
+    RunStarted {
+        spec: String,
+        model: Option<String>,
+        workdir: String,
+        isolation: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        worktree: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
+    },
     #[serde(rename = "log")]
     Log { level: String, message: String },
     #[serde(rename = "assistant.text")]
@@ -25,10 +34,28 @@ pub enum KataEvent {
         duration_ms: u64,
         result: Option<String>,
     },
+    #[serde(rename = "run.diff")]
+    RunDiff {
+        worktree: String,
+        branch: String,
+        files: Vec<DiffFile>,
+        insertions: u32,
+        deletions: u32,
+    },
     #[serde(rename = "run.error")]
     RunError { message: String },
     #[serde(rename = "run.cancelled")]
     RunCancelled,
+}
+
+/// One changed file in a worktree-isolation diff summary. Part of the
+/// `run.diff` event payload; also produced by `crate::worktree::diff`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DiffFile {
+    /// Git short status for the change: "A" | "M" | "D" | "R" | ...
+    pub status: String,
+    /// Path relative to the worktree root.
+    pub path: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -250,5 +277,34 @@ mod tests {
         assert!(t.len() <= 203); // truncated bytes + the "..." suffix
         // The prefix before "..." must be valid UTF-8 (no panic, no broken char).
         assert!(t.trim_end_matches("...").chars().all(|c| c == 'あ'));
+    }
+
+    #[test]
+    fn run_diff_serializes_with_tag_and_files() {
+        let e = KataEvent::RunDiff {
+            worktree: "/home/u/.kata/worktrees/spec-abc".into(),
+            branch: "kata/spec-abc".into(),
+            files: vec![DiffFile { status: "M".into(), path: "src/run.rs".into() }],
+            insertions: 3,
+            deletions: 1,
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains(r#""type":"run.diff""#));
+        assert!(s.contains(r#""branch":"kata/spec-abc""#));
+        assert!(s.contains(r#""status":"M""#));
+        assert!(s.contains(r#""path":"src/run.rs""#));
+        assert!(s.contains(r#""insertions":3"#));
+        assert!(s.contains(r#""deletions":1"#));
+    }
+
+    #[test]
+    fn run_started_omits_worktree_fields_when_none() {
+        let e = KataEvent::RunStarted {
+            spec: "s".into(), model: None, workdir: "/w".into(),
+            isolation: "none".into(), worktree: None, branch: None,
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(!s.contains("worktree"), "absent worktree must not serialize: {s}");
+        assert!(!s.contains("branch"), "absent branch must not serialize: {s}");
     }
 }

@@ -1,7 +1,7 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile"
 use std::io::Write;
 use std::{thread, time::Duration};
 
@@ -30,6 +30,13 @@ fn main() {
                 let _ = out.flush();
                 thread::sleep(Duration::from_millis(200));
             }
+        }
+        "writefile" => {
+            // Write a file into cwd so a worktree-isolated run produces a real diff.
+            let _ = std::fs::write("agent-made.txt", "line1\nline2\n");
+            let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"wrote a file"}}]}}}}"#);
+            let _ = writeln!(out, r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#);
+            let _ = out.flush();
         }
         _ => {
             let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"hi"}}]}}}}"#);

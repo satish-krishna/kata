@@ -99,3 +99,80 @@ fn run_max_turns_kills_child() {
     assert!(!events.iter().any(|e| matches!(e, KataEvent::Turn { n } if *n >= 3)));
     assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { .. })));
 }
+
+fn init_git_repo() -> tempfile::TempDir {
+    let d = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let ok = std::process::Command::new("git").arg("-C").arg(d.path()).args(args).status().unwrap().success();
+        assert!(ok, "git {args:?} failed");
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "t@example.com"]);
+    git(&["config", "user.name", "t"]);
+    std::fs::write(d.path().join("seed.txt"), "seed\n").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "init"]);
+    d
+}
+
+#[test]
+#[serial]
+fn worktree_isolation_runs_in_worktree_and_emits_diff() {
+    with_fake("writefile");
+    let repo = init_git_repo();
+    let khome = tempfile::tempdir().unwrap();
+    std::env::set_var("KATA_HOME", khome.path());
+
+    let mut spec = base_spec(&repo.path().to_string_lossy());
+    spec.leash.isolation = kata_core::spec::Isolation::Worktree;
+    let cancel = CancelToken::new();
+    let mut events = Vec::new();
+    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, |e| events.push(e)).unwrap();
+    assert_eq!(outcome.exit_code, 0);
+
+    // run.started carried the worktree path + branch.
+    let wt_path = match events.first().unwrap() {
+        KataEvent::RunStarted { worktree: Some(p), branch: Some(b), isolation, .. } => {
+            assert_eq!(isolation, "worktree");
+            assert!(b.starts_with("kata/"), "branch was {b}");
+            p.clone()
+        }
+        other => panic!("expected RunStarted with worktree, got {other:?}"),
+    };
+
+    // The agent's file landed in the worktree, NOT the live workdir.
+    assert!(std::path::Path::new(&wt_path).join("agent-made.txt").exists());
+    assert!(!repo.path().join("agent-made.txt").exists());
+
+    // A run.diff naming the new file was emitted before run.completed.
+    let diff_idx = events.iter().position(|e| matches!(e,
+        KataEvent::RunDiff { files, .. } if files.iter().any(|f| f.path == "agent-made.txt"))).expect("a run.diff naming the file");
+    let done_idx = events.iter().position(|e| matches!(e, KataEvent::RunCompleted { .. })).unwrap();
+    assert!(diff_idx < done_idx, "run.diff must precede run.completed");
+
+    std::env::remove_var("KATA_HOME");
+    // Best-effort: remove the worktree we created so the test leaves nothing behind.
+    let _ = std::process::Command::new("git").arg("-C").arg(repo.path())
+        .args(["worktree", "remove", "--force", &wt_path]).status();
+}
+
+#[test]
+#[serial]
+fn worktree_isolation_refuses_non_repo() {
+    with_fake("writefile");
+    let work = tempfile::tempdir().unwrap(); // NOT a git repo
+    let khome = tempfile::tempdir().unwrap();
+    std::env::set_var("KATA_HOME", khome.path());
+
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.leash.isolation = kata_core::spec::Isolation::Worktree;
+    let cancel = CancelToken::new();
+    let mut events = Vec::new();
+    let err = run(&spec, &[] as &[CatalogEntry], &cancel, |e| events.push(e)).unwrap_err();
+
+    assert!(matches!(err, RunError::Worktree(_)));
+    assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { .. })));
+    assert!(!work.path().join("agent-made.txt").exists(), "must not run in the live workdir");
+
+    std::env::remove_var("KATA_HOME");
+}
