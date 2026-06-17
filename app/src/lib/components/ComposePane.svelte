@@ -94,6 +94,26 @@
 
   <section class="wb-section">
     <div class="wb-section__head">
+      <span class="wb-section__title">Environment</span>
+      <span class="wb-section__sub">the room claude runs in</span>
+    </div>
+    <Field label="Room" key="auth.bare" hint="bare = the empty room (curated kit only). full = your real claude config, plugins, and login.">
+      <Segmented
+        options={["bare", "full"] as const}
+        value={spec.auth.bare ? "bare" : "full"}
+        onChange={(v) => (spec.auth.bare = v === "bare")}
+        ariaLabel="Environment"
+      />
+    </Field>
+    {#if spec.auth.bare}
+      <Field label="Token env var" key="auth.token_env" hint="Name of an env var holding your API key — not the key itself.">
+        <input class="k-input k-input--mono" placeholder="ANTHROPIC_API_KEY" bind:value={spec.auth.token_env} />
+      </Field>
+    {/if}
+  </section>
+
+  <section class="wb-section">
+    <div class="wb-section__head">
       <span class="wb-section__num">04 · THE LEASH</span>
       <span class="wb-section__title">Leash</span>
       <span class="wb-section__sub">cap · contain · observe</span>

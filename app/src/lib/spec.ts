@@ -13,6 +13,7 @@ export function defaultSpec(): RunSpec {
     plugins: {},
     model: { id: "" },
     leash: { max_turns: 12, timeout_secs: null, isolation: "none" },
+    auth: { bare: true, token_env: null },
   };
 }
 
@@ -34,6 +35,7 @@ export function draftFrom(loaded: RunSpec): RunSpec {
     leash: { ...d.leash, ...loaded.leash },
     skills: loaded.skills ?? [],
     plugins: loaded.plugins ?? {},
+    auth: { bare: loaded.auth?.bare ?? true, token_env: loaded.auth?.token_env ?? null },
   };
 }
 
@@ -47,6 +49,7 @@ export function normalize(spec: RunSpec): RunSpec {
   c.context = blankToNull(c.context);
   c.identity.system_prompt = blankToNull(c.identity.system_prompt);
   c.model.id = blankToNull(c.model.id);
+  c.auth.token_env = blankToNull(c.auth.token_env);
   return c;
 }
 
