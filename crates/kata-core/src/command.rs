@@ -89,6 +89,7 @@ mod tests {
     use super::*;
     use crate::assemble::Assembled;
     use crate::spec::*;
+    use serial_test::serial;
 
     fn spec() -> RunSpec {
         let mut s = RunSpec { schema: 1, name: "n".into(), task: "do it".into(), workdir: "/repo".into(), ..Default::default() };
@@ -162,6 +163,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn forwards_token_env_as_api_key_when_bare() {
         std::env::set_var("KATA_TEST_APIKEY", "sk-test-123");
         let mut s = spec();
@@ -173,6 +175,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn ignores_token_env_when_not_bare() {
         std::env::set_var("KATA_TEST_APIKEY2", "sk-test-456");
         let mut s = spec();
@@ -184,6 +187,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn forwards_named_env_vars_when_set() {
         std::env::set_var("KATA_TEST_TOKEN", "secret");
         let mut s = spec();
