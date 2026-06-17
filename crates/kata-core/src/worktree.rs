@@ -154,8 +154,8 @@ pub fn diff(wt: &Worktree) -> Result<DiffSummary, WorktreeError> {
 /// USERPROFILE>/.kata`. Returns NoHome rather than falling back to "." — we
 /// must never scatter worktrees into the cwd.
 fn worktrees_dir() -> Result<PathBuf, WorktreeError> {
-    if let Ok(h) = std::env::var("KATA_HOME") {
-        if !h.trim().is_empty() {
+    if let Some(h) = std::env::var_os("KATA_HOME") {
+        if !h.is_empty() {
             return Ok(PathBuf::from(h).join("worktrees"));
         }
     }

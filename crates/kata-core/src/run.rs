@@ -68,7 +68,7 @@ pub fn run<F: FnMut(KataEvent)>(
                 worktree = Some(wt);
             }
             Err(e) => {
-                let message = format!("worktree isolation requires a git repository at {} ({e})", spec.workdir);
+                let message = format!("worktree isolation failed for {}: {e}", spec.workdir);
                 emit(KataEvent::RunError { message: message.clone() });
                 return Err(RunError::Worktree(message));
             }
