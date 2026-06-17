@@ -27,6 +27,8 @@ pub struct RunSpec {
     pub model: Model,
     #[serde(default)]
     pub leash: Leash,
+    #[serde(default)]
+    pub auth: Auth,
 }
 
 impl Default for RunSpec {
@@ -43,6 +45,7 @@ impl Default for RunSpec {
             plugins: BTreeMap::new(),
             model: Model::default(),
             leash: Leash::default(),
+            auth: Auth::default(),
         }
     }
 }
@@ -110,6 +113,25 @@ impl Default for Leash {
 }
 
 fn default_max_turns() -> u32 { 12 }
+
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Auth {
+    #[serde(default = "default_bare")]
+    pub bare: bool,
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_env: Option<String>,
+}
+
+impl Default for Auth {
+    fn default() -> Self {
+        Self { bare: default_bare(), token_env: None }
+    }
+}
+
+fn default_bare() -> bool { true }
 
 fn default_schema_version() -> u32 { 1 }
 
@@ -312,7 +334,39 @@ isolation = "worktree"
             plugins,
             model: Model { id: Some("claude-sonnet-4-6".into()) },
             leash: Leash { max_turns: 8, timeout_secs: Some(600), isolation: Isolation::Worktree },
+            auth: Auth { bare: false, token_env: Some("ANTHROPIC_API_KEY".into()) },
         }
+    }
+
+    #[test]
+    fn auth_defaults_to_bare_with_no_token() {
+        let auth = Auth::default();
+        assert!(auth.bare, "bare must default to true (the empty room)");
+        assert_eq!(auth.token_env, None);
+    }
+
+    #[test]
+    fn auth_absent_in_toml_defaults_to_bare() {
+        let spec: RunSpec = toml::from_str(minimal_toml()).unwrap();
+        assert!(spec.auth.bare);
+        assert_eq!(spec.auth.token_env, None);
+    }
+
+    #[test]
+    fn auth_parses_explicit_table() {
+        let toml = r#"
+schema = 1
+name = "a"
+task = "t"
+workdir = "/w"
+
+[auth]
+bare = false
+token_env = "MY_KEY"
+"#;
+        let spec: RunSpec = toml::from_str(toml).unwrap();
+        assert!(!spec.auth.bare);
+        assert_eq!(spec.auth.token_env.as_deref(), Some("MY_KEY"));
     }
 
     #[test]
