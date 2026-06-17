@@ -35,6 +35,7 @@ The self-contained core. Headless and CI-usable today; Shokunin can integrate ag
 - [ ] Correlate `tool.result` back to its `tool.use` via `tool_use_id` so `ToolResult.name` is populated (currently empty; see TODO in `event.rs`).
 - [ ] Harden `catalog::dirs_home` (it silently falls back to `.` when `HOME`/`USERPROFILE` are both unset).
 - [ ] Dedup catalog entries when the same skill/plugin name exists in both user and project scopes.
+- [ ] Fix `worktree::diff` rename line-counts (best-effort `0/0` today; the `--numstat` `old => new` path form doesn't correlate with `--name-status`). See [#7](https://github.com/satish-krishna/kata/issues/7).
 
 ---
 
@@ -58,7 +59,7 @@ A Tauri v2 desktop app (SvelteKit SPA + TypeScript). Layout A: compose the run-s
 ## Phase 3 - Portability and containment
 
 - [x] **M7 - `kata bundle`.** Vendor the resolved skills/plugins for a spec into a self-contained folder (spec + copied `SKILL.md`s/plugins) so CI needs nothing pre-installed. Day-to-day specs stay reference-by-name. *(bundle produce + hermetic consume: `kata bundle <spec>` writes a `.claude`-shaped tree + `kata-bundle.toml` marker/manifest; `kata run <dir>` detects the marker and discovers the kit only from the bundle. Reuses the assemble resolution path. Workdir portability stayed out of scope as a general concern.)* **Status:** merged to `main` (#5) — incl. review hardening: symlink-safe `copy_dir`, sanitized default output name, `--force` replaces the vendored kit cleanly, and scope-accurate plugin provenance.
-- [x] **M8 - Worktree isolation.** When `leash.isolation = "worktree"`, the engine branches off `workdir`'s HEAD into a persistent worktree under `~/.kata/worktrees/<slug>-<id>` (branch `kata/<slug>-<id>`), runs the agent there, and emits a `run.diff` summary before the terminal event; `run.started` now carries the worktree path + branch. A non-git `workdir` is refused (exit 2) rather than silently downgraded. Worktrees persist for review; cleanup is the operator's via native `git worktree remove`/`prune`. Engine + protocol scope — the Workbench diff panel is a fast-follow. **Status:** on `feat/m8-worktree-isolation`.
+- [x] **M8 - Worktree isolation.** When `leash.isolation = "worktree"`, the engine branches off `workdir`'s HEAD into a persistent worktree under `~/.kata/worktrees/<slug>-<id>` (branch `kata/<slug>-<id>`), runs the agent there, and emits a `run.diff` summary before the terminal event; `run.started` now carries the worktree path + branch. A non-git `workdir` is refused (exit 2) rather than silently downgraded. Worktrees persist for review; cleanup is the operator's via native `git worktree remove`/`prune`. Engine + protocol scope — the Workbench diff panel is a fast-follow. **Status:** PR [#6](https://github.com/satish-krishna/kata/pull/6) open; rename line-counts tracked as [#7](https://github.com/satish-krishna/kata/issues/7).
 
 ---
 
