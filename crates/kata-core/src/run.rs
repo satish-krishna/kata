@@ -156,7 +156,16 @@ pub fn run<F: FnMut(KataEvent)>(
     });
 
     // Main loop: pull lines, enforce leash + cancel.
-    let deadline = spec.leash.timeout_secs.map(|s| start + Duration::from_secs(s));
+    // The wall-clock cap is never optional: an unset timeout falls back to a
+    // default so a hung run is always reaped instead of running forever.
+    let timeout_secs = spec.leash.effective_timeout_secs();
+    if spec.leash.timeout_secs.is_none() {
+        emit(KataEvent::Log {
+            level: "info".into(),
+            message: format!("no timeout set; applying default wall-clock cap of {timeout_secs}s"),
+        });
+    }
+    let deadline = start + Duration::from_secs(timeout_secs);
     let mut turns: u32 = 0;
     let mut result = None;
     let mut termination: Option<Termination> = None;
@@ -166,11 +175,9 @@ pub fn run<F: FnMut(KataEvent)>(
             termination = Some(Termination::Cancelled);
             break;
         }
-        if let Some(d) = deadline {
-            if Instant::now() >= d {
-                termination = Some(Termination::TimedOut);
-                break;
-            }
+        if Instant::now() >= deadline {
+            termination = Some(Termination::TimedOut);
+            break;
         }
         match rx.recv_timeout(POLL) {
             Ok(ChildLine::Out(line)) => {
@@ -207,7 +214,7 @@ pub fn run<F: FnMut(KataEvent)>(
             match term {
                 Termination::Cancelled => (130, KataEvent::RunCancelled),
                 Termination::TimedOut => (124, KataEvent::RunError {
-                    message: format!("timed out after {}s", spec.leash.timeout_secs.unwrap_or(0)),
+                    message: format!("timed out after {timeout_secs}s"),
                 }),
                 Termination::MaxTurns => (125, KataEvent::RunError {
                     message: format!("reached max turns ({})", spec.leash.max_turns),

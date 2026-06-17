@@ -112,6 +112,18 @@ impl Default for Leash {
     }
 }
 
+/// Wall-clock cap applied when a spec leaves `timeout_secs` unset, so a hung run
+/// is always reaped instead of running forever.
+pub const DEFAULT_TIMEOUT_SECS: u64 = 1800;
+
+impl Leash {
+    /// The wall-clock timeout the engine will enforce: the spec's explicit value,
+    /// or [`DEFAULT_TIMEOUT_SECS`] when unset. Never unbounded.
+    pub fn effective_timeout_secs(&self) -> u64 {
+        self.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS)
+    }
+}
+
 fn default_max_turns() -> u32 { 12 }
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -296,6 +308,23 @@ isolation = "worktree"
         let errs = validate(&spec).unwrap_err();
         assert!(errs.iter().any(|e| e.contains("schema")));
         assert!(errs.iter().any(|e| e.contains("max_turns")));
+    }
+
+    #[test]
+    fn effective_timeout_defaults_when_unset() {
+        let leash = Leash::default();
+        assert_eq!(leash.timeout_secs, None, "default leash leaves timeout unset");
+        assert_eq!(
+            leash.effective_timeout_secs(),
+            DEFAULT_TIMEOUT_SECS,
+            "an unset timeout must fall back to the default cap, never infinity"
+        );
+    }
+
+    #[test]
+    fn effective_timeout_honors_explicit_value() {
+        let leash = Leash { timeout_secs: Some(42), ..Default::default() };
+        assert_eq!(leash.effective_timeout_secs(), 42);
     }
 
     #[test]

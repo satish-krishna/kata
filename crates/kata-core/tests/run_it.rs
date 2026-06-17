@@ -81,6 +81,27 @@ fn run_gives_child_noninteractive_stdin_so_it_cannot_block() {
 
 #[test]
 #[serial]
+fn run_logs_default_timeout_cap_when_unset() {
+    // A spec with no timeout_secs must not run unbounded: the engine applies a
+    // default wall-clock cap and says so, so "forever" is never silent.
+    with_fake("ok");
+    let work = tempfile::tempdir().unwrap();
+    let spec = base_spec(&work.path().to_string_lossy()); // timeout_secs defaults to None
+    assert_eq!(spec.leash.timeout_secs, None);
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    run(&spec, &[] as &[CatalogEntry], &cancel, |e| events.push(e)).unwrap();
+
+    assert!(
+        events.iter().any(|e| matches!(e,
+            KataEvent::Log { level, message }
+                if level == "info" && message.contains("default") && message.contains("cap"))),
+        "expected an info Log announcing the default timeout cap, got {events:?}"
+    );
+}
+
+#[test]
+#[serial]
 fn run_invalid_spec_errors_before_spawn() {
     with_fake("ok");
     let mut spec = base_spec("/w");
