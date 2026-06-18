@@ -155,6 +155,48 @@ The design is fully specified and the CSS exists in the design source but is **n
 3. **`--bare` + `--mcp-config`.** Does the empty room still load an explicit MCP config? Likely yes (explicit flag, not ambient config); confirmed by the spike.
 4. **Tool name in the UI banner.** MCP server tools are namespaced (`mcp__<server>__ask_user`); the banner copy ("awaiting your input" + invoked tool name) should show something legible, not the raw namespaced id.
 
+## Spike results (2026-06-18)
+
+Ran a Node.js stdio MCP server (`spike/ask-mcp/server.mjs`) exposing a single `ask_user` tool that sleeps 3 s then returns `"USER SAYS: JWT"`. Invoked via:
+
+```
+claude -p "Use the ask_user tool to ask me whether to use JWT or session cookies. Then tell me exactly what I chose." \
+  --output-format stream-json --verbose --dangerously-skip-permissions \
+  --mcp-config spike/ask-mcp/mcp-config.json
+```
+
+**Q1 — Does headless `claude -p` call the MCP tool, block on the (~3 s) result, then continue using the returned text? YES.**
+
+Evidence — the `tool_use` line captured from the stream:
+
+```json
+{"type":"assistant","message":{"model":"claude-opus-4-8","id":"msg_017ZkXRjyKnX4tYZjegtwajV","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_01Un5PbMXcuec2mKzQD5fqUP","name":"mcp__kata-ask__ask_user","input":{"questions":["For authentication, should we use JWT (JSON Web Tokens) or session cookies?"]},"caller":{"type":"direct"}}], ...}}
+```
+
+Claude's final reply confirmed it acted on the answer: `"You chose **JWT**."`. Total run duration was 18 109 ms (api time 13 636 ms); the 3 s server sleep is accounted for within that window.
+
+**Q2 — Does it auto-approve under `--dangerously-skip-permissions` (no prompt, no termination)? YES.**
+
+The `result` line shows `"is_error":false`, `"terminal_reason":"completed"`, and `"permission_denials":[]`. No prompt was issued; the tool call succeeded without any approval gate.
+
+**Q3 — Does `--bare` still load `--mcp-config` (tool is available in the empty room)? YES (partial caveat).**
+
+The `system/init` line under `--bare` clearly shows `"mcp_servers":[{"name":"kata-ask","status":"pending"}]` — the config was parsed and the server registered. The run failed with `authentication_failed` because `--bare` on this machine skips keychain/OAuth and no `ANTHROPIC_API_KEY` is set; that is an environment constraint, not a `--mcp-config` parsing failure. The tool registration itself is confirmed.
+
+**Real namespaced tool name:**
+
+`mcp__kata-ask__ask_user`
+
+The pattern is `mcp__<mcpServers-key>__<tool-name>`. Task 5's `parse_stream_line` should match on this exact name.
+
+**`--append-system-prompt` inline vs file:**
+
+Both work on this `claude` version (2.1.181):
+- `--append-system-prompt "SWORDFISH"` (inline text) — confirmed: claude echoed the word.
+- `--append-system-prompt-file /tmp/sp_probe.txt` — confirmed: claude echoed `SWORDFISH_FROM_FILE` from the file.
+
+The `--help` output lists `--append-system-prompt <prompt>` as a named option and references `--append-system-prompt[-file]` in the `--bare` description, confirming both forms exist.
+
 ## Implementation surface (for the plan)
 
 - `crates/kata-core/src/spec.rs` — `Interactive { enabled, answer_timeout_secs }` block; `validate`; ts-rs binding.
