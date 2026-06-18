@@ -112,13 +112,26 @@ fn handle_conn(stream: TcpStream, tx: &Sender<AskRequest>) -> std::io::Result<()
 /// Handle one JSON-RPC 2.0 line from claude. Returns the response JSON line,
 /// or `None` for notifications (which require no response per the MCP spec).
 pub fn handle_rpc(line: &str, port: u16) -> Option<String> {
-    let val: serde_json::Value = serde_json::from_str(line).ok()?;
-    let method = val["method"].as_str()?;
+    // 1. Parse JSON; if it fails, return Parse error response per JSON-RPC 2.0
+    let val: serde_json::Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(_) => {
+            // Unparseable input gets Parse error with id: null
+            return Some(json_rpc_error(&serde_json::Value::Null, -32700, "Parse error"));
+        }
+    };
 
-    // Notifications have no `id` and must not be responded to.
-    if method.starts_with("notifications/") {
-        return None;
-    }
+    // 2. Check if it's a notification (no id field) — notifications get no response
+    val.get("id")?;
+
+    // 3. Extract method; if missing, return Invalid Request
+    let method = match val["method"].as_str() {
+        Some(m) => m,
+        None => {
+            let id = &val["id"];
+            return Some(json_rpc_error(id, -32600, "Invalid Request"));
+        }
+    };
 
     let id = &val["id"];
 
@@ -368,5 +381,23 @@ mod tests {
         let resp = handle_rpc(call, port).unwrap();
         assert!(resp.contains("JWT"), "tool result should carry the answer: {resp}");
         assert!(resp.contains(r#""content""#));
+    }
+
+    #[test]
+    fn rpc_malformed_json_returns_parse_error() {
+        let resp = handle_rpc("this is not json", 0).expect("must respond, not hang");
+        assert!(resp.contains("-32700"), "expected Parse error, got {resp}");
+    }
+
+    #[test]
+    fn rpc_missing_method_returns_invalid_request() {
+        let resp = handle_rpc(r#"{"jsonrpc":"2.0","id":9}"#, 0).expect("must respond");
+        assert!(resp.contains("-32600"), "expected Invalid Request, got {resp}");
+    }
+
+    #[test]
+    fn rpc_notification_without_id_returns_none() {
+        // A message with no id is a notification → no response.
+        assert!(handle_rpc(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, 0).is_none());
     }
 }
