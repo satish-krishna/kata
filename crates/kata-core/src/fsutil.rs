@@ -1,5 +1,23 @@
 use std::path::{Path, PathBuf};
 
+/// Resolve Kata's home directory: `KATA_HOME` if set and non-empty (taken
+/// verbatim), else `<HOME or USERPROFILE>/.kata`. `None` when no home variable is
+/// set — callers decide whether that is fatal (worktrees) or best-effort (transcripts).
+pub fn kata_home() -> Option<PathBuf> {
+    if let Some(h) = std::env::var_os("KATA_HOME") {
+        if !h.is_empty() {
+            return Some(PathBuf::from(h));
+        }
+    }
+    let base = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(PathBuf::from(base).join(".kata"))
+}
+
+/// `<kata-home>/runs`, where per-run transcripts are written. `None` when no home.
+pub fn runs_dir() -> Option<PathBuf> {
+    kata_home().map(|h| h.join("runs"))
+}
+
 /// Format seconds-since-the-Unix-epoch (UTC) as a compact stamp `YYYYMMDDThhmmssZ`.
 /// Pure function of the input — no system clock — so it is deterministically testable.
 pub fn utc_stamp(unix_secs: u64) -> String {
@@ -53,6 +71,36 @@ pub fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
+
+    #[test]
+    #[serial]
+    fn kata_home_resolution_order() {
+        let saved: Vec<(&str, Option<String>)> = ["KATA_HOME", "HOME", "USERPROFILE"]
+            .iter().map(|k| (*k, std::env::var(k).ok())).collect();
+        let restore = || for (k, v) in &saved {
+            match v { Some(val) => std::env::set_var(k, val), None => std::env::remove_var(k) }
+        };
+
+        // 1. KATA_HOME wins, taken verbatim (not joined with .kata).
+        std::env::set_var("KATA_HOME", "/tmp/khome");
+        assert_eq!(super::kata_home(), Some(std::path::PathBuf::from("/tmp/khome")));
+        assert_eq!(super::runs_dir(), Some(std::path::PathBuf::from("/tmp/khome").join("runs")));
+
+        // 2. Falls back to <HOME>/.kata.
+        std::env::remove_var("KATA_HOME");
+        std::env::remove_var("USERPROFILE");
+        std::env::set_var("HOME", "/tmp/h");
+        assert_eq!(super::kata_home(), Some(std::path::PathBuf::from("/tmp/h").join(".kata")));
+
+        // 3. Nothing set => None.
+        std::env::remove_var("HOME");
+        std::env::remove_var("USERPROFILE");
+        std::env::remove_var("KATA_HOME");
+        assert_eq!(super::kata_home(), None);
+
+        restore();
+    }
 
     #[test]
     fn copies_nested_tree() {
