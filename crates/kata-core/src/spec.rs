@@ -29,6 +29,8 @@ pub struct RunSpec {
     pub leash: Leash,
     #[serde(default)]
     pub auth: Auth,
+    #[serde(default)]
+    pub interactive: Interactive,
 }
 
 impl Default for RunSpec {
@@ -46,6 +48,7 @@ impl Default for RunSpec {
             model: Model::default(),
             leash: Leash::default(),
             auth: Auth::default(),
+            interactive: Interactive::default(),
         }
     }
 }
@@ -144,6 +147,21 @@ impl Default for Auth {
 }
 
 fn default_bare() -> bool { true }
+
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct Interactive {
+    /// Opt-in gate. When false, the engine never wires the ask_user tool, so
+    /// claude cannot pause — behaviour is identical to a non-interactive run.
+    #[serde(default)]
+    pub enabled: bool,
+    /// How long the engine waits on the operator's answer before reaping the run
+    /// (exit 123). Unset = wait indefinitely until answered or cancelled.
+    #[cfg_attr(feature = "ts", ts(optional = nullable, as = "Option<u32>"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_timeout_secs: Option<u64>,
+}
 
 fn default_schema_version() -> u32 { 1 }
 
@@ -364,6 +382,7 @@ isolation = "worktree"
             model: Model { id: Some("claude-sonnet-4-6".into()) },
             leash: Leash { max_turns: 8, timeout_secs: Some(600), isolation: Isolation::Worktree },
             auth: Auth { bare: false, token_env: Some("ANTHROPIC_API_KEY".into()) },
+            interactive: Interactive::default(),
         }
     }
 
@@ -423,5 +442,29 @@ token_env = "MY_KEY"
         let text = to_toml(&full_spec()).unwrap();
         let again: RunSpec = toml::from_str(&text).unwrap();
         assert_eq!(again.name, "triage");
+    }
+
+    #[test]
+    fn interactive_defaults_off() {
+        let spec: RunSpec = toml::from_str(minimal_toml()).unwrap();
+        assert!(!spec.interactive.enabled, "interactive must default off");
+        assert_eq!(spec.interactive.answer_timeout_secs, None);
+    }
+
+    #[test]
+    fn interactive_parses_explicit_table() {
+        let toml = r#"
+schema = 1
+name = "a"
+task = "t"
+workdir = "/w"
+
+[interactive]
+enabled = true
+answer_timeout_secs = 600
+"#;
+        let spec: RunSpec = toml::from_str(toml).unwrap();
+        assert!(spec.interactive.enabled);
+        assert_eq!(spec.interactive.answer_timeout_secs, Some(600));
     }
 }
