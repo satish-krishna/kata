@@ -73,21 +73,6 @@ fn cmd_catalog() -> ExitCode {
     }
 }
 
-/// Sanitize a spec name into a filesystem-safe segment for the DEFAULT output
-/// directory. The spec name is only validated non-empty, so it may contain path
-/// separators (e.g. "../x") or other characters that would write the bundle
-/// outside the intended location; map anything outside `[A-Za-z0-9_-]` to '-',
-/// trim leading/trailing '-', and fall back to "bundle" if nothing remains. An
-/// explicit `-o` path is the caller's responsibility and is not sanitized.
-fn slug(name: &str) -> String {
-    let mapped: String = name
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
-        .collect();
-    let trimmed = mapped.trim_matches('-');
-    if trimmed.is_empty() { "bundle".to_string() } else { trimmed.to_string() }
-}
-
 fn cmd_bundle(spec_path: &std::path::Path, out: Option<&std::path::Path>, force: bool) -> ExitCode {
     let spec = match kata_core::spec::load(spec_path) {
         Ok(s) => s,
@@ -103,7 +88,7 @@ fn cmd_bundle(spec_path: &std::path::Path, out: Option<&std::path::Path>, force:
 
     let out_dir = out
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(format!("{}-bundle", slug(&spec.name))));
+        .unwrap_or_else(|| PathBuf::from(format!("{}-bundle", kata_core::fsutil::slug(&spec.name))));
 
     match kata_core::bundle::bundle(&spec, &catalog, &out_dir, force) {
         Ok(()) => { println!("bundled to {}", out_dir.display()); ExitCode::SUCCESS }
@@ -190,7 +175,7 @@ fn cmd_run(path: &std::path::Path) -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{slug, parse_stdin_line, StdinCmd};
+    use super::{parse_stdin_line, StdinCmd};
 
     #[test]
     fn parses_cancel_and_answer_lines() {
@@ -205,19 +190,4 @@ mod tests {
         assert!(parse_stdin_line("garbage").is_none());
     }
 
-    #[test]
-    fn slug_strips_path_separators_and_traversal() {
-        // "../x" must not survive as a path that escapes the cwd.
-        assert_eq!(slug("../x"), "x");
-        assert_eq!(slug("a/b"), "a-b");
-        assert_eq!(slug("a\\b"), "a-b");
-    }
-
-    #[test]
-    fn slug_preserves_safe_chars_and_falls_back_when_empty() {
-        assert_eq!(slug("triage-flaky_1"), "triage-flaky_1");
-        // A name with no safe characters collapses to the "bundle" fallback.
-        assert_eq!(slug("型"), "bundle");
-        assert_eq!(slug("..."), "bundle");
-    }
 }

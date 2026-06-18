@@ -44,6 +44,19 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
+/// Sanitize a spec name into a single filesystem-safe path segment: map anything
+/// outside `[A-Za-z0-9_-]` to '-', trim leading/trailing '-', fall back to "bundle"
+/// when nothing remains. Spec names may legally contain path separators, so this is
+/// a path-traversal guard, not a cosmetic nicety.
+pub fn slug(name: &str) -> String {
+    let mapped: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let trimmed = mapped.trim_matches('-');
+    if trimmed.is_empty() { "bundle".to_string() } else { trimmed.to_string() }
+}
+
 /// Recursively copy a directory tree from `src` into `dst` (created if absent).
 ///
 /// Symlinks are skipped, never followed: a vendoring copy must not traverse a
@@ -140,5 +153,15 @@ mod tests {
         assert_eq!(super::utc_stamp(1_000_000_000), "20010909T014640Z");
         // 2020-02-29 00:00:00 UTC — exercises the leap day.
         assert_eq!(super::utc_stamp(1_582_934_400), "20200229T000000Z");
+    }
+
+    #[test]
+    fn slug_strips_path_separators_and_falls_back() {
+        assert_eq!(super::slug("../x"), "x");
+        assert_eq!(super::slug("a/b"), "a-b");
+        assert_eq!(super::slug("a\\b"), "a-b");
+        assert_eq!(super::slug("triage-flaky_1"), "triage-flaky_1");
+        assert_eq!(super::slug("型"), "bundle");
+        assert_eq!(super::slug("..."), "bundle");
     }
 }
