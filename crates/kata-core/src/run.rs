@@ -120,7 +120,11 @@ pub fn run<F: FnMut(KataEvent)>(
         let cfg_body = serde_json::json!({
             "mcpServers": { "kata-ask": {
                 "command": exe.to_string_lossy(),
-                "args": ["mcp-ask"]
+                "args": ["mcp-ask"],
+                // Pass the port via the per-server env block too: relying on
+                // claude to propagate KATA_ASK_PORT from the child env to this
+                // grandchild is not guaranteed. Belt and suspenders.
+                "env": { "KATA_ASK_PORT": port.to_string() }
             }}
         })
         .to_string();
