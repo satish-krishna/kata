@@ -94,7 +94,7 @@ Deferred from the MVP, which is observe-only by design: the engine drives `claud
 ## Cross-cutting tracks
 
 - [ ] **CI (GitHub Actions):** `cargo test --workspace`, `cargo clippy --all-targets -D warnings`, `cargo build --locked`. Keep the real-claude smoke test opt-in (it needs an authenticated `claude`); optionally run it on a secret-gated, logged-in runner.
-- [ ] **Release / packaging:** decide crates.io publish vs. tagged binary releases for `kata`; ship the Tauri app artifacts for macOS/Windows. MIT.
+- [~] **Release / packaging:** local Windows release process in place — `scripts/bump-version.ps1` + `scripts/build-release.ps1` build the standalone `kata` CLI and the Workbench NSIS/MSI installers; tag `vX.Y.Z` and `gh release create` by hand (see `docs/releasing.md`). Still open: crates.io publish vs. tagged binaries, macOS/Linux artifacts, code-signing/CI. MIT.
 - [ ] **Shokunin integration:** Shokunin (.NET) emits a run-spec file and shells out to `kata run`, consuming the `KataEvent` stream. Document the run-spec format + event protocol as the stable cross-language contract (it is the reference implementation in `kata-core`, but the contract is language-neutral).
 - [ ] **Docs:** a `README` usage section with a worked example (compose a spec, `kata run` it, read the events) once the GUI lands.
 
