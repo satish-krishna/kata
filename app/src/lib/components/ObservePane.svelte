@@ -1,9 +1,10 @@
 <script lang="ts">
   import type { RunSpec } from "../../bindings/RunSpec";
-  import type { StreamEvent, RunSummary, RunState } from "../events";
+  import type { StreamEvent, RunSummary, RunState, Question } from "../events";
   import { STATUS_LABEL } from "../events";
   import EventRow from "./EventRow.svelte";
   import SummaryStat from "./SummaryStat.svelte";
+  import AskPanel from "./AskPanel.svelte";
   import Cpu from "@lucide/svelte/icons/cpu";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import Terminal from "@lucide/svelte/icons/terminal";
@@ -15,11 +16,15 @@
     events,
     spec,
     summary,
+    pendingAsk = null,
+    onAnswer,
   }: {
     runState: RunState;
     events: StreamEvent[];
     spec: RunSpec;
     summary: RunSummary | null;
+    pendingAsk?: { id: string; questions: Question[] } | null;
+    onAnswer?: (id: string, answers: string[][]) => void;
   } = $props();
 
   let streamEl: HTMLDivElement | undefined = $state();
@@ -56,6 +61,9 @@
     {#each events as ev, i (i)}
       <div class="wb-event-enter"><EventRow {ev} /></div>
     {/each}
+  {/if}
+  {#if pendingAsk && onAnswer}
+    <div class="wb-event-enter"><AskPanel id={pendingAsk.id} questions={pendingAsk.questions} onSubmit={onAnswer} /></div>
   {/if}
 </div>
 

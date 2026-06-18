@@ -56,7 +56,7 @@ function handle(ev: KataEvent) {
 }
 
 export async function startRun(spec: RunSpec) {
-  if (runStore.state === "running") return;
+  if (runStore.state === "running" || runStore.state === "awaiting") return;
   teardown();
   runStore.events = [];
   runStore.summary = null;
