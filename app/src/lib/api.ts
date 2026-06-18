@@ -4,7 +4,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import type { RunSpec } from "../bindings/RunSpec";
 import type { CatalogEntry } from "../bindings/CatalogEntry";
 import type { KataEvent } from "$lib/events";
-import { inTauri, seedCatalog, validateLocal, runScript } from "$lib/mock";
+import { inTauri, seedCatalog, validateLocal, runScriptHead, runScriptTail } from "$lib/mock";
 
 export const catalog = (workdir: string | null) =>
   inTauri()
@@ -50,7 +50,7 @@ export async function onRunEvent(cb: (ev: KataEvent) => void): Promise<() => voi
 export async function runSpec(spec: RunSpec): Promise<void> {
   if (inTauri()) return invoke<void>("run_spec", { spec });
   let acc = 0;
-  for (const step of runScript) {
+  for (const step of runScriptHead) {
     acc += step.delay;
     browserTimers.push(setTimeout(() => browserCb?.(step.ev), acc));
   }
@@ -61,6 +61,23 @@ export async function cancelRun(): Promise<void> {
   if (inTauri()) return invoke<void>("cancel_run");
   browserTimers.forEach(clearTimeout);
   browserTimers = [];
+}
+
+/** Send the operator's answer to a pending ask.requested. */
+export async function submitAnswer(id: string, answers: string[][]): Promise<void> {
+  if (inTauri()) return invoke<void>("submit_answer", { id, answers });
+  // Browser mock: resolve the scripted pause by feeding an ask.answered + resume.
+  browserCb?.({ type: "ask.answered", id, answers });
+  resumeMockAfterAnswer();
+}
+
+/** Resume the scripted mock timeline after an ask has been answered. */
+function resumeMockAfterAnswer(): void {
+  let acc = 0;
+  for (const step of runScriptTail) {
+    acc += step.delay;
+    browserTimers.push(setTimeout(() => browserCb?.(step.ev), acc));
+  }
 }
 
 const SPEC_FILTERS = [{ name: "Run-spec", extensions: ["toml", "json"] }];

@@ -55,11 +55,12 @@ export function terminalStateFor(ev: KataEvent): RunState | null {
   }
 }
 
-export type RunState = "idle" | "running" | "success" | "warning" | "error";
+export type RunState = "idle" | "running" | "awaiting" | "success" | "warning" | "error";
 
 export const STATUS_LABEL: Record<RunState, string> = {
   idle: "Idle",
   running: "Running",
+  awaiting: "Awaiting",
   success: "Completed",
   error: "Error",
   warning: "Stopped",

@@ -2,7 +2,7 @@
  * drives the run via the api bridge. Components read `runStore` reactively;
  * the bridge (Tauri or browser fallback) feeds events in. */
 import type { RunSpec } from "../bindings/RunSpec";
-import type { KataEvent, StreamEvent, RunSummary, RunState } from "./events";
+import type { KataEvent, StreamEvent, RunSummary, RunState, Question } from "./events";
 import { terminalStateFor } from "./events";
 import * as api from "./api";
 
@@ -10,7 +10,8 @@ export const runStore = $state<{
   state: RunState;
   events: StreamEvent[];
   summary: RunSummary | null;
-}>({ state: "idle", events: [], summary: null });
+  pendingAsk: { id: string; questions: Question[] } | null;
+}>({ state: "idle", events: [], summary: null, pendingAsk: null });
 
 let unlisten: (() => void) | null = null;
 
@@ -36,9 +37,13 @@ function handle(ev: KataEvent) {
     case "run.diff":
       return; // meta only; the diff panel is a fast-follow
     case "ask.requested":
-      return; // ask events drive the AskPanel, not an EventRow
+      runStore.pendingAsk = { id: ev.id, questions: ev.questions };
+      runStore.state = "awaiting";
+      return;
     case "ask.answered":
-      return; // ask events drive the AskPanel, not an EventRow
+      runStore.pendingAsk = null;
+      runStore.state = "running";
+      return;
     default:
       runStore.events.push(ev); // streaming row
       return;
@@ -55,6 +60,7 @@ export async function startRun(spec: RunSpec) {
   teardown();
   runStore.events = [];
   runStore.summary = null;
+  runStore.pendingAsk = null;
   runStore.state = "running";
   unlisten = await api.onRunEvent(handle);
   try {
@@ -67,7 +73,7 @@ export async function startRun(spec: RunSpec) {
 }
 
 export async function cancelRun() {
-  if (runStore.state !== "running") return;
+  if (runStore.state !== "running" && runStore.state !== "awaiting") return;
   await api.cancelRun();
   runStore.events.push({
     type: "log",
@@ -76,4 +82,10 @@ export async function cancelRun() {
   });
   runStore.state = "warning";
   teardown();
+}
+
+export async function submitAnswer(id: string, answers: string[][]) {
+  if (runStore.state !== "awaiting") return;
+  await api.submitAnswer(id, answers);
+  // optimistic; the engine's ask.answered will flip state back to running
 }
