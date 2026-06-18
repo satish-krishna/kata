@@ -42,6 +42,87 @@ fn run_ok_streams_events_and_completes_zero() {
 
 #[test]
 #[serial]
+fn run_surfaces_child_stderr_as_log_events() {
+    with_fake("stderr");
+    let work = tempfile::tempdir().unwrap();
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(&base_spec(&work.path().to_string_lossy()), &[] as &[CatalogEntry], &cancel, |e| events.push(e)).unwrap();
+
+    assert_eq!(outcome.exit_code, 0);
+    assert!(
+        events.iter().any(|e| matches!(e,
+            KataEvent::Log { level, message }
+                if level == "warn" && message.contains("diagnostic from claude on stderr"))),
+        "expected a warn Log event carrying the child's stderr line, got {events:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn run_gives_child_noninteractive_stdin_so_it_cannot_block() {
+    // A child that reads stdin must not hang waiting for input it will never get.
+    // Kata gives claude a closed (null) stdin, so the read EOFs immediately and the
+    // run completes; without that, a blocked child would trip the leash timeout.
+    with_fake("blockstdin");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.leash.timeout_secs = Some(2); // guard: a stdin-blocked child times out (124)
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, |e| events.push(e)).unwrap();
+
+    assert_eq!(
+        outcome.exit_code, 0,
+        "child blocked on stdin (timed out) instead of completing; events={events:?}"
+    );
+    assert!(matches!(events.last().unwrap(), KataEvent::RunCompleted { exit_code: 0, .. }));
+}
+
+#[test]
+#[serial]
+fn run_logs_default_timeout_cap_when_unset() {
+    // A spec with no timeout_secs must not run unbounded: the engine applies a
+    // default wall-clock cap and says so, so "forever" is never silent.
+    with_fake("ok");
+    let work = tempfile::tempdir().unwrap();
+    let spec = base_spec(&work.path().to_string_lossy()); // timeout_secs defaults to None
+    assert_eq!(spec.leash.timeout_secs, None);
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    run(&spec, &[] as &[CatalogEntry], &cancel, |e| events.push(e)).unwrap();
+
+    assert!(
+        events.iter().any(|e| matches!(e,
+            KataEvent::Log { level, message }
+                if level == "info" && message.contains("default") && message.contains("cap"))),
+        "expected an info Log announcing the default timeout cap, got {events:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn run_reaps_child_that_closes_stdio_but_lingers() {
+    // A child that closes stdout+stderr (reader threads disconnect) but keeps
+    // running must still be reaped by the wall-clock deadline — not block forever
+    // in child.wait(). Without a leashed wait this hangs well past the deadline.
+    with_fake("closestdio");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.leash.timeout_secs = Some(1);
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, |e| events.push(e)).unwrap();
+
+    assert_eq!(
+        outcome.exit_code, 124,
+        "deadline must reap a child that closed stdio but kept running"
+    );
+    assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { .. })));
+}
+
+#[test]
+#[serial]
 fn run_invalid_spec_errors_before_spawn() {
     with_fake("ok");
     let mut spec = base_spec("/w");

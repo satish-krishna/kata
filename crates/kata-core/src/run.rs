@@ -111,32 +111,61 @@ pub fn run<F: FnMut(KataEvent)>(
 
     let start = Instant::now();
     let mut cmd = Command::new(&inv.program);
+    // claude runs headless (`-p`): it never reads stdin, so give it a closed one.
+    // Inheriting the parent's stdin lets an unauthenticated claude block forever on
+    // an interactive login prompt instead of fast-failing. (Cancellation uses the
+    // *engine's* stdin, handled in kata-cli — not the child's.)
     cmd.args(&inv.args)
         .current_dir(&cwd)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
     // The child inherits the parent process environment by default.
     for (k, v) in &inv.env {
         cmd.env(k, v);
     }
     let mut child = cmd.spawn().map_err(|e| RunError::Spawn(e.to_string()))?;
     let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
 
-    // Reader thread -> channel of lines.
-    let (tx, rx) = mpsc::channel::<String>();
+    // Reader threads -> one channel of tagged lines. claude reports results on
+    // stdout (stream-json) but human-readable errors and prompts (e.g. "Not logged
+    // in") go to stderr; we drain stderr on its own thread so a chatty child can't
+    // deadlock on a full pipe, and surface each line as a warn-level log event.
+    let (tx, rx) = mpsc::channel::<ChildLine>();
+    let tx_err = tx.clone();
     let reader_handle = thread::spawn(move || {
         use std::io::BufRead;
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
             match line {
-                Ok(l) => { if tx.send(l).is_err() { break; } }
+                Ok(l) => { if tx.send(ChildLine::Out(l)).is_err() { break; } }
+                Err(_) => break,
+            }
+        }
+    });
+    let stderr_handle = thread::spawn(move || {
+        use std::io::BufRead;
+        let reader = BufReader::new(stderr);
+        for line in reader.lines() {
+            match line {
+                Ok(l) => { if tx_err.send(ChildLine::Err(l)).is_err() { break; } }
                 Err(_) => break,
             }
         }
     });
 
     // Main loop: pull lines, enforce leash + cancel.
-    let deadline = spec.leash.timeout_secs.map(|s| start + Duration::from_secs(s));
+    // The wall-clock cap is never optional: an unset timeout falls back to a
+    // default so a hung run is always reaped instead of running forever.
+    let timeout_secs = spec.leash.effective_timeout_secs();
+    if spec.leash.timeout_secs.is_none() {
+        emit(KataEvent::Log {
+            level: "info".into(),
+            message: format!("no timeout set; applying default wall-clock cap of {timeout_secs}s"),
+        });
+    }
+    let deadline = start + Duration::from_secs(timeout_secs);
     let mut turns: u32 = 0;
     let mut result = None;
     let mut termination: Option<Termination> = None;
@@ -146,14 +175,12 @@ pub fn run<F: FnMut(KataEvent)>(
             termination = Some(Termination::Cancelled);
             break;
         }
-        if let Some(d) = deadline {
-            if Instant::now() >= d {
-                termination = Some(Termination::TimedOut);
-                break;
-            }
+        if Instant::now() >= deadline {
+            termination = Some(Termination::TimedOut);
+            break;
         }
         match rx.recv_timeout(POLL) {
-            Ok(line) => {
+            Ok(ChildLine::Out(line)) => {
                 if line.trim().is_empty() { continue; }
                 let parsed = crate::event::parse_stream_line(&line);
                 if parsed.is_assistant_message {
@@ -170,8 +197,24 @@ pub fn run<F: FnMut(KataEvent)>(
                 for e in parsed.events { emit(e); }
                 if let Some(r) = parsed.result { result = Some(r); }
             }
+            Ok(ChildLine::Err(line)) => {
+                if line.trim().is_empty() { continue; }
+                emit(KataEvent::Log { level: "warn".into(), message: line });
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break, // child closed stdout
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                // Both reader threads ended (stdio EOF). Usually the child has
+                // exited or is about to — break and let child.wait() collect it.
+                // But a child that closes its stdio early yet keeps running must
+                // stay leashed: if it has not exited, keep looping so the
+                // deadline/cancel checks reap it, instead of blocking forever in
+                // an unbounded child.wait().
+                match child.try_wait() {
+                    Ok(Some(_)) => break,
+                    Ok(None) => thread::sleep(POLL),
+                    Err(e) => return Err(RunError::Spawn(e.to_string())),
+                }
+            }
         }
     }
 
@@ -183,7 +226,7 @@ pub fn run<F: FnMut(KataEvent)>(
             match term {
                 Termination::Cancelled => (130, KataEvent::RunCancelled),
                 Termination::TimedOut => (124, KataEvent::RunError {
-                    message: format!("timed out after {}s", spec.leash.timeout_secs.unwrap_or(0)),
+                    message: format!("timed out after {timeout_secs}s"),
                 }),
                 Termination::MaxTurns => (125, KataEvent::RunError {
                     message: format!("reached max turns ({})", spec.leash.max_turns),
@@ -227,7 +270,14 @@ pub fn run<F: FnMut(KataEvent)>(
     emit(terminal);
 
     let _ = reader_handle.join();
+    let _ = stderr_handle.join();
     Ok(RunOutcome { exit_code })
+}
+
+/// A line drained from the child, tagged by which stream it came from.
+enum ChildLine {
+    Out(String),
+    Err(String),
 }
 
 enum Termination {
