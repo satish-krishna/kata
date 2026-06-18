@@ -158,7 +158,10 @@ fn cmd_run(path: &std::path::Path) -> ExitCode {
         }
     };
 
-    match kata_core::run::run(&spec, &catalog, &cancel, emit) {
+    // Task 8 wires the real operator-answer source; for now interactive runs
+    // receive an empty inbox (they will reap on the answer-deadline if claude asks).
+    let answers = kata_core::run::AnswerRx::default();
+    match kata_core::run::run(&spec, &catalog, &cancel, &answers, emit) {
         Ok(outcome) => {
             match u8::try_from(outcome.exit_code) {
                 Ok(c) => ExitCode::from(c),
