@@ -63,7 +63,9 @@
     {/each}
   {/if}
   {#if pendingAsk && onAnswer}
-    <div class="wb-event-enter"><AskPanel id={pendingAsk.id} questions={pendingAsk.questions} onSubmit={onAnswer} /></div>
+    {#key pendingAsk.id}
+      <div class="wb-event-enter"><AskPanel id={pendingAsk.id} questions={pendingAsk.questions} onSubmit={onAnswer} /></div>
+    {/key}
   {/if}
 </div>
 
