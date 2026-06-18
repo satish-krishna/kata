@@ -160,6 +160,19 @@ fn cancel_run(control: State<RunControl>) {
     }
 }
 
+/// Send the operator's answer to a paused interactive run: write an
+/// `answer <id> <json>` line to the engine's stdin (the engine returns it to
+/// claude as the ask_user tool result and emits ask.answered).
+#[tauri::command]
+fn submit_answer(control: State<RunControl>, id: String, answers: Vec<Vec<String>>) {
+    let json = serde_json::to_string(&answers).unwrap_or_else(|_| "[]".into());
+    let line = format!("answer {id} {json}\n");
+    let mut st = control.state.lock().unwrap();
+    if let Some(child) = st.child.as_mut() {
+        let _ = child.write(line.as_bytes());
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -172,7 +185,8 @@ pub fn run() {
             save_spec,
             validate_spec,
             run_spec,
-            cancel_run
+            cancel_run,
+            submit_answer
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

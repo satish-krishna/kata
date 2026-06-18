@@ -38,6 +38,17 @@
     const n = Math.trunc(Number(v));
     spec.leash.timeout_secs = Number.isFinite(n) && n >= 0 ? n : null;
   }
+
+  // Integer-coerce the interactive answer timeout (null = wait indefinitely).
+  function onAnswerTimeout(e: Event) {
+    const v = (e.currentTarget as HTMLInputElement).value.trim();
+    if (v === "") {
+      spec.interactive.answer_timeout_secs = null;
+      return;
+    }
+    const n = Math.trunc(Number(v));
+    spec.interactive.answer_timeout_secs = Number.isFinite(n) && n >= 0 ? n : null;
+  }
 </script>
 
 <div class="wb-compose">
@@ -139,5 +150,33 @@
     <Field label="Isolation" key="leash.isolation" hint="worktree contains writes in an ephemeral git worktree (reviewable as a diff).">
       <Segmented options={["none", "worktree"] as const} bind:value={spec.leash.isolation} ariaLabel="Isolation" />
     </Field>
+  </section>
+
+  <section class="wb-section">
+    <div class="wb-section__head">
+      <span class="wb-section__title">Interactive</span>
+      <span class="wb-section__sub">pause for operator input</span>
+    </div>
+    <Field label="Mode" key="interactive.enabled">
+      <Segmented
+        options={["off", "on"] as const}
+        value={spec.interactive.enabled ? "on" : "off"}
+        onChange={(v) => (spec.interactive.enabled = v === "on")}
+        ariaLabel="Interactive mode"
+      />
+    </Field>
+    {#if spec.interactive.enabled}
+      <Field label="Answer timeout" key="answer_timeout_secs" hint="seconds to wait on your answer; blank = wait indefinitely">
+        <input
+          class="k-input"
+          type="number"
+          min="0"
+          step="1"
+          placeholder="(none)"
+          value={spec.interactive.answer_timeout_secs ?? ""}
+          oninput={onAnswerTimeout}
+        />
+      </Field>
+    {/if}
   </section>
 </div>
