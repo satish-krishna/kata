@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 # Set the release version in Kata's two authoritative sources: the Cargo
 # workspace package version (inherited by kata-core and kata-cli) and the Tauri
-# app config. Edits files only — review the diff and commit as
+# app config. Edits files only -- review the diff and commit as
 # `chore: bump version to X.Y.Z`. Does not git add/commit/tag.
 [CmdletBinding()]
 param(
