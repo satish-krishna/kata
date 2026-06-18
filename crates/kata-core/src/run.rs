@@ -44,15 +44,47 @@ impl CancelToken {
 
 const POLL: Duration = Duration::from_millis(100);
 
+/// An operator's answer to a pending `ask.requested`, routed from the engine's
+/// stdin (kata-cli) into the run loop.
+#[derive(Debug, Clone)]
+pub struct Answer {
+    pub id: String,
+    pub answers: Vec<Vec<String>>,
+}
+
+/// The run loop's answer inbox. `Default` is an empty inbox (non-interactive
+/// runs never deliver answers). Build a live one with [`answer_channel`].
+#[derive(Default)]
+pub struct AnswerRx(Option<mpsc::Receiver<Answer>>);
+
+impl AnswerRx {
+    fn try_recv(&self) -> Option<Answer> {
+        self.0.as_ref().and_then(|rx| rx.try_recv().ok())
+    }
+}
+
+/// Create a connected (sender, inbox) pair for an interactive run.
+pub fn answer_channel() -> (mpsc::Sender<Answer>, AnswerRx) {
+    let (tx, rx) = mpsc::channel();
+    (tx, AnswerRx(Some(rx)))
+}
+
+/// Retasking note appended to claude's system prompt for interactive runs. It is
+/// additive (applied even under identity Replace mode) because it describes a
+/// Kata-provided capability the operator did not author. See the interactive
+/// sessions design spec.
+const INTERACTIVE_RETASK: &str = "You have an `ask_user` tool. When you hit a consequential fork you cannot resolve from the task and context — ambiguous requirements, a decision with real trade-offs, a destructive action you are unsure about — call `ask_user` with a crisp question (choose the `kind` that fits: confirm / select / text) instead of guessing. Do not use it for trivia you can decide yourself.";
+
 pub fn run<F: FnMut(KataEvent)>(
     spec: &RunSpec,
     catalog: &[CatalogEntry],
     cancel: &CancelToken,
+    answers: &AnswerRx,
     mut emit: F,
 ) -> Result<RunOutcome, RunError> {
     validate(spec).map_err(RunError::Invalid)?;
     let assembled = assemble(spec, catalog)?;
-    let inv = build_invocation(spec, &assembled);
+    let mut inv = build_invocation(spec, &assembled);
 
     // Fail fast: a bare run that references a token var it cannot resolve would
     // reach the API unauthenticated. Refuse before creating a worktree or spawning.
@@ -67,6 +99,43 @@ pub fn run<F: FnMut(KataEvent)>(
                 return Err(RunError::Auth(message));
             }
         }
+    }
+
+    // Interactive: bind the ask bridge, hand the child its port + the ask_user
+    // MCP tool + the retasking note. The temp dir holds only the generated
+    // mcp-config (the retasking note goes inline via --append-system-prompt,
+    // which real claude accepts); it lives until after the child exits.
+    let mut interactive_tmp: Option<tempfile::TempDir> = None;
+    let mut ask_rx: Option<mpsc::Receiver<crate::ask::AskRequest>> = None;
+    if spec.interactive.enabled {
+        let bridge = crate::ask::Bridge::bind().map_err(|e| RunError::Spawn(e.to_string()))?;
+        let port = bridge.port();
+        let (atx, arx) = mpsc::channel();
+        bridge.serve(atx, cancel.clone());
+        ask_rx = Some(arx);
+
+        let dir = tempfile::tempdir().map_err(|e| RunError::Spawn(e.to_string()))?;
+        let exe = std::env::current_exe().map_err(|e| RunError::Spawn(e.to_string()))?;
+        let cfg = dir.path().join("mcp-config.json");
+        let cfg_body = serde_json::json!({
+            "mcpServers": { "kata-ask": {
+                "command": exe.to_string_lossy(),
+                "args": ["mcp-ask"],
+                // Pass the port via the per-server env block too: relying on
+                // claude to propagate KATA_ASK_PORT from the child env to this
+                // grandchild is not guaranteed. Belt and suspenders.
+                "env": { "KATA_ASK_PORT": port.to_string() }
+            }}
+        })
+        .to_string();
+        std::fs::write(&cfg, cfg_body).map_err(|e| RunError::Spawn(e.to_string()))?;
+
+        inv.args.push("--mcp-config".into());
+        inv.args.push(cfg.to_string_lossy().into_owned());
+        inv.args.push("--append-system-prompt".into());
+        inv.args.push(INTERACTIVE_RETASK.into());
+        inv.env.push(("KATA_ASK_PORT".into(), port.to_string()));
+        interactive_tmp = Some(dir);
     }
 
     let isolation = match spec.leash.isolation {
@@ -170,14 +239,55 @@ pub fn run<F: FnMut(KataEvent)>(
     let mut result = None;
     let mut termination: Option<Termination> = None;
 
+    // Interactive await state. The work-clock excludes time spent awaiting an
+    // answer: `paused` accumulates that time and shifts the deadline.
+    let answer_deadline = spec.interactive.answer_timeout_secs.map(Duration::from_secs);
+    let mut awaiting_since: Option<Instant> = None;
+    let mut paused: Duration = Duration::ZERO;
+    let mut pending: Option<(String, mpsc::Sender<Vec<Vec<String>>>)> = None;
+    let mut ask_seq: u32 = 0;
+
     loop {
         if cancel.is_cancelled() {
             termination = Some(Termination::Cancelled);
             break;
         }
-        if Instant::now() >= deadline {
+        // Work-clock deadline excludes time spent awaiting an answer.
+        if awaiting_since.is_none() && Instant::now() >= deadline + paused {
             termination = Some(Termination::TimedOut);
             break;
+        }
+        // Answer-deadline: only while awaiting, only if configured.
+        if let (Some(since), Some(limit)) = (awaiting_since, answer_deadline) {
+            if since.elapsed() >= limit {
+                termination = Some(Termination::AnswerTimeout);
+                break;
+            }
+        }
+        // A new question from the bridge → emit ask.requested, enter awaiting.
+        if pending.is_none() {
+            if let Some(arx) = &ask_rx {
+                if let Ok(req) = arx.try_recv() {
+                    ask_seq += 1;
+                    let id = format!("q{ask_seq}");
+                    pending = Some((id.clone(), req.reply));
+                    awaiting_since = Some(Instant::now());
+                    emit(KataEvent::AskRequested { id, questions: req.questions });
+                }
+            }
+        }
+        // An answer from the operator → return it down the bridge, resume.
+        if let Some((pid, _)) = &pending {
+            if let Some(ans) = answers.try_recv() {
+                if &ans.id == pid {
+                    let (id, reply) = pending.take().unwrap();
+                    let _ = reply.send(ans.answers.clone());
+                    if let Some(since) = awaiting_since.take() {
+                        paused += since.elapsed();
+                    }
+                    emit(KataEvent::AskAnswered { id, answers: ans.answers });
+                }
+            }
         }
         match rx.recv_timeout(POLL) {
             Ok(ChildLine::Out(line)) => {
@@ -231,6 +341,12 @@ pub fn run<F: FnMut(KataEvent)>(
                 Termination::MaxTurns => (125, KataEvent::RunError {
                     message: format!("reached max turns ({})", spec.leash.max_turns),
                 }),
+                Termination::AnswerTimeout => (123, KataEvent::RunError {
+                    message: format!(
+                        "answer deadline exceeded after {}s",
+                        spec.interactive.answer_timeout_secs.unwrap_or(0)
+                    ),
+                }),
             }
         }
         None => {
@@ -271,6 +387,9 @@ pub fn run<F: FnMut(KataEvent)>(
 
     let _ = reader_handle.join();
     let _ = stderr_handle.join();
+    // Keep the interactive temp dir (the generated mcp-config) alive until the
+    // child has fully exited above; drop it only now.
+    drop(interactive_tmp);
     Ok(RunOutcome { exit_code })
 }
 
@@ -284,4 +403,5 @@ enum Termination {
     Cancelled,
     TimedOut,
     MaxTurns,
+    AnswerTimeout,
 }

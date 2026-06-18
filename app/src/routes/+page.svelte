@@ -9,7 +9,7 @@
   import ValidationBanner from "$lib/components/ValidationBanner.svelte";
   import ComposePane from "$lib/components/ComposePane.svelte";
   import ObservePane from "$lib/components/ObservePane.svelte";
-  import { runStore, startRun, cancelRun } from "$lib/run.svelte";
+  import { runStore, startRun, cancelRun, submitAnswer } from "$lib/run.svelte";
   import Terminal from "@lucide/svelte/icons/terminal";
   import Hash from "@lucide/svelte/icons/hash";
   import Folder from "@lucide/svelte/icons/folder";
@@ -26,7 +26,7 @@
 
   let dirty = $derived(!specEquals(spec, saved));
   let valid = $derived(errors.length === 0);
-  let running = $derived(runStore.state === "running");
+  let running = $derived(runStore.state === "running" || runStore.state === "awaiting");
 
   // Re-fetch the kit when workdir changes (debounced).
   $effect(() => {
@@ -154,7 +154,7 @@
 
     <div class="wb-pane wb-pane--observe">
       <div class="wb-pane__head"><span class="kata-eyebrow">Observe · the run</span></div>
-      <ObservePane runState={runStore.state} events={runStore.events} {spec} summary={runStore.summary} />
+      <ObservePane runState={runStore.state} events={runStore.events} {spec} summary={runStore.summary} asks={runStore.asks} onAnswer={submitAnswer} />
     </div>
   </div>
 

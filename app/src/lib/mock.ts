@@ -41,14 +41,13 @@ export function seedSpec(): RunSpec {
     model: { id: "claude-sonnet-4-6" },
     leash: { max_turns: 12, timeout_secs: 900, isolation: "worktree" },
     auth: { bare: true, token_env: null },
+    interactive: { enabled: false, answer_timeout_secs: null },
   };
 }
 
-/** Scripted KataEvent stream for the triage-flaky-test example (delay = ms
- *  after the previous event). Drives the browser fallback run; the real Tauri
- *  app receives the engine's relayed events instead. Mirrors the Rust
- *  RUN_SCRIPT in src-tauri so dev and packaged builds stream the same demo. */
-export const runScript: { delay: number; ev: KataEvent }[] = [
+/** The head of the scripted timeline — fires until the ask.requested pause.
+ *  `api.runSpec` schedules these; `api.submitAnswer` resumes the tail. */
+export const runScriptHead: { delay: number; ev: KataEvent }[] = [
   { delay: 250, ev: { type: "log", level: "info", message: "assembled plugin-dir: 1 skill, 1 plugin" } },
   { delay: 350, ev: { type: "log", level: "info", message: "worktree: ./.kata/wt-3f9a off main" } },
   { delay: 500, ev: { type: "turn", n: 1 } },
@@ -57,6 +56,16 @@ export const runScript: { delay: number; ev: KataEvent }[] = [
   { delay: 1300, ev: { type: "tool.result", name: "Bash", ok: true, summary: "27 passed / 3 failed — failures at iterations 8, 19, 26" } },
   { delay: 500, ev: { type: "turn", n: 2 } },
   { delay: 250, ev: { type: "assistant.text", text: "It fails ~1 in 10 locally. The failures share a timestamp boundary — this smells like a clock-skew race in token expiry." } },
+  { delay: 400, ev: { type: "ask.requested", id: "q1", questions: [
+    { kind: "select", header: "scope", question: "Fix the flake, or just isolate it?",
+      options: [ { label: "Isolate only", description: "as instructed" }, { label: "Fix it", description: "change prod code" } ],
+      multi_select: false },
+  ] } },
+];
+
+/** The tail of the scripted timeline — replayed by `api.submitAnswer` after the
+ *  operator answers the ask. */
+export const runScriptTail: { delay: number; ev: KataEvent }[] = [
   { delay: 800, ev: { type: "tool.use", name: "Read", input_summary: "src/Auth/TokenValidator.cs" } },
   { delay: 850, ev: { type: "tool.result", name: "Read", ok: true, summary: "TokenValidator.cs — 142 lines" } },
   { delay: 500, ev: { type: "turn", n: 3 } },

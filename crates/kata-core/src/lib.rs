@@ -1,3 +1,4 @@
+pub mod ask;
 pub mod assemble;
 pub mod bundle;
 pub mod catalog;
