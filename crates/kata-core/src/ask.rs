@@ -48,15 +48,14 @@ impl Bridge {
     /// question-batch, forward it as an `AskRequest`, block on its reply, and
     /// write the answer frame back. Stops when `cancel` trips or the peer closes.
     pub fn serve(self, tx: Sender<AskRequest>, cancel: CancelToken) {
-        // Unblock the blocking accept() promptly on cancel.
-        let _ = self.listener.set_nonblocking(false);
+        // Note: a cancel only takes effect between connections — a bridge idle in accept() unblocks when the next connection arrives or when the process exits (each run is its own OS process).
         thread::spawn(move || {
             for stream in self.listener.incoming() {
                 if cancel.is_cancelled() {
                     break;
                 }
                 let Ok(stream) = stream else { break };
-                if handle_conn(stream, &tx, &cancel).is_err() { /* peer gone */ }
+                if handle_conn(stream, &tx).is_err() { /* peer gone */ }
                 if cancel.is_cancelled() {
                     break;
                 }
@@ -68,7 +67,6 @@ impl Bridge {
 fn handle_conn(
     stream: TcpStream,
     tx: &Sender<AskRequest>,
-    cancel: &CancelToken,
 ) -> std::io::Result<()> {
     let mut write_half = stream.try_clone()?;
     let mut reader = BufReader::new(stream);
@@ -98,15 +96,11 @@ fn handle_conn(
         // Block until the run loop supplies an answer (or is cancelled/torn down).
         let answers = match reply_rx.recv() {
             Ok(a) => a,
-            Err(_) => {
-                if cancel.is_cancelled() {
-                    return Ok(());
-                }
-                return Ok(());
-            }
+            Err(_) => return Ok(()),
         };
         let frame = AnswerFrame { answers: &answers };
-        writeln!(write_half, "{}", serde_json::to_string(&frame).unwrap())?;
+        let body = serde_json::to_string(&frame).map_err(std::io::Error::other)?;
+        writeln!(write_half, "{body}")?;
         write_half.flush()?;
     }
 }
