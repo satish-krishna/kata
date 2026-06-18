@@ -73,7 +73,7 @@ pub fn answer_channel() -> (mpsc::Sender<Answer>, AnswerRx) {
 /// additive (applied even under identity Replace mode) because it describes a
 /// Kata-provided capability the operator did not author. See the interactive
 /// sessions design spec.
-const INTERACTIVE_RETASK: &str = "You have an `ask_user` tool. When you hit a consequential fork you cannot resolve from the task and context — ambiguous requirements, a decision with real trade-offs, a destructive action you are unsure about — call `ask_user` with a crisp question (choose the `kind` that fits: confirm / select / text) instead of guessing. Do not use it for trivia you can decide yourself.";
+const INTERACTIVE_RETASK: &str = "You have an `ask_user` tool. When you hit a consequential fork you cannot resolve from the task and context — ambiguous requirements, a decision with real trade-offs, a destructive action you are unsure about — call `ask_user` with a crisp question (choose the `kind` that fits: confirm / select / text) instead of guessing. Do not use it for trivia you can decide yourself. Do NOT use any built-in question or prompt tool such as `AskUserQuestion`; only `ask_user` reaches the operator.";
 
 pub fn run<F: FnMut(KataEvent)>(
     spec: &RunSpec,
@@ -404,4 +404,15 @@ enum Termination {
     TimedOut,
     MaxTurns,
     AnswerTimeout,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::INTERACTIVE_RETASK;
+
+    #[test]
+    fn retask_note_steers_to_ask_user_and_bans_the_builtin() {
+        assert!(INTERACTIVE_RETASK.contains("ask_user"));
+        assert!(INTERACTIVE_RETASK.contains("AskUserQuestion"));
+    }
 }

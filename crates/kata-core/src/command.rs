@@ -49,6 +49,14 @@ pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocati
     args.push("stream-json".into());
     args.push("--verbose".into()); // claude requires --verbose with stream-json under --print
     args.push("--dangerously-skip-permissions".into());
+    // Interactive runs surface questions through Kata's `ask_user` MCP tool (wired
+    // in run.rs), which crosses the ask bridge to the Workbench. Claude's built-in
+    // AskUserQuestion would bypass that bridge entirely, so take it away — otherwise
+    // claude prefers the salient built-in and the AskPanel never appears.
+    if spec.interactive.enabled {
+        args.push("--disallowedTools".into());
+        args.push("AskUserQuestion".into());
+    }
     // NOTE: claude 2.1.x has NO --max-turns flag; the turn cap is enforced
     // engine-side in run.rs (kill the child when turns exceed leash.max_turns).
 
@@ -197,5 +205,23 @@ mod tests {
         assert!(inv.env.iter().any(|(k, v)| k == "KATA_TEST_TOKEN" && v == "secret"));
         assert!(!inv.env.iter().any(|(k, _)| k == "KATA_TEST_ABSENT"));
         std::env::remove_var("KATA_TEST_TOKEN");
+    }
+
+    #[test]
+    fn interactive_disallows_the_builtin_ask_tool() {
+        let mut s = spec();
+        s.interactive.enabled = true;
+        let inv = build_invocation(&s, &assembled_with(None, None));
+        assert!(
+            inv.args.windows(2).any(|w| w[0] == "--disallowedTools" && w[1] == "AskUserQuestion"),
+            "interactive runs must disallow the built-in AskUserQuestion; got {:?}",
+            inv.args
+        );
+    }
+
+    #[test]
+    fn non_interactive_keeps_the_builtin_tools() {
+        let inv = build_invocation(&spec(), &assembled_with(None, None));
+        assert!(!inv.args.iter().any(|a| a == "--disallowedTools"));
     }
 }
