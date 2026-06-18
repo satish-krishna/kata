@@ -14,6 +14,7 @@ export function defaultSpec(): RunSpec {
     model: { id: "" },
     leash: { max_turns: 12, timeout_secs: null, isolation: "none" },
     auth: { bare: true, token_env: null },
+    interactive: { enabled: false, answer_timeout_secs: null },
   };
 }
 
@@ -36,6 +37,7 @@ export function draftFrom(loaded: RunSpec): RunSpec {
     skills: loaded.skills ?? [],
     plugins: loaded.plugins ?? {},
     auth: { bare: loaded.auth?.bare ?? true, token_env: loaded.auth?.token_env ?? null },
+    interactive: { ...d.interactive, ...loaded.interactive },
   };
 }
 

@@ -20,15 +20,29 @@ export type KataEvent =
       result: string | null;
     }
   | { type: "run.diff"; worktree: string; branch: string; files: { status: string; path: string }[]; insertions: number; deletions: number }
+  | { type: "ask.requested"; id: string; questions: Question[] }
+  | { type: "ask.answered"; id: string; answers: string[][] }
   | { type: "run.error"; message: string }
   | { type: "run.cancelled" };
+
+export type QuestionKind = "confirm" | "select" | "text";
+export type QuestionOption = { label: string; description?: string };
+export type Question = {
+  kind: QuestionKind;
+  header: string;
+  question: string;
+  options?: QuestionOption[];
+  multi_select?: boolean;
+  optional?: boolean;
+  placeholder?: string;
+};
 
 /** The terminal event carrying the run summary. */
 export type RunSummary = Extract<KataEvent, { type: "run.completed" }>;
 /** Everything that renders as a row in the stream (meta + terminal events excluded). */
 export type StreamEvent = Exclude<
   KataEvent,
-  { type: "run.started" | "run.completed" | "run.error" | "run.cancelled" | "run.diff" }
+  { type: "run.started" | "run.completed" | "run.error" | "run.cancelled" | "run.diff" | "ask.requested" | "ask.answered" }
 >;
 
 /** Terminal run state for an event, or null if the event is a streaming row. */

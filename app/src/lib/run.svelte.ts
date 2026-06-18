@@ -35,6 +35,10 @@ function handle(ev: KataEvent) {
       break;
     case "run.diff":
       return; // meta only; the diff panel is a fast-follow
+    case "ask.requested":
+      return; // ask events drive the AskPanel, not an EventRow
+    case "ask.answered":
+      return; // ask events drive the AskPanel, not an EventRow
     default:
       runStore.events.push(ev); // streaming row
       return;

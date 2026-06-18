@@ -41,6 +41,7 @@ export function seedSpec(): RunSpec {
     model: { id: "claude-sonnet-4-6" },
     leash: { max_turns: 12, timeout_secs: 900, isolation: "worktree" },
     auth: { bare: true, token_env: null },
+    interactive: { enabled: false, answer_timeout_secs: null },
   };
 }
 

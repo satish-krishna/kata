@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -42,6 +42,10 @@ pub enum KataEvent {
         insertions: u32,
         deletions: u32,
     },
+    #[serde(rename = "ask.requested")]
+    AskRequested { id: String, questions: Vec<Question> },
+    #[serde(rename = "ask.answered")]
+    AskAnswered { id: String, answers: Vec<Vec<String>> },
     #[serde(rename = "run.error")]
     RunError { message: String },
     #[serde(rename = "run.cancelled")]
@@ -56,6 +60,41 @@ pub struct DiffFile {
     pub status: String,
     /// Path relative to the worktree root.
     pub path: String,
+}
+
+/// One question in an `ask.requested` batch. Mirrored by hand in
+/// `app/src/lib/events.ts` (events are not ts-rs exported).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Question {
+    pub kind: QuestionKind,
+    pub header: String,
+    pub question: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<QuestionOption>,
+    #[serde(default)]
+    pub multi_select: bool,
+    #[serde(default)]
+    pub optional: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum QuestionKind {
+    /// Yes/No (or two-option) inline choice.
+    Confirm,
+    /// Single-choice (radio) or, with `multi_select`, multiple-choice (checkbox).
+    Select,
+    /// Free-form typed answer.
+    Text,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuestionOption {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -306,5 +345,43 @@ mod tests {
         let s = serde_json::to_string(&e).unwrap();
         assert!(!s.contains("worktree"), "absent worktree must not serialize: {s}");
         assert!(!s.contains("branch"), "absent branch must not serialize: {s}");
+    }
+
+    #[test]
+    fn ask_requested_serializes_with_tag_and_questions() {
+        let e = KataEvent::AskRequested {
+            id: "q1".into(),
+            questions: vec![Question {
+                kind: QuestionKind::Select,
+                header: "auth".into(),
+                question: "Which approach?".into(),
+                options: vec![QuestionOption { label: "JWT".into(), description: Some("stateless".into()) }],
+                multi_select: false,
+                optional: false,
+                placeholder: None,
+            }],
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains(r#""type":"ask.requested""#));
+        assert!(s.contains(r#""kind":"select""#));
+        assert!(s.contains(r#""multi_select":false"#));
+        assert!(s.contains(r#""label":"JWT""#));
+    }
+
+    #[test]
+    fn ask_answered_serializes_answers_matrix() {
+        let e = KataEvent::AskAnswered { id: "q1".into(), answers: vec![vec!["JWT".into()]] };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains(r#""type":"ask.answered""#));
+        assert!(s.contains(r#""answers":[["JWT"]]"#));
+    }
+
+    #[test]
+    fn question_deserializes_from_tool_input() {
+        let json = r#"{"kind":"confirm","header":"deploy","question":"Ship it?","options":[{"label":"Yes"},{"label":"No"}]}"#;
+        let q: Question = serde_json::from_str(json).unwrap();
+        assert_eq!(q.kind, QuestionKind::Confirm);
+        assert_eq!(q.options.len(), 2);
+        assert!(!q.multi_select);
     }
 }
