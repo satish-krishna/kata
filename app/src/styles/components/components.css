@@ -190,7 +190,7 @@
 .k-kit__provides { font: var(--font-code-sm); font-size: 11px; color: var(--text-faint); }
 .k-kit__provides b { color: var(--text-muted); font-weight: var(--weight-medium); }
 
-/* ---------- AskPanel (HITL checkpoint — AskUserQuestion intercepted at the edge) ---------- */
+/* ---------- AskPanel (HITL checkpoint — Kata-hosted ask_user MCP tool) ---------- */
 .k-ask { border: 1px solid var(--warning-border); border-radius: var(--radius-md); background: var(--surface-card); box-shadow: 0 0 0 1px var(--warning-subtle), var(--shadow-md); overflow: hidden; }
 .k-ask__banner { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); background: var(--warning-subtle); border-bottom: 1px solid var(--warning-border); }
 .k-ask__banner-dot { width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--warning); flex: none; }

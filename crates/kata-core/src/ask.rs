@@ -1,5 +1,5 @@
 //! The ask bridge: how a paused interactive run carries a question from claude
-//! (via the `kata _mcp-ask` MCP server it spawns) to the engine and an answer
+//! (via the `kata mcp-ask` MCP server it spawns) to the engine and an answer
 //! back. One JSON object per line over a localhost TCP connection; one
 //! question-batch in flight at a time (claude blocks on the tool result).
 

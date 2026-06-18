@@ -17,8 +17,8 @@ A spec marked interactive can have its run pause when claude asks a question; th
 Question kinds supported (the four the product asked for, via the design's three `kind`s):
 
 - **Yes/No** → `kind: "confirm"` (inline two-button choice)
-- **Single choice** → `kind: "select"`, `multiSelect: false` (radio options)
-- **Multiple choice** → `kind: "select"`, `multiSelect: true` (checkbox options)
+- **Single choice** → `kind: "select"`, `multi_select: false` (radio options)
+- **Multiple choice** → `kind: "select"`, `multi_select: true` (checkbox options)
 - **Descriptive** → `kind: "text"` (free-form typed answer)
 
 ## Non-goals
@@ -52,7 +52,7 @@ When `interactive.enabled`, the engine stands up a local MCP tool named `ask_use
 
 The engine is thread-based (no tokio/async; `run.rs` is threads + channels). To avoid dragging in an async HTTP stack, the recommended shape is:
 
-- A thin `kata _mcp-ask` stdio MCP subcommand that `claude` launches itself (named in the generated `--mcp-config`). It speaks minimal MCP over stdio: `initialize`, `tools/list` (the single `ask_user` tool), `tools/call`.
+- A thin `kata mcp-ask` stdio MCP subcommand that `claude` launches itself (named in the generated `--mcp-config`). It speaks minimal MCP over stdio: `initialize`, `tools/list` (the single `ask_user` tool), `tools/call`.
 - The subprocess bridges back to the run engine over a localhost TCP line-protocol: the engine listens on an ephemeral `127.0.0.1` port (passed to the subprocess via an env var), the subprocess sends the question JSON and blocks on a single answer line. Synchronous, cross-platform, std-only.
 
 Alternative considered: an in-process MCP-over-HTTP server (no IPC, handler lives in the engine) — cleaner data flow but pulls in an async HTTP/MCP dependency the engine otherwise doesn't need. Defer unless the stdio+TCP bridge proves awkward.
@@ -71,14 +71,14 @@ Two new `KataEvent` variants (Rust source of truth in `event.rs`, mirrored to TS
     { "kind": "select", "header": "auth", "question": "Which auth approach?",
       "options": [ { "label": "session cookie", "description": "server-side; simplest" },
                    { "label": "JWT", "description": "stateless; mobile-friendly" } ],
-      "multiSelect": false } ] }
+      "multi_select": false } ] }
 
 // engine → observer: answers accepted, session resumed
 { "type": "ask.answered", "id": "q1", "answers": [ ["JWT"] ] }
 ```
 
 - `id` — a correlation id (engine addition on top of the design README's payload) so the `answer <id>` back-channel routes to the right pause. The only deviation from the design's protocol; everything else is its shape unchanged.
-- `questions[]` — one or more questions surfaced in a single pause (the design's `AskPanel` already renders multiple). Each: `{ kind, header, question, options?, multiSelect?, optional?, placeholder? }`.
+- `questions[]` — one or more questions surfaced in a single pause (the design's `AskPanel` already renders multiple). Each: `{ kind, header, question, options?, multi_select?, optional?, placeholder? }`.
 - `answers: string[][]` — one inner array per question, carrying the chosen option label(s) or the typed text. `confirm`/single-`select` → one element; multi-`select` → zero+; `text` → one (empty allowed when `optional`).
 
 These supersede the `agent.question`/`agent.answered` names floated during brainstorming; we use the design system's names so the shipped CSS, prototype, and frontend store stay consistent.
@@ -91,7 +91,7 @@ Today kata-cli's stdin understands one line: `cancel`. We add one shape beside i
 answer <id> <json>      # <json> is the answers: string[][] payload for request <id>
 ```
 
-The CLI routes it to the engine, which hands it to the blocked tool handler. `cancel` still works while awaiting (kills claude + the `_mcp-ask` subprocess; the blocked handler unblocks and the run ends with exit 130).
+The CLI routes it to the engine, which hands it to the blocked tool handler. `cancel` still works while awaiting (kills claude + the `mcp-ask` subprocess; the blocked handler unblocks and the run ends with exit 130).
 
 ## RunSpec change (`spec.rs`)
 
@@ -128,7 +128,7 @@ The design is fully specified and the CSS exists in the design source but is **n
 - **New run state `awaiting`** (`app/src/lib/events.ts`): extend `RunState` to `"idle" | "running" | "awaiting" | "success" | "warning" | "error"`; add its `STATUS_LABEL`. The status dot is a **pulsing amber** (`.k-status--awaiting`). While awaiting, Run is replaced by Cancel and the bottom status bar reads `paused — waiting on your answer`.
 - **The `AskPanel`** (`.k-ask*`) renders inline at the bottom of the event stream where the run paused — an amber banner (`awaiting your input` + the invoked tool name), then one block per question by `kind`:
   - `confirm` → `.k-ask__confirm` two-button pair; chosen button takes the azure accent.
-  - `select` → `.k-ask__opts` / `.k-ask__opt` with radio marks, or checkbox marks when `multiSelect`; selected option takes azure border + tint + filled mark; option descriptions sit muted beneath.
+  - `select` → `.k-ask__opts` / `.k-ask__opt` with radio marks, or checkbox marks when `multi_select`; selected option takes azure border + tint + filled mark; option descriptions sit muted beneath.
   - `text` → a `.k-textarea`; `optional: true` lets it be left blank.
   - Footer (`.k-ask__foot`): hint `the run is paused on the leash` + a primary **Send answer · resume** button, disabled until every required question is answered.
 - **Answered state** (`.k-ask--answered`): the banner turns jade (`answered · run resumed`), selections stay highlighted, typed text shows in `.k-ask__answer`, and the exchange stays in the permanent run log as the stream continues below.
@@ -204,7 +204,7 @@ The `--help` output lists `--append-system-prompt <prompt>` as a named option an
 - `crates/kata-core/src/event.rs` — `AskRequested` / `AskAnswered` variants + `parse_stream_line` handling of the `ask_user` `tool_use`; ts-rs binding.
 - `crates/kata-core/src/command.rs` / `assemble.rs` — retasking fragment, generated `--mcp-config`.
 - `crates/kata-core/src/run.rs` — tool-call handler, answer back-channel, `awaiting` handling, work-clock pause, answer-deadline (exit 123).
-- `crates/kata-cli/src/main.rs` — stdin `answer <id> <json>` parsing; new `_mcp-ask` subcommand (stdio MCP server + TCP bridge).
+- `crates/kata-cli/src/main.rs` — stdin `answer <id> <json>` parsing; new `mcp-ask` subcommand (stdio MCP server + TCP bridge).
 - `crates/kata-core` (`fake-claude`) — interactive `KATA_FAKE_MODE`.
 - `app/src-tauri/src/lib.rs` — `submit_answer` command (write to sidecar stdin).
 - `app/src/lib/events.ts`, `run.svelte.ts`, `api.ts`, `mock.ts` — `awaiting` state, event routing, `submitAnswer`, mock step.
@@ -216,6 +216,6 @@ The `--help` output lists `--append-system-prompt <prompt>` as a named option an
 
 1. **Spike** the MCP transport against real claude (throwaway). Gate the design on its result.
 2. Engine contract: `spec.rs` + `event.rs` + ts-rs bindings (the cross-language surface first).
-3. Engine mechanism: `_mcp-ask` server + TCP bridge + `run.rs` handler + leash + `fake-claude` interactive mode + tests.
+3. Engine mechanism: `mcp-ask` server + TCP bridge + `run.rs` handler + leash + `fake-claude` interactive mode + tests.
 4. Workbench: vendor CSS, `AskPanel`, store wiring, `submit_answer`, Compose toggle, mock timeline.
 5. Docs: README usage note + roadmap M9 status.

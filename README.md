@@ -72,8 +72,8 @@ When `enabled`, the engine wires a Kata-hosted `ask_user` MCP tool and appends a
 
 **Question kinds** (the four supported via three `kind` values):
 - `confirm` — Yes/No two-button choice.
-- `select` with `multiSelect: false` — single-choice radio.
-- `select` with `multiSelect: true` — multiple-choice checkboxes.
+- `select` with `multi_select: false` — single-choice radio.
+- `select` with `multi_select: true` — multiple-choice checkboxes.
 - `text` — free-form typed answer.
 
 **The back-channel (extends kata-cli stdin).** Today `cancel` is the only line kata-cli's stdin understands. Interactive runs add one more shape beside it:
@@ -89,7 +89,7 @@ answer <id> <json>
 ```console
 $ kata run my-spec.toml
 {"type":"run.started","spec":"my-spec", ...}
-{"type":"ask.requested","id":"q1","questions":[{"kind":"select","header":"auth","question":"Which auth approach?","options":[{"label":"JWT"},{"label":"session cookie"}],"multiSelect":false}]}
+{"type":"ask.requested","id":"q1","questions":[{"kind":"select","header":"auth","question":"Which auth approach?","options":[{"label":"JWT"},{"label":"session cookie"}],"multi_select":false}]}
 # operator answers on stdin:
 answer q1 [["JWT"]]
 {"type":"ask.answered","id":"q1","answers":[["JWT"]]}
