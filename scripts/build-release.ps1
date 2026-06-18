@@ -40,8 +40,18 @@ try {
     foreach ($tool in @('npm', 'cargo')) {
         if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) { throw "$tool is not on PATH" }
     }
-    cargo tauri --version *> $null
-    if ($LASTEXITCODE -ne 0) { throw "the 'cargo tauri' subcommand is unavailable (cargo install tauri-cli)" }
+    # The Workbench build uses the node @tauri-apps/cli (npm run tauri:build / npx
+    # tauri), not `cargo tauri`. Verify it resolves from the app's node_modules.
+    Push-Location (Join-Path $repoRoot 'app')
+    try {
+        npx --no-install tauri --version *> $null
+        if ($LASTEXITCODE -ne 0) {
+            throw "the Tauri CLI is unavailable in app/node_modules (run 'npm --prefix app install')"
+        }
+    }
+    finally {
+        Pop-Location
+    }
 
     # 3. Build: CLI + frontend + installer bundles
     $step = 'build'

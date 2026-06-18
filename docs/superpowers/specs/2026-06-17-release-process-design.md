@@ -60,7 +60,7 @@ Invoked: `pwsh scripts/build-release.ps1` from the repo root. Steps, each named 
 
 1. **Version-consistency check** — read the version from `Cargo.toml` `[workspace.package]` (regex) and `app/src-tauri/tauri.conf.json` (JSON parse); abort if they differ.
 2. **Pre-release detection** — if the version contains `-`, set pre-release mode: the Workbench build skips MSI (Windows Installer rejects non-numeric pre-release identifiers) by passing `--bundles nsis`.
-3. **Pre-flight** — abort if `kata.exe` or `kata-app.exe` is running (linker `Access is denied`); verify `npm`, `cargo`, and the `cargo tauri` subcommand are available.
+3. **Pre-flight** — abort if `kata.exe` or `kata-app.exe` is running (linker `Access is denied`); verify `npm`, `cargo`, and the node Tauri CLI (`@tauri-apps/cli`, resolved via `npx tauri` from `app/`) are available.
 4. **Build** — run the Workbench/CLI build from `app/` (`npm run tauri:build`, or the equivalent with `--bundles nsis` for pre-releases). This single build yields the CLI, the frontend, and the installer bundles.
 5. **Stage artifacts** — copy `target/release/kata.exe` to `target/release/kata_X.Y.Z_x64.exe`; locate the NSIS bundle (and MSI for stable).
 6. **Summary** — print a table of the produced artifacts (name, size, modified time, full path).
