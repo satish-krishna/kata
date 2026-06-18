@@ -130,6 +130,9 @@ pub fn parse_stream_line(line: &str) -> Parsed {
                         }
                         Some("tool_use") => {
                             let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                            // The ask_user MCP tool surfaces via the AskPanel, not a
+                            // stream row; suppress its tool.use here.
+                            if name.ends_with("ask_user") { continue; }
                             out.events.push(KataEvent::ToolUse { name, input_summary: summarize_input(block.get("input")) });
                         }
                         _ => {}
@@ -383,5 +386,13 @@ mod tests {
         assert_eq!(q.kind, QuestionKind::Confirm);
         assert_eq!(q.options.len(), 2);
         assert!(!q.multi_select);
+    }
+
+    #[test]
+    fn ask_user_tool_use_is_suppressed_from_the_stream() {
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__kata-ask__ask_user","input":{"questions":[]}}]}}"#;
+        let p = parse_stream_line(line);
+        assert!(p.is_assistant_message, "still counts as an assistant turn");
+        assert!(p.events.is_empty(), "the ask_user tool.use must not render as a row");
     }
 }
