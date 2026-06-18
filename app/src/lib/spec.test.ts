@@ -38,6 +38,18 @@ describe("spec helpers", () => {
     b.task = "changed";
     expect(specEquals(a, b)).toBe(false);
   });
+
+  it("defaultSpec carries a bare auth with no token", () => {
+    const s = defaultSpec();
+    expect(s.auth.bare).toBe(true);
+    expect(s.auth.token_env).toBeNull();
+  });
+
+  it("normalize converts a blank token_env to null", () => {
+    const s = defaultSpec();
+    s.auth.token_env = "   ";
+    expect(normalize(s).auth.token_env).toBeNull();
+  });
 });
 
 describe("draftFrom", () => {
@@ -59,5 +71,19 @@ describe("draftFrom", () => {
     expect(draft.model.id).toBe("m");
     expect(draft.identity.mode).toBe("replace");
     expect(draft.identity.system_prompt).toBe("sp");
+  });
+
+  it("defaults auth when the loaded spec omits it", () => {
+    const loaded = { schema: 1, name: "x", task: "t", workdir: "/w", identity: { mode: "append" }, skills: [], plugins: {}, model: {}, leash: { max_turns: 8, isolation: "none" } } as any;
+    const draft = draftFrom(loaded);
+    expect(draft.auth.bare).toBe(true);
+    expect(draft.auth.token_env).toBeNull();
+  });
+
+  it("preserves a loaded auth block", () => {
+    const loaded = { ...defaultSpec(), auth: { bare: false, token_env: "MY_KEY" } } as any;
+    const draft = draftFrom(loaded);
+    expect(draft.auth.bare).toBe(false);
+    expect(draft.auth.token_env).toBe("MY_KEY");
   });
 });
