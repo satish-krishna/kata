@@ -28,6 +28,9 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
+    /// (internal) MCP stdio server backing the interactive `ask_user` tool.
+    #[command(hide = true)]
+    McpAsk,
 }
 
 // Exit codes: 0 = ok, 1 = validation failure, 2 = load/parse error,
@@ -39,6 +42,10 @@ fn main() -> ExitCode {
         Cmd::Catalog => cmd_catalog(),
         Cmd::Run { spec } => cmd_run(&spec),
         Cmd::Bundle { spec, out, force } => cmd_bundle(&spec, out.as_deref(), force),
+        Cmd::McpAsk => match kata_core::ask::serve_stdio() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => { eprintln!("error: {e}"); ExitCode::from(2) }
+        },
     }
 }
 

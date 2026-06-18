@@ -18,7 +18,7 @@ pub struct AskRequest {
     pub reply: std::sync::mpsc::Sender<Vec<Vec<String>>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct QuestionFrame {
     questions: Vec<Question>,
 }
@@ -26,6 +26,11 @@ struct QuestionFrame {
 #[derive(Serialize)]
 struct AnswerFrame<'a> {
     answers: &'a [Vec<String>],
+}
+
+#[derive(Deserialize)]
+struct AnswerFrameOwned {
+    answers: Vec<Vec<String>>,
 }
 
 /// Localhost listener for the ask bridge. Bind early in the run so the port can
@@ -48,7 +53,9 @@ impl Bridge {
     /// question-batch, forward it as an `AskRequest`, block on its reply, and
     /// write the answer frame back. Stops when `cancel` trips or the peer closes.
     pub fn serve(self, tx: Sender<AskRequest>, cancel: CancelToken) {
-        // Note: a cancel only takes effect between connections — a bridge idle in accept() unblocks when the next connection arrives or when the process exits (each run is its own OS process).
+        // Note: a cancel only takes effect between connections — a bridge idle in
+        // accept() unblocks when the next connection arrives or when the process
+        // exits (each run is its own OS process).
         thread::spawn(move || {
             for stream in self.listener.incoming() {
                 if cancel.is_cancelled() {
@@ -64,10 +71,7 @@ impl Bridge {
     }
 }
 
-fn handle_conn(
-    stream: TcpStream,
-    tx: &Sender<AskRequest>,
-) -> std::io::Result<()> {
+fn handle_conn(stream: TcpStream, tx: &Sender<AskRequest>) -> std::io::Result<()> {
     let mut write_half = stream.try_clone()?;
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
@@ -105,6 +109,180 @@ fn handle_conn(
     }
 }
 
+/// Handle one JSON-RPC 2.0 line from claude. Returns the response JSON line,
+/// or `None` for notifications (which require no response per the MCP spec).
+pub fn handle_rpc(line: &str, port: u16) -> Option<String> {
+    let val: serde_json::Value = serde_json::from_str(line).ok()?;
+    let method = val["method"].as_str()?;
+
+    // Notifications have no `id` and must not be responded to.
+    if method.starts_with("notifications/") {
+        return None;
+    }
+
+    let id = &val["id"];
+
+    let result = match method {
+        "initialize" => {
+            let proto = val["params"]["protocolVersion"]
+                .as_str()
+                .unwrap_or("2024-11-05");
+            serde_json::json!({
+                "protocolVersion": proto,
+                "capabilities": { "tools": {} },
+                "serverInfo": {
+                    "name": "kata-ask",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            })
+        }
+        "tools/list" => {
+            serde_json::json!({
+                "tools": [{
+                    "name": "ask_user",
+                    "description": "Ask the user one or more questions and wait for their answers.",
+                    "inputSchema": {
+                        "type": "object",
+                        "required": ["questions"],
+                        "properties": {
+                            "questions": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "required": ["kind", "header", "question"],
+                                    "properties": {
+                                        "kind": {
+                                            "type": "string",
+                                            "enum": ["confirm", "select", "text"]
+                                        },
+                                        "header": { "type": "string" },
+                                        "question": { "type": "string" },
+                                        "options": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "required": ["label"],
+                                                "properties": {
+                                                    "label": { "type": "string" },
+                                                    "description": { "type": "string" }
+                                                }
+                                            }
+                                        },
+                                        "multi_select": { "type": "boolean" },
+                                        "optional": { "type": "boolean" },
+                                        "placeholder": { "type": "string" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }]
+            })
+        }
+        "tools/call" => {
+            let name = val["params"]["name"].as_str().unwrap_or("");
+            if name != "ask_user" {
+                return Some(json_rpc_error(id, -32601, "Unknown tool"));
+            }
+            let questions_val = &val["params"]["arguments"]["questions"];
+            let questions: Vec<Question> = match serde_json::from_value(questions_val.clone()) {
+                Ok(q) => q,
+                Err(e) => {
+                    return Some(json_rpc_error(
+                        id,
+                        -32600,
+                        &format!("Invalid questions: {e}"),
+                    ))
+                }
+            };
+            let answers = match ask_over_bridge(port, &questions) {
+                Ok(a) => a,
+                Err(e) => {
+                    return Some(json_rpc_error(id, -32603, &format!("Bridge error: {e}")))
+                }
+            };
+            let text = format_answers(&questions, &answers);
+            serde_json::json!({
+                "content": [{ "type": "text", "text": text }]
+            })
+        }
+        _ => {
+            return Some(json_rpc_error(id, -32601, "Method not found"));
+        }
+    };
+
+    let resp = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    });
+    Some(resp.to_string())
+}
+
+fn json_rpc_error(id: &serde_json::Value, code: i32, message: &str) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": { "code": code, "message": message }
+    })
+    .to_string()
+}
+
+fn format_answers(questions: &[Question], answers: &[Vec<String>]) -> String {
+    questions
+        .iter()
+        .zip(answers.iter())
+        .map(|(q, a)| {
+            let answer_text = if a.is_empty() {
+                "(no answer)".to_string()
+            } else {
+                a.join(", ")
+            };
+            format!("{}: {}", q.header, answer_text)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn ask_over_bridge(port: u16, questions: &[Question]) -> std::io::Result<Vec<Vec<String>>> {
+    let mut stream = TcpStream::connect(("127.0.0.1", port))?;
+    let frame = QuestionFrame {
+        questions: questions.to_vec(),
+    };
+    let body = serde_json::to_string(&frame).map_err(std::io::Error::other)?;
+    writeln!(stream, "{body}")?;
+    stream.flush()?;
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    let ans: AnswerFrameOwned =
+        serde_json::from_str(line.trim()).map_err(std::io::Error::other)?;
+    Ok(ans.answers)
+}
+
+/// MCP stdio server loop. Reads `KATA_ASK_PORT` from the environment, then
+/// loops reading JSON-RPC 2.0 lines from stdin and writing responses to stdout.
+/// EOF on stdin is a clean exit.
+pub fn serve_stdio() -> std::io::Result<()> {
+    let port: u16 = std::env::var("KATA_ASK_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if stdin.lock().read_line(&mut line)? == 0 {
+            return Ok(());
+        }
+        if let Some(resp) = handle_rpc(line.trim(), port) {
+            writeln!(stdout, "{resp}")?;
+            stdout.flush()?;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +291,7 @@ mod tests {
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpStream;
     use std::sync::mpsc;
+    use std::thread;
 
     #[test]
     fn bridge_round_trips_a_question_and_answer() {
@@ -142,5 +321,52 @@ mod tests {
             line.contains(r#""answers":[["typed answer"]]"#),
             "got {line}"
         );
+    }
+
+    #[test]
+    fn rpc_initialize_advertises_tools_capability() {
+        let resp = handle_rpc(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}"#,
+            0,
+        )
+        .unwrap();
+        assert!(resp.contains(r#""tools""#));
+        assert!(resp.contains(r#""serverInfo""#));
+    }
+
+    #[test]
+    fn rpc_tools_list_exposes_ask_user_with_schema() {
+        let resp =
+            handle_rpc(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, 0).unwrap();
+        assert!(resp.contains(r#""name":"ask_user""#));
+        assert!(resp.contains(r#""questions""#)); // inputSchema mentions questions
+    }
+
+    #[test]
+    fn rpc_initialized_notification_has_no_response() {
+        assert!(
+            handle_rpc(
+                r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+                0
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn rpc_tools_call_bridges_to_the_listener() {
+        // Stand up a bridge that auto-answers, then drive a tools/call through it.
+        let bridge = Bridge::bind().unwrap();
+        let port = bridge.port();
+        let (tx, rx) = mpsc::channel::<AskRequest>();
+        bridge.serve(tx, CancelToken::new());
+        thread::spawn(move || {
+            let req = rx.recv().unwrap();
+            req.reply.send(vec![vec!["JWT".into()]]).unwrap();
+        });
+        let call = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ask_user","arguments":{"questions":[{"kind":"text","header":"h","question":"q?"}]}}}"#;
+        let resp = handle_rpc(call, port).unwrap();
+        assert!(resp.contains("JWT"), "tool result should carry the answer: {resp}");
+        assert!(resp.contains(r#""content""#));
     }
 }
