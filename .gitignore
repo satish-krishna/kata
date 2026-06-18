@@ -5,3 +5,4 @@ dist/
 .DS_Store
 Thumbs.db
 app/src-tauri/binaries/
+scripts/build-release.log
