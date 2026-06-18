@@ -202,7 +202,19 @@ pub fn run<F: FnMut(KataEvent)>(
                 emit(KataEvent::Log { level: "warn".into(), message: line });
             }
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break, // child closed both streams
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                // Both reader threads ended (stdio EOF). Usually the child has
+                // exited or is about to — break and let child.wait() collect it.
+                // But a child that closes its stdio early yet keeps running must
+                // stay leashed: if it has not exited, keep looping so the
+                // deadline/cancel checks reap it, instead of blocking forever in
+                // an unbounded child.wait().
+                match child.try_wait() {
+                    Ok(Some(_)) => break,
+                    Ok(None) => thread::sleep(POLL),
+                    Err(e) => return Err(RunError::Spawn(e.to_string())),
+                }
+            }
         }
     }
 

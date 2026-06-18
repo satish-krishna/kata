@@ -102,6 +102,27 @@ fn run_logs_default_timeout_cap_when_unset() {
 
 #[test]
 #[serial]
+fn run_reaps_child_that_closes_stdio_but_lingers() {
+    // A child that closes stdout+stderr (reader threads disconnect) but keeps
+    // running must still be reaped by the wall-clock deadline — not block forever
+    // in child.wait(). Without a leashed wait this hangs well past the deadline.
+    with_fake("closestdio");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.leash.timeout_secs = Some(1);
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, |e| events.push(e)).unwrap();
+
+    assert_eq!(
+        outcome.exit_code, 124,
+        "deadline must reap a child that closed stdio but kept running"
+    );
+    assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { .. })));
+}
+
+#[test]
+#[serial]
 fn run_invalid_spec_errors_before_spawn() {
     with_fake("ok");
     let mut spec = base_spec("/w");
