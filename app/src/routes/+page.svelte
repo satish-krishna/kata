@@ -154,7 +154,7 @@
 
     <div class="wb-pane wb-pane--observe">
       <div class="wb-pane__head"><span class="kata-eyebrow">Observe · the run</span></div>
-      <ObservePane runState={runStore.state} events={runStore.events} {spec} summary={runStore.summary} pendingAsk={runStore.pendingAsk} onAnswer={submitAnswer} />
+      <ObservePane runState={runStore.state} events={runStore.events} {spec} summary={runStore.summary} asks={runStore.asks} onAnswer={submitAnswer} />
     </div>
   </div>
 

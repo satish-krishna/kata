@@ -19,10 +19,10 @@ describe("run store — ask.requested / ask.answered transitions", () => {
     runStore.state = "idle";
     runStore.events = [];
     runStore.summary = null;
-    runStore.pendingAsk = null;
+    runStore.asks = [];
   });
 
-  it("transitions running → awaiting on ask.requested, then awaiting → running on ask.answered", async () => {
+  it("transitions running → awaiting on ask.requested, then awaiting → running on ask.answered; answered record persists", async () => {
     const api = await import("./api");
     let capturedHandle: ((ev: import("./events").KataEvent) => void) | null = null;
 
@@ -53,7 +53,7 @@ describe("run store — ask.requested / ask.answered transitions", () => {
     expect(runStore.state).toBe("running");
     expect(capturedHandle).not.toBeNull();
 
-    // Feed ask.requested — expect state → awaiting and pendingAsk populated.
+    // Feed ask.requested — expect state → awaiting and asks list populated.
     capturedHandle!({
       type: "ask.requested",
       id: "q1",
@@ -72,15 +72,62 @@ describe("run store — ask.requested / ask.answered transitions", () => {
     });
 
     expect(runStore.state).toBe("awaiting");
-    expect(runStore.pendingAsk).not.toBeNull();
-    expect(runStore.pendingAsk?.id).toBe("q1");
-    expect(runStore.pendingAsk?.questions).toHaveLength(1);
+    expect(runStore.asks).toHaveLength(1);
+    expect(runStore.asks[0].id).toBe("q1");
+    expect(runStore.asks[0].questions).toHaveLength(1);
+    expect(runStore.asks[0].answers).toBeNull();
 
-    // Feed ask.answered — expect state → running and pendingAsk cleared.
+    // Feed ask.answered — expect state → running and record persists with answers set (NOT cleared).
     capturedHandle!({ type: "ask.answered", id: "q1", answers: [["Isolate only"]] });
 
     expect(runStore.state).toBe("running");
-    expect(runStore.pendingAsk).toBeNull();
+    // The asks list still has the record (it is NOT removed).
+    expect(runStore.asks).toHaveLength(1);
+    expect(runStore.asks[0].id).toBe("q1");
+    expect(runStore.asks[0].answers).toEqual([["Isolate only"]]);
+  });
+
+  it("active-pending ask is null after ask.answered", async () => {
+    const api = await import("./api");
+    let capturedHandle: ((ev: import("./events").KataEvent) => void) | null = null;
+
+    vi.mocked(api.onRunEvent).mockImplementationOnce((cb) => {
+      capturedHandle = cb;
+      return Promise.resolve(() => {});
+    });
+
+    const spec = {
+      schema: 1 as const,
+      name: "test",
+      description: null,
+      task: "do something",
+      context: null,
+      workdir: "/tmp",
+      identity: { system_prompt: null, mode: "append" as const },
+      skills: [],
+      plugins: {},
+      model: { id: null },
+      leash: { max_turns: 5, timeout_secs: null, isolation: "none" as const },
+      auth: { bare: true, token_env: null },
+      interactive: { enabled: true, answer_timeout_secs: null },
+    };
+    await startRun(spec);
+
+    capturedHandle!({
+      type: "ask.requested",
+      id: "q2",
+      questions: [{ kind: "text", header: "h", question: "q?", optional: false }],
+    });
+
+    // The active ask (answers === null) exists before answering.
+    const activeBeforeAnswer = runStore.asks.find((a) => a.answers === null);
+    expect(activeBeforeAnswer).not.toBeUndefined();
+
+    capturedHandle!({ type: "ask.answered", id: "q2", answers: [["some text"]] });
+
+    // After answering, no ask has answers === null.
+    const activeAfterAnswer = runStore.asks.find((a) => a.answers === null);
+    expect(activeAfterAnswer).toBeUndefined();
   });
 
   it("submitAnswer is a no-op when state is not awaiting", async () => {

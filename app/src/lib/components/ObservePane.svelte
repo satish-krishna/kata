@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { RunSpec } from "../../bindings/RunSpec";
-  import type { StreamEvent, RunSummary, RunState, Question } from "../events";
+  import type { StreamEvent, RunSummary, RunState } from "../events";
+  import type { AskRecord } from "../run.svelte";
   import { STATUS_LABEL } from "../events";
   import EventRow from "./EventRow.svelte";
   import SummaryStat from "./SummaryStat.svelte";
@@ -16,14 +17,14 @@
     events,
     spec,
     summary,
-    pendingAsk = null,
+    asks = [],
     onAnswer,
   }: {
     runState: RunState;
     events: StreamEvent[];
     spec: RunSpec;
     summary: RunSummary | null;
-    pendingAsk?: { id: string; questions: Question[] } | null;
+    asks?: AskRecord[];
     onAnswer?: (id: string, answers: string[][]) => void;
   } = $props();
 
@@ -33,6 +34,7 @@
   $effect(() => {
     void events.length;
     void summary;
+    void asks.length;
     if (streamEl) streamEl.scrollTop = streamEl.scrollHeight;
   });
 
@@ -52,7 +54,7 @@
 </div>
 
 <div class="wb-stream" bind:this={streamEl}>
-  {#if events.length === 0 && !summary}
+  {#if events.length === 0 && !summary && asks.length === 0}
     <div class="wb-stream__empty">
       <Terminal size={28} />
       <p>Press <b style="color:var(--accent-text)">Run</b> to drive <code>claude -p</code> to completion. The normalized event stream renders here.</p>
@@ -62,11 +64,15 @@
       <div class="wb-event-enter"><EventRow {ev} /></div>
     {/each}
   {/if}
-  {#if pendingAsk && onAnswer}
-    {#key pendingAsk.id}
-      <div class="wb-event-enter"><AskPanel id={pendingAsk.id} questions={pendingAsk.questions} onSubmit={onAnswer} /></div>
-    {/key}
-  {/if}
+  {#each asks as ask (ask.id)}
+    {#if ask.answers === null}
+      {#key ask.id}
+        <div class="wb-event-enter"><AskPanel id={ask.id} questions={ask.questions} onSubmit={onAnswer} /></div>
+      {/key}
+    {:else}
+      <div class="wb-event-enter"><AskPanel id={ask.id} questions={ask.questions} answers={ask.answers} /></div>
+    {/if}
+  {/each}
 </div>
 
 {#if summary}
