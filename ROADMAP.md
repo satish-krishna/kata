@@ -82,11 +82,12 @@ Two engine improvements that grew out of a live debugging session ("why is my ru
 
 ---
 
-## Phase 5 - Observe and steer (human-in-the-loop)
+## Phase 5 - Observe + ask (human-in-the-loop)
 
-Deferred from the MVP, which is observe-only by design: the engine drives `claude -p` headless with `--dangerously-skip-permissions`, so a run takes no mid-flight intervention — you watch it and hold the leash. Once the Workbench MVP (M5 compose + M6 observe/run) ships, this is the first post-MVP track: turn the one-way observe pane into a two-way session. It builds directly on the cancel-only stdin channel M6 introduces (a `cancel` line to the `kata` process) — the same seam carries steering.
+Deferred from the MVP, which is observe-only by design: the engine drives `claude -p` headless with `--dangerously-skip-permissions`, so a run takes no mid-flight intervention — you watch it and hold the leash. Once the Workbench MVP (M5 compose + M6 observe/run) ships, this is the first post-MVP track: turn the one-way observe pane into a two-way session. It builds directly on the cancel-only stdin channel M6 introduces (a `cancel` line to the `kata` process) — the same seam carries answers.
 
-- [ ] **M9 - Observe + steer.** Extend the run's stdin protocol beyond `cancel` (e.g. `steer: <text>`) so the operator can inject guidance mid-run; the engine relays it into the live `claude` session. The observe pane gains an input affordance and the run gains a "steering" state. A real engine + protocol change.
+- [x] **M9 - Observe + ask.** Opt-in per spec (`[interactive] enabled = true`): when the spec is interactive, the engine stands up a Kata-hosted `ask_user` MCP tool (a `kata _mcp-ask` stdio subprocess bridged to the engine over a localhost TCP line-protocol) and appends a retasking note so claude knows to call it at consequential forks. claude calls the tool and blocks; the engine emits `ask.requested`, pauses the work-clock, waits for the operator's `answer <id> <json>` on stdin, returns the answer as the tool result, emits `ask.answered`, and resumes — one unbroken `claude -p` session. The Workbench surfaces the AskPanel inline, with an Interactive section in Compose. **Not** interception of the built-in `AskUserQuestion` (which terminates headless) — see the feasibility findings in `docs/superpowers/specs/2026-06-18-interactive-sessions-design.md`. Exit code 123 = answer deadline exceeded (distinct from 124 work timeout). **Status:** merged to `main`.
+- [ ] **Observe + steer (follow-on).** Operator-initiated mid-run guidance (injecting unsolicited context). Shares this same back-channel; deferred.
 - [ ] **Observe + approve (optional sibling).** Pause on tool calls and require operator approval before proceeding (the interactive heir to `--dangerously-skip-permissions`). Shares the same back-channel; ship only if a need appears.
 
 ---

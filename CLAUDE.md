@@ -21,13 +21,13 @@ A Cargo workspace plus a Tauri app. Three crates in `[workspace].members`:
 These are the stable, language-neutral interfaces; `kata-core` is the reference implementation but the contract is not Rust-specific (Shokunin is .NET and consumes both).
 
 - **The run-spec** (`spec::RunSpec`) — what to run. Serialized to TOML/JSON.
-- **The event protocol** (`event::KataEvent`) — `run.started` / `assistant.text` / `tool.use` / `tool.result` / `turn` / `log` / `run.completed` / `run.error` / `run.cancelled`, one JSON object per line on the engine's stdout.
+- **The event protocol** (`event::KataEvent`) — `run.started` / `assistant.text` / `tool.use` / `tool.result` / `turn` / `log` / `run.completed` / `run.error` / `run.cancelled` / `ask.requested` / `ask.answered`, one JSON object per line on the engine's stdout. `ask.requested` carries the question list and a correlation `id`; `ask.answered` carries the same `id` and the `answers: string[][]`. Only emitted when `[interactive] enabled = true` in the spec.
 
 `RunSpec` and the catalog/enum types are mirrored to TypeScript in `app/src/bindings/` by **ts-rs**, gated behind the `ts` Cargo feature. After changing any of these types, regenerate: `cargo test -p kata-core --features ts export_bindings`. Do not hand-edit `app/src/bindings/`.
 
 ## Exit-code semantics (the leash)
 
-The engine maps run outcomes to process exit codes, and the CLI surfaces them: turn cap → **125**, wall-clock timeout → **124**, cancel → **130**. The CLI itself uses **1** for validation failure and **2** for load/parse error. Preserve these — they are part of the CI/orchestrator contract.
+The engine maps run outcomes to process exit codes, and the CLI surfaces them: turn cap → **125**, wall-clock timeout → **124**, answer deadline exceeded → **123**, cancel → **130**. The CLI itself uses **1** for validation failure and **2** for load/parse error. Preserve these — they are part of the CI/orchestrator contract. Exit 123 is only reachable when `[interactive] enabled = true` and `answer_timeout_secs` is set; it is distinct from 124 so CI logs can tell "work ran too long" from "nobody answered."
 
 ## The Workbench (`app/`)
 

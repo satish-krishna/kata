@@ -58,6 +58,44 @@ triage-bundle/
         SKILL.md
 ```
 
+## Interactive runs
+
+By default, a Kata run is headless and observe-only. Add an `[interactive]` block to a spec to let claude pause mid-run and ask the operator a question; the Workbench (or any stdin-connected terminal) answers and the same `claude -p` session resumes with the answer fed back as a tool result.
+
+```toml
+[interactive]
+enabled            = true   # default false — the opt-in gate
+answer_timeout_secs = 600   # optional; omit to wait until answered or cancelled
+```
+
+When `enabled`, the engine wires a Kata-hosted `ask_user` MCP tool and appends a retasking note so claude knows to call it at consequential forks. claude calls the tool and blocks; the engine surfaces the question(s) and waits for an answer. When `enabled` is false (the default), `ask_user` is never offered — the headless contract is preserved exactly and every existing spec, CI run, and Shokunin job is unchanged.
+
+**Question kinds** (the four supported via three `kind` values):
+- `confirm` — Yes/No two-button choice.
+- `select` with `multiSelect: false` — single-choice radio.
+- `select` with `multiSelect: true` — multiple-choice checkboxes.
+- `text` — free-form typed answer.
+
+**The back-channel (extends kata-cli stdin).** Today `cancel` is the only line kata-cli's stdin understands. Interactive runs add one more shape beside it:
+
+```
+answer <id> <json>
+```
+
+`<id>` is the correlation id from the `ask.requested` event; `<json>` is the `answers: string[][]` payload — one inner array per question, carrying the chosen label(s) or typed text. `cancel` still works while awaiting (exits 130). An unattended interactive run that exceeds its `answer_timeout_secs` exits **123** (answer deadline exceeded) — distinct from 124 (work timeout) so CI logs can tell the two apart.
+
+**Worked example:**
+
+```console
+$ kata run my-spec.toml
+{"type":"run.started","spec":"my-spec", ...}
+{"type":"ask.requested","id":"q1","questions":[{"kind":"select","header":"auth","question":"Which auth approach?","options":[{"label":"JWT"},{"label":"session cookie"}],"multiSelect":false}]}
+# operator answers on stdin:
+answer q1 [["JWT"]]
+{"type":"ask.answered","id":"q1","answers":[["JWT"]]}
+{"type":"run.completed","exit_code":0, ...}
+```
+
 Hand that folder to any machine and run it by pointing `kata run` at the directory instead of a spec file:
 
 ```console
