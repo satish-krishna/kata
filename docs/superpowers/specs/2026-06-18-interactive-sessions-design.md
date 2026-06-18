@@ -154,6 +154,7 @@ The design is fully specified and the CSS exists in the design source but is **n
 2. **`ask_user` auto-approval** under `--dangerously-skip-permissions`. Expected (normal tool, not an interactive prompt), confirmed by the spike.
 3. **`--bare` + `--mcp-config`.** Does the empty room still load an explicit MCP config? Likely yes (explicit flag, not ambient config); confirmed by the spike.
 4. **Tool name in the UI banner.** MCP server tools are namespaced (`mcp__<server>__ask_user`); the banner copy ("awaiting your input" + invoked tool name) should show something legible, not the raw namespaced id.
+5. **Bridge trust boundary (threat model).** The ask bridge listens on `127.0.0.1:<ephemeral>` with no authentication; any local process that guesses the port could inject a question frame (surfacing a spurious AskPanel) or, by connecting first, intercept the question and feed claude a bogus answer as the tool result. This is the same trust boundary as the user's own shell, so it is acceptable for a single-user localhost desktop tool. Cheap future hardening if ever needed: generate a per-run shared secret, pass it alongside `KATA_ASK_PORT` via the mcp-config `env`, and require it on the first frame. (Surfaced by the final whole-branch review; not a pre-merge blocker.)
 
 ## Spike results (2026-06-18)
 
