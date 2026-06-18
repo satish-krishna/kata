@@ -14,6 +14,16 @@
 
   let kitCount = $derived(spec.skills.length + Object.keys(spec.plugins).length);
 
+  // In full mode claude uses the logged-in session, so a still-set token_env is
+  // ignored. Surface that at compose time so the hidden token field isn't a mystery.
+  const ROOM_HINT =
+    "bare = the empty room (curated kit only). full = your real claude config, plugins, and login.";
+  let roomHint = $derived(
+    !spec.auth.bare && spec.auth.token_env?.trim()
+      ? `${ROOM_HINT} (token_env is set but ignored in full mode.)`
+      : ROOM_HINT,
+  );
+
   // Integer-coerce the leash inputs (mirrors kata-core's expectations).
   function onMaxTurns(e: Event) {
     const n = Math.trunc(Number((e.currentTarget as HTMLInputElement).value));
@@ -97,7 +107,7 @@
       <span class="wb-section__title">Environment</span>
       <span class="wb-section__sub">the room claude runs in</span>
     </div>
-    <Field label="Room" key="auth.bare" hint="bare = the empty room (curated kit only). full = your real claude config, plugins, and login.">
+    <Field label="Room" key="auth.bare" hint={roomHint}>
       <Segmented
         options={["bare", "full"] as const}
         value={spec.auth.bare ? "bare" : "full"}
@@ -106,7 +116,7 @@
       />
     </Field>
     {#if spec.auth.bare}
-      <Field label="Token env var" key="auth.token_env" hint="Name of an env var holding your API key — not the key itself.">
+      <Field label="Token env var" key="auth.token_env" hint="Name of an env var holding your API key — not the key itself. Empty = use ambient credentials (claude login).">
         <input class="k-input k-input--mono" placeholder="ANTHROPIC_API_KEY" bind:value={spec.auth.token_env} />
       </Field>
     {/if}
