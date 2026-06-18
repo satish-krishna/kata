@@ -105,7 +105,7 @@ Ship these first. Copy `design_system/` into `app/src/` (e.g. `app/src/styles/`)
 
 **Purpose:** Let the agent ask the operator a question mid-run without breaking the headless model. **Reference:** the main Workbench (`prototype/index.html`) now folds a checkpoint into its run; `prototype/hitl.html` + `prototype/hitl.jsx` is the focused showcase of all three question kinds.
 
-**The mechanism:** when the agent calls the `AskUserQuestion` tool, Kata's harness **intercepts that one tool call at the edge** instead of executing it — it pauses the run, surfaces the question(s), waits, and feeds the operator's answer back as the tool *result*. The agent never knows a human was involved. HITL is a property of the leash, not a change to the agent.
+**The mechanism:** when the agent calls Kata's hosted **`ask_user` MCP tool**, the engine **handles that tool call at the edge** — it pauses the run, surfaces the question(s), waits, and feeds the operator's answer back as the tool *result*. The agent never knows a human was involved. HITL is a property of the leash, not a change to the agent. (This handoff originally imagined intercepting the built-in `AskUserQuestion` tool; that terminates a headless `claude -p`, so the shipped engine hosts its own `ask_user` MCP tool instead — see `docs/superpowers/specs/2026-06-18-interactive-sessions-design.md`.)
 
 **New run state:** the lifecycle becomes `idle → running → awaiting → running → {success|warning|error}`. `awaiting` is its own andon signal — a **pulsing amber** `StatusDot` (`.k-status--awaiting`, class already in `components.css`). While awaiting, Run is replaced by **Cancel** and the status bar reads `paused — waiting on your answer`.
 
@@ -114,7 +114,7 @@ Ship these first. Copy `design_system/` into `app/src/` (e.g. `app/src/styles/`)
 - `ask.answered` — `answers: string[][]` (chosen labels or typed text per question). Becomes the `tool.result` for the call; the run returns to `running`.
 
 **The AskPanel** (classes `.k-ask*` in `components.css`) renders inline at the bottom of the stream where the run paused:
-- An **amber banner** (`.k-ask__banner`: `awaiting your input` micro-label + the `AskUserQuestion` tool name) with a soft shadow, so it reads as an interactive surface above the flat event rows.
+- An **amber banner** (`.k-ask__banner`: `awaiting your input` micro-label + the `ask_user` tool name) with a soft shadow, so it reads as an interactive surface above the flat event rows.
 - One block per question (`.k-ask__q`): uppercase mono header eyebrow + question text, then the input — by `kind`:
   - **`confirm`** (`.k-ask__confirm` / `.k-ask__confirm-btn`) — a yes/no (or two-option) inline button pair; the chosen button takes the azure accent.
   - **`select`** (`.k-ask__opts` / `.k-ask__opt`) — multiple choice; radio marks, or checkboxes when `multi_select`. Selected option takes azure border + tint + filled mark; descriptions sit muted under each label.
