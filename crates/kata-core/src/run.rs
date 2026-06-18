@@ -3,7 +3,7 @@ use crate::catalog::CatalogEntry;
 use crate::command::build_invocation;
 use crate::event::KataEvent;
 use crate::spec::{validate, Isolation, RunSpec};
-use std::io::BufReader;
+use std::io::{BufReader, Write};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 #[derive(Debug)]
 pub struct RunOutcome {
     pub exit_code: i32,
+    /// Absolute path of the per-run transcript, or `None` if it could not be written.
+    pub transcript_path: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -75,6 +77,37 @@ pub fn answer_channel() -> (mpsc::Sender<Answer>, AnswerRx) {
 /// sessions design spec.
 const INTERACTIVE_RETASK: &str = "You have an `ask_user` tool. When you hit a consequential fork you cannot resolve from the task and context — ambiguous requirements, a decision with real trade-offs, a destructive action you are unsure about — call `ask_user` with a crisp question (choose the `kind` that fits: confirm / select / text) instead of guessing. Do not use it for trivia you can decide yourself. Do NOT use any built-in question or prompt tool such as `AskUserQuestion`; only `ask_user` reaches the operator.";
 
+/// Per-run transcript writer: each `KataEvent` is one JSON line, flushed
+/// immediately so a run killed by the leash, a cancel, or a panic still leaves a
+/// complete-up-to-the-cut record.
+struct Transcript {
+    out: std::io::BufWriter<std::fs::File>,
+}
+
+impl Transcript {
+    fn write(&mut self, event: &KataEvent) {
+        if let Ok(line) = serde_json::to_string(event) {
+            let _ = writeln!(self.out, "{line}");
+            let _ = self.out.flush();
+        }
+    }
+}
+
+/// Best-effort: open `<kata-home>/runs/<slug>-<utc>.jsonl`. `Err` (no home,
+/// unwritable) means the caller logs a warning and runs without a transcript.
+fn open_transcript(spec_name: &str) -> Result<(Transcript, std::path::PathBuf), String> {
+    let dir = crate::fsutil::runs_dir().ok_or_else(|| "no home directory for ~/.kata".to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let name = format!("{}-{}.jsonl", crate::fsutil::slug(spec_name), crate::fsutil::utc_stamp(now));
+    let path = dir.join(name);
+    let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+    Ok((Transcript { out: std::io::BufWriter::new(file) }, path))
+}
+
 pub fn run<F: FnMut(KataEvent)>(
     spec: &RunSpec,
     catalog: &[CatalogEntry],
@@ -85,6 +118,23 @@ pub fn run<F: FnMut(KataEvent)>(
     validate(spec).map_err(RunError::Invalid)?;
     let assembled = assemble(spec, catalog)?;
     let mut inv = build_invocation(spec, &assembled);
+
+    // Tee the event stream to a per-run transcript. Best-effort: a missing
+    // transcript must never fail a real run. Set up before the auth fail-fast so a
+    // refused run still leaves a record of why.
+    let (mut transcript, transcript_path) = match open_transcript(&spec.name) {
+        Ok((t, p)) => (Some(t), Some(p)),
+        Err(e) => {
+            emit(KataEvent::Log { level: "warn".into(), message: format!("transcript unavailable: {e}") });
+            (None, None)
+        }
+    };
+    let mut emit = |event: KataEvent| {
+        if let Some(t) = transcript.as_mut() {
+            t.write(&event);
+        }
+        emit(event);
+    };
 
     // Fail fast: a bare run that references a token var it cannot resolve would
     // reach the API unauthenticated. Refuse before creating a worktree or spawning.
@@ -177,6 +227,9 @@ pub fn run<F: FnMut(KataEvent)>(
         level: "info".into(),
         message: format!("assembled kit: {} skill(s), {} plugin(s)", spec.skills.len(), spec.plugins.len()),
     });
+    if let Some(p) = &transcript_path {
+        emit(KataEvent::Log { level: "info".into(), message: format!("transcript: {}", p.display()) });
+    }
 
     let start = Instant::now();
     let mut cmd = Command::new(&inv.program);
@@ -390,7 +443,10 @@ pub fn run<F: FnMut(KataEvent)>(
     // Keep the interactive temp dir (the generated mcp-config) alive until the
     // child has fully exited above; drop it only now.
     drop(interactive_tmp);
-    Ok(RunOutcome { exit_code })
+    Ok(RunOutcome {
+        exit_code,
+        transcript_path: transcript_path.map(|p| p.display().to_string()),
+    })
 }
 
 /// A line drained from the child, tagged by which stream it came from.

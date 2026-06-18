@@ -164,6 +164,9 @@ fn cmd_run(path: &std::path::Path) -> ExitCode {
 
     match kata_core::run::run(&spec, &catalog, &cancel, &answers, emit) {
         Ok(outcome) => {
+            if let Some(p) = &outcome.transcript_path {
+                eprintln!("transcript: {p}");
+            }
             match u8::try_from(outcome.exit_code) {
                 Ok(c) => ExitCode::from(c),
                 Err(_) => ExitCode::FAILURE,
