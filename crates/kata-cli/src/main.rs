@@ -111,6 +111,22 @@ fn cmd_bundle(spec_path: &std::path::Path, out: Option<&std::path::Path>, force:
     }
 }
 
+#[derive(Debug)]
+enum StdinCmd {
+    Cancel,
+    Answer(kata_core::run::Answer),
+}
+
+/// Parse one engine-stdin control line: `cancel` or `answer <id> <json-matrix>`.
+fn parse_stdin_line(line: &str) -> Option<StdinCmd> {
+    let line = line.trim();
+    if line == "cancel" { return Some(StdinCmd::Cancel); }
+    let rest = line.strip_prefix("answer ")?;
+    let (id, json) = rest.split_once(' ')?;
+    let answers: Vec<Vec<String>> = serde_json::from_str(json.trim()).ok()?;
+    Some(StdinCmd::Answer(kata_core::run::Answer { id: id.trim().to_string(), answers }))
+}
+
 fn cmd_run(path: &std::path::Path) -> ExitCode {
     // A directory carrying the kata-bundle.toml marker is a bundle: load its
     // spec and discover the kit ONLY from its vendored .claude (hermetic).
@@ -136,16 +152,19 @@ fn cmd_run(path: &std::path::Path) -> ExitCode {
     let _ = ctrlc::set_handler(move || flag.store(true, Ordering::SeqCst));
 
     // GUI / programmatic cancel: a `cancel` line on stdin flips the same flag the
-    // ctrlc handler uses. EOF (plain CLI use closes stdin) is a no-op.
+    // ctrlc handler uses. `answer <id> <json>` lines are forwarded to the run
+    // loop's answer inbox. EOF (plain CLI use closes stdin) is a no-op.
+    let (answer_tx, answers) = kata_core::run::answer_channel();
     let stdin_flag = cancel.flag();
     std::thread::spawn(move || {
         use std::io::BufRead;
         let stdin = std::io::stdin();
         let mut line = String::new();
         while stdin.lock().read_line(&mut line).unwrap_or(0) != 0 {
-            if line.trim() == "cancel" {
-                stdin_flag.store(true, Ordering::SeqCst);
-                break;
+            match parse_stdin_line(&line) {
+                Some(StdinCmd::Cancel) => { stdin_flag.store(true, Ordering::SeqCst); break; }
+                Some(StdinCmd::Answer(a)) => { let _ = answer_tx.send(a); }
+                None => {}
             }
             line.clear();
         }
@@ -158,9 +177,6 @@ fn cmd_run(path: &std::path::Path) -> ExitCode {
         }
     };
 
-    // Task 8 wires the real operator-answer source; for now interactive runs
-    // receive an empty inbox (they will reap on the answer-deadline if claude asks).
-    let answers = kata_core::run::AnswerRx::default();
     match kata_core::run::run(&spec, &catalog, &cancel, &answers, emit) {
         Ok(outcome) => {
             match u8::try_from(outcome.exit_code) {
@@ -174,7 +190,20 @@ fn cmd_run(path: &std::path::Path) -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::slug;
+    use super::{slug, parse_stdin_line, StdinCmd};
+
+    #[test]
+    fn parses_cancel_and_answer_lines() {
+        assert!(matches!(parse_stdin_line("cancel"), Some(StdinCmd::Cancel)));
+        match parse_stdin_line(r#"answer q1 [["JWT"]]"#) {
+            Some(StdinCmd::Answer(a)) => {
+                assert_eq!(a.id, "q1");
+                assert_eq!(a.answers, vec![vec!["JWT".to_string()]]);
+            }
+            other => panic!("expected Answer, got {other:?}"),
+        }
+        assert!(parse_stdin_line("garbage").is_none());
+    }
 
     #[test]
     fn slug_strips_path_separators_and_traversal() {
