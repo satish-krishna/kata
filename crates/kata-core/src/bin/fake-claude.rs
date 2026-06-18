@@ -1,7 +1,7 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask"
 use std::io::Write;
 use std::{thread, time::Duration};
 
@@ -73,6 +73,30 @@ fn main() {
                 drop(OwnedHandle::from_raw_handle(he));
             }
             thread::sleep(Duration::from_secs(5));
+        }
+        "ask" => {
+            // Play the role of the `kata mcp-ask` MCP server: connect to the
+            // engine's ask bridge on KATA_ASK_PORT, send a question frame, then
+            // block reading the answer line. With no answer (the deadline test)
+            // this blocks forever and the engine reaps the run with exit 123.
+            use std::io::{BufRead, BufReader, Write as _};
+            use std::net::TcpStream;
+            let port: u16 = std::env::var("KATA_ASK_PORT").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+            // The suppressed ask_user tool_use keeps is_assistant_message=true so
+            // the engine counts the turn but emits no tool.use event.
+            let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","name":"mcp__kata-ask__ask_user","input":{{"questions":[]}}}}]}}}}"#);
+            let _ = out.flush();
+            if let Ok(sock) = TcpStream::connect(("127.0.0.1", port)) {
+                let mut write_half = sock.try_clone().expect("clone sock");
+                let _ = writeln!(write_half, r#"{{"questions":[{{"kind":"text","header":"h","question":"q?"}}]}}"#);
+                let _ = write_half.flush();
+                // Wait (possibly forever — exercises the answer-deadline) for the answer.
+                let mut reader = BufReader::new(sock);
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+            }
+            let _ = writeln!(out, r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#);
+            let _ = out.flush();
         }
         "writefile" => {
             // Write a file into cwd so a worktree-isolated run produces a real diff.
