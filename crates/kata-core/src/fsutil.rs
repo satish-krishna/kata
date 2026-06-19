@@ -89,30 +89,35 @@ mod tests {
     #[test]
     #[serial]
     fn kata_home_resolution_order() {
-        let saved: Vec<(&str, Option<String>)> = ["KATA_HOME", "HOME", "USERPROFILE"]
-            .iter().map(|k| (*k, std::env::var(k).ok())).collect();
-        let restore = || for (k, v) in &saved {
-            match v { Some(val) => std::env::set_var(k, val), None => std::env::remove_var(k) }
-        };
+        // Save with var_os (env vars can be non-UTF-8; var() would lose them).
+        let saved: Vec<(&str, Option<std::ffi::OsString>)> = ["KATA_HOME", "HOME", "USERPROFILE"]
+            .iter().map(|k| (*k, std::env::var_os(k))).collect();
 
-        // 1. KATA_HOME wins, taken verbatim (not joined with .kata).
+        // Gather every result under its controlled env FIRST, then restore, then
+        // assert. Restoring before the assertions means a failing assertion can't
+        // skip the restore and leak a mutated env into later (serial) tests.
         std::env::set_var("KATA_HOME", "/tmp/khome");
-        assert_eq!(super::kata_home(), Some(std::path::PathBuf::from("/tmp/khome")));
-        assert_eq!(super::runs_dir(), Some(std::path::PathBuf::from("/tmp/khome").join("runs")));
+        let r_explicit = super::kata_home(); // KATA_HOME taken verbatim (not joined with .kata)
+        let r_runs = super::runs_dir();
 
-        // 2. Falls back to <HOME>/.kata.
         std::env::remove_var("KATA_HOME");
         std::env::remove_var("USERPROFILE");
         std::env::set_var("HOME", "/tmp/h");
-        assert_eq!(super::kata_home(), Some(std::path::PathBuf::from("/tmp/h").join(".kata")));
+        let r_fallback = super::kata_home(); // falls back to <HOME>/.kata
 
-        // 3. Nothing set => None.
         std::env::remove_var("HOME");
         std::env::remove_var("USERPROFILE");
         std::env::remove_var("KATA_HOME");
-        assert_eq!(super::kata_home(), None);
+        let r_none = super::kata_home(); // nothing set => None
 
-        restore();
+        for (k, v) in &saved {
+            match v { Some(val) => std::env::set_var(k, val), None => std::env::remove_var(k) }
+        }
+
+        assert_eq!(r_explicit, Some(std::path::PathBuf::from("/tmp/khome")));
+        assert_eq!(r_runs, Some(std::path::PathBuf::from("/tmp/khome").join("runs")));
+        assert_eq!(r_fallback, Some(std::path::PathBuf::from("/tmp/h").join(".kata")));
+        assert_eq!(r_none, None);
     }
 
     #[test]

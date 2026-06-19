@@ -129,11 +129,17 @@ pub fn run<F: FnMut(KataEvent)>(
             (None, None)
         }
     };
+    // `forward` names the original sink so the tee below reads unambiguously as
+    // "write to the transcript, then forward to the original emitter". (Rust `let`
+    // is non-recursive, so a closure that shadows `emit` and calls `emit` would
+    // resolve to the *previous* binding, not itself — but the rename removes the
+    // footgun appearance entirely.)
+    let mut forward = emit;
     let mut emit = |event: KataEvent| {
         if let Some(t) = transcript.as_mut() {
             t.write(&event);
         }
-        emit(event);
+        forward(event);
     };
 
     // Fail fast: a bare run that references a token var it cannot resolve would
