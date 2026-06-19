@@ -3,9 +3,10 @@ import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { RunSpec } from "../bindings/RunSpec";
 import type { CatalogEntry } from "../bindings/CatalogEntry";
+import type { Preset } from "../bindings/Preset";
 import type { KataEvent, RunRecord, RunDetail } from "$lib/events";
 import { inTauri, seedCatalog, validateLocal, runScriptHead, runScriptTail } from "$lib/mock";
-import { history as historyFixture, runDetailFixture } from "$lib/library";
+import { history as historyFixture, runDetailFixture, katasFixture, presetsFixture } from "$lib/library";
 
 export const catalog = (workdir: string | null) =>
   inTauri()
@@ -86,6 +87,24 @@ function resumeMockAfterAnswer(): void {
     browserTimers.push(setTimeout(() => browserCb?.(step.ev), acc));
   }
 }
+
+export const listKatas = (): Promise<RunSpec[]> =>
+  inTauri() ? invoke<RunSpec[]>("list_katas") : Promise.resolve(katasFixture);
+
+export const loadKata = (name: string): Promise<RunSpec> =>
+  inTauri() ? invoke<RunSpec>("load_kata", { name }) : Promise.resolve(katasFixture.find((k) => k.name === name) ?? katasFixture[0]);
+
+export const saveKata = (spec: RunSpec): Promise<void> =>
+  inTauri() ? invoke<void>("save_kata", { spec }) : Promise.resolve();
+
+export const listPresets = (): Promise<Preset[]> =>
+  inTauri() ? invoke<Preset[]>("list_presets") : Promise.resolve(presetsFixture);
+
+export const savePreset = (name: string, body: string): Promise<void> =>
+  inTauri() ? invoke<void>("save_preset", { name, body }) : Promise.resolve();
+
+export const exportBundle = (spec: RunSpec, out: string): Promise<void> =>
+  inTauri() ? invoke<void>("export_bundle", { spec, out }) : Promise.reject(new Error(NO_BACKEND));
 
 const SPEC_FILTERS = [{ name: "Run-spec", extensions: ["toml", "json"] }];
 

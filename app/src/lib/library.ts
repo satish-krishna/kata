@@ -5,6 +5,8 @@
 import type { Isolation } from "../bindings/Isolation";
 import type { RunState, StreamEvent } from "./events";
 import type { RunRecord, RunDetail } from "./events";
+import type { RunSpec } from "../bindings/RunSpec";
+import type { Preset } from "../bindings/Preset";
 
 export type { RunRecord };
 
@@ -74,3 +76,20 @@ export function runDetailFixture(id: string): RunDetail {
   const record = history.find((r) => r.id === id) ?? history[0];
   return { record, events: (runStreams[record.id] ?? []) as RunDetail["events"] };
 }
+
+const fixtureSpec = (name: string, description: string, isolation: "none" | "worktree", skills: string[], plugins: string[]): RunSpec => ({
+  schema: 1, name, description, task: "Do the kata.", workdir: "/repo",
+  identity: { mode: "append" }, skills, plugins: Object.fromEntries(plugins.map((p) => [p, {}])) as RunSpec["plugins"],
+  model: {}, leash: { max_turns: 12, isolation }, auth: { bare: true }, interactive: { enabled: false },
+} as RunSpec);
+
+export const katasFixture: RunSpec[] = [
+  fixtureSpec("triage-flaky-test", "Reproduce & isolate AuthTests.LoginExpiry", "worktree", ["triage-flaky-test"], ["github-tools"]),
+  fixtureSpec("release-notes", "Draft notes from the merged PRs since last tag", "none", ["release-notes"], ["github-tools"]),
+  fixtureSpec("audit-deps", "List risky dependencies & propose pins", "none", ["audit", "deps"], ["github-tools"]),
+];
+
+export const presetsFixture: Preset[] = [
+  { name: "dotnet repro", body: "Use `dotnet test --filter` to run a single test in a tight loop." },
+  { name: "staging slot", body: "Target the staging deployment slot, never production." },
+];
