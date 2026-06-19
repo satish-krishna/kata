@@ -2,32 +2,12 @@
  * history. The history array now matches the generated RunRecord shape so that
  * it can be returned directly by the browser-fallback path in api.ts. When
  * running under Tauri, listRuns() calls the live list_runs command instead. */
-import type { Isolation } from "../bindings/Isolation";
-import type { RunState, StreamEvent } from "./events";
+import type { StreamEvent } from "./events";
 import type { RunRecord, RunDetail } from "./events";
 import type { RunSpec } from "../bindings/RunSpec";
 import type { Preset } from "../bindings/Preset";
 
 export type { RunRecord };
-
-export interface SavedKata {
-  name: string;
-  description: string;
-  isolation: Isolation;
-  skills: number;
-  plugins: number;
-  lastState: RunState;
-  lastExit: number;
-  runs: number;
-}
-
-export const savedKatas: SavedKata[] = [
-  { name: "triage-flaky-test", description: "Reproduce & isolate AuthTests.LoginExpiry", isolation: "worktree", skills: 1, plugins: 1, lastState: "success", lastExit: 0, runs: 14 },
-  { name: "release-notes", description: "Draft notes from the merged PRs since last tag", isolation: "none", skills: 1, plugins: 1, lastState: "success", lastExit: 0, runs: 31 },
-  { name: "audit-deps", description: "List risky dependencies & propose pins", isolation: "none", skills: 2, plugins: 1, lastState: "warning", lastExit: 125, runs: 6 },
-  { name: "perf-sweep", description: "Profile the hot path & report top offenders", isolation: "worktree", skills: 1, plugins: 0, lastState: "error", lastExit: 1, runs: 3 },
-  { name: "doc-refresh", description: "Update README + module docs for changed APIs", isolation: "none", skills: 1, plugins: 0, lastState: "success", lastExit: 0, runs: 9 },
-];
 
 export const history: RunRecord[] = [
   { id: "triage-flaky-test-20260618T142200Z", kata: "triage-flaky-test", started_at: 1750256520, isolation: "worktree", exit: 0, turns: 4, cost_usd: 0.041, duration_ms: 48120, result: "Isolated the flake to a clock-skew race in TokenValidator.IsExpired (mixed Now/UtcNow). Deterministic repro: pin clock to 23:59:59.6 local. No production code changed." },
