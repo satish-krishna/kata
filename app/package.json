@@ -13,7 +13,8 @@
     "sidecar": "node scripts/stage-sidecar.mjs",
     "tauri:dev": "node scripts/stage-sidecar.mjs && tauri dev",
     "tauri:build": "node scripts/stage-sidecar.mjs --release && tauri build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "screenshots": "node scripts/screenshots.mjs"
   },
   "license": "MIT",
   "dependencies": {
@@ -33,6 +34,7 @@
     "@testing-library/svelte": "^5.3.1",
     "@types/node": "^25.9.3",
     "jsdom": "^29.1.1",
+    "playwright-core": "^1.61.0",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "typescript": "~5.6.2",
