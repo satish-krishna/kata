@@ -6,6 +6,3 @@ dist/
 Thumbs.db
 app/src-tauri/binaries/
 scripts/build-release.log
-
-# Generated release screenshots (regenerate with `npm run screenshots`)
-docs/screenshots/
