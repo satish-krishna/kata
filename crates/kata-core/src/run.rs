@@ -412,7 +412,7 @@ pub fn run<F: FnMut(KataEvent)>(
             let status = child.wait().map_err(|e| RunError::Spawn(e.to_string()))?;
             let code = status.code().unwrap_or(1);
             let payload = result.unwrap_or(crate::event::ResultPayload {
-                num_turns: turns, cost_usd: None, is_error: code != 0, result: None,
+                num_turns: turns, cost_usd: None, is_error: code != 0, result: None, subtype: None,
             });
             (code, KataEvent::RunCompleted {
                 exit_code: code,
