@@ -414,14 +414,22 @@ pub fn run<F: FnMut(KataEvent)>(
             let payload = result.unwrap_or(crate::event::ResultPayload {
                 num_turns: turns, cost_usd: None, is_error: code != 0, result: None, subtype: None,
             });
-            (code, KataEvent::RunCompleted {
-                exit_code: code,
-                is_error: payload.is_error,
-                num_turns: payload.num_turns,
-                cost_usd: payload.cost_usd,
-                duration_ms: start.elapsed().as_millis() as u64,
-                result: payload.result,
-            })
+            if payload.is_budget_exhausted() {
+                let ceiling = spec.leash.max_budget_usd.unwrap_or(0.0);
+                let spent = payload.cost_usd.unwrap_or(0.0);
+                (122, KataEvent::RunError {
+                    message: format!("budget ceiling ${ceiling:.2} reached; spent ${spent:.2}"),
+                })
+            } else {
+                (code, KataEvent::RunCompleted {
+                    exit_code: code,
+                    is_error: payload.is_error,
+                    num_turns: payload.num_turns,
+                    cost_usd: payload.cost_usd,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                    result: payload.result,
+                })
+            }
         }
     };
 
