@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { RunSpec } from "../../bindings/RunSpec";
   import type { CatalogEntry } from "../../bindings/CatalogEntry";
+  import type { Preset } from "../../bindings/Preset";
+  import { appendContext } from "$lib/katas";
   import KitChecklist from "./KitChecklist.svelte";
   import Field from "./Field.svelte";
   import Segmented from "./Segmented.svelte";
@@ -10,7 +12,22 @@
     spec,
     entries,
     onPickWorkdir,
-  }: { spec: RunSpec; entries: CatalogEntry[]; onPickWorkdir: () => void } = $props();
+    presets,
+    onSavePreset,
+  }: { spec: RunSpec; entries: CatalogEntry[]; onPickWorkdir: () => void; presets: Preset[]; onSavePreset: (name: string, body: string) => void } = $props();
+
+  function onPickPreset(e: Event) {
+    const sel = e.currentTarget as HTMLSelectElement;
+    const p = presets.find((x) => x.name === sel.value);
+    if (p) spec.context = appendContext(spec.context, p.body);
+    sel.value = ""; // reset to placeholder
+  }
+  function onSaveAsPreset() {
+    const body = (spec.context ?? "").trim();
+    if (body === "") return;
+    const name = prompt("Preset name?");
+    if (name && name.trim() !== "") onSavePreset(name.trim(), spec.context ?? "");
+  }
 
   let kitCount = $derived(spec.skills.length + Object.keys(spec.plugins).length);
 
@@ -77,6 +94,13 @@
     </Field>
     <Field label="Context" key="context" hint="Appended after the task.">
       <textarea class="k-textarea" rows="2" bind:value={spec.context}></textarea>
+      <div class="wb-presets">
+        <select class="k-input" onchange={onPickPreset} aria-label="Insert context preset">
+          <option value="">Insert preset…</option>
+          {#each presets as p (p.name)}<option value={p.name}>{p.name}</option>{/each}
+        </select>
+        <button class="k-btn k-btn--ghost k-btn--sm" type="button" disabled={!(spec.context ?? "").trim()} onclick={onSaveAsPreset}>Save as preset</button>
+      </div>
     </Field>
     <Field label="Workdir" key="workdir" hint="cwd for claude -p; the agent's file tools resolve here.">
       <div class="wb-picker">

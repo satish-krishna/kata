@@ -172,6 +172,50 @@ fn load_run(id: String) -> Result<kata_core::history::RunDetail, String> {
     kata_core::history::load_run(&id).map_err(|e| e.to_string())
 }
 
+/// Save a kata (named run-spec) to the user's kata library.
+#[tauri::command]
+fn save_kata(spec: kata_core::spec::RunSpec) -> Result<(), String> {
+    kata_core::katas::save_kata(&spec).map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// List all saved katas from the user's kata library.
+#[tauri::command]
+fn list_katas() -> Result<Vec<kata_core::spec::RunSpec>, String> {
+    Ok(kata_core::katas::list_katas())
+}
+
+/// Load a single kata by name from the user's kata library.
+#[tauri::command]
+fn load_kata(name: String) -> Result<kata_core::spec::RunSpec, String> {
+    kata_core::katas::load_kata(&name).map_err(|e| e.to_string())
+}
+
+/// List all presets from the user's preset library.
+#[tauri::command]
+fn list_presets() -> Result<Vec<kata_core::presets::Preset>, String> {
+    Ok(kata_core::presets::list_presets())
+}
+
+/// Save a preset (named prompt body) to the user's preset library.
+#[tauri::command]
+fn save_preset(name: String, body: String) -> Result<(), String> {
+    kata_core::presets::save_preset(&kata_core::presets::Preset { name, body })
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Export a kata as a portable bundle directory under the given output path.
+/// Bundles into a fresh `<slug>-bundle` subdirectory of the picked folder
+/// and uses force=true so re-exporting overwrites cleanly.
+#[tauri::command]
+fn export_bundle(spec: kata_core::spec::RunSpec, out: String) -> Result<(), String> {
+    let workdir = std::path::PathBuf::from(&spec.workdir);
+    let roots = kata_core::catalog::DiscoveryRoots::defaults(&workdir);
+    let catalog = kata_core::catalog::discover(&roots);
+    let dest = std::path::Path::new(&out).join(format!("{}-bundle", kata_core::fsutil::slug(&spec.name)));
+    kata_core::bundle::bundle(&spec, &catalog, &dest, true).map_err(|e| e.to_string())
+}
+
 /// Send the operator's answer to a paused interactive run: write an
 /// `answer <id> <json>` line to the engine's stdin (the engine returns it to
 /// claude as the ask_user tool result and emits ask.answered).
@@ -200,7 +244,13 @@ pub fn run() {
             cancel_run,
             submit_answer,
             list_runs,
-            load_run
+            load_run,
+            save_kata,
+            list_katas,
+            load_kata,
+            list_presets,
+            save_preset,
+            export_bundle
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

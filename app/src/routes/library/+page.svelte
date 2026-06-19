@@ -1,10 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { savedKatas } from "$lib/library";
-  import { listRuns, loadRun } from "$lib/api";
+  import { listRuns, loadRun, listKatas, loadKata, exportBundle, pickDirectory } from "$lib/api";
   import { statusForExit, isStreamEvent, type RunState, type RunRecord } from "$lib/events";
+  import { kataViews, withTask } from "$lib/katas";
+  import { setLaunch } from "$lib/launch";
   import EventRow from "$lib/components/EventRow.svelte";
   import SummaryStat from "$lib/components/SummaryStat.svelte";
+  import TaskEditor from "$lib/components/TaskEditor.svelte";
+  import { goto } from "$app/navigation";
+  import type { RunSpec } from "../../bindings/RunSpec";
   import FilePlus from "@lucide/svelte/icons/file-plus";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
   import Folder from "@lucide/svelte/icons/folder";
@@ -20,16 +24,22 @@
   import CheckCircle from "@lucide/svelte/icons/check-circle";
 
   let runs = $state<RunRecord[]>([]);
+  let katas = $state<RunSpec[]>([]);
+  let editing = $state<{ kata: RunSpec } | null>(null);
   let detail = $state<Awaited<ReturnType<typeof loadRun>> | null>(null);
   let selRun = $state<string | null>(null);
   let selKata = $state<string | null>(null);
+
+  let kataRows = $derived(kataViews(katas, runs));
+  const hasKata = (name: string) => katas.some((k) => k.name === name);
 
   // Fetch the run list once on mount. Using onMount (not $effect) makes the
   // mount-once intent explicit and keeps the fetch from being entangled with
   // any reactive read.
   onMount(async () => {
-    const rs = await listRuns();
+    const [rs, ks] = await Promise.all([listRuns(), listKatas()]);
     runs = rs;
+    katas = ks;
     if (selRun === null && rs.length > 0) selectRun(rs[0].id);
   });
 
@@ -72,6 +82,34 @@
   const onKey = (fn: () => void) => (e: KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); }
   };
+
+  async function onReRun() {
+    if (!run) return;
+    try { editing = { kata: await loadKata(run.kata) }; }
+    catch (e) { alert(`Failed to load kata: ${e}`); }
+  }
+  function confirmReRun(task: string) {
+    if (!editing) return;
+    setLaunch({ spec: withTask(editing.kata, task), autorun: true });
+    editing = null;
+    goto("/");
+  }
+  async function onOpenInCompose() {
+    if (!run) return;
+    try {
+      setLaunch({ spec: await loadKata(run.kata), autorun: false });
+      goto("/");
+    } catch (e) {
+      alert(`Failed to load kata: ${e}`);
+    }
+  }
+  async function onExportBundle() {
+    if (!run) return;
+    const dir = await pickDirectory();
+    if (!dir) return;
+    try { await exportBundle(await loadKata(run.kata), dir); }
+    catch (e) { alert(`Failed to export bundle: ${e}`); }
+  }
 </script>
 
 <div class="wb">
@@ -96,24 +134,18 @@
       </div>
       <div class="wb-pane__body">
         <div class="wb-rail__section">
-          <div class="wb-rail__label">Saved katas<span class="wb-rail__count">{savedKatas.length}</span></div>
-          {#each savedKatas as k (k.name)}
-            <div
-              class="wb-kata"
-              class:wb-kata--active={selKata === k.name}
-              role="button"
-              tabindex="0"
-              onclick={() => selectKata(k.name)}
-              onkeydown={onKey(() => selectKata(k.name))}
-            >
+          <div class="wb-rail__label">Saved katas<span class="wb-rail__count">{kataRows.length}</span></div>
+          {#each kataRows as k (k.name)}
+            <div class="wb-kata" class:wb-kata--active={selKata === k.name} role="button" tabindex="0"
+              onclick={() => selectKata(k.name)} onkeydown={onKey(() => selectKata(k.name))}>
               <div class="wb-kata__top">
                 <span class="wb-kata__name">{k.name}</span>
-                <span class="wb-kata__dot dot-{k.lastState}"></span>
+                <span class="wb-kata__dot dot-{k.lastState ?? 'idle'}"></span>
               </div>
               <div class="wb-kata__desc">{k.description}</div>
               <div class="wb-kata__meta">
                 {#if k.isolation === "worktree"}<span><GitBranch />worktree</span>{/if}
-                <span><Package />{k.skills + k.plugins} kit</span>
+                <span><Package />{k.kit} kit</span>
                 <span><Hash />{k.runs} runs</span>
               </div>
             </div>
@@ -159,9 +191,9 @@
             <span><Cpu />{fmtMs(run.duration_ms)}</span>
           </div>
           <div class="wb-detail__actions">
-            <button class="k-btn k-btn--primary k-btn--sm"><Play size={13} />Re-run</button>
-            <a href="/" class="k-btn k-btn--secondary k-btn--sm"><FolderOpen size={14} />Open in compose</a>
-            <button class="k-btn k-btn--ghost k-btn--sm"><Package size={14} />Export bundle</button>
+            <button class="k-btn k-btn--primary k-btn--sm" disabled={!run || !hasKata(run.kata)} onclick={onReRun}><Play size={13} />Re-run</button>
+            <button class="k-btn k-btn--secondary k-btn--sm" disabled={!run || !hasKata(run.kata)} onclick={onOpenInCompose}><FolderOpen size={14} />Open in compose</button>
+            <button class="k-btn k-btn--ghost k-btn--sm" disabled={!run || !hasKata(run.kata)} onclick={onExportBundle}><Package size={14} />Export bundle</button>
           </div>
         </div>
         <div class="wb-detail__body">
@@ -196,9 +228,13 @@
 
   <footer class="wb-statusbar">
     <span class="wb-statusbar__item wb-statusbar__ok">
-      <CheckCircle size={13} /> {savedKatas.length} saved katas · {runs.length} runs in local history
+      <CheckCircle size={13} /> {kataRows.length} saved katas · {runs.length} runs in local history
     </span>
     <div class="wb-statusbar__spacer"></div>
     <span class="wb-statusbar__item"><Folder size={13} /> ~/.kata/runs</span>
   </footer>
 </div>
+
+{#if editing}
+  <TaskEditor task={editing.kata.task} onRun={confirmReRun} onCancel={() => (editing = null)} />
+{/if}

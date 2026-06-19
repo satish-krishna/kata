@@ -1,9 +1,11 @@
 <script lang="ts">
   import type { RunSpec } from "../bindings/RunSpec";
   import type { CatalogEntry } from "../bindings/CatalogEntry";
+  import type { Preset } from "../bindings/Preset";
   import { defaultSpec, normalize, specEquals, draftFrom } from "$lib/spec";
   import { inTauri, seedSpec } from "$lib/mock";
   import * as api from "$lib/api";
+  import { takeLaunch } from "$lib/launch";
   import { onMount } from "svelte";
   import Toolbar from "$lib/components/Toolbar.svelte";
   import ValidationBanner from "$lib/components/ValidationBanner.svelte";
@@ -23,6 +25,7 @@
   let currentPath = $state<string | null>(null);
   let entries = $state<CatalogEntry[]>([]);
   let errors = $state<string[]>([]);
+  let presets = $state<Preset[]>([]);
 
   let dirty = $derived(!specEquals(spec, saved));
   let valid = $derived(errors.length === 0);
@@ -81,20 +84,23 @@
     }
   }
 
-  async function writeTo(path: string) {
+  async function onSave() {
     try {
-      await api.saveSpec(path, normalize($state.snapshot(spec) as RunSpec));
-      currentPath = path;
+      await api.saveKata(normalize($state.snapshot(spec) as RunSpec));
       saved = $state.snapshot(spec) as RunSpec;
     } catch (e) {
-      alert(`Failed to save spec: ${e}`);
+      alert(`Failed to save kata: ${e}`);
     }
   }
 
-  async function onSave() {
-    if (currentPath) return writeTo(currentPath);
-    const path = await api.pickSaveSpec();
-    if (path) await writeTo(path);
+  async function onExport() {
+    const dir = await api.pickDirectory();
+    if (!dir) return;
+    try {
+      await api.exportBundle(normalize($state.snapshot(spec) as RunSpec), dir);
+    } catch (e) {
+      alert(`Failed to export bundle: ${e}`);
+    }
   }
 
   async function onPickWorkdir() {
@@ -111,11 +117,27 @@
     cancelRun();
   }
 
+  async function onSavePreset(name: string, body: string) {
+    try { await api.savePreset(name, body); presets = await api.listPresets(); }
+    catch (e) { alert(`Failed to save preset: ${e}`); }
+  }
+
   // Browser dev/review only: `?demo=run` auto-starts the scripted run so the
   // Observe pane can be reviewed/screenshotted without a click. Never fires in
   // the real Tauri app.
-  onMount(() => {
+  onMount(async () => {
+    try { presets = await api.listPresets(); } catch (e) { console.error("listPresets failed", e); presets = []; }
     if (!inTauri() && new URLSearchParams(location.search).get("demo") === "run") onRun();
+    const handoff = takeLaunch();
+    if (handoff) {
+      spec = draftFrom(handoff.spec);
+      saved = $state.snapshot(spec) as RunSpec;
+      currentPath = null;
+      if (handoff.autorun) {
+        const errs = await api.validateSpec(normalize($state.snapshot(spec) as RunSpec));
+        if (errs.length === 0) startRun(normalize($state.snapshot(spec) as RunSpec));
+      }
+    }
   });
 
   // Ctrl+↵ (or ⌘↵) to run.
@@ -138,6 +160,7 @@
     {onNew}
     {onOpen}
     {onSave}
+    {onExport}
     {onRun}
     {onCancel}
   />
@@ -148,7 +171,7 @@
     <div class="wb-pane wb-pane--compose">
       <div class="wb-pane__head"><span class="kata-eyebrow">Compose · the run-spec</span></div>
       <div class="wb-pane__body">
-        <ComposePane {spec} {entries} {onPickWorkdir} />
+        <ComposePane {spec} {entries} {onPickWorkdir} {presets} {onSavePreset} />
       </div>
     </div>
 
