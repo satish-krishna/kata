@@ -74,11 +74,12 @@ Two engine improvements that grew out of a live debugging session ("why is my ru
 
 ## Phase 4 - Backlog / later (from the spec's open questions and Layout C)
 
-- [~] Saved-katas + run-history rail in the Workbench (Layout C as an addition to Layout A). Presentational rail + read-only run detail shipped at `/library` (PR #2) on fixtures; needs a run-history backend (e.g. `~/.kata/history`) and wired actions (re-run, open-in-compose, export).
+- [x] **Cost-ceiling leash.** Per-spec `leash.max_budget_usd`, enforced by claude's native `--max-budget-usd`; the engine maps the `error_max_budget_usd` result subtype to a distinct exit code (**122**) in the leash family. The cap is approximate (post-turn check, overshoots by up to one turn). Workbench leash field included. **Status:** merged to `main` (#14).
+- [x] **Saved-katas + run-history rail.** Run-history backend (`kata-core::history` reads `~/.kata/runs/*.jsonl` transcripts into ts-rs `RunRecord`s; `list_runs`/`load_run` Tauri commands; `exit_code` added to the terminal `run.error`/`run.cancelled` events so killed/cancelled runs render a faithful badge; one shared `statusForExit` andon mapping for live + history) made the `/library` Recent-runs rail + read-only detail live (#15). Saved katas persist in `~/.kata/katas` (compose Save → library by name); the Saved-katas rail joins them with run-history aggregates; the four actions are wired — New, **Re-run via a prefilled task editor** (the reusable-agent flow: same kit/identity/leash, a fresh task each run), Open-in-compose, Export bundle (#16).
+- [x] **Named, reusable context presets.** Copy-in preset library (`~/.kata/presets`); a menu in the compose Task section drops a preset's text into the spec's `context` — no `RunSpec` contract change, so specs stay self-contained and bundle-safe (#16).
+- [x] **Workbench polish — design-system dialogs.** Replaced the remaining browser-native `alert`/`prompt`/`confirm` with on-brand UI: andon-error toasts (a `Toaster` in the root layout) and `.k-dialog` modals (`PromptDialog` for preset naming, `ConfirmDialog` for the discard guard) (#17).
 - [ ] First-class `PreToolUse` guard-hook field + UI (programmatic enforcement, the heir to the permission-theater argument). Plugin-borne hooks already run today; this makes a guard first-class.
 - [ ] MCP configuration surface (per-server config, secret references to a vault/dotenv) beyond the current env-name passthrough.
-- [ ] Named, reusable context presets droppable into specs.
-- [x] **Cost-ceiling leash.** Per-spec `leash.max_budget_usd`, enforced by claude's native `--max-budget-usd`; the engine maps the `error_max_budget_usd` result subtype to a distinct exit code (**122**) in the leash family. The cap is approximate (post-turn check, overshoots by up to one turn). Workbench leash field included.
 
 ---
 
