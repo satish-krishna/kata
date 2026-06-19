@@ -18,6 +18,12 @@ pub fn runs_dir() -> Option<PathBuf> {
     kata_home().map(|h| h.join("runs"))
 }
 
+/// `<kata-home>/katas`, the saved-kata library. `None` when no home.
+pub fn katas_dir() -> Option<PathBuf> { kata_home().map(|h| h.join("katas")) }
+
+/// `<kata-home>/presets`, the context-preset library. `None` when no home.
+pub fn presets_dir() -> Option<PathBuf> { kata_home().map(|h| h.join("presets")) }
+
 /// Format seconds-since-the-Unix-epoch (UTC) as a compact stamp `YYYYMMDDThhmmssZ`.
 /// Pure function of the input — no system clock — so it is deterministically testable.
 pub fn utc_stamp(unix_secs: u64) -> String {

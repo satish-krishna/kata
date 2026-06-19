@@ -6,6 +6,7 @@ pub mod command;
 pub mod event;
 pub mod fsutil;
 pub mod history;
+pub mod katas;
 pub mod run;
 pub mod spec;
 pub mod worktree;
