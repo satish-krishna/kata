@@ -8,6 +8,7 @@
   import EventRow from "$lib/components/EventRow.svelte";
   import SummaryStat from "$lib/components/SummaryStat.svelte";
   import TaskEditor from "$lib/components/TaskEditor.svelte";
+  import DetailActions from "$lib/components/DetailActions.svelte";
   import { goto } from "$app/navigation";
   import type { RunSpec } from "../../bindings/RunSpec";
   import FilePlus from "@lucide/svelte/icons/file-plus";
@@ -191,11 +192,7 @@
             <span><Coins />{fmtCost(run.cost_usd)}</span>
             <span><Cpu />{fmtMs(run.duration_ms)}</span>
           </div>
-          <div class="wb-detail__actions">
-            <button class="k-btn k-btn--primary k-btn--sm" disabled={!run || !hasKata(run.kata)} onclick={onReRun}><Play size={13} />Re-run</button>
-            <button class="k-btn k-btn--secondary k-btn--sm" disabled={!run || !hasKata(run.kata)} onclick={onOpenInCompose}><FolderOpen size={14} />Open in compose</button>
-            <button class="k-btn k-btn--ghost k-btn--sm" disabled={!run || !hasKata(run.kata)} onclick={onExportBundle}><Package size={14} />Export bundle</button>
-          </div>
+          <DetailActions kataSaved={hasKata(run.kata)} {onReRun} {onOpenInCompose} {onExportBundle} />
         </div>
         <div class="wb-detail__body">
           <div class="wb-detail__stats">

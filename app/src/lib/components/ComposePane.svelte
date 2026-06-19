@@ -3,6 +3,7 @@
   import type { CatalogEntry } from "../../bindings/CatalogEntry";
   import type { Preset } from "../../bindings/Preset";
   import { appendContext } from "$lib/katas";
+  import { modelChoiceFor, modelIdForChoice, type ModelChoice } from "$lib/spec";
   import KitChecklist from "./KitChecklist.svelte";
   import Field from "./Field.svelte";
   import Segmented from "./Segmented.svelte";
@@ -41,6 +42,28 @@
       ? `${ROOM_HINT} (token_env is set but ignored in full mode.)`
       : ROOM_HINT,
   );
+
+  // Model selection (resolution logic + rationale live in $lib/spec). customMode
+  // keeps the free-text field open while the id is still blank — an empty custom
+  // id is stored as null so the engine omits --model rather than passing
+  // `--model ""`, which is why a blank id alone can't imply "custom".
+  let customMode = $state(false);
+  let modelChoice = $derived<ModelChoice>(customMode ? "custom" : modelChoiceFor(spec.model.id));
+  // Reconcile the flag whenever a *concrete* id arrives — a loaded kata, an alias
+  // click, or typed custom text — so it can't leak across specs. A blank id is
+  // left alone so clearing the custom field stays in custom mode mid-edit.
+  $effect(() => {
+    const id = spec.model.id;
+    if (id && id.trim()) customMode = modelChoiceFor(id) === "custom";
+  });
+  function onModelChoice(choice: ModelChoice) {
+    customMode = choice === "custom";
+    spec.model.id = modelIdForChoice(choice);
+  }
+  function onCustomId(e: Event) {
+    const v = (e.currentTarget as HTMLInputElement).value;
+    spec.model.id = v === "" ? null : v;
+  }
 
   // Integer-coerce the leash inputs (mirrors kata-core's expectations).
   function onMaxTurns(e: Event) {
@@ -139,14 +162,25 @@
     <div class="wb-section__head">
       <span class="wb-section__title">Model</span>
     </div>
-    <Field label="Model id" key="model.id" hint="Omit to use Claude's default.">
-      <select class="k-select" bind:value={spec.model.id}>
-        <option value="">(default)</option>
-        <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
-        <option value="claude-opus-4-1">claude-opus-4-1</option>
-        <option value="claude-haiku-4-5">claude-haiku-4-5</option>
-      </select>
+    <Field label="Model" key="model.id" hint="opus / sonnet / haiku are aliases claude resolves to its current model for that tier at run time. default omits --model.">
+      <Segmented
+        options={["default", "opus", "sonnet", "haiku", "custom"] as const}
+        value={modelChoice}
+        ariaLabel="Model"
+        onChange={onModelChoice}
+      />
     </Field>
+    {#if modelChoice === "custom"}
+      <Field label="Model id" key="model.id" hint="Pin an exact model id, e.g. claude-opus-4-8.">
+        <input
+          class="k-input k-input--mono"
+          placeholder="claude-opus-4-8"
+          spellcheck="false"
+          value={spec.model.id ?? ""}
+          oninput={onCustomId}
+        />
+      </Field>
+    {/if}
   </section>
 
   <section class="wb-section">

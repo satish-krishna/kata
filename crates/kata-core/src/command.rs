@@ -40,7 +40,7 @@ pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocati
         args.push(dir.clone());
     }
 
-    if let Some(id) = &spec.model.id {
+    if let Some(id) = spec.model.id.as_ref().filter(|s| !s.trim().is_empty()) {
         args.push("--model".into());
         args.push(id.clone());
     }
@@ -165,6 +165,19 @@ mod tests {
         let inv = build_invocation(&s, &assembled_with(Some("/tmp/kit"), None));
         assert!(inv.args.windows(2).any(|w| w[0] == "--plugin-dir" && w[1] == "/tmp/kit"));
         assert!(inv.args.windows(2).any(|w| w[0] == "--model" && w[1] == "claude-sonnet-4-6"));
+    }
+
+    #[test]
+    fn blank_model_id_omits_model_flag() {
+        // A present-but-blank id (e.g. an empty/whitespace string that slipped
+        // past the GUI) must omit --model rather than pass `--model ""`, which
+        // claude would reject. Mirrors the system_prompt empty-string guard.
+        for blank in ["", "   "] {
+            let mut s = spec();
+            s.model.id = Some(blank.into());
+            let inv = build_invocation(&s, &assembled_with(None, None));
+            assert!(!inv.args.iter().any(|a| a == "--model"), "blank id {blank:?} should omit --model");
+        }
     }
 
     #[test]

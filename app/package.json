@@ -13,7 +13,8 @@
     "sidecar": "node scripts/stage-sidecar.mjs",
     "tauri:dev": "node scripts/stage-sidecar.mjs && tauri dev",
     "tauri:build": "node scripts/stage-sidecar.mjs --release && tauri build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "screenshots": "node scripts/screenshots.mjs"
   },
   "license": "MIT",
   "dependencies": {
@@ -28,11 +29,19 @@
     "@sveltejs/kit": "^2.9.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tauri-apps/cli": "^2",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/svelte": "^5.3.1",
     "@types/node": "^25.9.3",
+    "jsdom": "^29.1.1",
+    "playwright-core": "^1.61.0",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "typescript": "~5.6.2",
     "vite": "^6.0.3",
     "vitest": "^4.1.8"
+  },
+  "engines": {
+    "node": ">=20.19.0"
   }
 }

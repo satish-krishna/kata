@@ -6,3 +6,7 @@ dist/
 Thumbs.db
 app/src-tauri/binaries/
 scripts/build-release.log
+
+# Release screenshots — regenerate with `npm run screenshots`, attach to the
+# GitHub Release rather than committing (binary churn).
+docs/screenshots/

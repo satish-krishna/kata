@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { defaultSpec, normalize, specEquals, draftFrom } from "./spec";
+import { defaultSpec, normalize, specEquals, draftFrom, modelChoiceFor, modelIdForChoice } from "./spec";
 
 describe("spec helpers", () => {
   it("defaultSpec is a valid-shaped schema-1 draft", () => {
@@ -85,5 +85,43 @@ describe("draftFrom", () => {
     const draft = draftFrom(loaded);
     expect(draft.auth.bare).toBe(false);
     expect(draft.auth.token_env).toBe("MY_KEY");
+  });
+});
+
+describe("model selection", () => {
+  it("modelChoiceFor treats a blank id as default", () => {
+    expect(modelChoiceFor(null)).toBe("default");
+    expect(modelChoiceFor(undefined)).toBe("default");
+    expect(modelChoiceFor("")).toBe("default");
+    // whitespace-only is blank too — consistent with normalize()/the engine guard
+    expect(modelChoiceFor("   ")).toBe("default");
+  });
+
+  it("modelChoiceFor recognises each tier alias", () => {
+    expect(modelChoiceFor("opus")).toBe("opus");
+    expect(modelChoiceFor("sonnet")).toBe("sonnet");
+    expect(modelChoiceFor("haiku")).toBe("haiku");
+  });
+
+  it("modelChoiceFor treats a pinned id as custom", () => {
+    expect(modelChoiceFor("claude-opus-4-8")).toBe("custom");
+    expect(modelChoiceFor("claude-sonnet-4-6")).toBe("custom");
+  });
+
+  it("modelIdForChoice stores null for default and custom (engine omits --model)", () => {
+    expect(modelIdForChoice("default")).toBeNull();
+    expect(modelIdForChoice("custom")).toBeNull();
+  });
+
+  it("modelIdForChoice passes aliases through verbatim", () => {
+    expect(modelIdForChoice("opus")).toBe("opus");
+    expect(modelIdForChoice("sonnet")).toBe("sonnet");
+    expect(modelIdForChoice("haiku")).toBe("haiku");
+  });
+
+  it("an alias round-trips through id and back to the same choice", () => {
+    for (const a of ["opus", "sonnet", "haiku"] as const) {
+      expect(modelChoiceFor(modelIdForChoice(a))).toBe(a);
+    }
   });
 });

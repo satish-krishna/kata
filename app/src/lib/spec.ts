@@ -1,5 +1,26 @@
 import type { RunSpec } from "../bindings/RunSpec";
 
+/** The model-selector modes. opus/sonnet/haiku are aliases claude resolves to
+ *  its current model for that tier at run time (honoring ANTHROPIC_DEFAULT_*_MODEL
+ *  when set), so they never go stale the way a pinned id does. */
+export type ModelChoice = "default" | "opus" | "sonnet" | "haiku" | "custom";
+export const MODEL_ALIASES = ["opus", "sonnet", "haiku"] as const;
+
+/** The selector mode implied by a stored model id: blank (incl. whitespace-only,
+ *  matching `normalize()` and the engine's `trim().is_empty()` guard) → default,
+ *  a known alias → that alias, anything else → a pinned custom id. */
+export function modelChoiceFor(id: string | null | undefined): ModelChoice {
+  const trimmed = id?.trim();
+  if (!trimmed) return "default";
+  return (MODEL_ALIASES as readonly string[]).includes(trimmed) ? (trimmed as ModelChoice) : "custom";
+}
+
+/** The model id to store for a chosen selector mode. default and custom both
+ *  start blank (null → engine omits --model); aliases pass through verbatim. */
+export function modelIdForChoice(choice: ModelChoice): string | null {
+  return choice === "default" || choice === "custom" ? null : choice;
+}
+
 export function defaultSpec(): RunSpec {
   return {
     schema: 1,
