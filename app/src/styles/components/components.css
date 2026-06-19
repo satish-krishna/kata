@@ -233,3 +233,26 @@
 .k-ask--answered .k-ask__banner { background: var(--surface-inset); border-bottom-color: var(--border-subtle); }
 .k-ask--answered .k-ask__banner-dot { background: var(--success); animation: none; }
 .k-ask--answered .k-ask__banner-label { color: var(--success-text); }
+
+/* ---------- Dialog ---------- */
+.k-dialog__scrim {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0, 0, 0, 0.55);
+}
+.k-dialog {
+  position: fixed; z-index: 101;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 480px; max-width: calc(100vw - var(--space-8));
+  background: var(--surface-card); border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  display: flex; flex-direction: column; gap: var(--space-4);
+  padding: var(--space-6);
+}
+.k-dialog__head {
+  font: var(--weight-semibold) var(--text-base)/1 var(--font-sans);
+  color: var(--text-primary);
+}
+.k-dialog__actions {
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: var(--space-3);
+}
