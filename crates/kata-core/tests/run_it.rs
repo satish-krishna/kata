@@ -166,7 +166,7 @@ fn run_cancel_kills_child() {
     let mut events = Vec::new();
     let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
     assert_eq!(outcome.exit_code, 130);
-    assert!(events.iter().any(|e| matches!(e, KataEvent::RunCancelled)));
+    assert!(events.iter().any(|e| matches!(e, KataEvent::RunCancelled { exit_code: 130 })));
 }
 
 #[test]
@@ -183,7 +183,7 @@ fn run_max_turns_kills_child() {
     assert!(events.iter().any(|e| matches!(e, KataEvent::Turn { n: 1 })));
     assert!(events.iter().any(|e| matches!(e, KataEvent::Turn { n: 2 })));
     assert!(!events.iter().any(|e| matches!(e, KataEvent::Turn { n } if *n >= 3)));
-    assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { .. })));
+    assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { exit_code: 125, .. })));
 }
 
 fn init_git_repo() -> tempfile::TempDir {

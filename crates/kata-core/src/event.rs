@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum KataEvent {
     #[serde(rename = "run.started")]
@@ -47,14 +47,14 @@ pub enum KataEvent {
     #[serde(rename = "ask.answered")]
     AskAnswered { id: String, answers: Vec<Vec<String>> },
     #[serde(rename = "run.error")]
-    RunError { message: String },
+    RunError { message: String, exit_code: i32 },
     #[serde(rename = "run.cancelled")]
-    RunCancelled,
+    RunCancelled { exit_code: i32 },
 }
 
 /// One changed file in a worktree-isolation diff summary. Part of the
 /// `run.diff` event payload; also produced by `crate::worktree::diff`.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DiffFile {
     /// Git short status for the change: "A" | "M" | "D" | "R" | ...
     pub status: String,
@@ -394,5 +394,21 @@ mod tests {
         let p = parse_stream_line(line);
         assert!(p.is_assistant_message, "still counts as an assistant turn");
         assert!(p.events.is_empty(), "the ask_user tool.use must not render as a row");
+    }
+
+    #[test]
+    fn terminal_events_carry_exit_code_and_round_trip() {
+        let cases = [
+            KataEvent::RunError { message: "reached max turns (12)".into(), exit_code: 125 },
+            KataEvent::RunCancelled { exit_code: 130 },
+            KataEvent::RunCompleted { exit_code: 0, is_error: false, num_turns: 2, cost_usd: Some(0.02), duration_ms: 100, result: Some("done".into()) },
+        ];
+        for ev in cases {
+            let json = serde_json::to_string(&ev).unwrap();
+            let back: KataEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(ev, back, "round-trip mismatch for {json}");
+        }
+        let s = serde_json::to_string(&KataEvent::RunCancelled { exit_code: 130 }).unwrap();
+        assert!(s.contains(r#""exit_code":130"#), "cancel must serialize its code: {s}");
     }
 }
