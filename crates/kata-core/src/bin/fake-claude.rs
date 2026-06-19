@@ -1,7 +1,7 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "budget"
 use std::io::Write;
 use std::{thread, time::Duration};
 
@@ -97,6 +97,15 @@ fn main() {
             }
             let _ = writeln!(out, r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#);
             let _ = out.flush();
+        }
+        "budget" => {
+            // Mirror real claude hitting --max-budget-usd: one assistant turn, then
+            // a terminal result tagged error_max_budget_usd with a non-zero spend,
+            // and a generic exit 1. The engine must override that 1 to exit 122.
+            let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"working"}}]}}}}"#);
+            let _ = writeln!(out, r#"{{"type":"result","subtype":"error_max_budget_usd","is_error":true,"num_turns":1,"total_cost_usd":0.05,"result":null,"errors":["Reached maximum budget ($0.01)"]}}"#);
+            let _ = out.flush();
+            std::process::exit(1);
         }
         "writefile" => {
             // Write a file into cwd so a worktree-isolated run produces a real diff.

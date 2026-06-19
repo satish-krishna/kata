@@ -78,7 +78,7 @@ Two engine improvements that grew out of a live debugging session ("why is my ru
 - [ ] First-class `PreToolUse` guard-hook field + UI (programmatic enforcement, the heir to the permission-theater argument). Plugin-borne hooks already run today; this makes a guard first-class.
 - [ ] MCP configuration surface (per-server config, secret references to a vault/dotenv) beyond the current env-name passthrough.
 - [ ] Named, reusable context presets droppable into specs.
-- [ ] Cost-ceiling leash (kill on `cost_usd` budget) once cost is reliably present in stream-json.
+- [x] **Cost-ceiling leash.** Per-spec `leash.max_budget_usd`, enforced by claude's native `--max-budget-usd`; the engine maps the `error_max_budget_usd` result subtype to a distinct exit code (**122**) in the leash family. The cap is approximate (post-turn check, overshoots by up to one turn). Workbench leash field included.
 
 ---
 

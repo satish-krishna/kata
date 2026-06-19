@@ -27,7 +27,7 @@ These are the stable, language-neutral interfaces; `kata-core` is the reference 
 
 ## Exit-code semantics (the leash)
 
-The engine maps run outcomes to process exit codes, and the CLI surfaces them: turn cap → **125**, wall-clock timeout → **124**, answer deadline exceeded → **123**, cancel → **130**. The CLI itself uses **1** for validation failure and **2** for load/parse error. Preserve these — they are part of the CI/orchestrator contract. Exit 123 is only reachable when `[interactive] enabled = true` and `answer_timeout_secs` is set; it is distinct from 124 so CI logs can tell "work ran too long" from "nobody answered."
+The engine maps run outcomes to process exit codes, and the CLI surfaces them: turn cap → **125**, wall-clock timeout → **124**, answer deadline exceeded → **123**, budget ceiling reached → **122**, cancel → **130**. The CLI itself uses **1** for validation failure and **2** for load/parse error. Preserve these — they are part of the CI/orchestrator contract. Exit 123 is only reachable when `[interactive] enabled = true` and `answer_timeout_secs` is set; it is distinct from 124 so CI logs can tell "work ran too long" from "nobody answered." Exit 122 is reached only when `leash.max_budget_usd` is set and claude stops on its native `--max-budget-usd` (a post-turn check, so the actual spend can overshoot the ceiling by up to one turn); the engine detects the `error_max_budget_usd` result subtype and overrides claude's generic exit 1.
 
 ## The Workbench (`app/`)
 

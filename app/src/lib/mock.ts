@@ -39,7 +39,7 @@ export function seedSpec(): RunSpec {
     skills: ["triage-flaky-test"],
     plugins: { "github-tools": { mcp: true, env: ["GITHUB_TOKEN", "GH_HOST"] } },
     model: { id: "claude-sonnet-4-6" },
-    leash: { max_turns: 12, timeout_secs: 900, isolation: "worktree" },
+    leash: { max_turns: 12, timeout_secs: 900, max_budget_usd: null, isolation: "worktree" },
     auth: { bare: true, token_env: null },
     interactive: { enabled: false, answer_timeout_secs: null },
   };
