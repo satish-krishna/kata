@@ -12,6 +12,7 @@
   import ComposePane from "$lib/components/ComposePane.svelte";
   import ObservePane from "$lib/components/ObservePane.svelte";
   import { runStore, startRun, cancelRun, submitAnswer } from "$lib/run.svelte";
+  import { toastError } from "$lib/toast.svelte";
   import Terminal from "@lucide/svelte/icons/terminal";
   import Hash from "@lucide/svelte/icons/hash";
   import Folder from "@lucide/svelte/icons/folder";
@@ -80,7 +81,7 @@
       saved = $state.snapshot(spec) as RunSpec;
       currentPath = path;
     } catch (e) {
-      alert(`Failed to load spec: ${e}`);
+      toastError(`Failed to load spec: ${e}`);
     }
   }
 
@@ -89,7 +90,7 @@
       await api.saveKata(normalize($state.snapshot(spec) as RunSpec));
       saved = $state.snapshot(spec) as RunSpec;
     } catch (e) {
-      alert(`Failed to save kata: ${e}`);
+      toastError(`Failed to save kata: ${e}`);
     }
   }
 
@@ -99,7 +100,7 @@
     try {
       await api.exportBundle(normalize($state.snapshot(spec) as RunSpec), dir);
     } catch (e) {
-      alert(`Failed to export bundle: ${e}`);
+      toastError(`Failed to export bundle: ${e}`);
     }
   }
 
@@ -119,7 +120,7 @@
 
   async function onSavePreset(name: string, body: string) {
     try { await api.savePreset(name, body); presets = await api.listPresets(); }
-    catch (e) { alert(`Failed to save preset: ${e}`); }
+    catch (e) { toastError(`Failed to save preset: ${e}`); }
   }
 
   // Browser dev/review only: `?demo=run` auto-starts the scripted run so the
