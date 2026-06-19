@@ -204,7 +204,7 @@ fn save_preset(name: String, body: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// Export a kata as a portable bundle zip to the given output path.
+/// Export a kata as a portable bundle directory under the given output path.
 /// Bundles into a fresh `<slug>-bundle` subdirectory of the picked folder
 /// and uses force=true so re-exporting overwrites cleanly.
 #[tauri::command]

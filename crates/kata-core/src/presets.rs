@@ -13,7 +13,7 @@ pub struct Preset {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PresetError {
-    #[error("preset name has no usable slug")]
+    #[error("preset name must contain at least one letter or digit")]
     InvalidName,
     #[error("serializing preset: {0}")]
     Ser(String),

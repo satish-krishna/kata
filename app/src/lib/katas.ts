@@ -15,17 +15,24 @@ export type KataView = {
 
 /** Join the kata library with run history (runs newest-first per `list_runs`). */
 export function kataViews(katas: RunSpec[], runs: RunRecord[]): KataView[] {
+  // Aggregate per kata in a single pass. `runs` is newest-first, so the first
+  // run seen for a name is its latest — O(katas + runs), not O(katas × runs).
+  const agg = new Map<string, { count: number; latest: RunRecord }>();
+  for (const r of runs) {
+    const a = agg.get(r.kata);
+    if (a) a.count += 1;
+    else agg.set(r.kata, { count: 1, latest: r });
+  }
   return katas.map((k) => {
-    const mine = runs.filter((r) => r.kata === k.name);
-    const latest = mine[0] ?? null;
+    const a = agg.get(k.name) ?? null;
     return {
       name: k.name,
       description: k.description ?? "",
       isolation: k.leash.isolation,
       kit: k.skills.length + Object.keys(k.plugins).length,
-      runs: mine.length,
-      lastState: latest ? statusForExit(latest.exit ?? null) : null,
-      lastExit: latest ? latest.exit ?? null : null,
+      runs: a ? a.count : 0,
+      lastState: a ? statusForExit(a.latest.exit ?? null) : null,
+      lastExit: a ? a.latest.exit ?? null : null,
     };
   });
 }

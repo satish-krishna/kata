@@ -7,7 +7,7 @@ use std::path::PathBuf;
 pub enum KataError {
     #[error("kata not found")]
     NotFound,
-    #[error("kata name has no usable slug")]
+    #[error("kata name must contain at least one letter or digit")]
     InvalidName,
     #[error("invalid spec: {0:?}")]
     Invalid(Vec<String>),

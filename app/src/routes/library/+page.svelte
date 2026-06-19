@@ -85,7 +85,8 @@
 
   async function onReRun() {
     if (!run) return;
-    editing = { kata: await loadKata(run.kata) };
+    try { editing = { kata: await loadKata(run.kata) }; }
+    catch (e) { alert(`Failed to load kata: ${e}`); }
   }
   function confirmReRun(task: string) {
     if (!editing) return;
@@ -95,8 +96,12 @@
   }
   async function onOpenInCompose() {
     if (!run) return;
-    setLaunch({ spec: await loadKata(run.kata), autorun: false });
-    goto("/");
+    try {
+      setLaunch({ spec: await loadKata(run.kata), autorun: false });
+      goto("/");
+    } catch (e) {
+      alert(`Failed to load kata: ${e}`);
+    }
   }
   async function onExportBundle() {
     if (!run) return;
