@@ -122,4 +122,4 @@ Touch-ups: `spec.ts` default spec (leave `max_budget_usd` unset/`null`), and any
 
 ## Sequencing
 
-First of Phase 4's five cycles, run on its own `feat/cost-ceiling-leash` branch: TDD per change, `cargo clippy --all-targets -D warnings` clean, `cargo build --locked` green, TS bindings regenerated, frequent commits, PR + review before merge — then on to item 2 (saved-katas + run-history, which will absorb the run-time task-override idea).
+First of Phase 4's cycles, run on its own `feat/cost-ceiling-leash` branch: TDD per change, `cargo clippy --all-targets -D warnings` clean, `cargo build --locked` green, TS bindings regenerated, frequent commits, PR + review before merge. Remaining Phase 4 order after this merges: (2) saved-katas + run-history **+ context presets** as one combined cycle — the home for the run-time task-override "reusable agent" idea; (3) guard-hooks (`PreToolUse`); (4) MCP configuration surface.
