@@ -229,7 +229,10 @@ pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
     if spec.workdir.trim().is_empty() { errs.push("workdir is required".into()); }
     if spec.leash.max_turns == 0 { errs.push("leash.max_turns must be >= 1".into()); }
     if let Some(b) = spec.leash.max_budget_usd {
-        if b <= 0.0 { errs.push("leash.max_budget_usd must be > 0".into()); }
+        // Reject non-finite (NaN/±inf) too: `b <= 0.0` is false for NaN, so a
+        // non-finite budget would otherwise pass and later emit an invalid
+        // `--max-budget-usd NaN`/`inf` argument.
+        if !b.is_finite() || b <= 0.0 { errs.push("leash.max_budget_usd must be > 0".into()); }
     }
     if errs.is_empty() { Ok(()) } else { Err(errs) }
 }
@@ -508,5 +511,15 @@ max_budget_usd = 5.0
         let mut spec = RunSpec { schema: 1, name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
         spec.leash.max_budget_usd = Some(2.5);
         assert!(validate(&spec).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_nonfinite_budget() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut spec = RunSpec { schema: 1, name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+            spec.leash.max_budget_usd = Some(bad);
+            let errs = validate(&spec).unwrap_err();
+            assert!(errs.iter().any(|e| e.contains("max_budget_usd")), "non-finite budget {bad} must be rejected");
+        }
     }
 }

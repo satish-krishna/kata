@@ -414,7 +414,11 @@ pub fn run<F: FnMut(KataEvent)>(
             let payload = result.unwrap_or(crate::event::ResultPayload {
                 num_turns: turns, cost_usd: None, is_error: code != 0, result: None, subtype: None,
             });
-            if payload.is_budget_exhausted() {
+            // Guard on the spec actually setting a budget: exit 122 is only
+            // reachable when leash.max_budget_usd is set, so a result that
+            // carries the subtype without a configured ceiling stays a normal
+            // completion (defensive against future subtype reuse).
+            if payload.is_budget_exhausted() && spec.leash.max_budget_usd.is_some() {
                 let ceiling = spec.leash.max_budget_usd.unwrap_or(0.0);
                 let spent = payload.cost_usd.unwrap_or(0.0);
                 (122, KataEvent::RunError {

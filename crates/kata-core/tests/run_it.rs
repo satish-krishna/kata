@@ -381,6 +381,27 @@ fn run_budget_exhausted_reports_122() {
 
 #[test]
 #[serial]
+fn budget_subtype_without_configured_ceiling_is_not_122() {
+    // Exit 122 is only reachable when leash.max_budget_usd is set. A result
+    // carrying the error_max_budget_usd subtype but no configured ceiling stays
+    // a normal completion (defensive against future subtype reuse).
+    with_fake("budget");
+    let work = tempfile::tempdir().unwrap();
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let spec = base_spec(&work.path().to_string_lossy()); // no max_budget_usd
+    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+
+    assert_ne!(outcome.exit_code, 122, "no ceiling set must not map to 122");
+    assert!(
+        matches!(events.last().unwrap(), KataEvent::RunCompleted { .. }),
+        "without a ceiling the run completes normally, got: {:?}",
+        events.last().unwrap()
+    );
+}
+
+#[test]
+#[serial]
 fn run_survives_when_transcript_cannot_be_written() {
     with_fake("ok");
     // A regular file where a directory is needed makes create_dir_all fail — portably.
