@@ -13,6 +13,7 @@
   import ObservePane from "$lib/components/ObservePane.svelte";
   import { runStore, startRun, cancelRun, submitAnswer } from "$lib/run.svelte";
   import { toastError } from "$lib/toast.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import Terminal from "@lucide/svelte/icons/terminal";
   import Hash from "@lucide/svelte/icons/hash";
   import Folder from "@lucide/svelte/icons/folder";
@@ -60,29 +61,36 @@
     return () => clearTimeout(t);
   });
 
-  function confirmDiscard(): boolean {
-    return !dirty || confirm("Discard unsaved changes?");
+  let confirmDiscardState = $state<{ action: () => void | Promise<void> } | null>(null);
+
+  // Run `action` immediately when there are no unsaved changes; otherwise defer
+  // it behind a confirm dialog.
+  function guardDiscard(action: () => void | Promise<void>) {
+    if (!dirty) { void action(); return; }
+    confirmDiscardState = { action };
   }
 
   function onNew() {
-    if (!confirmDiscard()) return;
-    spec = defaultSpec();
-    saved = $state.snapshot(spec) as RunSpec;
-    currentPath = null;
+    guardDiscard(() => {
+      spec = defaultSpec();
+      saved = $state.snapshot(spec) as RunSpec;
+      currentPath = null;
+    });
   }
 
-  async function onOpen() {
-    if (!confirmDiscard()) return;
-    const path = await api.pickOpenSpec();
-    if (!path) return;
-    try {
-      const loaded = await api.loadSpec(path);
-      spec = draftFrom(loaded);
-      saved = $state.snapshot(spec) as RunSpec;
-      currentPath = path;
-    } catch (e) {
-      toastError(`Failed to load spec: ${e}`);
-    }
+  function onOpen() {
+    guardDiscard(async () => {
+      const path = await api.pickOpenSpec();
+      if (!path) return;
+      try {
+        const loaded = await api.loadSpec(path);
+        spec = draftFrom(loaded);
+        saved = $state.snapshot(spec) as RunSpec;
+        currentPath = path;
+      } catch (e) {
+        toastError(`Failed to load spec: ${e}`);
+      }
+    });
   }
 
   async function onSave() {
@@ -195,4 +203,13 @@
     <span class="wb-statusbar__item"><Folder size={13} /> {spec.workdir || "—"}</span>
     <span class="wb-statusbar__item"><Terminal size={13} /> claude --bare -p</span>
   </footer>
+
+  {#if confirmDiscardState}
+    <ConfirmDialog
+      message="Discard unsaved changes?"
+      confirmLabel="Discard"
+      onConfirm={() => { const a = confirmDiscardState!.action; confirmDiscardState = null; void a(); }}
+      onCancel={() => (confirmDiscardState = null)}
+    />
+  {/if}
 </div>
