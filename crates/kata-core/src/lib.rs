@@ -5,6 +5,7 @@ pub mod catalog;
 pub mod command;
 pub mod event;
 pub mod fsutil;
+pub mod history;
 pub mod run;
 pub mod spec;
 pub mod worktree;
