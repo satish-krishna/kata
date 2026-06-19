@@ -70,7 +70,11 @@ pub fn load_run(id: &str) -> Result<RunDetail, HistoryError> {
     let path = dir.join(format!("{id}.jsonl"));
     // Path-traversal guard: the resolved file must sit directly under runs_dir.
     if path.parent() != Some(dir.as_path()) { return Err(HistoryError::InvalidId); }
-    if !path.exists() { return Err(HistoryError::NotFound); }
+    // Reject symlinks: the file's contents are returned to the webview, so a
+    // symlink at <id>.jsonl could exfiltrate an arbitrary file. symlink_metadata
+    // does not follow the link; a missing file errors here → NotFound.
+    let meta = std::fs::symlink_metadata(&path).map_err(|_| HistoryError::NotFound)?;
+    if meta.file_type().is_symlink() { return Err(HistoryError::InvalidId); }
     let events = read_events(&path).map_err(|e| HistoryError::Io(e.to_string()))?;
     let record = build_record(id, &events).ok_or(HistoryError::NotFound)?;
     Ok(RunDetail { record, events })

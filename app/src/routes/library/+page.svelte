@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { savedKatas } from "$lib/library";
   import { listRuns, loadRun } from "$lib/api";
   import { statusForExit, isStreamEvent, type RunState, type RunRecord } from "$lib/events";
@@ -23,11 +24,13 @@
   let selRun = $state<string | null>(null);
   let selKata = $state<string | null>(null);
 
-  $effect(() => {
-    listRuns().then((rs) => {
-      runs = rs;
-      if (selRun === null && rs.length > 0) selectRun(rs[0].id);
-    });
+  // Fetch the run list once on mount. Using onMount (not $effect) makes the
+  // mount-once intent explicit and keeps the fetch from being entangled with
+  // any reactive read.
+  onMount(async () => {
+    const rs = await listRuns();
+    runs = rs;
+    if (selRun === null && rs.length > 0) selectRun(rs[0].id);
   });
 
   let run = $derived(detail?.record ?? null);
@@ -55,7 +58,10 @@
     selRun = id;
     const r = runs.find((x) => x.id === id);
     if (r) selKata = r.kata;
-    detail = await loadRun(id);
+    const loaded = await loadRun(id);
+    // Guard against out-of-order responses: only apply if this is still the
+    // selected run (rapid clicks can resolve loadRun calls in any order).
+    if (selRun === id) detail = loaded;
   }
   function selectKata(name: string) {
     selKata = name;

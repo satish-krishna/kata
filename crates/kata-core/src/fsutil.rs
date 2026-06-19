@@ -39,6 +39,7 @@ pub fn parse_stamp(stem: &str) -> Option<u64> {
     let (y, mo, d) = (n(0..4)?, n(4..6)? as u32, n(6..8)? as u32);
     let (h, mi, se) = (n(9..11)?, n(11..13)?, n(13..15)?);
     if !(1..=12).contains(&mo) || !(1..=31).contains(&d) { return None; }
+    if h >= 24 || mi >= 60 || se >= 60 { return None; }
     let days = days_from_civil(y, mo, d);
     u64::try_from(days * 86_400 + h * 3600 + mi * 60 + se).ok()
 }
@@ -195,6 +196,11 @@ mod tests {
         }
         assert_eq!(parse_stamp("no-stamp-here"), None);
         assert_eq!(parse_stamp("short"), None);
+        // Out-of-range time/date components are rejected, not wrapped into a
+        // bogus huge timestamp.
+        assert_eq!(parse_stamp("k-20260101T999999Z"), None, "hour/min/sec >= bounds");
+        assert_eq!(parse_stamp("k-20260101T250000Z"), None, "hour 25");
+        assert_eq!(parse_stamp("k-20261301T000000Z"), None, "month 13");
     }
 
     #[test]
