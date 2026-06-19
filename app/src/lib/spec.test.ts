@@ -93,6 +93,8 @@ describe("model selection", () => {
     expect(modelChoiceFor(null)).toBe("default");
     expect(modelChoiceFor(undefined)).toBe("default");
     expect(modelChoiceFor("")).toBe("default");
+    // whitespace-only is blank too — consistent with normalize()/the engine guard
+    expect(modelChoiceFor("   ")).toBe("default");
   });
 
   it("modelChoiceFor recognises each tier alias", () => {

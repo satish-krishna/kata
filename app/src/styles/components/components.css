@@ -20,7 +20,7 @@
 .k-btn .k-btn__icon { width: 16px; height: 16px; flex: none; }
 
 /* Variants pin `color` on :hover too: these buttons are also used as <a>, and
-   the global a:hover { color: --accent-hover } (base.css) out-specifies the
+   the global a:hover { color: var(--accent-hover) } (base.css) out-specifies the
    variant's rest color, which would otherwise tint the label on hover — on the
    primary button that meant azure text on the azure hover background. */
 .k-btn--primary { background: var(--accent); color: var(--text-on-accent); font-weight: var(--weight-semibold); }

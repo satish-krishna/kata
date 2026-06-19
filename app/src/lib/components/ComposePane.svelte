@@ -49,6 +49,13 @@
   // `--model ""`, which is why a blank id alone can't imply "custom".
   let customMode = $state(false);
   let modelChoice = $derived<ModelChoice>(customMode ? "custom" : modelChoiceFor(spec.model.id));
+  // Reconcile the flag whenever a *concrete* id arrives — a loaded kata, an alias
+  // click, or typed custom text — so it can't leak across specs. A blank id is
+  // left alone so clearing the custom field stays in custom mode mid-edit.
+  $effect(() => {
+    const id = spec.model.id;
+    if (id && id.trim()) customMode = modelChoiceFor(id) === "custom";
+  });
   function onModelChoice(choice: ModelChoice) {
     customMode = choice === "custom";
     spec.model.id = modelIdForChoice(choice);

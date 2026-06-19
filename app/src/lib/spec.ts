@@ -6,11 +6,13 @@ import type { RunSpec } from "../bindings/RunSpec";
 export type ModelChoice = "default" | "opus" | "sonnet" | "haiku" | "custom";
 export const MODEL_ALIASES = ["opus", "sonnet", "haiku"] as const;
 
-/** The selector mode implied by a stored model id: blank → default, a known
- *  alias → that alias, anything else → a pinned custom id. */
+/** The selector mode implied by a stored model id: blank (incl. whitespace-only,
+ *  matching `normalize()` and the engine's `trim().is_empty()` guard) → default,
+ *  a known alias → that alias, anything else → a pinned custom id. */
 export function modelChoiceFor(id: string | null | undefined): ModelChoice {
-  if (!id) return "default";
-  return (MODEL_ALIASES as readonly string[]).includes(id) ? (id as ModelChoice) : "custom";
+  const trimmed = id?.trim();
+  if (!trimmed) return "default";
+  return (MODEL_ALIASES as readonly string[]).includes(trimmed) ? (trimmed as ModelChoice) : "custom";
 }
 
 /** The model id to store for a chosen selector mode. default and custom both
