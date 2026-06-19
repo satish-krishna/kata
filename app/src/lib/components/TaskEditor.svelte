@@ -4,7 +4,7 @@
   let draft = $state(task);
   function key(e: KeyboardEvent) {
     if (e.key === "Escape") onCancel();
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) onRun(draft);
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && draft.trim()) onRun(draft);
   }
 </script>
 
@@ -14,6 +14,6 @@
   <textarea class="k-textarea" rows="4" bind:value={draft} aria-label="Task"></textarea>
   <div class="k-dialog__actions">
     <button class="k-btn k-btn--ghost k-btn--sm" onclick={onCancel}>Cancel</button>
-    <button class="k-btn k-btn--primary k-btn--sm" onclick={() => onRun(draft)}><Play size={13} />Run</button>
+    <button class="k-btn k-btn--primary k-btn--sm" onclick={() => onRun(draft)} disabled={!draft.trim()}><Play size={13} />Run</button>
   </div>
 </div>

@@ -205,13 +205,15 @@ fn save_preset(name: String, body: String) -> Result<(), String> {
 }
 
 /// Export a kata as a portable bundle zip to the given output path.
+/// Bundles into a fresh `<slug>-bundle` subdirectory of the picked folder
+/// and uses force=true so re-exporting overwrites cleanly.
 #[tauri::command]
 fn export_bundle(spec: kata_core::spec::RunSpec, out: String) -> Result<(), String> {
     let workdir = std::path::PathBuf::from(&spec.workdir);
     let roots = kata_core::catalog::DiscoveryRoots::defaults(&workdir);
     let catalog = kata_core::catalog::discover(&roots);
-    kata_core::bundle::bundle(&spec, &catalog, std::path::Path::new(&out), false)
-        .map_err(|e| e.to_string())
+    let dest = std::path::Path::new(&out).join(format!("{}-bundle", kata_core::fsutil::slug(&spec.name)));
+    kata_core::bundle::bundle(&spec, &catalog, &dest, true).map_err(|e| e.to_string())
 }
 
 /// Send the operator's answer to a paused interactive run: write an

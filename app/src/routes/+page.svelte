@@ -126,15 +126,16 @@
   // Observe pane can be reviewed/screenshotted without a click. Never fires in
   // the real Tauri app.
   onMount(async () => {
-    presets = await api.listPresets();
+    try { presets = await api.listPresets(); } catch (e) { console.error("listPresets failed", e); presets = []; }
     if (!inTauri() && new URLSearchParams(location.search).get("demo") === "run") onRun();
     const handoff = takeLaunch();
     if (handoff) {
       spec = draftFrom(handoff.spec);
       saved = $state.snapshot(spec) as RunSpec;
       currentPath = null;
-      if (handoff.autorun && errors.length === 0) {
-        startRun(normalize($state.snapshot(spec) as RunSpec));
+      if (handoff.autorun) {
+        const errs = await api.validateSpec(normalize($state.snapshot(spec) as RunSpec));
+        if (errs.length === 0) startRun(normalize($state.snapshot(spec) as RunSpec));
       }
     }
   });
