@@ -19,12 +19,16 @@
 .k-btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
 .k-btn .k-btn__icon { width: 16px; height: 16px; flex: none; }
 
+/* Variants pin `color` on :hover too: these buttons are also used as <a>, and
+   the global a:hover { color: --accent-hover } (base.css) out-specifies the
+   variant's rest color, which would otherwise tint the label on hover — on the
+   primary button that meant azure text on the azure hover background. */
 .k-btn--primary { background: var(--accent); color: var(--text-on-accent); font-weight: var(--weight-semibold); }
-.k-btn--primary:hover:not(:disabled) { background: var(--accent-hover); }
+.k-btn--primary:hover:not(:disabled) { background: var(--accent-hover); color: var(--text-on-accent); }
 .k-btn--primary:active:not(:disabled) { background: var(--accent-press); }
 
 .k-btn--secondary { background: var(--surface-card); color: var(--text-primary); border-color: var(--border-default); }
-.k-btn--secondary:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-strong); }
+.k-btn--secondary:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border-strong); color: var(--text-primary); }
 
 .k-btn--ghost { background: transparent; color: var(--text-secondary); }
 .k-btn--ghost:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
