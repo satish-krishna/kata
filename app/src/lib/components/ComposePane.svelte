@@ -7,6 +7,7 @@
   import Field from "./Field.svelte";
   import Segmented from "./Segmented.svelte";
   import Folder from "@lucide/svelte/icons/folder";
+  import PromptDialog from "./PromptDialog.svelte";
 
   let {
     spec,
@@ -16,6 +17,8 @@
     onSavePreset,
   }: { spec: RunSpec; entries: CatalogEntry[]; onPickWorkdir: () => void; presets: Preset[]; onSavePreset: (name: string, body: string) => void } = $props();
 
+  let naming = $state(false);
+
   function onPickPreset(e: Event) {
     const sel = e.currentTarget as HTMLSelectElement;
     const p = presets.find((x) => x.name === sel.value);
@@ -23,10 +26,8 @@
     sel.value = ""; // reset to placeholder
   }
   function onSaveAsPreset() {
-    const body = (spec.context ?? "").trim();
-    if (body === "") return;
-    const name = prompt("Preset name?");
-    if (name && name.trim() !== "") onSavePreset(name.trim(), spec.context ?? "");
+    if ((spec.context ?? "").trim() === "") return;
+    naming = true;
   }
 
   let kitCount = $derived(spec.skills.length + Object.keys(spec.plugins).length);
@@ -217,4 +218,13 @@
       </Field>
     {/if}
   </section>
+
+{#if naming}
+  <PromptDialog
+    title="Save as preset"
+    placeholder="Preset name"
+    onConfirm={(name) => { naming = false; onSavePreset(name, spec.context ?? ""); }}
+    onCancel={() => (naming = false)}
+  />
+{/if}
 </div>
