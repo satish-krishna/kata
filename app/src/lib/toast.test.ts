@@ -34,4 +34,17 @@ describe("toast store", () => {
       vi.useRealTimers();
     }
   });
+
+  it("manual dismiss clears the auto-dismiss timer", () => {
+    vi.useFakeTimers();
+    try {
+      const id = toastError("temp");
+      dismiss(id);
+      expect(toasts().length).toBe(0);
+      vi.advanceTimersByTime(6000); // the cleared timer must not fire / resurrect
+      expect(toasts().length).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
