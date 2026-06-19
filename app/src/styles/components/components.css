@@ -256,3 +256,29 @@
   display: flex; align-items: center; justify-content: flex-end;
   gap: var(--space-3);
 }
+
+/* toasts — transient error notifications (floating, bottom-right) */
+.k-toaster {
+  position: fixed; right: var(--space-5); bottom: var(--space-5); z-index: 200;
+  display: flex; flex-direction: column-reverse; gap: var(--space-2);
+  max-width: 380px;
+}
+.k-toast {
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-card); border: 1px solid var(--border-default);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
+  color: var(--text-primary); font: var(--weight-medium) var(--text-sm)/1.4 var(--font-sans);
+}
+.k-toast--error { border-color: var(--error-border); }
+.k-toast__dot {
+  width: 8px; height: 8px; border-radius: var(--radius-full);
+  background: var(--error); flex: none;
+}
+.k-toast__msg { flex: 1; }
+.k-toast__close {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; color: var(--text-faint); cursor: pointer;
+  padding: var(--space-1); border-radius: var(--radius-sm);
+}
+.k-toast__close:hover { color: var(--text-secondary); }
