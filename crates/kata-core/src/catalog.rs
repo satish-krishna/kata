@@ -70,6 +70,11 @@ pub fn discover(roots: &DiscoveryRoots) -> Vec<CatalogEntry> {
     discover_skills(&roots.project_dir, "project", &mut out);
     discover_plugins(&roots.user_dir, "user", &mut out);
     discover_plugins(&roots.project_dir, "project", &mut out);
+    // Marketplace-installed plugins (incl. those Claude Code caches under
+    // plugins/cache/<marketplace>/<plugin>/<version>/) are registered only in
+    // installed_plugins.json, never as a flat plugins/<name>/ dir. Read it last
+    // so an explicit flat install of the same name wins.
+    discover_installed_plugins(&roots.user_dir, &mut out);
     out
 }
 
@@ -101,26 +106,73 @@ fn discover_plugins(claude_dir: &Path, source: &str, out: &mut Vec<CatalogEntry>
     let Ok(rd) = std::fs::read_dir(&plugins) else { return };
     for entry in rd.flatten() {
         let dir = entry.path();
-        let manifest = dir.join("plugin.json");
-        if !manifest.is_file() {
-            continue;
-        }
+        let Some(manifest) = plugin_manifest(&dir) else { continue };
         let name = dir.file_name().unwrap().to_string_lossy().into_owned();
-        let description = std::fs::read_to_string(&manifest)
-            .ok()
-            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-            .and_then(|v| v.get("description").and_then(|d| d.as_str()).map(String::from))
-            .unwrap_or_default();
         out.push(CatalogEntry {
             kind: EntryKind::Plugin,
             name,
-            description,
+            description: manifest_description(&manifest),
             source: source.to_string(),
             provides: plugin_provides(&dir),
             mcp_servers: plugin_mcp_servers(&dir),
             path: dir,
         });
     }
+}
+
+/// Surface plugins recorded in `<user>/.claude/plugins/installed_plugins.json`.
+/// Claude Code installs marketplace plugins into a content-addressed cache and
+/// tracks the active `installPath` there, so this is the authoritative way to
+/// find them by name. Deduped against plugins already found as flat dirs.
+fn discover_installed_plugins(user_claude_dir: &Path, out: &mut Vec<CatalogEntry>) {
+    let path = user_claude_dir.join("plugins").join("installed_plugins.json");
+    let Ok(text) = std::fs::read_to_string(&path) else { return };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return };
+    let Some(plugins) = v.get("plugins").and_then(|p| p.as_object()) else { return };
+    for (key, records) in plugins {
+        // Keys are "<name>@<marketplace>"; a kata references the bare name.
+        let name = key.split('@').next().unwrap_or(key).to_string();
+        if name.is_empty() || out.iter().any(|e| e.kind == EntryKind::Plugin && e.name == name) {
+            continue;
+        }
+        let Some(arr) = records.as_array() else { continue };
+        // First record whose recorded installPath still has a manifest on disk.
+        for rec in arr {
+            let Some(install) = rec.get("installPath").and_then(|s| s.as_str()) else { continue };
+            let root = PathBuf::from(install);
+            let Some(manifest) = plugin_manifest(&root) else { continue };
+            let source = rec.get("scope").and_then(|s| s.as_str()).unwrap_or("user").to_string();
+            out.push(CatalogEntry {
+                kind: EntryKind::Plugin,
+                description: manifest_description(&manifest),
+                name: name.clone(),
+                source,
+                provides: plugin_provides(&root),
+                mcp_servers: plugin_mcp_servers(&root),
+                path: root,
+            });
+            break;
+        }
+    }
+}
+
+/// A plugin's manifest is at `<dir>/plugin.json` (legacy) or
+/// `<dir>/.claude-plugin/plugin.json` (current Claude Code layout).
+fn plugin_manifest(dir: &Path) -> Option<PathBuf> {
+    let root = dir.join("plugin.json");
+    if root.is_file() {
+        return Some(root);
+    }
+    let nested = dir.join(".claude-plugin").join("plugin.json");
+    nested.is_file().then_some(nested)
+}
+
+fn manifest_description(manifest: &Path) -> String {
+    std::fs::read_to_string(manifest)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("description").and_then(|d| d.as_str()).map(String::from))
+        .unwrap_or_default()
 }
 
 fn plugin_provides(dir: &Path) -> Vec<String> {
@@ -273,6 +325,87 @@ mod tests {
         let p = entries.iter().find(|e| e.name == "project-plugin").unwrap();
         assert_eq!(u.source, "user");
         assert_eq!(p.source, "project");
+    }
+
+    fn make_cached_plugin(install_path: &std::path::Path, name: &str, desc: &str, with_mcp: bool) {
+        // Modern Claude Code layout: manifest under .claude-plugin/, skills at root.
+        let cp = install_path.join(".claude-plugin");
+        fs::create_dir_all(&cp).unwrap();
+        fs::write(cp.join("plugin.json"), format!("{{\"name\":\"{name}\",\"description\":\"{desc}\"}}")).unwrap();
+        fs::create_dir_all(install_path.join("skills").join("inner")).unwrap();
+        fs::write(install_path.join("skills").join("inner").join("SKILL.md"), "---\nname: inner\ndescription: d\n---\n").unwrap();
+        if with_mcp {
+            fs::write(install_path.join(".mcp.json"), "{\"mcpServers\":{\"srv\":{\"command\":\"x\"}}}").unwrap();
+        }
+    }
+
+    fn write_installed(user_dir: &std::path::Path, name: &str, marketplace: &str, scope: &str, install_path: &std::path::Path) {
+        let plugins = user_dir.join("plugins");
+        fs::create_dir_all(&plugins).unwrap();
+        let json = serde_json::json!({
+            "version": 2,
+            "plugins": {
+                format!("{name}@{marketplace}"): [
+                    { "scope": scope, "installPath": install_path.to_string_lossy(), "version": "1.0.0" }
+                ]
+            }
+        });
+        fs::write(plugins.join("installed_plugins.json"), serde_json::to_string(&json).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn discovers_installed_plugin_from_manifest_json() {
+        // A marketplace-cached plugin is registered only in installed_plugins.json
+        // (not as a flat plugins/<name>/ dir) and carries its manifest under
+        // .claude-plugin/. It must still surface, with provides/mcp/source read
+        // from its recorded installPath.
+        let user = tempfile::tempdir().unwrap();
+        let payload = tempfile::tempdir().unwrap();
+        make_cached_plugin(payload.path(), "superpowers", "sp", true);
+        write_installed(user.path(), "superpowers", "claude-plugins-official", "project", payload.path());
+
+        let roots = DiscoveryRoots { user_dir: user.path().to_path_buf(), project_dir: "/nonexistent".into() };
+        let entries = discover(&roots);
+        let p = entries.iter().find(|e| e.name == "superpowers").expect("installed plugin discovered");
+        assert_eq!(p.kind, EntryKind::Plugin);
+        assert_eq!(p.source, "project");
+        assert_eq!(p.description, "sp");
+        assert_eq!(p.mcp_servers, vec!["srv"]);
+        assert!(p.provides.iter().any(|s| s == "skill:inner"));
+        assert_eq!(p.path, payload.path());
+    }
+
+    #[test]
+    fn discovers_flat_plugin_with_claude_plugin_manifest() {
+        // A flat-installed plugin whose manifest lives under .claude-plugin/ (no
+        // root plugin.json) is discovered too.
+        let user = tempfile::tempdir().unwrap();
+        let dir = user.path().join("plugins").join("mytool");
+        let cp = dir.join(".claude-plugin");
+        fs::create_dir_all(&cp).unwrap();
+        fs::write(cp.join("plugin.json"), "{\"name\":\"mytool\",\"description\":\"mt\"}").unwrap();
+
+        let roots = DiscoveryRoots { user_dir: user.path().to_path_buf(), project_dir: "/nonexistent".into() };
+        let entries = discover(&roots);
+        let p = entries.iter().find(|e| e.name == "mytool").expect("flat .claude-plugin manifest discovered");
+        assert_eq!(p.description, "mt");
+    }
+
+    #[test]
+    fn installed_does_not_duplicate_flat_plugin() {
+        // A plugin present both as a flat dir and in installed_plugins.json
+        // appears once; the flat (explicit) entry wins.
+        let user = tempfile::tempdir().unwrap();
+        make_plugin(user.path(), "dup", "flat", false);
+        let payload = tempfile::tempdir().unwrap();
+        make_cached_plugin(payload.path(), "dup", "cached", false);
+        write_installed(user.path(), "dup", "mp", "user", payload.path());
+
+        let roots = DiscoveryRoots { user_dir: user.path().to_path_buf(), project_dir: "/nonexistent".into() };
+        let entries = discover(&roots);
+        let dups: Vec<_> = entries.iter().filter(|e| e.name == "dup").collect();
+        assert_eq!(dups.len(), 1, "flat install wins, no duplicate");
+        assert_eq!(dups[0].description, "flat");
     }
 
     #[test]
