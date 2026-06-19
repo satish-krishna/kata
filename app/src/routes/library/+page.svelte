@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { listRuns, loadRun, listKatas, loadKata, exportBundle, pickDirectory } from "$lib/api";
+  import { toastError } from "$lib/toast.svelte";
   import { statusForExit, isStreamEvent, type RunState, type RunRecord } from "$lib/events";
   import { kataViews, withTask } from "$lib/katas";
   import { setLaunch } from "$lib/launch";
@@ -86,7 +87,7 @@
   async function onReRun() {
     if (!run) return;
     try { editing = { kata: await loadKata(run.kata) }; }
-    catch (e) { alert(`Failed to load kata: ${e}`); }
+    catch (e) { toastError(`Failed to load kata: ${e}`); }
   }
   function confirmReRun(task: string) {
     if (!editing) return;
@@ -100,7 +101,7 @@
       setLaunch({ spec: await loadKata(run.kata), autorun: false });
       goto("/");
     } catch (e) {
-      alert(`Failed to load kata: ${e}`);
+      toastError(`Failed to load kata: ${e}`);
     }
   }
   async function onExportBundle() {
@@ -108,7 +109,7 @@
     const dir = await pickDirectory();
     if (!dir) return;
     try { await exportBundle(await loadKata(run.kata), dir); }
-    catch (e) { alert(`Failed to export bundle: ${e}`); }
+    catch (e) { toastError(`Failed to export bundle: ${e}`); }
   }
 </script>
 
