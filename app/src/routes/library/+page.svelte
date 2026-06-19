@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { savedKatas, history, runStreams } from "$lib/library";
-  import type { RunState } from "$lib/events";
+  import { savedKatas } from "$lib/library";
+  import { listRuns, loadRun } from "$lib/api";
+  import { statusForExit, isStreamEvent, type RunState, type RunRecord } from "$lib/events";
   import EventRow from "$lib/components/EventRow.svelte";
   import SummaryStat from "$lib/components/SummaryStat.svelte";
   import FilePlus from "@lucide/svelte/icons/file-plus";
@@ -17,31 +18,53 @@
   import Terminal from "@lucide/svelte/icons/terminal";
   import CheckCircle from "@lucide/svelte/icons/check-circle";
 
-  let selRun = $state<string | null>(history[0].id);
-  let selKata = $state<string | null>(history[0].kata);
+  let runs = $state<RunRecord[]>([]);
+  let detail = $state<Awaited<ReturnType<typeof loadRun>> | null>(null);
+  let selRun = $state<string | null>(null);
+  let selKata = $state<string | null>(null);
 
-  let run = $derived(history.find((r) => r.id === selRun) ?? null);
-  let stream = $derived(run ? (runStreams[run.id] ?? null) : null);
+  $effect(() => {
+    listRuns().then((rs) => {
+      runs = rs;
+      if (selRun === null && rs.length > 0) selectRun(rs[0].id);
+    });
+  });
 
+  let run = $derived(detail?.record ?? null);
+  let stream = $derived(detail ? detail.events.filter(isStreamEvent) : null);
+
+  const stateOf = (r: RunRecord): RunState => statusForExit(r.exit ?? null);
   const tone = (s: RunState) => (s === "success" ? "success" : s === "warning" ? "warning" : "error");
   const statTone = (s: RunState) => (s === "success" ? "success" : s === "error" ? "error" : undefined);
-  const fmtMs = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
+  const fmtMs = (ms: number | null | undefined) => (ms == null ? "—" : `${(ms / 1000).toFixed(1)}s`);
+  const fmtCost = (c: number | null | undefined) => (c == null ? "—" : `$${c.toFixed(3)}`);
+  const fmtTurns = (t: number | null | undefined) => (t == null ? "—" : `${t}`);
+  const fmtWhen = (secs: number) => {
+    const d = new Date(secs * 1000);
+    const hh = `${d.getHours()}`.padStart(2, "0");
+    const mm = `${d.getMinutes()}`.padStart(2, "0");
+    const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const days = Math.round((startOfDay(new Date()) - startOfDay(d)) / 86_400_000);
+    const day = days === 0 ? "today" : days === 1 ? "yesterday"
+      : days < 7 ? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()]
+      : d.toLocaleDateString();
+    return `${day} · ${hh}:${mm}`;
+  };
 
-  function selectRun(id: string) {
+  async function selectRun(id: string) {
     selRun = id;
-    const r = history.find((x) => x.id === id);
+    const r = runs.find((x) => x.id === id);
     if (r) selKata = r.kata;
+    detail = await loadRun(id);
   }
   function selectKata(name: string) {
     selKata = name;
-    const latest = history.find((r) => r.kata === name);
-    selRun = latest ? latest.id : null;
+    const latest = runs.find((r) => r.kata === name);
+    if (latest) selectRun(latest.id);
+    else { selRun = null; detail = null; }
   }
   const onKey = (fn: () => void) => (e: KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      fn();
-    }
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fn(); }
   };
 </script>
 
@@ -91,8 +114,8 @@
           {/each}
         </div>
         <div class="wb-rail__section">
-          <div class="wb-rail__label">Recent runs<span class="wb-rail__count">{history.length}</span></div>
-          {#each history as r (r.id)}
+          <div class="wb-rail__label">Recent runs<span class="wb-rail__count">{runs.length}</span></div>
+          {#each runs as r (r.id)}
             <div
               class="wb-hist"
               class:wb-hist--active={selRun === r.id}
@@ -101,12 +124,12 @@
               onclick={() => selectRun(r.id)}
               onkeydown={onKey(() => selectRun(r.id))}
             >
-              <span class="wb-hist__dot dot-{r.state}"></span>
+              <span class="wb-hist__dot dot-{stateOf(r)}"></span>
               <div class="wb-hist__body">
                 <span class="wb-hist__kata">{r.kata}</span>
-                <span class="wb-hist__when">{r.when} · {r.turns} turns · ${r.cost.toFixed(3)}</span>
+                <span class="wb-hist__when">{fmtWhen(r.started_at)} · {fmtTurns(r.turns)} turns · {fmtCost(r.cost_usd)}</span>
               </div>
-              <span class="k-badge k-badge--{tone(r.state)}">exit {r.exit}</span>
+              <span class="k-badge k-badge--{tone(stateOf(r))}">exit {r.exit ?? "—"}</span>
             </div>
           {/each}
         </div>
@@ -120,14 +143,14 @@
             <h2>{run.kata}</h2>
             <span class="wb-detail__id">{run.id}</span>
             <div style="margin-left:auto">
-              <span class="k-status k-status--{run.state}"><span class="k-status__dot"></span>exit {run.exit}</span>
+              <span class="k-status k-status--{stateOf(run)}"><span class="k-status__dot"></span>exit {run.exit ?? "—"}</span>
             </div>
           </div>
           <div class="wb-detail__sub">
-            <span><Clock />{run.when}</span>
-            <span><Hash />{run.turns} turns</span>
-            <span><Coins />${run.cost.toFixed(3)}</span>
-            <span><Cpu />{fmtMs(run.ms)}</span>
+            <span><Clock />{fmtWhen(run.started_at)}</span>
+            <span><Hash />{fmtTurns(run.turns)} turns</span>
+            <span><Coins />{fmtCost(run.cost_usd)}</span>
+            <span><Cpu />{fmtMs(run.duration_ms)}</span>
           </div>
           <div class="wb-detail__actions">
             <button class="k-btn k-btn--primary k-btn--sm"><Play size={13} />Re-run</button>
@@ -137,12 +160,12 @@
         </div>
         <div class="wb-detail__body">
           <div class="wb-detail__stats">
-            <SummaryStat label="EXIT" value={run.exit} tone={statTone(run.state)} />
-            <SummaryStat label="TURNS" value={run.turns} />
-            <SummaryStat label="COST" value={`$${run.cost.toFixed(3)}`} />
-            <SummaryStat label="DURATION" value={fmtMs(run.ms)} />
+            <SummaryStat label="EXIT" value={run.exit ?? "—"} tone={statTone(stateOf(run))} />
+            <SummaryStat label="TURNS" value={fmtTurns(run.turns)} />
+            <SummaryStat label="COST" value={fmtCost(run.cost_usd)} />
+            <SummaryStat label="DURATION" value={fmtMs(run.duration_ms)} />
           </div>
-          <div class="wb-detail__result">{run.result}</div>
+          <div class="wb-detail__result">{run.result ?? ""}</div>
           <div>
             <div class="wb-detail__streamhead" style="margin-bottom:10px">Event log · {run.kata}</div>
             {#if stream}
@@ -167,9 +190,9 @@
 
   <footer class="wb-statusbar">
     <span class="wb-statusbar__item wb-statusbar__ok">
-      <CheckCircle size={13} /> {savedKatas.length} saved katas · {history.length} runs in local history
+      <CheckCircle size={13} /> {savedKatas.length} saved katas · {runs.length} runs in local history
     </span>
     <div class="wb-statusbar__spacer"></div>
-    <span class="wb-statusbar__item"><Folder size={13} /> ~/.kata/history</span>
+    <span class="wb-statusbar__item"><Folder size={13} /> ~/.kata/runs</span>
   </footer>
 </div>

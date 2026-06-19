@@ -3,13 +3,20 @@ import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { RunSpec } from "../bindings/RunSpec";
 import type { CatalogEntry } from "../bindings/CatalogEntry";
-import type { KataEvent } from "$lib/events";
+import type { KataEvent, RunRecord, RunDetail } from "$lib/events";
 import { inTauri, seedCatalog, validateLocal, runScriptHead, runScriptTail } from "$lib/mock";
+import { history as historyFixture, runDetailFixture } from "$lib/library";
 
 export const catalog = (workdir: string | null) =>
   inTauri()
     ? invoke<CatalogEntry[]>("catalog", { workdir })
     : Promise.resolve(seedCatalog);
+
+export const listRuns = (): Promise<RunRecord[]> =>
+  inTauri() ? invoke<RunRecord[]>("list_runs") : Promise.resolve(historyFixture);
+
+export const loadRun = (id: string): Promise<RunDetail> =>
+  inTauri() ? invoke<RunDetail>("load_run", { id }) : Promise.resolve(runDetailFixture(id));
 
 const NO_BACKEND = "this action needs the Kata desktop app (Tauri backend unavailable)";
 
