@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { toasts, toastError, dismiss } from "./toast";
+import { toasts, toastError, dismiss } from "./toast.svelte";
 
 describe("toast store", () => {
   beforeEach(() => {

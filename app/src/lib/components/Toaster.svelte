@@ -1,6 +1,6 @@
 <script lang="ts">
   import X from "@lucide/svelte/icons/x";
-  import { toasts, dismiss } from "$lib/toast";
+  import { toasts, dismiss } from "$lib/toast.svelte";
 </script>
 
 {#if toasts().length > 0}
