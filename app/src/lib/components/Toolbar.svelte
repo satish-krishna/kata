@@ -5,6 +5,7 @@
   import Package from "@lucide/svelte/icons/package";
   import Play from "@lucide/svelte/icons/play";
   import Square from "@lucide/svelte/icons/square";
+  import Library from "@lucide/svelte/icons/library";
 
   let {
     name = $bindable(),
@@ -49,6 +50,8 @@
     <button class="k-iconbtn" onclick={onSave} title="Save  Ctrl+S" aria-label="Save spec"><Save size={16} /></button>
     <button class="k-iconbtn" onclick={onExport} disabled={!onExport} title="Export bundle" aria-label="Export bundle"><Package size={16} /></button>
   </div>
+  <div class="wb-sep"></div>
+  <a href="/library" class="k-btn k-btn--secondary"><Library size={14} />Library</a>
   <div class="wb-sep"></div>
   {#if running}
     <button class="k-btn k-btn--danger" onclick={onCancel}>
