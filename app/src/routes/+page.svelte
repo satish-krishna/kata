@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { RunSpec } from "../bindings/RunSpec";
   import type { CatalogEntry } from "../bindings/CatalogEntry";
+  import type { Preset } from "../bindings/Preset";
   import { defaultSpec, normalize, specEquals, draftFrom } from "$lib/spec";
   import { inTauri, seedSpec } from "$lib/mock";
   import * as api from "$lib/api";
@@ -24,6 +25,7 @@
   let currentPath = $state<string | null>(null);
   let entries = $state<CatalogEntry[]>([]);
   let errors = $state<string[]>([]);
+  let presets = $state<Preset[]>([]);
 
   let dirty = $derived(!specEquals(spec, saved));
   let valid = $derived(errors.length === 0);
@@ -115,10 +117,16 @@
     cancelRun();
   }
 
+  async function onSavePreset(name: string, body: string) {
+    try { await api.savePreset(name, body); presets = await api.listPresets(); }
+    catch (e) { alert(`Failed to save preset: ${e}`); }
+  }
+
   // Browser dev/review only: `?demo=run` auto-starts the scripted run so the
   // Observe pane can be reviewed/screenshotted without a click. Never fires in
   // the real Tauri app.
-  onMount(() => {
+  onMount(async () => {
+    presets = await api.listPresets();
     if (!inTauri() && new URLSearchParams(location.search).get("demo") === "run") onRun();
     const handoff = takeLaunch();
     if (handoff) {
@@ -162,7 +170,7 @@
     <div class="wb-pane wb-pane--compose">
       <div class="wb-pane__head"><span class="kata-eyebrow">Compose · the run-spec</span></div>
       <div class="wb-pane__body">
-        <ComposePane {spec} {entries} {onPickWorkdir} />
+        <ComposePane {spec} {entries} {onPickWorkdir} {presets} {onSavePreset} />
       </div>
     </div>
 
