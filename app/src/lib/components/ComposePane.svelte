@@ -39,6 +39,17 @@
     spec.leash.timeout_secs = Number.isFinite(n) && n >= 0 ? n : null;
   }
 
+  // Float-coerce the budget ceiling (null = no ceiling). Reject <= 0.
+  function onMaxBudget(e: Event) {
+    const v = (e.currentTarget as HTMLInputElement).value.trim();
+    if (v === "") {
+      spec.leash.max_budget_usd = null;
+      return;
+    }
+    const n = Number(v);
+    spec.leash.max_budget_usd = Number.isFinite(n) && n > 0 ? n : null;
+  }
+
   // Integer-coerce the interactive answer timeout (null = wait indefinitely).
   function onAnswerTimeout(e: Event) {
     const v = (e.currentTarget as HTMLInputElement).value.trim();
@@ -145,6 +156,9 @@
       </Field>
       <Field label="Timeout (secs)" key="timeout_secs" hint="Wall-clock kill → exit 124.">
         <input class="k-input" type="number" min="0" step="1" placeholder="(none)" value={spec.leash.timeout_secs ?? ""} oninput={onTimeout} />
+      </Field>
+      <Field label="Max budget (USD)" key="max_budget_usd" hint="Claude-native ceiling → exit 122 (approximate; checked at turn boundaries).">
+        <input class="k-input" type="number" min="0" step="0.01" placeholder="(none)" value={spec.leash.max_budget_usd ?? ""} oninput={onMaxBudget} />
       </Field>
     </div>
     <Field label="Isolation" key="leash.isolation" hint="worktree contains writes in an ephemeral git worktree (reviewable as a diff).">

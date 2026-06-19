@@ -103,6 +103,15 @@ pub struct ResultPayload {
     pub cost_usd: Option<f64>,
     pub is_error: bool,
     pub result: Option<String>,
+    pub subtype: Option<String>,
+}
+
+impl ResultPayload {
+    /// True when claude stopped because it hit `--max-budget-usd`. The terminal
+    /// `result` event carries this subtype; the process exit code is a generic 1.
+    pub fn is_budget_exhausted(&self) -> bool {
+        self.subtype.as_deref() == Some("error_max_budget_usd")
+    }
 }
 
 #[derive(Debug, Default)]
@@ -162,6 +171,7 @@ pub fn parse_stream_line(line: &str) -> Parsed {
                 cost_usd: v.get("total_cost_usd").and_then(|c| c.as_f64()),
                 is_error: v.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false),
                 result: v.get("result").and_then(|r| r.as_str()).map(String::from),
+                subtype: v.get("subtype").and_then(|s| s.as_str()).map(String::from),
             });
         }
         _ => {}
@@ -386,6 +396,22 @@ mod tests {
         assert_eq!(q.kind, QuestionKind::Confirm);
         assert_eq!(q.options.len(), 2);
         assert!(!q.multi_select);
+    }
+
+    #[test]
+    fn parses_budget_subtype_and_flags_exhaustion() {
+        let line = r#"{"type":"result","subtype":"error_max_budget_usd","is_error":true,"num_turns":1,"total_cost_usd":0.13,"result":null,"errors":["Reached maximum budget ($0.0001)"]}"#;
+        let p = parse_stream_line(line);
+        let r = p.result.unwrap();
+        assert_eq!(r.subtype.as_deref(), Some("error_max_budget_usd"));
+        assert!(r.is_budget_exhausted());
+    }
+
+    #[test]
+    fn success_result_is_not_budget_exhausted() {
+        let line = r#"{"type":"result","subtype":"success","is_error":false,"num_turns":2,"total_cost_usd":0.02,"result":"done"}"#;
+        let r = parse_stream_line(line).result.unwrap();
+        assert!(!r.is_budget_exhausted());
     }
 
     #[test]

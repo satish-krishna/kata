@@ -105,13 +105,16 @@ pub struct Leash {
     #[cfg_attr(feature = "ts", ts(optional = nullable, as = "Option<u32>"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
+    #[cfg_attr(feature = "ts", ts(optional = nullable, as = "Option<f64>"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_budget_usd: Option<f64>,
     #[serde(default)]
     pub isolation: Isolation,
 }
 
 impl Default for Leash {
     fn default() -> Self {
-        Self { max_turns: default_max_turns(), timeout_secs: None, isolation: Isolation::None }
+        Self { max_turns: default_max_turns(), timeout_secs: None, max_budget_usd: None, isolation: Isolation::None }
     }
 }
 
@@ -225,6 +228,12 @@ pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
     if spec.task.trim().is_empty() { errs.push("task is required".into()); }
     if spec.workdir.trim().is_empty() { errs.push("workdir is required".into()); }
     if spec.leash.max_turns == 0 { errs.push("leash.max_turns must be >= 1".into()); }
+    if let Some(b) = spec.leash.max_budget_usd {
+        // Reject non-finite (NaN/±inf) too: `b <= 0.0` is false for NaN, so a
+        // non-finite budget would otherwise pass and later emit an invalid
+        // `--max-budget-usd NaN`/`inf` argument.
+        if !b.is_finite() || b <= 0.0 { errs.push("leash.max_budget_usd must be > 0".into()); }
+    }
     if errs.is_empty() { Ok(()) } else { Err(errs) }
 }
 
@@ -380,7 +389,7 @@ isolation = "worktree"
             skills: vec!["triage-flaky-test".into()],
             plugins,
             model: Model { id: Some("claude-sonnet-4-6".into()) },
-            leash: Leash { max_turns: 8, timeout_secs: Some(600), isolation: Isolation::Worktree },
+            leash: Leash { max_turns: 8, timeout_secs: Some(600), max_budget_usd: None, isolation: Isolation::Worktree },
             auth: Auth { bare: false, token_env: Some("ANTHROPIC_API_KEY".into()) },
             interactive: Interactive::default(),
         }
@@ -466,5 +475,51 @@ answer_timeout_secs = 600
         let spec: RunSpec = toml::from_str(toml).unwrap();
         assert!(spec.interactive.enabled);
         assert_eq!(spec.interactive.answer_timeout_secs, Some(600));
+    }
+
+    #[test]
+    fn parses_max_budget_usd() {
+        let toml = r#"
+schema = 1
+name = "a"
+task = "t"
+workdir = "/w"
+
+[leash]
+max_budget_usd = 5.0
+"#;
+        let spec: RunSpec = toml::from_str(toml).unwrap();
+        assert_eq!(spec.leash.max_budget_usd, Some(5.0));
+    }
+
+    #[test]
+    fn budget_defaults_to_none() {
+        let spec: RunSpec = toml::from_str(minimal_toml()).unwrap();
+        assert_eq!(spec.leash.max_budget_usd, None);
+    }
+
+    #[test]
+    fn validate_rejects_nonpositive_budget() {
+        let mut spec = RunSpec { schema: 1, name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+        spec.leash.max_budget_usd = Some(0.0);
+        let errs = validate(&spec).unwrap_err();
+        assert!(errs.iter().any(|e| e.contains("max_budget_usd")));
+    }
+
+    #[test]
+    fn validate_accepts_positive_budget() {
+        let mut spec = RunSpec { schema: 1, name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+        spec.leash.max_budget_usd = Some(2.5);
+        assert!(validate(&spec).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_nonfinite_budget() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut spec = RunSpec { schema: 1, name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+            spec.leash.max_budget_usd = Some(bad);
+            let errs = validate(&spec).unwrap_err();
+            assert!(errs.iter().any(|e| e.contains("max_budget_usd")), "non-finite budget {bad} must be rejected");
+        }
     }
 }

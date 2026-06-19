@@ -45,6 +45,11 @@ pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocati
         args.push(id.clone());
     }
 
+    if let Some(b) = spec.leash.max_budget_usd {
+        args.push("--max-budget-usd".into());
+        args.push(format!("{b}"));
+    }
+
     args.push("--output-format".into());
     args.push("stream-json".into());
     args.push("--verbose".into()); // claude requires --verbose with stream-json under --print
@@ -223,5 +228,22 @@ mod tests {
     fn non_interactive_keeps_the_builtin_tools() {
         let inv = build_invocation(&spec(), &assembled_with(None, None));
         assert!(!inv.args.iter().any(|a| a == "--disallowedTools"));
+    }
+
+    #[test]
+    fn includes_max_budget_when_set() {
+        let mut s = spec();
+        s.leash.max_budget_usd = Some(5.0);
+        let inv = build_invocation(&s, &assembled_with(None, None));
+        assert!(
+            inv.args.windows(2).any(|w| w[0] == "--max-budget-usd" && w[1] == "5"),
+            "expected --max-budget-usd 5, got {:?}", inv.args
+        );
+    }
+
+    #[test]
+    fn omits_max_budget_when_unset() {
+        let inv = build_invocation(&spec(), &assembled_with(None, None));
+        assert!(!inv.args.iter().any(|a| a == "--max-budget-usd"));
     }
 }
