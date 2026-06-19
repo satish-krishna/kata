@@ -4,6 +4,7 @@
   import { defaultSpec, normalize, specEquals, draftFrom } from "$lib/spec";
   import { inTauri, seedSpec } from "$lib/mock";
   import * as api from "$lib/api";
+  import { takeLaunch } from "$lib/launch";
   import { onMount } from "svelte";
   import Toolbar from "$lib/components/Toolbar.svelte";
   import ValidationBanner from "$lib/components/ValidationBanner.svelte";
@@ -81,20 +82,23 @@
     }
   }
 
-  async function writeTo(path: string) {
+  async function onSave() {
     try {
-      await api.saveSpec(path, normalize($state.snapshot(spec) as RunSpec));
-      currentPath = path;
+      await api.saveKata(normalize($state.snapshot(spec) as RunSpec));
       saved = $state.snapshot(spec) as RunSpec;
     } catch (e) {
-      alert(`Failed to save spec: ${e}`);
+      alert(`Failed to save kata: ${e}`);
     }
   }
 
-  async function onSave() {
-    if (currentPath) return writeTo(currentPath);
-    const path = await api.pickSaveSpec();
-    if (path) await writeTo(path);
+  async function onExport() {
+    const dir = await api.pickDirectory();
+    if (!dir) return;
+    try {
+      await api.exportBundle(normalize($state.snapshot(spec) as RunSpec), dir);
+    } catch (e) {
+      alert(`Failed to export bundle: ${e}`);
+    }
   }
 
   async function onPickWorkdir() {
@@ -116,6 +120,15 @@
   // the real Tauri app.
   onMount(() => {
     if (!inTauri() && new URLSearchParams(location.search).get("demo") === "run") onRun();
+    const handoff = takeLaunch();
+    if (handoff) {
+      spec = draftFrom(handoff.spec);
+      saved = $state.snapshot(spec) as RunSpec;
+      currentPath = null;
+      if (handoff.autorun && errors.length === 0) {
+        startRun(normalize($state.snapshot(spec) as RunSpec));
+      }
+    }
   });
 
   // Ctrl+↵ (or ⌘↵) to run.
@@ -138,6 +151,7 @@
     {onNew}
     {onOpen}
     {onSave}
+    {onExport}
     {onRun}
     {onCancel}
   />
