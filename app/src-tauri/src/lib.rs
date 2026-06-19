@@ -160,6 +160,18 @@ fn cancel_run(control: State<RunControl>) {
     }
 }
 
+/// List all completed runs from the history store.
+#[tauri::command]
+fn list_runs() -> Result<Vec<kata_core::history::RunRecord>, String> {
+    Ok(kata_core::history::list_runs())
+}
+
+/// Load the full detail for a single run by id.
+#[tauri::command]
+fn load_run(id: String) -> Result<kata_core::history::RunDetail, String> {
+    kata_core::history::load_run(&id).map_err(|e| e.to_string())
+}
+
 /// Send the operator's answer to a paused interactive run: write an
 /// `answer <id> <json>` line to the engine's stdin (the engine returns it to
 /// claude as the ask_user tool result and emits ask.answered).
@@ -186,7 +198,9 @@ pub fn run() {
             validate_spec,
             run_spec,
             cancel_run,
-            submit_answer
+            submit_answer,
+            list_runs,
+            load_run
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -151,7 +151,7 @@ pub fn run<F: FnMut(KataEvent)>(
                 let message = format!(
                     "auth.token_env names '{name}', but it is unset or empty in the environment"
                 );
-                emit(KataEvent::RunError { message: message.clone() });
+                emit(KataEvent::RunError { message: message.clone(), exit_code: 2 });
                 return Err(RunError::Auth(message));
             }
         }
@@ -211,7 +211,7 @@ pub fn run<F: FnMut(KataEvent)>(
             }
             Err(e) => {
                 let message = format!("worktree isolation failed for {}: {e}", spec.workdir);
-                emit(KataEvent::RunError { message: message.clone() });
+                emit(KataEvent::RunError { message: message.clone(), exit_code: 2 });
                 return Err(RunError::Worktree(message));
             }
         }
@@ -393,18 +393,19 @@ pub fn run<F: FnMut(KataEvent)>(
             let _ = child.kill();
             let _ = child.wait();
             match term {
-                Termination::Cancelled => (130, KataEvent::RunCancelled),
+                Termination::Cancelled => (130, KataEvent::RunCancelled { exit_code: 130 }),
                 Termination::TimedOut => (124, KataEvent::RunError {
-                    message: format!("timed out after {timeout_secs}s"),
+                    message: format!("timed out after {timeout_secs}s"), exit_code: 124,
                 }),
                 Termination::MaxTurns => (125, KataEvent::RunError {
-                    message: format!("reached max turns ({})", spec.leash.max_turns),
+                    message: format!("reached max turns ({})", spec.leash.max_turns), exit_code: 125,
                 }),
                 Termination::AnswerTimeout => (123, KataEvent::RunError {
                     message: format!(
                         "answer deadline exceeded after {}s",
                         spec.interactive.answer_timeout_secs.unwrap_or(0)
                     ),
+                    exit_code: 123,
                 }),
             }
         }
@@ -423,6 +424,7 @@ pub fn run<F: FnMut(KataEvent)>(
                 let spent = payload.cost_usd.unwrap_or(0.0);
                 (122, KataEvent::RunError {
                     message: format!("budget ceiling ${ceiling:.2} reached; spent ${spent:.2}"),
+                    exit_code: 122,
                 })
             } else {
                 (code, KataEvent::RunCompleted {

@@ -28,6 +28,34 @@ pub fn utc_stamp(unix_secs: u64) -> String {
     format!("{y:04}{mo:02}{d:02}T{h:02}{m:02}{s:02}Z")
 }
 
+/// Inverse of [`utc_stamp`]: parse the trailing `YYYYMMDDThhmmssZ` of a filename
+/// stem into seconds since the Unix epoch. `None` when the stem has no valid stamp.
+pub fn parse_stamp(stem: &str) -> Option<u64> {
+    let start = stem.len().checked_sub(16)?;
+    let s = stem.get(start..)?;
+    let b = s.as_bytes();
+    if b.len() != 16 || b[8] != b'T' || b[15] != b'Z' { return None; }
+    let n = |range: std::ops::Range<usize>| s.get(range).and_then(|x| x.parse::<i64>().ok());
+    let (y, mo, d) = (n(0..4)?, n(4..6)? as u32, n(6..8)? as u32);
+    let (h, mi, se) = (n(9..11)?, n(11..13)?, n(13..15)?);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) { return None; }
+    if h >= 24 || mi >= 60 || se >= 60 { return None; }
+    let days = days_from_civil(y, mo, d);
+    u64::try_from(days * 86_400 + h * 3600 + mi * 60 + se).ok()
+}
+
+/// Howard Hinnant's `days_from_civil`: (year, month, day) → days since 1970-01-01.
+/// Inverse of [`civil_from_days`]. Public-domain algorithm.
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = (if y >= 0 { y } else { y - 399 }) / 400;
+    let yoe = y - era * 400; // [0, 399]
+    let mp = if m > 2 { m - 3 } else { m + 9 } as i64; // [0, 11]
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    era * 146_097 + doe - 719_468
+}
+
 /// Howard Hinnant's `civil_from_days`: convert days since 1970-01-01 to
 /// (year, month, day). Public-domain algorithm, valid for the full range we care
 /// about. See https://howardhinnant.github.io/date_algorithms.html#civil_from_days
@@ -158,6 +186,21 @@ mod tests {
         assert_eq!(super::utc_stamp(1_000_000_000), "20010909T014640Z");
         // 2020-02-29 00:00:00 UTC — exercises the leap day.
         assert_eq!(super::utc_stamp(1_582_934_400), "20200229T000000Z");
+    }
+
+    #[test]
+    fn parse_stamp_inverts_utc_stamp() {
+        for secs in [0u64, 1_000_000_000, 1_718_900_000, 1_766_096_012] {
+            let stem = format!("my-kata-{}", utc_stamp(secs));
+            assert_eq!(parse_stamp(&stem), Some(secs), "round-trip failed for {secs}");
+        }
+        assert_eq!(parse_stamp("no-stamp-here"), None);
+        assert_eq!(parse_stamp("short"), None);
+        // Out-of-range time/date components are rejected, not wrapped into a
+        // bogus huge timestamp.
+        assert_eq!(parse_stamp("k-20260101T999999Z"), None, "hour/min/sec >= bounds");
+        assert_eq!(parse_stamp("k-20260101T250000Z"), None, "hour 25");
+        assert_eq!(parse_stamp("k-20261301T000000Z"), None, "month 13");
     }
 
     #[test]
