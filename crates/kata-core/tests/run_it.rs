@@ -15,6 +15,11 @@ fn base_spec(workdir: &str) -> RunSpec {
 fn with_fake(mode: &str) {
     std::env::set_var("KATA_CLAUDE_BIN", env!("CARGO_BIN_EXE_fake-claude"));
     std::env::set_var("KATA_FAKE_MODE", mode);
+    // Always-on transcripts would otherwise write into the developer's real
+    // ~/.kata/runs during the suite. Point KATA_HOME at an OS-temp dir. Tests that
+    // assert transcript contents override KATA_HOME with their own tempdir after
+    // calling with_fake.
+    std::env::set_var("KATA_HOME", std::env::temp_dir().join("kata-test-home"));
 }
 
 #[test]
@@ -321,4 +326,55 @@ fn interactive_run_answer_deadline_reaps_with_123() {
     assert_eq!(outcome.exit_code, 123, "answer-deadline must reap with 123");
     assert!(events.iter().any(|e| matches!(e, KataEvent::AskRequested { .. })));
     assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { .. })));
+}
+
+#[test]
+#[serial]
+fn run_writes_transcript_of_the_event_stream() {
+    with_fake("ok");
+    let khome = tempfile::tempdir().unwrap();
+    std::env::set_var("KATA_HOME", khome.path());
+    let work = tempfile::tempdir().unwrap();
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(&base_spec(&work.path().to_string_lossy()), &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    assert_eq!(outcome.exit_code, 0);
+
+    let runs = khome.path().join("runs");
+    let files: Vec<_> = std::fs::read_dir(&runs).unwrap().map(|e| e.unwrap().path()).collect();
+    assert_eq!(files.len(), 1, "exactly one transcript expected, got {files:?}");
+
+    let body = std::fs::read_to_string(&files[0]).unwrap();
+    let lines: Vec<&str> = body.lines().collect();
+    assert!(lines.iter().all(|l| serde_json::from_str::<serde_json::Value>(l).is_ok()),
+        "every transcript line must be valid JSON: {body}");
+    let first: serde_json::Value = serde_json::from_str(lines.first().unwrap()).unwrap();
+    let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    assert_eq!(first["type"], "run.started");
+    assert_eq!(last["type"], "run.completed");
+
+    assert_eq!(outcome.transcript_path.as_deref(), Some(files[0].to_string_lossy().as_ref()));
+
+    std::env::remove_var("KATA_HOME");
+}
+
+#[test]
+#[serial]
+fn run_survives_when_transcript_cannot_be_written() {
+    with_fake("ok");
+    // A regular file where a directory is needed makes create_dir_all fail — portably.
+    let blocker = tempfile::NamedTempFile::new().unwrap();
+    std::env::set_var("KATA_HOME", blocker.path());
+    let work = tempfile::tempdir().unwrap();
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(&base_spec(&work.path().to_string_lossy()), &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+
+    assert_eq!(outcome.exit_code, 0, "a missing transcript must never fail the run");
+    assert!(outcome.transcript_path.is_none());
+    assert!(events.iter().any(|e| matches!(e,
+        KataEvent::Log { level, message } if level == "warn" && message.contains("transcript"))),
+        "a warn log must explain the missing transcript");
+
+    std::env::remove_var("KATA_HOME");
 }

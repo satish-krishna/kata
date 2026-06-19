@@ -150,19 +150,12 @@ pub fn diff(wt: &Worktree) -> Result<DiffSummary, WorktreeError> {
     Ok(DiffSummary { files, insertions, deletions })
 }
 
-/// Resolve `<kata-home>/worktrees`. `KATA_HOME` overrides; else `<HOME or
-/// USERPROFILE>/.kata`. Returns NoHome rather than falling back to "." — we
-/// must never scatter worktrees into the cwd.
+/// Resolve `<kata-home>/worktrees`. Returns `NoHome` rather than falling back to
+/// "." — we must never scatter worktrees into the cwd.
 fn worktrees_dir() -> Result<PathBuf, WorktreeError> {
-    if let Some(h) = std::env::var_os("KATA_HOME") {
-        if !h.is_empty() {
-            return Ok(PathBuf::from(h).join("worktrees"));
-        }
-    }
-    let base = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .ok_or(WorktreeError::NoHome)?;
-    Ok(PathBuf::from(base).join(".kata").join("worktrees"))
+    crate::fsutil::kata_home()
+        .map(|h| h.join("worktrees"))
+        .ok_or(WorktreeError::NoHome)
 }
 
 /// Sanitize a spec name into a filesystem/branch-safe segment: map anything
