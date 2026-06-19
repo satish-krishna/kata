@@ -78,7 +78,7 @@ let { message, confirmLabel = "Confirm", onConfirm, onCancel }:
 ## Call-site changes
 
 ### Errors → toasts
-Replace each `alert(\`Failed to …: ${e}\`)` with `toastError(\`Failed to …: ${e}\`)` (import `toastError` from `$lib/toast`):
+Replace each `alert(\`Failed to …: ${e}\`)` with `toastError(\`Failed to …: ${e}\`)` (import `toastError` from `$lib/toast.svelte`):
 - `routes/library/+page.svelte`: `onReRun`, `onOpenInCompose`, `onExportBundle` catch blocks.
 - `routes/+page.svelte`: `onOpen` (load spec), `onSave` (save kata), `onExport` (export bundle), `onSavePreset` (save preset) catch blocks.
 

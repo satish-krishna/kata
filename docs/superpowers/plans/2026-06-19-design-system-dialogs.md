@@ -30,7 +30,7 @@
 - Modify: `app/src/routes/+layout.svelte` (mount `Toaster`)
 
 **Interfaces:**
-- Produces: `$lib/toast` exports `type Toast = { id: number; kind: "error"; message: string }`, `toasts(): Toast[]`, `toastError(message: string): number`, `dismiss(id: number): void`. Task 2 calls `toastError`.
+- Produces: `$lib/toast.svelte` exports `type Toast = { id: number; kind: "error"; message: string }`, `toasts(): Toast[]`, `toastError(message: string): number`, `dismiss(id: number): void`. Task 2 calls `toastError`.
 
 - [ ] **Step 1: Write the failing store test**
 
@@ -38,7 +38,7 @@ Create `app/src/lib/toast.test.ts` (the project already unit-tests `.svelte.ts` 
 
 ```ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { toasts, toastError, dismiss } from "./toast";
+import { toasts, toastError, dismiss } from "./toast.svelte";
 
 describe("toast store", () => {
   beforeEach(() => {
@@ -79,7 +79,7 @@ describe("toast store", () => {
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `npm --prefix app test -- toast.test 2>&1 | tail -15`
-Expected: FAIL — `./toast` not found.
+Expected: FAIL — `./toast.svelte` not found.
 
 - [ ] **Step 3: Implement `toast.svelte.ts`**
 
@@ -161,7 +161,7 @@ In `app/src/styles/components/components.css`, append (mirror the existing `.k-a
 ```svelte
 <script lang="ts">
   import X from "@lucide/svelte/icons/x";
-  import { toasts, dismiss } from "$lib/toast";
+  import { toasts, dismiss } from "$lib/toast.svelte";
 </script>
 
 {#if toasts().length > 0}
@@ -213,11 +213,11 @@ git commit -m "feat(web): toast store + Toaster (andon-error, auto-dismiss) in r
 - Modify: `app/src/routes/library/+page.svelte` (3 `alert` sites)
 
 **Interfaces:**
-- Consumes: `toastError` from `$lib/toast` (Task 1).
+- Consumes: `toastError` from `$lib/toast.svelte` (Task 1).
 
 - [ ] **Step 1: Swap the compose-route alerts**
 
-In `app/src/routes/+page.svelte`, add `import { toastError } from "$lib/toast";` (with the other `$lib` imports) and replace each error `alert(...)`:
+In `app/src/routes/+page.svelte`, add `import { toastError } from "$lib/toast.svelte";` (with the other `$lib` imports) and replace each error `alert(...)`:
 
 - `onOpen` catch: `alert(\`Failed to load spec: ${e}\`)` → `toastError(\`Failed to load spec: ${e}\`)`
 - `onSave` catch: `alert(\`Failed to save kata: ${e}\`)` → `toastError(\`Failed to save kata: ${e}\`)`
@@ -226,7 +226,7 @@ In `app/src/routes/+page.svelte`, add `import { toastError } from "$lib/toast";`
 
 - [ ] **Step 2: Swap the library-route alerts**
 
-In `app/src/routes/library/+page.svelte`, add `import { toastError } from "$lib/toast";` and replace:
+In `app/src/routes/library/+page.svelte`, add `import { toastError } from "$lib/toast.svelte";` and replace:
 
 - `onReRun` catch: `alert(\`Failed to load kata: ${e}\`)` → `toastError(\`Failed to load kata: ${e}\`)`
 - `onOpenInCompose` catch: `alert(\`Failed to load kata: ${e}\`)` → `toastError(\`Failed to load kata: ${e}\`)`

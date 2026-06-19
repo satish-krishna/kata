@@ -27,5 +27,8 @@ export function dismiss(id: number): void {
     clearTimeout(t);
     timers.delete(id);
   }
-  items = items.filter((x) => x.id !== id);
+  // findIndex + splice so an unknown id is a true no-op (no array
+  // reassignment / spurious reactive update).
+  const idx = items.findIndex((x) => x.id === id);
+  if (idx !== -1) items.splice(idx, 1);
 }
