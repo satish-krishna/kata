@@ -24,7 +24,7 @@
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "remark-gfm": "^4.0.1",
-    "svelte-exmarkdown": "^3.0.5"
+    "svelte-exmarkdown": "^5.0.2"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.6",
