@@ -53,7 +53,22 @@ try {
         Pop-Location
     }
 
-    # 3. Build: CLI + frontend + installer bundles
+    # 3. Clean stale artifacts from previous builds so the bundle dirs and the
+    #    staged CLI hold only this build's outputs. Without this, a leftover
+    #    older-version bundle gets picked up by the selection below (and shown in
+    #    the summary) instead of the one we just built.
+    $step = 'clean'
+    $releaseDir = Join-Path $repoRoot 'target/release'
+    $stale = @()
+    $stale += Get-ChildItem $releaseDir -Filter 'kata_*_x64.exe' -ErrorAction SilentlyContinue
+    $stale += Get-ChildItem (Join-Path $releaseDir 'bundle/nsis') -Filter '*-setup.exe' -ErrorAction SilentlyContinue
+    $stale += Get-ChildItem (Join-Path $releaseDir 'bundle/msi') -Filter '*.msi' -ErrorAction SilentlyContinue
+    foreach ($f in $stale) {
+        Write-Host "removing stale artifact: $($f.Name)"
+        Remove-Item $f.FullName -Force
+    }
+
+    # 4. Build: CLI + frontend + installer bundles
     $step = 'build'
     Push-Location (Join-Path $repoRoot 'app')
     try {
@@ -74,18 +89,19 @@ try {
         Pop-Location
     }
 
-    # 4. Stage the standalone CLI and locate the bundles
+    # 5. Stage the standalone CLI and locate the bundles. The bundle filters are
+    #    version-scoped so a stray older bundle can never be selected even if the
+    #    clean step above was somehow skipped.
     $step = 'stage'
-    $releaseDir = Join-Path $repoRoot 'target/release'
     $cliSrc = Join-Path $releaseDir 'kata.exe'
     if (-not (Test-Path $cliSrc)) { throw "CLI binary not found at $cliSrc" }
     $cliOut = Join-Path $releaseDir "kata_${version}_x64.exe"
     Copy-Item $cliSrc $cliOut -Force
 
-    $nsis = Get-ChildItem (Join-Path $releaseDir 'bundle/nsis') -Filter '*-setup.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-    $msi = Get-ChildItem (Join-Path $releaseDir 'bundle/msi') -Filter '*.msi' -ErrorAction SilentlyContinue | Select-Object -First 1
+    $nsis = Get-ChildItem (Join-Path $releaseDir 'bundle/nsis') -Filter "*_${version}_*-setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    $msi = Get-ChildItem (Join-Path $releaseDir 'bundle/msi') -Filter "*_${version}_*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
 
-    # 5. Summary
+    # 6. Summary
     $step = 'summary'
     $artifacts = @($cliOut)
     if ($nsis) { $artifacts += $nsis.FullName }
