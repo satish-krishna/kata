@@ -16,6 +16,8 @@ A Cargo workspace plus a Tauri app. Three crates in `[workspace].members`:
 - `crates/kata-cli` — the `kata` binary. Thin CLI over `kata-core` with three subcommands: `validate`, `catalog`, `run`.
 - `app/src-tauri` — the Workbench desktop backend (`kata-app`). See "The Workbench" below.
 
+`examples/katas/` holds version-controlled reference run-specs (the superpowers brainstorm → plan → execute trio) with a README; they are documentation, not seeded at runtime.
+
 ## Two contracts that cross language boundaries
 
 These are the stable, language-neutral interfaces; `kata-core` is the reference implementation but the contract is not Rust-specific (Shokunin is .NET and consumes both).
