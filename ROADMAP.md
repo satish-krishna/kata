@@ -72,6 +72,15 @@ Two engine improvements that grew out of a live debugging session ("why is my ru
 
 ---
 
+## Engine hardening (merged, post-v0.2.0)
+
+Two more engine fixes from a single live debugging session (running an interactive brainstorm kata: it failed to spawn, then the turn cap surprised the operator), each TDD'd with per-task and final review before merge.
+
+- [x] **Interactive runs no longer collide with an identity append.** A kata combining an append-mode `[identity]` system prompt with `[interactive] enabled = true` failed before spawn: `command::build_invocation` passed `--append-system-prompt-file` while the interactive path appended its retasking note inline via `--append-system-prompt`, and modern `claude` rejects mixing the two flag forms. The retask now always uses the file form (`run::append_interactive_retask`) — it folds the note into the existing identity file when one exists, otherwise writes its own — so the invocation never carries both spellings. **Status:** merged to `main` (#22).
+- [x] **Optional `max_turns` (unset = unlimited).** `leash.max_turns` became `Option<u32>` (`None` = no turn cap, the new default), mirroring the other optional leash knobs (`timeout_secs`, `max_budget_usd`). The engine enforces the cap only when set, with the wall-clock timeout (124) as the always-on backstop, so exit **125** is now reachable only when a cap is set (parallel to 122/123 being conditional). `validate` rejects only `Some(0)`; existing katas with an explicit value are untouched (no migration). Contract regenerated to TS; the Workbench "Max turns" field treats an empty input as unlimited. Design: `docs/superpowers/specs/2026-06-20-max-turns-optional-design.md`. **Status:** merged to `main` (#21).
+
+---
+
 ## Phase 4 - Backlog / later (from the spec's open questions and Layout C)
 
 - [x] **Cost-ceiling leash.** Per-spec `leash.max_budget_usd`, enforced by claude's native `--max-budget-usd`; the engine maps the `error_max_budget_usd` result subtype to a distinct exit code (**122**) in the leash family. The cap is approximate (post-turn check, overshoots by up to one turn). Workbench leash field included. **Status:** merged to `main` (#14).
