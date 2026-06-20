@@ -1,10 +1,10 @@
 schema = 1
 name = "write-plan"
-description = "Turn a spec or idea into a written, reviewable plan (superpowers writing-plans)"
+description = "Turn a spec or idea into a written, reviewable plan (superpowers:writing-plans)"
 workdir = "."
 
 task = """
-Use the superpowers writing-plans skill to produce a written, reviewable implementation plan for:
+Use the `superpowers:writing-plans` skill to produce a written, reviewable implementation plan for:
 
 <<Describe the feature/spec, or point to the brainstorming output. Override this task at launch.>>
 
