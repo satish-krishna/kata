@@ -1,10 +1,10 @@
 schema = 1
 name = "execute-plan"
-description = "Execute a written plan via subagents, TDD per step (superpowers subagent-driven-development)"
+description = "Execute a written plan via subagents, TDD per step (superpowers:subagent-driven-development)"
 workdir = "."
 
 task = """
-Use the superpowers subagent-driven-development skill to execute an existing implementation plan:
+Use the `superpowers:subagent-driven-development` skill to execute an existing implementation plan:
 
 <<Path to the plan file to execute, e.g. docs/superpowers/plans/<YYYY-MM-DD>-<topic>.md. Override this task at launch.>>
 
