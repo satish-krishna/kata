@@ -28,11 +28,23 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install Node
+        # Only needed to run the sidecar-staging script below (no npm deps).
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
 
       - name: Format check
         run: cargo fmt --all --check
+
+      - name: Stage the kata sidecar
+        # kata-app declares `kata` as an externalBin; its tauri build script
+        # fails unless binaries/kata-<triple> exists. This builds kata-cli and
+        # stages it so clippy/test/build can compile the Tauri backend.
+        run: node app/scripts/stage-sidecar.mjs
 
       - name: Clippy (deny warnings)
         run: cargo clippy --all-targets -- -D warnings
