@@ -6,7 +6,7 @@ workdir = "."
 task = """
 Use the superpowers subagent-driven-development skill to execute an existing implementation plan:
 
-<<Path to the plan file to execute, e.g. docs/superpowers/<name>.md. Override this task at launch.>>
+<<Path to the plan file to execute, e.g. docs/superpowers/plans/<YYYY-MM-DD>-<topic>.md. Override this task at launch.>>
 
 Work the plan step by step. Dispatch a subagent for each independent task. Follow the repo's TDD discipline without exception: write the failing test first, watch it fail for the right reason, then write the minimal code to pass. Keep the build, lint, and tests green between steps (run the exact commands CLAUDE.md specifies). Stay within the plan's scope — do not add unrequested features or refactors — and surface any blocker instead of guessing. Commit only if CLAUDE.md's rules say to and the user has asked.
 """
