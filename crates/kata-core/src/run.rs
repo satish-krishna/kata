@@ -1,6 +1,6 @@
 use crate::assemble::{assemble, AssembleError};
 use crate::catalog::CatalogEntry;
-use crate::command::build_invocation;
+use crate::command::{build_invocation, ClaudeInvocation};
 use crate::event::KataEvent;
 use crate::spec::{validate, Isolation, RunSpec};
 use std::io::{BufReader, Write};
@@ -76,6 +76,38 @@ pub fn answer_channel() -> (mpsc::Sender<Answer>, AnswerRx) {
 /// Kata-provided capability the operator did not author. See the interactive
 /// sessions design spec.
 const INTERACTIVE_RETASK: &str = "You have an `ask_user` tool. When you hit a consequential fork you cannot resolve from the task and context — ambiguous requirements, a decision with real trade-offs, a destructive action you are unsure about — call `ask_user` with a crisp question (choose the `kind` that fits: confirm / select / text) instead of guessing. Do not use it for trivia you can decide yourself. Do NOT use any built-in question or prompt tool such as `AskUserQuestion`; only `ask_user` reaches the operator.";
+
+/// Append the interactive retask note to the invocation's system prompt without
+/// colliding with an identity-mode append.
+///
+/// claude rejects mixing `--append-system-prompt` (inline) with
+/// `--append-system-prompt-file`, and an Append-mode identity has already passed
+/// the file form (see `command::build_invocation`). So the retask always uses the
+/// file form too: when an identity file already exists, fold the note into it (no
+/// new flag); otherwise write a fresh note under `scratch` and pass it. Both
+/// `system_prompt_file` and `scratch` must outlive the spawned child.
+fn append_interactive_retask(
+    inv: &mut ClaudeInvocation,
+    system_prompt_file: Option<&str>,
+    retask: &str,
+    scratch: &std::path::Path,
+) -> std::io::Result<()> {
+    match system_prompt_file {
+        Some(existing) => {
+            // command.rs already passed `--append-system-prompt-file <existing>`;
+            // append to that file rather than adding a colliding second flag.
+            let mut f = std::fs::OpenOptions::new().append(true).open(existing)?;
+            write!(f, "\n\n{retask}")?;
+        }
+        None => {
+            let note = scratch.join("retask.txt");
+            std::fs::write(&note, retask)?;
+            inv.args.push("--append-system-prompt-file".into());
+            inv.args.push(note.to_string_lossy().into_owned());
+        }
+    }
+    Ok(())
+}
 
 /// Per-run transcript writer: each `KataEvent` is one JSON line, flushed
 /// immediately so a run killed by the leash, a cancel, or a panic still leaves a
@@ -158,9 +190,9 @@ pub fn run<F: FnMut(KataEvent)>(
     }
 
     // Interactive: bind the ask bridge, hand the child its port + the ask_user
-    // MCP tool + the retasking note. The temp dir holds only the generated
-    // mcp-config (the retasking note goes inline via --append-system-prompt,
-    // which real claude accepts); it lives until after the child exits.
+    // MCP tool + the retasking note. The temp dir holds the generated mcp-config
+    // and, when there is no identity append file to fold into, the retask note
+    // file (see `append_interactive_retask`); it lives until after the child exits.
     let mut interactive_tmp: Option<tempfile::TempDir> = None;
     let mut ask_rx: Option<mpsc::Receiver<crate::ask::AskRequest>> = None;
     if spec.interactive.enabled {
@@ -188,8 +220,13 @@ pub fn run<F: FnMut(KataEvent)>(
 
         inv.args.push("--mcp-config".into());
         inv.args.push(cfg.to_string_lossy().into_owned());
-        inv.args.push("--append-system-prompt".into());
-        inv.args.push(INTERACTIVE_RETASK.into());
+        append_interactive_retask(
+            &mut inv,
+            assembled.system_prompt_file.as_deref(),
+            INTERACTIVE_RETASK,
+            dir.path(),
+        )
+        .map_err(|e| RunError::Spawn(e.to_string()))?;
         inv.env.push(("KATA_ASK_PORT".into(), port.to_string()));
         interactive_tmp = Some(dir);
     }
@@ -487,11 +524,65 @@ enum Termination {
 
 #[cfg(test)]
 mod tests {
-    use super::INTERACTIVE_RETASK;
+    use super::{append_interactive_retask, ClaudeInvocation, INTERACTIVE_RETASK};
+
+    fn has_inline_append(inv: &ClaudeInvocation) -> bool {
+        inv.args.iter().any(|a| a == "--append-system-prompt")
+    }
+    fn append_file_count(inv: &ClaudeInvocation) -> usize {
+        inv.args.iter().filter(|a| *a == "--append-system-prompt-file").count()
+    }
 
     #[test]
     fn retask_note_steers_to_ask_user_and_bans_the_builtin() {
         assert!(INTERACTIVE_RETASK.contains("ask_user"));
         assert!(INTERACTIVE_RETASK.contains("AskUserQuestion"));
+    }
+
+    // The regression: an Append-mode identity already passed
+    // `--append-system-prompt-file`. The interactive retask must NOT also emit the
+    // inline `--append-system-prompt` (claude rejects mixing the two forms) nor add
+    // a second file flag — it folds the note into the existing identity file.
+    #[test]
+    fn interactive_retask_folds_into_identity_append_file() {
+        let td = tempfile::tempdir().unwrap();
+        let id_file = td.path().join("system.txt");
+        std::fs::write(&id_file, "IDENTITY PROMPT").unwrap();
+        let id_path = id_file.to_string_lossy().into_owned();
+        let mut inv = ClaudeInvocation {
+            program: "claude".into(),
+            args: vec!["--append-system-prompt-file".into(), id_path.clone()],
+            cwd: "/w".into(),
+            env: vec![],
+        };
+
+        append_interactive_retask(&mut inv, Some(&id_path), INTERACTIVE_RETASK, td.path()).unwrap();
+
+        assert!(!has_inline_append(&inv), "must not add inline --append-system-prompt");
+        assert_eq!(append_file_count(&inv), 1, "must not add a second --append-system-prompt-file");
+        let merged = std::fs::read_to_string(&id_file).unwrap();
+        assert!(merged.starts_with("IDENTITY PROMPT"), "identity prompt preserved");
+        assert!(merged.contains(INTERACTIVE_RETASK), "retask folded into the identity file");
+    }
+
+    // With no identity prompt there is no existing file: write our own and pass it
+    // by the file form (still never the inline form).
+    #[test]
+    fn interactive_retask_uses_file_form_when_no_identity_prompt() {
+        let td = tempfile::tempdir().unwrap();
+        let mut inv = ClaudeInvocation {
+            program: "claude".into(),
+            args: vec![],
+            cwd: "/w".into(),
+            env: vec![],
+        };
+
+        append_interactive_retask(&mut inv, None, INTERACTIVE_RETASK, td.path()).unwrap();
+
+        assert!(!has_inline_append(&inv));
+        assert_eq!(append_file_count(&inv), 1);
+        let idx = inv.args.iter().position(|a| a == "--append-system-prompt-file").unwrap();
+        let written = std::fs::read_to_string(&inv.args[idx + 1]).unwrap();
+        assert_eq!(written, INTERACTIVE_RETASK);
     }
 }
