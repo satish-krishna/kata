@@ -1,7 +1,6 @@
 <script lang="ts">
   import Markdown from "svelte-exmarkdown";
   import remarkGfm from "remark-gfm";
-  import { inTauri } from "$lib/mock";
 
   let { md }: { md: string } = $props();
 
@@ -21,7 +20,6 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-<div class="k-md" onclick={handleClick}>
+<div class="k-md" role="presentation" onclick={handleClick}>
   <Markdown {md} {plugins} />
 </div>
