@@ -84,6 +84,6 @@ export function validateLocal(spec: RunSpec): string[] {
   if (!spec.name || !spec.name.trim()) errs.push("name is required");
   if (!spec.task || !spec.task.trim()) errs.push("task is required");
   if (!spec.workdir || !spec.workdir.trim()) errs.push("workdir is required");
-  if (!spec.leash.max_turns || spec.leash.max_turns < 1) errs.push("leash.max_turns must be >= 1");
+  if (spec.leash.max_turns != null && spec.leash.max_turns < 1) errs.push("leash.max_turns must be >= 1");
   return errs;
 }

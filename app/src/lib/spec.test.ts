@@ -5,7 +5,7 @@ describe("spec helpers", () => {
   it("defaultSpec is a valid-shaped schema-1 draft", () => {
     const s = defaultSpec();
     expect(s.schema).toBe(1);
-    expect(s.leash.max_turns).toBe(12);
+    expect(s.leash.max_turns).toBeNull();
     expect(s.leash.isolation).toBe("none");
     expect(s.identity.mode).toBe("append");
     expect(s.skills).toEqual([]);
