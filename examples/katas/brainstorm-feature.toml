@@ -1,0 +1,35 @@
+schema = 1
+name = "brainstorm-feature"
+description = "Explore intent & design before any code (kata-brainstorming, interactive)"
+workdir = "."
+
+task = """
+Use the kata-brainstorming skill to explore — not implement — the following:
+
+<<Describe the feature, change, or problem to brainstorm. Override this task at launch with the specifics.>>
+
+Produce: a crisp problem statement; the key constraints, assumptions, and unknowns; 2–4 genuinely distinct approaches with their tradeoffs; and a single recommended direction with its rationale. Ask clarifying questions through the ask_user tool whenever intent is ambiguous rather than guessing. Write the finished design to a spec file at `docs/superpowers/specs/<YYYY-MM-DD>-<topic>-design.md` (do not commit it) — that written design is the deliverable, not just a final chat reply. Do NOT write or modify implementation code in this run; the only file you create is the design doc.
+"""
+
+[identity]
+mode = "append"
+system_prompt = """
+Before anything else, read the CLAUDE.md at the root of the workspace and treat it as binding for this entire run — its instructions override your defaults. If it points to nested CLAUDE.md files (for example app/CLAUDE.md) that govern the area you are working in, read and follow those too. Honor every convention it states — TDD workflow, commands, code style, design rules, commit rules — to the letter. If anything in the task conflicts with CLAUDE.md, stop and surface the conflict instead of silently choosing.
+"""
+
+[model]
+id = "opus"
+
+[plugins.superpowers]
+
+[leash]
+max_turns = 20
+timeout_secs = 1800
+isolation = "none"
+
+[auth]
+bare = false
+
+[interactive]
+enabled = true
+answer_timeout_secs = 1800
