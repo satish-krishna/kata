@@ -113,6 +113,31 @@ describe("MarkdownBody", () => {
       openSpy.mockRestore();
     });
 
+    it("does not open links with unsafe protocols (javascript:)", () => {
+      const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+      const { container } = render(MarkdownBody, {
+        md: "text",
+      });
+
+      // svelte-exmarkdown sanitises javascript: hrefs, so inject a raw anchor
+      // to exercise the handler's protocol guard directly.
+      const kmdDiv = container.querySelector(".k-md") as HTMLElement;
+      const a = document.createElement("a");
+      a.setAttribute("href", "javascript:window.__xss=true");
+      a.textContent = "evil";
+      kmdDiv.appendChild(a);
+
+      const clickEvent = new MouseEvent("click", { bubbles: true });
+      const preventDefaultSpy = vi.spyOn(clickEvent, "preventDefault");
+      a.dispatchEvent(clickEvent);
+
+      // Default navigation is blocked, but the unsafe scheme is never opened.
+      expect(preventDefaultSpy).toHaveBeenCalled();
+      expect(openSpy).not.toHaveBeenCalled();
+
+      openSpy.mockRestore();
+    });
+
     it("does not process clicks outside links", () => {
       const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
       const { container } = render(MarkdownBody, {
