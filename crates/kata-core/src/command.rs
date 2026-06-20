@@ -20,7 +20,12 @@ pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocati
     args.push("-p".into());
     args.push(compose_prompt(spec));
 
-    if let Some(sp) = spec.identity.system_prompt.as_ref().filter(|s| !s.trim().is_empty()) {
+    if let Some(sp) = spec
+        .identity
+        .system_prompt
+        .as_ref()
+        .filter(|s| !s.trim().is_empty())
+    {
         match spec.identity.mode {
             IdentityMode::Append => {
                 if let Some(file) = &assembled.system_prompt_file {
@@ -78,7 +83,12 @@ pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocati
     // key named by auth.token_env (resolved from the host env) as the standard
     // ANTHROPIC_API_KEY. When not bare, claude uses the user's logged-in session.
     if spec.auth.bare {
-        if let Some(name) = spec.auth.token_env.as_ref().filter(|n| !n.trim().is_empty()) {
+        if let Some(name) = spec
+            .auth
+            .token_env
+            .as_ref()
+            .filter(|n| !n.trim().is_empty())
+        {
             if let Ok(val) = std::env::var(name) {
                 if !val.trim().is_empty() {
                     env.push(("ANTHROPIC_API_KEY".into(), val));
@@ -87,11 +97,21 @@ pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocati
         }
     }
 
-    ClaudeInvocation { program, args, cwd: spec.workdir.clone(), env }
+    ClaudeInvocation {
+        program,
+        args,
+        cwd: spec.workdir.clone(),
+        env,
+    }
 }
 
 fn compose_prompt(spec: &RunSpec) -> String {
-    match spec.context.as_ref().map(|c| c.trim()).filter(|c| !c.is_empty()) {
+    match spec
+        .context
+        .as_ref()
+        .map(|c| c.trim())
+        .filter(|c| !c.is_empty())
+    {
         Some(ctx) => format!("{}\n\n{}", spec.task.trim(), ctx),
         None => spec.task.trim().to_string(),
     }
@@ -105,7 +125,13 @@ mod tests {
     use serial_test::serial;
 
     fn spec() -> RunSpec {
-        let mut s = RunSpec { schema: 1, name: "n".into(), task: "do it".into(), workdir: "/repo".into(), ..Default::default() };
+        let mut s = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "do it".into(),
+            workdir: "/repo".into(),
+            ..Default::default()
+        };
         s.leash.max_turns = Some(8);
         s
     }
@@ -120,15 +146,23 @@ mod tests {
         assert_eq!(inv.cwd, "/repo");
         assert!(inv.args.contains(&"--bare".to_string()));
         assert!(inv.args.contains(&"-p".to_string()));
-        assert!(inv.args.windows(2).any(|w| w[0] == "--output-format" && w[1] == "stream-json"));
+        assert!(inv
+            .args
+            .windows(2)
+            .any(|w| w[0] == "--output-format" && w[1] == "stream-json"));
         assert!(inv.args.contains(&"--verbose".to_string()));
-        assert!(inv.args.contains(&"--dangerously-skip-permissions".to_string()));
+        assert!(inv
+            .args
+            .contains(&"--dangerously-skip-permissions".to_string()));
         // claude 2.1.x has no --max-turns flag; the engine enforces the cap instead
         assert!(!inv.args.iter().any(|a| a == "--max-turns"));
         // no plugin dir, no system prompt, no model
         assert!(!inv.args.iter().any(|a| a == "--plugin-dir"));
         assert!(!inv.args.iter().any(|a| a == "--model"));
-        assert!(!inv.args.iter().any(|a| a.starts_with("--append-system-prompt")));
+        assert!(!inv
+            .args
+            .iter()
+            .any(|a| a.starts_with("--append-system-prompt")));
     }
 
     #[test]
@@ -146,7 +180,10 @@ mod tests {
         s.identity.system_prompt = Some("you triage".into());
         s.identity.mode = IdentityMode::Append;
         let inv = build_invocation(&s, &assembled_with(None, Some("/tmp/system.txt")));
-        assert!(inv.args.windows(2).any(|w| w[0] == "--append-system-prompt-file" && w[1] == "/tmp/system.txt"));
+        assert!(inv
+            .args
+            .windows(2)
+            .any(|w| w[0] == "--append-system-prompt-file" && w[1] == "/tmp/system.txt"));
     }
 
     #[test]
@@ -155,7 +192,10 @@ mod tests {
         s.identity.system_prompt = Some("be terse".into());
         s.identity.mode = IdentityMode::Replace;
         let inv = build_invocation(&s, &assembled_with(None, None));
-        assert!(inv.args.windows(2).any(|w| w[0] == "--system-prompt" && w[1] == "be terse"));
+        assert!(inv
+            .args
+            .windows(2)
+            .any(|w| w[0] == "--system-prompt" && w[1] == "be terse"));
     }
 
     #[test]
@@ -163,8 +203,14 @@ mod tests {
         let mut s = spec();
         s.model.id = Some("claude-sonnet-4-6".into());
         let inv = build_invocation(&s, &assembled_with(Some("/tmp/kit"), None));
-        assert!(inv.args.windows(2).any(|w| w[0] == "--plugin-dir" && w[1] == "/tmp/kit"));
-        assert!(inv.args.windows(2).any(|w| w[0] == "--model" && w[1] == "claude-sonnet-4-6"));
+        assert!(inv
+            .args
+            .windows(2)
+            .any(|w| w[0] == "--plugin-dir" && w[1] == "/tmp/kit"));
+        assert!(inv
+            .args
+            .windows(2)
+            .any(|w| w[0] == "--model" && w[1] == "claude-sonnet-4-6"));
     }
 
     #[test]
@@ -176,7 +222,10 @@ mod tests {
             let mut s = spec();
             s.model.id = Some(blank.into());
             let inv = build_invocation(&s, &assembled_with(None, None));
-            assert!(!inv.args.iter().any(|a| a == "--model"), "blank id {blank:?} should omit --model");
+            assert!(
+                !inv.args.iter().any(|a| a == "--model"),
+                "blank id {blank:?} should omit --model"
+            );
         }
     }
 
@@ -196,7 +245,10 @@ mod tests {
         s.auth.bare = true;
         s.auth.token_env = Some("KATA_TEST_APIKEY".into());
         let inv = build_invocation(&s, &assembled_with(None, None));
-        assert!(inv.env.iter().any(|(k, v)| k == "ANTHROPIC_API_KEY" && v == "sk-test-123"));
+        assert!(inv
+            .env
+            .iter()
+            .any(|(k, v)| k == "ANTHROPIC_API_KEY" && v == "sk-test-123"));
         std::env::remove_var("KATA_TEST_APIKEY");
     }
 
@@ -217,10 +269,16 @@ mod tests {
     fn forwards_named_env_vars_when_set() {
         std::env::set_var("KATA_TEST_TOKEN", "secret");
         let mut s = spec();
-        let cfg = PluginConfig { env: vec!["KATA_TEST_TOKEN".into(), "KATA_TEST_ABSENT".into()], ..Default::default() };
+        let cfg = PluginConfig {
+            env: vec!["KATA_TEST_TOKEN".into(), "KATA_TEST_ABSENT".into()],
+            ..Default::default()
+        };
         s.plugins.insert("gh".into(), cfg);
         let inv = build_invocation(&s, &assembled_with(None, None));
-        assert!(inv.env.iter().any(|(k, v)| k == "KATA_TEST_TOKEN" && v == "secret"));
+        assert!(inv
+            .env
+            .iter()
+            .any(|(k, v)| k == "KATA_TEST_TOKEN" && v == "secret"));
         assert!(!inv.env.iter().any(|(k, _)| k == "KATA_TEST_ABSENT"));
         std::env::remove_var("KATA_TEST_TOKEN");
     }
@@ -231,7 +289,9 @@ mod tests {
         s.interactive.enabled = true;
         let inv = build_invocation(&s, &assembled_with(None, None));
         assert!(
-            inv.args.windows(2).any(|w| w[0] == "--disallowedTools" && w[1] == "AskUserQuestion"),
+            inv.args
+                .windows(2)
+                .any(|w| w[0] == "--disallowedTools" && w[1] == "AskUserQuestion"),
             "interactive runs must disallow the built-in AskUserQuestion; got {:?}",
             inv.args
         );
@@ -249,8 +309,11 @@ mod tests {
         s.leash.max_budget_usd = Some(5.0);
         let inv = build_invocation(&s, &assembled_with(None, None));
         assert!(
-            inv.args.windows(2).any(|w| w[0] == "--max-budget-usd" && w[1] == "5"),
-            "expected --max-budget-usd 5, got {:?}", inv.args
+            inv.args
+                .windows(2)
+                .any(|w| w[0] == "--max-budget-usd" && w[1] == "5"),
+            "expected --max-budget-usd 5, got {:?}",
+            inv.args
         );
     }
 

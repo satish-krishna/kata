@@ -61,18 +61,18 @@ fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) -> Result
     let id = control.next_id.fetch_add(1, Ordering::SeqCst) + 1;
 
     // The engine reads a spec file; serialize this one to a per-run temp path.
-    let tmp =
-        std::env::temp_dir().join(format!("kata-workbench-run-{}-{}.toml", std::process::id(), id));
+    let tmp = std::env::temp_dir().join(format!(
+        "kata-workbench-run-{}-{}.toml",
+        std::process::id(),
+        id
+    ));
     spec::save(&tmp, &spec).map_err(|e| e.to_string())?;
 
-    let spawn_result = app
-        .shell()
-        .sidecar("kata")
-        .and_then(|cmd| {
-            cmd.args(["run", &tmp.to_string_lossy()])
-                .current_dir(&spec.workdir) // engine discovers its catalog relative to cwd
-                .spawn()
-        });
+    let spawn_result = app.shell().sidecar("kata").and_then(|cmd| {
+        cmd.args(["run", &tmp.to_string_lossy()])
+            .current_dir(&spec.workdir) // engine discovers its catalog relative to cwd
+            .spawn()
+    });
     let (mut rx, child) = match spawn_result {
         Ok(pair) => pair,
         Err(e) => {
@@ -142,7 +142,10 @@ fn relay_log(app: &AppHandle, bytes: &[u8]) {
     let line = String::from_utf8_lossy(bytes);
     let line = line.trim();
     if !line.is_empty() {
-        let _ = app.emit(RUN_EVENT, json!({ "type": "log", "level": "warn", "message": line }));
+        let _ = app.emit(
+            RUN_EVENT,
+            json!({ "type": "log", "level": "warn", "message": line }),
+        );
     }
 }
 
@@ -152,7 +155,11 @@ fn relay_log(app: &AppHandle, bytes: &[u8]) {
 #[tauri::command]
 fn cancel_run(control: State<RunControl>) {
     let mut st = control.state.lock().unwrap();
-    let still_alive = st.child.as_mut().map(|c| c.write(b"cancel\n").is_ok()).unwrap_or(false);
+    let still_alive = st
+        .child
+        .as_mut()
+        .map(|c| c.write(b"cancel\n").is_ok())
+        .unwrap_or(false);
     if !still_alive {
         if let Some(child) = st.child.take() {
             let _ = child.kill();
@@ -175,7 +182,9 @@ fn load_run(id: String) -> Result<kata_core::history::RunDetail, String> {
 /// Save a kata (named run-spec) to the user's kata library.
 #[tauri::command]
 fn save_kata(spec: kata_core::spec::RunSpec) -> Result<(), String> {
-    kata_core::katas::save_kata(&spec).map(|_| ()).map_err(|e| e.to_string())
+    kata_core::katas::save_kata(&spec)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// List all saved katas from the user's kata library.
@@ -212,7 +221,8 @@ fn export_bundle(spec: kata_core::spec::RunSpec, out: String) -> Result<(), Stri
     let workdir = std::path::PathBuf::from(&spec.workdir);
     let roots = kata_core::catalog::DiscoveryRoots::defaults(&workdir);
     let catalog = kata_core::catalog::discover(&roots);
-    let dest = std::path::Path::new(&out).join(format!("{}-bundle", kata_core::fsutil::slug(&spec.name)));
+    let dest =
+        std::path::Path::new(&out).join(format!("{}-bundle", kata_core::fsutil::slug(&spec.name)));
     kata_core::bundle::bundle(&spec, &catalog, &dest, true).map_err(|e| e.to_string())
 }
 

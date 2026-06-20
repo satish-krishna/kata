@@ -53,7 +53,10 @@ pub fn roots_for_workdir(workdir: Option<&str>) -> DiscoveryRoots {
         Some(w) if !w.trim().is_empty() => Path::new(w).join(".claude"),
         _ => home.join(".kata-no-project-scope"),
     };
-    DiscoveryRoots { user_dir: home.join(".claude"), project_dir }
+    DiscoveryRoots {
+        user_dir: home.join(".claude"),
+        project_dir,
+    }
 }
 
 fn dirs_home() -> PathBuf {
@@ -80,7 +83,9 @@ pub fn discover(roots: &DiscoveryRoots) -> Vec<CatalogEntry> {
 
 fn discover_skills(claude_dir: &Path, source: &str, out: &mut Vec<CatalogEntry>) {
     let skills = claude_dir.join("skills");
-    let Ok(rd) = std::fs::read_dir(&skills) else { return };
+    let Ok(rd) = std::fs::read_dir(&skills) else {
+        return;
+    };
     for entry in rd.flatten() {
         let dir = entry.path();
         let skill_md = dir.join("SKILL.md");
@@ -103,10 +108,14 @@ fn discover_skills(claude_dir: &Path, source: &str, out: &mut Vec<CatalogEntry>)
 
 fn discover_plugins(claude_dir: &Path, source: &str, out: &mut Vec<CatalogEntry>) {
     let plugins = claude_dir.join("plugins");
-    let Ok(rd) = std::fs::read_dir(&plugins) else { return };
+    let Ok(rd) = std::fs::read_dir(&plugins) else {
+        return;
+    };
     for entry in rd.flatten() {
         let dir = entry.path();
-        let Some(manifest) = plugin_manifest(&dir) else { continue };
+        let Some(manifest) = plugin_manifest(&dir) else {
+            continue;
+        };
         let name = dir.file_name().unwrap().to_string_lossy().into_owned();
         out.push(CatalogEntry {
             kind: EntryKind::Plugin,
@@ -125,23 +134,45 @@ fn discover_plugins(claude_dir: &Path, source: &str, out: &mut Vec<CatalogEntry>
 /// tracks the active `installPath` there, so this is the authoritative way to
 /// find them by name. Deduped against plugins already found as flat dirs.
 fn discover_installed_plugins(user_claude_dir: &Path, out: &mut Vec<CatalogEntry>) {
-    let path = user_claude_dir.join("plugins").join("installed_plugins.json");
-    let Ok(text) = std::fs::read_to_string(&path) else { return };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else { return };
-    let Some(plugins) = v.get("plugins").and_then(|p| p.as_object()) else { return };
+    let path = user_claude_dir
+        .join("plugins")
+        .join("installed_plugins.json");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return;
+    };
+    let Some(plugins) = v.get("plugins").and_then(|p| p.as_object()) else {
+        return;
+    };
     for (key, records) in plugins {
         // Keys are "<name>@<marketplace>"; a kata references the bare name.
         let name = key.split('@').next().unwrap_or(key).to_string();
-        if name.is_empty() || out.iter().any(|e| e.kind == EntryKind::Plugin && e.name == name) {
+        if name.is_empty()
+            || out
+                .iter()
+                .any(|e| e.kind == EntryKind::Plugin && e.name == name)
+        {
             continue;
         }
-        let Some(arr) = records.as_array() else { continue };
+        let Some(arr) = records.as_array() else {
+            continue;
+        };
         // First record whose recorded installPath still has a manifest on disk.
         for rec in arr {
-            let Some(install) = rec.get("installPath").and_then(|s| s.as_str()) else { continue };
+            let Some(install) = rec.get("installPath").and_then(|s| s.as_str()) else {
+                continue;
+            };
             let root = PathBuf::from(install);
-            let Some(manifest) = plugin_manifest(&root) else { continue };
-            let source = rec.get("scope").and_then(|s| s.as_str()).unwrap_or("user").to_string();
+            let Some(manifest) = plugin_manifest(&root) else {
+                continue;
+            };
+            let source = rec
+                .get("scope")
+                .and_then(|s| s.as_str())
+                .unwrap_or("user")
+                .to_string();
             out.push(CatalogEntry {
                 kind: EntryKind::Plugin,
                 description: manifest_description(&manifest),
@@ -171,7 +202,11 @@ fn manifest_description(manifest: &Path) -> String {
     std::fs::read_to_string(manifest)
         .ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .and_then(|v| v.get("description").and_then(|d| d.as_str()).map(String::from))
+        .and_then(|v| {
+            v.get("description")
+                .and_then(|d| d.as_str())
+                .map(String::from)
+        })
         .unwrap_or_default()
 }
 
@@ -331,15 +366,33 @@ mod tests {
         // Modern Claude Code layout: manifest under .claude-plugin/, skills at root.
         let cp = install_path.join(".claude-plugin");
         fs::create_dir_all(&cp).unwrap();
-        fs::write(cp.join("plugin.json"), format!("{{\"name\":\"{name}\",\"description\":\"{desc}\"}}")).unwrap();
+        fs::write(
+            cp.join("plugin.json"),
+            format!("{{\"name\":\"{name}\",\"description\":\"{desc}\"}}"),
+        )
+        .unwrap();
         fs::create_dir_all(install_path.join("skills").join("inner")).unwrap();
-        fs::write(install_path.join("skills").join("inner").join("SKILL.md"), "---\nname: inner\ndescription: d\n---\n").unwrap();
+        fs::write(
+            install_path.join("skills").join("inner").join("SKILL.md"),
+            "---\nname: inner\ndescription: d\n---\n",
+        )
+        .unwrap();
         if with_mcp {
-            fs::write(install_path.join(".mcp.json"), "{\"mcpServers\":{\"srv\":{\"command\":\"x\"}}}").unwrap();
+            fs::write(
+                install_path.join(".mcp.json"),
+                "{\"mcpServers\":{\"srv\":{\"command\":\"x\"}}}",
+            )
+            .unwrap();
         }
     }
 
-    fn write_installed(user_dir: &std::path::Path, name: &str, marketplace: &str, scope: &str, install_path: &std::path::Path) {
+    fn write_installed(
+        user_dir: &std::path::Path,
+        name: &str,
+        marketplace: &str,
+        scope: &str,
+        install_path: &std::path::Path,
+    ) {
         let plugins = user_dir.join("plugins");
         fs::create_dir_all(&plugins).unwrap();
         let json = serde_json::json!({
@@ -350,7 +403,11 @@ mod tests {
                 ]
             }
         });
-        fs::write(plugins.join("installed_plugins.json"), serde_json::to_string(&json).unwrap()).unwrap();
+        fs::write(
+            plugins.join("installed_plugins.json"),
+            serde_json::to_string(&json).unwrap(),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -362,11 +419,23 @@ mod tests {
         let user = tempfile::tempdir().unwrap();
         let payload = tempfile::tempdir().unwrap();
         make_cached_plugin(payload.path(), "superpowers", "sp", true);
-        write_installed(user.path(), "superpowers", "claude-plugins-official", "project", payload.path());
+        write_installed(
+            user.path(),
+            "superpowers",
+            "claude-plugins-official",
+            "project",
+            payload.path(),
+        );
 
-        let roots = DiscoveryRoots { user_dir: user.path().to_path_buf(), project_dir: "/nonexistent".into() };
+        let roots = DiscoveryRoots {
+            user_dir: user.path().to_path_buf(),
+            project_dir: "/nonexistent".into(),
+        };
         let entries = discover(&roots);
-        let p = entries.iter().find(|e| e.name == "superpowers").expect("installed plugin discovered");
+        let p = entries
+            .iter()
+            .find(|e| e.name == "superpowers")
+            .expect("installed plugin discovered");
         assert_eq!(p.kind, EntryKind::Plugin);
         assert_eq!(p.source, "project");
         assert_eq!(p.description, "sp");
@@ -383,11 +452,21 @@ mod tests {
         let dir = user.path().join("plugins").join("mytool");
         let cp = dir.join(".claude-plugin");
         fs::create_dir_all(&cp).unwrap();
-        fs::write(cp.join("plugin.json"), "{\"name\":\"mytool\",\"description\":\"mt\"}").unwrap();
+        fs::write(
+            cp.join("plugin.json"),
+            "{\"name\":\"mytool\",\"description\":\"mt\"}",
+        )
+        .unwrap();
 
-        let roots = DiscoveryRoots { user_dir: user.path().to_path_buf(), project_dir: "/nonexistent".into() };
+        let roots = DiscoveryRoots {
+            user_dir: user.path().to_path_buf(),
+            project_dir: "/nonexistent".into(),
+        };
         let entries = discover(&roots);
-        let p = entries.iter().find(|e| e.name == "mytool").expect("flat .claude-plugin manifest discovered");
+        let p = entries
+            .iter()
+            .find(|e| e.name == "mytool")
+            .expect("flat .claude-plugin manifest discovered");
         assert_eq!(p.description, "mt");
     }
 
@@ -401,7 +480,10 @@ mod tests {
         make_cached_plugin(payload.path(), "dup", "cached", false);
         write_installed(user.path(), "dup", "mp", "user", payload.path());
 
-        let roots = DiscoveryRoots { user_dir: user.path().to_path_buf(), project_dir: "/nonexistent".into() };
+        let roots = DiscoveryRoots {
+            user_dir: user.path().to_path_buf(),
+            project_dir: "/nonexistent".into(),
+        };
         let entries = discover(&roots);
         let dups: Vec<_> = entries.iter().filter(|e| e.name == "dup").collect();
         assert_eq!(dups.len(), 1, "flat install wins, no duplicate");
@@ -420,7 +502,10 @@ mod tests {
     #[test]
     fn roots_for_workdir_uses_project_scope_when_workdir_given() {
         let r = roots_for_workdir(Some("/tmp/proj"));
-        assert_eq!(r.project_dir, std::path::Path::new("/tmp/proj").join(".claude"));
+        assert_eq!(
+            r.project_dir,
+            std::path::Path::new("/tmp/proj").join(".claude")
+        );
         assert!(r.user_dir.ends_with(".claude"));
     }
 

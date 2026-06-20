@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref (e.g. force-push to a PR branch).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust (fmt · clippy · test · build)
+    # Windows matches Kata's primary/release platform; the Tauri backend
+    # (app/src-tauri) compiles here with no extra system deps, unlike Linux.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Node
+        # Only needed to run the sidecar-staging script below (no npm deps).
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+      - name: Stage the kata sidecar
+        # kata-app declares `kata` as an externalBin; its tauri build script
+        # fails unless binaries/kata-<triple> exists. This builds kata-cli and
+        # stages it so clippy/test/build can compile the Tauri backend.
+        run: node app/scripts/stage-sidecar.mjs
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test workspace
+        # The real-claude smoke test is opt-in (KATA_SMOKE_REAL unset → skipped).
+        run: cargo test --workspace
+
+      - name: Build (locked)
+        run: cargo build --locked
+
+  web:
+    name: Workbench (check · test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check (svelte-check)
+        run: npm run check
+
+      - name: Unit tests (Vitest)
+        run: npm test

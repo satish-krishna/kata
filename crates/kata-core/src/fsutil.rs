@@ -19,10 +19,14 @@ pub fn runs_dir() -> Option<PathBuf> {
 }
 
 /// `<kata-home>/katas`, the saved-kata library. `None` when no home.
-pub fn katas_dir() -> Option<PathBuf> { kata_home().map(|h| h.join("katas")) }
+pub fn katas_dir() -> Option<PathBuf> {
+    kata_home().map(|h| h.join("katas"))
+}
 
 /// `<kata-home>/presets`, the context-preset library. `None` when no home.
-pub fn presets_dir() -> Option<PathBuf> { kata_home().map(|h| h.join("presets")) }
+pub fn presets_dir() -> Option<PathBuf> {
+    kata_home().map(|h| h.join("presets"))
+}
 
 /// Format seconds-since-the-Unix-epoch (UTC) as a compact stamp `YYYYMMDDThhmmssZ`.
 /// Pure function of the input — no system clock — so it is deterministically testable.
@@ -40,12 +44,18 @@ pub fn parse_stamp(stem: &str) -> Option<u64> {
     let start = stem.len().checked_sub(16)?;
     let s = stem.get(start..)?;
     let b = s.as_bytes();
-    if b.len() != 16 || b[8] != b'T' || b[15] != b'Z' { return None; }
+    if b.len() != 16 || b[8] != b'T' || b[15] != b'Z' {
+        return None;
+    }
     let n = |range: std::ops::Range<usize>| s.get(range).and_then(|x| x.parse::<i64>().ok());
     let (y, mo, d) = (n(0..4)?, n(4..6)? as u32, n(6..8)? as u32);
     let (h, mi, se) = (n(9..11)?, n(11..13)?, n(13..15)?);
-    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) { return None; }
-    if h >= 24 || mi >= 60 || se >= 60 { return None; }
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) {
+        return None;
+    }
+    if h >= 24 || mi >= 60 || se >= 60 {
+        return None;
+    }
     let days = days_from_civil(y, mo, d);
     u64::try_from(days * 86_400 + h * 3600 + mi * 60 + se).ok()
 }
@@ -85,10 +95,20 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 pub fn slug(name: &str) -> String {
     let mapped: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
     let trimmed = mapped.trim_matches('-');
-    if trimmed.is_empty() { "bundle".to_string() } else { trimmed.to_string() }
+    if trimmed.is_empty() {
+        "bundle".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Recursively copy a directory tree from `src` into `dst` (created if absent).
@@ -125,7 +145,9 @@ mod tests {
     fn kata_home_resolution_order() {
         // Save with var_os (env vars can be non-UTF-8; var() would lose them).
         let saved: Vec<(&str, Option<std::ffi::OsString>)> = ["KATA_HOME", "HOME", "USERPROFILE"]
-            .iter().map(|k| (*k, std::env::var_os(k))).collect();
+            .iter()
+            .map(|k| (*k, std::env::var_os(k)))
+            .collect();
 
         // Gather every result under its controlled env FIRST, then restore, then
         // assert. Restoring before the assertions means a failing assertion can't
@@ -145,12 +167,21 @@ mod tests {
         let r_none = super::kata_home(); // nothing set => None
 
         for (k, v) in &saved {
-            match v { Some(val) => std::env::set_var(k, val), None => std::env::remove_var(k) }
+            match v {
+                Some(val) => std::env::set_var(k, val),
+                None => std::env::remove_var(k),
+            }
         }
 
         assert_eq!(r_explicit, Some(std::path::PathBuf::from("/tmp/khome")));
-        assert_eq!(r_runs, Some(std::path::PathBuf::from("/tmp/khome").join("runs")));
-        assert_eq!(r_fallback, Some(std::path::PathBuf::from("/tmp/h").join(".kata")));
+        assert_eq!(
+            r_runs,
+            Some(std::path::PathBuf::from("/tmp/khome").join("runs"))
+        );
+        assert_eq!(
+            r_fallback,
+            Some(std::path::PathBuf::from("/tmp/h").join(".kata"))
+        );
         assert_eq!(r_none, None);
     }
 
@@ -162,7 +193,10 @@ mod tests {
         let dst = tempfile::tempdir().unwrap();
         let target = dst.path().join("out");
         copy_dir(src.path(), &target).unwrap();
-        assert_eq!(std::fs::read_to_string(target.join("a").join("f.txt")).unwrap(), "hi");
+        assert_eq!(
+            std::fs::read_to_string(target.join("a").join("f.txt")).unwrap(),
+            "hi"
+        );
     }
 
     // Symlinks are skipped, not followed: a link inside the source tree must
@@ -175,14 +209,24 @@ mod tests {
 
         let src = tempfile::tempdir().unwrap();
         std::fs::write(src.path().join("real.txt"), "ok").unwrap();
-        std::os::unix::fs::symlink(secret.path().join("secret.txt"), src.path().join("link.txt")).unwrap();
+        std::os::unix::fs::symlink(
+            secret.path().join("secret.txt"),
+            src.path().join("link.txt"),
+        )
+        .unwrap();
 
         let dst = tempfile::tempdir().unwrap();
         let target = dst.path().join("out");
         copy_dir(src.path(), &target).unwrap();
 
-        assert_eq!(std::fs::read_to_string(target.join("real.txt")).unwrap(), "ok");
-        assert!(!target.join("link.txt").exists(), "symlink must not be copied or followed");
+        assert_eq!(
+            std::fs::read_to_string(target.join("real.txt")).unwrap(),
+            "ok"
+        );
+        assert!(
+            !target.join("link.txt").exists(),
+            "symlink must not be copied or followed"
+        );
     }
 
     #[test]
@@ -198,13 +242,21 @@ mod tests {
     fn parse_stamp_inverts_utc_stamp() {
         for secs in [0u64, 1_000_000_000, 1_718_900_000, 1_766_096_012] {
             let stem = format!("my-kata-{}", utc_stamp(secs));
-            assert_eq!(parse_stamp(&stem), Some(secs), "round-trip failed for {secs}");
+            assert_eq!(
+                parse_stamp(&stem),
+                Some(secs),
+                "round-trip failed for {secs}"
+            );
         }
         assert_eq!(parse_stamp("no-stamp-here"), None);
         assert_eq!(parse_stamp("short"), None);
         // Out-of-range time/date components are rejected, not wrapped into a
         // bogus huge timestamp.
-        assert_eq!(parse_stamp("k-20260101T999999Z"), None, "hour/min/sec >= bounds");
+        assert_eq!(
+            parse_stamp("k-20260101T999999Z"),
+            None,
+            "hour/min/sec >= bounds"
+        );
         assert_eq!(parse_stamp("k-20260101T250000Z"), None, "hour 25");
         assert_eq!(parse_stamp("k-20261301T000000Z"), None, "month 13");
     }
