@@ -6,6 +6,7 @@
   import EventRow from "./EventRow.svelte";
   import SummaryStat from "./SummaryStat.svelte";
   import AskPanel from "./AskPanel.svelte";
+  import MarkdownBody from "./MarkdownBody.svelte";
   import Cpu from "@lucide/svelte/icons/cpu";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import Terminal from "@lucide/svelte/icons/terminal";
@@ -92,7 +93,7 @@
       <SummaryStat label="DURATION" value={duration(summary)} />
     </div>
     {#if summary.result}
-      <div class="wb-summary__result">{summary.result}</div>
+      <div class="wb-summary__result"><MarkdownBody md={summary.result} /></div>
     {/if}
   </div>
 {/if}

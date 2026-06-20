@@ -68,4 +68,11 @@ describe("MarkdownBody", () => {
     });
     expect((window as unknown as Record<string, unknown>).__xss).toBeUndefined();
   });
+
+  it("renders an empty string without throwing", () => {
+    // ObservePane guards on {#if summary.result} so MarkdownBody never receives
+    // null, but an empty string is a valid edge case worth covering.
+    const { container } = render(MarkdownBody, { md: "" });
+    expect(container.querySelector(".k-md")).not.toBeNull();
+  });
 });
