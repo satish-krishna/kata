@@ -83,7 +83,7 @@ pub fn answer_channel() -> (mpsc::Sender<Answer>, AnswerRx) {
 /// additive (applied even under identity Replace mode) because it describes a
 /// Kata-provided capability the operator did not author. See the interactive
 /// sessions design spec.
-const INTERACTIVE_RETASK: &str = "You have an `ask_user` tool. When you hit a consequential fork you cannot resolve from the task and context — ambiguous requirements, a decision with real trade-offs, a destructive action you are unsure about — call `ask_user` with a crisp question (choose the `kind` that fits: confirm / select / text) instead of guessing. Do not use it for trivia you can decide yourself. Do NOT use any built-in question or prompt tool such as `AskUserQuestion`; only `ask_user` reaches the operator.";
+const INTERACTIVE_RETASK: &str = "You have an `ask_user` tool. When you hit a consequential fork you cannot resolve from the task and context — ambiguous requirements, a decision with real trade-offs, a destructive action you are unsure about — call `ask_user` with a crisp question (choose the `kind` that fits: confirm / select / text) instead of guessing. Do not use it for trivia you can decide yourself. Do NOT use any built-in question or prompt tool such as `AskUserQuestion`; only `ask_user` reaches the operator.\n\nCRITICAL: there is no human reading your messages turn by turn. A question you write as plain text does NOT reach the operator — it simply ends the run with the question unanswered. `ask_user` is the ONLY channel that reaches them. So whenever a skill or instruction tells you to \"ask the user\", \"ask one question at a time\", \"present options\", \"get approval\", or \"wait for approval\" before continuing, you MUST carry that out by calling `ask_user` — never by emitting the question as prose and stopping. If a skill expects a back-and-forth dialogue, conduct every turn of that dialogue through `ask_user`.";
 
 /// Append the interactive retask note to the invocation's system prompt without
 /// colliding with an identity-mode append.
@@ -628,6 +628,38 @@ mod tests {
     fn retask_note_steers_to_ask_user_and_bans_the_builtin() {
         assert!(INTERACTIVE_RETASK.contains("ask_user"));
         assert!(INTERACTIVE_RETASK.contains("AskUserQuestion"));
+    }
+
+    // Regression: a skill like superpowers:brainstorming drives interaction
+    // through prose ("ask one question at a time", "wait for approval") and has no
+    // knowledge of `ask_user`. In `claude -p` print mode a prose question silently
+    // ends the run, so the operator never sees it. The retask must explicitly
+    // override that pattern: name the prose trap and redirect the skill verbs
+    // ("ask the user", "present options", "wait for approval") through `ask_user`.
+    #[test]
+    fn retask_overrides_skill_prose_question_patterns() {
+        let note = INTERACTIVE_RETASK.to_lowercase();
+        assert!(
+            note.contains("plain text") || note.contains("plain-text"),
+            "retask must name the prose trap explicitly: {INTERACTIVE_RETASK}"
+        );
+        assert!(
+            note.contains("does not reach") || note.contains("will not reach"),
+            "retask must say a prose question does not reach the operator: {INTERACTIVE_RETASK}"
+        );
+        assert!(
+            note.contains("end the run") || note.contains("ends the run"),
+            "retask must warn a prose question ends the run: {INTERACTIVE_RETASK}"
+        );
+        // The skill verbs that must be redirected through ask_user.
+        assert!(
+            note.contains("present options"),
+            "retask must redirect the 'present options' pattern: {INTERACTIVE_RETASK}"
+        );
+        assert!(
+            note.contains("approval"),
+            "retask must redirect the 'wait for approval' pattern: {INTERACTIVE_RETASK}"
+        );
     }
 
     // The regression: an Append-mode identity already passed
