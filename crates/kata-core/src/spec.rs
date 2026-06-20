@@ -115,7 +115,12 @@ pub struct Leash {
 
 impl Default for Leash {
     fn default() -> Self {
-        Self { max_turns: None, timeout_secs: None, max_budget_usd: None, isolation: Isolation::None }
+        Self {
+            max_turns: None,
+            timeout_secs: None,
+            max_budget_usd: None,
+            isolation: Isolation::None,
+        }
     }
 }
 
@@ -131,7 +136,6 @@ impl Leash {
     }
 }
 
-
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -145,11 +149,16 @@ pub struct Auth {
 
 impl Default for Auth {
     fn default() -> Self {
-        Self { bare: default_bare(), token_env: None }
+        Self {
+            bare: default_bare(),
+            token_env: None,
+        }
     }
 }
 
-fn default_bare() -> bool { true }
+fn default_bare() -> bool {
+    true
+}
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
@@ -166,7 +175,9 @@ pub struct Interactive {
     pub answer_timeout_secs: Option<u64>,
 }
 
-fn default_schema_version() -> u32 { 1 }
+fn default_schema_version() -> u32 {
+    1
+}
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
@@ -193,8 +204,8 @@ pub enum SpecError {
 
 /// Load a spec from disk. `.json` parses as JSON; anything else as TOML.
 pub fn load(path: &Path) -> Result<RunSpec, SpecError> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| SpecError::Io(path.display().to_string(), e))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|e| SpecError::Io(path.display().to_string(), e))?;
     let spec = if path.extension().and_then(|e| e.to_str()) == Some("json") {
         serde_json::from_str(&text)?
     } else {
@@ -222,19 +233,36 @@ pub fn save(path: &Path, spec: &RunSpec) -> Result<(), SpecError> {
 pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
     if spec.schema != 1 {
-        errs.push(format!("unsupported schema version {} (expected 1)", spec.schema));
+        errs.push(format!(
+            "unsupported schema version {} (expected 1)",
+            spec.schema
+        ));
     }
-    if spec.name.trim().is_empty() { errs.push("name is required".into()); }
-    if spec.task.trim().is_empty() { errs.push("task is required".into()); }
-    if spec.workdir.trim().is_empty() { errs.push("workdir is required".into()); }
-    if spec.leash.max_turns == Some(0) { errs.push("leash.max_turns must be >= 1 when set".into()); }
+    if spec.name.trim().is_empty() {
+        errs.push("name is required".into());
+    }
+    if spec.task.trim().is_empty() {
+        errs.push("task is required".into());
+    }
+    if spec.workdir.trim().is_empty() {
+        errs.push("workdir is required".into());
+    }
+    if spec.leash.max_turns == Some(0) {
+        errs.push("leash.max_turns must be >= 1 when set".into());
+    }
     if let Some(b) = spec.leash.max_budget_usd {
         // Reject non-finite (NaN/±inf) too: `b <= 0.0` is false for NaN, so a
         // non-finite budget would otherwise pass and later emit an invalid
         // `--max-budget-usd NaN`/`inf` argument.
-        if !b.is_finite() || b <= 0.0 { errs.push("leash.max_budget_usd must be > 0".into()); }
+        if !b.is_finite() || b <= 0.0 {
+            errs.push("leash.max_budget_usd must be > 0".into());
+        }
     }
-    if errs.is_empty() { Ok(()) } else { Err(errs) }
+    if errs.is_empty() {
+        Ok(())
+    } else {
+        Err(errs)
+    }
 }
 
 #[cfg(test)]
@@ -321,7 +349,13 @@ isolation = "worktree"
 
     #[test]
     fn validate_flags_missing_required_fields() {
-        let spec = RunSpec { schema: 1, name: " ".into(), task: "".into(), workdir: "".into(), ..Default::default() };
+        let spec = RunSpec {
+            schema: 1,
+            name: " ".into(),
+            task: "".into(),
+            workdir: "".into(),
+            ..Default::default()
+        };
         let errs = validate(&spec).unwrap_err();
         assert!(errs.iter().any(|e| e.contains("name")));
         assert!(errs.iter().any(|e| e.contains("task")));
@@ -330,7 +364,13 @@ isolation = "worktree"
 
     #[test]
     fn validate_rejects_unknown_schema_and_zero_turns() {
-        let mut spec = RunSpec { schema: 99, name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+        let mut spec = RunSpec {
+            schema: 99,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
         spec.leash.max_turns = Some(0);
         let errs = validate(&spec).unwrap_err();
         assert!(errs.iter().any(|e| e.contains("schema")));
@@ -339,7 +379,13 @@ isolation = "worktree"
 
     #[test]
     fn validate_accepts_unset_max_turns() {
-        let mut spec = RunSpec { schema: 1, name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
         spec.leash.max_turns = None; // unlimited
         assert!(validate(&spec).is_ok());
     }
@@ -347,7 +393,10 @@ isolation = "worktree"
     #[test]
     fn effective_timeout_defaults_when_unset() {
         let leash = Leash::default();
-        assert_eq!(leash.timeout_secs, None, "default leash leaves timeout unset");
+        assert_eq!(
+            leash.timeout_secs, None,
+            "default leash leaves timeout unset"
+        );
         assert_eq!(
             leash.effective_timeout_secs(),
             DEFAULT_TIMEOUT_SECS,
@@ -357,7 +406,10 @@ isolation = "worktree"
 
     #[test]
     fn effective_timeout_honors_explicit_value() {
-        let leash = Leash { timeout_secs: Some(42), ..Default::default() };
+        let leash = Leash {
+            timeout_secs: Some(42),
+            ..Default::default()
+        };
         assert_eq!(leash.effective_timeout_secs(), 42);
     }
 
@@ -370,12 +422,18 @@ isolation = "worktree"
     #[test]
     fn schema_defaults_to_v1_when_omitted_or_default() {
         // Programmatic default is a valid v1 spec, not schema 0.
-        let d = RunSpec { name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+        let d = RunSpec {
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
         assert_eq!(d.schema, 1);
         assert!(validate(&d).is_ok());
 
         // A spec file that omits `schema` parses as v1.
-        let spec: RunSpec = toml::from_str("name = \"x\"\ntask = \"t\"\nworkdir = \"/w\"\n").unwrap();
+        let spec: RunSpec =
+            toml::from_str("name = \"x\"\ntask = \"t\"\nworkdir = \"/w\"\n").unwrap();
         assert_eq!(spec.schema, 1);
     }
 
@@ -383,7 +441,10 @@ isolation = "worktree"
         let mut plugins = std::collections::BTreeMap::new();
         plugins.insert(
             "github-tools".to_string(),
-            PluginConfig { mcp: Some(true), env: vec!["GITHUB_TOKEN".into()] },
+            PluginConfig {
+                mcp: Some(true),
+                env: vec!["GITHUB_TOKEN".into()],
+            },
         );
         RunSpec {
             schema: 1,
@@ -392,12 +453,25 @@ isolation = "worktree"
             task: "do it".into(),
             context: Some("ctx".into()),
             workdir: "/repo".into(),
-            identity: Identity { system_prompt: Some("you triage".into()), mode: IdentityMode::Replace },
+            identity: Identity {
+                system_prompt: Some("you triage".into()),
+                mode: IdentityMode::Replace,
+            },
             skills: vec!["triage-flaky-test".into()],
             plugins,
-            model: Model { id: Some("claude-sonnet-4-6".into()) },
-            leash: Leash { max_turns: Some(8), timeout_secs: Some(600), max_budget_usd: None, isolation: Isolation::Worktree },
-            auth: Auth { bare: false, token_env: Some("ANTHROPIC_API_KEY".into()) },
+            model: Model {
+                id: Some("claude-sonnet-4-6".into()),
+            },
+            leash: Leash {
+                max_turns: Some(8),
+                timeout_secs: Some(600),
+                max_budget_usd: None,
+                isolation: Isolation::Worktree,
+            },
+            auth: Auth {
+                bare: false,
+                token_env: Some("ANTHROPIC_API_KEY".into()),
+            },
             interactive: Interactive::default(),
         }
     }
@@ -507,7 +581,13 @@ max_budget_usd = 5.0
 
     #[test]
     fn validate_rejects_nonpositive_budget() {
-        let mut spec = RunSpec { schema: 1, name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
         spec.leash.max_budget_usd = Some(0.0);
         let errs = validate(&spec).unwrap_err();
         assert!(errs.iter().any(|e| e.contains("max_budget_usd")));
@@ -515,7 +595,13 @@ max_budget_usd = 5.0
 
     #[test]
     fn validate_accepts_positive_budget() {
-        let mut spec = RunSpec { schema: 1, name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
         spec.leash.max_budget_usd = Some(2.5);
         assert!(validate(&spec).is_ok());
     }
@@ -523,10 +609,19 @@ max_budget_usd = 5.0
     #[test]
     fn validate_rejects_nonfinite_budget() {
         for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            let mut spec = RunSpec { schema: 1, name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+            let mut spec = RunSpec {
+                schema: 1,
+                name: "n".into(),
+                task: "t".into(),
+                workdir: "/w".into(),
+                ..Default::default()
+            };
             spec.leash.max_budget_usd = Some(bad);
             let errs = validate(&spec).unwrap_err();
-            assert!(errs.iter().any(|e| e.contains("max_budget_usd")), "non-finite budget {bad} must be rejected");
+            assert!(
+                errs.iter().any(|e| e.contains("max_budget_usd")),
+                "non-finite budget {bad} must be rejected"
+            );
         }
     }
 }

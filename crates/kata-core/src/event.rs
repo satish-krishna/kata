@@ -22,7 +22,11 @@ pub enum KataEvent {
     #[serde(rename = "tool.use")]
     ToolUse { name: String, input_summary: String },
     #[serde(rename = "tool.result")]
-    ToolResult { name: String, ok: bool, summary: String },
+    ToolResult {
+        name: String,
+        ok: bool,
+        summary: String,
+    },
     #[serde(rename = "turn")]
     Turn { n: u32 },
     #[serde(rename = "run.completed")]
@@ -43,9 +47,15 @@ pub enum KataEvent {
         deletions: u32,
     },
     #[serde(rename = "ask.requested")]
-    AskRequested { id: String, questions: Vec<Question> },
+    AskRequested {
+        id: String,
+        questions: Vec<Question>,
+    },
     #[serde(rename = "ask.answered")]
-    AskAnswered { id: String, answers: Vec<Vec<String>> },
+    AskAnswered {
+        id: String,
+        answers: Vec<Vec<String>>,
+    },
     #[serde(rename = "run.error")]
     RunError { message: String, exit_code: i32 },
     #[serde(rename = "run.cancelled")]
@@ -125,7 +135,9 @@ pub struct Parsed {
 /// Defensive: unknown shapes and malformed JSON yield an empty `Parsed`.
 pub fn parse_stream_line(line: &str) -> Parsed {
     let mut out = Parsed::default();
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { return out };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+        return out;
+    };
     match v.get("type").and_then(|t| t.as_str()) {
         Some("assistant") => {
             out.is_assistant_message = true;
@@ -134,15 +146,26 @@ pub fn parse_stream_line(line: &str) -> Parsed {
                     match block.get("type").and_then(|t| t.as_str()) {
                         Some("text") => {
                             if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
-                                out.events.push(KataEvent::AssistantText { text: t.to_string() });
+                                out.events.push(KataEvent::AssistantText {
+                                    text: t.to_string(),
+                                });
                             }
                         }
                         Some("tool_use") => {
-                            let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                            let name = block
+                                .get("name")
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("")
+                                .to_string();
                             // The ask_user MCP tool surfaces via the AskPanel, not a
                             // stream row; suppress its tool.use here.
-                            if name.ends_with("ask_user") { continue; }
-                            out.events.push(KataEvent::ToolUse { name, input_summary: summarize_input(block.get("input")) });
+                            if name.ends_with("ask_user") {
+                                continue;
+                            }
+                            out.events.push(KataEvent::ToolUse {
+                                name,
+                                input_summary: summarize_input(block.get("input")),
+                            });
                         }
                         _ => {}
                     }
@@ -153,7 +176,10 @@ pub fn parse_stream_line(line: &str) -> Parsed {
             if let Some(content) = v.pointer("/message/content").and_then(|c| c.as_array()) {
                 for block in content {
                     if block.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
-                        let ok = !block.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false);
+                        let ok = !block
+                            .get("is_error")
+                            .and_then(|b| b.as_bool())
+                            .unwrap_or(false);
                         // TODO: claude tool_result carries a tool_use_id, not a
                         // tool name; correlate it back to the tool.use to fill `name`.
                         out.events.push(KataEvent::ToolResult {
@@ -181,7 +207,9 @@ pub fn parse_stream_line(line: &str) -> Parsed {
 
 fn summarize_input(input: Option<&serde_json::Value>) -> String {
     match input {
-        Some(v) => v.get("command").and_then(|c| c.as_str())
+        Some(v) => v
+            .get("command")
+            .and_then(|c| c.as_str())
             .map(String::from)
             .unwrap_or_else(|| truncate(&v.to_string(), 200)),
         None => String::new(),
@@ -222,16 +250,24 @@ pub fn pump<R: BufRead>(
     let mut turns: u32 = 0;
     let mut result = None;
     for line in reader.lines() {
-        if cancel() { break; }
+        if cancel() {
+            break;
+        }
         let Ok(line) = line else { break };
-        if line.trim().is_empty() { continue; }
+        if line.trim().is_empty() {
+            continue;
+        }
         let parsed = parse_stream_line(&line);
         if parsed.is_assistant_message {
             turns += 1;
             emit(KataEvent::Turn { n: turns });
         }
-        for e in parsed.events { emit(e); }
-        if let Some(r) = parsed.result { result = Some(r); }
+        for e in parsed.events {
+            emit(e);
+        }
+        if let Some(r) = parsed.result {
+            result = Some(r);
+        }
     }
     result
 }
@@ -246,7 +282,12 @@ mod tests {
         let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}"#;
         let p = parse_stream_line(line);
         assert!(p.is_assistant_message);
-        assert_eq!(p.events, vec![KataEvent::AssistantText { text: "hello".into() }]);
+        assert_eq!(
+            p.events,
+            vec![KataEvent::AssistantText {
+                text: "hello".into()
+            }]
+        );
         assert!(p.result.is_none());
     }
 
@@ -254,14 +295,27 @@ mod tests {
     fn parses_tool_use() {
         let line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls -la"}}]}}"#;
         let p = parse_stream_line(line);
-        assert_eq!(p.events, vec![KataEvent::ToolUse { name: "Bash".into(), input_summary: "ls -la".into() }]);
+        assert_eq!(
+            p.events,
+            vec![KataEvent::ToolUse {
+                name: "Bash".into(),
+                input_summary: "ls -la".into()
+            }]
+        );
     }
 
     #[test]
     fn parses_tool_result() {
         let line = r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"3 failed","is_error":false}]}}"#;
         let p = parse_stream_line(line);
-        assert_eq!(p.events, vec![KataEvent::ToolResult { name: String::new(), ok: true, summary: "3 failed".into() }]);
+        assert_eq!(
+            p.events,
+            vec![KataEvent::ToolResult {
+                name: String::new(),
+                ok: true,
+                summary: "3 failed".into()
+            }]
+        );
         assert!(!p.is_assistant_message);
     }
 
@@ -293,24 +347,40 @@ mod tests {
     #[test]
     fn parses_real_captured_fixture() {
         // Grounds the parser in REAL claude output captured in Task 0.
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/stream-hello.jsonl");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/stream-hello.jsonl"
+        );
         let text = std::fs::read_to_string(path).unwrap();
         let (mut saw_text, mut saw_result) = (false, false);
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             let p = parse_stream_line(line);
-            if p.events.iter().any(|e| matches!(e, KataEvent::AssistantText { .. })) { saw_text = true; }
-            if p.result.is_some() { saw_result = true; }
+            if p.events
+                .iter()
+                .any(|e| matches!(e, KataEvent::AssistantText { .. }))
+            {
+                saw_text = true;
+            }
+            if p.result.is_some() {
+                saw_result = true;
+            }
         }
         assert!(saw_text, "should extract assistant text from real output");
-        assert!(saw_result, "should extract a result payload from real output");
+        assert!(
+            saw_result,
+            "should extract a result payload from real output"
+        );
     }
 
     #[test]
     fn pump_emits_turns_and_returns_result() {
         let input = concat!(
-            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"a"}]}}"#, "\n",
-            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}"#, "\n",
-            r#"{"type":"result","subtype":"success","is_error":false,"num_turns":2,"total_cost_usd":0.01,"result":"ok"}"#, "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"a"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}"#,
+            "\n",
+            r#"{"type":"result","subtype":"success","is_error":false,"num_turns":2,"total_cost_usd":0.01,"result":"ok"}"#,
+            "\n",
         );
         let mut events = Vec::new();
         let result = pump(Cursor::new(input), &|| false, &mut |e| events.push(e));
@@ -327,7 +397,7 @@ mod tests {
         let t = truncate(&s, 200);
         assert!(t.ends_with("..."));
         assert!(t.len() <= 203); // truncated bytes + the "..." suffix
-        // The prefix before "..." must be valid UTF-8 (no panic, no broken char).
+                                 // The prefix before "..." must be valid UTF-8 (no panic, no broken char).
         assert!(t.trim_end_matches("...").chars().all(|c| c == 'あ'));
     }
 
@@ -336,7 +406,10 @@ mod tests {
         let e = KataEvent::RunDiff {
             worktree: "/home/u/.kata/worktrees/spec-abc".into(),
             branch: "kata/spec-abc".into(),
-            files: vec![DiffFile { status: "M".into(), path: "src/run.rs".into() }],
+            files: vec![DiffFile {
+                status: "M".into(),
+                path: "src/run.rs".into(),
+            }],
             insertions: 3,
             deletions: 1,
         };
@@ -352,12 +425,22 @@ mod tests {
     #[test]
     fn run_started_omits_worktree_fields_when_none() {
         let e = KataEvent::RunStarted {
-            spec: "s".into(), model: None, workdir: "/w".into(),
-            isolation: "none".into(), worktree: None, branch: None,
+            spec: "s".into(),
+            model: None,
+            workdir: "/w".into(),
+            isolation: "none".into(),
+            worktree: None,
+            branch: None,
         };
         let s = serde_json::to_string(&e).unwrap();
-        assert!(!s.contains("worktree"), "absent worktree must not serialize: {s}");
-        assert!(!s.contains("branch"), "absent branch must not serialize: {s}");
+        assert!(
+            !s.contains("worktree"),
+            "absent worktree must not serialize: {s}"
+        );
+        assert!(
+            !s.contains("branch"),
+            "absent branch must not serialize: {s}"
+        );
     }
 
     #[test]
@@ -368,7 +451,10 @@ mod tests {
                 kind: QuestionKind::Select,
                 header: "auth".into(),
                 question: "Which approach?".into(),
-                options: vec![QuestionOption { label: "JWT".into(), description: Some("stateless".into()) }],
+                options: vec![QuestionOption {
+                    label: "JWT".into(),
+                    description: Some("stateless".into()),
+                }],
                 multi_select: false,
                 optional: false,
                 placeholder: None,
@@ -383,7 +469,10 @@ mod tests {
 
     #[test]
     fn ask_answered_serializes_answers_matrix() {
-        let e = KataEvent::AskAnswered { id: "q1".into(), answers: vec![vec!["JWT".into()]] };
+        let e = KataEvent::AskAnswered {
+            id: "q1".into(),
+            answers: vec![vec!["JWT".into()]],
+        };
         let s = serde_json::to_string(&e).unwrap();
         assert!(s.contains(r#""type":"ask.answered""#));
         assert!(s.contains(r#""answers":[["JWT"]]"#));
@@ -419,15 +508,28 @@ mod tests {
         let line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__kata-ask__ask_user","input":{"questions":[]}}]}}"#;
         let p = parse_stream_line(line);
         assert!(p.is_assistant_message, "still counts as an assistant turn");
-        assert!(p.events.is_empty(), "the ask_user tool.use must not render as a row");
+        assert!(
+            p.events.is_empty(),
+            "the ask_user tool.use must not render as a row"
+        );
     }
 
     #[test]
     fn terminal_events_carry_exit_code_and_round_trip() {
         let cases = [
-            KataEvent::RunError { message: "reached max turns (12)".into(), exit_code: 125 },
+            KataEvent::RunError {
+                message: "reached max turns (12)".into(),
+                exit_code: 125,
+            },
             KataEvent::RunCancelled { exit_code: 130 },
-            KataEvent::RunCompleted { exit_code: 0, is_error: false, num_turns: 2, cost_usd: Some(0.02), duration_ms: 100, result: Some("done".into()) },
+            KataEvent::RunCompleted {
+                exit_code: 0,
+                is_error: false,
+                num_turns: 2,
+                cost_usd: Some(0.02),
+                duration_ms: 100,
+                result: Some("done".into()),
+            },
         ];
         for ev in cases {
             let json = serde_json::to_string(&ev).unwrap();
@@ -435,6 +537,9 @@ mod tests {
             assert_eq!(ev, back, "round-trip mismatch for {json}");
         }
         let s = serde_json::to_string(&KataEvent::RunCancelled { exit_code: 130 }).unwrap();
-        assert!(s.contains(r#""exit_code":130"#), "cancel must serialize its code: {s}");
+        assert!(
+            s.contains(r#""exit_code":130"#),
+            "cancel must serialize its code: {s}"
+        );
     }
 }

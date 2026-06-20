@@ -7,7 +7,13 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 fn base_spec(workdir: &str) -> RunSpec {
-    RunSpec { schema: 1, name: "it".into(), task: "do".into(), workdir: workdir.into(), ..Default::default() }
+    RunSpec {
+        schema: 1,
+        name: "it".into(),
+        task: "do".into(),
+        workdir: workdir.into(),
+        ..Default::default()
+    }
 }
 
 // These tests mutate process-global env vars that run() reads, so each is marked
@@ -29,14 +35,30 @@ fn run_ok_streams_events_and_completes_zero() {
     let work = tempfile::tempdir().unwrap();
     let cancel = CancelToken::new();
     let mut events: Vec<KataEvent> = Vec::new();
-    let outcome = run(&base_spec(&work.path().to_string_lossy()), &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    let outcome = run(
+        &base_spec(&work.path().to_string_lossy()),
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
 
     assert_eq!(outcome.exit_code, 0);
     assert!(matches!(events.first(), Some(KataEvent::RunStarted { .. })));
-    assert!(events.iter().any(|e| matches!(e, KataEvent::AssistantText { .. })));
-    assert!(events.iter().any(|e| matches!(e, KataEvent::ToolUse { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::AssistantText { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::ToolUse { .. })));
     match events.last().unwrap() {
-        KataEvent::RunCompleted { exit_code, num_turns, is_error, .. } => {
+        KataEvent::RunCompleted {
+            exit_code,
+            num_turns,
+            is_error,
+            ..
+        } => {
             assert_eq!(*exit_code, 0);
             assert_eq!(*num_turns, 2);
             assert!(!*is_error);
@@ -52,7 +74,14 @@ fn run_surfaces_child_stderr_as_log_events() {
     let work = tempfile::tempdir().unwrap();
     let cancel = CancelToken::new();
     let mut events: Vec<KataEvent> = Vec::new();
-    let outcome = run(&base_spec(&work.path().to_string_lossy()), &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    let outcome = run(
+        &base_spec(&work.path().to_string_lossy()),
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
 
     assert_eq!(outcome.exit_code, 0);
     assert!(
@@ -75,13 +104,23 @@ fn run_gives_child_noninteractive_stdin_so_it_cannot_block() {
     spec.leash.timeout_secs = Some(2); // guard: a stdin-blocked child times out (124)
     let cancel = CancelToken::new();
     let mut events: Vec<KataEvent> = Vec::new();
-    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
 
     assert_eq!(
         outcome.exit_code, 0,
         "child blocked on stdin (timed out) instead of completing; events={events:?}"
     );
-    assert!(matches!(events.last().unwrap(), KataEvent::RunCompleted { exit_code: 0, .. }));
+    assert!(matches!(
+        events.last().unwrap(),
+        KataEvent::RunCompleted { exit_code: 0, .. }
+    ));
 }
 
 #[test]
@@ -95,7 +134,14 @@ fn run_logs_default_timeout_cap_when_unset() {
     assert_eq!(spec.leash.timeout_secs, None);
     let cancel = CancelToken::new();
     let mut events: Vec<KataEvent> = Vec::new();
-    run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
 
     assert!(
         events.iter().any(|e| matches!(e,
@@ -117,13 +163,22 @@ fn run_reaps_child_that_closes_stdio_but_lingers() {
     spec.leash.timeout_secs = Some(1);
     let cancel = CancelToken::new();
     let mut events: Vec<KataEvent> = Vec::new();
-    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
 
     assert_eq!(
         outcome.exit_code, 124,
         "deadline must reap a child that closed stdio but kept running"
     );
-    assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::RunError { .. })));
 }
 
 #[test]
@@ -133,7 +188,14 @@ fn run_invalid_spec_errors_before_spawn() {
     let mut spec = base_spec("/w");
     spec.task = "".into();
     let cancel = CancelToken::new();
-    let err = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |_| {}).unwrap_err();
+    let err = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |_| {},
+    )
+    .unwrap_err();
     assert!(matches!(err, RunError::Invalid(_)));
 }
 
@@ -146,9 +208,18 @@ fn run_timeout_kills_child_and_reports_error() {
     spec.leash.timeout_secs = Some(1);
     let cancel = CancelToken::new();
     let mut events = Vec::new();
-    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
     assert_eq!(outcome.exit_code, 124);
-    assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::RunError { .. })));
 }
 
 #[test]
@@ -164,9 +235,18 @@ fn run_cancel_kills_child() {
         flag.store(true, Ordering::SeqCst);
     });
     let mut events = Vec::new();
-    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
     assert_eq!(outcome.exit_code, 130);
-    assert!(events.iter().any(|e| matches!(e, KataEvent::RunCancelled { exit_code: 130 })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::RunCancelled { exit_code: 130 })));
 }
 
 #[test]
@@ -178,12 +258,23 @@ fn run_max_turns_kills_child() {
     spec.leash.max_turns = Some(2);
     let cancel = CancelToken::new();
     let mut events = Vec::new();
-    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
     assert_eq!(outcome.exit_code, 125);
     assert!(events.iter().any(|e| matches!(e, KataEvent::Turn { n: 1 })));
     assert!(events.iter().any(|e| matches!(e, KataEvent::Turn { n: 2 })));
-    assert!(!events.iter().any(|e| matches!(e, KataEvent::Turn { n } if *n >= 3)));
-    assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { exit_code: 125, .. })));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, KataEvent::Turn { n } if *n >= 3)));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::RunError { exit_code: 125, .. })));
 }
 
 #[test]
@@ -195,17 +286,34 @@ fn run_unlimited_turns_does_not_cap() {
     spec.leash.max_turns = None; // unlimited
     let cancel = CancelToken::new();
     let mut events = Vec::new();
-    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
     // No turn cap fires: all 10 drip turns are counted, none trips exit 125.
-    assert!(!events.iter().any(|e| matches!(e, KataEvent::RunError { exit_code: 125, .. })));
-    assert!(events.iter().any(|e| matches!(e, KataEvent::Turn { n: 10 })));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, KataEvent::RunError { exit_code: 125, .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::Turn { n: 10 })));
     assert_eq!(outcome.exit_code, 0);
 }
 
 fn init_git_repo() -> tempfile::TempDir {
     let d = tempfile::tempdir().unwrap();
     let git = |args: &[&str]| {
-        let ok = std::process::Command::new("git").arg("-C").arg(d.path()).args(args).status().unwrap().success();
+        let ok = std::process::Command::new("git")
+            .arg("-C")
+            .arg(d.path())
+            .args(args)
+            .status()
+            .unwrap()
+            .success();
         assert!(ok, "git {args:?} failed");
     };
     git(&["init", "-q"]);
@@ -229,12 +337,24 @@ fn worktree_isolation_runs_in_worktree_and_emits_diff() {
     spec.leash.isolation = kata_core::spec::Isolation::Worktree;
     let cancel = CancelToken::new();
     let mut events = Vec::new();
-    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
     assert_eq!(outcome.exit_code, 0);
 
     // run.started carried the worktree path + branch.
     let wt_path = match events.first().unwrap() {
-        KataEvent::RunStarted { worktree: Some(p), branch: Some(b), isolation, .. } => {
+        KataEvent::RunStarted {
+            worktree: Some(p),
+            branch: Some(b),
+            isolation,
+            ..
+        } => {
             assert_eq!(isolation, "worktree");
             assert!(b.starts_with("kata/"), "branch was {b}");
             p.clone()
@@ -243,19 +363,32 @@ fn worktree_isolation_runs_in_worktree_and_emits_diff() {
     };
 
     // The agent's file landed in the worktree, NOT the live workdir.
-    assert!(std::path::Path::new(&wt_path).join("agent-made.txt").exists());
+    assert!(std::path::Path::new(&wt_path)
+        .join("agent-made.txt")
+        .exists());
     assert!(!repo.path().join("agent-made.txt").exists());
 
     // A run.diff naming the new file was emitted before run.completed.
-    let diff_idx = events.iter().position(|e| matches!(e,
-        KataEvent::RunDiff { files, .. } if files.iter().any(|f| f.path == "agent-made.txt"))).expect("a run.diff naming the file");
-    let done_idx = events.iter().position(|e| matches!(e, KataEvent::RunCompleted { .. })).unwrap();
+    let diff_idx = events
+        .iter()
+        .position(|e| {
+            matches!(e,
+        KataEvent::RunDiff { files, .. } if files.iter().any(|f| f.path == "agent-made.txt"))
+        })
+        .expect("a run.diff naming the file");
+    let done_idx = events
+        .iter()
+        .position(|e| matches!(e, KataEvent::RunCompleted { .. }))
+        .unwrap();
     assert!(diff_idx < done_idx, "run.diff must precede run.completed");
 
     std::env::remove_var("KATA_HOME");
     // Best-effort: remove the worktree we created so the test leaves nothing behind.
-    let _ = std::process::Command::new("git").arg("-C").arg(repo.path())
-        .args(["worktree", "remove", "--force", &wt_path]).status();
+    let _ = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args(["worktree", "remove", "--force", &wt_path])
+        .status();
 }
 
 #[test]
@@ -269,12 +402,23 @@ fn run_refuses_bare_run_with_unresolved_token_env() {
     spec.auth.token_env = Some("KATA_MISSING_TOKEN".into());
     let cancel = CancelToken::new();
     let mut events: Vec<KataEvent> = Vec::new();
-    let err = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap_err();
+    let err = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap_err();
 
     assert!(matches!(err, RunError::Auth(_)));
-    assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::RunError { .. })));
     assert!(
-        !events.iter().any(|e| matches!(e, KataEvent::RunStarted { .. })),
+        !events
+            .iter()
+            .any(|e| matches!(e, KataEvent::RunStarted { .. })),
         "must refuse before run.started"
     );
 }
@@ -291,11 +435,23 @@ fn worktree_isolation_refuses_non_repo() {
     spec.leash.isolation = kata_core::spec::Isolation::Worktree;
     let cancel = CancelToken::new();
     let mut events = Vec::new();
-    let err = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap_err();
+    let err = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap_err();
 
     assert!(matches!(err, RunError::Worktree(_)));
-    assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { .. })));
-    assert!(!work.path().join("agent-made.txt").exists(), "must not run in the live workdir");
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::RunError { .. })));
+    assert!(
+        !work.path().join("agent-made.txt").exists(),
+        "must not run in the live workdir"
+    );
 
     std::env::remove_var("KATA_HOME");
 }
@@ -315,15 +471,27 @@ fn interactive_run_pauses_and_resumes_on_answer() {
     let tx = answer_tx.clone();
     let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &answers, |e| {
         if let KataEvent::AskRequested { id, .. } = &e {
-            tx.send(kata_core::run::Answer { id: id.clone(), answers: vec![vec!["JWT".into()]] }).unwrap();
+            tx.send(kata_core::run::Answer {
+                id: id.clone(),
+                answers: vec![vec!["JWT".into()]],
+            })
+            .unwrap();
         }
         events.push(e);
-    }).unwrap();
+    })
+    .unwrap();
 
     assert_eq!(outcome.exit_code, 0);
-    assert!(events.iter().any(|e| matches!(e, KataEvent::AskRequested { .. })));
-    assert!(events.iter().any(|e| matches!(e, KataEvent::AskAnswered { .. })));
-    assert!(matches!(events.last().unwrap(), KataEvent::RunCompleted { exit_code: 0, .. }));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::AskRequested { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::AskAnswered { .. })));
+    assert!(matches!(
+        events.last().unwrap(),
+        KataEvent::RunCompleted { exit_code: 0, .. }
+    ));
 }
 
 #[test]
@@ -337,11 +505,18 @@ fn interactive_run_answer_deadline_reaps_with_123() {
     let cancel = CancelToken::new();
     let (_tx, answers) = kata_core::run::answer_channel();
     let mut events: Vec<KataEvent> = Vec::new();
-    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &answers, |e| events.push(e)).unwrap();
+    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &answers, |e| {
+        events.push(e)
+    })
+    .unwrap();
 
     assert_eq!(outcome.exit_code, 123, "answer-deadline must reap with 123");
-    assert!(events.iter().any(|e| matches!(e, KataEvent::AskRequested { .. })));
-    assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::AskRequested { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::RunError { .. })));
 }
 
 #[test]
@@ -353,23 +528,44 @@ fn run_writes_transcript_of_the_event_stream() {
     let work = tempfile::tempdir().unwrap();
     let cancel = CancelToken::new();
     let mut events: Vec<KataEvent> = Vec::new();
-    let outcome = run(&base_spec(&work.path().to_string_lossy()), &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    let outcome = run(
+        &base_spec(&work.path().to_string_lossy()),
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
     assert_eq!(outcome.exit_code, 0);
 
     let runs = khome.path().join("runs");
-    let files: Vec<_> = std::fs::read_dir(&runs).unwrap().map(|e| e.unwrap().path()).collect();
-    assert_eq!(files.len(), 1, "exactly one transcript expected, got {files:?}");
+    let files: Vec<_> = std::fs::read_dir(&runs)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(
+        files.len(),
+        1,
+        "exactly one transcript expected, got {files:?}"
+    );
 
     let body = std::fs::read_to_string(&files[0]).unwrap();
     let lines: Vec<&str> = body.lines().collect();
-    assert!(lines.iter().all(|l| serde_json::from_str::<serde_json::Value>(l).is_ok()),
-        "every transcript line must be valid JSON: {body}");
+    assert!(
+        lines
+            .iter()
+            .all(|l| serde_json::from_str::<serde_json::Value>(l).is_ok()),
+        "every transcript line must be valid JSON: {body}"
+    );
     let first: serde_json::Value = serde_json::from_str(lines.first().unwrap()).unwrap();
     let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
     assert_eq!(first["type"], "run.started");
     assert_eq!(last["type"], "run.completed");
 
-    assert_eq!(outcome.transcript_path.as_deref(), Some(files[0].to_string_lossy().as_ref()));
+    assert_eq!(
+        outcome.transcript_path.as_deref(),
+        Some(files[0].to_string_lossy().as_ref())
+    );
 
     std::env::remove_var("KATA_HOME");
 }
@@ -383,9 +579,19 @@ fn run_budget_exhausted_reports_122() {
     let mut events: Vec<KataEvent> = Vec::new();
     let mut spec = base_spec(&work.path().to_string_lossy());
     spec.leash.max_budget_usd = Some(0.01);
-    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
 
-    assert_eq!(outcome.exit_code, 122, "budget exhaustion must map to exit 122");
+    assert_eq!(
+        outcome.exit_code, 122,
+        "budget exhaustion must map to exit 122"
+    );
     match events.last().unwrap() {
         KataEvent::RunError { message, .. } => assert!(
             message.contains("budget"),
@@ -406,7 +612,14 @@ fn budget_subtype_without_configured_ceiling_is_not_122() {
     let cancel = CancelToken::new();
     let mut events: Vec<KataEvent> = Vec::new();
     let spec = base_spec(&work.path().to_string_lossy()); // no max_budget_usd
-    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
 
     assert_ne!(outcome.exit_code, 122, "no ceiling set must not map to 122");
     assert!(
@@ -426,13 +639,25 @@ fn run_survives_when_transcript_cannot_be_written() {
     let work = tempfile::tempdir().unwrap();
     let cancel = CancelToken::new();
     let mut events: Vec<KataEvent> = Vec::new();
-    let outcome = run(&base_spec(&work.path().to_string_lossy()), &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    let outcome = run(
+        &base_spec(&work.path().to_string_lossy()),
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
 
-    assert_eq!(outcome.exit_code, 0, "a missing transcript must never fail the run");
+    assert_eq!(
+        outcome.exit_code, 0,
+        "a missing transcript must never fail the run"
+    );
     assert!(outcome.transcript_path.is_none());
-    assert!(events.iter().any(|e| matches!(e,
+    assert!(
+        events.iter().any(|e| matches!(e,
         KataEvent::Log { level, message } if level == "warn" && message.contains("transcript"))),
-        "a warn log must explain the missing transcript");
+        "a warn log must explain the missing transcript"
+    );
 
     std::env::remove_var("KATA_HOME");
 }

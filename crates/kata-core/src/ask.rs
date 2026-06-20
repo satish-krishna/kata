@@ -117,7 +117,11 @@ pub fn handle_rpc(line: &str, port: u16) -> Option<String> {
         Ok(v) => v,
         Err(_) => {
             // Unparseable input gets Parse error with id: null
-            return Some(json_rpc_error(&serde_json::Value::Null, -32700, "Parse error"));
+            return Some(json_rpc_error(
+                &serde_json::Value::Null,
+                -32700,
+                "Parse error",
+            ));
         }
     };
 
@@ -210,9 +214,7 @@ pub fn handle_rpc(line: &str, port: u16) -> Option<String> {
             };
             let answers = match ask_over_bridge(port, &questions) {
                 Ok(a) => a,
-                Err(e) => {
-                    return Some(json_rpc_error(id, -32603, &format!("Bridge error: {e}")))
-                }
+                Err(e) => return Some(json_rpc_error(id, -32603, &format!("Bridge error: {e}"))),
             };
             let text = format_answers(&questions, &answers);
             serde_json::json!({
@@ -268,8 +270,7 @@ fn ask_over_bridge(port: u16, questions: &[Question]) -> std::io::Result<Vec<Vec
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
     reader.read_line(&mut line)?;
-    let ans: AnswerFrameOwned =
-        serde_json::from_str(line.trim()).map_err(std::io::Error::other)?;
+    let ans: AnswerFrameOwned = serde_json::from_str(line.trim()).map_err(std::io::Error::other)?;
     Ok(ans.answers)
 }
 
@@ -320,9 +321,7 @@ mod tests {
         )
         .unwrap();
 
-        let req = rx
-            .recv_timeout(std::time::Duration::from_secs(2))
-            .unwrap();
+        let req = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
         assert_eq!(req.questions.len(), 1);
         assert_eq!(req.questions[0].kind, QuestionKind::Text);
         req.reply.send(vec![vec!["typed answer".into()]]).unwrap();
@@ -349,21 +348,18 @@ mod tests {
 
     #[test]
     fn rpc_tools_list_exposes_ask_user_with_schema() {
-        let resp =
-            handle_rpc(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, 0).unwrap();
+        let resp = handle_rpc(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, 0).unwrap();
         assert!(resp.contains(r#""name":"ask_user""#));
         assert!(resp.contains(r#""questions""#)); // inputSchema mentions questions
     }
 
     #[test]
     fn rpc_initialized_notification_has_no_response() {
-        assert!(
-            handle_rpc(
-                r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
-                0
-            )
-            .is_none()
-        );
+        assert!(handle_rpc(
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            0
+        )
+        .is_none());
     }
 
     #[test]
@@ -379,7 +375,10 @@ mod tests {
         });
         let call = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"ask_user","arguments":{"questions":[{"kind":"text","header":"h","question":"q?"}]}}}"#;
         let resp = handle_rpc(call, port).unwrap();
-        assert!(resp.contains("JWT"), "tool result should carry the answer: {resp}");
+        assert!(
+            resp.contains("JWT"),
+            "tool result should carry the answer: {resp}"
+        );
         assert!(resp.contains(r#""content""#));
     }
 
@@ -392,12 +391,19 @@ mod tests {
     #[test]
     fn rpc_missing_method_returns_invalid_request() {
         let resp = handle_rpc(r#"{"jsonrpc":"2.0","id":9}"#, 0).expect("must respond");
-        assert!(resp.contains("-32600"), "expected Invalid Request, got {resp}");
+        assert!(
+            resp.contains("-32600"),
+            "expected Invalid Request, got {resp}"
+        );
     }
 
     #[test]
     fn rpc_notification_without_id_returns_none() {
         // A message with no id is a notification → no response.
-        assert!(handle_rpc(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, 0).is_none());
+        assert!(handle_rpc(
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            0
+        )
+        .is_none());
     }
 }

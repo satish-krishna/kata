@@ -13,12 +13,18 @@ fn main() {
 
     match mode.as_str() {
         "sleep" => {
-            let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"working"}}]}}}}"#);
+            let _ = writeln!(
+                out,
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"working"}}]}}}}"#
+            );
             let _ = out.flush();
             thread::sleep(Duration::from_secs(60));
         }
         "fail" => {
-            let _ = writeln!(out, r#"{{"type":"result","subtype":"error","is_error":true,"num_turns":1,"total_cost_usd":0.0,"result":"boom"}}"#);
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"error","is_error":true,"num_turns":1,"total_cost_usd":0.0,"result":"boom"}}"#
+            );
             let _ = out.flush();
             std::process::exit(1);
         }
@@ -26,7 +32,10 @@ fn main() {
             // Emit assistant turns on a slow drip so the engine's turn cap fires
             // before the process finishes on its own.
             for i in 1..=10 {
-                let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"turn {i}"}}]}}}}"#);
+                let _ = writeln!(
+                    out,
+                    r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"turn {i}"}}]}}}}"#
+                );
                 let _ = out.flush();
                 thread::sleep(Duration::from_millis(200));
             }
@@ -39,8 +48,14 @@ fn main() {
             use std::io::Read;
             let mut buf = String::new();
             let _ = std::io::stdin().read_to_string(&mut buf);
-            let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"hi"}}]}}}}"#);
-            let _ = writeln!(out, r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#);
+            let _ = writeln!(
+                out,
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"hi"}}]}}}}"#
+            );
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
+            );
             let _ = out.flush();
         }
         "stderr" => {
@@ -49,8 +64,14 @@ fn main() {
             let mut err = std::io::stderr();
             let _ = writeln!(err, "diagnostic from claude on stderr");
             let _ = err.flush();
-            let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"hi"}}]}}}}"#);
-            let _ = writeln!(out, r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#);
+            let _ = writeln!(
+                out,
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"hi"}}]}}}}"#
+            );
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
+            );
             let _ = out.flush();
         }
         "closestdio" => {
@@ -81,43 +102,76 @@ fn main() {
             // this blocks forever and the engine reaps the run with exit 123.
             use std::io::{BufRead, BufReader, Write as _};
             use std::net::TcpStream;
-            let port: u16 = std::env::var("KATA_ASK_PORT").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+            let port: u16 = std::env::var("KATA_ASK_PORT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
             // The suppressed ask_user tool_use keeps is_assistant_message=true so
             // the engine counts the turn but emits no tool.use event.
-            let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","name":"mcp__kata-ask__ask_user","input":{{"questions":[]}}}}]}}}}"#);
+            let _ = writeln!(
+                out,
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","name":"mcp__kata-ask__ask_user","input":{{"questions":[]}}}}]}}}}"#
+            );
             let _ = out.flush();
             if let Ok(sock) = TcpStream::connect(("127.0.0.1", port)) {
                 let mut write_half = sock.try_clone().expect("clone sock");
-                let _ = writeln!(write_half, r#"{{"questions":[{{"kind":"text","header":"h","question":"q?"}}]}}"#);
+                let _ = writeln!(
+                    write_half,
+                    r#"{{"questions":[{{"kind":"text","header":"h","question":"q?"}}]}}"#
+                );
                 let _ = write_half.flush();
                 // Wait (possibly forever — exercises the answer-deadline) for the answer.
                 let mut reader = BufReader::new(sock);
                 let mut line = String::new();
                 let _ = reader.read_line(&mut line);
             }
-            let _ = writeln!(out, r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#);
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
+            );
             let _ = out.flush();
         }
         "budget" => {
             // Mirror real claude hitting --max-budget-usd: one assistant turn, then
             // a terminal result tagged error_max_budget_usd with a non-zero spend,
             // and a generic exit 1. The engine must override that 1 to exit 122.
-            let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"working"}}]}}}}"#);
-            let _ = writeln!(out, r#"{{"type":"result","subtype":"error_max_budget_usd","is_error":true,"num_turns":1,"total_cost_usd":0.05,"result":null,"errors":["Reached maximum budget ($0.01)"]}}"#);
+            let _ = writeln!(
+                out,
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"working"}}]}}}}"#
+            );
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"error_max_budget_usd","is_error":true,"num_turns":1,"total_cost_usd":0.05,"result":null,"errors":["Reached maximum budget ($0.01)"]}}"#
+            );
             let _ = out.flush();
             std::process::exit(1);
         }
         "writefile" => {
             // Write a file into cwd so a worktree-isolated run produces a real diff.
             let _ = std::fs::write("agent-made.txt", "line1\nline2\n");
-            let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"wrote a file"}}]}}}}"#);
-            let _ = writeln!(out, r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#);
+            let _ = writeln!(
+                out,
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"wrote a file"}}]}}}}"#
+            );
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
+            );
             let _ = out.flush();
         }
         _ => {
-            let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"hi"}}]}}}}"#);
-            let _ = writeln!(out, r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","name":"Bash","input":{{"command":"echo hi"}}}}]}}}}"#);
-            let _ = writeln!(out, r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":2,"total_cost_usd":0.02,"result":"done"}}"#);
+            let _ = writeln!(
+                out,
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"hi"}}]}}}}"#
+            );
+            let _ = writeln!(
+                out,
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","name":"Bash","input":{{"command":"echo hi"}}}}]}}}}"#
+            );
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":2,"total_cost_usd":0.02,"result":"done"}}"#
+            );
             let _ = out.flush();
         }
     }

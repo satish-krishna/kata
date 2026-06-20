@@ -21,7 +21,8 @@ fn real_claude_trivial_run_completes() {
         work.path().to_string_lossy().replace('\\', "/"))).unwrap();
 
     let out = Command::new(env!("CARGO_BIN_EXE_kata"))
-        .arg("run").arg(&spec_path)
+        .arg("run")
+        .arg(&spec_path)
         // KATA_CLAUDE_BIN unset -> uses the real `claude` on PATH.
         .output()
         .unwrap();
@@ -29,12 +30,25 @@ fn real_claude_trivial_run_completes() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let last = stdout.lines().rfind(|l| !l.trim().is_empty()).unwrap();
     let v: serde_json::Value = serde_json::from_str(last).unwrap();
-    assert_eq!(v["type"], "run.completed", "last event should be run.completed; stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        v["type"],
+        "run.completed",
+        "last event should be run.completed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     // A genuine success: the run must not be an error and must exit 0. A rejected
     // flag or an unauthenticated claude still emits run.completed, so without
     // these assertions the test would pass on a broken run.
-    assert_eq!(v["is_error"], false, "run.completed was an error (is claude logged in? did a flag change?); result: {}", v["result"]);
-    assert_eq!(v["exit_code"], 0, "expected exit 0; result: {}", v["result"]);
+    assert_eq!(
+        v["is_error"], false,
+        "run.completed was an error (is claude logged in? did a flag change?); result: {}",
+        v["result"]
+    );
+    assert_eq!(
+        v["exit_code"], 0,
+        "expected exit 0; result: {}",
+        v["result"]
+    );
 }
 
 /// The full interactive chain against live claude: an interactive run forces an
@@ -121,7 +135,12 @@ fn interactive_real_claude_pauses_and_resumes() {
             }
         }
         done_w.store(true, Ordering::SeqCst);
-        let _ = tx.send(Observed { saw_requested, saw_answered, completed, captured });
+        let _ = tx.send(Observed {
+            saw_requested,
+            saw_answered,
+            completed,
+            captured,
+        });
     });
 
     // Wall-clock guard: 200s ~= leash timeout (180s) plus headroom for cleanup.

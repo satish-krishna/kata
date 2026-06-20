@@ -37,11 +37,19 @@ pub enum RunError {
 pub struct CancelToken(Arc<AtomicBool>);
 
 impl CancelToken {
-    pub fn new() -> Self { Self(Arc::new(AtomicBool::new(false))) }
-    pub fn cancel(&self) { self.0.store(true, Ordering::SeqCst); }
-    pub fn is_cancelled(&self) -> bool { self.0.load(Ordering::SeqCst) }
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicBool::new(false)))
+    }
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
     /// Share the underlying flag (e.g. with a Ctrl-C handler).
-    pub fn flag(&self) -> Arc<AtomicBool> { self.0.clone() }
+    pub fn flag(&self) -> Arc<AtomicBool> {
+        self.0.clone()
+    }
 }
 
 const POLL: Duration = Duration::from_millis(100);
@@ -128,16 +136,26 @@ impl Transcript {
 /// Best-effort: open `<kata-home>/runs/<slug>-<utc>.jsonl`. `Err` (no home,
 /// unwritable) means the caller logs a warning and runs without a transcript.
 fn open_transcript(spec_name: &str) -> Result<(Transcript, std::path::PathBuf), String> {
-    let dir = crate::fsutil::runs_dir().ok_or_else(|| "no home directory for ~/.kata".to_string())?;
+    let dir =
+        crate::fsutil::runs_dir().ok_or_else(|| "no home directory for ~/.kata".to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let name = format!("{}-{}.jsonl", crate::fsutil::slug(spec_name), crate::fsutil::utc_stamp(now));
+    let name = format!(
+        "{}-{}.jsonl",
+        crate::fsutil::slug(spec_name),
+        crate::fsutil::utc_stamp(now)
+    );
     let path = dir.join(name);
     let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
-    Ok((Transcript { out: std::io::BufWriter::new(file) }, path))
+    Ok((
+        Transcript {
+            out: std::io::BufWriter::new(file),
+        },
+        path,
+    ))
 }
 
 pub fn run<F: FnMut(KataEvent)>(
@@ -157,7 +175,10 @@ pub fn run<F: FnMut(KataEvent)>(
     let (mut transcript, transcript_path) = match open_transcript(&spec.name) {
         Ok((t, p)) => (Some(t), Some(p)),
         Err(e) => {
-            emit(KataEvent::Log { level: "warn".into(), message: format!("transcript unavailable: {e}") });
+            emit(KataEvent::Log {
+                level: "warn".into(),
+                message: format!("transcript unavailable: {e}"),
+            });
             (None, None)
         }
     };
@@ -177,13 +198,21 @@ pub fn run<F: FnMut(KataEvent)>(
     // Fail fast: a bare run that references a token var it cannot resolve would
     // reach the API unauthenticated. Refuse before creating a worktree or spawning.
     if spec.auth.bare {
-        if let Some(name) = spec.auth.token_env.as_ref().filter(|n| !n.trim().is_empty()) {
+        if let Some(name) = spec
+            .auth
+            .token_env
+            .as_ref()
+            .filter(|n| !n.trim().is_empty())
+        {
             let resolved = std::env::var(name).ok().filter(|v| !v.trim().is_empty());
             if resolved.is_none() {
                 let message = format!(
                     "auth.token_env names '{name}', but it is unset or empty in the environment"
                 );
-                emit(KataEvent::RunError { message: message.clone(), exit_code: 2 });
+                emit(KataEvent::RunError {
+                    message: message.clone(),
+                    exit_code: 2,
+                });
                 return Err(RunError::Auth(message));
             }
         }
@@ -248,7 +277,10 @@ pub fn run<F: FnMut(KataEvent)>(
             }
             Err(e) => {
                 let message = format!("worktree isolation failed for {}: {e}", spec.workdir);
-                emit(KataEvent::RunError { message: message.clone(), exit_code: 2 });
+                emit(KataEvent::RunError {
+                    message: message.clone(),
+                    exit_code: 2,
+                });
                 return Err(RunError::Worktree(message));
             }
         }
@@ -268,10 +300,17 @@ pub fn run<F: FnMut(KataEvent)>(
     });
     emit(KataEvent::Log {
         level: "info".into(),
-        message: format!("assembled kit: {} skill(s), {} plugin(s)", spec.skills.len(), spec.plugins.len()),
+        message: format!(
+            "assembled kit: {} skill(s), {} plugin(s)",
+            spec.skills.len(),
+            spec.plugins.len()
+        ),
     });
     if let Some(p) = &transcript_path {
-        emit(KataEvent::Log { level: "info".into(), message: format!("transcript: {}", p.display()) });
+        emit(KataEvent::Log {
+            level: "info".into(),
+            message: format!("transcript: {}", p.display()),
+        });
     }
 
     let start = Instant::now();
@@ -304,7 +343,11 @@ pub fn run<F: FnMut(KataEvent)>(
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
             match line {
-                Ok(l) => { if tx.send(ChildLine::Out(l)).is_err() { break; } }
+                Ok(l) => {
+                    if tx.send(ChildLine::Out(l)).is_err() {
+                        break;
+                    }
+                }
                 Err(_) => break,
             }
         }
@@ -314,7 +357,11 @@ pub fn run<F: FnMut(KataEvent)>(
         let reader = BufReader::new(stderr);
         for line in reader.lines() {
             match line {
-                Ok(l) => { if tx_err.send(ChildLine::Err(l)).is_err() { break; } }
+                Ok(l) => {
+                    if tx_err.send(ChildLine::Err(l)).is_err() {
+                        break;
+                    }
+                }
                 Err(_) => break,
             }
         }
@@ -337,7 +384,10 @@ pub fn run<F: FnMut(KataEvent)>(
 
     // Interactive await state. The work-clock excludes time spent awaiting an
     // answer: `paused` accumulates that time and shifts the deadline.
-    let answer_deadline = spec.interactive.answer_timeout_secs.map(Duration::from_secs);
+    let answer_deadline = spec
+        .interactive
+        .answer_timeout_secs
+        .map(Duration::from_secs);
     let mut awaiting_since: Option<Instant> = None;
     let mut paused: Duration = Duration::ZERO;
     let mut pending: Option<(String, mpsc::Sender<Vec<Vec<String>>>)> = None;
@@ -368,7 +418,10 @@ pub fn run<F: FnMut(KataEvent)>(
                     let id = format!("q{ask_seq}");
                     pending = Some((id.clone(), req.reply));
                     awaiting_since = Some(Instant::now());
-                    emit(KataEvent::AskRequested { id, questions: req.questions });
+                    emit(KataEvent::AskRequested {
+                        id,
+                        questions: req.questions,
+                    });
                 }
             }
         }
@@ -381,13 +434,18 @@ pub fn run<F: FnMut(KataEvent)>(
                     if let Some(since) = awaiting_since.take() {
                         paused += since.elapsed();
                     }
-                    emit(KataEvent::AskAnswered { id, answers: ans.answers });
+                    emit(KataEvent::AskAnswered {
+                        id,
+                        answers: ans.answers,
+                    });
                 }
             }
         }
         match rx.recv_timeout(POLL) {
             Ok(ChildLine::Out(line)) => {
-                if line.trim().is_empty() { continue; }
+                if line.trim().is_empty() {
+                    continue;
+                }
                 let parsed = crate::event::parse_stream_line(&line);
                 if parsed.is_assistant_message {
                     // Engine-side leash: claude 2.1.x has no --max-turns flag, so the
@@ -403,12 +461,21 @@ pub fn run<F: FnMut(KataEvent)>(
                     turns += 1;
                     emit(KataEvent::Turn { n: turns });
                 }
-                for e in parsed.events { emit(e); }
-                if let Some(r) = parsed.result { result = Some(r); }
+                for e in parsed.events {
+                    emit(e);
+                }
+                if let Some(r) = parsed.result {
+                    result = Some(r);
+                }
             }
             Ok(ChildLine::Err(line)) => {
-                if line.trim().is_empty() { continue; }
-                emit(KataEvent::Log { level: "warn".into(), message: line });
+                if line.trim().is_empty() {
+                    continue;
+                }
+                emit(KataEvent::Log {
+                    level: "warn".into(),
+                    message: line,
+                });
             }
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -434,26 +501,41 @@ pub fn run<F: FnMut(KataEvent)>(
             let _ = child.wait();
             match term {
                 Termination::Cancelled => (130, KataEvent::RunCancelled { exit_code: 130 }),
-                Termination::TimedOut => (124, KataEvent::RunError {
-                    message: format!("timed out after {timeout_secs}s"), exit_code: 124,
-                }),
-                Termination::MaxTurns(cap) => (125, KataEvent::RunError {
-                    message: format!("reached max turns ({cap})"), exit_code: 125,
-                }),
-                Termination::AnswerTimeout => (123, KataEvent::RunError {
-                    message: format!(
-                        "answer deadline exceeded after {}s",
-                        spec.interactive.answer_timeout_secs.unwrap_or(0)
-                    ),
-                    exit_code: 123,
-                }),
+                Termination::TimedOut => (
+                    124,
+                    KataEvent::RunError {
+                        message: format!("timed out after {timeout_secs}s"),
+                        exit_code: 124,
+                    },
+                ),
+                Termination::MaxTurns(cap) => (
+                    125,
+                    KataEvent::RunError {
+                        message: format!("reached max turns ({cap})"),
+                        exit_code: 125,
+                    },
+                ),
+                Termination::AnswerTimeout => (
+                    123,
+                    KataEvent::RunError {
+                        message: format!(
+                            "answer deadline exceeded after {}s",
+                            spec.interactive.answer_timeout_secs.unwrap_or(0)
+                        ),
+                        exit_code: 123,
+                    },
+                ),
             }
         }
         None => {
             let status = child.wait().map_err(|e| RunError::Spawn(e.to_string()))?;
             let code = status.code().unwrap_or(1);
             let payload = result.unwrap_or(crate::event::ResultPayload {
-                num_turns: turns, cost_usd: None, is_error: code != 0, result: None, subtype: None,
+                num_turns: turns,
+                cost_usd: None,
+                is_error: code != 0,
+                result: None,
+                subtype: None,
             });
             // Guard on the spec actually setting a budget: exit 122 is only
             // reachable when leash.max_budget_usd is set, so a result that
@@ -462,19 +544,25 @@ pub fn run<F: FnMut(KataEvent)>(
             if payload.is_budget_exhausted() && spec.leash.max_budget_usd.is_some() {
                 let ceiling = spec.leash.max_budget_usd.unwrap_or(0.0);
                 let spent = payload.cost_usd.unwrap_or(0.0);
-                (122, KataEvent::RunError {
-                    message: format!("budget ceiling ${ceiling:.2} reached; spent ${spent:.2}"),
-                    exit_code: 122,
-                })
+                (
+                    122,
+                    KataEvent::RunError {
+                        message: format!("budget ceiling ${ceiling:.2} reached; spent ${spent:.2}"),
+                        exit_code: 122,
+                    },
+                )
             } else {
-                (code, KataEvent::RunCompleted {
-                    exit_code: code,
-                    is_error: payload.is_error,
-                    num_turns: payload.num_turns,
-                    cost_usd: payload.cost_usd,
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    result: payload.result,
-                })
+                (
+                    code,
+                    KataEvent::RunCompleted {
+                        exit_code: code,
+                        is_error: payload.is_error,
+                        num_turns: payload.num_turns,
+                        cost_usd: payload.cost_usd,
+                        duration_ms: start.elapsed().as_millis() as u64,
+                        result: payload.result,
+                    },
+                )
             }
         }
     };
@@ -530,7 +618,10 @@ mod tests {
         inv.args.iter().any(|a| a == "--append-system-prompt")
     }
     fn append_file_count(inv: &ClaudeInvocation) -> usize {
-        inv.args.iter().filter(|a| *a == "--append-system-prompt-file").count()
+        inv.args
+            .iter()
+            .filter(|a| *a == "--append-system-prompt-file")
+            .count()
     }
 
     #[test]
@@ -558,11 +649,24 @@ mod tests {
 
         append_interactive_retask(&mut inv, Some(&id_path), INTERACTIVE_RETASK, td.path()).unwrap();
 
-        assert!(!has_inline_append(&inv), "must not add inline --append-system-prompt");
-        assert_eq!(append_file_count(&inv), 1, "must not add a second --append-system-prompt-file");
+        assert!(
+            !has_inline_append(&inv),
+            "must not add inline --append-system-prompt"
+        );
+        assert_eq!(
+            append_file_count(&inv),
+            1,
+            "must not add a second --append-system-prompt-file"
+        );
         let merged = std::fs::read_to_string(&id_file).unwrap();
-        assert!(merged.starts_with("IDENTITY PROMPT"), "identity prompt preserved");
-        assert!(merged.contains(INTERACTIVE_RETASK), "retask folded into the identity file");
+        assert!(
+            merged.starts_with("IDENTITY PROMPT"),
+            "identity prompt preserved"
+        );
+        assert!(
+            merged.contains(INTERACTIVE_RETASK),
+            "retask folded into the identity file"
+        );
     }
 
     // With no identity prompt there is no existing file: write our own and pass it
@@ -581,7 +685,11 @@ mod tests {
 
         assert!(!has_inline_append(&inv));
         assert_eq!(append_file_count(&inv), 1);
-        let idx = inv.args.iter().position(|a| a == "--append-system-prompt-file").unwrap();
+        let idx = inv
+            .args
+            .iter()
+            .position(|a| a == "--append-system-prompt-file")
+            .unwrap();
         let written = std::fs::read_to_string(&inv.args[idx + 1]).unwrap();
         assert_eq!(written, INTERACTIVE_RETASK);
     }

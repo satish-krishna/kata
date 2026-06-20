@@ -46,13 +46,21 @@ pub enum HistoryError {
 /// All runs in `~/.kata/runs`, newest first. Best-effort: an unreadable or
 /// malformed transcript is skipped, never fatal. Empty when there is no home.
 pub fn list_runs() -> Vec<RunRecord> {
-    let Some(dir) = fsutil::runs_dir() else { return Vec::new() };
-    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let Some(dir) = fsutil::runs_dir() else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
         if let Ok(events) = read_events(&path) {
             if let Some(rec) = build_record(stem, &events) {
                 out.push(rec);
@@ -65,23 +73,32 @@ pub fn list_runs() -> Vec<RunRecord> {
 
 /// One run's record plus its full event stream (for the detail view).
 pub fn load_run(id: &str) -> Result<RunDetail, HistoryError> {
-    if !is_valid_id(id) { return Err(HistoryError::InvalidId); }
+    if !is_valid_id(id) {
+        return Err(HistoryError::InvalidId);
+    }
     let dir = fsutil::runs_dir().ok_or(HistoryError::NotFound)?;
     let path = dir.join(format!("{id}.jsonl"));
     // Path-traversal guard: the resolved file must sit directly under runs_dir.
-    if path.parent() != Some(dir.as_path()) { return Err(HistoryError::InvalidId); }
+    if path.parent() != Some(dir.as_path()) {
+        return Err(HistoryError::InvalidId);
+    }
     // Reject symlinks: the file's contents are returned to the webview, so a
     // symlink at <id>.jsonl could exfiltrate an arbitrary file. symlink_metadata
     // does not follow the link; a missing file errors here → NotFound.
     let meta = std::fs::symlink_metadata(&path).map_err(|_| HistoryError::NotFound)?;
-    if meta.file_type().is_symlink() { return Err(HistoryError::InvalidId); }
+    if meta.file_type().is_symlink() {
+        return Err(HistoryError::InvalidId);
+    }
     let events = read_events(&path).map_err(|e| HistoryError::Io(e.to_string()))?;
     let record = build_record(id, &events).ok_or(HistoryError::NotFound)?;
     Ok(RunDetail { record, events })
 }
 
 fn is_valid_id(id: &str) -> bool {
-    !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    !id.is_empty()
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Read a transcript into events, skipping blank and malformed lines.
@@ -91,7 +108,9 @@ fn read_events(path: &Path) -> std::io::Result<Vec<KataEvent>> {
     let mut events = Vec::new();
     for line in std::io::BufReader::new(file).lines() {
         let line = line?;
-        if line.trim().is_empty() { continue; }
+        if line.trim().is_empty() {
+            continue;
+        }
         if let Ok(ev) = serde_json::from_str::<KataEvent>(&line) {
             events.push(ev);
         }
@@ -105,25 +124,56 @@ fn read_events(path: &Path) -> std::io::Result<Vec<KataEvent>> {
 fn build_record(stem: &str, events: &[KataEvent]) -> Option<RunRecord> {
     let started_at = fsutil::parse_stamp(stem)?;
     let (kata, isolation) = events.iter().find_map(|e| match e {
-        KataEvent::RunStarted { spec, isolation, .. } => Some((spec.clone(), isolation.clone())),
+        KataEvent::RunStarted {
+            spec, isolation, ..
+        } => Some((spec.clone(), isolation.clone())),
         _ => None,
     })?;
-    let terminal = events.iter().rev().find(|e| matches!(
-        e,
-        KataEvent::RunCompleted { .. } | KataEvent::RunError { .. } | KataEvent::RunCancelled { .. }
-    ));
+    let terminal = events.iter().rev().find(|e| {
+        matches!(
+            e,
+            KataEvent::RunCompleted { .. }
+                | KataEvent::RunError { .. }
+                | KataEvent::RunCancelled { .. }
+        )
+    });
     let (exit, turns, cost_usd, duration_ms, result) = match terminal {
-        Some(KataEvent::RunCompleted { exit_code, num_turns, cost_usd, duration_ms, result, .. }) =>
-            (Some(*exit_code), Some(*num_turns), *cost_usd, Some(*duration_ms), result.clone()),
-        Some(KataEvent::RunError { exit_code, message }) =>
-            (Some(*exit_code), None, None, None, Some(message.clone())),
-        Some(KataEvent::RunCancelled { exit_code }) =>
-            (Some(*exit_code), None, None, None, Some("cancelled".to_string())),
+        Some(KataEvent::RunCompleted {
+            exit_code,
+            num_turns,
+            cost_usd,
+            duration_ms,
+            result,
+            ..
+        }) => (
+            Some(*exit_code),
+            Some(*num_turns),
+            *cost_usd,
+            Some(*duration_ms),
+            result.clone(),
+        ),
+        Some(KataEvent::RunError { exit_code, message }) => {
+            (Some(*exit_code), None, None, None, Some(message.clone()))
+        }
+        Some(KataEvent::RunCancelled { exit_code }) => (
+            Some(*exit_code),
+            None,
+            None,
+            None,
+            Some("cancelled".to_string()),
+        ),
         _ => (None, None, None, None, None),
     };
     Some(RunRecord {
-        id: stem.to_string(), kata, started_at, isolation,
-        exit, turns, cost_usd, duration_ms, result,
+        id: stem.to_string(),
+        kata,
+        started_at,
+        isolation,
+        exit,
+        turns,
+        cost_usd,
+        duration_ms,
+        result,
     })
 }
 
@@ -147,21 +197,30 @@ mod tests {
     }
 
     const COMPLETED: &str = concat!(
-        r#"{"type":"run.started","spec":"triage","model":null,"workdir":"/w","isolation":"none"}"#, "\n",
-        r#"{"type":"turn","n":1}"#, "\n",
-        r#"{"type":"run.completed","exit_code":0,"is_error":false,"num_turns":4,"cost_usd":0.041,"duration_ms":48120,"result":"isolated the flake"}"#, "\n",
+        r#"{"type":"run.started","spec":"triage","model":null,"workdir":"/w","isolation":"none"}"#,
+        "\n",
+        r#"{"type":"turn","n":1}"#,
+        "\n",
+        r#"{"type":"run.completed","exit_code":0,"is_error":false,"num_turns":4,"cost_usd":0.041,"duration_ms":48120,"result":"isolated the flake"}"#,
+        "\n",
     );
     const KILLED: &str = concat!(
-        r#"{"type":"run.started","spec":"audit","model":null,"workdir":"/w","isolation":"worktree"}"#, "\n",
-        r#"{"type":"run.error","message":"reached max turns (12)","exit_code":125}"#, "\n",
+        r#"{"type":"run.started","spec":"audit","model":null,"workdir":"/w","isolation":"worktree"}"#,
+        "\n",
+        r#"{"type":"run.error","message":"reached max turns (12)","exit_code":125}"#,
+        "\n",
     );
     const CANCELLED: &str = concat!(
-        r#"{"type":"run.started","spec":"perf","model":null,"workdir":"/w","isolation":"none"}"#, "\n",
-        r#"{"type":"run.cancelled","exit_code":130}"#, "\n",
+        r#"{"type":"run.started","spec":"perf","model":null,"workdir":"/w","isolation":"none"}"#,
+        "\n",
+        r#"{"type":"run.cancelled","exit_code":130}"#,
+        "\n",
     );
     const INCOMPLETE: &str = concat!(
-        r#"{"type":"run.started","spec":"doc","model":null,"workdir":"/w","isolation":"none"}"#, "\n",
-        r#"{"type":"log","level":"info","message":"working"}"#, "\n",
+        r#"{"type":"run.started","spec":"doc","model":null,"workdir":"/w","isolation":"none"}"#,
+        "\n",
+        r#"{"type":"log","level":"info","message":"working"}"#,
+        "\n",
     );
 
     #[test]
@@ -169,7 +228,10 @@ mod tests {
     fn lists_records_newest_first_with_derived_fields() {
         let _h = seed(&[
             ("triage-20260618T100000Z.jsonl", COMPLETED),
-            ("audit-20260618T120000Z.jsonl", &format!("{KILLED}garbage not json\n")),
+            (
+                "audit-20260618T120000Z.jsonl",
+                &format!("{KILLED}garbage not json\n"),
+            ),
             ("perf-20260617T080000Z.jsonl", CANCELLED),
         ]);
         let runs = list_runs();
@@ -213,8 +275,17 @@ mod tests {
         let _h = seed(&[("triage-20260618T100000Z.jsonl", COMPLETED)]);
         let detail = load_run("triage-20260618T100000Z").unwrap();
         assert_eq!(detail.record.exit, Some(0));
-        assert!(detail.events.iter().any(|e| matches!(e, KataEvent::Turn { .. })));
-        assert!(matches!(load_run("../escape"), Err(HistoryError::InvalidId)));
-        assert!(matches!(load_run("nope-20260101T000000Z"), Err(HistoryError::NotFound)));
+        assert!(detail
+            .events
+            .iter()
+            .any(|e| matches!(e, KataEvent::Turn { .. })));
+        assert!(matches!(
+            load_run("../escape"),
+            Err(HistoryError::InvalidId)
+        ));
+        assert!(matches!(
+            load_run("nope-20260101T000000Z"),
+            Err(HistoryError::NotFound)
+        ));
     }
 }

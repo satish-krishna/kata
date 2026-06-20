@@ -35,7 +35,11 @@ pub enum WorktreeError {
     #[error("could not resolve a home directory for ~/.kata (HOME/USERPROFILE unset)")]
     NoHome,
     #[error("git {cmd} failed (status {status:?}): {stderr}")]
-    Git { cmd: String, status: Option<i32>, stderr: String },
+    Git {
+        cmd: String,
+        status: Option<i32>,
+        stderr: String,
+    },
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -54,7 +58,10 @@ pub fn create_in(workdir: &str, name: &str, root: &Path) -> Result<Worktree, Wor
     if !git(wd, &["rev-parse", "--git-dir"])?.status.success() {
         return Err(WorktreeError::NotAGitRepo(workdir.to_string()));
     }
-    if !git(wd, &["rev-parse", "--verify", "HEAD"])?.status.success() {
+    if !git(wd, &["rev-parse", "--verify", "HEAD"])?
+        .status
+        .success()
+    {
         return Err(WorktreeError::NotAGitRepo(workdir.to_string()));
     }
 
@@ -73,7 +80,10 @@ pub fn create_in(workdir: &str, name: &str, root: &Path) -> Result<Worktree, Wor
             stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
         });
     }
-    Ok(Worktree { path: path_str, branch })
+    Ok(Worktree {
+        path: path_str,
+        branch,
+    })
 }
 
 /// Summarize the worktree's changes vs HEAD, including newly-created untracked
@@ -107,7 +117,9 @@ pub fn diff(wt: &Worktree) -> Result<DiffSummary, WorktreeError> {
         return Err(WorktreeError::Git {
             cmd: "diff HEAD --name-status".into(),
             status: name_status.status.code(),
-            stderr: String::from_utf8_lossy(&name_status.stderr).trim().to_string(),
+            stderr: String::from_utf8_lossy(&name_status.stderr)
+                .trim()
+                .to_string(),
         });
     }
     let mut files = Vec::new();
@@ -123,7 +135,10 @@ pub fn diff(wt: &Worktree) -> Result<DiffSummary, WorktreeError> {
         let (ins, del) = counts.get(&path).copied().unwrap_or((0, 0));
         insertions += ins;
         deletions += del;
-        files.push(DiffFile { status: status.chars().next().unwrap().to_string(), path });
+        files.push(DiffFile {
+            status: status.chars().next().unwrap().to_string(),
+            path,
+        });
     }
 
     // Untracked (newly-created) files: status "A", insertions = line count.
@@ -132,7 +147,9 @@ pub fn diff(wt: &Worktree) -> Result<DiffSummary, WorktreeError> {
         return Err(WorktreeError::Git {
             cmd: "ls-files --others --exclude-standard".into(),
             status: untracked.status.code(),
-            stderr: String::from_utf8_lossy(&untracked.stderr).trim().to_string(),
+            stderr: String::from_utf8_lossy(&untracked.stderr)
+                .trim()
+                .to_string(),
         });
     }
     for path in String::from_utf8_lossy(&untracked.stdout).lines() {
@@ -144,10 +161,17 @@ pub fn diff(wt: &Worktree) -> Result<DiffSummary, WorktreeError> {
             .map(|c| c.lines().count() as u32)
             .unwrap_or(0); // unreadable/binary => 0
         insertions += ins;
-        files.push(DiffFile { status: "A".into(), path: path.to_string() });
+        files.push(DiffFile {
+            status: "A".into(),
+            path: path.to_string(),
+        });
     }
 
-    Ok(DiffSummary { files, insertions, deletions })
+    Ok(DiffSummary {
+        files,
+        insertions,
+        deletions,
+    })
 }
 
 /// Resolve `<kata-home>/worktrees`. Returns `NoHome` rather than falling back to
@@ -163,10 +187,20 @@ fn worktrees_dir() -> Result<PathBuf, WorktreeError> {
 fn slug(name: &str) -> String {
     let mapped: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
     let trimmed = mapped.trim_matches('-');
-    if trimmed.is_empty() { "kata".to_string() } else { trimmed.to_string() }
+    if trimmed.is_empty() {
+        "kata".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// A short, process-unique suffix so repeated runs never collide on a branch.
@@ -187,7 +221,13 @@ fn git(dir: &Path, args: &[&str]) -> Result<std::process::Output, WorktreeError>
         .arg(dir)
         .args(args)
         .output()
-        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { WorktreeError::GitMissing } else { WorktreeError::Io(e) })
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                WorktreeError::GitMissing
+            } else {
+                WorktreeError::Io(e)
+            }
+        })
 }
 
 #[cfg(test)]
@@ -199,7 +239,13 @@ mod tests {
     fn init_repo() -> tempfile::TempDir {
         let d = tempfile::tempdir().unwrap();
         let git = |args: &[&str]| {
-            let ok = Command::new("git").arg("-C").arg(d.path()).args(args).status().unwrap().success();
+            let ok = Command::new("git")
+                .arg("-C")
+                .arg(d.path())
+                .args(args)
+                .status()
+                .unwrap()
+                .success();
             assert!(ok, "git {args:?} failed");
         };
         git(&["init", "-q"]);
@@ -230,7 +276,11 @@ mod tests {
         let repo = init_repo();
         let root = tempfile::tempdir().unwrap();
         let wt = create_in(&repo.path().to_string_lossy(), "my spec!", root.path()).unwrap();
-        assert!(wt.branch.starts_with("kata/my-spec-"), "branch was {}", wt.branch);
+        assert!(
+            wt.branch.starts_with("kata/my-spec-"),
+            "branch was {}",
+            wt.branch
+        );
         assert!(Path::new(&wt.path).join("tracked.txt").exists());
     }
 
@@ -261,14 +311,30 @@ mod tests {
         std::fs::write(Path::new(&wt.path).join("new.txt"), "a\nb\n").unwrap();
 
         let d = diff(&wt).unwrap();
-        assert!(d.files.iter().any(|f| f.path == "tracked.txt" && f.status == "M"), "files: {:?}", d.files);
-        assert!(d.files.iter().any(|f| f.path == "new.txt" && f.status == "A"), "files: {:?}", d.files);
+        assert!(
+            d.files
+                .iter()
+                .any(|f| f.path == "tracked.txt" && f.status == "M"),
+            "files: {:?}",
+            d.files
+        );
+        assert!(
+            d.files
+                .iter()
+                .any(|f| f.path == "new.txt" && f.status == "A"),
+            "files: {:?}",
+            d.files
+        );
         assert_eq!(d.insertions, 3, "1 added to tracked + 2 in new.txt");
         assert_eq!(d.deletions, 0);
 
         // The index must NOT have been mutated (operator's later diff is unsurprised).
-        let staged = Command::new("git").arg("-C").arg(&wt.path)
-            .args(["diff", "--cached", "--name-only"]).output().unwrap();
+        let staged = Command::new("git")
+            .arg("-C")
+            .arg(&wt.path)
+            .args(["diff", "--cached", "--name-only"])
+            .output()
+            .unwrap();
         assert!(staged.stdout.is_empty(), "diff() must not stage anything");
     }
 
@@ -276,26 +342,42 @@ mod tests {
     #[serial]
     fn worktrees_dir_resolution_order() {
         let saved: Vec<(&str, Option<String>)> = ["KATA_HOME", "HOME", "USERPROFILE"]
-            .iter().map(|k| (*k, std::env::var(k).ok())).collect();
-        let restore = || for (k, v) in &saved {
-            match v { Some(val) => std::env::set_var(k, val), None => std::env::remove_var(k) }
+            .iter()
+            .map(|k| (*k, std::env::var(k).ok()))
+            .collect();
+        let restore = || {
+            for (k, v) in &saved {
+                match v {
+                    Some(val) => std::env::set_var(k, val),
+                    None => std::env::remove_var(k),
+                }
+            }
         };
 
         // 1. KATA_HOME wins.
         std::env::set_var("KATA_HOME", "/tmp/khome");
-        assert_eq!(worktrees_dir().unwrap(), PathBuf::from("/tmp/khome").join("worktrees"));
+        assert_eq!(
+            worktrees_dir().unwrap(),
+            PathBuf::from("/tmp/khome").join("worktrees")
+        );
 
         // 2. Falls back to HOME/.kata.
         std::env::remove_var("KATA_HOME");
         std::env::remove_var("USERPROFILE");
         std::env::set_var("HOME", "/tmp/h");
-        assert_eq!(worktrees_dir().unwrap(), PathBuf::from("/tmp/h").join(".kata").join("worktrees"));
+        assert_eq!(
+            worktrees_dir().unwrap(),
+            PathBuf::from("/tmp/h").join(".kata").join("worktrees")
+        );
 
         // 3. Neither => NoHome.
         std::env::remove_var("HOME");
         std::env::remove_var("USERPROFILE");
         std::env::remove_var("KATA_HOME");
-        assert!(matches!(worktrees_dir().unwrap_err(), WorktreeError::NoHome));
+        assert!(matches!(
+            worktrees_dir().unwrap_err(),
+            WorktreeError::NoHome
+        ));
 
         restore();
     }
