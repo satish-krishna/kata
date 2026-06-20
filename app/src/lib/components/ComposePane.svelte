@@ -65,10 +65,15 @@
     spec.model.id = v === "" ? null : v;
   }
 
-  // Integer-coerce the leash inputs (mirrors kata-core's expectations).
+  // Integer-coerce the turn cap (null = unlimited; mirrors kata-core's Option<u32>).
   function onMaxTurns(e: Event) {
-    const n = Math.trunc(Number((e.currentTarget as HTMLInputElement).value));
-    spec.leash.max_turns = Number.isFinite(n) && n >= 1 ? n : 1;
+    const v = (e.currentTarget as HTMLInputElement).value.trim();
+    if (v === "") {
+      spec.leash.max_turns = null;
+      return;
+    }
+    const n = Math.trunc(Number(v));
+    spec.leash.max_turns = Number.isFinite(n) && n >= 1 ? n : null;
   }
   function onTimeout(e: Event) {
     const v = (e.currentTarget as HTMLInputElement).value.trim();
@@ -210,8 +215,8 @@
       <span class="wb-section__sub">cap · contain · observe</span>
     </div>
     <div class="wb-grid-2">
-      <Field label="Max turns" key="max_turns" hint="Engine cap → exit 125.">
-        <input class="k-input" type="number" min="1" step="1" value={spec.leash.max_turns} oninput={onMaxTurns} />
+      <Field label="Max turns" key="max_turns" hint="empty = unlimited · engine cap → exit 125 when set">
+        <input class="k-input" type="number" min="1" step="1" placeholder="unlimited" value={spec.leash.max_turns ?? ""} oninput={onMaxTurns} />
       </Field>
       <Field label="Timeout (secs)" key="timeout_secs" hint="Wall-clock kill → exit 124.">
         <input class="k-input" type="number" min="0" step="1" placeholder="(none)" value={spec.leash.timeout_secs ?? ""} oninput={onTimeout} />

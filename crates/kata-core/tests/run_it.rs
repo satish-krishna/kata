@@ -175,7 +175,7 @@ fn run_max_turns_kills_child() {
     with_fake("manyturns");
     let work = tempfile::tempdir().unwrap();
     let mut spec = base_spec(&work.path().to_string_lossy());
-    spec.leash.max_turns = 2;
+    spec.leash.max_turns = Some(2);
     let cancel = CancelToken::new();
     let mut events = Vec::new();
     let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
@@ -184,6 +184,22 @@ fn run_max_turns_kills_child() {
     assert!(events.iter().any(|e| matches!(e, KataEvent::Turn { n: 2 })));
     assert!(!events.iter().any(|e| matches!(e, KataEvent::Turn { n } if *n >= 3)));
     assert!(events.iter().any(|e| matches!(e, KataEvent::RunError { exit_code: 125, .. })));
+}
+
+#[test]
+#[serial]
+fn run_unlimited_turns_does_not_cap() {
+    with_fake("manyturns");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.leash.max_turns = None; // unlimited
+    let cancel = CancelToken::new();
+    let mut events = Vec::new();
+    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &kata_core::run::AnswerRx::default(), |e| events.push(e)).unwrap();
+    // No turn cap fires: all 10 drip turns are counted, none trips exit 125.
+    assert!(!events.iter().any(|e| matches!(e, KataEvent::RunError { exit_code: 125, .. })));
+    assert!(events.iter().any(|e| matches!(e, KataEvent::Turn { n: 10 })));
+    assert_eq!(outcome.exit_code, 0);
 }
 
 fn init_git_repo() -> tempfile::TempDir {

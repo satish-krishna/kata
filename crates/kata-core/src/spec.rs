@@ -100,8 +100,9 @@ pub struct Model {
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Leash {
-    #[serde(default = "default_max_turns")]
-    pub max_turns: u32,
+    #[cfg_attr(feature = "ts", ts(optional = nullable, as = "Option<u32>"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<u32>,
     #[cfg_attr(feature = "ts", ts(optional = nullable, as = "Option<u32>"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
@@ -114,7 +115,7 @@ pub struct Leash {
 
 impl Default for Leash {
     fn default() -> Self {
-        Self { max_turns: default_max_turns(), timeout_secs: None, max_budget_usd: None, isolation: Isolation::None }
+        Self { max_turns: None, timeout_secs: None, max_budget_usd: None, isolation: Isolation::None }
     }
 }
 
@@ -130,7 +131,6 @@ impl Leash {
     }
 }
 
-fn default_max_turns() -> u32 { 12 }
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
@@ -227,7 +227,7 @@ pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
     if spec.name.trim().is_empty() { errs.push("name is required".into()); }
     if spec.task.trim().is_empty() { errs.push("task is required".into()); }
     if spec.workdir.trim().is_empty() { errs.push("workdir is required".into()); }
-    if spec.leash.max_turns == 0 { errs.push("leash.max_turns must be >= 1".into()); }
+    if spec.leash.max_turns == Some(0) { errs.push("leash.max_turns must be >= 1 when set".into()); }
     if let Some(b) = spec.leash.max_budget_usd {
         // Reject non-finite (NaN/±inf) too: `b <= 0.0` is false for NaN, so a
         // non-finite budget would otherwise pass and later emit an invalid
@@ -255,7 +255,7 @@ workdir = "/tmp/work"
         let spec: RunSpec = toml::from_str(minimal_toml()).unwrap();
         assert_eq!(spec.name, "demo");
         assert_eq!(spec.task, "do the thing");
-        assert_eq!(spec.leash.max_turns, 12); // default
+        assert_eq!(spec.leash.max_turns, None); // default: unlimited
         assert_eq!(spec.leash.isolation, Isolation::None);
         assert_eq!(spec.identity.mode, IdentityMode::Append);
         assert!(spec.skills.is_empty());
@@ -316,7 +316,7 @@ isolation = "worktree"
         let json = r#"{"schema":1,"name":"j","task":"t","workdir":"/w"}"#;
         let spec: RunSpec = serde_json::from_str(json).unwrap();
         assert_eq!(spec.name, "j");
-        assert_eq!(spec.leash.max_turns, 12);
+        assert_eq!(spec.leash.max_turns, None);
     }
 
     #[test]
@@ -331,10 +331,17 @@ isolation = "worktree"
     #[test]
     fn validate_rejects_unknown_schema_and_zero_turns() {
         let mut spec = RunSpec { schema: 99, name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
-        spec.leash.max_turns = 0;
+        spec.leash.max_turns = Some(0);
         let errs = validate(&spec).unwrap_err();
         assert!(errs.iter().any(|e| e.contains("schema")));
         assert!(errs.iter().any(|e| e.contains("max_turns")));
+    }
+
+    #[test]
+    fn validate_accepts_unset_max_turns() {
+        let mut spec = RunSpec { schema: 1, name: "n".into(), task: "t".into(), workdir: "/w".into(), ..Default::default() };
+        spec.leash.max_turns = None; // unlimited
+        assert!(validate(&spec).is_ok());
     }
 
     #[test]
@@ -389,7 +396,7 @@ isolation = "worktree"
             skills: vec!["triage-flaky-test".into()],
             plugins,
             model: Model { id: Some("claude-sonnet-4-6".into()) },
-            leash: Leash { max_turns: 8, timeout_secs: Some(600), max_budget_usd: None, isolation: Isolation::Worktree },
+            leash: Leash { max_turns: Some(8), timeout_secs: Some(600), max_budget_usd: None, isolation: Isolation::Worktree },
             auth: Auth { bare: false, token_env: Some("ANTHROPIC_API_KEY".into()) },
             interactive: Interactive::default(),
         }

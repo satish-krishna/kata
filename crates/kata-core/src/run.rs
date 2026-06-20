@@ -354,11 +354,14 @@ pub fn run<F: FnMut(KataEvent)>(
                 let parsed = crate::event::parse_stream_line(&line);
                 if parsed.is_assistant_message {
                     // Engine-side leash: claude 2.1.x has no --max-turns flag, so the
-                    // turn cap is enforced here. Allow up to max_turns turns; if a turn
-                    // beyond the cap begins, stop and kill the child.
-                    if turns >= spec.leash.max_turns {
-                        termination = Some(Termination::MaxTurns);
-                        break;
+                    // turn cap is enforced here. `None` means unlimited (bounded only
+                    // by the wall-clock timeout); when a cap is set, stop once a turn
+                    // beyond it begins and kill the child.
+                    if let Some(cap) = spec.leash.max_turns {
+                        if turns >= cap {
+                            termination = Some(Termination::MaxTurns(cap));
+                            break;
+                        }
                     }
                     turns += 1;
                     emit(KataEvent::Turn { n: turns });
@@ -397,8 +400,8 @@ pub fn run<F: FnMut(KataEvent)>(
                 Termination::TimedOut => (124, KataEvent::RunError {
                     message: format!("timed out after {timeout_secs}s"), exit_code: 124,
                 }),
-                Termination::MaxTurns => (125, KataEvent::RunError {
-                    message: format!("reached max turns ({})", spec.leash.max_turns), exit_code: 125,
+                Termination::MaxTurns(cap) => (125, KataEvent::RunError {
+                    message: format!("reached max turns ({cap})"), exit_code: 125,
                 }),
                 Termination::AnswerTimeout => (123, KataEvent::RunError {
                     message: format!(
@@ -478,7 +481,7 @@ enum ChildLine {
 enum Termination {
     Cancelled,
     TimedOut,
-    MaxTurns,
+    MaxTurns(u32),
     AnswerTimeout,
 }
 
