@@ -106,7 +106,7 @@ mod tests {
 
     fn spec() -> RunSpec {
         let mut s = RunSpec { schema: 1, name: "n".into(), task: "do it".into(), workdir: "/repo".into(), ..Default::default() };
-        s.leash.max_turns = 8;
+        s.leash.max_turns = Some(8);
         s
     }
 
