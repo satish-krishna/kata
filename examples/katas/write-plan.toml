@@ -8,7 +8,7 @@ Use the `superpowers:writing-plans` skill to produce a written, reviewable imple
 
 <<Describe the feature/spec, or point to the brainstorming output. Override this task at launch.>>
 
-The plan must: break the work into ordered, independently verifiable steps; name the files and areas each step touches; specify the tests to write first for each step (per the repo's TDD rule); and call out risks, dependencies, and open questions. Write the plan to a Markdown file under docs/ — follow any plan-location convention stated in CLAUDE.md (e.g. docs/superpowers/). Do NOT implement the code in this run; the deliverable is the plan file.
+The plan must: break the work into ordered, independently verifiable steps; name the files and areas each step touches; specify the tests to write first for each step (per the repo's TDD rule); and call out risks, dependencies, and open questions. Write the plan to a Markdown file under docs/ — follow any plan-location convention stated in CLAUDE.md (e.g. docs/superpowers/plans/). Do NOT implement the code in this run; the deliverable is the plan file.
 """
 
 [identity]
