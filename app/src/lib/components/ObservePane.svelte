@@ -7,6 +7,7 @@
   import SummaryStat from "./SummaryStat.svelte";
   import AskPanel from "./AskPanel.svelte";
   import MarkdownBody from "./MarkdownBody.svelte";
+  import { isAtBottom } from "../scroll";
   import Cpu from "@lucide/svelte/icons/cpu";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import Terminal from "@lucide/svelte/icons/terminal";
@@ -30,13 +31,23 @@
   } = $props();
 
   let streamEl: HTMLDivElement | undefined = $state();
+  // Follow the tail until the reader scrolls away. A plain (non-reactive) flag
+  // on purpose: only appended content should trigger a scroll, never a change
+  // to this flag — otherwise a pending ask would yank the reader back down.
+  let stick = true;
 
-  // Keep the stream pinned to the latest event.
+  function onScroll() {
+    if (streamEl) stick = isAtBottom(streamEl);
+  }
+
+  // Keep the stream pinned to the latest event, but only while the reader is
+  // already at the bottom — so streaming events (or a pending ask) don't fight
+  // them when they've scrolled up to read context.
   $effect(() => {
     void events.length;
     void summary;
     void asks.length;
-    if (streamEl) streamEl.scrollTop = streamEl.scrollHeight;
+    if (streamEl && stick) streamEl.scrollTop = streamEl.scrollHeight;
   });
 
   const cost = (s: RunSummary) => (s.cost_usd != null ? `$${s.cost_usd.toFixed(3)}` : "—");
@@ -54,7 +65,7 @@
   {/if}
 </div>
 
-<div class="wb-stream" bind:this={streamEl}>
+<div class="wb-stream" bind:this={streamEl} onscroll={onScroll}>
   {#if events.length === 0 && !summary && asks.length === 0}
     <div class="wb-stream__empty">
       <Terminal size={28} />

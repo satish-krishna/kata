@@ -9,6 +9,7 @@
   import SummaryStat from "$lib/components/SummaryStat.svelte";
   import TaskEditor from "$lib/components/TaskEditor.svelte";
   import DetailActions from "$lib/components/DetailActions.svelte";
+  import MarkdownBody from "$lib/components/MarkdownBody.svelte";
   import { goto } from "$app/navigation";
   import type { RunSpec } from "../../bindings/RunSpec";
   import FilePlus from "@lucide/svelte/icons/file-plus";
@@ -201,7 +202,9 @@
             <SummaryStat label="COST" value={fmtCost(run.cost_usd)} />
             <SummaryStat label="DURATION" value={fmtMs(run.duration_ms)} />
           </div>
-          <div class="wb-detail__result">{run.result ?? ""}</div>
+          {#if run.result}
+            <div class="wb-detail__result"><MarkdownBody md={run.result} /></div>
+          {/if}
           <div>
             <div class="wb-detail__streamhead" style="margin-bottom:10px">Event log · {run.kata}</div>
             {#if stream}
