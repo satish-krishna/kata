@@ -10,12 +10,12 @@ import type { Preset } from "../bindings/Preset";
 export type { RunRecord };
 
 export const history: RunRecord[] = [
-  { id: "triage-flaky-test-20260618T142200Z", kata: "triage-flaky-test", started_at: 1750256520, isolation: "worktree", exit: 0, turns: 4, cost_usd: 0.041, duration_ms: 48120, result: "Isolated the flake to a clock-skew race in TokenValidator.IsExpired (mixed Now/UtcNow). Deterministic repro: pin clock to 23:59:59.6 local. No production code changed." },
-  { id: "release-notes-20260618T110500Z", kata: "release-notes", started_at: 1750244700, isolation: "none", exit: 0, turns: 3, cost_usd: 0.028, duration_ms: 31540, result: "Drafted release notes for v2.4.0 from 18 merged PRs since v2.3.0; grouped by Added / Fixed / Changed." },
-  { id: "audit-deps-20260617T174800Z", kata: "audit-deps", started_at: 1750182480, isolation: "none", exit: 125, turns: null, cost_usd: null, duration_ms: null, result: "reached max turns (12)" },
-  { id: "triage-flaky-test-20260617T091400Z", kata: "triage-flaky-test", started_at: 1750151640, isolation: "worktree", exit: 0, turns: 5, cost_usd: 0.052, duration_ms: 61900, result: "Could not reproduce in 30 iterations on this commit; flake likely fixed by #1182. Recommend closing." },
-  { id: "perf-sweep-20260616T160200Z", kata: "perf-sweep", started_at: 1750089720, isolation: "worktree", exit: 130, turns: null, cost_usd: null, duration_ms: null, result: "cancelled" },
-  { id: "doc-refresh-20260616T103900Z", kata: "doc-refresh", started_at: 1750069140, isolation: "none", exit: 0, turns: 6, cost_usd: 0.061, duration_ms: 72400, result: "Updated README + 4 module docs for the renamed Auth API surface; 0 code changes." },
+  { id: "triage-flaky-test-20260618T142200Z", kata: "triage-flaky-test", started_at: 1781792520, isolation: "worktree", exit: 0, turns: 4, cost_usd: 0.041, duration_ms: 48120, result: "## Isolation Report\n\nIsolated `AuthTests.LoginExpiry` flake to a **clock-skew race**: `TokenValidator.IsExpired` mixes `DateTime.Now` (expiry) with `DateTime.UtcNow` (check).\n\n| Field | Value |\n|---|---|\n| Cause | Mixed Now/UtcNow in token expiry |\n| Repro | Pin clock to `23:59:59.6` local |\n| Prod code changed | No |\n\nNo production code was changed." },
+  { id: "release-notes-20260618T110500Z", kata: "release-notes", started_at: 1781780700, isolation: "none", exit: 0, turns: 3, cost_usd: 0.028, duration_ms: 31540, result: "Drafted release notes for v2.4.0 from 18 merged PRs since v2.3.0; grouped by Added / Fixed / Changed." },
+  { id: "audit-deps-20260617T174800Z", kata: "audit-deps", started_at: 1781718480, isolation: "none", exit: 125, turns: null, cost_usd: null, duration_ms: null, result: "reached max turns (12)" },
+  { id: "triage-flaky-test-20260617T091400Z", kata: "triage-flaky-test", started_at: 1781687640, isolation: "worktree", exit: 0, turns: 5, cost_usd: 0.052, duration_ms: 61900, result: "Could not reproduce in 30 iterations on this commit; flake likely fixed by #1182. Recommend closing." },
+  { id: "perf-sweep-20260616T160200Z", kata: "perf-sweep", started_at: 1781625720, isolation: "worktree", exit: 130, turns: null, cost_usd: null, duration_ms: null, result: "cancelled" },
+  { id: "doc-refresh-20260616T103900Z", kata: "doc-refresh", started_at: 1781606340, isolation: "none", exit: 0, turns: 6, cost_usd: 0.061, duration_ms: 72400, result: "Updated README + 4 module docs for the renamed Auth API surface; 0 code changes." },
 ];
 
 export const runStreams: Record<string, StreamEvent[]> = {
