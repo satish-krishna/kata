@@ -112,9 +112,9 @@ fn cmd_bundle(spec_path: &std::path::Path, out: Option<&std::path::Path>, force:
     let roots = kata_core::catalog::DiscoveryRoots::defaults(&cwd);
     let catalog = kata_core::catalog::discover(&roots);
 
-    let out_dir = out.map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(format!("{}-bundle", kata_core::fsutil::slug(&spec.name)))
-    });
+    let out_dir = out
+        .map(PathBuf::from)
+        .unwrap_or_else(|| kata_core::bundle::default_out_dir(&spec));
 
     match kata_core::bundle::bundle(&spec, &catalog, &out_dir, force) {
         Ok(()) => {

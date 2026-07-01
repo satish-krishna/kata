@@ -1,5 +1,9 @@
 [package]
 name = "kata-core"
+description = "Engine library for Kata: compose and run single headless coding-agent runs."
+repository = "https://github.com/satish-krishna/kata"
+keywords = ["claude", "agent", "headless", "orchestration", "cli"]
+categories = ["development-tools"]
 edition.workspace = true
 license.workspace = true
 version.workspace = true
