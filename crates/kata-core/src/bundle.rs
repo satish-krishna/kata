@@ -104,6 +104,13 @@ pub fn is_bundle(path: &Path) -> bool {
     path.is_dir() && path.join("kata-bundle.toml").is_file()
 }
 
+/// The default output directory for `bundle`: the spec name slugged into a
+/// single filesystem-safe segment plus a `-bundle` suffix. The one home for the
+/// naming convention shared by the CLI and the Workbench.
+pub fn default_out_dir(spec: &RunSpec) -> std::path::PathBuf {
+    format!("{}-bundle", crate::fsutil::slug(&spec.name)).into()
+}
+
 /// Discovery roots for running a bundle: the kit is discovered ONLY from
 /// the bundle's vendored `.claude`. The project scope is pointed at a
 /// path that will not exist, so discovery never leaks user/project entries.
@@ -264,6 +271,24 @@ mod tests {
                 .unwrap();
         assert_eq!(manifest.entry.len(), 1);
         assert_eq!(manifest.entry[0].name, "new");
+    }
+
+    #[test]
+    fn default_out_dir_slugs_name_and_appends_bundle() {
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "My Cool Kata".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            default_out_dir(&spec),
+            std::path::PathBuf::from("My-Cool-Kata-bundle")
+        );
+        // A name that is already a clean slug just gets the suffix.
+        spec.name = "demo".into();
+        assert_eq!(default_out_dir(&spec), std::path::PathBuf::from("demo-bundle"));
     }
 
     #[test]

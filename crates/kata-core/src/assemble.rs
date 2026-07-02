@@ -120,6 +120,7 @@ pub struct Assembled {
 
 impl Assembled {
     /// Construct without a backing temp dir, for tests of pure consumers.
+    #[cfg(test)]
     pub fn for_test(plugin_dir: Option<String>, system_prompt_file: Option<String>) -> Self {
         Self {
             plugin_dir,
