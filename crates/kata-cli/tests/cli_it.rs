@@ -126,6 +126,90 @@ fn run_streams_jsonl_events_and_exits_zero() {
     assert_eq!(last["exit_code"], 0);
 }
 
+/// Normalize a run's JSON-line stdout for golden comparison: parse each line,
+/// blank the three volatile fields (the temp workdir, the timestamped transcript
+/// path, the wall-clock duration), and re-serialize. Keys sort (serde_json's
+/// default Map is a BTreeMap), so the golden is stable and platform-independent.
+fn normalize_events(stdout: &str) -> String {
+    let mut lines = Vec::new();
+    for line in stdout.lines().filter(|l| !l.trim().is_empty()) {
+        let mut v: serde_json::Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("non-JSON line on run stdout: {line:?} ({e})"));
+        match v["type"].as_str() {
+            Some("run.started") => v["workdir"] = "<WORKDIR>".into(),
+            Some("log")
+                if v["message"]
+                    .as_str()
+                    .unwrap_or("")
+                    .starts_with("transcript: ") =>
+            {
+                v["message"] = "transcript: <TRANSCRIPT>".into()
+            }
+            Some("run.completed") => v["duration_ms"] = serde_json::json!(0),
+            _ => {}
+        }
+        lines.push(serde_json::to_string(&v).unwrap());
+    }
+    let mut s = lines.join("\n");
+    s.push('\n');
+    s
+}
+
+/// Golden test: the full `kata run` event stream for the deterministic `ok`
+/// fake-claude mode must match a checked-in fixture. This pins the out-of-process
+/// wire protocol (event sequence, type tags, field names) that the consumer guide
+/// in `docs/consuming-kata.md` documents. When the protocol changes on purpose,
+/// regenerate with `UPDATE_GOLDEN=1 cargo test -p kata-cli --test cli_it`.
+#[test]
+fn run_ok_event_stream_matches_golden() {
+    let work = tempfile::tempdir().unwrap();
+    let kata_home = tempfile::tempdir().unwrap();
+    let workdir = work.path().to_string_lossy().replace('\\', "/");
+    let spec = write(
+        work.path(),
+        "g.kata.toml",
+        &format!(
+            "schema = 1\nname = \"golden\"\ntask = \"t\"\nworkdir = \"{workdir}\"\n\n[leash]\ntimeout_secs = 60\n"
+        ),
+    );
+
+    let out = kata()
+        .arg("run")
+        .arg(&spec)
+        .env("KATA_CLAUDE_BIN", fake_claude())
+        .env("KATA_FAKE_MODE", "ok")
+        .env("KATA_HOME", kata_home.path())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let actual = normalize_events(&String::from_utf8(out.stdout).unwrap());
+
+    let golden_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/run_ok_events.jsonl");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::create_dir_all(golden_path.parent().unwrap()).unwrap();
+        std::fs::write(&golden_path, &actual).unwrap();
+    }
+    let golden = std::fs::read_to_string(&golden_path)
+        .unwrap_or_else(|_| {
+            panic!(
+                "missing golden fixture {}; generate it with UPDATE_GOLDEN=1",
+                golden_path.display()
+            )
+        })
+        .replace("\r\n", "\n");
+    assert_eq!(
+        actual, golden,
+        "the run event stream drifted from the golden fixture. If this change is \
+         intentional, regenerate with UPDATE_GOLDEN=1 and review the diff."
+    );
+}
+
 #[test]
 fn run_cancel_via_stdin_exits_130() {
     use std::io::Write;
