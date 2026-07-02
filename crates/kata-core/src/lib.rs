@@ -27,13 +27,23 @@
 //!
 //! # Interactive runs need an MCP `ask` server
 //!
-//! When `[interactive] enabled = true`, [`run`] launches claude with an MCP
-//! server backing the `ask_user` tool: it re-invokes the current executable with
-//! a `mcp-ask` argument, expecting that process to call [`serve_stdio`] and exit
-//! — true for the `kata` binary and the GUI sidecar. A library consumer that
-//! links [`run`] into its own binary must therefore add a `mcp-ask` guard to the
-//! top of its `main` that calls [`serve_stdio`] before anything else, or
-//! interactive runs cannot reach the operator.
+//! # Interactive runs are owned by the `kata` process
+//!
+//! When `[interactive] enabled = true`, the engine hosts the `ask_user` MCP tool
+//! itself — the tool, its JSON schema, the JSON-RPC server, and the localhost
+//! bridge are all internal. A consumer never implements an MCP tool. Its entire
+//! interactive surface is the event protocol:
+//!
+//! - receive [`KataEvent::AskRequested`] and render the questions in your UI;
+//! - reply with an [`Answer`] via the [`answer_channel`] sender — or, out of
+//!   process, by writing an `answer <id> <json>` line to the engine's stdin.
+//!
+//! The MCP server is spawned as `<current exe> mcp-ask`, so **interactive runs
+//! must be driven by the `kata` binary** (spawn `kata run` and stream its
+//! events). Linking [`run()`] into a *different* host binary works for
+//! non-interactive runs and every pure operation here; interactive in that mode
+//! would require the host to serve the `mcp-ask` server itself, which is rarely
+//! worth it — spawn `kata` instead.
 
 // ---- the run-spec contract ----
 pub mod spec;
@@ -48,9 +58,11 @@ pub mod catalog;
 pub mod run;
 pub use run::{answer_channel, run, Answer, AnswerRx, CancelToken, RunError, RunOutcome};
 
-// ---- the interactive ask MCP server (only serve_stdio is public API) ----
+// ---- the interactive ask MCP tool: owned by the engine, not consumer API ----
+// `ask::serve_stdio` exists only so the `kata` binary can back its hidden
+// `mcp-ask` subcommand; consumers drive interactivity via the event protocol.
+#[doc(hidden)]
 pub mod ask;
-pub use ask::serve_stdio;
 
 // ---- portable operations the GUI and CLI also build on ----
 pub mod bundle;
