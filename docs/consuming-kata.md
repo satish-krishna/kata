@@ -160,27 +160,35 @@ The crate root re-exports the intended API; everything else is `pub(crate)` and 
 
 ### Driving a run
 
-`run()` takes the spec, the discovered catalog, a cancel token, an answer inbox, and an `FnMut(KataEvent)` sink. It blocks until the run ends and returns the outcome.
+`run()` takes the spec, the discovered catalog, a cancel token, an answer inbox, and an `FnMut(KataEvent)` sink. It blocks until the run ends and returns the outcome. This block is the crate-root doctest verbatim — CI compiles it, so it cannot silently rot:
 
 ```rust
-use kata_core::{answer_channel, run, CancelToken};
+use kata_core::{answer_channel, run, Answer, CancelToken, KataEvent};
 
 let spec = kata_core::spec::load("triage.toml".as_ref())?;
 let catalog = kata_core::catalog::discover(
     &kata_core::catalog::roots_for_workdir(Some(&spec.workdir)));
 
-let cancel = CancelToken::new();          // call cancel.cancel() from another thread to stop
-let (_answer_tx, answers) = answer_channel(); // non-interactive: leave the sender unused
+// Call cancel.cancel() from another thread to stop the run.
+let cancel = CancelToken::new();
+// Keep the sender to answer interactive questions; drop it for non-interactive runs.
+let (answer_tx, answers) = answer_channel();
 
-let outcome = run(&spec, &catalog, &cancel, &answers, |event| {
-    // your sink: forward to a channel, serialize to a socket, update UI state...
-    println!("{}", serde_json::to_string(&event).unwrap());
+let outcome = run(&spec, &catalog, &cancel, &answers, |event| match event {
+    // Interactive fork: reply with one Vec<String> per question
+    // (chosen option labels, [typed text], or [] to skip an optional one).
+    KataEvent::AskRequested { id, questions } => {
+        let reply = questions.iter().map(|_| vec![String::from("yes")]).collect();
+        let _ = answer_tx.send(Answer { id, answers: reply });
+    }
+    // Everything else: forward to your UI, a socket, a log...
+    other => println!("{}", serde_json::to_string(&other).unwrap()),
 })?;
 
-std::process::exit(outcome.exit_code);
+println!("run finished with exit code {}", outcome.exit_code);
 ```
 
-For an interactive run, keep `_answer_tx`: when your sink sees `KataEvent::AskRequested { id, .. }`, send `Answer { id, answers }` on it, where `answers` is the same `Vec<Vec<String>>` matrix described above.
+The `AskRequested` arm here is a placeholder that answers every question with `"yes"`; a real consumer renders the questions, collects the operator's choices, and builds the `Vec<Vec<String>>` reply matrix from them (see [Answer matrix](#answer-matrix)).
 
 ### The one caveat: interactive in-process
 

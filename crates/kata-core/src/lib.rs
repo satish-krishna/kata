@@ -4,18 +4,32 @@
 //! # In-process (Rust)
 //!
 //! Link the library and drive a run directly, receiving every [`KataEvent`] as a
-//! callback:
+//! callback. This example is compiled as a doctest, so the guide stays honest:
 //!
 //! ```no_run
-//! let spec = kata_core::spec::load("run.toml".as_ref())?;
+//! use kata_core::{answer_channel, run, Answer, CancelToken, KataEvent};
+//!
+//! let spec = kata_core::spec::load("triage.toml".as_ref())?;
 //! let catalog = kata_core::catalog::discover(
 //!     &kata_core::catalog::roots_for_workdir(Some(&spec.workdir)));
-//! let cancel = kata_core::CancelToken::new();
-//! let (_answer_tx, answers) = kata_core::answer_channel();
-//! let outcome = kata_core::run(&spec, &catalog, &cancel, &answers, |ev| {
-//!     println!("{}", serde_json::to_string(&ev).unwrap());
+//!
+//! // Call cancel.cancel() from another thread to stop the run.
+//! let cancel = CancelToken::new();
+//! // Keep the sender to answer interactive questions; drop it for non-interactive runs.
+//! let (answer_tx, answers) = answer_channel();
+//!
+//! let outcome = run(&spec, &catalog, &cancel, &answers, |event| match event {
+//!     // Interactive fork: reply with one Vec<String> per question
+//!     // (chosen option labels, [typed text], or [] to skip an optional one).
+//!     KataEvent::AskRequested { id, questions } => {
+//!         let reply = questions.iter().map(|_| vec![String::from("yes")]).collect();
+//!         let _ = answer_tx.send(Answer { id, answers: reply });
+//!     }
+//!     // Everything else: forward to your UI, a socket, a log...
+//!     other => println!("{}", serde_json::to_string(&other).unwrap()),
 //! })?;
-//! # let _ = outcome;
+//!
+//! println!("run finished with exit code {}", outcome.exit_code);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
