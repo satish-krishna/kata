@@ -126,33 +126,61 @@ fn run_streams_jsonl_events_and_exits_zero() {
     assert_eq!(last["exit_code"], 0);
 }
 
-/// Normalize a run's JSON-line stdout for golden comparison: parse each line,
-/// blank the three volatile fields (the temp workdir, the timestamped transcript
-/// path, the wall-clock duration), and re-serialize. Keys sort (serde_json's
-/// default Map is a BTreeMap), so the golden is stable and platform-independent.
-fn normalize_events(stdout: &str) -> String {
-    let mut lines = Vec::new();
-    for line in stdout.lines().filter(|l| !l.trim().is_empty()) {
-        let mut v: serde_json::Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("non-JSON line on run stdout: {line:?} ({e})"));
-        match v["type"].as_str() {
-            Some("run.started") => v["workdir"] = "<WORKDIR>".into(),
-            Some("log")
-                if v["message"]
-                    .as_str()
-                    .unwrap_or("")
-                    .starts_with("transcript: ") =>
-            {
-                v["message"] = "transcript: <TRANSCRIPT>".into()
-            }
-            Some("run.completed") => v["duration_ms"] = serde_json::json!(0),
-            _ => {}
+/// Blank the volatile fields of one event line for golden comparison: the temp
+/// workdir, the timestamped transcript path, and the wall-clock duration. Returns
+/// the parsed value; serde_json's default Map is a BTreeMap, so re-serializing
+/// sorts keys and the golden is stable and platform-independent.
+fn normalize_line(line: &str) -> serde_json::Value {
+    let mut v: serde_json::Value = serde_json::from_str(line)
+        .unwrap_or_else(|e| panic!("non-JSON line on run stdout: {line:?} ({e})"));
+    match v["type"].as_str() {
+        Some("run.started") => v["workdir"] = "<WORKDIR>".into(),
+        Some("log")
+            if v["message"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("transcript: ") =>
+        {
+            v["message"] = "transcript: <TRANSCRIPT>".into()
         }
-        lines.push(serde_json::to_string(&v).unwrap());
+        Some("run.completed") => v["duration_ms"] = serde_json::json!(0),
+        _ => {}
     }
-    let mut s = lines.join("\n");
+    v
+}
+
+/// Render normalized event values as one compact JSON object per line.
+fn render(values: impl Iterator<Item = serde_json::Value>) -> String {
+    let mut s = values
+        .map(|v| serde_json::to_string(&v).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
     s.push('\n');
     s
+}
+
+fn normalize_events(stdout: &str) -> String {
+    render(
+        stdout
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(normalize_line),
+    )
+}
+
+/// Like `normalize_events`, but drops `turn` events. In an interactive run the
+/// turn counter is driven by the child's stdout while `ask.requested` is driven
+/// by the localhost ask bridge, so their relative order is inherently
+/// concurrent (the in-process test asserts on them order-agnostically for the
+/// same reason). The `ok` golden pins `turn`; this one pins the ask protocol.
+fn normalize_ask_events(stdout: &str) -> String {
+    render(
+        stdout
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(normalize_line)
+            .filter(|v| v["type"] != "turn"),
+    )
 }
 
 /// Golden test: the full `kata run` event stream for the deterministic `ok`
@@ -207,6 +235,91 @@ fn run_ok_event_stream_matches_golden() {
         actual, golden,
         "the run event stream drifted from the golden fixture. If this change is \
          intentional, regenerate with UPDATE_GOLDEN=1 and review the diff."
+    );
+}
+
+/// Golden test for the interactive path: drive the `ask` fake mode through
+/// `kata run`, answer the question on stdin, and pin the resulting
+/// `ask.requested` -> `ask.answered` -> `run.completed` exchange against a
+/// fixture. This locks the interactive wire shapes (the question fields, the
+/// answer matrix) documented in `docs/consuming-kata.md`. Regenerate on an
+/// intentional change with `UPDATE_GOLDEN=1 cargo test -p kata-cli --test cli_it`.
+#[test]
+fn run_ask_interactive_event_stream_matches_golden() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::Stdio;
+
+    let work = tempfile::tempdir().unwrap();
+    let kata_home = tempfile::tempdir().unwrap();
+    let workdir = work.path().to_string_lossy().replace('\\', "/");
+    let spec = write(
+        work.path(),
+        "gi.kata.toml",
+        &format!(
+            "schema = 1\nname = \"golden-ask\"\ntask = \"t\"\nworkdir = \"{workdir}\"\n\n\
+             [leash]\ntimeout_secs = 60\n\n\
+             [interactive]\nenabled = true\nanswer_timeout_secs = 30\n"
+        ),
+    );
+
+    let mut child = kata()
+        .arg("run")
+        .arg(&spec)
+        .env("KATA_CLAUDE_BIN", fake_claude())
+        .env("KATA_FAKE_MODE", "ask")
+        .env("KATA_HOME", kata_home.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Read the stream; when the question arrives, answer it on stdin and keep
+    // reading until the child completes and closes stdout.
+    let mut stdin = child.stdin.take().unwrap();
+    let reader = BufReader::new(child.stdout.take().unwrap());
+    let mut lines = Vec::new();
+    let mut answered = false;
+    for line in reader.lines() {
+        let line = line.unwrap();
+        if line.trim().is_empty() {
+            continue;
+        }
+        if !answered {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                if v["type"] == "ask.requested" {
+                    let id = v["id"].as_str().unwrap();
+                    writeln!(stdin, "answer {id} [[\"JWT\"]]").unwrap();
+                    stdin.flush().unwrap();
+                    answered = true;
+                }
+            }
+        }
+        lines.push(line);
+    }
+    let status = child.wait().unwrap();
+    assert!(status.success(), "interactive run should exit 0");
+    assert!(answered, "expected an ask.requested event to answer");
+
+    let actual = normalize_ask_events(&lines.join("\n"));
+
+    let golden_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/run_ask_events.jsonl");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::create_dir_all(golden_path.parent().unwrap()).unwrap();
+        std::fs::write(&golden_path, &actual).unwrap();
+    }
+    let golden = std::fs::read_to_string(&golden_path)
+        .unwrap_or_else(|_| {
+            panic!(
+                "missing golden fixture {}; generate it with UPDATE_GOLDEN=1",
+                golden_path.display()
+            )
+        })
+        .replace("\r\n", "\n");
+    assert_eq!(
+        actual, golden,
+        "the interactive run event stream drifted from the golden fixture. If this \
+         change is intentional, regenerate with UPDATE_GOLDEN=1 and review the diff."
     );
 }
 
