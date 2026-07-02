@@ -1,0 +1,8 @@
+{"isolation":"none","model":null,"spec":"golden","type":"run.started","workdir":"<WORKDIR>"}
+{"level":"info","message":"assembled kit: 0 skill(s), 0 plugin(s)","type":"log"}
+{"level":"info","message":"transcript: <TRANSCRIPT>","type":"log"}
+{"n":1,"type":"turn"}
+{"text":"hi","type":"assistant.text"}
+{"n":2,"type":"turn"}
+{"input_summary":"echo hi","name":"Bash","type":"tool.use"}
+{"cost_usd":0.02,"duration_ms":0,"exit_code":0,"is_error":false,"num_turns":2,"result":"done","type":"run.completed"}

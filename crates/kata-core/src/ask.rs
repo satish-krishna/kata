@@ -13,7 +13,7 @@ use std::thread;
 
 /// A question-batch handed to the run loop. Reply with one inner Vec per
 /// question (chosen option labels, or [typed text], or [] when optional/blank).
-pub struct AskRequest {
+pub(crate) struct AskRequest {
     pub questions: Vec<Question>,
     pub reply: std::sync::mpsc::Sender<Vec<Vec<String>>>,
 }
@@ -35,7 +35,7 @@ struct AnswerFrameOwned {
 
 /// Localhost listener for the ask bridge. Bind early in the run so the port can
 /// be handed to the child; then `serve` to accept the MCP server's connection.
-pub struct Bridge {
+pub(crate) struct Bridge {
     listener: TcpListener,
 }
 
@@ -111,7 +111,7 @@ fn handle_conn(stream: TcpStream, tx: &Sender<AskRequest>) -> std::io::Result<()
 
 /// Handle one JSON-RPC 2.0 line from claude. Returns the response JSON line,
 /// or `None` for notifications (which require no response per the MCP spec).
-pub fn handle_rpc(line: &str, port: u16) -> Option<String> {
+pub(crate) fn handle_rpc(line: &str, port: u16) -> Option<String> {
     // 1. Parse JSON; if it fails, return Parse error response per JSON-RPC 2.0
     let val: serde_json::Value = match serde_json::from_str(line) {
         Ok(v) => v,

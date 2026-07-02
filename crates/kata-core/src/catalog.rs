@@ -27,12 +27,12 @@ pub struct CatalogEntry {
 pub struct DiscoveryRoots {
     /// e.g. ~/.claude
     pub user_dir: PathBuf,
-    /// e.g. <project>/.claude
+    /// e.g. `<project>/.claude`
     pub project_dir: PathBuf,
 }
 
 impl DiscoveryRoots {
-    /// Default roots: $HOME/.claude and <cwd>/.claude.
+    /// Default roots: `$HOME/.claude` and `<cwd>/.claude`.
     pub fn defaults(cwd: &Path) -> Self {
         let home = dirs_home();
         Self {

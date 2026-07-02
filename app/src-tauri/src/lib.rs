@@ -221,8 +221,7 @@ fn export_bundle(spec: kata_core::spec::RunSpec, out: String) -> Result<(), Stri
     let workdir = std::path::PathBuf::from(&spec.workdir);
     let roots = kata_core::catalog::DiscoveryRoots::defaults(&workdir);
     let catalog = kata_core::catalog::discover(&roots);
-    let dest =
-        std::path::Path::new(&out).join(format!("{}-bundle", kata_core::fsutil::slug(&spec.name)));
+    let dest = std::path::Path::new(&out).join(kata_core::bundle::default_out_dir(&spec));
     kata_core::bundle::bundle(&spec, &catalog, &dest, true).map_err(|e| e.to_string())
 }
 

@@ -1,0 +1,6 @@
+{"isolation":"none","model":null,"spec":"golden-ask","type":"run.started","workdir":"<WORKDIR>"}
+{"level":"info","message":"assembled kit: 0 skill(s), 0 plugin(s)","type":"log"}
+{"level":"info","message":"transcript: <TRANSCRIPT>","type":"log"}
+{"id":"q1","questions":[{"header":"h","kind":"text","multi_select":false,"optional":false,"question":"q?"}],"type":"ask.requested"}
+{"answers":[["use a refresh token"]],"id":"q1","type":"ask.answered"}
+{"cost_usd":0.0,"duration_ms":0,"exit_code":0,"is_error":false,"num_turns":1,"result":"done","type":"run.completed"}

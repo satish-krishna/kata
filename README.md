@@ -169,6 +169,10 @@ answer q1 [["JWT"]]
 {"type":"run.completed","exit_code":0, ...}
 ```
 
+## Embedding Kata in another app
+
+Driving Kata from your own software — a GUI, an orchestrator, a CI step — is a first-class use. The `kata` binary is the single execution path the Workbench, the Shokunin orchestrator, and CI all share, and you can build on it two ways: spawn the binary and read its JSON-line events (any language), or depend on the `kata-core` crate and call `run()` in-process (Rust). Both are documented, with the event protocol, the control channel, the exit-code contract, and the full run-spec reference, in **[docs/consuming-kata.md](docs/consuming-kata.md)**.
+
 ## The family
 
 Kata sits in a small family of craft-named tools. The shared visual language should let them read as siblings:
