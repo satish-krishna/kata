@@ -288,7 +288,10 @@ mod tests {
         );
         // A name that is already a clean slug just gets the suffix.
         spec.name = "demo".into();
-        assert_eq!(default_out_dir(&spec), std::path::PathBuf::from("demo-bundle"));
+        assert_eq!(
+            default_out_dir(&spec),
+            std::path::PathBuf::from("demo-bundle")
+        );
     }
 
     #[test]

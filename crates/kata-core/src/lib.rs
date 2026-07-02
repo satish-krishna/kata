@@ -25,8 +25,6 @@
 //! its stdout; write `cancel` / `answer <id> <json>` lines to its stdin. Only
 //! the run-spec and event shapes are contractual — not this crate's Rust API.
 //!
-//! # Interactive runs need an MCP `ask` server
-//!
 //! # Interactive runs are owned by the `kata` process
 //!
 //! When `[interactive] enabled = true`, the engine hosts the `ask_user` MCP tool
