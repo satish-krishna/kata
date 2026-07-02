@@ -288,7 +288,7 @@ fn run_ask_interactive_event_stream_matches_golden() {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
                 if v["type"] == "ask.requested" {
                     let id = v["id"].as_str().unwrap();
-                    writeln!(stdin, "answer {id} [[\"JWT\"]]").unwrap();
+                    writeln!(stdin, "answer {id} [[\"use a refresh token\"]]").unwrap();
                     stdin.flush().unwrap();
                     answered = true;
                 }
