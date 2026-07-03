@@ -20,8 +20,8 @@ export const history: RunRecord[] = [
 
 export const runStreams: Record<string, StreamEvent[]> = {
   "triage-flaky-test-20260618T142200Z": [
-    { type: "log", message: "assembled plugin-dir: 1 skill, 1 plugin" },
-    { type: "log", message: "worktree: ./.kata/wt-3f9a off main" },
+    { type: "log", level: "info", message: "assembled plugin-dir: 1 skill, 1 plugin" },
+    { type: "log", level: "info", message: "worktree: ./.kata/wt-3f9a off main" },
     { type: "turn", n: 1 },
     { type: "assistant.text", text: "Reproducing the flake: running the single test in a tight loop to watch for the failure mode." },
     { type: "tool.use", name: "Bash", input_summary: "for i in $(seq 1 30); do dotnet test --filter AuthTests.LoginExpiry; done" },
@@ -34,7 +34,7 @@ export const runStreams: Record<string, StreamEvent[]> = {
     { type: "assistant.text", text: "Found it: IsExpired compares DateTime.UtcNow against an expiry built with DateTime.Now upstream." },
   ],
   "audit-deps-20260617T174800Z": [
-    { type: "log", message: "assembled plugin-dir: 2 skills, 1 plugin" },
+    { type: "log", level: "info", message: "assembled plugin-dir: 2 skills, 1 plugin" },
     { type: "turn", n: 1 },
     { type: "assistant.text", text: "Enumerating direct + transitive dependencies and flagging unpinned or known-risky versions." },
     { type: "tool.use", name: "Bash", input_summary: "dotnet list package --include-transitive" },
@@ -43,7 +43,7 @@ export const runStreams: Record<string, StreamEvent[]> = {
     { type: "assistant.text", text: "Reached the turn cap at 41 of ~60 packages audited." },
   ],
   "perf-sweep-20260616T160200Z": [
-    { type: "log", message: "assembled plugin-dir: 1 skill" },
+    { type: "log", level: "info", message: "assembled plugin-dir: 1 skill" },
     { type: "turn", n: 1 },
     { type: "tool.use", name: "Bash", input_summary: "dotnet-trace collect --process-id $(pidof api)" },
     { type: "tool.result", name: "Bash", ok: false, summary: "dotnet-trace: command not found" },
