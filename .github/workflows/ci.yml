@@ -81,6 +81,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Event types freshness (regenerate & diff)
+        # Regenerate the TS event types from the committed schema and fail on
+        # drift. Regenerate locally with: (cd app && npm run gen:events)
+        run: |
+          npm run gen:events
+          git diff --exit-code src/bindings/kata-events.ts
+
       - name: Type-check (svelte-check)
         run: npm run check
 
