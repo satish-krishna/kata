@@ -6,8 +6,13 @@ pub struct ClaudeInvocation {
     pub program: String,
     pub args: Vec<String>,
     pub cwd: String,
-    /// Env vars to set on the child, resolved by name from the current process env.
+    /// Env vars to set on the child, in application order (later entries win for a
+    /// repeated key). Plugin forwards and the `token_env`-derived key come first,
+    /// then `RunSpec.env` as the highest-precedence set layer.
     pub env: Vec<(String, String)>,
+    /// Env var names to unset on the child, applied after all sets so removal wins
+    /// even over an inherited or `token_env`-derived value. From `RunSpec.env_remove`.
+    pub env_remove: Vec<String>,
 }
 
 pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocation {
@@ -97,11 +102,19 @@ pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocati
         }
     }
 
+    // RunSpec.env is the highest-precedence set layer: append it last so that for
+    // any repeated key it overrides an inherited value, a plugin forward, and the
+    // token_env-derived ANTHROPIC_API_KEY when run.rs applies the env in order.
+    for (k, v) in &spec.env {
+        env.push((k.clone(), v.clone()));
+    }
+
     ClaudeInvocation {
         program,
         args,
         cwd: spec.workdir.clone(),
         env,
+        env_remove: spec.env_remove.clone(),
     }
 }
 
@@ -301,6 +314,62 @@ mod tests {
     fn non_interactive_keeps_the_builtin_tools() {
         let inv = build_invocation(&spec(), &assembled_with(None, None));
         assert!(!inv.args.iter().any(|a| a == "--disallowedTools"));
+    }
+
+    #[test]
+    fn runspec_env_is_forwarded_with_literal_values() {
+        let mut s = spec();
+        s.env.insert("ANTHROPIC_BASE_URL".into(), "http://127.0.0.1:4000".into());
+        let inv = build_invocation(&s, &assembled_with(None, None));
+        assert!(
+            inv.env
+                .iter()
+                .any(|(k, v)| k == "ANTHROPIC_BASE_URL" && v == "http://127.0.0.1:4000"),
+            "RunSpec.env must be forwarded verbatim, got {:?}",
+            inv.env
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn runspec_env_overrides_token_derived_api_key() {
+        // token_env resolves ANTHROPIC_API_KEY from the host env; RunSpec.env is the
+        // highest-precedence set layer, so its value must win. At the invocation
+        // level that means its entry comes LAST (run.rs applies env in order).
+        std::env::set_var("KATA_TEST_APIKEY3", "sk-from-token");
+        let mut s = spec();
+        s.auth.bare = true;
+        s.auth.token_env = Some("KATA_TEST_APIKEY3".into());
+        s.env
+            .insert("ANTHROPIC_API_KEY".into(), "sk-override".into());
+        let inv = build_invocation(&s, &assembled_with(None, None));
+        let last = inv
+            .env
+            .iter()
+            .rev()
+            .find(|(k, _)| k == "ANTHROPIC_API_KEY")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(
+            last,
+            Some("sk-override"),
+            "RunSpec.env must override the token-derived key; got {:?}",
+            inv.env
+        );
+        std::env::remove_var("KATA_TEST_APIKEY3");
+    }
+
+    #[test]
+    fn env_remove_names_are_carried_through() {
+        let mut s = spec();
+        s.env_remove.push("ANTHROPIC_API_KEY".into());
+        let inv = build_invocation(&s, &assembled_with(None, None));
+        assert_eq!(inv.env_remove, vec!["ANTHROPIC_API_KEY".to_string()]);
+    }
+
+    #[test]
+    fn no_env_fields_leaves_env_remove_empty() {
+        let inv = build_invocation(&spec(), &assembled_with(None, None));
+        assert!(inv.env_remove.is_empty());
     }
 
     #[test]

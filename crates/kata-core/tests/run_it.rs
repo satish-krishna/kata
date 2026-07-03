@@ -304,6 +304,199 @@ fn run_unlimited_turns_does_not_cap() {
     assert_eq!(outcome.exit_code, 0);
 }
 
+/// The assistant-text lines the child emitted, in order. The `envreport` fake
+/// mode reports each probed variable as one `ENV <name>=<value>` line.
+fn assistant_texts(events: &[KataEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            KataEvent::AssistantText { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Run the `envreport` child once, probing the named variables, and return the
+/// `ENV name=value` lines it reported.
+fn run_envreport(spec: &RunSpec, probe: &str) -> Vec<String> {
+    std::env::set_var("KATA_ENV_PROBE", probe);
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    run(
+        spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
+    std::env::remove_var("KATA_ENV_PROBE");
+    assistant_texts(&events)
+}
+
+#[test]
+#[serial]
+fn env_var_reaches_child_with_given_value() {
+    with_fake("envreport");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.env
+        .insert("KATA_PROBE_A".into(), "hello-from-spec".into());
+    let lines = run_envreport(&spec, "KATA_PROBE_A");
+    assert!(
+        lines.iter().any(|l| l == "ENV KATA_PROBE_A=hello-from-spec"),
+        "child must see the spec.env value; got {lines:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn env_overrides_inherited_parent_value() {
+    with_fake("envreport");
+    std::env::set_var("KATA_PROBE_B", "from-parent");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.env.insert("KATA_PROBE_B".into(), "child-wins".into());
+    let lines = run_envreport(&spec, "KATA_PROBE_B");
+    std::env::remove_var("KATA_PROBE_B");
+    assert!(
+        lines.iter().any(|l| l == "ENV KATA_PROBE_B=child-wins"),
+        "spec.env must override the inherited parent value; got {lines:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn env_remove_strips_inherited_var() {
+    with_fake("envreport");
+    std::env::set_var("KATA_PROBE_C", "present-in-parent");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.env_remove.push("KATA_PROBE_C".into());
+    let lines = run_envreport(&spec, "KATA_PROBE_C");
+    std::env::remove_var("KATA_PROBE_C");
+    assert!(
+        lines.iter().any(|l| l == "ENV KATA_PROBE_C=<unset>"),
+        "env_remove must strip an inherited var from the child; got {lines:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn env_overrides_token_derived_api_key() {
+    with_fake("envreport");
+    std::env::set_var("KATA_TEST_TOKEN_OV", "sk-from-token");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.auth.bare = true;
+    spec.auth.token_env = Some("KATA_TEST_TOKEN_OV".into());
+    spec.env
+        .insert("ANTHROPIC_API_KEY".into(), "sk-override".into());
+    let lines = run_envreport(&spec, "ANTHROPIC_API_KEY");
+    std::env::remove_var("KATA_TEST_TOKEN_OV");
+    assert!(
+        lines.iter().any(|l| l == "ENV ANTHROPIC_API_KEY=sk-override"),
+        "spec.env must override the token_env-derived key; got {lines:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn env_remove_strips_token_derived_api_key() {
+    // The direct-to-Anthropic vs bring-your-own-proxy split: strip the real key so
+    // it never leaves the host, even though token_env resolved it.
+    with_fake("envreport");
+    std::env::set_var("KATA_TEST_TOKEN_RM", "sk-real-secret");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.auth.bare = true;
+    spec.auth.token_env = Some("KATA_TEST_TOKEN_RM".into());
+    spec.env_remove.push("ANTHROPIC_API_KEY".into());
+    let lines = run_envreport(&spec, "ANTHROPIC_API_KEY");
+    std::env::remove_var("KATA_TEST_TOKEN_RM");
+    assert!(
+        lines.iter().any(|l| l == "ENV ANTHROPIC_API_KEY=<unset>"),
+        "env_remove must strip the token_env-derived key; got {lines:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn empty_env_leaves_inherited_environment_intact() {
+    // Regression guard: with no env/env_remove the child sees the parent env
+    // exactly as before this feature — we must never clear the environment.
+    with_fake("envreport");
+    std::env::set_var("KATA_PROBE_D", "still-inherited");
+    let work = tempfile::tempdir().unwrap();
+    let spec = base_spec(&work.path().to_string_lossy());
+    assert!(spec.env.is_empty() && spec.env_remove.is_empty());
+    let lines = run_envreport(&spec, "KATA_PROBE_D");
+    std::env::remove_var("KATA_PROBE_D");
+    assert!(
+        lines.iter().any(|l| l == "ENV KATA_PROBE_D=still-inherited"),
+        "an empty env must leave the inherited environment intact; got {lines:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn concurrent_runs_get_divergent_env_without_crosstalk() {
+    // The case that justifies the whole enhancement: two runs started at the same
+    // time with different env values for the SAME key each produce a child with the
+    // respective value. Because the layers are applied via the child Command and
+    // never via std::env::set_var, there is no shared-process-environment cross-talk.
+    with_fake("envreport");
+    std::env::set_var("KATA_ENV_PROBE", "KATA_PROBE_RACE");
+    let work_a = tempfile::tempdir().unwrap();
+    let work_b = tempfile::tempdir().unwrap();
+
+    let mut spec_a = base_spec(&work_a.path().to_string_lossy());
+    spec_a.name = "race-a".into(); // distinct transcript slugs so they can't collide
+    spec_a.env.insert("KATA_PROBE_RACE".into(), "run-a".into());
+    let mut spec_b = base_spec(&work_b.path().to_string_lossy());
+    spec_b.name = "race-b".into();
+    spec_b.env.insert("KATA_PROBE_RACE".into(), "run-b".into());
+
+    let collect = |spec: &RunSpec| -> Vec<String> {
+        let cancel = CancelToken::new();
+        let mut events: Vec<KataEvent> = Vec::new();
+        run(
+            spec,
+            &[] as &[CatalogEntry],
+            &cancel,
+            &kata_core::run::AnswerRx::default(),
+            |e| events.push(e),
+        )
+        .unwrap();
+        assistant_texts(&events)
+    };
+
+    let (lines_a, lines_b) = std::thread::scope(|s| {
+        let ha = s.spawn(|| collect(&spec_a));
+        let hb = s.spawn(|| collect(&spec_b));
+        (ha.join().unwrap(), hb.join().unwrap())
+    });
+    std::env::remove_var("KATA_ENV_PROBE");
+
+    assert!(
+        lines_a.iter().any(|l| l == "ENV KATA_PROBE_RACE=run-a"),
+        "run A must see its own value; got {lines_a:?}"
+    );
+    assert!(
+        lines_b.iter().any(|l| l == "ENV KATA_PROBE_RACE=run-b"),
+        "run B must see its own value; got {lines_b:?}"
+    );
+    // And no cross-talk: neither child saw the other's value.
+    assert!(
+        !lines_a.iter().any(|l| l.contains("run-b")),
+        "run A must not see run B's value; got {lines_a:?}"
+    );
+    assert!(
+        !lines_b.iter().any(|l| l.contains("run-a")),
+        "run B must not see run A's value; got {lines_b:?}"
+    );
+}
+
 fn init_git_repo() -> tempfile::TempDir {
     let d = tempfile::tempdir().unwrap();
     let git = |args: &[&str]| {

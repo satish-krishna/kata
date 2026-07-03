@@ -6,4 +6,17 @@ import type { Leash } from "./Leash";
 import type { Model } from "./Model";
 import type { PluginConfig } from "./PluginConfig";
 
-export type RunSpec = { schema: number, name: string, description?: string | null, task: string, context?: string | null, workdir: string, identity: Identity, skills: Array<string>, plugins: { [key in string]?: PluginConfig }, model: Model, leash: Leash, auth: Auth, interactive: Interactive, };
+export type RunSpec = { schema: number, name: string, description?: string | null, task: string, context?: string | null, workdir: string, identity: Identity, skills: Array<string>, plugins: { [key in string]?: PluginConfig }, model: Model, leash: Leash, auth: Auth, interactive: Interactive, 
+/**
+ * Environment variables to set on the spawned `claude` child, overriding any
+ * value inherited from the parent process, forwarded by a plugin, or derived
+ * from `auth.token_env`. Applied per run to the child only; the host process
+ * environment is never mutated. `BTreeMap` keeps serialization deterministic.
+ */
+env?: { [key in string]?: string }, 
+/**
+ * Environment variable names to unset on the spawned `claude` child, even if
+ * present in the parent process environment or set by an earlier layer.
+ * Applied last, so removal wins.
+ */
+env_remove?: Array<string>, };

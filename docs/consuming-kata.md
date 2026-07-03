@@ -223,6 +223,22 @@ Every field, with its default. Only `name`, `task`, and `workdir` are required.
 | `auth.token_env` | string? | — | Env var holding the API token; the engine fails fast if it names an unset var under `bare`. |
 | `interactive.enabled` | bool | `false` | Opt in to the `ask_user` tool. |
 | `interactive.answer_timeout_secs` | int? | — | How long to wait on an answer (exit 123). Unset = wait indefinitely. |
+| `env` | map | `{}` | Environment variables to set on the `claude` child (name → literal value). Overrides inherited, plugin-forwarded, and `token_env`-derived values. |
+| `env_remove` | string[] | `[]` | Environment variable names to unset on the `claude` child, applied last so removal wins — even over a `token_env`-derived `ANTHROPIC_API_KEY`. |
+
+### Environment resolution order
+
+`env` and `env_remove` let a caller shape the exact environment handed to the `claude` child, per run, without touching the host process environment. The child still inherits the parent environment by default; these two fields add a targeted set layer and an unset layer on top. The layers are resolved in a fixed order, each later layer winning over earlier ones for the same key:
+
+1. Inherited parent process environment.
+2. `plugins.*.env` forwards (names resolved from the parent environment).
+3. `auth.token_env` resolved to `ANTHROPIC_API_KEY` (bare mode only).
+4. `env` — set and override (highest-precedence set layer).
+5. `env_remove` — unset (applied last, so removal wins).
+
+So `env` overrides an inherited variable, a plugin-forwarded variable, and the `token_env`-derived `ANTHROPIC_API_KEY`; `env_remove` then strips any listed name regardless of which earlier layer set it. A name that appears in both `env` and `env_remove` is a hard validation error — the two fields must be disjoint. Empty/whitespace names, and an `env` key containing `=`, are also rejected. A small set of engine-reserved names (currently `KATA_ASK_PORT`, which wires the interactive ask bridge) cannot be set or unset either — doing so would silently break the run.
+
+The layers are applied to the child process only (via the child's own environment block), never by mutating the host process environment. This is what makes concurrent in-process runs correct by construction: two runs started at the same time with different `env` values for the same key each get their own child value, with no shared-state cross-talk. That is the property an in-process host (e.g. an orchestrator running Agent nodes concurrently against different model egress) depends on. Variable names are matched exactly — no wildcard or prefix matching — and name matching follows the host platform's own rules (case-sensitive on Unix, case-insensitive on Windows).
 
 Generate specs programmatically in TypeScript from the ts-rs bindings in `app/src/bindings/` (build with the `ts` cargo feature). Note: the run-spec types have generated bindings; the `KataEvent` types do not — mirror them by hand (see `app/src/lib/events.ts` for the reference mirror).
 

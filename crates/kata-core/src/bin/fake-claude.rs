@@ -1,7 +1,7 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "budget"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "budget" | "envreport"
 use std::io::Write;
 use std::{thread, time::Duration};
 
@@ -145,6 +145,28 @@ fn main() {
             );
             let _ = out.flush();
             std::process::exit(1);
+        }
+        "envreport" => {
+            // Report the child's effective environment so a test can assert on what
+            // Kata actually handed the child. KATA_ENV_PROBE names the variables to
+            // report (comma-separated); each is emitted as one assistant-text line
+            // "ENV <name>=<value>", or "ENV <name>=<unset>" when absent.
+            let probe = std::env::var("KATA_ENV_PROBE").unwrap_or_default();
+            for name in probe.split(',').filter(|s| !s.is_empty()) {
+                let val = std::env::var(name).unwrap_or_else(|_| "<unset>".into());
+                let line = serde_json::json!({
+                    "type": "assistant",
+                    "message": { "content": [
+                        { "type": "text", "text": format!("ENV {name}={val}") }
+                    ]}
+                });
+                let _ = writeln!(out, "{line}");
+            }
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
+            );
+            let _ = out.flush();
         }
         "writefile" => {
             // Write a file into cwd so a worktree-isolated run produces a real diff.

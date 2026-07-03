@@ -31,6 +31,19 @@ pub struct RunSpec {
     pub auth: Auth,
     #[serde(default)]
     pub interactive: Interactive,
+    /// Environment variables to set on the spawned `claude` child, overriding any
+    /// value inherited from the parent process, forwarded by a plugin, or derived
+    /// from `auth.token_env`. Applied per run to the child only; the host process
+    /// environment is never mutated. `BTreeMap` keeps serialization deterministic.
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<BTreeMap<String, String>>"))]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    /// Environment variable names to unset on the spawned `claude` child, even if
+    /// present in the parent process environment or set by an earlier layer.
+    /// Applied last, so removal wins.
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_remove: Vec<String>,
 }
 
 impl Default for RunSpec {
@@ -49,6 +62,8 @@ impl Default for RunSpec {
             leash: Leash::default(),
             auth: Auth::default(),
             interactive: Interactive::default(),
+            env: BTreeMap::new(),
+            env_remove: Vec::new(),
         }
     }
 }
@@ -229,6 +244,12 @@ pub fn save(path: &Path, spec: &RunSpec) -> Result<(), SpecError> {
     std::fs::write(path, text).map_err(|e| SpecError::Io(path.display().to_string(), e))
 }
 
+/// Environment variable names the engine injects into or reads from the `claude`
+/// child and depends on for correctness. A spec must not set or unset these via
+/// `env` / `env_remove`, since doing so would silently break the affected run
+/// (e.g. stripping `KATA_ASK_PORT` disconnects the interactive ask bridge).
+const RESERVED_CHILD_ENV: &[&str] = &["KATA_ASK_PORT"];
+
 /// Pure structural validation (no filesystem access).
 pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
@@ -256,6 +277,40 @@ pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
         // `--max-budget-usd NaN`/`inf` argument.
         if !b.is_finite() || b <= 0.0 {
             errs.push("leash.max_budget_usd must be > 0".into());
+        }
+    }
+    // Environment override layers must be well-formed and unambiguous. Note the
+    // checks below are byte-exact: on Windows environment names fold case at
+    // runtime, so `PATH`/`path` collide there but not here — matching the spec's
+    // "exact variable names only" rule rather than the OS's platform-specific one.
+    for key in spec.env.keys() {
+        if key.trim().is_empty() {
+            errs.push("env has an empty or whitespace-only key".into());
+        } else if key.contains('=') {
+            errs.push(format!(
+                "env key '{key}' contains '=', which is not a valid variable name"
+            ));
+        } else if RESERVED_CHILD_ENV.contains(&key.as_str()) {
+            errs.push(format!(
+                "env key '{key}' is reserved by the engine and cannot be set"
+            ));
+        }
+    }
+    for name in &spec.env_remove {
+        if name.trim().is_empty() {
+            errs.push("env_remove has an empty or whitespace-only name".into());
+        } else if RESERVED_CHILD_ENV.contains(&name.as_str()) {
+            errs.push(format!(
+                "env_remove name '{name}' is reserved by the engine and cannot be unset"
+            ));
+        }
+    }
+    // A key set and unset at once is ambiguous; the two fields must be disjoint.
+    for key in spec.env.keys() {
+        if spec.env_remove.contains(key) {
+            errs.push(format!(
+                "'{key}' appears in both env and env_remove; the two must be disjoint"
+            ));
         }
     }
     if errs.is_empty() {
@@ -473,6 +528,8 @@ isolation = "worktree"
                 token_env: Some("ANTHROPIC_API_KEY".into()),
             },
             interactive: Interactive::default(),
+            env: BTreeMap::new(),
+            env_remove: Vec::new(),
         }
     }
 
@@ -603,6 +660,183 @@ max_budget_usd = 5.0
             ..Default::default()
         };
         spec.leash.max_budget_usd = Some(2.5);
+        assert!(validate(&spec).is_ok());
+    }
+
+    #[test]
+    fn env_fields_default_empty_and_absent_in_toml() {
+        let spec: RunSpec = toml::from_str(minimal_toml()).unwrap();
+        assert!(spec.env.is_empty(), "env must default empty");
+        assert!(spec.env_remove.is_empty(), "env_remove must default empty");
+    }
+
+    #[test]
+    fn parses_env_and_env_remove_tables() {
+        let toml = r#"
+schema = 1
+name = "a"
+task = "t"
+workdir = "/w"
+
+env_remove = ["ANTHROPIC_API_KEY"]
+
+[env]
+ANTHROPIC_BASE_URL = "http://127.0.0.1:4000"
+ANTHROPIC_AUTH_TOKEN = "proxy-token-value"
+"#;
+        let spec: RunSpec = toml::from_str(toml).unwrap();
+        assert_eq!(
+            spec.env.get("ANTHROPIC_BASE_URL").map(String::as_str),
+            Some("http://127.0.0.1:4000")
+        );
+        assert_eq!(
+            spec.env.get("ANTHROPIC_AUTH_TOKEN").map(String::as_str),
+            Some("proxy-token-value")
+        );
+        assert_eq!(spec.env_remove, vec!["ANTHROPIC_API_KEY".to_string()]);
+    }
+
+    #[test]
+    fn env_round_trips_through_toml_and_json() {
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        spec.env.insert("ANTHROPIC_BASE_URL".into(), "http://x".into());
+        spec.env_remove.push("ANTHROPIC_API_KEY".into());
+
+        let toml_again: RunSpec = toml::from_str(&to_toml(&spec).unwrap()).unwrap();
+        assert_eq!(spec, toml_again);
+
+        let json_again: RunSpec =
+            serde_json::from_str(&serde_json::to_string(&spec).unwrap()).unwrap();
+        assert_eq!(spec, json_again);
+    }
+
+    #[test]
+    fn validate_rejects_env_key_in_both_env_and_env_remove() {
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        spec.env.insert("DUP".into(), "v".into());
+        spec.env_remove.push("DUP".into());
+        let errs = validate(&spec).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.contains("DUP")),
+            "a key in both env and env_remove must be rejected: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_empty_or_whitespace_env_key() {
+        for bad in ["", "   "] {
+            let mut spec = RunSpec {
+                schema: 1,
+                name: "n".into(),
+                task: "t".into(),
+                workdir: "/w".into(),
+                ..Default::default()
+            };
+            spec.env.insert(bad.into(), "v".into());
+            let errs = validate(&spec).unwrap_err();
+            assert!(
+                errs.iter().any(|e| e.contains("env")),
+                "empty env key {bad:?} must be rejected: {errs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_empty_or_whitespace_env_remove_name() {
+        for bad in ["", "   "] {
+            let mut spec = RunSpec {
+                schema: 1,
+                name: "n".into(),
+                task: "t".into(),
+                workdir: "/w".into(),
+                ..Default::default()
+            };
+            spec.env_remove.push(bad.into());
+            let errs = validate(&spec).unwrap_err();
+            assert!(
+                errs.iter().any(|e| e.contains("env_remove")),
+                "empty env_remove name {bad:?} must be rejected: {errs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_rejects_env_key_containing_equals() {
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        spec.env.insert("A=B".into(), "v".into());
+        let errs = validate(&spec).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.contains("=")),
+            "an env key containing '=' must be rejected: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_reserved_name_in_env() {
+        // The engine injects KATA_ASK_PORT into the interactive child; letting a
+        // spec set it would override the ask-bridge port and silently break the run.
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        spec.env.insert("KATA_ASK_PORT".into(), "9999".into());
+        let errs = validate(&spec).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.contains("KATA_ASK_PORT")),
+            "a reserved name in env must be rejected: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_reserved_name_in_env_remove() {
+        // Stripping KATA_ASK_PORT would silently break the interactive ask bridge.
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        spec.env_remove.push("KATA_ASK_PORT".into());
+        let errs = validate(&spec).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.contains("KATA_ASK_PORT")),
+            "a reserved name in env_remove must be rejected: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_disjoint_nonempty_env() {
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        spec.env.insert("ANTHROPIC_BASE_URL".into(), "http://x".into());
+        spec.env_remove.push("ANTHROPIC_API_KEY".into());
         assert!(validate(&spec).is_ok());
     }
 

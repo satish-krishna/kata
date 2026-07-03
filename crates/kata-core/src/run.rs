@@ -324,9 +324,17 @@ pub fn run<F: FnMut(KataEvent)>(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // The child inherits the parent process environment by default.
+    // The child inherits the parent process environment by default. Apply the set
+    // layers in order (later entries win for a repeated key), then the removals last
+    // so RunSpec.env_remove strips a key even if an earlier layer — including the
+    // token_env-derived ANTHROPIC_API_KEY — set it. All applied to the child
+    // Command only; the host process environment is never mutated, which is what
+    // makes two concurrent runs with divergent env correct by construction.
     for (k, v) in &inv.env {
         cmd.env(k, v);
+    }
+    for k in &inv.env_remove {
+        cmd.env_remove(k);
     }
     let mut child = cmd.spawn().map_err(|e| RunError::Spawn(e.to_string()))?;
     let stdout = child.stdout.take().expect("piped stdout");
@@ -677,6 +685,7 @@ mod tests {
             args: vec!["--append-system-prompt-file".into(), id_path.clone()],
             cwd: "/w".into(),
             env: vec![],
+            env_remove: vec![],
         };
 
         append_interactive_retask(&mut inv, Some(&id_path), INTERACTIVE_RETASK, td.path()).unwrap();
@@ -711,6 +720,7 @@ mod tests {
             args: vec![],
             cwd: "/w".into(),
             env: vec![],
+            env_remove: vec![],
         };
 
         append_interactive_retask(&mut inv, None, INTERACTIVE_RETASK, td.path()).unwrap();
