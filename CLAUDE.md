@@ -53,6 +53,7 @@ Rust (run from repo root):
 - Build: `cargo build --locked`
 - Test the workspace: `cargo test --workspace`
 - A single test: `cargo test -p kata-core <name>` or `cargo test -p kata-cli --test cli_it <name>`
+- Format (must be clean; **CI gates this**): `cargo fmt --all --check` (run `cargo fmt --all` to fix). Note it is workspace-wide, so it can surface pre-existing drift in files you did not touch.
 - Lint (must be clean): `cargo clippy --all-targets -- -D warnings`
 - Regenerate TS bindings after type changes: `cargo test -p kata-core --features ts export_bindings`
 
@@ -67,4 +68,4 @@ App (run from `app/`):
 
 - The engine's integration tests drive the offline `fake-claude` binary via the `KATA_FAKE_MODE` env var (`crates/kata-core/tests/run_it.rs`). These tests mutate process-global env and are marked `#[serial]`; don't remove that.
 - The opt-in real-claude smoke test asserts a genuinely successful run, so it needs an authenticated `claude` on PATH. It runs only when `KATA_SMOKE_REAL` is set; unset it skips.
-- Per the roadmap workflow: TDD, clippy clean, `cargo build --locked` green, frequent commits on a `feat/<milestone>` branch.
+- Per the roadmap workflow: TDD, `cargo fmt --all --check` and clippy clean, `cargo build --locked` green, frequent commits on a `feat/<milestone>` branch.
