@@ -319,7 +319,8 @@ mod tests {
     #[test]
     fn runspec_env_is_forwarded_with_literal_values() {
         let mut s = spec();
-        s.env.insert("ANTHROPIC_BASE_URL".into(), "http://127.0.0.1:4000".into());
+        s.env
+            .insert("ANTHROPIC_BASE_URL".into(), "http://127.0.0.1:4000".into());
         let inv = build_invocation(&s, &assembled_with(None, None));
         assert!(
             inv.env

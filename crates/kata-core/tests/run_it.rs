@@ -344,7 +344,9 @@ fn env_var_reaches_child_with_given_value() {
         .insert("KATA_PROBE_A".into(), "hello-from-spec".into());
     let lines = run_envreport(&spec, "KATA_PROBE_A");
     assert!(
-        lines.iter().any(|l| l == "ENV KATA_PROBE_A=hello-from-spec"),
+        lines
+            .iter()
+            .any(|l| l == "ENV KATA_PROBE_A=hello-from-spec"),
         "child must see the spec.env value; got {lines:?}"
     );
 }
@@ -395,7 +397,9 @@ fn env_overrides_token_derived_api_key() {
     let lines = run_envreport(&spec, "ANTHROPIC_API_KEY");
     std::env::remove_var("KATA_TEST_TOKEN_OV");
     assert!(
-        lines.iter().any(|l| l == "ENV ANTHROPIC_API_KEY=sk-override"),
+        lines
+            .iter()
+            .any(|l| l == "ENV ANTHROPIC_API_KEY=sk-override"),
         "spec.env must override the token_env-derived key; got {lines:?}"
     );
 }
@@ -433,7 +437,9 @@ fn empty_env_leaves_inherited_environment_intact() {
     let lines = run_envreport(&spec, "KATA_PROBE_D");
     std::env::remove_var("KATA_PROBE_D");
     assert!(
-        lines.iter().any(|l| l == "ENV KATA_PROBE_D=still-inherited"),
+        lines
+            .iter()
+            .any(|l| l == "ENV KATA_PROBE_D=still-inherited"),
         "an empty env must leave the inherited environment intact; got {lines:?}"
     );
 }

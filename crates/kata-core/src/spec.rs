@@ -705,7 +705,8 @@ ANTHROPIC_AUTH_TOKEN = "proxy-token-value"
             workdir: "/w".into(),
             ..Default::default()
         };
-        spec.env.insert("ANTHROPIC_BASE_URL".into(), "http://x".into());
+        spec.env
+            .insert("ANTHROPIC_BASE_URL".into(), "http://x".into());
         spec.env_remove.push("ANTHROPIC_API_KEY".into());
 
         let toml_again: RunSpec = toml::from_str(&to_toml(&spec).unwrap()).unwrap();
@@ -835,7 +836,8 @@ ANTHROPIC_AUTH_TOKEN = "proxy-token-value"
             workdir: "/w".into(),
             ..Default::default()
         };
-        spec.env.insert("ANTHROPIC_BASE_URL".into(), "http://x".into());
+        spec.env
+            .insert("ANTHROPIC_BASE_URL".into(), "http://x".into());
         spec.env_remove.push("ANTHROPIC_API_KEY".into());
         assert!(validate(&spec).is_ok());
     }
