@@ -282,6 +282,24 @@ pub fn pump<R: BufRead>(
     result
 }
 
+/// Render the canonical `KataEvent` JSON Schema: the schemars output with a
+/// stable root `title`, a `protocolVersion` stamp, and a trailing newline.
+/// This exact string is what `schema/kata-events.schema.json` must contain.
+#[cfg(feature = "schema")]
+pub fn generate_schema_json() -> String {
+    let mut root = serde_json::to_value(schemars::schema_for!(KataEvent)).unwrap();
+    let obj = root.as_object_mut().unwrap();
+    // Guarantee a deterministic name for downstream TS codegen.
+    obj.insert("title".to_string(), serde_json::json!("KataEvent"));
+    obj.insert(
+        "protocolVersion".to_string(),
+        serde_json::json!(KATA_EVENT_PROTOCOL_VERSION),
+    );
+    let mut s = serde_json::to_string_pretty(&root).unwrap();
+    s.push('\n');
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -564,6 +582,27 @@ mod tests {
         assert!(
             s.contains(r#""exit_code":130"#),
             "cancel must serialize its code: {s}"
+        );
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn schema_artifact_is_fresh() {
+        let generated = super::generate_schema_json();
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../schema/kata-events.schema.json");
+        if std::env::var_os("KATA_BLESS_SCHEMA").is_some() {
+            let p = std::path::Path::new(path);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, &generated).unwrap();
+            return;
+        }
+        let committed = std::fs::read_to_string(path).unwrap_or_else(|_| {
+            panic!("schema/kata-events.schema.json missing — regenerate with \
+                    KATA_BLESS_SCHEMA=1 cargo test -p kata-core --features schema schema_artifact_is_fresh")
+        });
+        assert_eq!(
+            committed, generated,
+            "schema drift — regenerate with KATA_BLESS_SCHEMA=1 cargo test -p kata-core --features schema schema_artifact_is_fresh"
         );
     }
 }
