@@ -1,7 +1,13 @@
 use serde::{Deserialize, Serialize};
 use std::io::BufRead;
 
+/// Wire-protocol version of the `KataEvent` stream. Bump on any breaking
+/// change to an event shape. Stamped into `schema/kata-events.schema.json`
+/// so consumers can pin and detect breaks.
+pub const KATA_EVENT_PROTOCOL_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type")]
 pub enum KataEvent {
     #[serde(rename = "run.started")]
@@ -65,6 +71,7 @@ pub enum KataEvent {
 /// One changed file in a worktree-isolation diff summary. Part of the
 /// `run.diff` event payload; also produced by `crate::worktree::diff`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DiffFile {
     /// Git short status for the change: "A" | "M" | "D" | "R" | ...
     pub status: String,
@@ -75,6 +82,7 @@ pub struct DiffFile {
 /// One question in an `ask.requested` batch. Mirrored by hand in
 /// `app/src/lib/events.ts` (events are not ts-rs exported).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Question {
     pub kind: QuestionKind,
     pub header: String,
@@ -90,6 +98,7 @@ pub struct Question {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum QuestionKind {
     /// Yes/No (or two-option) inline choice.
@@ -101,6 +110,7 @@ pub enum QuestionKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct QuestionOption {
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -512,6 +522,20 @@ mod tests {
             p.events.is_empty(),
             "the ask_user tool.use must not render as a row"
         );
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn schema_is_internally_tagged_and_names_variants() {
+        let json = serde_json::to_value(schemars::schema_for!(KataEvent)).unwrap();
+        // Internally-tagged enum → a `oneOf` of variant subschemas.
+        let variants = json.get("oneOf").and_then(|v| v.as_array()).unwrap();
+        assert!(variants.len() >= 12, "expected one subschema per variant");
+        // The wire tag must be the literal event name, e.g. "run.started".
+        let dump = json.to_string();
+        assert!(dump.contains("run.started"), "tag rename must survive: {dump}");
+        assert!(dump.contains("ask.requested"));
+        assert!(dump.contains("tool.result"));
     }
 
     #[test]
