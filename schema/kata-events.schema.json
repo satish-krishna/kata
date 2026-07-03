@@ -19,7 +19,7 @@
       "type": "object"
     },
     "Question": {
-      "description": "One question in an `ask.requested` batch. Mirrored by hand in\n`app/src/lib/events.ts` (events are not ts-rs exported).",
+      "description": "One question in an `ask.requested` batch. Part of the published event\nschema (`schema/kata-events.schema.json`); the app's TS type is generated\nfrom that schema, not hand-mirrored.",
       "properties": {
         "header": {
           "type": "string"

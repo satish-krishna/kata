@@ -87,8 +87,9 @@ export interface DiffFile {
   status: string;
 }
 /**
- * One question in an `ask.requested` batch. Mirrored by hand in
- * `app/src/lib/events.ts` (events are not ts-rs exported).
+ * One question in an `ask.requested` batch. Part of the published event
+ * schema (`schema/kata-events.schema.json`); the app's TS type is generated
+ * from that schema, not hand-mirrored.
  */
 export interface Question {
   header: string;

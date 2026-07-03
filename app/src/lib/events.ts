@@ -5,8 +5,9 @@
 
 import type { RunRecord } from "../bindings/RunRecord";
 export type { RunRecord };
-/** One past run: its record plus its full event stream (hand-typed because it
- *  wraps the hand-mirrored KataEvent union; not ts-rs-generated). */
+/** One past run: its record plus its full event stream. `KataEvent` is
+ *  generated from the published schema (`schema/kata-events.schema.json`);
+ *  this wrapper stays hand-written. */
 export type RunDetail = { record: RunRecord; events: KataEvent[] };
 
 import type {
