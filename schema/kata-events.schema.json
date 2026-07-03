@@ -1,0 +1,415 @@
+{
+  "$defs": {
+    "DiffFile": {
+      "description": "One changed file in a worktree-isolation diff summary. Part of the\n`run.diff` event payload; also produced by `crate::worktree::diff`.",
+      "properties": {
+        "path": {
+          "description": "Path relative to the worktree root.",
+          "type": "string"
+        },
+        "status": {
+          "description": "Git short status for the change: \"A\" | \"M\" | \"D\" | \"R\" | ...",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "path"
+      ],
+      "type": "object"
+    },
+    "Question": {
+      "description": "One question in an `ask.requested` batch. Part of the published event\nschema (`schema/kata-events.schema.json`); the app's TS type is generated\nfrom that schema, not hand-mirrored.",
+      "properties": {
+        "header": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/QuestionKind"
+        },
+        "multi_select": {
+          "default": false,
+          "type": "boolean"
+        },
+        "optional": {
+          "default": false,
+          "type": "boolean"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/QuestionOption"
+          },
+          "type": "array"
+        },
+        "placeholder": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "question": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "header",
+        "question"
+      ],
+      "type": "object"
+    },
+    "QuestionKind": {
+      "oneOf": [
+        {
+          "const": "confirm",
+          "description": "Yes/No (or two-option) inline choice.",
+          "type": "string"
+        },
+        {
+          "const": "select",
+          "description": "Single-choice (radio) or, with `multi_select`, multiple-choice (checkbox).",
+          "type": "string"
+        },
+        {
+          "const": "text",
+          "description": "Free-form typed answer.",
+          "type": "string"
+        }
+      ]
+    },
+    "QuestionOption": {
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "properties": {
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "isolation": {
+          "type": "string"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spec": {
+          "type": "string"
+        },
+        "type": {
+          "const": "run.started",
+          "type": "string"
+        },
+        "workdir": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "spec",
+        "workdir",
+        "isolation"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "level": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "type": {
+          "const": "log",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "level",
+        "message"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "type": {
+          "const": "assistant.text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "input_summary": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool.use",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "input_summary"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "type": {
+          "const": "tool.result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "name",
+        "ok",
+        "summary"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "n": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "turn",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "n"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "cost_usd": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "duration_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "exit_code": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "is_error": {
+          "type": "boolean"
+        },
+        "num_turns": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "result": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "const": "run.completed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "exit_code",
+        "is_error",
+        "num_turns",
+        "duration_ms"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "deletions": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/DiffFile"
+          },
+          "type": "array"
+        },
+        "insertions": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "run.diff",
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "worktree",
+        "branch",
+        "files",
+        "insertions",
+        "deletions"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/Question"
+          },
+          "type": "array"
+        },
+        "type": {
+          "const": "ask.requested",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "questions"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "answers": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "const": "ask.answered",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "answers"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "exit_code": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "message": {
+          "type": "string"
+        },
+        "type": {
+          "const": "run.error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "message",
+        "exit_code"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "exit_code": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "type": {
+          "const": "run.cancelled",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "exit_code"
+      ],
+      "type": "object"
+    }
+  ],
+  "protocolVersion": 1,
+  "title": "KataEvent"
+}

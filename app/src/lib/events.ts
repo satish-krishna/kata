@@ -1,47 +1,23 @@
-/* The normalized KataEvent protocol relayed by the engine (mirrors
- * kata-core::event). The Tauri backend emits these over the `kata://event`
- * channel; the Observe pane renders one EventRow per streaming event and a
- * Summary block on `run.completed`. */
+/* The normalized KataEvent protocol relayed by the engine (generated from
+ * schema/kata-events.schema.json). The Tauri backend emits these over the
+ * `kata://event` channel; the Observe pane renders one EventRow per
+ * streaming event and a Summary block on `run.completed`. */
 
 import type { RunRecord } from "../bindings/RunRecord";
 export type { RunRecord };
-/** One past run: its record plus its full event stream (hand-typed because it
- *  wraps the hand-mirrored KataEvent union; not ts-rs-generated). */
+/** One past run: its record plus its full event stream. `KataEvent` is
+ *  generated from the published schema (`schema/kata-events.schema.json`);
+ *  this wrapper stays hand-written. */
 export type RunDetail = { record: RunRecord; events: KataEvent[] };
 
-export type KataEvent =
-  | { type: "run.started"; spec: string; model: string | null; workdir: string; isolation: string; worktree?: string | null; branch?: string | null }
-  | { type: "log"; level?: string; message: string }
-  | { type: "turn"; n: number }
-  | { type: "assistant.text"; text: string }
-  | { type: "tool.use"; name: string; input_summary: string }
-  | { type: "tool.result"; name: string; ok: boolean; summary: string }
-  | {
-      type: "run.completed";
-      exit_code: number;
-      is_error: boolean;
-      num_turns: number;
-      cost_usd: number | null;
-      duration_ms: number;
-      result: string | null;
-    }
-  | { type: "run.diff"; worktree: string; branch: string; files: { status: string; path: string }[]; insertions: number; deletions: number }
-  | { type: "ask.requested"; id: string; questions: Question[] }
-  | { type: "ask.answered"; id: string; answers: string[][] }
-  | { type: "run.error"; message: string; exit_code: number }
-  | { type: "run.cancelled"; exit_code: number };
-
-export type QuestionKind = "confirm" | "select" | "text";
-export type QuestionOption = { label: string; description?: string };
-export type Question = {
-  kind: QuestionKind;
-  header: string;
-  question: string;
-  options?: QuestionOption[];
-  multi_select?: boolean;
-  optional?: boolean;
-  placeholder?: string;
-};
+import type {
+  KataEvent,
+  Question,
+  QuestionKind,
+  QuestionOption,
+  DiffFile,
+} from "../bindings/kata-events";
+export type { KataEvent, Question, QuestionKind, QuestionOption, DiffFile };
 
 /** The terminal event carrying the run summary. */
 export type RunSummary = Extract<KataEvent, { type: "run.completed" }>;

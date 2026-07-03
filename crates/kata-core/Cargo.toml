@@ -23,9 +23,11 @@ toml.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
 ts-rs = { version = "10", optional = true, default-features = false }
+schemars = { version = "1", optional = true }
 
 [features]
 ts = ["dep:ts-rs"]
+schema = ["dep:schemars"]
 
 [dev-dependencies]
 serial_test = "3"

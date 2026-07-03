@@ -1,5 +1,8 @@
 # Normalize all text files to LF in the repo; check out with LF everywhere.
 # Stops the CRLF<->LF churn on Windows checkouts.
+# NOTE: eol=lf is load-bearing for CI — the schema/kata-events.schema.json and
+# app/src/bindings/kata-events.ts freshness gates compare bytes across the
+# windows-latest (Rust) and ubuntu-latest (web) jobs; CRLF drift would break them.
 * text=auto eol=lf
 
 # Binary assets — never apply text/EOL conversion.

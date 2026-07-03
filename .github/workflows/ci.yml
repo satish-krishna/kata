@@ -53,6 +53,12 @@ jobs:
         # The real-claude smoke test is opt-in (KATA_SMOKE_REAL unset → skipped).
         run: cargo test --workspace
 
+      - name: Schema freshness (regenerate & diff)
+        # Fails if schema/kata-events.schema.json has drifted from the enum.
+        # Regenerate locally with:
+        #   KATA_BLESS_SCHEMA=1 cargo test -p kata-core --features schema schema_artifact_is_fresh
+        run: cargo test -p kata-core --features schema schema_artifact_is_fresh
+
       - name: Build (locked)
         run: cargo build --locked
 
@@ -74,6 +80,13 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Event types freshness (regenerate & diff)
+        # Regenerate the TS event types from the committed schema and fail on
+        # drift. Regenerate locally with: (cd app && npm run gen:events)
+        run: |
+          npm run gen:events
+          git diff --exit-code src/bindings/kata-events.ts
 
       - name: Type-check (svelte-check)
         run: npm run check

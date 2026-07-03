@@ -1,7 +1,14 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::BufRead;
 
+/// Wire-protocol version of the `KataEvent` stream. Bump on any breaking
+/// change to an event shape. Stamped into `schema/kata-events.schema.json`
+/// so consumers can pin and detect breaks.
+pub const KATA_EVENT_PROTOCOL_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type")]
 pub enum KataEvent {
     #[serde(rename = "run.started")]
@@ -65,6 +72,7 @@ pub enum KataEvent {
 /// One changed file in a worktree-isolation diff summary. Part of the
 /// `run.diff` event payload; also produced by `crate::worktree::diff`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DiffFile {
     /// Git short status for the change: "A" | "M" | "D" | "R" | ...
     pub status: String,
@@ -72,9 +80,11 @@ pub struct DiffFile {
     pub path: String,
 }
 
-/// One question in an `ask.requested` batch. Mirrored by hand in
-/// `app/src/lib/events.ts` (events are not ts-rs exported).
+/// One question in an `ask.requested` batch. Part of the published event
+/// schema (`schema/kata-events.schema.json`); the app's TS type is generated
+/// from that schema, not hand-mirrored.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Question {
     pub kind: QuestionKind,
     pub header: String,
@@ -90,6 +100,7 @@ pub struct Question {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum QuestionKind {
     /// Yes/No (or two-option) inline choice.
@@ -101,6 +112,7 @@ pub enum QuestionKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct QuestionOption {
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -131,78 +143,109 @@ pub struct Parsed {
     pub result: Option<ResultPayload>,
 }
 
-/// Translate one line of Claude `stream-json` into normalized events.
-/// Defensive: unknown shapes and malformed JSON yield an empty `Parsed`.
-pub fn parse_stream_line(line: &str) -> Parsed {
-    let mut out = Parsed::default();
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-        return out;
-    };
-    match v.get("type").and_then(|t| t.as_str()) {
-        Some("assistant") => {
-            out.is_assistant_message = true;
-            if let Some(content) = v.pointer("/message/content").and_then(|c| c.as_array()) {
-                for block in content {
-                    match block.get("type").and_then(|t| t.as_str()) {
-                        Some("text") => {
-                            if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
-                                out.events.push(KataEvent::AssistantText {
-                                    text: t.to_string(),
+/// Stateful translator for a `stream-json` line sequence. Holds the
+/// `tool_use_id → tool name` map so `tool.result` events can be labelled with
+/// the tool that produced them (Claude's `tool_result` carries only the id).
+#[derive(Debug, Default)]
+pub struct StreamParser {
+    tool_names: HashMap<String, String>,
+}
+
+impl StreamParser {
+    pub fn push(&mut self, line: &str) -> Parsed {
+        let mut out = Parsed::default();
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            return out;
+        };
+        match v.get("type").and_then(|t| t.as_str()) {
+            Some("assistant") => {
+                out.is_assistant_message = true;
+                if let Some(content) = v.pointer("/message/content").and_then(|c| c.as_array()) {
+                    for block in content {
+                        match block.get("type").and_then(|t| t.as_str()) {
+                            Some("text") => {
+                                if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
+                                    out.events.push(KataEvent::AssistantText {
+                                        text: t.to_string(),
+                                    });
+                                }
+                            }
+                            Some("tool_use") => {
+                                let name = block
+                                    .get("name")
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                // Record id → name for later tool_result correlation,
+                                // even for ask_user (harmless; its result is suppressed).
+                                if let Some(id) = block.get("id").and_then(|i| i.as_str()) {
+                                    self.tool_names.insert(id.to_string(), name.clone());
+                                }
+                                // The ask_user MCP tool surfaces via the AskPanel, not a
+                                // stream row; suppress its tool.use here.
+                                if name.ends_with("ask_user") {
+                                    continue;
+                                }
+                                out.events.push(KataEvent::ToolUse {
+                                    name,
+                                    input_summary: summarize_input(block.get("input")),
                                 });
                             }
+                            _ => {}
                         }
-                        Some("tool_use") => {
+                    }
+                }
+            }
+            Some("user") => {
+                if let Some(content) = v.pointer("/message/content").and_then(|c| c.as_array()) {
+                    for block in content {
+                        if block.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
+                            let ok = !block
+                                .get("is_error")
+                                .and_then(|b| b.as_bool())
+                                .unwrap_or(false);
                             let name = block
-                                .get("name")
-                                .and_then(|n| n.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            // The ask_user MCP tool surfaces via the AskPanel, not a
-                            // stream row; suppress its tool.use here.
+                                .get("tool_use_id")
+                                .and_then(|i| i.as_str())
+                                .and_then(|id| self.tool_names.get(id))
+                                .cloned()
+                                .unwrap_or_default();
+                            // Mirrors the tool_use suppression above: the ask_user
+                            // answer surfaces via `ask.answered`, not a stream row.
                             if name.ends_with("ask_user") {
                                 continue;
                             }
-                            out.events.push(KataEvent::ToolUse {
+                            out.events.push(KataEvent::ToolResult {
                                 name,
-                                input_summary: summarize_input(block.get("input")),
+                                ok,
+                                summary: summarize_content(block.get("content")),
                             });
                         }
-                        _ => {}
                     }
                 }
             }
-        }
-        Some("user") => {
-            if let Some(content) = v.pointer("/message/content").and_then(|c| c.as_array()) {
-                for block in content {
-                    if block.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
-                        let ok = !block
-                            .get("is_error")
-                            .and_then(|b| b.as_bool())
-                            .unwrap_or(false);
-                        // TODO: claude tool_result carries a tool_use_id, not a
-                        // tool name; correlate it back to the tool.use to fill `name`.
-                        out.events.push(KataEvent::ToolResult {
-                            name: String::new(),
-                            ok,
-                            summary: summarize_content(block.get("content")),
-                        });
-                    }
-                }
+            Some("result") => {
+                out.result = Some(ResultPayload {
+                    num_turns: v.get("num_turns").and_then(|n| n.as_u64()).unwrap_or(0) as u32,
+                    cost_usd: v.get("total_cost_usd").and_then(|c| c.as_f64()),
+                    is_error: v.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false),
+                    result: v.get("result").and_then(|r| r.as_str()).map(String::from),
+                    subtype: v.get("subtype").and_then(|s| s.as_str()).map(String::from),
+                });
             }
+            _ => {}
         }
-        Some("result") => {
-            out.result = Some(ResultPayload {
-                num_turns: v.get("num_turns").and_then(|n| n.as_u64()).unwrap_or(0) as u32,
-                cost_usd: v.get("total_cost_usd").and_then(|c| c.as_f64()),
-                is_error: v.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false),
-                result: v.get("result").and_then(|r| r.as_str()).map(String::from),
-                subtype: v.get("subtype").and_then(|s| s.as_str()).map(String::from),
-            });
-        }
-        _ => {}
+        out
     }
-    out
+}
+
+/// Translate one line of Claude `stream-json` into normalized events.
+/// Stateless convenience wrapper over [`StreamParser`]; a `tool.result` whose
+/// `tool_use` arrived on an earlier line will have an empty `name` here — use
+/// [`StreamParser`] across a stream to correlate. Defensive: unknown shapes
+/// and malformed JSON yield an empty `Parsed`.
+pub fn parse_stream_line(line: &str) -> Parsed {
+    StreamParser::default().push(line)
 }
 
 fn summarize_input(input: Option<&serde_json::Value>) -> String {
@@ -249,6 +292,7 @@ pub fn pump<R: BufRead>(
 ) -> Option<ResultPayload> {
     let mut turns: u32 = 0;
     let mut result = None;
+    let mut parser = StreamParser::default();
     for line in reader.lines() {
         if cancel() {
             break;
@@ -257,7 +301,7 @@ pub fn pump<R: BufRead>(
         if line.trim().is_empty() {
             continue;
         }
-        let parsed = parse_stream_line(&line);
+        let parsed = parser.push(&line);
         if parsed.is_assistant_message {
             turns += 1;
             emit(KataEvent::Turn { n: turns });
@@ -270,6 +314,24 @@ pub fn pump<R: BufRead>(
         }
     }
     result
+}
+
+/// Render the canonical `KataEvent` JSON Schema: the schemars output with a
+/// stable root `title`, a `protocolVersion` stamp, and a trailing newline.
+/// This exact string is what `schema/kata-events.schema.json` must contain.
+#[cfg(feature = "schema")]
+pub fn generate_schema_json() -> String {
+    let mut root = serde_json::to_value(schemars::schema_for!(KataEvent)).unwrap();
+    let obj = root.as_object_mut().unwrap();
+    // Guarantee a deterministic name for downstream TS codegen.
+    obj.insert("title".to_string(), serde_json::json!("KataEvent"));
+    obj.insert(
+        "protocolVersion".to_string(),
+        serde_json::json!(KATA_EVENT_PROTOCOL_VERSION),
+    );
+    let mut s = serde_json::to_string_pretty(&root).unwrap();
+    s.push('\n');
+    s
 }
 
 #[cfg(test)]
@@ -515,6 +577,39 @@ mod tests {
     }
 
     #[test]
+    fn stream_parser_suppresses_ask_user_tool_result() {
+        let mut p = StreamParser::default();
+        // Real interactive shape: the ask_user tool_use carries an id...
+        let use_line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_ask","name":"mcp__kata-ask__ask_user","input":{"questions":[]}}]}}"#;
+        // ...and its tool_result references that id.
+        let res_line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_ask","content":"answered","is_error":false}]}}"#;
+
+        let used = p.push(use_line);
+        assert!(used.is_assistant_message, "still counts as an assistant turn");
+        assert!(used.events.is_empty(), "ask_user tool.use must not render a row");
+
+        let result = p.push(res_line);
+        assert!(
+            result.events.is_empty(),
+            "ask_user tool.result must not render a row either (answer surfaces via ask.answered)"
+        );
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn schema_is_internally_tagged_and_names_variants() {
+        let json = serde_json::to_value(schemars::schema_for!(KataEvent)).unwrap();
+        // Internally-tagged enum → a `oneOf` of variant subschemas.
+        let variants = json.get("oneOf").and_then(|v| v.as_array()).unwrap();
+        assert!(variants.len() >= 12, "expected one subschema per variant");
+        // The wire tag must be the literal event name, e.g. "run.started".
+        let dump = json.to_string();
+        assert!(dump.contains("run.started"), "tag rename must survive: {dump}");
+        assert!(dump.contains("ask.requested"));
+        assert!(dump.contains("tool.result"));
+    }
+
+    #[test]
     fn terminal_events_carry_exit_code_and_round_trip() {
         let cases = [
             KataEvent::RunError {
@@ -540,6 +635,79 @@ mod tests {
         assert!(
             s.contains(r#""exit_code":130"#),
             "cancel must serialize its code: {s}"
+        );
+    }
+
+    #[test]
+    fn stream_parser_correlates_tool_result_name() {
+        let mut p = StreamParser::default();
+        let use_line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]}}"#;
+        let res_line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok","is_error":false}]}}"#;
+
+        let _ = p.push(use_line);
+        let parsed = p.push(res_line);
+
+        assert_eq!(
+            parsed.events,
+            vec![KataEvent::ToolResult {
+                name: "Bash".into(),
+                ok: true,
+                summary: "ok".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn stream_parser_leaves_name_empty_when_uncorrelated() {
+        // A result whose tool_use was never seen keeps an empty name (no panic).
+        let mut p = StreamParser::default();
+        let res_line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_x","content":"ok","is_error":false}]}}"#;
+        let parsed = p.push(res_line);
+        assert_eq!(
+            parsed.events[0],
+            KataEvent::ToolResult {
+                name: String::new(),
+                ok: true,
+                summary: "ok".into()
+            }
+        );
+    }
+
+    #[test]
+    fn pump_labels_tool_results_across_lines() {
+        let input = concat!(
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_9","name":"Read","input":{"command":"cat x"}}]}}"#,
+            "\n",
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_9","content":"data","is_error":false}]}}"#,
+            "\n",
+        );
+        let mut events = Vec::new();
+        let _ = pump(Cursor::new(input), &|| false, &mut |e| events.push(e));
+        assert!(events.contains(&KataEvent::ToolResult {
+            name: "Read".into(),
+            ok: true,
+            summary: "data".into(),
+        }));
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn schema_artifact_is_fresh() {
+        let generated = super::generate_schema_json();
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../schema/kata-events.schema.json");
+        if std::env::var_os("KATA_BLESS_SCHEMA").is_some() {
+            let p = std::path::Path::new(path);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, &generated).unwrap();
+            return;
+        }
+        let committed = std::fs::read_to_string(path).unwrap_or_else(|_| {
+            panic!("schema/kata-events.schema.json missing — regenerate with \
+                    KATA_BLESS_SCHEMA=1 cargo test -p kata-core --features schema schema_artifact_is_fresh")
+        });
+        assert_eq!(
+            committed, generated,
+            "schema drift — regenerate with KATA_BLESS_SCHEMA=1 cargo test -p kata-core --features schema schema_artifact_is_fresh"
         );
     }
 }

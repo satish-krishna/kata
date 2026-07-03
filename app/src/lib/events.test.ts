@@ -47,7 +47,7 @@ describe("terminalStateFor", () => {
 describe("isStreamEvent", () => {
   it("accepts stream rows, rejects meta/terminal events", () => {
     expect(isStreamEvent({ type: "turn", n: 1 })).toBe(true);
-    expect(isStreamEvent({ type: "log", message: "x" })).toBe(true);
+    expect(isStreamEvent({ type: "log", level: "info", message: "x" })).toBe(true);
     expect(isStreamEvent({ type: "run.started", spec: "s", model: null, workdir: "/w", isolation: "none" })).toBe(false);
     expect(isStreamEvent({ type: "run.completed", exit_code: 0, is_error: false, num_turns: 1, cost_usd: null, duration_ms: 1, result: null })).toBe(false);
   });
@@ -64,4 +64,26 @@ test("KataEvent union accepts run.diff and run.started worktree fields", () => {
   };
   expect(started.type).toBe("run.started");
   expect(diff.type).toBe("run.diff");
+});
+
+describe("generated KataEvent types", () => {
+  it("accepts one representative event per family", () => {
+    const events: KataEvent[] = [
+      { type: "run.started", spec: "s", model: null, workdir: "/w", isolation: "none" },
+      { type: "log", level: "info", message: "hi" },
+      { type: "turn", n: 1 },
+      { type: "assistant.text", text: "hello" },
+      { type: "tool.use", name: "Bash", input_summary: "ls" },
+      { type: "tool.result", name: "Bash", ok: true, summary: "ok" },
+      { type: "run.completed", exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.01, duration_ms: 100, result: "done" },
+      { type: "run.diff", worktree: "/wt", branch: "b", files: [{ status: "M", path: "a.rs" }], insertions: 1, deletions: 0 },
+      { type: "ask.requested", id: "q1", questions: [{ kind: "select", header: "h", question: "?", options: [{ label: "A" }] }] },
+      { type: "ask.answered", id: "q1", answers: [["A"]] },
+      { type: "run.error", message: "boom", exit_code: 125 },
+      { type: "run.cancelled", exit_code: 130 },
+    ];
+    expect(events).toHaveLength(12);
+    expect(isStreamEvent({ type: "assistant.text", text: "x" })).toBe(true);
+    expect(statusForExit(0)).toBe("success");
+  });
 });
