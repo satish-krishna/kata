@@ -1,8 +1,8 @@
 # Kata event-protocol schema — enhancement design
 
 - Date: 2026-07-03
-- Status: design (implementation deferred to a separate Kata session)
-- Repo: **this spec targets the Kata repo** (`crates/kata-core`, `app/`); authored from the Jig session and staged here for relocation. Do not implement in Kata yet.
+- Status: **implemented** (Deliverable 1 + Optional item 2, PR #31). Deliverable 2 (the .NET package) and Optional item 1 (`notify`) remain deferred to their own sessions — see "Session scope & resolved decisions" below.
+- Repo: **this spec targets the Kata repo** (`crates/kata-core`, `app/`); originally authored from the Jig session and staged here. Deliverable 1 and Optional item 2 have since been implemented in Kata.
 
 ## Goal
 
