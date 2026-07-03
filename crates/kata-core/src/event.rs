@@ -585,8 +585,14 @@ mod tests {
         let res_line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_ask","content":"answered","is_error":false}]}}"#;
 
         let used = p.push(use_line);
-        assert!(used.is_assistant_message, "still counts as an assistant turn");
-        assert!(used.events.is_empty(), "ask_user tool.use must not render a row");
+        assert!(
+            used.is_assistant_message,
+            "still counts as an assistant turn"
+        );
+        assert!(
+            used.events.is_empty(),
+            "ask_user tool.use must not render a row"
+        );
 
         let result = p.push(res_line);
         assert!(
@@ -604,7 +610,10 @@ mod tests {
         assert!(variants.len() >= 12, "expected one subschema per variant");
         // The wire tag must be the literal event name, e.g. "run.started".
         let dump = json.to_string();
-        assert!(dump.contains("run.started"), "tag rename must survive: {dump}");
+        assert!(
+            dump.contains("run.started"),
+            "tag rename must survive: {dump}"
+        );
         assert!(dump.contains("ask.requested"));
         assert!(dump.contains("tool.result"));
     }
@@ -694,7 +703,10 @@ mod tests {
     #[test]
     fn schema_artifact_is_fresh() {
         let generated = super::generate_schema_json();
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../schema/kata-events.schema.json");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../schema/kata-events.schema.json"
+        );
         if std::env::var_os("KATA_BLESS_SCHEMA").is_some() {
             let p = std::path::Path::new(path);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
