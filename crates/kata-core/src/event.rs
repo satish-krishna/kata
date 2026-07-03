@@ -210,6 +210,11 @@ impl StreamParser {
                                 .and_then(|id| self.tool_names.get(id))
                                 .cloned()
                                 .unwrap_or_default();
+                            // Mirrors the tool_use suppression above: the ask_user
+                            // answer surfaces via `ask.answered`, not a stream row.
+                            if name.ends_with("ask_user") {
+                                continue;
+                            }
                             out.events.push(KataEvent::ToolResult {
                                 name,
                                 ok,
@@ -568,6 +573,25 @@ mod tests {
         assert!(
             p.events.is_empty(),
             "the ask_user tool.use must not render as a row"
+        );
+    }
+
+    #[test]
+    fn stream_parser_suppresses_ask_user_tool_result() {
+        let mut p = StreamParser::default();
+        // Real interactive shape: the ask_user tool_use carries an id...
+        let use_line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_ask","name":"mcp__kata-ask__ask_user","input":{"questions":[]}}]}}"#;
+        // ...and its tool_result references that id.
+        let res_line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_ask","content":"answered","is_error":false}]}}"#;
+
+        let used = p.push(use_line);
+        assert!(used.is_assistant_message, "still counts as an assistant turn");
+        assert!(used.events.is_empty(), "ask_user tool.use must not render a row");
+
+        let result = p.push(res_line);
+        assert!(
+            result.events.is_empty(),
+            "ask_user tool.result must not render a row either (answer surfaces via ask.answered)"
         );
     }
 
