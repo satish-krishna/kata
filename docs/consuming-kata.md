@@ -20,6 +20,8 @@ Build it from the workspace (`cargo build --release -p kata-cli` produces `targe
 
 ### 2. Write a run-spec
 
+The fastest start is `kata init`, which scaffolds a valid starter spec wired to the run-spec JSON Schema (`schema/kata-runspec.schema.json`). Open the result in a JSON-Schema-aware TOML editor (VS Code's Even Better TOML / the Taplo LSP) and you get field autocomplete, hover docs, and inline validation as you type — the `#:schema` directive on line one wires it automatically. `kata init myrun` names the file `myrun.toml`; `kata init --local` embeds a working-tree-relative schema path instead of the default version-pinned URL (use it when authoring inside a kata checkout, offline, or before the current version is released). Then edit the placeholders and validate.
+
 A run-spec is one TOML (or JSON) file describing the job. Minimal:
 
 ```toml
@@ -220,7 +222,7 @@ The mechanism is also why in-process interactive does not work, and is not meant
 
 ## Run-spec reference
 
-Unlike the event protocol — which is published as a language-neutral JSON Schema at `schema/kata-events.schema.json` — **the run-spec has no JSON Schema.** This table is its human-readable schema, and it is authoritative. The machine artifacts are: the Rust `spec::RunSpec` struct plus `validate()` (`crates/kata-core/src/spec.rs`, the reference implementation), and the ts-rs TypeScript bindings in `app/src/bindings/` for TypeScript consumers. A consumer in another language (e.g. a .NET orchestrator) authors TOML against this table and checks it with `kata validate` — there is no generated type to import for it. If that gap matters to you, raise it; it is a deliberate current state, not an oversight to route around silently.
+The run-spec is published as a language-neutral JSON Schema at `schema/kata-runspec.schema.json` (generated from `spec::RunSpec` via `schemars`, drift-gated in CI, alongside the event protocol's `schema/kata-events.schema.json`). Its primary use is *authoring*: point a JSON-Schema-aware editor at it — or let `kata init` wire it via the `#:schema` directive — for field autocomplete, hover docs, and inline validation. This table is the human-readable mirror; the schema, the Rust `spec::RunSpec` struct plus `validate()`, and the ts-rs TypeScript bindings in `app/src/bindings/` are the machine artifacts. `kata validate` remains the runtime backstop.
 
 Every field, with its default. Only `name`, `task`, and `workdir` are required.
 

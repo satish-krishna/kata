@@ -13,7 +13,7 @@ The `kata` binary is the single execution path the GUI, the Shokunin orchestrato
 A Cargo workspace plus a Tauri app. Three crates in `[workspace].members`:
 
 - `crates/kata-core` — the engine library (`kata_core`). Also builds the `fake-claude` test binary. Modules: `spec` (the `RunSpec` contract: TOML/JSON load/save + pure `validate`), `catalog` (`discover` skills/plugins from user+project scopes), `command` (`build_invocation` pins the exact claude flag set), `assemble` (build the disposable `--plugin-dir` with RAII temp cleanup), `run` (orchestrate the child, stream `KataEvent`s, enforce the leash, clean up), `event` (the normalized `KataEvent` protocol + `parse_stream_line` translating claude `stream-json`), `fsutil`.
-- `crates/kata-cli` — the `kata` binary. Thin CLI over `kata-core` with three subcommands: `validate`, `catalog`, `run`.
+- `crates/kata-cli` — the `kata` binary. Thin CLI over `kata-core` with four subcommands: `init`, `validate`, `catalog`, `run`.
 - `app/src-tauri` — the Workbench desktop backend (`kata-app`). See "The Workbench" below.
 
 `examples/katas/` holds version-controlled reference run-specs (the superpowers brainstorm → plan → execute trio) with a README; they are documentation, not seeded at runtime.
@@ -26,6 +26,8 @@ These are the stable, language-neutral interfaces; `kata-core` is the reference 
 - **The event protocol** (`event::KataEvent`) — `run.started` / `assistant.text` / `tool.use` / `tool.result` / `turn` / `log` / `run.completed` / `run.error` / `run.cancelled` / `ask.requested` / `ask.answered`, one JSON object per line on the engine's stdout. `ask.requested` carries the question list and a correlation `id`; `ask.answered` carries the same `id` and the `answers: string[][]`. Only emitted when `[interactive] enabled = true` in the spec.
 
 `RunSpec` and the catalog/enum types are mirrored to TypeScript in `app/src/bindings/` by **ts-rs**, gated behind the `ts` Cargo feature. After changing any of these types, regenerate: `cargo test -p kata-core --features ts export_bindings`. Do not hand-edit `app/src/bindings/`.
+
+The **run-spec** is also published as a JSON Schema at `schema/kata-runspec.schema.json`, generated from `RunSpec` via `schemars` (gated behind the `schema` Cargo feature) and stamped with `specSchemaVersion`. Regenerate after changing any run-spec type: `KATA_BLESS_SCHEMA=1 cargo test -p kata-core --features schema runspec_schema_artifact_is_fresh`. It is primarily an authoring aid (editor autocomplete via the `#:schema` directive that `kata init` embeds); CI fails on drift, same as the event schema.
 
 The **event protocol** is published as a JSON Schema at `schema/kata-events.schema.json`, generated from `KataEvent` via `schemars` (gated behind the `schema` Cargo feature) and stamped with `protocolVersion`. Regenerate after changing any event type: `KATA_BLESS_SCHEMA=1 cargo test -p kata-core --features schema schema_artifact_is_fresh`. The Workbench's TS event types (`app/src/bindings/kata-events.ts`) are generated from that schema with `cd app && npm run gen:events`; `app/src/lib/events.ts` re-exports them and adds hand-written render/status helpers. CI fails on drift in either direction.
 
