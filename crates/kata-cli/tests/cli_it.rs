@@ -554,6 +554,11 @@ fn init_local_emits_a_relative_path_inside_a_workspace() {
     )
     .unwrap();
     std::fs::create_dir_all(root.path().join("schema")).unwrap();
+    std::fs::write(
+        root.path().join("schema").join("kata-runspec.schema.json"),
+        "{}",
+    )
+    .unwrap();
     let sub = root.path().join("specs");
     std::fs::create_dir_all(&sub).unwrap();
 
@@ -568,5 +573,51 @@ fn init_local_emits_a_relative_path_inside_a_workspace() {
     assert_eq!(
         text.lines().next().unwrap(),
         "#:schema ../schema/kata-runspec.schema.json"
+    );
+}
+
+#[test]
+fn init_local_errors_outside_a_workspace() {
+    // No Cargo.toml anywhere under this temp dir: `find_workspace_root` must fail.
+    let dir = tempfile::tempdir().unwrap();
+    let code = kata()
+        .arg("init")
+        .arg("--local")
+        .current_dir(dir.path())
+        .status()
+        .unwrap()
+        .code()
+        .unwrap();
+    assert_eq!(code, 2, "--local outside a workspace must exit 2");
+    assert!(
+        !dir.path().join("kata.toml").exists(),
+        "kata.toml must not be written on failure"
+    );
+}
+
+#[test]
+fn init_local_errors_when_schema_missing() {
+    // A [workspace] Cargo.toml exists, but there is no schema/ dir under it.
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[workspace]\nmembers = []\n",
+    )
+    .unwrap();
+    let sub = root.path().join("specs");
+    std::fs::create_dir_all(&sub).unwrap();
+
+    let code = kata()
+        .arg("init")
+        .arg("--local")
+        .current_dir(&sub)
+        .status()
+        .unwrap()
+        .code()
+        .unwrap();
+    assert_eq!(code, 2, "--local with a missing schema file must exit 2");
+    assert!(
+        !sub.join("kata.toml").exists(),
+        "kata.toml must not be written on failure"
     );
 }

@@ -210,6 +210,15 @@ fn cmd_init(name: Option<&str>, force: bool, local: bool) -> ExitCode {
             return ExitCode::from(2);
         };
         let schema_abs = root.join("schema").join("kata-runspec.schema.json");
+        if !schema_abs.exists() {
+            eprintln!(
+                "error: --local requires authoring inside a kata working tree \
+                 (schema/kata-runspec.schema.json not found under the workspace root at {}); \
+                 use the default (hosted URL) instead",
+                root.display()
+            );
+            return ExitCode::from(2);
+        }
         let rel = relative_path(&spec_dir, &schema_abs);
         // Forward slashes for portability in the directive.
         format!("#:schema {}", rel.to_string_lossy().replace('\\', "/"))
@@ -225,7 +234,7 @@ fn cmd_init(name: Option<&str>, force: bool, local: bool) -> ExitCode {
         eprintln!("error: {e}");
         return ExitCode::from(2);
     }
-    eprintln!(
+    println!(
         "wrote {}. Edit it, then run `kata validate {}`.",
         target.display(),
         target.display()

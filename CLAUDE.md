@@ -13,7 +13,7 @@ The `kata` binary is the single execution path the GUI, the Shokunin orchestrato
 A Cargo workspace plus a Tauri app. Three crates in `[workspace].members`:
 
 - `crates/kata-core` — the engine library (`kata_core`). Also builds the `fake-claude` test binary. Modules: `spec` (the `RunSpec` contract: TOML/JSON load/save + pure `validate`), `catalog` (`discover` skills/plugins from user+project scopes), `command` (`build_invocation` pins the exact claude flag set), `assemble` (build the disposable `--plugin-dir` with RAII temp cleanup), `run` (orchestrate the child, stream `KataEvent`s, enforce the leash, clean up), `event` (the normalized `KataEvent` protocol + `parse_stream_line` translating claude `stream-json`), `fsutil`.
-- `crates/kata-cli` — the `kata` binary. Thin CLI over `kata-core` with four subcommands: `init`, `validate`, `catalog`, `run`.
+- `crates/kata-cli` — the `kata` binary. Thin CLI over `kata-core` with five subcommands: `init`, `validate`, `catalog`, `run`, `bundle`.
 - `app/src-tauri` — the Workbench desktop backend (`kata-app`). See "The Workbench" below.
 
 `examples/katas/` holds version-controlled reference run-specs (the superpowers brainstorm → plan → execute trio) with a README; they are documentation, not seeded at runtime.
