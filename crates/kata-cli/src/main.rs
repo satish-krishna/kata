@@ -32,12 +32,24 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
+    /// Scaffold a starter run-spec wired to the run-spec JSON Schema.
+    Init {
+        /// Spec name; writes `<name>.toml` (default: `kata.toml`).
+        name: Option<String>,
+        /// Overwrite an existing target file.
+        #[arg(long)]
+        force: bool,
+        /// Emit a working-tree-relative `#:schema` path instead of the pinned URL.
+        #[arg(long)]
+        local: bool,
+    },
     /// (internal) MCP stdio server backing the interactive `ask_user` tool.
     #[command(hide = true)]
     McpAsk,
 }
 
-// Exit codes: 0 = ok, 1 = validation failure, 2 = load/parse error,
+// Exit codes: 0 = ok, 1 = validation failure, 2 = load/parse or IO error,
+// 73 (EX_CANTCREAT) = init refused to overwrite an existing file,
 // 70 (EX_SOFTWARE) = subcommand not yet implemented.
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -46,6 +58,7 @@ fn main() -> ExitCode {
         Cmd::Catalog => cmd_catalog(),
         Cmd::Run { spec } => cmd_run(&spec),
         Cmd::Bundle { spec, out, force } => cmd_bundle(&spec, out.as_deref(), force),
+        Cmd::Init { name, force, local } => cmd_init(name.as_deref(), force, local),
         Cmd::McpAsk => match kata_core::ask::serve_stdio() {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
@@ -126,6 +139,98 @@ fn cmd_bundle(spec_path: &std::path::Path, out: Option<&std::path::Path>, force:
             ExitCode::from(2)
         }
     }
+}
+
+/// Walk up from `start` for a Cargo.toml that declares `[workspace]`.
+fn find_workspace_root(start: &std::path::Path) -> Option<PathBuf> {
+    for dir in start.ancestors() {
+        let cargo = dir.join("Cargo.toml");
+        if cargo.is_file() {
+            if let Ok(txt) = std::fs::read_to_string(&cargo) {
+                if txt.contains("[workspace]") {
+                    return Some(dir.to_path_buf());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Relative path from directory `from_dir` to file `to_file`; both absolute.
+fn relative_path(from_dir: &std::path::Path, to_file: &std::path::Path) -> PathBuf {
+    let from: Vec<_> = from_dir.components().collect();
+    let to: Vec<_> = to_file.components().collect();
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let mut result = PathBuf::new();
+    for _ in common..from.len() {
+        result.push("..");
+    }
+    for comp in &to[common..] {
+        result.push(comp.as_os_str());
+    }
+    result
+}
+
+fn cmd_init(name: Option<&str>, force: bool, local: bool) -> ExitCode {
+    let file_name = format!("{}.toml", name.unwrap_or("kata"));
+    let target = PathBuf::from(&file_name);
+
+    if target.exists() && !force {
+        eprintln!(
+            "error: {} already exists (pass --force to overwrite)",
+            target.display()
+        );
+        return ExitCode::from(73);
+    }
+
+    // Compute the #:schema directive.
+    let directive = if local {
+        // Resolve the spec's parent directory to an absolute, existing path.
+        let cwd = match std::env::current_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::from(2);
+            }
+        };
+        let abs_target = cwd.join(&target);
+        let spec_dir = abs_target.parent().unwrap_or(&cwd);
+        let spec_dir = match spec_dir.canonicalize() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::from(2);
+            }
+        };
+        let Some(root) = find_workspace_root(&spec_dir) else {
+            eprintln!(
+                "error: --local requires authoring inside a kata working tree \
+                 (no [workspace] Cargo.toml found); use the default (hosted URL) instead"
+            );
+            return ExitCode::from(2);
+        };
+        let schema_abs = root.join("schema").join("kata-runspec.schema.json");
+        let rel = relative_path(&spec_dir, &schema_abs);
+        // Forward slashes for portability in the directive.
+        format!("#:schema {}", rel.to_string_lossy().replace('\\', "/"))
+    } else {
+        format!(
+            "#:schema https://raw.githubusercontent.com/satish-krishna/kata/v{}/schema/kata-runspec.schema.json",
+            env!("CARGO_PKG_VERSION")
+        )
+    };
+
+    let body = kata_core::spec::starter_toml(&directive);
+    if let Err(e) = std::fs::write(&target, body) {
+        eprintln!("error: {e}");
+        return ExitCode::from(2);
+    }
+    eprintln!(
+        "wrote {}. Edit it, then run `kata validate {}`.",
+        target.display(),
+        target.display()
+    );
+    ExitCode::SUCCESS
 }
 
 #[derive(Debug)]
