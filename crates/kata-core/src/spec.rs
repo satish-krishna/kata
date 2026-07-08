@@ -311,6 +311,36 @@ pub fn save(path: &Path, spec: &RunSpec) -> Result<(), SpecError> {
 /// (e.g. stripping `KATA_ASK_PORT` disconnects the interactive ask bridge).
 const RESERVED_CHILD_ENV: &[&str] = &["KATA_ASK_PORT"];
 
+/// Render a curated starter run-spec as TOML text, wired to the schema via the
+/// given `#:schema` directive on its first line. The three required fields are
+/// filled with placeholders; a small set of high-value optionals are present and
+/// commented. Everything else is left to editor autocomplete. The output parses
+/// as a `RunSpec` and passes `validate`.
+pub fn starter_toml(schema_directive: &str) -> String {
+    format!(
+        "{schema_directive}\n\
+         schema = 1\n\
+         name = \"my-run\"\n\
+         task = \"Describe the job for the agent here.\"\n\
+         # Directory the run executes in. Set this to your project's path.\n\
+         workdir = \".\"\n\
+         \n\
+         [leash]\n\
+         # Turn cap (exit 125). Unset = unbounded, limited only by the timeout.\n\
+         # max_turns = 30\n\
+         # Wall-clock cap in seconds (exit 124). Unset applies the 1800s default.\n\
+         # timeout_secs = 1800\n\
+         \n\
+         [model]\n\
+         # Model id (e.g. \"opus\"). Unset uses claude's default.\n\
+         # id = \"opus\"\n\
+         \n\
+         [interactive]\n\
+         # Give the agent an ask_user tool so it can pause for your input.\n\
+         # enabled = true\n"
+    )
+}
+
 /// Pure structural validation (no filesystem access).
 pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
     let mut errs = Vec::new();
@@ -960,5 +990,21 @@ ANTHROPIC_AUTH_TOKEN = "proxy-token-value"
                 "non-finite budget {bad} must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn starter_toml_is_valid_and_carries_the_directive() {
+        let directive = "#:schema https://example.test/kata-runspec.schema.json";
+        let text = super::starter_toml(directive);
+        // First line is the schema directive.
+        assert_eq!(text.lines().next().unwrap(), directive);
+        // Parses as a RunSpec (the directive is a TOML comment, so it is ignored).
+        let spec: RunSpec = toml::from_str(&text).unwrap();
+        // And is structurally valid.
+        validate(&spec).expect("starter must validate");
+        // Sanity: the required fields are present and non-empty.
+        assert!(!spec.name.trim().is_empty());
+        assert!(!spec.task.trim().is_empty());
+        assert!(!spec.workdir.trim().is_empty());
     }
 }
