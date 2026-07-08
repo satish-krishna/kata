@@ -6,7 +6,7 @@ This guide is for developers embedding Kata in their own software — a GUI, an 
 
 Separately, if you are Rust, you may **link the `kata-core` crate for the pure, side-effect-free operations** — `validate`, `catalog`, `load`/`save` specs. These are cheap synchronous calls; forking a whole process to parse a TOML file would be silly, so the Workbench links them in-process as one-liners. Linking the crate for those helpers is *not* a second way to run — running still goes through the binary. In-process `run()` exists as a narrow escape hatch for one consumer (see [In-process](#in-process-rust)) and does not support interactivity by design.
 
-**The two things that are contractual** — stable across languages and versions — are the **run-spec** (what to run) and the **event protocol** (what comes back). The Rust API is the reference implementation of those contracts, not itself a frozen surface (pre-1.0; expect it to move). If you can, depend on the contracts, not the crate.
+**The two things that are contractual** — stable across languages and versions — are the **run-spec** (what to run) and the **event protocol** (what comes back). The Rust API is the reference implementation of those contracts, not itself a stability-frozen surface: the crate's signatures can shift between releases even though the contracts do not. If you can, depend on the contracts, not the crate.
 
 ---
 
@@ -272,4 +272,4 @@ Generate specs programmatically in TypeScript from the ts-rs bindings in `app/sr
 
 - **Run-spec** and **event protocol**: stable and language-neutral. Build against these.
 - **Exit codes**: stable; part of the CI/orchestrator contract.
-- **The `kata_core` Rust API**: the reference implementation, pre-1.0. The curated crate-root re-exports are the intended surface, but signatures may change before 1.0 — pin a git rev or version.
+- **The `kata_core` Rust API**: the reference implementation, less stable than the contracts above. The curated crate-root re-exports are the intended surface, but signatures may shift between releases — pin a version.
