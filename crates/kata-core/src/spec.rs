@@ -4,31 +4,45 @@ use std::path::Path;
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunSpec {
+    /// Run-spec format version. Currently always 1.
     #[serde(default = "default_schema_version")]
     pub schema: u32,
+    /// Run name; also the source for the transcript and bundle slug.
     pub name: String,
+    /// Human note describing the run. Ignored by the engine.
     #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// The prompt handed to the agent.
     pub task: String,
+    /// Extra context prepended to the task.
     #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
+    /// Directory the run executes in.
     pub workdir: String,
+    /// System-prompt identity: append to or replace the default system prompt.
     #[serde(default)]
     pub identity: Identity,
+    /// Skills to vendor into the disposable kit.
     #[serde(default)]
     pub skills: Vec<String>,
+    /// Plugins to vendor into the disposable kit, keyed by plugin name.
     #[serde(default)]
     pub plugins: BTreeMap<String, PluginConfig>,
+    /// Model selection for the run.
     #[serde(default)]
     pub model: Model,
+    /// The leash: turn cap, wall-clock timeout, budget ceiling, and isolation.
     #[serde(default)]
     pub leash: Leash,
+    /// Auth and empty-room ("bare") settings.
     #[serde(default)]
     pub auth: Auth,
+    /// Interactive-run settings (the `ask_user` tool).
     #[serde(default)]
     pub interactive: Interactive,
     /// Environment variables to set on the spawned `claude` child, overriding any
@@ -70,11 +84,14 @@ impl Default for RunSpec {
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Identity {
+    /// A system prompt to append to, or replace, the default.
     #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+    /// How `system_prompt` combines with the default: append or replace.
     #[serde(default)]
     pub mode: IdentityMode,
 }
@@ -82,21 +99,27 @@ pub struct Identity {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[cfg_attr(feature = "ts", ts(rename_all = "lowercase"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum IdentityMode {
+    /// Append the spec's system prompt to the default.
     #[default]
     Append,
+    /// Replace the default system prompt entirely.
     Replace,
 }
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct PluginConfig {
+    /// Whether the plugin exposes an MCP server to wire in. Unset = inherit the plugin's own default.
     #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<bool>,
+    /// Environment variable names to forward to the plugin, resolved from the parent environment.
     #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<String>,
@@ -104,8 +127,10 @@ pub struct PluginConfig {
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Model {
+    /// Model id (e.g. `opus`). Unset uses claude's default.
     #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
@@ -113,17 +138,22 @@ pub struct Model {
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Leash {
+    /// Turn cap (exit 125). Unset = unbounded, limited only by the timeout.
     #[cfg_attr(feature = "ts", ts(optional = nullable, as = "Option<u32>"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
+    /// Wall-clock cap in seconds (exit 124). Unset applies the 1800s default.
     #[cfg_attr(feature = "ts", ts(optional = nullable, as = "Option<u32>"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
+    /// Spend ceiling in USD (exit 122). Must be > 0 when set.
     #[cfg_attr(feature = "ts", ts(optional = nullable, as = "Option<f64>"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_budget_usd: Option<f64>,
+    /// Isolation mode: run in place, or branch off HEAD into a worktree.
     #[serde(default)]
     pub isolation: Isolation,
 }
@@ -153,10 +183,13 @@ impl Leash {
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Auth {
+    /// Run in the empty room (`--bare`). Default true.
     #[serde(default = "default_bare")]
     pub bare: bool,
+    /// Env var holding the API token; forwarded to `ANTHROPIC_API_KEY` under bare mode.
     #[cfg_attr(feature = "ts", ts(optional = nullable))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_env: Option<String>,
@@ -177,6 +210,7 @@ fn default_bare() -> bool {
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Interactive {
     /// Opt-in gate. When false, the engine never wires the ask_user tool, so
@@ -194,14 +228,41 @@ fn default_schema_version() -> u32 {
     1
 }
 
+/// Render the canonical run-spec JSON Schema: the schemars output with a stable
+/// root `title`, a `specSchemaVersion` stamp, the `schema` field pinned to
+/// `const: 1`, and a trailing newline. This exact string is what
+/// `schema/kata-runspec.schema.json` must contain.
+#[cfg(feature = "schema")]
+pub fn generate_runspec_schema_json() -> String {
+    let mut root = serde_json::to_value(schemars::schema_for!(RunSpec)).unwrap();
+    let obj = root.as_object_mut().unwrap();
+    obj.insert("title".to_string(), serde_json::json!("Kata run-spec"));
+    obj.insert("specSchemaVersion".to_string(), serde_json::json!(1));
+    // Pin the format-version field so `schema = 2` is flagged by editors.
+    if let Some(schema_field) = obj
+        .get_mut("properties")
+        .and_then(|p| p.as_object_mut())
+        .and_then(|props| props.get_mut("schema"))
+        .and_then(|s| s.as_object_mut())
+    {
+        schema_field.insert("const".to_string(), serde_json::json!(1));
+    }
+    let mut s = serde_json::to_string_pretty(&root).unwrap();
+    s.push('\n');
+    s
+}
+
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[cfg_attr(feature = "ts", ts(rename_all = "lowercase"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Isolation {
+    /// Run in `workdir` directly, no isolation.
     #[default]
     None,
+    /// Branch off HEAD into a git worktree and run there. Requires a git workdir.
     Worktree,
 }
 
@@ -323,6 +384,46 @@ pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn runspec_schema_pins_version_and_carries_docs() {
+        let json: serde_json::Value =
+            serde_json::from_str(&super::generate_runspec_schema_json()).unwrap();
+        assert_eq!(json["title"], "Kata run-spec");
+        assert_eq!(json["specSchemaVersion"], 1);
+        // The `schema` field is pinned so an editor flags a wrong format version.
+        assert_eq!(json["properties"]["schema"]["const"], 1);
+        // Field doc comments must survive as descriptions (editor hover text).
+        assert_eq!(
+            json["properties"]["workdir"]["description"],
+            "Directory the run executes in."
+        );
+    }
+
+    #[cfg(feature = "schema")]
+    #[test]
+    fn runspec_schema_artifact_is_fresh() {
+        let generated = super::generate_runspec_schema_json();
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../schema/kata-runspec.schema.json"
+        );
+        if std::env::var_os("KATA_BLESS_SCHEMA").is_some() {
+            let p = std::path::Path::new(path);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, &generated).unwrap();
+            return;
+        }
+        let committed = std::fs::read_to_string(path).unwrap_or_else(|_| {
+            panic!("schema/kata-runspec.schema.json missing — regenerate with \
+                    KATA_BLESS_SCHEMA=1 cargo test -p kata-core --features schema runspec_schema_artifact_is_fresh")
+        });
+        assert_eq!(
+            committed, generated,
+            "schema drift — regenerate with KATA_BLESS_SCHEMA=1 cargo test -p kata-core --features schema runspec_schema_artifact_is_fresh"
+        );
+    }
 
     fn minimal_toml() -> &'static str {
         r#"
