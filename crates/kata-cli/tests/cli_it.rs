@@ -621,3 +621,27 @@ fn init_local_errors_when_schema_missing() {
         "kata.toml must not be written on failure"
     );
 }
+
+#[test]
+fn init_rejects_path_like_names() {
+    // NAME must be a single file-name component: a name with a path separator or
+    // a `..` component must be refused (exit 2) and write nothing outside cwd.
+    let dir = tempfile::tempdir().unwrap();
+    for bad in ["../escape", "sub/name", ".."] {
+        let code = kata()
+            .arg("init")
+            .arg(bad)
+            .current_dir(dir.path())
+            .status()
+            .unwrap()
+            .code()
+            .unwrap();
+        assert_eq!(
+            code, 2,
+            "init should reject path-like name {bad:?} with exit 2"
+        );
+    }
+    // Nothing was written into or above the temp dir.
+    assert!(!dir.path().join("escape.toml").exists());
+    assert!(!dir.path().join("..").join("escape.toml").exists());
+}

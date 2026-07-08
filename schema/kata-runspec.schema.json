@@ -90,6 +90,7 @@
         },
         "max_budget_usd": {
           "description": "Spend ceiling in USD (exit 122). Must be > 0 when set.",
+          "exclusiveMinimum": 0,
           "format": "double",
           "type": [
             "number",
@@ -99,7 +100,7 @@
         "max_turns": {
           "description": "Turn cap (exit 125). Unset = unbounded, limited only by the timeout.",
           "format": "uint32",
-          "minimum": 0,
+          "minimum": 1,
           "type": [
             "integer",
             "null"

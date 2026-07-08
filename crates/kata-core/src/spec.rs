@@ -247,6 +247,32 @@ pub fn generate_runspec_schema_json() -> String {
     {
         schema_field.insert("const".to_string(), serde_json::json!(1));
     }
+    // Mirror the numeric bounds `validate` enforces on the leash, so editor
+    // validation matches runtime validation: `max_turns >= 1` and
+    // `max_budget_usd > 0` when set. (The remaining `validate` rules —
+    // non-empty/-whitespace strings, reserved and disjoint env names — are not
+    // expressed here; `kata validate` remains the full check.)
+    if let Some(leash_props) = obj
+        .get_mut("$defs")
+        .and_then(|d| d.as_object_mut())
+        .and_then(|defs| defs.get_mut("Leash"))
+        .and_then(|l| l.as_object_mut())
+        .and_then(|leash| leash.get_mut("properties"))
+        .and_then(|p| p.as_object_mut())
+    {
+        if let Some(mt) = leash_props
+            .get_mut("max_turns")
+            .and_then(|v| v.as_object_mut())
+        {
+            mt.insert("minimum".to_string(), serde_json::json!(1));
+        }
+        if let Some(mb) = leash_props
+            .get_mut("max_budget_usd")
+            .and_then(|v| v.as_object_mut())
+        {
+            mb.insert("exclusiveMinimum".to_string(), serde_json::json!(0));
+        }
+    }
     let mut s = serde_json::to_string_pretty(&root).unwrap();
     s.push('\n');
     s
@@ -429,6 +455,10 @@ mod tests {
             json["properties"]["workdir"]["description"],
             "Directory the run executes in."
         );
+        // Leash numeric bounds mirror `validate`: max_turns >= 1, max_budget_usd > 0.
+        let leash = &json["$defs"]["Leash"]["properties"];
+        assert_eq!(leash["max_turns"]["minimum"], 1);
+        assert_eq!(leash["max_budget_usd"]["exclusiveMinimum"], 0);
     }
 
     #[cfg(feature = "schema")]

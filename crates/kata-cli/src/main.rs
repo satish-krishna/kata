@@ -172,6 +172,18 @@ fn relative_path(from_dir: &std::path::Path, to_file: &std::path::Path) -> PathB
 }
 
 fn cmd_init(name: Option<&str>, force: bool, local: bool) -> ExitCode {
+    // NAME becomes `<name>.toml` in the current directory: reject anything that
+    // is not a single, normal path component, so `../x` or `/tmp/x` cannot write
+    // the scaffold outside the current directory.
+    if let Some(n) = name {
+        let mut comps = std::path::Path::new(n).components();
+        let simple =
+            matches!(comps.next(), Some(std::path::Component::Normal(_))) && comps.next().is_none();
+        if !simple {
+            eprintln!("error: name must be a simple file name with no path separators (got '{n}')");
+            return ExitCode::from(2);
+        }
+    }
     let file_name = format!("{}.toml", name.unwrap_or("kata"));
     let target = PathBuf::from(&file_name);
 
@@ -234,7 +246,8 @@ fn cmd_init(name: Option<&str>, force: bool, local: bool) -> ExitCode {
         eprintln!("error: {e}");
         return ExitCode::from(2);
     }
-    println!(
+    // Guidance to stderr (matches the design): keeps stdout clean for scripts.
+    eprintln!(
         "wrote {}. Edit it, then run `kata validate {}`.",
         target.display(),
         target.display()
