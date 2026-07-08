@@ -2,17 +2,11 @@
 
 This guide is for developers embedding Kata in their own software — a GUI, an orchestrator, a CI step, a service. It is not about *authoring* run-specs (see the root `README.md`); it is about *driving* a run and observing it from your own code.
 
-There are two integration modes. Pick by language first, then by how much you want to own.
+**There is one way to run a spec: spawn the `kata` binary and read its JSON-line events.** Every consumer — the Workbench, the Shokunin orchestrator, CI — goes through that single execution path, on purpose. It is language-neutral, process-isolated, and the only path where interactive runs work. Start here; do not reach for anything else unless you have a specific reason the rest of this guide names.
 
-| | Out-of-process | In-process |
-|---|---|---|
-| **Who** | Any language | Rust only |
-| **How** | Spawn the `kata` binary, read JSON-line events | Depend on the `kata-core` crate, call `run()` |
-| **You depend on** | The run-spec + event protocol (language-neutral) | The `kata_core` Rust API |
-| **Interactive runs** | Fully supported, nothing extra | Supported only if you spawn `kata` for it (see [Interactive](#interactive-runs)) |
-| **Use when** | You are not Rust, or you want process isolation | You are Rust and want the pure operations in-process |
+Separately, if you are Rust, you may **link the `kata-core` crate for the pure, side-effect-free operations** — `validate`, `catalog`, `load`/`save` specs. These are cheap synchronous calls; forking a whole process to parse a TOML file would be silly, so the Workbench links them in-process as one-liners. Linking the crate for those helpers is *not* a second way to run — running still goes through the binary. In-process `run()` exists as a narrow escape hatch for one consumer (see [In-process](#in-process-rust)) and does not support interactivity by design.
 
-**The two things that are contractual** — stable across languages and versions — are the **run-spec** (what to run) and the **event protocol** (what comes back). The Rust API is the reference implementation of those contracts, not itself a frozen surface (pre-1.0; expect it to move). If you can, depend on the contracts, not the crate.
+**The two things that are contractual** — stable across languages and versions — are the **run-spec** (what to run) and the **event protocol** (what comes back). The Rust API is the reference implementation of those contracts, not itself a stability-frozen surface: the crate's signatures can shift between releases even though the contracts do not. If you can, depend on the contracts, not the crate.
 
 ---
 
@@ -25,6 +19,8 @@ This is the universal path, and the one the Kata Workbench itself uses. Your pro
 Build it from the workspace (`cargo build --release -p kata-cli` produces `target/release/kata`) and put it on `PATH`. A real run needs an authenticated `claude` on `PATH` as well — Kata drives `claude -p`, it does not replace it.
 
 ### 2. Write a run-spec
+
+The fastest start is `kata init`, which scaffolds a valid starter spec wired to the run-spec JSON Schema (`schema/kata-runspec.schema.json`). Open the result in a JSON-Schema-aware TOML editor (VS Code's Even Better TOML / the Taplo LSP) and you get field autocomplete, hover docs, and inline validation as you type — the `#:schema` directive on line one wires it automatically. `kata init myrun` names the file `myrun.toml`; `kata init --local` embeds a working-tree-relative schema path instead of the default version-pinned URL (use it when authoring inside a kata checkout, offline, or before the current version is released). Then edit the placeholders and validate.
 
 A run-spec is one TOML (or JSON) file describing the job. Minimal:
 
@@ -39,9 +35,29 @@ max_turns = 30
 timeout_secs = 1800
 ```
 
-See [Run-spec reference](#run-spec-reference) for every field. Validate before running: `kata validate triage.toml` (exit 0 = valid; exit 1 = invalid with reasons on stderr; exit 2 = could not load/parse).
+See [Run-spec reference](#run-spec-reference) for every field.
 
-### 3. Run it and read events
+### 3. Validate before you run
+
+`kata validate <spec>` is a pure preflight: it loads and validates the spec and does **nothing else** — no `claude` spawned, no run started, no side effects. Use it so a consumer never launches a run only to discover the spec was malformed.
+
+```
+kata validate triage.toml
+```
+
+The exit code is the whole signal:
+
+| Code | Meaning |
+|---|---|
+| 0 | Valid. Safe to run. Prints `ok: <path> valid`. |
+| 1 | Semantic validation failed. One reason per line on stderr. |
+| 2 | Could not load or parse the file at all. |
+
+You are not *required* to call `validate` — `kata run` validates the spec internally as its first action and fails fast (before spawning `claude`) on an invalid one, so a bad spec never reaches a run either way. The reason to preflight anyway is twofold: `validate` has zero side effects (so you can check speculatively — on save, on keystroke), and it *distinguishes* the failure. Through `kata run`, a validation failure surfaces as exit **2** (the engine maps every startup error to 2), so it reads the same as an unparseable file. Only `kata validate` separates exit **1** ("your spec is wrong") from exit **2** ("I couldn't read it"). If your integration branches on that distinction, preflight with `validate`; do not try to recover it from `run`.
+
+If you are Rust, `kata_core::spec::validate` is one of the pure re-exports (see [In-process](#in-process-rust)), so you can run this same preflight in-process with zero process spawns and still run the spec out-of-process.
+
+### 4. Run it and read events
 
 ```
 kata run triage.toml
@@ -141,7 +157,11 @@ If `answer_timeout_secs` is set and no answer arrives in time, the run is reaped
 
 ## In-process (Rust)
 
-Depend on `kata-core` and call the engine directly. Until Kata is published to a registry, use a git dependency:
+Most Rust consumers link `kata-core` for **only** the pure operations — `validate`, `catalog`, `load`/`save` specs, `bundle` — and still spawn the `kata` binary to run (that is exactly what the Workbench backend does). Those helpers are the everyday reason to depend on the crate.
+
+Running in-process — calling `run()` from your own binary instead of spawning `kata` — is a **narrow escape hatch, not the recommended path.** It exists for one shape of consumer: a concurrent orchestrator that drives many runs inside a single process and wants to avoid a `kata` child per run. If that is not you, spawn the binary and skip to the caveat below. Whatever you do, `run()` in your own binary **cannot do interactive runs** — see [Why interactive is binary-only](#why-interactive-is-binary-only-by-design).
+
+Until Kata is published to a registry, use a git dependency:
 
 ```toml
 [dependencies]
@@ -190,15 +210,19 @@ println!("run finished with exit code {}", outcome.exit_code);
 
 The `AskRequested` arm here is a placeholder that answers every question with `"yes"`; a real consumer renders the questions, collects the operator's choices, and builds the `Vec<Vec<String>>` reply matrix from them (see [Answer matrix](#answer-matrix)).
 
-### The one caveat: interactive in-process
+### Why interactive is binary-only (by design)
 
-The `ask_user` MCP server is spawned by claude as `<current exe> mcp-ask`. When you link `run()` into your own binary, "current exe" is *your* binary — which has no `mcp-ask` subcommand — so interactive runs cannot reach the operator.
+Interactivity is packaged *inside* Kata — the `ask_user` tool, its schema, the MCP server, and the localhost bridge all live in `kata-core` and never leave the `kata` process. A consumer never touches anything MCP-related; it only renders `ask.requested` and writes `answer` back (see [Interactive runs](#interactive-runs)). That is the point: the MCP is invisible, and the app owns the UI layer.
 
-The clean answer: **for interactive runs, spawn the `kata` binary** (the out-of-process path) rather than linking `run()`. Link the crate for the pure operations and non-interactive runs; rent the `kata` process when you need a human in the loop. (Serving `mcp-ask` from your own `main` is possible but rarely worth it.)
+The mechanism is also why in-process interactive does not work, and is not meant to. When a run goes interactive, the engine tells `claude` to launch the MCP server as `<current exe> mcp-ask`. In the `kata` binary, "current exe" is `kata`, which has that hidden subcommand. Link `run()` into *your* binary and "current exe" is *your* binary — which has no `mcp-ask` — so the server never starts. This is a guardrail, not a gap: the single execution path for a *run* is the binary, and interactive runs are the sharpest case of it.
+
+**So: for interactive runs, spawn the `kata` binary.** Link the crate for the pure operations and, if you are that concurrent orchestrator, for non-interactive `run()`; spawn the `kata` process the moment you need a human in the loop. (Serving `mcp-ask` from your own `main` is technically possible but re-execs your process into a JSON-RPC server on stdout — a real footgun for any non-trivial `main` — and is rarely worth it.)
 
 ---
 
 ## Run-spec reference
+
+The run-spec is published as a language-neutral JSON Schema at `schema/kata-runspec.schema.json` (generated from `spec::RunSpec` via `schemars`, drift-gated in CI, alongside the event protocol's `schema/kata-events.schema.json`). Its primary use is *authoring*: point a JSON-Schema-aware editor at it — or let `kata init` wire it via the `#:schema` directive — for field autocomplete, hover docs, and inline validation. This table is the human-readable mirror; the schema, the Rust `spec::RunSpec` struct plus `validate()`, and the ts-rs TypeScript bindings in `app/src/bindings/` are the machine artifacts. `kata validate` remains the runtime backstop.
 
 Every field, with its default. Only `name`, `task`, and `workdir` are required.
 
@@ -248,4 +272,4 @@ Generate specs programmatically in TypeScript from the ts-rs bindings in `app/sr
 
 - **Run-spec** and **event protocol**: stable and language-neutral. Build against these.
 - **Exit codes**: stable; part of the CI/orchestrator contract.
-- **The `kata_core` Rust API**: the reference implementation, pre-1.0. The curated crate-root re-exports are the intended surface, but signatures may change before 1.0 — pin a git rev or version.
+- **The `kata_core` Rust API**: the reference implementation, less stable than the contracts above. The curated crate-root re-exports are the intended surface, but signatures may shift between releases — pin a version.

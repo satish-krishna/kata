@@ -1,0 +1,261 @@
+{
+  "$defs": {
+    "Auth": {
+      "properties": {
+        "bare": {
+          "default": true,
+          "description": "Run in the empty room (`--bare`). Default true.",
+          "type": "boolean"
+        },
+        "token_env": {
+          "description": "Env var holding the API token; forwarded to `ANTHROPIC_API_KEY` under bare mode.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Identity": {
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/IdentityMode",
+          "default": "append",
+          "description": "How `system_prompt` combines with the default: append or replace."
+        },
+        "system_prompt": {
+          "description": "A system prompt to append to, or replace, the default.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "IdentityMode": {
+      "oneOf": [
+        {
+          "const": "append",
+          "description": "Append the spec's system prompt to the default.",
+          "type": "string"
+        },
+        {
+          "const": "replace",
+          "description": "Replace the default system prompt entirely.",
+          "type": "string"
+        }
+      ]
+    },
+    "Interactive": {
+      "properties": {
+        "answer_timeout_secs": {
+          "description": "How long the engine waits on the operator's answer before reaping the run\n(exit 123). Unset = wait indefinitely until answered or cancelled.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "enabled": {
+          "default": false,
+          "description": "Opt-in gate. When false, the engine never wires the ask_user tool, so\nclaude cannot pause — behaviour is identical to a non-interactive run.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Isolation": {
+      "oneOf": [
+        {
+          "const": "none",
+          "description": "Run in `workdir` directly, no isolation.",
+          "type": "string"
+        },
+        {
+          "const": "worktree",
+          "description": "Branch off HEAD into a git worktree and run there. Requires a git workdir.",
+          "type": "string"
+        }
+      ]
+    },
+    "Leash": {
+      "properties": {
+        "isolation": {
+          "$ref": "#/$defs/Isolation",
+          "default": "none",
+          "description": "Isolation mode: run in place, or branch off HEAD into a worktree."
+        },
+        "max_budget_usd": {
+          "description": "Spend ceiling in USD (exit 122). Must be > 0 when set.",
+          "exclusiveMinimum": 0,
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "max_turns": {
+          "description": "Turn cap (exit 125). Unset = unbounded, limited only by the timeout.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "timeout_secs": {
+          "description": "Wall-clock cap in seconds (exit 124). Unset applies the 1800s default.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Model": {
+      "properties": {
+        "id": {
+          "description": "Model id (e.g. `opus`). Unset uses claude's default.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "PluginConfig": {
+      "properties": {
+        "env": {
+          "description": "Environment variable names to forward to the plugin, resolved from the parent environment.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mcp": {
+          "description": "Whether the plugin exposes an MCP server to wire in. Unset = inherit the plugin's own default.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "auth": {
+      "$ref": "#/$defs/Auth",
+      "default": {
+        "bare": true
+      },
+      "description": "Auth and empty-room (\"bare\") settings."
+    },
+    "context": {
+      "description": "Extra context prepended to the task.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "description": {
+      "description": "Human note describing the run. Ignored by the engine.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "env": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Environment variables to set on the spawned `claude` child, overriding any\nvalue inherited from the parent process, forwarded by a plugin, or derived\nfrom `auth.token_env`. Applied per run to the child only; the host process\nenvironment is never mutated. `BTreeMap` keeps serialization deterministic.",
+      "type": "object"
+    },
+    "env_remove": {
+      "description": "Environment variable names to unset on the spawned `claude` child, even if\npresent in the parent process environment or set by an earlier layer.\nApplied last, so removal wins.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "identity": {
+      "$ref": "#/$defs/Identity",
+      "default": {
+        "mode": "append"
+      },
+      "description": "System-prompt identity: append to or replace the default system prompt."
+    },
+    "interactive": {
+      "$ref": "#/$defs/Interactive",
+      "default": {
+        "enabled": false
+      },
+      "description": "Interactive-run settings (the `ask_user` tool)."
+    },
+    "leash": {
+      "$ref": "#/$defs/Leash",
+      "default": {
+        "isolation": "none"
+      },
+      "description": "The leash: turn cap, wall-clock timeout, budget ceiling, and isolation."
+    },
+    "model": {
+      "$ref": "#/$defs/Model",
+      "default": {},
+      "description": "Model selection for the run."
+    },
+    "name": {
+      "description": "Run name; also the source for the transcript and bundle slug.",
+      "type": "string"
+    },
+    "plugins": {
+      "additionalProperties": {
+        "$ref": "#/$defs/PluginConfig"
+      },
+      "default": {},
+      "description": "Plugins to vendor into the disposable kit, keyed by plugin name.",
+      "type": "object"
+    },
+    "schema": {
+      "const": 1,
+      "default": 1,
+      "description": "Run-spec format version. Currently always 1.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "skills": {
+      "default": [],
+      "description": "Skills to vendor into the disposable kit.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "task": {
+      "description": "The prompt handed to the agent.",
+      "type": "string"
+    },
+    "workdir": {
+      "description": "Directory the run executes in.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "task",
+    "workdir"
+  ],
+  "specSchemaVersion": 1,
+  "title": "Kata run-spec",
+  "type": "object"
+}

@@ -475,3 +475,173 @@ fn run_from_bundle_is_hermetic_and_completes() {
     assert_eq!(last["type"], "run.completed");
     assert_eq!(last["exit_code"], 0);
 }
+
+#[test]
+fn init_writes_default_spec_that_validates() {
+    let dir = tempfile::tempdir().unwrap();
+    let status = kata().arg("init").current_dir(dir.path()).status().unwrap();
+    assert!(status.success(), "init should exit 0");
+
+    let spec = dir.path().join("kata.toml");
+    let text = std::fs::read_to_string(&spec).unwrap();
+    assert!(
+        text.lines()
+            .next()
+            .unwrap()
+            .starts_with("#:schema https://raw.githubusercontent.com/satish-krishna/kata/v"),
+        "first line must be the pinned schema URL, got: {text}"
+    );
+
+    // The scaffolded spec must pass `kata validate`.
+    let v = kata().arg("validate").arg(&spec).status().unwrap();
+    assert!(v.success(), "scaffolded spec must validate");
+}
+
+#[test]
+fn init_names_the_file_after_the_argument() {
+    let dir = tempfile::tempdir().unwrap();
+    let status = kata()
+        .arg("init")
+        .arg("triage")
+        .current_dir(dir.path())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert!(dir.path().join("triage.toml").exists());
+}
+
+#[test]
+fn init_refuses_to_overwrite_without_force() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("kata.toml"), "existing").unwrap();
+    let code = kata()
+        .arg("init")
+        .current_dir(dir.path())
+        .status()
+        .unwrap()
+        .code()
+        .unwrap();
+    assert_eq!(code, 73, "no-overwrite refusal must exit 73 (EX_CANTCREAT)");
+    // File must be untouched.
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("kata.toml")).unwrap(),
+        "existing"
+    );
+}
+
+#[test]
+fn init_force_overwrites() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("kata.toml"), "existing").unwrap();
+    let status = kata()
+        .arg("init")
+        .arg("--force")
+        .current_dir(dir.path())
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let text = std::fs::read_to_string(dir.path().join("kata.toml")).unwrap();
+    assert!(text.contains("[leash]"), "should be the scaffold now");
+}
+
+#[test]
+fn init_local_emits_a_relative_path_inside_a_workspace() {
+    // Fake a workspace root: a Cargo.toml with [workspace] and a schema dir.
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[workspace]\nmembers = []\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.path().join("schema")).unwrap();
+    std::fs::write(
+        root.path().join("schema").join("kata-runspec.schema.json"),
+        "{}",
+    )
+    .unwrap();
+    let sub = root.path().join("specs");
+    std::fs::create_dir_all(&sub).unwrap();
+
+    let status = kata()
+        .arg("init")
+        .arg("--local")
+        .current_dir(&sub)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let text = std::fs::read_to_string(sub.join("kata.toml")).unwrap();
+    assert_eq!(
+        text.lines().next().unwrap(),
+        "#:schema ../schema/kata-runspec.schema.json"
+    );
+}
+
+#[test]
+fn init_local_errors_outside_a_workspace() {
+    // No Cargo.toml anywhere under this temp dir: `find_workspace_root` must fail.
+    let dir = tempfile::tempdir().unwrap();
+    let code = kata()
+        .arg("init")
+        .arg("--local")
+        .current_dir(dir.path())
+        .status()
+        .unwrap()
+        .code()
+        .unwrap();
+    assert_eq!(code, 2, "--local outside a workspace must exit 2");
+    assert!(
+        !dir.path().join("kata.toml").exists(),
+        "kata.toml must not be written on failure"
+    );
+}
+
+#[test]
+fn init_local_errors_when_schema_missing() {
+    // A [workspace] Cargo.toml exists, but there is no schema/ dir under it.
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[workspace]\nmembers = []\n",
+    )
+    .unwrap();
+    let sub = root.path().join("specs");
+    std::fs::create_dir_all(&sub).unwrap();
+
+    let code = kata()
+        .arg("init")
+        .arg("--local")
+        .current_dir(&sub)
+        .status()
+        .unwrap()
+        .code()
+        .unwrap();
+    assert_eq!(code, 2, "--local with a missing schema file must exit 2");
+    assert!(
+        !sub.join("kata.toml").exists(),
+        "kata.toml must not be written on failure"
+    );
+}
+
+#[test]
+fn init_rejects_path_like_names() {
+    // NAME must be a single file-name component: a name with a path separator or
+    // a `..` component must be refused (exit 2) and write nothing outside cwd.
+    let dir = tempfile::tempdir().unwrap();
+    for bad in ["../escape", "sub/name", ".."] {
+        let code = kata()
+            .arg("init")
+            .arg(bad)
+            .current_dir(dir.path())
+            .status()
+            .unwrap()
+            .code()
+            .unwrap();
+        assert_eq!(
+            code, 2,
+            "init should reject path-like name {bad:?} with exit 2"
+        );
+    }
+    // Nothing was written into or above the temp dir.
+    assert!(!dir.path().join("escape.toml").exists());
+    assert!(!dir.path().join("..").join("escape.toml").exists());
+}

@@ -1774,7 +1774,7 @@ dependencies = [
 
 [[package]]
 name = "kata-cli"
-version = "0.7.0"
+version = "1.0.0"
 dependencies = [
  "clap",
  "ctrlc",
@@ -1786,7 +1786,7 @@ dependencies = [
 
 [[package]]
 name = "kata-core"
-version = "0.7.0"
+version = "1.0.0"
 dependencies = [
  "schemars 1.2.1",
  "serde",

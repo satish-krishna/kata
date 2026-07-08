@@ -51,6 +51,8 @@ A real run needs an authenticated `claude` on your `PATH`.
 
 Write a run-spec:
 
+Run `kata init` to scaffold a starter run-spec wired to the run-spec JSON Schema — open it in a JSON-Schema-aware TOML editor for autocomplete and inline validation, edit the placeholders, then `kata validate` and `kata run` it.
+
 ```toml
 # triage.kata.toml
 name    = "triage-flaky"
