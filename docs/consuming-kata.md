@@ -270,6 +270,9 @@ Generate specs programmatically in TypeScript from the ts-rs bindings in `app/sr
 
 ## Which contracts are stable
 
+`CONTRACTS.md` at the repo root is the authoritative list of frozen surfaces and the versioning rules (what change is major vs minor). In brief:
+
 - **Run-spec** and **event protocol**: stable and language-neutral. Build against these.
-- **Exit codes**: stable; part of the CI/orchestrator contract.
+- **Exit codes** and the **engine invocation + stdin control channel** (`cancel`, `answer`): stable; part of the CI/orchestrator contract.
 - **The `kata_core` Rust API**: the reference implementation, less stable than the contracts above. The curated crate-root re-exports are the intended surface, but signatures may shift between releases — pin a version.
+- **The `ask_user` MCP server** is an internal implementation detail, not a contract — drive interactivity via the `ask.*` events and the `answer` control line.
