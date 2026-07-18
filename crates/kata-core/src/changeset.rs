@@ -17,6 +17,7 @@ pub struct DiffSummary {
     pub files: Vec<DiffFile>,
     pub insertions: u32,
     pub deletions: u32,
+    pub by_type: Vec<crate::event::DiffTypeStat>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -92,6 +93,7 @@ pub fn diff_at(dir: &Path) -> Result<DiffSummary, ChangesetError> {
     let mut files = Vec::new();
     let mut insertions = 0u32;
     let mut deletions = 0u32;
+    let mut by_ext: HashMap<String, (u32, u32, u32)> = HashMap::new();
     for line in String::from_utf8_lossy(&name_status.stdout).lines() {
         let mut it = line.split('\t');
         let status = it.next().unwrap_or("");
@@ -104,8 +106,12 @@ pub fn diff_at(dir: &Path) -> Result<DiffSummary, ChangesetError> {
         deletions += del;
         files.push(DiffFile {
             status: status.chars().next().unwrap().to_string(),
-            path,
+            path: path.clone(),
         });
+        let e = by_ext.entry(ext_of(&path)).or_insert((0, 0, 0));
+        e.0 += 1;
+        e.1 += ins;
+        e.2 += del;
     }
 
     // Untracked (newly-created) files: status "A", insertions = line count.
@@ -132,13 +138,41 @@ pub fn diff_at(dir: &Path) -> Result<DiffSummary, ChangesetError> {
             status: "A".into(),
             path: path.to_string(),
         });
+        let e = by_ext.entry(ext_of(path)).or_insert((0, 0, 0));
+        e.0 += 1;
+        e.1 += ins;
     }
+
+    let mut by_type: Vec<crate::event::DiffTypeStat> = by_ext
+        .into_iter()
+        .map(
+            |(file_type, (files, insertions, deletions))| crate::event::DiffTypeStat {
+                file_type,
+                files,
+                insertions,
+                deletions,
+            },
+        )
+        .collect();
+    by_type.sort_by(|a, b| a.file_type.cmp(&b.file_type));
 
     Ok(DiffSummary {
         files,
         insertions,
         deletions,
+        by_type,
     })
+}
+
+/// Lowercased file extension of a path, or "" when there is none. Uses
+/// `Path::extension`, so a leading-dot-only name (".gitignore") has no
+/// extension.
+fn ext_of(path: &str) -> String {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default()
 }
 
 /// Run `git -C <dir> <args>`, mapping a missing binary to `GitMissing`.
@@ -237,5 +271,36 @@ mod tests {
         let notrepo = tempfile::tempdir().unwrap();
         let err = diff_at(notrepo.path()).unwrap_err();
         assert!(matches!(err, ChangesetError::NotARepo), "got {err:?}");
+    }
+
+    #[test]
+    fn diff_at_groups_by_file_type() {
+        let repo = init_repo(); // seeds tracked.txt ("one\ntwo\n")
+                                // Modify tracked .txt (+1), add untracked .rs (+2) and a no-ext file (+1).
+        std::fs::write(repo.path().join("tracked.txt"), "one\ntwo\nthree\n").unwrap();
+        std::fs::write(repo.path().join("new.rs"), "a\nb\n").unwrap();
+        std::fs::write(repo.path().join("Makefile"), "all:\n").unwrap();
+
+        let d = diff_at(repo.path()).unwrap();
+
+        // Sorted by file_type: "" (Makefile), "rs", "txt".
+        let types: Vec<&str> = d.by_type.iter().map(|t| t.file_type.as_str()).collect();
+        assert_eq!(
+            types,
+            vec!["", "rs", "txt"],
+            "sorted by file_type: {:?}",
+            d.by_type
+        );
+
+        let get = |t: &str| d.by_type.iter().find(|s| s.file_type == t).unwrap();
+        assert_eq!((get("").files, get("").insertions), (1, 1)); // Makefile: +1
+        assert_eq!((get("rs").files, get("rs").insertions), (1, 2)); // new.rs: +2
+        assert_eq!((get("txt").files, get("txt").insertions), (1, 1)); // tracked.txt: +1
+
+        // by_type is a partition of the totals.
+        let sum_ins: u32 = d.by_type.iter().map(|t| t.insertions).sum();
+        let sum_del: u32 = d.by_type.iter().map(|t| t.deletions).sum();
+        assert_eq!(sum_ins, d.insertions);
+        assert_eq!(sum_del, d.deletions);
     }
 }

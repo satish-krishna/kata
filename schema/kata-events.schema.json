@@ -18,6 +18,38 @@
       ],
       "type": "object"
     },
+    "DiffTypeStat": {
+      "description": "Per-file-type slice of a run's changeset. Part of the `run.diff` payload.\n`file_type` is a lowercased file extension; `\"\"` means no extension.",
+      "properties": {
+        "deletions": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "file_type": {
+          "description": "Lowercased file extension (\"rs\", \"ts\", \"md\"); \"\" for files with no\nextension (Makefile, LICENSE, .gitignore).",
+          "type": "string"
+        },
+        "files": {
+          "description": "Number of changed files of this type.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "insertions": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "file_type",
+        "files",
+        "insertions",
+        "deletions"
+      ],
+      "type": "object"
+    },
     "Question": {
       "description": "One question in an `ask.requested` batch. Part of the published event\nschema (`schema/kata-events.schema.json`); the app's TS type is generated\nfrom that schema, not hand-mirrored.",
       "properties": {
@@ -291,6 +323,14 @@
             "string",
             "null"
           ]
+        },
+        "by_type": {
+          "default": [],
+          "description": "Changeset partitioned by file extension, sorted by `file_type`.\nA partition of the totals above: summing `by_type[*].insertions`\nequals `insertions` (same for deletions). `#[serde(default)]` so a\npre-enhancement `run.diff` transcript line still deserializes (as []).",
+          "items": {
+            "$ref": "#/$defs/DiffTypeStat"
+          },
+          "type": "array"
         },
         "deletions": {
           "format": "uint32",

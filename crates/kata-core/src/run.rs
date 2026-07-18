@@ -613,6 +613,7 @@ pub fn run<F: FnMut(KataEvent)>(
             files: d.files,
             insertions: d.insertions,
             deletions: d.deletions,
+            by_type: d.by_type,
         }),
         Err(crate::changeset::ChangesetError::NotARepo) => emit(KataEvent::Log {
             level: "info".into(),

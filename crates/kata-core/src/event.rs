@@ -56,6 +56,12 @@ pub enum KataEvent {
         files: Vec<DiffFile>,
         insertions: u32,
         deletions: u32,
+        /// Changeset partitioned by file extension, sorted by `file_type`.
+        /// A partition of the totals above: summing `by_type[*].insertions`
+        /// equals `insertions` (same for deletions). `#[serde(default)]` so a
+        /// pre-enhancement `run.diff` transcript line still deserializes (as []).
+        #[serde(default)]
+        by_type: Vec<DiffTypeStat>,
     },
     #[serde(rename = "ask.requested")]
     AskRequested {
@@ -104,6 +110,20 @@ pub struct DiffFile {
     pub status: String,
     /// Path relative to the worktree root.
     pub path: String,
+}
+
+/// Per-file-type slice of a run's changeset. Part of the `run.diff` payload.
+/// `file_type` is a lowercased file extension; `""` means no extension.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct DiffTypeStat {
+    /// Lowercased file extension ("rs", "ts", "md"); "" for files with no
+    /// extension (Makefile, LICENSE, .gitignore).
+    pub file_type: String,
+    /// Number of changed files of this type.
+    pub files: u32,
+    pub insertions: u32,
+    pub deletions: u32,
 }
 
 /// One question in an `ask.requested` batch. Part of the published event
@@ -722,6 +742,7 @@ mod tests {
             }],
             insertions: 3,
             deletions: 1,
+            by_type: vec![],
         };
         let s = serde_json::to_string(&e).unwrap();
         assert!(s.contains(r#""type":"run.diff""#));
@@ -744,12 +765,42 @@ mod tests {
             files: vec![],
             insertions: 0,
             deletions: 0,
+            by_type: vec![],
         };
         let ws = serde_json::to_string(&w).unwrap();
         assert!(
             ws.contains(r#""branch":"kata/spec-abc""#),
             "worktree run keeps branch: {ws}"
         );
+    }
+
+    #[test]
+    fn run_diff_by_type_round_trips_and_defaults_when_absent() {
+        // A pre-enhancement run.diff line (no by_type) still parses, as [].
+        let old: KataEvent =
+            serde_json::from_str(r#"{"type":"run.diff","files":[],"insertions":0,"deletions":0}"#)
+                .unwrap();
+        assert!(matches!(old, KataEvent::RunDiff { ref by_type, .. } if by_type.is_empty()));
+
+        // A populated by_type round-trips.
+        let ev = KataEvent::RunDiff {
+            worktree: None,
+            branch: None,
+            files: vec![DiffFile {
+                status: "A".into(),
+                path: "src/x.rs".into(),
+            }],
+            insertions: 5,
+            deletions: 0,
+            by_type: vec![DiffTypeStat {
+                file_type: "rs".into(),
+                files: 1,
+                insertions: 5,
+                deletions: 0,
+            }],
+        };
+        let back: KataEvent = serde_json::from_str(&serde_json::to_string(&ev).unwrap()).unwrap();
+        assert_eq!(ev, back);
     }
 
     #[test]

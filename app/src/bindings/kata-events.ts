@@ -48,6 +48,13 @@ export type KataEvent =
        * Isolation branch (`kata/<slug>-<id>`) — present only when isolated.
        */
       branch?: string | null;
+      /**
+       * Changeset partitioned by file extension, sorted by `file_type`.
+       * A partition of the totals above: summing `by_type[*].insertions`
+       * equals `insertions` (same for deletions). `#[serde(default)]` so a
+       * pre-enhancement `run.diff` transcript line still deserializes (as []).
+       */
+      by_type?: DiffTypeStat[];
       deletions: number;
       files: DiffFile[];
       insertions: number;
@@ -101,6 +108,23 @@ export type KataEvent =
     };
 export type QuestionKind = "confirm" | "select" | "text";
 
+/**
+ * Per-file-type slice of a run's changeset. Part of the `run.diff` payload.
+ * `file_type` is a lowercased file extension; `""` means no extension.
+ */
+export interface DiffTypeStat {
+  deletions: number;
+  /**
+   * Lowercased file extension ("rs", "ts", "md"); "" for files with no
+   * extension (Makefile, LICENSE, .gitignore).
+   */
+  file_type: string;
+  /**
+   * Number of changed files of this type.
+   */
+  files: number;
+  insertions: number;
+}
 /**
  * One changed file in a run's changeset. Part of the `run.diff` event
  * payload; produced by `crate::changeset::diff_at`.
