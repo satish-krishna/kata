@@ -75,7 +75,10 @@ pub enum KataEvent {
         /// the leash killed the child before it could report (timeout, cancel,
         /// turn cap); present on the budget path (exit 122).
         cost_usd: Option<f64>,
-        /// Wall-clock run duration in milliseconds.
+        /// Wall-clock run duration in milliseconds. `#[serde(default)]` so a
+        /// pre-1.1.0 transcript line that predates this field still deserializes
+        /// (as 0) instead of being dropped from run history.
+        #[serde(default)]
         duration_ms: u64,
     },
     #[serde(rename = "run.cancelled")]
@@ -84,7 +87,10 @@ pub enum KataEvent {
         /// Almost always `None`: a cancelled child is killed before it reports
         /// a cost. Kept for symmetry with the other terminal events.
         cost_usd: Option<f64>,
-        /// Wall-clock run duration in milliseconds.
+        /// Wall-clock run duration in milliseconds. `#[serde(default)]` so a
+        /// pre-1.1.0 transcript line that predates this field still deserializes
+        /// (as 0) instead of being dropped from run history.
+        #[serde(default)]
         duration_ms: u64,
     },
 }
@@ -615,6 +621,34 @@ mod tests {
         );
         assert!(dump.contains("ask.requested"));
         assert!(dump.contains("tool.result"));
+    }
+
+    #[test]
+    fn terminal_events_deserialize_without_duration_ms_from_old_transcripts() {
+        // Pre-1.1.0 run.error / run.cancelled lines lack duration_ms; they must
+        // still parse (duration_ms defaults to 0) so old history is not dropped.
+        let err: KataEvent =
+            serde_json::from_str(r#"{"type":"run.error","message":"boom","exit_code":124}"#)
+                .unwrap();
+        assert!(matches!(
+            err,
+            KataEvent::RunError {
+                duration_ms: 0,
+                cost_usd: None,
+                exit_code: 124,
+                ..
+            }
+        ));
+        let cancelled: KataEvent =
+            serde_json::from_str(r#"{"type":"run.cancelled","exit_code":130}"#).unwrap();
+        assert!(matches!(
+            cancelled,
+            KataEvent::RunCancelled {
+                duration_ms: 0,
+                cost_usd: None,
+                exit_code: 130
+            }
+        ));
     }
 
     #[test]

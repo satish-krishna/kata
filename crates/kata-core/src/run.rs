@@ -214,7 +214,7 @@ pub fn run<F: FnMut(KataEvent)>(
                     message: message.clone(),
                     exit_code: 2,
                     cost_usd: None,
-                    duration_ms: 0,
+                    duration_ms: 0, // fires before the run clock (Instant::now()) starts
                 });
                 return Err(RunError::Auth(message));
             }
@@ -284,7 +284,7 @@ pub fn run<F: FnMut(KataEvent)>(
                     message: message.clone(),
                     exit_code: 2,
                     cost_usd: None,
-                    duration_ms: 0,
+                    duration_ms: 0, // fires before the run clock (Instant::now()) starts
                 });
                 return Err(RunError::Worktree(message));
             }
