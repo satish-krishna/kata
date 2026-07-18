@@ -1,0 +1,35 @@
+schema = 1
+name = "triage"
+description = "Reproduce, root-cause, and classify a bug into a written report (kata:triage, interactive)"
+workdir = "."
+
+task = """
+Use the kata:triage skill to triage the following issue:
+
+<<Paste the bug report / issue text, or point to it. Override this task at launch.>>
+
+Reproduce it first (via kata-test-runner) or state plainly that you could not and what was tried. Dig evidence through kata-scout — recent history in the implicated areas, related code paths, similar past fixes — then localize the root cause yourself to `path:line` with a mechanism, distinguishing cause from symptom. Ask through the ask_user tool only for what the repo cannot tell you, and confirm the recommended next action with me before closing. Write the report to `docs/triage/<YYYY-MM-DD>-<slug>-triage.md` (do not commit it), ending with the failing test a fix should start from. Diagnosis only: do NOT fix the bug in this run.
+"""
+
+[identity]
+mode = "append"
+system_prompt = """
+Before anything else, read the CLAUDE.md at the root of the workspace and treat it as binding for this entire run — its instructions override your defaults. If it points to nested CLAUDE.md files (for example app/CLAUDE.md) that govern the area you are working in, read and follow those too. Honor every convention it states — TDD workflow, commands, code style, design rules, commit rules — to the letter. If anything in the task conflicts with CLAUDE.md, stop and surface the conflict instead of silently choosing.
+"""
+
+[model]
+id = "sonnet"
+
+[plugins.kata]
+
+[leash]
+max_turns = 40
+timeout_secs = 3600
+isolation = "none"
+
+[auth]
+bare = false
+
+[interactive]
+enabled = true
+answer_timeout_secs = 1800

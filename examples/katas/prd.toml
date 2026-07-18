@@ -1,0 +1,35 @@
+schema = 1
+name = "prd"
+description = "Grill the operator into a reviewable PRD (kata:prd, interactive)"
+workdir = "."
+
+task = """
+Use the kata:prd skill to produce a PRD for:
+
+<<Describe the feature or idea to turn into a PRD. Override this task at launch with the specifics.>>
+
+Recon the repo first, then grill me one focused question at a time through the ask_user tool — problem, users, scope in/out, success metrics, constraints, non-goals — challenging vague answers until every requirement is defensible and testable. Write the finished PRD to `docs/prds/<YYYY-MM-DD>-<topic>-prd.md` (do not commit it); that file is the deliverable, not just a final chat reply. Requirements only: no design, no plan, no implementation code in this run.
+"""
+
+[identity]
+mode = "append"
+system_prompt = """
+Before anything else, read the CLAUDE.md at the root of the workspace and treat it as binding for this entire run — its instructions override your defaults. If it points to nested CLAUDE.md files (for example app/CLAUDE.md) that govern the area you are working in, read and follow those too. Honor every convention it states — TDD workflow, commands, code style, design rules, commit rules — to the letter. If anything in the task conflicts with CLAUDE.md, stop and surface the conflict instead of silently choosing.
+"""
+
+[model]
+id = "sonnet"
+
+[plugins.kata]
+
+[leash]
+max_turns = 30
+timeout_secs = 2400
+isolation = "none"
+
+[auth]
+bare = false
+
+[interactive]
+enabled = true
+answer_timeout_secs = 1800

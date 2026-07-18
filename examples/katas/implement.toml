@@ -1,0 +1,35 @@
+schema = 1
+name = "implement"
+description = "Execute a written plan step by step, TDD via subagents (kata:implement, worktree)"
+workdir = "."
+
+task = """
+Use the kata:implement skill to execute the implementation plan at:
+
+<<Path to the plan file, e.g. docs/plans/<YYYY-MM-DD>-<topic>-plan.md. Override this task at launch.>>
+
+You are the conductor: dispatch kata-implementer for each step with its full text, verify independently with kata-test-runner, review with kata-reviewer, and escalate after two needs-work rounds on one step instead of grinding. Follow the repo's TDD discipline without exception — failing test first, watched failing for the right reason, then minimal code. Keep the tree green at every step boundary, mark steps done in the plan file, stay strictly inside the plan's scope, and surface any blocker instead of guessing. Close with the full gate suite (the exact commands CLAUDE.md specifies) and an honest report. Commit only if CLAUDE.md's rules say to and the user has asked.
+"""
+
+[identity]
+mode = "append"
+system_prompt = """
+Before anything else, read the CLAUDE.md at the root of the workspace and treat it as binding for this entire run — its instructions override your defaults. If it points to nested CLAUDE.md files (for example app/CLAUDE.md) that govern the area you are working in, read and follow those too. Honor every convention it states — TDD workflow, commands, code style, design rules, commit rules — to the letter. If anything in the task conflicts with CLAUDE.md, stop and surface the conflict instead of silently choosing.
+"""
+
+[model]
+id = "sonnet"
+
+[plugins.kata]
+
+[leash]
+max_turns = 60
+timeout_secs = 7200
+max_budget_usd = 10.0
+isolation = "worktree"
+
+[auth]
+bare = false
+
+[interactive]
+enabled = false

@@ -1,0 +1,35 @@
+schema = 1
+name = "plan"
+description = "Turn a PRD/context pack into a written TDD plan (kata:plan, interactive)"
+workdir = "."
+
+task = """
+Use the kata:plan skill to produce a written, reviewable TDD implementation plan for:
+
+<<Point to the PRD and/or context pack (e.g. docs/prds/... and docs/context/...), or describe the feature. Override this task at launch.>>
+
+Verify every file and symbol the plan will reference before writing steps. Each step must lead with the failing test to write first, name the files it touches, sketch the minimal implementation, and carry exact verify commands and observable done-criteria — bite-sized, dependency-ordered, tree green at every boundary. Resolve consequential forks and get my approval through the ask_user tool. Write the plan to a Markdown file under docs/ following the repo's plan convention (default `docs/plans/<YYYY-MM-DD>-<topic>-plan.md`), and do not commit it. Do NOT implement any code in this run; the plan file is the deliverable.
+"""
+
+[identity]
+mode = "append"
+system_prompt = """
+Before anything else, read the CLAUDE.md at the root of the workspace and treat it as binding for this entire run — its instructions override your defaults. If it points to nested CLAUDE.md files (for example app/CLAUDE.md) that govern the area you are working in, read and follow those too. Honor every convention it states — TDD workflow, commands, code style, design rules, commit rules — to the letter. If anything in the task conflicts with CLAUDE.md, stop and surface the conflict instead of silently choosing.
+"""
+
+[model]
+id = "sonnet"
+
+[plugins.kata]
+
+[leash]
+max_turns = 40
+timeout_secs = 3600
+isolation = "none"
+
+[auth]
+bare = false
+
+[interactive]
+enabled = true
+answer_timeout_secs = 1800

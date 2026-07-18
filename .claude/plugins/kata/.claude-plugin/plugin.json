@@ -1,0 +1,5 @@
+{
+  "name": "kata",
+  "version": "0.1.0",
+  "description": "Engineering workflow kit for Kata runs: grill a PRD out of the operator, build a context pack, write a TDD plan, execute it step by step, and triage issues. Every question goes through Kata's ask_user tool; mechanical work runs on Haiku subagents, judgment work on Sonnet."
+}

@@ -1,0 +1,34 @@
+schema = 1
+name = "context"
+description = "Build a context pack for a feature area (kata:context, read-only)"
+workdir = "."
+
+task = """
+Use the kata:context skill to build a context pack for:
+
+<<Name the feature, PRD path, or area to map — e.g. the PRD a prd kata just wrote. Override this task at launch.>>
+
+Fan the reconnaissance out to parallel kata-scout subagents — layout, binding conventions and exact commands, the subsystems the target touches, how they are tested, prior art — then synthesize one pack with a `path:line` reference on every claim. Record anything only the operator can answer under Open questions rather than stalling. Write the pack to `docs/context/<YYYY-MM-DD>-<topic>-context.md` (do not commit it); that file is the deliverable. Strictly read-only otherwise: change nothing.
+"""
+
+[identity]
+mode = "append"
+system_prompt = """
+Before anything else, read the CLAUDE.md at the root of the workspace and treat it as binding for this entire run — its instructions override your defaults. If it points to nested CLAUDE.md files (for example app/CLAUDE.md) that govern the area you are working in, read and follow those too. Honor every convention it states — TDD workflow, commands, code style, design rules, commit rules — to the letter. If anything in the task conflicts with CLAUDE.md, stop and surface the conflict instead of silently choosing.
+"""
+
+[model]
+id = "sonnet"
+
+[plugins.kata]
+
+[leash]
+max_turns = 30
+timeout_secs = 2400
+isolation = "none"
+
+[auth]
+bare = false
+
+[interactive]
+enabled = false
