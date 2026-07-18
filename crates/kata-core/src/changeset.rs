@@ -1,9 +1,10 @@
 //! Git changeset summary for a directory: `git diff HEAD` (tracked changes)
 //! plus newly-created untracked files, WITHOUT mutating the index. Used for
 //! both worktree-isolated runs (diff the worktree) and default runs (diff the
-//! workdir). A non-git directory, a missing `git`, or any git failure is an
-//! `Err` the caller degrades to a warning — a diff must never mask a run's
-//! outcome.
+//! workdir). A non-git directory is a benign, common case the caller reports
+//! quietly (`ChangesetError::NotARepo`); a missing `git` or any other git
+//! failure is an `Err` the caller degrades to a warning — a diff must never
+//! mask a run's outcome.
 
 use crate::event::DiffFile;
 use std::collections::HashMap;
@@ -22,6 +23,8 @@ pub struct DiffSummary {
 pub enum ChangesetError {
     #[error("`git` was not found on PATH")]
     GitMissing,
+    #[error("not a git repository")]
+    NotARepo,
     #[error("git {cmd} failed (status {status:?}): {stderr}")]
     Git {
         cmd: String,
@@ -34,8 +37,17 @@ pub enum ChangesetError {
 
 /// Summarize `dir`'s changes vs its `HEAD`, including newly-created untracked
 /// files, WITHOUT mutating the index. A directory that is not a git work tree
-/// (or has no `HEAD`) surfaces as `Err(ChangesetError::Git { .. })`.
+/// surfaces as `Err(ChangesetError::NotARepo)`; any other git failure surfaces
+/// as `Err(ChangesetError::Git { .. })`.
 pub fn diff_at(dir: &Path) -> Result<DiffSummary, ChangesetError> {
+    // A non-git directory is a benign, common case (bare runs outside a
+    // repo): detect it up front so the caller can report it quietly rather
+    // than as a git error. A missing `git` binary still surfaces as
+    // GitMissing via git().
+    if !git(dir, &["rev-parse", "--git-dir"])?.status.success() {
+        return Err(ChangesetError::NotARepo);
+    }
+
     // Per-file insertions/deletions for tracked changes (binary => "-\t-").
     let numstat = git(dir, &["diff", "HEAD", "--numstat"])?;
     if !numstat.status.success() {
@@ -214,6 +226,6 @@ mod tests {
     fn diff_at_non_repo_errors() {
         let notrepo = tempfile::tempdir().unwrap();
         let err = diff_at(notrepo.path()).unwrap_err();
-        assert!(matches!(err, ChangesetError::Git { .. }), "got {err:?}");
+        assert!(matches!(err, ChangesetError::NotARepo), "got {err:?}");
     }
 }

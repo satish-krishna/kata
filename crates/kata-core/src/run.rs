@@ -601,9 +601,11 @@ pub fn run<F: FnMut(KataEvent)>(
 
     // The child has exited; surface the changeset before the terminal event.
     // Runs against `cwd` — the worktree path when isolated, the workdir
-    // otherwise. A diff failure (non-git dir, missing git) degrades to a
-    // warning; it never masks the run outcome. worktree/branch are set only
-    // for an isolated run.
+    // otherwise. A non-git workdir is benign and common (a bare run outside
+    // a repo), so it gets a quiet info note; any other diff failure (missing
+    // git, a git command erroring) degrades to a warning. Either way it
+    // never masks the run outcome. worktree/branch are set only for an
+    // isolated run.
     match crate::changeset::diff_at(Path::new(&cwd)) {
         Ok(d) => emit(KataEvent::RunDiff {
             worktree: worktree.as_ref().map(|wt| wt.path.clone()),
@@ -611,6 +613,10 @@ pub fn run<F: FnMut(KataEvent)>(
             files: d.files,
             insertions: d.insertions,
             deletions: d.deletions,
+        }),
+        Err(crate::changeset::ChangesetError::NotARepo) => emit(KataEvent::Log {
+            level: "info".into(),
+            message: "no changeset: workdir is not a git repository".into(),
         }),
         Err(e) => emit(KataEvent::Log {
             level: "warn".into(),
