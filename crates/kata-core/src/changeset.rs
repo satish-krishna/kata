@@ -40,12 +40,22 @@ pub enum ChangesetError {
 /// surfaces as `Err(ChangesetError::NotARepo)`; any other git failure surfaces
 /// as `Err(ChangesetError::Git { .. })`.
 pub fn diff_at(dir: &Path) -> Result<DiffSummary, ChangesetError> {
-    // A non-git directory is a benign, common case (bare runs outside a
-    // repo): detect it up front so the caller can report it quietly rather
-    // than as a git error. A missing `git` binary still surfaces as
-    // GitMissing via git().
-    if !git(dir, &["rev-parse", "--git-dir"])?.status.success() {
-        return Err(ChangesetError::NotARepo);
+    // A non-git directory is the only benign pre-check failure. git's rev-parse
+    // also exits non-zero for other reasons (e.g. "detected dubious ownership"
+    // on shared/CI checkouts); those are real failures the caller should surface
+    // as a warning, not silently suppress as "not a repository". Gate NotARepo on
+    // git's actual "not a git repository" message.
+    let probe = git(dir, &["rev-parse", "--git-dir"])?;
+    if !probe.status.success() {
+        let stderr = String::from_utf8_lossy(&probe.stderr);
+        if stderr.contains("not a git repository") {
+            return Err(ChangesetError::NotARepo);
+        }
+        return Err(ChangesetError::Git {
+            cmd: "rev-parse --git-dir".into(),
+            status: probe.status.code(),
+            stderr: stderr.trim().to_string(),
+        });
     }
 
     // Per-file insertions/deletions for tracked changes (binary => "-\t-").
