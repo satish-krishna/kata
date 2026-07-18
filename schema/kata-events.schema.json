@@ -4,7 +4,7 @@
       "description": "One changed file in a run's changeset. Part of the `run.diff` event\npayload; produced by `crate::changeset::diff_at`.",
       "properties": {
         "path": {
-          "description": "Path relative to the worktree root.",
+          "description": "Path relative to the run's working directory (the worktree when isolated, the workdir otherwise).",
           "type": "string"
         },
         "status": {

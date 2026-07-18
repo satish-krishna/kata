@@ -131,7 +131,7 @@ export interface DiffTypeStat {
  */
 export interface DiffFile {
   /**
-   * Path relative to the worktree root.
+   * Path relative to the run's working directory (the worktree when isolated, the workdir otherwise).
    */
   path: string;
   /**

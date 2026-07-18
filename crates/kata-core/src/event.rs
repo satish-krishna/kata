@@ -108,7 +108,7 @@ pub enum KataEvent {
 pub struct DiffFile {
     /// Git short status for the change: "A" | "M" | "D" | "R" | ...
     pub status: String,
-    /// Path relative to the worktree root.
+    /// Path relative to the run's working directory (the worktree when isolated, the workdir otherwise).
     pub path: String,
 }
 
