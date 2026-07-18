@@ -6,59 +6,7 @@ import type { Leash } from "./Leash";
 import type { Model } from "./Model";
 import type { PluginConfig } from "./PluginConfig";
 
-export type RunSpec = { 
-/**
- * Run-spec format version. Currently always 1.
- */
-schema: number, 
-/**
- * Run name; also the source for the transcript and bundle slug.
- */
-name: string, 
-/**
- * Human note describing the run. Ignored by the engine.
- */
-description?: string | null, 
-/**
- * The prompt handed to the agent.
- */
-task: string, 
-/**
- * Extra context prepended to the task.
- */
-context?: string | null, 
-/**
- * Directory the run executes in.
- */
-workdir: string, 
-/**
- * System-prompt identity: append to or replace the default system prompt.
- */
-identity: Identity, 
-/**
- * Skills to vendor into the disposable kit.
- */
-skills: Array<string>, 
-/**
- * Plugins to vendor into the disposable kit, keyed by plugin name.
- */
-plugins: { [key in string]?: PluginConfig }, 
-/**
- * Model selection for the run.
- */
-model: Model, 
-/**
- * The leash: turn cap, wall-clock timeout, budget ceiling, and isolation.
- */
-leash: Leash, 
-/**
- * Auth and empty-room ("bare") settings.
- */
-auth: Auth, 
-/**
- * Interactive-run settings (the `ask_user` tool).
- */
-interactive: Interactive, 
+export type RunSpec = { schema: number, name: string, description?: string | null, task: string, context?: string | null, workdir: string, identity: Identity, skills: Array<string>, plugins: { [key in string]?: PluginConfig }, model: Model, leash: Leash, auth: Auth, interactive: Interactive, 
 /**
  * Environment variables to set on the spawned `claude` child, overriding any
  * value inherited from the parent process, forwarded by a plugin, or derived
