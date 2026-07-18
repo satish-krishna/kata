@@ -578,7 +578,7 @@ pub fn run<F: FnMut(KataEvent)>(
     // The child has exited; surface the worktree diff before the terminal event.
     // A diff failure degrades to a warning — it never masks the run outcome.
     if let Some(wt) = &worktree {
-        match crate::worktree::diff(wt) {
+        match crate::changeset::diff_at(std::path::Path::new(&wt.path)) {
             Ok(d) => emit(KataEvent::RunDiff {
                 worktree: wt.path.clone(),
                 branch: wt.branch.clone(),
