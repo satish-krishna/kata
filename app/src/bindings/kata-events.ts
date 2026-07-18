@@ -44,12 +44,18 @@ export type KataEvent =
       type: "run.completed";
     }
   | {
-      branch: string;
+      /**
+       * Isolation branch (`kata/<slug>-<id>`) — present only when isolated.
+       */
+      branch?: string | null;
       deletions: number;
       files: DiffFile[];
       insertions: number;
       type: "run.diff";
-      worktree: string;
+      /**
+       * Absolute worktree path — present only for a worktree-isolated run.
+       */
+      worktree?: string | null;
     }
   | {
       id: string;
@@ -62,19 +68,42 @@ export type KataEvent =
       type: "ask.answered";
     }
   | {
+      /**
+       * Total cost claude reported, if a `result` line arrived. `None` when
+       * the leash killed the child before it could report (timeout, cancel,
+       * turn cap); present on the budget path (exit 122).
+       */
+      cost_usd?: number | null;
+      /**
+       * Wall-clock run duration in milliseconds. `#[serde(default)]` so a
+       * pre-1.1.0 transcript line that predates this field still deserializes
+       * (as 0) instead of being dropped from run history.
+       */
+      duration_ms?: number;
       exit_code: number;
       message: string;
       type: "run.error";
     }
   | {
+      /**
+       * Almost always `None`: a cancelled child is killed before it reports
+       * a cost. Kept for symmetry with the other terminal events.
+       */
+      cost_usd?: number | null;
+      /**
+       * Wall-clock run duration in milliseconds. `#[serde(default)]` so a
+       * pre-1.1.0 transcript line that predates this field still deserializes
+       * (as 0) instead of being dropped from run history.
+       */
+      duration_ms?: number;
       exit_code: number;
       type: "run.cancelled";
     };
 export type QuestionKind = "confirm" | "select" | "text";
 
 /**
- * One changed file in a worktree-isolation diff summary. Part of the
- * `run.diff` event payload; also produced by `crate::worktree::diff`.
+ * One changed file in a run's changeset. Part of the `run.diff` event
+ * payload; produced by `crate::changeset::diff_at`.
  */
 export interface DiffFile {
   /**

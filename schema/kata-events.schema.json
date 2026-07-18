@@ -1,7 +1,7 @@
 {
   "$defs": {
     "DiffFile": {
-      "description": "One changed file in a worktree-isolation diff summary. Part of the\n`run.diff` event payload; also produced by `crate::worktree::diff`.",
+      "description": "One changed file in a run's changeset. Part of the `run.diff` event\npayload; produced by `crate::changeset::diff_at`.",
       "properties": {
         "path": {
           "description": "Path relative to the worktree root.",
@@ -286,7 +286,11 @@
     {
       "properties": {
         "branch": {
-          "type": "string"
+          "description": "Isolation branch (`kata/<slug>-<id>`) — present only when isolated.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "deletions": {
           "format": "uint32",
@@ -309,13 +313,15 @@
           "type": "string"
         },
         "worktree": {
-          "type": "string"
+          "description": "Absolute worktree path — present only for a worktree-isolated run.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "type",
-        "worktree",
-        "branch",
         "files",
         "insertions",
         "deletions"
@@ -373,6 +379,21 @@
     },
     {
       "properties": {
+        "cost_usd": {
+          "description": "Total cost claude reported, if a `result` line arrived. `None` when\nthe leash killed the child before it could report (timeout, cancel,\nturn cap); present on the budget path (exit 122).",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "duration_ms": {
+          "default": 0,
+          "description": "Wall-clock run duration in milliseconds. `#[serde(default)]` so a\npre-1.1.0 transcript line that predates this field still deserializes\n(as 0) instead of being dropped from run history.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "exit_code": {
           "format": "int32",
           "type": "integer"
@@ -394,6 +415,21 @@
     },
     {
       "properties": {
+        "cost_usd": {
+          "description": "Almost always `None`: a cancelled child is killed before it reports\na cost. Kept for symmetry with the other terminal events.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "duration_ms": {
+          "default": 0,
+          "description": "Wall-clock run duration in milliseconds. `#[serde(default)]` so a\npre-1.1.0 transcript line that predates this field still deserializes\n(as 0) instead of being dropped from run history.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "exit_code": {
           "format": "int32",
           "type": "integer"
