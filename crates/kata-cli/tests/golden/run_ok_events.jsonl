@@ -5,4 +5,5 @@
 {"text":"hi","type":"assistant.text"}
 {"n":2,"type":"turn"}
 {"input_summary":"echo hi","name":"Bash","type":"tool.use"}
+{"level":"info","message":"no changeset: workdir is not a git repository","type":"log"}
 {"cost_usd":0.02,"duration_ms":0,"exit_code":0,"is_error":false,"num_turns":2,"result":"done","type":"run.completed"}

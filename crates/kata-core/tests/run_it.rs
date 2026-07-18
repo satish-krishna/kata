@@ -246,7 +246,7 @@ fn run_cancel_kills_child() {
     assert_eq!(outcome.exit_code, 130);
     assert!(events
         .iter()
-        .any(|e| matches!(e, KataEvent::RunCancelled { exit_code: 130 })));
+        .any(|e| matches!(e, KataEvent::RunCancelled { exit_code: 130, .. })));
 }
 
 #[test]
@@ -859,4 +859,105 @@ fn run_survives_when_transcript_cannot_be_written() {
     );
 
     std::env::remove_var("KATA_HOME");
+}
+
+#[test]
+#[serial]
+fn default_run_in_git_workdir_emits_changeset() {
+    // No worktree isolation: the agent writes into the live workdir, and a
+    // run.diff naming that file is emitted before run.completed, with no
+    // worktree/branch (they are None for a non-isolated run).
+    with_fake("writefile");
+    let repo = init_git_repo();
+    let cancel = CancelToken::new();
+    let mut events = Vec::new();
+    let outcome = run(
+        &base_spec(&repo.path().to_string_lossy()),
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
+    assert_eq!(outcome.exit_code, 0);
+
+    let diff_idx = events
+        .iter()
+        .position(|e| {
+            matches!(e,
+            KataEvent::RunDiff { worktree: None, branch: None, files, .. }
+                if files.iter().any(|f| f.path == "agent-made.txt"))
+        })
+        .expect("a run.diff naming the file, with no worktree/branch");
+    let done_idx = events
+        .iter()
+        .position(|e| matches!(e, KataEvent::RunCompleted { .. }))
+        .unwrap();
+    assert!(diff_idx < done_idx, "run.diff must precede run.completed");
+}
+
+#[test]
+#[serial]
+fn default_run_in_non_git_workdir_notes_no_changeset() {
+    // A plain (non-git) workdir has no HEAD to diff: no run.diff, and a
+    // deterministic info log explains why (not a scary warn). The run still
+    // completes normally.
+    with_fake("writefile");
+    let work = tempfile::tempdir().unwrap(); // NOT a git repo
+    let cancel = CancelToken::new();
+    let mut events = Vec::new();
+    let outcome = run(
+        &base_spec(&work.path().to_string_lossy()),
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
+    assert_eq!(outcome.exit_code, 0);
+
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, KataEvent::RunDiff { .. })),
+        "a non-git workdir must emit no run.diff"
+    );
+    assert!(
+        events.iter().any(|e| matches!(e,
+            KataEvent::Log { level, message }
+                if level == "info" && message == "no changeset: workdir is not a git repository")),
+        "a deterministic info log must explain the missing changeset, got {events:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn cancelled_run_reports_duration() {
+    // run.cancelled now carries duration_ms (cost is None — the killed child
+    // never reported one).
+    with_fake("sleep");
+    let work = tempfile::tempdir().unwrap();
+    let spec = base_spec(&work.path().to_string_lossy());
+    let cancel = CancelToken::new();
+    let flag = cancel.flag();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(300));
+        flag.store(true, Ordering::SeqCst);
+    });
+    let mut events = Vec::new();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
+    assert_eq!(outcome.exit_code, 130);
+    assert!(
+        events.iter().any(|e| matches!(e,
+            KataEvent::RunCancelled { exit_code: 130, cost_usd: None, duration_ms }
+                if *duration_ms > 0)),
+        "run.cancelled must carry a positive duration_ms, got {events:?}"
+    );
 }

@@ -81,12 +81,26 @@ Every event is a JSON object with a `type` field. Fields below are exactly as se
 | `turn` | `n` | The nth assistant turn began (the turn counter the `max_turns` leash counts). |
 | `ask.requested` | `id`, `questions[]` | The agent is paused, asking the operator. Interactive runs only. See [Interactive](#interactive-runs). |
 | `ask.answered` | `id`, `answers[][]` | The operator's answer was delivered (echo, for your transcript). |
-| `run.diff` | `worktree`, `branch`, `files[]`, `insertions`, `deletions` | Worktree diff summary, emitted just before the terminal event under worktree isolation. |
+| `run.diff` | `worktree?`, `branch?`, `files[]`, `insertions`, `deletions`, `by_type[]` | Changeset summary, emitted just before the terminal event on every run. worktree/branch present only under worktree isolation. |
 | `run.completed` | `exit_code`, `is_error`, `num_turns`, `cost_usd?`, `duration_ms`, `result?` | Terminal: the run finished on its own. |
-| `run.error` | `message`, `exit_code` | Terminal: the run was stopped by the leash or failed. |
-| `run.cancelled` | `exit_code` | Terminal: the run was cancelled. |
+| `run.error` | `message`, `exit_code`, `cost_usd?`, `duration_ms` | Terminal: the run was stopped by the leash or failed. |
+| `run.cancelled` | `exit_code`, `cost_usd?`, `duration_ms` | Terminal: the run was cancelled. |
 
 Exactly one terminal event (`run.completed` / `run.error` / `run.cancelled`) ends every stream. `ask.*` events appear only when the spec sets `[interactive] enabled = true`.
+
+### The changeset (run.diff)
+
+`run.diff` is emitted on every run, immediately before the terminal event, listing the changed files with per-file status and total insertions/deletions.
+
+`by_type` partitions the changeset by lowercased file extension: each entry is `{ file_type, files, insertions, deletions }`, sorted by `file_type`, with `""` for files that have no extension. Summing `by_type[*].insertions` equals the top-level `insertions` (likewise for `deletions`).
+
+`worktree` and `branch` are present only for a worktree-isolated run.
+
+For a default (non-worktree) run the changeset is the working tree versus `HEAD` at the run's end, so any file left uncommitted before the run is attributed to the run; use `isolation = "worktree"` for clean per-run attribution.
+
+When the workdir is not a git repository, no `run.diff` is emitted; instead a single `info` `log` event with the message `no changeset: workdir is not a git repository` explains why. A genuine git failure (git present but a command errored) is reported as a `warn` `log` instead.
+
+`run.error` and `run.cancelled` now carry `cost_usd` and `duration_ms` matching `run.completed`. `cost_usd` is `null` when the leash kills the child before claude reports a final cost (timeout, cancel, turn cap) and is present on the budget path (exit 122); `duration_ms` is always present.
 
 ### The control channel (stdin)
 

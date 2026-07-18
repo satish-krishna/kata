@@ -4,6 +4,7 @@ use crate::command::{build_invocation, ClaudeInvocation};
 use crate::event::KataEvent;
 use crate::spec::{validate, Isolation, RunSpec};
 use std::io::{BufReader, Write};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -212,6 +213,8 @@ pub fn run<F: FnMut(KataEvent)>(
                 emit(KataEvent::RunError {
                     message: message.clone(),
                     exit_code: 2,
+                    cost_usd: None,
+                    duration_ms: 0, // fires before the run clock (Instant::now()) starts
                 });
                 return Err(RunError::Auth(message));
             }
@@ -280,6 +283,8 @@ pub fn run<F: FnMut(KataEvent)>(
                 emit(KataEvent::RunError {
                     message: message.clone(),
                     exit_code: 2,
+                    cost_usd: None,
+                    duration_ms: 0, // fires before the run clock (Instant::now()) starts
                 });
                 return Err(RunError::Worktree(message));
             }
@@ -507,13 +512,26 @@ pub fn run<F: FnMut(KataEvent)>(
         Some(term) => {
             let _ = child.kill();
             let _ = child.wait();
+            let duration_ms = start.elapsed().as_millis() as u64;
+            // A killed child never emitted its final `result` line, so cost is
+            // usually absent here; forward whatever we have.
+            let cost_usd = result.as_ref().and_then(|r| r.cost_usd);
             match term {
-                Termination::Cancelled => (130, KataEvent::RunCancelled { exit_code: 130 }),
+                Termination::Cancelled => (
+                    130,
+                    KataEvent::RunCancelled {
+                        exit_code: 130,
+                        cost_usd,
+                        duration_ms,
+                    },
+                ),
                 Termination::TimedOut => (
                     124,
                     KataEvent::RunError {
                         message: format!("timed out after {timeout_secs}s"),
                         exit_code: 124,
+                        cost_usd,
+                        duration_ms,
                     },
                 ),
                 Termination::MaxTurns(cap) => (
@@ -521,6 +539,8 @@ pub fn run<F: FnMut(KataEvent)>(
                     KataEvent::RunError {
                         message: format!("reached max turns ({cap})"),
                         exit_code: 125,
+                        cost_usd,
+                        duration_ms,
                     },
                 ),
                 Termination::AnswerTimeout => (
@@ -531,6 +551,8 @@ pub fn run<F: FnMut(KataEvent)>(
                             spec.interactive.answer_timeout_secs.unwrap_or(0)
                         ),
                         exit_code: 123,
+                        cost_usd,
+                        duration_ms,
                     },
                 ),
             }
@@ -557,6 +579,8 @@ pub fn run<F: FnMut(KataEvent)>(
                     KataEvent::RunError {
                         message: format!("budget ceiling ${ceiling:.2} reached; spent ${spent:.2}"),
                         exit_code: 122,
+                        cost_usd: payload.cost_usd,
+                        duration_ms: start.elapsed().as_millis() as u64,
                     },
                 )
             } else {
@@ -575,22 +599,30 @@ pub fn run<F: FnMut(KataEvent)>(
         }
     };
 
-    // The child has exited; surface the worktree diff before the terminal event.
-    // A diff failure degrades to a warning — it never masks the run outcome.
-    if let Some(wt) = &worktree {
-        match crate::worktree::diff(wt) {
-            Ok(d) => emit(KataEvent::RunDiff {
-                worktree: wt.path.clone(),
-                branch: wt.branch.clone(),
-                files: d.files,
-                insertions: d.insertions,
-                deletions: d.deletions,
-            }),
-            Err(e) => emit(KataEvent::Log {
-                level: "warn".into(),
-                message: format!("worktree diff failed: {e}"),
-            }),
-        }
+    // The child has exited; surface the changeset before the terminal event.
+    // Runs against `cwd` — the worktree path when isolated, the workdir
+    // otherwise. A non-git workdir is benign and common (a bare run outside
+    // a repo), so it gets a quiet info note; any other diff failure (missing
+    // git, a git command erroring) degrades to a warning. Either way it
+    // never masks the run outcome. worktree/branch are set only for an
+    // isolated run.
+    match crate::changeset::diff_at(Path::new(&cwd)) {
+        Ok(d) => emit(KataEvent::RunDiff {
+            worktree: worktree.as_ref().map(|wt| wt.path.clone()),
+            branch: worktree.as_ref().map(|wt| wt.branch.clone()),
+            files: d.files,
+            insertions: d.insertions,
+            deletions: d.deletions,
+            by_type: d.by_type,
+        }),
+        Err(crate::changeset::ChangesetError::NotARepo) => emit(KataEvent::Log {
+            level: "info".into(),
+            message: "no changeset: workdir is not a git repository".into(),
+        }),
+        Err(e) => emit(KataEvent::Log {
+            level: "warn".into(),
+            message: format!("changeset diff failed: {e}"),
+        }),
     }
     emit(terminal);
 

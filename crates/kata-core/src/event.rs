@@ -47,11 +47,21 @@ pub enum KataEvent {
     },
     #[serde(rename = "run.diff")]
     RunDiff {
-        worktree: String,
-        branch: String,
+        /// Absolute worktree path — present only for a worktree-isolated run.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        worktree: Option<String>,
+        /// Isolation branch (`kata/<slug>-<id>`) — present only when isolated.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
         files: Vec<DiffFile>,
         insertions: u32,
         deletions: u32,
+        /// Changeset partitioned by file extension, sorted by `file_type`.
+        /// A partition of the totals above: summing `by_type[*].insertions`
+        /// equals `insertions` (same for deletions). `#[serde(default)]` so a
+        /// pre-enhancement `run.diff` transcript line still deserializes (as []).
+        #[serde(default)]
+        by_type: Vec<DiffTypeStat>,
     },
     #[serde(rename = "ask.requested")]
     AskRequested {
@@ -64,20 +74,56 @@ pub enum KataEvent {
         answers: Vec<Vec<String>>,
     },
     #[serde(rename = "run.error")]
-    RunError { message: String, exit_code: i32 },
+    RunError {
+        message: String,
+        exit_code: i32,
+        /// Total cost claude reported, if a `result` line arrived. `None` when
+        /// the leash killed the child before it could report (timeout, cancel,
+        /// turn cap); present on the budget path (exit 122).
+        cost_usd: Option<f64>,
+        /// Wall-clock run duration in milliseconds. `#[serde(default)]` so a
+        /// pre-1.1.0 transcript line that predates this field still deserializes
+        /// (as 0) instead of being dropped from run history.
+        #[serde(default)]
+        duration_ms: u64,
+    },
     #[serde(rename = "run.cancelled")]
-    RunCancelled { exit_code: i32 },
+    RunCancelled {
+        exit_code: i32,
+        /// Almost always `None`: a cancelled child is killed before it reports
+        /// a cost. Kept for symmetry with the other terminal events.
+        cost_usd: Option<f64>,
+        /// Wall-clock run duration in milliseconds. `#[serde(default)]` so a
+        /// pre-1.1.0 transcript line that predates this field still deserializes
+        /// (as 0) instead of being dropped from run history.
+        #[serde(default)]
+        duration_ms: u64,
+    },
 }
 
-/// One changed file in a worktree-isolation diff summary. Part of the
-/// `run.diff` event payload; also produced by `crate::worktree::diff`.
+/// One changed file in a run's changeset. Part of the `run.diff` event
+/// payload; produced by `crate::changeset::diff_at`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DiffFile {
     /// Git short status for the change: "A" | "M" | "D" | "R" | ...
     pub status: String,
-    /// Path relative to the worktree root.
+    /// Path relative to the run's working directory (the worktree when isolated, the workdir otherwise).
     pub path: String,
+}
+
+/// Per-file-type slice of a run's changeset. Part of the `run.diff` payload.
+/// `file_type` is a lowercased file extension; `""` means no extension.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct DiffTypeStat {
+    /// Lowercased file extension ("rs", "ts", "md"); "" for files with no
+    /// extension (Makefile, LICENSE, .gitignore).
+    pub file_type: String,
+    /// Number of changed files of this type.
+    pub files: u32,
+    pub insertions: u32,
+    pub deletions: u32,
 }
 
 /// One question in an `ask.requested` batch. Part of the published event
@@ -464,27 +510,6 @@ mod tests {
     }
 
     #[test]
-    fn run_diff_serializes_with_tag_and_files() {
-        let e = KataEvent::RunDiff {
-            worktree: "/home/u/.kata/worktrees/spec-abc".into(),
-            branch: "kata/spec-abc".into(),
-            files: vec![DiffFile {
-                status: "M".into(),
-                path: "src/run.rs".into(),
-            }],
-            insertions: 3,
-            deletions: 1,
-        };
-        let s = serde_json::to_string(&e).unwrap();
-        assert!(s.contains(r#""type":"run.diff""#));
-        assert!(s.contains(r#""branch":"kata/spec-abc""#));
-        assert!(s.contains(r#""status":"M""#));
-        assert!(s.contains(r#""path":"src/run.rs""#));
-        assert!(s.contains(r#""insertions":3"#));
-        assert!(s.contains(r#""deletions":1"#));
-    }
-
-    #[test]
     fn run_started_omits_worktree_fields_when_none() {
         let e = KataEvent::RunStarted {
             spec: "s".into(),
@@ -619,13 +644,47 @@ mod tests {
     }
 
     #[test]
-    fn terminal_events_carry_exit_code_and_round_trip() {
+    fn terminal_events_deserialize_without_duration_ms_from_old_transcripts() {
+        // Pre-1.1.0 run.error / run.cancelled lines lack duration_ms; they must
+        // still parse (duration_ms defaults to 0) so old history is not dropped.
+        let err: KataEvent =
+            serde_json::from_str(r#"{"type":"run.error","message":"boom","exit_code":124}"#)
+                .unwrap();
+        assert!(matches!(
+            err,
+            KataEvent::RunError {
+                duration_ms: 0,
+                cost_usd: None,
+                exit_code: 124,
+                ..
+            }
+        ));
+        let cancelled: KataEvent =
+            serde_json::from_str(r#"{"type":"run.cancelled","exit_code":130}"#).unwrap();
+        assert!(matches!(
+            cancelled,
+            KataEvent::RunCancelled {
+                duration_ms: 0,
+                cost_usd: None,
+                exit_code: 130
+            }
+        ));
+    }
+
+    #[test]
+    fn terminal_events_carry_cost_duration_and_round_trip() {
         let cases = [
             KataEvent::RunError {
                 message: "reached max turns (12)".into(),
                 exit_code: 125,
+                cost_usd: None,
+                duration_ms: 4200,
             },
-            KataEvent::RunCancelled { exit_code: 130 },
+            KataEvent::RunCancelled {
+                exit_code: 130,
+                cost_usd: None,
+                duration_ms: 300,
+            },
             KataEvent::RunCompleted {
                 exit_code: 0,
                 is_error: false,
@@ -640,11 +699,108 @@ mod tests {
             let back: KataEvent = serde_json::from_str(&json).unwrap();
             assert_eq!(ev, back, "round-trip mismatch for {json}");
         }
-        let s = serde_json::to_string(&KataEvent::RunCancelled { exit_code: 130 }).unwrap();
+        // The budget-exhaustion path is the one run.error that carries a real cost.
+        let s = serde_json::to_string(&KataEvent::RunError {
+            message: "budget ceiling $0.01 reached; spent $0.13".into(),
+            exit_code: 122,
+            cost_usd: Some(0.13),
+            duration_ms: 900,
+        })
+        .unwrap();
         assert!(
-            s.contains(r#""exit_code":130"#),
-            "cancel must serialize its code: {s}"
+            s.contains(r#""cost_usd":0.13"#),
+            "budget error carries cost: {s}"
         );
+        assert!(s.contains(r#""duration_ms":900"#));
+        // A killed run's cancel serializes duration and a null cost.
+        let c = serde_json::to_string(&KataEvent::RunCancelled {
+            exit_code: 130,
+            cost_usd: None,
+            duration_ms: 300,
+        })
+        .unwrap();
+        assert!(
+            c.contains(r#""exit_code":130"#),
+            "cancel must serialize its code: {c}"
+        );
+        assert!(
+            c.contains(r#""cost_usd":null"#),
+            "cancel serializes null cost: {c}"
+        );
+        assert!(c.contains(r#""duration_ms":300"#));
+    }
+
+    #[test]
+    fn run_diff_omits_worktree_and_branch_when_none() {
+        // Non-worktree run: no worktree/branch, still a full changeset.
+        let e = KataEvent::RunDiff {
+            worktree: None,
+            branch: None,
+            files: vec![DiffFile {
+                status: "M".into(),
+                path: "src/run.rs".into(),
+            }],
+            insertions: 3,
+            deletions: 1,
+            by_type: vec![],
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(s.contains(r#""type":"run.diff""#));
+        assert!(
+            !s.contains("worktree"),
+            "absent worktree must not serialize: {s}"
+        );
+        assert!(
+            !s.contains("branch"),
+            "absent branch must not serialize: {s}"
+        );
+        assert!(s.contains(r#""status":"M""#));
+        assert!(s.contains(r#""insertions":3"#));
+        assert!(s.contains(r#""deletions":1"#));
+
+        // Worktree run: both present.
+        let w = KataEvent::RunDiff {
+            worktree: Some("/home/u/.kata/worktrees/spec-abc".into()),
+            branch: Some("kata/spec-abc".into()),
+            files: vec![],
+            insertions: 0,
+            deletions: 0,
+            by_type: vec![],
+        };
+        let ws = serde_json::to_string(&w).unwrap();
+        assert!(
+            ws.contains(r#""branch":"kata/spec-abc""#),
+            "worktree run keeps branch: {ws}"
+        );
+    }
+
+    #[test]
+    fn run_diff_by_type_round_trips_and_defaults_when_absent() {
+        // A pre-enhancement run.diff line (no by_type) still parses, as [].
+        let old: KataEvent =
+            serde_json::from_str(r#"{"type":"run.diff","files":[],"insertions":0,"deletions":0}"#)
+                .unwrap();
+        assert!(matches!(old, KataEvent::RunDiff { ref by_type, .. } if by_type.is_empty()));
+
+        // A populated by_type round-trips.
+        let ev = KataEvent::RunDiff {
+            worktree: None,
+            branch: None,
+            files: vec![DiffFile {
+                status: "A".into(),
+                path: "src/x.rs".into(),
+            }],
+            insertions: 5,
+            deletions: 0,
+            by_type: vec![DiffTypeStat {
+                file_type: "rs".into(),
+                files: 1,
+                insertions: 5,
+                deletions: 0,
+            }],
+        };
+        let back: KataEvent = serde_json::from_str(&serde_json::to_string(&ev).unwrap()).unwrap();
+        assert_eq!(ev, back);
     }
 
     #[test]

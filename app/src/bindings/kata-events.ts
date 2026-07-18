@@ -44,12 +44,25 @@ export type KataEvent =
       type: "run.completed";
     }
   | {
-      branch: string;
+      /**
+       * Isolation branch (`kata/<slug>-<id>`) — present only when isolated.
+       */
+      branch?: string | null;
+      /**
+       * Changeset partitioned by file extension, sorted by `file_type`.
+       * A partition of the totals above: summing `by_type[*].insertions`
+       * equals `insertions` (same for deletions). `#[serde(default)]` so a
+       * pre-enhancement `run.diff` transcript line still deserializes (as []).
+       */
+      by_type?: DiffTypeStat[];
       deletions: number;
       files: DiffFile[];
       insertions: number;
       type: "run.diff";
-      worktree: string;
+      /**
+       * Absolute worktree path — present only for a worktree-isolated run.
+       */
+      worktree?: string | null;
     }
   | {
       id: string;
@@ -62,23 +75,63 @@ export type KataEvent =
       type: "ask.answered";
     }
   | {
+      /**
+       * Total cost claude reported, if a `result` line arrived. `None` when
+       * the leash killed the child before it could report (timeout, cancel,
+       * turn cap); present on the budget path (exit 122).
+       */
+      cost_usd?: number | null;
+      /**
+       * Wall-clock run duration in milliseconds. `#[serde(default)]` so a
+       * pre-1.1.0 transcript line that predates this field still deserializes
+       * (as 0) instead of being dropped from run history.
+       */
+      duration_ms?: number;
       exit_code: number;
       message: string;
       type: "run.error";
     }
   | {
+      /**
+       * Almost always `None`: a cancelled child is killed before it reports
+       * a cost. Kept for symmetry with the other terminal events.
+       */
+      cost_usd?: number | null;
+      /**
+       * Wall-clock run duration in milliseconds. `#[serde(default)]` so a
+       * pre-1.1.0 transcript line that predates this field still deserializes
+       * (as 0) instead of being dropped from run history.
+       */
+      duration_ms?: number;
       exit_code: number;
       type: "run.cancelled";
     };
 export type QuestionKind = "confirm" | "select" | "text";
 
 /**
- * One changed file in a worktree-isolation diff summary. Part of the
- * `run.diff` event payload; also produced by `crate::worktree::diff`.
+ * Per-file-type slice of a run's changeset. Part of the `run.diff` payload.
+ * `file_type` is a lowercased file extension; `""` means no extension.
+ */
+export interface DiffTypeStat {
+  deletions: number;
+  /**
+   * Lowercased file extension ("rs", "ts", "md"); "" for files with no
+   * extension (Makefile, LICENSE, .gitignore).
+   */
+  file_type: string;
+  /**
+   * Number of changed files of this type.
+   */
+  files: number;
+  insertions: number;
+}
+/**
+ * One changed file in a run's changeset. Part of the `run.diff` event
+ * payload; produced by `crate::changeset::diff_at`.
  */
 export interface DiffFile {
   /**
-   * Path relative to the worktree root.
+   * Path relative to the run's working directory (the worktree when isolated, the workdir otherwise).
    */
   path: string;
   /**

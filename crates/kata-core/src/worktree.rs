@@ -3,8 +3,6 @@
 //! diff summary. The worktree is NOT removed on drop — it persists for review;
 //! cleanup is the operator's via `git worktree remove` / `git worktree prune`.
 
-use crate::event::DiffFile;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,14 +14,6 @@ pub struct Worktree {
     pub path: String,
     /// The branch the worktree is checked out on (`kata/<slug>-<id>`).
     pub branch: String,
-}
-
-/// A diff summary for a worktree, relative to the branch point (HEAD).
-#[derive(Debug, Clone, PartialEq)]
-pub struct DiffSummary {
-    pub files: Vec<DiffFile>,
-    pub insertions: u32,
-    pub deletions: u32,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -83,94 +73,6 @@ pub fn create_in(workdir: &str, name: &str, root: &Path) -> Result<Worktree, Wor
     Ok(Worktree {
         path: path_str,
         branch,
-    })
-}
-
-/// Summarize the worktree's changes vs HEAD, including newly-created untracked
-/// files, WITHOUT mutating the index.
-pub fn diff(wt: &Worktree) -> Result<DiffSummary, WorktreeError> {
-    let dir = Path::new(&wt.path);
-
-    // Per-file insertions/deletions for tracked changes (binary => "-\t-").
-    let numstat = git(dir, &["diff", "HEAD", "--numstat"])?;
-    if !numstat.status.success() {
-        return Err(WorktreeError::Git {
-            cmd: "diff HEAD --numstat".into(),
-            status: numstat.status.code(),
-            stderr: String::from_utf8_lossy(&numstat.stderr).trim().to_string(),
-        });
-    }
-    let mut counts: HashMap<String, (u32, u32)> = HashMap::new();
-    for line in String::from_utf8_lossy(&numstat.stdout).lines() {
-        let mut it = line.split('\t');
-        let ins = it.next().unwrap_or("0").parse::<u32>().unwrap_or(0);
-        let del = it.next().unwrap_or("0").parse::<u32>().unwrap_or(0);
-        let path = it.next_back().unwrap_or("").to_string();
-        if !path.is_empty() {
-            counts.insert(path, (ins, del));
-        }
-    }
-
-    // Statuses for tracked changes (A/M/D/R...).
-    let name_status = git(dir, &["diff", "HEAD", "--name-status"])?;
-    if !name_status.status.success() {
-        return Err(WorktreeError::Git {
-            cmd: "diff HEAD --name-status".into(),
-            status: name_status.status.code(),
-            stderr: String::from_utf8_lossy(&name_status.stderr)
-                .trim()
-                .to_string(),
-        });
-    }
-    let mut files = Vec::new();
-    let mut insertions = 0u32;
-    let mut deletions = 0u32;
-    for line in String::from_utf8_lossy(&name_status.stdout).lines() {
-        let mut it = line.split('\t');
-        let status = it.next().unwrap_or("");
-        let path = it.next_back().unwrap_or("").to_string(); // last field handles renames
-        if status.is_empty() || path.is_empty() {
-            continue;
-        }
-        let (ins, del) = counts.get(&path).copied().unwrap_or((0, 0));
-        insertions += ins;
-        deletions += del;
-        files.push(DiffFile {
-            status: status.chars().next().unwrap().to_string(),
-            path,
-        });
-    }
-
-    // Untracked (newly-created) files: status "A", insertions = line count.
-    let untracked = git(dir, &["ls-files", "--others", "--exclude-standard"])?;
-    if !untracked.status.success() {
-        return Err(WorktreeError::Git {
-            cmd: "ls-files --others --exclude-standard".into(),
-            status: untracked.status.code(),
-            stderr: String::from_utf8_lossy(&untracked.stderr)
-                .trim()
-                .to_string(),
-        });
-    }
-    for path in String::from_utf8_lossy(&untracked.stdout).lines() {
-        let path = path.trim();
-        if path.is_empty() {
-            continue;
-        }
-        let ins = std::fs::read_to_string(dir.join(path))
-            .map(|c| c.lines().count() as u32)
-            .unwrap_or(0); // unreadable/binary => 0
-        insertions += ins;
-        files.push(DiffFile {
-            status: "A".into(),
-            path: path.to_string(),
-        });
-    }
-
-    Ok(DiffSummary {
-        files,
-        insertions,
-        deletions,
     })
 }
 
@@ -299,43 +201,6 @@ mod tests {
         let a = create_in(&repo.path().to_string_lossy(), "spec", root.path()).unwrap();
         let b = create_in(&repo.path().to_string_lossy(), "spec", root.path()).unwrap();
         assert_ne!(a.branch, b.branch);
-    }
-
-    #[test]
-    fn diff_reports_modified_tracked_and_new_untracked() {
-        let repo = init_repo();
-        let root = tempfile::tempdir().unwrap();
-        let wt = create_in(&repo.path().to_string_lossy(), "spec", root.path()).unwrap();
-        // Modify a tracked file (+1 line) and create an untracked file (+2 lines).
-        std::fs::write(Path::new(&wt.path).join("tracked.txt"), "one\ntwo\nthree\n").unwrap();
-        std::fs::write(Path::new(&wt.path).join("new.txt"), "a\nb\n").unwrap();
-
-        let d = diff(&wt).unwrap();
-        assert!(
-            d.files
-                .iter()
-                .any(|f| f.path == "tracked.txt" && f.status == "M"),
-            "files: {:?}",
-            d.files
-        );
-        assert!(
-            d.files
-                .iter()
-                .any(|f| f.path == "new.txt" && f.status == "A"),
-            "files: {:?}",
-            d.files
-        );
-        assert_eq!(d.insertions, 3, "1 added to tracked + 2 in new.txt");
-        assert_eq!(d.deletions, 0);
-
-        // The index must NOT have been mutated (operator's later diff is unsurprised).
-        let staged = Command::new("git")
-            .arg("-C")
-            .arg(&wt.path)
-            .args(["diff", "--cached", "--name-only"])
-            .output()
-            .unwrap();
-        assert!(staged.stdout.is_empty(), "diff() must not stage anything");
     }
 
     #[test]

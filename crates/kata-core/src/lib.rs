@@ -78,6 +78,7 @@ pub mod ask;
 
 // ---- portable operations the GUI and CLI also build on ----
 pub mod bundle;
+pub mod changeset;
 pub mod history;
 pub mod katas;
 pub mod presets;
