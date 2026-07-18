@@ -59,6 +59,17 @@ jobs:
         #   KATA_BLESS_SCHEMA=1 cargo test -p kata-core --features schema schema_artifact_is_fresh
         run: cargo test -p kata-core --features schema schema_artifact_is_fresh
 
+      - name: TS bindings freshness (ts-rs, regenerate & diff)
+        # Fails if the ts-rs TS bindings (app/src/bindings/*.ts) have drifted
+        # from the Rust types. --ignore-cr-at-eol tolerates the Windows runner's
+        # CRLF vs the committed LF; `git add -N` makes a brand-new, uncommitted
+        # binding surface as drift too. Regenerate locally with:
+        #   cargo test -p kata-core --features ts export_bindings
+        run: |
+          cargo test -p kata-core --features ts export_bindings
+          git add --intent-to-add app/src/bindings/
+          git diff --ignore-cr-at-eol --exit-code app/src/bindings/
+
       - name: Build (locked)
         run: cargo build --locked
 
