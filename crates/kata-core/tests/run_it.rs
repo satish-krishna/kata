@@ -246,7 +246,7 @@ fn run_cancel_kills_child() {
     assert_eq!(outcome.exit_code, 130);
     assert!(events
         .iter()
-        .any(|e| matches!(e, KataEvent::RunCancelled { exit_code: 130 })));
+        .any(|e| matches!(e, KataEvent::RunCancelled { exit_code: 130, .. })));
 }
 
 #[test]

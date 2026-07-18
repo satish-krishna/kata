@@ -152,14 +152,27 @@ fn build_record(stem: &str, events: &[KataEvent]) -> Option<RunRecord> {
             Some(*duration_ms),
             result.clone(),
         ),
-        Some(KataEvent::RunError { exit_code, message }) => {
-            (Some(*exit_code), None, None, None, Some(message.clone()))
-        }
-        Some(KataEvent::RunCancelled { exit_code }) => (
+        Some(KataEvent::RunError {
+            exit_code,
+            message,
+            cost_usd,
+            duration_ms,
+        }) => (
             Some(*exit_code),
             None,
+            *cost_usd,
+            Some(*duration_ms),
+            Some(message.clone()),
+        ),
+        Some(KataEvent::RunCancelled {
+            exit_code,
+            cost_usd,
+            duration_ms,
+        }) => (
+            Some(*exit_code),
             None,
-            None,
+            *cost_usd,
+            Some(*duration_ms),
             Some("cancelled".to_string()),
         ),
         _ => (None, None, None, None, None),
@@ -207,13 +220,13 @@ mod tests {
     const KILLED: &str = concat!(
         r#"{"type":"run.started","spec":"audit","model":null,"workdir":"/w","isolation":"worktree"}"#,
         "\n",
-        r#"{"type":"run.error","message":"reached max turns (12)","exit_code":125}"#,
+        r#"{"type":"run.error","message":"reached max turns (12)","exit_code":125,"cost_usd":null,"duration_ms":9000}"#,
         "\n",
     );
     const CANCELLED: &str = concat!(
         r#"{"type":"run.started","spec":"perf","model":null,"workdir":"/w","isolation":"none"}"#,
         "\n",
-        r#"{"type":"run.cancelled","exit_code":130}"#,
+        r#"{"type":"run.cancelled","exit_code":130,"cost_usd":null,"duration_ms":500}"#,
         "\n",
     );
     const INCOMPLETE: &str = concat!(
