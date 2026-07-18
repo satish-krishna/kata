@@ -131,3 +131,13 @@ sequenceDiagram
 - Clean per-run attribution for non-worktree runs (before/after snapshot). Explicitly rejected in favor of the end-state baseline; `isolation = "worktree"` is the answer for clean attribution.
 - Surfacing cost/duration for `run.error`/`run.cancelled` in the Workbench Observe pane UI. The data flows on the events; rendering it is a separate frontend task.
 - Streaming incremental cost mid-run. claude only reports cost in its final `result` line; there is nothing to stream.
+
+## Addendum: per-file-type breakdown on `run.diff`
+
+Follow-on enhancement (same branch). `run.diff` gains a `by_type` field partitioning the changeset by file extension, so a consumer can see the changed-line volume per language without re-parsing paths.
+
+New published type `DiffTypeStat { file_type: String, files: u32, insertions: u32, deletions: u32 }`, where `file_type` is the lowercased file extension (`rs`, `ts`, `md`) and `""` for files with no extension (e.g. `Makefile`, `LICENSE`, `.gitignore` — Rust's `Path::extension()` yields `None` for a leading-dot-only name).
+
+`run.diff` gains `by_type: Vec<DiffTypeStat>`, sorted by `file_type` for deterministic output, carried `#[serde(default)]` so a pre-enhancement `run.diff` transcript line still deserializes (as `[]`). The field is a partition of the existing top-level totals: summing `by_type[*].insertions` equals `insertions` (same for deletions). The top-level totals and `DiffFile` are unchanged.
+
+Computation lives in `changeset::diff_at`, which already knows each changed file's path and its `(insertions, deletions)` (tracked files from `git diff --numstat`, untracked files as `(line-count, 0)`); it folds each into a per-extension accumulator and emits the sorted vector. This is additive (minor) — `protocolVersion` stays 1, still shipped under 1.1.0.
