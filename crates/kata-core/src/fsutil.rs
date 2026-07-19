@@ -135,6 +135,41 @@ pub fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Test-only helper: pin `KATA_HOME` to a fresh temp dir for the guard's
+/// lifetime, restoring the previous value (or absence) on drop — even on a
+/// panicking assertion — so env-mutating tests can't leak into each other or
+/// clobber a developer's real `KATA_HOME`. Callers must still be `#[serial]`:
+/// env vars are process-global.
+#[cfg(test)]
+pub(crate) mod testenv {
+    pub struct HomeGuard {
+        temp: tempfile::TempDir,
+        prev: Option<std::ffi::OsString>,
+    }
+
+    impl HomeGuard {
+        pub fn path(&self) -> &std::path::Path {
+            self.temp.path()
+        }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match &self.prev {
+                Some(v) => std::env::set_var("KATA_HOME", v),
+                None => std::env::remove_var("KATA_HOME"),
+            }
+        }
+    }
+
+    pub fn with_home() -> HomeGuard {
+        let temp = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("KATA_HOME");
+        std::env::set_var("KATA_HOME", temp.path());
+        HomeGuard { temp, prev }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

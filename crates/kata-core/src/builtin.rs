@@ -3,8 +3,9 @@
 //! not just a checkout of this repo. The embedded tree is materialized on
 //! demand under `<kata-home>/builtin/` into a content-addressed directory
 //! (`kata-<hash>`), so upgraded binaries refresh automatically, repeat calls
-//! are a cheap existence check, and concurrent processes never trample each
-//! other (each writes a private temp dir and renames; first rename wins).
+//! are a cheap existence check, and concurrent callers never trample each
+//! other (each writes a private temp dir — pid plus a per-call nonce — and
+//! renames; first rename wins).
 
 use std::path::PathBuf;
 
@@ -43,7 +44,12 @@ pub(crate) fn ensure_materialized() -> Option<PathBuf> {
     if marker.is_file() {
         return Some(dir);
     }
-    let tmp = base.join(format!(".tmp-{}", std::process::id()));
+    // pid alone is not unique enough: two threads of one process (e.g.
+    // concurrent Tauri commands) may materialize at once, so add a per-call
+    // nonce to keep their temp dirs disjoint.
+    static NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = NONCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = base.join(format!(".tmp-{}-{nonce}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     for (rel, bytes) in FILES {
         let dest = tmp.join(rel);
@@ -93,8 +99,7 @@ mod tests {
     #[test]
     #[serial]
     fn materializes_once_and_reuses() {
-        let home = tempfile::tempdir().unwrap();
-        std::env::set_var("KATA_HOME", home.path());
+        let home = crate::fsutil::testenv::with_home();
 
         let first = ensure_materialized().expect("materializes");
         assert!(first.join("skills").join("prd").join("SKILL.md").is_file());
@@ -110,7 +115,6 @@ mod tests {
             .modified()
             .unwrap();
 
-        std::env::remove_var("KATA_HOME");
         assert_eq!(first, second, "content-addressed path is stable");
         assert_eq!(stamp_before, stamp_after, "second call must not rewrite");
     }

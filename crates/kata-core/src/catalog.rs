@@ -301,13 +301,9 @@ mod tests {
     use std::fs;
 
     // `discover` materializes the builtin kit under the kata home, so every
-    // test that calls it pins KATA_HOME to a temp dir (and is #[serial] —
-    // env vars are process-global).
-    fn with_home() -> tempfile::TempDir {
-        let h = tempfile::tempdir().unwrap();
-        std::env::set_var("KATA_HOME", h.path());
-        h
-    }
+    // test that calls it pins KATA_HOME to a temp dir via the restoring guard
+    // (and is #[serial] — env vars are process-global).
+    use crate::fsutil::testenv::with_home;
 
     fn make_skill(root: &std::path::Path, name: &str, desc: &str) {
         let dir = root.join("skills").join(name);

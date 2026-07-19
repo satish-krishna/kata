@@ -268,8 +268,7 @@ mod tests {
     fn assembles_builtin_kata_plugin_without_any_scope() {
         // `[plugins.kata]` must resolve in any workdir: the catalog offers the
         // embedded builtin kit and assemble vendors it like any other plugin.
-        let home = tempfile::tempdir().unwrap();
-        std::env::set_var("KATA_HOME", home.path());
+        let _home = crate::fsutil::testenv::with_home();
         let catalog = crate::catalog::discover(&crate::catalog::DiscoveryRoots {
             user_dir: "/nonexistent/x".into(),
             project_dir: "/nonexistent/y".into(),
@@ -285,7 +284,6 @@ mod tests {
         spec.plugins.insert("kata".into(), PluginConfig::default());
 
         let a = assemble(&spec, &catalog).unwrap();
-        std::env::remove_var("KATA_HOME");
         let dir = PathBuf::from(a.plugin_dir.as_ref().unwrap());
         let kit = dir.join("plugins").join("kata");
         assert!(kit.join(".claude-plugin").join("plugin.json").is_file());
