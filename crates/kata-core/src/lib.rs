@@ -86,5 +86,6 @@ pub mod worktree;
 
 // ---- engine-internal plumbing: NOT public API ----
 pub(crate) mod assemble;
+pub(crate) mod builtin;
 pub(crate) mod command;
 pub(crate) mod fsutil;
