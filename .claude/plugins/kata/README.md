@@ -31,9 +31,11 @@ The driver runs on Sonnet (pin `[model] id = "sonnet"` in the run-spec; the comm
 
 A Kata run drives `claude -p` headlessly — a question typed as prose ends the run unanswered. Every skill therefore asks **only** through the `ask_user` MCP tool Kata wires in when the run-spec sets `[interactive] enabled = true` (the built-in `AskUserQuestion` is disallowed by the engine). In non-interactive runs the skills degrade deliberately: conservative assumptions recorded in the deliverable, or a clean written stop at a blocker — never a stall.
 
+**Where docs land is the operator's choice.** A path named in the task always wins; otherwise the doc-writing skills ask the destination through `ask_user` (leading with the defaults in the table above, or the repo's own convention); non-interactive runs take the default.
+
 ## Using it from a run-spec
 
-The plugin is project-scoped (`.claude/plugins/kata/`), so Kata's catalog discovers it when the run's workdir is a checkout of this repo. To use it against any other repo, copy this directory to `~/.claude/plugins/kata/`. Then, in the run-spec:
+This directory is embedded into the `kata` binary at build time and offered by the catalog as a **`builtin`** source (materialized on demand under `<kata-home>/builtin/`), so `[plugins.kata]` resolves against **any** workdir — no install step. A plugin named `kata` in `~/.claude/plugins/` or the target repo's `.claude/plugins/` shadows the builtin, which is also how you customize the kit. In the run-spec:
 
 ```toml
 [plugins.kata]

@@ -35,7 +35,7 @@ Create a task per step and work them in order:
    Grill means grill: when an answer is vague ("it should be fast"), ask for the number. When two answers conflict, surface the conflict and make them pick. When everything is "must have", force a must / should / won't split. Stop only when you could defend every requirement to a stranger.
 3. **Draft.** Assemble the PRD: Problem; Goals & success metrics; Users & jobs; Requirements (must / should / won't, each testable); Non-goals; Constraints & assumptions; Risks & open questions; Acceptance criteria.
 4. **Confirm.** Present a tight summary through `ask_user` (`select`: approve / amend, approve first). On amend, loop back to the gap.
-5. **Deliver — to a file.** Write the PRD to the path the task specifies, or default to `docs/prds/<YYYY-MM-DD>-<topic>-prd.md` (follow the repo's own convention if one exists). A run's final message is not a durable artifact. Summarize in your closing message. Do not commit unless the task says to.
+5. **Deliver — to a file.** Resolve the destination in order: a path the task names wins; otherwise ask where to write through `ask_user` — a `select` leading with the default `docs/prds/<YYYY-MM-DD>-<topic>-prd.md`, then any doc convention the recon surfaced, then an "elsewhere" option whose answer is a custom path; in a non-interactive run just take the default. A run's final message is not a durable artifact — the file is. Summarize in your closing message. Do not commit unless the task says to.
 
 ## Anti-patterns
 

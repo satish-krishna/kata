@@ -8,7 +8,7 @@ Use the kata:prd skill to produce a PRD for:
 
 <<Describe the feature or idea to turn into a PRD. Override this task at launch with the specifics.>>
 
-Recon the repo first, then grill me one focused question at a time through the ask_user tool — problem, users, scope in/out, success metrics, constraints, non-goals — challenging vague answers until every requirement is defensible and testable. Write the finished PRD to `docs/prds/<YYYY-MM-DD>-<topic>-prd.md` (do not commit it); that file is the deliverable, not just a final chat reply. Requirements only: no design, no plan, no implementation code in this run.
+Recon the repo first, then grill me one focused question at a time through the ask_user tool — problem, users, scope in/out, success metrics, constraints, non-goals — challenging vague answers until every requirement is defensible and testable. Ask me through ask_user where to write the finished PRD (default `docs/prds/<YYYY-MM-DD>-<topic>-prd.md`) and write it there without committing; that file is the deliverable, not just a final chat reply. Requirements only: no design, no plan, no implementation code in this run.
 """
 
 [identity]

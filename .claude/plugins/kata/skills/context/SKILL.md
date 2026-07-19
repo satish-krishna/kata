@@ -32,7 +32,7 @@ Create a task per step and work them in order:
    - **Integration points** — where new work plugs in, and what it must not break;
    - **Risks & unknowns** — sharp edges, drift, surprises;
    - **Open questions** — what only the operator can answer.
-5. **Deliver — to a file.** Write the pack to the path the task specifies, or default to `docs/context/<YYYY-MM-DD>-<topic>-context.md`. Summarize in your closing message. Do not commit unless the task says to.
+5. **Deliver — to a file.** Resolve the destination in order: a path the task names wins; otherwise, in an interactive run, ask where to write through `ask_user` (a `select` leading with the default `docs/context/<YYYY-MM-DD>-<topic>-context.md`, plus an "elsewhere" option whose answer is a custom path); otherwise take the default. Summarize in your closing message. Do not commit unless the task says to.
 
 ## Anti-patterns
 

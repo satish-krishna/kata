@@ -78,7 +78,37 @@ pub fn discover(roots: &DiscoveryRoots) -> Vec<CatalogEntry> {
     // installed_plugins.json, never as a flat plugins/<name>/ dir. Read it last
     // so an explicit flat install of the same name wins.
     discover_installed_plugins(&roots.user_dir, &mut out);
+    // The engine ships its own workflow kit (the `kata` plugin) embedded in
+    // the binary, so `[plugins.kata]` resolves in any workdir. Offered last,
+    // as a `builtin` source, and only when nothing else claimed the name — an
+    // explicit user/project/marketplace install always wins.
+    discover_builtin(&mut out);
     out
+}
+
+fn discover_builtin(out: &mut Vec<CatalogEntry>) {
+    let name = crate::builtin::BUILTIN_PLUGIN_NAME;
+    if out
+        .iter()
+        .any(|e| e.kind == EntryKind::Plugin && e.name == name)
+    {
+        return;
+    }
+    let Some(root) = crate::builtin::ensure_materialized() else {
+        return;
+    };
+    let Some(manifest) = plugin_manifest(&root) else {
+        return;
+    };
+    out.push(CatalogEntry {
+        kind: EntryKind::Plugin,
+        name: name.to_string(),
+        description: manifest_description(&manifest),
+        source: "builtin".to_string(),
+        provides: plugin_provides(&root),
+        mcp_servers: plugin_mcp_servers(&root),
+        path: root,
+    });
 }
 
 fn discover_skills(claude_dir: &Path, source: &str, out: &mut Vec<CatalogEntry>) {
@@ -267,7 +297,17 @@ fn read_frontmatter(path: &Path) -> (Option<String>, Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::fs;
+
+    // `discover` materializes the builtin kit under the kata home, so every
+    // test that calls it pins KATA_HOME to a temp dir (and is #[serial] —
+    // env vars are process-global).
+    fn with_home() -> tempfile::TempDir {
+        let h = tempfile::tempdir().unwrap();
+        std::env::set_var("KATA_HOME", h.path());
+        h
+    }
 
     fn make_skill(root: &std::path::Path, name: &str, desc: &str) {
         let dir = root.join("skills").join(name);
@@ -303,7 +343,9 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn discovers_skills_with_source_labels() {
+        let _h = with_home();
         let user = tempfile::tempdir().unwrap();
         let proj = tempfile::tempdir().unwrap();
         make_skill(user.path(), "triage", "triage flaky tests");
@@ -314,6 +356,7 @@ mod tests {
             project_dir: proj.path().to_path_buf(),
         };
         let mut entries = discover(&roots);
+        entries.retain(|e| e.source != "builtin");
         entries.sort_by(|a, b| a.name.cmp(&b.name));
 
         assert_eq!(entries.len(), 2);
@@ -326,7 +369,9 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn discovers_plugins_with_provides_and_mcp() {
+        let _h = with_home();
         let user = tempfile::tempdir().unwrap();
         let proj = tempfile::tempdir().unwrap();
         make_plugin(user.path(), "github-tools", "gh", true);
@@ -343,9 +388,11 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn plugin_source_reflects_discovery_scope() {
         // Plugins carry their original scope ("user"/"project"), like skills,
         // so a bundle's manifest records meaningful provenance.
+        let _h = with_home();
         let user = tempfile::tempdir().unwrap();
         let proj = tempfile::tempdir().unwrap();
         make_plugin(user.path(), "user-plugin", "u", false);
@@ -411,11 +458,13 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn discovers_installed_plugin_from_manifest_json() {
         // A marketplace-cached plugin is registered only in installed_plugins.json
         // (not as a flat plugins/<name>/ dir) and carries its manifest under
         // .claude-plugin/. It must still surface, with provides/mcp/source read
         // from its recorded installPath.
+        let _h = with_home();
         let user = tempfile::tempdir().unwrap();
         let payload = tempfile::tempdir().unwrap();
         make_cached_plugin(payload.path(), "superpowers", "sp", true);
@@ -445,9 +494,11 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn discovers_flat_plugin_with_claude_plugin_manifest() {
         // A flat-installed plugin whose manifest lives under .claude-plugin/ (no
         // root plugin.json) is discovered too.
+        let _h = with_home();
         let user = tempfile::tempdir().unwrap();
         let dir = user.path().join("plugins").join("mytool");
         let cp = dir.join(".claude-plugin");
@@ -471,9 +522,11 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn installed_does_not_duplicate_flat_plugin() {
         // A plugin present both as a flat dir and in installed_plugins.json
         // appears once; the flat (explicit) entry wins.
+        let _h = with_home();
         let user = tempfile::tempdir().unwrap();
         make_plugin(user.path(), "dup", "flat", false);
         let payload = tempfile::tempdir().unwrap();
@@ -491,12 +544,67 @@ mod tests {
     }
 
     #[test]
-    fn missing_roots_yield_empty() {
+    #[serial]
+    fn missing_roots_yield_only_the_builtin_kit() {
+        let _h = with_home();
         let roots = DiscoveryRoots {
             user_dir: "/nonexistent/x".into(),
             project_dir: "/nonexistent/y".into(),
         };
-        assert!(discover(&roots).is_empty());
+        let entries = discover(&roots);
+        assert!(
+            entries.iter().all(|e| e.source == "builtin"),
+            "nothing but the builtin kit without discovery roots"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn builtin_kata_plugin_is_offered_everywhere() {
+        // No user/project scope needed: the embedded kit surfaces so
+        // `[plugins.kata]` resolves against any workdir.
+        let _h = with_home();
+        let roots = DiscoveryRoots {
+            user_dir: "/nonexistent/x".into(),
+            project_dir: "/nonexistent/y".into(),
+        };
+        let entries = discover(&roots);
+        let p = entries
+            .iter()
+            .find(|e| e.kind == EntryKind::Plugin && e.name == "kata")
+            .expect("builtin kata plugin offered");
+        assert_eq!(p.source, "builtin");
+        assert!(!p.description.is_empty());
+        for skill in ["prd", "context", "plan", "implement", "triage"] {
+            assert!(
+                p.provides.iter().any(|s| s == &format!("skill:{skill}")),
+                "provides skill:{skill}"
+            );
+        }
+        assert!(p.path.join("skills").join("prd").join("SKILL.md").is_file());
+    }
+
+    #[test]
+    #[serial]
+    fn explicit_kata_plugin_shadows_the_builtin() {
+        // A user-scope plugin named `kata` wins over the embedded kit; the
+        // builtin never duplicates a claimed name.
+        let _h = with_home();
+        let user = tempfile::tempdir().unwrap();
+        make_plugin(user.path(), "kata", "my own kit", false);
+
+        let roots = DiscoveryRoots {
+            user_dir: user.path().to_path_buf(),
+            project_dir: "/nonexistent".into(),
+        };
+        let entries = discover(&roots);
+        let kata: Vec<_> = entries
+            .iter()
+            .filter(|e| e.kind == EntryKind::Plugin && e.name == "kata")
+            .collect();
+        assert_eq!(kata.len(), 1, "exactly one entry for the name");
+        assert_eq!(kata[0].source, "user");
+        assert_eq!(kata[0].description, "my own kit");
     }
 
     #[test]

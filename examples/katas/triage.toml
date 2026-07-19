@@ -8,7 +8,7 @@ Use the kata:triage skill to triage the following issue:
 
 <<Paste the bug report / issue text, or point to it. Override this task at launch.>>
 
-Reproduce it first (via kata-test-runner) or state plainly that you could not and what was tried. Dig evidence through kata-scout — recent history in the implicated areas, related code paths, similar past fixes — then localize the root cause yourself to `path:line` with a mechanism, distinguishing cause from symptom. Ask through the ask_user tool only for what the repo cannot tell you, and confirm the recommended next action with me before closing. Write the report to `docs/triage/<YYYY-MM-DD>-<slug>-triage.md` (do not commit it), ending with the failing test a fix should start from. Diagnosis only: do NOT fix the bug in this run.
+Reproduce it first (via kata-test-runner) or state plainly that you could not and what was tried. Dig evidence through kata-scout — recent history in the implicated areas, related code paths, similar past fixes — then localize the root cause yourself to `path:line` with a mechanism, distinguishing cause from symptom. Ask through the ask_user tool only for what the repo cannot tell you, and confirm the recommended next action with me before closing — asking in the same call where to write the report (default `docs/triage/<YYYY-MM-DD>-<slug>-triage.md`). Write it there (do not commit it), ending with the failing test a fix should start from. Diagnosis only: do NOT fix the bug in this run.
 """
 
 [identity]

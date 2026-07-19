@@ -32,8 +32,8 @@ Create a task per step and work them in order:
    - **Done when** — observable criteria, no judgment calls.
 
    Steps are bite-sized (one sitting each), ordered by dependency, and leave the tree green at every boundary. Then a closing section: **Risks, dependencies & open questions**.
-5. **Approval gate.** Present the step list and key choices through `ask_user` (`select`: approve / amend, approve first). On amend, revise and re-present.
-6. **Deliver — to a file.** Write the plan to the path the task specifies, or follow the repo's plan convention (e.g. `docs/superpowers/plans/` here), defaulting to `docs/plans/<YYYY-MM-DD>-<topic>-plan.md`. Summarize in your closing message. Do not commit unless the task says to.
+5. **Approval gate.** Present the step list and key choices through `ask_user` (`select`: approve / amend, approve first). On amend, revise and re-present. Unless the task already names the plan's path, ask the destination in the same call — a `select` leading with the repo's plan convention if one exists (e.g. `docs/superpowers/plans/` here), then the default `docs/plans/<YYYY-MM-DD>-<topic>-plan.md`, then an "elsewhere" option whose answer is a custom path.
+6. **Deliver — to a file.** Write the plan to the resolved destination (task-named path first; in a non-interactive run, the repo convention or the default). Summarize in your closing message. Do not commit unless the task says to.
 
 ## Anti-patterns
 
