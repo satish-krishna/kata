@@ -8,6 +8,8 @@ Kata is a launcher for single, headless coding-agent runs. You compose a *run-sp
 
 The `kata` binary is the single execution path the GUI, the Shokunin orchestrator, and CI all share. `README.md` and `ROADMAP.md` carry the product vision and milestone status; design specs and plans live in `docs/superpowers/`.
 
+**Before adding a run-spec field, an event, a CLI subcommand, or a Workbench pane, read [`docs/adding-a-feature.md`](docs/adding-a-feature.md).** Each shape has a regeneration chain that CI gates, and the common failure is getting that chain wrong rather than the code.
+
 ## Layout
 
 A Cargo workspace plus a Tauri app. Three crates in `[workspace].members`:
