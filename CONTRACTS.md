@@ -20,7 +20,7 @@ The test: **would existing, correct consumer code or an existing valid run-spec 
 
 The TOML/JSON run-spec (`crates/kata-core/src/spec.rs`). Machine mirror: `schema/kata-runspec.schema.json` (drift-gated in CI).
 
-**Frozen:** the field names, types, defaults, and semantics of every `RunSpec` field and sub-type (`identity`, `plugins`, `model`, `leash`, `auth`, `interactive`, `env`, `env_remove`, …); the `schema = 1` format version; TOML and JSON loading; the structural rules `validate` enforces (required `name`/`task`/`workdir`; `leash.max_turns >= 1`; `leash.max_budget_usd > 0`; `env`/`env_remove` well-formedness and disjointness).
+**Frozen:** the field names, types, defaults, and semantics of every `RunSpec` field and sub-type (`identity`, `plugins`, `model`, `leash`, `auth`, `interactive`, `permissions`, `env`, `env_remove`, …); the `schema = 1` format version; TOML and JSON loading; the structural rules `validate` enforces (required `name`/`task`/`workdir`; `leash.max_turns >= 1`; `leash.max_budget_usd > 0`; `env`/`env_remove` well-formedness and disjointness; the `permissions` coherence rules — rules only under `mode = "prompt"`, `unmatched = "ask"` only with `interactive.enabled`, well-formed rule syntax).
 
 **Breaking (major):** renaming or removing a field; changing a field's type or its default's meaning; tightening `validate` to reject a spec that was previously valid; requiring a `schema` value other than 1.
 
@@ -30,7 +30,9 @@ The TOML/JSON run-spec (`crates/kata-core/src/spec.rs`). Machine mirror: `schema
 
 One JSON object per line on the engine's stdout (`crates/kata-core/src/event.rs`). Machine mirror: `schema/kata-events.schema.json` (drift-gated in CI).
 
-**Frozen:** the event `type` tags and each event's field names and semantics, for all twelve — `run.started`, `log`, `assistant.text`, `tool.use`, `tool.result`, `turn`, `ask.requested`, `ask.answered`, `run.diff`, `run.completed`, `run.error`, `run.cancelled`; the one-object-per-line framing; the guarantee that exactly one terminal event (`run.completed` / `run.error` / `run.cancelled`) ends every stream; that `ask.*` events appear only when `[interactive] enabled = true`.
+**Frozen:** the event `type` tags and each event's field names and semantics, for all fourteen — `run.started`, `log`, `assistant.text`, `tool.use`, `tool.result`, `turn`, `ask.requested`, `ask.answered`, `permission.requested`, `permission.decided`, `run.diff`, `run.completed`, `run.error`, `run.cancelled`; the one-object-per-line framing; the guarantee that exactly one terminal event (`run.completed` / `run.error` / `run.cancelled`) ends every stream; that `ask.*` events appear only when `[interactive] enabled = true`, and `permission.*` events only when `[permissions] mode = "prompt"`.
+
+Not frozen: the *set* of `decided_by` values on `permission.decided`. Today it is `allow-rule` / `deny-rule` / `unmatched-policy` / `operator`; a consumer must treat an unrecognized value as "something else decided it" rather than failing.
 
 **Breaking (major):** renaming or removing an event type or a field; changing a field's meaning; changing the single-terminal-event guarantee or the framing.
 
@@ -51,7 +53,7 @@ The process exit code of `kata run` (and the CLI's own codes). Consumers and CI 
 | 2 | (CLI) could not load/parse the spec, or an engine error. |
 | 73 | (CLI) `kata init` refused to overwrite an existing file (`EX_CANTCREAT`). |
 | 122 | Budget ceiling reached (`leash.max_budget_usd`). |
-| 123 | Answer deadline exceeded (`interactive.answer_timeout_secs`). |
+| 123 | Answer deadline exceeded (`interactive.answer_timeout_secs`) — an unanswered question or an undecided permission check. |
 | 124 | Wall-clock timeout (`leash.timeout_secs`, or the 1800s default). |
 | 125 | Turn cap reached (`leash.max_turns`). |
 | 130 | Cancelled. |
@@ -64,7 +66,7 @@ The process exit code of `kata run` (and the CLI's own codes). Consumers and CI 
 
 How a consumer drives a run (`docs/consuming-kata.md`).
 
-**Frozen:** `kata run <spec>` emits `KataEvent` lines on **stdout** and human-readable noise plus the transcript path on **stderr**, and its exit code is the leash outcome; the stdin control lines `cancel` and `answer <id> <json>`; `kata validate <spec>` as a side-effect-free preflight whose exit codes are 0/1/2 as above.
+**Frozen:** `kata run <spec>` emits `KataEvent` lines on **stdout** and human-readable noise plus the transcript path on **stderr**, and its exit code is the leash outcome; the stdin control lines `cancel`, `answer <id> <json>`, and `decide <id> allow|deny [reason]`; `kata validate <spec>` as a side-effect-free preflight whose exit codes are 0/1/2 as above.
 
 **Breaking (major):** changing which stream carries events; changing the grammar of a control line; changing `validate`'s exit-code semantics.
 
@@ -75,7 +77,7 @@ How a consumer drives a run (`docs/consuming-kata.md`).
 These may change in any release; do not build load-bearing consumers on them.
 
 - **The `kata_core` Rust API.** It is the reference implementation of the contracts above, not a frozen surface. Signatures may shift between releases — pin a version.
-- **The `ask_user` MCP server** (its tool name, input schema, and the localhost bridge). This is an internal implementation detail of interactive runs. Consumers interact with the human-in-the-loop flow **only** through the `ask.requested` / `ask.answered` events and the `answer` control line — never the MCP directly.
+- **The `mcp-ask` MCP server** — the `ask_user` and `approve_tool` tools, their input schemas, and the localhost bridge frames. These are internal implementation details of interactive and prompt-mode runs. Consumers interact with the human-in-the-loop flow **only** through the `ask.*` / `permission.*` events and the `answer` / `decide` control lines — never the MCP directly.
 - **Log and passthrough text**, as noted under the event protocol.
 - **The transcript file's format and location**, the disposable kit (`--plugin-dir`) assembly, and the exact `#:schema` URL scheme beyond "it points at the tagged schema for the emitting version."
 - **Internal module layout**, the `fake-claude` test binary, and test harnesses.

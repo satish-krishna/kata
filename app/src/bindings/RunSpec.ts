@@ -4,6 +4,7 @@ import type { Identity } from "./Identity";
 import type { Interactive } from "./Interactive";
 import type { Leash } from "./Leash";
 import type { Model } from "./Model";
+import type { Permissions } from "./Permissions";
 import type { PluginConfig } from "./PluginConfig";
 
 export type RunSpec = { 
@@ -59,6 +60,12 @@ auth: Auth,
  * Interactive-run settings (the `ask_user` tool).
  */
 interactive: Interactive, 
+/**
+ * How the run answers claude's permission checks. Defaults to `bypass`
+ * (`--dangerously-skip-permissions`), which a machine's managed settings can
+ * forbid; `prompt` routes each check to Kata instead.
+ */
+permissions: Permissions, 
 /**
  * Environment variables to set on the spawned `claude` child, overriding any
  * value inherited from the parent process, forwarded by a plugin, or derived

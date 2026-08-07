@@ -1,11 +1,12 @@
 <script lang="ts">
   import type { RunSpec } from "../../bindings/RunSpec";
   import type { StreamEvent, RunSummary, RunState } from "../events";
-  import type { AskRecord } from "../run.svelte";
+  import type { AskRecord, PermissionRecord } from "../run.svelte";
   import { STATUS_LABEL } from "../events";
   import EventRow from "./EventRow.svelte";
   import SummaryStat from "./SummaryStat.svelte";
   import AskPanel from "./AskPanel.svelte";
+  import PermissionPanel from "./PermissionPanel.svelte";
   import MarkdownBody from "./MarkdownBody.svelte";
   import { isAtBottom } from "../scroll";
   import Cpu from "@lucide/svelte/icons/cpu";
@@ -20,14 +21,18 @@
     spec,
     summary,
     asks = [],
+    permissions = [],
     onAnswer,
+    onDecide,
   }: {
     runState: RunState;
     events: StreamEvent[];
     spec: RunSpec;
     summary: RunSummary | null;
     asks?: AskRecord[];
+    permissions?: PermissionRecord[];
     onAnswer?: (id: string, answers: string[][]) => void;
+    onDecide?: (id: string, allow: boolean, message: string | null) => void;
   } = $props();
 
   let streamEl: HTMLDivElement | undefined = $state();
@@ -47,6 +52,7 @@
     void events.length;
     void summary;
     void asks.length;
+    void permissions.length;
     if (streamEl && stick) streamEl.scrollTop = streamEl.scrollHeight;
   });
 
@@ -66,7 +72,7 @@
 </div>
 
 <div class="wb-stream" bind:this={streamEl} onscroll={onScroll}>
-  {#if events.length === 0 && !summary && asks.length === 0}
+  {#if events.length === 0 && !summary && asks.length === 0 && permissions.length === 0}
     <div class="wb-stream__empty">
       <Terminal size={28} />
       <p>Press <b style="color:var(--accent-text)">Run</b> to drive <code>claude -p</code> to completion. The normalized event stream renders here.</p>
@@ -83,6 +89,19 @@
       {/key}
     {:else}
       <div class="wb-event-enter"><AskPanel id={ask.id} questions={ask.questions} answers={ask.answers} /></div>
+    {/if}
+  {/each}
+  {#each permissions as p (p.id)}
+    {#if p.decided === null}
+      {#key p.id}
+        <div class="wb-event-enter">
+          <PermissionPanel id={p.id} tool={p.tool} input_summary={p.input_summary} onDecide={onDecide} />
+        </div>
+      {/key}
+    {:else}
+      <div class="wb-event-enter">
+        <PermissionPanel id={p.id} tool={p.tool} input_summary={p.input_summary} decided={p.decided} />
+      </div>
     {/if}
   {/each}
 </div>

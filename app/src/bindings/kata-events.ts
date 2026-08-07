@@ -75,6 +75,42 @@ export type KataEvent =
       type: "ask.answered";
     }
   | {
+      id: string;
+      /**
+       * The call's target rendered for a human: the shell command, the file
+       * path, the query — whatever the decision actually turns on.
+       */
+      input_summary: string;
+      /**
+       * The tool claude wants to use, e.g. `Bash` or `mcp__github__list_issues`.
+       */
+      tool: string;
+      type: "permission.requested";
+    }
+  | {
+      allow: boolean;
+      /**
+       * What resolved it: `allow-rule`, `deny-rule`, `unmatched-policy`, or
+       * `operator`. Treat an unrecognized value as "something else decided".
+       */
+      decided_by: string;
+      /**
+       * Correlates with a preceding `permission.requested`, when there was one.
+       */
+      id: string;
+      /**
+       * Same rendering as `permission.requested.input_summary`, repeated here
+       * so an auto-resolved check is legible on its own.
+       */
+      input_summary: string;
+      /**
+       * The reason handed back to claude on a denial.
+       */
+      message?: string | null;
+      tool: string;
+      type: "permission.decided";
+    }
+  | {
       /**
        * Total cost claude reported, if a `result` line arrived. `None` when
        * the leash killed the child before it could report (timeout, cancel,

@@ -42,6 +42,7 @@ export function seedSpec(): RunSpec {
     leash: { max_turns: 12, timeout_secs: 900, max_budget_usd: null, isolation: "worktree" },
     auth: { bare: true, token_env: null },
     interactive: { enabled: false, answer_timeout_secs: null },
+    permissions: { mode: "bypass", allow: [], deny: [], unmatched: "ask" },
   };
 }
 

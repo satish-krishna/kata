@@ -79,6 +79,26 @@ export async function submitAnswer(id: string, answers: string[][]): Promise<voi
   resumeMockAfterAnswer();
 }
 
+/** Send the operator's verdict on a pending permission.requested. */
+export async function submitDecision(
+  id: string,
+  allow: boolean,
+  message: string | null,
+): Promise<void> {
+  if (inTauri()) return invoke<void>("submit_decision", { id, allow, message });
+  // Browser mock: resolve the scripted pause by feeding permission.decided + resume.
+  browserCb?.({
+    type: "permission.decided",
+    id,
+    tool: "Bash",
+    input_summary: "rm -rf build/",
+    allow,
+    decided_by: "operator",
+    message: message ?? undefined,
+  });
+  resumeMockAfterAnswer();
+}
+
 /** Resume the scripted mock timeline after an ask has been answered. */
 function resumeMockAfterAnswer(): void {
   let acc = 0;

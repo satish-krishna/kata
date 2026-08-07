@@ -323,6 +323,117 @@ fn run_ask_interactive_event_stream_matches_golden() {
     );
 }
 
+/// Golden test for the permission-prompt path: drive the `approve` fake mode
+/// through `kata run` in `[permissions] mode = "prompt"`, decide the check on
+/// stdin, and pin the resulting `permission.requested` -> `permission.decided`
+/// -> `run.completed` exchange. This locks the wire shapes and the `decide`
+/// control line documented in `docs/consuming-kata.md`. Regenerate on an
+/// intentional change with `UPDATE_GOLDEN=1 cargo test -p kata-cli --test cli_it`.
+#[test]
+fn run_permission_prompt_event_stream_matches_golden() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::process::Stdio;
+
+    let work = tempfile::tempdir().unwrap();
+    let kata_home = tempfile::tempdir().unwrap();
+    let workdir = work.path().to_string_lossy().replace('\\', "/");
+    let spec = write(
+        work.path(),
+        "gp.kata.toml",
+        &format!(
+            "schema = 1\nname = \"golden-perm\"\ntask = \"t\"\nworkdir = \"{workdir}\"\n\n\
+             [leash]\ntimeout_secs = 60\n\n\
+             [interactive]\nenabled = true\nanswer_timeout_secs = 30\n\n\
+             [permissions]\nmode = \"prompt\"\nunmatched = \"ask\"\ndeny = [\"Bash(shutdown *)\"]\n"
+        ),
+    );
+
+    let mut child = kata()
+        .arg("run")
+        .arg(&spec)
+        .env("KATA_CLAUDE_BIN", fake_claude())
+        .env("KATA_FAKE_MODE", "approve")
+        .env("KATA_FAKE_TOOL", "Bash")
+        .env("KATA_FAKE_TOOL_INPUT", r#"{"command":"rm -rf build/"}"#)
+        .env("KATA_HOME", kata_home.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let reader = BufReader::new(child.stdout.take().unwrap());
+    let mut lines = Vec::new();
+    let mut decided = false;
+    for line in reader.lines() {
+        let line = line.unwrap();
+        if line.trim().is_empty() {
+            continue;
+        }
+        if !decided {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                if v["type"] == "permission.requested" {
+                    let id = v["id"].as_str().unwrap();
+                    writeln!(stdin, "decide {id} deny build/ is not yours to delete").unwrap();
+                    stdin.flush().unwrap();
+                    decided = true;
+                }
+            }
+        }
+        lines.push(line);
+    }
+    let status = child.wait().unwrap();
+    assert!(status.success(), "a denied tool call is not a failed run");
+    assert!(decided, "expected a permission.requested event to decide");
+
+    let actual = normalize_ask_events(&lines.join("\n"));
+
+    let golden_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden/run_permission_events.jsonl");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::create_dir_all(golden_path.parent().unwrap()).unwrap();
+        std::fs::write(&golden_path, &actual).unwrap();
+    }
+    let golden = std::fs::read_to_string(&golden_path)
+        .unwrap_or_else(|_| {
+            panic!(
+                "missing golden fixture {}; generate it with UPDATE_GOLDEN=1",
+                golden_path.display()
+            )
+        })
+        .replace("\r\n", "\n");
+    assert_eq!(
+        actual, golden,
+        "the permission-prompt event stream drifted from the golden fixture. If this \
+         change is intentional, regenerate with UPDATE_GOLDEN=1 and review the diff."
+    );
+}
+
+/// The engine must refuse a spec whose permission posture cannot work: `ask`
+/// with no operator to ask. Exit 1 is the validation code, and the message has
+/// to name the field so the fix is obvious from CI output alone.
+#[test]
+fn run_rejects_ask_policy_without_interactive() {
+    let work = tempfile::tempdir().unwrap();
+    let workdir = work.path().to_string_lossy().replace('\\', "/");
+    let spec = write(
+        work.path(),
+        "bad.kata.toml",
+        &format!(
+            "schema = 1\nname = \"bad\"\ntask = \"t\"\nworkdir = \"{workdir}\"\n\n\
+             [permissions]\nmode = \"prompt\"\n"
+        ),
+    );
+
+    let out = kata().arg("validate").arg(&spec).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "validation failure is exit 1");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("permissions.unmatched"),
+        "the error must name the field: {stderr}"
+    );
+}
+
 #[test]
 fn run_cancel_via_stdin_exits_130() {
     use std::io::Write;

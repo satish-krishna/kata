@@ -73,6 +73,39 @@ pub enum KataEvent {
         id: String,
         answers: Vec<Vec<String>>,
     },
+    /// A tool call is paused on the operator's decision. Emitted only under
+    /// `[permissions] mode = "prompt"` with `unmatched = "ask"`, and only for a
+    /// call no rule resolved — the exact analogue of `ask.requested`. The run
+    /// stays paused until the matching `permission.decided`.
+    #[serde(rename = "permission.requested")]
+    PermissionRequested {
+        id: String,
+        /// The tool claude wants to use, e.g. `Bash` or `mcp__github__list_issues`.
+        tool: String,
+        /// The call's target rendered for a human: the shell command, the file
+        /// path, the query — whatever the decision actually turns on.
+        input_summary: String,
+    },
+    /// How a permission check was resolved. Emitted for **every** check under
+    /// `[permissions] mode = "prompt"`, including the ones a rule or the
+    /// unmatched policy settled without pausing, so the stream is a complete
+    /// audit trail of what the agent was allowed to do.
+    #[serde(rename = "permission.decided")]
+    PermissionDecided {
+        /// Correlates with a preceding `permission.requested`, when there was one.
+        id: String,
+        tool: String,
+        /// Same rendering as `permission.requested.input_summary`, repeated here
+        /// so an auto-resolved check is legible on its own.
+        input_summary: String,
+        allow: bool,
+        /// What resolved it: `allow-rule`, `deny-rule`, `unmatched-policy`, or
+        /// `operator`. Treat an unrecognized value as "something else decided".
+        decided_by: String,
+        /// The reason handed back to claude on a denial.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
     #[serde(rename = "run.error")]
     RunError {
         message: String,
@@ -227,9 +260,10 @@ impl StreamParser {
                                 if let Some(id) = block.get("id").and_then(|i| i.as_str()) {
                                     self.tool_names.insert(id.to_string(), name.clone());
                                 }
-                                // The ask_user MCP tool surfaces via the AskPanel, not a
-                                // stream row; suppress its tool.use here.
-                                if name.ends_with("ask_user") {
+                                // Kata's own bridge tools surface as their own
+                                // events (ask.* / permission.*), not stream rows;
+                                // suppress their tool.use here.
+                                if is_bridge_tool(&name) {
                                     continue;
                                 }
                                 out.events.push(KataEvent::ToolUse {
@@ -256,9 +290,10 @@ impl StreamParser {
                                 .and_then(|id| self.tool_names.get(id))
                                 .cloned()
                                 .unwrap_or_default();
-                            // Mirrors the tool_use suppression above: the ask_user
-                            // answer surfaces via `ask.answered`, not a stream row.
-                            if name.ends_with("ask_user") {
+                            // Mirrors the tool_use suppression above: a bridge
+                            // tool's result surfaces via `ask.answered` /
+                            // `permission.decided`, not a stream row.
+                            if is_bridge_tool(&name) {
                                 continue;
                             }
                             out.events.push(KataEvent::ToolResult {
@@ -294,6 +329,19 @@ pub fn parse_stream_line(line: &str) -> Parsed {
     StreamParser::default().push(line)
 }
 
+/// True for a tool served by Kata's own `mcp-ask` bridge.
+///
+/// Matched on the `<server>__<tool>` suffix rather than the full
+/// `mcp__kata-ask__…` name, because claude's namespacing prefix has changed
+/// across versions — but the server segment is required. A bare `ask_user`
+/// suffix would be enough for stream suppression, where a false positive only
+/// hides a row; it is not enough for `run.rs`, which uses this to exempt Kata's
+/// own tools from the permission rules, and there a third-party tool that
+/// happened to end in `ask_user` would be silently auto-approved.
+pub(crate) fn is_bridge_tool(name: &str) -> bool {
+    name.ends_with("kata-ask__ask_user") || name.ends_with("kata-ask__approve_tool")
+}
+
 fn summarize_input(input: Option<&serde_json::Value>) -> String {
     match input {
         Some(v) => v
@@ -313,7 +361,7 @@ fn summarize_content(content: Option<&serde_json::Value>) -> String {
     }
 }
 
-fn truncate(s: &str, max: usize) -> String {
+pub(crate) fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
     }
@@ -566,6 +614,82 @@ mod tests {
     }
 
     #[test]
+    fn permission_events_serialize_with_their_tags() {
+        let req = KataEvent::PermissionRequested {
+            id: "p1".into(),
+            tool: "Bash".into(),
+            input_summary: "rm -rf build/".into(),
+        };
+        let s = serde_json::to_string(&req).unwrap();
+        assert!(s.contains(r#""type":"permission.requested""#));
+        assert!(s.contains(r#""tool":"Bash""#));
+        assert!(s.contains("rm -rf build/"));
+
+        let decided = KataEvent::PermissionDecided {
+            id: "p1".into(),
+            tool: "Bash".into(),
+            input_summary: "rm -rf build/".into(),
+            allow: false,
+            decided_by: "deny-rule".into(),
+            message: Some("matched permissions.deny".into()),
+        };
+        let s = serde_json::to_string(&decided).unwrap();
+        assert!(s.contains(r#""type":"permission.decided""#));
+        assert!(s.contains(r#""allow":false"#));
+        assert!(s.contains(r#""decided_by":"deny-rule""#));
+
+        // An allow carries no message, and must not serialize a null one.
+        let allowed = KataEvent::PermissionDecided {
+            id: "p2".into(),
+            tool: "Read".into(),
+            input_summary: "/etc/hosts".into(),
+            allow: true,
+            decided_by: "allow-rule".into(),
+            message: None,
+        };
+        let s = serde_json::to_string(&allowed).unwrap();
+        assert!(
+            !s.contains("message"),
+            "absent message must be omitted: {s}"
+        );
+    }
+
+    #[test]
+    fn permission_events_round_trip() {
+        for ev in [
+            KataEvent::PermissionRequested {
+                id: "p1".into(),
+                tool: "Bash".into(),
+                input_summary: "ls".into(),
+            },
+            KataEvent::PermissionDecided {
+                id: "p1".into(),
+                tool: "Bash".into(),
+                input_summary: "ls".into(),
+                allow: true,
+                decided_by: "operator".into(),
+                message: None,
+            },
+        ] {
+            let json = serde_json::to_string(&ev).unwrap();
+            let back: KataEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(ev, back, "round-trip mismatch for {json}");
+        }
+    }
+
+    // Claude invokes the permission prompt tool itself; if a version of it ever
+    // surfaces in the stream, it must not render as an ordinary tool row —
+    // permission.* events already tell that story.
+    #[test]
+    fn approve_tool_calls_are_suppressed_from_the_stream() {
+        let mut p = StreamParser::default();
+        let use_line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_a","name":"mcp__kata-ask__approve_tool","input":{"tool_name":"Bash"}}]}}"#;
+        let res_line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_a","content":"allowed","is_error":false}]}}"#;
+        assert!(p.push(use_line).events.is_empty());
+        assert!(p.push(res_line).events.is_empty());
+    }
+
+    #[test]
     fn question_deserializes_from_tool_input() {
         let json = r#"{"kind":"confirm","header":"deploy","question":"Ship it?","options":[{"label":"Yes"},{"label":"No"}]}"#;
         let q: Question = serde_json::from_str(json).unwrap();
@@ -588,6 +712,17 @@ mod tests {
         let line = r#"{"type":"result","subtype":"success","is_error":false,"num_turns":2,"total_cost_usd":0.02,"result":"done"}"#;
         let r = parse_stream_line(line).result.unwrap();
         assert!(!r.is_budget_exhausted());
+    }
+
+    // The exemption in run.rs turns on this predicate, so a lookalike from a
+    // third-party MCP server must not match it.
+    #[test]
+    fn only_katas_own_server_counts_as_a_bridge_tool() {
+        assert!(is_bridge_tool("mcp__kata-ask__ask_user"));
+        assert!(is_bridge_tool("mcp__kata-ask__approve_tool"));
+        assert!(!is_bridge_tool("mcp__helpful-bot__ask_user"));
+        assert!(!is_bridge_tool("ask_user"));
+        assert!(!is_bridge_tool("Bash"));
     }
 
     #[test]
@@ -640,6 +775,8 @@ mod tests {
             "tag rename must survive: {dump}"
         );
         assert!(dump.contains("ask.requested"));
+        assert!(dump.contains("permission.requested"));
+        assert!(dump.contains("permission.decided"));
         assert!(dump.contains("tool.result"));
     }
 

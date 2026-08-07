@@ -238,6 +238,26 @@ fn submit_answer(control: State<RunControl>, id: String, answers: Vec<Vec<String
     }
 }
 
+/// Send the operator's verdict on a paused permission check: write a
+/// `decide <id> allow|deny [reason]` line to the engine's stdin (the engine
+/// returns it to claude as the permission-prompt tool result and emits
+/// permission.decided). The reason is free text and must stay on one line, so
+/// newlines collapse to spaces before it goes on the wire.
+#[tauri::command]
+fn submit_decision(control: State<RunControl>, id: String, allow: bool, message: Option<String>) {
+    let verdict = if allow { "allow" } else { "deny" };
+    let reason = message
+        .map(|m| m.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|m| !m.is_empty())
+        .map(|m| format!(" {m}"))
+        .unwrap_or_default();
+    let line = format!("decide {id} {verdict}{reason}\n");
+    let mut st = control.state.lock().unwrap();
+    if let Some(child) = st.child.as_mut() {
+        let _ = child.write(line.as_bytes());
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -252,6 +272,7 @@ pub fn run() {
             run_spec,
             cancel_run,
             submit_answer,
+            submit_decision,
             list_runs,
             load_run,
             save_kata,

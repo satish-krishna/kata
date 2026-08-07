@@ -130,6 +130,49 @@
       },
       "type": "object"
     },
+    "PermissionMode": {
+      "oneOf": [
+        {
+          "const": "bypass",
+          "description": "Pass `--dangerously-skip-permissions`. Fastest, and what every run did\nbefore this field existed — but a machine whose managed settings set\n`permissions.disableBypassPermissionsMode` rejects it at startup.",
+          "type": "string"
+        },
+        {
+          "const": "prompt",
+          "description": "Pass `--permission-prompt-tool`, pointing claude at Kata's own MCP tool.\nEvery check claude would have put to a human is decided by the spec's\nrules, or routed to the operator. Not a bypass: managed deny and ask\nrules are evaluated first and still win.",
+          "type": "string"
+        }
+      ]
+    },
+    "Permissions": {
+      "properties": {
+        "allow": {
+          "description": "Rules auto-allowed under `mode = \"prompt\"`. Claude rule syntax: `Tool` or\n`Tool(specifier)`, with `*` as a wildcard — e.g. `Bash(git *)`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "deny": {
+          "description": "Rules auto-denied under `mode = \"prompt\"`. Evaluated before `allow`, so a\ndeny cannot be re-opened by a broader allow.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mode": {
+          "$ref": "#/$defs/PermissionMode",
+          "default": "bypass",
+          "description": "How claude's permission checks are answered: `bypass` (the default,\n`--dangerously-skip-permissions`) or `prompt` (Kata's MCP tool decides)."
+        },
+        "unmatched": {
+          "$ref": "#/$defs/UnmatchedPolicy",
+          "default": "ask",
+          "description": "What happens to a call no rule matched: ask the operator (the default,\nwhich requires `[interactive] enabled = true`), deny it, or allow it."
+        }
+      },
+      "type": "object"
+    },
     "PluginConfig": {
       "properties": {
         "env": {
@@ -148,6 +191,25 @@
         }
       },
       "type": "object"
+    },
+    "UnmatchedPolicy": {
+      "oneOf": [
+        {
+          "const": "ask",
+          "description": "Put the call to the operator and pause the run until they decide.\nRequires `[interactive] enabled = true` — nothing else can answer.",
+          "type": "string"
+        },
+        {
+          "const": "deny",
+          "description": "Deny the call and tell claude why. The headless default worth choosing:\nthe spec's `allow` list is then the run's complete tool surface.",
+          "type": "string"
+        },
+        {
+          "const": "allow",
+          "description": "Allow the call. Every decision is still logged as a `permission.decided`\nevent, which makes this an audit mode rather than a silent bypass.",
+          "type": "string"
+        }
+      ]
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -216,6 +278,14 @@
     "name": {
       "description": "Run name; also the source for the transcript and bundle slug.",
       "type": "string"
+    },
+    "permissions": {
+      "$ref": "#/$defs/Permissions",
+      "default": {
+        "mode": "bypass",
+        "unmatched": "ask"
+      },
+      "description": "How the run answers claude's permission checks. Defaults to `bypass`\n(`--dangerously-skip-permissions`), which a machine's managed settings can\nforbid; `prompt` routes each check to Kata instead."
     },
     "plugins": {
       "additionalProperties": {

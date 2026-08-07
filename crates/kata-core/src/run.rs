@@ -2,7 +2,7 @@ use crate::assemble::{assemble, AssembleError};
 use crate::catalog::CatalogEntry;
 use crate::command::{build_invocation, ClaudeInvocation};
 use crate::event::KataEvent;
-use crate::spec::{validate, Isolation, RunSpec};
+use crate::spec::{validate, Isolation, PermissionMode, RunSpec, UnmatchedPolicy};
 use std::io::{BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -79,6 +79,47 @@ pub fn answer_channel() -> (mpsc::Sender<Answer>, AnswerRx) {
     let (tx, rx) = mpsc::channel();
     (tx, AnswerRx(Some(rx)))
 }
+
+/// An operator's verdict on a pending `permission.requested`, routed from the
+/// engine's stdin (kata-cli) into the run loop.
+#[derive(Debug, Clone)]
+pub struct Decision {
+    pub id: String,
+    pub allow: bool,
+    /// Why it was denied. Claude sees this and may take another route.
+    pub message: Option<String>,
+}
+
+/// The run loop's decision inbox. `Default` is an empty inbox — correct for
+/// every run that is not in `[permissions] mode = "prompt"` with
+/// `unmatched = "ask"`, since nothing else ever pauses on a decision.
+#[derive(Default)]
+pub struct DecisionRx(Option<mpsc::Receiver<Decision>>);
+
+impl DecisionRx {
+    fn try_recv(&self) -> Option<Decision> {
+        self.0.as_ref().and_then(|rx| rx.try_recv().ok())
+    }
+}
+
+/// Create a connected (sender, inbox) pair for a run that asks the operator to
+/// approve tool calls.
+pub fn decision_channel() -> (mpsc::Sender<Decision>, DecisionRx) {
+    let (tx, rx) = mpsc::channel();
+    (tx, DecisionRx(Some(rx)))
+}
+
+/// Cap on the rendered tool input carried by `permission.*` events. Generous
+/// enough that an operator sees a whole shell command, bounded so a pathological
+/// tool input cannot flood the stream or the transcript.
+const PERMISSION_SUMMARY_MAX: usize = 2000;
+
+/// Denial reasons handed back to claude. Claude reads these and may adjust its
+/// approach, so each says *why* rather than just "no".
+const DENY_BY_RULE: &str = "Denied: this call matches the run's permissions.deny rules.";
+const DENY_BY_POLICY: &str =
+    "Denied: this run only permits tools listed in its permissions.allow rules.";
+const DENY_BY_OPERATOR: &str = "The operator denied this tool call.";
 
 /// Retasking note appended to claude's system prompt for interactive runs. It is
 /// additive (applied even under identity Replace mode) because it describes a
@@ -164,6 +205,7 @@ pub fn run<F: FnMut(KataEvent)>(
     catalog: &[CatalogEntry],
     cancel: &CancelToken,
     answers: &AnswerRx,
+    decisions: &DecisionRx,
     mut emit: F,
 ) -> Result<RunOutcome, RunError> {
     validate(spec).map_err(RunError::Invalid)?;
@@ -221,45 +263,62 @@ pub fn run<F: FnMut(KataEvent)>(
         }
     }
 
-    // Interactive: bind the ask bridge, hand the child its port + the ask_user
-    // MCP tool + the retasking note. The temp dir holds the generated mcp-config
-    // and, when there is no identity append file to fold into, the retask note
-    // file (see `append_interactive_retask`); it lives until after the child exits.
+    // Two spec sections need Kata's own MCP server in the child: `[interactive]`
+    // for the `ask_user` tool, and `[permissions] mode = "prompt"` for the
+    // `approve_tool` handler behind `--permission-prompt-tool`. Either one binds
+    // the bridge and generates one mcp-config; the tool set advertised is
+    // exactly what was asked for. The temp dir holds that config and, when there
+    // is no identity append file to fold into, the retask note file (see
+    // `append_interactive_retask`); it lives until after the child exits.
+    let prompt_permissions = spec.permissions.mode == PermissionMode::Prompt;
+    let tools = crate::ask::Tools {
+        ask_user: spec.interactive.enabled,
+        approve_tool: prompt_permissions,
+    };
     let mut interactive_tmp: Option<tempfile::TempDir> = None;
-    let mut ask_rx: Option<mpsc::Receiver<crate::ask::AskRequest>> = None;
-    if spec.interactive.enabled {
+    let mut bridge_rx: Option<mpsc::Receiver<crate::ask::Request>> = None;
+    if tools.ask_user || tools.approve_tool {
         let bridge = crate::ask::Bridge::bind().map_err(|e| RunError::Spawn(e.to_string()))?;
         let port = bridge.port();
         let (atx, arx) = mpsc::channel();
         bridge.serve(atx, cancel.clone());
-        ask_rx = Some(arx);
+        bridge_rx = Some(arx);
 
         let dir = tempfile::tempdir().map_err(|e| RunError::Spawn(e.to_string()))?;
         let exe = std::env::current_exe().map_err(|e| RunError::Spawn(e.to_string()))?;
         let cfg = dir.path().join("mcp-config.json");
-        let cfg_body = serde_json::json!({
-            "mcpServers": { "kata-ask": {
+        // Pass the port and tool set via the per-server env block too: relying on
+        // claude to propagate them from the child env to this grandchild is not
+        // guaranteed. Belt and suspenders.
+        let mut server_env = serde_json::Map::new();
+        server_env.insert("KATA_ASK_PORT".into(), port.to_string().into());
+        server_env.insert(crate::ask::TOOLS_ENV.into(), tools.to_env().into());
+        let mut servers = serde_json::Map::new();
+        servers.insert(
+            crate::ask::MCP_SERVER_NAME.into(),
+            serde_json::json!({
                 "command": exe.to_string_lossy(),
                 "args": ["mcp-ask"],
-                // Pass the port via the per-server env block too: relying on
-                // claude to propagate KATA_ASK_PORT from the child env to this
-                // grandchild is not guaranteed. Belt and suspenders.
-                "env": { "KATA_ASK_PORT": port.to_string() }
-            }}
-        })
-        .to_string();
+                "env": server_env,
+            }),
+        );
+        let cfg_body = serde_json::json!({ "mcpServers": servers }).to_string();
         std::fs::write(&cfg, cfg_body).map_err(|e| RunError::Spawn(e.to_string()))?;
 
         inv.args.push("--mcp-config".into());
         inv.args.push(cfg.to_string_lossy().into_owned());
-        append_interactive_retask(
-            &mut inv,
-            assembled.system_prompt_file.as_deref(),
-            INTERACTIVE_RETASK,
-            dir.path(),
-        )
-        .map_err(|e| RunError::Spawn(e.to_string()))?;
+        if spec.interactive.enabled {
+            append_interactive_retask(
+                &mut inv,
+                assembled.system_prompt_file.as_deref(),
+                INTERACTIVE_RETASK,
+                dir.path(),
+            )
+            .map_err(|e| RunError::Spawn(e.to_string()))?;
+        }
         inv.env.push(("KATA_ASK_PORT".into(), port.to_string()));
+        inv.env
+            .push((crate::ask::TOOLS_ENV.to_string(), tools.to_env()));
         interactive_tmp = Some(dir);
     }
 
@@ -395,16 +454,19 @@ pub fn run<F: FnMut(KataEvent)>(
     let mut result = None;
     let mut termination: Option<Termination> = None;
 
-    // Interactive await state. The work-clock excludes time spent awaiting an
-    // answer: `paused` accumulates that time and shifts the deadline.
+    // Await state, shared by both things that can pause a run: an unanswered
+    // question and an undecided permission check. The work-clock excludes time
+    // spent waiting on the operator — `paused` accumulates it and shifts the
+    // deadline — and `interactive.answer_timeout_secs` bounds either wait.
     let answer_deadline = spec
         .interactive
         .answer_timeout_secs
         .map(Duration::from_secs);
     let mut awaiting_since: Option<Instant> = None;
     let mut paused: Duration = Duration::ZERO;
-    let mut pending: Option<(String, mpsc::Sender<Vec<Vec<String>>>)> = None;
+    let mut pending: Option<Pending> = None;
     let mut ask_seq: u32 = 0;
+    let mut perm_seq: u32 = 0;
 
     loop {
         if cancel.is_cancelled() {
@@ -423,36 +485,166 @@ pub fn run<F: FnMut(KataEvent)>(
                 break;
             }
         }
-        // A new question from the bridge → emit ask.requested, enter awaiting.
+        // A new request from the bridge. A question always pauses the run; a
+        // permission check pauses only when no rule resolved it and the spec
+        // says to ask.
         if pending.is_none() {
-            if let Some(arx) = &ask_rx {
-                if let Ok(req) = arx.try_recv() {
-                    ask_seq += 1;
-                    let id = format!("q{ask_seq}");
-                    pending = Some((id.clone(), req.reply));
-                    awaiting_since = Some(Instant::now());
-                    emit(KataEvent::AskRequested {
-                        id,
-                        questions: req.questions,
-                    });
+            if let Some(brx) = &bridge_rx {
+                if let Ok(req) = brx.try_recv() {
+                    match req.payload {
+                        crate::ask::RequestPayload::Ask(questions) => {
+                            ask_seq += 1;
+                            let id = format!("q{ask_seq}");
+                            pending = Some(Pending::Ask {
+                                id: id.clone(),
+                                reply: req.reply,
+                            });
+                            awaiting_since = Some(Instant::now());
+                            emit(KataEvent::AskRequested { id, questions });
+                        }
+                        crate::ask::RequestPayload::Approve { tool, input } => {
+                            perm_seq += 1;
+                            let id = format!("p{perm_seq}");
+                            let summary = crate::event::truncate(
+                                &crate::permission::target_of(&tool, &input),
+                                PERMISSION_SUMMARY_MAX,
+                            );
+                            // Kata's own bridge tools are exempt. `ask_user` is an
+                            // ordinary MCP tool as far as claude is concerned, so
+                            // in prompt mode it needs permission like anything
+                            // else — and putting it to the rules would let a
+                            // headless deny policy silently disable interactivity,
+                            // or (under `ask`) ask the operator for permission to
+                            // ask the operator. The engine owns these tools; it
+                            // does not negotiate with itself over them.
+                            let settled = if crate::event::is_bridge_tool(&tool) {
+                                Some((true, "engine", None))
+                            } else {
+                                // Deny rules first, then allow — claude's own
+                                // precedence, so a broad deny cannot be re-opened.
+                                match crate::permission::decide(
+                                    &spec.permissions.allow,
+                                    &spec.permissions.deny,
+                                    &tool,
+                                    &input,
+                                ) {
+                                    Some(crate::permission::Matched::Deny) => {
+                                        Some((false, "deny-rule", Some(DENY_BY_RULE.to_string())))
+                                    }
+                                    Some(crate::permission::Matched::Allow) => {
+                                        Some((true, "allow-rule", None))
+                                    }
+                                    None => match spec.permissions.unmatched {
+                                        UnmatchedPolicy::Deny => Some((
+                                            false,
+                                            "unmatched-policy",
+                                            Some(DENY_BY_POLICY.to_string()),
+                                        )),
+                                        UnmatchedPolicy::Allow => {
+                                            Some((true, "unmatched-policy", None))
+                                        }
+                                        // `validate` guarantees interactive is on here.
+                                        UnmatchedPolicy::Ask => None,
+                                    },
+                                }
+                            };
+                            match settled {
+                                Some((allow, decided_by, message)) => {
+                                    let _ = req.reply.send(crate::ask::ReplyPayload::Verdict(
+                                        crate::ask::Verdict {
+                                            allow,
+                                            message: message.clone(),
+                                        },
+                                    ));
+                                    emit(KataEvent::PermissionDecided {
+                                        id,
+                                        tool,
+                                        input_summary: summary,
+                                        allow,
+                                        decided_by: decided_by.to_string(),
+                                        message,
+                                    });
+                                }
+                                None => {
+                                    pending = Some(Pending::Approve {
+                                        id: id.clone(),
+                                        tool: tool.clone(),
+                                        input_summary: summary.clone(),
+                                        reply: req.reply,
+                                    });
+                                    awaiting_since = Some(Instant::now());
+                                    emit(KataEvent::PermissionRequested {
+                                        id,
+                                        tool,
+                                        input_summary: summary,
+                                    });
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-        // An answer from the operator → return it down the bridge, resume.
-        if let Some((pid, _)) = &pending {
-            if let Some(ans) = answers.try_recv() {
-                if &ans.id == pid {
-                    let (id, reply) = pending.take().unwrap();
-                    let _ = reply.send(ans.answers.clone());
-                    if let Some(since) = awaiting_since.take() {
-                        paused += since.elapsed();
+        // The operator's reply → return it down the bridge, resume the clock.
+        match &pending {
+            Some(Pending::Ask { id: pid, .. }) => {
+                if let Some(ans) = answers.try_recv() {
+                    if &ans.id == pid {
+                        let Some(Pending::Ask { id, reply }) = pending.take() else {
+                            unreachable!("matched Pending::Ask above")
+                        };
+                        let _ = reply.send(crate::ask::ReplyPayload::Answers(ans.answers.clone()));
+                        if let Some(since) = awaiting_since.take() {
+                            paused += since.elapsed();
+                        }
+                        emit(KataEvent::AskAnswered {
+                            id,
+                            answers: ans.answers,
+                        });
                     }
-                    emit(KataEvent::AskAnswered {
-                        id,
-                        answers: ans.answers,
-                    });
                 }
             }
+            Some(Pending::Approve { id: pid, .. }) => {
+                if let Some(d) = decisions.try_recv() {
+                    if &d.id == pid {
+                        let Some(Pending::Approve {
+                            id,
+                            tool,
+                            input_summary,
+                            reply,
+                        }) = pending.take()
+                        else {
+                            unreachable!("matched Pending::Approve above")
+                        };
+                        let message = if d.allow {
+                            None
+                        } else {
+                            Some(
+                                d.message
+                                    .clone()
+                                    .unwrap_or_else(|| DENY_BY_OPERATOR.to_string()),
+                            )
+                        };
+                        let _ =
+                            reply.send(crate::ask::ReplyPayload::Verdict(crate::ask::Verdict {
+                                allow: d.allow,
+                                message: message.clone(),
+                            }));
+                        if let Some(since) = awaiting_since.take() {
+                            paused += since.elapsed();
+                        }
+                        emit(KataEvent::PermissionDecided {
+                            id,
+                            tool,
+                            input_summary,
+                            allow: d.allow,
+                            decided_by: "operator".into(),
+                            message,
+                        });
+                    }
+                }
+            }
+            None => {}
         }
         match rx.recv_timeout(POLL) {
             Ok(ChildLine::Out(line)) => {
@@ -648,6 +840,21 @@ enum Termination {
     TimedOut,
     MaxTurns(u32),
     AnswerTimeout,
+}
+
+/// What the run is currently paused on. At most one at a time: claude blocks on
+/// the bridge tool result, so it cannot have two requests outstanding.
+enum Pending {
+    Ask {
+        id: String,
+        reply: mpsc::Sender<crate::ask::ReplyPayload>,
+    },
+    Approve {
+        id: String,
+        tool: String,
+        input_summary: String,
+        reply: mpsc::Sender<crate::ask::ReplyPayload>,
+    },
 }
 
 #[cfg(test)]

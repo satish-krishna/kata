@@ -84,13 +84,14 @@ Kata's whole job is controlling the four edges around a rented agent loop, then 
 - **The empty room.** Runs start from `claude --bare` (default-on, switchable per run), so nothing leaks in from your ambient `~/.claude` unless the spec asks for it.
 - **Retasking.** A system prompt is appended to — or replaces — the default coding assistant, telling the agent what it is for this one job.
 - **The kit.** The skills and plugins a spec names are assembled into a disposable `--plugin-dir` for the run, then cleaned up.
+- **Permissions.** Every run states outright how claude's permission checks are answered — skipped with `--dangerously-skip-permissions`, or handed to Kata's own MCP tool. See [Permissions](#permissions).
 - **The leash.** Turn cap, wall-clock timeout, optional git-worktree isolation for writes, and a budget ceiling. The outcome maps to a process exit code so CI and orchestrators can branch on it:
 
 | Exit | Meaning |
 | --- | --- |
 | `0` | run completed |
 | `122` | budget ceiling reached (`leash.max_budget_usd`) |
-| `123` | answer deadline exceeded (interactive runs only) |
+| `123` | answer deadline exceeded (an unanswered question or permission check) |
 | `124` | wall-clock timeout (`leash.timeout_secs`) |
 | `125` | turn cap reached (`leash.max_turns`) |
 | `130` | cancelled |
@@ -132,6 +133,38 @@ $ kata run triage-bundle
 
 `kata run` sees the `kata-bundle.toml` marker and runs **hermetically**: it discovers the kit *only* from the bundle's own `.claude`, never the host's `~/.claude` or the target repo's `.claude`. The run depends solely on what the bundle carries, so it behaves identically wherever it lands — which is the whole point of a kata. (Re-bundle with `--force` to overwrite an existing output folder.)
 
+## Permissions
+
+A run's default posture is `--dangerously-skip-permissions`: claude never asks, which is what a headless run wants. That flag is also the first thing a locked-down machine takes away — an admin who sets `permissions.disableBypassPermissionsMode` in managed settings makes claude reject it at startup, and every Kata run on that machine dies before it starts.
+
+`mode = "prompt"` is the route through. Kata passes `--permission-prompt-tool` instead, pointing claude at Kata's own MCP tool, and answers each check itself:
+
+```toml
+[permissions]
+mode      = "prompt"     # "bypass" (default) | "prompt"
+unmatched = "deny"       # "ask" (default) | "deny" | "allow"
+allow     = ["Read", "Grep", "Bash(git *)"]
+deny      = ["Bash(rm *)"]
+```
+
+This is not a bypass wearing a different hat. The prompt tool is the **last** step of claude's evaluation chain — an admin's deny rules are evaluated first and still win, and a call they blocked never reaches Kata at all.
+
+`unmatched` decides what happens to a call no rule matched, and it is the choice worth making deliberately: `deny` makes the `allow` list the run's entire tool surface (the headless answer), `ask` pauses the run and puts the call to the operator (which is why it requires `[interactive] enabled = true` — `kata validate` rejects the combination otherwise), and `allow` lets everything through while still logging every decision.
+
+Rules use claude's own grammar — `Tool` or `Tool(specifier)`, `*` for any run of characters — matched against the call's target (a shell command, a file path, a query). `deny` is evaluated before `allow`, so a broad deny can't be re-opened by a narrower allow. Kata's own `ask_user` tool is exempt from the rules entirely, so a strict deny policy can't silently switch interactivity off.
+
+**Nothing falls back automatically.** A spec that says `bypass` gets `bypass` on every machine, and fails loudly where that is forbidden, rather than quietly running under a different safety posture somewhere else. Changing posture is an edit to the spec.
+
+Every check emits a `permission.decided` event — including the ones a rule settled without pausing — so the stream and the transcript are a complete record of what the agent was allowed to do, and what it was refused:
+
+```console
+{"type":"permission.decided","id":"p1","tool":"Read","input_summary":"src/main.rs","allow":true,"decided_by":"allow-rule"}
+{"type":"permission.requested","id":"p2","tool":"Bash","input_summary":"rm -rf build/"}
+# operator decides on stdin:
+decide p2 deny build/ is not yours to delete
+{"type":"permission.decided","id":"p2","tool":"Bash","input_summary":"rm -rf build/","allow":false,"decided_by":"operator","message":"build/ is not yours to delete"}
+```
+
 ## Interactive runs
 
 By default, a Kata run is headless and observe-only. Add an `[interactive]` block to a spec to let claude pause mid-run and ask the operator a question; the Workbench (or any stdin-connected terminal) answers and the same `claude -p` session resumes with the answer fed back as a tool result.
@@ -151,7 +184,7 @@ When `enabled`, the engine wires a Kata-hosted `ask_user` MCP tool and appends a
 - `select` with `multi_select: true` — multiple-choice checkboxes.
 - `text` — free-form typed answer.
 
-**The back-channel (extends kata-cli stdin).** Today `cancel` is the only line kata-cli's stdin understands. Interactive runs add one more shape beside it:
+**The back-channel (extends kata-cli stdin).** Beside `cancel` (and `decide`, which [permission prompting](#permissions) adds), interactive runs add one more shape:
 
 ```
 answer <id> <json>

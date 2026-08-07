@@ -7,7 +7,7 @@
 //! callback. This example is compiled as a doctest, so the guide stays honest:
 //!
 //! ```no_run
-//! use kata_core::{answer_channel, run, Answer, CancelToken, KataEvent};
+//! use kata_core::{answer_channel, decision_channel, run, Answer, CancelToken, Decision, KataEvent};
 //!
 //! let spec = kata_core::spec::load("triage.toml".as_ref())?;
 //! let catalog = kata_core::catalog::discover(
@@ -15,15 +15,23 @@
 //!
 //! // Call cancel.cancel() from another thread to stop the run.
 //! let cancel = CancelToken::new();
-//! // Keep the sender to answer interactive questions; drop it for non-interactive runs.
+//! // Keep the senders to answer interactive questions and approve tool calls;
+//! // an `AnswerRx::default()` / `DecisionRx::default()` is fine when neither applies.
 //! let (answer_tx, answers) = answer_channel();
+//! let (decision_tx, decisions) = decision_channel();
 //!
-//! let outcome = run(&spec, &catalog, &cancel, &answers, |event| match event {
+//! let outcome = run(&spec, &catalog, &cancel, &answers, &decisions, |event| match event {
 //!     // Interactive fork: reply with one Vec<String> per question
 //!     // (chosen option labels, [typed text], or [] to skip an optional one).
 //!     KataEvent::AskRequested { id, questions } => {
 //!         let reply = questions.iter().map(|_| vec![String::from("yes")]).collect();
 //!         let _ = answer_tx.send(Answer { id, answers: reply });
+//!     }
+//!     // Permission fork ([permissions] mode = "prompt", unmatched = "ask"):
+//!     // decide whether this tool call may proceed.
+//!     KataEvent::PermissionRequested { id, tool, input_summary } => {
+//!         println!("{tool}: {input_summary}");
+//!         let _ = decision_tx.send(Decision { id, allow: false, message: None });
 //!     }
 //!     // Everything else: forward to your UI, a socket, a log...
 //!     other => println!("{}", serde_json::to_string(&other).unwrap()),
@@ -36,8 +44,9 @@
 //! # Out-of-process (any language)
 //!
 //! Spawn the `kata` binary and read one [`KataEvent`] JSON object per line off
-//! its stdout; write `cancel` / `answer <id> <json>` lines to its stdin. Only
-//! the run-spec and event shapes are contractual — not this crate's Rust API.
+//! its stdout; write `cancel`, `answer <id> <json>`, or
+//! `decide <id> allow|deny [reason]` lines to its stdin. Only the run-spec and
+//! event shapes are contractual — not this crate's Rust API.
 //!
 //! # Interactive runs are owned by the `kata` process
 //!
@@ -68,7 +77,10 @@ pub use event::{KataEvent, Question, QuestionKind, QuestionOption};
 // ---- discovery & orchestration ----
 pub mod catalog;
 pub mod run;
-pub use run::{answer_channel, run, Answer, AnswerRx, CancelToken, RunError, RunOutcome};
+pub use run::{
+    answer_channel, decision_channel, run, Answer, AnswerRx, CancelToken, Decision, DecisionRx,
+    RunError, RunOutcome,
+};
 
 // ---- the interactive ask MCP tool: owned by the engine, not consumer API ----
 // `ask::serve_stdio` exists only so the `kata` binary can back its hidden
@@ -83,6 +95,9 @@ pub mod history;
 pub mod katas;
 pub mod presets;
 pub mod worktree;
+
+// ---- permission rule matching for `[permissions] mode = "prompt"` ----
+pub mod permission;
 
 // ---- engine-internal plumbing: NOT public API ----
 pub(crate) mod assemble;

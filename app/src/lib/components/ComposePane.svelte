@@ -96,6 +96,16 @@
     spec.leash.max_budget_usd = Number.isFinite(n) && n > 0 ? n : null;
   }
 
+  // Permission rules edit as one-per-line text; blank lines are dropped so a
+  // trailing newline never becomes an empty rule the engine would reject.
+  const rulesText = (rules: string[] | undefined) => (rules ?? []).join("\n");
+  function parseRules(e: Event): string[] {
+    return (e.currentTarget as HTMLTextAreaElement).value
+      .split("\n")
+      .map((r) => r.trim())
+      .filter((r) => r !== "");
+  }
+
   // Integer-coerce the interactive answer timeout (null = wait indefinitely).
   function onAnswerTimeout(e: Event) {
     const v = (e.currentTarget as HTMLInputElement).value.trim();
@@ -254,6 +264,55 @@
           value={spec.interactive.answer_timeout_secs ?? ""}
           oninput={onAnswerTimeout}
         />
+      </Field>
+    {/if}
+  </section>
+
+  <section class="wb-section">
+    <div class="wb-section__head">
+      <span class="wb-section__title">Permissions</span>
+      <span class="wb-section__sub">how claude's checks are answered</span>
+    </div>
+    <Field
+      label="Mode"
+      key="permissions.mode"
+      hint="bypass passes --dangerously-skip-permissions; prompt hands each check to Kata's MCP tool instead — the route when managed settings forbid bypass."
+    >
+      <Segmented
+        options={["bypass", "prompt"] as const}
+        bind:value={spec.permissions.mode}
+        ariaLabel="Permission mode"
+      />
+    </Field>
+    {#if spec.permissions.mode === "prompt"}
+      <Field
+        label="Unmatched"
+        key="permissions.unmatched"
+        hint="what happens to a call no rule matched. ask needs interactive on; deny makes the allow list the run's whole tool surface."
+      >
+        <Segmented
+          options={["ask", "deny", "allow"] as const}
+          bind:value={spec.permissions.unmatched}
+          ariaLabel="Unmatched policy"
+        />
+      </Field>
+      <Field label="Allow" key="permissions.allow" hint="one rule per line — Tool or Tool(specifier), * is a wildcard. e.g. Bash(git *)">
+        <textarea
+          class="k-textarea"
+          rows="3"
+          placeholder="Read&#10;Grep&#10;Bash(git *)"
+          value={rulesText(spec.permissions.allow)}
+          oninput={(e) => (spec.permissions.allow = parseRules(e))}
+        ></textarea>
+      </Field>
+      <Field label="Deny" key="permissions.deny" hint="evaluated before allow, so a deny cannot be re-opened by a broader allow.">
+        <textarea
+          class="k-textarea"
+          rows="2"
+          placeholder="Bash(rm *)"
+          value={rulesText(spec.permissions.deny)}
+          oninput={(e) => (spec.permissions.deny = parseRules(e))}
+        ></textarea>
       </Field>
     {/if}
   </section>

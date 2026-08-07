@@ -1,5 +1,5 @@
 import { describe, it, test, expect } from "vitest";
-import { terminalStateFor, statusForExit, isStreamEvent, type KataEvent } from "./events";
+import { terminalStateFor, statusForExit, isStreamEvent, gutterFor, variantFor, bodyFor, type KataEvent } from "./events";
 
 describe("statusForExit", () => {
   it("maps exit codes to andon states", () => {
@@ -85,5 +85,44 @@ describe("generated KataEvent types", () => {
     expect(events).toHaveLength(12);
     expect(isStreamEvent({ type: "assistant.text", text: "x" })).toBe(true);
     expect(statusForExit(0)).toBe("success");
+  });
+});
+
+
+describe("permission.decided rows", () => {
+  const decided = (allow: boolean, decided_by: string) =>
+    ({
+      type: "permission.decided",
+      id: "p1",
+      tool: "Bash",
+      input_summary: "rm -rf build/",
+      allow,
+      decided_by,
+    }) as const;
+
+  it("is a stream row, while permission.requested is not", () => {
+    expect(isStreamEvent(decided(true, "allow-rule"))).toBe(true);
+    expect(
+      isStreamEvent({
+        type: "permission.requested",
+        id: "p1",
+        tool: "Bash",
+        input_summary: "rm -rf build/",
+      }),
+    ).toBe(false);
+  });
+
+  it("labels the gutter by the verdict and colours it with the andon set", () => {
+    expect(gutterFor(decided(true, "allow-rule"))).toBe("allowed");
+    expect(gutterFor(decided(false, "deny-rule"))).toBe("denied");
+    expect(variantFor(decided(true, "allow-rule"))).toBe("result-ok");
+    expect(variantFor(decided(false, "deny-rule"))).toBe("result-err");
+  });
+
+  it("names the tool, the target, and what decided it", () => {
+    const body = bodyFor(decided(false, "unmatched-policy"));
+    expect(body).toContain("Bash");
+    expect(body).toContain("rm -rf build/");
+    expect(body).toContain("unmatched-policy");
   });
 });

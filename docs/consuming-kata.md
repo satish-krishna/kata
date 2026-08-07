@@ -81,12 +81,14 @@ Every event is a JSON object with a `type` field. Fields below are exactly as se
 | `turn` | `n` | The nth assistant turn began (the turn counter the `max_turns` leash counts). |
 | `ask.requested` | `id`, `questions[]` | The agent is paused, asking the operator. Interactive runs only. See [Interactive](#interactive-runs). |
 | `ask.answered` | `id`, `answers[][]` | The operator's answer was delivered (echo, for your transcript). |
+| `permission.requested` | `id`, `tool`, `input_summary` | A tool call is paused on the operator's decision. Prompt-mode runs only. See [Permissions](#permission-prompting). |
+| `permission.decided` | `id`, `tool`, `input_summary`, `allow`, `decided_by`, `message?` | How a permission check was resolved. Emitted for **every** check, including ones no operator saw. |
 | `run.diff` | `worktree?`, `branch?`, `files[]`, `insertions`, `deletions`, `by_type[]` | Changeset summary, emitted just before the terminal event on every run. worktree/branch present only under worktree isolation. |
 | `run.completed` | `exit_code`, `is_error`, `num_turns`, `cost_usd?`, `duration_ms`, `result?` | Terminal: the run finished on its own. |
 | `run.error` | `message`, `exit_code`, `cost_usd?`, `duration_ms` | Terminal: the run was stopped by the leash or failed. |
 | `run.cancelled` | `exit_code`, `cost_usd?`, `duration_ms` | Terminal: the run was cancelled. |
 
-Exactly one terminal event (`run.completed` / `run.error` / `run.cancelled`) ends every stream. `ask.*` events appear only when the spec sets `[interactive] enabled = true`.
+Exactly one terminal event (`run.completed` / `run.error` / `run.cancelled`) ends every stream. `ask.*` events appear only when the spec sets `[interactive] enabled = true`; `permission.*` events only when it sets `[permissions] mode = "prompt"`.
 
 ### The changeset (run.diff)
 
@@ -104,10 +106,11 @@ When the workdir is not a git repository, no `run.diff` is emitted; instead a si
 
 ### The control channel (stdin)
 
-The engine reads control lines on its stdin. Two commands:
+The engine reads control lines on its stdin. Three commands:
 
 - `cancel` — stop the run. The engine kills claude, cleans up (worktree, temp kit), emits `run.cancelled`, and exits 130. EOF on stdin is a no-op, so a plain CLI invocation that closes stdin runs normally.
 - `answer <id> <json>` — answer a pending `ask.requested`. `<id>` is the id from the event; `<json>` is the answer matrix (see below). Ignored unless it matches the pending question's id.
+- `decide <id> allow|deny [reason]` — settle a pending `permission.requested`. The optional trailing free text is the reason claude sees on a denial. A line that is neither `allow` nor `deny` is ignored rather than guessed at. Ignored unless it matches the pending check's id.
 
 ### Exit codes
 
@@ -119,7 +122,7 @@ The process exit code is the leash outcome, and part of the contract — CI and 
 | 1 | (CLI) spec validation failed. |
 | 2 | (CLI) could not load/parse the spec, or an engine error. |
 | 122 | Budget ceiling reached (`leash.max_budget_usd`). Spend may overshoot by up to one turn. |
-| 123 | Answer deadline exceeded (`interactive.answer_timeout_secs`). Distinct from 124 so logs can tell "nobody answered" from "work ran too long". |
+| 123 | Answer deadline exceeded (`interactive.answer_timeout_secs`) — an unanswered question *or* an undecided permission check. Distinct from 124 so logs can tell "nobody answered" from "work ran too long". |
 | 124 | Wall-clock timeout (`leash.timeout_secs`, or the 1800s default when unset). |
 | 125 | Turn cap reached (`leash.max_turns`). Only reachable when the cap is set. |
 | 130 | Cancelled. |
@@ -166,6 +169,66 @@ answer q1 [["JWT"],["use a refresh token"]]
 ```
 
 If `answer_timeout_secs` is set and no answer arrives in time, the run is reaped with exit 123. Unset means wait indefinitely (until answered or cancelled); the wall-clock leash excludes time spent waiting on an answer.
+
+---
+
+## Permission prompting
+
+By default a run passes `--dangerously-skip-permissions`, so claude never asks about a tool call. That flag is exactly what a machine's **managed settings** can forbid: an admin who sets `permissions.disableBypassPermissionsMode` makes claude reject it at startup, and every Kata run on that machine fails before it begins.
+
+`[permissions] mode = "prompt"` is the way through. Instead of skipping the check, Kata takes it: the engine passes `--permission-prompt-tool` pointing at its own MCP tool, and every call claude would have put to a human comes back to the engine, which answers it from the spec's rules or from the operator.
+
+This is **not** a bypass by another name. The prompt tool is the last step of claude's evaluation chain — hooks, deny rules, and ask rules are evaluated first — so a call an admin denied never reaches Kata at all, and no rule here can widen it.
+
+### Choosing a posture
+
+The mode is explicit and never inferred. There is deliberately no automatic fallback from `bypass` to `prompt`: a run whose safety posture silently changed between machines is not reproducible, which is the whole point of a run-spec.
+
+```toml
+[permissions]
+mode = "prompt"        # "bypass" (default) | "prompt"
+unmatched = "deny"     # "ask" (default) | "deny" | "allow"
+allow = ["Read", "Grep", "Bash(git *)"]
+deny  = ["Bash(rm *)"]
+```
+
+`unmatched` says what happens to a call no rule matched, and it is the field to get right:
+
+| Value | Behaviour | Use when |
+|---|---|---|
+| `ask` | Pause the run and put the call to the operator. **Requires `[interactive] enabled = true`** — `validate` rejects the spec otherwise, since nothing else could answer. | A human is watching (the Workbench). |
+| `deny` | Deny it and tell claude why. The `allow` list is then the run's complete tool surface. | Headless and CI. |
+| `allow` | Allow it. Every decision is still emitted as `permission.decided`, so this is an audit mode, not a silent bypass. | You want the ledger without the gate. |
+
+### Rule syntax
+
+`Tool` or `Tool(specifier)`, with `*` matching any run of characters — the same grammar claude uses:
+
+- `Read` — every `Read` call
+- `Bash(git *)` — shell commands starting with `git `
+- `mcp__github__get_*` — the `get_` tools of the `github` MCP server
+
+The specifier matches the call's *target*: the `command` for `Bash`, the `file_path` for `Read`/`Write`/`Edit`, the `pattern` for `Glob`/`Grep`, the `url` for `WebFetch`, the `query` for `WebSearch`, and the whole input JSON for anything else. **`deny` is evaluated before `allow`**, so a broad deny cannot be re-opened by a narrower allow. A malformed rule is a validation error, never a silent wildcard.
+
+Kata's own bridge tools (`ask_user`, `approve_tool`) are exempt and never consulted against the rules — they are `decided_by: "engine"`. Claude sees `ask_user` as an ordinary MCP tool, so without the exemption a headless `deny` policy would silently switch interactivity off, and `ask` would ask the operator for permission to ask the operator.
+
+### The loop
+
+1. A rule or the `unmatched` policy resolves most checks with no pause; each emits `permission.decided` with `decided_by` of `allow-rule`, `deny-rule`, or `unmatched-policy`.
+2. Under `unmatched = "ask"`, an unmatched call emits `permission.requested` and pauses the run.
+3. You render `tool` and `input_summary`, then write `decide <id> allow` or `decide <id> deny <reason>`.
+4. The engine unblocks claude and emits `permission.decided` with `decided_by: "operator"`.
+
+`interactive.answer_timeout_secs` bounds this wait too: an undecided check is reaped with exit 123, the same code as an unanswered question.
+
+Because every check emits `permission.decided`, the event stream (and the transcript) is a complete record of what the agent was permitted to do — including the calls it was refused.
+
+### What this does not solve
+
+- **`disableSideloadFlags`.** An organization strict enough to disable bypass may also set this, which makes claude reject `--mcp-config` and `--plugin-dir`. That breaks the curated kit and this bridge alike, and no run-spec field can route around it — the run needs an admin change, not a different spec.
+- **Managed `deny` and `ask` rules.** They are evaluated before the prompt tool. A call an admin denied never reaches Kata, and no `allow` rule here re-opens it.
+- **`defaultMode = "dontAsk"`.** That mode denies without ever calling the prompt tool, so prompt mode is inert under it. Managed settings outrank CLI arguments, so a run cannot override it.
+- **Tools marked `requiresUserInteraction`.** Claude converts an `allow` from a permission prompt tool into a deny for these, so Kata cannot approve one no matter what the rules say.
 
 ---
 
@@ -260,7 +323,11 @@ Every field, with its default. Only `name`, `task`, and `workdir` are required.
 | `auth.bare` | bool | `true` | Run in the empty room (`--bare`). |
 | `auth.token_env` | string? | — | Env var holding the API token; the engine fails fast if it names an unset var under `bare`. |
 | `interactive.enabled` | bool | `false` | Opt in to the `ask_user` tool. |
-| `interactive.answer_timeout_secs` | int? | — | How long to wait on an answer (exit 123). Unset = wait indefinitely. |
+| `interactive.answer_timeout_secs` | int? | — | How long to wait on an answer, or on a permission decision (exit 123). Unset = wait indefinitely. |
+| `permissions.mode` | `"bypass"` \| `"prompt"` | `bypass` | How claude's permission checks are answered. See [Permission prompting](#permission-prompting). |
+| `permissions.unmatched` | `"ask"` \| `"deny"` \| `"allow"` | `ask` | What happens to a call no rule matched. `ask` requires `interactive.enabled`. |
+| `permissions.allow` | string[] | `[]` | Rules auto-allowed under `mode = "prompt"`. |
+| `permissions.deny` | string[] | `[]` | Rules auto-denied under `mode = "prompt"`. Evaluated before `allow`. |
 | `env` | map | `{}` | Environment variables to set on the `claude` child (name → literal value). Overrides inherited, plugin-forwarded, and `token_env`-derived values. |
 | `env_remove` | string[] | `[]` | Environment variable names to unset on the `claude` child, applied last so removal wins — even over a `token_env`-derived `ANTHROPIC_API_KEY`. |
 
@@ -274,7 +341,7 @@ Every field, with its default. Only `name`, `task`, and `workdir` are required.
 4. `env` — set and override (highest-precedence set layer).
 5. `env_remove` — unset (applied last, so removal wins).
 
-So `env` overrides an inherited variable, a plugin-forwarded variable, and the `token_env`-derived `ANTHROPIC_API_KEY`; `env_remove` then strips any listed name regardless of which earlier layer set it. A name that appears in both `env` and `env_remove` is a hard validation error — the two fields must be disjoint. Empty/whitespace names, and an `env` key containing `=`, are also rejected. A small set of engine-reserved names (currently `KATA_ASK_PORT`, which wires the interactive ask bridge) cannot be set or unset either — doing so would silently break the run.
+So `env` overrides an inherited variable, a plugin-forwarded variable, and the `token_env`-derived `ANTHROPIC_API_KEY`; `env_remove` then strips any listed name regardless of which earlier layer set it. A name that appears in both `env` and `env_remove` is a hard validation error — the two fields must be disjoint. Empty/whitespace names, and an `env` key containing `=`, are also rejected. A small set of engine-reserved names (currently `KATA_ASK_PORT` and `KATA_MCP_TOOLS`, which wire the engine's MCP bridge) cannot be set or unset either — doing so would silently break the run.
 
 The layers are applied to the child process only (via the child's own environment block), never by mutating the host process environment. This is what makes concurrent in-process runs correct by construction: two runs started at the same time with different `env` values for the same key each get their own child value, with no shared-state cross-talk. That is the property an in-process host (e.g. an orchestrator running Agent nodes concurrently against different model egress) depends on. Variable names are matched exactly — no wildcard or prefix matching — and name matching follows the host platform's own rules (case-sensitive on Unix, case-insensitive on Windows).
 
@@ -287,6 +354,6 @@ Generate specs programmatically in TypeScript from the ts-rs bindings in `app/sr
 `CONTRACTS.md` at the repo root is the authoritative list of frozen surfaces and the versioning rules (what change is major vs minor). In brief:
 
 - **Run-spec** and **event protocol**: stable and language-neutral. Build against these.
-- **Exit codes** and the **engine invocation + stdin control channel** (`cancel`, `answer`): stable; part of the CI/orchestrator contract.
+- **Exit codes** and the **engine invocation + stdin control channel** (`cancel`, `answer`, `decide`): stable; part of the CI/orchestrator contract.
 - **The `kata_core` Rust API**: the reference implementation, less stable than the contracts above. The curated crate-root re-exports are the intended surface, but signatures may shift between releases — pin a version.
-- **The `ask_user` MCP server** is an internal implementation detail, not a contract — drive interactivity via the `ask.*` events and the `answer` control line.
+- **The `ask_user` and `approve_tool` MCP tools** are internal implementation details, not contracts — drive interactivity via the `ask.*` events and the `answer` control line, and permissions via the `permission.*` events and the `decide` control line.
