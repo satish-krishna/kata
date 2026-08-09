@@ -56,10 +56,10 @@ export const runScriptHead: ScriptStep[] = [
   { delay: 250, ev: { type: "log", level: "info", message: "assembled plugin-dir: 1 skill, 1 plugin" } },
   { delay: 350, ev: { type: "log", level: "info", message: "worktree: ./.kata/wt-3f9a off main" } },
   { delay: 500, ev: { type: "turn", n: 1 } },
-  { delay: 250, ev: { type: "assistant.text", text: "Reproducing the flake: I'll run the single test in a tight loop and watch for the failure mode.\n\n```bash\nfor i in $(seq 1 30); do dotnet test --filter AuthTests.LoginExpiry; done\n```" } },
-  { delay: 400, ev: { type: "permission.decided", id: "d1", tool: "Bash", input_summary: "for i in $(seq 1 30); do dotnet test --filter AuthTests.LoginExpiry; done", allow: true, decided_by: "allow-rule" } },
-  { delay: 300, ev: { type: "tool.use", name: "Bash", input_summary: "for i in $(seq 1 30); do dotnet test --filter AuthTests.LoginExpiry; done" } },
-  { delay: 1300, ev: { type: "tool.result", name: "Bash", ok: true, summary: "27 passed / 3 failed — failures at iterations 8, 19, 26" } },
+  { delay: 250, ev: { type: "assistant.text", text: "Reproducing the flake: I'll hammer the single test and watch for the failure mode.\n\n```bash\ndotnet test --filter AuthTests.LoginExpiry\n```" } },
+  { delay: 400, ev: { type: "permission.decided", id: "d1", tool: "Bash", input_summary: "dotnet test --filter AuthTests.LoginExpiry", allow: true, decided_by: "allow-rule" } },
+  { delay: 300, ev: { type: "tool.use", name: "Bash", input_summary: "dotnet test --filter AuthTests.LoginExpiry" } },
+  { delay: 1300, ev: { type: "tool.result", name: "Bash", ok: true, summary: "3 of 30 runs failed — iterations 8, 19, 26" } },
   { delay: 500, ev: { type: "turn", n: 2 } },
   { delay: 250, ev: { type: "assistant.text", text: "It fails ~1 in 10 locally. The failures share a **timestamp boundary** — this smells like a clock-skew race in `TokenValidator.IsExpired`." } },
   { delay: 400, ev: { type: "ask.requested", id: "q1", questions: [
@@ -69,6 +69,10 @@ export const runScriptHead: ScriptStep[] = [
   ] } },
 ];
 
+/** The one permission check the scripted demo puts to the operator. Exported so
+ *  `api.submitDecision`'s echoed verdict cannot drift out of sync with it. */
+export const PENDING_PERMISSION = { tool: "Bash", input_summary: "git -C ./.kata/wt-3f9a diff --stat" } as const;
+
 /** Replayed after the operator answers the ask; ends on the permission pause. */
 export const runScriptMid: ScriptStep[] = [
   { delay: 500, ev: { type: "permission.decided", id: "d2", tool: "Read", input_summary: "src/Auth/TokenValidator.cs", allow: true, decided_by: "allow-rule" } },
@@ -76,7 +80,7 @@ export const runScriptMid: ScriptStep[] = [
   { delay: 850, ev: { type: "tool.result", name: "Read", ok: true, summary: "TokenValidator.cs — 142 lines" } },
   { delay: 500, ev: { type: "turn", n: 3 } },
   { delay: 250, ev: { type: "assistant.text", text: "Found it. `IsExpired` compares `DateTime.UtcNow` against an expiry built with `DateTime.Now` upstream — across the DST/second boundary the two clocks disagree and the token reads as expired.\n\nLet me confirm I've left the worktree clean before I write the report." } },
-  { delay: 500, ev: { type: "permission.requested", id: "p1", tool: "Bash", input_summary: "git -C ./.kata/wt-3f9a diff --stat" } },
+  { delay: 500, ev: { type: "permission.requested", id: "p1", ...PENDING_PERMISSION } },
 ];
 
 /** Replayed after the operator settles the permission check. */

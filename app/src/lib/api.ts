@@ -5,7 +5,7 @@ import type { RunSpec } from "../bindings/RunSpec";
 import type { CatalogEntry } from "../bindings/CatalogEntry";
 import type { Preset } from "../bindings/Preset";
 import type { KataEvent, RunRecord, RunDetail } from "$lib/events";
-import { inTauri, seedCatalog, validateLocal, runScriptHead, runScriptMid, runScriptTail } from "$lib/mock";
+import { inTauri, seedCatalog, validateLocal, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION } from "$lib/mock";
 import type { ScriptStep } from "$lib/mock";
 import { history as historyFixture, runDetailFixture, katasFixture, presetsFixture } from "$lib/library";
 
@@ -97,8 +97,7 @@ export async function submitDecision(
   browserCb?.({
     type: "permission.decided",
     id,
-    tool: "Bash",
-    input_summary: "git -C ./.kata/wt-3f9a diff --stat",
+    ...PENDING_PERMISSION,
     allow,
     decided_by: "operator",
     message: message ?? undefined,
