@@ -8,6 +8,7 @@
   import Field from "./Field.svelte";
   import Segmented from "./Segmented.svelte";
   import Folder from "@lucide/svelte/icons/folder";
+  import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
   import PromptDialog from "./PromptDialog.svelte";
 
   let {
@@ -109,7 +110,9 @@
   // Rules are only consulted under prompt mode and the engine rejects a spec
   // that carries them under bypass. The editors are hidden there, so keeping
   // the values would produce a validation error naming a field the operator
-  // cannot see — drop them with the mode instead.
+  // cannot see — drop them with the mode instead. Do not swap this back to
+  // `bind:value` — the clear-on-bypass side effect is the whole point, and
+  // losing it reintroduces a validation error naming a hidden field.
   function onPermissionMode(mode: "bypass" | "prompt") {
     spec.permissions.mode = mode;
     if (mode === "bypass") {
@@ -309,6 +312,17 @@
           ariaLabel="Unmatched policy"
         />
       </Field>
+      {#if spec.permissions.unmatched === "ask" && !spec.interactive.enabled}
+        <div class="wb-banner wb-banner--warning" role="alert">
+          <AlertTriangle size={15} />
+          <div class="wb-banner__list">
+            <span>unmatched = "ask" needs an operator to ask, and interactive is off.</span>
+          </div>
+          <button type="button" class="k-btn" onclick={() => (spec.interactive.enabled = true)}>
+            Enable interactive
+          </button>
+        </div>
+      {/if}
       <Field label="Allow" key="permissions.allow" hint="one rule per line — Tool or Tool(specifier), * is a wildcard. e.g. Bash(git *)">
         <textarea
           class="k-textarea"

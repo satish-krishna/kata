@@ -6,6 +6,8 @@ import { defaultSpec } from "$lib/spec";
 import type { RunSpec } from "../../bindings/RunSpec";
 import { reactiveSpec } from "./spec-fixture.svelte";
 
+// Plain (non-reactive) spec — fine for render-time assertions. Use `renderSpec`
+// if the test clicks something and expects the template to re-render.
 function renderWith(modelId: string | null) {
   const spec = defaultSpec();
   spec.model.id = modelId;
@@ -98,5 +100,41 @@ describe("ComposePane permissions — rule visibility", () => {
     });
     await fireEvent.click(screen.getByRole("radio", { name: "prompt" }));
     expect(spec.permissions.allow).toEqual(["Read"]);
+  });
+});
+
+const ASK_WARNING = /needs an operator/i;
+
+describe("ComposePane permissions — the ask/interactive warning", () => {
+  it("shows no warning under bypass", () => {
+    renderSpec();
+    expect(screen.queryByText(ASK_WARNING)).toBeNull();
+  });
+
+  it("warns when prompt + ask has interactive off", async () => {
+    renderSpec();
+    await fireEvent.click(screen.getByRole("radio", { name: "prompt" }));
+    expect(screen.getByText(ASK_WARNING)).toBeInTheDocument();
+  });
+
+  it("shows no warning when unmatched is deny", async () => {
+    renderSpec((s) => (s.permissions.mode = "prompt"));
+    await fireEvent.click(screen.getByRole("radio", { name: "deny" }));
+    expect(screen.queryByText(ASK_WARNING)).toBeNull();
+  });
+
+  it("shows no warning when interactive is already on", () => {
+    renderSpec((s) => {
+      s.permissions.mode = "prompt";
+      s.interactive.enabled = true;
+    });
+    expect(screen.queryByText(ASK_WARNING)).toBeNull();
+  });
+
+  it("enables interactive from the fix button and dismisses the warning", async () => {
+    const spec = renderSpec((s) => (s.permissions.mode = "prompt"));
+    await fireEvent.click(screen.getByRole("button", { name: "Enable interactive" }));
+    expect(spec.interactive.enabled).toBe(true);
+    expect(screen.queryByText(ASK_WARNING)).toBeNull();
   });
 });

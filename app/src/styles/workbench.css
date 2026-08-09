@@ -41,6 +41,7 @@
 /* ---------- Validation banner ---------- */
 .wb-banner { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-5); font: var(--font-code-sm); flex: none; border-bottom: 1px solid var(--border-subtle); }
 .wb-banner--error { background: var(--error-subtle); color: var(--error-text); }
+.wb-banner--warning { background: var(--warning-subtle); color: var(--warning-text); }
 .wb-banner__list { display: flex; gap: var(--space-4); flex-wrap: wrap; }
 .wb-banner svg { width: 15px; height: 15px; flex: none; }
 
