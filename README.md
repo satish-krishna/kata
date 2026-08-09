@@ -137,7 +137,7 @@ $ kata run triage-bundle
 
 A run's default posture is `--dangerously-skip-permissions`: claude never asks, which is what a headless run wants. That flag is also the first thing a locked-down machine takes away — an admin who sets `permissions.disableBypassPermissionsMode` in managed settings makes claude reject it at startup, and every Kata run on that machine dies before it starts.
 
-`mode = "prompt"` is the route through. Kata passes `--permission-prompt-tool` instead, pointing claude at Kata's own MCP tool, and answers each check itself:
+`mode = "prompt"` is the route through. Kata writes the spec's `allow`/`deny` rules verbatim into a generated claude settings file, and claude enforces them itself — Kata does not match rules. `--permission-prompt-tool` still points claude at Kata's own MCP tool, but that tool only ever sees a call claude's settings didn't resolve:
 
 ```toml
 [permissions]
@@ -147,18 +147,17 @@ allow     = ["Read", "Grep", "Bash(git *)"]
 deny      = ["Bash(rm *)"]
 ```
 
-This is not a bypass wearing a different hat. The prompt tool is the **last** step of claude's evaluation chain — an admin's deny rules are evaluated first and still win, and a call they blocked never reaches Kata at all.
+This is not a bypass wearing a different hat. Claude checks its settings **before** it would ever call the prompt tool, and before its own built-in auto-approve for read-only commands (`git status`, `git log`, `ls`, `cat`, …) — so a `deny` rule reaches even those, which is exactly what an engine-side matcher never could see. A call the settings resolve, one way or the other, never reaches Kata at all.
 
-`unmatched` decides what happens to a call no rule matched, and it is the choice worth making deliberately: `deny` makes the `allow` list the run's entire tool surface (the headless answer), `ask` pauses the run and puts the call to the operator (which is why it requires `[interactive] enabled = true` — `kata validate` rejects the combination otherwise), and `allow` lets everything through while still logging every decision.
+`unmatched` decides what happens to a call settings leave unresolved, and it is the choice worth making deliberately: `deny` refuses it (the headless answer — but note `allow` is *not* a complete tool surface on its own; claude has no catch-all deny, so anything not explicitly denied and not caught by `unmatched = "deny"` is still reachable), `ask` pauses the run and puts the call to the operator (which is why it requires `[interactive] enabled = true` — `kata validate` rejects the combination otherwise), and `allow` lets it through too.
 
-Rules use claude's own grammar — `Tool` or `Tool(specifier)`, `*` for any run of characters — matched against the call's target (a shell command, a file path, a query). `deny` is evaluated before `allow`, so a broad deny can't be re-opened by a narrower allow. Kata's own `ask_user` tool is exempt from the rules entirely, so a strict deny policy can't silently switch interactivity off.
+Rules use claude's own grammar — `Tool` or `Tool(specifier)`, `*` for any run of characters, a space before the `*` for prefix matching (`Bash(git diff *)` matches any command starting with `git diff`; without the space, `Bash(git diff*)` would also match `git diff-index`) — handed to claude verbatim. `deny` is evaluated before `allow`. Kata's own `ask_user`/`approve_tool` bridge tools are exempt from the rules entirely (`decided_by: "engine"`), so a strict deny policy can't silently switch interactivity off.
 
 **Nothing falls back automatically.** A spec that says `bypass` gets `bypass` on every machine, and fails loudly where that is forbidden, rather than quietly running under a different safety posture somewhere else. Changing posture is an edit to the spec.
 
-Every check emits a `permission.decided` event — including the ones a rule settled without pausing — so the stream and the transcript are a complete record of what the agent was allowed to do, and what it was refused:
+A `permission.decided` event is emitted only for a check that reaches Kata itself — the `unmatched` policy or the operator. A call claude's settings (or its read-only auto-approve) resolved directly is never seen by Kata and produces no event at all, so the event stream is **not** a complete record of every permission check — only of the ones Kata answered:
 
 ```console
-{"type":"permission.decided","id":"p1","tool":"Read","input_summary":"src/main.rs","allow":true,"decided_by":"allow-rule"}
 {"type":"permission.requested","id":"p2","tool":"Bash","input_summary":"rm -rf build/"}
 # operator decides on stdin:
 decide p2 deny build/ is not yours to delete

@@ -8,10 +8,11 @@ Run the test suite, read the failures, and fix them.
 
 <<Replace this with the job. Override the task at launch if you drive this from CI.>>
 
-Everything you need is in the allow list below: reading and searching the repo,
-running the project's own commands, and editing source. If you need something
-outside it, say so in your final message rather than working around it — the
-call will be denied and you will see why.
+The allow list below covers reading and searching the repo, running the
+project's own commands, and editing source, and claude enforces it before you
+ever get near a tool call. `unmatched = "deny"` refuses anything else it asks
+for — if you need something outside the allow list, say so in your final
+message rather than working around it.
 """
 
 [model]
@@ -26,15 +27,21 @@ isolation = "worktree"
 # The point of this example. `bypass` (the default) passes
 # --dangerously-skip-permissions, which claude rejects at startup on any machine
 # whose managed settings set `permissions.disableBypassPermissionsMode`. `prompt`
-# hands each check to Kata's own MCP tool instead, and the rules below answer it.
+# writes the allow/deny rules below verbatim into a generated claude settings
+# file; claude enforces them itself, and Kata's own MCP tool is only consulted
+# for a call those settings leave unresolved.
 #
-# `unmatched = "deny"` is the headless choice: nobody is watching, so the allow
-# list is this run's complete tool surface and anything else is refused with a
-# reason claude can read. (`unmatched = "ask"` would need [interactive] on.)
+# `unmatched = "deny"` is the headless choice: nobody is watching, so a call the
+# allow list doesn't cover and the deny list doesn't block is still refused, with
+# a reason claude can read, once it reaches Kata's tool. (`unmatched = "ask"`
+# would need [interactive] on.) Note this is not the same as saying the allow
+# list is the run's whole tool surface — claude has no catch-all deny, so this
+# refusal only happens for calls that make it past claude's own settings and
+# read-only auto-approve to Kata's prompt tool in the first place.
 #
-# Note this never *widens* anything: the prompt tool is the last step of claude's
-# evaluation chain, so a call the machine's managed deny rules already block
-# never reaches Kata at all.
+# Note this never *widens* anything: claude checks its settings before it would
+# ever call Kata's prompt tool, so a call the machine's managed deny rules
+# already block never reaches Kata at all.
 [permissions]
 mode = "prompt"
 unmatched = "deny"

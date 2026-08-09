@@ -291,7 +291,7 @@
     <Field
       label="Mode"
       key="permissions.mode"
-      hint="bypass passes --dangerously-skip-permissions; prompt hands each check to Kata's MCP tool instead — the route when managed settings forbid bypass."
+      hint="bypass passes --dangerously-skip-permissions; prompt writes allow/deny into claude's own settings and claude enforces them — the route when managed settings forbid bypass."
     >
       <Segmented
         options={["bypass", "prompt"] as const}
@@ -304,7 +304,7 @@
       <Field
         label="Unmatched"
         key="permissions.unmatched"
-        hint="what happens to a call no rule matched. ask needs interactive on; deny makes the allow list the run's whole tool surface."
+        hint="what happens to a call claude's settings leave unresolved. ask needs interactive on; deny refuses it, but allow alone isn't a full tool surface — claude has no catch-all deny."
       >
         <Segmented
           options={["ask", "deny", "allow"] as const}
@@ -323,7 +323,7 @@
           </button>
         </div>
       {/if}
-      <Field label="Allow" key="permissions.allow" hint="one rule per line — Tool or Tool(specifier), * is a wildcard. e.g. Bash(git *)">
+      <Field label="Allow" key="permissions.allow" hint="one rule per line, claude's own grammar — Tool or Tool(specifier), * is a wildcard. e.g. Bash(git *)">
         <textarea
           class="k-textarea"
           rows="3"
@@ -332,7 +332,7 @@
           oninput={(e) => (spec.permissions.allow = parseRules(e))}
         ></textarea>
       </Field>
-      <Field label="Deny" key="permissions.deny" hint="evaluated before allow, so a deny cannot be re-opened by a broader allow.">
+      <Field label="Deny" key="permissions.deny" hint="evaluated before allow; claude checks these before its read-only auto-approve, so a deny reaches commands like git log too.">
         <textarea
           class="k-textarea"
           rows="2"
