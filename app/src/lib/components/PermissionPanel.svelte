@@ -60,7 +60,7 @@
     {#if !settled}
       <div class="k-ask__foot">
         <span class="k-ask__hint">the run is paused on the leash</span>
-        <button class="k-btn" onclick={() => onDecide?.(id, false, reason.trim() || null)}>Deny</button>
+        <button class="k-btn k-btn--secondary" onclick={() => onDecide?.(id, false, reason.trim() || null)}>Deny</button>
         <button class="k-btn k-btn--primary" onclick={() => onDecide?.(id, true, null)}>Allow · resume</button>
       </div>
     {/if}

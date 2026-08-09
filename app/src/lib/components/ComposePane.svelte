@@ -318,7 +318,7 @@
           <div class="wb-banner__list">
             <span><code>permissions.unmatched = "ask"</code> needs an operator to ask, and interactive is off.</span>
           </div>
-          <button type="button" class="k-btn" onclick={() => (spec.interactive.enabled = true)}>
+          <button type="button" class="k-btn k-btn--secondary" onclick={() => (spec.interactive.enabled = true)}>
             Enable interactive
           </button>
         </div>
