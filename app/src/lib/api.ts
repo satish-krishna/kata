@@ -5,7 +5,8 @@ import type { RunSpec } from "../bindings/RunSpec";
 import type { CatalogEntry } from "../bindings/CatalogEntry";
 import type { Preset } from "../bindings/Preset";
 import type { KataEvent, RunRecord, RunDetail } from "$lib/events";
-import { inTauri, seedCatalog, validateLocal, runScriptHead, runScriptTail } from "$lib/mock";
+import { inTauri, seedCatalog, validateLocal, runScriptHead, runScriptMid, runScriptTail } from "$lib/mock";
+import type { ScriptStep } from "$lib/mock";
 import { history as historyFixture, runDetailFixture, katasFixture, presetsFixture } from "$lib/library";
 
 export const catalog = (workdir: string | null) =>
@@ -54,14 +55,19 @@ export async function onRunEvent(cb: (ev: KataEvent) => void): Promise<() => voi
   };
 }
 
-/** Start a run for the given spec. Events arrive via onRunEvent. */
-export async function runSpec(spec: RunSpec): Promise<void> {
-  if (inTauri()) return invoke<void>("run_spec", { spec });
+/** Schedule one segment of the scripted browser timeline. */
+function playMock(segment: ScriptStep[]): void {
   let acc = 0;
-  for (const step of runScriptHead) {
+  for (const step of segment) {
     acc += step.delay;
     browserTimers.push(setTimeout(() => browserCb?.(step.ev), acc));
   }
+}
+
+/** Start a run for the given spec. Events arrive via onRunEvent. */
+export async function runSpec(spec: RunSpec): Promise<void> {
+  if (inTauri()) return invoke<void>("run_spec", { spec });
+  playMock(runScriptHead);
 }
 
 /** Cancel the in-flight run (stops the backend/scripted stream). */
@@ -76,7 +82,7 @@ export async function submitAnswer(id: string, answers: string[][]): Promise<voi
   if (inTauri()) return invoke<void>("submit_answer", { id, answers });
   // Browser mock: resolve the scripted pause by feeding an ask.answered + resume.
   browserCb?.({ type: "ask.answered", id, answers });
-  resumeMockAfterAnswer();
+  playMock(runScriptMid);
 }
 
 /** Send the operator's verdict on a pending permission.requested. */
@@ -86,26 +92,18 @@ export async function submitDecision(
   message: string | null,
 ): Promise<void> {
   if (inTauri()) return invoke<void>("submit_decision", { id, allow, message });
-  // Browser mock: resolve the scripted pause by feeding permission.decided + resume.
+  // Browser mock: settle the scripted pause with the operator's verdict. The
+  // tool/input echo the permission.requested in runScriptMid.
   browserCb?.({
     type: "permission.decided",
     id,
     tool: "Bash",
-    input_summary: "rm -rf build/",
+    input_summary: "rm -rf ./.kata/wt-3f9a/scratch",
     allow,
     decided_by: "operator",
     message: message ?? undefined,
   });
-  resumeMockAfterAnswer();
-}
-
-/** Resume the scripted mock timeline after an ask has been answered. */
-function resumeMockAfterAnswer(): void {
-  let acc = 0;
-  for (const step of runScriptTail) {
-    acc += step.delay;
-    browserTimers.push(setTimeout(() => browserCb?.(step.ev), acc));
-  }
+  playMock(runScriptTail);
 }
 
 export const listKatas = (): Promise<RunSpec[]> =>

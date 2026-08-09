@@ -41,19 +41,24 @@ export function seedSpec(): RunSpec {
     model: { id: "claude-sonnet-4-6" },
     leash: { max_turns: 12, timeout_secs: 900, max_budget_usd: null, isolation: "worktree" },
     auth: { bare: true, token_env: null },
-    interactive: { enabled: false, answer_timeout_secs: null },
-    permissions: { mode: "bypass", allow: [], deny: [], unmatched: "ask" },
+    interactive: { enabled: true, answer_timeout_secs: null },
+    permissions: { mode: "prompt", allow: ["Read", "Grep", "Bash(dotnet *)"], deny: ["Bash(rm *)"], unmatched: "ask" },
   };
 }
 
-/** The head of the scripted timeline — fires until the ask.requested pause.
- *  `api.runSpec` schedules these; `api.submitAnswer` resumes the tail. */
-export const runScriptHead: { delay: number; ev: KataEvent }[] = [
+export type ScriptStep = { delay: number; ev: KataEvent };
+
+/** The scripted timeline, in the order the operator unblocks it:
+ *  head → (ask.requested pause) → mid → (permission.requested pause) → tail.
+ *  `api.runSpec` schedules the head, `api.submitAnswer` the mid, and
+ *  `api.submitDecision` the tail. */
+export const runScriptHead: ScriptStep[] = [
   { delay: 250, ev: { type: "log", level: "info", message: "assembled plugin-dir: 1 skill, 1 plugin" } },
   { delay: 350, ev: { type: "log", level: "info", message: "worktree: ./.kata/wt-3f9a off main" } },
   { delay: 500, ev: { type: "turn", n: 1 } },
   { delay: 250, ev: { type: "assistant.text", text: "Reproducing the flake: I'll run the single test in a tight loop and watch for the failure mode.\n\n```bash\nfor i in $(seq 1 30); do dotnet test --filter AuthTests.LoginExpiry; done\n```" } },
-  { delay: 700, ev: { type: "tool.use", name: "Bash", input_summary: "for i in $(seq 1 30); do dotnet test --filter AuthTests.LoginExpiry; done" } },
+  { delay: 400, ev: { type: "permission.decided", id: "d1", tool: "Bash", input_summary: "for i in $(seq 1 30); do dotnet test --filter AuthTests.LoginExpiry; done", allow: true, decided_by: "allow-rule" } },
+  { delay: 300, ev: { type: "tool.use", name: "Bash", input_summary: "for i in $(seq 1 30); do dotnet test --filter AuthTests.LoginExpiry; done" } },
   { delay: 1300, ev: { type: "tool.result", name: "Bash", ok: true, summary: "27 passed / 3 failed — failures at iterations 8, 19, 26" } },
   { delay: 500, ev: { type: "turn", n: 2 } },
   { delay: 250, ev: { type: "assistant.text", text: "It fails ~1 in 10 locally. The failures share a **timestamp boundary** — this smells like a clock-skew race in `TokenValidator.IsExpired`." } },
@@ -64,14 +69,19 @@ export const runScriptHead: { delay: number; ev: KataEvent }[] = [
   ] } },
 ];
 
-/** The tail of the scripted timeline — replayed by `api.submitAnswer` after the
- *  operator answers the ask. */
-export const runScriptTail: { delay: number; ev: KataEvent }[] = [
-  { delay: 800, ev: { type: "tool.use", name: "Read", input_summary: "src/Auth/TokenValidator.cs" } },
+/** Replayed after the operator answers the ask; ends on the permission pause. */
+export const runScriptMid: ScriptStep[] = [
+  { delay: 500, ev: { type: "permission.decided", id: "d2", tool: "Read", input_summary: "src/Auth/TokenValidator.cs", allow: true, decided_by: "allow-rule" } },
+  { delay: 300, ev: { type: "tool.use", name: "Read", input_summary: "src/Auth/TokenValidator.cs" } },
   { delay: 850, ev: { type: "tool.result", name: "Read", ok: true, summary: "TokenValidator.cs — 142 lines" } },
   { delay: 500, ev: { type: "turn", n: 3 } },
-  { delay: 250, ev: { type: "assistant.text", text: "Found it. `IsExpired` compares `DateTime.UtcNow` against an expiry built with `DateTime.Now` upstream — across the DST/second boundary the two clocks disagree and the token reads as expired." } },
-  { delay: 800, ev: { type: "tool.use", name: "Bash", input_summary: "git -C ./.kata/wt-3f9a diff --stat" } },
+  { delay: 250, ev: { type: "assistant.text", text: "Found it. `IsExpired` compares `DateTime.UtcNow` against an expiry built with `DateTime.Now` upstream — across the DST/second boundary the two clocks disagree and the token reads as expired.\n\nI'd like to stash the scratch build output before I write the report." } },
+  { delay: 500, ev: { type: "permission.requested", id: "p1", tool: "Bash", input_summary: "rm -rf ./.kata/wt-3f9a/scratch" } },
+];
+
+/** Replayed after the operator settles the permission check. */
+export const runScriptTail: ScriptStep[] = [
+  { delay: 600, ev: { type: "tool.use", name: "Bash", input_summary: "git -C ./.kata/wt-3f9a diff --stat" } },
   { delay: 700, ev: { type: "tool.result", name: "Bash", ok: false, summary: "no changes — isolation only, as instructed" } },
   { delay: 500, ev: { type: "turn", n: 4 } },
   { delay: 250, ev: { type: "assistant.text", text: "**Smallest repro:** pin the system clock to `23:59:59.6` local and call `LoginExpiry` once — it fails deterministically.\n\n**Cause:** `TokenValidator.IsExpired` mixes `DateTime.Now` (expiry) with `DateTime.UtcNow` (check).\n\nNo production code changed." } },
