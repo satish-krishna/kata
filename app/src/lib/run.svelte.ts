@@ -56,6 +56,9 @@ function handle(ev: KataEvent) {
         tool: ev.tool,
         input_summary: ev.input_summary,
         decided: null,
+        // Stamp the position in the stream so the pane can render the card
+        // where the check happened rather than after everything else.
+        at: runStore.events.length,
       });
       runStore.state = "awaiting";
       return;

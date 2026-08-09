@@ -122,4 +122,8 @@ export type PermissionRecord = {
   tool: string;
   input_summary: string;
   decided: { allow: boolean; message: string | null } | null;
+  /** How many stream events preceded this check. The Observe pane splices the
+   *  card back in at that position so it reads where it happened, rather than
+   *  piling every card at the end of the transcript. */
+  at: number;
 };

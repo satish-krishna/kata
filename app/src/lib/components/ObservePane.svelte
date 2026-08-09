@@ -56,6 +56,31 @@
     if (streamEl && stick) streamEl.scrollTop = streamEl.scrollHeight;
   });
 
+  /* A permission card belongs where the check happened, not in a pile at the
+   * end of the transcript: reading "…ran the tests, then asked about this" is
+   * the whole point of a stream. Each record carries `at` — how many events
+   * preceded it — and is spliced back in there. */
+  type StreamItem =
+    | { kind: "event"; key: string; ev: StreamEvent }
+    | { kind: "perm"; key: string; p: PermissionRecord };
+
+  const streamItems: StreamItem[] = $derived.by(() => {
+    const at = (n: number): StreamItem[] =>
+      permissions.filter((p) => p.at === n).map((p) => ({ kind: "perm", key: `p:${p.id}`, p }));
+    const items: StreamItem[] = [...at(0)];
+    events.forEach((ev, i) => {
+      items.push({ kind: "event", key: `e:${i}`, ev });
+      items.push(...at(i + 1));
+    });
+    // Defensive: never silently drop a card whose position outran the stream.
+    items.push(
+      ...permissions
+        .filter((p) => p.at > events.length)
+        .map((p): StreamItem => ({ kind: "perm", key: `p:${p.id}`, p })),
+    );
+    return items;
+  });
+
   const cost = (s: RunSummary) => (s.cost_usd != null ? `$${s.cost_usd.toFixed(3)}` : "—");
   const duration = (s: RunSummary) => `${(s.duration_ms / 1000).toFixed(1)}s`;
 </script>
@@ -78,8 +103,30 @@
       <p>Press <b style="color:var(--accent-text)">Run</b> to drive <code>claude -p</code> to completion. The normalized event stream renders here.</p>
     </div>
   {:else}
-    {#each events as ev, i (i)}
-      <div class="wb-event-enter"><EventRow {ev} /></div>
+    {#each streamItems as item (item.key)}
+      {#if item.kind === "event"}
+        <div class="wb-event-enter"><EventRow ev={item.ev} /></div>
+      {:else if item.p.decided === null}
+        {#key item.p.id}
+          <div class="wb-event-enter">
+            <PermissionPanel
+              id={item.p.id}
+              tool={item.p.tool}
+              input_summary={item.p.input_summary}
+              onDecide={onDecide}
+            />
+          </div>
+        {/key}
+      {:else}
+        <div class="wb-event-enter">
+          <PermissionPanel
+            id={item.p.id}
+            tool={item.p.tool}
+            input_summary={item.p.input_summary}
+            decided={item.p.decided}
+          />
+        </div>
+      {/if}
     {/each}
   {/if}
   {#each asks as ask (ask.id)}
@@ -89,19 +136,6 @@
       {/key}
     {:else}
       <div class="wb-event-enter"><AskPanel id={ask.id} questions={ask.questions} answers={ask.answers} /></div>
-    {/if}
-  {/each}
-  {#each permissions as p (p.id)}
-    {#if p.decided === null}
-      {#key p.id}
-        <div class="wb-event-enter">
-          <PermissionPanel id={p.id} tool={p.tool} input_summary={p.input_summary} onDecide={onDecide} />
-        </div>
-      {/key}
-    {:else}
-      <div class="wb-event-enter">
-        <PermissionPanel id={p.id} tool={p.tool} input_summary={p.input_summary} decided={p.decided} />
-      </div>
     {/if}
   {/each}
 </div>

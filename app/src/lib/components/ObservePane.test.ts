@@ -16,6 +16,7 @@ const PENDING: PermissionRecord = {
   tool: "Bash",
   input_summary: "git -C ./.kata/wt-3f9a diff --stat",
   decided: null,
+  at: 0,
 };
 
 const DECIDED_BY_RULE: StreamEvent = {
@@ -77,7 +78,7 @@ describe("ObservePane — the approval card", () => {
       runState: "awaiting",
       permissions: [
         PENDING,
-        { id: "p2", tool: "Write", input_summary: "src/Auth/TokenValidator.cs", decided: null },
+        { id: "p2", tool: "Write", input_summary: "src/Auth/TokenValidator.cs", decided: null, at: 0 },
       ],
     });
     expect(screen.getAllByText("Allow this tool call?")).toHaveLength(2);
@@ -128,5 +129,37 @@ describe("ObservePane — the empty state", () => {
   it("does not show the empty state when only a permission card is present", () => {
     renderPane({ runState: "awaiting", permissions: [PENDING] });
     expect(screen.queryByText(/normalized event stream renders here/)).toBeNull();
+  });
+});
+
+describe("ObservePane — a card renders where the check happened", () => {
+  it("splices the card between the events it sat between, not at the end", () => {
+    const { container } = renderPane({
+      runState: "awaiting",
+      events: [DECIDED_BY_RULE, { ...DECIDED_BY_RULE, id: "d2" }],
+      // arrived after the first event, before the second
+      permissions: [{ ...PENDING, at: 1 }],
+    });
+    const order = [...container.querySelectorAll(".k-event, .k-ask")].map((el) =>
+      el.classList.contains("k-ask") ? "card" : "event",
+    );
+    expect(order).toEqual(["event", "card", "event"]);
+  });
+
+  it("puts a card before every event when it arrived first", () => {
+    const { container } = renderPane({
+      runState: "awaiting",
+      events: [DECIDED_BY_RULE],
+      permissions: [{ ...PENDING, at: 0 }],
+    });
+    const order = [...container.querySelectorAll(".k-event, .k-ask")].map((el) =>
+      el.classList.contains("k-ask") ? "card" : "event",
+    );
+    expect(order).toEqual(["card", "event"]);
+  });
+
+  it("keeps a card whose position outran the stream rather than dropping it", () => {
+    renderPane({ runState: "awaiting", events: [], permissions: [{ ...PENDING, at: 7 }] });
+    expect(screen.getByText("Allow this tool call?")).toBeInTheDocument();
   });
 });
