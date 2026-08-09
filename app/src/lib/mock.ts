@@ -75,8 +75,8 @@ export const runScriptMid: ScriptStep[] = [
   { delay: 300, ev: { type: "tool.use", name: "Read", input_summary: "src/Auth/TokenValidator.cs" } },
   { delay: 850, ev: { type: "tool.result", name: "Read", ok: true, summary: "TokenValidator.cs — 142 lines" } },
   { delay: 500, ev: { type: "turn", n: 3 } },
-  { delay: 250, ev: { type: "assistant.text", text: "Found it. `IsExpired` compares `DateTime.UtcNow` against an expiry built with `DateTime.Now` upstream — across the DST/second boundary the two clocks disagree and the token reads as expired.\n\nI'd like to stash the scratch build output before I write the report." } },
-  { delay: 500, ev: { type: "permission.requested", id: "p1", tool: "Bash", input_summary: "rm -rf ./.kata/wt-3f9a/scratch" } },
+  { delay: 250, ev: { type: "assistant.text", text: "Found it. `IsExpired` compares `DateTime.UtcNow` against an expiry built with `DateTime.Now` upstream — across the DST/second boundary the two clocks disagree and the token reads as expired.\n\nLet me confirm I've left the worktree clean before I write the report." } },
+  { delay: 500, ev: { type: "permission.requested", id: "p1", tool: "Bash", input_summary: "git -C ./.kata/wt-3f9a diff --stat" } },
 ];
 
 /** Replayed after the operator settles the permission check. */

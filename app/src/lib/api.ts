@@ -98,7 +98,7 @@ export async function submitDecision(
     type: "permission.decided",
     id,
     tool: "Bash",
-    input_summary: "rm -rf ./.kata/wt-3f9a/scratch",
+    input_summary: "git -C ./.kata/wt-3f9a diff --stat",
     allow,
     decided_by: "operator",
     message: message ?? undefined,
