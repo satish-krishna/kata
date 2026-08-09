@@ -1,6 +1,6 @@
 # Example katas
 
-Ready-to-use [run-specs](../../README.md). Each `.toml` is one kata: a precise, reproducible form for a single headless `claude -p` run. Copy them into your library or open them in the Workbench, fill in the task, and run. Three sets live here: the superpowers **brainstorm → plan → execute** trio, the **kata plugin's** engineering-workflow kit (prd → context → plan → implement, plus triage), and one **standalone** example of a locked-down permission posture.
+Ready-to-use [run-specs](../../README.md). Each `.toml` is one kata: a precise, reproducible form for a single headless `claude -p` run. Copy them into your library or open them in the Workbench, fill in the task, and run. Three sets live here: the superpowers **brainstorm → plan → execute** trio, the **kata plugin's** engineering-workflow kit (prd → context → plan → implement, plus triage), and two **standalone** examples of permission postures.
 
 ## The trio
 
@@ -31,8 +31,11 @@ They chain: prd feeds context, context feeds plan, plan feeds implement — each
 | Kata | What it shows | Deliverable | Interactive |
 |------|---------------|-------------|-------------|
 | [`locked-down-ci.toml`](locked-down-ci.toml) | `[permissions] mode = "prompt"` — the posture for a machine whose managed settings forbid `--dangerously-skip-permissions` | whatever the task asks for, in a worktree | no — `unmatched = "deny"` |
+| [`permission-checkpoint.toml`](permission-checkpoint.toml) | the same posture with a human in the loop — drives all three outcomes on purpose so you can watch them | a four-line report of what was allowed, asked, and denied | yes — `unmatched = "ask"` |
 
-Use it as the template when `claude` refuses to start with `Bypass permissions mode is disabled`. Its `allow` list is the run's entire tool surface; anything outside it is denied with a reason claude can read, and every decision shows up as a `permission.decided` event.
+Use **`locked-down-ci`** as the template when `claude` refuses to start with `Bypass permissions mode is disabled`. Its `allow` list is the run's entire tool surface; anything outside it is denied with a reason claude can read, and every decision shows up as a `permission.decided` event.
+
+Use **`permission-checkpoint`** to verify the plumbing end to end against a live `claude`. It is a fixture, not a working kata: it asks claude to make four specific tool calls in order, arranged so the first two are settled by an `allow` rule, the third matches nothing and **pauses the run on you**, and the fourth is refused by a `deny` rule before it can run. Nothing writes, deletes, or touches the network — the denied call is a `git push --dry-run` that the engine refuses ahead of execution. Leave the prompt unanswered for `answer_timeout_secs` and the run should end **123** rather than hang, which is the fourth thing worth checking.
 
 ## Using them
 
