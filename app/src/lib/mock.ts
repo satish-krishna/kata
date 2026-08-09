@@ -79,7 +79,21 @@ export const runScriptTail: { delay: number; ev: KataEvent }[] = [
     result: "## Isolation Report\n\nIsolated `AuthTests.LoginExpiry` flake to a **clock-skew race**: `TokenValidator.IsExpired` mixes `DateTime.Now` (expiry) with `DateTime.UtcNow` (check).\n\n| Field | Value |\n|---|---|\n| Cause | Mixed Now/UtcNow in token expiry |\n| Repro | Pin clock to `23:59:59.6` local |\n| Prod code changed | No |\n\nNo production code was changed." } },
 ];
 
-/** Client-side mirror of `kata-core::spec::validate` (see lib.rs validate_spec). */
+/** Faithful port of `kata-core::permission::parse_rule` — a rule is `Tool` or
+ *  `Tool(specifier)`. Empty is malformed; a stray `)` without a `(` is
+ *  malformed; a `(` must close at the end and be preceded by a tool name. */
+function ruleIsWellFormed(raw: string): boolean {
+  const r = raw.trim();
+  if (r === "") return false;
+  const open = r.indexOf("(");
+  if (open === -1) return !r.includes(")");
+  if (!r.endsWith(")")) return false;
+  return r.slice(0, open).trim() !== "";
+}
+
+/** Client-side mirror of `kata-core::spec::validate` (see lib.rs validate_spec).
+ *  Under Tauri the real engine validates; this keeps browser review honest, so
+ *  it must never be more optimistic than the engine. */
 export function validateLocal(spec: RunSpec): string[] {
   const errs: string[] = [];
   if (spec.schema !== 1) errs.push(`unsupported schema version ${spec.schema} (expected 1)`);
@@ -87,5 +101,34 @@ export function validateLocal(spec: RunSpec): string[] {
   if (!spec.task || !spec.task.trim()) errs.push("task is required");
   if (!spec.workdir || !spec.workdir.trim()) errs.push("workdir is required");
   if (spec.leash.max_turns != null && spec.leash.max_turns < 1) errs.push("leash.max_turns must be >= 1");
+
+  // Permissions — a setting that would be silently ignored is an error, so a
+  // spec never looks like it constrains a run when it does not.
+  const p = spec.permissions;
+  const allow = p.allow ?? [];
+  const deny = p.deny ?? [];
+  if (p.mode === "bypass") {
+    if (allow.length > 0 || deny.length > 0) {
+      errs.push(
+        'permissions.allow/deny are only consulted under permissions.mode = "prompt"; ' +
+          'under "bypass" claude never asks, so the rules would be ignored',
+      );
+    }
+  } else if (p.unmatched === "ask" && !spec.interactive.enabled) {
+    errs.push(
+      'permissions.unmatched = "ask" needs an operator to ask: set [interactive] enabled = true, ' +
+        'or choose unmatched = "deny" / "allow" for a headless run',
+    );
+  }
+  for (const [field, rules] of [
+    ["permissions.allow", allow],
+    ["permissions.deny", deny],
+  ] as const) {
+    for (const raw of rules) {
+      if (!ruleIsWellFormed(raw)) {
+        errs.push(`${field} has a malformed rule '${raw}'; expected 'Tool' or 'Tool(specifier)'`);
+      }
+    }
+  }
   return errs;
 }
