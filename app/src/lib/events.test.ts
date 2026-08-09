@@ -101,7 +101,7 @@ describe("permission.decided rows", () => {
     }) as const;
 
   it("is a stream row, while permission.requested is not", () => {
-    expect(isStreamEvent(decided(true, "allow-rule"))).toBe(true);
+    expect(isStreamEvent(decided(true, "unmatched-policy"))).toBe(true);
     expect(
       isStreamEvent({
         type: "permission.requested",
@@ -113,10 +113,10 @@ describe("permission.decided rows", () => {
   });
 
   it("labels the gutter by the verdict and colours it with the andon set", () => {
-    expect(gutterFor(decided(true, "allow-rule"))).toBe("allowed");
-    expect(gutterFor(decided(false, "deny-rule"))).toBe("denied");
-    expect(variantFor(decided(true, "allow-rule"))).toBe("result-ok");
-    expect(variantFor(decided(false, "deny-rule"))).toBe("result-err");
+    expect(gutterFor(decided(true, "unmatched-policy"))).toBe("allowed");
+    expect(gutterFor(decided(false, "unmatched-policy"))).toBe("denied");
+    expect(variantFor(decided(true, "unmatched-policy"))).toBe("result-ok");
+    expect(variantFor(decided(false, "unmatched-policy"))).toBe("result-err");
   });
 
   it("names the tool, the target, and what decided it", () => {

@@ -90,8 +90,11 @@ export type KataEvent =
   | {
       allow: boolean;
       /**
-       * What resolved it: `allow-rule`, `deny-rule`, `unmatched-policy`, or
-       * `operator`. Treat an unrecognized value as "something else decided".
+       * What resolved it: `unmatched-policy`, `operator`, or `engine` (one of
+       * Kata's own bridge tools, which are exempt from the rules). A rule can
+       * never appear here — the spec's `allow`/`deny` are enforced by claude
+       * from the generated settings file, and a call they resolve never
+       * reaches Kata. Treat an unrecognized value as "something else decided".
        */
       decided_by: string;
       /**

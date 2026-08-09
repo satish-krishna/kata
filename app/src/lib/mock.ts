@@ -50,6 +50,12 @@ export type ScriptStep = { delay: number; ev: KataEvent };
 
 /** The scripted timeline, in the order the operator unblocks it:
  *  head → (ask.requested pause) → mid → (permission.requested pause) → tail.
+ *
+ *  Note what is NOT here: a `permission.decided` for a call a rule resolved.
+ *  Under prompt mode the spec's rules go into a generated claude settings file,
+ *  so claude settles those itself and Kata never sees them — a denial shows up
+ *  as an ordinary failed `tool.result`, and only an unmatched call reaches Kata
+ *  and pauses the run.
  *  `api.runSpec` schedules the head, `api.submitAnswer` the mid, and
  *  `api.submitDecision` the tail. */
 export const runScriptHead: ScriptStep[] = [
@@ -57,7 +63,6 @@ export const runScriptHead: ScriptStep[] = [
   { delay: 350, ev: { type: "log", level: "info", message: "worktree: ./.kata/wt-3f9a off main" } },
   { delay: 500, ev: { type: "turn", n: 1 } },
   { delay: 250, ev: { type: "assistant.text", text: "Reproducing the flake: I'll hammer the single test and watch for the failure mode.\n\n```bash\ndotnet test --filter AuthTests.LoginExpiry\n```" } },
-  { delay: 400, ev: { type: "permission.decided", id: "d1", tool: "Bash", input_summary: "dotnet test --filter AuthTests.LoginExpiry", allow: true, decided_by: "allow-rule" } },
   { delay: 300, ev: { type: "tool.use", name: "Bash", input_summary: "dotnet test --filter AuthTests.LoginExpiry" } },
   { delay: 1300, ev: { type: "tool.result", name: "Bash", ok: true, summary: "3 of 30 runs failed — iterations 8, 19, 26" } },
   { delay: 500, ev: { type: "turn", n: 2 } },
@@ -75,10 +80,11 @@ export const PENDING_PERMISSION = { tool: "Bash", input_summary: "git -C ./.kata
 
 /** Replayed after the operator answers the ask; ends on the permission pause. */
 export const runScriptMid: ScriptStep[] = [
-  { delay: 500, ev: { type: "permission.decided", id: "d2", tool: "Read", input_summary: "src/Auth/TokenValidator.cs", allow: true, decided_by: "allow-rule" } },
   { delay: 300, ev: { type: "tool.use", name: "Read", input_summary: "src/Auth/TokenValidator.cs" } },
   { delay: 850, ev: { type: "tool.result", name: "Read", ok: true, summary: "TokenValidator.cs — 142 lines" } },
   { delay: 500, ev: { type: "turn", n: 3 } },
+  { delay: 400, ev: { type: "tool.use", name: "Bash", input_summary: "git log --oneline -3" } },
+  { delay: 300, ev: { type: "tool.result", name: "Bash", ok: false, summary: "Permission to use Bash with command git log --oneline -3 has been denied." } },
   { delay: 250, ev: { type: "assistant.text", text: "Found it. `IsExpired` compares `DateTime.UtcNow` against an expiry built with `DateTime.Now` upstream — across the DST/second boundary the two clocks disagree and the token reads as expired.\n\nLet me confirm I've left the worktree clean before I write the report." } },
   { delay: 500, ev: { type: "permission.requested", id: "p1", ...PENDING_PERMISSION } },
 ];

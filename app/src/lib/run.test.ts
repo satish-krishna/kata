@@ -229,7 +229,7 @@ describe("run store — permission.requested / permission.decided transitions", 
       tool: "Read",
       input_summary: "/etc/hosts",
       allow: true,
-      decided_by: "allow-rule",
+      decided_by: "unmatched-policy",
     });
 
     expect(runStore.state).toBe("running");

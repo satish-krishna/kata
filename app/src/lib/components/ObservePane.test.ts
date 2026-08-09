@@ -19,13 +19,13 @@ const PENDING: PermissionRecord = {
   at: 0,
 };
 
-const DECIDED_BY_RULE: StreamEvent = {
+const DECIDED_BY_POLICY: StreamEvent = {
   type: "permission.decided",
   id: "d1",
   tool: "Bash",
   input_summary: "dotnet test --filter AuthTests.LoginExpiry",
   allow: true,
-  decided_by: "allow-rule",
+  decided_by: "unmatched-policy",
 };
 
 /** Props go under an explicit `props` key: testing-library reads a bare object
@@ -91,28 +91,28 @@ describe("ObservePane — the approval card", () => {
 
 describe("ObservePane — the audit row", () => {
   it("renders an auto-resolved allow as a success row naming the rule", () => {
-    const { container } = renderPane({ events: [DECIDED_BY_RULE] });
+    const { container } = renderPane({ events: [DECIDED_BY_POLICY] });
     const row = container.querySelector(".k-event--result-ok");
     expect(row).not.toBeNull();
     expect(row!.textContent).toContain("allowed");
     expect(row!.textContent).toContain("dotnet test --filter AuthTests.LoginExpiry");
-    expect(row!.textContent).toContain("allow-rule");
+    expect(row!.textContent).toContain("unmatched-policy");
   });
 
   it("renders an auto-resolved deny as an error row", () => {
     const { container } = renderPane({
-      events: [{ ...DECIDED_BY_RULE, id: "d2", allow: false, decided_by: "deny-rule" }],
+      events: [{ ...DECIDED_BY_POLICY, id: "d2", allow: false, decided_by: "unmatched-policy" }],
     });
     const row = container.querySelector(".k-event--result-err");
     expect(row).not.toBeNull();
     expect(row!.textContent).toContain("denied");
-    expect(row!.textContent).toContain("deny-rule");
+    expect(row!.textContent).toContain("unmatched-policy");
   });
 
   it("shows an audit row and an open card together — the two paths are independent", () => {
     const { container } = renderPane({
       runState: "awaiting",
-      events: [DECIDED_BY_RULE],
+      events: [DECIDED_BY_POLICY],
       permissions: [PENDING],
     });
     expect(container.querySelector(".k-event--result-ok")).not.toBeNull();
@@ -136,7 +136,7 @@ describe("ObservePane — a card renders where the check happened", () => {
   it("splices the card between the events it sat between, not at the end", () => {
     const { container } = renderPane({
       runState: "awaiting",
-      events: [DECIDED_BY_RULE, { ...DECIDED_BY_RULE, id: "d2" }],
+      events: [DECIDED_BY_POLICY, { ...DECIDED_BY_POLICY, id: "d2" }],
       // arrived after the first event, before the second
       permissions: [{ ...PENDING, at: 1 }],
     });
@@ -149,7 +149,7 @@ describe("ObservePane — a card renders where the check happened", () => {
   it("puts a card before every event when it arrived first", () => {
     const { container } = renderPane({
       runState: "awaiting",
-      events: [DECIDED_BY_RULE],
+      events: [DECIDED_BY_POLICY],
       permissions: [{ ...PENDING, at: 0 }],
     });
     const order = [...container.querySelectorAll(".k-event, .k-ask")].map((el) =>
@@ -175,7 +175,7 @@ describe("ObservePane — asks render where they happened too", () => {
   it("splices an ask between the events it sat between", () => {
     const { container } = renderPane({
       runState: "awaiting",
-      events: [DECIDED_BY_RULE, { ...DECIDED_BY_RULE, id: "d2" }],
+      events: [DECIDED_BY_POLICY, { ...DECIDED_BY_POLICY, id: "d2" }],
       asks: [ASK],
     });
     const order = [...container.querySelectorAll(".k-event, .k-ask")].map((el) =>
@@ -187,7 +187,7 @@ describe("ObservePane — asks render where they happened too", () => {
   it("orders a permission and an ask deterministically at the same position", () => {
     const { container } = renderPane({
       runState: "awaiting",
-      events: [DECIDED_BY_RULE],
+      events: [DECIDED_BY_POLICY],
       permissions: [{ ...PENDING, at: 1 }],
       asks: [{ ...ASK, at: 1 }],
     });

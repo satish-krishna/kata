@@ -451,7 +451,7 @@
           "type": "boolean"
         },
         "decided_by": {
-          "description": "What resolved it: `allow-rule`, `deny-rule`, `unmatched-policy`, or\n`operator`. Treat an unrecognized value as \"something else decided\".",
+          "description": "What resolved it: `unmatched-policy`, `operator`, or `engine` (one of\nKata's own bridge tools, which are exempt from the rules). A rule can\nnever appear here — the spec's `allow`/`deny` are enforced by claude\nfrom the generated settings file, and a call they resolve never\nreaches Kata. Treat an unrecognized value as \"something else decided\".",
           "type": "string"
         },
         "id": {
