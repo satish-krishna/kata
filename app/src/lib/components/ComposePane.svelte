@@ -313,10 +313,10 @@
         />
       </Field>
       {#if spec.permissions.unmatched === "ask" && !spec.interactive.enabled}
-        <div class="wb-banner wb-banner--warning" role="alert">
+        <div class="wb-banner wb-banner--error" role="alert">
           <AlertTriangle size={15} />
           <div class="wb-banner__list">
-            <span>unmatched = "ask" needs an operator to ask, and interactive is off.</span>
+            <span><code>permissions.unmatched = "ask"</code> needs an operator to ask, and interactive is off.</span>
           </div>
           <button type="button" class="k-btn" onclick={() => (spec.interactive.enabled = true)}>
             Enable interactive
