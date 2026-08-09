@@ -4,20 +4,7 @@ import { render, screen, fireEvent } from "@testing-library/svelte";
 import ComposePane from "./ComposePane.svelte";
 import { defaultSpec } from "$lib/spec";
 import type { RunSpec } from "../../bindings/RunSpec";
-// `proxy` is Svelte's internal `$state` primitive, exposed via the
-// `svelte/internal/client` entry point. In the real app the compose route
-// wraps its spec in `$state(...)` (see `+page.svelte`), which deep-proxies
-// nested writes so `{#if spec.permissions.mode === "prompt"}` re-renders
-// when a click flips the mode. A plain object handed to `render()` here has
-// no such proxy — @testing-library/svelte only makes the top-level props
-// record reactive (see its `createProps`), not nested fields — so a click
-// that mutates `spec.permissions.mode` in place would never reach the
-// template. Proxying the spec the same way `$state` does keeps these tests
-// exercising the pane through real clicks instead of only asserting on the
-// mutated object.
-// @ts-expect-error — svelte/internal/client ships no type declarations; it is
-// Svelte's own runtime, not a documented public API.
-import { proxy } from "svelte/internal/client";
+import { reactiveSpec } from "./spec-fixture.svelte";
 
 function renderWith(modelId: string | null) {
   const spec = defaultSpec();
@@ -52,10 +39,11 @@ describe("ComposePane model selector", () => {
 });
 
 /** Render the pane over a caller-owned spec so tests can assert the mutations
- *  the pane makes. The pane mutates the object it is handed. */
+ *  the pane makes. The pane mutates the object it is handed. Needs a
+ *  `$state`-proxied spec (see `spec-fixture.svelte.ts`) so a click that flips
+ *  a nested field actually re-renders the template. */
 function renderSpec(mutate: (s: RunSpec) => void = () => {}) {
-  const spec = proxy(defaultSpec());
-  mutate(spec);
+  const spec = reactiveSpec(mutate);
   render(ComposePane, {
     spec,
     entries: [],
@@ -66,26 +54,27 @@ function renderSpec(mutate: (s: RunSpec) => void = () => {}) {
   return spec;
 }
 
-// Svelte collapses the source's `&#10;` entity references in this static
-// attribute to plain spaces at compile time, so the rendered placeholder is
-// single-line — match what the DOM actually carries, not the source text.
-const ALLOW_PLACEHOLDER = "Read Grep Bash(git *)";
+const ALLOW_PLACEHOLDER = "Read\nGrep\nBash(git *)";
+// testing-library's default text matcher collapses whitespace (including
+// newlines) before comparing, which would erase the very line breaks these
+// tests exist to assert on — opt out for placeholder lookups on this field.
+const allowPlaceholderOptions = { collapseWhitespace: false };
 
 describe("ComposePane permissions — rule visibility", () => {
   it("hides the rule editors under bypass", () => {
     renderSpec();
-    expect(screen.queryByPlaceholderText(ALLOW_PLACEHOLDER)).toBeNull();
+    expect(screen.queryByPlaceholderText(ALLOW_PLACEHOLDER, allowPlaceholderOptions)).toBeNull();
   });
 
   it("shows the rule editors under prompt", async () => {
     renderSpec();
     await fireEvent.click(screen.getByRole("radio", { name: "prompt" }));
-    expect(screen.getByPlaceholderText(ALLOW_PLACEHOLDER)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(ALLOW_PLACEHOLDER, allowPlaceholderOptions)).toBeInTheDocument();
   });
 
   it("drops blank lines when parsing rules", async () => {
     const spec = renderSpec((s) => (s.permissions.mode = "prompt"));
-    const allow = screen.getByPlaceholderText(ALLOW_PLACEHOLDER);
+    const allow = screen.getByPlaceholderText(ALLOW_PLACEHOLDER, allowPlaceholderOptions);
     await fireEvent.input(allow, { target: { value: "Read\n\n  Grep  \n" } });
     expect(spec.permissions.allow).toEqual(["Read", "Grep"]);
   });

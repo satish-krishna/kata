@@ -313,7 +313,7 @@
         <textarea
           class="k-textarea"
           rows="3"
-          placeholder="Read&#10;Grep&#10;Bash(git *)"
+          placeholder={"Read\nGrep\nBash(git *)"}
           value={rulesText(spec.permissions.allow)}
           oninput={(e) => (spec.permissions.allow = parseRules(e))}
         ></textarea>
