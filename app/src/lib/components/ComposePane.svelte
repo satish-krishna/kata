@@ -106,6 +106,18 @@
       .filter((r) => r !== "");
   }
 
+  // Rules are only consulted under prompt mode and the engine rejects a spec
+  // that carries them under bypass. The editors are hidden there, so keeping
+  // the values would produce a validation error naming a field the operator
+  // cannot see — drop them with the mode instead.
+  function onPermissionMode(mode: "bypass" | "prompt") {
+    spec.permissions.mode = mode;
+    if (mode === "bypass") {
+      spec.permissions.allow = [];
+      spec.permissions.deny = [];
+    }
+  }
+
   // Integer-coerce the interactive answer timeout (null = wait indefinitely).
   function onAnswerTimeout(e: Event) {
     const v = (e.currentTarget as HTMLInputElement).value.trim();
@@ -280,7 +292,8 @@
     >
       <Segmented
         options={["bypass", "prompt"] as const}
-        bind:value={spec.permissions.mode}
+        value={spec.permissions.mode}
+        onChange={onPermissionMode}
         ariaLabel="Permission mode"
       />
     </Field>
