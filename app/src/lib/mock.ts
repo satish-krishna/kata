@@ -120,6 +120,8 @@ export function validateLocal(spec: RunSpec): string[] {
         'or choose unmatched = "deny" / "allow" for a headless run',
     );
   }
+  // Rule shape is checked unconditionally, as in the engine: a malformed rule
+  // is malformed under any mode, and a bypass spec can earn both errors at once.
   for (const [field, rules] of [
     ["permissions.allow", allow],
     ["permissions.deny", deny],
