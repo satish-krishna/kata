@@ -1,7 +1,7 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho"
 use std::io::Write;
 use std::{thread, time::Duration};
 
@@ -221,6 +221,36 @@ fn main() {
                 });
                 let _ = writeln!(out, "{line}");
             }
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
+            );
+            let _ = out.flush();
+        }
+        "settingsecho" => {
+            // Report the `--settings <path>` claude was given, so a test can
+            // assert on the *content* Kata generated without depending on the
+            // temp dir surviving the run. Finds the flag in argv (fake-claude
+            // otherwise ignores its args) and echoes the file's raw bytes back
+            // as one assistant-text line prefixed "SETTINGS ".
+            let args: Vec<String> = std::env::args().collect();
+            let settings_path = args
+                .iter()
+                .position(|a| a == "--settings")
+                .and_then(|i| args.get(i + 1));
+            let body = match settings_path {
+                Some(p) => {
+                    std::fs::read_to_string(p).unwrap_or_else(|e| format!("<read error: {e}>"))
+                }
+                None => "<no --settings flag>".into(),
+            };
+            let line = serde_json::json!({
+                "type": "assistant",
+                "message": { "content": [
+                    { "type": "text", "text": format!("SETTINGS {body}") }
+                ]}
+            });
+            let _ = writeln!(out, "{line}");
             let _ = writeln!(
                 out,
                 r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#

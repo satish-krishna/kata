@@ -1095,37 +1095,6 @@ fn prompt_mode_denies_an_unmatched_call_under_the_deny_policy() {
 
 #[test]
 #[serial]
-fn prompt_mode_allows_a_call_matching_an_allow_rule() {
-    let work = tempfile::tempdir().unwrap();
-    let mut spec = prompt_spec(&work.path().to_string_lossy());
-    spec.permissions.allow.push("Bash(git *)".into());
-    let (exit, events) = run_prompt(&spec, Some("Bash"), Some(r#"{"command":"git status"}"#));
-
-    assert_eq!(exit, 0);
-    let (allow, by, _) = decision(&events);
-    assert!(allow, "git status matches the allow rule");
-    assert_eq!(by, "allow-rule");
-    assert!(verdict_text(&events).contains("allow"));
-}
-
-#[test]
-#[serial]
-fn prompt_mode_deny_rule_beats_a_broader_allow() {
-    let work = tempfile::tempdir().unwrap();
-    let mut spec = prompt_spec(&work.path().to_string_lossy());
-    spec.permissions.unmatched = kata_core::spec::UnmatchedPolicy::Allow;
-    spec.permissions.allow.push("Bash".into());
-    spec.permissions.deny.push("Bash(rm *)".into());
-    let (exit, events) = run_prompt(&spec, Some("Bash"), Some(r#"{"command":"rm -rf /"}"#));
-
-    assert_eq!(exit, 0);
-    let (allow, by, _) = decision(&events);
-    assert!(!allow, "deny is evaluated before allow");
-    assert_eq!(by, "deny-rule");
-}
-
-#[test]
-#[serial]
 fn prompt_mode_records_the_call_being_decided() {
     let work = tempfile::tempdir().unwrap();
     let spec = prompt_spec(&work.path().to_string_lossy());
@@ -1270,4 +1239,48 @@ fn prompt_mode_never_puts_katas_own_tools_to_the_rules() {
     let (allow, by, _) = decision(&events);
     assert!(allow, "the engine's own bridge tool must not be deniable");
     assert_eq!(by, "engine");
+}
+
+// The rules are no longer matched engine-side: they are handed to claude in a
+// generated settings file and claude enforces them. That is what lets a deny
+// cover the read-only commands claude auto-approves without consulting anyone.
+#[test]
+#[serial]
+fn prompt_mode_writes_a_settings_file_with_the_spec_rules_verbatim() {
+    with_fake("settingsecho");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = prompt_spec(&work.path().to_string_lossy());
+    spec.permissions.allow.push("Bash(git *)".into());
+    spec.permissions.allow.push("Read(*)".into());
+    spec.permissions.deny.push("Bash(rm *)".into());
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 0);
+    let text = assistant_texts(&events)
+        .into_iter()
+        .find(|t| t.starts_with("SETTINGS "))
+        .expect("fake-claude must echo the --settings file it was given");
+    let body = text.trim_start_matches("SETTINGS ");
+    let actual: serde_json::Value = serde_json::from_str(body)
+        .unwrap_or_else(|e| panic!("settings file was not JSON ({e}): {body}"));
+    let expected = serde_json::json!({
+        "permissions": {
+            "allow": ["Bash(git *)", "Read(*)"],
+            "deny": ["Bash(rm *)"],
+        }
+    });
+    assert_eq!(
+        actual, expected,
+        "settings file content must be exactly the spec's rule arrays, verbatim"
+    );
 }

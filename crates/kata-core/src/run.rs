@@ -116,7 +116,9 @@ const PERMISSION_SUMMARY_MAX: usize = 2000;
 
 /// Denial reasons handed back to claude. Claude reads these and may adjust its
 /// approach, so each says *why* rather than just "no".
-const DENY_BY_RULE: &str = "Denied: this call matches the run's permissions.deny rules.";
+/// A deny *rule* never produces a message here — claude enforces those itself
+/// from the generated settings file and reports its own refusal. This covers
+/// the other case: a call no rule matched, refused by `unmatched = "deny"`.
 const DENY_BY_POLICY: &str =
     "Denied: this run only permits tools listed in its permissions.allow rules.";
 const DENY_BY_OPERATOR: &str = "The operator denied this tool call.";
@@ -322,6 +324,34 @@ pub fn run<F: FnMut(KataEvent)>(
         interactive_tmp = Some(dir);
     }
 
+    // Under prompt mode the spec's rules are authored into a settings file and
+    // enforced by claude itself. They are deliberately NOT matched engine-side:
+    // claude resolves a call against these *before* it would consult the prompt
+    // tool, so a rule written here reaches every call — including the read-only
+    // commands (`git status`, `cat`, `ls`) that claude auto-approves without
+    // asking anyone, and which therefore never reach `approve_tool` at all. A
+    // deny that lived only in Kata's matcher would be silently inert for them.
+    //
+    // What is left over — matching no rule and not auto-approved — is what
+    // reaches `approve_tool`, where the `unmatched` policy decides or the
+    // operator does.
+    let mut settings_tmp: Option<tempfile::TempDir> = None;
+    if prompt_permissions {
+        let dir = tempfile::tempdir().map_err(|e| RunError::Spawn(e.to_string()))?;
+        let path = dir.path().join("settings.json");
+        let body = serde_json::json!({
+            "permissions": {
+                "allow": spec.permissions.allow,
+                "deny": spec.permissions.deny,
+            }
+        })
+        .to_string();
+        std::fs::write(&path, body).map_err(|e| RunError::Spawn(e.to_string()))?;
+        inv.args.push("--settings".into());
+        inv.args.push(path.to_string_lossy().into_owned());
+        settings_tmp = Some(dir);
+    }
+
     let isolation = match spec.leash.isolation {
         Isolation::None => "none",
         Isolation::Worktree => "worktree",
@@ -520,32 +550,22 @@ pub fn run<F: FnMut(KataEvent)>(
                             let settled = if crate::event::is_bridge_tool(&tool) {
                                 Some((true, "engine", None))
                             } else {
-                                // Deny rules first, then allow — claude's own
-                                // precedence, so a broad deny cannot be re-opened.
-                                match crate::permission::decide(
-                                    &spec.permissions.allow,
-                                    &spec.permissions.deny,
-                                    &tool,
-                                    &input,
-                                ) {
-                                    Some(crate::permission::Matched::Deny) => {
-                                        Some((false, "deny-rule", Some(DENY_BY_RULE.to_string())))
+                                // The spec's allow/deny rules never reach here:
+                                // claude enforced them from the generated
+                                // settings file and only calls this tool for
+                                // what they left unresolved. So the `unmatched`
+                                // policy is the whole decision.
+                                match spec.permissions.unmatched {
+                                    UnmatchedPolicy::Deny => Some((
+                                        false,
+                                        "unmatched-policy",
+                                        Some(DENY_BY_POLICY.to_string()),
+                                    )),
+                                    UnmatchedPolicy::Allow => {
+                                        Some((true, "unmatched-policy", None))
                                     }
-                                    Some(crate::permission::Matched::Allow) => {
-                                        Some((true, "allow-rule", None))
-                                    }
-                                    None => match spec.permissions.unmatched {
-                                        UnmatchedPolicy::Deny => Some((
-                                            false,
-                                            "unmatched-policy",
-                                            Some(DENY_BY_POLICY.to_string()),
-                                        )),
-                                        UnmatchedPolicy::Allow => {
-                                            Some((true, "unmatched-policy", None))
-                                        }
-                                        // `validate` guarantees interactive is on here.
-                                        UnmatchedPolicy::Ask => None,
-                                    },
+                                    // `validate` guarantees interactive is on here.
+                                    UnmatchedPolicy::Ask => None,
                                 }
                             };
                             match settled {
@@ -820,9 +840,10 @@ pub fn run<F: FnMut(KataEvent)>(
 
     let _ = reader_handle.join();
     let _ = stderr_handle.join();
-    // Keep the interactive temp dir (the generated mcp-config) alive until the
-    // child has fully exited above; drop it only now.
+    // Keep the temp dirs (the generated mcp-config and settings file) alive
+    // until the child has fully exited above; drop them only now.
     drop(interactive_tmp);
+    drop(settings_tmp);
     Ok(RunOutcome {
         exit_code,
         transcript_path: transcript_path.map(|p| p.display().to_string()),
