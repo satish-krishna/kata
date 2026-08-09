@@ -11,6 +11,8 @@
   import DetailActions from "$lib/components/DetailActions.svelte";
   import MarkdownBody from "$lib/components/MarkdownBody.svelte";
   import { goto } from "$app/navigation";
+  import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
+  import type { KataLoadFailure } from "../../bindings/KataLoadFailure";
   import type { RunSpec } from "../../bindings/RunSpec";
   import FilePlus from "@lucide/svelte/icons/file-plus";
   import FolderOpen from "@lucide/svelte/icons/folder-open";
@@ -28,6 +30,9 @@
 
   let runs = $state<RunRecord[]>([]);
   let katas = $state<RunSpec[]>([]);
+  // Files in ~/.kata/katas that would not load. Surfaced rather than dropped:
+  // a kata that silently vanishes is worse than one visibly broken.
+  let kataFailures = $state<KataLoadFailure[]>([]);
   let editing = $state<{ kata: RunSpec } | null>(null);
   let detail = $state<Awaited<ReturnType<typeof loadRun>> | null>(null);
   let selRun = $state<string | null>(null);
@@ -40,9 +45,10 @@
   // mount-once intent explicit and keeps the fetch from being entangled with
   // any reactive read.
   onMount(async () => {
-    const [rs, ks] = await Promise.all([listRuns(), listKatas()]);
+    const [rs, listing] = await Promise.all([listRuns(), listKatas()]);
     runs = rs;
-    katas = ks;
+    katas = listing.katas;
+    kataFailures = listing.failures;
     if (selRun === null && rs.length > 0) selectRun(rs[0].id);
   });
 
@@ -138,6 +144,15 @@
       <div class="wb-pane__body">
         <div class="wb-rail__section">
           <div class="wb-rail__label">Saved katas<span class="wb-rail__count">{kataRows.length}</span></div>
+          {#each kataFailures as f (f.path)}
+            <div class="wb-kata wb-kata--broken" title={f.message}>
+              <div class="wb-kata__top">
+                <span class="wb-kata__name">{f.path.split(/[\/]/).pop()}</span>
+                <AlertTriangle size={13} />
+              </div>
+              <div class="wb-kata__desc">{f.message}</div>
+            </div>
+          {/each}
           {#each kataRows as k (k.name)}
             <div class="wb-kata" class:wb-kata--active={selKata === k.name} role="button" tabindex="0"
               onclick={() => selectKata(k.name)} onkeydown={onKey(() => selectKata(k.name))}>
