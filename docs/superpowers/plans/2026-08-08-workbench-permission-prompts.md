@@ -10,6 +10,23 @@
 
 **Reference spec:** `docs/superpowers/specs/2026-08-08-workbench-permission-prompts-design.md`
 
+> **Erratum — Task 5's fixture snippets are wrong as written; superseded by `91d058e` and `5095dc1`.**
+> This plan is kept as a record of intent, but two of Task 5's scripted events
+> contradict the engine's own rule matching, and copying them verbatim would
+> reintroduce both bugs:
+> - The `permission.requested` pause for `Bash` / `rm -rf ./.kata/wt-3f9a/scratch`
+>   would be settled automatically by the seeded `Bash(rm *)` deny rule — deny is
+>   evaluated first and short-circuits, so the engine could never put that call to
+>   the operator. The shipped pause is `git -C ./.kata/wt-3f9a diff --stat`, which
+>   genuinely matches no rule.
+> - The `d1` auto-allow claims `decided_by: "allow-rule"` for a command beginning
+>   `for i in $(seq 1 30); …`. Specifier matching is anchored whole-string, so
+>   `Bash(dotnet *)` never matches it. The shipped command is
+>   `dotnet test --filter AuthTests.LoginExpiry`.
+>
+> See `crates/kata-core/src/permission.rs` (`glob_matches`, `decide`) for the
+> semantics both errors got wrong.
+
 ---
 
 ## Background the engineer needs
