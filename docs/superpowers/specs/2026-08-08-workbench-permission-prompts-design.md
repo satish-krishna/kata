@@ -96,8 +96,9 @@ flowchart LR
 
 `resumeMockAfterAnswer` generalizes to `resumeMock(segment)`; `submitAnswer`
 resumes the mid segment and `submitDecision` resumes the tail. The mid segment
-carries a `permission.decided` with `decided_by: "rule"` so the auto-resolved
-audit row renders alongside the interactive card.
+carries a `permission.decided` with `decided_by: "allow-rule"` (the engine's
+vocabulary is `allow-rule` / `deny-rule` / `unmatched-policy` / `operator`) so
+the auto-resolved audit row renders alongside the interactive card.
 
 `seedSpec` moves to `mode: "prompt"` with a small allow list and
 `interactive.enabled: true`, making the seeded demo spec coherent under the
