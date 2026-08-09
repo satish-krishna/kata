@@ -61,7 +61,8 @@ The frontend stays **presentational**. `app/src/lib/api.ts` gates every backend 
 Rust (run from repo root):
 
 - Build: `cargo build --locked`
-- Test the workspace: `cargo test --workspace`
+- Test the engine: `cargo test -p kata-core -p kata-cli` — no prerequisites, and it is what you want for engine work.
+- Test the workspace: `cargo test --workspace` **needs the sidecar staged first** (`node app/scripts/stage-sidecar.mjs`, or `cd app && npm run sidecar`). `app/src-tauri` declares the `kata` binary as a Tauri `externalBin`, so its build script fails with `resource path binaries\kata-<target-triple> doesn't exist` on a clean checkout. CI stages it before this step; do the same locally.
 - A single test: `cargo test -p kata-core <name>` or `cargo test -p kata-cli --test cli_it <name>`
 - Format (must be clean; **CI gates this**): `cargo fmt --all --check` (run `cargo fmt --all` to fix). Note it is workspace-wide, so it can surface pre-existing drift in files you did not touch.
 - Lint (must be clean): `cargo clippy --all-targets -- -D warnings`
