@@ -477,6 +477,11 @@ pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
     // Permissions. The whole point of the field is that a run states its posture
     // outright, so a setting that would be silently ignored is an error rather
     // than a no-op: a spec must not look like it constrains a run when it does not.
+    //
+    // These checks are mirrored in `app/src/lib/mock.ts::validateLocal`, the
+    // browser-only fallback the Workbench uses when the Tauri backend (and so
+    // this validator) is unreachable. Change one, change the other — the error
+    // strings are asserted verbatim there.
     match spec.permissions.mode {
         PermissionMode::Bypass => {
             if !spec.permissions.allow.is_empty() || !spec.permissions.deny.is_empty() {

@@ -27,6 +27,9 @@ pub struct Rule {
 /// Parse `Tool` or `Tool(specifier)`. Returns `None` for a malformed rule: an
 /// empty tool name, or an unbalanced/misplaced parenthesis. `validate` uses this
 /// to reject a bad rule at spec-load time rather than at permission time.
+///
+/// Ported to TypeScript as `ruleIsWellFormed` in `app/src/lib/mock.ts` for the
+/// Workbench's browser-only validation fallback; keep the two in step.
 pub fn parse_rule(raw: &str) -> Option<Rule> {
     let raw = raw.trim();
     if raw.is_empty() {
