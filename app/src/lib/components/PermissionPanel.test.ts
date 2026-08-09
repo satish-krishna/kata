@@ -14,6 +14,7 @@ describe("PermissionPanel — pending", () => {
     render(PermissionPanel, { ...PENDING, onDecide: vi.fn() });
     expect(screen.getByText("Bash")).toBeInTheDocument();
     expect(screen.getByText("rm -rf build/")).toBeInTheDocument();
+    expect(screen.getByText("awaiting your decision")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Deny" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Allow · resume" })).toBeEnabled();
   });
@@ -66,6 +67,7 @@ describe("PermissionPanel — settled", () => {
       decided: { allow: false, message: "not on this branch" },
     });
     expect(screen.getByText("not on this branch")).toBeInTheDocument();
+    expect(screen.getByText("denied · run resumed")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Deny" })).toHaveClass("k-ask__confirm-btn--selected");
   });
 
