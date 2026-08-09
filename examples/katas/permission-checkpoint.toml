@@ -45,6 +45,15 @@ character by character, so `git log --oneline -3` and `git --no-pager log
 --oneline -3` are not the same call and will not be answered the same way.
 """
 
+# Not bare, deliberately. Bare mode skips OAuth and needs ANTHROPIC_API_KEY, so
+# a verification kata that defaulted to it would fail on auth ("Not logged in ·
+# Please run /login") before testing anything. Non-bare is also the stronger
+# check: the run inherits your own ~/.claude/settings.json, so a refusal here
+# proves the generated settings file overrides your ambient allow rules rather
+# than merely agreeing with them.
+[auth]
+bare = false
+
 [identity]
 mode = "append"
 system_prompt = """
