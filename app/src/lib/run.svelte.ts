@@ -6,7 +6,14 @@ import type { KataEvent, StreamEvent, RunSummary, RunState, Question, Permission
 import { terminalStateFor } from "./events";
 import * as api from "./api";
 
-export type AskRecord = { id: string; questions: Question[]; answers: string[][] | null };
+export type AskRecord = {
+  id: string;
+  questions: Question[];
+  answers: string[][] | null;
+  /** How many stream events preceded this ask, so the Observe pane can render
+   *  the panel where it happened rather than after the whole transcript. */
+  at: number;
+};
 export type { PermissionRecord };
 
 export const runStore = $state<{
@@ -41,7 +48,12 @@ function handle(ev: KataEvent) {
     case "run.diff":
       return; // meta only; the diff panel is a fast-follow
     case "ask.requested":
-      runStore.asks.push({ id: ev.id, questions: ev.questions, answers: null });
+      runStore.asks.push({
+        id: ev.id,
+        questions: ev.questions,
+        answers: null,
+        at: runStore.events.length,
+      });
       runStore.state = "awaiting";
       return;
     case "ask.answered": {

@@ -163,3 +163,38 @@ describe("ObservePane — a card renders where the check happened", () => {
     expect(screen.getByText("Allow this tool call?")).toBeInTheDocument();
   });
 });
+
+describe("ObservePane — asks render where they happened too", () => {
+  const ASK = {
+    id: "q1",
+    questions: [{ kind: "text" as const, header: "scope", question: "Fix or isolate?", optional: false }],
+    answers: null,
+    at: 1,
+  };
+
+  it("splices an ask between the events it sat between", () => {
+    const { container } = renderPane({
+      runState: "awaiting",
+      events: [DECIDED_BY_RULE, { ...DECIDED_BY_RULE, id: "d2" }],
+      asks: [ASK],
+    });
+    const order = [...container.querySelectorAll(".k-event, .k-ask")].map((el) =>
+      el.classList.contains("k-ask") ? "panel" : "event",
+    );
+    expect(order).toEqual(["event", "panel", "event"]);
+  });
+
+  it("orders a permission and an ask deterministically at the same position", () => {
+    const { container } = renderPane({
+      runState: "awaiting",
+      events: [DECIDED_BY_RULE],
+      permissions: [{ ...PENDING, at: 1 }],
+      asks: [{ ...ASK, at: 1 }],
+    });
+    const panels = [...container.querySelectorAll(".k-ask")];
+    expect(panels).toHaveLength(2);
+    // permissions first, by construction — see the comment on streamItems
+    expect(panels[0].textContent).toContain("Allow this tool call?");
+    expect(panels[1].textContent).toContain("Fix or isolate?");
+  });
+});

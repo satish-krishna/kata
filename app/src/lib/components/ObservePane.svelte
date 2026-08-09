@@ -56,27 +56,42 @@
     if (streamEl && stick) streamEl.scrollTop = streamEl.scrollHeight;
   });
 
-  /* A permission card belongs where the check happened, not in a pile at the
-   * end of the transcript: reading "…ran the tests, then asked about this" is
-   * the whole point of a stream. Each record carries `at` — how many events
-   * preceded it — and is spliced back in there. */
+  /* A pause belongs where it happened, not in a pile at the end of the
+   * transcript: reading "…ran the tests, then asked about this" is the whole
+   * point of a stream. Every ask and permission record carries `at` — how many
+   * events preceded it — and is spliced back in there.
+   *
+   * A run can only ever be paused on one thing at a time, so an ask and a
+   * permission sharing an `at` is not a real sequence; permissions are emitted
+   * first purely so the order is deterministic. */
   type StreamItem =
     | { kind: "event"; key: string; ev: StreamEvent }
-    | { kind: "perm"; key: string; p: PermissionRecord };
+    | { kind: "perm"; key: string; p: PermissionRecord }
+    | { kind: "ask"; key: string; a: AskRecord };
 
   const streamItems: StreamItem[] = $derived.by(() => {
-    const at = (n: number): StreamItem[] =>
-      permissions.filter((p) => p.at === n).map((p) => ({ kind: "perm", key: `p:${p.id}`, p }));
+    const at = (n: number): StreamItem[] => [
+      ...permissions
+        .filter((p) => p.at === n)
+        .map((p): StreamItem => ({ kind: "perm", key: `p:${p.id}`, p })),
+      ...asks
+        .filter((a) => a.at === n)
+        .map((a): StreamItem => ({ kind: "ask", key: `a:${a.id}`, a })),
+    ];
     const items: StreamItem[] = [...at(0)];
     events.forEach((ev, i) => {
       items.push({ kind: "event", key: `e:${i}`, ev });
       items.push(...at(i + 1));
     });
-    // Defensive: never silently drop a card whose position outran the stream.
+    // Defensive: never silently drop a pause whose position outran the stream.
+    const beyond = (n: number) => n > events.length;
     items.push(
       ...permissions
-        .filter((p) => p.at > events.length)
+        .filter((p) => beyond(p.at))
         .map((p): StreamItem => ({ kind: "perm", key: `p:${p.id}`, p })),
+      ...asks
+        .filter((a) => beyond(a.at))
+        .map((a): StreamItem => ({ kind: "ask", key: `a:${a.id}`, a })),
     );
     return items;
   });
@@ -106,7 +121,7 @@
     {#each streamItems as item (item.key)}
       {#if item.kind === "event"}
         <div class="wb-event-enter"><EventRow ev={item.ev} /></div>
-      {:else if item.p.decided === null}
+      {:else if item.kind === "perm" && item.p.decided === null}
         {#key item.p.id}
           <div class="wb-event-enter">
             <PermissionPanel
@@ -117,7 +132,7 @@
             />
           </div>
         {/key}
-      {:else}
+      {:else if item.kind === "perm"}
         <div class="wb-event-enter">
           <PermissionPanel
             id={item.p.id}
@@ -126,18 +141,19 @@
             decided={item.p.decided}
           />
         </div>
+      {:else if item.a.answers === null}
+        {#key item.a.id}
+          <div class="wb-event-enter">
+            <AskPanel id={item.a.id} questions={item.a.questions} onSubmit={onAnswer} />
+          </div>
+        {/key}
+      {:else}
+        <div class="wb-event-enter">
+          <AskPanel id={item.a.id} questions={item.a.questions} answers={item.a.answers} />
+        </div>
       {/if}
     {/each}
   {/if}
-  {#each asks as ask (ask.id)}
-    {#if ask.answers === null}
-      {#key ask.id}
-        <div class="wb-event-enter"><AskPanel id={ask.id} questions={ask.questions} onSubmit={onAnswer} /></div>
-      {/key}
-    {:else}
-      <div class="wb-event-enter"><AskPanel id={ask.id} questions={ask.questions} answers={ask.answers} /></div>
-    {/if}
-  {/each}
 </div>
 
 {#if summary}
