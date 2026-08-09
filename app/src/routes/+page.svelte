@@ -11,7 +11,7 @@
   import ValidationBanner from "$lib/components/ValidationBanner.svelte";
   import ComposePane from "$lib/components/ComposePane.svelte";
   import ObservePane from "$lib/components/ObservePane.svelte";
-  import { runStore, startRun, cancelRun, submitAnswer } from "$lib/run.svelte";
+  import { runStore, startRun, cancelRun, submitAnswer, submitDecision } from "$lib/run.svelte";
   import { toastError } from "$lib/toast.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import Terminal from "@lucide/svelte/icons/terminal";
@@ -186,7 +186,7 @@
 
     <div class="wb-pane wb-pane--observe">
       <div class="wb-pane__head"><span class="kata-eyebrow">Observe · the run</span></div>
-      <ObservePane runState={runStore.state} events={runStore.events} {spec} summary={runStore.summary} asks={runStore.asks} onAnswer={submitAnswer} />
+      <ObservePane runState={runStore.state} events={runStore.events} {spec} summary={runStore.summary} asks={runStore.asks} permissions={runStore.permissions} onAnswer={submitAnswer} onDecide={submitDecision} />
     </div>
   </div>
 

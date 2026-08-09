@@ -1,0 +1,8 @@
+{"isolation":"none","model":null,"spec":"golden-perm","type":"run.started","workdir":"<WORKDIR>"}
+{"level":"info","message":"assembled kit: 0 skill(s), 0 plugin(s)","type":"log"}
+{"level":"info","message":"transcript: <TRANSCRIPT>","type":"log"}
+{"id":"p1","input_summary":"rm -rf build/","tool":"Bash","type":"permission.requested"}
+{"allow":false,"decided_by":"operator","id":"p1","input_summary":"rm -rf build/","message":"build/ is not yours to delete","tool":"Bash","type":"permission.decided"}
+{"text":"verdict: deny - build/ is not yours to delete","type":"assistant.text"}
+{"level":"info","message":"no changeset: workdir is not a git repository","type":"log"}
+{"cost_usd":0.0,"duration_ms":0,"exit_code":0,"is_error":false,"num_turns":1,"result":"done","type":"run.completed"}

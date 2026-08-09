@@ -45,6 +45,11 @@ pub struct RunSpec {
     /// Interactive-run settings (the `ask_user` tool).
     #[serde(default)]
     pub interactive: Interactive,
+    /// How the run answers claude's permission checks. Defaults to `bypass`
+    /// (`--dangerously-skip-permissions`), which a machine's managed settings can
+    /// forbid; `prompt` routes each check to Kata instead.
+    #[serde(default)]
+    pub permissions: Permissions,
     /// Environment variables to set on the spawned `claude` child, overriding any
     /// value inherited from the parent process, forwarded by a plugin, or derived
     /// from `auth.token_env`. Applied per run to the child only; the host process
@@ -76,6 +81,7 @@ impl Default for RunSpec {
             leash: Leash::default(),
             auth: Auth::default(),
             interactive: Interactive::default(),
+            permissions: Permissions::default(),
             env: BTreeMap::new(),
             env_remove: Vec::new(),
         }
@@ -224,6 +230,69 @@ pub struct Interactive {
     pub answer_timeout_secs: Option<u64>,
 }
 
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct Permissions {
+    /// How claude's permission checks are answered: `bypass` (the default,
+    /// `--dangerously-skip-permissions`) or `prompt` (Kata's MCP tool decides).
+    #[serde(default)]
+    pub mode: PermissionMode,
+    /// Rules auto-allowed under `mode = "prompt"`. Claude rule syntax: `Tool` or
+    /// `Tool(specifier)`, with `*` as a wildcard — e.g. `Bash(git *)`.
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow: Vec<String>,
+    /// Rules auto-denied under `mode = "prompt"`. Evaluated before `allow`, so a
+    /// deny cannot be re-opened by a broader allow.
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny: Vec<String>,
+    /// What happens to a call no rule matched: ask the operator (the default,
+    /// which requires `[interactive] enabled = true`), deny it, or allow it.
+    #[serde(default)]
+    pub unmatched: UnmatchedPolicy,
+}
+
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "ts", ts(rename_all = "lowercase"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PermissionMode {
+    /// Pass `--dangerously-skip-permissions`. Fastest, and what every run did
+    /// before this field existed — but a machine whose managed settings set
+    /// `permissions.disableBypassPermissionsMode` rejects it at startup.
+    #[default]
+    Bypass,
+    /// Pass `--permission-prompt-tool`, pointing claude at Kata's own MCP tool.
+    /// Every check claude would have put to a human is decided by the spec's
+    /// rules, or routed to the operator. Not a bypass: managed deny and ask
+    /// rules are evaluated first and still win.
+    Prompt,
+}
+
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "ts", ts(rename_all = "lowercase"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum UnmatchedPolicy {
+    /// Put the call to the operator and pause the run until they decide.
+    /// Requires `[interactive] enabled = true` — nothing else can answer.
+    #[default]
+    Ask,
+    /// Deny the call and tell claude why. The headless default worth choosing:
+    /// the spec's `allow` list is then the run's complete tool surface.
+    Deny,
+    /// Allow the call. Every decision is still logged as a `permission.decided`
+    /// event, which makes this an audit mode rather than a silent bypass.
+    Allow,
+}
+
 fn default_schema_version() -> u32 {
     1
 }
@@ -335,7 +404,7 @@ pub fn save(path: &Path, spec: &RunSpec) -> Result<(), SpecError> {
 /// child and depends on for correctness. A spec must not set or unset these via
 /// `env` / `env_remove`, since doing so would silently break the affected run
 /// (e.g. stripping `KATA_ASK_PORT` disconnects the interactive ask bridge).
-const RESERVED_CHILD_ENV: &[&str] = &["KATA_ASK_PORT"];
+const RESERVED_CHILD_ENV: &[&str] = &["KATA_ASK_PORT", "KATA_MCP_TOOLS"];
 
 /// Render a curated starter run-spec as TOML text, wired to the schema via the
 /// given `#:schema` directive on its first line. The three required fields are
@@ -363,7 +432,16 @@ pub fn starter_toml(schema_directive: &str) -> String {
          \n\
          [interactive]\n\
          # Give the agent an ask_user tool so it can pause for your input.\n\
-         # enabled = true\n"
+         # enabled = true\n\
+         \n\
+         [permissions]\n\
+         # \"bypass\" (default) passes --dangerously-skip-permissions. Switch to\n\
+         # \"prompt\" if managed settings forbid bypass, then say what happens to a\n\
+         # call no rule matched: \"deny\" headless, or \"ask\" with interactive on.\n\
+         # mode = \"prompt\"\n\
+         # unmatched = \"deny\"\n\
+         # allow = [\"Read\", \"Grep\", \"Bash(git *)\"]\n\
+         # deny = [\"Bash(rm *)\"]\n"
     )
 }
 
@@ -394,6 +472,47 @@ pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
         // `--max-budget-usd NaN`/`inf` argument.
         if !b.is_finite() || b <= 0.0 {
             errs.push("leash.max_budget_usd must be > 0".into());
+        }
+    }
+    // Permissions. The whole point of the field is that a run states its posture
+    // outright, so a setting that would be silently ignored is an error rather
+    // than a no-op: a spec must not look like it constrains a run when it does not.
+    //
+    // These checks are mirrored in `app/src/lib/mock.ts::validateLocal`, the
+    // browser-only fallback the Workbench uses when the Tauri backend (and so
+    // this validator) is unreachable. Change one, change the other — the error
+    // strings are asserted verbatim there.
+    match spec.permissions.mode {
+        PermissionMode::Bypass => {
+            if !spec.permissions.allow.is_empty() || !spec.permissions.deny.is_empty() {
+                errs.push(
+                    "permissions.allow/deny are only consulted under permissions.mode = \"prompt\"; \
+                     under \"bypass\" claude never asks, so the rules would be ignored"
+                        .into(),
+                );
+            }
+        }
+        PermissionMode::Prompt => {
+            if spec.permissions.unmatched == UnmatchedPolicy::Ask && !spec.interactive.enabled {
+                errs.push(
+                    "permissions.unmatched = \"ask\" needs an operator to ask: set \
+                     [interactive] enabled = true, or choose unmatched = \"deny\" / \"allow\" \
+                     for a headless run"
+                        .into(),
+                );
+            }
+        }
+    }
+    for (field, rules) in [
+        ("permissions.allow", &spec.permissions.allow),
+        ("permissions.deny", &spec.permissions.deny),
+    ] {
+        for raw in rules {
+            if crate::permission::parse_rule(raw).is_none() {
+                errs.push(format!(
+                    "{field} has a malformed rule '{raw}'; expected 'Tool' or 'Tool(specifier)'"
+                ));
+            }
         }
     }
     // Environment override layers must be well-formed and unambiguous. Note the
@@ -689,6 +808,7 @@ isolation = "worktree"
                 token_env: Some("ANTHROPIC_API_KEY".into()),
             },
             interactive: Interactive::default(),
+            permissions: Permissions::default(),
             env: BTreeMap::new(),
             env_remove: Vec::new(),
         }
@@ -1018,6 +1138,174 @@ ANTHROPIC_AUTH_TOKEN = "proxy-token-value"
             assert!(
                 errs.iter().any(|e| e.contains("max_budget_usd")),
                 "non-finite budget {bad} must be rejected"
+            );
+        }
+    }
+
+    // The whole field is additive: a spec written before it existed must keep
+    // meaning exactly what it meant, i.e. bypass.
+    #[test]
+    fn permissions_defaults_to_bypass_with_no_rules() {
+        let spec: RunSpec = toml::from_str(minimal_toml()).unwrap();
+        assert_eq!(spec.permissions.mode, PermissionMode::Bypass);
+        assert_eq!(spec.permissions.unmatched, UnmatchedPolicy::Ask);
+        assert!(spec.permissions.allow.is_empty());
+        assert!(spec.permissions.deny.is_empty());
+        assert!(validate(&spec).is_ok());
+    }
+
+    #[test]
+    fn permissions_parses_explicit_table() {
+        let toml = r#"
+schema = 1
+name = "a"
+task = "t"
+workdir = "/w"
+
+[permissions]
+mode = "prompt"
+unmatched = "deny"
+allow = ["Read", "Bash(git *)"]
+deny = ["Bash(rm *)"]
+"#;
+        let spec: RunSpec = toml::from_str(toml).unwrap();
+        assert_eq!(spec.permissions.mode, PermissionMode::Prompt);
+        assert_eq!(spec.permissions.unmatched, UnmatchedPolicy::Deny);
+        assert_eq!(spec.permissions.allow, vec!["Read", "Bash(git *)"]);
+        assert_eq!(spec.permissions.deny, vec!["Bash(rm *)"]);
+        assert!(validate(&spec).is_ok());
+    }
+
+    #[test]
+    fn permissions_round_trips_through_toml_and_json() {
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        spec.permissions.mode = PermissionMode::Prompt;
+        spec.permissions.unmatched = UnmatchedPolicy::Allow;
+        spec.permissions.allow.push("Read".into());
+        spec.permissions.deny.push("Bash(rm *)".into());
+
+        let toml_again: RunSpec = toml::from_str(&to_toml(&spec).unwrap()).unwrap();
+        assert_eq!(spec, toml_again);
+        let json_again: RunSpec =
+            serde_json::from_str(&serde_json::to_string(&spec).unwrap()).unwrap();
+        assert_eq!(spec, json_again);
+    }
+
+    // "ask" with nobody to ask would pause forever and then die on the answer
+    // deadline. Catch it at validate time, where the fix is obvious.
+    #[test]
+    fn validate_rejects_ask_policy_without_interactive() {
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        spec.permissions.mode = PermissionMode::Prompt;
+        let errs = validate(&spec).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.contains("unmatched")),
+            "prompt + ask + non-interactive must be rejected: {errs:?}"
+        );
+
+        spec.interactive.enabled = true;
+        assert!(validate(&spec).is_ok(), "interactive makes ask answerable");
+    }
+
+    #[test]
+    fn validate_accepts_headless_prompt_mode_with_an_explicit_policy() {
+        for policy in [UnmatchedPolicy::Deny, UnmatchedPolicy::Allow] {
+            let mut spec = RunSpec {
+                schema: 1,
+                name: "n".into(),
+                task: "t".into(),
+                workdir: "/w".into(),
+                ..Default::default()
+            };
+            spec.permissions.mode = PermissionMode::Prompt;
+            spec.permissions.unmatched = policy;
+            assert!(validate(&spec).is_ok(), "{policy:?} needs no operator");
+        }
+    }
+
+    // Rules under bypass would be inert. Silently ignoring them is exactly the
+    // failure this field exists to prevent, so it is an error.
+    #[test]
+    fn validate_rejects_rules_that_the_mode_would_ignore() {
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        spec.permissions.allow.push("Read".into());
+        let errs = validate(&spec).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.contains("permissions.allow")),
+            "rules under bypass must be rejected: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_malformed_permission_rules() {
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        spec.permissions.mode = PermissionMode::Prompt;
+        spec.permissions.unmatched = UnmatchedPolicy::Deny;
+        spec.permissions.deny.push("Bash(unclosed".into());
+        let errs = validate(&spec).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.contains("malformed rule")),
+            "a malformed rule must be rejected: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_reserved_mcp_tools_name_in_env() {
+        // KATA_MCP_TOOLS tells the mcp-ask server which tools to advertise;
+        // overriding it would unwire ask_user or the permission prompt tool.
+        for mut spec in [
+            {
+                let mut s = RunSpec {
+                    schema: 1,
+                    name: "n".into(),
+                    task: "t".into(),
+                    workdir: "/w".into(),
+                    ..Default::default()
+                };
+                s.env.insert("KATA_MCP_TOOLS".into(), "x".into());
+                s
+            },
+            {
+                let mut s = RunSpec {
+                    schema: 1,
+                    name: "n".into(),
+                    task: "t".into(),
+                    workdir: "/w".into(),
+                    ..Default::default()
+                };
+                s.env_remove.push("KATA_MCP_TOOLS".into());
+                s
+            },
+        ] {
+            spec.schema = 1;
+            let errs = validate(&spec).unwrap_err();
+            assert!(
+                errs.iter().any(|e| e.contains("KATA_MCP_TOOLS")),
+                "reserved name must be rejected: {errs:?}"
             );
         }
     }

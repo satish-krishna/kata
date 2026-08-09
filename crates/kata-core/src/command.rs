@@ -1,5 +1,5 @@
 use crate::assemble::Assembled;
-use crate::spec::{IdentityMode, RunSpec};
+use crate::spec::{IdentityMode, PermissionMode, RunSpec};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClaudeInvocation {
@@ -63,7 +63,18 @@ pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocati
     args.push("--output-format".into());
     args.push("stream-json".into());
     args.push("--verbose".into()); // claude requires --verbose with stream-json under --print
-    args.push("--dangerously-skip-permissions".into());
+                                   // The permission posture. `bypass` is what every run did before the field
+                                   // existed, and a machine whose managed settings set
+                                   // `permissions.disableBypassPermissionsMode` rejects the flag at startup —
+                                   // `prompt` is the way through, handing each check to Kata's MCP tool
+                                   // (wired in run.rs) instead of skipping the check entirely.
+    match spec.permissions.mode {
+        PermissionMode::Bypass => args.push("--dangerously-skip-permissions".into()),
+        PermissionMode::Prompt => {
+            args.push("--permission-prompt-tool".into());
+            args.push(crate::ask::PERMISSION_PROMPT_TOOL.into());
+        }
+    }
     // Interactive runs surface questions through Kata's `ask_user` MCP tool (wired
     // in run.rs), which crosses the ask bridge to the Workbench. Claude's built-in
     // AskUserQuestion would bypass that bridge entirely, so take it away — otherwise
@@ -151,6 +162,43 @@ mod tests {
 
     fn assembled_with(plugin_dir: Option<&str>, sys: Option<&str>) -> Assembled {
         Assembled::for_test(plugin_dir.map(String::from), sys.map(String::from))
+    }
+
+    fn flag_value<'a>(inv: &'a ClaudeInvocation, flag: &str) -> Option<&'a str> {
+        inv.args
+            .windows(2)
+            .find(|w| w[0] == flag)
+            .map(|w| w[1].as_str())
+    }
+
+    // The point of the whole feature: prompt mode must NOT pass the bypass flag,
+    // because the machine we are on refuses it.
+    #[test]
+    fn prompt_mode_swaps_bypass_for_the_permission_prompt_tool() {
+        let mut s = spec();
+        s.permissions.mode = PermissionMode::Prompt;
+        s.permissions.unmatched = UnmatchedPolicy::Deny;
+        let inv = build_invocation(&s, &assembled_with(None, None));
+        assert!(
+            !inv.args
+                .contains(&"--dangerously-skip-permissions".to_string()),
+            "prompt mode must not pass the flag managed settings reject: {:?}",
+            inv.args
+        );
+        assert_eq!(
+            flag_value(&inv, "--permission-prompt-tool"),
+            Some(crate::ask::PERMISSION_PROMPT_TOOL)
+        );
+    }
+
+    #[test]
+    fn bypass_mode_is_the_default_and_passes_no_prompt_tool() {
+        let inv = build_invocation(&spec(), &assembled_with(None, None));
+        assert_eq!(spec().permissions.mode, PermissionMode::Bypass);
+        assert!(inv
+            .args
+            .contains(&"--dangerously-skip-permissions".to_string()));
+        assert!(flag_value(&inv, "--permission-prompt-tool").is_none());
     }
 
     #[test]

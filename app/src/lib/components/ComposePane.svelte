@@ -8,6 +8,7 @@
   import Field from "./Field.svelte";
   import Segmented from "./Segmented.svelte";
   import Folder from "@lucide/svelte/icons/folder";
+  import AlertTriangle from "@lucide/svelte/icons/alert-triangle";
   import PromptDialog from "./PromptDialog.svelte";
 
   let {
@@ -94,6 +95,30 @@
     }
     const n = Number(v);
     spec.leash.max_budget_usd = Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  // Permission rules edit as one-per-line text; blank lines are dropped so a
+  // trailing newline never becomes an empty rule the engine would reject.
+  const rulesText = (rules: string[] | undefined) => (rules ?? []).join("\n");
+  function parseRules(e: Event): string[] {
+    return (e.currentTarget as HTMLTextAreaElement).value
+      .split("\n")
+      .map((r) => r.trim())
+      .filter((r) => r !== "");
+  }
+
+  // Rules are only consulted under prompt mode and the engine rejects a spec
+  // that carries them under bypass. The editors are hidden there, so keeping
+  // the values would produce a validation error naming a field the operator
+  // cannot see — drop them with the mode instead. Do not swap this back to
+  // `bind:value` — the clear-on-bypass side effect is the whole point, and
+  // losing it reintroduces a validation error naming a hidden field.
+  function onPermissionMode(mode: "bypass" | "prompt") {
+    spec.permissions.mode = mode;
+    if (mode === "bypass") {
+      spec.permissions.allow = [];
+      spec.permissions.deny = [];
+    }
   }
 
   // Integer-coerce the interactive answer timeout (null = wait indefinitely).
@@ -254,6 +279,67 @@
           value={spec.interactive.answer_timeout_secs ?? ""}
           oninput={onAnswerTimeout}
         />
+      </Field>
+    {/if}
+  </section>
+
+  <section class="wb-section">
+    <div class="wb-section__head">
+      <span class="wb-section__title">Permissions</span>
+      <span class="wb-section__sub">how claude's checks are answered</span>
+    </div>
+    <Field
+      label="Mode"
+      key="permissions.mode"
+      hint="bypass passes --dangerously-skip-permissions; prompt writes allow/deny into claude's own settings and claude enforces them — the route when managed settings forbid bypass."
+    >
+      <Segmented
+        options={["bypass", "prompt"] as const}
+        value={spec.permissions.mode}
+        onChange={onPermissionMode}
+        ariaLabel="Permission mode"
+      />
+    </Field>
+    {#if spec.permissions.mode === "prompt"}
+      <Field
+        label="Unmatched"
+        key="permissions.unmatched"
+        hint="what happens to a call claude's settings leave unresolved. ask needs interactive on; deny refuses it, but allow alone isn't a full tool surface — claude has no catch-all deny."
+      >
+        <Segmented
+          options={["ask", "deny", "allow"] as const}
+          bind:value={spec.permissions.unmatched}
+          ariaLabel="Unmatched policy"
+        />
+      </Field>
+      {#if spec.permissions.unmatched === "ask" && !spec.interactive.enabled}
+        <div class="wb-banner wb-banner--error" role="alert">
+          <AlertTriangle size={15} />
+          <div class="wb-banner__list">
+            <span><code>permissions.unmatched = "ask"</code> needs an operator to ask, and interactive is off.</span>
+          </div>
+          <button type="button" class="k-btn k-btn--secondary" onclick={() => (spec.interactive.enabled = true)}>
+            Enable interactive
+          </button>
+        </div>
+      {/if}
+      <Field label="Allow" key="permissions.allow" hint="one rule per line, claude's own grammar — Tool or Tool(specifier), * is a wildcard. e.g. Bash(git *)">
+        <textarea
+          class="k-textarea"
+          rows="3"
+          placeholder={"Read\nGrep\nBash(git *)"}
+          value={rulesText(spec.permissions.allow)}
+          oninput={(e) => (spec.permissions.allow = parseRules(e))}
+        ></textarea>
+      </Field>
+      <Field label="Deny" key="permissions.deny" hint="evaluated before allow; claude checks these before its read-only auto-approve, so a deny reaches commands like git log too.">
+        <textarea
+          class="k-textarea"
+          rows="2"
+          placeholder="Bash(rm *)"
+          value={rulesText(spec.permissions.deny)}
+          oninput={(e) => (spec.permissions.deny = parseRules(e))}
+        ></textarea>
       </Field>
     {/if}
   </section>

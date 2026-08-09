@@ -1,0 +1,69 @@
+schema = 1
+name = "locked-down-ci"
+description = "A headless run for a machine whose managed settings forbid --dangerously-skip-permissions"
+workdir = "."
+
+task = """
+Run the test suite, read the failures, and fix them.
+
+<<Replace this with the job. Override the task at launch if you drive this from CI.>>
+
+The allow list below covers reading and searching the repo, running the
+project's own commands, and editing source, and claude enforces it before you
+ever get near a tool call. `unmatched = "deny"` refuses anything else it asks
+for — if you need something outside the allow list, say so in your final
+message rather than working around it.
+"""
+
+[model]
+id = "sonnet"
+
+[leash]
+max_turns = 40
+timeout_secs = 3600
+max_budget_usd = 5.0
+isolation = "worktree"
+
+# The point of this example. `bypass` (the default) passes
+# --dangerously-skip-permissions, which claude rejects at startup on any machine
+# whose managed settings set `permissions.disableBypassPermissionsMode`. `prompt`
+# writes the allow/deny rules below verbatim into a generated claude settings
+# file; claude enforces them itself, and Kata's own MCP tool is only consulted
+# for a call those settings leave unresolved.
+#
+# `unmatched = "deny"` is the headless choice: nobody is watching, so a call the
+# allow list doesn't cover and the deny list doesn't block is still refused, with
+# a reason claude can read, once it reaches Kata's tool. (`unmatched = "ask"`
+# would need [interactive] on.) Note this is not the same as saying the allow
+# list is the run's whole tool surface — claude has no catch-all deny, so this
+# refusal only happens for calls that make it past claude's own settings and
+# read-only auto-approve to Kata's prompt tool in the first place.
+#
+# Note this never *widens* anything: claude checks its settings before it would
+# ever call Kata's prompt tool, so a call the machine's managed deny rules
+# already block never reaches Kata at all.
+[permissions]
+mode = "prompt"
+unmatched = "deny"
+allow = [
+  "Read",
+  "Glob",
+  "Grep",
+  "Edit",
+  "Write",
+  "Bash(git status*)",
+  "Bash(git diff*)",
+  "Bash(git log*)",
+  "Bash(cargo test*)",
+  "Bash(cargo build*)",
+  "Bash(cargo fmt*)",
+  "Bash(cargo clippy*)",
+]
+# Evaluated before `allow`, so these hold even though `Edit` and `Write` are
+# allowed above and `Bash(git *)` prefixes overlap.
+deny = [
+  "Bash(rm *)",
+  "Bash(git push*)",
+  "Bash(curl *)",
+  "Edit(//etc/**)",
+]

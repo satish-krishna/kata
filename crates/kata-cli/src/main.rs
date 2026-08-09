@@ -259,21 +259,49 @@ fn cmd_init(name: Option<&str>, force: bool, local: bool) -> ExitCode {
 enum StdinCmd {
     Cancel,
     Answer(kata_core::run::Answer),
+    Decide(kata_core::run::Decision),
 }
 
-/// Parse one engine-stdin control line: `cancel` or `answer <id> <json-matrix>`.
+/// Parse one engine-stdin control line:
+///
+/// - `cancel`
+/// - `answer <id> <json-matrix>` — the operator's reply to `ask.requested`
+/// - `decide <id> allow|deny [reason]` — the operator's verdict on
+///   `permission.requested`. The optional trailing reason is free text handed
+///   to claude on a denial.
 fn parse_stdin_line(line: &str) -> Option<StdinCmd> {
     let line = line.trim();
     if line == "cancel" {
         return Some(StdinCmd::Cancel);
     }
-    let rest = line.strip_prefix("answer ")?;
-    let (id, json) = rest.split_once(' ')?;
-    let answers: Vec<Vec<String>> = serde_json::from_str(json.trim()).ok()?;
-    Some(StdinCmd::Answer(kata_core::run::Answer {
-        id: id.trim().to_string(),
-        answers,
-    }))
+    if let Some(rest) = line.strip_prefix("answer ") {
+        let (id, json) = rest.split_once(' ')?;
+        let answers: Vec<Vec<String>> = serde_json::from_str(json.trim()).ok()?;
+        return Some(StdinCmd::Answer(kata_core::run::Answer {
+            id: id.trim().to_string(),
+            answers,
+        }));
+    }
+    if let Some(rest) = line.strip_prefix("decide ") {
+        let rest = rest.trim();
+        let (id, tail) = rest.split_once(' ')?;
+        let tail = tail.trim_start();
+        let (verdict, reason) = match tail.split_once(' ') {
+            Some((v, r)) => (v, r.trim()),
+            None => (tail, ""),
+        };
+        let allow = match verdict {
+            "allow" => true,
+            "deny" => false,
+            _ => return None,
+        };
+        return Some(StdinCmd::Decide(kata_core::run::Decision {
+            id: id.trim().to_string(),
+            allow,
+            message: (!reason.is_empty()).then(|| reason.to_string()),
+        }));
+    }
+    None
 }
 
 fn cmd_run(path: &std::path::Path) -> ExitCode {
@@ -308,8 +336,10 @@ fn cmd_run(path: &std::path::Path) -> ExitCode {
 
     // GUI / programmatic cancel: a `cancel` line on stdin flips the same flag the
     // ctrlc handler uses. `answer <id> <json>` lines are forwarded to the run
-    // loop's answer inbox. EOF (plain CLI use closes stdin) is a no-op.
+    // loop's answer inbox, `decide <id> allow|deny [reason]` lines to its
+    // decision inbox. EOF (plain CLI use closes stdin) is a no-op.
     let (answer_tx, answers) = kata_core::run::answer_channel();
+    let (decision_tx, decisions) = kata_core::run::decision_channel();
     let stdin_flag = cancel.flag();
     std::thread::spawn(move || {
         use std::io::BufRead;
@@ -324,6 +354,9 @@ fn cmd_run(path: &std::path::Path) -> ExitCode {
                 Some(StdinCmd::Answer(a)) => {
                     let _ = answer_tx.send(a);
                 }
+                Some(StdinCmd::Decide(d)) => {
+                    let _ = decision_tx.send(d);
+                }
                 None => {}
             }
             line.clear();
@@ -337,7 +370,7 @@ fn cmd_run(path: &std::path::Path) -> ExitCode {
         }
     };
 
-    match kata_core::run::run(&spec, &catalog, &cancel, &answers, emit) {
+    match kata_core::run::run(&spec, &catalog, &cancel, &answers, &decisions, emit) {
         Ok(outcome) => {
             if let Some(p) = &outcome.transcript_path {
                 eprintln!("transcript: {p}");
@@ -369,5 +402,38 @@ mod tests {
             other => panic!("expected Answer, got {other:?}"),
         }
         assert!(parse_stdin_line("garbage").is_none());
+    }
+
+    #[test]
+    fn parses_decide_lines_with_and_without_a_reason() {
+        match parse_stdin_line("decide p1 allow") {
+            Some(StdinCmd::Decide(d)) => {
+                assert_eq!(d.id, "p1");
+                assert!(d.allow);
+                assert_eq!(d.message, None);
+            }
+            other => panic!("expected Decide, got {other:?}"),
+        }
+        // A denial's trailing free text is the reason claude will see, spaces and all.
+        match parse_stdin_line("decide p2 deny not on production data") {
+            Some(StdinCmd::Decide(d)) => {
+                assert_eq!(d.id, "p2");
+                assert!(!d.allow);
+                assert_eq!(d.message.as_deref(), Some("not on production data"));
+            }
+            other => panic!("expected Decide, got {other:?}"),
+        }
+    }
+
+    // A malformed control line must be ignored, never guessed at: silently
+    // reading "denny" as a denial (or an allow) is the worst possible failure.
+    #[test]
+    fn rejects_malformed_decide_lines() {
+        for bad in ["decide p1", "decide p1 maybe", "decide  ", "decide"] {
+            assert!(
+                parse_stdin_line(bad).is_none(),
+                "{bad:?} must not parse as a decision"
+            );
+        }
     }
 }

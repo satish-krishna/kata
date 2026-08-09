@@ -1,11 +1,12 @@
 <script lang="ts">
   import type { RunSpec } from "../../bindings/RunSpec";
   import type { StreamEvent, RunSummary, RunState } from "../events";
-  import type { AskRecord } from "../run.svelte";
+  import type { AskRecord, PermissionRecord } from "../run.svelte";
   import { STATUS_LABEL } from "../events";
   import EventRow from "./EventRow.svelte";
   import SummaryStat from "./SummaryStat.svelte";
   import AskPanel from "./AskPanel.svelte";
+  import PermissionPanel from "./PermissionPanel.svelte";
   import MarkdownBody from "./MarkdownBody.svelte";
   import { isAtBottom } from "../scroll";
   import Cpu from "@lucide/svelte/icons/cpu";
@@ -20,14 +21,18 @@
     spec,
     summary,
     asks = [],
+    permissions = [],
     onAnswer,
+    onDecide,
   }: {
     runState: RunState;
     events: StreamEvent[];
     spec: RunSpec;
     summary: RunSummary | null;
     asks?: AskRecord[];
+    permissions?: PermissionRecord[];
     onAnswer?: (id: string, answers: string[][]) => void;
+    onDecide?: (id: string, allow: boolean, message: string | null) => void;
   } = $props();
 
   let streamEl: HTMLDivElement | undefined = $state();
@@ -47,7 +52,48 @@
     void events.length;
     void summary;
     void asks.length;
+    void permissions.length;
     if (streamEl && stick) streamEl.scrollTop = streamEl.scrollHeight;
+  });
+
+  /* A pause belongs where it happened, not in a pile at the end of the
+   * transcript: reading "…ran the tests, then asked about this" is the whole
+   * point of a stream. Every ask and permission record carries `at` — how many
+   * events preceded it — and is spliced back in there.
+   *
+   * A run can only ever be paused on one thing at a time, so an ask and a
+   * permission sharing an `at` is not a real sequence; permissions are emitted
+   * first purely so the order is deterministic. */
+  type StreamItem =
+    | { kind: "event"; key: string; ev: StreamEvent }
+    | { kind: "perm"; key: string; p: PermissionRecord }
+    | { kind: "ask"; key: string; a: AskRecord };
+
+  const streamItems: StreamItem[] = $derived.by(() => {
+    const at = (n: number): StreamItem[] => [
+      ...permissions
+        .filter((p) => p.at === n)
+        .map((p): StreamItem => ({ kind: "perm", key: `p:${p.id}`, p })),
+      ...asks
+        .filter((a) => a.at === n)
+        .map((a): StreamItem => ({ kind: "ask", key: `a:${a.id}`, a })),
+    ];
+    const items: StreamItem[] = [...at(0)];
+    events.forEach((ev, i) => {
+      items.push({ kind: "event", key: `e:${i}`, ev });
+      items.push(...at(i + 1));
+    });
+    // Defensive: never silently drop a pause whose position outran the stream.
+    const beyond = (n: number) => n > events.length;
+    items.push(
+      ...permissions
+        .filter((p) => beyond(p.at))
+        .map((p): StreamItem => ({ kind: "perm", key: `p:${p.id}`, p })),
+      ...asks
+        .filter((a) => beyond(a.at))
+        .map((a): StreamItem => ({ kind: "ask", key: `a:${a.id}`, a })),
+    );
+    return items;
   });
 
   const cost = (s: RunSummary) => (s.cost_usd != null ? `$${s.cost_usd.toFixed(3)}` : "—");
@@ -66,25 +112,48 @@
 </div>
 
 <div class="wb-stream" bind:this={streamEl} onscroll={onScroll}>
-  {#if events.length === 0 && !summary && asks.length === 0}
+  {#if events.length === 0 && !summary && asks.length === 0 && permissions.length === 0}
     <div class="wb-stream__empty">
       <Terminal size={28} />
       <p>Press <b style="color:var(--accent-text)">Run</b> to drive <code>claude -p</code> to completion. The normalized event stream renders here.</p>
     </div>
   {:else}
-    {#each events as ev, i (i)}
-      <div class="wb-event-enter"><EventRow {ev} /></div>
+    {#each streamItems as item (item.key)}
+      {#if item.kind === "event"}
+        <div class="wb-event-enter"><EventRow ev={item.ev} /></div>
+      {:else if item.kind === "perm" && item.p.decided === null}
+        {#key item.p.id}
+          <div class="wb-event-enter">
+            <PermissionPanel
+              id={item.p.id}
+              tool={item.p.tool}
+              input_summary={item.p.input_summary}
+              onDecide={onDecide}
+            />
+          </div>
+        {/key}
+      {:else if item.kind === "perm"}
+        <div class="wb-event-enter">
+          <PermissionPanel
+            id={item.p.id}
+            tool={item.p.tool}
+            input_summary={item.p.input_summary}
+            decided={item.p.decided}
+          />
+        </div>
+      {:else if item.a.answers === null}
+        {#key item.a.id}
+          <div class="wb-event-enter">
+            <AskPanel id={item.a.id} questions={item.a.questions} onSubmit={onAnswer} />
+          </div>
+        {/key}
+      {:else}
+        <div class="wb-event-enter">
+          <AskPanel id={item.a.id} questions={item.a.questions} answers={item.a.answers} />
+        </div>
+      {/if}
     {/each}
   {/if}
-  {#each asks as ask (ask.id)}
-    {#if ask.answers === null}
-      {#key ask.id}
-        <div class="wb-event-enter"><AskPanel id={ask.id} questions={ask.questions} onSubmit={onAnswer} /></div>
-      {/key}
-    {:else}
-      <div class="wb-event-enter"><AskPanel id={ask.id} questions={ask.questions} answers={ask.answers} /></div>
-    {/if}
-  {/each}
 </div>
 
 {#if summary}

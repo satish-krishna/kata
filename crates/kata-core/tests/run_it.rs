@@ -40,6 +40,7 @@ fn run_ok_streams_events_and_completes_zero() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -79,6 +80,7 @@ fn run_surfaces_child_stderr_as_log_events() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -109,6 +111,7 @@ fn run_gives_child_noninteractive_stdin_so_it_cannot_block() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -139,6 +142,7 @@ fn run_logs_default_timeout_cap_when_unset() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -168,6 +172,7 @@ fn run_reaps_child_that_closes_stdio_but_lingers() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -193,6 +198,7 @@ fn run_invalid_spec_errors_before_spawn() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |_| {},
     )
     .unwrap_err();
@@ -213,6 +219,7 @@ fn run_timeout_kills_child_and_reports_error() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -240,6 +247,7 @@ fn run_cancel_kills_child() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -263,6 +271,7 @@ fn run_max_turns_kills_child() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -291,6 +300,7 @@ fn run_unlimited_turns_does_not_cap() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -327,6 +337,7 @@ fn run_envreport(spec: &RunSpec, probe: &str) -> Vec<String> {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -471,6 +482,7 @@ fn concurrent_runs_get_divergent_env_without_crosstalk() {
             &[] as &[CatalogEntry],
             &cancel,
             &kata_core::run::AnswerRx::default(),
+            &kata_core::run::DecisionRx::default(),
             |e| events.push(e),
         )
         .unwrap();
@@ -541,6 +553,7 @@ fn worktree_isolation_runs_in_worktree_and_emits_diff() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -606,6 +619,7 @@ fn run_refuses_bare_run_with_unresolved_token_env() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap_err();
@@ -639,6 +653,7 @@ fn worktree_isolation_refuses_non_repo() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap_err();
@@ -668,16 +683,23 @@ fn interactive_run_pauses_and_resumes_on_answer() {
     // Answer the first ask.requested we observe, from the emit closure.
     let mut events: Vec<KataEvent> = Vec::new();
     let tx = answer_tx.clone();
-    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &answers, |e| {
-        if let KataEvent::AskRequested { id, .. } = &e {
-            tx.send(kata_core::run::Answer {
-                id: id.clone(),
-                answers: vec![vec!["JWT".into()]],
-            })
-            .unwrap();
-        }
-        events.push(e);
-    })
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &answers,
+        &kata_core::run::DecisionRx::default(),
+        |e| {
+            if let KataEvent::AskRequested { id, .. } = &e {
+                tx.send(kata_core::run::Answer {
+                    id: id.clone(),
+                    answers: vec![vec!["JWT".into()]],
+                })
+                .unwrap();
+            }
+            events.push(e);
+        },
+    )
     .unwrap();
 
     assert_eq!(outcome.exit_code, 0);
@@ -704,9 +726,14 @@ fn interactive_run_answer_deadline_reaps_with_123() {
     let cancel = CancelToken::new();
     let (_tx, answers) = kata_core::run::answer_channel();
     let mut events: Vec<KataEvent> = Vec::new();
-    let outcome = run(&spec, &[] as &[CatalogEntry], &cancel, &answers, |e| {
-        events.push(e)
-    })
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &answers,
+        &kata_core::run::DecisionRx::default(),
+        |e| events.push(e),
+    )
     .unwrap();
 
     assert_eq!(outcome.exit_code, 123, "answer-deadline must reap with 123");
@@ -732,6 +759,7 @@ fn run_writes_transcript_of_the_event_stream() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -783,6 +811,7 @@ fn run_budget_exhausted_reports_122() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -816,6 +845,7 @@ fn budget_subtype_without_configured_ceiling_is_not_122() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -843,6 +873,7 @@ fn run_survives_when_transcript_cannot_be_written() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -876,6 +907,7 @@ fn default_run_in_git_workdir_emits_changeset() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -911,6 +943,7 @@ fn default_run_in_non_git_workdir_notes_no_changeset() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -950,6 +983,7 @@ fn cancelled_run_reports_duration() {
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -959,5 +993,294 @@ fn cancelled_run_reports_duration() {
             KataEvent::RunCancelled { exit_code: 130, cost_usd: None, duration_ms }
                 if *duration_ms > 0)),
         "run.cancelled must carry a positive duration_ms, got {events:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// [permissions] mode = "prompt": the route for a machine whose managed settings
+// forbid --dangerously-skip-permissions. The `approve` fake mode plays the
+// mcp-ask server, so these drive the real bridge end to end.
+// ---------------------------------------------------------------------------
+
+fn prompt_spec(workdir: &str) -> RunSpec {
+    let mut spec = base_spec(workdir);
+    spec.permissions.mode = kata_core::spec::PermissionMode::Prompt;
+    spec.permissions.unmatched = kata_core::spec::UnmatchedPolicy::Deny;
+    spec
+}
+
+/// Run the `approve` fake against `spec`, optionally overriding the tool call it
+/// asks about, and return the events.
+fn run_prompt(spec: &RunSpec, tool: Option<&str>, input: Option<&str>) -> (i32, Vec<KataEvent>) {
+    with_fake("approve");
+    match tool {
+        Some(t) => std::env::set_var("KATA_FAKE_TOOL", t),
+        None => std::env::remove_var("KATA_FAKE_TOOL"),
+    }
+    match input {
+        Some(i) => std::env::set_var("KATA_FAKE_TOOL_INPUT", i),
+        None => std::env::remove_var("KATA_FAKE_TOOL_INPUT"),
+    }
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(
+        spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
+    std::env::remove_var("KATA_FAKE_TOOL");
+    std::env::remove_var("KATA_FAKE_TOOL_INPUT");
+    (outcome.exit_code, events)
+}
+
+fn decision(events: &[KataEvent]) -> (bool, String, Option<String>) {
+    events
+        .iter()
+        .find_map(|e| match e {
+            KataEvent::PermissionDecided {
+                allow,
+                decided_by,
+                message,
+                ..
+            } => Some((*allow, decided_by.clone(), message.clone())),
+            _ => None,
+        })
+        .expect("expected a permission.decided event")
+}
+
+/// The assistant text the `approve` fake echoes: the raw verdict frame the
+/// engine sent back down the bridge. Proves the decision reached the child.
+fn verdict_text(events: &[KataEvent]) -> String {
+    events
+        .iter()
+        .find_map(|e| match e {
+            KataEvent::AssistantText { text } => Some(text.clone()),
+            _ => None,
+        })
+        .expect("expected the fake to echo the verdict")
+}
+
+#[test]
+#[serial]
+fn prompt_mode_denies_an_unmatched_call_under_the_deny_policy() {
+    let work = tempfile::tempdir().unwrap();
+    let spec = prompt_spec(&work.path().to_string_lossy());
+    let (exit, events) = run_prompt(&spec, None, None);
+
+    assert_eq!(exit, 0, "a denied tool call is not a failed run");
+    let (allow, by, message) = decision(&events);
+    assert!(!allow);
+    assert_eq!(by, "unmatched-policy");
+    assert!(
+        message.unwrap_or_default().contains("permissions.allow"),
+        "the denial must tell claude how the run is scoped"
+    );
+    assert!(
+        verdict_text(&events).contains("deny"),
+        "the verdict must reach the child: {}",
+        verdict_text(&events)
+    );
+    // Nothing paused: an auto-resolved check emits no permission.requested.
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, KataEvent::PermissionRequested { .. })),
+        "a policy-resolved call must not pause the run"
+    );
+}
+
+#[test]
+#[serial]
+fn prompt_mode_records_the_call_being_decided() {
+    let work = tempfile::tempdir().unwrap();
+    let spec = prompt_spec(&work.path().to_string_lossy());
+    let (_, events) = run_prompt(&spec, Some("Bash"), Some(r#"{"command":"rm -rf build/"}"#));
+
+    let summarized = events.iter().any(|e| {
+        matches!(e, KataEvent::PermissionDecided { tool, input_summary, .. }
+            if tool == "Bash" && input_summary == "rm -rf build/")
+    });
+    assert!(
+        summarized,
+        "the audit trail must name the tool and its target: {events:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn prompt_mode_ask_pauses_until_the_operator_decides() {
+    with_fake("approve");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.permissions.mode = kata_core::spec::PermissionMode::Prompt;
+    // "ask" is the default policy; it needs an operator, so interactive is on.
+    spec.interactive.enabled = true;
+    let cancel = CancelToken::new();
+    let (decision_tx, decisions) = kata_core::run::decision_channel();
+
+    let mut events: Vec<KataEvent> = Vec::new();
+    let tx = decision_tx.clone();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        &decisions,
+        |e| {
+            if let KataEvent::PermissionRequested { id, .. } = &e {
+                tx.send(kata_core::run::Decision {
+                    id: id.clone(),
+                    allow: false,
+                    message: Some("not on this branch".into()),
+                })
+                .unwrap();
+            }
+            events.push(e);
+        },
+    )
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 0);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, KataEvent::PermissionRequested { .. })),
+        "an unmatched call under ask must pause the run"
+    );
+    let (allow, by, message) = decision(&events);
+    assert!(!allow);
+    assert_eq!(by, "operator");
+    assert_eq!(message.as_deref(), Some("not on this branch"));
+    assert!(
+        verdict_text(&events).contains("not on this branch"),
+        "the operator's reason must reach claude"
+    );
+}
+
+#[test]
+#[serial]
+fn prompt_mode_ask_hits_the_answer_deadline_with_123() {
+    with_fake("approve"); // asks, then waits forever for a decision that never comes
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.permissions.mode = kata_core::spec::PermissionMode::Prompt;
+    spec.interactive.enabled = true;
+    spec.interactive.answer_timeout_secs = Some(1);
+    let cancel = CancelToken::new();
+    let (_tx, decisions) = kata_core::run::decision_channel();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        &decisions,
+        |e| events.push(e),
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcome.exit_code, 123,
+        "an undecided permission check is reaped by the same answer deadline"
+    );
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::PermissionRequested { .. })));
+}
+
+// The default posture must be exactly what it was before the field existed.
+#[test]
+#[serial]
+fn bypass_mode_wires_no_permission_bridge() {
+    with_fake("ok");
+    let work = tempfile::tempdir().unwrap();
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(
+        &base_spec(&work.path().to_string_lossy()),
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 0);
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            KataEvent::PermissionRequested { .. } | KataEvent::PermissionDecided { .. }
+        )),
+        "a bypass run must emit no permission events at all"
+    );
+}
+
+// Regression: `ask_user` is an ordinary MCP tool to claude, so under prompt mode
+// it goes through the permission check like anything else. A headless deny
+// policy must not be able to silently switch interactivity off.
+#[test]
+#[serial]
+fn prompt_mode_never_puts_katas_own_tools_to_the_rules() {
+    let work = tempfile::tempdir().unwrap();
+    // The strictest posture there is: deny everything unmatched, allow nothing.
+    let spec = prompt_spec(&work.path().to_string_lossy());
+    let (exit, events) = run_prompt(
+        &spec,
+        Some("mcp__kata-ask__ask_user"),
+        Some(r#"{"questions":[]}"#),
+    );
+
+    assert_eq!(exit, 0);
+    let (allow, by, _) = decision(&events);
+    assert!(allow, "the engine's own bridge tool must not be deniable");
+    assert_eq!(by, "engine");
+}
+
+// The rules are no longer matched engine-side: they are handed to claude in a
+// generated settings file and claude enforces them. That is what lets a deny
+// cover the read-only commands claude auto-approves without consulting anyone.
+#[test]
+#[serial]
+fn prompt_mode_writes_a_settings_file_with_the_spec_rules_verbatim() {
+    with_fake("settingsecho");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = prompt_spec(&work.path().to_string_lossy());
+    spec.permissions.allow.push("Bash(git *)".into());
+    spec.permissions.allow.push("Read(*)".into());
+    spec.permissions.deny.push("Bash(rm *)".into());
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 0);
+    let text = assistant_texts(&events)
+        .into_iter()
+        .find(|t| t.starts_with("SETTINGS "))
+        .expect("fake-claude must echo the --settings file it was given");
+    let body = text.trim_start_matches("SETTINGS ");
+    let actual: serde_json::Value = serde_json::from_str(body)
+        .unwrap_or_else(|e| panic!("settings file was not JSON ({e}): {body}"));
+    let expected = serde_json::json!({
+        "permissions": {
+            "allow": ["Bash(git *)", "Read(*)"],
+            "deny": ["Bash(rm *)"],
+        }
+    });
+    assert_eq!(
+        actual, expected,
+        "settings file content must be exactly the spec's rule arrays, verbatim"
     );
 }

@@ -14,7 +14,7 @@
     "gen:events": "json2ts -i ../schema/kata-events.schema.json -o src/bindings/kata-events.ts --no-additionalProperties --bannerComment \"/* Generated from schema/kata-events.schema.json by 'npm run gen:events'. DO NOT EDIT. */\"",
     "tauri:dev": "node scripts/stage-sidecar.mjs && tauri dev",
     "tauri:build": "node scripts/stage-sidecar.mjs --release && tauri build",
-    "test": "vitest run",
+    "test": "svelte-kit sync && vitest run",
     "screenshots": "node scripts/screenshots.mjs"
   },
   "license": "MIT",

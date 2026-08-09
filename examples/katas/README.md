@@ -1,6 +1,6 @@
 # Example katas
 
-Ready-to-use [run-specs](../../README.md). Each `.toml` is one kata: a precise, reproducible form for a single headless `claude -p` run. Copy them into your library or open them in the Workbench, fill in the task, and run. Two sets live here: the superpowers **brainstorm → plan → execute** trio, and the **kata plugin's** engineering-workflow kit (prd → context → plan → implement, plus triage).
+Ready-to-use [run-specs](../../README.md). Each `.toml` is one kata: a precise, reproducible form for a single headless `claude -p` run. Copy them into your library or open them in the Workbench, fill in the task, and run. Three sets live here: the superpowers **brainstorm → plan → execute** trio, the **kata plugin's** engineering-workflow kit (prd → context → plan → implement, plus triage), and two **standalone** examples of permission postures.
 
 ## The trio
 
@@ -26,6 +26,17 @@ Five katas driving the [`kata` plugin](../../.claude/plugins/kata/) — this rep
 
 They chain: prd feeds context, context feeds plan, plan feeds implement — each run's output file is the next run's task input. triage stands alone and hands its "failing test to start from" to a plan/implement pair.
 
+## Standalone
+
+| Kata | What it shows | Deliverable | Interactive |
+|------|---------------|-------------|-------------|
+| [`locked-down-ci.toml`](locked-down-ci.toml) | `[permissions] mode = "prompt"` — the posture for a machine whose managed settings forbid `--dangerously-skip-permissions` | whatever the task asks for, in a worktree | no — `unmatched = "deny"` |
+| [`permission-checkpoint.toml`](permission-checkpoint.toml) | the same posture with a human in the loop — drives both outcomes on purpose so you can watch them | a two-line report of what was denied and asked | yes — `unmatched = "ask"` |
+
+Use **`locked-down-ci`** as the template when `claude` refuses to start with `Bypass permissions mode is disabled`. Kata does not match its `allow`/`deny` rules itself — they are written verbatim into a generated claude settings file, and claude enforces them. A call those rules and claude's own read-only auto-approve don't resolve then falls to `unmatched = "deny"`, which refuses it with a reason claude can read; that is not the same as saying `allow` is the run's whole tool surface, since claude has no catch-all deny of its own. Only a check that reaches Kata's own tool shows up as a `permission.decided` event — a call claude's settings resolved directly leaves no trace in the event stream.
+
+Use **`permission-checkpoint`** to verify the plumbing end to end against a live `claude`. It is a fixture, not a working kata: it asks claude to make two specific tool calls in order. The first, `git log --oneline -3`, is refused by a `deny` rule — the point being that a deny rule reaches even a read-only command claude would otherwise auto-approve without consulting Kata at all. The second, `cp README.md .kata-split-probe.txt`, matches no rule and isn't read-only, so it **pauses the run on you**. Nothing here deletes or touches the network; if you allow the second call, remove the file it creates with `git clean -f .kata-split-probe.txt`. Leave the prompt unanswered for `answer_timeout_secs` and the run should end **123** rather than hang, which is the third thing worth checking.
+
 ## Using them
 
 1. **Pick a target.** Every kata ships with `workdir = "."` so it validates anywhere; set it to the repo you want the run to operate on (the Workbench's workdir picker, or edit the field).
@@ -44,4 +55,5 @@ A real run needs an authenticated `claude` on `PATH`. `bare = false` means the r
 - **`brainstorm-feature` uses the `kata-brainstorming` skill**, which lives in this repo at [`.claude/skills/kata-brainstorming/`](../../.claude/skills/kata-brainstorming). It is the print-mode-safe replacement for `superpowers:brainstorming`: it routes every clarifying question through the `ask_user` tool (a plain-text question in a headless run never reaches the operator — it just ends the run). Because the skill is discovered from the workspace's `.claude/skills/`, run this kata against a checkout of Kata, or install the skill into `~/.claude/skills/` to use it elsewhere.
 - **The kit katas use the `kata` plugin**, which lives in this repo at [`.claude/plugins/kata/`](../../.claude/plugins/kata/) — and is also embedded into the `kata` binary at build time as a **builtin** catalog source, so `[plugins.kata]` resolves against any workdir with no install step. A plugin named `kata` in `~/.claude/plugins/` or the target repo's `.claude/plugins/` shadows the builtin if you want a customized kit.
 - **Interactive runs** (`[interactive] enabled = true`) emit `ask.requested` events and pause for an answer; the Workbench shows an AskPanel, and a CLI driver answers over stdin. `answer_timeout_secs` bounds the wait (exit 123 if nobody answers).
+- **Prompt-mode permissions** (`[permissions] mode = "prompt"`) write the spec's `allow`/`deny` rules verbatim into a generated claude settings file; claude enforces them itself, before it would ever auto-approve a read-only command, so a `deny` rule reaches those too. Kata's own tool is consulted only for a call those settings leave unresolved, and only that call gets a `permission.decided` event — the event stream is not a record of every check claude made. With `unmatched = "ask"` (which also needs `[interactive] enabled = true`) such a call additionally emits `permission.requested` and pauses the run until a `decide <id> allow|deny [reason]` line arrives — bounded by the same `answer_timeout_secs`.
 - These are **starting points, not gospel** — adjust the model, leash, skills, and plugins to taste.

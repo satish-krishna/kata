@@ -1,0 +1,97 @@
+schema = 1
+name = "permission-checkpoint"
+description = "Drive both prompt-mode outcomes past a live operator, in one short run"
+workdir = "."
+
+# A verification kata, not a working one. It exists to prove that
+# `[permissions] mode = "prompt"` behaves against a real claude session by
+# making claude walk deliberately into each of two outcomes, in a fixed order,
+# so you can watch them land:
+#
+#   1. a read-only command a `deny` rule still catches   → REFUSED
+#      Kata does not match rules — the spec's allow/deny are written verbatim
+#      into a generated claude settings file, and claude checks those *before*
+#      it would auto-approve a read-only command like `git log` on its own.
+#      That is why a deny rule reaches this call at all: an engine-side
+#      matcher never could, because claude would have auto-approved it before
+#      anything outside claude saw it.
+#
+#   2. a call no rule covers, and that is not read-only  → PAUSES on you
+#      Claude cannot resolve it from settings, so it calls Kata's own
+#      `approve_tool`, and `unmatched = "ask"` stops the run until you decide.
+#
+# Nothing here deletes or touches the network. Step 2 writes one file into the
+# working directory (`.kata-split-probe.txt`); if you Allow it, remove the file
+# afterwards: `git clean -f .kata-split-probe.txt`.
+task = """
+You are verifying Kata's permission plumbing. Run exactly the two steps below,
+in order, one tool call each. Do not combine them, do not substitute equivalent
+commands, and do not add steps.
+
+1. Run this Bash command, verbatim: `git log --oneline -3`
+2. Run this Bash command, verbatim: `cp README.md .kata-split-probe.txt`
+
+Step 1 is expected to be refused. When it is, do NOT retry it, do not look for
+another way to see the log, and do not treat it as a problem to solve — being
+refused is the point of the exercise. Step 2 is expected to pause while a human
+decides; wait for the decision rather than trying anything else in the meantime.
+
+Then write a final message with one line per step, in this exact form:
+
+    <step number> | <the tool call you made> | allowed | denied | asked
+
+The exact command strings matter. They are checked against this run's rules
+character by character, so `git log --oneline -3` and `git --no-pager log
+--oneline -3` are not the same call and will not be answered the same way.
+"""
+
+[identity]
+mode = "append"
+system_prompt = """
+You are being used as a test fixture for a permission system. Follow the task's
+steps literally. Never work around a refused tool call — a refusal is a result
+to report, not an obstacle to route around.
+"""
+
+[model]
+id = "sonnet"
+
+# Short and cheap: this run does two tool calls and stops. isolation stays
+# "none" on purpose — step 1 (`git log`) should describe this repo's own
+# history, not a scratch worktree, which makes the refusal easier to verify.
+[leash]
+max_turns = 8
+timeout_secs = 600
+max_budget_usd = 1.0
+isolation = "none"
+
+# Required by `unmatched = "ask"` — validate rejects the pair otherwise, since
+# nothing else could answer the prompt. answer_timeout_secs also gives you a
+# third thing to verify: walk away from step 2's prompt and the run should end
+# with exit 123 rather than hanging.
+[interactive]
+enabled = true
+answer_timeout_secs = 300
+
+[permissions]
+mode = "prompt"
+
+# The whole point. A call claude's settings leave unresolved comes back to
+# Kata's own tool, which answers it from `unmatched` or the operator and emits
+# a `permission.decided` event for that check only — a call settled by claude's
+# own settings or its read-only auto-approve is never seen by Kata and gets no
+# event at all.
+unmatched = "ask"
+
+allow = [
+  "Read",
+]
+
+# Step 1 lands here even though `git log` is one of claude's own read-only
+# auto-approved commands — settings are consulted before that auto-approve, so
+# this deny reaches it anyway. That is the mechanism this kata exists to prove.
+# Step 2 (`cp`) matches nothing here and is not read-only, so it falls through
+# to `unmatched` and pauses on you.
+deny = [
+  "Bash(git log*)",
+]

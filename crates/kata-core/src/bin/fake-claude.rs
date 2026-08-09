@@ -1,7 +1,7 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "budget" | "envreport"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho"
 use std::io::Write;
 use std::{thread, time::Duration};
 
@@ -117,7 +117,7 @@ fn main() {
                 let mut write_half = sock.try_clone().expect("clone sock");
                 let _ = writeln!(
                     write_half,
-                    r#"{{"questions":[{{"kind":"text","header":"h","question":"q?"}}]}}"#
+                    r#"{{"kind":"ask","questions":[{{"kind":"text","header":"h","question":"q?"}}]}}"#
                 );
                 let _ = write_half.flush();
                 // Wait (possibly forever — exercises the answer-deadline) for the answer.
@@ -125,6 +125,65 @@ fn main() {
                 let mut line = String::new();
                 let _ = reader.read_line(&mut line);
             }
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
+            );
+            let _ = out.flush();
+        }
+        "approve" => {
+            // Play the role of the `kata mcp-ask` server serving `approve_tool`:
+            // ask the engine to approve one Bash call, then report the verdict
+            // back on the stream so a test can assert it reached the child. With
+            // no decision (the deadline test) the read blocks and the engine
+            // reaps the run with exit 123.
+            //
+            // KATA_FAKE_TOOL / KATA_FAKE_TOOL_INPUT override the call being
+            // approved, so one mode covers allow rules, deny rules, and the
+            // unmatched policy.
+            use std::io::{BufRead, BufReader, Write as _};
+            use std::net::TcpStream;
+            let port: u16 = std::env::var("KATA_ASK_PORT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let tool = std::env::var("KATA_FAKE_TOOL").unwrap_or_else(|_| "Bash".into());
+            let input = std::env::var("KATA_FAKE_TOOL_INPUT")
+                .unwrap_or_else(|_| r#"{"command":"rm -rf build/"}"#.into());
+            let mut verdict = String::from("(no verdict)");
+            if let Ok(sock) = TcpStream::connect(("127.0.0.1", port)) {
+                let mut write_half = sock.try_clone().expect("clone sock");
+                let _ = writeln!(
+                    write_half,
+                    r#"{{"kind":"approve","tool":"{tool}","input":{input}}}"#
+                );
+                let _ = write_half.flush();
+                let mut reader = BufReader::new(sock);
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) > 0 {
+                    // Render a stable summary rather than echoing the raw frame:
+                    // the bridge frame is engine-internal and free to change, and
+                    // a golden fixture must not pin it.
+                    let v: serde_json::Value =
+                        serde_json::from_str(line.trim()).unwrap_or(serde_json::Value::Null);
+                    let word = if v["allow"].as_bool().unwrap_or(false) {
+                        "allow"
+                    } else {
+                        "deny"
+                    };
+                    verdict = match v["message"].as_str().filter(|m| !m.is_empty()) {
+                        Some(m) => format!("verdict: {word} - {m}"),
+                        None => format!("verdict: {word}"),
+                    };
+                }
+            }
+            // The verdict rides back as assistant text so the test can assert
+            // that the engine's decision actually reached the child.
+            let text = serde_json::json!({
+                "type": "assistant",
+                "message": { "content": [{ "type": "text", "text": verdict }] }
+            });
+            let _ = writeln!(out, "{text}");
             let _ = writeln!(
                 out,
                 r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
@@ -162,6 +221,36 @@ fn main() {
                 });
                 let _ = writeln!(out, "{line}");
             }
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
+            );
+            let _ = out.flush();
+        }
+        "settingsecho" => {
+            // Report the `--settings <path>` claude was given, so a test can
+            // assert on the *content* Kata generated without depending on the
+            // temp dir surviving the run. Finds the flag in argv (fake-claude
+            // otherwise ignores its args) and echoes the file's raw bytes back
+            // as one assistant-text line prefixed "SETTINGS ".
+            let args: Vec<String> = std::env::args().collect();
+            let settings_path = args
+                .iter()
+                .position(|a| a == "--settings")
+                .and_then(|i| args.get(i + 1));
+            let body = match settings_path {
+                Some(p) => {
+                    std::fs::read_to_string(p).unwrap_or_else(|e| format!("<read error: {e}>"))
+                }
+                None => "<no --settings flag>".into(),
+            };
+            let line = serde_json::json!({
+                "type": "assistant",
+                "message": { "content": [
+                    { "type": "text", "text": format!("SETTINGS {body}") }
+                ]}
+            });
+            let _ = writeln!(out, "{line}");
             let _ = writeln!(
                 out,
                 r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#

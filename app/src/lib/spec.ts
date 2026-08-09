@@ -36,6 +36,7 @@ export function defaultSpec(): RunSpec {
     leash: { max_turns: null, timeout_secs: null, max_budget_usd: null, isolation: "none" },
     auth: { bare: true, token_env: null },
     interactive: { enabled: false, answer_timeout_secs: null },
+    permissions: { mode: "bypass", allow: [], deny: [], unmatched: "ask" },
   };
 }
 
@@ -59,6 +60,12 @@ export function draftFrom(loaded: RunSpec): RunSpec {
     plugins: loaded.plugins ?? {},
     auth: { bare: loaded.auth?.bare ?? true, token_env: loaded.auth?.token_env ?? null },
     interactive: { ...d.interactive, ...loaded.interactive },
+    permissions: {
+      ...d.permissions,
+      ...loaded.permissions,
+      allow: loaded.permissions?.allow ?? [],
+      deny: loaded.permissions?.deny ?? [],
+    },
   };
 }
 

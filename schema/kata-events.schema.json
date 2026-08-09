@@ -418,6 +418,76 @@
       "type": "object"
     },
     {
+      "description": "A tool call is paused on the operator's decision. Emitted only under\n`[permissions] mode = \"prompt\"` with `unmatched = \"ask\"`, and only for a\ncall no rule resolved — the exact analogue of `ask.requested`. The run\nstays paused until the matching `permission.decided`.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "input_summary": {
+          "description": "The call's target rendered for a human: the shell command, the file\npath, the query — whatever the decision actually turns on.",
+          "type": "string"
+        },
+        "tool": {
+          "description": "The tool claude wants to use, e.g. `Bash` or `mcp__github__list_issues`.",
+          "type": "string"
+        },
+        "type": {
+          "const": "permission.requested",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "tool",
+        "input_summary"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "How a permission check was resolved. Emitted for **every** check under\n`[permissions] mode = \"prompt\"`, including the ones a rule or the\nunmatched policy settled without pausing, so the stream is a complete\naudit trail of what the agent was allowed to do.",
+      "properties": {
+        "allow": {
+          "type": "boolean"
+        },
+        "decided_by": {
+          "description": "What resolved it: `unmatched-policy`, `operator`, or `engine` (one of\nKata's own bridge tools, which are exempt from the rules). A rule can\nnever appear here — the spec's `allow`/`deny` are enforced by claude\nfrom the generated settings file, and a call they resolve never\nreaches Kata. Treat an unrecognized value as \"something else decided\".",
+          "type": "string"
+        },
+        "id": {
+          "description": "Correlates with a preceding `permission.requested`, when there was one.",
+          "type": "string"
+        },
+        "input_summary": {
+          "description": "Same rendering as `permission.requested.input_summary`, repeated here\nso an auto-resolved check is legible on its own.",
+          "type": "string"
+        },
+        "message": {
+          "description": "The reason handed back to claude on a denial.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tool": {
+          "type": "string"
+        },
+        "type": {
+          "const": "permission.decided",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "tool",
+        "input_summary",
+        "allow",
+        "decided_by"
+      ],
+      "type": "object"
+    },
+    {
       "properties": {
         "cost_usd": {
           "description": "Total cost claude reported, if a `result` line arrived. `None` when\nthe leash killed the child before it could report (timeout, cancel,\nturn cap); present on the budget path (exit 122).",
