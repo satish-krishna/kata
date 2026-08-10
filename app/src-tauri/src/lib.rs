@@ -187,9 +187,11 @@ fn save_kata(spec: kata_core::spec::RunSpec) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// List all saved katas from the user's kata library.
+/// List the user's kata library: the katas that loaded, and any `*.toml` that
+/// would not. The failures are returned rather than dropped so a broken kata
+/// shows up as broken instead of silently disappearing.
 #[tauri::command]
-fn list_katas() -> Result<Vec<kata_core::spec::RunSpec>, String> {
+fn list_katas() -> Result<kata_core::katas::KataListing, String> {
     Ok(kata_core::katas::list_katas())
 }
 

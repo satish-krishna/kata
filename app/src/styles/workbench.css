@@ -127,6 +127,10 @@
 .wb-kata__top { display: flex; align-items: center; gap: var(--space-3); }
 .wb-kata__name { font: var(--weight-semibold) var(--text-base)/1 var(--font-mono); color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-kata__dot { width: 7px; height: 7px; border-radius: var(--radius-full); flex: none; margin-left: auto; }
+/* A kata file that would not load: visibly broken, never silently absent. */
+.wb-kata--broken { border-color: var(--error-border); background: var(--error-subtle); cursor: default; }
+.wb-kata--broken .wb-kata__name { color: var(--error-text); }
+.wb-kata--broken svg { color: var(--error-text); flex: none; }
 .wb-kata__desc { font: var(--text-xs)/1.4 var(--font-sans); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-kata__meta { display: flex; align-items: center; gap: var(--space-3); font: var(--font-code-sm); font-size: 10px; color: var(--text-faint); }
 .wb-kata__meta span { display: inline-flex; align-items: center; gap: 3px; }

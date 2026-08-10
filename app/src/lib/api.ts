@@ -4,6 +4,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import type { RunSpec } from "../bindings/RunSpec";
 import type { CatalogEntry } from "../bindings/CatalogEntry";
 import type { Preset } from "../bindings/Preset";
+import type { KataListing } from "../bindings/KataListing";
 import type { KataEvent, RunRecord, RunDetail } from "$lib/events";
 import { inTauri, seedCatalog, validateLocal, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION } from "$lib/mock";
 import type { ScriptStep } from "$lib/mock";
@@ -105,8 +106,10 @@ export async function submitDecision(
   playMock(runScriptTail);
 }
 
-export const listKatas = (): Promise<RunSpec[]> =>
-  inTauri() ? invoke<RunSpec[]>("list_katas") : Promise.resolve(katasFixture);
+export const listKatas = (): Promise<KataListing> =>
+  inTauri()
+    ? invoke<KataListing>("list_katas")
+    : Promise.resolve({ katas: katasFixture, failures: [] });
 
 export const loadKata = (name: string): Promise<RunSpec> =>
   inTauri() ? invoke<RunSpec>("load_kata", { name }) : Promise.resolve(katasFixture.find((k) => k.name === name) ?? katasFixture[0]);
