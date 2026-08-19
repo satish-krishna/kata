@@ -188,25 +188,21 @@ fn run_reaps_child_that_closes_stdio_but_lingers() {
 
 #[test]
 #[serial]
-fn run_does_not_validate_so_callers_are_responsible() {
+fn run_invalid_spec_errors_before_spawn() {
     with_fake("ok");
     let mut spec = base_spec("/w");
-    // run() does not call validate(), so an invalid spec (empty task) is not caught
-    // at the library level. CLI and other callers are responsible for validation.
-    // This test verifies that run() attempts to execute even with invalid specs.
     spec.task = "".into();
     let cancel = CancelToken::new();
-    let outcome = run(
+    let err = run(
         &spec,
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
         |_| {},
-    );
-    // run() does not validate, so it will attempt to execute
-    // (the actual error depends on how the empty task is handled by the command builder)
-    let _ = outcome;
+    )
+    .unwrap_err();
+    assert!(matches!(err, RunError::Invalid(_)));
 }
 
 #[test]
@@ -1337,13 +1333,12 @@ fn auto_mode_routes_a_reaching_call_to_the_operator() {
     spec.permissions.mode = kata_core::spec::PermissionMode::Auto;
     spec.interactive.enabled = true;
     spec.permissions.ask.push("Bash(*)".into());
-    // Deny is what `unmatched` would do under prompt. Under auto the decision
-    // path must IGNORE unmatched and route to the operator anyway. This is the
-    // fail-first lever: before the auto branch exists, this call is auto-denied
-    // by the unmatched match (decided_by = "unmatched-policy", allow = false);
-    // after, it pauses on the operator. `validate` rejects this combo, but
-    // `run()` does not call `validate`, so the decision path is exercised directly.
-    spec.permissions.unmatched = kata_core::spec::UnmatchedPolicy::Deny;
+    // A valid auto spec: unmatched is left at its default (validate rejects an
+    // explicit unmatched under auto, and run() validates first). Under auto the
+    // decision path routes a reaching call to the operator; this characterizes
+    // that observable contract. It is not fail-first — the default Ask policy
+    // would also pause — so the explicit auto branch is defensive per the design
+    // (spec Section D).
     let cancel = CancelToken::new();
     let (decision_tx, decisions) = kata_core::run::decision_channel();
     let mut events: Vec<KataEvent> = Vec::new();
