@@ -344,27 +344,25 @@
           oninput={(e) => (spec.permissions.deny = parseRules(e))}
         ></textarea>
       </Field>
-      {#if spec.permissions.mode === "auto"}
-        <Field label="Ask" key="permissions.ask" hint="rules that always pause on the operator for a decision. Requires interactive mode enabled.">
-          <textarea
-            class="k-textarea"
-            rows="2"
-            placeholder="Bash(git push *)"
-            value={rulesText(spec.permissions.ask)}
-            oninput={(e) => (spec.permissions.ask = parseRules(e))}
-          ></textarea>
-        </Field>
-        {#if (spec.permissions.ask ?? []).length > 0 && !spec.interactive.enabled}
-          <div class="wb-banner wb-banner--error" role="alert">
-            <AlertTriangle size={15} />
-            <div class="wb-banner__list">
-              <span><code>permissions.ask</code> rules need an operator to ask, and interactive is off.</span>
-            </div>
-            <button type="button" class="k-btn k-btn--secondary" onclick={() => (spec.interactive.enabled = true)}>
-              Enable interactive
-            </button>
+      <Field label="Ask" key="permissions.ask" hint="rules that always pause on the operator for a decision. Requires interactive mode enabled.">
+        <textarea
+          class="k-textarea"
+          rows="2"
+          placeholder="Bash(git push *)"
+          value={rulesText(spec.permissions.ask)}
+          oninput={(e) => (spec.permissions.ask = parseRules(e))}
+        ></textarea>
+      </Field>
+      {#if (spec.permissions.ask ?? []).length > 0 && !spec.interactive.enabled}
+        <div class="wb-banner wb-banner--error" role="alert">
+          <AlertTriangle size={15} />
+          <div class="wb-banner__list">
+            <span><code>permissions.ask</code> rules need an operator to ask, and interactive is off.</span>
           </div>
-        {/if}
+          <button type="button" class="k-btn k-btn--secondary" onclick={() => (spec.interactive.enabled = true)}>
+            Enable interactive
+          </button>
+        </div>
       {/if}
     {/if}
   </section>
