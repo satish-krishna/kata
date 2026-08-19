@@ -1,0 +1,35 @@
+schema = 1
+name = "debug-triage"
+description = "Reproduce and root-cause a bug into a written report (superpowers:systematic-debugging, diagnosis only, interactive)"
+workdir = "."
+
+task = """
+Use the `superpowers:systematic-debugging` skill to triage the following bug — Phase 1 only, diagnosis:
+
+<<Paste the bug report / failing test / issue text, or point to it. Override this task at launch.>>
+
+Reproduce it first, then localize the root cause yourself to `path:line` with a mechanism, distinguishing cause from symptom — do not stop at the first plausible line. If you cannot reproduce it, say so plainly through `ask_user` and state exactly what you tried before going further. Confirm the diagnosis and the recommended next action with me before closing, and ask in that same call where to write the report (default `docs/superpowers/triage/<YYYY-MM-DD>-<slug>.md`). Write it there — a crisp problem statement, the reproduction, the root cause with its mechanism, and end with the exact failing test a fix should start from — but do NOT commit it. Diagnosis only: do NOT fix the bug in this run. The fix is a separate kata (`debug-resolve`).
+"""
+
+[identity]
+mode = "append"
+system_prompt = """
+Before anything else, read the CLAUDE.md at the root of the workspace and treat it as binding for this entire run — its instructions override your defaults. If it points to nested CLAUDE.md files (for example app/CLAUDE.md) that govern the area you are working in, read and follow those too. Honor every convention it states — TDD workflow, commands, code style, design rules, commit rules — to the letter. If anything in the task conflicts with CLAUDE.md, stop and surface the conflict instead of silently choosing.
+"""
+
+[model]
+id = "sonnet"
+
+[plugins.superpowers]
+
+[leash]
+max_turns = 40
+timeout_secs = 3600
+isolation = "none"
+
+[auth]
+bare = false
+
+[interactive]
+enabled = true
+answer_timeout_secs = 1800

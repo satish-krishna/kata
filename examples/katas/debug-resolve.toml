@@ -1,0 +1,42 @@
+schema = 1
+name = "debug-resolve"
+description = "Land a bug fix under TDD, verify, review, and integrate (superpowers full discipline, worktree, interactive)"
+workdir = "."
+
+task = """
+Resolve a triaged bug end to end, following the superpowers discipline in order:
+
+<<Path to the triage report to fix, e.g. docs/superpowers/triage/<YYYY-MM-DD>-<slug>.md (from the debug-triage kata). Override this task at launch.>>
+
+1. `superpowers:test-driven-development` — start from the failing test the report names. Write it (or confirm it fails) and watch it fail for the right reason before touching implementation, then write the minimal code to pass. No fix ahead of a red test.
+2. `superpowers:systematic-debugging` — if the real root cause shifts once you are in the code, re-localize it to `path:line` with a mechanism rather than patching the symptom the report guessed at.
+3. `superpowers:verification-before-completion` — before claiming anything works, run the exact build, lint, and test commands CLAUDE.md specifies and read the actual output. Evidence before assertions, always.
+4. `superpowers:requesting-code-review` — get the change reviewed and address what comes back.
+5. `superpowers:finishing-a-development-branch` — decide integration with me.
+
+Stay within the fix's scope — no unrequested features or refactors. Surface any consequential fork through `ask_user` rather than guessing: an ambiguous root cause, a fix with real trade-offs, and how to integrate the branch (merge, PR, or leave it). Commit only if CLAUDE.md's rules say to and I have asked.
+"""
+
+[identity]
+mode = "append"
+system_prompt = """
+Before anything else, read the CLAUDE.md at the root of the workspace and treat it as binding for this entire run — its instructions override your defaults. If it points to nested CLAUDE.md files (for example app/CLAUDE.md) that govern the area you are working in, read and follow those too. Honor every convention it states — TDD workflow, commands, code style, design rules, commit rules — to the letter. If anything in the task conflicts with CLAUDE.md, stop and surface the conflict instead of silently choosing.
+"""
+
+[model]
+id = "opus"
+
+[plugins.superpowers]
+
+[leash]
+max_turns = 60
+timeout_secs = 7200
+max_budget_usd = 10.0
+isolation = "worktree"
+
+[auth]
+bare = false
+
+[interactive]
+enabled = true
+answer_timeout_secs = 1800
