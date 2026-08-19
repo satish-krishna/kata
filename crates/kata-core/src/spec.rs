@@ -498,10 +498,14 @@ pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
     // strings are asserted verbatim there.
     match spec.permissions.mode {
         PermissionMode::Bypass => {
-            if !spec.permissions.allow.is_empty() || !spec.permissions.deny.is_empty() {
+            if !spec.permissions.allow.is_empty()
+                || !spec.permissions.deny.is_empty()
+                || !spec.permissions.ask.is_empty()
+            {
                 errs.push(
-                    "permissions.allow/deny are only consulted under permissions.mode = \"prompt\"; \
-                     under \"bypass\" claude never asks, so the rules would be ignored"
+                    "permissions.allow/deny/ask are only consulted under permissions.mode = \
+                     \"prompt\" or \"auto\"; under \"bypass\" claude never asks, so the rules \
+                     would be ignored"
                         .into(),
                 );
             }
@@ -516,11 +520,33 @@ pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
                 );
             }
         }
-        PermissionMode::Auto => {}
+        PermissionMode::Auto => {
+            if spec.permissions.unmatched != UnmatchedPolicy::default() {
+                errs.push(
+                    "permissions.unmatched has no meaning under permissions.mode = \"auto\": \
+                     claude's classifier decides every call no rule matched. Remove it, or use \
+                     mode = \"prompt\" to route unmatched calls to the operator."
+                        .into(),
+                );
+            }
+        }
+    }
+    // ask rules pause on the operator, so someone must be there to answer. This
+    // holds under both prompt and auto; bypass already rejected them above.
+    if !spec.permissions.ask.is_empty()
+        && spec.permissions.mode != PermissionMode::Bypass
+        && !spec.interactive.enabled
+    {
+        errs.push(
+            "permissions.ask rules pause on the operator: set [interactive] enabled = true, \
+             or remove them"
+                .into(),
+        );
     }
     for (field, rules) in [
         ("permissions.allow", &spec.permissions.allow),
         ("permissions.deny", &spec.permissions.deny),
+        ("permissions.ask", &spec.permissions.ask),
     ] {
         for raw in rules {
             if crate::permission::parse_rule(raw).is_none() {
@@ -1344,6 +1370,96 @@ deny = ["Bash(rm *)"]
                 "reserved name must be rejected: {errs:?}"
             );
         }
+    }
+
+    #[test]
+    fn auto_rejects_an_explicit_unmatched_policy() {
+        let mut s = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        s.permissions.mode = PermissionMode::Auto;
+        s.permissions.unmatched = UnmatchedPolicy::Deny;
+        let errs = validate(&s).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("unmatched") && e.contains("auto")),
+            "auto must reject a set unmatched policy: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn ask_rules_require_interactive() {
+        for mode in [PermissionMode::Prompt, PermissionMode::Auto] {
+            let mut s = RunSpec {
+                schema: 1,
+                name: "n".into(),
+                task: "t".into(),
+                workdir: "/w".into(),
+                ..Default::default()
+            };
+            s.permissions.mode = mode;
+            s.permissions.unmatched = UnmatchedPolicy::Deny; // keep prompt otherwise valid
+            s.permissions.ask.push("Bash(git push *)".into());
+            s.interactive.enabled = false;
+            let errs = validate(&s).unwrap_err();
+            assert!(
+                errs.iter().any(|e| e.contains("permissions.ask")),
+                "ask rules need interactive ({mode:?}): {errs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bypass_rejects_ask_rules() {
+        let mut s = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        s.permissions.mode = PermissionMode::Bypass;
+        s.permissions.ask.push("Bash(git push *)".into());
+        let errs = validate(&s).unwrap_err();
+        assert!(errs.iter().any(|e| e.contains("ask")), "{errs:?}");
+    }
+
+    #[test]
+    fn auto_with_ask_and_interactive_is_valid() {
+        let mut s = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        s.permissions.mode = PermissionMode::Auto;
+        s.permissions.ask.push("Bash(git push *)".into());
+        s.interactive.enabled = true;
+        assert!(validate(&s).is_ok());
+    }
+
+    #[test]
+    fn malformed_ask_rule_is_rejected() {
+        let mut s = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        s.permissions.mode = PermissionMode::Auto;
+        s.interactive.enabled = true;
+        s.permissions.ask.push("Bash(unclosed".into());
+        let errs = validate(&s).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.contains("permissions.ask")),
+            "{errs:?}"
+        );
     }
 
     #[test]
