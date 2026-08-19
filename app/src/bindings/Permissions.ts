@@ -19,6 +19,13 @@ allow?: Array<string>,
  */
 deny?: Array<string>, 
 /**
+ * Rules that force the operator prompt under `mode = "prompt"` or `"auto"`.
+ * Same claude syntax as `allow`/`deny` (`Tool` or `Tool(specifier)`, `*`
+ * wildcard). A matching call is routed to Kata's `approve_tool` and pauses
+ * on the operator, so a non-empty list requires `[interactive] enabled = true`.
+ */
+ask?: Array<string>, 
+/**
  * What happens to a call no rule matched: ask the operator (the default,
  * which requires `[interactive] enabled = true`), deny it, or allow it.
  */

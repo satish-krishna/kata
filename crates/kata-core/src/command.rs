@@ -74,6 +74,16 @@ pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocati
             args.push("--permission-prompt-tool".into());
             args.push(crate::ask::PERMISSION_PROMPT_TOOL.into());
         }
+        PermissionMode::Auto => {
+            // Two flags together, deliberately: `auto` runs the classifier, and
+            // the prompt tool keeps a route for a `permissions.ask` rule to reach
+            // the operator. Drop either and the ask-rule checkpoint silently
+            // evaporates. Do not "simplify" this arm.
+            args.push("--permission-mode".into());
+            args.push("auto".into());
+            args.push("--permission-prompt-tool".into());
+            args.push(crate::ask::PERMISSION_PROMPT_TOOL.into());
+        }
     }
     // Interactive runs surface questions through Kata's `ask_user` MCP tool (wired
     // in run.rs), which crosses the ask bridge to the Workbench. Claude's built-in
@@ -439,5 +449,23 @@ mod tests {
     fn omits_max_budget_when_unset() {
         let inv = build_invocation(&spec(), &assembled_with(None, None));
         assert!(!inv.args.iter().any(|a| a == "--max-budget-usd"));
+    }
+
+    #[test]
+    fn auto_mode_emits_permission_mode_and_the_prompt_tool() {
+        let mut s = spec();
+        s.permissions.mode = PermissionMode::Auto;
+        let inv = build_invocation(&s, &assembled_with(None, None));
+        assert!(inv
+            .args
+            .windows(2)
+            .any(|w| w[0] == "--permission-mode" && w[1] == "auto"));
+        assert_eq!(
+            flag_value(&inv, "--permission-prompt-tool"),
+            Some(crate::ask::PERMISSION_PROMPT_TOOL)
+        );
+        assert!(!inv
+            .args
+            .contains(&"--dangerously-skip-permissions".to_string()));
     }
 }

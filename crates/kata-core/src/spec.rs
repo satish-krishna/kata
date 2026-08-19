@@ -249,6 +249,13 @@ pub struct Permissions {
     #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub deny: Vec<String>,
+    /// Rules that force the operator prompt under `mode = "prompt"` or `"auto"`.
+    /// Same claude syntax as `allow`/`deny` (`Tool` or `Tool(specifier)`, `*`
+    /// wildcard). A matching call is routed to Kata's `approve_tool` and pauses
+    /// on the operator, so a non-empty list requires `[interactive] enabled = true`.
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ask: Vec<String>,
     /// What happens to a call no rule matched: ask the operator (the default,
     /// which requires `[interactive] enabled = true`), deny it, or allow it.
     #[serde(default)]
@@ -272,6 +279,13 @@ pub enum PermissionMode {
     /// rules, or routed to the operator. Not a bypass: managed deny and ask
     /// rules are evaluated first and still win.
     Prompt,
+    /// Pass `--permission-mode auto` alongside `--permission-prompt-tool`.
+    /// Claude routes each call through its classifier — auto-approving routine
+    /// work, blocking the irreversible or the exfiltrating — and consults the
+    /// prompt tool only for a call a `permissions.ask` rule forces to the
+    /// operator. `permissions.deny` still blocks before the classifier, and
+    /// `unmatched` has no meaning here: the classifier is the unmatched handler.
+    Auto,
 }
 
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -502,6 +516,7 @@ pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
                 );
             }
         }
+        PermissionMode::Auto => {}
     }
     for (field, rules) in [
         ("permissions.allow", &spec.permissions.allow),
@@ -1195,6 +1210,27 @@ deny = ["Bash(rm *)"]
         let json_again: RunSpec =
             serde_json::from_str(&serde_json::to_string(&spec).unwrap()).unwrap();
         assert_eq!(spec, json_again);
+    }
+
+    #[test]
+    fn auto_mode_and_ask_rules_round_trip() {
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        spec.permissions.mode = PermissionMode::Auto;
+        spec.permissions.ask.push("Bash(git push *)".into());
+        let toml = to_toml(&spec).unwrap();
+        let back = toml::from_str::<RunSpec>(&toml).unwrap();
+        assert_eq!(back.permissions.mode, PermissionMode::Auto);
+        assert_eq!(back.permissions.ask, vec!["Bash(git push *)"]);
+        let json_back =
+            serde_json::from_str::<RunSpec>(&serde_json::to_string(&spec).unwrap()).unwrap();
+        assert_eq!(json_back.permissions.mode, PermissionMode::Auto);
+        assert_eq!(json_back.permissions.ask, vec!["Bash(git push *)"]);
     }
 
     // "ask" with nobody to ask would pause forever and then die on the answer
