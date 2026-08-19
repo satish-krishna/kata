@@ -236,7 +236,9 @@ pub struct Interactive {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Permissions {
     /// How claude's permission checks are answered: `bypass` (the default,
-    /// `--dangerously-skip-permissions`) or `prompt` (Kata's MCP tool decides).
+    /// `--dangerously-skip-permissions`), `prompt` (Kata's MCP tool decides every
+    /// call), or `auto` (claude's own classifier decides, with Kata's MCP tool
+    /// consulted only for a call an `ask` rule forces to the operator).
     #[serde(default)]
     pub mode: PermissionMode,
     /// Rules auto-allowed under `mode = "prompt"`. Claude rule syntax: `Tool` or
@@ -449,13 +451,14 @@ pub fn starter_toml(schema_directive: &str) -> String {
          # enabled = true\n\
          \n\
          [permissions]\n\
-         # \"bypass\" (default) passes --dangerously-skip-permissions. Switch to\n\
-         # \"prompt\" if managed settings forbid bypass, then say what happens to a\n\
-         # call no rule matched: \"deny\" headless, or \"ask\" with interactive on.\n\
-         # mode = \"prompt\"\n\
-         # unmatched = \"deny\"\n\
-         # allow = [\"Read\", \"Grep\", \"Bash(git *)\"]\n\
-         # deny = [\"Bash(rm *)\"]\n"
+         # \"bypass\" (default) passes --dangerously-skip-permissions. \"prompt\"\n\
+         # writes allow/deny into claude's settings and routes unmatched calls\n\
+         # to you (unmatched = \"deny\"/\"ask\"). \"auto\" runs claude's classifier —\n\
+         # routine work auto-approved, destructive or external calls blocked —\n\
+         # with deny as a hard block and ask rules pausing on you.\n\
+         # mode = \"auto\"\n\
+         # deny = [\"Bash(rm *)\"]\n\
+         # ask = [\"Bash(git push *)\"]  # needs [interactive] enabled = true\n"
     )
 }
 

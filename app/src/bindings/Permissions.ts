@@ -5,7 +5,9 @@ import type { UnmatchedPolicy } from "./UnmatchedPolicy";
 export type Permissions = { 
 /**
  * How claude's permission checks are answered: `bypass` (the default,
- * `--dangerously-skip-permissions`) or `prompt` (Kata's MCP tool decides).
+ * `--dangerously-skip-permissions`), `prompt` (Kata's MCP tool decides every
+ * call), or `auto` (claude's own classifier decides, with Kata's MCP tool
+ * consulted only for a call an `ask` rule forces to the operator).
  */
 mode: PermissionMode, 
 /**

@@ -175,7 +175,7 @@
         "mode": {
           "$ref": "#/$defs/PermissionMode",
           "default": "bypass",
-          "description": "How claude's permission checks are answered: `bypass` (the default,\n`--dangerously-skip-permissions`) or `prompt` (Kata's MCP tool decides)."
+          "description": "How claude's permission checks are answered: `bypass` (the default,\n`--dangerously-skip-permissions`), `prompt` (Kata's MCP tool decides every\ncall), or `auto` (claude's own classifier decides, with Kata's MCP tool\nconsulted only for a call an `ask` rule forces to the operator)."
         },
         "unmatched": {
           "$ref": "#/$defs/UnmatchedPolicy",
