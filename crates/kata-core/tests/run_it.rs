@@ -1323,3 +1323,54 @@ fn auto_mode_writes_ask_rules_into_the_settings_file() {
     });
     assert_eq!(actual, expected);
 }
+
+#[test]
+#[serial]
+fn auto_mode_routes_a_reaching_call_to_the_operator() {
+    with_fake("approve");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.permissions.mode = kata_core::spec::PermissionMode::Auto;
+    spec.interactive.enabled = true;
+    spec.permissions.ask.push("Bash(*)".into());
+    // Deny is what `unmatched` would do under prompt. Under auto the decision
+    // path must IGNORE unmatched and route to the operator anyway. This is the
+    // fail-first lever: before the auto branch exists, this call is auto-denied
+    // by the unmatched match (decided_by = "unmatched-policy", allow = false);
+    // after, it pauses on the operator. `validate` rejects this combo, but
+    // `run()` does not call `validate`, so the decision path is exercised directly.
+    spec.permissions.unmatched = kata_core::spec::UnmatchedPolicy::Deny;
+    let cancel = CancelToken::new();
+    let (decision_tx, decisions) = kata_core::run::decision_channel();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let tx = decision_tx.clone();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        &decisions,
+        |e| {
+            if let KataEvent::PermissionRequested { id, .. } = &e {
+                tx.send(kata_core::run::Decision {
+                    id: id.clone(),
+                    allow: true,
+                    message: None,
+                })
+                .unwrap();
+            }
+            events.push(e);
+        },
+    )
+    .unwrap();
+    assert_eq!(outcome.exit_code, 0);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, KataEvent::PermissionRequested { .. })),
+        "under auto, a call reaching approve_tool must pause on the operator"
+    );
+    let (allow, by, _msg) = decision(&events);
+    assert!(allow);
+    assert_eq!(by, "operator");
+}

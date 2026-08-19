@@ -553,6 +553,14 @@ pub fn run<F: FnMut(KataEvent)>(
                             // does not negotiate with itself over them.
                             let settled = if crate::event::is_bridge_tool(&tool) {
                                 Some((true, "engine", None))
+                            } else if spec.permissions.mode == PermissionMode::Auto {
+                                // Under auto a call only reaches this tool because
+                                // a `permissions.ask` rule matched it — an explicit
+                                // request for the operator. Route it there; the
+                                // classifier already handled everything unruled, so
+                                // `unmatched` does not apply. `validate` guarantees
+                                // interactive is on when ask rules exist.
+                                None
                             } else {
                                 // The spec's allow/deny rules never reach here:
                                 // claude enforced them from the generated
