@@ -521,10 +521,14 @@ pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
             }
         }
         PermissionMode::Auto => {
-            // Under auto mode, the decision logic ignores the unmatched policy:
-            // a call reaching approve_tool must have matched an ask rule, so it
-            // always routes to the operator. The unmatched policy is not enforced,
-            // but it is allowed to be set (it simply does nothing).
+            if spec.permissions.unmatched != UnmatchedPolicy::default() {
+                errs.push(
+                    "permissions.unmatched has no meaning under permissions.mode = \"auto\": \
+                     claude's classifier decides every call no rule matched. Remove it, or use \
+                     mode = \"prompt\" to route unmatched calls to the operator."
+                        .into(),
+                );
+            }
         }
     }
     // ask rules pause on the operator, so someone must be there to answer. This
@@ -1369,7 +1373,7 @@ deny = ["Bash(rm *)"]
     }
 
     #[test]
-    fn auto_allows_an_explicit_unmatched_policy() {
+    fn auto_rejects_an_explicit_unmatched_policy() {
         let mut s = RunSpec {
             schema: 1,
             name: "n".into(),
@@ -1378,14 +1382,13 @@ deny = ["Bash(rm *)"]
             ..Default::default()
         };
         s.permissions.mode = PermissionMode::Auto;
-        s.interactive.enabled = true;
-        s.permissions.ask.push("Bash(*)".into());
         s.permissions.unmatched = UnmatchedPolicy::Deny;
-        // Under auto mode, the decision logic ignores the unmatched policy:
-        // a call reaching approve_tool must have matched an ask rule, so it
-        // always routes to the operator. The unmatched policy is allowed to be set
-        // (it simply does nothing). So validation should pass.
-        validate(&s).expect("auto mode should allow an explicit unmatched policy");
+        let errs = validate(&s).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("unmatched") && e.contains("auto")),
+            "auto must reject a set unmatched policy: {errs:?}"
+        );
     }
 
     #[test]

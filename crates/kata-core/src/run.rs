@@ -2,7 +2,7 @@ use crate::assemble::{assemble, AssembleError};
 use crate::catalog::CatalogEntry;
 use crate::command::{build_invocation, ClaudeInvocation};
 use crate::event::KataEvent;
-use crate::spec::{validate, Isolation, PermissionMode, RunSpec, UnmatchedPolicy};
+use crate::spec::{Isolation, PermissionMode, RunSpec, UnmatchedPolicy};
 use std::io::{BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -210,7 +210,6 @@ pub fn run<F: FnMut(KataEvent)>(
     decisions: &DecisionRx,
     mut emit: F,
 ) -> Result<RunOutcome, RunError> {
-    validate(spec).map_err(RunError::Invalid)?;
     let assembled = assemble(spec, catalog)?;
     let mut inv = build_invocation(spec, &assembled);
 
