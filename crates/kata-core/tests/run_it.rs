@@ -1277,10 +1277,49 @@ fn prompt_mode_writes_a_settings_file_with_the_spec_rules_verbatim() {
         "permissions": {
             "allow": ["Bash(git *)", "Read(*)"],
             "deny": ["Bash(rm *)"],
+            "ask": [],
         }
     });
     assert_eq!(
         actual, expected,
         "settings file content must be exactly the spec's rule arrays, verbatim"
     );
+}
+
+#[test]
+#[serial]
+fn auto_mode_writes_ask_rules_into_the_settings_file() {
+    with_fake("settingsecho");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.permissions.mode = kata_core::spec::PermissionMode::Auto;
+    spec.interactive.enabled = true;
+    spec.permissions.deny.push("Bash(rm *)".into());
+    spec.permissions.ask.push("Bash(git push *)".into());
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
+    assert_eq!(outcome.exit_code, 0);
+    let text = assistant_texts(&events)
+        .into_iter()
+        .find(|t| t.starts_with("SETTINGS "))
+        .expect("auto mode must write a --settings file");
+    let actual: serde_json::Value =
+        serde_json::from_str(text.trim_start_matches("SETTINGS ")).unwrap();
+    let expected = serde_json::json!({
+        "permissions": {
+            "allow": [],
+            "deny": ["Bash(rm *)"],
+            "ask": ["Bash(git push *)"],
+        }
+    });
+    assert_eq!(actual, expected);
 }

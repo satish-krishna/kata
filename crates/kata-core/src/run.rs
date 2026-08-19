@@ -266,16 +266,19 @@ pub fn run<F: FnMut(KataEvent)>(
     }
 
     // Two spec sections need Kata's own MCP server in the child: `[interactive]`
-    // for the `ask_user` tool, and `[permissions] mode = "prompt"` for the
+    // for the `ask_user` tool, and `[permissions] mode = "prompt"` or "auto" for the
     // `approve_tool` handler behind `--permission-prompt-tool`. Either one binds
     // the bridge and generates one mcp-config; the tool set advertised is
     // exactly what was asked for. The temp dir holds that config and, when there
     // is no identity append file to fold into, the retask note file (see
     // `append_interactive_retask`); it lives until after the child exits.
-    let prompt_permissions = spec.permissions.mode == PermissionMode::Prompt;
+    let permissions_bridge = matches!(
+        spec.permissions.mode,
+        PermissionMode::Prompt | PermissionMode::Auto
+    );
     let tools = crate::ask::Tools {
         ask_user: spec.interactive.enabled,
-        approve_tool: prompt_permissions,
+        approve_tool: permissions_bridge,
     };
     let mut interactive_tmp: Option<tempfile::TempDir> = None;
     let mut bridge_rx: Option<mpsc::Receiver<crate::ask::Request>> = None;
@@ -324,7 +327,7 @@ pub fn run<F: FnMut(KataEvent)>(
         interactive_tmp = Some(dir);
     }
 
-    // Under prompt mode the spec's rules are authored into a settings file and
+    // Under prompt and auto modes the spec's rules are authored into a settings file and
     // enforced by claude itself. They are deliberately NOT matched engine-side:
     // claude resolves a call against these *before* it would consult the prompt
     // tool, so a rule written here reaches every call — including the read-only
@@ -336,13 +339,14 @@ pub fn run<F: FnMut(KataEvent)>(
     // reaches `approve_tool`, where the `unmatched` policy decides or the
     // operator does.
     let mut settings_tmp: Option<tempfile::TempDir> = None;
-    if prompt_permissions {
+    if permissions_bridge {
         let dir = tempfile::tempdir().map_err(|e| RunError::Spawn(e.to_string()))?;
         let path = dir.path().join("settings.json");
         let body = serde_json::json!({
             "permissions": {
                 "allow": spec.permissions.allow,
                 "deny": spec.permissions.deny,
+                "ask": spec.permissions.ask,
             }
         })
         .to_string();
