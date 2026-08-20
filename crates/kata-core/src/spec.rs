@@ -241,12 +241,14 @@ pub struct Permissions {
     /// consulted only for a call an `ask` rule forces to the operator).
     #[serde(default)]
     pub mode: PermissionMode,
-    /// Rules auto-allowed under `mode = "prompt"`. Claude rule syntax: `Tool` or
+    /// Rules auto-allowed under `mode = "prompt"` or `"auto"` (claude enforces
+    /// them before its own classifier ever runs). Claude rule syntax: `Tool` or
     /// `Tool(specifier)`, with `*` as a wildcard — e.g. `Bash(git *)`.
     #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allow: Vec<String>,
-    /// Rules auto-denied under `mode = "prompt"`. Evaluated before `allow`, so a
+    /// Rules auto-denied under `mode = "prompt"` or `"auto"` (claude enforces
+    /// them before its own classifier ever runs). Evaluated before `allow`, so a
     /// deny cannot be re-opened by a broader allow.
     #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

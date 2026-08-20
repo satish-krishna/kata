@@ -152,7 +152,7 @@
     "Permissions": {
       "properties": {
         "allow": {
-          "description": "Rules auto-allowed under `mode = \"prompt\"`. Claude rule syntax: `Tool` or\n`Tool(specifier)`, with `*` as a wildcard — e.g. `Bash(git *)`.",
+          "description": "Rules auto-allowed under `mode = \"prompt\"` or `\"auto\"` (claude enforces\nthem before its own classifier ever runs). Claude rule syntax: `Tool` or\n`Tool(specifier)`, with `*` as a wildcard — e.g. `Bash(git *)`.",
           "items": {
             "type": "string"
           },
@@ -166,7 +166,7 @@
           "type": "array"
         },
         "deny": {
-          "description": "Rules auto-denied under `mode = \"prompt\"`. Evaluated before `allow`, so a\ndeny cannot be re-opened by a broader allow.",
+          "description": "Rules auto-denied under `mode = \"prompt\"` or `\"auto\"` (claude enforces\nthem before its own classifier ever runs). Evaluated before `allow`, so a\ndeny cannot be re-opened by a broader allow.",
           "items": {
             "type": "string"
           },
