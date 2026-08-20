@@ -127,17 +127,35 @@ export function validateLocal(spec: RunSpec): string[] {
   const p = spec.permissions;
   const allow = p.allow ?? [];
   const deny = p.deny ?? [];
+  const ask = p.ask ?? [];
   if (p.mode === "bypass") {
-    if (allow.length > 0 || deny.length > 0) {
+    if (allow.length > 0 || deny.length > 0 || ask.length > 0) {
       errs.push(
-        'permissions.allow/deny are only consulted under permissions.mode = "prompt"; ' +
+        'permissions.allow/deny/ask are only consulted under permissions.mode = "prompt" or "auto"; ' +
           'under "bypass" claude never asks, so the rules would be ignored',
       );
     }
-  } else if (p.unmatched === "ask" && !spec.interactive.enabled) {
+  } else if (p.mode === "prompt") {
+    if (p.unmatched === "ask" && !spec.interactive.enabled) {
+      errs.push(
+        'permissions.unmatched = "ask" needs an operator to ask: set [interactive] enabled = true, ' +
+          'or choose unmatched = "deny" / "allow" for a headless run',
+      );
+    }
+  } else if (p.mode === "auto") {
+    if (p.unmatched && p.unmatched !== "ask") {
+      errs.push(
+        'permissions.unmatched has no meaning under permissions.mode = "auto": ' +
+          "claude's classifier decides every call no rule matched. Remove it, or use " +
+          'mode = "prompt" to route unmatched calls to the operator.',
+      );
+    }
+  }
+  // ask rules pause on the operator, so someone must be there to answer. This
+  // holds under both prompt and auto; bypass already rejected them above.
+  if (ask.length > 0 && p.mode !== "bypass" && !spec.interactive.enabled) {
     errs.push(
-      'permissions.unmatched = "ask" needs an operator to ask: set [interactive] enabled = true, ' +
-        'or choose unmatched = "deny" / "allow" for a headless run',
+      "permissions.ask rules pause on the operator: set [interactive] enabled = true, or remove them",
     );
   }
   // Rule shape is checked unconditionally, as in the engine: a malformed rule
@@ -145,6 +163,7 @@ export function validateLocal(spec: RunSpec): string[] {
   for (const [field, rules] of [
     ["permissions.allow", allow],
     ["permissions.deny", deny],
+    ["permissions.ask", ask],
   ] as const) {
     for (const raw of rules) {
       if (!ruleIsWellFormed(raw)) {

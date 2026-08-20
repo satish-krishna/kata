@@ -20,7 +20,7 @@ describe("validateLocal — permission coherence", () => {
     const s = runnableSpec();
     s.permissions.allow = ["Read"];
     expect(validateLocal(s)).toContain(
-      'permissions.allow/deny are only consulted under permissions.mode = "prompt"; under "bypass" claude never asks, so the rules would be ignored',
+      'permissions.allow/deny/ask are only consulted under permissions.mode = "prompt" or "auto"; under "bypass" claude never asks, so the rules would be ignored',
     );
   });
 
@@ -71,5 +71,27 @@ describe("validateLocal — permission coherence", () => {
     expect(validateLocal(s)).toContain(
       "permissions.deny has a malformed rule 'Bash(unclosed'; expected 'Tool' or 'Tool(specifier)'",
     );
+  });
+
+  it("rejects ask rules under bypass", () => {
+    const s = runnableSpec();
+    s.permissions.mode = "bypass";
+    s.permissions.ask = ["Bash(git push *)"];
+    expect(validateLocal(s).some((e) => e.includes("ask"))).toBe(true);
+  });
+
+  it("rejects an explicit unmatched under auto", () => {
+    const s = runnableSpec();
+    s.permissions.mode = "auto";
+    s.permissions.unmatched = "deny";
+    expect(validateLocal(s).some((e) => e.includes("auto"))).toBe(true);
+  });
+
+  it("requires interactive for ask rules under auto", () => {
+    const s = runnableSpec();
+    s.interactive.enabled = false;
+    s.permissions.mode = "auto";
+    s.permissions.ask = ["Bash(git push *)"];
+    expect(validateLocal(s).some((e) => e.includes("permissions.ask"))).toBe(true);
   });
 });

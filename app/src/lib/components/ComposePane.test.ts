@@ -138,3 +138,45 @@ describe("ComposePane permissions — the ask/interactive warning", () => {
     expect(screen.queryByText(ASK_WARNING)).toBeNull();
   });
 });
+
+describe("ComposePane permissions — auto mode", () => {
+  it("offers auto as a third permission mode", () => {
+    renderSpec();
+    expect(screen.getByRole("radio", { name: "auto" })).toBeInTheDocument();
+  });
+
+  it("shows the ask editor under prompt", async () => {
+    renderSpec();
+    await fireEvent.click(screen.getByRole("radio", { name: "prompt" }));
+    expect(screen.getByText("permissions.ask")).toBeInTheDocument();
+  });
+
+  it("shows the ask editor under auto", async () => {
+    renderSpec();
+    await fireEvent.click(screen.getByRole("radio", { name: "auto" }));
+    expect(screen.getByText("permissions.ask")).toBeInTheDocument();
+  });
+
+  it("hides the unmatched field under auto and shows it under prompt", async () => {
+    renderSpec();
+    await fireEvent.click(screen.getByRole("radio", { name: "auto" }));
+    expect(screen.queryByText("permissions.unmatched")).toBeNull();
+
+    await fireEvent.click(screen.getByRole("radio", { name: "prompt" }));
+    expect(screen.getByText("permissions.unmatched")).toBeInTheDocument();
+  });
+
+  it("clears allow, deny, and ask when switching to bypass", async () => {
+    const spec = renderSpec((s) => {
+      s.permissions.mode = "prompt";
+      s.permissions.allow = ["Read"];
+      s.permissions.deny = ["Bash(rm *)"];
+      s.permissions.ask = ["Bash(git push *)"];
+    });
+    await fireEvent.click(screen.getByRole("radio", { name: "bypass" }));
+    expect(spec.permissions.mode).toBe("bypass");
+    expect(spec.permissions.allow).toEqual([]);
+    expect(spec.permissions.deny).toEqual([]);
+    expect(spec.permissions.ask).toEqual([]);
+  });
+});

@@ -141,6 +141,11 @@
           "const": "prompt",
           "description": "Pass `--permission-prompt-tool`, pointing claude at Kata's own MCP tool.\nEvery check claude would have put to a human is decided by the spec's\nrules, or routed to the operator. Not a bypass: managed deny and ask\nrules are evaluated first and still win.",
           "type": "string"
+        },
+        {
+          "const": "auto",
+          "description": "Pass `--permission-mode auto` alongside `--permission-prompt-tool`.\nClaude routes each call through its classifier — auto-approving routine\nwork, blocking the irreversible or the exfiltrating — and consults the\nprompt tool only for a call a `permissions.ask` rule forces to the\noperator. `permissions.deny` still blocks before the classifier, and\n`unmatched` has no meaning here: the classifier is the unmatched handler.",
+          "type": "string"
         }
       ]
     },
@@ -148,6 +153,13 @@
       "properties": {
         "allow": {
           "description": "Rules auto-allowed under `mode = \"prompt\"`. Claude rule syntax: `Tool` or\n`Tool(specifier)`, with `*` as a wildcard — e.g. `Bash(git *)`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ask": {
+          "description": "Rules that force the operator prompt under `mode = \"prompt\"` or `\"auto\"`.\nSame claude syntax as `allow`/`deny` (`Tool` or `Tool(specifier)`, `*`\nwildcard). A matching call is routed to Kata's `approve_tool` and pauses\non the operator, so a non-empty list requires `[interactive] enabled = true`.",
           "items": {
             "type": "string"
           },
@@ -163,7 +175,7 @@
         "mode": {
           "$ref": "#/$defs/PermissionMode",
           "default": "bypass",
-          "description": "How claude's permission checks are answered: `bypass` (the default,\n`--dangerously-skip-permissions`) or `prompt` (Kata's MCP tool decides)."
+          "description": "How claude's permission checks are answered: `bypass` (the default,\n`--dangerously-skip-permissions`), `prompt` (Kata's MCP tool decides every\ncall), or `auto` (claude's own classifier decides, with Kata's MCP tool\nconsulted only for a call an `ask` rule forces to the operator)."
         },
         "unmatched": {
           "$ref": "#/$defs/UnmatchedPolicy",

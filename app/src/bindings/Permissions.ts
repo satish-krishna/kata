@@ -5,7 +5,9 @@ import type { UnmatchedPolicy } from "./UnmatchedPolicy";
 export type Permissions = { 
 /**
  * How claude's permission checks are answered: `bypass` (the default,
- * `--dangerously-skip-permissions`) or `prompt` (Kata's MCP tool decides).
+ * `--dangerously-skip-permissions`), `prompt` (Kata's MCP tool decides every
+ * call), or `auto` (claude's own classifier decides, with Kata's MCP tool
+ * consulted only for a call an `ask` rule forces to the operator).
  */
 mode: PermissionMode, 
 /**
@@ -18,6 +20,13 @@ allow?: Array<string>,
  * deny cannot be re-opened by a broader allow.
  */
 deny?: Array<string>, 
+/**
+ * Rules that force the operator prompt under `mode = "prompt"` or `"auto"`.
+ * Same claude syntax as `allow`/`deny` (`Tool` or `Tool(specifier)`, `*`
+ * wildcard). A matching call is routed to Kata's `approve_tool` and pauses
+ * on the operator, so a non-empty list requires `[interactive] enabled = true`.
+ */
+ask?: Array<string>, 
 /**
  * What happens to a call no rule matched: ask the operator (the default,
  * which requires `[interactive] enabled = true`), deny it, or allow it.
