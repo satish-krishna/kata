@@ -3,7 +3,9 @@
 export type Interactive = { 
 /**
  * Opt-in gate. When false, the engine never wires the ask_user tool, so
- * claude cannot pause — behaviour is identical to a non-interactive run.
+ * claude has no way to pause on the operator. Claude's built-in
+ * AskUserQuestion is disallowed on every run regardless (it terminates a
+ * headless session), so a non-interactive run must decide for itself.
  */
 enabled: boolean, 
 /**

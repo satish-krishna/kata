@@ -220,7 +220,9 @@ fn default_bare() -> bool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Interactive {
     /// Opt-in gate. When false, the engine never wires the ask_user tool, so
-    /// claude cannot pause — behaviour is identical to a non-interactive run.
+    /// claude has no way to pause on the operator. Claude's built-in
+    /// AskUserQuestion is disallowed on every run regardless (it terminates a
+    /// headless session), so a non-interactive run must decide for itself.
     #[serde(default)]
     pub enabled: bool,
     /// How long the engine waits on the operator's answer before reaping the run

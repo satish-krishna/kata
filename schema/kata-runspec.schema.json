@@ -61,7 +61,7 @@
         },
         "enabled": {
           "default": false,
-          "description": "Opt-in gate. When false, the engine never wires the ask_user tool, so\nclaude cannot pause — behaviour is identical to a non-interactive run.",
+          "description": "Opt-in gate. When false, the engine never wires the ask_user tool, so\nclaude has no way to pause on the operator. Claude's built-in\nAskUserQuestion is disallowed on every run regardless (it terminates a\nheadless session), so a non-interactive run must decide for itself.",
           "type": "boolean"
         }
       },

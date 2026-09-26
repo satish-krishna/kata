@@ -85,14 +85,17 @@ pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocati
             args.push(crate::ask::PERMISSION_PROMPT_TOOL.into());
         }
     }
-    // Interactive runs surface questions through Kata's `ask_user` MCP tool (wired
-    // in run.rs), which crosses the ask bridge to the Workbench. Claude's built-in
-    // AskUserQuestion would bypass that bridge entirely, so take it away — otherwise
-    // claude prefers the salient built-in and the AskPanel never appears.
-    if spec.interactive.enabled {
-        args.push("--disallowedTools".into());
-        args.push("AskUserQuestion".into());
-    }
+    // Claude's built-in AskUserQuestion is taken away on EVERY run, whatever the
+    // permission mode and whether or not the run is interactive. Under `claude -p`
+    // there is no UI to answer it, so calling it terminates the session outright —
+    // and neither `bypass` nor `auto` stops claude from asking: permission mode
+    // governs tool approval, not whether the model wants to ask a question. The
+    // only channel that reaches an operator is Kata's `ask_user` MCP tool (wired in
+    // run.rs when `[interactive] enabled = true`); in a non-interactive run there is
+    // no channel at all, and a missing tool is recoverable where a dead session is
+    // not. Do not gate this on `interactive` again.
+    args.push("--disallowedTools".into());
+    args.push("AskUserQuestion".into());
     // NOTE: claude 2.1.x has NO --max-turns flag; the turn cap is enforced
     // engine-side in run.rs (kill the child when turns exceed leash.max_turns).
 
@@ -354,24 +357,30 @@ mod tests {
         std::env::remove_var("KATA_TEST_TOKEN");
     }
 
+    // The built-in AskUserQuestion kills a headless `claude -p` session, and no
+    // permission mode stops claude from reaching for it. So it is disallowed in
+    // every combination of mode and interactivity — not just interactive runs.
     #[test]
-    fn interactive_disallows_the_builtin_ask_tool() {
-        let mut s = spec();
-        s.interactive.enabled = true;
-        let inv = build_invocation(&s, &assembled_with(None, None));
-        assert!(
-            inv.args
-                .windows(2)
-                .any(|w| w[0] == "--disallowedTools" && w[1] == "AskUserQuestion"),
-            "interactive runs must disallow the built-in AskUserQuestion; got {:?}",
-            inv.args
-        );
-    }
-
-    #[test]
-    fn non_interactive_keeps_the_builtin_tools() {
-        let inv = build_invocation(&spec(), &assembled_with(None, None));
-        assert!(!inv.args.iter().any(|a| a == "--disallowedTools"));
+    fn every_run_disallows_the_builtin_ask_tool() {
+        for mode in [
+            PermissionMode::Bypass,
+            PermissionMode::Prompt,
+            PermissionMode::Auto,
+        ] {
+            for interactive in [false, true] {
+                let mut s = spec();
+                s.permissions.mode = mode;
+                s.interactive.enabled = interactive;
+                let inv = build_invocation(&s, &assembled_with(None, None));
+                assert!(
+                    inv.args
+                        .windows(2)
+                        .any(|w| w[0] == "--disallowedTools" && w[1] == "AskUserQuestion"),
+                    "{mode:?}/interactive={interactive} must disallow AskUserQuestion; got {:?}",
+                    inv.args
+                );
+            }
+        }
     }
 
     #[test]

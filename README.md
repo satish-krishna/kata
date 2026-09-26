@@ -174,7 +174,9 @@ enabled             = true   # default false — the opt-in gate
 answer_timeout_secs = 600    # optional; omit to wait until answered or cancelled
 ```
 
-When `enabled`, the engine wires a Kata-hosted `ask_user` MCP tool and appends a retasking note so claude knows to call it at consequential forks. claude calls the tool and blocks; the engine surfaces the question(s) and waits for an answer. When `enabled` is false (the default), `ask_user` is never offered — the headless contract is preserved exactly and every existing spec, CI run, and Shokunin job is unchanged.
+When `enabled`, the engine wires a Kata-hosted `ask_user` MCP tool and appends a retasking note so claude knows to call it at consequential forks. claude calls the tool and blocks; the engine surfaces the question(s) and waits for an answer. When `enabled` is false (the default), `ask_user` is never offered and no retasking note is appended.
+
+Independently of `enabled` and of `[permissions] mode`, every run passes `--disallowedTools AskUserQuestion`. Permission mode governs tool *approval*, not whether the model wants to ask a question — under `bypass` or `auto` claude still reaches for its built-in question tool at a fork, and under `claude -p` there is no UI to answer it, so the call terminates the session outright. Taking the tool away turns that fatal call into a recoverable one: in a non-interactive run claude has to decide for itself; in an interactive run `ask_user` is the only way to ask.
 
 **Question kinds** (four, via three `kind` values):
 
