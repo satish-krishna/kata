@@ -79,7 +79,7 @@ Every event is a JSON object with a `type` field. Fields below are exactly as se
 | `tool.use` | `name`, `input_summary` | The agent invoked a tool. |
 | `tool.result` | `name`, `ok`, `summary` | A tool returned. `ok` is false on tool error. |
 | `turn` | `n` | The nth assistant turn began (the turn counter the `max_turns` leash counts). |
-| `ask.requested` | `id`, `questions[]` | The agent is paused, asking the operator. Interactive runs only. See [Interactive](#interactive-runs). |
+| `ask.requested` | `id`, `questions[]` | The agent is paused, asking the operator. Any run. See [Interactive](#interactive-runs). |
 | `ask.answered` | `id`, `answers[][]` | The operator's answer was delivered (echo, for your transcript). |
 | `permission.requested` | `id`, `tool`, `input_summary` | A tool call is paused on the operator's decision. Prompt-mode runs only. See [Permissions](#permission-prompting). |
 | `permission.decided` | `id`, `tool`, `input_summary`, `allow`, `decided_by`, `message?` | How a permission check was resolved. Emitted only for a check that reaches Kata's own tool — the `unmatched` policy or the operator. A call claude's own settings (or its built-in read-only auto-approve) resolved is never seen by Kata and gets no event at all — this is **not** a complete audit trail of every permission check. |
@@ -88,7 +88,7 @@ Every event is a JSON object with a `type` field. Fields below are exactly as se
 | `run.error` | `message`, `exit_code`, `cost_usd?`, `duration_ms` | Terminal: the run was stopped by the leash or failed. |
 | `run.cancelled` | `exit_code`, `cost_usd?`, `duration_ms` | Terminal: the run was cancelled. |
 
-Exactly one terminal event (`run.completed` / `run.error` / `run.cancelled`) ends every stream. `ask.*` events appear only when the spec sets `[interactive] enabled = true`; `permission.*` events only when it sets `[permissions] mode = "prompt"`.
+Exactly one terminal event (`run.completed` / `run.error` / `run.cancelled`) ends every stream. `ask.*` events may appear on any run; `permission.*` events only when it sets `[permissions] mode = "prompt"` or `"auto"`.
 
 ### The changeset (run.diff)
 
@@ -131,7 +131,7 @@ The process exit code is the leash outcome, and part of the contract — CI and 
 
 ## Interactive runs
 
-When the spec sets `[interactive] enabled = true`, the agent gets an `ask_user` tool and can pause at a genuine decision fork. **You do not implement anything MCP-related** — Kata owns the `ask_user` tool, its schema, the server, and the bridge. Your only job is to render the question and send back an answer.
+Every run — interactive or not, in any permission mode — gives the agent an `ask_user` tool, so any run can pause at a genuine decision fork. There is no automatic answer: **handle `ask.requested` on every run**, or close the engine's stdin so an unanswerable question ends the run with exit 123 instead of waiting. (`[interactive] enabled` only decides whether permission checks may pause too.) **You do not implement anything MCP-related** — Kata owns the `ask_user` tool, its schema, the server, and the bridge. Your only job is to render the question and send back an answer.
 
 The loop:
 
@@ -245,7 +245,7 @@ Kata's own bridge tools (`ask_user`, `approve_tool`) are exempt and never consul
 
 Most Rust consumers link `kata-core` for **only** the pure operations — `validate`, `catalog`, `load`/`save` specs, `bundle` — and still spawn the `kata` binary to run (that is exactly what the Workbench backend does). Those helpers are the everyday reason to depend on the crate.
 
-Running in-process — calling `run()` from your own binary instead of spawning `kata` — is a **narrow escape hatch, not the recommended path.** It exists for one shape of consumer: a concurrent orchestrator that drives many runs inside a single process and wants to avoid a `kata` child per run. If that is not you, spawn the binary and skip to the caveat below. Whatever you do, `run()` in your own binary **cannot do interactive runs** — see [Why interactive is binary-only](#why-interactive-is-binary-only-by-design).
+Running in-process — calling `run()` from your own binary instead of spawning `kata` — is a **narrow escape hatch, not the recommended path.** It exists for one shape of consumer: a concurrent orchestrator that drives many runs inside a single process and wants to avoid a `kata` child per run. If that is not you, spawn the binary and skip to the caveat below. Whatever you do, `run()` in your own binary needs that binary to serve `mcp-ask`, because every run wires the `ask_user` tool — see [Why interactive is binary-only](#why-interactive-is-binary-only-by-design).
 
 Until Kata is published to a registry, use a git dependency:
 
@@ -277,7 +277,8 @@ let catalog = kata_core::catalog::discover(
 
 // Call cancel.cancel() from another thread to stop the run.
 let cancel = CancelToken::new();
-// Keep the sender to answer interactive questions; drop it for non-interactive runs.
+// Keep the sender to answer questions — any run can ask. Dropping it means a
+// question ends the run with exit 123.
 let (answer_tx, answers) = answer_channel();
 
 let outcome = run(&spec, &catalog, &cancel, &answers, |event| match event {
@@ -300,9 +301,9 @@ The `AskRequested` arm here is a placeholder that answers every question with `"
 
 Interactivity is packaged *inside* Kata — the `ask_user` tool, its schema, the MCP server, and the localhost bridge all live in `kata-core` and never leave the `kata` process. A consumer never touches anything MCP-related; it only renders `ask.requested` and writes `answer` back (see [Interactive runs](#interactive-runs)). That is the point: the MCP is invisible, and the app owns the UI layer.
 
-The mechanism is also why in-process interactive does not work, and is not meant to. When a run goes interactive, the engine tells `claude` to launch the MCP server as `<current exe> mcp-ask`. In the `kata` binary, "current exe" is `kata`, which has that hidden subcommand. Link `run()` into *your* binary and "current exe" is *your* binary — which has no `mcp-ask` — so the server never starts. This is a guardrail, not a gap: the single execution path for a *run* is the binary, and interactive runs are the sharpest case of it.
+The mechanism is also why in-process runs do not work out of the box, and are not meant to. Every run tells `claude` to launch the MCP server as `<current exe> mcp-ask`. In the `kata` binary, "current exe" is `kata`, which has that hidden subcommand. Link `run()` into *your* binary and "current exe" is *your* binary — which has no `mcp-ask` — so the server never starts. This is a guardrail, not a gap: the single execution path for a *run* is the binary, and interactive runs are the sharpest case of it.
 
-**So: for interactive runs, spawn the `kata` binary.** Link the crate for the pure operations and, if you are that concurrent orchestrator, for non-interactive `run()`; spawn the `kata` process the moment you need a human in the loop. (Serving `mcp-ask` from your own `main` is technically possible but re-execs your process into a JSON-RPC server on stdout — a real footgun for any non-trivial `main` — and is rarely worth it.)
+**So: to run a spec, spawn the `kata` binary.** Link the crate for the pure operations. If you are that concurrent orchestrator and must call `run()` in-process, your `main` has to dispatch an `mcp-ask` first argument to `kata_core::ask::serve_stdio()` before doing anything else — it re-execs your process into a JSON-RPC server on stdout, a real footgun for any non-trivial `main`. Without it claude cannot start the server, and the run has no way to ask its operator anything.
 
 ---
 

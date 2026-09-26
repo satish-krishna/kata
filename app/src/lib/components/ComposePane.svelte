@@ -261,7 +261,14 @@
       <span class="wb-section__title">Interactive</span>
       <span class="wb-section__sub">pause for operator input</span>
     </div>
-    <Field label="Mode" key="interactive.enabled">
+    <!-- Questions reach the operator on every run: ask_user is always wired, so
+         the timeout applies whatever this toggle says. The toggle only lets
+         permission checks pause on the operator too. -->
+    <Field
+      label="Mode"
+      key="interactive.enabled"
+      hint="claude can ask you a question on any run; on also lets permission checks (ask rules, unmatched = ask) pause on you."
+    >
       <Segmented
         options={["off", "on"] as const}
         value={spec.interactive.enabled ? "on" : "off"}
@@ -269,19 +276,17 @@
         ariaLabel="Interactive mode"
       />
     </Field>
-    {#if spec.interactive.enabled}
-      <Field label="Answer timeout" key="answer_timeout_secs" hint="seconds to wait on your answer; blank = wait indefinitely">
-        <input
-          class="k-input"
-          type="number"
-          min="0"
-          step="1"
-          placeholder="(none)"
-          value={spec.interactive.answer_timeout_secs ?? ""}
-          oninput={onAnswerTimeout}
-        />
-      </Field>
-    {/if}
+    <Field label="Answer timeout" key="answer_timeout_secs" hint="seconds to wait on your answer, on any run; blank = wait indefinitely">
+      <input
+        class="k-input"
+        type="number"
+        min="0"
+        step="1"
+        placeholder="(none)"
+        value={spec.interactive.answer_timeout_secs ?? ""}
+        oninput={onAnswerTimeout}
+      />
+    </Field>
   </section>
 
   <section class="wb-section">

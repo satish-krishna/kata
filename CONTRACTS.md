@@ -30,7 +30,9 @@ The TOML/JSON run-spec (`crates/kata-core/src/spec.rs`). Machine mirror: `schema
 
 One JSON object per line on the engine's stdout (`crates/kata-core/src/event.rs`). Machine mirror: `schema/kata-events.schema.json` (drift-gated in CI).
 
-**Frozen:** the event `type` tags and each event's field names and semantics, for all fourteen — `run.started`, `log`, `assistant.text`, `tool.use`, `tool.result`, `turn`, `ask.requested`, `ask.answered`, `permission.requested`, `permission.decided`, `run.diff`, `run.completed`, `run.error`, `run.cancelled`; the one-object-per-line framing; the guarantee that exactly one terminal event (`run.completed` / `run.error` / `run.cancelled`) ends every stream; that `ask.*` events appear only when `[interactive] enabled = true`, and `permission.*` events only when `[permissions] mode = "prompt"`.
+**Frozen:** the event `type` tags and each event's field names and semantics, for all fourteen — `run.started`, `log`, `assistant.text`, `tool.use`, `tool.result`, `turn`, `ask.requested`, `ask.answered`, `permission.requested`, `permission.decided`, `run.diff`, `run.completed`, `run.error`, `run.cancelled`; the one-object-per-line framing; the guarantee that exactly one terminal event (`run.completed` / `run.error` / `run.cancelled`) ends every stream; that `ask.*` events may appear on any run, and `permission.*` events only when `[permissions] mode` is `"prompt"` or `"auto"`.
+
+**Breaking in `v3.0.0`:** `ask.*` events are no longer confined to `[interactive] enabled = true`. No permission mode stops claude from wanting to ask a question, and its built-in `AskUserQuestion` kills a headless `claude -p` session — so every run now gets Kata's `ask_user` tool, and a question on any run emits `ask.requested` and pauses on the operator. There is no automatic answer. **A consumer must handle `ask.requested` on every run** — answer it, or close the engine's stdin so the run ends with 123 (see exit codes) — rather than assume a non-interactive spec never asks. `interactive.enabled` correspondingly narrows to "permission checks may pause on the operator", and `interactive.answer_timeout_secs` bounds the wait on every run.
 
 **Breaking in `v2.0.0`:** `permission.decided` is no longer emitted for every check. Kata does not match permission rules — under `mode = "prompt"` the spec's `allow`/`deny` are written into a generated claude settings file and claude enforces them itself, before it ever consults Kata's prompt tool and before its own built-in read-only auto-approve. A call settings (or the auto-approve) resolve is never seen by Kata and gets no `permission.decided` event at all. `permission.decided` now fires only for a check that reaches Kata's own tool: the `unmatched` policy or the operator. **A consumer must stop treating the event stream as a complete audit trail of every permission check** — it is a record only of the checks Kata itself answered.
 
@@ -55,7 +57,7 @@ The process exit code of `kata run` (and the CLI's own codes). Consumers and CI 
 | 2 | (CLI) could not load/parse the spec, or an engine error. |
 | 73 | (CLI) `kata init` refused to overwrite an existing file (`EX_CANTCREAT`). |
 | 122 | Budget ceiling reached (`leash.max_budget_usd`). |
-| 123 | Answer deadline exceeded (`interactive.answer_timeout_secs`) — an unanswered question or an undecided permission check. |
+| 123 | Nobody answered — an unanswered question or an undecided permission check outlived `interactive.answer_timeout_secs`, or the engine's answer channel was closed (kata-cli stdin at EOF) so no answer could ever arrive. |
 | 124 | Wall-clock timeout (`leash.timeout_secs`, or the 1800s default). |
 | 125 | Turn cap reached (`leash.max_turns`). |
 | 130 | Cancelled. |
@@ -79,7 +81,7 @@ How a consumer drives a run (`docs/consuming-kata.md`).
 These may change in any release; do not build load-bearing consumers on them.
 
 - **The `kata_core` Rust API.** It is the reference implementation of the contracts above, not a frozen surface. Signatures may shift between releases — pin a version.
-- **The `mcp-ask` MCP server** — the `ask_user` and `approve_tool` tools, their input schemas, and the localhost bridge frames. These are internal implementation details of interactive and prompt-mode runs. Consumers interact with the human-in-the-loop flow **only** through the `ask.*` / `permission.*` events and the `answer` / `decide` control lines — never the MCP directly.
+- **The `mcp-ask` MCP server** — the `ask_user` and `approve_tool` tools, their input schemas, and the localhost bridge frames. These are internal implementation details of every run (`ask_user`) and of prompt- and auto-mode runs (`approve_tool`). Consumers interact with the human-in-the-loop flow **only** through the `ask.*` / `permission.*` events and the `answer` / `decide` control lines — never the MCP directly.
 - **Log and passthrough text**, as noted under the event protocol.
 - **The transcript file's format and location**, the disposable kit (`--plugin-dir`) assembly, and the exact `#:schema` URL scheme beyond "it points at the tagged schema for the emitting version."
 - **Internal module layout**, the `fake-claude` test binary, and test harnesses.

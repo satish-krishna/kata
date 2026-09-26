@@ -57,7 +57,8 @@ leash: Leash,
  */
 auth: Auth, 
 /**
- * Interactive-run settings (the `ask_user` tool).
+ * Operator-wait settings: whether permission checks may pause, and how long
+ * any pause (a question or a permission check) may last.
  */
 interactive: Interactive, 
 /**

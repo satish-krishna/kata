@@ -2,14 +2,17 @@
 
 export type Interactive = { 
 /**
- * Opt-in gate. When false, the engine never wires the ask_user tool, so
- * claude has no way to pause on the operator. Claude's built-in
- * AskUserQuestion is disallowed on every run regardless (it terminates a
- * headless session), so a non-interactive run must decide for itself.
+ * Whether *permission checks* may pause on the operator: `permissions.ask`
+ * rules and `unmatched = "ask"` require it. It does not gate questions —
+ * the `ask_user` tool is wired into every run, interactive or not, and a
+ * question always pauses on the operator (claude's built-in
+ * AskUserQuestion is disallowed because it kills a headless session).
  */
 enabled: boolean, 
 /**
- * How long the engine waits on the operator's answer before reaping the run
- * (exit 123). Unset = wait indefinitely until answered or cancelled.
+ * How long the engine waits on the operator — a question or a permission
+ * check — before reaping the run (exit 123). Applies to every run, not just
+ * interactive ones. Unset = wait until answered or cancelled; a run whose
+ * answer channel is closed (kata-cli stdin at EOF) exits 123 at once.
  */
 answer_timeout_secs?: number | null, };

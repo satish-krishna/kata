@@ -10,7 +10,7 @@ Assemble everything a planner or implementer must know before touching a feature
 
 ## Interaction contract
 
-A Kata run is headless: a question typed as prose ends the run unanswered. If the target is genuinely ambiguous (which feature? which of two same-named modules?), ask through the **`ask_user`** tool — never prose, never the built-in `AskUserQuestion`. This skill should rarely need more than one question; if `ask_user` is unavailable (non-interactive run), record the ambiguity under **Open questions** and cover the plausible readings instead of stalling.
+A Kata run is headless: a question typed as prose ends the run unanswered. If the target is genuinely ambiguous (which feature? which of two same-named modules?), ask through the **`ask_user`** tool — never prose, never the built-in `AskUserQuestion`. This skill should rarely need more than one question; Kata wires `ask_user` into every run, interactive or not. Only if the tool is genuinely missing from your toolset, record the ambiguity under **Open questions** and cover the plausible readings instead of stalling.
 
 ## Model policy
 
@@ -32,7 +32,7 @@ Create a task per step and work them in order:
    - **Integration points** — where new work plugs in, and what it must not break;
    - **Risks & unknowns** — sharp edges, drift, surprises;
    - **Open questions** — what only the operator can answer.
-5. **Deliver — to a file.** Resolve the destination in order: a path the task names wins; otherwise, in an interactive run, ask where to write through `ask_user` (a `select` leading with the default `docs/context/<YYYY-MM-DD>-<topic>-context.md`, plus an "elsewhere" option whose answer is a custom path); otherwise take the default. Summarize in your closing message. Do not commit unless the task says to.
+5. **Deliver — to a file.** Resolve the destination in order: a path the task names wins; otherwise ask where to write through `ask_user` (a `select` leading with the default `docs/context/<YYYY-MM-DD>-<topic>-context.md`, plus an "elsewhere" option whose answer is a custom path). Summarize in your closing message. Do not commit unless the task says to.
 
 ## Anti-patterns
 
@@ -40,4 +40,4 @@ Create a task per step and work them in order:
 - **Driver-as-scout.** Reading fifty files on Sonnet is burning judgment tokens on Haiku work. Fan out.
 - **Uncited claims.** A "contract" without a `path:line` is a rumor.
 - **Editorializing.** "This code is messy" is not context. What it does, where, and what must not break — that is context.
-- **Stalling on ambiguity in a non-interactive run.** Record it as an open question and keep moving.
+- **Guessing past a genuine ambiguity.** Ask through `ask_user`; don't pick a reading silently.

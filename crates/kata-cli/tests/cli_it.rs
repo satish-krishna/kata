@@ -126,6 +126,46 @@ fn run_streams_jsonl_events_and_exits_zero() {
     assert_eq!(last["exit_code"], 0);
 }
 
+/// The unattended CI case: a non-interactive spec, no answer deadline, and
+/// stdin at EOF. Claude asks anyway (it can, whatever the permission mode); the
+/// question pauses on the operator, nobody can ever answer, and the run must end
+/// with 123 rather than hang with its work clock paused.
+#[test]
+fn run_question_with_stdin_at_eof_exits_123_instead_of_hanging() {
+    let work = tempfile::tempdir().unwrap();
+    let kata_home = tempfile::tempdir().unwrap();
+    let spec = write(
+        work.path(),
+        "q.kata.toml",
+        &format!(
+            "schema = 1\nname = \"q\"\ntask = \"t\"\nworkdir = \"{}\"\n\n[leash]\ntimeout_secs = 60\n",
+            work.path().to_string_lossy().replace('\\', "/")
+        ),
+    );
+
+    let started = std::time::Instant::now();
+    let out = kata()
+        .arg("run")
+        .arg(&spec)
+        .env("KATA_CLAUDE_BIN", fake_claude())
+        .env("KATA_FAKE_MODE", "ask")
+        .env("KATA_HOME", kata_home.path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        out.status.code(),
+        Some(123),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains(r#""type":"ask.requested""#), "{stdout}");
+    assert!(stdout.contains("nobody can answer"), "{stdout}");
+}
+
 /// Blank the volatile fields of one event line for golden comparison: the temp
 /// workdir, the timestamped transcript path, and the wall-clock duration. Returns
 /// the parsed value; serde_json's default Map is a BTreeMap, so re-serializing

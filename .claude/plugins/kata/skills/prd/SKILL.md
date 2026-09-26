@@ -12,7 +12,7 @@ Interrogate a rough idea until it is a product requirements document someone cou
 
 **`ask_user` is your only mouth. A question you write as prose never reaches the operator.** A Kata run drives `claude -p` headlessly; end a turn with a plain-text question and the run simply ends, unanswered. Everywhere this skill says "ask", call the `ask_user` tool — it pauses the run, shows the question, and returns the answer in the same turn. Never use the built-in `AskUserQuestion`; it is disabled in Kata runs.
 
-Ask one focused question per call (batch only genuinely-related ones). Prefer `select`/`confirm` with your recommended option first over open `text` whenever the choices are knowable. Read each answer before forming the next question. If `ask_user` is unavailable (a non-interactive run), do not stall: make the conservative assumption, record it in the PRD under **Assumptions**, and continue.
+Ask one focused question per call (batch only genuinely-related ones). Prefer `select`/`confirm` with your recommended option first over open `text` whenever the choices are knowable. Read each answer before forming the next question. Kata wires `ask_user` into every run, interactive or not, so ask whenever you need the operator. Only if the tool is genuinely missing from your toolset, do not stall: make the conservative assumption, record it in the PRD under **Assumptions**, and continue.
 
 ## Model policy
 
@@ -35,7 +35,7 @@ Create a task per step and work them in order:
    Grill means grill: when an answer is vague ("it should be fast"), ask for the number. When two answers conflict, surface the conflict and make them pick. When everything is "must have", force a must / should / won't split. Stop only when you could defend every requirement to a stranger.
 3. **Draft.** Assemble the PRD: Problem; Goals & success metrics; Users & jobs; Requirements (must / should / won't, each testable); Non-goals; Constraints & assumptions; Risks & open questions; Acceptance criteria.
 4. **Confirm.** Present a tight summary through `ask_user` (`select`: approve / amend, approve first). On amend, loop back to the gap.
-5. **Deliver — to a file.** Resolve the destination in order: a path the task names wins; otherwise ask where to write through `ask_user` — a `select` leading with the default `docs/prds/<YYYY-MM-DD>-<topic>-prd.md`, then any doc convention the recon surfaced, then an "elsewhere" option whose answer is a custom path; in a non-interactive run just take the default. A run's final message is not a durable artifact — the file is. Summarize in your closing message. Do not commit unless the task says to.
+5. **Deliver — to a file.** Resolve the destination in order: a path the task names wins; otherwise ask where to write through `ask_user` — a `select` leading with the default `docs/prds/<YYYY-MM-DD>-<topic>-prd.md`, then any doc convention the recon surfaced, then an "elsewhere" option whose answer is a custom path. A run's final message is not a durable artifact — the file is. Summarize in your closing message. Do not commit unless the task says to.
 
 ## Anti-patterns
 
