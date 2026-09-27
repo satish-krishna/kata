@@ -1,0 +1,88 @@
+schema = 1
+name = "question-checkpoint"
+description = "Prove a bypass, non-interactive run can still ask the operator a question and survive it"
+workdir = "."
+
+# A verification kata, not a working one. It proves the premise behind v3.0.0:
+# permission mode governs tool approval, not whether claude asks questions. So a
+# run in the loosest posture there is — `bypass`, interactive off — must still:
+#
+#   1. have Kata's `ask_user` tool           → the question reaches you as ask.requested
+#   2. NOT have the built-in AskUserQuestion → the session survives the question
+#   3. wait for YOUR answer                   → no automatic reply; your word comes back
+#
+# Three ways to drive it, each checking something different:
+#
+#   Workbench   Open this kata and Run. The AskPanel should appear even though
+#               the Interactive toggle is off. Answer it; the final message
+#               should quote your choice back.
+#
+#   Terminal    kata run examples/katas/question-checkpoint.toml
+#               When the ask.requested line appears, type (with its id):
+#                 answer q1 [["blue"]]
+#               The run resumes and ends with exit 0.
+#
+#   Unattended  $null | kata run examples/katas/question-checkpoint.toml   (PowerShell)
+#               kata run examples/katas/question-checkpoint.toml < /dev/null   (POSIX)
+#               stdin is at EOF, so nobody can answer. The run should end at
+#               once with exit 123 and a "nobody can answer" run.error — not
+#               hang, and not finish with a guessed answer.
+#
+# Failure looks like: the run ends before any ask.requested (claude reached for a
+# tool it did not have, or asked in prose); the final message names a color you
+# did not pick (something answered for you); or the unattended run hangs.
+#
+# Nothing here writes files, runs commands, or touches the network.
+task = """
+You are verifying that a Kata run can put a question to its operator. Do exactly
+the steps below and nothing else. Do not read files, run commands, or explore the
+repository.
+
+1. Ask the operator which color they prefer, offering exactly two options: "red"
+   and "blue". You must not choose for them, and you must not guess a default —
+   the whole point of this run is that the answer comes from the human.
+2. Write a final message of exactly two lines:
+
+       answer | <the color the operator chose, verbatim>
+       tool   | <the exact name of the tool you used to ask>
+
+If you have no way to reach the operator, do not invent an answer. Write instead:
+
+       answer | UNREACHABLE
+       tool   | none
+"""
+
+# Not bare, so the run uses your logged-in session instead of needing
+# ANTHROPIC_API_KEY. Same reasoning as permission-checkpoint.
+[auth]
+bare = false
+
+[identity]
+mode = "append"
+system_prompt = """
+You are being used as a test fixture. Follow the task literally. A question to
+the operator is the expected result of this run, not an obstacle to avoid.
+"""
+
+[model]
+id = "sonnet"
+
+# One question and one reply: a handful of turns is plenty.
+[leash]
+max_turns = 6
+timeout_secs = 600
+max_budget_usd = 0.5
+isolation = "none"
+
+# The point of the kata: interactive is OFF, and the question must reach you
+# anyway. No answer_timeout_secs either, deliberately — in the Workbench and the
+# terminal the run waits for you; unattended it must end on the closed stdin,
+# not on a deadline. That is the difference between exit 123 arriving at once
+# and exit 123 arriving after a timeout.
+[interactive]
+enabled = false
+
+# The loosest posture. If a question survives here, no permission mode is what
+# was protecting it.
+[permissions]
+mode = "bypass"
