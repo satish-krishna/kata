@@ -103,7 +103,9 @@ enabled = true              # default false — the opt-in gate
 answer_timeout_secs = 600   # optional; the answer-deadline. unset = wait until answered or cancelled
 ```
 
-Mirrored to `app/src/bindings/` (`cargo test -p kata-core --features ts export_bindings`). When `enabled` is false the `ask_user` tool is never wired in, so claude *cannot* ask — the headless contract is preserved exactly.
+Mirrored to `app/src/bindings/` (`cargo test -p kata-core --features ts export_bindings`). When `enabled` is false the `ask_user` tool is never wired in, so claude has no channel to the operator.
+
+> **Correction (2026-09-26).** This originally claimed claude *cannot* ask when `enabled` is false. It can: the built-in `AskUserQuestion` is still in its toolset, no permission mode (`bypass`, `prompt`, `auto`) stops the model from calling it, and a headless call terminates the session. The engine now passes `--disallowedTools AskUserQuestion` and wires `ask_user` (with its retasking note) on **every** run, not just interactive ones. A question always pauses on the operator — no automatic answer — and a run whose answer channel is closed exits 123 immediately. `enabled` now only gates operator pauses for permission checks.
 
 ## The leash (`run.rs`)
 
@@ -139,7 +141,7 @@ The design is fully specified and the CSS exists in the design source but is **n
 ## CLI behavior + CI safety
 
 - Headless `kata run` of an interactive spec still works: `answer <id> <json>` lines can be typed or piped to kata-cli's stdin (it already reads stdin for `cancel`). A terminal operator can answer too.
-- **CI safety rests on the opt-in.** CI/Shokunin specs leave `[interactive]` off → `ask_user` is never wired → claude cannot ask → behavior is identical to today. An interactive spec run truly unattended simply waits out its answer-deadline and exits 123 — deterministic, never an indefinite silent stall.
+- **CI safety rests on the opt-in.** Superseded (see the correction above): every run wires `ask_user`. An unattended CI run whose stdin is at EOF ends with 123 the moment claude asks — deterministic, never a stall. An interactive spec run truly unattended simply waits out its answer-deadline and exits 123 — deterministic, never an indefinite silent stall.
 
 ## Testing
 

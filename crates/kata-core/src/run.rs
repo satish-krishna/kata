@@ -63,18 +63,39 @@ pub struct Answer {
     pub answers: Vec<Vec<String>>,
 }
 
-/// The run loop's answer inbox. `Default` is an empty inbox (non-interactive
-/// runs never deliver answers). Build a live one with [`answer_channel`].
+/// What polling an operator inbox found.
+enum Inbox<T> {
+    /// A reply arrived.
+    Reply(T),
+    /// Nothing yet; someone may still answer.
+    Waiting,
+    /// Nobody can ever answer: the caller passed an empty inbox, or dropped the
+    /// sender (kata-cli drops it when its stdin reaches EOF).
+    Closed,
+}
+
+fn poll<T>(rx: Option<&mpsc::Receiver<T>>) -> Inbox<T> {
+    match rx.map(|rx| rx.try_recv()) {
+        Some(Ok(v)) => Inbox::Reply(v),
+        Some(Err(mpsc::TryRecvError::Empty)) => Inbox::Waiting,
+        Some(Err(mpsc::TryRecvError::Disconnected)) | None => Inbox::Closed,
+    }
+}
+
+/// The run loop's answer inbox. `Default` is an empty inbox: nobody can answer,
+/// so a question claude asks ends the run with 123 instead of waiting forever.
+/// Build a live one with [`answer_channel`].
 #[derive(Default)]
 pub struct AnswerRx(Option<mpsc::Receiver<Answer>>);
 
 impl AnswerRx {
-    fn try_recv(&self) -> Option<Answer> {
-        self.0.as_ref().and_then(|rx| rx.try_recv().ok())
+    fn poll(&self) -> Inbox<Answer> {
+        poll(self.0.as_ref())
     }
 }
 
-/// Create a connected (sender, inbox) pair for an interactive run.
+/// Create a connected (sender, inbox) pair. Every run can ask the operator a
+/// question, so any caller that can relay an answer should pass one.
 pub fn answer_channel() -> (mpsc::Sender<Answer>, AnswerRx) {
     let (tx, rx) = mpsc::channel();
     (tx, AnswerRx(Some(rx)))
@@ -97,8 +118,8 @@ pub struct Decision {
 pub struct DecisionRx(Option<mpsc::Receiver<Decision>>);
 
 impl DecisionRx {
-    fn try_recv(&self) -> Option<Decision> {
-        self.0.as_ref().and_then(|rx| rx.try_recv().ok())
+    fn poll(&self) -> Inbox<Decision> {
+        poll(self.0.as_ref())
     }
 }
 
@@ -123,7 +144,7 @@ const DENY_BY_POLICY: &str =
     "Denied: this run only permits tools listed in its permissions.allow rules.";
 const DENY_BY_OPERATOR: &str = "The operator denied this tool call.";
 
-/// Retasking note appended to claude's system prompt for interactive runs. It is
+/// Retasking note appended to claude's system prompt on every run. It is
 /// additive (applied even under identity Replace mode) because it describes a
 /// Kata-provided capability the operator did not author. See the interactive
 /// sessions design spec.
@@ -265,29 +286,28 @@ pub fn run<F: FnMut(KataEvent)>(
         }
     }
 
-    // Two spec sections need Kata's own MCP server in the child: `[interactive]`
-    // for the `ask_user` tool, and `[permissions] mode = "prompt"` or "auto" for the
-    // `approve_tool` handler behind `--permission-prompt-tool`. Either one binds
-    // the bridge and generates one mcp-config; the tool set advertised is
-    // exactly what was asked for. The temp dir holds that config and, when there
-    // is no identity append file to fold into, the retask note file (see
-    // `append_interactive_retask`); it lives until after the child exits.
+    // Every run gets Kata's own MCP server in the child, because every run gets
+    // the `ask_user` tool: no permission mode stops claude from wanting to ask,
+    // and its built-in AskUserQuestion (disallowed in command.rs) kills a
+    // headless session. Whether or not the spec is `[interactive]`, a question
+    // pauses on the operator — there is no automatic answer. `[permissions] mode
+    // = "prompt"` or "auto" additionally advertises the `approve_tool` handler
+    // behind `--permission-prompt-tool`. The temp dir holds the mcp-config and,
+    // when there is no identity append file to fold into, the retask note file
+    // (see `append_interactive_retask`); it lives until after the child exits.
     let permissions_bridge = matches!(
         spec.permissions.mode,
         PermissionMode::Prompt | PermissionMode::Auto
     );
     let tools = crate::ask::Tools {
-        ask_user: spec.interactive.enabled,
+        ask_user: true,
         approve_tool: permissions_bridge,
     };
-    let mut interactive_tmp: Option<tempfile::TempDir> = None;
-    let mut bridge_rx: Option<mpsc::Receiver<crate::ask::Request>> = None;
-    if tools.ask_user || tools.approve_tool {
+    let (bridge_rx, bridge_tmp) = {
         let bridge = crate::ask::Bridge::bind().map_err(|e| RunError::Spawn(e.to_string()))?;
         let port = bridge.port();
         let (atx, arx) = mpsc::channel();
         bridge.serve(atx, cancel.clone());
-        bridge_rx = Some(arx);
 
         let dir = tempfile::tempdir().map_err(|e| RunError::Spawn(e.to_string()))?;
         let exe = std::env::current_exe().map_err(|e| RunError::Spawn(e.to_string()))?;
@@ -312,20 +332,18 @@ pub fn run<F: FnMut(KataEvent)>(
 
         inv.args.push("--mcp-config".into());
         inv.args.push(cfg.to_string_lossy().into_owned());
-        if spec.interactive.enabled {
-            append_interactive_retask(
-                &mut inv,
-                assembled.system_prompt_file.as_deref(),
-                INTERACTIVE_RETASK,
-                dir.path(),
-            )
-            .map_err(|e| RunError::Spawn(e.to_string()))?;
-        }
+        append_interactive_retask(
+            &mut inv,
+            assembled.system_prompt_file.as_deref(),
+            INTERACTIVE_RETASK,
+            dir.path(),
+        )
+        .map_err(|e| RunError::Spawn(e.to_string()))?;
         inv.env.push(("KATA_ASK_PORT".into(), port.to_string()));
         inv.env
             .push((crate::ask::TOOLS_ENV.to_string(), tools.to_env()));
-        interactive_tmp = Some(dir);
-    }
+        (arx, dir)
+    };
 
     // Under prompt and auto modes the spec's rules are authored into a settings file and
     // enforced by claude itself. They are deliberately NOT matched engine-side:
@@ -523,94 +541,90 @@ pub fn run<F: FnMut(KataEvent)>(
         // permission check pauses only when no rule resolved it and the spec
         // says to ask.
         if pending.is_none() {
-            if let Some(brx) = &bridge_rx {
-                if let Ok(req) = brx.try_recv() {
-                    match req.payload {
-                        crate::ask::RequestPayload::Ask(questions) => {
-                            ask_seq += 1;
-                            let id = format!("q{ask_seq}");
-                            pending = Some(Pending::Ask {
-                                id: id.clone(),
-                                reply: req.reply,
-                            });
-                            awaiting_since = Some(Instant::now());
-                            emit(KataEvent::AskRequested { id, questions });
-                        }
-                        crate::ask::RequestPayload::Approve { tool, input } => {
-                            perm_seq += 1;
-                            let id = format!("p{perm_seq}");
-                            let summary = crate::event::truncate(
-                                &crate::permission::target_of(&tool, &input),
-                                PERMISSION_SUMMARY_MAX,
-                            );
-                            // Kata's own bridge tools are exempt. `ask_user` is an
-                            // ordinary MCP tool as far as claude is concerned, so
-                            // in prompt mode it needs permission like anything
-                            // else — and putting it to the rules would let a
-                            // headless deny policy silently disable interactivity,
-                            // or (under `ask`) ask the operator for permission to
-                            // ask the operator. The engine owns these tools; it
-                            // does not negotiate with itself over them.
-                            let settled = if crate::event::is_bridge_tool(&tool) {
-                                Some((true, "engine", None))
-                            } else if spec.permissions.mode == PermissionMode::Auto {
-                                // Under auto a call only reaches this tool because
-                                // a `permissions.ask` rule matched it — an explicit
-                                // request for the operator. Route it there; the
-                                // classifier already handled everything unruled, so
-                                // `unmatched` does not apply. `validate` guarantees
-                                // interactive is on when ask rules exist.
-                                None
-                            } else {
-                                // The spec's allow/deny rules never reach here:
-                                // claude enforced them from the generated
-                                // settings file and only calls this tool for
-                                // what they left unresolved. So the `unmatched`
-                                // policy is the whole decision.
-                                match spec.permissions.unmatched {
-                                    UnmatchedPolicy::Deny => Some((
-                                        false,
-                                        "unmatched-policy",
-                                        Some(DENY_BY_POLICY.to_string()),
-                                    )),
-                                    UnmatchedPolicy::Allow => {
-                                        Some((true, "unmatched-policy", None))
-                                    }
-                                    // `validate` guarantees interactive is on here.
-                                    UnmatchedPolicy::Ask => None,
-                                }
-                            };
-                            match settled {
-                                Some((allow, decided_by, message)) => {
-                                    let _ = req.reply.send(crate::ask::ReplyPayload::Verdict(
-                                        crate::ask::Verdict {
-                                            allow,
-                                            message: message.clone(),
-                                        },
-                                    ));
-                                    emit(KataEvent::PermissionDecided {
-                                        id,
-                                        tool,
-                                        input_summary: summary,
+            if let Ok(req) = bridge_rx.try_recv() {
+                match req.payload {
+                    crate::ask::RequestPayload::Ask(questions) => {
+                        ask_seq += 1;
+                        let id = format!("q{ask_seq}");
+                        pending = Some(Pending::Ask {
+                            id: id.clone(),
+                            reply: req.reply,
+                        });
+                        awaiting_since = Some(Instant::now());
+                        emit(KataEvent::AskRequested { id, questions });
+                    }
+                    crate::ask::RequestPayload::Approve { tool, input } => {
+                        perm_seq += 1;
+                        let id = format!("p{perm_seq}");
+                        let summary = crate::event::truncate(
+                            &crate::permission::target_of(&tool, &input),
+                            PERMISSION_SUMMARY_MAX,
+                        );
+                        // Kata's own bridge tools are exempt. `ask_user` is an
+                        // ordinary MCP tool as far as claude is concerned, so
+                        // in prompt mode it needs permission like anything
+                        // else — and putting it to the rules would let a
+                        // headless deny policy silently disable interactivity,
+                        // or (under `ask`) ask the operator for permission to
+                        // ask the operator. The engine owns these tools; it
+                        // does not negotiate with itself over them.
+                        let settled = if crate::event::is_bridge_tool(&tool) {
+                            Some((true, "engine", None))
+                        } else if spec.permissions.mode == PermissionMode::Auto {
+                            // Under auto a call only reaches this tool because
+                            // a `permissions.ask` rule matched it — an explicit
+                            // request for the operator. Route it there; the
+                            // classifier already handled everything unruled, so
+                            // `unmatched` does not apply. `validate` guarantees
+                            // interactive is on when ask rules exist.
+                            None
+                        } else {
+                            // The spec's allow/deny rules never reach here:
+                            // claude enforced them from the generated
+                            // settings file and only calls this tool for
+                            // what they left unresolved. So the `unmatched`
+                            // policy is the whole decision.
+                            match spec.permissions.unmatched {
+                                UnmatchedPolicy::Deny => Some((
+                                    false,
+                                    "unmatched-policy",
+                                    Some(DENY_BY_POLICY.to_string()),
+                                )),
+                                UnmatchedPolicy::Allow => Some((true, "unmatched-policy", None)),
+                                // `validate` guarantees interactive is on here.
+                                UnmatchedPolicy::Ask => None,
+                            }
+                        };
+                        match settled {
+                            Some((allow, decided_by, message)) => {
+                                let _ = req.reply.send(crate::ask::ReplyPayload::Verdict(
+                                    crate::ask::Verdict {
                                         allow,
-                                        decided_by: decided_by.to_string(),
-                                        message,
-                                    });
-                                }
-                                None => {
-                                    pending = Some(Pending::Approve {
-                                        id: id.clone(),
-                                        tool: tool.clone(),
-                                        input_summary: summary.clone(),
-                                        reply: req.reply,
-                                    });
-                                    awaiting_since = Some(Instant::now());
-                                    emit(KataEvent::PermissionRequested {
-                                        id,
-                                        tool,
-                                        input_summary: summary,
-                                    });
-                                }
+                                        message: message.clone(),
+                                    },
+                                ));
+                                emit(KataEvent::PermissionDecided {
+                                    id,
+                                    tool,
+                                    input_summary: summary,
+                                    allow,
+                                    decided_by: decided_by.to_string(),
+                                    message,
+                                });
+                            }
+                            None => {
+                                pending = Some(Pending::Approve {
+                                    id: id.clone(),
+                                    tool: tool.clone(),
+                                    input_summary: summary.clone(),
+                                    reply: req.reply,
+                                });
+                                awaiting_since = Some(Instant::now());
+                                emit(KataEvent::PermissionRequested {
+                                    id,
+                                    tool,
+                                    input_summary: summary,
+                                });
                             }
                         }
                     }
@@ -619,8 +633,13 @@ pub fn run<F: FnMut(KataEvent)>(
         }
         // The operator's reply → return it down the bridge, resume the clock.
         match &pending {
-            Some(Pending::Ask { id: pid, .. }) => {
-                if let Some(ans) = answers.try_recv() {
+            Some(Pending::Ask { id: pid, .. }) => match answers.poll() {
+                Inbox::Closed => {
+                    termination = Some(Termination::Unanswerable);
+                    break;
+                }
+                Inbox::Waiting => {}
+                Inbox::Reply(ans) => {
                     if &ans.id == pid {
                         let Some(Pending::Ask { id, reply }) = pending.take() else {
                             unreachable!("matched Pending::Ask above")
@@ -635,9 +654,14 @@ pub fn run<F: FnMut(KataEvent)>(
                         });
                     }
                 }
-            }
-            Some(Pending::Approve { id: pid, .. }) => {
-                if let Some(d) = decisions.try_recv() {
+            },
+            Some(Pending::Approve { id: pid, .. }) => match decisions.poll() {
+                Inbox::Closed => {
+                    termination = Some(Termination::Unanswerable);
+                    break;
+                }
+                Inbox::Waiting => {}
+                Inbox::Reply(d) => {
                     if &d.id == pid {
                         let Some(Pending::Approve {
                             id,
@@ -675,7 +699,7 @@ pub fn run<F: FnMut(KataEvent)>(
                         });
                     }
                 }
-            }
+            },
             None => {}
         }
         match rx.recv_timeout(POLL) {
@@ -767,6 +791,19 @@ pub fn run<F: FnMut(KataEvent)>(
                         duration_ms,
                     },
                 ),
+                Termination::Unanswerable => (
+                    123,
+                    KataEvent::RunError {
+                        message:
+                            "the run is waiting on the operator, but nobody can answer: \
+                                  the engine's input is closed (for kata-cli, stdin reached EOF). \
+                                  Keep stdin open to answer, or set interactive.answer_timeout_secs"
+                                .into(),
+                        exit_code: 123,
+                        cost_usd,
+                        duration_ms,
+                    },
+                ),
                 Termination::AnswerTimeout => (
                     123,
                     KataEvent::RunError {
@@ -854,7 +891,7 @@ pub fn run<F: FnMut(KataEvent)>(
     let _ = stderr_handle.join();
     // Keep the temp dirs (the generated mcp-config and settings file) alive
     // until the child has fully exited above; drop them only now.
-    drop(interactive_tmp);
+    drop(bridge_tmp);
     drop(settings_tmp);
     Ok(RunOutcome {
         exit_code,
@@ -873,6 +910,8 @@ enum Termination {
     TimedOut,
     MaxTurns(u32),
     AnswerTimeout,
+    /// Paused on the operator with no way for an answer to ever arrive.
+    Unanswerable,
 }
 
 /// What the run is currently paused on. At most one at a time: claude blocks on

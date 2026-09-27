@@ -166,15 +166,17 @@ decide p2 deny build/ is not yours to delete
 
 ## Interactive runs
 
-By default, a Kata run is headless and observe-only. Add an `[interactive]` block to a spec to let claude pause mid-run and ask the operator a question; the Workbench (or any stdin-connected terminal) answers and the same `claude -p` session resumes with the answer fed back as a tool result.
+Any Kata run can pause mid-run and ask the operator a question; the Workbench (or any stdin-connected terminal) answers and the same `claude -p` session resumes with the answer fed back as a tool result.
+
+Every run — whatever `[permissions] mode`, interactive or not — gets a Kata-hosted `ask_user` MCP tool and a retasking note so claude knows to call it at consequential forks, and passes `--disallowedTools AskUserQuestion`. Permission mode governs tool *approval*, not whether the model wants to ask a question: under `bypass` or `auto` claude still reaches for a question tool at a fork, and its built-in one has no UI under `claude -p`, so calling it terminates the session outright. `ask_user` is the channel that survives. claude calls it and blocks; the engine surfaces the question(s) and waits. **There is no automatic answer** — a question always waits on the operator.
 
 ```toml
 [interactive]
-enabled             = true   # default false — the opt-in gate
-answer_timeout_secs = 600    # optional; omit to wait until answered or cancelled
+enabled             = true   # default false — lets permission checks pause on you too
+answer_timeout_secs = 600    # optional; bounds any operator wait, on any run
 ```
 
-When `enabled`, the engine wires a Kata-hosted `ask_user` MCP tool and appends a retasking note so claude knows to call it at consequential forks. claude calls the tool and blocks; the engine surfaces the question(s) and waits for an answer. When `enabled` is false (the default), `ask_user` is never offered — the headless contract is preserved exactly and every existing spec, CI run, and Shokunin job is unchanged.
+`enabled` no longer gates questions; it decides whether *permission checks* (`permissions.ask` rules, `unmatched = "ask"`) may also pause on the operator. `answer_timeout_secs` bounds every wait. An unattended run is never stuck on a question: if the engine's answer channel is closed — `kata run` with stdin at EOF, as in most CI — a question ends the run with **123** at once.
 
 **Question kinds** (four, via three `kind` values):
 
@@ -183,13 +185,13 @@ When `enabled`, the engine wires a Kata-hosted `ask_user` MCP tool and appends a
 - `select` with `multi_select: true` — multiple-choice checkboxes.
 - `text` — free-form typed answer.
 
-**The back-channel (extends kata-cli stdin).** Beside `cancel` (and `decide`, which [permission prompting](#permissions) adds), interactive runs add one more shape:
+**The back-channel (extends kata-cli stdin).** Beside `cancel` (and `decide`, which [permission prompting](#permissions) adds), questions add one more shape:
 
 ```
 answer <id> <json>
 ```
 
-`<id>` is the correlation id from the `ask.requested` event; `<json>` is the `answers: string[][]` payload — one inner array per question, carrying the chosen label(s) or typed text. `cancel` still works while awaiting (exits 130). An unattended interactive run that exceeds its `answer_timeout_secs` exits **123** (answer deadline exceeded) — distinct from 124 (work timeout) so CI logs can tell the two apart.
+`<id>` is the correlation id from the `ask.requested` event; `<json>` is the `answers: string[][]` payload — one inner array per question, carrying the chosen label(s) or typed text. `cancel` still works while awaiting (exits 130). A run whose question outlives `answer_timeout_secs`, or that nobody can answer because stdin is closed, exits **123** (nobody answered) — distinct from 124 (work timeout) so CI logs can tell the two apart.
 
 **Worked example:**
 

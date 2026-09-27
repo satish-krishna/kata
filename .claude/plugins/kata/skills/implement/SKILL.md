@@ -10,7 +10,7 @@ Work a written plan to completion, one step at a time, keeping the tree green at
 
 ## Interaction contract
 
-A Kata run is headless: a question typed as prose ends the run unanswered. When a blocker needs the operator — the plan is wrong, a fork appeared it does not cover, a gate will not go green for a reason outside scope — ask through the **`ask_user`** tool (never prose, never the built-in `AskUserQuestion`). If `ask_user` is unavailable (non-interactive run), stop at the blocker and write up exactly where and why in your report — a clean stop beats improvising past the plan.
+A Kata run is headless: a question typed as prose ends the run unanswered. When a blocker needs the operator — the plan is wrong, a fork appeared it does not cover, a gate will not go green for a reason outside scope — ask through the **`ask_user`** tool (never prose, never the built-in `AskUserQuestion`). Kata wires `ask_user` into every run, interactive or not. Only if the tool is genuinely missing from your toolset, stop at the blocker and write up exactly where and why in your report — a clean stop beats improvising past the plan.
 
 ## Model policy
 

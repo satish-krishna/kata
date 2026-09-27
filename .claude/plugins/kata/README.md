@@ -29,9 +29,9 @@ The driver runs on Sonnet (pin `[model] id = "sonnet"` in the run-spec; the comm
 
 ## The interaction contract
 
-A Kata run drives `claude -p` headlessly — a question typed as prose ends the run unanswered. Every skill therefore asks **only** through the `ask_user` MCP tool Kata wires in when the run-spec sets `[interactive] enabled = true` (the built-in `AskUserQuestion` is disallowed by the engine). In non-interactive runs the skills degrade deliberately: conservative assumptions recorded in the deliverable, or a clean written stop at a blocker — never a stall.
+A Kata run drives `claude -p` headlessly — a question typed as prose ends the run unanswered. Every skill therefore asks **only** through the `ask_user` MCP tool, which Kata wires into every run, interactive or not (the built-in `AskUserQuestion` is disallowed by the engine, because headless it kills the session). A question always pauses on the operator; an unattended run nobody can answer ends with exit 123 rather than guessing. Only if the tool is genuinely missing do the skills degrade: conservative assumptions recorded in the deliverable, or a clean written stop at a blocker — never a stall.
 
-**Where docs land is the operator's choice.** A path named in the task always wins; otherwise the doc-writing skills ask the destination through `ask_user` (leading with the defaults in the table above, or the repo's own convention); non-interactive runs take the default.
+**Where docs land is the operator's choice.** A path named in the task always wins; otherwise the doc-writing skills ask the destination through `ask_user` (leading with the defaults in the table above, or the repo's own convention).
 
 ## Using it from a run-spec
 

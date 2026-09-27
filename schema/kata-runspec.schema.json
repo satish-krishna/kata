@@ -51,7 +51,7 @@
     "Interactive": {
       "properties": {
         "answer_timeout_secs": {
-          "description": "How long the engine waits on the operator's answer before reaping the run\n(exit 123). Unset = wait indefinitely until answered or cancelled.",
+          "description": "How long the engine waits on the operator — a question or a permission\ncheck — before reaping the run (exit 123). Applies to every run, not just\ninteractive ones. Unset = wait until answered or cancelled; a run whose\nanswer channel is closed (kata-cli stdin at EOF) exits 123 at once.",
           "format": "uint64",
           "minimum": 0,
           "type": [
@@ -61,7 +61,7 @@
         },
         "enabled": {
           "default": false,
-          "description": "Opt-in gate. When false, the engine never wires the ask_user tool, so\nclaude cannot pause — behaviour is identical to a non-interactive run.",
+          "description": "Whether *permission checks* may pause on the operator: `permissions.ask`\nrules and `unmatched = \"ask\"` require it. It does not gate questions —\nthe `ask_user` tool is wired into every run, interactive or not, and a\nquestion always pauses on the operator (claude's built-in\nAskUserQuestion is disallowed because it kills a headless session).",
           "type": "boolean"
         }
       },
@@ -273,7 +273,7 @@
       "default": {
         "enabled": false
       },
-      "description": "Interactive-run settings (the `ask_user` tool)."
+      "description": "Operator-wait settings: whether permission checks may pause, and how long\nany pause (a question or a permission check) may last."
     },
     "leash": {
       "$ref": "#/$defs/Leash",

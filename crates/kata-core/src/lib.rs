@@ -15,8 +15,9 @@
 //!
 //! // Call cancel.cancel() from another thread to stop the run.
 //! let cancel = CancelToken::new();
-//! // Keep the senders to answer interactive questions and approve tool calls;
-//! // an `AnswerRx::default()` / `DecisionRx::default()` is fine when neither applies.
+//! // Keep the senders to answer questions (any run can ask) and approve tool
+//! // calls. An `AnswerRx::default()` / `DecisionRx::default()` means nobody can
+//! // answer: a pause on it ends the run with exit 123.
 //! let (answer_tx, answers) = answer_channel();
 //! let (decision_tx, decisions) = decision_channel();
 //!
@@ -48,9 +49,9 @@
 //! `decide <id> allow|deny [reason]` lines to its stdin. Only the run-spec and
 //! event shapes are contractual — not this crate's Rust API.
 //!
-//! # Interactive runs are owned by the `kata` process
+//! # Operator questions are owned by the `kata` process
 //!
-//! When `[interactive] enabled = true`, the engine hosts the `ask_user` MCP tool
+//! Every run gets the `ask_user` MCP tool, interactive or not; the engine hosts it
 //! itself — the tool, its JSON schema, the JSON-RPC server, and the localhost
 //! bridge are all internal. A consumer never implements an MCP tool. Its entire
 //! interactive surface is the event protocol:
@@ -59,12 +60,13 @@
 //! - reply with an [`Answer`] via the [`answer_channel`] sender — or, out of
 //!   process, by writing an `answer <id> <json>` line to the engine's stdin.
 //!
-//! The MCP server is spawned as `<current exe> mcp-ask`, so **interactive runs
-//! must be driven by the `kata` binary** (spawn `kata run` and stream its
-//! events). Linking [`run()`] into a *different* host binary works for
-//! non-interactive runs and every pure operation here; interactive in that mode
-//! would require the host to serve the `mcp-ask` server itself, which is rarely
-//! worth it — spawn `kata` instead.
+//! The MCP server is spawned as `<current exe> mcp-ask`, so **runs must be
+//! driven by the `kata` binary** (spawn `kata run` and stream its events).
+//! Linking [`run()`] into a *different* host binary requires that binary to
+//! serve `mcp-ask` itself — dispatch that argument to `ask::serve_stdio()`
+//! before doing anything else in `main` — or claude cannot start the server and
+//! the run loses its only channel to the operator. Every pure operation here
+//! works from any binary.
 
 // ---- the run-spec contract ----
 pub mod spec;

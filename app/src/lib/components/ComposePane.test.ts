@@ -180,3 +180,13 @@ describe("ComposePane permissions — auto mode", () => {
     expect(spec.permissions.ask).toEqual([]);
   });
 });
+
+describe("ComposePane interactive — the answer timeout", () => {
+  // Every run can ask the operator a question, so the timeout that bounds the
+  // wait must be editable whether or not interactive is on.
+  it("shows the answer timeout with interactive off", () => {
+    const spec = renderSpec((s) => (s.interactive.enabled = false));
+    expect(spec.interactive.enabled).toBe(false);
+    expect(screen.getByText("Answer timeout")).toBeInTheDocument();
+  });
+});

@@ -1373,3 +1373,130 @@ fn auto_mode_routes_a_reaching_call_to_the_operator() {
     assert!(allow);
     assert_eq!(by, "operator");
 }
+
+// Permission mode governs tool approval, not whether claude wants to ask a
+// question — and its built-in AskUserQuestion kills a headless session. So Kata's
+// `ask_user` is wired into every run, whatever the mode, interactive or not.
+#[test]
+#[serial]
+fn ask_user_is_wired_in_every_permission_mode_even_when_not_interactive() {
+    with_fake("envreport");
+    for mode in [
+        kata_core::spec::PermissionMode::Bypass,
+        kata_core::spec::PermissionMode::Prompt,
+        kata_core::spec::PermissionMode::Auto,
+    ] {
+        let work = tempfile::tempdir().unwrap();
+        let mut spec = base_spec(&work.path().to_string_lossy());
+        spec.permissions.mode = mode;
+        if mode == kata_core::spec::PermissionMode::Prompt {
+            spec.permissions.unmatched = kata_core::spec::UnmatchedPolicy::Deny;
+        }
+        assert!(!spec.interactive.enabled);
+        let lines = run_envreport(&spec, "KATA_MCP_TOOLS,KATA_ASK_PORT");
+        let tools = lines
+            .iter()
+            .find_map(|l| l.strip_prefix("ENV KATA_MCP_TOOLS="))
+            .unwrap_or_else(|| panic!("{mode:?}: no KATA_MCP_TOOLS line in {lines:?}"));
+        assert!(
+            tools.split(',').any(|t| t == "ask_user"),
+            "{mode:?}: ask_user must be advertised on a non-interactive run; got {tools:?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l == "ENV KATA_ASK_PORT=<unset>"),
+            "{mode:?}: the ask bridge must be bound; got {lines:?}"
+        );
+    }
+}
+
+// No automatic answer: a question on a non-interactive run pauses on the
+// operator exactly as it does on an interactive one.
+#[test]
+#[serial]
+fn non_interactive_run_still_pauses_on_a_question_for_the_operator() {
+    with_fake("ask");
+    let work = tempfile::tempdir().unwrap();
+    let spec = base_spec(&work.path().to_string_lossy());
+    assert!(!spec.interactive.enabled);
+    let cancel = CancelToken::new();
+    let (answer_tx, answers) = kata_core::run::answer_channel();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &answers,
+        &kata_core::run::DecisionRx::default(),
+        |e| {
+            if let KataEvent::AskRequested { id, .. } = &e {
+                answer_tx
+                    .send(kata_core::run::Answer {
+                        id: id.clone(),
+                        answers: vec![vec!["from the operator".into()]],
+                    })
+                    .unwrap();
+            }
+            events.push(e);
+        },
+    )
+    .unwrap();
+
+    assert_eq!(outcome.exit_code, 0);
+    let answered = events.iter().find_map(|e| match e {
+        KataEvent::AskAnswered { answers, .. } => Some(answers.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        answered,
+        Some(vec![vec!["from the operator".to_string()]]),
+        "the answer must be the operator's, not an automatic one: {events:?}"
+    );
+}
+
+// A question nobody can ever answer must not hang the run: the work clock is
+// paused while awaiting, so without this an unattended run (CI with stdin at
+// EOF) with no answer deadline would wait forever. It ends with 123, the
+// "nobody answered" code, as soon as the inbox is known to be closed.
+#[test]
+#[serial]
+fn a_question_nobody_can_answer_ends_the_run_with_123() {
+    with_fake("ask");
+    for dropped_sender in [false, true] {
+        let work = tempfile::tempdir().unwrap();
+        let spec = base_spec(&work.path().to_string_lossy());
+        assert_eq!(spec.interactive.answer_timeout_secs, None);
+        let answers = if dropped_sender {
+            let (tx, rx) = kata_core::run::answer_channel();
+            drop(tx);
+            rx
+        } else {
+            kata_core::run::AnswerRx::default()
+        };
+        let cancel = CancelToken::new();
+        let mut events: Vec<KataEvent> = Vec::new();
+        let started = std::time::Instant::now();
+        let outcome = run(
+            &spec,
+            &[] as &[CatalogEntry],
+            &cancel,
+            &answers,
+            &kata_core::run::DecisionRx::default(),
+            |e| events.push(e),
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 123, "dropped_sender={dropped_sender}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "must end promptly, not wait out a deadline"
+        );
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                KataEvent::RunError { message, exit_code: 123, .. }
+                    if message.contains("nobody can answer")
+            )),
+            "dropped_sender={dropped_sender}: {events:?}"
+        );
+    }
+}

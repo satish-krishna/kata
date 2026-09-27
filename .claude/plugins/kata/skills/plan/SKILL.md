@@ -10,7 +10,7 @@ Turn a spec into a plan a fresh session could execute without you: ordered, bite
 
 ## The one rule that changes everything
 
-**`ask_user` is your only mouth. A question you write as prose never reaches the operator.** A Kata run drives `claude -p` headlessly; end a turn with a plain-text question and the run ends, unanswered. Everywhere this skill says "ask" or "get approval", call the `ask_user` tool. Never use the built-in `AskUserQuestion`; it is disabled in Kata runs. Prefer `select`/`confirm` with your recommendation first; one focused question per call. If `ask_user` is unavailable (non-interactive run), take the conservative fork, record it in the plan under **Assumptions**, and skip the approval gate rather than stall.
+**`ask_user` is your only mouth. A question you write as prose never reaches the operator.** A Kata run drives `claude -p` headlessly; end a turn with a plain-text question and the run ends, unanswered. Everywhere this skill says "ask" or "get approval", call the `ask_user` tool. Never use the built-in `AskUserQuestion`; it is disabled in Kata runs. Prefer `select`/`confirm` with your recommendation first; one focused question per call. Kata wires `ask_user` into every run, interactive or not, so ask whenever the plan needs the operator. Only if the tool is genuinely missing from your toolset, take the conservative fork, record it in the plan under **Assumptions**, and skip the approval gate rather than stall.
 
 ## Model policy
 
@@ -33,7 +33,7 @@ Create a task per step and work them in order:
 
    Steps are bite-sized (one sitting each), ordered by dependency, and leave the tree green at every boundary. Then a closing section: **Risks, dependencies & open questions**.
 5. **Approval gate.** Present the step list and key choices through `ask_user` (`select`: approve / amend, approve first). On amend, revise and re-present. Unless the task already names the plan's path, ask the destination in the same call — a `select` leading with the repo's plan convention if one exists (e.g. `docs/superpowers/plans/` here), then the default `docs/plans/<YYYY-MM-DD>-<topic>-plan.md`, then an "elsewhere" option whose answer is a custom path.
-6. **Deliver — to a file.** Write the plan to the resolved destination (task-named path first; in a non-interactive run, the repo convention or the default). Summarize in your closing message. Do not commit unless the task says to.
+6. **Deliver — to a file.** Write the plan to the resolved destination (task-named path first; otherwise the one the operator chose through `ask_user`). Summarize in your closing message. Do not commit unless the task says to.
 
 ## Anti-patterns
 
@@ -41,4 +41,4 @@ Create a task per step and work them in order:
 - **Steps that only make sense to you.** The executor is a fresh session with no memory of this conversation. Every step self-contained.
 - **Test-after steps.** "Implement X, then add tests" violates the contract. The failing test is named first, in every step.
 - **Phantom references.** Naming a file or helper you never verified exists. That is what `kata-scout` is for.
-- **Skipping the approval gate in an interactive run.** An unapproved plan is a draft; get the operator's yes through `ask_user`.
+- **Skipping the approval gate.** An unapproved plan is a draft; get the operator's yes through `ask_user`.

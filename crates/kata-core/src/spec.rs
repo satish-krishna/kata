@@ -42,7 +42,8 @@ pub struct RunSpec {
     /// Auth and empty-room ("bare") settings.
     #[serde(default)]
     pub auth: Auth,
-    /// Interactive-run settings (the `ask_user` tool).
+    /// Operator-wait settings: whether permission checks may pause, and how long
+    /// any pause (a question or a permission check) may last.
     #[serde(default)]
     pub interactive: Interactive,
     /// How the run answers claude's permission checks. Defaults to `bypass`
@@ -219,12 +220,17 @@ fn default_bare() -> bool {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Interactive {
-    /// Opt-in gate. When false, the engine never wires the ask_user tool, so
-    /// claude cannot pause — behaviour is identical to a non-interactive run.
+    /// Whether *permission checks* may pause on the operator: `permissions.ask`
+    /// rules and `unmatched = "ask"` require it. It does not gate questions —
+    /// the `ask_user` tool is wired into every run, interactive or not, and a
+    /// question always pauses on the operator (claude's built-in
+    /// AskUserQuestion is disallowed because it kills a headless session).
     #[serde(default)]
     pub enabled: bool,
-    /// How long the engine waits on the operator's answer before reaping the run
-    /// (exit 123). Unset = wait indefinitely until answered or cancelled.
+    /// How long the engine waits on the operator — a question or a permission
+    /// check — before reaping the run (exit 123). Applies to every run, not just
+    /// interactive ones. Unset = wait until answered or cancelled; a run whose
+    /// answer channel is closed (kata-cli stdin at EOF) exits 123 at once.
     #[cfg_attr(feature = "ts", ts(optional = nullable, as = "Option<u32>"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer_timeout_secs: Option<u64>,

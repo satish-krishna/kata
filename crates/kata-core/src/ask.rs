@@ -6,8 +6,9 @@
 //! Two tools ride the same bridge, each wired only when its spec section asks
 //! for it:
 //!
-//! - `ask_user` — `[interactive] enabled = true`. Claude asks the operator a
-//!   question and waits for the answer.
+//! - `ask_user` — every run, interactive or not. Claude asks the operator a
+//!   question and waits for the answer; no permission mode stops claude from
+//!   wanting to ask, and its built-in AskUserQuestion kills a headless session.
 //! - `approve_tool` — `[permissions] mode = "prompt"`. Claude asks whether a
 //!   tool call may proceed, because the run cannot pass
 //!   `--dangerously-skip-permissions`. The engine answers from the spec's rules
@@ -601,9 +602,9 @@ mod tests {
         assert!(resp.contains(r#""questions""#)); // inputSchema mentions questions
     }
 
-    // A run only exposes what its spec asked for: a non-interactive prompt-mode
-    // run must not hand claude an ask_user it has no way to answer, and a plain
-    // interactive run must not advertise the permission handler.
+    // The server advertises exactly the enabled set. The engine enables ask_user
+    // on every run; approve_tool only under prompt/auto, so a bypass run never
+    // advertises the permission handler.
     #[test]
     fn tools_list_is_gated_by_the_enabled_set() {
         let list =
