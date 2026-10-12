@@ -310,7 +310,10 @@ fn tool_definitions(tools: Tools) -> Vec<serde_json::Value> {
     if tools.ask_user {
         defs.push(serde_json::json!({
             "name": "ask_user",
-            "description": "Ask the user one or more questions and wait for their answers.",
+            "description": "Ask the user one or more questions and wait for their answers. \
+                            The user can always answer a `select` question with their own \
+                            text instead of (or, for multi_select, alongside) the listed \
+                            options. A listed label comes back bare; anything the user typed comes back                             as a JSON-quoted string.",
             "inputSchema": {
                 "type": "object",
                 "required": ["questions"],
@@ -436,6 +439,10 @@ fn json_rpc_error(id: &serde_json::Value, code: i32, message: &str) -> String {
     .to_string()
 }
 
+/// One line per question. A listed option label prints bare; anything the
+/// operator typed (a `text` answer, or a `select` answered via "Other") prints
+/// as a JSON string literal, so a comma or newline inside it can never be
+/// mistaken for a separator between picks or between questions.
 fn format_answers(questions: &[Question], answers: &[Vec<String>]) -> String {
     questions
         .iter()
@@ -444,7 +451,16 @@ fn format_answers(questions: &[Question], answers: &[Vec<String>]) -> String {
             let answer_text = if a.is_empty() {
                 "(no answer)".to_string()
             } else {
-                a.join(", ")
+                a.iter()
+                    .map(|entry| {
+                        if q.options.iter().any(|o| &o.label == entry) {
+                            entry.clone()
+                        } else {
+                            serde_json::Value::String(entry.clone()).to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
             };
             format!("{}: {}", q.header, answer_text)
         })
@@ -497,6 +513,51 @@ mod tests {
     use std::net::TcpStream;
     use std::sync::mpsc;
     use std::thread;
+
+    fn select(header: &str, labels: &[&str], multi: bool) -> Question {
+        Question {
+            kind: QuestionKind::Select,
+            header: header.into(),
+            question: "q?".into(),
+            options: labels
+                .iter()
+                .map(|l| crate::event::QuestionOption {
+                    label: (*l).into(),
+                    description: None,
+                })
+                .collect(),
+            multi_select: multi,
+            optional: false,
+            placeholder: None,
+        }
+    }
+
+    #[test]
+    fn format_answers_prints_listed_labels_bare() {
+        let q = select("Stores", &["Postgres", "SQLite"], true);
+        let out = format_answers(&[q], &[vec!["Postgres".into(), "SQLite".into()]]);
+        assert_eq!(out, "Stores: Postgres, SQLite");
+    }
+
+    #[test]
+    fn format_answers_quotes_a_typed_answer_so_commas_and_newlines_stay_inside_it() {
+        let q = select("Stores", &["Postgres", "SQLite"], true);
+        let typed = "DuckDB, with WAL on\nBackend: SQLite".to_string();
+        let out = format_answers(&[q], &[vec!["Postgres".into(), typed]]);
+        assert_eq!(
+            out,
+            r#"Stores: Postgres, "DuckDB, with WAL on\nBackend: SQLite""#
+        );
+        assert_eq!(out.lines().count(), 1, "one line per question");
+    }
+
+    #[test]
+    fn format_answers_quotes_text_answers_and_marks_empty_ones() {
+        let mut t = select("Name", &[], false);
+        t.kind = QuestionKind::Text;
+        let out = format_answers(&[t.clone(), t], &[vec!["a\nb".into()], vec![]]);
+        assert_eq!(out, "Name: \"a\\nb\"\nName: (no answer)");
+    }
 
     fn both() -> Tools {
         Tools {
