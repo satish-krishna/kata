@@ -63,6 +63,16 @@ describe("AskPanel — Other option", () => {
     expect(onSubmit).toHaveBeenCalledWith("a1", [["Postgres", "DuckDB"]]);
   });
 
+  it("multi-select: typing an already-ticked label does not send it twice", async () => {
+    const onSubmit = vi.fn();
+    render(AskPanel, { id: "a1", questions: [multi], onSubmit });
+    await fireEvent.click(screen.getByRole("button", { name: /Postgres/ }));
+    await fireEvent.click(screen.getByRole("button", { name: /Other/ }));
+    await fireEvent.input(screen.getByRole("textbox"), { target: { value: "Postgres" } });
+    await fireEvent.click(send());
+    expect(onSubmit).toHaveBeenCalledWith("a1", [["Postgres"]]);
+  });
+
   it("answered view shows a custom answer as a selected Other row", () => {
     render(AskPanel, { id: "a1", questions: [single], answers: [["DuckDB"]] });
     expect(screen.getByText("DuckDB")).toBeInTheDocument();

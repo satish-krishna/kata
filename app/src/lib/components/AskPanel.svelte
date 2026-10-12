@@ -39,7 +39,7 @@
   function answerFor(q: Question, i: number): string[] {
     if (q.kind === "text") return [text[i]];
     const custom = q.kind === "select" && otherOn[i] ? otherText[i].trim() : "";
-    return custom ? [...answers[i], custom] : answers[i];
+    return custom && !answers[i].includes(custom) ? [...answers[i], custom] : answers[i];
   }
 
   // Picking Other commits to typing something: an empty Other never sends.
