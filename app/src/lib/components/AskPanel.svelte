@@ -11,6 +11,11 @@
   // answers[i] is the selection/text for question i (interactive state only).
   let answers = $state<string[][]>(questions.map(() => []));
   let text = $state<string[]>(questions.map(() => ""));
+  // Every select question carries a trailing "Other" row, as Claude Code's own
+  // picker does: the operator is never boxed into the model's list. The typed
+  // text travels as one more entry in that question's answer list.
+  let otherOn = $state<boolean[]>(questions.map(() => false));
+  let otherText = $state<string[]>(questions.map(() => ""));
 
   function toggle(i: number, label: string, multi: boolean) {
     const cur = answers[i];
@@ -18,15 +23,40 @@
       answers[i] = cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label];
     } else {
       answers[i] = [label];
+      otherOn[i] = false;
     }
   }
 
-  const ready = $derived(questions.every((q, i) =>
-    q.optional || (q.kind === "text" ? text[i].trim().length > 0 : answers[i].length > 0)));
+  function toggleOther(i: number, multi: boolean) {
+    if (multi) {
+      otherOn[i] = !otherOn[i];
+    } else {
+      answers[i] = [];
+      otherOn[i] = true;
+    }
+  }
+
+  function answerFor(q: Question, i: number): string[] {
+    if (q.kind === "text") return [text[i]];
+    const custom = q.kind === "select" && otherOn[i] ? otherText[i].trim() : "";
+    return custom ? [...answers[i], custom] : answers[i];
+  }
+
+  // Picking Other commits to typing something: an empty Other never sends.
+  const ready = $derived(questions.every((q, i) => {
+    if (q.kind === "select" && otherOn[i] && !otherText[i].trim()) return false;
+    if (q.optional) return true;
+    return q.kind === "text" ? text[i].trim().length > 0 : answerFor(q, i).length > 0;
+  }));
 
   function send() {
-    const payload = questions.map((q, i) => (q.kind === "text" ? [text[i]] : answers[i]));
-    onSubmit?.(id, payload);
+    onSubmit?.(id, questions.map(answerFor));
+  }
+
+  /** Answers to a select question that are not among its listed labels. */
+  function customAnswers(q: Question, i: number): string[] {
+    const labels = new Set((q.options ?? []).map((o) => o.label));
+    return (answeredAnswers![i] ?? []).filter((a) => !labels.has(a));
   }
 
   const answered = $derived(answeredAnswers !== null);
@@ -75,6 +105,17 @@
                     </span>
                   </button>
                 {/each}
+                {#if customAnswers(q, i).length > 0}
+                  <button type="button" class="k-ask__opt k-ask__opt--selected" disabled>
+                    <span class="k-ask__mark {q.multi_select ? 'k-ask__mark--check' : 'k-ask__mark--radio'}">
+                      {#if q.multi_select}✓{:else}<span class="k-ask__mark-dot"></span>{/if}
+                    </span>
+                    <span class="k-ask__opt-text">
+                      <span class="k-ask__opt-label">Other</span>
+                      {#each customAnswers(q, i) as c}<span class="k-ask__opt-desc k-ask__other-answer">{c}</span>{/each}
+                    </span>
+                  </button>
+                {/if}
               </div>
             {/if}
           {/if}
@@ -103,6 +144,22 @@
                   </span>
                 </button>
               {/each}
+              <button type="button" class="k-ask__opt"
+                class:k-ask__opt--selected={otherOn[i]}
+                onclick={() => toggleOther(i, !!q.multi_select)}>
+                <span class="k-ask__mark {q.multi_select ? 'k-ask__mark--check' : 'k-ask__mark--radio'}">
+                  {#if otherOn[i]}{#if q.multi_select}✓{:else}<span class="k-ask__mark-dot"></span>{/if}{/if}
+                </span>
+                <span class="k-ask__opt-text">
+                  <span class="k-ask__opt-label">Other</span>
+                  <span class="k-ask__opt-desc">type your own answer</span>
+                </span>
+              </button>
+              {#if otherOn[i]}
+                <!-- svelte-ignore a11y_autofocus -->
+                <textarea class="k-textarea" rows="2" placeholder="Your answer" autofocus
+                  aria-label="Other answer" bind:value={otherText[i]}></textarea>
+              {/if}
             </div>
           {:else}
             <textarea class="k-textarea" rows="3" placeholder={q.placeholder ?? ""} bind:value={text[i]}></textarea>

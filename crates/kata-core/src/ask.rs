@@ -310,7 +310,10 @@ fn tool_definitions(tools: Tools) -> Vec<serde_json::Value> {
     if tools.ask_user {
         defs.push(serde_json::json!({
             "name": "ask_user",
-            "description": "Ask the user one or more questions and wait for their answers.",
+            "description": "Ask the user one or more questions and wait for their answers. \
+                            The user can always answer a `select` question with their own \
+                            text instead of (or, for multi_select, alongside) the listed \
+                            options, so an answer may be a string that is not one of your labels.",
             "inputSchema": {
                 "type": "object",
                 "required": ["questions"],
