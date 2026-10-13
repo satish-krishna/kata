@@ -3,7 +3,7 @@ import type { StreamEvent } from "./events";
 import type { AskRecord, PermissionRecord } from "./run.svelte";
 import {
   pairToolEvents, withPauses, rendererFor, statusOf, defaultOpen,
-  targetFor, metaFor, editStats, todosOf, type ToolCall, type StreamItem,
+  targetFor, metaFor, editStats, todosOf, editsOf, type ToolCall, type StreamItem,
 } from "./toolcards";
 
 const use = (id: string, name: string, extra: Record<string, unknown> = {}): StreamEvent =>
@@ -176,5 +176,59 @@ describe("row text", () => {
     const bare = callAt(pairToolEvents([use("i", "Edit")]), 0);
     expect(targetFor(bare)).toBe("Edit summary");
     expect(metaFor(bare)).toEqual({});
+  });
+});
+
+describe("F1 memoized edit stats", () => {
+  it("returns the identical meta object across two passes over the same events", () => {
+    const events = [use("i", "Edit", { input: { file_path: "a", old_string: "x\n", new_string: "y\nz\n" } }), res("i", "Edit")];
+    const a = callAt(pairToolEvents(events), 0);
+    const b = callAt(pairToolEvents(events), 0);
+    expect(a).not.toBe(b);
+    expect(metaFor(a)).toBe(metaFor(b));
+    const multi = [use("m", "MultiEdit", { input: { file_path: "a", edits: [{ old_string: "x", new_string: "y" }] } })];
+    expect(metaFor(callAt(pairToolEvents(multi), 0))).toBe(metaFor(callAt(pairToolEvents(multi), 0)));
+  });
+});
+
+describe("F2 malformed MultiEdit", () => {
+  const input = { file_path: "a", edits: [null, 3, { old_string: "a", new_string: "b" }] };
+  it("editsOf keeps only object elements", () => {
+    const c = callAt(pairToolEvents([use("m", "MultiEdit", { input })]), 0);
+    expect(editsOf(c)).toEqual([{ old_string: "a", new_string: "b" }]);
+  });
+  it("metaFor does not throw and counts the good edit", () => {
+    const c = callAt(pairToolEvents([use("m", "MultiEdit", { input })]), 0);
+    expect(metaFor(c)).toEqual({ add: 1, del: 1 });
+  });
+});
+
+describe("F4 duplicate tool.use id", () => {
+  it("keeps the repeat as a plain event with a unique key", () => {
+    const items = pairToolEvents([use("d", "Read"), use("d", "Read")]);
+    expect(items).toHaveLength(2);
+    expect(new Set(items.map((i) => i.key)).size).toBe(2);
+    expect(items[1].kind).toBe("event");
+  });
+});
+
+describe("F5 nested agent meta", () => {
+  it("shows no call count for a depth-1 Agent", () => {
+    const items = pairToolEvents([use("A", "Agent"), use("B", "Agent", { parent_id: "A" }), use("C", "Read", { parent_id: "B" })]);
+    const nested = callAt(callAt(items, 0).children, 0);
+    expect(nested.depth).toBe(1);
+    expect(metaFor(nested)).toEqual({});
+  });
+});
+
+describe("F3 turn nesting", () => {
+  it("nests a turn with parent_id under its Agent call", () => {
+    const items = pairToolEvents([
+      use("A", "Agent"),
+      { type: "turn", n: 2, parent_id: "A" } as StreamEvent,
+      { type: "turn", n: 3 } as StreamEvent,
+    ]);
+    expect(items).toHaveLength(2);
+    expect(callAt(items, 0).children.map((c) => c.kind)).toEqual(["event"]);
   });
 });

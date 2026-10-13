@@ -42,7 +42,7 @@ export function pairToolEvents(events: StreamEvent[]): StreamItem[] {
     (parentId ? slots.get(parentId) : undefined) ?? { list: top, depth: 0 };
 
   events.forEach((ev, i) => {
-    if (ev.type === "tool.use" && ev.id) {
+    if (ev.type === "tool.use" && ev.id && !calls.has(ev.id)) {
       const slot = slotFor(ev.parent_id);
       const call: ToolCall = { id: ev.id, use: ev, result: null, depth: slot.depth, children: [] };
       calls.set(ev.id, call);
@@ -58,7 +58,7 @@ export function pairToolEvents(events: StreamEvent[]): StreamItem[] {
       }
     }
     const parentId =
-      ev.type === "tool.use" || ev.type === "tool.result" || ev.type === "assistant.text"
+      ev.type === "tool.use" || ev.type === "tool.result" || ev.type === "assistant.text" || ev.type === "turn"
         ? ev.parent_id
         : undefined;
     slotFor(parentId).list.push({ kind: "event", key: `e:${i}`, at: i, ev });
@@ -139,15 +139,29 @@ export function todosOf(call: ToolCall): Todo[] {
 
 const lineCount = (s: string): number => (s === "" ? 0 : s.replace(/\n$/, "").split("\n").length);
 
-export function editStats(oldText: string, newText: string): { add: number; del: number } {
+/** A diff that takes longer than this is abandoned: the row shows no `+n −m`
+ *  and the body shows the two texts side by side instead of a diff. */
+export const DIFF_TIMEOUT_MS = 200;
+
+/** `null` when the diff timed out. */
+export function editStats(oldText: string, newText: string): { add: number; del: number } | null {
+  const parts = diffLines(oldText, newText, { timeout: DIFF_TIMEOUT_MS });
+  if (!parts) return null;
   let add = 0;
   let del = 0;
-  for (const part of diffLines(oldText, newText)) {
+  for (const part of parts) {
     const n = part.count ?? lineCount(part.value);
     if (part.added) add += n;
     else if (part.removed) del += n;
   }
   return { add, del };
+}
+
+/** A MultiEdit's edits, minus anything that is not an object. */
+export function editsOf(call: ToolCall): Record<string, unknown>[] {
+  const edits = inputOf(call).edits;
+  if (!Array.isArray(edits)) return [];
+  return edits.filter((e): e is Record<string, unknown> => e !== null && typeof e === "object");
 }
 
 export function targetFor(call: ToolCall): string {
@@ -172,18 +186,37 @@ export type Meta = { add?: number; del?: number; text?: string };
 const countCalls = (items: StreamItem[]): number => items.filter((i) => i.kind === "call").length;
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
+// Keyed on the tool.use event, which is stable across re-derives, so a big
+// Edit is diffed once rather than on every appended event.
+const editMeta = new WeakMap<object, Meta>();
+
+function cachedEditMeta(call: ToolCall, compute: () => Meta): Meta {
+  let m = editMeta.get(call.use);
+  if (!m) {
+    m = compute();
+    editMeta.set(call.use, m);
+  }
+  return m;
+}
+
 export function metaFor(call: ToolCall): Meta {
   const inp = inputOf(call);
   const output = call.result?.output;
   switch (rendererFor(call)) {
-    case "edit": return editStats(str(inp.old_string), str(inp.new_string));
-    case "multiedit": {
-      const edits = Array.isArray(inp.edits) ? inp.edits : [];
-      return edits.reduce<{ add: number; del: number }>((acc, e) => {
-        const s = editStats(str(e?.old_string), str(e?.new_string));
-        return { add: acc.add + s.add, del: acc.del + s.del };
-      }, { add: 0, del: 0 });
-    }
+    case "edit":
+      return cachedEditMeta(call, () => editStats(str(inp.old_string), str(inp.new_string)) ?? {});
+    case "multiedit":
+      return cachedEditMeta(call, () => {
+        let add = 0;
+        let del = 0;
+        for (const e of editsOf(call)) {
+          const s = editStats(str(e.old_string), str(e.new_string));
+          if (!s) return {};
+          add += s.add;
+          del += s.del;
+        }
+        return { add, del };
+      });
     case "write": return { add: lineCount(str(inp.content)) };
     case "read": return output != null ? { text: plural(lineCount(output), "line") } : {};
     case "search":
@@ -194,7 +227,9 @@ export function metaFor(call: ToolCall): Meta {
       const todos = todosOf(call);
       return { text: `${todos.filter((t) => t.status === "completed").length} / ${todos.length}` };
     }
-    case "agent": return { text: plural(countCalls(call.children), "call") };
+    // A nested agent's calls are flattened into its parent's body, so its own
+    // count would read "0 calls".
+    case "agent": return call.depth > 0 ? {} : { text: plural(countCalls(call.children), "call") };
     case "generic": return {};
   }
 }

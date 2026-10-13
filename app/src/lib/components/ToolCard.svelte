@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ToolCall } from "$lib/toolcards";
   import {
-    rendererFor, statusOf, defaultOpen, targetFor, metaFor, inputOf, todosOf, str, STATUS_TEXT,
+    rendererFor, statusOf, defaultOpen, targetFor, metaFor, inputOf, todosOf, editsOf, str, STATUS_TEXT,
   } from "$lib/toolcards";
   import EventRow from "./EventRow.svelte";
   import ToolCard from "./ToolCard.svelte";
@@ -24,7 +24,7 @@
   const meta = $derived(metaFor(call));
   const output = $derived(call.result ? (call.result.output ?? call.result.summary) : "");
   const outTruncated = $derived(call.result?.truncated ?? false);
-  const edits = $derived(Array.isArray(inp.edits) ? (inp.edits as Record<string, unknown>[]) : []);
+  const edits = $derived(editsOf(call));
   // Bespoke bodies show the tool's own view; a failure's message goes under it.
   const showErrorOutput = $derived(
     status === "error" && (renderer === "edit" || renderer === "multiedit" || renderer === "write" || renderer === "todo"),

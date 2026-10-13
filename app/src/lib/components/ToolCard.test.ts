@@ -93,4 +93,12 @@ describe("ToolCard", () => {
     await fireEvent.click(screen.getByRole("button", { name: /Read/ }));
     expect(screen.getByText("… truncated at 256 KB")).toBeInTheDocument();
   });
+
+  it("skips non-object MultiEdit elements instead of crashing", () => {
+    const { container } = render(ToolCard, { call: callOf([
+      use("MultiEdit", { file_path: "a.rs", edits: [null, { old_string: "a", new_string: "b" }] }),
+      res("MultiEdit"),
+    ]) });
+    expect(container.querySelectorAll(".k-toolcard__diff")).toHaveLength(1);
+  });
 });
