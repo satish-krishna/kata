@@ -74,7 +74,7 @@ flowchart LR
 
 ### C. Workbench: the rail
 
-Layout is the **rail** (approved against mockups `card-style.html` and `rail-v4.html` in `.superpowers/brainstorm/`): one mono line per call, with an expandable body hanging off a hairline rail.
+Layout is the **rail** (the approved mockup is [`assets/2026-10-12-tool-cards-rail.html`](assets/2026-10-12-tool-cards-rail.html); option B, "boxed" cards, was considered and rejected): one mono line per call, with an expandable body hanging off a hairline rail.
 
 **Row:** `chevron · status dot · tool name · target · meta · status label`, 12px `--font-mono`. The status label sits beside the dot on every row (`ok`, `error`, `running…`), per the andon rule in `app/CLAUDE.md` that a status color is never shown without a label. There is no `exit N` label: `tool.result` carries only `ok`, and parsing an exit code out of Bash output text is the same fragility as parsing line numbers. The `exit 101` in the mockups is therefore not built. The row is the toggle; nothing else on it is interactive.
 

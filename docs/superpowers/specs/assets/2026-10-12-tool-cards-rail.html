@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --surface-app:#0c0b0a;--surface-panel:#17150f;--surface-card:#1b1916;--surface-inset:#211e1a;--surface-hover:#26221d;
+  --text-primary:#ede7de;--text-secondary:#b3aba0;--text-muted:#837b70;--text-faint:#6b6359;
+  --border-subtle:#2e2a24;--border-default:#38332d;--border-strong:#4a443c;
+  --accent:#1e92d8;--accent-text:#74c0ec;--accent-subtle:color-mix(in srgb,#1e92d8 14%,transparent);
+  --success:#4fb477;--success-text:#7fd1a0;--success-subtle:color-mix(in srgb,#4fb477 15%,transparent);
+  --error:#f04458;--error-text:#f7869a;--error-subtle:color-mix(in srgb,#f04458 15%,transparent);
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--surface-app);color:var(--text-primary);font:13px/1.5 var(--sans);padding:24px}
+h2{font:600 18px var(--sans);margin:0 0 4px}
+.sub{color:var(--text-muted);margin:0 0 20px;max-width:900px}
+.layout{display:grid;grid-template-columns:minmax(0,760px) 280px;gap:24px;align-items:start}
+.pane{border:1px solid var(--border-default);border-radius:6px;background:var(--surface-panel)}
+.pane-head{padding:8px 14px;border-bottom:1px solid var(--border-subtle);font:11px var(--mono);color:var(--text-muted);letter-spacing:.06em;text-transform:uppercase}
+.stream{padding:16px;display:flex;flex-direction:column;gap:8px}
+.prose{color:var(--text-primary);margin:4px 0}
+.chev{color:var(--text-faint);width:10px;display:inline-block;flex:none}
+.row{display:flex;gap:8px;align-items:baseline;font:12px/1.6 var(--mono);cursor:pointer;padding:1px 4px;margin:0 -4px;border-radius:3px}
+.row:hover{background:var(--surface-hover)}
+.dot{width:7px;height:7px;border-radius:50%;flex:none;transform:translateY(-1px)}
+.dot.ok{background:var(--success)}.dot.err{background:var(--error)}.dot.run{background:var(--text-faint)}
+.tname{color:var(--text-primary);font-weight:500;flex:none}
+.ttarget{color:var(--accent-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.tmeta{color:var(--text-faint);margin-left:auto;flex:none}
+.lbl{flex:none;font-size:11px;min-width:56px;text-align:right}
+.lbl.ok{color:var(--success-text)}.lbl.err{color:var(--error-text)}.lbl.run{color:var(--text-faint)}
+.body[hidden]{display:none}
+.body{margin:4px 0 6px 21px;padding-left:12px;border-left:1px solid var(--border-default);display:flex;flex-direction:column;gap:6px}
+.diff{font:12px/1.55 var(--mono);background:var(--surface-inset);border:1px solid var(--border-subtle);border-radius:4px;overflow:hidden}
+.diff div{padding:0 8px;white-space:pre}
+.diff .ctx{color:var(--text-muted)}
+.diff .del{background:var(--error-subtle);color:var(--error-text)}
+.diff .add{background:var(--success-subtle);color:var(--success-text)}
+.diff .ln{color:var(--text-faint);display:inline-block;width:26px}
+.todo{font:12px/1.7 var(--mono)}
+.todo .done{color:var(--text-faint);text-decoration:line-through}
+.todo .now{color:var(--accent-text)}
+.todo .pend{color:var(--text-muted)}
+.out{font:12px/1.5 var(--mono);background:var(--surface-inset);border:1px solid var(--border-subtle);border-radius:4px;padding:6px 8px;color:var(--text-secondary);white-space:pre}
+.trunc{font:11px var(--mono);color:var(--text-faint)}
+.label{font:10px var(--mono);color:var(--text-faint);letter-spacing:.06em;text-transform:uppercase}
+.prompt{font:12px/1.5 var(--sans);color:var(--text-secondary)}
+.notes{font-size:12px;color:var(--text-secondary)}
+.notes h3{font:600 13px var(--sans);color:var(--text-primary);margin:0 0 8px}
+.notes ul{margin:0 0 16px;padding-left:16px}.notes li{margin-bottom:6px}
+.notes code{font:11px var(--mono);color:var(--accent-text)}
+</style></head><body>
+<h2>Rail, revised</h2>
+<p class="sub">Option A with the fixes from section 2: every row has a status label next to its dot, cards open or collapse by the default policy, a call still running, a subagent Task expanded with its own calls nested one level deep, and a generic fallback card. Every chevron toggles; click around.</p>
+
+<div class="layout">
+<div class="pane">
+  <div class="pane-head">observe · stream</div>
+  <div class="stream" id="s">
+
+    <div class="prose">The failing test is in the claim-expiry check. Let me look.</div>
+
+    <!-- Read: collapsed by default -->
+    <div class="call">
+      <div class="row"><span class="chev">›</span><span class="dot ok"></span><span class="tname">Read</span><span class="ttarget">src/claim.rs</span><span class="tmeta">212 lines</span><span class="lbl ok">ok</span></div>
+      <div class="body" hidden><div class="out"> 38  pub fn is_expired(&amp;self, now: Instant) -&gt; bool {
+ 39      let claim = &amp;self.claim;
+ 40      // a claim is live up to and including expires_at
+ 41      if now &gt; claim.expires_at {
+ 42          return true;
+ 43      }</div><div class="trunc">… 206 more lines</div></div>
+    </div>
+
+    <!-- Edit: open by default -->
+    <div class="call">
+      <div class="row"><span class="chev">⌄</span><span class="dot ok"></span><span class="tname">Edit</span><span class="ttarget">src/claim.rs</span><span class="tmeta"><span style="color:var(--success-text)">+1</span> <span style="color:var(--error-text)">−1</span></span><span class="lbl ok">ok</span></div>
+      <div class="body"><div class="diff">
+        <div class="ctx">     // a claim is live up to and including expires_at</div>
+        <div class="del">-    if now &gt; claim.expires_at {</div>
+        <div class="add">+    if now &gt;= claim.expires_at {</div>
+        <div class="ctx">         return true;</div>
+      </div></div>
+    </div>
+
+    <!-- Bash failed: open by default (failure) -->
+    <div class="call">
+      <div class="row"><span class="chev">⌄</span><span class="dot err"></span><span class="tname">Bash</span><span class="ttarget">cargo test -p queue</span><span class="tmeta"></span><span class="lbl err">exit 101</span></div>
+      <div class="body"><div class="out">test claim::expiry_boundary ... FAILED
+thread 'claim::expiry_boundary' panicked at src/claim.rs:44:9:
+assertion failed: !claim.is_expired(at_expiry)</div><div class="trunc">… truncated at 256 KB</div></div>
+    </div>
+
+    <div class="prose">The comment and the code disagree — the comment is right. Checking for the same mistake elsewhere.</div>
+
+    <!-- Task: collapsed by default, shown OPEN here to demo nesting -->
+    <div class="call">
+      <div class="row"><span class="chev">⌄</span><span class="dot ok"></span><span class="tname">Task</span><span class="ttarget">Explore: find other expiry checks</span><span class="tmeta">3 calls</span><span class="lbl ok">ok</span></div>
+      <div class="body">
+        <div class="label">prompt</div>
+        <div class="prompt">Find every comparison against an <code style="font:11px var(--mono);color:var(--accent-text)">expires_at</code> field in crates/ and report whether it uses &gt; or &gt;=.</div>
+        <div class="call">
+          <div class="row"><span class="chev">›</span><span class="dot ok"></span><span class="tname">Grep</span><span class="ttarget">expires_at</span><span class="tmeta">7 matches</span><span class="lbl ok">ok</span></div>
+          <div class="body" hidden><div class="out">src/claim.rs:41
+src/lease.rs:88
+src/lease.rs:112
+src/sweeper.rs:23</div></div>
+        </div>
+        <div class="call">
+          <div class="row"><span class="chev">›</span><span class="dot ok"></span><span class="tname">Read</span><span class="ttarget">src/lease.rs</span><span class="tmeta">140 lines</span><span class="lbl ok">ok</span></div>
+          <div class="body" hidden><div class="out">…</div></div>
+        </div>
+        <div class="call">
+          <div class="row"><span class="chev">›</span><span class="dot ok"></span><span class="tname">Read</span><span class="ttarget">src/sweeper.rs</span><span class="tmeta">61 lines</span><span class="lbl ok">ok</span></div>
+          <div class="body" hidden><div class="out">…</div></div>
+        </div>
+        <div class="label">result</div>
+        <div class="prompt">lease.rs:88 has the same strict &gt; comparison. The other six use &gt;= correctly.</div>
+      </div>
+    </div>
+
+    <!-- TodoWrite: open by default -->
+    <div class="call">
+      <div class="row"><span class="chev">⌄</span><span class="dot ok"></span><span class="tname">TodoWrite</span><span class="ttarget"></span><span class="tmeta">2 / 4</span><span class="lbl ok">ok</span></div>
+      <div class="body todo">
+        <div class="done">✓ reproduce the expiry failure</div>
+        <div class="done">✓ fix the boundary in claim.rs</div>
+        <div class="now">● fix the same boundary in lease.rs</div>
+        <div class="pend">○ run the queue tests</div>
+      </div>
+    </div>
+
+    <!-- Generic fallback: collapsed -->
+    <div class="call">
+      <div class="row"><span class="chev">›</span><span class="dot ok"></span><span class="tname">WebFetch</span><span class="ttarget">https://docs.rs/tokio/latest/tokio/time/struct.Instant.html</span><span class="tmeta"></span><span class="lbl ok">ok</span></div>
+      <div class="body" hidden>
+        <div class="label">input</div>
+        <div class="out">{
+  "url": "https://docs.rs/tokio/latest/tokio/time/struct.Instant.html",
+  "prompt": "Is Instant comparison monotonic?"
+}</div>
+        <div class="label">output</div>
+        <div class="out">Yes. Instant is monotonic and never goes backwards…</div>
+      </div>
+    </div>
+
+    <!-- Running -->
+    <div class="call">
+      <div class="row"><span class="chev">›</span><span class="dot run"></span><span class="tname">Edit</span><span class="ttarget">src/lease.rs</span><span class="tmeta"></span><span class="lbl run">running…</span></div>
+    </div>
+
+  </div>
+</div>
+
+<div class="notes">
+  <h3>What changed from v1</h3>
+  <ul>
+    <li>Every row has a <b>label</b> next to its dot (<code>ok</code>, <code>exit 101</code>, <code>running…</code>). That's the andon rule: never color alone.</li>
+    <li>Edit diffs have <b>no line numbers</b>: the tool input only carries <code>old_string</code> and <code>new_string</code>, with no position in the file. Any context lines are whatever claude included in <code>old_string</code>.</li>
+    <li>The <b>Task</b> card nests its subagent's calls one level deep, between its prompt and its result. Shown open here; it starts collapsed.</li>
+    <li><b>Generic</b> fallback (WebFetch here): the target is the input summary, and the body is pretty-printed input, then the output.</li>
+  </ul>
+  <h3>Open by default</h3>
+  <ul>
+    <li>Edit / Write / MultiEdit</li>
+    <li>TodoWrite</li>
+    <li>Anything that failed</li>
+  </ul>
+  <h3>Collapsed by default</h3>
+  <ul>
+    <li>Read / Grep / Glob, Task, generic</li>
+  </ul>
+</div>
+</div>
+
+<script>
+document.querySelectorAll('.row').forEach(r=>{
+  const body=r.nextElementSibling;
+  if(!body||!body.classList.contains('body'))return;
+  r.addEventListener('click',e=>{
+    e.stopPropagation();
+    body.hidden=!body.hidden;
+    r.querySelector('.chev').textContent=body.hidden?'›':'⌄';
+  });
+});
+</script>
+</body></html>
