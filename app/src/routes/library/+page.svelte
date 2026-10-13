@@ -6,6 +6,8 @@
   import { kataViews, withTask } from "$lib/katas";
   import { setLaunch } from "$lib/launch";
   import EventRow from "$lib/components/EventRow.svelte";
+  import ToolCard from "$lib/components/ToolCard.svelte";
+  import { pairToolEvents } from "$lib/toolcards";
   import SummaryStat from "$lib/components/SummaryStat.svelte";
   import TaskEditor from "$lib/components/TaskEditor.svelte";
   import DetailActions from "$lib/components/DetailActions.svelte";
@@ -53,7 +55,7 @@
   });
 
   let run = $derived(detail?.record ?? null);
-  let stream = $derived(detail ? detail.events.filter(isStreamEvent) : null);
+  let stream = $derived(detail ? pairToolEvents(detail.events.filter(isStreamEvent)) : null);
 
   const stateOf = (r: RunRecord): RunState => statusForExit(r.exit ?? null);
   const tone = (s: RunState) => (s === "success" ? "success" : s === "warning" ? "warning" : "error");
@@ -224,7 +226,9 @@
             <div class="wb-detail__streamhead" style="margin-bottom:10px">Event log · {run.kata}</div>
             {#if stream}
               <div class="wb-detail__stream">
-                {#each stream as ev, i (i)}<EventRow {ev} />{/each}
+                {#each stream as item (item.key)}
+                  {#if item.kind === "call"}<ToolCard call={item.call} />{:else}<EventRow ev={item.ev} />{/if}
+                {/each}
               </div>
             {:else}
               <div class="wb-detail__result" style="color:var(--text-faint)">Event log for this run has been pruned from local history.</div>
