@@ -796,3 +796,47 @@ fn init_rejects_path_like_names() {
     assert!(!dir.path().join("escape.toml").exists());
     assert!(!dir.path().join("..").join("escape.toml").exists());
 }
+
+#[test]
+fn run_full_payloads_flag_adds_tool_output() {
+    let work = tempfile::tempdir().unwrap();
+    let kata_home = tempfile::tempdir().unwrap();
+    let spec = write(
+        work.path(),
+        "p.kata.toml",
+        &format!(
+            "schema = 1\nname = \"p\"\ntask = \"t\"\nworkdir = \"{}\"\n",
+            work.path().to_string_lossy().replace('\\', "/")
+        ),
+    );
+    let run = |flag: bool| {
+        let mut cmd = kata();
+        cmd.arg("run");
+        if flag {
+            cmd.arg("--full-payloads");
+        }
+        let out = cmd
+            .arg(&spec)
+            .env("KATA_CLAUDE_BIN", fake_claude())
+            .env("KATA_FAKE_MODE", "subagent")
+            .env("KATA_HOME", kata_home.path())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+            .find(|v| v["type"] == "tool.result" && v["name"] == "Read")
+            .expect("a Read tool.result")
+    };
+    let lean = run(false);
+    assert_eq!(lean["id"], "toolu_B");
+    assert!(lean.get("output").is_none());
+    let full = run(true);
+    assert_eq!(full["output"], "1\thello");
+}

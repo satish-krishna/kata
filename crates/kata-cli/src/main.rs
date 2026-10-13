@@ -21,7 +21,13 @@ enum Cmd {
     /// List discovered skills and plugins as JSON.
     Catalog,
     /// Run a kata to completion, streaming JSON-line events.
-    Run { spec: PathBuf },
+    Run {
+        spec: PathBuf,
+        /// Add raw tool input and output to tool.use / tool.result events
+        /// (each capped at 256 KB). Off by default to keep CI logs lean.
+        #[arg(long)]
+        full_payloads: bool,
+    },
     /// Vendor a spec's skills/plugins into a portable bundle folder.
     Bundle {
         spec: PathBuf,
@@ -56,7 +62,10 @@ fn main() -> ExitCode {
     match cli.command {
         Cmd::Validate { spec } => cmd_validate(&spec),
         Cmd::Catalog => cmd_catalog(),
-        Cmd::Run { spec } => cmd_run(&spec),
+        Cmd::Run {
+            spec,
+            full_payloads,
+        } => cmd_run(&spec, full_payloads),
         Cmd::Bundle { spec, out, force } => cmd_bundle(&spec, out.as_deref(), force),
         Cmd::Init { name, force, local } => cmd_init(name.as_deref(), force, local),
         Cmd::McpAsk => match kata_core::ask::serve_stdio() {
@@ -304,7 +313,7 @@ fn parse_stdin_line(line: &str) -> Option<StdinCmd> {
     None
 }
 
-fn cmd_run(path: &std::path::Path) -> ExitCode {
+fn cmd_run(path: &std::path::Path, full_payloads: bool) -> ExitCode {
     // A directory carrying the kata-bundle.toml marker is a bundle: load its
     // spec and discover the kit ONLY from its vendored .claude (hermetic).
     let (spec, roots) = if kata_core::bundle::is_bundle(path) {
@@ -370,7 +379,8 @@ fn cmd_run(path: &std::path::Path) -> ExitCode {
         }
     };
 
-    match kata_core::run::run(&spec, &catalog, &cancel, &answers, &decisions, emit) {
+    let opts = kata_core::run::RunOptions { full_payloads };
+    match kata_core::run::run_with(&spec, &catalog, &cancel, &answers, &decisions, opts, emit) {
         Ok(outcome) => {
             if let Some(p) = &outcome.transcript_path {
                 eprintln!("transcript: {p}");
