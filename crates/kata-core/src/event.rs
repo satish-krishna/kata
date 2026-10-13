@@ -7,6 +7,15 @@ use std::io::BufRead;
 /// so consumers can pin and detect breaks.
 pub const KATA_EVENT_PROTOCOL_VERSION: u32 = 1;
 
+/// Per-field ceiling for `tool.use.input` (serialized) and `tool.result.output`
+/// under `kata run --full-payloads`. Keeps one accidental `cat` of a minified
+/// bundle from reaching the webview as a multi-megabyte DOM node.
+pub const PAYLOAD_CAP_BYTES: usize = 256 * 1024;
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type")]
@@ -25,14 +34,50 @@ pub enum KataEvent {
     #[serde(rename = "log")]
     Log { level: String, message: String },
     #[serde(rename = "assistant.text")]
-    AssistantText { text: String },
+    AssistantText {
+        text: String,
+        /// `id` of the subagent call this text was written inside; absent at
+        /// the top level.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_id: Option<String>,
+    },
     #[serde(rename = "tool.use")]
-    ToolUse { name: String, input_summary: String },
+    ToolUse {
+        name: String,
+        input_summary: String,
+        /// claude's `tool_use_id`. Pairs this call with its `tool.result`.
+        /// Emitted on every run; absent only in transcripts written before it
+        /// existed, or when claude sent none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        /// `id` of the subagent call this call was made inside; absent at the
+        /// top level.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_id: Option<String>,
+        /// Raw tool input. Only under `kata run --full-payloads`; omitted, with
+        /// `truncated` set, when its serialized form exceeds `PAYLOAD_CAP_BYTES`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        truncated: bool,
+    },
     #[serde(rename = "tool.result")]
     ToolResult {
         name: String,
         ok: bool,
         summary: String,
+        /// The `id` of the `tool.use` this result answers.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_id: Option<String>,
+        /// The tool's output flattened to text. Only under
+        /// `kata run --full-payloads`; cut at `PAYLOAD_CAP_BYTES` with
+        /// `truncated` set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        truncated: bool,
     },
     #[serde(rename = "turn")]
     Turn { n: u32 },
@@ -231,14 +276,29 @@ pub struct Parsed {
 #[derive(Debug, Default)]
 pub struct StreamParser {
     tool_names: HashMap<String, String>,
+    full_payloads: bool,
 }
 
 impl StreamParser {
+    /// `full_payloads` adds the raw `input` / `output` to tool events
+    /// (`kata run --full-payloads`). `StreamParser::default()` leaves it off.
+    pub fn new(full_payloads: bool) -> Self {
+        Self {
+            full_payloads,
+            ..Self::default()
+        }
+    }
+
     pub fn push(&mut self, line: &str) -> Parsed {
         let mut out = Parsed::default();
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
             return out;
         };
+        // Set on every message claude emits from inside a subagent.
+        let parent_id = v
+            .get("parent_tool_use_id")
+            .and_then(|p| p.as_str())
+            .map(String::from);
         match v.get("type").and_then(|t| t.as_str()) {
             Some("assistant") => {
                 out.is_assistant_message = true;
@@ -249,6 +309,7 @@ impl StreamParser {
                                 if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
                                     out.events.push(KataEvent::AssistantText {
                                         text: t.to_string(),
+                                        parent_id: parent_id.clone(),
                                     });
                                 }
                             }
@@ -258,10 +319,11 @@ impl StreamParser {
                                     .and_then(|n| n.as_str())
                                     .unwrap_or("")
                                     .to_string();
+                                let id = block.get("id").and_then(|i| i.as_str()).map(String::from);
                                 // Record id → name for later tool_result correlation,
                                 // even for ask_user (harmless; its result is suppressed).
-                                if let Some(id) = block.get("id").and_then(|i| i.as_str()) {
-                                    self.tool_names.insert(id.to_string(), name.clone());
+                                if let Some(id) = &id {
+                                    self.tool_names.insert(id.clone(), name.clone());
                                 }
                                 // Kata's own bridge tools surface as their own
                                 // events (ask.* / permission.*), not stream rows;
@@ -269,9 +331,18 @@ impl StreamParser {
                                 if is_bridge_tool(&name) {
                                     continue;
                                 }
+                                let (input, truncated) = if self.full_payloads {
+                                    capped_input(block.get("input"))
+                                } else {
+                                    (None, false)
+                                };
                                 out.events.push(KataEvent::ToolUse {
                                     name,
                                     input_summary: summarize_input(block.get("input")),
+                                    id,
+                                    parent_id: parent_id.clone(),
+                                    input,
+                                    truncated,
                                 });
                             }
                             _ => {}
@@ -287,9 +358,12 @@ impl StreamParser {
                                 .get("is_error")
                                 .and_then(|b| b.as_bool())
                                 .unwrap_or(false);
-                            let name = block
+                            let id = block
                                 .get("tool_use_id")
                                 .and_then(|i| i.as_str())
+                                .map(String::from);
+                            let name = id
+                                .as_deref()
                                 .and_then(|id| self.tool_names.get(id))
                                 .cloned()
                                 .unwrap_or_default();
@@ -299,10 +373,19 @@ impl StreamParser {
                             if is_bridge_tool(&name) {
                                 continue;
                             }
+                            let (output, truncated) = if self.full_payloads {
+                                capped_output(block.get("content"))
+                            } else {
+                                (None, false)
+                            };
                             out.events.push(KataEvent::ToolResult {
                                 name,
                                 ok,
                                 summary: summarize_content(block.get("content")),
+                                id,
+                                parent_id: parent_id.clone(),
+                                output,
+                                truncated,
                             });
                         }
                     }
@@ -361,6 +444,49 @@ fn summarize_content(content: Option<&serde_json::Value>) -> String {
         Some(serde_json::Value::String(s)) => truncate(s, 200),
         Some(other) => truncate(&other.to_string(), 200),
         None => String::new(),
+    }
+}
+
+/// A `tool_result.content` as plain text. claude sends a string for most tools
+/// and an array of content blocks for some (the subagent `Agent` tool). Text
+/// blocks contribute their text; any other block a `[<type>]` placeholder.
+pub(crate) fn flatten_content(content: Option<&serde_json::Value>) -> String {
+    match content {
+        None | Some(serde_json::Value::Null) => String::new(),
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Array(blocks)) => blocks
+            .iter()
+            .map(|b| match b.get("type").and_then(|t| t.as_str()) {
+                Some("text") => b
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                Some(other) => format!("[{other}]"),
+                None => b.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Some(other) => other.to_string(),
+    }
+}
+
+/// The raw input, or nothing (with `truncated`) when it is over the cap: a cut
+/// JSON object would be invalid, so it is dropped whole.
+fn capped_input(input: Option<&serde_json::Value>) -> (Option<serde_json::Value>, bool) {
+    match input {
+        None => (None, false),
+        Some(v) if v.to_string().len() > PAYLOAD_CAP_BYTES => (None, true),
+        Some(v) => (Some(v.clone()), false),
+    }
+}
+
+fn capped_output(content: Option<&serde_json::Value>) -> (Option<String>, bool) {
+    let text = flatten_content(content);
+    if text.len() > PAYLOAD_CAP_BYTES {
+        (Some(truncate(&text, PAYLOAD_CAP_BYTES)), true)
+    } else {
+        (Some(text), false)
     }
 }
 
@@ -444,7 +570,8 @@ mod tests {
         assert_eq!(
             p.events,
             vec![KataEvent::AssistantText {
-                text: "hello".into()
+                text: "hello".into(),
+                parent_id: None,
             }]
         );
         assert!(p.result.is_none());
@@ -458,7 +585,11 @@ mod tests {
             p.events,
             vec![KataEvent::ToolUse {
                 name: "Bash".into(),
-                input_summary: "ls -la".into()
+                input_summary: "ls -la".into(),
+                id: None,
+                parent_id: None,
+                input: None,
+                truncated: false,
             }]
         );
     }
@@ -472,7 +603,11 @@ mod tests {
             vec![KataEvent::ToolResult {
                 name: String::new(),
                 ok: true,
-                summary: "3 failed".into()
+                summary: "3 failed".into(),
+                id: None,
+                parent_id: None,
+                output: None,
+                truncated: false,
             }]
         );
         assert!(!p.is_assistant_message);
@@ -546,7 +681,10 @@ mod tests {
         assert_eq!(result.unwrap().num_turns, 2);
         assert!(events.contains(&KataEvent::Turn { n: 1 }));
         assert!(events.contains(&KataEvent::Turn { n: 2 }));
-        assert!(events.contains(&KataEvent::AssistantText { text: "a".into() }));
+        assert!(events.contains(&KataEvent::AssistantText {
+            text: "a".into(),
+            parent_id: None
+        }));
     }
 
     #[test]
@@ -958,6 +1096,10 @@ mod tests {
                 name: "Bash".into(),
                 ok: true,
                 summary: "ok".into(),
+                id: Some("toolu_1".into()),
+                parent_id: None,
+                output: None,
+                truncated: false,
             }]
         );
     }
@@ -973,7 +1115,11 @@ mod tests {
             KataEvent::ToolResult {
                 name: String::new(),
                 ok: true,
-                summary: "ok".into()
+                summary: "ok".into(),
+                id: Some("toolu_x".into()),
+                parent_id: None,
+                output: None,
+                truncated: false,
             }
         );
     }
@@ -992,6 +1138,10 @@ mod tests {
             name: "Read".into(),
             ok: true,
             summary: "data".into(),
+            id: Some("toolu_9".into()),
+            parent_id: None,
+            output: None,
+            truncated: false,
         }));
     }
 
@@ -1016,6 +1166,230 @@ mod tests {
         assert_eq!(
             committed, generated,
             "schema drift — regenerate with KATA_BLESS_SCHEMA=1 cargo test -p kata-core --features schema schema_artifact_is_fresh"
+        );
+    }
+
+    const PARALLEL_USE: &str = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"a.rs"}},{"type":"tool_use","id":"t2","name":"Read","input":{"file_path":"b.rs"}},{"type":"tool_use","id":"t3","name":"Grep","input":{"pattern":"x"}}]}}"#;
+    const PARALLEL_RESULTS: &str = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t3","content":"m"},{"type":"tool_result","tool_use_id":"t1","content":"1\thello"},{"type":"tool_result","tool_use_id":"t2","content":"2\tbye"}]}}"#;
+
+    fn results(events: &[KataEvent]) -> Vec<(Option<String>, String)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                KataEvent::ToolResult { id, name, .. } => Some((id.clone(), name.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn parallel_calls_pair_by_id() {
+        let mut p = StreamParser::default();
+        let uses = p.push(PARALLEL_USE).events;
+        let ids: Vec<_> = uses
+            .iter()
+            .filter_map(|e| match e {
+                KataEvent::ToolUse { id, .. } => id.clone(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids, vec!["t1", "t2", "t3"]);
+        let res = p.push(PARALLEL_RESULTS).events;
+        assert_eq!(
+            results(&res),
+            vec![
+                (Some("t3".into()), "Grep".into()),
+                (Some("t1".into()), "Read".into()),
+                (Some("t2".into()), "Read".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn payloads_absent_without_the_flag() {
+        let mut p = StreamParser::default();
+        let mut events = p.push(PARALLEL_USE).events;
+        events.extend(p.push(PARALLEL_RESULTS).events);
+        for e in &events {
+            match e {
+                KataEvent::ToolUse {
+                    input,
+                    truncated,
+                    id,
+                    ..
+                } => {
+                    assert!(input.is_none());
+                    assert!(!truncated);
+                    assert!(id.is_some(), "id is emitted on every run");
+                }
+                KataEvent::ToolResult {
+                    output,
+                    truncated,
+                    id,
+                    ..
+                } => {
+                    assert!(output.is_none());
+                    assert!(!truncated);
+                    assert!(id.is_some());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn payloads_present_with_the_flag() {
+        let mut p = StreamParser::new(true);
+        let uses = p.push(PARALLEL_USE).events;
+        match &uses[0] {
+            KataEvent::ToolUse { input, .. } => {
+                assert_eq!(
+                    input.as_ref().unwrap(),
+                    &serde_json::json!({"file_path": "a.rs"})
+                )
+            }
+            other => panic!("expected tool.use, got {other:?}"),
+        }
+        let res = p.push(PARALLEL_RESULTS).events;
+        match &res[1] {
+            KataEvent::ToolResult {
+                output, truncated, ..
+            } => {
+                assert_eq!(output.as_deref(), Some("1\thello"));
+                assert!(!truncated);
+            }
+            other => panic!("expected tool.result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn oversized_output_is_cut_on_a_char_boundary() {
+        let mut p = StreamParser::new(true);
+        p.push(r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}"#);
+        let big = "é".repeat(PAYLOAD_CAP_BYTES); // 2 bytes each: twice the cap
+        let line = serde_json::json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":big}]}}).to_string();
+        match &p.push(&line).events[0] {
+            KataEvent::ToolResult {
+                output, truncated, ..
+            } => {
+                let out = output.as_ref().unwrap();
+                assert!(*truncated);
+                assert!(
+                    out.len() <= PAYLOAD_CAP_BYTES + 3,
+                    "cap plus the ... suffix"
+                );
+                assert!(out.ends_with("..."));
+            }
+            other => panic!("expected tool.result, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn oversized_input_is_omitted_not_cut() {
+        let mut p = StreamParser::new(true);
+        let line = serde_json::json!({"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Write","input":{"content":"x".repeat(PAYLOAD_CAP_BYTES + 1)}}]}}).to_string();
+        match &p.push(&line).events[0] {
+            KataEvent::ToolUse {
+                input,
+                truncated,
+                input_summary,
+                ..
+            } => {
+                assert!(input.is_none(), "a cut JSON object would be invalid");
+                assert!(*truncated);
+                assert!(!input_summary.is_empty(), "the summary still renders");
+            }
+            other => panic!("expected tool.use, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn string_and_block_array_content_flatten_alike() {
+        let s = serde_json::json!("a\nb");
+        let blocks = serde_json::json!([{"type":"text","text":"a"},{"type":"text","text":"b"}]);
+        assert_eq!(flatten_content(Some(&s)), flatten_content(Some(&blocks)));
+        let with_image =
+            serde_json::json!([{"type":"text","text":"a"},{"type":"image","source":{}}]);
+        assert_eq!(flatten_content(Some(&with_image)), "a\n[image]");
+        assert_eq!(flatten_content(None), "");
+    }
+
+    #[test]
+    fn parent_id_marks_subagent_messages_only() {
+        let mut p = StreamParser::default();
+        let top = p.push(r#"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"A","name":"Agent","input":{"prompt":"p"}}]}}"#);
+        let inner_use = p.push(r#"{"type":"assistant","parent_tool_use_id":"A","message":{"content":[{"type":"text","text":"looking"},{"type":"tool_use","id":"B","name":"Read","input":{"file_path":"x"}}]}}"#);
+        let inner_res = p.push(r#"{"type":"user","parent_tool_use_id":"A","message":{"content":[{"type":"tool_result","tool_use_id":"B","content":"1\thi"}]}}"#);
+        assert!(matches!(
+            &top.events[0],
+            KataEvent::ToolUse {
+                parent_id: None,
+                ..
+            }
+        ));
+        assert!(
+            matches!(&inner_use.events[0], KataEvent::AssistantText { parent_id: Some(p), .. } if p == "A")
+        );
+        assert!(
+            matches!(&inner_use.events[1], KataEvent::ToolUse { parent_id: Some(p), .. } if p == "A")
+        );
+        assert!(
+            matches!(&inner_res.events[0], KataEvent::ToolResult { parent_id: Some(p), name, .. } if p == "A" && name == "Read")
+        );
+    }
+
+    #[test]
+    fn transcripts_written_before_the_new_fields_still_load() {
+        let u: KataEvent =
+            serde_json::from_str(r#"{"type":"tool.use","name":"Bash","input_summary":"ls"}"#)
+                .unwrap();
+        assert!(matches!(
+            u,
+            KataEvent::ToolUse {
+                id: None,
+                parent_id: None,
+                input: None,
+                truncated: false,
+                ..
+            }
+        ));
+        let r: KataEvent =
+            serde_json::from_str(r#"{"type":"tool.result","name":"Bash","ok":true,"summary":"s"}"#)
+                .unwrap();
+        assert!(matches!(
+            r,
+            KataEvent::ToolResult {
+                id: None,
+                output: None,
+                truncated: false,
+                ..
+            }
+        ));
+        let t: KataEvent =
+            serde_json::from_str(r#"{"type":"assistant.text","text":"hi"}"#).unwrap();
+        assert!(matches!(
+            t,
+            KataEvent::AssistantText {
+                parent_id: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn absent_fields_are_not_serialized() {
+        let v = serde_json::to_value(KataEvent::ToolUse {
+            name: "Bash".into(),
+            input_summary: "ls".into(),
+            id: None,
+            parent_id: None,
+            input: None,
+            truncated: false,
+        })
+        .unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"type":"tool.use","name":"Bash","input_summary":"ls"})
         );
     }
 }

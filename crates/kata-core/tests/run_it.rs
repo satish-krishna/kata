@@ -320,7 +320,7 @@ fn assistant_texts(events: &[KataEvent]) -> Vec<String> {
     events
         .iter()
         .filter_map(|e| match e {
-            KataEvent::AssistantText { text } => Some(text.clone()),
+            KataEvent::AssistantText { text, .. } => Some(text.clone()),
             _ => None,
         })
         .collect()
@@ -1058,7 +1058,7 @@ fn verdict_text(events: &[KataEvent]) -> String {
     events
         .iter()
         .find_map(|e| match e {
-            KataEvent::AssistantText { text } => Some(text.clone()),
+            KataEvent::AssistantText { text, .. } => Some(text.clone()),
             _ => None,
         })
         .expect("expected the fake to echo the verdict")
