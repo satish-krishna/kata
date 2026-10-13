@@ -80,7 +80,13 @@ pub enum KataEvent {
         truncated: bool,
     },
     #[serde(rename = "turn")]
-    Turn { n: u32 },
+    Turn {
+        n: u32,
+        /// Set when the assistant message came from inside a subagent: the
+        /// `id` of the `tool.use` that spawned it. Omitted at the top level.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_id: Option<String>,
+    },
     #[serde(rename = "run.completed")]
     RunCompleted {
         exit_code: i32,
@@ -267,6 +273,8 @@ impl ResultPayload {
 pub struct Parsed {
     pub events: Vec<KataEvent>,
     pub is_assistant_message: bool,
+    /// The message's `parent_tool_use_id`, when it came from inside a subagent.
+    pub parent_id: Option<String>,
     pub result: Option<ResultPayload>,
 }
 
@@ -299,6 +307,7 @@ impl StreamParser {
             .get("parent_tool_use_id")
             .and_then(|p| p.as_str())
             .map(String::from);
+        out.parent_id = parent_id.clone();
         match v.get("type").and_then(|t| t.as_str()) {
             Some("assistant") => {
                 out.is_assistant_message = true;
@@ -527,7 +536,10 @@ pub fn pump<R: BufRead>(
         let parsed = parser.push(&line);
         if parsed.is_assistant_message {
             turns += 1;
-            emit(KataEvent::Turn { n: turns });
+            emit(KataEvent::Turn {
+                n: turns,
+                parent_id: parsed.parent_id.clone(),
+            });
         }
         for e in parsed.events {
             emit(e);
@@ -679,8 +691,14 @@ mod tests {
         let mut events = Vec::new();
         let result = pump(Cursor::new(input), &|| false, &mut |e| events.push(e));
         assert_eq!(result.unwrap().num_turns, 2);
-        assert!(events.contains(&KataEvent::Turn { n: 1 }));
-        assert!(events.contains(&KataEvent::Turn { n: 2 }));
+        assert!(events.contains(&KataEvent::Turn {
+            n: 1,
+            parent_id: None
+        }));
+        assert!(events.contains(&KataEvent::Turn {
+            n: 2,
+            parent_id: None
+        }));
         assert!(events.contains(&KataEvent::AssistantText {
             text: "a".into(),
             parent_id: None
@@ -1336,6 +1354,30 @@ mod tests {
         assert!(
             matches!(&inner_res.events[0], KataEvent::ToolResult { parent_id: Some(p), name, .. } if p == "A" && name == "Read")
         );
+    }
+
+    #[test]
+    fn pump_stamps_a_subagent_turn_with_its_parent() {
+        let input = concat!(
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"top"}]}}"#,
+            "
+",
+            r#"{"type":"assistant","parent_tool_use_id":"toolu_A","message":{"content":[{"type":"text","text":"inner"}]}}"#,
+            "
+",
+        );
+        let mut events = Vec::new();
+        pump(std::io::Cursor::new(input), &|| false, &mut |e| {
+            events.push(e)
+        });
+        assert!(events.contains(&KataEvent::Turn {
+            n: 1,
+            parent_id: None
+        }));
+        assert!(events.contains(&KataEvent::Turn {
+            n: 2,
+            parent_id: Some("toolu_A".into())
+        }));
     }
 
     #[test]

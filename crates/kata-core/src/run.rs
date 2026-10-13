@@ -751,7 +751,10 @@ pub fn run_with<F: FnMut(KataEvent)>(
                         }
                     }
                     turns += 1;
-                    emit(KataEvent::Turn { n: turns });
+                    emit(KataEvent::Turn {
+                        n: turns,
+                        parent_id: parsed.parent_id.clone(),
+                    });
                 }
                 for e in parsed.events {
                     emit(e);

@@ -68,6 +68,11 @@ export type KataEvent =
     }
   | {
       n: number;
+      /**
+       * Set when the assistant message came from inside a subagent: the
+       * `id` of the `tool.use` that spawned it. Omitted at the top level.
+       */
+      parent_id?: string | null;
       type: "turn";
     }
   | {

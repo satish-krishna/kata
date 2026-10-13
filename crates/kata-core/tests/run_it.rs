@@ -276,11 +276,15 @@ fn run_max_turns_kills_child() {
     )
     .unwrap();
     assert_eq!(outcome.exit_code, 125);
-    assert!(events.iter().any(|e| matches!(e, KataEvent::Turn { n: 1 })));
-    assert!(events.iter().any(|e| matches!(e, KataEvent::Turn { n: 2 })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::Turn { n: 1, .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, KataEvent::Turn { n: 2, .. })));
     assert!(!events
         .iter()
-        .any(|e| matches!(e, KataEvent::Turn { n } if *n >= 3)));
+        .any(|e| matches!(e, KataEvent::Turn { n, .. } if *n >= 3)));
     assert!(events
         .iter()
         .any(|e| matches!(e, KataEvent::RunError { exit_code: 125, .. })));
@@ -310,7 +314,7 @@ fn run_unlimited_turns_does_not_cap() {
         .any(|e| matches!(e, KataEvent::RunError { exit_code: 125, .. })));
     assert!(events
         .iter()
-        .any(|e| matches!(e, KataEvent::Turn { n: 10 })));
+        .any(|e| matches!(e, KataEvent::Turn { n: 10, .. })));
     assert_eq!(outcome.exit_code, 0);
 }
 
@@ -709,6 +713,14 @@ fn interactive_run_pauses_and_resumes_on_answer() {
     assert!(events
         .iter()
         .any(|e| matches!(e, KataEvent::AskAnswered { .. })));
+    // The bridge tool's tool_use and tool_result are both suppressed in the
+    // live loop; the question surfaces only as ask.requested / ask.answered.
+    assert!(
+        !events.iter().any(|e| matches!(e,
+            KataEvent::ToolUse { id, .. } | KataEvent::ToolResult { id, .. }
+                if id.as_deref() == Some("toolu_ask"))),
+        "ask_user must not surface as a tool row"
+    );
     assert!(matches!(
         events.last().unwrap(),
         KataEvent::RunCompleted { exit_code: 0, .. }
@@ -1545,6 +1557,8 @@ fn tool_results_carry_their_tool_name_ids_and_parent() {
         KataEvent::ToolUse { name, parent_id: None, .. } if name == "Agent")));
     assert!(events.iter().any(|e| matches!(e,
         KataEvent::AssistantText { text, parent_id: Some(p) } if text == "reading" && p == "toolu_A")));
+    assert!(events.iter().any(|e| matches!(e,
+        KataEvent::Turn { parent_id: Some(p), .. } if p == "toolu_A")));
 }
 
 #[test]

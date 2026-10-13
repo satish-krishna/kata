@@ -110,7 +110,7 @@ fn main() {
             // the engine counts the turn but emits no tool.use event.
             let _ = writeln!(
                 out,
-                r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","name":"mcp__kata-ask__ask_user","input":{{"questions":[]}}}}]}}}}"#
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"toolu_ask","name":"mcp__kata-ask__ask_user","input":{{"questions":[]}}}}]}}}}"#
             );
             let _ = out.flush();
             if let Ok(sock) = TcpStream::connect(("127.0.0.1", port)) {
@@ -125,6 +125,10 @@ fn main() {
                 let mut line = String::new();
                 let _ = reader.read_line(&mut line);
             }
+            let _ = writeln!(
+                out,
+                r#"{{"type":"user","message":{{"content":[{{"type":"tool_result","tool_use_id":"toolu_ask","content":"answered"}}]}}}}"#
+            );
             let _ = writeln!(
                 out,
                 r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#

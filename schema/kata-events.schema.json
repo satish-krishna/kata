@@ -308,6 +308,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "parent_id": {
+          "description": "Set when the assistant message came from inside a subagent: the\n`id` of the `tool.use` that spawned it. Omitted at the top level.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "type": {
           "const": "turn",
           "type": "string"
