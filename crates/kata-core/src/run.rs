@@ -223,12 +223,40 @@ fn open_transcript(spec_name: &str) -> Result<(Transcript, std::path::PathBuf), 
     ))
 }
 
+/// What a run reports, as opposed to what it does. Kept out of `RunSpec` on
+/// purpose: a spec stays a reproducible description of the work.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RunOptions {
+    /// Emit raw tool `input` / `output` on tool events (`kata run --full-payloads`).
+    pub full_payloads: bool,
+}
+
 pub fn run<F: FnMut(KataEvent)>(
     spec: &RunSpec,
     catalog: &[CatalogEntry],
     cancel: &CancelToken,
     answers: &AnswerRx,
     decisions: &DecisionRx,
+    emit: F,
+) -> Result<RunOutcome, RunError> {
+    run_with(
+        spec,
+        catalog,
+        cancel,
+        answers,
+        decisions,
+        RunOptions::default(),
+        emit,
+    )
+}
+
+pub fn run_with<F: FnMut(KataEvent)>(
+    spec: &RunSpec,
+    catalog: &[CatalogEntry],
+    cancel: &CancelToken,
+    answers: &AnswerRx,
+    decisions: &DecisionRx,
+    opts: RunOptions,
     mut emit: F,
 ) -> Result<RunOutcome, RunError> {
     validate(spec).map_err(RunError::Invalid)?;
@@ -503,6 +531,9 @@ pub fn run<F: FnMut(KataEvent)>(
     }
     let deadline = start + Duration::from_secs(timeout_secs);
     let mut turns: u32 = 0;
+    // One parser for the whole stream: it carries the tool_use_id → name map
+    // that labels each tool.result. A fresh parser per line loses it.
+    let mut parser = crate::event::StreamParser::new(opts.full_payloads);
     let mut result = None;
     let mut termination: Option<Termination> = None;
 
@@ -707,7 +738,7 @@ pub fn run<F: FnMut(KataEvent)>(
                 if line.trim().is_empty() {
                     continue;
                 }
-                let parsed = crate::event::parse_stream_line(&line);
+                let parsed = parser.push(&line);
                 if parsed.is_assistant_message {
                     // Engine-side leash: claude 2.1.x has no --max-turns flag, so the
                     // turn cap is enforced here. `None` means unlimited (bounded only

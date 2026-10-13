@@ -1,6 +1,6 @@
 use kata_core::catalog::CatalogEntry;
 use kata_core::event::KataEvent;
-use kata_core::run::{run, CancelToken, RunError};
+use kata_core::run::{run, run_with, CancelToken, RunError, RunOptions};
 use kata_core::spec::RunSpec;
 use serial_test::serial;
 use std::sync::atomic::Ordering;
@@ -1499,4 +1499,65 @@ fn a_question_nobody_can_answer_ends_the_run_with_123() {
             "dropped_sender={dropped_sender}: {events:?}"
         );
     }
+}
+
+fn run_subagent(opts: RunOptions) -> Vec<KataEvent> {
+    with_fake("subagent");
+    let work = tempfile::tempdir().unwrap();
+    let mut events = Vec::new();
+    let outcome = run_with(
+        &base_spec(&work.path().to_string_lossy()),
+        &[] as &[CatalogEntry],
+        &CancelToken::new(),
+        &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
+        opts,
+        |e| events.push(e),
+    )
+    .unwrap();
+    assert_eq!(outcome.exit_code, 0);
+    events
+}
+
+#[test]
+#[serial]
+fn tool_results_carry_their_tool_name_ids_and_parent() {
+    // Before this change the live loop parsed each line with a fresh parser,
+    // so every tool.result had name "" in a real run.
+    let events = run_subagent(RunOptions::default());
+    let read_result = events
+        .iter()
+        .find_map(|e| match e {
+            KataEvent::ToolResult {
+                id,
+                name,
+                parent_id,
+                output,
+                ..
+            } if id.as_deref() == Some("toolu_B") => {
+                Some((name.clone(), parent_id.clone(), output.clone()))
+            }
+            _ => None,
+        })
+        .expect("a tool.result for the subagent's Read");
+    assert_eq!(read_result, ("Read".into(), Some("toolu_A".into()), None));
+    assert!(events.iter().any(|e| matches!(e,
+        KataEvent::ToolUse { name, parent_id: None, .. } if name == "Agent")));
+    assert!(events.iter().any(|e| matches!(e,
+        KataEvent::AssistantText { text, parent_id: Some(p) } if text == "reading" && p == "toolu_A")));
+}
+
+#[test]
+#[serial]
+fn full_payloads_adds_input_and_output() {
+    let events = run_subagent(RunOptions {
+        full_payloads: true,
+    });
+    assert!(events.iter().any(|e| matches!(e,
+        KataEvent::ToolUse { name, input: Some(i), .. }
+            if name == "Read" && i == &serde_json::json!({"file_path": "probe.txt"}))));
+    assert!(events.iter().any(|e| matches!(e,
+        KataEvent::ToolResult { name, output: Some(o), .. } if name == "Read" && o == "1	hello")));
+    assert!(events.iter().any(|e| matches!(e,
+        KataEvent::ToolResult { name, output: Some(o), .. } if name == "Agent" && o == "probe.txt says hello")));
 }

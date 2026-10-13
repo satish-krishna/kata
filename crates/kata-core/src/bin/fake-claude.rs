@@ -1,7 +1,7 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "subagent"
 use std::io::Write;
 use std::{thread, time::Duration};
 
@@ -268,6 +268,23 @@ fn main() {
                 out,
                 r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
             );
+            let _ = out.flush();
+        }
+        "subagent" => {
+            // One Agent call whose subagent reads a file, mirroring a real
+            // claude 2.1.296 stream: inner messages carry parent_tool_use_id,
+            // and the Agent result's content is an array of text blocks.
+            for line in [
+                r#"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"toolu_A","name":"Agent","input":{"description":"Read probe","subagent_type":"general-purpose","prompt":"Read probe.txt"}}]}}"#,
+                r#"{"type":"user","parent_tool_use_id":"toolu_A","message":{"content":[{"type":"text","text":"Read probe.txt"}]}}"#,
+                r#"{"type":"assistant","parent_tool_use_id":"toolu_A","message":{"content":[{"type":"text","text":"reading"},{"type":"tool_use","id":"toolu_B","name":"Read","input":{"file_path":"probe.txt"}}]}}"#,
+                r#"{"type":"user","parent_tool_use_id":"toolu_A","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_B","content":"1\thello"}]}}"#,
+                r#"{"type":"user","parent_tool_use_id":null,"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_A","content":[{"type":"text","text":"probe.txt says hello"}]}]}}"#,
+                r#"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"text","text":"done"}]}}"#,
+                r#"{"type":"result","subtype":"success","is_error":false,"num_turns":3,"total_cost_usd":0.01,"result":"done"}"#,
+            ] {
+                let _ = writeln!(out, "{line}");
+            }
             let _ = out.flush();
         }
         _ => {
