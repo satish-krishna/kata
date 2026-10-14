@@ -75,10 +75,10 @@ Every event is a JSON object with a `type` field. Fields below are exactly as se
 |---|---|---|
 | `run.started` | `spec`, `model`, `workdir`, `isolation`, `worktree?`, `branch?` | Run began. `worktree`/`branch` present only under worktree isolation. |
 | `log` | `level`, `message` | Engine log line (`info` / `warn`). |
-| `assistant.text` | `text` | A chunk of the agent's assistant-visible text. |
-| `tool.use` | `name`, `input_summary` | The agent invoked a tool. |
-| `tool.result` | `name`, `ok`, `summary` | A tool returned. `ok` is false on tool error. |
-| `turn` | `n` | The nth assistant turn began (the turn counter the `max_turns` leash counts). |
+| `assistant.text` | `text`, `parent_id?` | A chunk of the agent's assistant-visible text. `parent_id` is the `id` of the subagent call it was written inside; absent at the top level. |
+| `tool.use` | `name`, `input_summary`, `id?`, `parent_id?`, `input?`, `truncated?` | The agent invoked a tool. `id` is claude's `tool_use_id`, emitted on every run; pair it with the `tool.result` carrying the same `id`. `input` (the raw tool input) is present only under `kata run --full-payloads`, and is omitted with `truncated: true` when its JSON exceeds 256 KB. |
+| `tool.result` | `name`, `ok`, `summary`, `id?`, `parent_id?`, `output?`, `truncated?` | A tool returned. `ok` is false on tool error. `id` matches the `tool.use` it answers. `output` (the result flattened to text) is present only under `kata run --full-payloads`, cut at 256 KB with `truncated: true`. |
+| `turn` | `n`, `parent_id?` | The nth assistant turn began (the turn counter the `max_turns` leash counts). `parent_id` is set when the message came from inside a subagent (the spawning `tool.use` id). |
 | `ask.requested` | `id`, `questions[]` | The agent is paused, asking the operator. Any run. See [Interactive](#interactive-runs). |
 | `ask.answered` | `id`, `answers[][]` | The operator's answer was delivered (echo, for your transcript). |
 | `permission.requested` | `id`, `tool`, `input_summary` | A tool call is paused on the operator's decision. Prompt-mode runs only. See [Permissions](#permission-prompting). |

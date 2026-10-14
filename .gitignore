@@ -10,3 +10,5 @@ scripts/build-release.log
 # Release screenshots — regenerate with `npm run screenshots`, attach to the
 # GitHub Release rather than committing (binary churn).
 docs/screenshots/
+
+.superpowers/

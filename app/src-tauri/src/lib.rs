@@ -69,7 +69,8 @@ fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) -> Result
     spec::save(&tmp, &spec).map_err(|e| e.to_string())?;
 
     let spawn_result = app.shell().sidecar("kata").and_then(|cmd| {
-        cmd.args(["run", &tmp.to_string_lossy()])
+        // The Observe pane renders tool payloads, so the GUI always asks for them.
+        cmd.args(["run", "--full-payloads", &tmp.to_string_lossy()])
             .current_dir(&spec.workdir) // engine discovers its catalog relative to cwd
             .spawn()
     });

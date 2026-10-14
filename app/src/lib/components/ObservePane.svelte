@@ -4,6 +4,8 @@
   import type { AskRecord, PermissionRecord } from "../run.svelte";
   import { STATUS_LABEL } from "../events";
   import EventRow from "./EventRow.svelte";
+  import ToolCard from "./ToolCard.svelte";
+  import { pairToolEvents, withPauses, type PausedItem } from "../toolcards";
   import SummaryStat from "./SummaryStat.svelte";
   import AskPanel from "./AskPanel.svelte";
   import PermissionPanel from "./PermissionPanel.svelte";
@@ -58,43 +60,9 @@
 
   /* A pause belongs where it happened, not in a pile at the end of the
    * transcript: reading "…ran the tests, then asked about this" is the whole
-   * point of a stream. Every ask and permission record carries `at` — how many
-   * events preceded it — and is spliced back in there.
-   *
-   * A run can only ever be paused on one thing at a time, so an ask and a
-   * permission sharing an `at` is not a real sequence; permissions are emitted
-   * first purely so the order is deterministic. */
-  type StreamItem =
-    | { kind: "event"; key: string; ev: StreamEvent }
-    | { kind: "perm"; key: string; p: PermissionRecord }
-    | { kind: "ask"; key: string; a: AskRecord };
-
-  const streamItems: StreamItem[] = $derived.by(() => {
-    const at = (n: number): StreamItem[] => [
-      ...permissions
-        .filter((p) => p.at === n)
-        .map((p): StreamItem => ({ kind: "perm", key: `p:${p.id}`, p })),
-      ...asks
-        .filter((a) => a.at === n)
-        .map((a): StreamItem => ({ kind: "ask", key: `a:${a.id}`, a })),
-    ];
-    const items: StreamItem[] = [...at(0)];
-    events.forEach((ev, i) => {
-      items.push({ kind: "event", key: `e:${i}`, ev });
-      items.push(...at(i + 1));
-    });
-    // Defensive: never silently drop a pause whose position outran the stream.
-    const beyond = (n: number) => n > events.length;
-    items.push(
-      ...permissions
-        .filter((p) => beyond(p.at))
-        .map((p): StreamItem => ({ kind: "perm", key: `p:${p.id}`, p })),
-      ...asks
-        .filter((a) => beyond(a.at))
-        .map((a): StreamItem => ({ kind: "ask", key: `a:${a.id}`, a })),
-    );
-    return items;
-  });
+   * point of a stream. Tool calls are paired first, then each ask and
+   * permission record is spliced back by its `at` (see withPauses). */
+  const streamItems: PausedItem[] = $derived(withPauses(pairToolEvents(events), permissions, asks));
 
   const cost = (s: RunSummary) => (s.cost_usd != null ? `$${s.cost_usd.toFixed(3)}` : "—");
   const duration = (s: RunSummary) => `${(s.duration_ms / 1000).toFixed(1)}s`;
@@ -121,6 +89,8 @@
     {#each streamItems as item (item.key)}
       {#if item.kind === "event"}
         <div class="wb-event-enter"><EventRow ev={item.ev} /></div>
+      {:else if item.kind === "call"}
+        <div class="wb-event-enter"><ToolCard call={item.call} /></div>
       {:else if item.kind === "perm" && item.p.decided === null}
         {#key item.p.id}
           <div class="wb-event-enter">

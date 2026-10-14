@@ -24,6 +24,7 @@
     "@lucide/svelte": "^1.18.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
+    "diff": "^9.0.0",
     "remark-gfm": "^4.0.1",
     "svelte-exmarkdown": "^5.0.2"
   },
@@ -36,8 +37,8 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/svelte": "^5.3.1",
     "@types/node": "^25.9.3",
-    "json-schema-to-typescript": "^15.0.4",
     "jsdom": "^29.1.1",
+    "json-schema-to-typescript": "^15.0.4",
     "playwright-core": "^1.61.0",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",

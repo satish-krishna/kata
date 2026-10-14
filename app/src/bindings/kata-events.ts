@@ -16,22 +16,63 @@ export type KataEvent =
       type: "log";
     }
   | {
+      /**
+       * `id` of the subagent call this text was written inside; absent at
+       * the top level.
+       */
+      parent_id?: string | null;
       text: string;
       type: "assistant.text";
     }
   | {
+      /**
+       * claude's `tool_use_id`. Pairs this call with its `tool.result`.
+       * Emitted on every run; absent only in transcripts written before it
+       * existed, or when claude sent none.
+       */
+      id?: string | null;
+      /**
+       * Raw tool input. Only under `kata run --full-payloads`; omitted, with
+       * `truncated` set, when its serialized form exceeds `PAYLOAD_CAP_BYTES`.
+       */
+      input?: {
+        [k: string]: unknown;
+      };
       input_summary: string;
       name: string;
+      /**
+       * `id` of the subagent call this call was made inside; absent at the
+       * top level.
+       */
+      parent_id?: string | null;
+      truncated?: boolean;
       type: "tool.use";
     }
   | {
+      /**
+       * The `id` of the `tool.use` this result answers.
+       */
+      id?: string | null;
       name: string;
       ok: boolean;
+      /**
+       * The tool's output flattened to text. Only under
+       * `kata run --full-payloads`; cut at `PAYLOAD_CAP_BYTES` with
+       * `truncated` set.
+       */
+      output?: string | null;
+      parent_id?: string | null;
       summary: string;
+      truncated?: boolean;
       type: "tool.result";
     }
   | {
       n: number;
+      /**
+       * Set when the assistant message came from inside a subagent: the
+       * `id` of the `tool.use` that spawned it. Omitted at the top level.
+       */
+      parent_id?: string | null;
       type: "turn";
     }
   | {

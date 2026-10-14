@@ -63,8 +63,14 @@ export const runScriptHead: ScriptStep[] = [
   { delay: 350, ev: { type: "log", level: "info", message: "worktree: ./.kata/wt-3f9a off main" } },
   { delay: 500, ev: { type: "turn", n: 1 } },
   { delay: 250, ev: { type: "assistant.text", text: "Reproducing the flake: I'll hammer the single test and watch for the failure mode.\n\n```bash\ndotnet test --filter AuthTests.LoginExpiry\n```" } },
-  { delay: 300, ev: { type: "tool.use", name: "Bash", input_summary: "dotnet test --filter AuthTests.LoginExpiry" } },
-  { delay: 1300, ev: { type: "tool.result", name: "Bash", ok: true, summary: "3 of 30 runs failed — iterations 8, 19, 26" } },
+  { delay: 200, ev: { type: "tool.use", name: "TodoWrite", input_summary: "{\"todos\":[…]}", id: "toolu_todo1", input: { todos: [
+    { content: "Reproduce the LoginExpiry flake", status: "in_progress" },
+    { content: "Find the root cause", status: "pending" },
+    { content: "Write the isolation report", status: "pending" },
+  ] } } },
+  { delay: 150, ev: { type: "tool.result", name: "TodoWrite", ok: true, summary: "Todos updated", id: "toolu_todo1", output: "Todos have been modified successfully." } },
+  { delay: 300, ev: { type: "tool.use", name: "Bash", input_summary: "dotnet test --filter AuthTests.LoginExpiry", id: "toolu_bash1", input: { command: "dotnet test --filter AuthTests.LoginExpiry", description: "Hammer the flaky test" } } },
+  { delay: 1300, ev: { type: "tool.result", name: "Bash", ok: true, summary: "3 of 30 runs failed — iterations 8, 19, 26", id: "toolu_bash1", output: "Passed!  - Failed: 0, Passed: 1 (run 1)\n…\nFailed!  - Failed: 1, Passed: 0 (run 8)\n  AuthTests.LoginExpiry: token reported expired 0.4s early\n…\n3 of 30 runs failed — iterations 8, 19, 26" } },
   { delay: 500, ev: { type: "turn", n: 2 } },
   { delay: 250, ev: { type: "assistant.text", text: "It fails ~1 in 10 locally. The failures share a **timestamp boundary** — this smells like a clock-skew race in `TokenValidator.IsExpired`." } },
   { delay: 400, ev: { type: "ask.requested", id: "q1", questions: [
@@ -80,19 +86,23 @@ export const PENDING_PERMISSION = { tool: "Bash", input_summary: "git -C ./.kata
 
 /** Replayed after the operator answers the ask; ends on the permission pause. */
 export const runScriptMid: ScriptStep[] = [
-  { delay: 300, ev: { type: "tool.use", name: "Read", input_summary: "src/Auth/TokenValidator.cs" } },
-  { delay: 850, ev: { type: "tool.result", name: "Read", ok: true, summary: "TokenValidator.cs — 142 lines" } },
+  { delay: 300, ev: { type: "tool.use", name: "Agent", input_summary: "Explore: find expiry comparisons", id: "toolu_agent1", input: { subagent_type: "Explore", description: "find expiry comparisons", prompt: "Find every place token expiry is computed or compared in src/Auth and report which clock each one uses." } } },
+  { delay: 400, ev: { type: "tool.use", name: "Grep", input_summary: "IsExpired|ExpiresAt", id: "toolu_grep1", parent_id: "toolu_agent1", input: { pattern: "IsExpired|ExpiresAt", path: "src/Auth" } } },
+  { delay: 350, ev: { type: "tool.result", name: "Grep", ok: true, summary: "4 matches", id: "toolu_grep1", parent_id: "toolu_agent1", output: "src/Auth/TokenValidator.cs:41\nsrc/Auth/TokenValidator.cs:58\nsrc/Auth/TokenIssuer.cs:22\nsrc/Auth/SessionStore.cs:107" } },
+  { delay: 300, ev: { type: "tool.use", name: "Read", input_summary: "src/Auth/TokenValidator.cs", id: "toolu_read1", parent_id: "toolu_agent1", input: { file_path: "src/Auth/TokenValidator.cs" } } },
+  { delay: 600, ev: { type: "tool.result", name: "Read", ok: true, summary: "TokenValidator.cs — 142 lines", id: "toolu_read1", parent_id: "toolu_agent1", output: "    38\tpublic bool IsExpired(Token t)\n    39\t{\n    40\t    // expiry was stamped by TokenIssuer\n    41\t    return DateTime.UtcNow > t.ExpiresAt;\n    42\t}" } },
+  { delay: 400, ev: { type: "tool.result", name: "Agent", ok: true, summary: "TokenIssuer stamps with DateTime.Now", id: "toolu_agent1", output: "TokenValidator.cs:41 compares DateTime.UtcNow; TokenIssuer.cs:22 stamps ExpiresAt with DateTime.Now. The other two use UtcNow consistently." } },
   { delay: 500, ev: { type: "turn", n: 3 } },
-  { delay: 400, ev: { type: "tool.use", name: "Bash", input_summary: "git log --oneline -3" } },
-  { delay: 300, ev: { type: "tool.result", name: "Bash", ok: false, summary: "Permission to use Bash with command git log --oneline -3 has been denied." } },
+  { delay: 400, ev: { type: "tool.use", name: "Bash", input_summary: "git log --oneline -3", id: "toolu_bash2", input: { command: "git log --oneline -3" } } },
+  { delay: 300, ev: { type: "tool.result", name: "Bash", ok: false, summary: "Permission to use Bash with command git log --oneline -3 has been denied.", id: "toolu_bash2", output: "Permission to use Bash with command git log --oneline -3 has been denied." } },
   { delay: 250, ev: { type: "assistant.text", text: "Found it. `IsExpired` compares `DateTime.UtcNow` against an expiry built with `DateTime.Now` upstream — across the DST/second boundary the two clocks disagree and the token reads as expired.\n\nLet me confirm I've left the worktree clean before I write the report." } },
   { delay: 500, ev: { type: "permission.requested", id: "p1", ...PENDING_PERMISSION } },
 ];
 
 /** Replayed after the operator settles the permission check. */
 export const runScriptTail: ScriptStep[] = [
-  { delay: 600, ev: { type: "tool.use", name: "Bash", input_summary: "git -C ./.kata/wt-3f9a diff --stat" } },
-  { delay: 700, ev: { type: "tool.result", name: "Bash", ok: false, summary: "no changes — isolation only, as instructed" } },
+  { delay: 600, ev: { type: "tool.use", name: "Bash", input_summary: "git -C ./.kata/wt-3f9a diff --stat", id: "toolu_bash3", input: { command: "git -C ./.kata/wt-3f9a diff --stat" } } },
+  { delay: 700, ev: { type: "tool.result", name: "Bash", ok: false, summary: "no changes — isolation only, as instructed", id: "toolu_bash3", output: "" } },
   { delay: 500, ev: { type: "turn", n: 4 } },
   { delay: 250, ev: { type: "assistant.text", text: "**Smallest repro:** pin the system clock to `23:59:59.6` local and call `LoginExpiry` once — it fails deterministically.\n\n**Cause:** `TokenValidator.IsExpired` mixes `DateTime.Now` (expiry) with `DateTime.UtcNow` (check).\n\nNo production code changed." } },
   { delay: 600, ev: { type: "run.completed", exit_code: 0, is_error: false, num_turns: 4, cost_usd: 0.041, duration_ms: 48120,

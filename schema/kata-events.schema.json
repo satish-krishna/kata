@@ -193,6 +193,13 @@
     },
     {
       "properties": {
+        "parent_id": {
+          "description": "`id` of the subagent call this text was written inside; absent at\nthe top level.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "text": {
           "type": "string"
         },
@@ -209,11 +216,31 @@
     },
     {
       "properties": {
+        "id": {
+          "description": "claude's `tool_use_id`. Pairs this call with its `tool.result`.\nEmitted on every run; absent only in transcripts written before it\nexisted, or when claude sent none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "input": {
+          "description": "Raw tool input. Only under `kata run --full-payloads`; omitted, with\n`truncated` set, when its serialized form exceeds `PAYLOAD_CAP_BYTES`."
+        },
         "input_summary": {
           "type": "string"
         },
         "name": {
           "type": "string"
+        },
+        "parent_id": {
+          "description": "`id` of the subagent call this call was made inside; absent at the\ntop level.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "truncated": {
+          "type": "boolean"
         },
         "type": {
           "const": "tool.use",
@@ -229,14 +256,37 @@
     },
     {
       "properties": {
+        "id": {
+          "description": "The `id` of the `tool.use` this result answers.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "name": {
           "type": "string"
         },
         "ok": {
           "type": "boolean"
         },
+        "output": {
+          "description": "The tool's output flattened to text. Only under\n`kata run --full-payloads`; cut at `PAYLOAD_CAP_BYTES` with\n`truncated` set.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parent_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "summary": {
           "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
         },
         "type": {
           "const": "tool.result",
@@ -257,6 +307,13 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "parent_id": {
+          "description": "Set when the assistant message came from inside a subagent: the\n`id` of the `tool.use` that spawned it. Omitted at the top level.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "type": {
           "const": "turn",

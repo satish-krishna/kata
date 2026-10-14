@@ -198,3 +198,22 @@ describe("ObservePane — asks render where they happened too", () => {
     expect(panels[1].textContent).toContain("Fix or isolate?");
   });
 });
+
+describe("ObservePane — tool calls", () => {
+  it("renders a paired call as one rail row, not two log rows", () => {
+    renderPane({
+      events: [
+        { type: "tool.use", name: "Read", input_summary: "src/a.rs", id: "t1", input: { file_path: "src/a.rs" } },
+        { type: "tool.result", name: "Read", ok: true, summary: "12 lines", id: "t1", output: "1\tfn a() {}" },
+      ],
+    });
+    expect(screen.getByRole("button", { name: /Read/ })).toBeInTheDocument();
+    expect(screen.getByText("ok")).toBeInTheDocument();
+    expect(screen.queryByText("12 lines")).not.toBeInTheDocument();
+  });
+
+  it("still renders id-less events from old transcripts as log rows", () => {
+    renderPane({ events: [{ type: "tool.use", name: "Bash", input_summary: "ls -la" }] });
+    expect(screen.getByText("ls -la")).toBeInTheDocument();
+  });
+});
