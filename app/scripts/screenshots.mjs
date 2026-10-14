@@ -106,7 +106,16 @@ async function main() {
     if (await opt.count()) await opt.click();
   }
   await page.locator(".k-ask__foot button.k-btn--primary").click();
+
+  // The resumed run then pauses on a permission check; allow it so it finishes.
+  const allow = page.getByRole("button", { name: "Allow · resume" });
+  await allow.waitFor({ state: "visible", timeout: 15_000 });
+  await allow.click();
   await ready(".wb-summary", 15_000);
+
+  // Open the subagent's tool card so the shot shows its nested calls.
+  await page.locator(".k-toolcard__row", { hasText: "Agent" }).first().click();
+  await page.waitForTimeout(250);
   await shoot("03-observe-complete");
 
   // Library — saved katas, run history, and the run detail.
