@@ -18,12 +18,12 @@ Keep every session on the Workbench on-brand and on-convention. The Kata design 
 - **Icons:** `@ng-icons/lucide`, 1.5–2px stroke, `currentColor`. Register the icons a component uses with `provideIcons({ lucidePlay })` in its `providers` and render them with `<ng-icon name="lucidePlay" />`. The legacy `NgIconsModule` throws at bootstrap; never use it.
 - **Controls are Helm primitives skinned in `libs/ui/`** (button, input, select, dialog, tabs, switch, ...). The Kata look is applied by editing the vendored copy under `libs/ui/`, or through the primitive's `variant`/`size` input — never by restyling a control at the call site. Use `variant="bare"` on a primitive when a Kata class (`.k-btn`, `.k-input`, ...) supplies the look.
 - **Kata's non-control classes** (`.k-*` cards, event rows, toolcards, shell layout) live in `src/styles/kata/`, not in component stylesheets.
-- **Desktop only** (laptop → ultrawide). No mobile breakpoints. (`check:responsive` still runs the 375 / 768 / 1280 widths as a no-overflow smoke test, not as a mobile commitment.)
+- **Desktop only** (laptop → ultrawide). No mobile breakpoints. (`check:responsive` runs at 1280 and 1600 only, as a no-overflow check.)
 
 ## Where things live
 - Tokens: `app/src/styles/kata/tokens/{colors,typography,spacing}.css`
 - Component classes: `app/src/styles/kata/components.css`; base: `base.css`; shell layout: `workbench.css`
-- Self-hosted fonts: `app/src/styles/kata/fonts/` + `app/src/styles/kata/fonts.css` (CSP blocks the CDN — re-copy woff2 from `@fontsource/ibm-plex-{sans,mono}` to refresh)
+- Self-hosted fonts: `app/src/styles/kata/fonts/` + `app/src/styles/kata/fonts.css` (CSP blocks the CDN — the woff2 files are vendored and came from `@fontsource/ibm-plex-sans` and `@fontsource/ibm-plex-mono`, which are no longer dependencies; install them temporarily to refresh)
 - Presentational components: `app/src/app/ui/` (inputs and outputs only, no injection); routed screens: `app/src/app/workbench/`, `app/src/app/library/`, each a thin component over a component-scoped ViewModel
 - Run store, launch store, toast store: `app/src/app/core/`; the transport seam (`KataTransport`) is `app/src/app/core/transport/`
 - Helm primitives: `app/libs/ui/`
@@ -97,9 +97,9 @@ Every routed screen is a thin component over a component-scoped ViewModel. This 
 - A feature component holds no state. No property initialized with `signal()`, `computed()`, `linkedSignal()` or `form()`. All of it lives in the ViewModel and the template reads it off `vm`. Components under `src/app/ui/` are exempt, because a presentational form legitimately owns its own model.
 - A feature component does not inject a data service — its ViewModel does. A `src/app/ui/` component injects nothing at all: inputs and outputs only. Note that any class whose name ends in `Service` counts, including `PreferencesService`.
 - Never `.subscribe()` in a component or a ViewModel. Convert at the edge with `toSignal`, and prefer it to `route.snapshot`: the router reuses a component when only the id changes, so a snapshot read in `ngOnInit` shows the first record forever.
-- Forms are Signal Forms over a zod schema, which is the single source of truth for shape, rules and field labels. Never restate a validator the schema already expresses, and never reach for `FormsModule`, `ReactiveFormsModule`, `ngModel` or `(ngSubmit)` — submission goes through `submission.action`.
+- Forms are Signal Forms over the generated `RunSpec` type. There is no zod: validation belongs to the engine (`validate_spec` under Tauri, `validateLocal` in browser mode), so never restate an engine rule in the form. Never reach for `FormsModule`, `ReactiveFormsModule`, `ngModel` or `(ngSubmit)` — submission goes through `submission.action`.
 
-**A method nobody calls is a bug, not dead weight.** `npm run check:wiring` fails on any public ViewModel or component member that no template references. Both of this project's worst shipped defects were exactly that: one left an Edit dialog opening onto an empty body, the other let a dismissed dialog make the next Create overwrite an unrelated record. Every counter read zero through both, because absent code is perfectly conformant.
+**A method nobody calls is a bug, not dead weight.** `npm run check:wiring` fails on any public ViewModel or component member that no template references. The classic instance is a dialog that opens onto an empty body because the template never calls the ViewModel method that fills it. Every drift counter reads zero through that, because absent code is perfectly conformant.
 
 ## Verifying your work
 
@@ -107,11 +107,11 @@ Run these before claiming anything is done. A green board from an earlier state 
 
 ```bash
 npm run lint             # the 27 house rules
-npm test                 # unit tests
+npm test -- --watch=false # unit tests (plain `npm test` watches)
 npm run build            # production build
 npm run check:boot       # every route renders without a runtime error
 npm run check:interaction # every overlay opens, closes, logs nothing
-npm run check:responsive # 375 / 768 / 1280
+npm run check:responsive # 1280 / 1600 (desktop only)
 # check:contrast is not wired in kata (harness reads only hex tokens; Kata's are var() references, so it would pass vacuously)
 npm run check:wiring     # no orphaned members
 ```
