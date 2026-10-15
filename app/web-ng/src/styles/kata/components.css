@@ -19,6 +19,8 @@
 
 /* ---------- Field (label + control + hint) ---------- */
 .k-field { display: flex; flex-direction: column; gap: var(--space-2); }
+.k-field__label { font: var(--weight-medium) var(--text-sm)/1 var(--font-sans); color: var(--text-secondary); display: flex; align-items: center; gap: var(--space-2); }
+.k-field__label code { font: var(--font-code-sm); color: var(--text-faint); }
 .k-field__hint { font: var(--text-xs)/1.4 var(--font-sans); color: var(--text-faint); }
 .k-field__hint--error { color: var(--error-text); }
 
@@ -154,7 +156,7 @@
 .k-md hr { border: none; border-top: 1px solid var(--border-subtle); margin: var(--space-4) 0; }
 /* GFM task-list box. Angular's innerHTML sanitizer strips <input>, so the
    markdown pipeline emits a span; this draws the disabled checkbox it replaces. */
-.k-md__task { display: inline-block; vertical-align: middle; box-sizing: border-box; width: 13px; height: 13px; margin: 3px 3px 3px 4px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--surface-inset); position: relative; opacity: 0.6; }
+.k-md__task { display: inline-block; vertical-align: middle; box-sizing: border-box; width: 13px; height: 13px; margin: var(--space-1-5) var(--space-1-5) var(--space-1-5) var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--surface-inset); position: relative; opacity: 0.6; }
 .k-md__task--done { background: var(--accent); border-color: var(--accent); }
 .k-md__task--done::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid var(--text-on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 /* Strong and em — pin colors so they override inherited muted tones */
