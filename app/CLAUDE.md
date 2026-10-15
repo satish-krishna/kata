@@ -125,6 +125,8 @@ There are exactly two correct responses, and the guard's own message says so.
 1. Satisfy the rule properly. Appearance on a primitive comes from its `variant`/`size` input or from editing the vendored copy under `libs/ui/` — that path is open and the gate ignores `libs/**`.
 2. If you believe the rule itself is wrong, say so in your final response and stop. That happens: one rule here rejected the documented tab-trigger composition and its corrective message named the wrong fix, and the resulting defect was written exactly as instructed.
 
+A PreToolUse guard (`.claude/hooks/protect-gates.mjs` at the repo root) denies agent edits to the few files whose weakening nothing else would catch: `app/eslint.config.mjs`, `app/stylelint.config.mjs`, `app/harness/gate/rules/primitive-vocabulary.ts`, `app/harness/gate/rules/no-raw-control.ts`, and the guard itself. The owner edits those. The rest of `harness/` stays editable because `npm run test:harness` runs in CI and turns red if a rule is gutted, and `package.json`, `tsconfig*.json`, `.mcp.json` and `.claude/settings.json` stay editable because the diff and CI show any change. angular-jig's own `app/.claude/hooks/protect-enforcement.mjs` is vendored but deliberately not wired: its substring match over paths and command text blocks reads and every dependency bump.
+
 What is never acceptable is making the check unable to see the problem — relocating content onto a non-primitive element, adding a second directive to quiet a counter, repurposing an unrelated variant, or expressing a forbidden class through a `[class.x]` binding the classifier does not read. All of those pass. None of them comply.
 
 ## House frontend conventions
