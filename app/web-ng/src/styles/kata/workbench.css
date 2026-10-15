@@ -169,3 +169,8 @@
 .wb-detail__result { font: var(--font-code-sm); color: var(--text-secondary); line-height: 1.6; background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-5); }
 .wb-detail__streamhead { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-faint); }
 .wb-detail__stream { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); overflow: hidden; background: var(--surface-app); }
+
+/* Observe pane: the host adds no box, so the status bar, stream and summary stay direct flex items of the pane. */
+.wb-observe { display: contents; }
+.wb-accent { color: var(--accent-text); }
+.wb-summary__note { font: var(--font-code-sm); color: var(--text-faint); }
