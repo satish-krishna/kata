@@ -1,0 +1,16 @@
+{
+  "$comment": "Gate-ON condition only. The run driver passes this via `claude -p --settings harness/gate/gate-on.settings.json` for the gated trials. It is deliberately NOT part of the committed .claude/settings.json, so the substrate is identical between conditions and registering this hook is the single variable the experiment moves.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/seal-templates.mjs"
+          }
+        ]
+      }
+    ]
+  }
+}

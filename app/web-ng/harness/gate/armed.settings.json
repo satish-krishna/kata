@@ -1,0 +1,22 @@
+{
+  "$comment": "The constitution, always on. Every session in this repo now runs the full edit-time gate plus the enforcement guard; the experiment phase is over and these are house rules rather than an experimental arm. Firings are recorded to .claude/hook-firings.jsonl (git-ignored) on every session - read them with `npm run firings`. To do maintenance ON the harness itself, launch with --settings harness/gate/maintenance.settings.json, which drops protect-enforcement and keeps the gates.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell",
+        "hooks": [{ "type": "command", "command": "node .claude/hooks/protect-enforcement.mjs" }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/seal-templates.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-layout.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-component-shape.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-freeloader.mjs" }
+        ]
+      }
+    ]
+  }
+}

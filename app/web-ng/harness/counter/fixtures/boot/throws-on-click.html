@@ -1,0 +1,12 @@
+<!doctype html><meta name="viewport" content="width=device-width">
+<!--
+  Boot fixture: renders perfectly and throws only when a control is used. This is
+  the shape of the real NG0201 dialog fault, which hides behind
+  @if (vm.showRetireDialog()) so the content is never instantiated until someone
+  clicks Retire. A load-only boot check reports this page as clean, which is why
+  the gate has an interaction sweep at all. Expected: >= 1 failure, and ONLY
+  because the sweep clicks.
+-->
+<body><main><h1>Hero Ops</h1><button id="retire" type="button">Retire</button>
+<script>document.getElementById('retire').addEventListener('click', () => { throw new Error('NG0201: No provider found for `BrnDialogRef`'); });</script>
+</main></body>

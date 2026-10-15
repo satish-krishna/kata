@@ -1,0 +1,11 @@
+<!-- Part 4 clean fixture: native control flow and class/style bindings. Zero. -->
+@if (show) {
+  <div>shown</div>
+}
+<ul>
+  @for (h of heroes; track h.id) {
+    <li>{{ h.name }}</li>
+  }
+</ul>
+<div [class.active]="isActive">a</div>
+<div [style.width.px]="w">b</div>

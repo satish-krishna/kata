@@ -104,3 +104,31 @@ jobs:
 
       - name: Unit tests (Vitest)
         run: npm test
+
+  web-ng:
+    name: Workbench Angular (lint · build · test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app/web-ng
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: app/web-ng/package-lock.json
+      - run: npm ci
+      - name: Lint (ESLint seal + shape)
+        run: npm run lint
+      - name: Stylelint (token gate)
+        run: npx stylelint "src/**/*.css"
+      - name: Build
+        run: npm run build
+      - name: Unit tests (Vitest)
+        run: npm test -- --watch=false
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Boot check
+        run: npm run check:boot

@@ -1,0 +1,5 @@
+/* spacing note: 16px here is in a comment and must be ignored */
+.box {
+  padding: 8px;
+  border-radius: var(--radius);
+}

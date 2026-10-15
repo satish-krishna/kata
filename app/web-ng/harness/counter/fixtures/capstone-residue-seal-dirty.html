@@ -1,0 +1,52 @@
+<!--
+  Capstone-residue sealing fixture: DIRTY. Rules 5 and 6, the drift that got
+  past rules 1 through 4 in the measured capstone run. Hand-counted:
+
+    unknown-primitive (4):
+      hlmSelectTrigger as an ATTRIBUTE  (installed selector is the element
+                                         hlm-select-trigger)
+      hlmAvatar        as an ATTRIBUTE  (installed selector is hlm-avatar)
+      hlm-sidebar      as an ATTRIBUTE  (installed selector is the element)
+      <hlm-avatar-image>  as an ELEMENT (installed selector is img[hlmAvatarImage])
+
+    missing-composition-part (1):
+      hlm-dialog-content with no descendant carrying hlmDialogTitle
+
+  NOT flagged, on purpose, and each of these is a case a too-greedy rule would
+  break. The bare hlmInput in a plain div below is the important one: an earlier
+  draft of rule 6 required every control to sit inside an hlmField, which would
+  have hard-blocked the toolbar search box and class filter the capstone build
+  spec itself calls for. That half is doc-only, and this fixture pins it as NOT a
+  violation. Also: hlmBtn and hlmAvatarFallback are real attribute selectors;
+  hlm-select-trigger and hlm-avatar are real element selectors; a non-hlm
+  attribute is never considered at all; and the correctly composed field and
+  dialog further down must stay silent.
+-->
+<section hlmCard class="grid gap-4">
+  <button hlmBtn hlmSelectTrigger>Class</button>
+
+  <div hlmAvatar><span hlmAvatarFallback>SW</span></div>
+
+  <aside hlm-sidebar class="w-64">
+    <hlm-avatar-image />
+  </aside>
+
+  <hlm-dialog-content>
+    <h2 class="font-semibold">Retire hero?</h2>
+    <p>This cannot be undone.</p>
+  </hlm-dialog-content>
+
+  <div class="flex flex-col gap-2">
+    <label hlmLabel for="alias">Alias</label>
+    <input hlmInput id="alias" />
+  </div>
+
+  <hlm-field>
+    <label hlmFieldLabel for="ok">Correctly composed</label>
+    <input hlmInput id="ok" />
+  </hlm-field>
+
+  <hlm-avatar><span hlmAvatarFallback>OK</span></hlm-avatar>
+  <hlm-select-trigger><hlm-select-value /></hlm-select-trigger>
+  <div data-testid="not-a-primitive" aria-label="ignored">plain attributes are never considered</div>
+</section>

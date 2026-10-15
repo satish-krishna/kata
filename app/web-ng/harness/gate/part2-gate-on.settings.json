@@ -1,0 +1,20 @@
+{
+  "$comment": "Part 2, gate-ON condition. The single variable Part 2 moves: the layout hook, added on top of the sealing baseline. Sealing (Part 1) plus layout (Part 2), both enforced at edit time.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/seal-templates.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node .claude/hooks/check-layout.mjs"
+          }
+        ]
+      }
+    ]
+  }
+}

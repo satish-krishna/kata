@@ -1,0 +1,16 @@
+{
+  "$comment": "Part 2, gate-OFF condition. Cumulative baseline: the Part 1 sealing hook is on in both conditions, because by Part 2 sealing is part of the substrate. Layout is NOT enforced here. The run driver passes this via `claude -p --settings` for Part 2 gate-off trials.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/seal-templates.mjs"
+          }
+        ]
+      }
+    ]
+  }
+}

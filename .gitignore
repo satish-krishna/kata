@@ -12,3 +12,10 @@ scripts/build-release.log
 docs/screenshots/
 
 .superpowers/
+
+# Angular Workbench port
+app/web-ng/dist/
+app/web-ng/.angular/
+app/web-ng/node_modules/
+app/web-ng/parity/actual/
+app/web-ng/parity/diff/

@@ -1,0 +1,15 @@
+<!--
+  Capstone-residue shape fixture: DIRTY, template half. Hand-counted:
+
+    orphan-ng-submit (1): an (ngSubmit) binding, which in this repo can never be
+    matched by a directive because rules 3 and 6 ban both forms modules, so
+    Angular registers a DOM listener for an event nothing ever fires and the
+    submit button is dead on a page that looks finished.
+-->
+<form (ngSubmit)="onSubmit()">
+  <hlm-field>
+    <label hlmFieldLabel for="name">Name</label>
+    <input hlmInput id="name" />
+  </hlm-field>
+  <button hlmBtn type="submit">Save</button>
+</form>

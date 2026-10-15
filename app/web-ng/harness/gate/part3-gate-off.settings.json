@@ -1,0 +1,20 @@
+{
+  "$comment": "Part 3, gate-OFF condition. The cumulative baseline: sealing (Part 1) plus layout (Part 2), both enforced at edit time. The component-shape gate is absent, so Part 3 drift is free to ship. This is the single-variable control for the Part 3 measured run.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/seal-templates.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node .claude/hooks/check-layout.mjs"
+          }
+        ]
+      }
+    ]
+  }
+}

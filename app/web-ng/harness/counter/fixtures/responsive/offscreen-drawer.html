@@ -1,0 +1,13 @@
+<!doctype html><meta name="viewport" content="width=device-width">
+<!--
+  The other half of the exemption, and the reason it is stricter rather than
+  laxer: a drawer merely translated out of view is still rendered, still in the
+  tab order, and still read by assistive technology. It is NOT exempt.
+  Expected: element-escape >= 1.
+-->
+<body style="margin:0;overflow-x:hidden"><app-hero-detail>
+  <div style="position:fixed;left:0;top:0;width:280px;height:400px;background:#ccc;transform:translateX(-280px)">
+    parked off-screen but still shown
+  </div>
+  <p style="max-width:100%">visible content that fits</p>
+</app-hero-detail></body>

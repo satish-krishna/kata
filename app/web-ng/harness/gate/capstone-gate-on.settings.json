@@ -1,0 +1,22 @@
+{
+  "$comment": "Capstone, gate-ON condition: the whole constitution mechanized. Every edit-time hook the series built is registered at once, including the capstone's widened sealing vocabulary, the raw-icon rule, the four MVVM rules and the capstone-residue rules, because those ride inside the existing seal and shape hooks which run the repo eslint config. The responsive gate stays soft, as Part 5 disclosed: it is an instruction in the stage prompts to run npm run check:responsive and fix until it passes, because Playwright needs a whole rendered app and a per-edit hook is physically impossible. strictTemplates is on in both conditions. protect-enforcement is present in BOTH conditions and is an experimental control, not a gate.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell",
+        "hooks": [{ "type": "command", "command": "node .claude/hooks/protect-enforcement.mjs" }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/seal-templates.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-layout.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-component-shape.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-freeloader.mjs" }
+        ]
+      }
+    ]
+  }
+}

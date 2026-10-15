@@ -1,0 +1,51 @@
+<!--
+  Capstone sealing fixture: DIRTY. The widened vocabulary plus the icon rule.
+  Hand-counted against harness/sealing-spec.md:
+
+    raw-control (8):
+      <table>    without hlmTable
+      <thead>    without hlmTableHeader/hlmTHead
+      <tr>       without hlmTableRow/hlmTr        (the one inside <thead>)
+      <th>       without hlmTableHead/hlmTh
+      <td>       without hlmTableCell/hlmTd
+      <label>    without hlmLabel/hlmFieldLabel
+      <textarea> without hlmTextarea
+      <select>   replacement-only: no attribute makes it acceptable
+
+    appearance-on-primitive (2):
+      bg-blue-600  on a hlmBtn primitive
+      rounded-none on a hlmBadge primitive
+
+    style-attribute (1):
+      a static style="" on a <div>
+
+    raw-icon (1):
+      an inline <svg> (both parsers name this node ":svg:svg")
+
+  NOT flagged, on purpose: <tbody hlmTBody> and <tr hlmTr> carry their
+  primitive; layout classes (grid, gap-4, w-full) on a primitive are allowed;
+  <option> has no primitive twin; a bare <a> is a real navigation element.
+-->
+<section hlmCard class="grid gap-4">
+  <table>
+    <thead>
+      <tr><th>Hero</th></tr>
+    </thead>
+    <tbody hlmTBody>
+      <tr hlmTr><td>88</td></tr>
+    </tbody>
+  </table>
+
+  <label for="alias">Alias</label>
+  <textarea></textarea>
+  <select><option>Aerial</option></select>
+
+  <button hlmBtn class="bg-blue-600 w-full">Deploy</button>
+  <span hlmBadge class="rounded-none">Active</span>
+
+  <div style="padding: 8px">Notes</div>
+
+  <svg viewBox="0 0 24 24"><path d="M3 6h18"></path></svg>
+
+  <a href="/roster">Back to roster</a>
+</section>

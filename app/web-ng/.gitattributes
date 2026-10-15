@@ -1,0 +1,10 @@
+# rule-docs.mjs's agentGuidanceFor() reads harness/rules/*.md at hook runtime
+# and matches a regex anchored on a literal LF. core.autocrlf and the absence
+# of any prior .gitattributes mean a plain checkout on this repo can hand that
+# code CRLF content, which silently blanks every worked example the hooks
+# splice into their corrective stderr (see harness/gate/rule-docs-hook.test.mjs
+# for the CRLF round-trip test that guards this in code too). Pin exactly the
+# files this depends on to LF - not the whole tree, which would renormalize
+# unrelated history and bury this branch's diff.
+harness/rules/*.md text eol=lf
+.claude/hooks/*.mjs text eol=lf

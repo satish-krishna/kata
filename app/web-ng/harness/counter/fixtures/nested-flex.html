@@ -1,0 +1,55 @@
+<!--
+  nested-flex-grid fixture. The whole rule is direction, so this fixture is
+  mostly controls: the anti-pattern is a ROW of COLUMNS, and everything else
+  that nests flex is legitimate.
+
+  Hand-counted: nested-flex-grid = 2 (the two row-of-columns blocks).
+
+  The five NOT-flagged cases below are the ones the original proxy got wrong.
+  Over seven capstone builds it flagged 63 sites and exactly one was real; these
+  are the shapes that made up the other 62.
+-->
+<section>
+  <!-- VIOLATION 1: a flex row whose children are flex columns. This is a grid. -->
+  <div class="flex justify-between">
+    <div class="flex flex-col gap-1"><span>Power</span><span>88</span></div>
+    <div class="flex flex-col gap-1"><span>Missions</span><span>12</span></div>
+    <div class="flex flex-col gap-1"><span>Clearance</span><span>Tier 4</span></div>
+  </div>
+
+  <!-- VIOLATION 2: same shape with a responsive prefix on the columns, which is
+       stripped to the base utility before classifying. -->
+  <div class="flex items-start">
+    <div class="sm:flex sm:flex-col"><span>a</span></div>
+    <div class="sm:flex sm:flex-col"><span>b</span></div>
+  </div>
+
+  <!-- NOT flagged: a flex COLUMN of flex rows. A card body with a header row and
+       a content row. Not two-dimensional, not a grid, and by far the most common
+       thing the old proxy misfired on. -->
+  <div hlmCard class="flex flex-col gap-3">
+    <div class="flex items-center justify-between"><span>Silverwing</span><span hlmBadge>Active</span></div>
+    <div class="flex items-center gap-2"><span>Aerial</span><span>88</span></div>
+  </div>
+
+  <!-- NOT flagged: Part 2's own counter-example, a flex toolbar of flex rows.
+       A ROW of ROWS. Reading that example carefully is what showed the
+       discriminator was in the doc the whole time. -->
+  <div class="flex items-center gap-2">
+    <div class="flex items-center gap-1"><button hlmBtn>Deploy</button></div>
+    <div class="flex items-center gap-1"><button hlmBtn>Retire</button></div>
+  </div>
+
+  <!-- NOT flagged: a row with only ONE flex-col child. One column is not a grid. -->
+  <div class="flex justify-between">
+    <div class="flex flex-col"><span>only one</span></div>
+    <span hlmBadge>Active</span>
+  </div>
+
+  <!-- NOT flagged: the documented answer to the violation above. -->
+  <div class="grid grid-cols-3 gap-4">
+    <div class="flex flex-col gap-1"><span>Power</span><span>88</span></div>
+    <div class="flex flex-col gap-1"><span>Missions</span><span>12</span></div>
+    <div class="flex flex-col gap-1"><span>Clearance</span><span>Tier 4</span></div>
+  </div>
+</section>

@@ -1,0 +1,39 @@
+{
+  "$comment": "All house gates, armed. Every edit-time hook this project defines runs here: the sealed primitive vocabulary and the icon rule, the layout grammar, component shape and MVVM, the framework-freeloader rules, and the enforcement guard that keeps this configuration read-only. The boot and responsive checks are separate commands the build is told to run (npm run check:boot, npm run check:responsive), because they need a rendered application and cannot be a per-edit hook.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/protect-enforcement.mjs"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/seal-templates.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node .claude/hooks/check-layout.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node .claude/hooks/check-component-shape.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node .claude/hooks/check-freeloader.mjs"
+          }
+        ]
+      }
+    ]
+  }
+}

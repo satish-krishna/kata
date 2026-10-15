@@ -1,0 +1,8 @@
+<!-- Part 4 dirty fixture: legacy structural directives and ngClass/ngStyle.
+     Expected: legacy-control-flow 2 (*ngIf, *ngFor), ng-class-style 2. -->
+<div *ngIf="show">shown</div>
+<ul>
+  <li *ngFor="let h of heroes">{{ h.name }}</li>
+</ul>
+<div [ngClass]="{ active: isActive }">a</div>
+<div [ngStyle]="{ width: w }">b</div>
