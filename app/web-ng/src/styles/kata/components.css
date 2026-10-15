@@ -86,6 +86,7 @@
 .k-event--turn .k-event__body { color: var(--text-faint); }
 .k-event--log .k-event__body { color: var(--text-muted); }
 .k-event__tool { color: var(--text-primary); font-weight: var(--weight-medium); }
+.k-event__turn-rule { display: block; border-top: 1px dashed var(--border-subtle); margin-top: var(--space-2-5); }
 
 /* ---------- MarkdownBody (rendered assistant markdown, Observe pane) ---------- */
 .k-md { line-height: var(--leading-relaxed); }
@@ -151,6 +152,11 @@
 }
 /* Horizontal rule */
 .k-md hr { border: none; border-top: 1px solid var(--border-subtle); margin: var(--space-4) 0; }
+/* GFM task-list box. Angular's innerHTML sanitizer strips <input>, so the
+   markdown pipeline emits a span; this draws the disabled checkbox it replaces. */
+.k-md__task { display: inline-block; vertical-align: middle; box-sizing: border-box; width: 13px; height: 13px; margin: 3px 3px 3px 4px; border: 1px solid var(--border-strong); border-radius: var(--radius-xs); background: var(--surface-inset); position: relative; opacity: 0.6; }
+.k-md__task--done { background: var(--accent); border-color: var(--accent); }
+.k-md__task--done::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid var(--text-on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 /* Strong and em — pin colors so they override inherited muted tones */
 .k-md strong { font-weight: var(--weight-semibold); color: var(--text-primary); }
 .k-md em { font-style: italic; color: var(--text-secondary); }

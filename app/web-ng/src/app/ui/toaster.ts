@@ -14,7 +14,7 @@ import type { Toast } from '../core/toast/toast.store';
         <div class="k-toast" [class]="'k-toast--' + t.kind" role="alert">
           <span class="k-toast__dot"></span>
           <span class="k-toast__msg">{{ t.message }}</span>
-          <button hlmBtn variant="ghost" size="icon-sm" aria-label="Dismiss" (click)="dismiss.emit(t.id)">
+          <button hlmBtn variant="bare" size="bare" class="k-toast__close" aria-label="Dismiss" (click)="dismiss.emit(t.id)">
             <ng-icon name="lucideX" size="14" />
           </button>
         </div>
