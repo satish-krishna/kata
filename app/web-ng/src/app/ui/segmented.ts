@@ -3,6 +3,7 @@ import { HlmToggleGroupImports } from '@spartan-ng/helm/toggle-group';
 
 @Component({
   selector: 'app-segmented',
+  host: { class: 'contents' },
   imports: [HlmToggleGroupImports],
   template: `<hlm-toggle-group
     type="single"

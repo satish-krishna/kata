@@ -1,3 +1,4 @@
+import { ApplicationRef } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { WorkbenchViewModel } from './workbench.view-model';
@@ -258,4 +259,12 @@ it('forwards answers and decisions to the run store', async () => {
   vm.decide({ id: 'p', allow: true, message: null });
   expect(answer).toHaveBeenCalledWith('a', [['x']]);
   expect(decide).toHaveBeenCalledWith('p', true, null);
+});
+
+it('flush renders synchronously through the application ref', async () => {
+  const { vm } = setup();
+  await vm.init(false);
+  const tick = vi.spyOn(TestBed.inject(ApplicationRef), 'tick');
+  vm.flush();
+  expect(tick).toHaveBeenCalledTimes(1);
 });

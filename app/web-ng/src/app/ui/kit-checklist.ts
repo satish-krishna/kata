@@ -29,7 +29,7 @@ const match = (e: CatalogEntry, q: string): boolean => {
   template: `
     <div class="wb-kit">
       <div class="wb-kit__search">
-        <ng-icon name="lucideSearch" />
+        <ng-icon name="lucideSearch" size="15" />
         <input hlmInput placeholder="search kit…" aria-label="Search kit" [value]="query()" (input)="onQuery($event)" />
       </div>
 

@@ -1,4 +1,4 @@
-import { Injectable, computed, effect, inject, signal } from '@angular/core';
+import { ApplicationRef, Injectable, computed, effect, inject, signal } from '@angular/core';
 import { form } from '@angular/forms/signals';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
@@ -22,6 +22,7 @@ export class WorkbenchViewModel {
   private readonly runs = inject(RunStore);
   private readonly toasts = inject(ToastStore);
   private readonly launches = inject(LaunchStore);
+  private readonly app = inject(ApplicationRef);
 
   // Real Tauri app opens a blank New spec; browser dev/review seeds the example.
   private readonly initial = inTauri() ? defaultSpec() : seedSpec();
@@ -195,6 +196,14 @@ export class WorkbenchViewModel {
 
   decide(e: { id: string; allow: boolean; message: string | null }): void {
     void this.runs.submitDecision(e.id, e.allow, e.message);
+  }
+
+  /** Render now. The zoneless scheduler defers change detection to a timer/animation-frame race, so a
+   *  click's DOM effect (a tool card opening, its nested cards appearing) landed a beat after the event.
+   *  Svelte flushed in a microtask, and anything driving the page click by click (the parity harness,
+   *  an e2e script) reads the DOM straight after each click and needs the same. */
+  flush(): void {
+    this.app.tick();
   }
 
   /** Ctrl/Cmd+Enter runs the spec, unless a run is active or a dialog is open. */

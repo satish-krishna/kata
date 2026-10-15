@@ -76,7 +76,7 @@
 /* ---------- Kit ---------- */
 .wb-kit { display: flex; flex-direction: column; gap: var(--space-3); }
 .wb-kit__search { position: relative; }
-.wb-kit__search svg { position: absolute; left: var(--space-4); top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--text-faint); pointer-events: none; }
+.wb-kit__search ng-icon { position: absolute; left: var(--space-4); top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--text-faint); pointer-events: none; }
 /* Targets the helm input primitive (hlmInput). !important because hlmInput's px utility lives in the later utilities layer and would otherwise win. */
 .wb-kit__search [hlmInput] { padding-left: calc(var(--space-5) + 18px) !important; }
 .wb-kit__group { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-faint); margin: var(--space-3) 0 var(--space-1); }
