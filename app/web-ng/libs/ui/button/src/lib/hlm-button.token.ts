@@ -7,7 +7,7 @@ export interface BrnButtonConfig {
 }
 
 const defaultConfig: BrnButtonConfig = {
-  variant: 'default',
+  variant: 'secondary',
   size: 'default',
 };
 

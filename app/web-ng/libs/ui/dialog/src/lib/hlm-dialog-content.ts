@@ -54,7 +54,7 @@ export class HlmDialogContent {
   });
 
   public readonly showCloseButton = input<boolean, BooleanInput>(
-    this._dialogContext?.$showCloseButton ?? true,
+    this._dialogContext?.$showCloseButton ?? false,
     {
       transform: booleanAttribute,
     },
@@ -67,7 +67,7 @@ export class HlmDialogContent {
 
   constructor() {
     classes(() => [
-      'bg-popover text-popover-foreground data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 ring-foreground/10 grid max-w-[calc(100%-2rem)] gap-6 rounded-xl p-6 text-sm ring-1 duration-100 sm:max-w-md relative mx-auto w-full outline-none sm:mx-0',
+      'k-dialog relative flex flex-col gap-(--space-4) p-(--space-6) w-(--dialog-w) max-w-[calc(100vw-var(--space-8))] bg-(--surface-card) border border-(--border-default) rounded-(--radius-lg) [box-shadow:var(--shadow-lg)] outline-none',
       this._dynamicComponentClass,
     ]);
   }

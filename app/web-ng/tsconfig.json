@@ -31,7 +31,10 @@
       "@spartan-ng/helm/separator": ["./libs/ui/separator/src/index.ts"],
       "@spartan-ng/helm/sidebar": ["./libs/ui/sidebar/src/index.ts"],
       "@spartan-ng/helm/sheet": ["./libs/ui/sheet/src/index.ts"],
-      "@spartan-ng/helm/skeleton": ["./libs/ui/skeleton/src/index.ts"]
+      "@spartan-ng/helm/skeleton": ["./libs/ui/skeleton/src/index.ts"],
+      "@spartan-ng/helm/checkbox": ["./libs/ui/checkbox/src/index.ts"],
+      "@spartan-ng/helm/toggle-group": ["./libs/ui/toggle-group/src/index.ts"],
+      "@spartan-ng/helm/toggle": ["./libs/ui/toggle/src/index.ts"]
     }
   },
   "angularCompilerOptions": {

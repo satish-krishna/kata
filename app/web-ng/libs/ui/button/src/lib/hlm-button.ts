@@ -5,38 +5,63 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import type { ClassValue } from 'clsx';
 import { injectBrnButtonConfig } from './hlm-button.token';
 
+// Kata's `.k-btn` family, transcribed value for value. Every color, length and
+// duration is a Kata token; nothing is a raw literal.
 export const buttonVariants = cva(
-  "focus-visible:border-ring focus-visible:ring-ring/50 data-[matches-spartan-invalid=true]:ring-destructive/20 dark:data-[matches-spartan-invalid=true]:ring-destructive/40 data-[matches-spartan-invalid=true]:border-destructive dark:data-[matches-spartan-invalid=true]:border-destructive/50 rounded-md border border-transparent bg-clip-padding text-sm font-medium focus-visible:ring-3 active:not-aria-[haspopup]:translate-y-px data-[matches-spartan-invalid=true]:ring-3 [&_ng-icon:not([class*='text-'])]:text-[length:--spacing(4)] group/button inline-flex shrink-0 items-center justify-center whitespace-nowrap transition-all outline-none select-none data-disabled:pointer-events-none data-disabled:opacity-50 [&_ng-icon]:pointer-events-none [&_ng-icon]:shrink-0",
+  [
+    'group/button inline-flex shrink-0 items-center justify-center whitespace-nowrap select-none',
+    'font-sans font-medium leading-none text-[length:var(--text-base)]',
+    'rounded-(--radius-sm) border border-transparent cursor-pointer',
+    'transition-[background-color,border-color,color,transform] duration-(--dur-fast) ease-(--ease-out)',
+    'not-disabled:not-data-disabled:active:translate-y-[0.5px]',
+    'disabled:cursor-not-allowed disabled:opacity-[0.45] data-disabled:cursor-not-allowed data-disabled:opacity-[0.45]',
+    '[&_ng-icon]:pointer-events-none [&_ng-icon]:shrink-0',
+  ],
   {
     variants: {
+      // Each variant pins `color` on :hover too: these also render as <a>, and the
+      // global a:hover color would otherwise tint the label on hover.
       variant: {
-        default: 'bg-primary text-primary-foreground hover:bg-primary/80',
-        outline:
-          'border-border bg-background hover:bg-muted hover:text-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 aria-expanded:bg-muted aria-expanded:text-foreground shadow-xs',
-        secondary:
-          'bg-secondary text-secondary-foreground aria-expanded:bg-secondary aria-expanded:text-secondary-foreground hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)]',
-        ghost:
-          'hover:bg-muted hover:text-foreground dark:hover:bg-muted/50 aria-expanded:bg-muted aria-expanded:text-foreground',
-        destructive:
-          'bg-destructive/10 hover:bg-destructive/20 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/20 text-destructive focus-visible:border-destructive/40 dark:hover:bg-destructive/30',
-        link: 'text-primary underline-offset-4 hover:underline',
+        primary: [
+          // Marker, not style: parity/capture.mjs finds the primary action by this class.
+          'k-btn--primary',
+          'bg-(--accent) text-(color:--text-on-accent) font-semibold',
+          'not-disabled:hover:bg-(--accent-hover) not-disabled:hover:text-(color:--text-on-accent)',
+          'not-disabled:active:bg-(--accent-press)',
+        ],
+        secondary: [
+          'bg-(--surface-card) text-(color:--text-primary) border-(--border-default)',
+          'not-disabled:hover:bg-(--surface-hover) not-disabled:hover:border-(--border-strong) not-disabled:hover:text-(color:--text-primary)',
+        ],
+        ghost: [
+          'bg-transparent text-(color:--text-secondary)',
+          'not-disabled:hover:bg-(--surface-hover) not-disabled:hover:text-(color:--text-primary)',
+        ],
+        danger: [
+          'bg-transparent text-(color:--error-text) border-(--error-border)',
+          'not-disabled:hover:bg-(--error-subtle)',
+        ],
       },
       size: {
-        default:
-          'h-9 gap-1.5 px-2.5 in-data-[slot=button-group]:rounded-md has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2',
-        xs: "h-6 gap-1 rounded-[min(var(--radius-md),8px)] px-2 text-xs in-data-[slot=button-group]:rounded-md has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_ng-icon:not([class*='text-'])]:text-[length:--spacing(3)]",
-        sm: 'h-8 gap-1 rounded-[min(var(--radius-md),10px)] px-2.5 in-data-[slot=button-group]:rounded-md has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5',
-        lg: 'h-10 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2',
-        icon: 'size-9',
-        'icon-xs':
-          "size-6 rounded-[min(var(--radius-md),8px)] in-data-[slot=button-group]:rounded-md [&_ng-icon:not([class*='text-'])]:text-[length:--spacing(3)]",
-        'icon-sm':
-          'size-8 rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-md',
-        'icon-lg': 'size-10',
+        default: 'h-(--control-h) gap-(--space-3) px-(--space-5)',
+        sm: 'h-(--control-h-sm) gap-(--space-2) px-(--space-4) text-[length:var(--text-sm)]',
+        lg: 'h-(--control-h-lg) gap-(--space-3) px-(--space-6) text-[length:var(--text-md)]',
+        // Square icon-only buttons: `.k-iconbtn` (32px) and `.k-iconbtn--sm` (26px).
+        icon: 'size-(--control-h) gap-(--space-3) p-0',
+        'icon-sm': 'size-(--control-h-sm) gap-(--space-3) p-0',
       },
     },
+    compoundVariants: [
+      // `.k-iconbtn`: muted at rest, dimmer when disabled.
+      {
+        variant: 'ghost',
+        size: ['icon', 'icon-sm'],
+        class:
+          'text-(color:--text-muted) disabled:opacity-40 data-disabled:opacity-40',
+      },
+    ],
     defaultVariants: {
-      variant: 'default',
+      variant: 'secondary',
       size: 'default',
     },
   },

@@ -1,7 +1,25 @@
-import { Directive } from '@angular/core';
+import { Directive, input } from '@angular/core';
 import { BrnFieldControlDescribedBy } from '@spartan-ng/brain/field';
 import { BrnInput } from '@spartan-ng/brain/input';
 import { classes } from '@spartan-ng/helm/utils';
+
+export type HlmInputVariant = 'default' | 'mono';
+
+// Kata's `.k-input` / `.k-input--mono` / `.k-input--invalid`. The inset surface is
+// darker than its card; focus is an azure border plus a 3px subtle ring.
+const base = [
+  'w-full h-(--control-h) px-(--space-4)',
+  'bg-(--surface-inset) text-(color:--text-primary) border border-(--border-default) rounded-(--radius-sm)',
+  'placeholder:text-(color:--text-placeholder)',
+  'transition-[border-color,background-color] duration-(--dur-fast) ease-(--ease-out)',
+  'hover:border-(--border-strong)',
+  'focus:outline-none focus:border-(--accent) focus:[box-shadow:0_0_0_3px_var(--accent-subtle)]',
+  // `.k-input--invalid` sat below :hover and :focus in the cascade, so it never beat either.
+  'not-hover:not-focus:data-[matches-spartan-invalid=true]:border-(--error-border)',
+];
+
+const body = 'font-sans font-normal text-[length:var(--text-base)] leading-(--leading-normal)';
+const mono = 'font-mono font-normal text-[length:var(--text-base)] leading-(--leading-code)';
 
 @Directive({
   selector: '[hlmInput]',
@@ -12,10 +30,10 @@ import { classes } from '@spartan-ng/helm/utils';
   host: { 'data-slot': 'input' },
 })
 export class HlmInput {
+  /** `mono` is for data: paths, keys, model ids. */
+  public readonly variant = input<HlmInputVariant>('default');
+
   constructor() {
-    classes(
-      () =>
-        'dark:bg-input/30 border-input focus-visible:border-ring focus-visible:ring-ring/50 data-[matches-spartan-invalid=true]:ring-destructive/20 dark:data-[matches-spartan-invalid=true]:ring-destructive/40 data-[matches-spartan-invalid=true]:border-destructive dark:data-[matches-spartan-invalid=true]:border-destructive/50 h-9 rounded-md border bg-transparent px-2.5 py-1 text-base shadow-xs transition-[color,box-shadow] file:h-7 file:text-sm file:font-medium focus-visible:ring-3 data-[matches-spartan-invalid=true]:ring-3 md:text-sm file:text-foreground placeholder:text-muted-foreground w-full min-w-0 outline-none file:inline-flex file:border-0 file:bg-transparent disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
-    );
+    classes(() => [base, this.variant() === 'mono' ? mono : body]);
   }
 }

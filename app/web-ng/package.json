@@ -11,13 +11,13 @@
     "lint": "eslint src",
     "test:harness": "vitest run --config harness/vitest.config.mjs",
     "typecheck:harness": "tsc -p tsconfig.harness.json --noEmit",
-    "check:responsive": "node harness/gate/check-responsive.mjs",
+    "check:responsive": "node scripts/check-responsive-desktop.mjs",
     "count": "node harness/counter/counter.mjs --root . src",
     "check:boot": "node harness/gate/check-boot.mjs --route \"\" --route library",
     "firings": "node harness/driver/firing-rollup.mjs",
     "check:wiring": "node harness/counter/check-wiring.mjs --root . src",
     "check:interaction": "node harness/gate/check-interaction.mjs --route \"\" --route library",
-    "check:contrast": "node harness/gate/check-contrast.mjs"
+    "check:parity": "node scripts/check-parity.mjs"
   },
   "private": true,
   "engines": {
@@ -60,7 +60,10 @@
     "angular-eslint": "^22.2.0",
     "eslint": "^10.9.1",
     "jsdom": "^28.0.0",
+    "pixelmatch": "^8.0.0",
     "playwright": "^1.63.0",
+    "playwright-core": "^1.61.0",
+    "pngjs": "^7.0.0",
     "postcss": "^8.5.3",
     "prettier": "^3.8.1",
     "stylelint": "^17.14.1",

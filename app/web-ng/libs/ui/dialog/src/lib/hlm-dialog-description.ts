@@ -11,7 +11,7 @@ export class HlmDialogDescription {
   constructor() {
     classes(
       () =>
-        'text-muted-foreground *:[a]:hover:text-foreground text-sm *:[a]:underline *:[a]:underline-offset-3',
+        'text-[length:var(--text-sm)] text-(color:--text-muted) *:[a]:underline *:[a]:underline-offset-3',
     );
   }
 }

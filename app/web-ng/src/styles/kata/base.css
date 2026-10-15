@@ -1,0 +1,40 @@
+/* ============================================================
+   KATA · BASE
+   Minimal reset + element defaults wired to the tokens. Applied
+   to consuming surfaces so the sumi-ink theme is the baseline.
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--surface-app);
+  color: var(--text-primary);
+  font: var(--font-body);
+  font-feature-settings: "cv05" 1, "ss01" 1; /* Plex tweaks: single-storey a, etc. */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, h5, h6, p, figure { margin: 0; }
+
+a { color: var(--accent-text); text-decoration: none; }
+a:hover { color: var(--accent-hover); }
+
+code, pre, kbd, samp { font-family: var(--font-mono); }
+
+button, input, textarea, select { font: inherit; color: inherit; }
+
+:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* Thin, themed scrollbars for the dense desktop panes */
+* { scrollbar-width: thin; scrollbar-color: var(--ink-500) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb {
+  background: var(--ink-500);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--radius-full);
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--ink-400); background-clip: padding-box; }
