@@ -3,7 +3,7 @@ import { BrnFieldControlDescribedBy } from '@spartan-ng/brain/field';
 import { BrnInput } from '@spartan-ng/brain/input';
 import { classes } from '@spartan-ng/helm/utils';
 
-export type HlmInputVariant = 'default' | 'mono';
+export type HlmInputVariant = 'default' | 'mono' | 'bare';
 
 // Kata's `.k-input` / `.k-input--mono` / `.k-input--invalid`. The inset surface is
 // darker than its card; focus is an azure border plus a 3px subtle ring.
@@ -30,10 +30,11 @@ const mono = 'font-mono font-normal text-[length:var(--text-base)] leading-(--le
   host: { 'data-slot': 'input' },
 })
 export class HlmInput {
-  /** `mono` is for data: paths, keys, model ids. */
+  /** `mono` is for data: paths, keys, model ids. `bare` emits no classes: a Kata component
+   *  class (e.g. `.wb-specname`) supplies the whole look, which utilities here would out-rank. */
   public readonly variant = input<HlmInputVariant>('default');
 
   constructor() {
-    classes(() => [base, this.variant() === 'mono' ? mono : body]);
+    classes(() => (this.variant() === 'bare' ? [] : [base, this.variant() === 'mono' ? mono : body]));
   }
 }
