@@ -57,6 +57,8 @@ export class RunStore {
     this.unlisten = unlisten;
     try {
       await this.transport.runSpec(spec);
+      // A cancel landed while run_spec was spawning; the backend had no child to signal then.
+      if (gen !== this.generation) void this.transport.cancelRun();
     } catch (e) {
       if (gen !== this.generation) return;
       this.generation++;
@@ -68,11 +70,18 @@ export class RunStore {
 
   async cancelRun(): Promise<void> {
     if (!this.active()) return;
-    await this.transport.cancelRun();
-    this.generation++;
-    this.append('warn', 'run cancelled â€” engine stopped claude and cleaned up the plugin-dir');
-    this.snap.update((s) => ({ ...s, state: 'warning' }));
+    // Settle the UI state synchronously so no later event or re-run can be confused with this run.
+    const gen = ++this.generation;
     this.teardown();
+    this.append('warn', 'run cancelled — engine stopped claude and cleaned up the plugin-dir');
+    this.snap.update((s) => ({ ...s, state: 'warning' }));
+    try {
+      await this.transport.cancelRun();
+    } catch (e) {
+      if (gen !== this.generation) return;
+      this.append('error', `cancel failed: ${e}`);
+      this.snap.update((s) => ({ ...s, state: 'error' }));
+    }
   }
 
   async submitAnswer(id: string, answers: string[][]): Promise<void> {

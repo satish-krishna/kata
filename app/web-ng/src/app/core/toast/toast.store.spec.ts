@@ -35,9 +35,8 @@ describe('ToastStore', () => {
     vi.useFakeTimers();
     const store = TestBed.inject(ToastStore);
     const id = store.error('temp');
+    expect(vi.getTimerCount()).toBe(1);
     store.dismiss(id);
-    store.error('next');
-    vi.advanceTimersByTime(5999);
-    expect(store.toasts().map((t) => t.message)).toEqual(['next']);
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
