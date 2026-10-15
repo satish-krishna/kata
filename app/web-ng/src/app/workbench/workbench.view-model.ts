@@ -1,0 +1,206 @@
+import { Injectable, computed, effect, inject, signal } from '@angular/core';
+import { form } from '@angular/forms/signals';
+import type { RunSpec } from '@bindings/RunSpec';
+import type { CatalogEntry } from '@bindings/CatalogEntry';
+import type { Preset } from '@bindings/Preset';
+import { KataTransport } from '../core/transport/kata-transport';
+import { RunStore } from '../core/run/run.store';
+import { ToastStore } from '../core/toast/toast.store';
+import { LaunchStore } from '../core/launch/launch.store';
+import { defaultSpec, draftFrom, normalize, specEquals } from '../lib/spec';
+import { inTauri, seedSpec } from '../lib/mock';
+
+const CATALOG_DEBOUNCE_MS = 300;
+const VALIDATE_DEBOUNCE_MS = 200;
+
+/** Everything the Workbench screen does: the draft run-spec and its Signal Forms
+ *  tree, dirty tracking against the last-saved snapshot, live validation, the
+ *  kit catalog, and the open/save/export/run orchestration. */
+@Injectable()
+export class WorkbenchViewModel {
+  private readonly transport = inject(KataTransport);
+  private readonly runs = inject(RunStore);
+  private readonly toasts = inject(ToastStore);
+  private readonly launches = inject(LaunchStore);
+
+  // Real Tauri app opens a blank New spec; browser dev/review seeds the example.
+  private readonly initial = inTauri() ? defaultSpec() : seedSpec();
+  readonly spec = signal<RunSpec>(structuredClone(this.initial));
+  readonly form = form(this.spec);
+  /** Normalized snapshot of the last load or save. Dirty is snapshot-based because the compose
+   *  pane writes through the form's root value, which the form's own dirty() does not see. */
+  private readonly saved = signal<RunSpec>(normalize(this.initial));
+  readonly dirty = computed(() => !specEquals(normalize(this.spec()), this.saved()));
+
+  readonly catalog = signal<CatalogEntry[]>([]);
+  readonly presets = signal<Preset[]>([]);
+  readonly errors = signal<string[]>([]);
+  readonly valid = computed(() => this.errors().length === 0);
+
+  readonly runState = this.runs.state;
+  readonly events = this.runs.events;
+  readonly summary = this.runs.summary;
+  readonly asks = this.runs.asks;
+  readonly permissions = this.runs.permissions;
+  readonly running = computed(() => this.runState() === 'running' || this.runState() === 'awaiting');
+
+  /** The action waiting behind the "Discard unsaved changes?" confirm, or null when it is closed. */
+  private readonly pendingDiscard = signal<(() => void | Promise<void>) | null>(null);
+  readonly confirmOpen = computed(() => this.pendingDiscard() !== null);
+  /** Set while a run is validating and spawning, so a second trigger cannot slip in before the store goes active. */
+  private starting = false;
+
+  constructor() {
+    const workdir = computed(() => this.spec().workdir);
+    effect((onCleanup) => {
+      const dir = workdir();
+      const t = setTimeout(() => void this.loadCatalog(dir), CATALOG_DEBOUNCE_MS);
+      onCleanup(() => clearTimeout(t));
+    });
+    effect((onCleanup) => {
+      const snapshot = normalize(this.spec());
+      const t = setTimeout(() => void this.revalidate(snapshot), VALIDATE_DEBOUNCE_MS);
+      onCleanup(() => clearTimeout(t));
+    });
+  }
+
+  private async loadCatalog(workdir: string): Promise<void> {
+    try {
+      this.catalog.set(await this.transport.catalog(workdir.trim() === '' ? null : workdir));
+    } catch (e) {
+      console.error('catalog failed', e);
+      this.catalog.set([]);
+    }
+  }
+
+  private async revalidate(snapshot: RunSpec): Promise<void> {
+    try {
+      this.errors.set(await this.transport.validateSpec(snapshot));
+    } catch (e) {
+      console.error('validate failed', e);
+      this.errors.set([]);
+    }
+  }
+
+  /** Replace the draft with `next` and mark it as the saved baseline. */
+  private load(next: RunSpec): void {
+    this.spec.set(next);
+    this.saved.set(normalize(next));
+  }
+
+  async init(demo: boolean): Promise<void> {
+    try {
+      this.presets.set(await this.transport.listPresets());
+    } catch (e) {
+      console.error('listPresets failed', e);
+      this.presets.set([]);
+    }
+    // Browser dev/review only: ?demo=run auto-starts the scripted run. Never fires under Tauri.
+    if (!inTauri() && demo) await this.run();
+    const handoff = this.launches.take();
+    if (handoff) {
+      this.load(draftFrom(handoff.spec));
+      if (handoff.autorun) await this.run();
+    }
+  }
+
+  /** Run `action` now when there are no unsaved changes; otherwise defer it behind the confirm. */
+  private async guardDiscard(action: () => void | Promise<void>): Promise<void> {
+    if (!this.dirty()) {
+      await action();
+      return;
+    }
+    this.pendingDiscard.set(action);
+  }
+
+  confirmDiscard(): void {
+    const action = this.pendingDiscard();
+    this.pendingDiscard.set(null);
+    if (action) void action();
+  }
+
+  cancelDiscard(): void {
+    this.pendingDiscard.set(null);
+  }
+
+  newSpec(): void {
+    void this.guardDiscard(() => this.load(defaultSpec()));
+  }
+
+  open(): Promise<void> {
+    return this.guardDiscard(async () => {
+      const path = await this.transport.pickOpenSpec();
+      if (!path) return;
+      try {
+        this.load(draftFrom(await this.transport.loadSpec(path)));
+      } catch (e) {
+        this.toasts.error(`Failed to load spec: ${e}`);
+      }
+    });
+  }
+
+  async save(): Promise<void> {
+    try {
+      await this.transport.saveKata(normalize(this.spec()));
+      this.saved.set(normalize(this.spec()));
+    } catch (e) {
+      this.toasts.error(`Failed to save kata: ${e}`);
+    }
+  }
+
+  async export(): Promise<void> {
+    const dir = await this.transport.pickDirectory();
+    if (!dir) return;
+    try {
+      await this.transport.exportBundle(normalize(this.spec()), dir);
+    } catch (e) {
+      this.toasts.error(`Failed to export bundle: ${e}`);
+    }
+  }
+
+  async pickWorkdir(): Promise<void> {
+    const dir = await this.transport.pickDirectory();
+    if (dir) this.form.workdir().value.set(dir);
+  }
+
+  async run(): Promise<void> {
+    if (this.running() || this.starting || this.confirmOpen()) return;
+    this.starting = true;
+    try {
+      const spec = normalize(this.spec());
+      const errs = await this.transport.validateSpec(spec);
+      this.errors.set(errs);
+      if (errs.length === 0) await this.runs.startRun(spec);
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  cancel(): void {
+    void this.runs.cancelRun();
+  }
+
+  async savePreset(p: { name: string; body: string }): Promise<void> {
+    try {
+      await this.transport.savePreset(p.name, p.body);
+      this.presets.set(await this.transport.listPresets());
+    } catch (e) {
+      this.toasts.error(`Failed to save preset: ${e}`);
+    }
+  }
+
+  answer(e: { id: string; answers: string[][] }): void {
+    void this.runs.submitAnswer(e.id, e.answers);
+  }
+
+  decide(e: { id: string; allow: boolean; message: string | null }): void {
+    void this.runs.submitDecision(e.id, e.allow, e.message);
+  }
+
+  /** Ctrl/Cmd+Enter runs the spec, unless a run is active or a dialog is open. */
+  onKey(e: KeyboardEvent): void {
+    if (!(e.metaKey || e.ctrlKey) || e.key !== 'Enter') return;
+    e.preventDefault();
+    void this.run();
+  }
+}
