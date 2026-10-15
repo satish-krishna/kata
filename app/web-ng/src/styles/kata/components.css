@@ -213,7 +213,8 @@
 .k-ask__answer--empty { color: var(--text-faint); }
 .k-ask__foot { display: flex; align-items: center; gap: var(--space-4); padding-top: var(--space-2); }
 .k-ask__hint { font: var(--font-code-sm); font-size: var(--text-xs); color: var(--text-faint); }
-.k-ask__foot .k-btn { margin-left: auto; }
+/* Targets the helm button primitive (hlmBtn). */
+.k-ask__foot [hlmBtn] { margin-left: auto; }
 .k-ask--answered { border-color: var(--border-default); box-shadow: none; opacity: 0.92; }
 .k-ask--answered .k-ask__banner { background: var(--surface-inset); border-bottom-color: var(--border-subtle); }
 .k-ask--answered .k-ask__banner-dot { background: var(--success); animation: none; }

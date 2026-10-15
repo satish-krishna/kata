@@ -13,8 +13,25 @@ import { VIEWS, captureAll } from '../parity/capture.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const THRESHOLD = 0.001;
+const USAGE = 'usage: npm run check:parity [-- --only name,name]';
 const onlyArg = process.argv.indexOf('--only');
-const only = onlyArg >= 0 ? new Set(process.argv[onlyArg + 1].split(',')) : null;
+const onlyValue = onlyArg >= 0 ? process.argv[onlyArg + 1] : undefined;
+if (onlyArg >= 0 && (!onlyValue || onlyValue.startsWith('--'))) {
+  console.error(`--only needs a comma-separated view list
+${USAGE}`);
+  process.exit(1);
+}
+const only = onlyArg >= 0 ? new Set(onlyValue.split(',').filter(Boolean)) : null;
+if (only) {
+  const valid = VIEWS.map((v) => v.name);
+  const unknown = [...only].filter((n) => !valid.includes(n));
+  if (unknown.length || only.size === 0) {
+    console.error(`unknown view(s): ${unknown.join(', ') || '(none given)'}
+valid views: ${valid.join(', ')}
+${USAGE}`);
+    process.exit(1);
+  }
+}
 
 async function serve() {
   const child = spawn('npx', ['ng', 'serve', '--port', '4317', '--configuration', 'production'], { cwd: root, shell: true });
@@ -45,8 +62,10 @@ function stop(child) {
 const actualDir = join(root, 'parity', 'actual');
 const diffDir = join(root, 'parity', 'diff');
 await rm(actualDir, { recursive: true, force: true });
+await rm(diffDir, { recursive: true, force: true });
 await mkdir(diffDir, { recursive: true });
 if (only) VIEWS.splice(0, VIEWS.length, ...VIEWS.filter((v) => only.has(v.name)));
+if (VIEWS.length === 0) { console.error('no views to compare'); process.exit(1); }
 
 const server = await serve();
 let failed = 0;

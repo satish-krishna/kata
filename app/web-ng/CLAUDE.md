@@ -23,7 +23,7 @@ You are an expert in TypeScript, Angular, and scalable web application developme
 - It MUST follow all WCAG AA minimums, including focus management, color contrast, and ARIA attributes.
 - Every icon-only control needs an accessible name, and it should identify the record rather than repeat a generic verb: `[attr.aria-label]="'Edit ' + hero.name"`. Check first whether the primitive already supplies one — several render an `sr-only` span, and an explicit `aria-label` silently overrides it rather than adding to it.
 - Heading level is a document-outline decision, not a component decision. `hlmCardTitle` is an attribute directive that attaches to any element, and the `<h3>` in spartan's examples is a placeholder. Pick the level the page needs; never skip one.
-- Colour tokens are checked mechanically by `npm run check:contrast`. Text pairs must clear 4.5:1 and the focus ring 3:1, in both themes. A design document is not exempt: the palette that shipped at 2.80:1 came from a spec nobody had run the arithmetic on.
+- `npm run check:contrast` is not wired in Kata: the harness reads only hex tokens and Kata's tokens are `var()` references, so it would pass vacuously. Check contrast by hand until that changes. Text pairs must clear 4.5:1 and the focus ring 3:1, in both themes. A design document is not exempt: the palette that shipped at 2.80:1 came from a spec nobody had run the arithmetic on.
 
 ### Components
 
@@ -69,7 +69,7 @@ npm run build            # production build
 npm run check:boot       # every route renders without a runtime error
 npm run check:interaction # every overlay opens, closes, logs nothing
 npm run check:responsive # 375 / 768 / 1280
-npm run check:contrast   # WCAG AA over the design tokens
+# check:contrast is not wired in kata (harness reads only hex tokens; Kata's are var() references, so it would pass vacuously)
 npm run check:wiring     # no orphaned members
 ```
 

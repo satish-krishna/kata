@@ -62,15 +62,18 @@
 .wb-section__sub { font: var(--text-xs)/1 var(--font-sans); color: var(--text-faint); margin-left: auto; }
 .wb-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-5); }
 .wb-picker { display: flex; gap: var(--space-2); }
-.wb-picker .k-input { flex: 1; }
+/* Targets the helm input primitive (hlmInput). */
+.wb-picker [hlmInput] { flex: 1; }
 .wb-presets { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-2); }
-.wb-presets .k-input { flex: 1; }
+/* Targets the helm input primitive (hlmInput). */
+.wb-presets [hlmInput] { flex: 1; }
 
 /* ---------- Kit ---------- */
 .wb-kit { display: flex; flex-direction: column; gap: var(--space-3); }
 .wb-kit__search { position: relative; }
 .wb-kit__search svg { position: absolute; left: var(--space-4); top: 50%; transform: translateY(-50%); width: 15px; height: 15px; color: var(--text-faint); pointer-events: none; }
-.wb-kit__search .k-input { padding-left: calc(var(--space-5) + 18px); }
+/* Targets the helm input primitive (hlmInput). !important because hlmInput's px utility lives in the later utilities layer and would otherwise win. */
+.wb-kit__search [hlmInput] { padding-left: calc(var(--space-5) + 18px) !important; }
 .wb-kit__group { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-faint); margin: var(--space-3) 0 var(--space-1); }
 
 /* ---------- Observe pane ---------- */
