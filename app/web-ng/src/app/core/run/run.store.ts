@@ -13,6 +13,8 @@ export class RunStore {
   private readonly transport = inject(KataTransport);
   private readonly snap = signal<RunSnapshot>(IDLE);
   private generation = 0;
+  /** The generation a cancel ended, so only a cancelled run (not a finished one) triggers the post-spawn cancel. */
+  private cancelledGen = -1;
   private unlisten: (() => void) | null = null;
 
   readonly state = computed(() => this.snap().state);
@@ -58,7 +60,7 @@ export class RunStore {
     try {
       await this.transport.runSpec(spec);
       // A cancel landed while run_spec was spawning; the backend had no child to signal then.
-      if (gen !== this.generation) void this.transport.cancelRun();
+      if (this.cancelledGen === gen) void this.transport.cancelRun();
     } catch (e) {
       if (gen !== this.generation) return;
       this.generation++;
@@ -71,6 +73,7 @@ export class RunStore {
   async cancelRun(): Promise<void> {
     if (!this.active()) return;
     // Settle the UI state synchronously so no later event or re-run can be confused with this run.
+    this.cancelledGen = this.generation;
     const gen = ++this.generation;
     this.teardown();
     this.append('warn', 'run cancelled — engine stopped claude and cleaned up the plugin-dir');

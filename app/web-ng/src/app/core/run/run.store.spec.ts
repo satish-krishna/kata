@@ -24,8 +24,9 @@ function setup() {
 }
 function deferred<T = void>() {
   let resolve!: (v: T) => void;
-  const promise = new Promise<T>((r) => { resolve = r; });
-  return { promise, resolve };
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((r, j) => { resolve = r; reject = j; });
+  return { promise, resolve, reject };
 }
 const log = (message: string): KataEvent => ({ type: 'log', level: 'info', message });
 
@@ -113,16 +114,20 @@ describe('RunStore', () => {
 
   it('cancel while onRunEvent is pending never spawns the engine', async () => {
     const { store, fake } = setup();
-    const d = deferred<() => void>();
-    fake.onRunEvent = () => d.promise;
+    const listen = deferred<() => void>();
+    const cancel = deferred();
+    fake.onRunEvent = () => listen.promise;
+    fake.cancelRun.mockReturnValueOnce(cancel.promise);
     const unlisten = vi.fn();
     const started = store.startRun(seedSpec());
-    await store.cancelRun();
-    d.resolve(unlisten);
+    const cancelling = store.cancelRun();
+    listen.resolve(unlisten);
     await started;
     expect(fake.runSpec).not.toHaveBeenCalled();
     expect(unlisten).toHaveBeenCalledTimes(1);
     expect(store.state()).toBe('warning');
+    cancel.resolve();
+    await cancelling;
   });
 
   it('cancel while runSpec is pending cancels again when it resolves and drops that run events', async () => {
@@ -141,6 +146,19 @@ describe('RunStore', () => {
     expect(store.events().length).toBe(before);
   });
 
+  it('a fast-failing run (terminal event before runSpec resolves) does not issue a stray cancel', async () => {
+    const { store, fake } = setup();
+    const d = deferred();
+    fake.runSpec.mockReturnValueOnce(d.promise);
+    const started = store.startRun(seedSpec());
+    await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalled());
+    fake.listeners[0]({ type: 'run.error', message: 'boom', exit_code: 1 } as never);
+    expect(store.state()).toBe('error');
+    d.resolve();
+    await started;
+    expect(fake.cancelRun).not.toHaveBeenCalled();
+  });
+
   it('a stale cancel resolving after a re-run does not touch the new run', async () => {
     const { store, fake } = setup();
     await store.startRun(seedSpec());
@@ -155,7 +173,23 @@ describe('RunStore', () => {
     expect(store.events()).toEqual([]);
   });
 
-  it('a terminal event then a re-run is unaffected by a later cancel call on the old run', async () => {
+  it('a stale cancel rejecting after a re-run does not touch the new run', async () => {
+    const { store, fake } = setup();
+    await store.startRun(seedSpec());
+    const d = deferred();
+    fake.cancelRun.mockReturnValueOnce(d.promise);
+    const cancelling = store.cancelRun();
+    await store.startRun(seedSpec());
+    d.reject('late failure');
+    await cancelling;
+    expect(store.state()).toBe('running');
+    expect(store.events()).toEqual([]);
+  });
+
+  // After the optimistic cancel, a terminal event cannot land while the cancel promise is
+  // pending (the generation is already bumped and the listener torn down), so the reviewer's
+  // exact interleaving cannot arise. This checks the reachable neighbor instead.
+  it('cancelling a re-run after a terminal event cancels only the new run', async () => {
     const { store, fake } = setup();
     await store.startRun(seedSpec());
     fake.listeners[0]({ type: 'run.completed', exit_code: 0 } as never);
@@ -163,6 +197,7 @@ describe('RunStore', () => {
     await store.cancelRun();
     fake.listeners[1](log('after cancel of run 2'));
     expect(store.state()).toBe('warning');
+    expect(fake.cancelRun).toHaveBeenCalledTimes(1);
   });
 
   it('a rejecting transport.cancelRun leaves state error with a cancel failed row', async () => {
