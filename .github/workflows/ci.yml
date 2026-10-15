@@ -100,6 +100,12 @@ jobs:
         run: npm run build
       - name: Unit tests (Vitest)
         run: npm test -- --watch=false
+      - name: Gate rule tests (harness)
+        # The rule engine is deliberately not guarded by the edit-time hook;
+        # these tests are its backstop, so a gutted rule turns CI red.
+        run: npm run test:harness
+      - name: Enforcement guard tests
+        run: node --test ../.claude/hooks/protect-gates.test.mjs
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - name: Boot check
