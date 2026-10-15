@@ -6,7 +6,7 @@ import { formatCorrectiveMessage } from './responsive-guidance.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(here, '..', '..');
-const DIST = join(ROOT, 'dist', 'kata-workbench', 'browser');
+const DIST = join(ROOT, 'dist', 'angular-jig', 'browser');
 
 // Independent in-page check. Distinct code from the auditor's inPageMeasure.
 function pageCheck({ tol, anchorSelector }) {

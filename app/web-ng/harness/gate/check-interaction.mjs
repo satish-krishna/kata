@@ -43,7 +43,7 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const DIST = join(ROOT, 'dist', 'kata-workbench', 'browser');
+const DIST = join(ROOT, 'dist', 'angular-jig', 'browser');
 
 const MIME = {
   '.html': 'text/html',

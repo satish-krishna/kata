@@ -1,8 +1,8 @@
 {
   "build": {
-    "beforeDevCommand": "npm --prefix ../web-ng start",
+    "beforeDevCommand": "npm --prefix web-ng start",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm --prefix ../web-ng run build",
-    "frontendDist": "../web-ng/dist/kata-workbench/browser"
+    "beforeBuildCommand": "npm --prefix web-ng run build",
+    "frontendDist": "../web-ng/dist/angular-jig/browser"
   }
 }

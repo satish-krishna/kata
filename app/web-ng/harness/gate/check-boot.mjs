@@ -39,7 +39,7 @@ import { serveStatic, launchChromium } from '../playwright/serve-and-visit.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(here, '..', '..');
-const DIST = join(ROOT, 'dist', 'kata-workbench', 'browser');
+const DIST = join(ROOT, 'dist', 'angular-jig', 'browser');
 
 // Noise that is not an application fault. Kept deliberately short: a gate that
 // filters aggressively stops being a gate. Anything not listed here fails.
