@@ -4,7 +4,7 @@ import { lucideCheckCircle, lucideCpu, lucideGitBranch, lucideTerminal, lucideXC
 import type { RunSpec } from '@bindings/RunSpec';
 import { STATUS_LABEL, type AskRecord, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../lib/events';
 import { isAtBottom } from '../lib/scroll';
-import { pairToolEvents, withPauses } from '../lib/toolcards';
+import { pairToolEvents, withPauses, type PausedItem } from '../lib/toolcards';
 import { AskPanel } from './ask-panel';
 import { EventRow } from './event-row';
 import { MarkdownBody } from './markdown-body';
@@ -36,7 +36,7 @@ import { ToolCard } from './tool-card';
           <p>Press <b class="wb-accent">Run</b> to drive <code>claude -p</code> to completion. The normalized event stream renders here.</p>
         </div>
       } @else {
-        @for (item of streamItems(); track item.key) {
+        @for (item of streamItems(); track trackKey(item)) {
           @if (item.kind === 'event') {
             <div class="wb-event-enter"><app-event-row [ev]="item.ev" /></div>
           } @else if (item.kind === 'call') {
@@ -115,6 +115,15 @@ export class ObservePane {
       const el = this.streamEl().nativeElement;
       if (this.stick) el.scrollTop = el.scrollHeight;
     });
+  }
+
+  /* Svelte drew a pending and a settled pause from separate branches, so
+   * settling remounted the card and replayed its fade-in. The key changes only
+   * at settle, so an open panel is never recreated by unrelated arrivals. */
+  protected trackKey(item: PausedItem): string {
+    if (item.kind === 'perm') return `${item.key}:${item.p.decided ? 'done' : 'open'}`;
+    if (item.kind === 'ask') return `${item.key}:${item.a.answers ? 'done' : 'open'}`;
+    return item.key;
   }
 
   protected onScroll(): void {

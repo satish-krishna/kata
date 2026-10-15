@@ -289,3 +289,31 @@ describe('ObservePane - auto-scroll', () => {
     expect(top()).toBe(0);
   });
 });
+
+describe('ObservePane - settling replays the enter animation', () => {
+  it('remounts the wrapper of a permission when it settles', async () => {
+    const m = await renderPane({ state: 'awaiting', permissions: [PENDING] });
+    const before = m.container.querySelector('.wb-event-enter');
+    m.fixture.componentRef.setInput('permissions', [{ ...PENDING, decided: { allow: true, message: null } }]);
+    await m.fixture.whenStable();
+    const after = m.container.querySelector('.wb-event-enter');
+    expect(after).not.toBeNull();
+    expect(after).not.toBe(before);
+  });
+
+  it('remounts the wrapper of an ask when it is answered', async () => {
+    const ask = {
+      id: 'q1',
+      questions: [{ kind: 'text' as const, header: 'scope', question: 'Fix or isolate?', optional: false }],
+      answers: null,
+      at: 0,
+    };
+    const m = await renderPane({ state: 'awaiting', asks: [ask] });
+    const before = m.container.querySelector('.wb-event-enter');
+    m.fixture.componentRef.setInput('asks', [{ ...ask, answers: [['isolate']] }]);
+    await m.fixture.whenStable();
+    const after = m.container.querySelector('.wb-event-enter');
+    expect(after).not.toBeNull();
+    expect(after).not.toBe(before);
+  });
+});
