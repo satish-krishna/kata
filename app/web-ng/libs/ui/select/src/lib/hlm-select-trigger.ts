@@ -24,6 +24,7 @@ import type { ClassValue } from 'clsx';
       brnFieldControlDescribedBy
       [forceInvalid]="forceInvalid()"
       [id]="buttonId()"
+      [attr.aria-label]="ariaLabel()"
       [class]="_computedClass()"
       [attr.data-size]="size()"
       data-slot="select-trigger"
@@ -50,6 +51,9 @@ export class HlmSelectTrigger {
   public readonly buttonId = input<string>(`hlm-select-trigger-${HlmSelectTrigger._id++}`);
 
   public readonly size = input<'default' | 'sm'>('default');
+
+  /** Accessible name for the inner button when the visible value alone is not one. */
+  public readonly ariaLabel = input<string | null>(null, { alias: 'aria-label' });
 
   /** Whether to force the trigger into an invalid state. */
   public readonly forceInvalid = input<boolean, BooleanInput>(false, {

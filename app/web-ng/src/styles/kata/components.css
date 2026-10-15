@@ -172,7 +172,9 @@
 .k-kit { display: block; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-card); transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
 .k-kit + .k-kit { margin-top: var(--space-2); }
 .k-kit--selected { border-color: var(--accent-border); background: color-mix(in srgb, var(--accent) 6%, var(--surface-card)); }
-.k-kit__main { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); cursor: pointer; }
+/* !important on gap/font/color: hlmLabel's utilities live in the later utilities layer and would otherwise win. */
+.k-kit__main { display: flex; align-items: center; gap: var(--space-3) !important; padding: var(--space-3) var(--space-4); cursor: pointer; }
+.k-kit__mcp { display: inline-flex; align-items: center; gap: var(--space-3) !important; cursor: pointer; font: var(--font-body) !important; color: var(--text-primary) !important; }
 .k-kit__check { flex: none; }
 .k-kit__name { font: var(--weight-semibold) var(--text-base)/1 var(--font-mono); color: var(--text-primary); }
 .k-kit__desc { font: var(--text-xs)/1.3 var(--font-sans); color: var(--text-muted); margin-left: auto; text-align: right; max-width: 52%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

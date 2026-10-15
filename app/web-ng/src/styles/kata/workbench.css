@@ -67,6 +67,8 @@
 .wb-presets { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-2); }
 /* Targets the helm input primitive (hlmInput). */
 .wb-presets [hlmInput] { flex: 1; }
+/* The preset picker is an hlm-select, not a native select. */
+.wb-presets hlm-select { flex: 1; }
 
 /* ---------- Kit ---------- */
 .wb-kit { display: flex; flex-direction: column; gap: var(--space-3); }
