@@ -56,21 +56,25 @@ it('selecting a run loads its detail and ignores an out-of-order response', asyn
 });
 
 it('selecting a kata with no runs clears the detail', async () => {
-  const { vm } = setup();
+  const fake = new FakeTransport();
+  const orphan = { ...structuredClone(katasFixture[0]), name: 'orphan-kata' };
+  fake.listKatas.mockResolvedValue({ katas: [...katasFixture, orphan], failures: [] });
+  const { vm } = setup(fake);
   await vm.init();
-  const never = katasFixture.find((k) => !history.some((r) => r.kata === k.name));
-  if (!never) return;
-  await vm.selectKata(never.name);
+  expect(vm.run()).not.toBeNull();
+  await vm.selectKata('orphan-kata');
+  expect(vm.selKata()).toBe('orphan-kata');
   expect(vm.run()).toBeNull();
   expect(vm.selRun()).toBeNull();
 });
 
 it('shows a kata load failure in the failures list', async () => {
   const fake = new FakeTransport();
-  fake.listKatas.mockResolvedValue({ katas: [], failures: [{ path: 'C:\k\bad.toml', message: 'parse error' }] });
+  fake.listKatas.mockResolvedValue({ katas: [], failures: [{ path: 'D:/Repos/acme/.kata/bad.toml', message: 'parse error' }] });
   const { vm } = setup(fake);
   await vm.init();
-  expect(vm.failures()).toEqual([{ path: 'C:\k\bad.toml', message: 'parse error' }]);
+  expect(vm.failures()).toEqual([{ path: 'D:/Repos/acme/.kata/bad.toml', message: 'parse error' }]);
+  expect(vm.baseName(vm.failures()[0].path)).toBe('bad.toml');
 });
 
 it('Run again opens the task editor, then launches the edited spec with autorun and navigates home', async () => {
