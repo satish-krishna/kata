@@ -47,8 +47,10 @@ import type { PermissionRecord } from '../lib/events';
         @if (!settled()) {
           <div class="k-ask__foot">
             <span class="k-ask__hint">the run is paused on the leash</span>
-            <button hlmBtn variant="secondary" (click)="deny()">Deny</button>
-            <button hlmBtn variant="primary" (click)="allow()">Allow · resume</button>
+            <div class="k-ask__actions">
+              <button hlmBtn variant="secondary" (click)="deny()">Deny</button>
+              <button hlmBtn variant="primary" (click)="allow()">Allow · resume</button>
+            </div>
           </div>
         }
       </div>

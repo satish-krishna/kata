@@ -223,8 +223,11 @@
 .k-ask__answer--empty { color: var(--text-faint); }
 .k-ask__foot { display: flex; align-items: center; gap: var(--space-4); padding-top: var(--space-2); }
 .k-ask__hint { font: var(--font-code-sm); font-size: var(--text-xs); color: var(--text-faint); }
-/* Targets the helm button primitive (hlmBtn). */
-.k-ask__foot [hlmBtn] { margin-left: auto; }
+/* Targets the helm button primitive (hlmBtn): a lone footer button sits right. */
+.k-ask__foot > [hlmBtn] { margin-left: auto; }
+/* A button pair sits right as one group; 1fr tracks in an auto-width grid both
+   size to the wider label, so the two buttons share one width. */
+.k-ask__actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin-left: auto; }
 .k-ask--answered { border-color: var(--border-default); box-shadow: none; opacity: 0.92; }
 .k-ask--answered .k-ask__banner { background: var(--surface-inset); border-bottom-color: var(--border-subtle); }
 .k-ask--answered .k-ask__banner-dot { background: var(--success); animation: none; }

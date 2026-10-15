@@ -65,6 +65,18 @@ describe('PermissionPanel - pending', () => {
     const m = await mount(PENDING);
     expect(m.container.querySelector('.k-ask__foot button.k-btn--primary')).not.toBeNull();
   });
+
+  it('groups Deny and Allow into one right-aligned pair, after the hint', async () => {
+    const m = await mount(PENDING);
+    const foot = m.container.querySelector('.k-ask__foot')!;
+    const pair = foot.querySelector(':scope > .k-ask__actions')!;
+    expect(Array.from(pair.querySelectorAll('button')).map((b) => b.textContent!.trim())).toEqual([
+      'Deny',
+      'Allow · resume',
+    ]);
+    expect(foot.querySelector(':scope > [hlmBtn]')).toBeNull();
+    expect(foot.lastElementChild).toBe(pair);
+  });
 });
 
 describe('PermissionPanel - settled', () => {
