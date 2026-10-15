@@ -73,7 +73,7 @@ export class RunStore {
     // Settle the UI state synchronously so no later event or re-run can be confused with this run.
     const gen = ++this.generation;
     this.teardown();
-    this.append('warn', 'run cancelled — engine stopped claude and cleaned up the plugin-dir');
+    this.append('warn', 'run cancelled â€” engine stopped claude and cleaned up the plugin-dir');
     this.snap.update((s) => ({ ...s, state: 'warning' }));
     try {
       await this.transport.cancelRun();
