@@ -69,6 +69,9 @@
 .wb-presets [hlmInput] { flex: 1; }
 /* The preset picker is an hlm-select, not a native select. */
 .wb-presets hlm-select { flex: 1; }
+/* Match the native select the Svelte build rendered: primary-colored value, inset a native-select's 4px,
+   (the chevron is sized and colored in the helm select trigger). */
+.wb-presets hlm-select-value { color: var(--text-primary); padding-left: var(--space-2); position: relative; top: var(--space-px); }
 
 /* ---------- Kit ---------- */
 .wb-kit { display: flex; flex-direction: column; gap: var(--space-3); }

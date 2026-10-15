@@ -32,7 +32,7 @@ import type { ClassValue } from 'clsx';
       <ng-content />
       <ng-icon
         name="lucideChevronDown"
-        class="ms-auto text-(color:--text-muted) text-[length:var(--icon-chevron)]"
+        class="ms-auto -me-[calc(var(--space-4)+var(--space-px))] relative -top-(--space-px) text-(color:--text-primary) text-[length:var(--icon-chevron)]"
       />
     </button>
   `,

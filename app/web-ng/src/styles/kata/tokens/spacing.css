@@ -35,7 +35,7 @@
   --check-size:   16px;   /* checkbox box */
   --icon-size:    16px;   /* inline icon in a button */
   --dialog-w:     480px;  /* dialog width */
-  --icon-chevron: 12px;   /* select chevron */
+  --icon-chevron: 17px;   /* select chevron, sized to match the native select glyph */
   --icon-check:   11px;   /* checkmark inside a checkbox */
 
   /* ---- Radii (restrained / precise) ---- */
