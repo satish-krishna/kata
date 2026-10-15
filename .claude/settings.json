@@ -1,4 +1,29 @@
 {
   "prefersReducedMotion": true,
-  "outputStyle": "Bob the Skull"
+  "outputStyle": "Bob the Skull",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/web-ng-gate.mjs\" seal-templates.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/web-ng-gate.mjs\" check-layout.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/web-ng-gate.mjs\" check-component-shape.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/web-ng-gate.mjs\" check-freeloader.mjs"
+          }
+        ]
+      }
+    ]
+  }
 }
