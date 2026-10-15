@@ -133,7 +133,7 @@
 .wb-kata:hover { background: var(--surface-card); }
 .wb-kata--active { background: color-mix(in srgb, var(--accent) 8%, var(--surface-card)); border-color: var(--accent-border); }
 .wb-kata__top { display: flex; align-items: center; gap: var(--space-3); }
-.wb-kata__name { font: var(--weight-semibold) var(--text-base)/1 var(--font-mono); color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-kata__name { font: var(--weight-semibold) var(--text-base)/1 var(--font-mono); color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-block: var(--space-1); margin-block: calc(-1 * var(--space-1)); }
 .wb-kata__dot { width: 7px; height: 7px; border-radius: var(--radius-full); flex: none; margin-left: auto; }
 /* A kata file that would not load: visibly broken, never silently absent. */
 .wb-kata--broken { border-color: var(--error-border); background: var(--error-subtle); cursor: default; }
@@ -179,3 +179,11 @@
 .wb-observe { display: contents; }
 .wb-accent { color: var(--accent-text); }
 .wb-summary__note { font: var(--font-code-sm); color: var(--text-faint); }
+
+/* Library screen: classes standing in for the Svelte page inline styles. */
+.wb-title { font: var(--weight-semibold) var(--text-md)/1 var(--font-sans); color: var(--text-primary); }
+.wb-newbtn { display: flex; width: 100%; }
+.wb-detail__status { margin-left: auto; }
+.wb-detail__streamhead--spaced { margin-bottom: 10px; }
+.wb-detail__result--faint { color: var(--text-faint); }
+.wb-detail--empty { align-items: center; justify-content: center; }
