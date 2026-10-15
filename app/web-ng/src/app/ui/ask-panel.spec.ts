@@ -126,3 +126,37 @@ describe('AskPanel - text and confirm', () => {
     expect(m.container.querySelector('.k-ask__foot')).toBeNull();
   });
 });
+
+describe('AskPanel - Other autofocus', () => {
+  const two: Question[] = [single, { ...single, header: 'Cache', question: 'Which cache?' }];
+  const others = (root: HTMLElement) => Array.from(root.querySelectorAll('button')).filter((b) => /Other/.test(b.textContent ?? ''));
+  const boxes = (root: HTMLElement) => Array.from(root.querySelectorAll('textarea'));
+
+  it('focuses the box just opened, not the last in DOM order', async () => {
+    const m = await mount(two);
+    await m.click(others(m.container)[1]);
+    await m.click(others(m.container)[0]);
+    const [q1] = boxes(m.container);
+    expect(document.activeElement).toBe(q1);
+  });
+
+  it('focuses the new box when one closes and another opens', async () => {
+    const m = await mount(two);
+    await m.click(others(m.container)[0]);
+    await m.click(m.container.querySelectorAll('.k-ask__q')[0].querySelector('.k-ask__opt') as HTMLElement);
+    await m.click(others(m.container)[1]);
+    const [q2] = boxes(m.container);
+    expect(boxes(m.container).length).toBe(1);
+    expect(document.activeElement).toBe(q2);
+  });
+
+  it('does not move focus while typing', async () => {
+    const m = await mount(two);
+    await m.click(others(m.container)[0]);
+    await m.click(others(m.container)[1]);
+    const [q1] = boxes(m.container);
+    q1.focus();
+    await m.type(q1, 'abc');
+    expect(document.activeElement).toBe(q1);
+  });
+});

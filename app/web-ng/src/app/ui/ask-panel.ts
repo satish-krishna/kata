@@ -177,12 +177,13 @@ export class AskPanel {
 
   constructor() {
     // Svelte's `autofocus` focused the Other textarea the moment it appeared.
-    let seen = 0;
+    let prev = new Set<HTMLTextAreaElement>();
     effect(() => {
-      const els = this.otherEls();
-      if (els.length > seen) els[els.length - 1].nativeElement.focus();
-      seen = els.length;
+      const els = this.otherEls().map((e) => e.nativeElement);
+      els.find((e) => !prev.has(e))?.focus();
+      prev = new Set(els);
     });
+
   }
 
   protected options(q: Question): QuestionOption[] {
