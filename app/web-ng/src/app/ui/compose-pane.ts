@@ -1,4 +1,4 @@
-import { Component, computed, input, linkedSignal, output, signal } from '@angular/core';
+import { Component, computed, effect, input, linkedSignal, output, signal, untracked } from '@angular/core';
 import { FormField, type FieldTree } from '@angular/forms/signals';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideFolder, lucideTriangleAlert } from '@ng-icons/lucide';
@@ -69,18 +69,16 @@ const ROOM_HINT = 'bare = the empty room (curated kit only). full = your real cl
       <app-field label="Context" key="context" hint="Appended after the task.">
         <textarea hlmTextarea rows="2" [value]="contextText()" (input)="setText('context', $event)"></textarea>
         <div class="wb-presets">
-          @for (k of [pickerKey()]; track k) {
-            <hlm-select [value]="''" (valueChange)="onPickPreset($event)">
-              <hlm-select-trigger aria-label="Insert context preset">
-                <hlm-select-value placeholder="Insert preset…" />
-              </hlm-select-trigger>
-              <hlm-select-content *hlmSelectPortal>
-                @for (p of presets(); track p.name) {
-                  <hlm-select-item [value]="p.name">{{ p.name }}</hlm-select-item>
-                }
-              </hlm-select-content>
-            </hlm-select>
-          }
+          <hlm-select [(value)]="pickedPreset">
+            <hlm-select-trigger aria-label="Insert context preset">
+              <hlm-select-value placeholder="Insert preset…" />
+            </hlm-select-trigger>
+            <hlm-select-content *hlmSelectPortal>
+              @for (p of presets(); track p.name) {
+                <hlm-select-item [value]="p.name">{{ p.name }}</hlm-select-item>
+              }
+            </hlm-select-content>
+          </hlm-select>
           <button hlmBtn variant="ghost" size="sm" type="button" [disabled]="!contextText().trim()" (click)="onSaveAsPreset()">
             Save as preset
           </button>
@@ -394,8 +392,20 @@ export class ComposePane {
   });
 
   protected readonly naming = signal(false);
-  /** Bumped after each pick so the preset select is rebuilt and shows its placeholder again. */
-  protected readonly pickerKey = signal(0);
+  /** The preset picker's controlled value. A pick lands here, is applied by the effect below, and is
+   *  reset to null so the one select instance (and its focus) shows the placeholder again. */
+  protected readonly pickedPreset = signal<string | null>(null);
+
+  constructor() {
+    effect(() => {
+      const name = this.pickedPreset();
+      if (name === null) return;
+      untracked(() => this.applyPreset(name));
+      // Reset after this change-detection pass: the select must first see the pick, and a same-pass
+      // reset to null would be coalesced away and leave the pick showing.
+      queueMicrotask(() => this.pickedPreset.set(null));
+    });
+  }
 
   // Model selection (resolution logic + rationale live in lib/spec). customMode keeps the
   // free-text field open while the id is still blank: an empty custom id is stored as null
@@ -411,10 +421,9 @@ export class ComposePane {
     this.customMode() ? 'custom' : modelChoiceFor(this.spec().model.id),
   );
 
-  protected onPickPreset(name: unknown): void {
+  private applyPreset(name: string): void {
     const p = this.presets().find((x) => x.name === name);
     if (p) this.patch((s) => (s.context = appendContext(s.context, p.body)));
-    this.pickerKey.update((k) => k + 1);
   }
 
   protected onSaveAsPreset(): void {

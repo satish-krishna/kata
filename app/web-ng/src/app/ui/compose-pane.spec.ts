@@ -305,6 +305,7 @@ describe('ComposePane bindings, kit and presets', () => {
     );
     const trigger = container.querySelector<HTMLElement>('button[aria-label="Insert context preset"]')!;
     expect(trigger.textContent).toContain('Insert preset…');
+    trigger.focus();
     trigger.click();
     await fixture.whenStable();
     const item = Array.from(document.body.querySelectorAll<HTMLElement>('hlm-select-item')).find((i) =>
@@ -314,6 +315,9 @@ describe('ComposePane bindings, kit and presets', () => {
     await fixture.whenStable();
     expect(model().context).toBe('base\n\nBe terse.');
     expect(container.querySelector('.wb-presets')!.textContent).toContain('Insert preset…');
+    // Same node, still focused: the select is not rebuilt after a pick.
+    expect(container.querySelector('button[aria-label="Insert context preset"]')).toBe(trigger);
+    expect(document.activeElement).toBe(trigger);
   });
 
   it('emits pickWorkdir and gates Save as preset on non-blank context', async () => {
