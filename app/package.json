@@ -15,7 +15,8 @@
     "tauri:dev": "node scripts/stage-sidecar.mjs && tauri dev",
     "tauri:build": "node scripts/stage-sidecar.mjs --release && tauri build",
     "test": "svelte-kit sync && vitest run",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "parity:baseline": "node scripts/screenshots.mjs --parity"
   },
   "license": "MIT",
   "dependencies": {

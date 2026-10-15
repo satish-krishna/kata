@@ -16,6 +16,7 @@ import { createServer } from "vite";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve, isAbsolute } from "node:path";
 import { mkdir } from "node:fs/promises";
+import { captureAll, launchBrowser } from "../web-ng/parity/capture.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(here, "..");
@@ -28,6 +29,7 @@ const argVal = (flag) => {
 };
 
 const urlArg = argVal("--url");
+const parity = args.includes("--parity");
 const outArg = argVal("--out") ?? process.env.SCREENSHOTS_OUT;
 const outDir = outArg ? (isAbsolute(outArg) ? outArg : resolve(process.cwd(), outArg)) : join(repoRoot, "docs", "screenshots");
 
@@ -35,20 +37,8 @@ const outDir = outArg ? (isAbsolute(outArg) ? outArg : resolve(process.cwd(), ou
 const VIEWPORT = { width: 1440, height: 900 };
 const SCALE = 2;
 
-async function launchBrowser() {
-  for (const channel of ["chrome", "msedge"]) {
-    try {
-      return await chromium.launch({ channel, headless: true });
-    } catch (e) {
-      if (channel === "msedge") {
-        throw new Error(`Could not launch Chrome or Edge for screenshots.\n${e.message}`);
-      }
-    }
-  }
-}
-
 async function main() {
-  await mkdir(outDir, { recursive: true });
+  if (!parity) await mkdir(outDir, { recursive: true });
 
   let server;
   let base = urlArg?.replace(/\/$/, "");
@@ -65,6 +55,14 @@ async function main() {
     console.log(`serving ${base}`);
   } else {
     console.log(`using ${base}`);
+  }
+
+  if (parity) {
+    const written = await captureAll(base, resolve(appRoot, "web-ng/parity/baseline"));
+    if (server) await server.close();
+    console.log(`
+${written.length} screenshot(s) written`);
+    return;
   }
 
   const browser = await launchBrowser();
