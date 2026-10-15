@@ -22,7 +22,7 @@ Port the Kata Workbench frontend (`app/`) from SvelteKit + Svelte 5 to Angular s
 1. `app/src-tauri` and every Tauri command stay unchanged. This is a frontend swap.
 2. Feature parity includes browser mode: fixtures, the scripted run timeline, and `?demo=run`.
 3. Generated types stay generated (18 ts-rs bindings, `kata-events.ts` via json2ts) with unchanged generators and CI drift checks.
-4. The Hero Ops domain, angular-jig's `harness/*-spec.md` write-ups, and `.superpowers/sdd/` logs are not copied. Gates, rules, hooks, and skills are.
+4. The Hero Ops domain (`src/app/*` features, `docs/screenshots/`, `prototype/`) and `.superpowers/` logs are not copied. `harness/` is copied whole because `eslint.config.mjs` imports its rules from `harness/gate/`. Hooks, skills, and `.mcp.json` servers are wired into kata's repo-root `.claude/` and `.mcp.json`, since Claude Code loads settings only from the project root.
 
 ### Success criteria
 
@@ -137,7 +137,11 @@ Unchanged from today: rejected transport calls surface through `ToastStore.error
 
 ### Gates
 
-angular-jig's gates run unchanged: ESLint seal and shape rules (`noInlineConfig: true`), the Stylelint token gate, `check:boot`, `check:interaction`, `check:contrast`, `check:wiring`, and the `.claude` hooks. `check:responsive` runs at 1280 and 1600 only.
+angular-jig's gates run unchanged: ESLint seal and shape rules (`noInlineConfig: true`), the Stylelint token gate, `check:boot`, `check:interaction`, `check:contrast`, `check:wiring`, and the `.claude` hooks. `harness/` is write-protected by `protect-enforcement.mjs`, so kata's routes are passed to the gates as `--route` flags from `package.json`, and `check:responsive` runs through a kata wrapper that calls the exported `assertResponsive` with breakpoints 1280 and 1600.
+
+Primitive skinning: `no-raw-control` requires a helm primitive for every button, input, textarea, select, label and dialog, and `no-appearance-on-primitive` forbids restyling one at the call site. The sumi-ink look of `.k-btn`, `.k-input` and friends therefore moves into the helm sources in `libs/ui` as variants. Missing primitives (checkbox, toggle group) are added with the spartan CLI. Kata's non-control classes (`.k-event`, `.k-toolcard`, `.wb-*`, ...) stay as global stylesheets, as today.
+
+Token collision: spartan's `--accent` is a neutral hover surface, Kata's `--accent` is Hanada azure. Kata keeps `--accent`; `styles.css` overrides Tailwind's `--color-accent` and `--color-accent-foreground` in an `@theme inline` block after the preset so `bg-accent` resolves to `--surface-hover`.
 
 ## Bindings and build wiring
 
@@ -148,7 +152,8 @@ angular-jig's gates run unchanged: ESLint seal and shape rules (`noInlineConfig:
 
 ## CI
 
-- During side-by-side, the existing `web` job is unchanged and a new `web-ng` job runs: `npm ci`, the `gen:events` drift check, `lint`, stylelint, `ng build`, `ng test`, `check:parity`.
+- During side-by-side, the existing `web` job is unchanged and a new `web-ng` job runs on Node 24 (Angular 22 requires `^22.22.3 || ^24.15.0`): `npm ci`, `lint`, stylelint, `ng build`, `ng test`, `check:boot`.
+- `check:parity` is a local gate, not a CI step: the baseline is captured on the owner's Windows machine, and Chrome on Linux rasterizes fonts differently, so a CI parity run would fail on every view.
 - At the swap, `web-ng` replaces `web`.
 
 ## Swap commit
