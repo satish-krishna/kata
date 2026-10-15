@@ -24,7 +24,8 @@ const CONTROL_PRIMITIVE_ATTRS: Record<string, readonly string[]> = {
     'hlmSidebarMenuAction',
     'hlmSidebarGroupAction',
     'hlmSidebarGroupLabel',
-    'hlmTabsTrigger'
+    'hlmTabsTrigger',
+    'hlmToggleGroupItem'
   ],
   input: ['hlmInput', 'hlmSidebarInput'],
   textarea: ['hlmTextarea'],

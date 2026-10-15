@@ -1,12 +1,12 @@
 import { Component, input, output } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideX } from '@ng-icons/lucide';
-import { HlmButton } from '@spartan-ng/helm/button';
+import { HlmButtonImports } from '@spartan-ng/helm/button';
 import type { Toast } from '../core/toast/toast.store';
 
 @Component({
   selector: 'app-toaster',
-  imports: [NgIcon, HlmButton],
+  imports: [NgIcon, HlmButtonImports],
   providers: [provideIcons({ lucideX })],
   template: `@if (toasts().length > 0) {
     <div class="k-toaster">

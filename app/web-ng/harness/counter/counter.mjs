@@ -91,6 +91,8 @@ const PRIMITIVE_ATTRS = new Set([
   'hlmTabsContentLazy',
   'hlmTabsList',
   'hlmTabsTrigger',
+  'hlmToggleGroup',
+  'hlmToggleGroupItem',
   'hlmAvatarBadge',
   'hlmAvatarFallback',
   'hlmAvatarGroup',
@@ -166,6 +168,8 @@ const PRIMITIVE_ELEMENTS = new Set([
   'hlm-tabs-list',
   'hlm-paginated-tabs-list',
   'hlm-switch',
+  'hlm-toggle-group',
+  'hlm-checkbox',
   'hlm-sidebar',
   'hlm-sidebar-content',
   'hlm-sidebar-footer',
@@ -194,7 +198,8 @@ const CONTROL_PRIMITIVE_ATTRS = {
     'hlmSidebarMenuAction',
     'hlmSidebarGroupAction',
     'hlmSidebarGroupLabel',
-    'hlmTabsTrigger'
+    'hlmTabsTrigger',
+    'hlmToggleGroupItem'
   ],
   input: ['hlmInput', 'hlmSidebarInput'],
   textarea: ['hlmTextarea'],
