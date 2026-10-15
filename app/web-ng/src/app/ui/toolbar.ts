@@ -11,11 +11,12 @@ import {
 } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmInput } from '@spartan-ng/helm/input';
+import { RouterLink } from '@angular/router';
 
 @Component({
   selector: 'app-toolbar',
   host: { class: 'contents' },
-  imports: [NgIcon, HlmButtonImports, HlmInput],
+  imports: [NgIcon, HlmButtonImports, HlmInput, RouterLink],
   providers: [
     provideIcons({
       lucideFilePlus,
@@ -59,7 +60,7 @@ import { HlmInput } from '@spartan-ng/helm/input';
         </button>
       </div>
       <div class="wb-sep"></div>
-      <a hlmBtn variant="secondary" href="/library"><ng-icon name="lucideLibrary" size="14" />Library</a>
+      <a hlmBtn variant="secondary" routerLink="/library"><ng-icon name="lucideLibrary" size="14" />Library</a>
       <div class="wb-sep"></div>
       @if (running()) {
         <button hlmBtn variant="danger" type="button" (click)="cancel.emit()"><ng-icon name="lucideSquare" size="14" />Cancel</button>

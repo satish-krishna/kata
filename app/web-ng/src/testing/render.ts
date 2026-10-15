@@ -1,4 +1,4 @@
-import { Provider, Type } from '@angular/core';
+import { EnvironmentProviders, Provider, Type } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 /** Mount a standalone component with its inputs set, the way @testing-library's
@@ -6,7 +6,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 export async function render<T>(
   cmp: Type<T>,
   inputs: Record<string, unknown> = {},
-  providers: Provider[] = [],
+  providers: (Provider | EnvironmentProviders)[] = [],
 ): Promise<{ fixture: ComponentFixture<T>; container: HTMLElement }> {
   TestBed.configureTestingModule({ imports: [cmp], providers });
   const fixture = TestBed.createComponent(cmp);
