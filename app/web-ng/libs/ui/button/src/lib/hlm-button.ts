@@ -7,7 +7,7 @@ import { injectBrnButtonConfig } from './hlm-button.token';
 
 // Kata's `.k-btn` family, transcribed value for value. Every color, length and
 // duration is a Kata token; nothing is a raw literal.
-export const buttonVariants = cva(
+const coreButtonVariants = cva(
   [
     'group/button inline-flex shrink-0 items-center justify-center whitespace-nowrap select-none',
     'font-sans font-medium leading-none text-[length:var(--text-base)]',
@@ -41,6 +41,8 @@ export const buttonVariants = cva(
           'bg-transparent text-(color:--error-text) border-(--error-border)',
           'not-disabled:hover:bg-(--error-subtle)',
         ],
+        // Appearance-free: a Kata component class supplies the whole look (see buttonVariants).
+        bare: [],
       },
       size: {
         default: 'h-(--control-h) gap-(--space-3) px-(--space-5)',
@@ -49,6 +51,7 @@ export const buttonVariants = cva(
         // Square icon-only buttons: `.k-iconbtn` (32px) and `.k-iconbtn--sm` (26px).
         icon: 'size-(--control-h) gap-(--space-3) p-0',
         'icon-sm': 'size-(--control-h-sm) gap-(--space-3) p-0',
+        bare: [],
       },
     },
     compoundVariants: [
@@ -67,7 +70,18 @@ export const buttonVariants = cva(
   },
 );
 
-export type ButtonVariants = VariantProps<typeof buttonVariants>;
+type CoreProps = VariantProps<typeof coreButtonVariants>;
+
+/** `variant="bare"` (with `size="bare"`) emits no classes at all, not even the shared
+ *  base: the native <button> in Svelte took its whole look from a Kata class such as
+ *  `.k-toolcard__row`, and any utility here would out-rank that class (components.css
+ *  sits in a lower cascade layer). Every other combination is unchanged. */
+export function buttonVariants(props?: CoreProps): string {
+  if (props?.variant === 'bare') return '';
+  return coreButtonVariants(props);
+}
+
+export type ButtonVariants = CoreProps;
 
 @Directive({
   selector: 'button[hlmBtn], a[hlmBtn]',
