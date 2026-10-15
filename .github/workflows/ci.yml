@@ -74,43 +74,11 @@ jobs:
         run: cargo build --locked
 
   web:
-    name: Workbench (check · test)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: app
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: app/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Event types freshness (regenerate & diff)
-        # Regenerate the TS event types from the committed schema and fail on
-        # drift. Regenerate locally with: (cd app && npm run gen:events)
-        run: |
-          npm run gen:events
-          git diff --exit-code src/bindings/kata-events.ts
-
-      - name: Type-check (svelte-check)
-        run: npm run check
-
-      - name: Unit tests (Vitest)
-        run: npm test
-
-  web-ng:
     name: Workbench Angular (lint · build · test)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: app/web-ng
+        working-directory: app
     steps:
       - uses: actions/checkout@v7
       - name: Install Node
@@ -118,8 +86,12 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: app/web-ng/package-lock.json
+          cache-dependency-path: app/package-lock.json
       - run: npm ci
+      - name: Event types freshness (regenerate & diff)
+        run: |
+          npm run gen:events
+          git diff --exit-code src/bindings/kata-events.ts
       - name: Lint (ESLint seal + shape)
         run: npm run lint
       - name: Stylelint (token gate)

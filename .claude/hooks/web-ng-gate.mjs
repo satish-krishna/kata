@@ -7,8 +7,8 @@ import { spawn } from 'node:child_process';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Task 15 changes this to `app` at the swap.
-const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'app', 'web-ng');
+// The Angular Workbench root; every hook file is looked up under <root>/.claude/hooks.
+const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'app');
 
 const hookName = process.argv[2] ?? '';
 if (!hookName || /[\/]/.test(hookName) || hookName.includes('..')) {
