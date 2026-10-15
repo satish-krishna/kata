@@ -2,6 +2,7 @@
 // Kata-owned dispatcher: runs one of angular-jig's PostToolUse hooks only for
 // edits inside the Angular Workbench, and stays silent for every other path.
 // Usage: node .claude/hooks/web-ng-gate.mjs <hook-file-name>
+import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,10 +33,29 @@ const root = norm(WEB_ROOT);
 const target = norm(file);
 if (target !== root && !target.startsWith(root + '/')) process.exit(0);
 
-const child = spawn(process.execPath, [join(WEB_ROOT, '.claude', 'hooks', hookName)], {
+const hookPath = join(WEB_ROOT, '.claude', 'hooks', hookName);
+if (!existsSync(hookPath)) {
+  process.stderr.write(`web-ng-gate: hook file not found for ${hookName}: ${hookPath}
+`);
+  process.exit(2);
+}
+
+const child = spawn(process.execPath, [hookPath], {
   cwd: WEB_ROOT,
   stdio: ['pipe', 'inherit', 'inherit'],
 });
+child.on('error', (err) => {
+  process.stderr.write(`web-ng-gate: ${hookName} failed to start (${err.message}); failing closed.
+`);
+  process.exit(2);
+});
 child.stdin.on('error', () => {});
 child.stdin.end(raw);
-child.on('close', (code) => process.exit(code ?? 1));
+child.on('close', (code, signal) => {
+  if (code === null) {
+    process.stderr.write(`web-ng-gate: ${hookName} was killed by ${signal}; failing closed.
+`);
+    process.exit(2);
+  }
+  process.exit(code);
+});
