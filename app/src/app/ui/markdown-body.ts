@@ -18,8 +18,25 @@ export class MarkdownBody {
     const a = target.closest('a');
     if (!a) return;
     const href = a.getAttribute('href');
-    if (!href || href.startsWith('#')) return;
+    if (!href) return;
     e.preventDefault();
+    if (href.startsWith('#')) {
+      // Under <base href="/"> a bare #x resolves to /#x, a full document reload
+      // that wipes the root RunStore. Scroll in-page instead. Search this
+      // rendered body first (footnote ids repeat across messages, so a
+      // document-wide lookup would hit the wrong one), then the document.
+      let id = href.slice(1);
+      try {
+        id = decodeURIComponent(id);
+      } catch {
+        // malformed escape: use the raw id
+      }
+      if (!id) return;
+      const host = e.currentTarget instanceof Element ? e.currentTarget : null;
+      const local = host ? Array.from(host.querySelectorAll('[id]')).find((n) => n.id === id) : undefined;
+      (local ?? document.getElementById(id))?.scrollIntoView();
+      return;
+    }
     // Resolve to validate the scheme: block javascript:, data:, etc. and
     // only open over safe protocols. Open the original href so the URL is
     // passed through verbatim (no normalization surprises).

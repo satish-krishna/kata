@@ -103,16 +103,35 @@ describe('MarkdownBody', () => {
       openSpy.mockRestore();
     });
 
-    it('does not open or prevent default for hash anchor links', async () => {
+    // Flipped: this used to pin the old skip-# behavior. Under Angular's
+    // <base href="/"> a bare #x resolves to /#x, a full document reload that
+    // wipes the root RunStore, so the handler must keep the navigation in-page.
+    it('prevents default and scrolls the target into view for hash anchor links', async () => {
       const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
       const { container } = await render(MarkdownBody, { md: '[anchor](#section)' });
+      const target = document.createElement('div');
+      target.id = 'section';
+      container.appendChild(target);
+      const scrollSpy = vi.fn();
+      target.scrollIntoView = scrollSpy;
       const link = container.querySelector('a') as HTMLAnchorElement;
-      const clickEvent = new MouseEvent('click', { bubbles: true });
+      const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
       const preventDefaultSpy = vi.spyOn(clickEvent, 'preventDefault');
       link.dispatchEvent(clickEvent);
-      expect(preventDefaultSpy).not.toHaveBeenCalled();
+      expect(preventDefaultSpy).toHaveBeenCalled();
+      expect(scrollSpy).toHaveBeenCalled();
       expect(openSpy).not.toHaveBeenCalled();
       openSpy.mockRestore();
+    });
+
+    it('prevents default for a footnote link from real GFM output', async () => {
+      const { container } = await render(MarkdownBody, { md: 'text[^1]\n\n[^1]: note' });
+      const link = container.querySelector('a[href^="#"]') as HTMLAnchorElement;
+      expect(link).not.toBeNull();
+      const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+      const preventDefaultSpy = vi.spyOn(clickEvent, 'preventDefault');
+      link.dispatchEvent(clickEvent);
+      expect(preventDefaultSpy).toHaveBeenCalled();
     });
 
     it('does not open links with unsafe protocols (javascript:)', async () => {
