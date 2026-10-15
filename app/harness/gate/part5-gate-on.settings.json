@@ -1,0 +1,16 @@
+{
+  "$comment": "Part 5, gate-ON condition. Same baseline hooks as gate-off; strictTemplates on in both. The responsive gate is soft: gate-on layers no new hook, it swaps the task prompt to task-prompt-detail-form-responsive.md, which instructs the agent to run npm run check:responsive and fix until it passes. The prompt is the single variable, disclosed in responsive-spec.md as the soft-gate asymmetry.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/seal-templates.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-layout.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-component-shape.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-freeloader.mjs" }
+        ]
+      }
+    ]
+  }
+}

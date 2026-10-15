@@ -1,0 +1,7 @@
+<!doctype html><meta name="viewport" content="width=device-width">
+<!-- Boot fixture: throws during initial render, the shape of the NgIconsModule
+     bootstrap crash and of a NullInjectorError on a routed component.
+     Expected: >= 1 failure, with no interaction needed. -->
+<body><main><h1>Hero Ops</h1></main>
+<script>throw new Error('NG0201: No provider found for `HeroDetailViewModel`');</script>
+</body>

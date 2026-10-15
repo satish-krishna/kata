@@ -1,0 +1,24 @@
+{
+  "$comment": "Part 3, gate-ON condition. The single variable Part 3 moves: the component-shape hook, added on top of the sealing plus layout baseline. Sealing (Part 1) plus layout (Part 2) plus component shape (Part 3), all enforced at edit time.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/seal-templates.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node .claude/hooks/check-layout.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node .claude/hooks/check-component-shape.mjs"
+          }
+        ]
+      }
+    ]
+  }
+}

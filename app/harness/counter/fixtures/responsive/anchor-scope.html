@@ -1,0 +1,17 @@
+<!doctype html><meta name="viewport" content="width=device-width">
+<!--
+  Not part of the spec's fixture set; added to prove the --anchor parameter
+  actually changes the measured subtree. A wide, position:fixed element sits
+  OUTSIDE app-hero-detail, as a sibling, mirroring the capstone's off-canvas
+  nav rail that lives beside the routed component rather than inside it.
+  position:fixed keeps it out of document flow (no viewport-escape, which is
+  page-level and anchor-independent by design), so element-escape is the only
+  signal that moves. The default anchor (app-hero-detail) must not see it;
+  anchoring at body must.
+-->
+<body style="margin:0;overflow-x:hidden">
+  <div style="position:fixed;left:0;top:0;width:900px;height:40px;background:#ccc">sibling rail, outside the routed slice</div>
+  <app-hero-detail>
+    <p style="max-width:100%">visible content that fits</p>
+  </app-hero-detail>
+</body>

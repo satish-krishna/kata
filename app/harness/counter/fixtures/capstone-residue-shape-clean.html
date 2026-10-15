@@ -1,0 +1,12 @@
+<!--
+  Capstone-residue shape fixture: CLEAN, template half. Expected: zero.
+  The submit path is wired in the class through submit(this.form, ...), so the
+  form carries no (ngSubmit) at all and the button is a plain type="submit".
+-->
+<form>
+  <hlm-field>
+    <label hlmFieldLabel for="name">Name</label>
+    <input hlmInput id="name" />
+  </hlm-field>
+  <button hlmBtn type="submit">Save</button>
+</form>

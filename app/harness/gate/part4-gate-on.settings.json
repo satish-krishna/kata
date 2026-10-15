@@ -1,0 +1,16 @@
+{
+  "$comment": "Part 4, gate-ON condition. The two new freeloaders, on top of the Parts 1-3 baseline: the edit-time template-modernity vocabulary hook (@if over *ngIf, no ngClass/ngStyle), and strictTemplates (turned on by the driver before the agent builds, so the compiler's template type-checker fails the build on a binding that does not typecheck). Sealing, layout, and component shape stay on in both conditions.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/seal-templates.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-layout.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-component-shape.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-freeloader.mjs" }
+        ]
+      }
+    ]
+  }
+}

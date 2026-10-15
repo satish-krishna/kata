@@ -12,3 +12,9 @@ scripts/build-release.log
 docs/screenshots/
 
 .superpowers/
+
+# Angular Workbench
+app/dist/
+app/.angular/
+app/parity/actual/
+app/parity/diff/

@@ -1,0 +1,16 @@
+{
+  "$comment": "Part 5, gate-OFF condition. Cumulative baseline: sealing (Part 1), layout (Part 2), component shape (Part 3), and the Part 4 freeloader vocabulary hook, all at edit time. strictTemplates is on in BOTH Part 5 conditions (the driver sets it). No responsive gate: the gate-off prompt does not run check:responsive. The single variable in Part 5 is the prompt.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/seal-templates.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-layout.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-component-shape.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-freeloader.mjs" }
+        ]
+      }
+    ]
+  }
+}

@@ -18,8 +18,13 @@ cargo build --locked                         # must build reproducibly
 For frontend changes (`app/`), additionally from `app/`:
 
 ```sh
-npm run check        # svelte-check / type-check
-npm test             # Vitest
+npm run lint                    # house rules (ESLint)
+npx stylelint "src/**/*.css"    # CSS token gate
+npm test -- --watch=false       # Vitest
+npm run build                   # production build
+npm run check:boot              # every route renders (needs Playwright Chromium)
+npm run check:interaction       # every overlay opens and closes
+npm run check:parity            # pixel diff against the frozen baseline (local only)
 ```
 
 If you changed any `RunSpec` / `KataEvent` / catalog type, regenerate the TypeScript bindings (never hand-edit `app/src/bindings/`):
@@ -75,7 +80,7 @@ When you change either: regenerate the TS bindings (above), keep changes backwar
 
 ### Frontend (`app/`)
 
-SvelteKit SPA + TypeScript + Svelte 5. The frontend stays **presentational** (gate backend calls on `inTauri()`). The design rules in `app/CLAUDE.md` are non-negotiable: style only against CSS custom properties (never hard-code a hex), sentence-case labels, no emoji in the UI. `npm run check` and `npm test` must pass.
+Angular 22 (the angular-jig template) + SpartanNG + TypeScript. The frontend stays **presentational**: every backend call goes through `KataTransport`, chosen once by `provideKataTransport` (Tauri in the desktop app, Mock in a plain browser). The design rules in `app/CLAUDE.md` are non-negotiable: style only against CSS custom properties (never hard-code a hex), sentence-case labels, no emoji in the UI. `npm run lint`, `npx stylelint "src/**/*.css"`, `npm test -- --watch=false` and the `check:*` gates must pass.
 
 ## Conventional Commits are mandatory
 

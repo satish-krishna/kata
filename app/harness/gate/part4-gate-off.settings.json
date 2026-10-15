@@ -1,0 +1,15 @@
+{
+  "$comment": "Part 4, gate-OFF condition. The cumulative baseline: sealing (Part 1), layout (Part 2), and component shape (Part 3), all enforced at edit time. The Part 4 freeloaders are absent: no template-modernity vocabulary hook, and strictTemplates stays off (the driver only turns it on for gate-on). This is the single-variable control for the Part 4 measured run.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/seal-templates.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-layout.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-component-shape.mjs" }
+        ]
+      }
+    ]
+  }
+}

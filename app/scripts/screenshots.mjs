@@ -1,21 +1,21 @@
 // Release screenshot capture for the Kata Workbench.
 //
-// Spins up the SvelteKit dev server in-process on a free port (so it won't
-// clash with `tauri:dev` on 1420), drives the installed Chrome via
-// playwright-core, and captures the key views in browser/fixtures mode
-// (`inTauri()` is false, so it uses mock.ts — deterministic, no live engine).
+// Serves the Angular app with `ng serve` on port 4318 (so it won't clash with
+// `tauri:dev` on 1420), drives the installed Chrome via playwright-core, and
+// captures the key views in browser/fixtures mode (outside Tauri the transport
+// is the mock one — deterministic, no live engine).
 //
-//   npm run screenshots                 # serve in-process, capture all views
+//   npm run screenshots                 # serve with ng serve, capture all views
 //   npm run screenshots -- --url URL    # capture against an already-running server
 //   SCREENSHOTS_OUT=path npm run screenshots
 //
 // Requires Google Chrome (channel: "chrome"); falls back to Edge if absent.
 
-import { chromium } from "playwright-core";
-import { createServer } from "vite";
+import { spawn, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve, isAbsolute } from "node:path";
 import { mkdir } from "node:fs/promises";
+import { launchBrowser } from "../parity/capture.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(here, "..");
@@ -34,17 +34,33 @@ const outDir = outArg ? (isAbsolute(outArg) ? outArg : resolve(process.cwd(), ou
 // Desktop-only product (laptop → ultrawide); 2x for crisp retina output.
 const VIEWPORT = { width: 1440, height: 900 };
 const SCALE = 2;
+const PORT = 4318;
 
-async function launchBrowser() {
-  for (const channel of ["chrome", "msedge"]) {
-    try {
-      return await chromium.launch({ channel, headless: true });
-    } catch (e) {
-      if (channel === "msedge") {
-        throw new Error(`Could not launch Chrome or Edge for screenshots.\n${e.message}`);
-      }
-    }
-  }
+// Copied from check-parity.mjs: start `ng serve`, resolve once it is listening.
+async function serve() {
+  const child = spawn("npx", ["ng", "serve", "--port", String(PORT), "--configuration", "production"], { cwd: appRoot, shell: true });
+  let seen = "";
+  try {
+    await new Promise((ok, fail) => {
+      const t = setTimeout(() => fail(new Error("ng serve did not start in 180s")), 180000);
+      child.stdout.on("data", (d) => {
+        // ng colors "Local" and ":" separately, so strip ANSI before matching.
+        seen += String(d).replace(/\u001b\[[0-9;]*m/g, "");
+        if (/Local:\s+http/.test(seen)) { clearTimeout(t); ok(); }
+      });
+      child.on("exit", (c) => fail(new Error(`ng serve exited ${c}`)));
+    });
+  } catch (e) { stop(child); throw e; }
+  return child;
+}
+
+// `shell: true` puts a shell between us and ng, so child.kill() would leave ng
+// serving on the port. Kill the whole tree.
+function stop(child) {
+  try {
+    if (process.platform === "win32") execSync(`taskkill /pid ${child.pid} /T /F`, { stdio: "ignore" });
+    else child.kill();
+  } catch { /* already gone */ }
 }
 
 async function main() {
@@ -53,15 +69,8 @@ async function main() {
   let server;
   let base = urlArg?.replace(/\/$/, "");
   if (!base) {
-    // Random free port + non-strict so a running tauri:dev (1420) doesn't block us.
-    server = await createServer({
-      root: appRoot,
-      configFile: join(appRoot, "vite.config.js"),
-      logLevel: "warn",
-      server: { port: 0, strictPort: false, open: false },
-    });
-    await server.listen();
-    base = server.resolvedUrls.local[0].replace(/\/$/, "");
+    server = await serve();
+    base = `http://localhost:${PORT}`;
     console.log(`serving ${base}`);
   } else {
     console.log(`using ${base}`);
@@ -124,7 +133,7 @@ async function main() {
   await shoot("04-library");
 
   await browser.close();
-  if (server) await server.close();
+  if (server) stop(server);
 
   console.log(`\n${written.length} screenshot(s) written to ${outDir}`);
 }

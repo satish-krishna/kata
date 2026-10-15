@@ -1,0 +1,16 @@
+{
+  "$comment": "Maintenance profile: for sessions whose JOB is to change the harness - migrating a rule, splitting a spec, adding a gate. The house-convention PostToolUse gates stay registered, because a maintenance session still edits src/ and should still obey the constitution. protect-enforcement is deliberately ABSENT, because the thing it forbids is the thing this session was invoked to do. Use: claude --settings harness/gate/maintenance.settings.json. This is not a dial on the gate: the gate rules are unchanged and un-suppressible in every arm. It is a different operator, not a weaker rule.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "node .claude/hooks/seal-templates.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-layout.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-component-shape.mjs" },
+          { "type": "command", "command": "node .claude/hooks/check-freeloader.mjs" }
+        ]
+      }
+    ]
+  }
+}

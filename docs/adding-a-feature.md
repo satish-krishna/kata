@@ -73,11 +73,17 @@ Work test-first. TDD is the workflow, not a suggestion.
 
 2. **Register it** in the `tauri::generate_handler![...]` list.
 
-3. **Frontend** in `app/src/lib/components/`, using the generated types from `app/src/bindings/`. Never hand-write a type that already exists there.
+3. **Frontend**, in this order, using the generated types from `app/src/bindings/` (never hand-write a type that already exists there):
+   - Add the call to the abstract `KataTransport` (`app/src/app/core/transport/kata-transport.ts`) and implement it in both `TauriTransport` (the `invoke`) and `MockTransport` (a fixture), each with a spec.
+   - Build the presentational component in `app/src/app/ui/` with inputs and outputs only (no injection), plus a spec beside it.
+   - Wire it into the routed screen's ViewModel (`workbench.view-model.ts` or `library.view-model.ts`), which owns the state and calls the transport; the screen's template reads it off `vm`.
+   - Run `npm run lint`, `npm test -- --watch=false`, `npm run check:boot`, `npm run check:interaction`.
 
-4. **Respect the design system.** Rules are in `app/CLAUDE.md` and are non-negotiable: style only against CSS custom properties, never a literal hex. The pixel references in `design/prototype/` are HTML and React — recreate in Svelte, never copy.
+4. **Respect the design system.** Rules are in `app/CLAUDE.md` and are non-negotiable: style only against CSS custom properties, never a literal hex. The pixel references in `design/prototype/` are HTML and React — recreate in Angular, never copy. Controls are Helm primitives skinned in `app/libs/ui/`; see `app/CLAUDE.md`.
 
-5. **Keep `api.ts` gated.** Every backend call goes through `inTauri()` so the browser dev path keeps working against fixtures.
+5. **Keep the transport seam.** Every backend call goes through `KataTransport`, so the browser dev path keeps working against `MockTransport` fixtures. Never call `invoke` from a component or ViewModel.
+
+6. **Parity baseline.** `npm run check:parity` diffs the build against the frozen screenshots in `app/parity/baseline/`. A pane that intentionally changes pixels fails it; re-blessing the baseline needs the owner's sign-off, so do not regenerate it on your own.
 
 ---
 

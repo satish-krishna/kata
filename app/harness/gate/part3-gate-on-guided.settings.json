@@ -1,0 +1,24 @@
+{
+  "$comment": "Part 3, gate-ON-GUIDED experiment condition. Identical to part3-gate-on (sealing plus layout plus component shape) except the component-shape hook is the guided variant, whose exit-2 message hands the agent the signal-forms worked example. The single variable versus gate-on is the corrective message, so the folder measures whether pointing at the right implementation moves the agent onto signal-forms.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/seal-templates.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node .claude/hooks/check-layout.mjs"
+          },
+          {
+            "type": "command",
+            "command": "node .claude/hooks/check-component-shape-guided.mjs"
+          }
+        ]
+      }
+    ]
+  }
+}

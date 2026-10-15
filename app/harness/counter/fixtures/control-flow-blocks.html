@@ -1,0 +1,58 @@
+<!--
+  Block-AST coverage fixture. Every violation here sits INSIDE an Angular
+  control-flow block body, and each block shape is one the counters used to walk
+  straight past:
+
+    @switch   - SwitchBlock exposes `groups`, not `cases`; the counters listed
+                only `cases`, so they never entered a switch at all.
+    @empty    - ForLoopBlock.empty is an OBJECT, and the counters guarded every
+                key with Array.isArray, so it was skipped.
+    @defer    - DeferredBlock.placeholder / .loading / .error are OBJECTS too.
+
+  Hand-counted, all raw-control (a bare <button> where hlmBtn is required):
+    @switch @case            1
+    @switch @default         1
+    @for @empty              1
+    @defer @placeholder      1
+    @defer @loading          1
+    @defer @error            1
+    @if / @else if / @else   3   (branches, which always worked)
+                            ---
+                            9
+
+  This fixture exists because the two engines DID disagree here and no test
+  could see it: the gate walked these bodies, the counters did not, and every
+  cross-engine agreement test used templates built only from @if and @for
+  bodies. An anti-circularity check that only compares the cases where both
+  engines are known to agree is not a check.
+-->
+<div>
+  @switch (hero.class) {
+    @case ('Aerial') { <button>Deploy</button> }
+    @default { <button>Hold</button> }
+  }
+
+  @for (hero of heroes; track hero.id) {
+    <p>{{ hero.name }}</p>
+  } @empty {
+    <button>Recruit the first hero</button>
+  }
+
+  @defer (on viewport) {
+    <p>Mission log</p>
+  } @placeholder {
+    <button>Load log</button>
+  } @loading {
+    <button>Cancel</button>
+  } @error {
+    <button>Retry</button>
+  }
+
+  @if (a) {
+    <button>A</button>
+  } @else if (b) {
+    <button>B</button>
+  } @else {
+    <button>C</button>
+  }
+</div>

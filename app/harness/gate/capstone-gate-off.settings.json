@@ -1,0 +1,11 @@
+{
+  "$comment": "Capstone, gate-OFF condition: the honest baseline. NO house-convention enforcement hooks are registered. The agent still has the entire documented constitution in its context (both MCP servers, the spartan skill, the house-style skill with the sealed vocabulary, the icon rule, the MVVM section and the responsive section, Angular's generated CLAUDE.md) and the build spec it is building to. This is what a capable agent ships from good docs alone. strictTemplates is on in BOTH conditions because it is a tsconfig property of the substrate the agent inherits, not a hook we register; the variable the capstone moves is the house-convention hook set plus the responsive instruction. The capstone is deliberately NOT a single-variable isolation like Parts 1 through 5: it measures the whole apparatus at once, and capstone-spec.md says so. The ONE hook present here is protect-enforcement, which is an experimental control rather than a gate: it stops the agent editing the harness that measures it, and it is registered identically in both conditions so neither arm can tamper. See the note in the hook itself.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash|PowerShell",
+        "hooks": [{ "type": "command", "command": "node .claude/hooks/protect-enforcement.mjs" }]
+      }
+    ]
+  }
+}

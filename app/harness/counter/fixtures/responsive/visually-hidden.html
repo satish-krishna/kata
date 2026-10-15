@@ -1,0 +1,24 @@
+<!doctype html><meta name="viewport" content="width=device-width">
+<!--
+  Capstone visually-hidden exemption: the screen-reader-only pattern, in the two
+  recipes in common use. Both collapse a box to 1x1 and clip real text, so both
+  trip element-clip by construction. Neither is shown to a sighted user, so
+  neither is a violation. Expected: element-escape 0, element-clip 0.
+
+  This is not a hypothetical. The capstone probe measured exactly this eight
+  times per route, entirely from spartan's own Helm markup, which labels its
+  icon-only buttons this way.
+
+  The last element is the control: a REAL clip, 300x20 of text crammed into a
+  40x10 overflow:hidden box. It is not 1x1, so it is not exempt, and it must
+  still be flagged. Without it this fixture could pass by exempting everything.
+-->
+<body style="margin:0"><app-hero-detail>
+  <button style="width:40px;height:40px">
+    <span style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0">Toggle navigation</span>
+  </button>
+  <button style="width:40px;height:40px">
+    <span style="position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap">Open account menu</span>
+  </button>
+  <div style="width:40px;height:10px;overflow:hidden;white-space:nowrap">a genuinely truncated label that the user cannot read or reach</div>
+</app-hero-detail></body>

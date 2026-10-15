@@ -1,0 +1,46 @@
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/preflight.css' layer(base);
+@import 'tailwindcss/utilities.css';
+@import '@spartan-ng/brain/hlm-tailwind-preset.css';
+
+/* Kata's sumi-ink design system. Its tokens sit on :root outside any layer, so
+   where a name matches a Tailwind theme variable (--font-sans, --text-sm,
+   --radius-md, --shadow-sm, ...) Kata's value wins. That is how the helm
+   primitives pick up Kata's type and radius scale. */
+@import './styles/kata/fonts.css';
+@import './styles/kata/tokens/colors.css';
+@import './styles/kata/tokens/typography.css';
+@import './styles/kata/tokens/spacing.css';
+@import './styles/kata/base.css' layer(base);
+@import './styles/kata/components.css' layer(components);
+@import './styles/kata/workbench.css' layer(components);
+
+/* spartan's semantic tokens, defined from Kata's. Dark only: there is no .dark toggle. */
+:root {
+  color-scheme: dark;
+  --background: var(--surface-app);
+  --foreground: var(--text-primary);
+  --card: var(--surface-card);
+  --card-foreground: var(--text-primary);
+  --popover: var(--surface-card);
+  --popover-foreground: var(--text-primary);
+  --primary: var(--accent);
+  --primary-foreground: var(--text-on-accent);
+  --secondary: var(--surface-card);
+  --secondary-foreground: var(--text-primary);
+  --muted: var(--surface-inset);
+  --muted-foreground: var(--text-muted);
+  --destructive: var(--error);
+  --border: var(--border-default);
+  --input: var(--border-default);
+  --ring: var(--accent);
+  --radius: var(--radius-sm);
+}
+
+/* spartan's --accent is a neutral hover surface; Kata's --accent is Hanada azure
+   and keeps its name. Point Tailwind's accent utilities at the hover surface. */
+@theme inline {
+  --color-accent: var(--surface-hover);
+  --color-accent-foreground: var(--text-primary);
+}

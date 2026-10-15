@@ -1,0 +1,16 @@
+<!doctype html><meta name="viewport" content="width=device-width">
+<!--
+  Capstone hidden-element exemption: a closed off-canvas drawer done three
+  honest ways. All three are parked off-screen (negative left edge), which is
+  the geometry element-escape catches, but none is being shown to the user, so
+  none is a violation. Expected: element-escape 0, element-clip 0.
+-->
+<body style="margin:0;overflow-x:hidden"><app-hero-detail>
+  <div style="position:fixed;left:-280px;top:0;width:280px;height:400px;background:#ccc;visibility:hidden">visibility hidden</div>
+  <div aria-hidden="true" style="position:fixed;left:-280px;top:0;width:280px;height:400px;background:#ccc">aria-hidden</div>
+  <div aria-hidden="true" style="position:fixed;left:-280px;top:0;width:280px;height:400px;background:#ccc">
+    <p style="width:900px">a descendant of an aria-hidden drawer is hidden too</p>
+  </div>
+  <div style="position:fixed;left:-280px;top:0;width:280px;height:400px;background:#ccc;display:none">display none</div>
+  <p style="max-width:100%">visible content that fits</p>
+</app-hero-detail></body>

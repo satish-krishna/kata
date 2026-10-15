@@ -1,0 +1,152 @@
+<div class="wb">
+  <header class="wb-toolbar">
+    <div class="wb-brand"><span class="wb-seal">型</span></div>
+    <div class="wb-sep"></div>
+    <span class="wb-title">Library</span>
+    <div class="wb-toolbar__spacer"></div>
+    <div class="wb-toolbar__group">
+      <button hlmBtn variant="bare" size="bare" class="k-iconbtn" type="button" aria-label="Search"><ng-icon name="lucideSearch" size="16" /></button>
+      <button hlmBtn variant="bare" size="bare" class="k-iconbtn" type="button" aria-label="Open"><ng-icon name="lucideFolderOpen" size="16" /></button>
+    </div>
+    <div class="wb-sep"></div>
+    <a hlmBtn variant="secondary" routerLink="/"><ng-icon name="lucidePlay" size="14" />Open Workbench</a>
+  </header>
+
+  <div class="wb-panes">
+    <aside class="wb-pane wb-pane--rail">
+      <div class="wb-rail__head"><span class="kata-eyebrow">Library</span></div>
+      <div class="wb-rail__newbtn">
+        <a hlmBtn variant="primary" class="wb-newbtn" routerLink="/"><ng-icon name="lucideFilePlus" size="14" />New kata<span class="k-kbd">Ctrl N</span></a>
+      </div>
+      <div class="wb-pane__body">
+        <div class="wb-rail__section">
+          <div class="wb-rail__label">Saved katas<span class="wb-rail__count">{{ vm.kataRows().length }}</span></div>
+          @for (f of vm.failures(); track f.path) {
+            <div class="wb-kata wb-kata--broken" [attr.title]="f.message">
+              <div class="wb-kata__top">
+                <span class="wb-kata__name">{{ vm.baseName(f.path) }}</span>
+                <ng-icon name="lucideTriangleAlert" size="13" />
+              </div>
+              <div class="wb-kata__desc">{{ f.message }}</div>
+            </div>
+          }
+          @for (k of vm.kataRows(); track k.name) {
+            <div
+              class="wb-kata"
+              [class.wb-kata--active]="vm.selKata() === k.name"
+              role="button"
+              tabindex="0"
+              (click)="vm.selectKata(k.name)"
+              (keydown)="vm.onRowKey($event, () => vm.selectKata(k.name))"
+            >
+              <div class="wb-kata__top">
+                <span class="wb-kata__name">{{ k.name }}</span>
+                <span class="wb-kata__dot" [class]="'dot-' + (k.lastState ?? 'idle')"></span>
+              </div>
+              <div class="wb-kata__desc">{{ k.description }}</div>
+              <div class="wb-kata__meta">
+                @if (k.isolation === 'worktree') {
+                  <span><ng-icon name="lucideGitBranch" size="11" />worktree</span>
+                }
+                <span><ng-icon name="lucidePackage" size="11" />{{ k.kit }} kit</span>
+                <span><ng-icon name="lucideHash" size="11" />{{ k.runs }} runs</span>
+              </div>
+            </div>
+          }
+        </div>
+        <div class="wb-rail__section">
+          <div class="wb-rail__label">Recent runs<span class="wb-rail__count">{{ vm.runs().length }}</span></div>
+          @for (r of vm.runs(); track r.id) {
+            <div
+              class="wb-hist"
+              [class.wb-hist--active]="vm.selRun() === r.id"
+              role="button"
+              tabindex="0"
+              (click)="vm.selectRun(r.id)"
+              (keydown)="vm.onRowKey($event, () => vm.selectRun(r.id))"
+            >
+              <span class="wb-hist__dot" [class]="'dot-' + vm.stateOf(r)"></span>
+              <div class="wb-hist__body">
+                <span class="wb-hist__kata">{{ r.kata }}</span>
+                <span class="wb-hist__when">{{ vm.fmtWhen(r.started_at) }} · {{ vm.fmtTurns(r.turns) }} turns · {{ vm.fmtCost(r.cost_usd) }}</span>
+              </div>
+              <span class="k-badge" [class]="'k-badge--' + vm.tone(vm.stateOf(r))">exit {{ r.exit ?? '—' }}</span>
+            </div>
+          }
+        </div>
+      </div>
+    </aside>
+
+    @if (vm.run(); as run) {
+      <div class="wb-detail">
+        <div class="wb-detail__head">
+          <div class="wb-detail__title">
+            <h2>{{ run.kata }}</h2>
+            <span class="wb-detail__id">{{ run.id }}</span>
+            <div class="wb-detail__status">
+              <span class="k-status" [class]="'k-status--' + vm.stateOf(run)"><span class="k-status__dot"></span>exit {{ run.exit ?? '—' }}</span>
+            </div>
+          </div>
+          <div class="wb-detail__sub">
+            <span><ng-icon name="lucideClock" size="13" />{{ vm.fmtWhen(run.started_at) }}</span>
+            <span><ng-icon name="lucideHash" size="13" />{{ vm.fmtTurns(run.turns) }} turns</span>
+            <span><ng-icon name="lucideCoins" size="13" />{{ vm.fmtCost(run.cost_usd) }}</span>
+            <span><ng-icon name="lucideCpu" size="13" />{{ vm.fmtMs(run.duration_ms) }}</span>
+          </div>
+          <app-detail-actions
+            [kataSaved]="vm.kataSaved()"
+            (reRun)="vm.reRun()"
+            (openInCompose)="vm.openInCompose()"
+            (exportBundle)="vm.exportBundle()"
+          />
+        </div>
+        <div class="wb-detail__body">
+          <div class="wb-detail__stats">
+            <app-summary-stat label="EXIT" [value]="run.exit ?? '—'" [tone]="vm.statTone(vm.stateOf(run))" />
+            <app-summary-stat label="TURNS" [value]="vm.fmtTurns(run.turns)" />
+            <app-summary-stat label="COST" [value]="vm.fmtCost(run.cost_usd)" />
+            <app-summary-stat label="DURATION" [value]="vm.fmtMs(run.duration_ms)" />
+          </div>
+          @if (run.result) {
+            <div class="wb-detail__result"><app-markdown-body [md]="run.result" /></div>
+          }
+          <div>
+            <div class="wb-detail__streamhead wb-detail__streamhead--spaced">Event log · {{ run.kata }}</div>
+            @if (vm.stream(); as stream) {
+              <div class="wb-detail__stream">
+                @for (item of stream; track item.key) {
+                  @if (item.kind === 'call') {
+                    <app-tool-card [call]="item.call" />
+                  } @else {
+                    <app-event-row [ev]="item.ev" />
+                  }
+                }
+              </div>
+            } @else {
+              <div class="wb-detail__result wb-detail__result--faint">Event log for this run has been pruned from local history.</div>
+            }
+          </div>
+        </div>
+      </div>
+    } @else {
+      <div class="wb-detail wb-detail--empty">
+        <div class="wb-stream__empty">
+          <ng-icon name="lucideTerminal" size="28" />
+          <p>Select a saved kata or a run from the rail to review its form and event log.</p>
+        </div>
+      </div>
+    }
+  </div>
+
+  <footer class="wb-statusbar">
+    <span class="wb-statusbar__item wb-statusbar__ok">
+      <ng-icon name="lucideCircleCheck" size="13" /> {{ vm.kataRows().length }} saved katas · {{ vm.runs().length }} runs in local history
+    </span>
+    <div class="wb-statusbar__spacer"></div>
+    <span class="wb-statusbar__item"><ng-icon name="lucideFolder" size="13" /> ~/.kata/runs</span>
+  </footer>
+</div>
+
+@if (vm.editing(); as kata) {
+  <app-task-editor [task]="kata.task" (run)="vm.confirmReRun($event)" (cancel)="vm.cancelReRun()" />
+}

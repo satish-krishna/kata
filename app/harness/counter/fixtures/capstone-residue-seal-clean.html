@@ -1,0 +1,56 @@
+<!--
+  Capstone-residue sealing fixture: CLEAN. Every construct in the dirty fixture,
+  written the way the docs say. Expected tally: all zeros, on both engines.
+
+  Covers deliberately: the element form of every primitive that has no attribute
+  twin, a dialog composed with hlmDialogTitle, controls wrapped in both the
+  attribute (hlmField) and element (hlm-field) forms of the field primitive, and
+  a textarea and select which the ancestor half of rule 6 also governs.
+-->
+<section hlmCard class="grid gap-4">
+  <hlm-select>
+    <hlm-select-trigger><hlm-select-value /></hlm-select-trigger>
+    <hlm-select-content><hlm-select-item>Aerial</hlm-select-item></hlm-select-content>
+  </hlm-select>
+
+  <hlm-avatar>
+    <img hlmAvatarImage src="/hero.png" alt="" />
+    <span hlmAvatarFallback>SW</span>
+  </hlm-avatar>
+
+  <hlm-sidebar class="w-64">
+    <div hlmSidebarContent>
+      <ul hlmSidebarMenu>
+        <li hlmSidebarMenuItem><button hlmSidebarMenuButton>Roster</button></li>
+      </ul>
+    </div>
+  </hlm-sidebar>
+
+  <hlm-dialog-content>
+    <hlm-dialog-header>
+      <h2 hlmDialogTitle>Retire hero?</h2>
+      <p hlmDialogDescription>This cannot be undone.</p>
+    </hlm-dialog-header>
+    <hlm-dialog-footer>
+      <button hlmBtn variant="ghost" hlmDialogClose>Cancel</button>
+      <button hlmBtn variant="destructive">Retire</button>
+    </hlm-dialog-footer>
+  </hlm-dialog-content>
+
+  <hlm-field>
+    <label hlmFieldLabel for="alias">Alias</label>
+    <input hlmInput id="alias" />
+  </hlm-field>
+
+  <div hlmField>
+    <label hlmFieldLabel for="notes">Notes</label>
+    <textarea hlmTextarea id="notes"></textarea>
+  </div>
+
+  <div hlmField>
+    <label hlmFieldLabel for="cls">Class</label>
+    <hlm-select>
+      <hlm-select-trigger><hlm-select-value /></hlm-select-trigger>
+    </hlm-select>
+  </div>
+</section>

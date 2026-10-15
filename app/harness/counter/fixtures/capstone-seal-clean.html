@@ -1,0 +1,45 @@
+<!--
+  Capstone sealing fixture: CLEAN. Every construct in the dirty fixture, done
+  the way the docs say. Expected tally: all zeros, on both engines.
+
+  Covers deliberately: an alternate accepted attribute per element
+  (hlmTableHeader vs hlmTHead), a composition-specific button directive
+  (hlmSidebarMenuButton) satisfying <button> without hlmBtn, layout classes on
+  a primitive, a computed [style.*] binding, and an <ng-icon> in place of SVG.
+-->
+<section hlmCard class="grid gap-4">
+  <table hlmTable>
+    <caption hlmTableCaption>Active roster</caption>
+    <thead hlmTableHeader>
+      <tr hlmTableRow><th hlmTableHead>Hero</th></tr>
+    </thead>
+    <tbody hlmTBody>
+      <tr hlmTr><td hlmTd>88</td></tr>
+    </tbody>
+  </table>
+
+  <hlm-field>
+    <label hlmFieldLabel for="alias">Alias</label>
+    <input hlmInput id="alias" />
+    <textarea hlmTextarea></textarea>
+  </hlm-field>
+
+  <hlm-select>
+    <hlm-select-trigger><hlm-select-value /></hlm-select-trigger>
+    <hlm-select-content><hlm-select-item>Aerial</hlm-select-item></hlm-select-content>
+  </hlm-select>
+
+  <fieldset hlmFieldSet>
+    <legend hlmFieldLegend>Clearance</legend>
+  </fieldset>
+
+  <button hlmBtn class="w-full">Deploy</button>
+  <button hlmSidebarMenuButton>Roster</button>
+  <span hlmBadge class="mt-2">Active</span>
+
+  <div class="grid gap-2" [style.width.%]="pct()">Notes</div>
+
+  <ng-icon name="lucideTrash2" class="text-muted-foreground" />
+
+  <a href="/roster">Back to roster</a>
+</section>

@@ -49,16 +49,16 @@ Permission mode governs tool *approval*, not whether claude asks questions — u
 
 ## The Workbench (`app/`)
 
-A Tauri v2 desktop app: SvelteKit SPA frontend (`app/src/`, static-adapter SPA, TypeScript, Svelte 5) over a Rust backend (`app/src-tauri/`). Layout A: compose the run-spec on the left, observe the run on the right.
+A Tauri v2 desktop app: Angular 22 SPA frontend (`app/src/`, the angular-jig template, SpartanNG primitives, TypeScript) over a Rust backend (`app/src-tauri/`). Layout A: compose the run-spec on the left, observe the run on the right.
 
 The backend splits its relationship with the engine deliberately (see `app/src-tauri/src/lib.rs`):
 
 - It **links `kata-core` in-process** for the cheap, pure operations — `catalog`, `load_spec`, `save_spec`, `validate_spec` are `#[tauri::command]` one-liners over the library.
 - It **spawns the `kata` sidecar binary** for the one impure operation, `run_spec`: serialize the spec to a temp file, spawn `kata run` in the spec's workdir, and relay its JSON-line `KataEvent`s to the webview over the `kata://event` channel. `cancel_run` writes a `cancel` line to the engine's stdin (the engine traps it, kills claude, cleans up, emits `run.cancelled`), falling back to a hard kill. This keeps the GUI on the engine's single execution path.
 
-The frontend stays **presentational**. `app/src/lib/api.ts` gates every backend call on `inTauri()`: under Tauri it `invoke`s/`listen`s; in a plain browser it falls back to fixtures and a scripted run timeline from `app/src/lib/mock.ts`. The run store is `app/src/lib/run.svelte.ts`.
+The frontend stays **presentational**. Every backend call goes through the abstract `KataTransport` (`app/src/app/core/transport/`): `provideKataTransport` picks `TauriTransport` (`invoke`/`listen`) under Tauri and `MockTransport` (fixtures and a scripted run timeline from `app/src/app/lib/mock.ts`) in a plain browser, once at bootstrap. `RunStore` (`app/src/app/core/run/run.store.ts`) folds the relayed `KataEvent`s into run state; each routed screen is a thin component over a component-scoped ViewModel that reads the stores and calls the transport.
 
-**Design rules are non-negotiable and live in `app/CLAUDE.md`** (the dark "sumi-ink" system, single Hanada-azure accent, IBM Plex type, andon status palette). Read it before touching anything visual. Style only against CSS custom properties — never hard-code a hex value. The full system + per-component specs are in `design/README.md`; pixel references in `design/prototype/` are HTML/React — recreate in Svelte, never copy.
+**Design rules are non-negotiable and live in `app/CLAUDE.md`** (the dark "sumi-ink" system, single Hanada-azure accent, IBM Plex type, andon status palette). Read it before touching anything visual. Style only against CSS custom properties — never hard-code a hex value. The full system + per-component specs are in `design/README.md`; pixel references in `design/prototype/` are HTML/React — recreate in Angular, never copy.
 
 ## Commands
 
@@ -70,14 +70,17 @@ Rust (run from repo root):
 - A single test: `cargo test -p kata-core <name>` or `cargo test -p kata-cli --test cli_it <name>`
 - Format (must be clean; **CI gates this**): `cargo fmt --all --check` (run `cargo fmt --all` to fix). Note it is workspace-wide, so it can surface pre-existing drift in files you did not touch.
 - Lint (must be clean): `cargo clippy --all-targets -- -D warnings`
-- Regenerate TS bindings after type changes: `cargo test -p kata-core --features ts export_bindings`
+- Regenerate TS bindings after type changes: `cargo test -p kata-core --features ts export_bindings` (writes `app/src/bindings/`; the event types there come from `npm run gen:events`, below)
 
 App (run from `app/`):
 
-- Browser dev (fixtures, no native backend): `npm run dev` → `http://localhost:1420`. `http://localhost:1420/?demo=run` auto-starts the scripted Observe-pane run for screenshots.
+- Browser dev (fixtures, no native backend): `npm start` → `http://localhost:1420`. `http://localhost:1420/?demo=run` auto-starts the scripted Observe-pane run for screenshots.
 - Real desktop app with the live engine: `npm run tauri:dev` — this first stages the `kata` sidecar (`scripts/stage-sidecar.mjs` builds `kata-cli` and copies it to `src-tauri/binaries/kata-<target-triple>`), then launches Tauri. A real run needs an authenticated `claude` on PATH.
-- Type-check Svelte: `npm run check`
-- Frontend tests: `npm test` (Vitest)
+- Lint (the house rules, ESLint) and the CSS token gate: `npm run lint`, `npx stylelint "src/**/*.css"`
+- Production build: `npm run build` (outputs to `app/dist/angular-jig/browser`, which Tauri's `frontendDist` serves)
+- Frontend tests: `npm test -- --watch=false` (Vitest through `ng test`)
+- Regenerate the TS event types from `schema/kata-events.schema.json`: `npm run gen:events`
+- Browser gates (need Playwright Chromium): `npm run check:boot` (every route renders), `npm run check:interaction` (every overlay opens and closes), `npm run check:parity` (pixel diff against the frozen baseline in `app/parity/baseline/`; local only, the baseline is Windows-rendered), `npm run check:responsive`
 
 ## Testing notes
 

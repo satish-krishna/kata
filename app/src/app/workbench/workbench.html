@@ -1,0 +1,70 @@
+<div class="wb">
+  <app-toolbar
+    [name]="vm.spec().name"
+    (nameChange)="vm.form.name().value.set($event)"
+    [dirty]="vm.dirty()"
+    [running]="vm.running()"
+    [canRun]="vm.valid()"
+    (newSpec)="vm.newSpec()"
+    (openSpec)="vm.open()"
+    (save)="vm.save()"
+    (exportBundle)="vm.export()"
+    (run)="vm.run()"
+    (cancel)="vm.cancel()"
+  />
+
+  <app-validation-banner [errors]="vm.errors()" />
+
+  <div class="wb-panes">
+    <div class="wb-pane wb-pane--compose">
+      <div class="wb-pane__head"><span class="kata-eyebrow">Compose · the run-spec</span></div>
+      <div class="wb-pane__body">
+        <app-compose-pane
+          [form]="vm.form"
+          [catalog]="vm.catalog()"
+          [presets]="vm.presets()"
+          [naming]="vm.naming()"
+          (namingChange)="vm.setNaming($event)"
+          (pickWorkdir)="vm.pickWorkdir()"
+          (savePreset)="vm.savePreset($event)"
+        />
+      </div>
+    </div>
+
+    <div class="wb-pane wb-pane--observe">
+      <div class="wb-pane__head"><span class="kata-eyebrow">Observe · the run</span></div>
+      <app-observe-pane
+        [state]="vm.runState()"
+        [events]="vm.events()"
+        [spec]="vm.spec()"
+        [summary]="vm.summary()"
+        [asks]="vm.asks()"
+        [permissions]="vm.permissions()"
+        (answer)="vm.answer($event)"
+        (decide)="vm.decide($event)"
+      />
+    </div>
+  </div>
+
+  <footer class="wb-statusbar">
+    <span class="wb-statusbar__item" [class.wb-statusbar__ok]="vm.valid()" [class.wb-statusbar__err]="!vm.valid()">
+      @if (vm.valid()) {
+        <ng-icon name="lucideCircleCheck" size="13" /> spec is valid
+      } @else {
+        <ng-icon name="lucideTriangleAlert" size="13" /> {{ vm.errors().length }} {{ vm.errors().length === 1 ? 'error' : 'errors' }}: {{ vm.errors()[0] }}
+      }
+    </span>
+    <div class="wb-statusbar__spacer"></div>
+    <span class="wb-statusbar__item"><ng-icon name="lucideHash" size="13" /> schema {{ vm.spec().schema }}</span>
+    <span class="wb-statusbar__item"><ng-icon name="lucideFolder" size="13" /> {{ vm.spec().workdir || '—' }}</span>
+    <span class="wb-statusbar__item"><ng-icon name="lucideTerminal" size="13" /> claude --bare -p</span>
+  </footer>
+
+  <app-confirm-dialog
+    [open]="vm.confirmOpen()"
+    message="Discard unsaved changes?"
+    confirmLabel="Discard"
+    (confirm)="vm.confirmDiscard()"
+    (cancel)="vm.cancelDiscard()"
+  />
+</div>
