@@ -1,4 +1,4 @@
-import { ApplicationRef, Injectable, computed, effect, inject, signal } from '@angular/core';
+import { Injectable, computed, effect, inject, signal } from '@angular/core';
 import { form } from '@angular/forms/signals';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
@@ -22,7 +22,6 @@ export class WorkbenchViewModel {
   private readonly runs = inject(RunStore);
   private readonly toasts = inject(ToastStore);
   private readonly launches = inject(LaunchStore);
-  private readonly app = inject(ApplicationRef);
 
   // Real Tauri app opens a blank New spec; browser dev/review seeds the example.
   private readonly initial = inTauri() ? defaultSpec() : seedSpec();
@@ -48,8 +47,8 @@ export class WorkbenchViewModel {
   /** The action waiting behind the "Discard unsaved changes?" confirm, or null when it is closed. */
   private readonly pendingDiscard = signal<(() => void | Promise<void>) | null>(null);
   readonly confirmOpen = computed(() => this.pendingDiscard() !== null);
-  /** Set while a run is validating and spawning, so a second trigger cannot slip in before the store goes active. */
-  private starting = false;
+  /** Whether ComposePane's save-as-preset name prompt is open. */
+  readonly naming = signal(false);
 
   constructor() {
     const workdir = computed(() => this.spec().workdir);
@@ -101,7 +100,7 @@ export class WorkbenchViewModel {
     const handoff = this.launches.take();
     if (handoff) {
       this.load(draftFrom(handoff.spec));
-      if (handoff.autorun) await this.run();
+      if (handoff.autorun) await this.autorun();
     }
   }
 
@@ -164,16 +163,24 @@ export class WorkbenchViewModel {
     if (dir) this.form.workdir().value.set(dir);
   }
 
+  setNaming(open: boolean): void {
+    this.naming.set(open);
+  }
+
+  /** Same gate as +page.svelte: the debounced validity, no active run, no dialog open. */
   async run(): Promise<void> {
-    if (this.running() || this.starting || this.confirmOpen()) return;
-    this.starting = true;
+    if (!this.valid() || this.running() || this.confirmOpen() || this.naming()) return;
+    await this.runs.startRun(normalize(this.spec()));
+  }
+
+  /** The Library handoff re-validates fresh: the debounced errors cannot have caught up with a just-loaded spec. */
+  private async autorun(): Promise<void> {
     try {
       const spec = normalize(this.spec());
-      const errs = await this.transport.validateSpec(spec);
-      this.errors.set(errs);
-      if (errs.length === 0) await this.runs.startRun(spec);
-    } finally {
-      this.starting = false;
+      this.errors.set(await this.transport.validateSpec(spec));
+      if (this.valid()) await this.run();
+    } catch (e) {
+      this.toasts.error(`Failed to validate spec: ${e}`);
     }
   }
 
@@ -196,14 +203,6 @@ export class WorkbenchViewModel {
 
   decide(e: { id: string; allow: boolean; message: string | null }): void {
     void this.runs.submitDecision(e.id, e.allow, e.message);
-  }
-
-  /** Render now. The zoneless scheduler defers change detection to a timer/animation-frame race, so a
-   *  click's DOM effect (a tool card opening, its nested cards appearing) landed a beat after the event.
-   *  Svelte flushed in a microtask, and anything driving the page click by click (the parity harness,
-   *  an e2e script) reads the DOM straight after each click and needs the same. */
-  flush(): void {
-    this.app.tick();
   }
 
   /** Ctrl/Cmd+Enter runs the spec, unless a run is active or a dialog is open. */

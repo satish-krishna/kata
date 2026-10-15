@@ -1,4 +1,4 @@
-import { Component, computed, effect, input, linkedSignal, output, signal, untracked } from '@angular/core';
+import { Component, computed, effect, input, linkedSignal, model, output, signal, untracked } from '@angular/core';
 import { FormField, type FieldTree } from '@angular/forms/signals';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideFolder, lucideTriangleAlert } from '@ng-icons/lucide';
@@ -391,7 +391,8 @@ export class ComposePane {
     return !a.bare && a.token_env?.trim() ? `${ROOM_HINT} (token_env is set but ignored in full mode.)` : ROOM_HINT;
   });
 
-  protected readonly naming = signal(false);
+  /** Whether the save-as-preset name prompt is open. The Workbench owns it so a Ctrl+Enter pressed in the prompt cannot start a run. */
+  readonly naming = model(false);
   /** The preset picker's controlled value. A pick lands here, is applied by the effect below, and is
    *  reset to null so the one select instance (and its focus) shows the placeholder again. */
   protected readonly pickedPreset = signal<string | null>(null);

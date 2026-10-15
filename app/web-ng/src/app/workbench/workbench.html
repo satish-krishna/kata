@@ -23,6 +23,8 @@
           [form]="vm.form"
           [catalog]="vm.catalog()"
           [presets]="vm.presets()"
+          [naming]="vm.naming()"
+          (namingChange)="vm.setNaming($event)"
           (pickWorkdir)="vm.pickWorkdir()"
           (savePreset)="vm.savePreset($event)"
         />

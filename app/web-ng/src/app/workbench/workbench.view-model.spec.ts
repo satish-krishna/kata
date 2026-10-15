@@ -1,4 +1,3 @@
-import { ApplicationRef } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { WorkbenchViewModel } from './workbench.view-model';
@@ -175,8 +174,8 @@ it('blocks a run and shows errors when validation fails', async () => {
   const { vm, fake } = setup();
   fake.validateSpec.mockResolvedValue(['task is required']);
   await vm.init(false);
+  await vi.waitFor(() => expect(vm.errors()).toEqual(['task is required']));
   await vm.run();
-  expect(vm.errors()).toEqual(['task is required']);
   expect(vm.valid()).toBe(false);
   expect(fake.runSpec).not.toHaveBeenCalled();
 });
@@ -261,10 +260,32 @@ it('forwards answers and decisions to the run store', async () => {
   expect(decide).toHaveBeenCalledWith('p', true, null);
 });
 
-it('flush renders synchronously through the application ref', async () => {
-  const { vm } = setup();
+it('ignores Ctrl+Enter while the save-preset prompt is open (R22)', async () => {
+  const { vm, fake } = setup();
   await vm.init(false);
-  const tick = vi.spyOn(TestBed.inject(ApplicationRef), 'tick');
-  vm.flush();
-  expect(tick).toHaveBeenCalledTimes(1);
+  vm.setNaming(true);
+  vm.onKey(ctrlEnter());
+  await settle();
+  expect(fake.runSpec).not.toHaveBeenCalled();
+  vm.setNaming(false);
+  vm.onKey(ctrlEnter());
+  await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalledTimes(1));
+});
+
+it('toasts instead of rejecting when the Library autorun validation throws', async () => {
+  const { vm, fake } = setup();
+  fake.validateSpec.mockRejectedValue(new Error('engine down'));
+  TestBed.inject(LaunchStore).set({ spec: seedSpec(), autorun: true });
+  await vm.init(false);
+  expect(fake.runSpec).not.toHaveBeenCalled();
+  expect(toastText()).toContain('engine down');
+});
+
+it('does not autorun a Library spec that fails fresh validation', async () => {
+  const { vm, fake } = setup();
+  fake.validateSpec.mockResolvedValue(['task is required']);
+  TestBed.inject(LaunchStore).set({ spec: seedSpec(), autorun: true });
+  await vm.init(false);
+  expect(vm.errors()).toEqual(['task is required']);
+  expect(fake.runSpec).not.toHaveBeenCalled();
 });

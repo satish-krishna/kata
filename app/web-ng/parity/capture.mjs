@@ -58,7 +58,7 @@ export const VIEWS = [
   { name: 'observe-toolcards-open', path: '/?demo=run', ready: '.k-ask',
     act: async (p) => { await finishRun(p);
       const rows = p.locator('.k-toolcard__row');
-      for (let i = 0; i < (await rows.count()); i++) { const r = rows.nth(i); if ((await r.getAttribute('aria-expanded')) === 'false') await r.click(); } } },
+      for (let i = 0; i < (await rows.count()); i++) { const r = rows.nth(i); if ((await r.getAttribute('aria-expanded')) === 'false') { await r.click(); await p.waitForFunction((el) => el.getAttribute('aria-expanded') === 'true', await r.elementHandle(), { timeout: 5000 }); } } } },
   { name: 'library-list', path: '/library', ready: '.wb-kata' },
   { name: 'library-detail', path: '/library', ready: '.wb-kata',
     act: async (p) => { await p.locator('.wb-hist').nth(3).click(); await p.waitForSelector('.wb-detail'); } },

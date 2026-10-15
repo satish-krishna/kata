@@ -17,7 +17,7 @@ import { WorkbenchViewModel } from './workbench.view-model';
   ],
   imports: [NgIcon, Toolbar, ValidationBanner, ComposePane, ObservePane, ConfirmDialog],
   templateUrl: './workbench.html',
-  host: { '(document:keydown)': 'vm.onKey($event)', '(click)': 'vm.flush()' },
+  host: { '(document:keydown)': 'vm.onKey($event)' },
 })
 export class Workbench {
   protected readonly vm = inject(WorkbenchViewModel);
