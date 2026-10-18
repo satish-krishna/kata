@@ -3,7 +3,7 @@ import { provideRouter } from '@angular/router';
 import { WorkbenchViewModel } from './workbench.view-model';
 import { KataTransport } from '../core/transport/kata-transport';
 import { RunStore } from '../core/run/run.store';
-import { ToastStore } from '../core/toast/toast.store';
+import { toastState } from '@spartan-ng/brain/sonner';
 import { LaunchStore } from '../core/launch/launch.store';
 import { seedSpec, seedCatalog } from '../lib/mock';
 import { defaultSpec, draftFrom, normalize } from '../lib/spec';
@@ -44,10 +44,12 @@ const TAURI = '__TAURI_INTERNALS__';
 const ctrlEnter = () => new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true });
 const settle = () => new Promise<void>((r) => setTimeout(r, 0));
 const toastText = () =>
-  TestBed.inject(ToastStore)
+  toastState
     .toasts()
-    .map((t) => t.message)
+    .map((t) => String(t.title))
     .join(' ');
+
+afterEach(() => toastState.reset());
 
 it('starts from seedSpec in the browser and from defaultSpec under Tauri, where demo is ignored', async () => {
   const a = setup();

@@ -2,20 +2,13 @@ import type { BooleanInput, NumberInput } from '@angular/cdk/coercion';
 import {
   ChangeDetectionStrategy,
   Component,
+  afterNextRender,
   booleanAttribute,
   computed,
   input,
   numberAttribute,
 } from '@angular/core';
-import { NgIcon, provideIcons } from '@ng-icons/core';
-import {
-  lucideCircleCheck,
-  lucideInfo,
-  lucideLoader2,
-  lucideOctagonX,
-  lucideTriangleAlert,
-} from '@ng-icons/lucide';
-import { BrnSonnerImports, type ToasterProps } from '@spartan-ng/brain/sonner';
+import { BrnSonnerImports, type ToasterProps, toastState } from '@spartan-ng/brain/sonner';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { hlm } from '@spartan-ng/helm/utils';
 import type { ClassValue } from 'clsx';
@@ -23,16 +16,7 @@ import type { ClassValue } from 'clsx';
 @Component({
   selector: 'hlm-toaster',
   exportAs: 'hlmToaster',
-  imports: [BrnSonnerImports, HlmButtonImports, NgIcon],
-  providers: [
-    provideIcons({
-      lucideCircleCheck,
-      lucideInfo,
-      lucideTriangleAlert,
-      lucideOctagonX,
-      lucideLoader2,
-    }),
-  ],
+  imports: [BrnSonnerImports, HlmButtonImports],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <brn-sonner-toaster
@@ -50,24 +34,12 @@ import type { ClassValue } from 'clsx';
       [offset]="offset()"
       [style]="userStyle()"
     >
-      <ng-template #loadingIcon>
-        <ng-icon
-          name="lucideLoader2"
-          class="overflow-visible! text-base [&>svg]:motion-safe:animate-spin"
-        />
-      </ng-template>
-      <ng-template #successIcon>
-        <ng-icon name="lucideCircleCheck" class="overflow-visible! text-base" />
-      </ng-template>
-      <ng-template #errorIcon>
-        <ng-icon name="lucideOctagonX" class="overflow-visible! text-base" />
-      </ng-template>
-      <ng-template #infoIcon>
-        <ng-icon name="lucideInfo" class="overflow-visible! text-base" />
-      </ng-template>
-      <ng-template #warningIcon>
-        <ng-icon name="lucideTriangleAlert" class="overflow-visible! text-base" />
-      </ng-template>
+      <!-- Kata's andon pairing: an error is a crimson dot beside its message. The other toast types are unused, so their stock icons are emptied rather than shown. -->
+      <ng-template #loadingIcon></ng-template>
+      <ng-template #successIcon></ng-template>
+      <ng-template #errorIcon><span class="k-toast__dot"></span></ng-template>
+      <ng-template #infoIcon></ng-template>
+      <ng-template #warningIcon></ng-template>
       <button
         *brnToastAction="let action; let toast = toast"
         [style]="toast.actionButtonStyle"
@@ -94,13 +66,13 @@ export class HlmToaster {
   public readonly invert = input<ToasterProps['invert'], BooleanInput>(false, {
     transform: booleanAttribute,
   });
-  public readonly theme = input<ToasterProps['theme']>('light');
+  public readonly theme = input<ToasterProps['theme']>('dark');
   public readonly position = input<ToasterProps['position']>('bottom-right');
   public readonly hotKey = input<ToasterProps['hotkey']>(['altKey', 'KeyT']);
   public readonly richColors = input<ToasterProps['richColors'], BooleanInput>(false, {
     transform: booleanAttribute,
   });
-  public readonly expand = input<ToasterProps['expand'], BooleanInput>(false, {
+  public readonly expand = input<ToasterProps['expand'], BooleanInput>(true, {
     transform: booleanAttribute,
   });
   public readonly duration = input<ToasterProps['duration'], NumberInput>(4000, {
@@ -109,7 +81,7 @@ export class HlmToaster {
   public readonly visibleToasts = input<ToasterProps['visibleToasts'], NumberInput>(3, {
     transform: numberAttribute,
   });
-  public readonly closeButton = input<ToasterProps['closeButton'], BooleanInput>(false, {
+  public readonly closeButton = input<ToasterProps['closeButton'], BooleanInput>(true, {
     transform: booleanAttribute,
   });
   public readonly toastOptions = input<ToasterProps['toastOptions']>({});
@@ -120,21 +92,34 @@ export class HlmToaster {
       ...options,
       classes: {
         ...options?.classes,
-        toast: hlm('rounded-2xl!', options?.classes?.toast),
+        toast: hlm('k-toast', options?.classes?.toast),
+        error: hlm('k-toast--error', options?.classes?.error),
+        closeButton: hlm('k-toast__close', options?.classes?.closeButton),
       },
     };
   });
-  public readonly offset = input<ToasterProps['offset']>(null);
+  public readonly offset = input<ToasterProps['offset']>('var(--space-5)');
   public readonly userClass = input<ClassValue>('', { alias: 'class' });
   public readonly userStyle = input<Record<string, string>>(
     {
-      '--normal-bg': 'var(--popover)',
-      '--normal-text': 'var(--popover-foreground)',
-      '--normal-border': 'var(--border)',
-      '--border-radius': 'var(--radius)',
+      '--normal-bg': 'var(--surface-card)',
+      '--normal-text': 'var(--text-primary)',
+      '--normal-border': 'var(--border-default)',
+      '--border-radius': 'var(--radius-md)',
     },
     { alias: 'style' },
   );
 
   protected readonly _computedClass = computed(() => hlm('toaster group', this.userClass()));
+
+  constructor() {
+    // Brain's toaster resets the global toast list when it is constructed, which would drop an error raised
+    // before it mounted. Take the list here (the parent constructs first), then put it back once it has.
+    const pending = toastState.toasts();
+    if (pending.length > 0) {
+      afterNextRender(() => {
+        for (const t of [...pending].reverse()) toastState.addToast(t);
+      });
+    }
+  }
 }

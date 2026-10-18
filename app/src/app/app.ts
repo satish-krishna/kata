@@ -1,14 +1,10 @@
-import { Component, inject } from '@angular/core';
+import { Component } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
-import { AppShellViewModel } from './app-shell.view-model';
-import { Toaster } from './ui/toaster';
+import { HlmToasterImports } from '@spartan-ng/helm/sonner';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, Toaster],
-  providers: [AppShellViewModel],
-  template: `<router-outlet /><app-toaster [toasts]="vm.toasts()" (dismiss)="vm.dismiss($event)" />`,
+  imports: [RouterOutlet, HlmToasterImports],
+  template: `<router-outlet /><hlm-toaster />`,
 })
-export class App {
-  protected readonly vm = inject(AppShellViewModel);
-}
+export class App {}
