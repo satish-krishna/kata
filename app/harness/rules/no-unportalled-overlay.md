@@ -48,6 +48,6 @@ The content element of an overlay always carries the portal. If you are writing 
 
 ## Known blind spots
 
-- It checks the three overlay families installed in this project. A future overlay primitive with its own portal is invisible to it until added to the table, exactly as `no-raw-control` was blind to `hlmTabsTrigger` until that was added to its own table.
+- It checks the four overlay families installed (dialog, sheet, select, alert-dialog) in this project. A future overlay primitive with its own portal is invisible to it until added to the table, exactly as `no-raw-control` was blind to `hlmTabsTrigger` until that was added to its own table.
 - It only sees content nested somewhere beneath its container element in the same template. Content extracted into a separate component and projected in is not reachable from this walk.
 - It verifies the portal is present, never that the overlay actually opens. A portal correctly applied to an overlay that fails for some other reason still passes. The runtime half of this question belongs to `check-interaction.mjs`, which clicks every trigger and asserts an overlay appears and dismisses.

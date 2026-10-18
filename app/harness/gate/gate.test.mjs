@@ -98,7 +98,7 @@ describe('sealing gate: template rules', () => {
     // required-ancestor half entirely (over-broad; the capstone build's
     // toolbar search/select are legitimately unwrapped, and "is this control
     // part of a form" is not decidable from the template) - so the current,
-    // spec-correct count is 1 (the dialog-title descendant only). See
+    // spec-correct count is 2. See
     // harness/rules/no-missing-composition-part.md for the full note.
     const messages = lintHtml(readFileSync(fx('capstone-residue-seal-dirty.html'), 'utf8'));
     expect(messages.some((m) => m.fatal)).toBe(false);

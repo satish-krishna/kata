@@ -85,7 +85,6 @@
 .k-event--result-ok .k-event__gutter { color: var(--success-text); }
 .k-event--result-err .k-event__gutter { color: var(--error-text); }
 .k-event--turn { color: var(--text-faint); }
-.k-event--turn .k-event__body { color: var(--text-faint); }
 .k-event--log .k-event__body { color: var(--text-muted); }
 .k-event__tool { color: var(--text-primary); font-weight: var(--weight-medium); }
 

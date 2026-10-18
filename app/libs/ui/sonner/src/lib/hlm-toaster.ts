@@ -172,7 +172,9 @@ export class HlmToaster {
     const pending = toastState.toasts();
     if (pending.length > 0) {
       afterNextRender(() => {
-        for (const t of [...pending].reverse()) toastState.addToast(t);
+        // Only what brain's reset dropped: a brain that stops resetting would otherwise duplicate these.
+        const present = new Set(toastState.toasts().map((t) => t.id));
+        for (const t of [...pending].reverse()) if (!present.has(t.id)) toastState.addToast(t);
       });
     }
   }

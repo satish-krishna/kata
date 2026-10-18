@@ -81,7 +81,7 @@ export class HlmCodeBlockContent {
   constructor() {
     classes(
       () =>
-        'px-(--space-3) py-(--space-2) group-has-data-[slot=code-block-footer]/code-block:pb-(--space-1) group-data-[variant=flush]/code-block:px-(--space-2) group-data-[variant=flush]/code-block:py-0 max-h-[360px] group-data-[variant=flush]/code-block:max-h-[480px] min-h-0 min-w-0 scrollbar-thin overflow-auto text-start font-[inherit] outline-none data-wrap:wrap-break-word data-wrap:whitespace-pre-wrap',
+        'px-(--space-3) py-(--space-2) group-has-data-[slot=code-block-footer]/code-block:pb-(--space-1) group-data-[variant=flush]/code-block:px-(--space-2) group-data-[variant=flush]/code-block:py-0 max-h-[360px] group-data-[variant=flush]/code-block:max-h-[480px] min-h-0 min-w-0 scrollbar-thin overflow-auto text-start font-[inherit] outline-none data-wrap:wrap-anywhere data-wrap:whitespace-pre-wrap',
     );
   }
 }

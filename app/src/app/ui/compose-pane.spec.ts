@@ -192,6 +192,34 @@ describe('ComposePane permissions: the ask/interactive warning', () => {
     expect(container.textContent).toMatch(ASK_WARNING);
   });
 
+  it('renders the warning as one hlm-alert with the fix button inside it', async () => {
+    const { container, fixture } = await mount(specWith());
+    radio(container, 'prompt').click();
+    await fixture.whenStable();
+    const alerts = container.querySelectorAll('[role="alert"]');
+    expect(alerts).toHaveLength(1);
+    const alert = alerts[0];
+    expect(alert.tagName).toBe('HLM-ALERT');
+    expect(alert.getAttribute('data-slot')).toBe('alert');
+    expect(alert.textContent).toMatch(ASK_WARNING);
+    expect(alert.querySelector('[data-slot="alert-description"]')).not.toBeNull();
+    expect(buttonNamed(alert as HTMLElement, 'Enable interactive')).toBeTruthy();
+  });
+
+  it('renders the ask-rules warning as one hlm-alert', async () => {
+    const { container } = await mount(
+      specWith((s) => {
+        s.permissions.mode = 'prompt';
+        s.permissions.unmatched = 'deny';
+        s.permissions.ask = ['Bash(git push *)'];
+      }),
+    );
+    const alerts = container.querySelectorAll('[role="alert"]');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].tagName).toBe('HLM-ALERT');
+    expect(alerts[0].textContent).toContain('permissions.ask');
+  });
+
   it('shows no warning when unmatched is deny', async () => {
     const { container, fixture } = await mount(specWith((s) => (s.permissions.mode = 'prompt')));
     radio(container, 'deny').click();

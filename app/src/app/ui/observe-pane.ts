@@ -33,7 +33,7 @@ import { ToolCard } from './tool-card';
     <div hlmMessageScrollerProvider [autoScroll]="true">
       <hlm-message-scroller class="wb-stream">
         <hlm-message-scroller-viewport aria-label="Event stream">
-          <hlm-message-scroller-content>
+          <hlm-message-scroller-content aria-live="off">
             @if (empty()) {
               <hlm-empty class="wb-stream__empty">
                 <hlm-empty-header>

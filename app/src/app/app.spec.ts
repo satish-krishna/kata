@@ -7,7 +7,7 @@ import { ToastStore } from './core/toast/toast.store';
 describe('App toasts', () => {
   afterEach(() => toastState.reset());
 
-  it('shows two errors raised before the toaster renders, each with a named dismiss control', async () => {
+  it('shows two errors raised after the toaster renders, each with a named dismiss control', async () => {
     const { fixture, container } = await render(App, {}, [provideRouter([])]);
     const store = fixture.debugElement.injector.get(ToastStore);
     store.error('save failed');
@@ -32,5 +32,17 @@ describe('App toasts', () => {
     fixture.detectChanges();
     await fixture.whenStable();
     expect(container.querySelector('hlm-toaster')?.textContent).toContain('early');
+  });
+
+  it('does not duplicate an early toast when brain stops resetting the list', async () => {
+    toastState.create({ message: 'early', type: 'error' });
+    vi.spyOn(toastState, 'reset').mockImplementation(() => undefined);
+    const { fixture, container } = await render(App, {}, [provideRouter([])]);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const region = container.querySelector('hlm-toaster');
+    expect(region?.textContent).toContain('early');
+    expect(region?.querySelectorAll('li.k-toast')).toHaveLength(1);
+    vi.restoreAllMocks();
   });
 });

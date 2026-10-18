@@ -304,6 +304,12 @@ describe('ObservePane - the stream scroller', () => {
     expect(region?.getAttribute('aria-label')).toBe('Event stream');
   });
 
+  it('keeps the stream out of the live region so arrivals are not announced', async () => {
+    const m = await renderPane({ events: [DECIDED_BY_POLICY] });
+    const content = m.container.querySelector('[data-slot="message-scroller-content"]');
+    expect(content?.getAttribute('aria-live')).toBe('off');
+  });
+
   it('gives each stream item its trackKey as a message id', async () => {
     const m = await renderPane({ state: 'awaiting', events: [DECIDED_BY_POLICY], asks: [ASK] });
     const ids = [...m.container.querySelectorAll('[data-slot="message-scroller-item"]')].map((el) =>
