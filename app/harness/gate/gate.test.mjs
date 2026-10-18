@@ -11,7 +11,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..');
 const fx = (name) => join(repoRoot, 'harness', 'counter', 'fixtures', name);
 
-function lintHtml(code) {
+function lintHtml(code, extraRules = {}) {
   const linter = new Linter();
   return linter.verify(
     code,
@@ -27,6 +27,7 @@ function lintHtml(code) {
         'seal/no-raw-icon': 'error',
         'seal/no-unknown-primitive': 'error',
         'seal/no-missing-composition-part': 'error',
+        ...extraRules,
       },
     },
     { filename: 'x.html' },
@@ -103,7 +104,7 @@ describe('sealing gate: template rules', () => {
     expect(messages.some((m) => m.fatal)).toBe(false);
     expect(countByMessageId(messages)).toEqual({
       unknownPrimitive: 4,
-      missingCompositionPart: 1,
+      missingCompositionPart: 2,
     });
   });
 
@@ -133,6 +134,27 @@ describe('sealing gate: template rules', () => {
     const gateTotal = lintHtml(readFileSync(fx('capstone-residue-seal-dirty.html'), 'utf8')).length;
     const counterTotal = tally([fx('capstone-residue-seal-dirty.html')]).totals.all;
     expect(gateTotal).toBe(counterTotal);
+  });
+});
+
+describe('sealing gate: alert-dialog composition', () => {
+  const good =
+    '<hlm-alert-dialog><hlm-alert-dialog-content *hlmAlertDialogPortal="let ctx"><h2 hlmAlertDialogTitle>x</h2></hlm-alert-dialog-content></hlm-alert-dialog>';
+  const noTitle =
+    '<hlm-alert-dialog><hlm-alert-dialog-content *hlmAlertDialogPortal="let ctx"><h2>x</h2></hlm-alert-dialog-content></hlm-alert-dialog>';
+  const noPortal =
+    '<hlm-alert-dialog><hlm-alert-dialog-content><h2 hlmAlertDialogTitle>x</h2></hlm-alert-dialog-content></hlm-alert-dialog>';
+
+  it('accepts a titled alert-dialog-content under its portal', () => {
+    expect(lintHtml(good, { 'seal/no-unportalled-overlay': 'error' })).toEqual([]);
+  });
+
+  it('flags alert-dialog-content with no hlmAlertDialogTitle', () => {
+    expect(countByMessageId(lintHtml(noTitle))).toEqual({ missingCompositionPart: 1 });
+  });
+
+  it('flags alert-dialog-content that is not under hlmAlertDialogPortal', () => {
+    expect(countByMessageId(lintHtml(noPortal, { 'seal/no-unportalled-overlay': 'error' }))).toEqual({ unportalledOverlay: 1 });
   });
 });
 

@@ -117,8 +117,9 @@ describe('structural counter: capstone-residue seal (rules 5 and 6)', () => {
     //     attributes (installed as elements), hlm-sidebar written as an
     //     attribute (installed as an element), <hlm-avatar-image> written as
     //     an element (installed as the attribute hlmAvatarImage)
-    //   missing-composition-part (1): hlm-dialog-content with no descendant
-    //     carrying hlmDialogTitle. The fixture's bare hlmInput is deliberately
+    //   missing-composition-part (2): hlm-dialog-content with no descendant
+    //     carrying hlmDialogTitle, and hlm-alert-dialog-content with none
+    //     carrying hlmAlertDialogTitle. The fixture's bare hlmInput is deliberately
     //     NOT a violation: the field-wrapping half of the spartan forms doc is
     //     doc-only, not gated (sealing-spec.md, "What this rule deliberately
     //     does NOT check").
@@ -128,8 +129,8 @@ describe('structural counter: capstone-residue seal (rules 5 and 6)', () => {
       'style-attribute': 0,
       'raw-icon': 0,
       'unknown-primitive': 4,
-      'missing-composition-part': 1,
-      all: 5,
+      'missing-composition-part': 2,
+      all: 6,
     });
   });
 

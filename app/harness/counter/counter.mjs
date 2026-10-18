@@ -340,6 +340,7 @@ const UNKNOWN_ELEMENT_RE = /^hlm-/;
 const REQUIRED_DESCENDANT = {
   'hlm-dialog-content': 'hlmDialogTitle',
   'hlm-sheet-content': 'hlmSheetTitle',
+  'hlm-alert-dialog-content': 'hlmAlertDialogTitle',
 };
 
 const emptyTotals = () => ({

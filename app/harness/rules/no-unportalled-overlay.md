@@ -11,6 +11,7 @@ An overlay content element rendered as a plain child of its container instead of
 | `hlm-select` | `hlm-select-content` | `*hlmSelectPortal` |
 | `hlm-dialog` | `hlm-dialog-content` | `*hlmDialogPortal` |
 | `hlm-sheet` | `hlm-sheet-content` | `*hlmSheetPortal` |
+| `hlm-alert-dialog` | `hlm-alert-dialog-content` | `*hlmAlertDialogPortal` |
 
 ## Why
 
@@ -40,7 +41,7 @@ The project's own capstone report names this defect class as the source of every
 
 ## Agent guidance
 
-The content element of an overlay always carries the portal. If you are writing `hlm-select-content`, `hlm-dialog-content` or `hlm-sheet-content`, it takes `*hlmSelectPortal`, `*hlmDialogPortal` or `*hlmSheetPortal` respectively — with the asterisk.
+The content element of an overlay always carries the portal. If you are writing `hlm-select-content`, `hlm-dialog-content`, `hlm-sheet-content` or `hlm-alert-dialog-content`, it takes `*hlmSelectPortal`, `*hlmDialogPortal`, `*hlmSheetPortal` or `*hlmAlertDialogPortal` respectively — with the asterisk.
 
     Good: <hlm-dialog-content *hlmDialogPortal>
     Bad:  <hlm-dialog-content>
