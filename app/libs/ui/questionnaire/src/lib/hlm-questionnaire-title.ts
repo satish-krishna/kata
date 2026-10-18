@@ -14,7 +14,7 @@ export class HlmQuestionnaireTitle {
   constructor() {
     classes(
       () =>
-        'font-sans font-medium text-[length:var(--text-md)] leading-[1.4] text-(color:--text-primary) [&:not(:has(~[data-slot=questionnaire-description]))]:mb-(--space-4) text-pretty',
+        'flex flex-col gap-(--space-3) font-sans font-medium text-[length:var(--text-md)] leading-[1.4] text-(color:--text-primary) [&:not(:has(~[data-slot=questionnaire-description]))]:mb-(--space-4) text-pretty',
     );
   }
 }
