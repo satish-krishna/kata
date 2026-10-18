@@ -17,6 +17,6 @@ import { classes } from '@spartan-ng/helm/utils';
 })
 export class HlmMessageScrollerItem {
   constructor() {
-    classes(() => 'min-w-0 shrink-0 [contain-intrinsic-size:auto_10rem] [content-visibility:auto]');
+    classes(() => 'min-w-0 shrink-0');
   }
 }

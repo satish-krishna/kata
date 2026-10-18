@@ -17,6 +17,6 @@ import { classes } from '@spartan-ng/helm/utils';
 })
 export class HlmMessageScrollerContent {
   constructor() {
-    classes(() => 'gap-8 flex h-max min-h-full flex-col');
+    classes(() => 'gap-(--space-px) flex h-max min-h-full flex-col');
   }
 }

@@ -261,31 +261,84 @@ describe('ObservePane - status and summary', () => {
   });
 });
 
-describe('ObservePane - auto-scroll', () => {
-  function geometry(el: HTMLElement, h: { top: number; height: number; client: number }) {
-    let top = h.top;
-    Object.defineProperty(el, 'scrollHeight', { get: () => h.height, configurable: true });
-    Object.defineProperty(el, 'clientHeight', { get: () => h.client, configurable: true });
+describe('ObservePane - the stream scroller', () => {
+  const ASK = {
+    id: 'q1',
+    questions: [{ kind: 'text' as const, header: 'scope', question: 'Fix or isolate?', optional: false }],
+    answers: null,
+    at: 1,
+  };
+
+  // jsdom has no layout, so the viewport's geometry is stood in for: a 500px
+  // window over 2000px of content. Items report their bottom edge at the end
+  // of the content; the viewport reports itself at the origin.
+  function geometry(el: HTMLElement, start: number) {
+    let top = start;
+    Object.defineProperty(el, 'scrollHeight', { get: () => 2000, configurable: true });
+    Object.defineProperty(el, 'clientHeight', { get: () => 500, configurable: true });
     Object.defineProperty(el, 'scrollTop', { get: () => top, set: (v) => (top = v), configurable: true });
+    el.scrollTo = ((opts: ScrollToOptions) => {
+      top = opts.top ?? top;
+    }) as typeof el.scrollTo;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const bottom = this === el ? 500 : 2000;
+      return { top: 0, bottom, left: 0, right: 0, width: 0, height: bottom, x: 0, y: 0, toJSON: () => ({}) };
+    });
     return () => top;
   }
-
-  it('sticks to the bottom when new events arrive and the reader is at the bottom', async () => {
-    const m = await renderPane();
-    const el = m.container.querySelector('.wb-stream') as HTMLElement;
-    const top = geometry(el, { top: 0, height: 500, client: 500 });
-    m.fixture.componentRef.setInput('events', [DECIDED_BY_POLICY]);
+  const settle = async (m: { fixture: { whenStable(): Promise<unknown> } }) => {
     await m.fixture.whenStable();
-    expect(top()).toBe(500);
+    await new Promise((r) => setTimeout(r, 80));
+  };
+  const viewportOf = (c: HTMLElement) => c.querySelector('[data-slot="message-scroller-viewport"]') as HTMLElement;
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('renders the stream as a scroll region named Event stream', async () => {
+    const m = await renderPane();
+    const region = m.container.querySelector('[role="region"]');
+    expect(region?.getAttribute('aria-label')).toBe('Event stream');
   });
 
-  it('does not yank a reader who scrolled up', async () => {
+  it('gives each stream item its trackKey as a message id', async () => {
+    const m = await renderPane({ state: 'awaiting', events: [DECIDED_BY_POLICY], asks: [ASK] });
+    const ids = [...m.container.querySelectorAll('[data-slot="message-scroller-item"]')].map((el) =>
+      el.getAttribute('data-message-id'),
+    );
+    expect(ids).toHaveLength(2);
+    expect(ids.every((id) => !!id)).toBe(true);
+    expect(ids[1]).toMatch(/:open$/);
+  });
+
+  it('offers a Scroll to latest event button', async () => {
     const m = await renderPane();
-    const el = m.container.querySelector('.wb-stream') as HTMLElement;
-    const top = geometry(el, { top: 0, height: 2000, client: 500 });
+    expect(m.container.querySelector('button[aria-label="Scroll to latest event"]')).not.toBeNull();
+  });
+
+  it('follows the tail when the reader has not scrolled away', async () => {
+    const m = await renderPane({ events: [DECIDED_BY_POLICY] });
+    const top = geometry(viewportOf(m.container), 0);
+    m.fixture.componentRef.setInput('events', [DECIDED_BY_POLICY, { ...DECIDED_BY_POLICY, id: 'd2' }]);
+    await settle(m);
+    expect(top()).toBeGreaterThan(0);
+  });
+
+  it('does not pull a reader who scrolled up when an event or a pause arrives', async () => {
+    const m = await renderPane({ events: [DECIDED_BY_POLICY] });
+    const el = viewportOf(m.container);
+    const top = geometry(el, 1500);
+    el.dispatchEvent(new Event('wheel'));
+    el.scrollTop = 0;
     el.dispatchEvent(new Event('scroll'));
-    m.fixture.componentRef.setInput('events', [DECIDED_BY_POLICY]);
-    await m.fixture.whenStable();
+    await settle(m);
+
+    m.fixture.componentRef.setInput('events', [DECIDED_BY_POLICY, { ...DECIDED_BY_POLICY, id: 'd2' }]);
+    await settle(m);
+    expect(top()).toBe(0);
+
+    m.fixture.componentRef.setInput('state', 'awaiting');
+    m.fixture.componentRef.setInput('asks', [ASK]);
+    await settle(m);
     expect(top()).toBe(0);
   });
 });
