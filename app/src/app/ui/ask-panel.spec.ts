@@ -1,3 +1,5 @@
+import { Component, signal } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
 import { render } from '../../testing/render';
 import type { AskRecord, Question } from '../lib/events';
 import { AskPanel } from './ask-panel';
@@ -9,6 +11,8 @@ const single: Question = {
   options: [{ label: 'Postgres' }, { label: 'SQLite' }],
 };
 const multi: Question = { ...single, header: 'Stores', multi_select: true };
+const confirm: Question = { kind: 'confirm', header: 'Go', question: 'Proceed?' };
+const text: Question = { kind: 'text', header: 'Name', question: 'Name?' };
 
 function rec(questions: Question[], answers: string[][] | null = null): AskRecord {
   return { id: 'a1', questions, answers, at: 0 };
@@ -27,136 +31,238 @@ async function mount(questions: Question[], answers: string[][] | null = null) {
     el.click();
     await r.fixture.whenStable();
   };
-  const type = async (el: HTMLTextAreaElement, value: string) => {
+  const type = async (el: HTMLInputElement, value: string) => {
     el.value = value;
     el.dispatchEvent(new Event('input', { bubbles: true }));
     await r.fixture.whenStable();
   };
-  const textbox = () => root.querySelector('textarea') as HTMLTextAreaElement | null;
-  return { ...r, answer, btn, maybeBtn, send, click, type, textbox };
+  const items = () => Array.from(root.querySelectorAll('fieldset'));
+  const active = () => items().find((f) => !f.hasAttribute('hidden'))!;
+  // Choices are located by value inside the active item; brain overwrites every id.
+  const pick = async (value: string) =>
+    click(Array.from(active().querySelectorAll<HTMLInputElement>('input')).find((i) => i.value === value)!);
+  const free = () => active().querySelector<HTMLInputElement>('input[hlmQuestionnaireInput]');
+  const press = async (el: Element, key: string) => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    await r.fixture.whenStable();
+  };
+  const error = () => root.querySelector<HTMLElement>('[hlmQuestionnaireError]:not([hidden])');
+  return { ...r, answer, btn, maybeBtn, send, click, type, items, active, pick, free, press, error };
 }
 
-describe('AskPanel - Other option', () => {
-  it('offers an Other row on every select question', async () => {
+describe('AskPanel - free text', () => {
+  it('offers a free-text answer on every select question', async () => {
     const m = await mount([single]);
-    expect(m.maybeBtn(/Other/)).not.toBeNull();
+    expect(m.container.querySelectorAll('label[hlmQuestionnaireChoice]').length).toBe(2);
+    const other = m.container.querySelector<HTMLInputElement>('input[aria-label="Other answer"]')!;
+    expect(other.getAttribute('placeholder')).toBe('Other — type your own answer');
   });
 
-  it('does not offer Other on a confirm question', async () => {
-    const m = await mount([{ kind: 'confirm', header: 'Go', question: 'Proceed?' }]);
-    expect(m.maybeBtn(/Other/)).toBeNull();
+  it('does not offer free text on a confirm question', async () => {
+    const m = await mount([confirm]);
+    expect(m.container.querySelector('input[hlmQuestionnaireInput]')).toBeNull();
   });
 
-  it('keeps send disabled while Other is picked but empty', async () => {
+  it('an empty free-text answer never sends', async () => {
     const m = await mount([single]);
-    await m.click(m.btn(/Other/));
-    expect(m.send().disabled).toBe(true);
+    await m.type(m.free()!, '   ');
+    await m.click(m.send());
+    expect(m.answer).not.toHaveBeenCalled();
+    expect(m.error()?.textContent?.trim()).toBeTruthy();
   });
 
-  it('single-select: the typed text replaces the choice', async () => {
+  it('single-select: typed text replaces the choice', async () => {
     const m = await mount([single]);
-    await m.click(m.btn(/Postgres/));
-    await m.click(m.btn(/Other/));
-    await m.type(m.textbox()!, '  DuckDB  ');
+    await m.pick('SQLite');
+    await m.type(m.free()!, 'DuckDB');
     await m.click(m.send());
     expect(m.answer).toHaveBeenCalledWith({ id: 'a1', answers: [['DuckDB']] });
   });
 
-  it('single-select: picking a listed option after Other drops the typed text', async () => {
+  it('single-select: picking a listed choice after typing clears the text', async () => {
     const m = await mount([single]);
-    await m.click(m.btn(/Other/));
-    await m.type(m.textbox()!, 'DuckDB');
-    await m.click(m.btn(/SQLite/));
-    expect(m.textbox()).toBeNull();
+    await m.type(m.free()!, 'DuckDB');
+    await m.pick('SQLite');
+    expect(m.free()!.value).toBe('');
     await m.click(m.send());
     expect(m.answer).toHaveBeenCalledWith({ id: 'a1', answers: [['SQLite']] });
   });
 
-  it('multi-select: the typed text joins the ticked options', async () => {
+  it('multi-select: typed text joins the ticked options', async () => {
     const m = await mount([multi]);
-    await m.click(m.btn(/Postgres/));
-    await m.click(m.btn(/Other/));
-    await m.type(m.textbox()!, 'DuckDB');
+    await m.pick('Postgres');
+    await m.type(m.free()!, 'DuckDB');
     await m.click(m.send());
     expect(m.answer).toHaveBeenCalledWith({ id: 'a1', answers: [['Postgres', 'DuckDB']] });
   });
 
-  it('multi-select: typing an already-ticked label does not send it twice', async () => {
+  it('multi-select: a ticked label typed again is sent once', async () => {
     const m = await mount([multi]);
-    await m.click(m.btn(/Postgres/));
-    await m.click(m.btn(/Other/));
-    await m.type(m.textbox()!, 'Postgres');
+    await m.pick('Postgres');
+    await m.type(m.free()!, 'Postgres');
     await m.click(m.send());
     expect(m.answer).toHaveBeenCalledWith({ id: 'a1', answers: [['Postgres']] });
   });
 
-  it('answered view shows a custom answer as a selected Other row', async () => {
-    const m = await mount([single], [['DuckDB']]);
-    expect(m.container.textContent).toContain('DuckDB');
-    expect(m.btn(/Other/).classList.contains('k-ask__opt--selected')).toBe(true);
+  it('a select with no options offers only free text', async () => {
+    const m = await mount([{ ...single, options: undefined }]);
+    expect(m.container.querySelector('label[hlmQuestionnaireChoice]')).toBeNull();
+    expect(m.container.querySelectorAll('input[hlmQuestionnaireInput]').length).toBe(1);
+    await m.click(m.send());
+    expect(m.answer).not.toHaveBeenCalled();
+    await m.type(m.free()!, 'x');
+    await m.click(m.send());
+    expect(m.answer).toHaveBeenCalledWith({ id: 'a1', answers: [['x']] });
   });
 
-  it('answered view omits the Other row when every answer was a listed option', async () => {
-    const m = await mount([single], [['SQLite']]);
-    expect(m.maybeBtn(/Other/)).toBeNull();
+  it('labels with quotes and markup are sent exactly', async () => {
+    const label = 'He said "<b>&';
+    const m = await mount([{ ...single, options: [{ label }, { label: 'Other' }] }]);
+    expect(m.container.querySelector('b')).toBeNull();
+    expect(m.container.textContent).toContain(label);
+    await m.pick(label);
+    await m.click(m.send());
+    expect(m.answer).toHaveBeenCalledWith({ id: 'a1', answers: [[label]] });
   });
 });
 
 describe('AskPanel - text and confirm', () => {
   it('sends typed text for a text question', async () => {
-    const m = await mount([{ kind: 'text', header: 'Name', question: 'Name?' }]);
-    expect(m.send().disabled).toBe(true);
-    await m.type(m.textbox()!, 'kata');
+    const m = await mount([text]);
+    await m.click(m.send());
+    expect(m.answer).not.toHaveBeenCalled();
+    await m.type(m.container.querySelector<HTMLInputElement>('input[aria-label="Name?"]')!, 'kata');
     await m.click(m.send());
     expect(m.answer).toHaveBeenCalledWith({ id: 'a1', answers: [['kata']] });
   });
 
-  it('confirm defaults to Yes/No and selects one', async () => {
-    const m = await mount([{ kind: 'confirm', header: 'Go', question: 'Proceed?' }]);
-    await m.click(m.btn(/^\s*No\s*$/));
-    expect(m.btn(/^\s*No\s*$/).classList.contains('k-ask__confirm-btn--selected')).toBe(true);
+  it('confirm defaults to Yes/No', async () => {
+    const m = await mount([confirm]);
+    await m.pick('No');
     await m.click(m.send());
     expect(m.answer).toHaveBeenCalledWith({ id: 'a1', answers: [['No']] });
   });
 
-  it('shows the answered banner and hides the footer', async () => {
-    const m = await mount([{ kind: 'text', header: 'Name', question: 'Name?' }], [['kata']]);
+  it('settled: shows the answered banner and the summary, no form', async () => {
+    const m = await mount([text], [['kata']]);
     expect(m.container.querySelector('.k-ask--answered')).not.toBeNull();
     expect(m.container.textContent).toContain('answered · run resumed');
+    expect(m.container.querySelector('app-ask-summary')).not.toBeNull();
+    expect(m.container.querySelector('form')).toBeNull();
     expect(m.container.querySelector('.k-ask__foot')).toBeNull();
   });
 });
 
-describe('AskPanel - Other autofocus', () => {
+describe('AskPanel - stepping', () => {
   const two: Question[] = [single, { ...single, header: 'Cache', question: 'Which cache?' }];
-  const others = (root: HTMLElement) => Array.from(root.querySelectorAll('button')).filter((b) => /Other/.test(b.textContent ?? ''));
-  const boxes = (root: HTMLElement) => Array.from(root.querySelectorAll('textarea'));
 
-  it('focuses the box just opened, not the last in DOM order', async () => {
+  it('shows one question at a time', async () => {
     const m = await mount(two);
-    await m.click(others(m.container)[1]);
-    await m.click(others(m.container)[0]);
-    const [q1] = boxes(m.container);
-    expect(document.activeElement).toBe(q1);
+    const [a, b] = m.items();
+    expect(a.hasAttribute('hidden')).toBe(false);
+    expect(b.hasAttribute('hidden')).toBe(true);
+    expect(m.container.querySelector('[hlmQuestionnaireProgress]')).not.toBeNull();
   });
 
-  it('focuses the new box when one closes and another opens', async () => {
-    const m = await mount(two);
-    await m.click(others(m.container)[0]);
-    await m.click(m.container.querySelectorAll('.k-ask__q')[0].querySelector('.k-ask__opt') as HTMLElement);
-    await m.click(others(m.container)[1]);
-    const [q2] = boxes(m.container);
-    expect(boxes(m.container).length).toBe(1);
-    expect(document.activeElement).toBe(q2);
+  it('shows no progress for a single question', async () => {
+    const m = await mount([single]);
+    expect(m.container.querySelector('[hlmQuestionnaireProgress]')).toBeNull();
   });
 
-  it('does not move focus while typing', async () => {
+  it('Next moves to the next question; Send appears on the last', async () => {
     const m = await mount(two);
-    await m.click(others(m.container)[0]);
-    await m.click(others(m.container)[1]);
-    const [q1] = boxes(m.container);
-    q1.focus();
-    await m.type(q1, 'abc');
-    expect(document.activeElement).toBe(q1);
+    const visible = (re: RegExp) => !m.btn(re).hasAttribute('hidden');
+    expect(visible(/Next/)).toBe(true);
+    expect(visible(/Send answer/)).toBe(false);
+    await m.pick('Postgres');
+    await m.click(m.btn(/Next/));
+    expect(m.items()[1].hasAttribute('hidden')).toBe(false);
+    expect(visible(/Send answer/)).toBe(true);
+  });
+
+  it('a required question refuses Next until answered', async () => {
+    const m = await mount(two);
+    await m.click(m.btn(/Next/));
+    expect(m.items()[0].hasAttribute('hidden')).toBe(false);
+    expect(m.error()?.textContent?.trim()).toBeTruthy();
+    // Skip is not offered on a required question and does nothing if clicked.
+    expect(m.btn(/Skip/).hasAttribute('hidden')).toBe(true);
+    await m.click(m.btn(/Skip/));
+    expect(m.items()[0].hasAttribute('hidden')).toBe(false);
+    expect(m.answer).not.toHaveBeenCalled();
+  });
+
+  it('an optional question can be skipped', async () => {
+    const m = await mount([{ ...single, optional: true }, { ...single, header: 'Cache', question: 'Which cache?' }]);
+    expect(m.btn(/Skip/).hasAttribute('hidden')).toBe(false);
+    await m.click(m.btn(/Skip/));
+    await m.pick('SQLite');
+    await m.click(m.send());
+    expect(m.answer).toHaveBeenCalledWith({ id: 'a1', answers: [[], ['SQLite']] });
+  });
+
+  it('Skip on the last optional question sends', async () => {
+    const m = await mount([{ ...single, optional: true }]);
+    await m.click(m.btn(/Skip/));
+    await Promise.resolve();
+    await m.fixture.whenStable();
+    expect(m.answer).toHaveBeenCalledWith({ id: 'a1', answers: [[]] });
+  });
+
+  it('Enter in a filled answer on the last step sends', async () => {
+    const m = await mount([text]);
+    const input = m.container.querySelector<HTMLInputElement>('input[aria-label="Name?"]')!;
+    await m.type(input, 'kata');
+    await m.press(input, 'Enter');
+    expect(m.answer).toHaveBeenCalledWith({ id: 'a1', answers: [['kata']] });
+  });
+
+  it('a number key picks a choice', async () => {
+    const m = await mount([single]);
+    await m.press(m.active(), '2');
+    expect(Array.from(m.active().querySelectorAll<HTMLInputElement>('input')).find((i) => i.value === 'SQLite')!.checked).toBe(true);
+  });
+
+  it('a pending ask takes focus', async () => {
+    const m = await mount([single]);
+    expect(m.container.querySelector('form')!.contains(document.activeElement)).toBe(true);
+  });
+
+  it('an already-settled ask takes no focus', async () => {
+    await mount([single], [['SQLite']]);
+    expect(document.activeElement).toBe(document.body);
+  });
+});
+
+@Component({
+  selector: 'app-two-panels-host',
+  imports: [AskPanel],
+  template: `
+    <app-ask-panel [ask]="settled()" />
+    <app-ask-panel [ask]="pending()" (answer)="got.push($event)" />
+  `,
+})
+class TwoPanelsHost {
+  readonly settled = signal(rec([single], [['SQLite']]));
+  readonly pending = signal({ ...rec([single]), id: 'a2' });
+  readonly got: unknown[] = [];
+}
+
+describe('AskPanel - isolation', () => {
+  it('two panels do not share fields', async () => {
+    TestBed.configureTestingModule({ imports: [TwoPanelsHost] });
+    const fixture = TestBed.createComponent(TwoPanelsHost);
+    await fixture.whenStable();
+    const root = fixture.nativeElement as HTMLElement;
+    const [settledPanel, pendingPanel] = Array.from(root.querySelectorAll('app-ask-panel'));
+    const before = settledPanel.textContent;
+    const pick = Array.from(pendingPanel.querySelectorAll<HTMLInputElement>('input')).find((i) => i.value === 'Postgres')!;
+    pick.click();
+    await fixture.whenStable();
+    (pendingPanel.querySelector('button[type=submit]') as HTMLButtonElement).click();
+    await fixture.whenStable();
+    expect(fixture.componentInstance.got).toEqual([{ id: 'a2', answers: [['Postgres']] }]);
+    expect(settledPanel.textContent).toBe(before);
+    expect(settledPanel.querySelector('input')).toBeNull();
   });
 });
