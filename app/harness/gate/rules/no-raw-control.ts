@@ -29,7 +29,14 @@ const CONTROL_PRIMITIVE_ATTRS: Record<string, readonly string[]> = {
     'hlmQuestionnaireNext',
     'hlmQuestionnairePrevious',
     'hlmQuestionnaireSkip',
-    'hlmQuestionnaireSubmit'
+    'hlmQuestionnaireSubmit',
+    'hlmTraceCollapsibleTrigger',
+    'hlmAlertDialogTrigger',
+    'hlmAlertDialogTriggerFor',
+    'hlmAlertDialogAction',
+    'hlmAlertDialogCancel',
+    'hlmCodeBlockCopyButton',
+    'hlmMessageScrollerButton'
   ],
   input: ['hlmInput', 'hlmSidebarInput', 'hlmQuestionnaireInput'],
   textarea: ['hlmTextarea'],

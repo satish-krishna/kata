@@ -23,7 +23,8 @@ Primitive attribute directives:
 `hlmAvatarBadge`, `hlmAvatarFallback`, `hlmAvatarGroup`, `hlmAvatarGroupCount`, `hlmAvatarImage`,
 `hlmSwitchThumb`,
 `hlmSidebarContent`, `hlmSidebarFooter`, `hlmSidebarGroup`, `hlmSidebarGroupAction`, `hlmSidebarGroupContent`, `hlmSidebarGroupLabel`, `hlmSidebarHeader`, `hlmSidebarInput`, `hlmSidebarInset`, `hlmSidebarMenu`, `hlmSidebarMenuAction`, `hlmSidebarMenuBadge`, `hlmSidebarMenuButton`, `hlmSidebarMenuItem`, `hlmSidebarMenuSkeleton`, `hlmSidebarMenuSub`, `hlmSidebarMenuSubButton`, `hlmSidebarMenuSubItem`, `hlmSidebarRail`, `hlmSidebarSeparator`, `hlmSidebarTrigger`, `hlmSidebarWrapper`,
-`hlmQuestionnaire`, `hlmQuestionnaireActions`, `hlmQuestionnaireChoice`, `hlmQuestionnaireChoiceDescription`, `hlmQuestionnaireChoices`, `hlmQuestionnaireDescription`, `hlmQuestionnaireError`, `hlmQuestionnaireInput`, `hlmQuestionnaireItem`, `hlmQuestionnaireNext`, `hlmQuestionnairePrevious`, `hlmQuestionnaireProgress`, `hlmQuestionnaireSkip`, `hlmQuestionnaireSubmit`, `hlmQuestionnaireTitle`.
+`hlmQuestionnaire`, `hlmQuestionnaireActions`, `hlmQuestionnaireChoice`, `hlmQuestionnaireChoiceDescription`, `hlmQuestionnaireChoices`, `hlmQuestionnaireDescription`, `hlmQuestionnaireError`, `hlmQuestionnaireInput`, `hlmQuestionnaireItem`, `hlmQuestionnaireNext`, `hlmQuestionnairePrevious`, `hlmQuestionnaireProgress`, `hlmQuestionnaireSkip`, `hlmQuestionnaireSubmit`, `hlmQuestionnaireTitle`,
+`hlmTrace`, `hlmTraceCollapsible`, `hlmTraceCollapsibleTrigger`, `hlmTraceDescription`, `hlmTraceIcon`, `hlmTraceLine`, `hlmTraceTitle`, `hlmCodeBlock`, `hlmCodeBlockActions`, `hlmCodeBlockContent`, `hlmCodeBlockCopyButton`, `hlmCodeBlockFooter`, `hlmCodeBlockHeader`, `hlmCodeBlockLine`, `hlmCodeBlockTitle`, `hlmAlertDialogAction`, `hlmAlertDialogCancel`, `hlmAlertDialogContent`, `hlmAlertDialogDescription`, `hlmAlertDialogFooter`, `hlmAlertDialogHeader`, `hlmAlertDialogMedia`, `hlmAlertDialogOverlay`, `hlmAlertDialogPortal`, `hlmAlertDialogTitle`, `hlmAlertDialogTrigger`, `hlmAlertDialogTriggerFor`, `hlmAlert`, `hlmAlertAction`, `hlmAlertDescription`, `hlmAlertTitle`, `hlmEmpty`, `hlmEmptyContent`, `hlmEmptyDescription`, `hlmEmptyHeader`, `hlmEmptyMedia`, `hlmEmptyTitle`, `hlmMessageScroller`, `hlmMessageScrollerButton`, `hlmMessageScrollerContent`, `hlmMessageScrollerItem`, `hlmMessageScrollerProvider`, `hlmMessageScrollerViewport`, `hlmMarker`, `hlmMarkerContent`, `hlmMarkerIcon`.
 
 Primitive element names:
 
@@ -37,9 +38,12 @@ Primitive element names:
 `hlm-tabs`, `hlm-tabs-list`, `hlm-paginated-tabs-list`,
 `hlm-switch`,
 `hlm-sidebar`, `hlm-sidebar-content`, `hlm-sidebar-footer`, `hlm-sidebar-group`, `hlm-sidebar-header`, `hlm-sidebar-menu-badge`, `hlm-sidebar-menu-skeleton`, `hlm-sidebar-separator`, `hlm-sidebar-wrapper`,
-`hlm-questionnaire-actions`.
+`hlm-questionnaire-actions`,
+`hlm-trace`, `hlm-trace-collapsible`, `hlm-trace-collapsible-content`, `hlm-trace-description`, `hlm-trace-icon`, `hlm-trace-line`, `hlm-trace-title`, `hlm-code-block`, `hlm-code-block-actions`, `hlm-code-block-footer`, `hlm-code-block-header`, `hlm-code-block-title`, `hlm-alert-dialog`, `hlm-alert-dialog-content`, `hlm-alert-dialog-footer`, `hlm-alert-dialog-header`, `hlm-alert-dialog-media`, `hlm-alert-dialog-overlay`, `hlm-alert`, `hlm-empty`, `hlm-empty-content`, `hlm-empty-header`, `hlm-empty-media`, `hlm-toaster`, `hlm-message-scroller`, `hlm-message-scroller-content`, `hlm-message-scroller-item`, `hlm-message-scroller-viewport`, `hlm-marker`, `hlm-marker-content`, `hlm-marker-icon`.
 
 The questionnaire family was added with the spartan 1.8.0 upgrade. Its parts sit on native elements (`fieldset[hlmQuestionnaireItem]`, `legend[hlmQuestionnaireTitle]`, `label[hlmQuestionnaireChoice]`, `input[hlmQuestionnaireInput]`, and `button[hlmQuestionnaireNext|Previous|Skip|Submit]`), so `no-raw-control` accepts each of those attributes as the primitive for its element.
+
+The trace, code-block, alert-dialog, alert, empty, sonner, message-scroller and marker families were added in one adoption pass on spartan 1.8.0. Their button parts (`button[hlmTraceCollapsibleTrigger]`, `button[hlmAlertDialogTrigger|TriggerFor|Action|Cancel]`, `button[hlmCodeBlockCopyButton]`, `button[hlmMessageScrollerButton]`) are accepted by `no-raw-control` as the primitive for `button`.
 
 The set of primitive attribute names and element names is used by `no-appearance-on-primitive` and `no-unknown-primitive` to decide whether an element is a primitive.
 
