@@ -118,11 +118,15 @@ describe('ObservePane - the audit row', () => {
 describe('ObservePane - the empty state', () => {
   it('shows the empty state when nothing has arrived', async () => {
     const m = await renderPane();
-    expect(m.text()).toMatch(/normalized event stream renders here/);
+    expect(m.container.querySelector('hlm-empty')).not.toBeNull();
+    expect(m.container.querySelector('hlm-empty')!.textContent).toContain(
+      'Press Run to drive claude -p to completion. The normalized event stream renders here.',
+    );
   });
 
   it('does not show the empty state when only a permission card is present', async () => {
     const m = await renderPane({ state: 'awaiting', permissions: [PENDING] });
+    expect(m.container.querySelector('hlm-empty')).toBeNull();
     expect(m.text()).not.toMatch(/normalized event stream renders here/);
   });
 });

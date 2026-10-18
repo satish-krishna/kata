@@ -10,7 +10,7 @@ export class HlmEmpty {
   constructor() {
     classes(
       () =>
-        'gap-4 rounded-lg border-dashed p-12 flex w-full min-w-0 flex-1 flex-col items-center justify-center text-center text-balance',
+        'm-auto flex flex-col items-center gap-(--space-4) p-(--space-12) text-center text-(--text-faint)',
     );
   }
 }

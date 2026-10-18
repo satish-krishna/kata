@@ -1,6 +1,7 @@
 import { Component, computed, input, output } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCheckCircle, lucideCpu, lucideGitBranch, lucideTerminal, lucideXCircle } from '@ng-icons/lucide';
+import { HlmEmptyImports } from '@spartan-ng/helm/empty';
 import { HlmMessageScrollerImports } from '@spartan-ng/helm/message-scroller';
 import type { RunSpec } from '@bindings/RunSpec';
 import { STATUS_LABEL, type AskRecord, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../lib/events';
@@ -15,7 +16,7 @@ import { ToolCard } from './tool-card';
 @Component({
   selector: 'app-observe-pane',
   host: { class: 'wb-observe' },
-  imports: [NgIcon, HlmMessageScrollerImports, EventRow, ToolCard, SummaryStat, AskPanel, PermissionPanel, MarkdownBody],
+  imports: [NgIcon, HlmEmptyImports, HlmMessageScrollerImports, EventRow, ToolCard, SummaryStat, AskPanel, PermissionPanel, MarkdownBody],
   providers: [provideIcons({ lucideCpu, lucideGitBranch, lucideTerminal, lucideCheckCircle, lucideXCircle })],
   template: `
     <div class="wb-status">
@@ -34,10 +35,12 @@ import { ToolCard } from './tool-card';
         <hlm-message-scroller-viewport aria-label="Event stream">
           <hlm-message-scroller-content>
             @if (empty()) {
-              <div class="wb-stream__empty">
-                <ng-icon name="lucideTerminal" size="28" />
-                <p>Press <b class="wb-accent">Run</b> to drive <code>claude -p</code> to completion. The normalized event stream renders here.</p>
-              </div>
+              <hlm-empty class="wb-stream__empty">
+                <hlm-empty-header>
+                  <hlm-empty-media><ng-icon name="lucideTerminal" size="28" /></hlm-empty-media>
+                  <p hlmEmptyDescription>Press <b class="wb-accent">Run</b> to drive <code>claude -p</code> to completion. The normalized event stream renders here.</p>
+                </hlm-empty-header>
+              </hlm-empty>
             } @else {
               @for (item of streamItems(); track trackKey(item)) {
                 <hlm-message-scroller-item [messageId]="trackKey(item)">
