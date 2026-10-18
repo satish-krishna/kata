@@ -3,13 +3,14 @@ import { classes } from '@spartan-ng/helm/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 
 const codeBlockVariants = cva(
-  'has-[>[data-slot=code-block-content]:focus-visible]:ring-ring/50 rounded-lg text-sm has-[>[data-slot=code-block-content]:focus-visible]:ring-3 data-[size=sm]:text-xs group/code-block relative flex w-full min-w-0 flex-col overflow-hidden',
+  'group/code-block relative flex w-full min-w-0 flex-col overflow-hidden bg-(--surface-inset) border border-(--border-subtle) rounded-(--radius-sm) text-(color:--text-secondary) font-mono text-[length:var(--text-sm)] data-[size=sm]:[font:var(--font-code-sm)] has-[>[data-slot=code-block-content]:focus-visible]:border-(--accent)',
   {
     variants: {
       variant: {
-        default:
-          'border-input text-foreground dark:bg-input/30 has-[>[data-slot=code-block-content]:focus-visible]:border-ring border',
-        destructive: 'border-destructive/30 text-destructive dark:border-destructive/40 border',
+        default: '',
+        // Edge-to-edge diff lines: the content drops its vertical padding and the lines carry the horizontal gutter.
+        flush: '',
+        destructive: 'border-(--error)',
       },
     },
     defaultVariants: {

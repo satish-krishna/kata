@@ -4,9 +4,10 @@ import { DiffBody } from './diff-body';
 describe('DiffBody', () => {
   it('renders add, del and ctx lines with their gutter marks', async () => {
     const { container } = await render(DiffBody, { oldText: 'a\nb\nc', newText: 'a\nB\nc' });
-    expect(container.querySelector('.k-toolcard__dl--del')!.textContent).toBe('-b');
-    expect(container.querySelector('.k-toolcard__dl--add')!.textContent).toBe('+B');
-    expect(container.querySelectorAll('.k-toolcard__dl--ctx')).toHaveLength(2);
+    expect(container.querySelector('[data-slot=code-block-line][data-variant=removed]')!.textContent).toBe('-b');
+    expect(container.querySelector('[data-slot=code-block-line][data-variant=added]')!.textContent).toBe('+B');
+    expect(container.querySelectorAll('[data-slot=code-block-line][data-variant=default]')).toHaveLength(2);
+    expect(container.querySelectorAll('span[hlmCodeBlockLine]')).toHaveLength(4);
   });
 
   // The Svelte original mocked `diff` to return undefined. This port does not
@@ -18,7 +19,7 @@ describe('DiffBody', () => {
     const { container } = await render(DiffBody, { oldText: big('o'), newText: big('n') });
     const labels = [...container.querySelectorAll('.k-toolcard__label')].map((l) => l.textContent);
     expect(labels).toEqual(['before', 'after']);
-    expect(container.querySelector('.k-toolcard__dl')).toBeNull();
-    expect(container.querySelectorAll('.k-toolcard__out')).toHaveLength(2);
+    expect(container.querySelector('[data-slot=code-block-line]')).toBeNull();
+    expect(container.querySelectorAll('pre[hlmCodeBlockContent]')).toHaveLength(2);
   }, 30000);
 });

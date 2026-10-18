@@ -38,8 +38,8 @@ describe('ToolCard', () => {
     const q = within(container);
     expect(q.getByText('src/claim.rs')).toBeTruthy();
     expect(q.getByText('ok')).toBeTruthy();
-    expect(container.querySelector('.k-toolcard__dl--del')!.textContent).toContain('if now > t {');
-    expect(container.querySelector('.k-toolcard__dl--add')!.textContent).toContain('if now >= t {');
+    expect(container.querySelector('[data-slot=code-block-line][data-variant=removed]')!.textContent).toContain('if now > t {');
+    expect(container.querySelector('[data-slot=code-block-line][data-variant=added]')!.textContent).toContain('if now >= t {');
   });
 
   it('renders a Read collapsed and opens it on click', async () => {
@@ -143,7 +143,7 @@ describe('ToolCard', () => {
         res('MultiEdit'),
       ]),
     });
-    expect(container.querySelectorAll('.k-toolcard__diff')).toHaveLength(1);
+    expect(container.querySelectorAll('app-diff-body hlm-code-block')).toHaveLength(1);
   });
 
   it('exposes the row as the .k-toolcard__row button the parity capture clicks', async () => {
@@ -170,7 +170,7 @@ describe('ToolCard', () => {
     const { container } = await render(ToolCard, {
       call: callOf([use('Read', { file_path: 'a.rs' }), res('Read', true, { output: 'x' })]),
     });
-    expect(container.querySelector('.k-toolcard__out')).toBeNull();
+    expect(container.querySelector('pre[hlmCodeBlockContent]')).toBeNull();
     expect(container.querySelector('[data-slot=trace-collapsible-content]')!.hasAttribute('inert')).toBe(true);
   });
 

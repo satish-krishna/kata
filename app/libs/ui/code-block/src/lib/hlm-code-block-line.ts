@@ -3,14 +3,14 @@ import { classes } from '@spartan-ng/helm/utils';
 import { cva, VariantProps } from 'class-variance-authority';
 
 const codeBlockLineVariants = cva(
-  "before:text-muted-foreground after:text-muted-foreground -mx-4 px-4 group-data-[size=sm]/code-block:-mx-3 group-data-[size=sm]/code-block:px-3 before:min-w-6 before:text-end after:start-1 in-data-numbered:gap-x-3 relative block min-h-lh after:absolute after:top-0 after:select-none in-data-numbered:col-span-2 in-data-numbered:grid in-data-numbered:grid-cols-subgrid in-data-numbered:[counter-increment:line] in-data-numbered:before:content-[counter(line)] in-data-numbered:before:select-none in-data-numbered:supports-[content:counter(line)_/_'']:before:content-[counter(line)_/_'']",
+  "before:text-(--text-faint) before:min-w-6 before:text-end in-data-numbered:gap-x-3 relative block min-h-lh whitespace-pre -mx-(--space-3) px-(--space-3) group-data-[variant=flush]/code-block:-mx-(--space-2) group-data-[variant=flush]/code-block:px-(--space-2) in-data-numbered:col-span-2 in-data-numbered:grid in-data-numbered:grid-cols-subgrid in-data-numbered:[counter-increment:line] in-data-numbered:before:content-[counter(line)] in-data-numbered:before:select-none in-data-numbered:supports-[content:counter(line)_/_'']:before:content-[counter(line)_/_'']",
   {
     variants: {
       variant: {
-        default: '',
-        added: "bg-muted after:content-['+']",
-        removed: "bg-destructive/10 after:text-destructive after:content-['−']",
-        highlighted: 'bg-muted',
+        default: 'text-(color:--text-muted)',
+        added: 'bg-(--success-subtle) text-(color:--success-text)',
+        removed: 'bg-(--error-subtle) text-(color:--error-text)',
+        highlighted: 'bg-(--surface-card)',
       },
     },
     defaultVariants: {

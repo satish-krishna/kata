@@ -81,7 +81,7 @@ export class HlmCodeBlockContent {
   constructor() {
     classes(
       () =>
-        'px-4 py-4 leading-relaxed group-has-data-[slot=code-block-footer]/code-block:pb-2 group-has-data-[slot=code-block-header]/code-block:pt-2 group-data-[size=sm]/code-block:px-3 group-data-[size=sm]/code-block:py-3 group-data-[size=sm]/code-block:group-has-data-[slot=code-block-header]/code-block:pt-1.5 scroll-fade-x data-wrap:scroll-fade-y min-h-0 min-w-0 scrollbar-thin overflow-auto text-start font-mono outline-none data-wrap:wrap-break-word data-wrap:whitespace-pre-wrap',
+        'px-(--space-3) py-(--space-2) group-has-data-[slot=code-block-footer]/code-block:pb-(--space-1) group-data-[variant=flush]/code-block:px-(--space-2) group-data-[variant=flush]/code-block:py-0 max-h-[360px] group-data-[variant=flush]/code-block:max-h-[480px] min-h-0 min-w-0 scrollbar-thin overflow-auto text-start font-[inherit] outline-none data-wrap:wrap-break-word data-wrap:whitespace-pre-wrap',
     );
   }
 }
