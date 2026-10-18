@@ -1,11 +1,15 @@
 import { Component, input } from '@angular/core';
+import { HlmCodeBlockImports } from '@spartan-ng/helm/code-block';
 
 @Component({
   selector: 'app-output-body',
-  template: `<pre class="k-toolcard__out">{{ text() || '(no output)' }}</pre>
+  imports: [HlmCodeBlockImports],
+  template: `<hlm-code-block size="sm">
+    <pre hlmCodeBlockContent wrap [code]="text() || '(no output)'"></pre>
     @if (truncated()) {
-      <div class="k-toolcard__trunc">… truncated at 256 KB</div>
-    }`,
+      <hlm-code-block-footer>… truncated at 256 KB</hlm-code-block-footer>
+    }
+  </hlm-code-block>`,
 })
 export class OutputBody {
   readonly text = input.required<string>();

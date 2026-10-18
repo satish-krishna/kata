@@ -2,6 +2,7 @@ import { Component, computed, effect, input, linkedSignal, model, output, signal
 import { FormField, type FieldTree } from '@angular/forms/signals';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideFolder, lucideTriangleAlert } from '@ng-icons/lucide';
+import { HlmAlertImports } from '@spartan-ng/helm/alert';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmInput } from '@spartan-ng/helm/input';
 import { HlmSelectImports } from '@spartan-ng/helm/select';
@@ -42,6 +43,7 @@ const ROOM_HINT = 'bare = the empty room (curated kit only). full = your real cl
   imports: [
     NgIcon,
     FormField,
+    HlmAlertImports,
     HlmButtonImports,
     HlmInput,
     HlmTextareaImports,
@@ -296,13 +298,13 @@ const ROOM_HINT = 'bare = the empty room (curated kit only). full = your real cl
           />
         </app-field>
         @if (spec().permissions.unmatched === 'ask' && !spec().interactive.enabled) {
-          <div class="wb-banner wb-banner--error" role="alert">
+          <hlm-alert variant="destructive" class="wb-banner wb-banner--error">
             <ng-icon name="lucideTriangleAlert" size="15" />
-            <div class="wb-banner__list">
+            <div hlmAlertDescription class="wb-banner__list">
               <span><code>permissions.unmatched = "ask"</code> needs an operator to ask, and interactive is off.</span>
             </div>
             <button hlmBtn variant="secondary" type="button" (click)="enableInteractive()">Enable interactive</button>
-          </div>
+          </hlm-alert>
         }
       }
       @if (spec().permissions.mode === 'prompt' || spec().permissions.mode === 'auto') {
@@ -346,13 +348,13 @@ const ROOM_HINT = 'bare = the empty room (curated kit only). full = your real cl
           ></textarea>
         </app-field>
         @if ((spec().permissions.ask ?? []).length > 0 && !spec().interactive.enabled) {
-          <div class="wb-banner wb-banner--error" role="alert">
+          <hlm-alert variant="destructive" class="wb-banner wb-banner--error">
             <ng-icon name="lucideTriangleAlert" size="15" />
-            <div class="wb-banner__list">
+            <div hlmAlertDescription class="wb-banner__list">
               <span><code>permissions.ask</code> rules need an operator to ask, and interactive is off.</span>
             </div>
             <button hlmBtn variant="secondary" type="button" (click)="enableInteractive()">Enable interactive</button>
-          </div>
+          </hlm-alert>
         }
       }
     </section>

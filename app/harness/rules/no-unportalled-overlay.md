@@ -11,6 +11,7 @@ An overlay content element rendered as a plain child of its container instead of
 | `hlm-select` | `hlm-select-content` | `*hlmSelectPortal` |
 | `hlm-dialog` | `hlm-dialog-content` | `*hlmDialogPortal` |
 | `hlm-sheet` | `hlm-sheet-content` | `*hlmSheetPortal` |
+| `hlm-alert-dialog` | `hlm-alert-dialog-content` | `*hlmAlertDialogPortal` |
 
 ## Why
 
@@ -40,13 +41,13 @@ The project's own capstone report names this defect class as the source of every
 
 ## Agent guidance
 
-The content element of an overlay always carries the portal. If you are writing `hlm-select-content`, `hlm-dialog-content` or `hlm-sheet-content`, it takes `*hlmSelectPortal`, `*hlmDialogPortal` or `*hlmSheetPortal` respectively — with the asterisk.
+The content element of an overlay always carries the portal. If you are writing `hlm-select-content`, `hlm-dialog-content`, `hlm-sheet-content` or `hlm-alert-dialog-content`, it takes `*hlmSelectPortal`, `*hlmDialogPortal`, `*hlmSheetPortal` or `*hlmAlertDialogPortal` respectively — with the asterisk.
 
     Good: <hlm-dialog-content *hlmDialogPortal>
     Bad:  <hlm-dialog-content>
 
 ## Known blind spots
 
-- It checks the three overlay families installed in this project. A future overlay primitive with its own portal is invisible to it until added to the table, exactly as `no-raw-control` was blind to `hlmTabsTrigger` until that was added to its own table.
+- It checks the four overlay families installed (dialog, sheet, select, alert-dialog) in this project. A future overlay primitive with its own portal is invisible to it until added to the table, exactly as `no-raw-control` was blind to `hlmTabsTrigger` until that was added to its own table.
 - It only sees content nested somewhere beneath its container element in the same template. Content extracted into a separate component and projected in is not reachable from this walk.
 - It verifies the portal is present, never that the overlay actually opens. A portal correctly applied to an overlay that fails for some other reason still passes. The runtime half of this question belongs to `check-interaction.mjs`, which clicks every trigger and asserts an overlay appears and dismisses.

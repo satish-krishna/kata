@@ -11,7 +11,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..');
 const fx = (name) => join(repoRoot, 'harness', 'counter', 'fixtures', name);
 
-function lintHtml(code) {
+function lintHtml(code, extraRules = {}) {
   const linter = new Linter();
   return linter.verify(
     code,
@@ -27,6 +27,7 @@ function lintHtml(code) {
         'seal/no-raw-icon': 'error',
         'seal/no-unknown-primitive': 'error',
         'seal/no-missing-composition-part': 'error',
+        ...extraRules,
       },
     },
     { filename: 'x.html' },
@@ -97,13 +98,13 @@ describe('sealing gate: template rules', () => {
     // required-ancestor half entirely (over-broad; the capstone build's
     // toolbar search/select are legitimately unwrapped, and "is this control
     // part of a form" is not decidable from the template) - so the current,
-    // spec-correct count is 1 (the dialog-title descendant only). See
+    // spec-correct count is 2. See
     // harness/rules/no-missing-composition-part.md for the full note.
     const messages = lintHtml(readFileSync(fx('capstone-residue-seal-dirty.html'), 'utf8'));
     expect(messages.some((m) => m.fatal)).toBe(false);
     expect(countByMessageId(messages)).toEqual({
       unknownPrimitive: 4,
-      missingCompositionPart: 1,
+      missingCompositionPart: 2,
     });
   });
 
@@ -133,6 +134,27 @@ describe('sealing gate: template rules', () => {
     const gateTotal = lintHtml(readFileSync(fx('capstone-residue-seal-dirty.html'), 'utf8')).length;
     const counterTotal = tally([fx('capstone-residue-seal-dirty.html')]).totals.all;
     expect(gateTotal).toBe(counterTotal);
+  });
+});
+
+describe('sealing gate: alert-dialog composition', () => {
+  const good =
+    '<hlm-alert-dialog><hlm-alert-dialog-content *hlmAlertDialogPortal="let ctx"><h2 hlmAlertDialogTitle>x</h2></hlm-alert-dialog-content></hlm-alert-dialog>';
+  const noTitle =
+    '<hlm-alert-dialog><hlm-alert-dialog-content *hlmAlertDialogPortal="let ctx"><h2>x</h2></hlm-alert-dialog-content></hlm-alert-dialog>';
+  const noPortal =
+    '<hlm-alert-dialog><hlm-alert-dialog-content><h2 hlmAlertDialogTitle>x</h2></hlm-alert-dialog-content></hlm-alert-dialog>';
+
+  it('accepts a titled alert-dialog-content under its portal', () => {
+    expect(lintHtml(good, { 'seal/no-unportalled-overlay': 'error' })).toEqual([]);
+  });
+
+  it('flags alert-dialog-content with no hlmAlertDialogTitle', () => {
+    expect(countByMessageId(lintHtml(noTitle))).toEqual({ missingCompositionPart: 1 });
+  });
+
+  it('flags alert-dialog-content that is not under hlmAlertDialogPortal', () => {
+    expect(countByMessageId(lintHtml(noPortal, { 'seal/no-unportalled-overlay': 'error' }))).toEqual({ unportalledOverlay: 1 });
   });
 });
 

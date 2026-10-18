@@ -1,9 +1,10 @@
-import { Component, afterRenderEffect, computed, ElementRef, input, output, viewChild } from '@angular/core';
+import { Component, computed, input, output } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCheckCircle, lucideCpu, lucideGitBranch, lucideTerminal, lucideXCircle } from '@ng-icons/lucide';
+import { HlmEmptyImports } from '@spartan-ng/helm/empty';
+import { HlmMessageScrollerImports } from '@spartan-ng/helm/message-scroller';
 import type { RunSpec } from '@bindings/RunSpec';
 import { STATUS_LABEL, type AskRecord, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../lib/events';
-import { isAtBottom } from '../lib/scroll';
 import { pairToolEvents, withPauses, type PausedItem } from '../lib/toolcards';
 import { AskPanel } from './ask-panel';
 import { EventRow } from './event-row';
@@ -15,7 +16,7 @@ import { ToolCard } from './tool-card';
 @Component({
   selector: 'app-observe-pane',
   host: { class: 'wb-observe' },
-  imports: [NgIcon, EventRow, ToolCard, SummaryStat, AskPanel, PermissionPanel, MarkdownBody],
+  imports: [NgIcon, HlmEmptyImports, HlmMessageScrollerImports, EventRow, ToolCard, SummaryStat, AskPanel, PermissionPanel, MarkdownBody],
   providers: [provideIcons({ lucideCpu, lucideGitBranch, lucideTerminal, lucideCheckCircle, lucideXCircle })],
   template: `
     <div class="wb-status">
@@ -29,25 +30,36 @@ import { ToolCard } from './tool-card';
       }
     </div>
 
-    <div class="wb-stream" #stream (scroll)="onScroll()">
-      @if (empty()) {
-        <div class="wb-stream__empty">
-          <ng-icon name="lucideTerminal" size="28" />
-          <p>Press <b class="wb-accent">Run</b> to drive <code>claude -p</code> to completion. The normalized event stream renders here.</p>
-        </div>
-      } @else {
-        @for (item of streamItems(); track trackKey(item)) {
-          @if (item.kind === 'event') {
-            <div class="wb-event-enter"><app-event-row [ev]="item.ev" /></div>
-          } @else if (item.kind === 'call') {
-            <div class="wb-event-enter"><app-tool-card [call]="item.call" /></div>
-          } @else if (item.kind === 'perm') {
-            <div class="wb-event-enter"><app-permission-panel [record]="item.p" (decide)="decide.emit($event)" /></div>
-          } @else {
-            <div class="wb-event-enter"><app-ask-panel [ask]="item.a" (answer)="answer.emit($event)" /></div>
-          }
-        }
-      }
+    <div hlmMessageScrollerProvider [autoScroll]="true">
+      <hlm-message-scroller class="wb-stream">
+        <hlm-message-scroller-viewport aria-label="Event stream">
+          <hlm-message-scroller-content aria-live="off">
+            @if (empty()) {
+              <hlm-empty class="wb-stream__empty">
+                <hlm-empty-header>
+                  <hlm-empty-media><ng-icon name="lucideTerminal" size="28" /></hlm-empty-media>
+                  <p hlmEmptyDescription>Press <b class="wb-accent">Run</b> to drive <code>claude -p</code> to completion. The normalized event stream renders here.</p>
+                </hlm-empty-header>
+              </hlm-empty>
+            } @else {
+              @for (item of streamItems(); track trackKey(item)) {
+                <hlm-message-scroller-item [messageId]="trackKey(item)">
+                  @if (item.kind === 'event') {
+                    <div class="wb-event-enter"><app-event-row [ev]="item.ev" /></div>
+                  } @else if (item.kind === 'call') {
+                    <div class="wb-event-enter"><app-tool-card [call]="item.call" /></div>
+                  } @else if (item.kind === 'perm') {
+                    <div class="wb-event-enter"><app-permission-panel [record]="item.p" (decide)="decide.emit($event)" /></div>
+                  } @else {
+                    <div class="wb-event-enter"><app-ask-panel [ask]="item.a" (answer)="answer.emit($event)" /></div>
+                  }
+                </hlm-message-scroller-item>
+              }
+            }
+          </hlm-message-scroller-content>
+        </hlm-message-scroller-viewport>
+        <button hlmMessageScrollerButton aria-label="Scroll to latest event"></button>
+      </hlm-message-scroller>
     </div>
 
     @if (summary(); as s) {
@@ -83,12 +95,6 @@ export class ObservePane {
   readonly answer = output<{ id: string; answers: string[][] }>();
   readonly decide = output<{ id: string; allow: boolean; message: string | null }>();
 
-  private readonly streamEl = viewChild.required<ElementRef<HTMLDivElement>>('stream');
-  // Follow the tail until the reader scrolls away. A plain (non-reactive) flag
-  // on purpose: only appended content should trigger a scroll, never a change
-  // to this flag, otherwise a pending ask would yank the reader back down.
-  private stick = true;
-
   protected readonly statusLabel = computed(() => STATUS_LABEL[this.state()]);
   protected readonly empty = computed(
     () => this.events().length === 0 && !this.summary() && this.asks().length === 0 && this.permissions().length === 0,
@@ -103,20 +109,6 @@ export class ObservePane {
   });
   protected readonly duration = computed(() => `${((this.summary()?.duration_ms ?? 0) / 1000).toFixed(1)}s`);
 
-  constructor() {
-    // Keep the stream pinned to the latest event, but only while the reader is
-    // already at the bottom. Runs after render so scrollHeight includes the
-    // content that just arrived.
-    afterRenderEffect(() => {
-      void this.events().length;
-      void this.summary();
-      void this.asks().length;
-      void this.permissions().length;
-      const el = this.streamEl().nativeElement;
-      if (this.stick) el.scrollTop = el.scrollHeight;
-    });
-  }
-
   /* Svelte drew a pending and a settled pause from separate branches, so
    * settling remounted the card and replayed its fade-in. The key changes only
    * at settle, so an open panel is never recreated by unrelated arrivals. */
@@ -124,9 +116,5 @@ export class ObservePane {
     if (item.kind === 'perm') return `${item.key}:${item.p.decided ? 'done' : 'open'}`;
     if (item.kind === 'ask') return `${item.key}:${item.a.answers ? 'done' : 'open'}`;
     return item.key;
-  }
-
-  protected onScroll(): void {
-    this.stick = isAtBottom(this.streamEl().nativeElement);
   }
 }

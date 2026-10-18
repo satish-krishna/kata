@@ -4,7 +4,7 @@
 
 ## What it forbids
 
-An overlay container primitive present without a required descendant somewhere under it in the same template: `hlm-dialog-content` needs a descendant carrying `hlmDialogTitle`, and `hlm-sheet-content` needs one carrying `hlmSheetTitle`. This is a pure parent/child containment property of a single template AST — no cross-file join, no type information, no heuristic — so the search walks every container-shaped child (including inside `@if`, `@for`, and other control-flow blocks) looking for the attribute anywhere beneath the primitive.
+An overlay container primitive present without a required descendant somewhere under it in the same template: `hlm-dialog-content` needs a descendant carrying `hlmDialogTitle`, `hlm-sheet-content` needs one carrying `hlmSheetTitle`, and `hlm-alert-dialog-content` needs one carrying `hlmAlertDialogTitle`. This is a pure parent/child containment property of a single template AST — no cross-file join, no type information, no heuristic — so the search walks every container-shaped child (including inside `@if`, `@for`, and other control-flow blocks) looking for the attribute anywhere beneath the primitive.
 
 ## Why
 
@@ -23,7 +23,7 @@ An earlier draft of this rule went further and required every `hlmInput`, `hlmTe
 
 ## Agent guidance
 
-Every `hlm-dialog-content` or `hlm-sheet-content` needs a title element inside it. If the design hides the title, keep it present with `class="sr-only"` rather than removing it.
+Every `hlm-dialog-content`, `hlm-sheet-content` or `hlm-alert-dialog-content` needs a title element inside it. If the design hides the title, keep it present with `class="sr-only"` rather than removing it.
 
     Good: <hlm-dialog-content><h2 hlmDialogTitle>Retire hero?</h2>...</hlm-dialog-content>
     Bad:  <hlm-dialog-content><h2 class="font-semibold">Retire hero?</h2>...</hlm-dialog-content>

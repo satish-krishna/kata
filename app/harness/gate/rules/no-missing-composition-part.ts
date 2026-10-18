@@ -12,6 +12,7 @@ export const RULE_NAME = 'no-missing-composition-part';
 const REQUIRED_DESCENDANT: Record<string, string> = {
   'hlm-dialog-content': 'hlmDialogTitle',
   'hlm-sheet-content': 'hlmSheetTitle',
+  'hlm-alert-dialog-content': 'hlmAlertDialogTitle',
 };
 
 // A structural view over the template AST nodes this walk needs: an optional

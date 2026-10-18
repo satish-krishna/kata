@@ -4,7 +4,7 @@ import type { RunSpec } from '@bindings/RunSpec';
 import { LibraryViewModel } from './library.view-model';
 import { KataTransport } from '../core/transport/kata-transport';
 import { LaunchStore } from '../core/launch/launch.store';
-import { ToastStore } from '../core/toast/toast.store';
+import { toastState } from '@spartan-ng/brain/sonner';
 import { history, katasFixture, runDetailFixture } from '../lib/library';
 
 class FakeTransport {
@@ -27,10 +27,12 @@ function setup(fake = new FakeTransport()) {
 }
 
 const toastText = () =>
-  TestBed.inject(ToastStore)
+  toastState
     .toasts()
-    .map((t) => t.message)
+    .map((t) => String(t.title))
     .join(' ');
+
+afterEach(() => toastState.reset());
 
 it('loads history and katas on init and selects the newest run', async () => {
   const { vm, fake } = setup();

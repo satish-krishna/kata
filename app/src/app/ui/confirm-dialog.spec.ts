@@ -7,15 +7,17 @@ const button = (label: string) =>
 describe('ConfirmDialog', () => {
   it('renders nothing while closed', async () => {
     await render(ConfirmDialog, { open: false, message: 'Discard changes?' });
-    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.body.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
-  it('shows the message as the dialog title with the default Confirm label', async () => {
+  it('is an alert dialog named by the message, with the default Confirm label', async () => {
     await render(ConfirmDialog, { open: true, message: 'Discard changes?' });
-    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
-    const dialog = document.body.querySelector('.k-dialog')!;
-    expect(dialog.getAttribute('aria-label')).toBe('Discard changes?');
-    expect(dialog.querySelector('[hlmDialogTitle]')!.textContent).toContain('Discard changes?');
+    const dialog = document.body.querySelector('[role="alertdialog"]')!;
+    expect(dialog).not.toBeNull();
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+    const title = dialog.querySelector('[data-slot="alert-dialog-title"]')!;
+    expect(title.textContent).toContain('Discard changes?');
+    expect(dialog.getAttribute('aria-labelledby')).toBe(title.id);
     expect(button('Confirm')).toBeTruthy();
   });
 

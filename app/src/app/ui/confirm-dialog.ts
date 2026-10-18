@@ -1,22 +1,21 @@
 import { Component, input, output } from '@angular/core';
 import type { BrnDialogState } from '@spartan-ng/brain/dialog';
-import { HlmButtonImports } from '@spartan-ng/helm/button';
-import { HlmDialogImports } from '@spartan-ng/helm/dialog';
+import { HlmAlertDialogImports } from '@spartan-ng/helm/alert-dialog';
 
 @Component({
   selector: 'app-confirm-dialog',
   host: { class: 'contents' },
-  imports: [HlmDialogImports, HlmButtonImports],
+  imports: [HlmAlertDialogImports],
   template: `
-    <hlm-dialog [state]="open() ? 'open' : 'closed'" (stateChanged)="onState($event)">
-      <hlm-dialog-content *hlmDialogPortal="let ctx" [attr.aria-label]="message()">
-        <div hlmDialogTitle>{{ message() }}</div>
-        <hlm-dialog-footer>
-          <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
-          <button hlmBtn variant="primary" size="sm" type="button" (click)="confirm.emit()">{{ confirmLabel() }}</button>
-        </hlm-dialog-footer>
-      </hlm-dialog-content>
-    </hlm-dialog>
+    <hlm-alert-dialog [state]="open() ? 'open' : 'closed'" (stateChanged)="onState($event)">
+      <hlm-alert-dialog-content *hlmAlertDialogPortal="let ctx">
+        <div hlmAlertDialogTitle>{{ message() }}</div>
+        <hlm-alert-dialog-footer>
+          <button hlmAlertDialogCancel size="sm">Cancel</button>
+          <button hlmAlertDialogAction variant="primary" size="sm" (click)="confirm.emit()">{{ confirmLabel() }}</button>
+        </hlm-alert-dialog-footer>
+      </hlm-alert-dialog-content>
+    </hlm-alert-dialog>
   `,
 })
 export class ConfirmDialog {
@@ -26,7 +25,7 @@ export class ConfirmDialog {
   readonly confirm = output<void>();
   readonly cancel = output<void>();
 
-  /** Escape and a backdrop click close the overlay from inside; surface that as cancel. */
+  /** Cancel and Escape both close the overlay from inside; surface that as cancel. A click outside does not close an alert dialog. */
   protected onState(state: BrnDialogState): void {
     if (state === 'closed' && this.open()) this.cancel.emit();
   }

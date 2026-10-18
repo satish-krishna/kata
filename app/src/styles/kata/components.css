@@ -85,10 +85,8 @@
 .k-event--result-ok .k-event__gutter { color: var(--success-text); }
 .k-event--result-err .k-event__gutter { color: var(--error-text); }
 .k-event--turn { color: var(--text-faint); }
-.k-event--turn .k-event__body { color: var(--text-faint); }
 .k-event--log .k-event__body { color: var(--text-muted); }
 .k-event__tool { color: var(--text-primary); font-weight: var(--weight-medium); }
-.k-event__turn-rule { display: block; border-top: 1px dashed var(--border-subtle); margin-top: var(--space-2-5); }
 
 /* ---------- MarkdownBody (rendered assistant markdown, Observe pane) ---------- */
 .k-md { line-height: var(--leading-relaxed); }
@@ -225,37 +223,14 @@
 .k-ask--answered .k-ask__banner-dot { background: var(--success); animation: none; }
 .k-ask--answered .k-ask__banner-label { color: var(--success-text); }
 
-/* toasts — transient error notifications (floating, bottom-right) */
-.k-toaster {
-  position: fixed; right: var(--space-5); bottom: var(--space-5); z-index: 200;
-  display: flex; flex-direction: column-reverse; gap: var(--space-2);
-  max-width: 380px;
-}
-.k-toast {
-  display: flex; align-items: center; gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface-card); border: 1px solid var(--border-default);
-  border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
-  color: var(--text-primary); font: var(--weight-medium) var(--text-sm)/1.4 var(--font-sans);
-}
-.k-toast--error { border-color: var(--error-border); }
-.k-toast__dot {
-  width: 8px; height: 8px; border-radius: var(--radius-full);
-  background: var(--error); flex: none;
-}
-.k-toast__msg { flex: 1; }
-.k-toast__close {
-  display: inline-flex; align-items: center; justify-content: center;
-  background: none; border: none; color: var(--text-faint); cursor: pointer;
-  padding: var(--space-1); border-radius: var(--radius-sm);
-}
-.k-toast__close:hover { color: var(--text-secondary); }
+/* toasts: skinned in libs/ui/sonner (hlm-toaster.ts). Sonner's styles are unlayered, so a rule in this file's `components` layer can never beat them. */
 
 /* tool cards — the rail (docs/superpowers/specs/2026-10-12-tool-cards-design.md) */
 .k-toolcard { display: flex; flex-direction: column; }
 .k-toolcard__row { appearance: none; background: none; border: 0; width: 100%; display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2); border-radius: var(--radius-xs); font: var(--font-code-sm); color: var(--text-secondary); text-align: left; cursor: pointer; }
 .k-toolcard__row:hover { background: var(--surface-hover); }
 .k-toolcard__row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.k-toolcard__line { gap: var(--space-2); }
 .k-toolcard__chev { flex: none; display: inline-flex; color: var(--text-faint); }
 .k-toolcard__dot { flex: none; width: 7px; height: 7px; border-radius: var(--radius-full); }
 .k-toolcard__dot--ok { background: var(--success); }
@@ -271,14 +246,8 @@
 .k-toolcard__status--error { color: var(--error-text); }
 .k-toolcard__status--running { color: var(--text-faint); }
 .k-toolcard__body { margin: var(--space-1) 0 var(--space-2) var(--indent-toolcard); padding-left: var(--space-3); border-left: 1px solid var(--border-default); display: flex; flex-direction: column; gap: var(--space-2); }
-.k-toolcard__out { margin: 0; font: var(--font-code-sm); color: var(--text-secondary); background: var(--surface-inset); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); white-space: pre-wrap; word-break: break-word; max-height: 360px; overflow: auto; }
-.k-toolcard__trunc { font: var(--font-code-sm); font-size: var(--text-2xs); color: var(--text-faint); }
 .k-toolcard__label { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-faint); }
 .k-toolcard__prose { font: var(--text-sm)/1.5 var(--font-sans); color: var(--text-secondary); white-space: pre-wrap; }
-.k-toolcard__diff { font: var(--font-code-sm); background: var(--surface-inset); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); overflow: auto; max-height: 480px; }
-.k-toolcard__dl { padding: 0 var(--space-2); white-space: pre; color: var(--text-muted); }
-.k-toolcard__dl--add { background: var(--success-subtle); color: var(--success-text); }
-.k-toolcard__dl--del { background: var(--error-subtle); color: var(--error-text); }
 .k-toolcard__dm { display: inline-block; width: 1.5ch; user-select: none; }
 .k-toolcard__todo { list-style: none; margin: 0; padding: 0; font: var(--font-code-sm); line-height: 1.7; }
 .k-toolcard__todo-item { display: flex; gap: var(--space-2); align-items: center; color: var(--text-muted); }

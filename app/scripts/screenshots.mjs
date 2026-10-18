@@ -15,7 +15,7 @@ import { spawn, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve, isAbsolute } from "node:path";
 import { mkdir } from "node:fs/promises";
-import { launchBrowser } from "../parity/capture.mjs";
+import { answerAsk, launchBrowser } from "../parity/capture.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(here, "..");
@@ -29,7 +29,7 @@ const argVal = (flag) => {
 
 const urlArg = argVal("--url");
 const outArg = argVal("--out") ?? process.env.SCREENSHOTS_OUT;
-const outDir = outArg ? (isAbsolute(outArg) ? outArg : resolve(process.cwd(), outArg)) : join(repoRoot, "docs", "screenshots");
+const outDir = outArg ? (isAbsolute(outArg) ? outArg : resolve(process.cwd(), outArg)) : join(repoRoot, "docs", "images");
 
 // Desktop-only product (laptop → ultrawide); 2x for crisp retina output.
 const VIEWPORT = { width: 1440, height: 900 };
@@ -76,6 +76,15 @@ async function main() {
     console.log(`using ${base}`);
   }
 
+  // A failed capture must not leave ng serve holding the port.
+  try {
+    await capture(base);
+  } finally {
+    if (server) stop(server);
+  }
+}
+
+async function capture(base) {
   const browser = await launchBrowser();
   const page = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: SCALE });
   const written = [];
@@ -102,19 +111,10 @@ async function main() {
   await ready(".k-ask", 30_000);
   await shoot("02-observe-ask");
 
-  // Answer the ask (first option / sample text per question) so the run resumes
+  // Answer the ask (first choice / sample text per step) so the run resumes
   // and finishes, surfacing the run.completed summary (exit / turns / cost).
-  const groups = page.locator(".k-ask__q");
-  for (let i = 0; i < (await groups.count()); i++) {
-    const g = groups.nth(i);
-    if (await g.locator("textarea").count()) {
-      await g.locator("textarea").fill("Confirmed — proceed.");
-      continue;
-    }
-    const opt = g.locator(".k-ask__opt, .k-ask__confirm-btn").first();
-    if (await opt.count()) await opt.click();
-  }
-  await page.locator(".k-ask__foot button.k-btn--primary").click();
+  // Shared with the parity capture, so the two cannot drift apart again.
+  await answerAsk(page);
 
   // The resumed run then pauses on a permission check; allow it so it finishes.
   const allow = page.getByRole("button", { name: "Allow · resume" });
@@ -133,7 +133,6 @@ async function main() {
   await shoot("04-library");
 
   await browser.close();
-  if (server) stop(server);
 
   console.log(`\n${written.length} screenshot(s) written to ${outDir}`);
 }
