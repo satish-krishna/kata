@@ -201,6 +201,8 @@
 .k-ask__opt:hover { border-color: var(--border-strong); background: var(--surface-hover); }
 .k-ask__opt--selected { border-color: var(--accent); background: var(--accent-subtle); }
 .k-ask__opt:disabled { opacity: 0.55; cursor: default; }
+.k-ask__opt--static { cursor: default; }
+.k-ask__opt--static:hover { border-color: var(--accent); background: var(--accent-subtle); }
 .k-ask__mark { width: 16px; height: 16px; flex: none; margin-top: var(--space-px); border: 1px solid var(--border-strong); background: var(--surface-card); display: inline-flex; align-items: center; justify-content: center; color: transparent; transition: all var(--dur-fast) var(--ease-out); }
 .k-ask__mark--radio { border-radius: var(--radius-full); }
 .k-ask__mark--check { border-radius: var(--radius-xs); }
