@@ -12,6 +12,6 @@ import { classes } from '@spartan-ng/helm/utils';
 })
 export class HlmQuestionnaireChoices {
   constructor() {
-    classes(() => 'gap-3 group/questionnaire-choices grid min-w-0');
+    classes(() => 'gap-(--space-2) group/questionnaire-choices grid min-w-0');
   }
 }

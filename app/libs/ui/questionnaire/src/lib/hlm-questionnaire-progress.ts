@@ -36,7 +36,7 @@ export class HlmQuestionnaireProgress {
 
   constructor() {
     classes(
-      () => 'text-xs text-muted-foreground min-h-lh w-fit min-w-[14ch] font-medium tabular-nums',
+      () => 'min-h-lh w-fit min-w-[14ch] font-mono text-[length:var(--text-2xs)] font-medium tracking-(--tracking-label) text-(color:--accent-text) uppercase tabular-nums',
     );
   }
 }

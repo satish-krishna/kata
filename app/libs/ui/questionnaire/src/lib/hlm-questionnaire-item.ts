@@ -26,6 +26,6 @@ import { classes } from '@spartan-ng/helm/utils';
 })
 export class HlmQuestionnaireItem {
   constructor() {
-    classes(() => 'gap-5 flex min-w-0 flex-col border-0 p-0 outline-none');
+    classes(() => 'gap-(--space-4) flex min-w-0 flex-col border-0 p-0 outline-none');
   }
 }

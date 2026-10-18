@@ -12,7 +12,7 @@ export class HlmQuestionnaireActions {
   constructor() {
     classes(
       () =>
-        'gap-2 sm:min-h-9 grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center',
+        'gap-(--space-3) sm:min-h-9 grid min-h-11 w-full grid-cols-[minmax(0,1fr)_auto_auto] items-center',
     );
   }
 }

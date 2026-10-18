@@ -40,26 +40,26 @@ import { classes } from '@spartan-ng/helm/utils';
     <span
       aria-hidden="true"
       data-slot="questionnaire-choice-indicator"
-      class="border-input group-data-checked/questionnaire-choice:border-primary group-data-checked/questionnaire-choice:bg-primary group-data-checked/questionnaire-choice:text-primary-foreground dark:bg-input/30 dark:group-data-checked/questionnaire-choice:bg-primary pointer-events-none relative flex size-4 shrink-0 translate-y-[--spacing(0.45)] items-center justify-center rounded-[4px] border group-has-data-[slot=questionnaire-choice-description]/questionnaire-choice:translate-y-0.5 group-data-[type=radio]/questionnaire-choice:rounded-full"
+      class="pointer-events-none relative flex size-4 shrink-0 translate-y-px items-center justify-center rounded-(--radius-xs) border border-(--border-strong) bg-(--surface-card) transition-[background-color,border-color] duration-(--dur-fast) ease-(--ease-out) group-data-checked/questionnaire-choice:border-(--accent) group-data-checked/questionnaire-choice:bg-(--accent) group-data-checked/questionnaire-choice:text-(color:--text-on-accent) group-data-[type=radio]/questionnaire-choice:rounded-full"
     >
       @if (_choice.checked() && _choice.type() === 'radio') {
         <span
           data-slot="questionnaire-choice-indicator-dot"
-          class="bg-primary-foreground size-2 rounded-full"
+          class="size-1.5 rounded-full bg-current"
         ></span>
       }
       @if (_choice.checked() && _choice.type() === 'checkbox') {
         <ng-icon
           name="lucideCheck"
           data-slot="questionnaire-choice-indicator-check"
-          class="text-[length:--spacing(3.5)]"
+          class="text-[length:11px]"
         />
       }
     </span>
     <span
       brnQuestionnaireChoiceLabel
       data-slot="questionnaire-choice-label"
-      class="gap-1 flex min-w-0 flex-1 flex-col leading-snug"
+      class="flex min-w-0 flex-1 flex-col gap-(--space-1) font-sans font-medium text-[length:var(--text-base)] leading-[1.3] text-(color:--text-primary)"
     >
       <ng-content />
     </span>
@@ -67,7 +67,7 @@ import { classes } from '@spartan-ng/helm/utils';
       <span
         brnQuestionnaireChoiceShortcut
         data-slot="questionnaire-choice-shortcut"
-        class="border-input bg-background text-muted-foreground pointer-events-none ms-auto inline-flex size-5 shrink-0 translate-y-[--spacing(0.45)] items-center justify-center rounded-md border font-mono text-[0.625rem] leading-none font-medium shadow-xs group-has-data-[slot=questionnaire-choice-description]/questionnaire-choice:translate-y-0.5"
+        class="pointer-events-none ms-auto inline-flex size-5 shrink-0 items-center justify-center rounded-(--radius-xs) border border-(--border-default) bg-(--surface-card) font-mono text-[length:var(--text-2xs)] leading-none font-medium text-(color:--text-muted)"
       >
         {{ shortcut }}
       </span>
@@ -80,7 +80,7 @@ export class HlmQuestionnaireChoice {
   constructor() {
     classes(
       () =>
-        'border-input hover:bg-muted/50 has-[>input:focus-visible]:border-ring has-[>input:focus-visible]:ring-ring/50 data-invalid:border-destructive dark:bg-input/20 data-checked:border-primary/40 data-checked:bg-muted dark:data-checked:bg-muted gap-3 rounded-md border bg-transparent px-4 py-3.5 text-sm shadow-xs transition-colors has-[>input:focus-visible]:ring-3 data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-disabled:opacity-50 group/questionnaire-choice relative flex min-h-11 cursor-pointer items-start text-start outline-none select-none',
+        'group/questionnaire-choice relative flex cursor-pointer items-start gap-(--space-3) rounded-(--radius-sm) border border-(--border-default) bg-(--surface-inset) px-(--space-4) py-(--space-3) text-start select-none outline-none transition-[background-color,border-color] duration-(--dur-fast) ease-(--ease-out) hover:border-(--border-strong) hover:bg-(--surface-hover) data-checked:border-(--accent) data-checked:bg-(--accent-subtle) data-checked:hover:border-(--accent) data-checked:hover:bg-(--accent-subtle) has-[>input:focus-visible]:border-(--accent) has-[>input:focus-visible]:[box-shadow:0_0_0_3px_var(--accent-subtle)] data-invalid:border-(--error-border) data-disabled:pointer-events-none data-disabled:cursor-default data-disabled:opacity-[0.55]',
     );
   }
 }

@@ -10,6 +10,6 @@ import { classes } from '@spartan-ng/helm/utils';
 })
 export class HlmQuestionnaireChoiceDescription {
   constructor() {
-    classes(() => 'text-muted-foreground');
+    classes(() => 'font-sans font-normal text-[length:var(--text-xs)] leading-[1.45] text-(color:--text-muted)');
   }
 }

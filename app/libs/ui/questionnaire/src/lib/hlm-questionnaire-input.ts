@@ -18,8 +18,8 @@ import { classes } from '@spartan-ng/helm/utils';
 export class HlmQuestionnaireInput {
   constructor() {
     classes(() => [
-      'dark:bg-input/30 border-input focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:aria-invalid:border-destructive/50 h-9 rounded-md border bg-transparent px-2.5 py-1 text-base shadow-xs focus-visible:ring-3 aria-invalid:ring-3 md:text-sm min-h-11 w-full min-w-0 transition-[color,box-shadow,background-color] outline-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-0',
-      'selection:bg-primary selection:text-primary-foreground placeholder:text-muted-foreground',
+      'h-(--control-h) w-full min-w-0 px-(--space-4) font-sans font-normal text-[length:var(--text-base)] leading-(--leading-normal) bg-(--surface-inset) text-(color:--text-primary) border border-(--border-default) rounded-(--radius-sm) transition-[border-color,background-color] duration-(--dur-fast) ease-(--ease-out) hover:border-(--border-strong) focus:outline-none focus:border-(--accent) focus:[box-shadow:0_0_0_3px_var(--accent-subtle)] aria-invalid:border-(--error-border) disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
+      'placeholder:text-(color:--text-placeholder)',
     ]);
   }
 }
