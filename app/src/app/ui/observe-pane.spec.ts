@@ -184,7 +184,7 @@ describe('ObservePane - asks render where they happened too', () => {
 
   it('forwards an answer to answer with the ask id', async () => {
     const m = await renderPane({ state: 'awaiting', asks: [ASK] });
-    const ta = m.container.querySelector('textarea')!;
+    const ta = m.container.querySelector<HTMLInputElement>('input[hlmQuestionnaireInput]')!;
     ta.value = 'isolate';
     ta.dispatchEvent(new Event('input', { bubbles: true }));
     await m.fixture.whenStable();
@@ -195,14 +195,14 @@ describe('ObservePane - asks render where they happened too', () => {
 
   it('keeps an open ask panel (and what was typed) when more events arrive', async () => {
     const m = await renderPane({ state: 'awaiting', asks: [ASK] });
-    const ta = m.container.querySelector('textarea')!;
+    const ta = m.container.querySelector<HTMLInputElement>('input[hlmQuestionnaireInput]')!;
     ta.value = 'half-typed';
     ta.dispatchEvent(new Event('input', { bubbles: true }));
     await m.fixture.whenStable();
     m.fixture.componentRef.setInput('events', [DECIDED_BY_POLICY]);
     m.fixture.componentRef.setInput('asks', [{ ...ASK, at: 0 }]);
     await m.fixture.whenStable();
-    expect(m.container.querySelector('textarea')).toBe(ta);
+    expect(m.container.querySelector('input[hlmQuestionnaireInput]')).toBe(ta);
     expect(ta.value).toBe('half-typed');
   });
 });

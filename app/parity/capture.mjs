@@ -7,14 +7,19 @@ import { mkdir } from 'node:fs/promises';
 export const VIEWPORT = { width: 1440, height: 900 };
 
 async function answerAsk(page) {
-  const groups = page.locator('.k-ask__q');
-  for (let i = 0; i < (await groups.count()); i++) {
-    const g = groups.nth(i);
-    if (await g.locator('textarea').count()) { await g.locator('textarea').fill('Confirmed — proceed.'); continue; }
-    const opt = g.locator('.k-ask__opt, .k-ask__confirm-btn').first();
-    if (await opt.count()) await opt.click();
+  const send = page.getByRole('button', { name: 'Send answer · resume' });
+  const next = page.locator('button[hlmQuestionnaireNext]:visible');
+  for (let step = 0; step < 20; step++) {
+    const item = page.locator('fieldset[hlmQuestionnaireItem]:visible').first();
+    await item.waitFor({ timeout: 15000 });
+    const choice = item.locator('label[hlmQuestionnaireChoice]:visible').first();
+    if (await choice.count()) await choice.click();
+    else await item.locator('input:visible, textarea:visible').first().fill('Confirmed — proceed.');
+    if (await next.count()) { await next.first().click(); continue; }
+    await send.click();
+    return;
   }
-  await page.locator('.k-ask__foot button.k-btn--primary').click();
+  throw new Error('answerAsk: questionnaire did not reach Send');
 }
 
 async function allowPermission(page) {

@@ -34,7 +34,8 @@
       "@spartan-ng/helm/skeleton": ["./libs/ui/skeleton/src/index.ts"],
       "@spartan-ng/helm/checkbox": ["./libs/ui/checkbox/src/index.ts"],
       "@spartan-ng/helm/toggle-group": ["./libs/ui/toggle-group/src/index.ts"],
-      "@spartan-ng/helm/toggle": ["./libs/ui/toggle/src/index.ts"]
+      "@spartan-ng/helm/toggle": ["./libs/ui/toggle/src/index.ts"],
+      "@spartan-ng/helm/questionnaire": ["./libs/ui/questionnaire/src/index.ts"]
     }
   },
   "angularCompilerOptions": {

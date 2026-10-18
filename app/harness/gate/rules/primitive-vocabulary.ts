@@ -112,6 +112,21 @@ export const PRIMITIVE_ATTRS: ReadonlySet<string> = new Set([
   'hlmSidebarSeparator',
   'hlmSidebarTrigger',
   'hlmSidebarWrapper',
+  'hlmQuestionnaire',
+  'hlmQuestionnaireActions',
+  'hlmQuestionnaireChoice',
+  'hlmQuestionnaireChoiceDescription',
+  'hlmQuestionnaireChoices',
+  'hlmQuestionnaireDescription',
+  'hlmQuestionnaireError',
+  'hlmQuestionnaireInput',
+  'hlmQuestionnaireItem',
+  'hlmQuestionnaireNext',
+  'hlmQuestionnairePrevious',
+  'hlmQuestionnaireProgress',
+  'hlmQuestionnaireSkip',
+  'hlmQuestionnaireSubmit',
+  'hlmQuestionnaireTitle',
 ]);
 
 export const PRIMITIVE_ELEMENTS: ReadonlySet<string> = new Set([
@@ -171,4 +186,5 @@ export const PRIMITIVE_ELEMENTS: ReadonlySet<string> = new Set([
   'hlm-sidebar-menu-skeleton',
   'hlm-sidebar-separator',
   'hlm-sidebar-wrapper',
+  'hlm-questionnaire-actions',
 ]);

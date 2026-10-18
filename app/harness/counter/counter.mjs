@@ -121,6 +121,21 @@ const PRIMITIVE_ATTRS = new Set([
   'hlmSidebarSeparator',
   'hlmSidebarTrigger',
   'hlmSidebarWrapper',
+  'hlmQuestionnaire',
+  'hlmQuestionnaireActions',
+  'hlmQuestionnaireChoice',
+  'hlmQuestionnaireChoiceDescription',
+  'hlmQuestionnaireChoices',
+  'hlmQuestionnaireDescription',
+  'hlmQuestionnaireError',
+  'hlmQuestionnaireInput',
+  'hlmQuestionnaireItem',
+  'hlmQuestionnaireNext',
+  'hlmQuestionnairePrevious',
+  'hlmQuestionnaireProgress',
+  'hlmQuestionnaireSkip',
+  'hlmQuestionnaireSubmit',
+  'hlmQuestionnaireTitle',
 ]);
 const PRIMITIVE_ELEMENTS = new Set([
   'hlm-card',
@@ -179,6 +194,7 @@ const PRIMITIVE_ELEMENTS = new Set([
   'hlm-sidebar-menu-skeleton',
   'hlm-sidebar-separator',
   'hlm-sidebar-wrapper',
+  'hlm-questionnaire-actions',
 ]);
 
 // Rule 1's table: a native element -> the set of acceptable primitive
@@ -199,13 +215,17 @@ const CONTROL_PRIMITIVE_ATTRS = {
     'hlmSidebarGroupAction',
     'hlmSidebarGroupLabel',
     'hlmTabsTrigger',
-    'hlmToggleGroupItem'
+    'hlmToggleGroupItem',
+    'hlmQuestionnaireNext',
+    'hlmQuestionnairePrevious',
+    'hlmQuestionnaireSkip',
+    'hlmQuestionnaireSubmit'
   ],
-  input: ['hlmInput', 'hlmSidebarInput'],
+  input: ['hlmInput', 'hlmSidebarInput', 'hlmQuestionnaireInput'],
   textarea: ['hlmTextarea'],
-  label: ['hlmLabel', 'hlmFieldLabel'],
-  fieldset: ['hlmFieldSet'],
-  legend: ['hlmFieldLegend'],
+  label: ['hlmLabel', 'hlmFieldLabel', 'hlmQuestionnaireChoice'],
+  fieldset: ['hlmFieldSet', 'hlmQuestionnaireItem'],
+  legend: ['hlmFieldLegend', 'hlmQuestionnaireTitle'],
   table: ['hlmTable'],
   thead: ['hlmTableHeader', 'hlmTHead'],
   tbody: ['hlmTableBody', 'hlmTBody'],
