@@ -215,7 +215,7 @@
 .k-ask__answer { font: var(--font-code-sm); color: var(--text-secondary); background: var(--surface-inset); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: var(--space-3) var(--space-4); line-height: 1.5; }
 .k-ask__answer--empty { color: var(--text-faint); }
 .k-ask__foot { display: flex; align-items: center; gap: var(--space-4); padding-top: var(--space-2); }
-.k-ask__hint { font: var(--font-code-sm); font-size: var(--text-xs); color: var(--text-faint); }
+.k-ask__hint { font: var(--font-code-sm); font-size: var(--text-xs); color: var(--text-faint); flex: none; white-space: nowrap; }
 /* Targets the helm button primitive (hlmBtn): a lone footer button sits right. */
 .k-ask__foot > [hlmBtn] { margin-left: auto; }
 /* A button pair sits right as one group; 1fr tracks in an auto-width grid both

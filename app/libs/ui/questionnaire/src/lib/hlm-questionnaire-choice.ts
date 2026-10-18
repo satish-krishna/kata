@@ -80,7 +80,7 @@ export class HlmQuestionnaireChoice {
   constructor() {
     classes(
       () =>
-        'group/questionnaire-choice relative flex cursor-pointer items-start gap-(--space-3) rounded-(--radius-sm) border border-(--border-default) bg-(--surface-inset) px-(--space-4) py-(--space-3) text-start select-none outline-none transition-[background-color,border-color] duration-(--dur-fast) ease-(--ease-out) hover:border-(--border-strong) hover:bg-(--surface-hover) data-checked:border-(--accent) data-checked:bg-(--accent-subtle) data-checked:hover:border-(--accent) data-checked:hover:bg-(--accent-subtle) has-[>input:focus-visible]:border-(--accent) has-[>input:focus-visible]:[box-shadow:0_0_0_3px_var(--accent-subtle)] data-invalid:border-(--error-border) data-disabled:pointer-events-none data-disabled:cursor-default data-disabled:opacity-[0.55]',
+        'group/questionnaire-choice relative flex cursor-pointer items-start gap-(--space-3) rounded-(--radius-sm) border border-(--border-default) bg-(--surface-inset) px-(--space-4) py-(--space-3) text-start select-none outline-none transition-[background-color,border-color] duration-(--dur-fast) ease-(--ease-out) hover:border-(--border-strong) hover:bg-(--surface-hover) data-checked:border-(--accent) data-checked:bg-(--accent-subtle) data-checked:hover:border-(--accent) data-checked:hover:bg-(--accent-subtle) has-[>input:focus-visible]:outline-solid has-[>input:focus-visible]:outline-2 has-[>input:focus-visible]:outline-offset-2 has-[>input:focus-visible]:outline-(--accent) data-invalid:border-(--error-border) data-disabled:pointer-events-none data-disabled:cursor-default data-disabled:opacity-[0.55]',
     );
   }
 }
