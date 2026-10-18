@@ -69,7 +69,7 @@ describe('ObservePane - the approval card', () => {
     });
     expect(m.text()).toContain('denied · run resumed');
     expect(m.text()).toContain('not on this branch');
-    expect(m.container.querySelector('input[hlmQuestionnaireInput]')).toBeNull();
+    expect(m.container.querySelector('textarea')).toBeNull();
     expect(m.button('Deny').disabled).toBe(true);
     expect(m.decide).not.toHaveBeenCalled();
   });

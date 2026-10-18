@@ -47,7 +47,11 @@ import { AskSummary } from './ask-summary';
                     <input hlmQuestionnaireInput [attr.aria-label]="q.question" [attr.placeholder]="q.placeholder ?? ''" />
                   }
                 </div>
-                <p hlmQuestionnaireError></p>
+                @if (q.kind === 'text') {
+                  <p hlmQuestionnaireError requiredMessage="Type an answer to continue."></p>
+                } @else {
+                  <p hlmQuestionnaireError></p>
+                }
               </fieldset>
             }
             <div class="k-ask__foot">

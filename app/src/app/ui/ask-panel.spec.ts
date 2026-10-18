@@ -133,6 +133,8 @@ describe('AskPanel - text and confirm', () => {
     const m = await mount([text]);
     await m.click(m.send());
     expect(m.answer).not.toHaveBeenCalled();
+    expect(m.errorEl().hasAttribute('hidden')).toBe(false);
+    expect(m.errorEl().textContent?.trim()).toBe('Type an answer to continue.');
     await m.type(m.container.querySelector<HTMLInputElement>('input[aria-label="Name?"]')!, 'kata');
     await m.click(m.send());
     expect(m.answer).toHaveBeenCalledWith({ id: 'a1', answers: [['kata']] });
