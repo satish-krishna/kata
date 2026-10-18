@@ -6,7 +6,7 @@ import { mkdir } from 'node:fs/promises';
 
 export const VIEWPORT = { width: 1440, height: 900 };
 
-async function answerAsk(page) {
+export async function answerAsk(page) {
   const send = page.getByRole('button', { name: 'Send answer · resume' });
   const next = page.locator('button[hlmQuestionnaireNext]:visible');
   for (let step = 0; step < 20; step++) {
