@@ -35,7 +35,15 @@
       "@spartan-ng/helm/checkbox": ["./libs/ui/checkbox/src/index.ts"],
       "@spartan-ng/helm/toggle-group": ["./libs/ui/toggle-group/src/index.ts"],
       "@spartan-ng/helm/toggle": ["./libs/ui/toggle/src/index.ts"],
-      "@spartan-ng/helm/questionnaire": ["./libs/ui/questionnaire/src/index.ts"]
+      "@spartan-ng/helm/questionnaire": ["./libs/ui/questionnaire/src/index.ts"],
+      "@spartan-ng/helm/trace": ["./libs/ui/trace/src/index.ts"],
+      "@spartan-ng/helm/code-block": ["./libs/ui/code-block/src/index.ts"],
+      "@spartan-ng/helm/alert-dialog": ["./libs/ui/alert-dialog/src/index.ts"],
+      "@spartan-ng/helm/alert": ["./libs/ui/alert/src/index.ts"],
+      "@spartan-ng/helm/empty": ["./libs/ui/empty/src/index.ts"],
+      "@spartan-ng/helm/sonner": ["./libs/ui/sonner/src/index.ts"],
+      "@spartan-ng/helm/message-scroller": ["./libs/ui/message-scroller/src/index.ts"],
+      "@spartan-ng/helm/marker": ["./libs/ui/marker/src/index.ts"]
     }
   },
   "angularCompilerOptions": {
