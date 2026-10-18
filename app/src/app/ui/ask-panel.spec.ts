@@ -46,8 +46,9 @@ async function mount(questions: Question[], answers: string[][] | null = null) {
     el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
     await r.fixture.whenStable();
   };
-  const error = () => root.querySelector<HTMLElement>('[hlmQuestionnaireError]:not([hidden])');
-  return { ...r, answer, btn, maybeBtn, send, click, type, items, active, pick, free, press, error };
+  // The error text always renders; brain toggles `hidden`, so visibility is the hidden attribute.
+  const errorEl = () => active().querySelector<HTMLElement>('[hlmQuestionnaireError]')!;
+  return { ...r, answer, btn, maybeBtn, send, click, type, items, active, pick, free, press, errorEl };
 }
 
 describe('AskPanel - free text', () => {
@@ -66,9 +67,10 @@ describe('AskPanel - free text', () => {
   it('an empty free-text answer never sends', async () => {
     const m = await mount([single]);
     await m.type(m.free()!, '   ');
+    expect(m.errorEl().hasAttribute('hidden')).toBe(true);
     await m.click(m.send());
     expect(m.answer).not.toHaveBeenCalled();
-    expect(m.error()?.textContent?.trim()).toBeTruthy();
+    expect(m.errorEl().hasAttribute('hidden')).toBe(false);
   });
 
   it('single-select: typed text replaces the choice', async () => {
@@ -182,9 +184,10 @@ describe('AskPanel - stepping', () => {
 
   it('a required question refuses Next until answered', async () => {
     const m = await mount(two);
+    expect(m.errorEl().hasAttribute('hidden')).toBe(true);
     await m.click(m.btn(/Next/));
     expect(m.items()[0].hasAttribute('hidden')).toBe(false);
-    expect(m.error()?.textContent?.trim()).toBeTruthy();
+    expect(m.errorEl().hasAttribute('hidden')).toBe(false);
     // Skip is not offered on a required question and does nothing if clicked.
     expect(m.btn(/Skip/).hasAttribute('hidden')).toBe(true);
     await m.click(m.btn(/Skip/));
@@ -238,14 +241,15 @@ describe('AskPanel - stepping', () => {
   selector: 'app-two-panels-host',
   imports: [AskPanel],
   template: `
-    <app-ask-panel [ask]="settled()" />
-    <app-ask-panel [ask]="pending()" (answer)="got.push($event)" />
+    <app-ask-panel [ask]="a()" (answer)="gotA.push($event)" />
+    <app-ask-panel [ask]="b()" (answer)="gotB.push($event)" />
   `,
 })
 class TwoPanelsHost {
-  readonly settled = signal(rec([single], [['SQLite']]));
-  readonly pending = signal({ ...rec([single]), id: 'a2' });
-  readonly got: unknown[] = [];
+  readonly a = signal({ ...rec([single]), id: 'a-id' });
+  readonly b = signal({ ...rec([single]), id: 'b-id' });
+  readonly gotA: unknown[] = [];
+  readonly gotB: unknown[] = [];
 }
 
 describe('AskPanel - isolation', () => {
@@ -253,16 +257,17 @@ describe('AskPanel - isolation', () => {
     TestBed.configureTestingModule({ imports: [TwoPanelsHost] });
     const fixture = TestBed.createComponent(TwoPanelsHost);
     await fixture.whenStable();
-    const root = fixture.nativeElement as HTMLElement;
-    const [settledPanel, pendingPanel] = Array.from(root.querySelectorAll('app-ask-panel'));
-    const before = settledPanel.textContent;
-    const pick = Array.from(pendingPanel.querySelectorAll<HTMLInputElement>('input')).find((i) => i.value === 'Postgres')!;
-    pick.click();
+    const [panelA, panelB] = Array.from((fixture.nativeElement as HTMLElement).querySelectorAll('app-ask-panel'));
+    const choice = (panel: Element, value: string) =>
+      Array.from(panel.querySelectorAll<HTMLInputElement>('input')).find((i) => i.value === value)!;
+    expect(choice(panelB, 'Postgres')).not.toBe(choice(panelA, 'Postgres'));
+    choice(panelA, 'Postgres').click();
     await fixture.whenStable();
-    (pendingPanel.querySelector('button[type=submit]') as HTMLButtonElement).click();
+    expect(choice(panelA, 'Postgres').checked).toBe(true);
+    expect(choice(panelB, 'Postgres').checked).toBe(false);
+    (panelA.querySelector('button[type=submit]') as HTMLButtonElement).click();
     await fixture.whenStable();
-    expect(fixture.componentInstance.got).toEqual([{ id: 'a2', answers: [['Postgres']] }]);
-    expect(settledPanel.textContent).toBe(before);
-    expect(settledPanel.querySelector('input')).toBeNull();
+    expect(fixture.componentInstance.gotA).toEqual([{ id: 'a-id', answers: [['Postgres']] }]);
+    expect(fixture.componentInstance.gotB).toEqual([]);
   });
 });
