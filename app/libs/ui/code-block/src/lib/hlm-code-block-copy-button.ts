@@ -11,7 +11,7 @@ import { classes } from '@spartan-ng/helm/utils';
   imports: [NgIcon],
   providers: [
     provideIcons({ lucideCopy, lucideCheck }),
-    provideBrnButtonConfig({ variant: 'ghost', size: 'icon-xs' }),
+    provideBrnButtonConfig({ variant: 'ghost', size: 'icon-sm' }),
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   hostDirectives: [{ directive: HlmButton, inputs: ['variant', 'size'] }],
