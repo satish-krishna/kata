@@ -19,7 +19,11 @@ describe('App toasts', () => {
     expect(region?.textContent).toContain('export failed');
     const closers = Array.from(region?.querySelectorAll('button[data-close-button]') ?? []);
     expect(closers).toHaveLength(2);
-    for (const c of closers) expect(c.getAttribute('aria-label')).toBeTruthy();
+    for (const c of closers) {
+      expect(c.getAttribute('aria-label')).toBeTruthy();
+      expect(c.classList).toContain('k-toast__close');
+    }
+    expect(region?.querySelectorAll('li.k-toast.k-toast--error')).toHaveLength(2);
   });
 
   it('shows a toast raised before the app shell exists', async () => {

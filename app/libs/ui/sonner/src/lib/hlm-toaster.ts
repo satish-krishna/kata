@@ -2,6 +2,7 @@ import type { BooleanInput, NumberInput } from '@angular/cdk/coercion';
 import {
   ChangeDetectionStrategy,
   Component,
+  ViewEncapsulation,
   afterNextRender,
   booleanAttribute,
   computed,
@@ -17,6 +18,59 @@ import type { ClassValue } from 'clsx';
   selector: 'hlm-toaster',
   exportAs: 'hlmToaster',
   imports: [BrnSonnerImports, HlmButtonImports],
+  encapsulation: ViewEncapsulation.None,
+  // Kata skin. Sonner's own rules are unlayered, so these live here (also unlayered) rather than in the
+  // `components` layer of src/styles/kata, where they would lose to sonner at any specificity.
+  styles: `
+    [data-sonner-toast].k-toast[data-styled='true'] {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      padding: var(--space-3) var(--space-4);
+      box-shadow: var(--shadow-lg);
+      font: var(--weight-medium) var(--text-sm) / 1.4 var(--font-sans);
+    }
+    /* sonner redefines --error-border inside the toaster, so derive from --error directly */
+    [data-sonner-toast].k-toast--error[data-styled='true'] {
+      border-color: color-mix(in srgb, var(--error) 42%, transparent);
+    }
+    .k-toast__dot {
+      display: block;
+      width: 8px;
+      height: 8px;
+      border-radius: var(--radius-full);
+      background: var(--error);
+      flex: none;
+    }
+    [data-sonner-toast].k-toast [data-icon] {
+      margin: 0;
+    }
+    [data-sonner-toast].k-toast [data-content] {
+      flex: 1;
+    }
+    [data-sonner-toast].k-toast .k-toast__close[data-close-button],
+    [data-sonner-toast].k-toast:hover .k-toast__close[data-close-button]:hover {
+      position: static;
+      order: 1;
+      transform: none;
+      flex: none;
+      width: auto;
+      height: auto;
+      padding: var(--space-1);
+      background: none;
+      border: none;
+      border-radius: var(--radius-sm);
+      color: var(--text-faint);
+      cursor: pointer;
+    }
+    [data-sonner-toast].k-toast:hover .k-toast__close[data-close-button]:hover {
+      color: var(--text-secondary);
+    }
+    [data-sonner-toast].k-toast .k-toast__close[data-close-button]:focus-visible {
+      outline: none;
+      box-shadow: var(--focus-ring);
+    }
+  `,
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <brn-sonner-toaster

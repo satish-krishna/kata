@@ -224,31 +224,7 @@
 .k-ask--answered .k-ask__banner-dot { background: var(--success); animation: none; }
 .k-ask--answered .k-ask__banner-label { color: var(--success-text); }
 
-/* toasts — transient error notifications, rendered by sonner (hlm-toaster; floating, bottom-right).
-   Sonner's own rules are [data-sonner-toast][data-styled=true] (0,2,0), so these carry that attribute pair to win. */
-[data-sonner-toast].k-toast[data-styled='true'] {
-  display: flex; align-items: center; gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  box-shadow: var(--shadow-lg);
-  font: var(--weight-medium) var(--text-sm)/1.4 var(--font-sans);
-}
-/* sonner redefines --error-border inside the toaster, so derive from --error directly */
-[data-sonner-toast].k-toast--error[data-styled='true'] { border-color: color-mix(in srgb, var(--error) 42%, transparent); }
-.k-toast__dot {
-  display: block; width: 8px; height: 8px; border-radius: var(--radius-full);
-  background: var(--error); flex: none;
-}
-[data-sonner-toast] [data-icon] { margin: 0; }
-[data-sonner-toast].k-toast [data-content] { flex: 1; }
-[data-sonner-toast].k-toast .k-toast__close[data-close-button],
-[data-sonner-toast].k-toast:hover .k-toast__close[data-close-button]:hover {
-  position: static; order: 1; transform: none; flex: none;
-  width: auto; height: auto; padding: var(--space-1);
-  background: none; border: none; border-radius: var(--radius-sm);
-  color: var(--text-faint); cursor: pointer;
-}
-[data-sonner-toast].k-toast:hover .k-toast__close[data-close-button]:hover { color: var(--text-secondary); }
-[data-sonner-toast].k-toast .k-toast__close[data-close-button]:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* toasts: skinned in libs/ui/sonner (hlm-toaster.ts). Sonner's styles are unlayered, so a rule in this file's `components` layer can never beat them. */
 
 /* tool cards — the rail (docs/superpowers/specs/2026-10-12-tool-cards-design.md) */
 .k-toolcard { display: flex; flex-direction: column; }
