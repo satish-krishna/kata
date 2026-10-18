@@ -8,6 +8,6 @@ import { classes } from '@spartan-ng/helm/utils';
 })
 export class HlmTraceDescription {
   constructor() {
-    classes(() => 'text-muted-foreground/70 shrink-0 tabular-nums');
+    classes(() => 'shrink-0');
   }
 }

@@ -1,31 +1,23 @@
 import { ChangeDetectionStrategy, Component } from '@angular/core';
-import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideChevronRight } from '@ng-icons/lucide';
 import { BrnCollapsibleTrigger } from '@spartan-ng/brain/collapsible';
 import { classes } from '@spartan-ng/helm/utils';
 
+/**
+ * Kata skin: the stock trailing chevron is gone. The call site puts the chevron in an
+ * `hlm-trace-icon` at the start of the row (it swaps right/down with the open state), and the
+ * Kata look (padding, hover, focus ring, type) comes from the `.k-toolcard__row` class.
+ */
 @Component({
   // eslint-disable-next-line @angular-eslint/component-selector
   selector: 'button[hlmTraceCollapsibleTrigger]',
   exportAs: 'hlmTraceCollapsibleTrigger',
-  imports: [NgIcon],
-  providers: [provideIcons({ lucideChevronRight })],
   changeDetection: ChangeDetectionStrategy.OnPush,
   hostDirectives: [{ directive: BrnCollapsibleTrigger, inputs: ['type'] }],
   host: { 'data-slot': 'trace-collapsible-trigger' },
-  template: `
-    <ng-content />
-    <ng-icon
-      name="lucideChevronRight"
-      class="transition-transform group-aria-expanded/trace-collapsible-trigger:rotate-90 motion-reduce:transition-none"
-    />
-  `,
+  template: `<ng-content />`,
 })
 export class HlmTraceCollapsibleTrigger {
   constructor() {
-    classes(
-      () =>
-        'focus-visible:ring-ring/50 gap-1 rounded-md focus-visible:ring-3 group/trace-collapsible-trigger text-muted-foreground hover:text-foreground has-[[data-status=error]]:text-destructive flex w-fit max-w-full min-w-0 cursor-pointer items-center text-left transition-colors outline-none',
-    );
+    classes(() => 'flex w-full min-w-0 cursor-pointer items-center text-left');
   }
 }

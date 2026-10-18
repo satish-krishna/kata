@@ -152,4 +152,52 @@ describe('ToolCard', () => {
     expect(row.tagName).toBe('BUTTON');
     expect(row.getAttribute('aria-expanded')).toBe('false');
   });
+  it('the row is a collapsible trigger wired to its body', async () => {
+    const { container, fixture } = await render(ToolCard, {
+      call: callOf([use('Read', { file_path: 'a.rs' }), res('Read', true, { output: 'x' })]),
+    });
+    const row = container.querySelector('.k-toolcard__row') as HTMLButtonElement;
+    const body = container.querySelector('[data-slot=trace-collapsible-content]') as HTMLElement;
+    expect(body.id).not.toBe('');
+    expect(row.getAttribute('aria-controls')).toBe(body.id);
+    expect(row.getAttribute('aria-expanded')).toBe('false');
+    row.click();
+    await fixture.whenStable();
+    expect(row.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('a closed card renders no body content and its body is inert', async () => {
+    const { container } = await render(ToolCard, {
+      call: callOf([use('Read', { file_path: 'a.rs' }), res('Read', true, { output: 'x' })]),
+    });
+    expect(container.querySelector('.k-toolcard__out')).toBeNull();
+    expect(container.querySelector('[data-slot=trace-collapsible-content]')!.hasAttribute('inert')).toBe(true);
+  });
+
+  it('a call that turns to error after render opens itself, and the operator click still wins', async () => {
+    const running = callOf([use('Read', { file_path: 'a.rs' })]);
+    const failed = callOf([use('Read', { file_path: 'a.rs' }), res('Read', false, { output: 'boom' })]);
+    const { container, fixture } = await render(ToolCard, { call: running });
+    const row = container.querySelector('.k-toolcard__row') as HTMLButtonElement;
+    expect(row.getAttribute('aria-expanded')).toBe('false');
+    fixture.componentRef.setInput('call', failed);
+    await fixture.whenStable();
+    expect(row.getAttribute('aria-expanded')).toBe('true');
+    expect(within(container).getByText('boom')).toBeTruthy();
+    row.click();
+    await fixture.whenStable();
+    expect(row.getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('[data-slot=trace-collapsible-content]')!.hasAttribute('inert')).toBe(true);
+  });
+
+  it.each([
+    ['ok', [use('Read', { file_path: 'a.rs' }), res('Read')]],
+    ['error', [use('Read', { file_path: 'a.rs' }), res('Read', false)]],
+    ['running…', [use('Read', { file_path: 'a.rs' })]],
+  ])('the status label %s is visible beside the dot', async (label, events) => {
+    const { container } = await render(ToolCard, { call: callOf(events as Record<string, unknown>[]) });
+    const row = container.querySelector('.k-toolcard__row') as HTMLElement;
+    expect(within(row).getByText(label)).toBeTruthy();
+    expect(row.querySelector('.k-toolcard__dot')).not.toBeNull();
+  });
 });

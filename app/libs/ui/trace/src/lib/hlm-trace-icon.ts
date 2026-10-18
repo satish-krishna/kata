@@ -8,9 +8,6 @@ import { classes } from '@spartan-ng/helm/utils';
 })
 export class HlmTraceIcon {
   constructor() {
-    classes(
-      () =>
-        "size-4 [&_ng-icon:not([class*='text-'])]:text-[length:--spacing(4)] [[data-slot=trace-title]~&]:-ml-1 flex shrink-0 items-center justify-center [&_ng-icon]:pointer-events-none",
-    );
+    classes(() => 'flex shrink-0 items-center justify-center [&_ng-icon]:pointer-events-none');
   }
 }

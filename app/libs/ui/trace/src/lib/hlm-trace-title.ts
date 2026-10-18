@@ -8,6 +8,6 @@ import { classes } from '@spartan-ng/helm/utils';
 })
 export class HlmTraceTitle {
   constructor() {
-    classes(() => 'motion-reduce:shimmer-none min-w-0 truncate');
+    classes(() => 'min-w-0 truncate');
   }
 }
