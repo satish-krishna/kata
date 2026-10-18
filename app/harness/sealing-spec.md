@@ -22,7 +22,8 @@ Primitive attribute directives:
 `hlmTabs`, `hlmTabsContent`, `hlmTabsContentLazy`, `hlmTabsList`, `hlmTabsTrigger`,
 `hlmAvatarBadge`, `hlmAvatarFallback`, `hlmAvatarGroup`, `hlmAvatarGroupCount`, `hlmAvatarImage`,
 `hlmSwitchThumb`,
-`hlmSidebarContent`, `hlmSidebarFooter`, `hlmSidebarGroup`, `hlmSidebarGroupAction`, `hlmSidebarGroupContent`, `hlmSidebarGroupLabel`, `hlmSidebarHeader`, `hlmSidebarInput`, `hlmSidebarInset`, `hlmSidebarMenu`, `hlmSidebarMenuAction`, `hlmSidebarMenuBadge`, `hlmSidebarMenuButton`, `hlmSidebarMenuItem`, `hlmSidebarMenuSkeleton`, `hlmSidebarMenuSub`, `hlmSidebarMenuSubButton`, `hlmSidebarMenuSubItem`, `hlmSidebarRail`, `hlmSidebarSeparator`, `hlmSidebarTrigger`, `hlmSidebarWrapper`.
+`hlmSidebarContent`, `hlmSidebarFooter`, `hlmSidebarGroup`, `hlmSidebarGroupAction`, `hlmSidebarGroupContent`, `hlmSidebarGroupLabel`, `hlmSidebarHeader`, `hlmSidebarInput`, `hlmSidebarInset`, `hlmSidebarMenu`, `hlmSidebarMenuAction`, `hlmSidebarMenuBadge`, `hlmSidebarMenuButton`, `hlmSidebarMenuItem`, `hlmSidebarMenuSkeleton`, `hlmSidebarMenuSub`, `hlmSidebarMenuSubButton`, `hlmSidebarMenuSubItem`, `hlmSidebarRail`, `hlmSidebarSeparator`, `hlmSidebarTrigger`, `hlmSidebarWrapper`,
+`hlmQuestionnaire`, `hlmQuestionnaireActions`, `hlmQuestionnaireChoice`, `hlmQuestionnaireChoiceDescription`, `hlmQuestionnaireChoices`, `hlmQuestionnaireDescription`, `hlmQuestionnaireError`, `hlmQuestionnaireInput`, `hlmQuestionnaireItem`, `hlmQuestionnaireNext`, `hlmQuestionnairePrevious`, `hlmQuestionnaireProgress`, `hlmQuestionnaireSkip`, `hlmQuestionnaireSubmit`, `hlmQuestionnaireTitle`.
 
 Primitive element names:
 
@@ -35,7 +36,10 @@ Primitive element names:
 `hlm-sheet`, `hlm-sheet-content`, `hlm-sheet-footer`, `hlm-sheet-header`, `hlm-sheet-overlay`,
 `hlm-tabs`, `hlm-tabs-list`, `hlm-paginated-tabs-list`,
 `hlm-switch`,
-`hlm-sidebar`, `hlm-sidebar-content`, `hlm-sidebar-footer`, `hlm-sidebar-group`, `hlm-sidebar-header`, `hlm-sidebar-menu-badge`, `hlm-sidebar-menu-skeleton`, `hlm-sidebar-separator`, `hlm-sidebar-wrapper`.
+`hlm-sidebar`, `hlm-sidebar-content`, `hlm-sidebar-footer`, `hlm-sidebar-group`, `hlm-sidebar-header`, `hlm-sidebar-menu-badge`, `hlm-sidebar-menu-skeleton`, `hlm-sidebar-separator`, `hlm-sidebar-wrapper`,
+`hlm-questionnaire-actions`.
+
+The questionnaire family was added with the spartan 1.8.0 upgrade. Its parts sit on native elements (`fieldset[hlmQuestionnaireItem]`, `legend[hlmQuestionnaireTitle]`, `label[hlmQuestionnaireChoice]`, `input[hlmQuestionnaireInput]`, and `button[hlmQuestionnaireNext|Previous|Skip|Submit]`), so `no-raw-control` accepts each of those attributes as the primitive for its element.
 
 The set of primitive attribute names and element names is used by `no-appearance-on-primitive` and `no-unknown-primitive` to decide whether an element is a primitive.
 
