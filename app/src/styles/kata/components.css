@@ -88,7 +88,6 @@
 .k-event--turn .k-event__body { color: var(--text-faint); }
 .k-event--log .k-event__body { color: var(--text-muted); }
 .k-event__tool { color: var(--text-primary); font-weight: var(--weight-medium); }
-.k-event__turn-rule { display: block; border-top: 1px dashed var(--border-subtle); margin-top: var(--space-2-5); }
 
 /* ---------- MarkdownBody (rendered assistant markdown, Observe pane) ---------- */
 .k-md { line-height: var(--leading-relaxed); }

@@ -11,6 +11,6 @@ import { classes } from '@spartan-ng/helm/utils';
 })
 export class HlmMarkerIcon {
   constructor() {
-    classes(() => "size-4 shrink-0 [&_ng-icon:not([class*='text-'])]:text-[length:--spacing(4)]");
+    classes(() => "size-(--space-5) shrink-0 [&_ng-icon:not([class*='text-'])]:text-[length:var(--space-5)]");
   }
 }

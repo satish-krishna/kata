@@ -1,25 +1,30 @@
 import { Component, computed, input } from '@angular/core';
 import { bodyFor, gutterFor, variantFor, type StreamEvent } from '../lib/events';
+import { HlmMarkerImports } from '@spartan-ng/helm/marker';
 import { MarkdownBody } from './markdown-body';
 
 @Component({
   selector: 'app-event-row',
-  imports: [MarkdownBody],
+  imports: [MarkdownBody, HlmMarkerImports],
   template: `<div class="k-event" [class]="'k-event--' + variant()">
-    <span class="k-event__gutter">{{ gutter() }}</span>
-    <div class="k-event__body">
-      @if (ev().type === 'turn') {
-        <span class="k-event__turn-rule"></span>
-      } @else if (text() !== null) {
-        <app-markdown-body [md]="text() ?? ''" />
-      } @else {
-        @if (tool()) {
-          <span class="k-event__tool">{{ tool() }}</span
-          >{{ ' ' }}
+    @if (ev().type === 'turn') {
+      <hlm-marker variant="separator">
+        <hlm-marker-content>{{ gutter() }}</hlm-marker-content>
+      </hlm-marker>
+    } @else {
+      <span class="k-event__gutter">{{ gutter() }}</span>
+      <div class="k-event__body">
+        @if (text() !== null) {
+          <app-markdown-body [md]="text() ?? ''" />
+        } @else {
+          @if (tool()) {
+            <span class="k-event__tool">{{ tool() }}</span
+            >{{ ' ' }}
+          }
+          {{ body() }}
         }
-        {{ body() }}
-      }
-    </div>
+      </div>
+    }
   </div>`,
 })
 export class EventRow {

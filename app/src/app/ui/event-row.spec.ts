@@ -28,13 +28,24 @@ describe('EventRow markdown routing', () => {
     expect(container.textContent).toContain('assembled plugin-dir');
   });
 
-  it('renders a turn as a divider rule with no inline style', async () => {
+  it('renders a turn as a separator marker carrying "turn N"', async () => {
     const { container } = await render(EventRow, {
-      ev: { type: 'turn', n: 2 } as unknown as StreamEvent,
+      ev: { type: 'turn', n: 3 } as unknown as StreamEvent,
     });
-    const rule = container.querySelector('.k-event__turn-rule');
-    expect(rule).not.toBeNull();
-    expect(rule!.getAttribute('style')).toBeNull();
+    const marker = container.querySelector('hlm-marker');
+    expect(marker).not.toBeNull();
+    expect(marker!.getAttribute('data-variant')).toBe('separator');
+    expect(marker!.textContent!.trim()).toBe('turn 3');
+    expect(container.querySelector('.k-event__turn-rule')).toBeNull();
+    // the marker carries the label; no second "turn 3" gutter
+    expect(container.textContent!.match(/turn 3/g)).toHaveLength(1);
+  });
+
+  it('renders no marker for non-turn rows', async () => {
+    const { container } = await render(EventRow, {
+      ev: { type: 'log', level: 'info', message: 'hello' } as StreamEvent,
+    });
+    expect(container.querySelector('hlm-marker')).toBeNull();
   });
 
   it('keeps assistant raw HTML inert', async () => {

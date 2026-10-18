@@ -3,14 +3,14 @@ import { classes } from '@spartan-ng/helm/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 
 const markerVariants = cva(
-  "text-muted-foreground gap-2.5 group/marker [a]:hover:text-foreground relative flex min-h-4 w-full items-center text-start text-sm [&_ng-icon:not([class*='text-'])]:text-[length:--spacing(4)] [a]:underline [a]:underline-offset-3",
+  "group/marker relative flex w-full items-center gap-(--space-2-5) text-start font-mono font-medium uppercase leading-none tracking-(--tracking-label) text-(color:--text-faint) text-[length:var(--text-2xs)] [a]:hover:text-(color:--text-primary) [a]:underline [a]:underline-offset-3",
   {
     variants: {
       variant: {
         default: '',
         separator:
-          'before:bg-border after:bg-border before:me-1.5 before:h-px before:min-w-0 before:flex-1 after:ms-1.5 after:h-px after:min-w-0 after:flex-1',
-        border: 'border-border border-b pb-2.5',
+          'before:bg-(--border-subtle) after:bg-(--border-subtle) before:me-(--space-1-5) before:h-px before:min-w-0 before:flex-1 after:ms-(--space-1-5) after:h-px after:min-w-0 after:flex-1',
+        border: 'border-b border-(--border-subtle) pb-(--space-2-5)',
       },
     },
     defaultVariants: {
