@@ -1,22 +1,38 @@
 import { Component, input, output } from '@angular/core';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideChevronDown, lucideFolderPlus, lucideX } from '@ng-icons/lucide';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
-import { HlmSelectImports } from '@spartan-ng/helm/select';
+import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { HlmDropdownMenuImports } from '@spartan-ng/helm/dropdown-menu';
 
-/* The toolbar's workspace picker: a select whose value is the current workspace. Each option shows the folder and
- * the change count and flags a folder that is gone. Add and Remove are separate toolbar buttons, not options. */
+/* The toolbar's workspace switcher: a dropdown on the workspace name. It lists every known workspace with its
+ * folder and change count, checks the current one, flags a folder that is gone, and ends with Add workspace… and
+ * Remove from list… (removing only forgets the workspace; nothing on disk is touched). */
 @Component({
   selector: 'app-workspace-switcher',
   host: { class: 'contents' },
-  imports: [HlmSelectImports],
+  imports: [NgIcon, HlmButtonImports, HlmDropdownMenuImports],
+  providers: [provideIcons({ lucideChevronDown, lucideFolderPlus, lucideX })],
   template: `
-    <div class="k-wsswitch">
-      <hlm-select [value]="current()?.id ?? null" [itemToString]="nameOf" (valueChange)="onPick($event)">
-        <hlm-select-trigger aria-label="Switch workspace">
-          <hlm-select-value placeholder="No workspace" />
-        </hlm-select-trigger>
-        <hlm-select-content *hlmSelectPortal>
+    <button
+      hlmBtn
+      variant="bare"
+      size="bare"
+      class="k-wstrigger"
+      type="button"
+      aria-label="Switch workspace"
+      [hlmDropdownMenuTrigger]="menu"
+      [disabled]="locked()"
+    >
+      <span class="k-wstrigger__name">{{ current()?.name ?? 'No workspace' }}</span>
+      <ng-icon name="lucideChevronDown" size="14" />
+    </button>
+    <ng-template #menu>
+      <hlm-dropdown-menu>
+        @if (workspaces().length) {
+          <hlm-dropdown-menu-label>Workspaces</hlm-dropdown-menu-label>
           @for (w of workspaces(); track w.id) {
-            <hlm-select-item [value]="w.id">
+            <button hlmDropdownMenuRadio type="button" [checked]="w.id === current()?.id" [keepOpen]="false" (triggered)="onPick(w.id)">
               <span class="k-wsitem">
                 <span class="k-wsitem__name">{{ w.name }}</span>
                 <span class="k-wsitem__folder">{{ w.folder }}</span>
@@ -26,11 +42,21 @@ import { HlmSelectImports } from '@spartan-ng/helm/select';
                   <span class="k-wsitem__note">{{ counts()[w.id] }} {{ counts()[w.id] === 1 ? 'change' : 'changes' }}</span>
                 }
               </span>
-            </hlm-select-item>
+              <hlm-dropdown-menu-radio-indicator />
+            </button>
           }
-        </hlm-select-content>
-      </hlm-select>
-    </div>
+          <hlm-dropdown-menu-separator />
+        }
+        <button hlmDropdownMenuItem type="button" (triggered)="add.emit()">
+          <ng-icon name="lucideFolderPlus" />Add workspace…
+        </button>
+        @if (current()) {
+          <button hlmDropdownMenuItem type="button" (triggered)="remove.emit()">
+            <ng-icon name="lucideX" />Remove from list…
+          </button>
+        }
+      </hlm-dropdown-menu>
+    </ng-template>
   `,
 })
 export class WorkspaceSwitcher {
@@ -40,13 +66,14 @@ export class WorkspaceSwitcher {
   readonly missing = input<string[]>([]);
   /** Change count per workspace id, where known. */
   readonly counts = input<Record<string, number>>({});
+  /** A run or locked operation is in progress. */
+  readonly locked = input(false);
 
   readonly select = output<string>();
+  readonly add = output<void>();
+  readonly remove = output<void>();
 
-  /** The trigger shows the workspace's name, not its id. */
-  protected readonly nameOf = (id: unknown): string => this.workspaces().find((w) => w.id === id)?.name ?? String(id);
-
-  protected onPick(value: unknown): void {
-    if (typeof value === 'string' && value !== this.current()?.id) this.select.emit(value);
+  protected onPick(id: string): void {
+    if (id !== this.current()?.id) this.select.emit(id);
   }
 }

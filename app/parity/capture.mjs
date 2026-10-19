@@ -84,7 +84,7 @@ export const VIEWS = [
   { name: 'sdlc-mode', path: '/mode', ready: '.k-mode' },
   { name: 'sdlc-home', path: '/sdlc', ready: '.k-rowlink' },
   { name: 'sdlc-switcher-open', path: '/sdlc', ready: '.k-rowlink',
-    act: async (p) => { await p.getByRole('combobox').click(); await p.getByRole('option').first().waitFor({ state: 'visible' }); } },
+    act: async (p) => { await p.getByRole('button', { name: 'Switch workspace' }).click(); await p.getByRole('menuitemradio').first().waitFor({ state: 'visible' }); } },
   { name: 'sdlc-add-workspace-steps', path: '/sdlc?demo=sdlc-setup', ready: '.k-lock__steps' },
   { name: 'sdlc-lock-ask', path: CHANGE_SPEC + '?demo=sdlc', ready: '.k-lock', act: lockAsk },
   { name: 'sdlc-leftovers', path: CHANGE_SPEC + '?demo=sdlc', ready: '.k-lock', act: cancelToLeftovers },

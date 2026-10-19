@@ -12,72 +12,87 @@ const settle = async () => {
   await new Promise((r) => setTimeout(r, 0));
   TestBed.tick();
 };
-const items = () => Array.from(document.body.querySelectorAll<HTMLElement>('hlm-select-item'));
-const trigger = (c: HTMLElement) => c.querySelector<HTMLElement>('button[aria-label="Switch workspace"]')!;
+const radios = () => Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]'));
+const items = () => Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'));
+const trigger = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('button[aria-label="Switch workspace"]')!;
 const open = async (c: HTMLElement) => {
-  trigger(c).focus();
   trigger(c).click();
   await settle();
 };
+const radioWith = (text: string) => radios().find((i) => i.textContent!.includes(text))!;
 const itemWith = (text: string) => items().find((i) => i.textContent!.includes(text))!;
+const base = { workspaces: [A, B], current: A, missing: [], counts: {} };
 
 describe('WorkspaceSwitcher', () => {
   beforeAll(() => {
-    // jsdom has neither ResizeObserver (CDK overlay positioning) nor scrollIntoView (select highlight).
-    Element.prototype.scrollIntoView ??= () => {};
+    // jsdom has no ResizeObserver (CDK overlay positioning).
     globalThis.ResizeObserver ??= class {
       observe() {}
       unobserve() {}
       disconnect() {}
     };
   });
+  afterEach(() => document.body.querySelectorAll('.cdk-overlay-container').forEach((n) => (n.innerHTML = '')));
 
-  it('shows the current workspace as the select value and keeps the list closed', async () => {
-    const { container } = await render(WorkspaceSwitcher, { workspaces: [A, B], current: A, missing: [], counts: {} });
+  it('names the current workspace on the trigger and keeps the menu closed', async () => {
+    const { container } = await render(WorkspaceSwitcher, base);
     expect(trigger(container).textContent).toContain('acme-claims');
-    expect(items().length).toBe(0);
+    expect(radios().length).toBe(0);
   });
 
   it('lists every workspace with its folder and change count, and flags a missing folder', async () => {
-    const { container } = await render(WorkspaceSwitcher, {
-      workspaces: [A, B], current: A, missing: ['old-billing'], counts: { 'acme-claims': 3 },
-    });
+    const { container } = await render(WorkspaceSwitcher, { ...base, missing: ['old-billing'], counts: { 'acme-claims': 3 } });
     await open(container);
-    const acme = itemWith('acme-claims').textContent!.replace(/\s+/g, ' ');
-    const billing = itemWith('old-billing').textContent!.replace(/\s+/g, ' ');
+    const acme = radioWith('acme-claims').textContent!.replace(/\s+/g, ' ');
+    const billing = radioWith('old-billing').textContent!.replace(/\s+/g, ' ');
     expect(acme).toContain('D:/Work/acme-claims');
     expect(acme).toContain('3 changes');
     expect(acme).not.toContain('folder missing');
     expect(billing).toContain('folder missing');
   });
 
-  it('lists only workspaces: Add and Remove are not options', async () => {
-    const { container } = await render(WorkspaceSwitcher, { workspaces: [A, B], current: A, missing: [], counts: {} });
+  it('checks the current workspace', async () => {
+    const { container } = await render(WorkspaceSwitcher, base);
     await open(container);
-    expect(items().length).toBe(2);
-    expect(document.body.textContent).not.toContain('Add workspace');
-    expect(document.body.textContent).not.toContain('Remove from list');
+    expect(radioWith('acme-claims').getAttribute('aria-checked')).toBe('true');
+    expect(radioWith('old-billing').getAttribute('aria-checked')).toBe('false');
   });
 
-  it('binds the select to the current workspace, so it is the selected option', async () => {
-    const { container } = await render(WorkspaceSwitcher, { workspaces: [A, B], current: A, missing: [], counts: {} });
-    await open(container);
-    expect(itemWith('acme-claims').getAttribute('aria-selected')).toBe('true');
-    expect(itemWith('old-billing').getAttribute('aria-selected')).not.toBe('true');
-  });
-
-  it('emits select with the id of the chosen workspace', async () => {
-    const { fixture, container } = await render(WorkspaceSwitcher, { workspaces: [A, B], current: A, missing: [], counts: {} });
+  it('emits select with the id of another workspace, and nothing for the current one', async () => {
+    const { fixture, container } = await render(WorkspaceSwitcher, base);
     const picked: string[] = [];
     fixture.componentInstance.select.subscribe((id) => picked.push(id));
     await open(container);
-    itemWith('old-billing').click();
+    radioWith('acme-claims').click();
+    await open(container);
+    radioWith('old-billing').click();
     await settle();
     expect(picked).toEqual(['old-billing']);
   });
 
-  it('shows a placeholder when there is no current workspace', async () => {
+  it('ends with Add workspace… and Remove from list…, which emit', async () => {
+    const { fixture, container } = await render(WorkspaceSwitcher, base);
+    const got: string[] = [];
+    fixture.componentInstance.add.subscribe(() => got.push('add'));
+    fixture.componentInstance.remove.subscribe(() => got.push('remove'));
+    await open(container);
+    expect(items().map((i) => i.textContent!.trim())).toEqual(['Add workspace…', 'Remove from list…']);
+    itemWith('Add workspace').click();
+    await open(container);
+    itemWith('Remove from list').click();
+    expect(got).toEqual(['add', 'remove']);
+  });
+
+  it('offers only Add workspace… when there is no workspace yet', async () => {
     const { container } = await render(WorkspaceSwitcher, { workspaces: [], current: null, missing: [], counts: {} });
     expect(trigger(container).textContent).toContain('No workspace');
+    await open(container);
+    expect(radios().length).toBe(0);
+    expect(items().map((i) => i.textContent!.trim())).toEqual(['Add workspace…']);
+  });
+
+  it('disables the trigger while locked', async () => {
+    const { container } = await render(WorkspaceSwitcher, { ...base, locked: true });
+    expect(trigger(container).disabled).toBe(true);
   });
 });
