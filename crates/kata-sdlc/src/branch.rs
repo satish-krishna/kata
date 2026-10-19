@@ -134,6 +134,10 @@ fn existing_on(master: &Path, rev: &str, system_change: &str) -> bool {
 
 /// Settle a pending branch: rename it to `change/<folder>` if the run created a change folder,
 /// otherwise return to `base` and delete it (only when it carries no commits).
+///
+/// The delete path refuses a dirty tree with `BranchError::Dirty` and leaves the pending branch
+/// checked out and untouched. The caller resolves the leftovers (discard or keep) and calls
+/// `finish_pending` again.
 pub fn finish_pending(
     master: &Path,
     pending: &str,
@@ -162,6 +166,7 @@ pub fn finish_pending(
     if ahead.trim() != "0" {
         return Err(BranchError::PendingHasCommits);
     }
+    ensure_clean(master)?;
     git::run(master, &["checkout", "-q", base])?;
     git::run(master, &["branch", "-D", pending])?;
     Ok(FinishOutcome::Deleted)
@@ -304,6 +309,23 @@ mod tests {
             finish_pending(&repo, &pending, "main"),
             Err(BranchError::PendingHasCommits)
         ));
+        assert!(branch_exists(&repo, &pending));
+    }
+
+    #[test]
+    fn finish_refuses_to_leave_dirty_pending() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let pending = start_pending(&repo, "main", 1_792_368_000).unwrap();
+        std::fs::write(
+            repo.join("README.md"),
+            "edited
+",
+        )
+        .unwrap();
+        let err = finish_pending(&repo, &pending, "main").unwrap_err();
+        assert!(matches!(&err, BranchError::Dirty(p) if p == &["README.md"]));
+        assert_eq!(current_branch(&repo).as_deref(), Some(pending.as_str()));
         assert!(branch_exists(&repo, &pending));
     }
 
