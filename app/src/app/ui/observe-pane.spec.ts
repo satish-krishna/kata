@@ -380,3 +380,25 @@ describe('ObservePane - settling replays the enter animation', () => {
     expect(after).not.toBe(before);
   });
 });
+
+describe('ObservePane - pauses left open when the run ends', () => {
+  const ask = {
+    id: 'q1',
+    questions: [{ kind: 'text' as const, header: 'scope', question: 'Fix or isolate?', optional: false }],
+    answers: null,
+    at: 0,
+  };
+
+  it('offers no way to answer an ask or decide a check once the run is over', async () => {
+    const m = await renderPane({ state: 'warning', asks: [ask], permissions: [PENDING] });
+    expect(m.text()).toContain('Fix or isolate?');
+    expect(m.text()).toContain('not answered · run ended');
+    expect(m.text()).toContain('not decided · run ended');
+    expect(m.container.querySelectorAll('.k-ask button')).toHaveLength(0);
+  });
+
+  it('keeps the open ask answerable while the run is paused on it', async () => {
+    const m = await renderPane({ state: 'awaiting', asks: [ask] });
+    expect(m.button('Send answer · resume')).toBeDefined();
+  });
+});

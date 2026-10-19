@@ -9,15 +9,24 @@ import { AskSummary } from './ask-summary';
   selector: 'app-ask-panel',
   imports: [FormRoot, FormField, HlmQuestionnaireImports, AskSummary],
   template: `
-    <div class="k-ask" [class.k-ask--answered]="settled() !== null">
+    <div class="k-ask" [class.k-ask--answered]="settled() !== null" [class.k-ask--lapsed]="lapsed()">
       <div class="k-ask__banner">
         <span class="k-ask__banner-dot"></span>
-        <span class="k-ask__banner-label">{{ settled() !== null ? 'answered · run resumed' : 'awaiting your input' }}</span>
+        <span class="k-ask__banner-label">{{ settled() !== null ? 'answered · run resumed' : lapsed() ? 'not answered · run ended' : 'awaiting your input' }}</span>
         <span class="k-ask__banner-tool">ask_user</span>
       </div>
       <div class="k-ask__body">
         @if (settled(); as answers) {
           <app-ask-summary [questions]="ask().questions" [answers]="answers" />
+        } @else if (lapsed()) {
+          @for (q of ask().questions; track $index) {
+            <div class="k-ask__q">
+              <div class="k-ask__q-head">
+                <span class="k-ask__q-eyebrow">{{ q.header }}</span>
+              </div>
+              <div class="k-ask__q-text">{{ q.question }}</div>
+            </div>
+          }
         } @else {
           <form hlmQuestionnaire [formRoot]="state().form" shortcuts="numbers">
             @if (ask().questions.length > 1) {
@@ -71,12 +80,15 @@ import { AskSummary } from './ask-summary';
 })
 export class AskPanel {
   readonly ask = input.required<AskRecord>();
+  /** The run is over, so an unanswered ask can no longer be answered. */
+  readonly ended = input(false);
   readonly answer = output<{ id: string; answers: string[][] }>();
 
   // The Signal Form is built per ask, so it needs an injector outside a field initializer.
   private readonly injector = inject(Injector);
 
   protected readonly settled = computed(() => this.ask().answers);
+  protected readonly lapsed = computed(() => this.ended() && this.ask().answers === null);
 
   // Keyed on the ask id so a re-delivered record (same ask, new object) keeps what was typed.
   private readonly askId = computed(() => this.ask().id);

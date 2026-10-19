@@ -49,9 +49,9 @@ import { ToolCard } from './tool-card';
                   } @else if (item.kind === 'call') {
                     <div class="wb-event-enter"><app-tool-card [call]="item.call" /></div>
                   } @else if (item.kind === 'perm') {
-                    <div class="wb-event-enter"><app-permission-panel [record]="item.p" (decide)="decide.emit($event)" /></div>
+                    <div class="wb-event-enter"><app-permission-panel [record]="item.p" [ended]="ended()" (decide)="decide.emit($event)" /></div>
                   } @else {
-                    <div class="wb-event-enter"><app-ask-panel [ask]="item.a" (answer)="answer.emit($event)" /></div>
+                    <div class="wb-event-enter"><app-ask-panel [ask]="item.a" [ended]="ended()" (answer)="answer.emit($event)" /></div>
                   }
                 </hlm-message-scroller-item>
               }
@@ -96,6 +96,8 @@ export class ObservePane {
   readonly decide = output<{ id: string; allow: boolean; message: string | null }>();
 
   protected readonly statusLabel = computed(() => STATUS_LABEL[this.state()]);
+  /** An open pause outlives its run (cancel, deadline exit); it must not stay answerable. */
+  protected readonly ended = computed(() => this.state() !== 'running' && this.state() !== 'awaiting');
   protected readonly empty = computed(
     () => this.events().length === 0 && !this.summary() && this.asks().length === 0 && this.permissions().length === 0,
   );

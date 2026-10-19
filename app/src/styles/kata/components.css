@@ -222,6 +222,10 @@
 .k-ask--answered .k-ask__banner { background: var(--surface-inset); border-bottom-color: var(--border-subtle); }
 .k-ask--answered .k-ask__banner-dot { background: var(--success); animation: none; }
 .k-ask--answered .k-ask__banner-label { color: var(--success-text); }
+.k-ask--lapsed { border-color: var(--border-default); box-shadow: none; }
+.k-ask--lapsed .k-ask__banner { background: var(--surface-inset); border-bottom-color: var(--border-subtle); }
+.k-ask--lapsed .k-ask__banner-dot { background: var(--text-faint); animation: none; }
+.k-ask--lapsed .k-ask__banner-label { color: var(--text-muted); }
 
 /* toasts: skinned in libs/ui/sonner (hlm-toaster.ts). Sonner's styles are unlayered, so a rule in this file's `components` layer can never beat them. */
 
