@@ -36,7 +36,13 @@ const CONTROL_PRIMITIVE_ATTRS: Record<string, readonly string[]> = {
     'hlmAlertDialogAction',
     'hlmAlertDialogCancel',
     'hlmCodeBlockCopyButton',
-    'hlmMessageScrollerButton'
+    'hlmMessageScrollerButton',
+    'hlmDropdownMenuTrigger',
+    'hlmDropdownMenuItem',
+    'hlmDropdownMenuCheckbox',
+    'hlmDropdownMenuCheckboxItem',
+    'hlmDropdownMenuRadio',
+    'hlmDropdownMenuSubTrigger'
   ],
   input: ['hlmInput', 'hlmSidebarInput', 'hlmQuestionnaireInput'],
   textarea: ['hlmTextarea'],

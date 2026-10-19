@@ -65,6 +65,9 @@ const TRIGGERS = [
   // reported that no select had opened. A checker with a false positive gets
   // switched off, so the selector is exact.
   { name: 'select', trigger: 'hlm-select-trigger button', surface: 'hlm-select-content' },
+  // HlmDropdownMenuTrigger stamps data-slot on its host; the CDK menu it opens
+  // carries data-slot="dropdown-menu" once attached to the overlay.
+  { name: 'dropdown-menu', trigger: '[data-slot="dropdown-menu-trigger"]', surface: '[data-slot="dropdown-menu"]' },
 ];
 
 const DEFAULT_ROUTES = ['dashboard', 'roster', 'detail/11', 'missions', 'threats', 'recruit', 'settings'];

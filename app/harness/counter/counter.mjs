@@ -182,6 +182,21 @@ const PRIMITIVE_ATTRS = new Set([
   'hlmMarker',
   'hlmMarkerContent',
   'hlmMarkerIcon',
+  'hlmDropdownMenu',
+  'hlmDropdownMenuCheckbox',
+  'hlmDropdownMenuCheckboxCdk',
+  'hlmDropdownMenuCheckboxItem',
+  'hlmDropdownMenuFocusOnHover',
+  'hlmDropdownMenuGroup',
+  'hlmDropdownMenuItem',
+  'hlmDropdownMenuLabel',
+  'hlmDropdownMenuRadio',
+  'hlmDropdownMenuRadioCdk',
+  'hlmDropdownMenuSeparator',
+  'hlmDropdownMenuShortcut',
+  'hlmDropdownMenuSub',
+  'hlmDropdownMenuSubTrigger',
+  'hlmDropdownMenuTrigger',
 ]);
 const PRIMITIVE_ELEMENTS = new Set([
   'hlm-card',
@@ -272,6 +287,16 @@ const PRIMITIVE_ELEMENTS = new Set([
   'hlm-marker',
   'hlm-marker-content',
   'hlm-marker-icon',
+  'hlm-dropdown-menu',
+  'hlm-dropdown-menu-checkbox-indicator',
+  'hlm-dropdown-menu-group',
+  'hlm-dropdown-menu-item',
+  'hlm-dropdown-menu-item-sub-indicator',
+  'hlm-dropdown-menu-label',
+  'hlm-dropdown-menu-radio-indicator',
+  'hlm-dropdown-menu-separator',
+  'hlm-dropdown-menu-shortcut',
+  'hlm-dropdown-menu-sub',
 ]);
 
 // Rule 1's table: a native element -> the set of acceptable primitive
@@ -303,7 +328,13 @@ const CONTROL_PRIMITIVE_ATTRS = {
     'hlmAlertDialogAction',
     'hlmAlertDialogCancel',
     'hlmCodeBlockCopyButton',
-    'hlmMessageScrollerButton'
+    'hlmMessageScrollerButton',
+    'hlmDropdownMenuTrigger',
+    'hlmDropdownMenuItem',
+    'hlmDropdownMenuCheckbox',
+    'hlmDropdownMenuCheckboxItem',
+    'hlmDropdownMenuRadio',
+    'hlmDropdownMenuSubTrigger'
   ],
   input: ['hlmInput', 'hlmSidebarInput', 'hlmQuestionnaireInput'],
   textarea: ['hlmTextarea'],
