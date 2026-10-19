@@ -1,5 +1,6 @@
 use kata_core::catalog::{self, CatalogEntry};
 use kata_core::spec::{self, RunSpec};
+use kata_sdlc as sdlc;
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -136,6 +137,127 @@ fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) -> Result
     });
 
     Ok(())
+}
+
+// ---- AI-SDLC mode: thin wrappers over `kata-sdlc` ----
+
+#[tauri::command]
+fn sdlc_settings() -> sdlc::store::Settings {
+    sdlc::store::load_settings()
+}
+
+#[tauri::command]
+fn sdlc_save_settings(settings: sdlc::store::Settings) -> Result<(), String> {
+    sdlc::store::save_settings(&settings).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sdlc_workspaces() -> Vec<sdlc::store::WorkspaceEntry> {
+    sdlc::store::load_workspaces()
+}
+
+#[tauri::command]
+fn sdlc_save_workspaces(workspaces: Vec<sdlc::store::WorkspaceEntry>) -> Result<(), String> {
+    sdlc::store::save_workspaces(&workspaces).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sdlc_scan(folder: String) -> Result<sdlc::workspace::WorkspaceScan, String> {
+    sdlc::workspace::scan(Path::new(&folder)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sdlc_context_health(
+    folder: String,
+    master: String,
+    system: String,
+    repo: String,
+) -> sdlc::workspace::ContextState {
+    sdlc::workspace::context_health(Path::new(&folder), &master, &system, &repo)
+}
+
+#[tauri::command]
+fn sdlc_changes(master: String, system: String) -> Vec<sdlc::changes::ChangeInfo> {
+    sdlc::changes::list(Path::new(&master), &system)
+}
+
+#[tauri::command]
+fn sdlc_branches(master: String) -> sdlc::changes::BranchInfo {
+    sdlc::changes::branch_info(Path::new(&master))
+}
+
+#[tauri::command]
+fn sdlc_read_doc(master: String, system: String, change: String, doc: String) -> Option<String> {
+    sdlc::changes::read_doc(Path::new(&master), &system, &change, &doc)
+}
+
+#[tauri::command]
+fn sdlc_snapshot(master: String) -> Result<sdlc::snapshot::Snapshot, String> {
+    sdlc::snapshot::take(Path::new(&master)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sdlc_leftovers(
+    master: String,
+    before: sdlc::snapshot::Snapshot,
+    product_repos: Vec<String>,
+) -> Result<sdlc::snapshot::Leftovers, String> {
+    let repos: Vec<std::path::PathBuf> = product_repos.into_iter().map(Into::into).collect();
+    sdlc::snapshot::leftovers(Path::new(&master), &before, &repos).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sdlc_discard(
+    master: String,
+    before: sdlc::snapshot::Snapshot,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    sdlc::snapshot::discard(Path::new(&master), &before, &paths).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sdlc_start_change(master: String, base: String) -> Result<String, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    sdlc::branch::start_pending(Path::new(&master), &base, now).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sdlc_finish_change(
+    master: String,
+    pending: String,
+    base: String,
+) -> Result<sdlc::branch::FinishOutcome, String> {
+    sdlc::branch::finish_pending(Path::new(&master), &pending, &base).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sdlc_checkout(master: String, branch: String) -> Result<(), String> {
+    sdlc::branch::checkout(Path::new(&master), &branch).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sdlc_decide(
+    master: String,
+    system: String,
+    change: String,
+    decision: sdlc::decide::Decision,
+    confirmed: bool,
+) -> Result<sdlc::decide::DecideOutcome, String> {
+    sdlc::decide::apply(Path::new(&master), &system, &change, decision, confirmed)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sdlc_run_links() -> Vec<sdlc::store::RunLink> {
+    sdlc::store::load_run_links()
+}
+
+#[tauri::command]
+fn sdlc_link_run(link: sdlc::store::RunLink) -> Result<(), String> {
+    sdlc::store::append_run_link(link).map_err(|e| e.to_string())
 }
 
 /// Relay a non-JSON stdout/stderr line as a warn-level log event.
@@ -283,7 +405,25 @@ pub fn run() {
             load_kata,
             list_presets,
             save_preset,
-            export_bundle
+            export_bundle,
+            sdlc_settings,
+            sdlc_save_settings,
+            sdlc_workspaces,
+            sdlc_save_workspaces,
+            sdlc_scan,
+            sdlc_context_health,
+            sdlc_changes,
+            sdlc_branches,
+            sdlc_read_doc,
+            sdlc_snapshot,
+            sdlc_leftovers,
+            sdlc_discard,
+            sdlc_start_change,
+            sdlc_finish_change,
+            sdlc_checkout,
+            sdlc_decide,
+            sdlc_run_links,
+            sdlc_link_run
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

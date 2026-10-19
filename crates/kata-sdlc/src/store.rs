@@ -47,6 +47,7 @@ pub struct WorkspaceEntry {
     pub name: String,
     pub folder: String,
     pub base_branch: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub last_opened: u64,
 }
 
@@ -59,6 +60,7 @@ pub struct RunLink {
     pub change: String,
     pub stage: String,
     pub run_id: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub started_at: u64,
 }
 

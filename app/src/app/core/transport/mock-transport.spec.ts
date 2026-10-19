@@ -71,4 +71,14 @@ describe('MockTransport', () => {
     expect(await t.pickOpenSpec()).toBeNull();
     expect(await t.pickSaveSpec()).toBeNull();
   });
+
+  it('accepting the fnol spec moves its change to plan-ready', async () => {
+    const t = new MockTransport();
+    const before = (await t.sdlcChanges('D:/Work/acme-claims/claims-intent', 'claims')).find((c) => c.change === '2026-10-12-fnol-photo-upload');
+    expect(before?.stage).toBe('spec-awaiting');
+    const out = await t.sdlcDecide('D:/Work/acme-claims/claims-intent', 'claims', '2026-10-12-fnol-photo-upload', 'accept-spec', false);
+    expect(out).toEqual({ kind: 'committed' });
+    const after = (await t.sdlcChanges('D:/Work/acme-claims/claims-intent', 'claims')).find((c) => c.change === '2026-10-12-fnol-photo-upload');
+    expect(after?.stage).toBe('plan-ready');
+  });
 });
