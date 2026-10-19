@@ -113,7 +113,11 @@ fn is_change_name(name: &str) -> bool {
 
 /// A single normal path component: not empty, not `.`/`..`, no separators.
 fn is_safe_system(system: &str) -> bool {
-    !matches!(system, "" | "." | "..") && !system.contains(['/', '\\'])
+    use std::path::Component;
+    let mut parts = Path::new(system).components();
+    matches!(parts.next(), Some(Component::Normal(_)))
+        && parts.next().is_none()
+        && !system.contains(['/', '\\', ':'])
 }
 
 fn doc_state(master: &Path, system: &str, change: &str, file: &str) -> DocState {
@@ -359,7 +363,7 @@ mod tests {
         );
         assert_eq!(read_doc(&repo, "s", "2026-10-12-x", "../README"), None);
         assert_eq!(read_doc(&repo, "s", "../..", "spec"), None);
-        for bad in ["../..", "..", ".", "", "a/b", "a\\b"] {
+        for bad in ["../..", "..", ".", "", "a/b", "a\\b", "C:", "C:foo"] {
             assert_eq!(read_doc(&repo, bad, "2026-10-12-x", "spec"), None, "{bad}");
             assert!(list(&repo, bad).is_empty(), "{bad}");
         }
