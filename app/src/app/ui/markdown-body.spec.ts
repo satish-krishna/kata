@@ -1,5 +1,6 @@
 import { render } from '../../testing/render';
 import { MarkdownBody } from './markdown-body';
+import { diagrams } from '../lib/mermaid';
 
 describe('MarkdownBody', () => {
   it('wraps output in a .k-md element', async () => {
@@ -163,5 +164,51 @@ describe('MarkdownBody', () => {
       expect(openSpy).not.toHaveBeenCalled();
       openSpy.mockRestore();
     });
+  });
+});
+
+describe('MarkdownBody - mermaid diagrams', () => {
+  const MERMAID = '```mermaid\nflowchart LR\n  A --> B\n```';
+  afterEach(() => vi.restoreAllMocks());
+
+  it('replaces a mermaid block with the rendered diagram', async () => {
+    const draw = vi.spyOn(diagrams, 'render').mockResolvedValue('<svg data-testid="diagram"></svg>');
+    const { container } = await render(MarkdownBody, { md: `before\n\n${MERMAID}\n\nafter` });
+    await vi.waitFor(() => expect(container.querySelector('[data-testid="diagram"]')).not.toBeNull());
+    expect(draw).toHaveBeenCalledTimes(1);
+    expect(draw.mock.calls[0][0]).toBe('flowchart LR\n  A --> B\n');
+    expect(container.querySelector('code.language-mermaid')).toBeNull();
+    expect(container.querySelector('.k-md__diagram')!.parentElement!.classList.contains('k-md')).toBe(true);
+  });
+
+  it('keeps the source and says why when a diagram fails to render', async () => {
+    vi.spyOn(diagrams, 'render').mockRejectedValue(new Error('Parse error on line 2'));
+    const { container } = await render(MarkdownBody, { md: MERMAID });
+    await vi.waitFor(() => expect(container.textContent).toContain('Diagram could not render: Parse error on line 2'));
+    expect(container.querySelector('code.language-mermaid')).not.toBeNull();
+  });
+
+  it('loads nothing when the text has no mermaid block', async () => {
+    const draw = vi.spyOn(diagrams, 'render');
+    await render(MarkdownBody, { md: '```gherkin\nFeature: x\n```' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(draw).not.toHaveBeenCalled();
+  });
+});
+
+describe('MarkdownBody - links inside a diagram', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('routes an SVG xlink:href through the same guard as a markdown link', async () => {
+    vi.spyOn(diagrams, 'render').mockResolvedValue(
+      '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><a xlink:href="https://evil.example"><text>B</text></a></svg>',
+    );
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const { container } = await render(MarkdownBody, { md: '```mermaid\nflowchart LR\n  A --> B\n```' });
+    await vi.waitFor(() => expect(container.querySelector('.k-md__diagram text')).not.toBeNull());
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+    container.querySelector('.k-md__diagram text')!.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(true);
+    expect(open).toHaveBeenCalledWith('https://evil.example', '_blank', 'noopener,noreferrer');
   });
 });

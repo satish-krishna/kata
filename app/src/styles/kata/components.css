@@ -130,6 +130,10 @@
 .k-md a:hover { color: var(--accent); }
 /* Lists */
 .k-md ul, .k-md ol { padding-left: var(--space-6); margin: var(--space-2) 0 var(--space-3); }
+/* Tailwind's preflight strips list markers; a numbered requirement needs its number back. */
+.k-md ul { list-style: disc; }
+.k-md ol { list-style: decimal; }
+.k-md ul.contains-task-list { list-style: none; padding-left: 0; }
 .k-md li { margin-bottom: var(--space-1); }
 .k-md li:last-child { margin-bottom: 0; }
 /* Blockquote */
@@ -158,6 +162,15 @@
 .k-md__task--done { background: var(--accent); border-color: var(--accent); }
 .k-md__task--done::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid var(--text-on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 /* Strong and em — pin colors so they override inherited muted tones */
+/* Gherkin highlighting: weight and brightness, not hue, so the andon and accent colors keep their meaning. */
+.k-md .hljs-keyword { color: var(--text-primary); font-weight: var(--weight-semibold); }
+.k-md .hljs-string, .k-md .hljs-variable { color: var(--text-primary); }
+.k-md .hljs-meta, .k-md .hljs-symbol { color: var(--text-muted); }
+.k-md .hljs-comment { color: var(--text-muted); font-style: italic; }
+/* Mermaid diagrams, drawn in place of their source block */
+.k-md__diagram { background: var(--surface-inset); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: var(--space-4); margin: var(--space-3) 0; overflow-x: auto; }
+.k-md__diagram svg { display: block; margin-inline: auto; height: auto; }
+.k-md__diagram-error { font: var(--font-code-sm); color: var(--text-muted); margin: calc(-1 * var(--space-2)) 0 var(--space-3); }
 .k-md strong { font-weight: var(--weight-semibold); color: var(--text-primary); }
 .k-md em { font-style: italic; color: var(--text-secondary); }
 

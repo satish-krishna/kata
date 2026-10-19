@@ -88,7 +88,7 @@ export const VIEWS = [
   { name: 'sdlc-add-workspace-steps', path: '/sdlc?demo=sdlc-setup', ready: '.k-lock__steps' },
   { name: 'sdlc-lock-ask', path: CHANGE_SPEC + '?demo=sdlc', ready: '.k-session', act: lockAsk },
   { name: 'sdlc-leftovers', path: CHANGE_SPEC + '?demo=sdlc', ready: '.k-session', act: cancelToLeftovers },
-  { name: 'sdlc-change-spec', path: CHANGE_SPEC, ready: '.k-doc' },
+  { name: 'sdlc-change-spec', path: CHANGE_SPEC, ready: '.k-md__diagram svg' },
   { name: 'sdlc-change-plan', path: '/sdlc/claims/2026-10-09-adjuster-reassign', ready: '.k-doc' },
   { name: 'hover-secondary', path: '/', ready: '.wb-toolbar',
     act: async (p) => { await p.getByRole('button', { name: 'Open spec' }).hover(); } },

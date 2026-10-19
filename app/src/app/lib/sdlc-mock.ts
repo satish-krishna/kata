@@ -105,7 +105,13 @@ const DOC_STEMS = new Set(['intent', 'spec', 'plan']);
 const DOCS: Record<string, string> = {
   '2026-10-16-fraud-flag/intent': '---\nstatus: draft\n---\n# Flag suspected fraud on intake\n\nAdjusters need a visible fraud flag on a claim so that suspicious submissions are reviewed before payout.\n\n## Outcomes\n\n- A claim can be flagged at intake.\n- Flagged claims are routed to the special investigations queue.\n',
   '2026-10-12-fnol-photo-upload/intent': '---\nstatus: accepted\n---\n# Photo upload at first notice of loss\n\nPolicyholders attach damage photos when they report a claim.\n',
-  '2026-10-12-fnol-photo-upload/spec': '---\nstatus: draft\n---\n# Spec: photo upload\n\n## Requirements\n\n1. Up to 10 photos per claim, 10 MB each.\n2. JPEG and PNG only.\n3. Photos are virus-scanned before they are attached.\n',
+  '2026-10-12-fnol-photo-upload/spec': [
+    '---\nstatus: draft\n---\n# Spec: photo upload\n',
+    '**Context freshness.** The claims-core context was built two commits ago; neither commit touches intake, so the rules below are written against the current behavior of the first notice of loss form and the attachment store it already uses for police reports.\n',
+    '## Requirements\n\n1. Up to 10 photos per claim, 10 MB each.\n2. JPEG and PNG only.\n3. Photos are virus-scanned before they are attached.\n',
+    '```gherkin\nFeature: Photo upload at first notice of loss\n\n  Rule: R1 - A policyholder attaches up to 10 photos\n\n    Scenario: R1.1 - An eleventh photo is refused\n      Given a claim with 10 photos attached\n      When the policyholder adds "kitchen.jpg"\n      Then the upload is refused # the limit is per claim\n```\n',
+    '## Flow\n\n```mermaid\nflowchart LR\n  A[Policyholder] -->|uploads| B(Virus scan)\n  B -->|clean| C[Claim]\n  B -->|infected| D[Rejected]\n```\n',
+  ].join('\n'),
   '2026-10-09-adjuster-reassign/intent': '---\nstatus: accepted\n---\n# Reassign a claim to another adjuster\n\nSupervisors move a claim between adjusters without losing its history.\n',
   '2026-10-09-adjuster-reassign/spec': '---\nstatus: accepted\n---\n# Spec: reassign\n\n1. Only supervisors can reassign.\n2. Reassignment is recorded in the claim history.\n',
   '2026-10-09-adjuster-reassign/plan': '---\nstatus: draft\n---\n# Plan: reassign\n\n- [ ] Add the reassign endpoint to claims-core.\n- [ ] Add the reassign action to customer-portal.\n',
