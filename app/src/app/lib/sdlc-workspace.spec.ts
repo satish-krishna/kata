@@ -2,7 +2,7 @@ import type { ContextState } from '@bindings/ContextState';
 import type { RunLink } from '@bindings/RunLink';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import {
-  contextLabel, folderName, formatWhen, isSetUp, lastRunTimes, masterPath, needsContext, productRepos, repoRows, systemOf,
+  contextAction, contextLabel, folderName, formatWhen, isSetUp, lastRunTimes, masterPath, productRepos, repoRows, systemOf,
 } from './sdlc-workspace';
 
 const scan = (over: Partial<WorkspaceScan> = {}): WorkspaceScan => ({
@@ -50,7 +50,7 @@ describe('sdlc-workspace', () => {
     expect(rows[1].system).toBe('claims');
   });
 
-  it('words every context state and offers Run context only on missing or stale', () => {
+  it('words every context state and offers Run context when missing and Refresh context once a file exists', () => {
     expect(contextLabel({ kind: 'fresh' })).toEqual({ text: 'fresh', tone: 'success' });
     expect(contextLabel({ kind: 'stale', commits: 1 }).text).toBe('stale · 1 commit');
     expect(contextLabel({ kind: 'stale', commits: 14 }).text).toBe('stale · 14 commits');
@@ -58,7 +58,7 @@ describe('sdlc-workspace', () => {
     expect(contextLabel({ kind: 'notCheckedOut' }).text).toBe('not checked out');
     expect(contextLabel(null).text).toBe('—');
     const states: (ContextState | null)[] = [{ kind: 'fresh' }, { kind: 'stale', commits: 2 }, { kind: 'missing' }, { kind: 'notCheckedOut' }, null];
-    expect(states.map(needsContext)).toEqual([false, true, true, false, false]);
+    expect(states.map(contextAction)).toEqual(['Refresh context', 'Refresh context', 'Run context', null, null]);
   });
 
   it('keeps the latest run start per change for one workspace', () => {

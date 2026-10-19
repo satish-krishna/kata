@@ -35,14 +35,14 @@ describe('SdlcHome', () => {
     expect(labels(container)).toContain('Add system');
   });
 
-  it('offers Run context only for the stale and missing repos, and crosses the seam when clicked', async () => {
+  it('offers Refresh context on every product repo with a context file, and crosses the seam when clicked', async () => {
     const { container, transport } = await mount();
     const run = vi.spyOn(transport, 'runSpec').mockResolvedValue();
     const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter((b) =>
-      (b.getAttribute('aria-label') ?? '').startsWith('Run context'),
+      / context for /.test(b.getAttribute('aria-label') ?? ''),
     );
-    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual(['Run context for customer-portal']);
-    buttons[0].click();
+    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual(['Refresh context for claims-core', 'Refresh context for customer-portal']);
+    buttons[1].click();
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     expect(run.mock.calls[0][0].name).toBe('sdlc-claims-context');
   });
@@ -50,7 +50,7 @@ describe('SdlcHome', () => {
   it('crosses the seam: a running agent takes the page with the session view and locks every control outside it', async () => {
     const { container } = await mount();
     vi.spyOn(TestBed.inject(KataTransport), 'runSpec').mockResolvedValue();
-    container.querySelector<HTMLButtonElement>('[aria-label="Run context for customer-portal"]')!.click();
+    container.querySelector<HTMLButtonElement>('[aria-label="Refresh context for customer-portal"]')!.click();
     await vi.waitFor(() => expect(container.querySelector('app-sdlc-session')).not.toBeNull());
     await settle();
     expect(container.querySelector('app-observe-pane')).not.toBeNull();

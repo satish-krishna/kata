@@ -75,7 +75,9 @@ describe("specFor", () => {
   it("context", () => {
     const s = specFor("context", null, { ...ctx, change: null, repos: ["a", "b"] }, bypass, both);
     expect(s.name).toBe("sdlc-claims-context");
-    expect(s.task).toBe("Use the ai-sdlc context skill for system claims, repositories: a, b.");
+    expect(s.task).toBe(
+      "Use the ai-sdlc context skill for system claims, repositories: a, b. Refresh each existing context file, even one that is current.",
+    );
   });
   it("new intent", () => {
     const s = specFor("intent", null, { ...ctx, change: null, idea: "photo upload" }, bypass, both);

@@ -1,12 +1,12 @@
 import { Component, input, output } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmTableImports } from '@spartan-ng/helm/table';
-import { contextLabel, needsContext, type RepoRole, type RepoRow } from '../lib/sdlc-workspace';
+import { contextAction, contextLabel, type RepoRole, type RepoRow } from '../lib/sdlc-workspace';
 
 const ROLE: Record<RepoRole, string> = { master: 'master', product: 'product', 'not-checked-out': 'product' };
 
-/* The workspace home's Repositories table: each repo, its role, its context state, and Run context where
- * the context is missing or stale. */
+/* The workspace home's Repositories table: each repo, its role, its context state, and Run or Refresh
+ * context on each product repo that is checked out. */
 @Component({
   selector: 'app-repos-table',
   imports: [HlmButtonImports, HlmTableImports],
@@ -36,16 +36,16 @@ const ROLE: Record<RepoRole, string> = { master: 'master', product: 'product', '
                 }
               </td>
               <td hlmTableCell class="k-cell-end">
-                @if (needs(r)) {
+                @if (r.role !== 'master' && action(r); as label) {
                   <button
                     hlmBtn
                     variant="secondary"
                     size="sm"
                     type="button"
-                    [attr.aria-label]="'Run context for ' + r.name"
+                    [attr.aria-label]="label + ' for ' + r.name"
                     [disabled]="disabled()"
                     (click)="runContext.emit(r.name)"
-                  >Run context</button>
+                  >{{ label }}</button>
                 }
               </td>
             </tr>
@@ -74,7 +74,7 @@ export class ReposTable {
     return contextLabel(r.context);
   }
 
-  protected needs(r: RepoRow): boolean {
-    return needsContext(r.context);
+  protected action(r: RepoRow) {
+    return contextAction(r.context);
   }
 }

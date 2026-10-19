@@ -11,7 +11,7 @@ const rows: RepoRow[] = [
 ];
 const text = (c: HTMLElement) => c.textContent!.replace(/\s+/g, ' ');
 const runButtons = (c: HTMLElement) =>
-  Array.from(c.querySelectorAll<HTMLButtonElement>('button')).filter((b) => (b.getAttribute('aria-label') ?? '').startsWith('Run context'));
+  Array.from(c.querySelectorAll<HTMLButtonElement>('button')).filter((b) => / context for /.test(b.getAttribute('aria-label') ?? ''));
 
 describe('ReposTable', () => {
   it('shows each repo with its role and a labelled context state', async () => {
@@ -26,12 +26,14 @@ describe('ReposTable', () => {
     expect(t).toContain('.ai-sdlc.json · 1 system');
   });
 
-  it('offers Run context only on stale and missing rows', async () => {
+  it('offers Refresh context on fresh and stale rows, Run context on missing ones, nothing on the rest', async () => {
     const { container } = await render(ReposTable, { rows, marker: '' });
     expect(runButtons(container).map((b) => b.getAttribute('aria-label'))).toEqual([
-      'Run context for customer-portal',
+      'Refresh context for claims-core',
+      'Refresh context for customer-portal',
       'Run context for ledger',
     ]);
+    expect(runButtons(container).map((b) => b.textContent!.trim())).toEqual(['Refresh context', 'Refresh context', 'Run context']);
   });
 
   it('emits the repo name when Run context is clicked', async () => {
@@ -39,7 +41,7 @@ describe('ReposTable', () => {
     const got: string[] = [];
     fixture.componentInstance.runContext.subscribe((n) => got.push(n));
     runButtons(container)[0].click();
-    expect(got).toEqual(['customer-portal']);
+    expect(got).toEqual(['claims-core']);
   });
 
   it('disables Run context while the app is locked', async () => {

@@ -102,7 +102,7 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext, ca
     case "setup":
       return system ? `Use the ai-sdlc setup skill. System: ${system}` : "Use the ai-sdlc setup skill.";
     case "context":
-      return `Use the ai-sdlc context skill for system ${system}, repositories: ${(ctx.repos ?? []).join(", ")}.`;
+      return `Use the ai-sdlc context skill for system ${system}, repositories: ${(ctx.repos ?? []).join(", ")}. Refresh each existing context file, even one that is current.`;
     case "intent": {
       if (change === null) return `Use the ai-sdlc intent skill for system ${system}. The idea: ${ctx.idea ?? ""}`;
       const resume = `Use the ai-sdlc intent skill for system ${system} on the existing change folder ${change}. Resume the draft.`;

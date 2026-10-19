@@ -82,9 +82,18 @@ export function contextLabel(state: ContextState | null): { text: string; tone: 
   }
 }
 
-/** Run context is offered on exactly the rows whose context is missing or behind. */
-export function needsContext(state: ContextState | null): boolean {
-  return state?.kind === 'missing' || state?.kind === 'stale';
+/** The context action a repo row offers: build a missing file, refresh an existing one (stale or not, since
+ * only the engineer can tell a current file is wrong), nothing for a repo that is not checked out. */
+export function contextAction(state: ContextState | null): 'Run context' | 'Refresh context' | null {
+  switch (state?.kind) {
+    case 'missing':
+      return 'Run context';
+    case 'fresh':
+    case 'stale':
+      return 'Refresh context';
+    default:
+      return null;
+  }
 }
 
 /** Latest run start per `<system>/<change>` for one workspace. */
