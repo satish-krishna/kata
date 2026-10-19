@@ -111,6 +111,11 @@ fn is_change_name(name: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
 }
 
+/// A single normal path component: not empty, not `.`/`..`, no separators.
+fn is_safe_system(system: &str) -> bool {
+    !matches!(system, "" | "." | "..") && !system.contains(['/', '\\'])
+}
+
 fn doc_state(master: &Path, system: &str, change: &str, file: &str) -> DocState {
     let rel = format!("intent/{system}/{change}/{file}");
     match std::fs::read_to_string(master.join(&rel)) {
@@ -125,6 +130,9 @@ fn doc_state(master: &Path, system: &str, change: &str, file: &str) -> DocState 
 
 /// The changes of `system` in the master repo, newest folder name first.
 pub fn list(master: &Path, system: &str) -> Vec<ChangeInfo> {
+    if !is_safe_system(system) {
+        return Vec::new();
+    }
     let Ok(entries) = std::fs::read_dir(master.join("intent").join(system)) else {
         return Vec::new();
     };
@@ -156,6 +164,7 @@ pub fn list(master: &Path, system: &str) -> Vec<ChangeInfo> {
 
 /// The checked-out branch; `None` on a detached or unborn HEAD.
 pub fn current_branch(master: &Path) -> Option<String> {
+    git::run(master, &["rev-parse", "--verify", "-q", "HEAD"]).ok()?;
     git::run(master, &["symbolic-ref", "--short", "-q", "HEAD"])
         .ok()
         .filter(|b| !b.is_empty())
@@ -180,7 +189,10 @@ pub fn other_change_branches(master: &Path) -> Vec<String> {
 
 /// Read `intent`, `spec`, or `plan` of a change from the working tree.
 pub fn read_doc(master: &Path, system: &str, change: &str, doc: &str) -> Option<String> {
-    if !matches!(doc, "intent" | "spec" | "plan") || !is_change_name(change) {
+    if !matches!(doc, "intent" | "spec" | "plan")
+        || !is_change_name(change)
+        || !is_safe_system(system)
+    {
         return None;
     }
     std::fs::read_to_string(
@@ -326,6 +338,17 @@ mod tests {
     }
 
     #[test]
+    fn unborn_head_has_no_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("u");
+        std::fs::create_dir_all(&repo).unwrap();
+        git::run(&repo, &["init", "-q", "-b", "main"]).unwrap();
+        assert_eq!(current_branch(&repo), None);
+        assert_eq!(branch::default_base(&repo), None);
+        assert!(other_change_branches(&repo).is_empty());
+    }
+
+    #[test]
     fn read_doc_reads_and_rejects_bad_names() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
@@ -336,5 +359,9 @@ mod tests {
         );
         assert_eq!(read_doc(&repo, "s", "2026-10-12-x", "../README"), None);
         assert_eq!(read_doc(&repo, "s", "../..", "spec"), None);
+        for bad in ["../..", "..", ".", "", "a/b", "a\\b"] {
+            assert_eq!(read_doc(&repo, bad, "2026-10-12-x", "spec"), None, "{bad}");
+            assert!(list(&repo, bad).is_empty(), "{bad}");
+        }
     }
 }
