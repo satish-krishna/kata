@@ -261,10 +261,42 @@ describe('ChangePageViewModel', () => {
   describe('runs', () => {
     const specOf = (runAgent: { mock: { calls: unknown[][] } }) => runAgent.mock.calls[0][1] as RunSpec;
 
+    it('a revisit asks for feedback first and runs nothing until the operator confirms', async () => {
+      const { vm, runAgent } = setup(REASSIGN);
+      await ready(vm);
+      await vm.act('reopen-spec');
+      expect(vm.feedbackFor()).toBe('Reopen spec');
+      expect(runAgent).not.toHaveBeenCalled();
+      vm.cancelFeedback();
+      expect(vm.feedbackFor()).toBeNull();
+      expect(runAgent).not.toHaveBeenCalled();
+    });
+
+    it('reopen spec runs the spec skill with the confirmation and the operator feedback', async () => {
+      const { vm, runAgent } = setup(REASSIGN);
+      await ready(vm);
+      await vm.act('reopen-spec');
+      await vm.runWithFeedback('R2 is wrong: supervisors and team leads can reassign.');
+      expect(vm.feedbackFor()).toBeNull();
+      expect(runAgent).toHaveBeenCalledTimes(1);
+      expect(specOf(runAgent).name).toBe(`sdlc-claims-${REASSIGN}-spec`);
+      expect(specOf(runAgent).task).toContain('already confirmed reopening this accepted spec');
+      expect(specOf(runAgent).task).toContain('Operator feedback:\nR2 is wrong: supervisors and team leads can reassign.');
+    });
+
+    it('starting a first draft needs no feedback', async () => {
+      const { vm, runAgent } = setup(REASSIGN);
+      await ready(vm);
+      await vm.act('start-plan');
+      expect(vm.feedbackFor()).toBeNull();
+      expect(runAgent).toHaveBeenCalledTimes(1);
+    });
+
     it('reopen intent starts an intent run whose task says the reopen was already confirmed', async () => {
       const { vm, runAgent } = setup(FNOL);
       await ready(vm);
       await vm.act('reopen-intent');
+      await vm.runWithFeedback('');
       expect(runAgent).toHaveBeenCalledTimes(1);
       expect(specOf(runAgent).task).toContain('already confirmed reopening');
       expect(specOf(runAgent).name).toBe(`sdlc-claims-${FNOL}-intent`);
@@ -274,6 +306,7 @@ describe('ChangePageViewModel', () => {
       const { vm, runAgent } = setup(FNOL);
       await ready(vm);
       await vm.act('continue-spec');
+      await vm.runWithFeedback('');
       expect(specOf(runAgent).name).toBe(`sdlc-claims-${FNOL}-spec`);
       expect(specOf(runAgent).task).toContain(FNOL);
     });
@@ -282,7 +315,9 @@ describe('ChangePageViewModel', () => {
       const { vm, runAgent } = setup(REASSIGN);
       await ready(vm);
       await vm.act('rerun-plan');
+      await vm.runWithFeedback('');
       expect(specOf(runAgent).task).toContain('already confirmed replacing the existing plan');
+      expect(specOf(runAgent).task).not.toContain('Operator feedback');
     });
 
     it('reloads the change after a run', async () => {

@@ -51,6 +51,24 @@ describe('ChangePage', () => {
     expect(tab('Spec').getAttribute('aria-current')).toBe('step');
   });
 
+  it('crosses the seam: Reopen spec opens the feedback box, and Run starts a spec run carrying the corrections', async () => {
+    const transport = new MockTransport();
+    const run = vi.spyOn(transport, 'runSpec').mockResolvedValue();
+    const { container } = await mount('2026-10-09-adjuster-reassign', transport);
+    Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Reopen spec')!.click();
+    await settle();
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('Reopen spec');
+    expect(run).not.toHaveBeenCalled();
+    const box = dialog.querySelector<HTMLTextAreaElement>('textarea')!;
+    box.value = 'R2: team leads can reassign too.';
+    box.dispatchEvent(new Event('input'));
+    await settle();
+    Array.from(dialog.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Run')!.click();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0][0].task).toContain('Operator feedback:\nR2: team leads can reassign too.');
+  });
+
   it('offers the toolbar actions for the stage', async () => {
     const { container } = await mount();
     const all = labels(container);

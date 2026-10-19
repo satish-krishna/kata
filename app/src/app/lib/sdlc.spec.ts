@@ -3,7 +3,7 @@ import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
 import type { KataEvent } from "./events";
 import { validateLocal } from "./mock";
-import { actionLabel, actionsFor, hasAiSdlcPlugin, primaryAction, runCounts, specFor, splitFrontMatter, stageLabel, transcriptRunId, type RunContext } from "./sdlc";
+import { actionLabel, actionsFor, hasAiSdlcPlugin, primaryAction, revisits, runCounts, specFor, splitFrontMatter, stageLabel, transcriptRunId, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -22,9 +22,9 @@ const ACTIONS: Record<Stage, string[]> = {
   "spec-ready": ["start-spec", "reopen-intent"],
   "spec-awaiting": ["continue-spec", "accept-spec", "reopen-intent"],
   "spec-accepted-uncommitted": ["commit-acceptance", "continue-spec"],
-  "plan-ready": ["start-plan", "reopen-intent"],
-  "plan-written": ["rerun-plan", "reopen-intent"],
-  "plan-superseded": ["start-plan"],
+  "plan-ready": ["start-plan", "reopen-spec", "reopen-intent"],
+  "plan-written": ["rerun-plan", "reopen-spec", "reopen-intent"],
+  "plan-superseded": ["rerun-plan", "reopen-spec"],
 };
 
 describe("actionsFor", () => {
@@ -117,6 +117,30 @@ describe("specFor", () => {
         "The user has already confirmed replacing the existing plan; do not ask again.",
     );
   });
+  it("reopen spec carries the confirmation and touches only the spec", () => {
+    const s = specFor("spec", "reopen-spec", ctx, bypass, both);
+    expect(s.name).toBe("sdlc-claims-2026-10-12-fnol-spec");
+    expect(s.task).toBe(
+      "Use the ai-sdlc spec skill for system claims on change folder 2026-10-12-fnol. " +
+        "The user has already confirmed reopening this accepted spec; do not ask again.",
+    );
+  });
+  it("continue spec carries the confirmation to regenerate", () => {
+    expect(specFor("spec", "continue-spec", ctx, bypass, both).task).toBe(
+      "Use the ai-sdlc spec skill for system claims on change folder 2026-10-12-fnol. " +
+        "The user has already confirmed regenerating the spec; do not ask again.",
+    );
+  });
+  it("appends the operator's feedback as its own block, and nothing when it is blank", () => {
+    const withFeedback = specFor("spec", "reopen-spec", { ...ctx, feedback: "  R3 is wrong: compress, do not refuse.\nKeep R1.  " }, bypass, both);
+    const plain = specFor("spec", "reopen-spec", ctx, bypass, both);
+    expect(withFeedback.task).toBe(`${plain.task}\n\nOperator feedback:\nR3 is wrong: compress, do not refuse.\nKeep R1.`);
+    expect(specFor("spec", "reopen-spec", { ...ctx, feedback: "   " }, bypass, both).task).toBe(plain.task);
+  });
+  it("names the actions that revisit a document", () => {
+    const all = Object.values(ACTIONS).flat().filter((a, i, xs) => xs.indexOf(a) === i) as StageAction[];
+    expect(all.filter(revisits).sort()).toEqual(["continue-intent", "continue-spec", "reopen-intent", "reopen-spec", "rerun-plan"]);
+  });
   it("prompt mode enables interactive and asks on unmatched", () => {
     const s = specFor("spec", "start-spec", ctx, prompt, both);
     expect(s.permissions.mode).toBe("prompt");
@@ -195,6 +219,7 @@ describe("actionLabel and primaryAction", () => {
     expect(actionsFor("spec-awaiting").map(actionLabel)).toEqual(["Continue spec", "Accept spec", "Reopen intent"]);
     expect(actionLabel("commit-acceptance")).toBe("Commit acceptance");
     expect(actionLabel("rerun-plan")).toBe("Re-run plan");
+    expect(actionLabel("reopen-spec")).toBe("Reopen spec");
   });
 
   it("picks one primary: accept, then commit, then start, then continue; never reopen or re-run", () => {

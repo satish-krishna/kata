@@ -22,6 +22,7 @@ export type StageAction =
   | "accept-spec"
   | "start-plan"
   | "rerun-plan"
+  | "reopen-spec"
   | "reopen-intent";
 
 const ACTIONS: Record<Stage, StageAction[]> = {
@@ -32,10 +33,17 @@ const ACTIONS: Record<Stage, StageAction[]> = {
   "spec-ready": ["start-spec", "reopen-intent"],
   "spec-awaiting": ["continue-spec", "accept-spec", "reopen-intent"],
   "spec-accepted-uncommitted": ["commit-acceptance", "continue-spec"],
-  "plan-ready": ["start-plan", "reopen-intent"],
-  "plan-written": ["rerun-plan", "reopen-intent"],
-  "plan-superseded": ["start-plan"],
+  "plan-ready": ["start-plan", "reopen-spec", "reopen-intent"],
+  "plan-written": ["rerun-plan", "reopen-spec", "reopen-intent"],
+  "plan-superseded": ["rerun-plan", "reopen-spec"],
 };
+
+const REVISITS: readonly StageAction[] = ["continue-intent", "reopen-intent", "continue-spec", "reopen-spec", "rerun-plan"];
+
+/** True for an action that regenerates a document that already exists, so the operator can say what should change. */
+export function revisits(action: StageAction): boolean {
+  return REVISITS.includes(action);
+}
 
 /** The spec's "Stage derivation and actions" table, Actions column, in order. */
 export function actionsFor(stage: Stage): StageAction[] {
@@ -71,6 +79,8 @@ export type RunContext = {
   change: string | null;
   idea?: string;
   repos?: string[];
+  /** The operator's corrections for a revisit, passed to the skill as `Operator feedback:`. */
+  feedback?: string;
 };
 
 export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan";
@@ -110,8 +120,12 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext, ca
         ? `${resume} The user has already confirmed reopening this accepted intent; do not ask again.`
         : resume;
     }
-    case "spec":
-      return `Use the ai-sdlc spec skill for system ${system} on change folder ${change}.`;
+    case "spec": {
+      const task = `Use the ai-sdlc spec skill for system ${system} on change folder ${change}.`;
+      if (action === "reopen-spec") return `${task} The user has already confirmed reopening this accepted spec; do not ask again.`;
+      if (action === "continue-spec") return `${task} The user has already confirmed regenerating the spec; do not ask again.`;
+      return task;
+    }
     case "plan": {
       let task = `Use the ai-sdlc plan skill for system ${system} on change folder ${change}.`;
       if (!hasPlugin(catalog, SUPERPOWERS)) task += " --standalone";
@@ -133,7 +147,8 @@ export function specFor(
   const plugins: Record<string, PluginConfig> = { [AI_SDLC]: {} };
   if (kind === "plan" && hasPlugin(catalog, SUPERPOWERS)) plugins[SUPERPOWERS] = {};
   spec.name = nameFor(kind, ctx);
-  spec.task = taskFor(kind, action, ctx, catalog);
+  const feedback = ctx.feedback?.trim() ?? "";
+  spec.task = taskFor(kind, action, ctx, catalog) + (feedback ? `\n\nOperator feedback:\n${feedback}` : "");
   spec.workdir = ctx.folder;
   spec.plugins = plugins;
   // Outside the empty room: `--bare` ignores the operator's claude login and accepts only an API key.
@@ -171,6 +186,7 @@ const LABEL: Record<StageAction, string> = {
   "accept-spec": "Accept spec",
   "start-plan": "Start plan",
   "rerun-plan": "Re-run plan",
+  "reopen-spec": "Reopen spec",
   "reopen-intent": "Reopen intent",
 };
 

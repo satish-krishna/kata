@@ -175,9 +175,9 @@ Status values are read from front matter and shown raw; only the literal `accept
 | `intent.md` rejected | Closed · rejected | none |
 | intent accepted, no `spec.md` | Spec · ready to start | Start spec, Reopen intent |
 | `spec.md` not accepted | Spec · awaiting acceptance | Continue spec, Accept spec, Reopen intent |
-| spec accepted, no `plan.md` | Plan · ready to start | Start plan, Reopen intent |
-| `plan.md` present, not superseded | Plan · written | Re-run plan, Reopen intent |
-| `plan.md` superseded | Plan · superseded | Start plan (after spec is re-accepted) |
+| spec accepted, no `plan.md` | Plan · ready to start | Start plan, Reopen spec, Reopen intent |
+| `plan.md` present, not superseded | Plan · written | Re-run plan, Reopen spec, Reopen intent |
+| `plan.md` superseded | Plan · superseded | Re-run plan (it replaces the superseded plan), Reopen spec |
 
 The skills enforce their own gates (for example, `spec` refuses an uncommitted acceptance). The Workbench hides actions the gate would refuse, but the skill stays the authority: if a run stops on a gate, its message is shown as-is.
 
@@ -237,7 +237,9 @@ The change-to-run link is written to local app data, keyed by workspace, system,
 - Early in every run it emits a `log` event at level `info` with the message `transcript: <absolute path>`. The Workbench reads the id from that event and records it.
 - As a fallback for a run whose transcript could not be written (the engine then emits `transcript unavailable: …` instead), the Workbench gives every AI-SDLC run-spec a deterministic `name` of the form `sdlc-<system>-<change>-<stage>`, so `list_runs` can still be filtered by the record's `kata` field. The link is then best-effort, which is acceptable for a run that has no transcript to open anyway.
 
-Buttons are the confirmation. When a button stands for a decision a skill would otherwise confirm through `ask_user` (Reopen intent: "edit an accepted intent?"; Re-run plan: "replace the existing plan?"), the task wording states that the user already confirmed, so the user is not asked twice. Every other question the skill asks still comes through `ask_user`.
+Buttons are the confirmation. When a button stands for a decision a skill would otherwise confirm through `ask_user` (Reopen intent: "edit an accepted intent?"; Reopen spec: "edit an accepted spec?"; Continue spec: "regenerate the spec?"; Re-run plan: "replace the existing plan?"), the task wording states that the user already confirmed, so the user is not asked twice. Every other question the skill asks still comes through `ask_user`.
+
+Reopen spec sets only the spec back to draft and marks any plan superseded; the intent stays accepted. Every action that revisits an existing document (Continue intent, Reopen intent, Continue spec, Reopen spec, Re-run plan) first opens a feedback box, "What should change?", which is optional. Its text is appended to the task as an `Operator feedback:` block, and the skill regenerates the whole document with it (ai-sdlc 0.4.0, workspace reference section "Operator feedback"). Start spec and Start plan run at once, since a first draft has nothing to correct.
 
 `interactive.answer_timeout_secs` is 3600 (one hour) for every AI-SDLC run. An interview pause can be long, but a forgotten session should still end with exit 123 rather than hold a `claude` process forever. The lock panel's countdown is computed from the time `ask.requested` arrived plus that value; the event itself carries no deadline.
 

@@ -19,6 +19,7 @@ import {
   actionLabel,
   actionsFor,
   primaryAction,
+  revisits,
   runCounts,
   specFor,
   splitFrontMatter,
@@ -43,6 +44,7 @@ const RUNS: Partial<Record<StageAction, { kind: 'intent' | 'spec' | 'plan'; titl
   'reopen-intent': { kind: 'intent', title: 'Reopening intent', label: 'Intent' },
   'start-spec': { kind: 'spec', title: 'Starting spec', label: 'Spec' },
   'continue-spec': { kind: 'spec', title: 'Continuing spec', label: 'Spec' },
+  'reopen-spec': { kind: 'spec', title: 'Reopening spec', label: 'Spec' },
   'start-plan': { kind: 'plan', title: 'Starting plan', label: 'Plan' },
   'rerun-plan': { kind: 'plan', title: 'Re-running plan', label: 'Plan' },
 };
@@ -147,6 +149,14 @@ export class ChangePageViewModel {
     return `${FILE[d]} has other uncommitted edits; ${d === 'reject-intent' ? 'rejecting' : 'accepting'} commits them too.`;
   });
 
+  // --- the feedback box: a revisit asks what should change before it runs
+  private readonly pendingRevisit = signal<StageAction | null>(null);
+  /** The label of the action waiting on the feedback box, or null while the box is closed. */
+  readonly feedbackFor = computed(() => {
+    const a = this.pendingRevisit();
+    return a === null ? null : actionLabel(a);
+  });
+
   // --- the lock: Kata's own checks in the overlay, an agent run as the session view
   readonly locked = computed(() => this.lock.active() !== null);
   readonly lockView = computed(() => {
@@ -183,7 +193,7 @@ export class ChangePageViewModel {
   async startDemo(demo: string | null): Promise<void> {
     if (inTauri() || demo !== 'sdlc') return;
     await this.load();
-    if (this.state() === 'ready') await this.act('continue-spec');
+    if (this.state() === 'ready') await this.runStage('continue-spec');
   }
 
   // --- actions
@@ -200,8 +210,22 @@ export class ChangePageViewModel {
         await this.commitDecision(this.change()?.stage === 'intent-accepted-uncommitted' ? 'accept-intent' : 'accept-spec', false);
         return;
       default:
-        await this.runStage(action);
+        // Regenerating an existing document first asks what should change; a first draft just runs.
+        if (revisits(action)) this.pendingRevisit.set(action);
+        else await this.runStage(action);
     }
+  }
+
+  /** The operator confirmed the revisit, with their corrections (blank for none). */
+  async runWithFeedback(feedback: string): Promise<void> {
+    const action = this.pendingRevisit();
+    this.pendingRevisit.set(null);
+    if (action === null || this.refuseWhileLocked()) return;
+    await this.runStage(action, feedback);
+  }
+
+  cancelFeedback(): void {
+    this.pendingRevisit.set(null);
   }
 
   /** The operator confirmed that the file has other edits and the commit should take them too. */
@@ -322,7 +346,7 @@ export class ChangePageViewModel {
     await this.load();
   }
 
-  private async runStage(action: StageAction): Promise<void> {
+  private async runStage(action: StageAction, feedback = ''): Promise<void> {
     const run = RUNS[action];
     const workspace = this.current();
     const scan = this.scan();
@@ -331,7 +355,7 @@ export class ChangePageViewModel {
     let spec;
     try {
       const settings = this.modes.settings() ?? (await this.modes.load());
-      spec = specFor(run.kind, action, { folder: workspace.folder, system: this.system(), change: this.changeName() }, settings, this.catalog());
+      spec = specFor(run.kind, action, { folder: workspace.folder, system: this.system(), change: this.changeName(), feedback }, settings, this.catalog());
     } catch (e) {
       this.toasts.error(`Could not prepare the run: ${message(e)}`);
       return;

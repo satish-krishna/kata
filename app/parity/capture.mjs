@@ -95,6 +95,11 @@ export const VIEWS = [
       await p.getByRole('heading', { name: 'Photo upload at first notice of loss' }).waitFor();
     } },
   { name: 'sdlc-change-plan', path: '/sdlc/claims/2026-10-09-adjuster-reassign', ready: '.k-doc' },
+  { name: 'sdlc-feedback', path: '/sdlc/claims/2026-10-09-adjuster-reassign', ready: '.k-doc',
+    act: async (p) => {
+      await p.getByRole('button', { name: 'Reopen spec' }).click();
+      await p.getByRole('dialog').getByRole('textbox', { name: 'What should change?' }).fill('R2 is wrong: team leads can reassign too.');
+    } },
   { name: 'hover-secondary', path: '/', ready: '.wb-toolbar',
     act: async (p) => { await p.getByRole('button', { name: 'Open spec' }).hover(); } },
 ];
