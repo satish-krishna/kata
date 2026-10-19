@@ -1,4 +1,5 @@
-use crate::{branch, changes, git};
+use crate::workspace::{Marker, MARKER};
+use crate::{branch, changes, frontmatter, git};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -32,14 +33,41 @@ pub enum DecideError {
     Io(#[from] std::io::Error),
 }
 
-/// The only place commit messages are built.
-pub fn message(decision: Decision, system: &str, change: &str) -> String {
+/// The only place commit messages are built: the ai-sdlc header and its `Generated-By` trailer.
+pub fn message(decision: Decision, scope: &str, change: &str) -> String {
     let verb = match decision {
         Decision::AcceptIntent => "accept intent",
         Decision::RejectIntent => "reject intent",
         Decision::AcceptSpec => "accept spec",
     };
-    format!("docs({system}): {verb} {change}")
+    format!("docs({scope}): {verb} {change}\n\nGenerated-By: ai-sdlc")
+}
+
+/// Lowercase kebab-case, the only scope shape a commitlint header accepts.
+fn is_scope(s: &str) -> bool {
+    !s.is_empty()
+        && !s.starts_with('-')
+        && !s.ends_with('-')
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// The change's scope, as the ai-sdlc plugin resolves it: the intent's `scope`, then the
+/// marker's `systems.<system>.commitScope`, then the system name. A malformed value is skipped.
+fn scope(master: &Path, system: &str, change: &str) -> String {
+    let intent =
+        std::fs::read_to_string(master.join(format!("intent/{system}/{change}/intent.md")))
+            .ok()
+            .and_then(|t| frontmatter::field(&t, "scope"));
+    let marker = std::fs::read_to_string(master.join(MARKER))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Marker>(&t).ok())
+        .and_then(|m| m.systems.get(system)?.commit_scope.clone());
+    [intent, marker]
+        .into_iter()
+        .flatten()
+        .find(|s| is_scope(s))
+        .unwrap_or_else(|| system.to_string())
 }
 
 /// Return `text` with the front-matter `status` line set to `value`, or removed when `None`.
@@ -143,7 +171,7 @@ pub fn apply(
         std::fs::write(&path, edited)?;
     }
 
-    let msg = message(decision, system, change);
+    let msg = message(decision, &scope(master, system, change), change);
     let committed = git::run(master, &["add", "--", &rel])
         .and_then(|_| git::run(master, &["commit", "-m", &msg, "--", &rel]));
     Ok(match committed {
@@ -179,15 +207,105 @@ mod tests {
     fn message_format() {
         assert_eq!(
             message(Decision::AcceptIntent, "claims", CHANGE),
-            "docs(claims): accept intent 2026-10-12-fnol"
+            "docs(claims): accept intent 2026-10-12-fnol\n\nGenerated-By: ai-sdlc"
         );
         assert_eq!(
             message(Decision::RejectIntent, "claims", CHANGE),
-            "docs(claims): reject intent 2026-10-12-fnol"
+            "docs(claims): reject intent 2026-10-12-fnol\n\nGenerated-By: ai-sdlc"
         );
         assert_eq!(
             message(Decision::AcceptSpec, "claims", CHANGE),
-            "docs(claims): accept spec 2026-10-12-fnol"
+            "docs(claims): accept spec 2026-10-12-fnol\n\nGenerated-By: ai-sdlc"
+        );
+    }
+
+    fn subject(repo: &Path) -> String {
+        git::run(repo, &["log", "-1", "--format=%s"]).unwrap()
+    }
+
+    fn marker(repo: &Path, json: &str) {
+        testutil::commit_file(repo, ".ai-sdlc.json", json, "marker");
+    }
+
+    #[test]
+    fn commit_carries_the_trailer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        apply(&repo, "claims", CHANGE, Decision::AcceptIntent, false).unwrap();
+        let trailer = git::run(
+            &repo,
+            &[
+                "log",
+                "-1",
+                "--format=%(trailers:key=Generated-By,valueonly)",
+            ],
+        )
+        .unwrap();
+        assert_eq!(trailer.trim_end(), "ai-sdlc");
+    }
+
+    #[test]
+    fn scope_comes_from_the_intent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        marker(
+            &repo,
+            r#"{"version":1,"systems":{"claims":{"commitScope":"claims-sys"}}}"#,
+        );
+        testutil::commit_file(
+            &repo,
+            INTENT,
+            "---\nstatus: draft\nscope: \"fnol\"\n---\n",
+            "i",
+        );
+        apply(&repo, "claims", CHANGE, Decision::AcceptIntent, false).unwrap();
+        assert_eq!(subject(&repo), "docs(fnol): accept intent 2026-10-12-fnol");
+    }
+
+    #[test]
+    fn spec_acceptance_uses_the_intent_scope() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        testutil::commit_file(
+            &repo,
+            INTENT,
+            "---\nstatus: accepted\nscope: fnol\n---\n",
+            "i",
+        );
+        let spec = "intent/claims/2026-10-12-fnol/spec.md";
+        testutil::commit_file(&repo, spec, "---\nstatus: ready\n---\n", "spec");
+        apply(&repo, "claims", CHANGE, Decision::AcceptSpec, false).unwrap();
+        assert_eq!(subject(&repo), "docs(fnol): accept spec 2026-10-12-fnol");
+    }
+
+    #[test]
+    fn scope_falls_back_to_the_system_commit_scope() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        marker(
+            &repo,
+            r#"{"version":1,"systems":{"claims":{"repos":[],"commitScope":"claims-sys"}}}"#,
+        );
+        apply(&repo, "claims", CHANGE, Decision::AcceptIntent, false).unwrap();
+        assert_eq!(
+            subject(&repo),
+            "docs(claims-sys): accept intent 2026-10-12-fnol"
+        );
+    }
+
+    #[test]
+    fn malformed_scopes_are_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        marker(
+            &repo,
+            r#"{"version":1,"systems":{"claims":{"commitScope":"Claims Sys"}}}"#,
+        );
+        testutil::commit_file(&repo, INTENT, "---\nstatus: draft\nscope: a(b)\n---\n", "i");
+        apply(&repo, "claims", CHANGE, Decision::AcceptIntent, false).unwrap();
+        assert_eq!(
+            subject(&repo),
+            "docs(claims): accept intent 2026-10-12-fnol"
         );
     }
 

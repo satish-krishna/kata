@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-const MARKER: &str = ".ai-sdlc.json";
+pub(crate) const MARKER: &str = ".ai-sdlc.json";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ScanError {
@@ -27,6 +27,14 @@ pub struct Marker {
 pub struct SystemDef {
     #[serde(default)]
     pub repos: Vec<String>,
+    /// The Conventional Commits scope for this system's commits; the system name when absent.
+    #[serde(
+        rename = "commitScope",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "ts", ts(optional = nullable, rename = "commitScope"))]
+    pub commit_scope: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
