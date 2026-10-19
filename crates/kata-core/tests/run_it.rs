@@ -292,6 +292,39 @@ fn run_max_turns_kills_child() {
 
 #[test]
 #[serial]
+fn run_max_turns_counts_messages_not_lines() {
+    with_fake("splitturns");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.leash.max_turns = Some(2);
+    let cancel = CancelToken::new();
+    let mut events = Vec::new();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap();
+    // Two messages of two lines each fit under a cap of 2; the third message trips it.
+    assert_eq!(outcome.exit_code, 125);
+    let texts: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            KataEvent::AssistantText { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, ["turn 1", "turn 2"]);
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, KataEvent::Turn { n, .. } if *n >= 3)));
+}
+
+#[test]
+#[serial]
 fn run_unlimited_turns_does_not_cap() {
     with_fake("manyturns");
     let work = tempfile::tempdir().unwrap();

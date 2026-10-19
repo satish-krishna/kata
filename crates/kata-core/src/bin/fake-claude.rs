@@ -40,6 +40,22 @@ fn main() {
                 thread::sleep(Duration::from_millis(200));
             }
         }
+        "splitturns" => {
+            // Real claude's shape: each content block of one message is its own
+            // line sharing message.id, a redacted thinking block first.
+            for i in 1..=10 {
+                let _ = writeln!(
+                    out,
+                    r#"{{"type":"assistant","message":{{"id":"m{i}","content":[{{"type":"thinking","thinking":"","signature":"s"}}]}}}}"#
+                );
+                let _ = writeln!(
+                    out,
+                    r#"{{"type":"assistant","message":{{"id":"m{i}","content":[{{"type":"text","text":"turn {i}"}}]}}}}"#
+                );
+                let _ = out.flush();
+                thread::sleep(Duration::from_millis(200));
+            }
+        }
         "blockstdin" => {
             // Block until stdin reaches EOF, then complete. With an inherited,
             // open-but-idle stdin this never returns on its own; with Stdio::null()
@@ -106,7 +122,7 @@ fn main() {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0);
-            // The suppressed ask_user tool_use keeps is_assistant_message=true so
+            // The suppressed ask_user tool_use keeps starts_turn=true so
             // the engine counts the turn but emits no tool.use event.
             let _ = writeln!(
                 out,

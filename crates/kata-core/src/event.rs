@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 
 /// Wire-protocol version of the `KataEvent` stream. Bump on any breaking
@@ -272,7 +272,10 @@ impl ResultPayload {
 #[derive(Debug, Default)]
 pub struct Parsed {
     pub events: Vec<KataEvent>,
-    pub is_assistant_message: bool,
+    /// True on the first line of an assistant message. claude emits each content
+    /// block (thinking, text, tool_use) as its own line sharing `message.id`, so
+    /// one turn spans several lines; a line without an id counts as its own turn.
+    pub starts_turn: bool,
     /// The message's `parent_tool_use_id`, when it came from inside a subagent.
     pub parent_id: Option<String>,
     pub result: Option<ResultPayload>,
@@ -284,6 +287,9 @@ pub struct Parsed {
 #[derive(Debug, Default)]
 pub struct StreamParser {
     tool_names: HashMap<String, String>,
+    /// Assistant `message.id`s already seen, so a message's later blocks do not
+    /// start another turn. A set, not the last id: parallel subagents interleave.
+    message_ids: HashSet<String>,
     full_payloads: bool,
 }
 
@@ -310,7 +316,10 @@ impl StreamParser {
         out.parent_id = parent_id.clone();
         match v.get("type").and_then(|t| t.as_str()) {
             Some("assistant") => {
-                out.is_assistant_message = true;
+                out.starts_turn = match v.pointer("/message/id").and_then(|i| i.as_str()) {
+                    Some(id) => self.message_ids.insert(id.to_string()),
+                    None => true,
+                };
                 if let Some(content) = v.pointer("/message/content").and_then(|c| c.as_array()) {
                     for block in content {
                         match block.get("type").and_then(|t| t.as_str()) {
@@ -534,7 +543,7 @@ pub fn pump<R: BufRead>(
             continue;
         }
         let parsed = parser.push(&line);
-        if parsed.is_assistant_message {
+        if parsed.starts_turn {
             turns += 1;
             emit(KataEvent::Turn {
                 n: turns,
@@ -578,7 +587,7 @@ mod tests {
     fn parses_assistant_text_and_marks_message() {
         let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}"#;
         let p = parse_stream_line(line);
-        assert!(p.is_assistant_message);
+        assert!(p.starts_turn);
         assert_eq!(
             p.events,
             vec![KataEvent::AssistantText {
@@ -622,7 +631,7 @@ mod tests {
                 truncated: false,
             }]
         );
-        assert!(!p.is_assistant_message);
+        assert!(!p.starts_turn);
     }
 
     #[test]
@@ -676,6 +685,45 @@ mod tests {
             saw_result,
             "should extract a result payload from real output"
         );
+    }
+
+    #[test]
+    fn content_blocks_of_one_message_are_one_turn() {
+        // Real claude 2.x shape: each content block is its own line, all sharing
+        // message.id, and a redacted thinking block comes first with no text.
+        let input = concat!(
+            r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"thinking","thinking":"","signature":"s"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}"#,
+            "\n",
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"id":"m2","content":[{"type":"thinking","thinking":"","signature":"s"}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"id":"m2","content":[{"type":"text","text":"done"}]}}"#,
+            "\n",
+        );
+        let mut events = Vec::new();
+        pump(Cursor::new(input), &|| false, &mut |e| events.push(e));
+        let turns: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, KataEvent::Turn { .. }))
+            .collect();
+        assert_eq!(
+            turns,
+            vec![
+                &KataEvent::Turn {
+                    n: 1,
+                    parent_id: None
+                },
+                &KataEvent::Turn {
+                    n: 2,
+                    parent_id: None
+                },
+            ]
+        );
+        // The turn marker lands before the first block, so the thinking line opens it.
+        assert_eq!(events[0], *turns[0]);
     }
 
     #[test]
@@ -888,7 +936,7 @@ mod tests {
     fn ask_user_tool_use_is_suppressed_from_the_stream() {
         let line = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__kata-ask__ask_user","input":{"questions":[]}}]}}"#;
         let p = parse_stream_line(line);
-        assert!(p.is_assistant_message, "still counts as an assistant turn");
+        assert!(p.starts_turn, "still counts as an assistant turn");
         assert!(
             p.events.is_empty(),
             "the ask_user tool.use must not render as a row"
@@ -904,10 +952,7 @@ mod tests {
         let res_line = r#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_ask","content":"answered","is_error":false}]}}"#;
 
         let used = p.push(use_line);
-        assert!(
-            used.is_assistant_message,
-            "still counts as an assistant turn"
-        );
+        assert!(used.starts_turn, "still counts as an assistant turn");
         assert!(
             used.events.is_empty(),
             "ask_user tool.use must not render a row"

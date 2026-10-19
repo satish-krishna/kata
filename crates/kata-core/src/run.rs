@@ -739,7 +739,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
                     continue;
                 }
                 let parsed = parser.push(&line);
-                if parsed.is_assistant_message {
+                if parsed.starts_turn {
                     // Engine-side leash: claude 2.1.x has no --max-turns flag, so the
                     // turn cap is enforced here. `None` means unlimited (bounded only
                     // by the wall-clock timeout); when a cap is set, stop once a turn
