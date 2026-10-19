@@ -12,7 +12,7 @@ The `kata` binary is the single execution path the GUI, the Shokunin orchestrato
 
 ## Layout
 
-A Cargo workspace plus a Tauri app. Three crates in `[workspace].members`:
+A Cargo workspace plus a Tauri app. Four crates in `[workspace].members`:
 
 - `crates/kata-core` — the engine library (`kata_core`). Also builds the `fake-claude` test binary. Modules: `spec` (the `RunSpec` contract: TOML/JSON load/save + pure `validate`), `catalog` (`discover` skills/plugins from user+project scopes, plus the embedded builtin kit), `builtin` (the repo's `.claude/plugins/kata/` workflow plugin, embedded at build time by `build.rs` and materialized under `<kata-home>/builtin/` so `[plugins.kata]` resolves in any workdir; user/project plugins of the same name shadow it), `command` (`build_invocation` pins the exact claude flag set), `assemble` (build the disposable `--plugin-dir` with RAII temp cleanup), `ask` (the localhost bridge and the `mcp-ask` MCP server behind the `ask_user` and `approve_tool` tools), `run` (orchestrate the child, stream `KataEvent`s, enforce the leash, clean up), `event` (the normalized `KataEvent` protocol + `parse_stream_line` translating claude `stream-json`), `permission` (rule *syntax* validation and call-target rendering for `[permissions] mode = "prompt"` — it does not match rules; claude does, from a generated settings file), `fsutil`.
 - `crates/kata-sdlc` — the AI-SDLC mode backend library (`kata_sdlc`): workspace scanning, change and stage detection, the branch and snapshot operations around a run, acceptance commits, and the local `<KATA_HOME>/workbench/` JSON data. It never touches the run-spec or the event protocol; the Workbench backend links it in-process.
