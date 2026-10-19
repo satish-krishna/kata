@@ -1,6 +1,6 @@
 import { Component, input, output } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideChevronRight, lucideSettings } from '@ng-icons/lucide';
+import { lucideChevronRight, lucideFolderPlus, lucideSettings, lucideX } from '@ng-icons/lucide';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { WorkspaceSwitcher } from './workspace-switcher';
@@ -11,7 +11,7 @@ import { WorkspaceSwitcher } from './workspace-switcher';
   selector: 'app-sdlc-toolbar',
   host: { class: 'contents' },
   imports: [NgIcon, HlmButtonImports, WorkspaceSwitcher],
-  providers: [provideIcons({ lucideChevronRight, lucideSettings })],
+  providers: [provideIcons({ lucideChevronRight, lucideFolderPlus, lucideSettings, lucideX })],
   template: `
     <header class="wb-toolbar">
       <div class="wb-brand">
@@ -36,9 +36,25 @@ import { WorkspaceSwitcher } from './workspace-switcher';
           [missing]="missing()"
           [counts]="counts()"
           (select)="select.emit($event)"
-          (add)="add.emit()"
-          (remove)="remove.emit()"
         />
+        <button hlmBtn variant="bare" size="bare" class="k-iconbtn" type="button" title="Add workspace" aria-label="Add workspace" [disabled]="locked()" (click)="add.emit()">
+          <ng-icon name="lucideFolderPlus" size="16" />
+        </button>
+        @if (current(); as w) {
+          <button
+            hlmBtn
+            variant="bare"
+            size="bare"
+            class="k-iconbtn"
+            type="button"
+            title="Remove from list"
+            [attr.aria-label]="'Remove ' + w.name + ' from list'"
+            [disabled]="locked()"
+            (click)="remove.emit()"
+          >
+            <ng-icon name="lucideX" size="16" />
+          </button>
+        }
       }
       <nav class="k-crumbs" aria-label="Breadcrumb">
         @for (crumb of crumbs(); track $index) {

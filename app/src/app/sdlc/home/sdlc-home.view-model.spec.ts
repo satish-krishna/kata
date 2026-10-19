@@ -174,6 +174,28 @@ describe('SdlcHomeViewModel add workspace', () => {
     expect(saveWorkspaces).not.toHaveBeenCalled();
   });
 
+  it('says so when the workspace check is cancelled, and adds nothing', async () => {
+    const { vm, transport, lock, saveWorkspaces } = setup();
+    vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
+    await vm.init();
+    vi.spyOn(lock, 'runSteps').mockResolvedValue('cancelled');
+    await vm.addWorkspace();
+    expect(toastText()).toContain('Workspace check cancelled. Nothing was added.');
+    expect(vm.candidate()).toBeNull();
+    expect(saveWorkspaces).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed context read after setup instead of rejecting', async () => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
+    await vm.init();
+    vi.spyOn(transport, 'sdlcScan').mockResolvedValueOnce(scanOf({ master: { kind: 'none' }, marker: null }));
+    vi.spyOn(transport, 'sdlcContextHealth').mockRejectedValue('git exploded');
+    await expect(vm.addWorkspace()).resolves.toBeUndefined();
+    expect(toastText()).toContain('git exploded');
+    expect(vm.candidate()).toBeNull();
+  });
+
   it('explains a folder with no repos instead of running anything', async () => {
     const { vm, transport, runAgent } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
@@ -280,6 +302,15 @@ describe('SdlcHomeViewModel runs', () => {
     vm.answerSwitch(true);
     await done;
     expect(toastText()).toContain('uncommitted changes: a.md');
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it('aborts with an error and runs nothing when the branch cannot be read', async () => {
+    const { vm, transport, runAgent } = setup();
+    await vm.init();
+    vi.spyOn(transport, 'sdlcBranches').mockRejectedValue('not a git repository');
+    await vm.runContext('customer-portal');
+    expect(toastText()).toContain('not a git repository');
     expect(runAgent).not.toHaveBeenCalled();
   });
 

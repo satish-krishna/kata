@@ -264,6 +264,10 @@ export class SdlcHomeViewModel {
       },
     ]);
     let scan = found.scan as WorkspaceScan | null;
+    if (outcome === 'cancelled') {
+      this.toasts.info('Workspace check cancelled. Nothing was added.');
+      return;
+    }
     if (outcome !== 'done' || scan === null) return;
 
     const name = folderName(dir);
@@ -280,7 +284,12 @@ export class SdlcHomeViewModel {
       const ran = await this.runSetup(dir, scan);
       if (ran === null) return;
       scan = ran;
-      contexts = await this.readContexts(dir, scan);
+      try {
+        contexts = await this.readContexts(dir, scan);
+      } catch (e) {
+        this.toasts.error(`Could not read the context health: ${message(e)}`);
+        return;
+      }
     }
     const repo = masterRepo(scan);
     if (repo === null) return;
@@ -511,8 +520,10 @@ export class SdlcHomeViewModel {
     let info: BranchInfo;
     try {
       info = await this.transport.sdlcBranches(master);
-    } catch {
-      return true;
+    } catch (e) {
+      // Without the branch there is no telling where a commit would land, so do not run.
+      this.toasts.error(`Could not read the master repo's branch: ${message(e)}`);
+      return false;
     }
     const target = base ?? info.default_base;
     if (info.current === null || target === null || info.current === target) return true;

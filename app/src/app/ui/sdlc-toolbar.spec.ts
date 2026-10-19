@@ -45,10 +45,27 @@ describe('SdlcToolbar', () => {
     expect(byLabel(container, 'AI-SDLC settings').disabled).toBe(true);
   });
 
+  it('has Add workspace and a Remove button named for the workspace, which emit', async () => {
+    const { fixture, container } = await render(SdlcToolbar, inputs());
+    const got: string[] = [];
+    fixture.componentInstance.add.subscribe(() => got.push('add'));
+    fixture.componentInstance.remove.subscribe(() => got.push('remove'));
+    byLabel(container, 'Add workspace').click();
+    byLabel(container, 'Remove acme-claims from list').click();
+    expect(got).toEqual(['add', 'remove']);
+  });
+
+  it('cannot remove when there is no current workspace', async () => {
+    const { container } = await render(SdlcToolbar, inputs({ current: null, workspaces: [] }));
+    expect(container.querySelector('button[aria-label^="Remove"]')).toBeNull();
+    expect(byLabel(container, 'Add workspace')).not.toBeNull();
+  });
+
   it('withholds the workspace switcher and branch while blocked', async () => {
     const { container } = await render(SdlcToolbar, inputs({ blocked: true }));
     expect(container.querySelector('button[aria-label="Switch workspace"]')).toBeNull();
     expect(container.querySelector('[data-testid="branch"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Add workspace"]')).toBeNull();
     expect(byLabel(container, 'Switch mode')).not.toBeNull();
   });
 

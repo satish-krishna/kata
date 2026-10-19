@@ -77,9 +77,13 @@ export class SdlcRunner {
     });
   }
 
-  async run(title: string, spec: RunSpec, target: RunTarget): Promise<RunOutcome> {
+  private isBusy(): boolean {
     const busy = this.runs.state();
-    if (this.lock.active() !== null || busy === 'running' || busy === 'awaiting') {
+    return this.lock.active() !== null || busy === 'running' || busy === 'awaiting';
+  }
+
+  async run(title: string, spec: RunSpec, target: RunTarget): Promise<RunOutcome> {
+    if (this.isBusy()) {
       this.toasts.error('Another task is already running.');
       return { state: 'error', runId: null, snapshot: null };
     }
@@ -134,7 +138,7 @@ export class SdlcRunner {
    */
   async newChange(target: ChangeTarget, system: string, idea: string): Promise<void> {
     const { workspace, master, productRepos } = target;
-    if (this.lock.active() !== null) {
+    if (this.isBusy()) {
       this.toasts.error('Another task is already running.');
       return;
     }

@@ -32,7 +32,7 @@ describe('WorkspaceSwitcher', () => {
     };
   });
 
-  it('shows the current workspace on the trigger and keeps the list closed', async () => {
+  it('shows the current workspace as the select value and keeps the list closed', async () => {
     const { container } = await render(WorkspaceSwitcher, { workspaces: [A, B], current: A, missing: [], counts: {} });
     expect(trigger(container).textContent).toContain('acme-claims');
     expect(items().length).toBe(0);
@@ -51,13 +51,22 @@ describe('WorkspaceSwitcher', () => {
     expect(billing).toContain('folder missing');
   });
 
-  it('ends with Add workspace and Remove from list', async () => {
-    const { container } = await render(WorkspaceSwitcher, { workspaces: [A], current: A, missing: [], counts: {} });
+  it('lists only workspaces: Add and Remove are not options', async () => {
+    const { container } = await render(WorkspaceSwitcher, { workspaces: [A, B], current: A, missing: [], counts: {} });
     await open(container);
-    expect(items().slice(-2).map((i) => i.textContent!.trim())).toEqual(['Add workspace…', 'Remove from list…']);
+    expect(items().length).toBe(2);
+    expect(document.body.textContent).not.toContain('Add workspace');
+    expect(document.body.textContent).not.toContain('Remove from list');
   });
 
-  it('emits select with the id of the chosen workspace and shows the current one again', async () => {
+  it('binds the select to the current workspace, so it is the selected option', async () => {
+    const { container } = await render(WorkspaceSwitcher, { workspaces: [A, B], current: A, missing: [], counts: {} });
+    await open(container);
+    expect(itemWith('acme-claims').getAttribute('aria-selected')).toBe('true');
+    expect(itemWith('old-billing').getAttribute('aria-selected')).not.toBe('true');
+  });
+
+  it('emits select with the id of the chosen workspace', async () => {
     const { fixture, container } = await render(WorkspaceSwitcher, { workspaces: [A, B], current: A, missing: [], counts: {} });
     const picked: string[] = [];
     fixture.componentInstance.select.subscribe((id) => picked.push(id));
@@ -65,27 +74,10 @@ describe('WorkspaceSwitcher', () => {
     itemWith('old-billing').click();
     await settle();
     expect(picked).toEqual(['old-billing']);
-    expect(trigger(container).textContent).toContain('acme-claims');
   });
 
-  it('emits add and remove from the footer items', async () => {
-    const { fixture, container } = await render(WorkspaceSwitcher, { workspaces: [A], current: A, missing: [], counts: {} });
-    const got: string[] = [];
-    fixture.componentInstance.add.subscribe(() => got.push('add'));
-    fixture.componentInstance.remove.subscribe(() => got.push('remove'));
-    await open(container);
-    itemWith('Add workspace').click();
-    await settle();
-    await open(container);
-    itemWith('Remove from list').click();
-    await settle();
-    expect(got).toEqual(['add', 'remove']);
-  });
-
-  it('shows a placeholder and cannot remove when there is no current workspace', async () => {
+  it('shows a placeholder when there is no current workspace', async () => {
     const { container } = await render(WorkspaceSwitcher, { workspaces: [], current: null, missing: [], counts: {} });
     expect(trigger(container).textContent).toContain('No workspace');
-    await open(container);
-    expect(itemWith('Remove from list').hasAttribute('data-disabled')).toBe(true);
   });
 });

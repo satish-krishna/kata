@@ -49,17 +49,18 @@ function setup(agent: (spec: RunSpec) => Promise<RunState> | RunState = () => 's
       return agent(spec);
     }),
   };
+  const state = signal('idle');
   const toasts = { error: vi.fn(), success: vi.fn(), info: vi.fn() };
   TestBed.configureTestingModule({
     providers: [
       { provide: KataTransport, useValue: fake },
       { provide: LockStore, useValue: lock },
-      { provide: RunStore, useValue: { events, summary, state: signal('idle') } },
+      { provide: RunStore, useValue: { events, summary, state } },
       { provide: ToastStore, useValue: toasts },
     ],
   });
   const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
-  return { runner: TestBed.inject(SdlcRunner), fake, lock, toasts, events, summary, active, navigate };
+  return { runner: TestBed.inject(SdlcRunner), fake, lock, toasts, events, summary, active, navigate, state };
 }
 
 describe('SdlcRunner.run', () => {
@@ -237,6 +238,15 @@ describe('SdlcRunner.newChange', () => {
     await done;
     expect(toasts.error).toHaveBeenCalledWith(expect.stringContaining('change/pending-1'));
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('creates no pending branch while a run is active', async () => {
+    const { runner, fake, toasts, state, lock } = setup();
+    state.set('running');
+    await runner.newChange(target, 'claims', 'idea');
+    expect(fake.sdlcStartChange).not.toHaveBeenCalled();
+    expect(lock.runAgent).not.toHaveBeenCalled();
+    expect(toasts.error).toHaveBeenCalledWith('Another task is already running.');
   });
 
   it('stops before the run when the pending branch cannot be created', async () => {

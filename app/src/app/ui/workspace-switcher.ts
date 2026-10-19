@@ -1,24 +1,18 @@
-import { Component, effect, input, output, signal, untracked } from '@angular/core';
+import { Component, input, output } from '@angular/core';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import { HlmSelectImports } from '@spartan-ng/helm/select';
 
-const ADD = '\u0000add';
-const REMOVE = '\u0000remove';
-
-/* The toolbar's workspace dropdown. Lists the known workspaces with their folder and change count, flags one
- * whose folder is gone, and ends with Add and Remove. Removing only forgets the entry.
- *
- * Built on the select primitive, used as a command picker: its value is always empty (the trigger shows the
- * current workspace as its placeholder), a pick is emitted and the value is reset, so nothing is ever "selected". */
+/* The toolbar's workspace picker: a select whose value is the current workspace. Each option shows the folder and
+ * the change count and flags a folder that is gone. Add and Remove are separate toolbar buttons, not options. */
 @Component({
   selector: 'app-workspace-switcher',
   host: { class: 'contents' },
   imports: [HlmSelectImports],
   template: `
     <div class="k-wsswitch">
-      <hlm-select [(value)]="picked">
+      <hlm-select [value]="current()?.id ?? null" [itemToString]="nameOf" (valueChange)="onPick($event)">
         <hlm-select-trigger aria-label="Switch workspace">
-          <hlm-select-value [placeholder]="current()?.name ?? 'No workspace'" />
+          <hlm-select-value placeholder="No workspace" />
         </hlm-select-trigger>
         <hlm-select-content *hlmSelectPortal>
           @for (w of workspaces(); track w.id) {
@@ -34,11 +28,6 @@ const REMOVE = '\u0000remove';
               </span>
             </hlm-select-item>
           }
-          @if (workspaces().length > 0) {
-            <hlm-select-separator />
-          }
-          <hlm-select-item [value]="addValue">Add workspace…</hlm-select-item>
-          <hlm-select-item [value]="removeValue" [disabled]="current() === null">Remove from list…</hlm-select-item>
         </hlm-select-content>
       </hlm-select>
     </div>
@@ -53,24 +42,11 @@ export class WorkspaceSwitcher {
   readonly counts = input<Record<string, number>>({});
 
   readonly select = output<string>();
-  readonly add = output<void>();
-  readonly remove = output<void>();
 
-  protected readonly addValue = ADD;
-  protected readonly removeValue = REMOVE;
-  protected readonly picked = signal<string | null>(null);
+  /** The trigger shows the workspace's name, not its id. */
+  protected readonly nameOf = (id: unknown): string => this.workspaces().find((w) => w.id === id)?.name ?? String(id);
 
-  constructor() {
-    effect(() => {
-      const value = this.picked();
-      if (value === null) return;
-      untracked(() => {
-        if (value === ADD) this.add.emit();
-        else if (value === REMOVE) this.remove.emit();
-        else this.select.emit(value);
-      });
-      // Reset after this change-detection pass so the one select instance shows the current workspace again.
-      queueMicrotask(() => this.picked.set(null));
-    });
+  protected onPick(value: unknown): void {
+    if (typeof value === 'string' && value !== this.current()?.id) this.select.emit(value);
   }
 }
