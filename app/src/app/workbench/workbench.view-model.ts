@@ -7,6 +7,7 @@ import { KataTransport } from '../core/transport/kata-transport';
 import { RunStore } from '../core/run/run.store';
 import { ToastStore } from '../core/toast/toast.store';
 import { LaunchStore } from '../core/launch/launch.store';
+import { ModeStore } from '../core/mode/mode.store';
 import { defaultSpec, draftFrom, normalize, specEquals } from '../lib/spec';
 import { inTauri, seedSpec } from '../lib/mock';
 
@@ -22,6 +23,7 @@ export class WorkbenchViewModel {
   private readonly runs = inject(RunStore);
   private readonly toasts = inject(ToastStore);
   private readonly launches = inject(LaunchStore);
+  private readonly modes = inject(ModeStore);
 
   // Real Tauri app opens a blank New spec; browser dev/review seeds the example.
   private readonly initial = inTauri() ? defaultSpec() : seedSpec();
@@ -186,6 +188,10 @@ export class WorkbenchViewModel {
 
   cancel(): void {
     void this.runs.cancelRun();
+  }
+
+  switchMode(): void {
+    void this.modes.switchTo('sdlc').catch((e) => this.toasts.error(`Failed to switch mode: ${e}`));
   }
 
   async savePreset(p: { name: string; body: string }): Promise<void> {

@@ -187,3 +187,20 @@
 .wb-detail__streamhead--spaced { margin-bottom: var(--space-3-5); }
 .wb-detail__result--faint { color: var(--text-faint); }
 .wb-detail--empty { align-items: center; justify-content: center; }
+
+/* ---------- Mode choice (launch screen) ---------- */
+.k-mode { display: grid; place-items: center; min-height: 100vh; background: var(--surface-app); color: var(--text-primary); padding: var(--space-6); }
+.k-mode__panel { display: grid; gap: var(--space-5); width: min(100%, 44rem); padding: var(--space-6); background: var(--surface-panel); border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: var(--shadow-md); }
+.k-mode__heading { font: var(--weight-semibold) var(--text-lg)/1.2 var(--font-sans); color: var(--text-primary); margin: 0; }
+.k-mode__cards { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
+.k-modecard { display: grid; align-content: start; gap: var(--space-2); text-align: left; padding: var(--space-5); background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); cursor: pointer; transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.k-modecard:hover { border-color: var(--border-default); }
+.k-modecard--selected, .k-modecard--selected:hover { border-color: var(--accent); background: var(--surface-inset); }
+.k-modecard__eyebrow { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--accent-text); }
+.k-modecard__title { font: var(--weight-semibold) var(--text-md)/1.2 var(--font-sans); color: var(--text-primary); }
+.k-modecard__body { font: var(--text-sm)/1.5 var(--font-sans); color: var(--text-secondary); }
+.k-mode__foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+.k-mode__remember { display: flex; align-items: center; gap: var(--space-3); color: var(--text-secondary); cursor: pointer; }
+.k-modebadge { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--accent-text); padding: var(--space-1-5) var(--space-2-5); border: 1px solid var(--border-default); border-radius: var(--radius-xs); cursor: pointer; }
+.k-modebadge:hover:not(:disabled) { border-color: var(--accent); }
+.k-modebadge:disabled { opacity: 0.5; cursor: default; }

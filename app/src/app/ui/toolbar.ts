@@ -60,6 +60,17 @@ import { RouterLink } from '@angular/router';
         </button>
       </div>
       <div class="wb-sep"></div>
+      <button
+        hlmBtn
+        variant="bare"
+        size="bare"
+        class="k-modebadge"
+        type="button"
+        title="Switch mode"
+        aria-label="Switch mode"
+        [disabled]="running() || modeSwitchDisabled()"
+        (click)="switchMode.emit()"
+      >workbench</button>
       <a hlmBtn variant="secondary" routerLink="/library"><ng-icon name="lucideLibrary" size="14" />Library</a>
       <div class="wb-sep"></div>
       @if (running()) {
@@ -77,6 +88,8 @@ export class Toolbar {
   readonly dirty = input.required<boolean>();
   readonly running = input(false);
   readonly canRun = input(true);
+  readonly modeSwitchDisabled = input(false);
+  readonly switchMode = output<void>();
   readonly newSpec = output<void>();
   readonly openSpec = output<void>();
   readonly save = output<void>();

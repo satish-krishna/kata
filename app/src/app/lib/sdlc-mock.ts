@@ -52,7 +52,7 @@ function applyDecision(c: ChangeInfo, decision: Decision): ChangeInfo {
 }
 
 export class SdlcMock {
-  private settings: Settings = { mode: null, remember: false, permission_mode: 'bypass' };
+  private settings: Settings = { mode: 'workbench', remember: true, permission_mode: 'bypass' };
   private workspaces: WorkspaceEntry[] = [{
     id: 'acme-claims', name: 'acme-claims', folder: MOCK_WORKSPACE_FOLDER, base_branch: 'main', last_opened: 1792281600,
   }];
