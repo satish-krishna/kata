@@ -1,5 +1,5 @@
 import { getTemplateParserServices } from '@angular-eslint/utils';
-import type { TmplAstElement } from '@angular-eslint/bundled-angular-compiler';
+import { BindingType, type TmplAstElement } from '@angular-eslint/bundled-angular-compiler'
 import { createRule } from './create-rule.ts';
 
 // What this forbids, why, and its known blind spots: see
@@ -96,7 +96,16 @@ export default createRule<Options, MessageIds>({
 
         const acceptable = CONTROL_PRIMITIVE_ATTRS[node.name];
         if (!acceptable) return;
-        const hasPrimitive = node.attributes.some((a) => acceptable.includes(a.name));
+        // A primitive applies as a static attribute or as a property binding of its key
+        // (`[hlmTabsTrigger]="s.name"` in a loop). `[attr.hlmBtn]` is an attribute
+        // binding: it writes a DOM attribute and applies no directive, so it does not count.
+         const hasPrimitive =
+          node.attributes.some((a) => acceptable.includes(a.name)) ||
+          node.inputs.some(
+            (i) =>
+              (i as unknown as { __originalType?: BindingType }).__originalType === BindingType.Property &&
+              acceptable.includes(i.name),
+          );
         if (hasPrimitive) return;
         context.report({
           loc: parserServices.convertElementSourceSpanToLoc(context, node),

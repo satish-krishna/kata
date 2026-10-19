@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import angular from 'angular-eslint';
 import seal from './index.mjs';
-import { tally } from '../counter/counter.mjs';
+import { tally, countTemplateSource } from '../counter/counter.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..');
@@ -181,5 +181,27 @@ describe('sealing gate: end-to-end through the repo config', () => {
     const messages = results.flatMap((r) => r.messages);
     // Inline template: <button>Inline</button> (rawControl) + style on input.
     expect(countByMessageId(messages)).toEqual({ rawControl: 1, styleAttribute: 1 });
+  });
+});
+
+describe('sealing gate: a primitive bound as an input', () => {
+  // A tab list built from data binds the trigger key: <button [hlmTabsTrigger]="s.name">.
+  // The directive still applies, so the element is the primitive, not a raw control.
+  const bound = '@for (s of steps; track s) {\n<button [hlmTabsTrigger]="s" variant="bare">{{ s }}</button>\n}';
+  // [attr.x] only writes a DOM attribute; no directive applies, so it must not satisfy the rule.
+  const attrOnly = '<button [attr.hlmBtn]="x">Save</button>';
+  // A bound input that is not a primitive does not either.
+  const unrelated = '<button [disabled]="x">Save</button>';
+
+  it('accepts a primitive whose key is a property binding, in the gate and the counter alike', () => {
+    expect(countByMessageId(lintHtml(bound))).toEqual({});
+    expect(countTemplateSource(bound, { file: 'x.html' }).filter((v) => v.kind === 'raw-control')).toEqual([]);
+  });
+
+  it('still flags [attr.hlmBtn] and an unrelated bound input as raw controls', () => {
+    for (const html of [attrOnly, unrelated]) {
+      expect(countByMessageId(lintHtml(html))).toEqual({ rawControl: 1 });
+      expect(countTemplateSource(html, { file: 'x.html' }).filter((v) => v.kind === 'raw-control')).toHaveLength(1);
+    }
   });
 });
