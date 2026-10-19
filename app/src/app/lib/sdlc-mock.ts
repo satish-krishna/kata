@@ -1,6 +1,7 @@
 /* In-memory AI-SDLC fixtures for the browser demo. Each MockTransport owns one
  * instance, mutated by mock decisions and branch operations, so the demo
  * reflects what the operator did. Deterministic: no clocks, no randomness. */
+import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ContextState } from '@bindings/ContextState';
@@ -21,6 +22,15 @@ export const MOCK_MASTER = 'claims-intent';
 export const MOCK_SYSTEM = 'claims';
 export const MOCK_PENDING_BRANCH = 'change/pending-20261018T000000Z';
 export const MOCK_NEW_CHANGE = '2026-10-18-new-change';
+
+const plugin = (name: string, description: string): CatalogEntry =>
+  ({ kind: 'plugin', name, description, source: 'user', path: `~/.claude/plugins/${name}`, provides: [], mcp_servers: [] });
+
+/** Plugins the catalog finds for the demo workspace, so the AI-SDLC screens render in a plain browser. */
+export const MOCK_SDLC_CATALOG: CatalogEntry[] = [
+  plugin('ai-sdlc', 'intent, spec and plan skills for a change'),
+  plugin('superpowers', 'planning and review skills'),
+];
 
 const MOCK_REPOS = ['claims-intent', 'claims-core', 'customer-portal', 'billing-api'];
 

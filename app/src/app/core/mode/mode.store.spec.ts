@@ -32,6 +32,18 @@ describe('ModeStore', () => {
     expect(transport.sdlcSettings).toHaveBeenCalledTimes(1);
   });
 
+  it('save persists the settings and a later switchTo builds on them, not on the stale load', async () => {
+    const { store, saved } = setup(base);
+    await store.load();
+    await store.save({ ...base, permission_mode: 'prompt' });
+    await store.switchTo('sdlc');
+    expect(saved).toEqual([
+      { mode: null, remember: true, permission_mode: 'prompt' },
+      { mode: 'sdlc', remember: true, permission_mode: 'prompt' },
+    ]);
+    expect(store.settings()?.permission_mode).toBe('prompt');
+  });
+
   it('choose persists the mode when remembered and navigates to it', async () => {
     const { store, saved, navigate } = setup(base);
     await store.choose('sdlc', true);

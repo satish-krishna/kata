@@ -15,8 +15,8 @@ import { KataTransport } from '../transport/kata-transport';
 /** What a run is about: where the master repo is, which product repos to watch, and what to link the transcript to. */
 export type RunTarget = {
   workspaceId: string;
-  /** Absolute path of the master repo. */
-  master: string;
+  /** Absolute path of the master repo, or null before one exists (first setup): nothing is snapshotted then. */
+  master: string | null;
   /** Folder names of the product repos checked for stray writes after a failed run. */
   productRepos: string[];
   /** The change and stage the transcript belongs to, or null when the caller links it later. */
@@ -83,12 +83,14 @@ export class SdlcRunner {
       this.toasts.error('Another task is already running.');
       return { state: 'error', runId: null, snapshot: null };
     }
-    let snapshot: Snapshot;
-    try {
-      snapshot = await this.transport.sdlcSnapshot(target.master);
-    } catch (e) {
-      this.toasts.error(`Could not read the master repo before the run: ${message(e)}`);
-      return { state: 'error', runId: null, snapshot: null };
+    let snapshot: Snapshot | null = null;
+    if (target.master !== null) {
+      try {
+        snapshot = await this.transport.sdlcSnapshot(target.master);
+      } catch (e) {
+        this.toasts.error(`Could not read the master repo before the run: ${message(e)}`);
+        return { state: 'error', runId: null, snapshot: null };
+      }
     }
     this.linkTarget = target.link
       ? { workspace_id: target.workspaceId, ...target.link, started_at: Math.floor(Date.now() / 1000) }
@@ -210,11 +212,16 @@ export class SdlcRunner {
     }
   }
 
-  private async reportStopped(label: string, state: RunState, target: RunTarget, snapshot: Snapshot): Promise<void> {
+  private async reportStopped(label: string, state: RunState, target: RunTarget, snapshot: Snapshot | null): Promise<void> {
+    const verb = state === 'warning' ? 'stopped' : 'failed';
+    if (target.master === null || snapshot === null) {
+      this.toasts.error(`${label} ${verb} · there was no master repo to compare against`);
+      return;
+    }
     const data = await this.readLeftovers(target.master, snapshot, target.productRepos);
     const commits = plural(data.new_commits.length, 'commit', 'commits');
     const files = plural(data.discardable.length + data.touched_dirty.length, 'file', 'files');
-    this.toasts.error(`${label} ${state === 'warning' ? 'stopped' : 'failed'} · ${commits} landed, ${files} left uncommitted`);
+    this.toasts.error(`${label} ${verb} · ${commits} landed, ${files} left uncommitted`);
     if (hasLeftovers(data)) this.pending.set({ master: target.master, snapshot, data });
   }
 

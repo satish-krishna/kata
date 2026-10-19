@@ -45,6 +45,13 @@ describe('SdlcToolbar', () => {
     expect(byLabel(container, 'AI-SDLC settings').disabled).toBe(true);
   });
 
+  it('withholds the workspace switcher and branch while blocked', async () => {
+    const { container } = await render(SdlcToolbar, inputs({ blocked: true }));
+    expect(container.querySelector('button[aria-label="Switch workspace"]')).toBeNull();
+    expect(container.querySelector('[data-testid="branch"]')).toBeNull();
+    expect(byLabel(container, 'Switch mode')).not.toBeNull();
+  });
+
   it('projects the primary action', async () => {
     @Component({
       imports: [SdlcToolbar],

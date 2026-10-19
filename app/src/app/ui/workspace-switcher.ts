@@ -15,31 +15,33 @@ const REMOVE = '\u0000remove';
   host: { class: 'contents' },
   imports: [HlmSelectImports],
   template: `
-    <hlm-select [(value)]="picked">
-      <hlm-select-trigger aria-label="Switch workspace">
-        <hlm-select-value [placeholder]="current()?.name ?? 'No workspace'" />
-      </hlm-select-trigger>
-      <hlm-select-content *hlmSelectPortal>
-        @for (w of workspaces(); track w.id) {
-          <hlm-select-item [value]="w.id">
-            <span class="k-wsitem">
-              <span class="k-wsitem__name">{{ w.name }}</span>
-              <span class="k-wsitem__folder">{{ w.folder }}</span>
-              @if (missing().includes(w.id)) {
-                <span class="k-wsitem__note k-wsitem__note--warn">folder missing</span>
-              } @else if (counts()[w.id] !== undefined) {
-                <span class="k-wsitem__note">{{ counts()[w.id] }} {{ counts()[w.id] === 1 ? 'change' : 'changes' }}</span>
-              }
-            </span>
-          </hlm-select-item>
-        }
-        @if (workspaces().length > 0) {
-          <hlm-select-separator />
-        }
-        <hlm-select-item [value]="addValue">Add workspace…</hlm-select-item>
-        <hlm-select-item [value]="removeValue" [disabled]="current() === null">Remove from list…</hlm-select-item>
-      </hlm-select-content>
-    </hlm-select>
+    <div class="k-wsswitch">
+      <hlm-select [(value)]="picked">
+        <hlm-select-trigger aria-label="Switch workspace">
+          <hlm-select-value [placeholder]="current()?.name ?? 'No workspace'" />
+        </hlm-select-trigger>
+        <hlm-select-content *hlmSelectPortal>
+          @for (w of workspaces(); track w.id) {
+            <hlm-select-item [value]="w.id">
+              <span class="k-wsitem">
+                <span class="k-wsitem__name">{{ w.name }}</span>
+                <span class="k-wsitem__folder">{{ w.folder }}</span>
+                @if (missing().includes(w.id)) {
+                  <span class="k-wsitem__note k-wsitem__note--warn">folder missing</span>
+                } @else if (counts()[w.id] !== undefined) {
+                  <span class="k-wsitem__note">{{ counts()[w.id] }} {{ counts()[w.id] === 1 ? 'change' : 'changes' }}</span>
+                }
+              </span>
+            </hlm-select-item>
+          }
+          @if (workspaces().length > 0) {
+            <hlm-select-separator />
+          }
+          <hlm-select-item [value]="addValue">Add workspace…</hlm-select-item>
+          <hlm-select-item [value]="removeValue" [disabled]="current() === null">Remove from list…</hlm-select-item>
+        </hlm-select-content>
+      </hlm-select>
+    </div>
   `,
 })
 export class WorkspaceSwitcher {

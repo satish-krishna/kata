@@ -44,6 +44,13 @@ export class ModeStore {
     return this.loading;
   }
 
+  /** Persist settings changed elsewhere (the AI-SDLC dialog) and keep the cached copy in step, so a later mode switch does not write stale values back. */
+  async save(next: Settings): Promise<void> {
+    await this.transport.sdlcSaveSettings(next);
+    this.state.set(next);
+    this.loading = Promise.resolve(next);
+  }
+
   /** The launch dialog's answer. Without `remember` no mode is stored, so the next launch asks again. */
   async choose(mode: Mode, remember: boolean): Promise<void> {
     const current = await this.load();

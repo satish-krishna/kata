@@ -136,6 +136,15 @@ describe('SdlcRunner.run', () => {
     expect(toasts.error).toHaveBeenCalledWith('Running setup failed · 0 commits landed, 0 files left uncommitted');
   });
 
+  it('skips the snapshot and the leftover report when no master repo exists yet', async () => {
+    const { runner, fake, toasts } = setup(() => 'error');
+    await runner.run('Running setup', seedSpec(), { ...TARGET, master: null, link: null });
+    expect(fake.sdlcSnapshot).not.toHaveBeenCalled();
+    expect(fake.sdlcLeftovers).not.toHaveBeenCalled();
+    expect(runner.leftovers()).toBeNull();
+    expect(toasts.error).toHaveBeenCalledWith('Running setup failed · there was no master repo to compare against');
+  });
+
   it('discard sends the chosen paths with the snapshot and clears the dialog', async () => {
     const { runner, fake } = setup(() => 'error');
     fake.leftovers = { ...EMPTY, discardable: ['a.md', 'b.md'] };

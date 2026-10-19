@@ -9,5 +9,6 @@ export const routes: Routes = [
     loadComponent: () => import('./workbench/workbench').then((m) => m.Workbench),
   },
   { path: 'library', loadComponent: () => import('./library/library').then((m) => m.Library) },
+  { path: 'sdlc', loadComponent: () => import('./sdlc/home/sdlc-home').then((m) => m.SdlcHome) },
   { path: 'mode', loadComponent: () => import('./sdlc/mode/mode-screen').then((m) => m.ModeScreen) },
 ];

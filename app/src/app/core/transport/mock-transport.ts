@@ -17,7 +17,7 @@ import type { RunLink } from '@bindings/RunLink';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import { seedCatalog, validateLocal, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
 import { history, runDetailFixture, katasFixture, presetsFixture } from '../../lib/library';
-import { SdlcMock } from '../../lib/sdlc-mock';
+import { MOCK_SDLC_CATALOG, MOCK_WORKSPACE_FOLDER, SdlcMock } from '../../lib/sdlc-mock';
 import { KataTransport, NO_BACKEND } from './kata-transport';
 
 /** Browser stand-in: fixtures plus the scripted run timeline (head, ask,
@@ -35,7 +35,9 @@ export class MockTransport extends KataTransport {
     }
   }
 
-  catalog(_workdir: string | null): Promise<CatalogEntry[]> { return Promise.resolve(seedCatalog); }
+  catalog(workdir: string | null): Promise<CatalogEntry[]> {
+    return Promise.resolve(workdir === MOCK_WORKSPACE_FOLDER ? [...seedCatalog, ...MOCK_SDLC_CATALOG] : seedCatalog);
+  }
   listRuns(): Promise<RunRecord[]> { return Promise.resolve(history); }
   loadRun(id: string): Promise<RunDetail> { return Promise.resolve(runDetailFixture(id)); }
   loadSpec(_path: string): Promise<RunSpec> { return Promise.reject(new Error(NO_BACKEND)); }

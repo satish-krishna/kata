@@ -29,22 +29,24 @@ import { WorkspaceSwitcher } from './workspace-switcher';
         (click)="switchMode.emit()"
       >ai-sdlc</button>
       <div class="wb-sep"></div>
-      <app-workspace-switcher
-        [workspaces]="workspaces()"
-        [current]="current()"
-        [missing]="missing()"
-        [counts]="counts()"
-        (select)="select.emit($event)"
-        (add)="add.emit()"
-        (remove)="remove.emit()"
-      />
+      @if (!blocked()) {
+        <app-workspace-switcher
+          [workspaces]="workspaces()"
+          [current]="current()"
+          [missing]="missing()"
+          [counts]="counts()"
+          (select)="select.emit($event)"
+          (add)="add.emit()"
+          (remove)="remove.emit()"
+        />
+      }
       <nav class="k-crumbs" aria-label="Breadcrumb">
         @for (crumb of crumbs(); track $index) {
           <ng-icon name="lucideChevronRight" size="14" />
           <span class="k-crumbs__item">{{ crumb }}</span>
         }
       </nav>
-      @if (branch(); as b) {
+      @if (!blocked() && branch(); as b) {
         <span class="k-branch" data-testid="branch" title="Branch checked out in the master repo">{{ b }}</span>
       }
       <div class="wb-toolbar__spacer"></div>
@@ -77,6 +79,8 @@ export class SdlcToolbar {
   readonly crumbs = input<string[]>([]);
   /** A run or locked operation is in progress. */
   readonly locked = input(false);
+  /** Nothing in a workspace can be acted on (the ai-sdlc plugin is missing), so the workspace controls are withheld. */
+  readonly blocked = input(false);
 
   readonly switchMode = output<void>();
   readonly select = output<string>();
