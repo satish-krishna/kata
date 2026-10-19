@@ -179,8 +179,9 @@ describe('sealing gate: end-to-end through the repo config', () => {
     });
     const results = await eslint.lintFiles([fx('dirty.component.ts')]);
     const messages = results.flatMap((r) => r.messages);
-    // Inline template: <button>Inline</button> (rawControl) + style on input.
-    expect(countByMessageId(messages)).toEqual({ rawControl: 1, styleAttribute: 1 });
+    // Inline template: <button>Inline</button> (rawControl) + style on input. The repo config also
+    // runs shape/no-inline-template, which flags the inline template itself.
+    expect(countByMessageId(messages)).toEqual({ rawControl: 1, styleAttribute: 1, inlineTemplate: 1 });
   });
 });
 

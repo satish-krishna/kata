@@ -16,7 +16,7 @@ import ts from 'typescript';
 
 const norm = (p) => p.replaceAll('\\', '/');
 
-// The fourteen gated kinds contribute to totals.all; the two heuristics are
+// The sixteen gated kinds contribute to totals.all; the two heuristics are
 // measured and reported but excluded from all, so all counts what the gate
 // could have blocked.
 const GATED_KINDS = [
@@ -34,6 +34,8 @@ const GATED_KINDS = [
   'legacy-icon-module',
   'unregistered-icon',
   'orphan-ng-submit',
+  'inline-template',
+  'inline-styles',
 ];
 const HEURISTIC_KINDS = ['hand-written-form-model', 'dumb-holds-state'];
 const isGated = (k) => GATED_KINDS.includes(k);
@@ -170,6 +172,16 @@ export function countTsSource(sourceText, { file }) {
       // present in the decorator's object literal, to any value.
       const sa = findProp(obj, 'standalone');
       if (sa) out.push({ kind: 'explicit-standalone', file, line: lineOf(sa), detail: 'standalone set explicitly' });
+
+      // Rule 15 (inline-template / inline-styles): the same property-presence
+      // shape, on `template` and `styles`. Spec files are exempt (test-host
+      // components legitimately inline), decided by the counted filename.
+      if (!/\.spec\.ts$/.test(norm(file))) {
+        const tpl = findProp(obj, 'template');
+        if (tpl) out.push({ kind: 'inline-template', file, line: lineOf(tpl), detail: 'template set inline' });
+        const sty = findProp(obj, 'styles');
+        if (sty) out.push({ kind: 'inline-styles', file, line: lineOf(sty), detail: 'styles set inline' });
+      }
 
       const imp = findProp(obj, 'imports');
       if (imp && ts.isArrayLiteralExpression(imp.initializer)) {

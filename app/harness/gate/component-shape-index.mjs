@@ -13,6 +13,7 @@ import noExplicitStandalone from './rules/no-explicit-standalone.ts';
 import noLegacyIconModule from './rules/no-legacy-icon-module.ts';
 import noUnregisteredIcon from './rules/no-unregistered-icon.ts';
 import noOrphanNgSubmit from './rules/no-orphan-ng-submit.ts';
+import noInlineTemplate from './rules/no-inline-template.ts';
 
 // The `shape` eslint plugin: the Part 3 component-shape rules, encoding the
 // component-shape spec (../component-shape-spec.md). It is the second of the two
@@ -35,6 +36,8 @@ import noOrphanNgSubmit from './rules/no-orphan-ng-submit.ts';
 //   legacyIconModule       -> legacy-icon-module         (capstone-residue, rule 12)
 //   unregisteredIcon       -> unregistered-icon          (capstone-residue, rule 13)
 //   orphanNgSubmit         -> orphan-ng-submit           (capstone-residue, rule 14, template)
+//   inlineTemplate         -> inline-template            (rule 15, one rule, two messageIds)
+//   inlineStyles           -> inline-styles              (rule 15)
 // The two heuristics (hand-written-form-model, dumb-holds-state) are counter-only
 // and deliberately have no gate rule.
 const plugin = {
@@ -55,6 +58,7 @@ const plugin = {
     'no-legacy-icon-module': noLegacyIconModule,
     'no-unregistered-icon': noUnregisteredIcon,
     'no-orphan-ng-submit': noOrphanNgSubmit,
+    'no-inline-template': noInlineTemplate,
   },
 };
 

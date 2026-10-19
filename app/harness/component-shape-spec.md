@@ -28,9 +28,9 @@ By Part 3 the Part 1 sealing hook and the Part 2 layout hook are baseline: on in
 
 ## The rules
 
-Every gated Part 3 violation is one of exactly fifteen kinds. The gate reports them by `messageId`, one per row in the table below; the counter tallies them by `kind`, and the two counts differ by exactly one: `no-forms-module` (TypeScript) and `no-ng-model` (template) are two separate rules that both feed the single `template-driven-form` kind, so the counter's `totals` carries fourteen keys (see "The tally shape" below), not fifteen. Neither figure is a typo of the other; both are stated so.
+Every gated Part 3 violation is one of exactly sixteen kinds. The gate reports them by `messageId`; the counter tallies them by `kind`. There are sixteen rules and sixteen kinds, but the mapping is not one to one in two places that cancel out: `no-forms-module` (TypeScript) and `no-ng-model` (template) are two rules that both feed the single `template-driven-form` kind, and `no-inline-template` is one rule with two messageIds (`inlineTemplate`, `inlineStyles`) that feed two kinds (`inline-template`, `inline-styles`). The counter's `totals` therefore carries sixteen gated keys plus the two heuristics (see "The tally shape" below). Neither figure is a typo of the other; both are stated so.
 
-The fifteen rules break down as seven original (`no-hand-set-change-detection`, `no-component-subscribe`, `no-forms-module`, `no-ng-model`, `no-restated-validator`, `no-presentational-inject`, `no-reactive-form`), four MVVM (added by the capstone), and four capstone-residue (`no-explicit-standalone`, `no-legacy-icon-module`, `no-unregistered-icon`, `no-orphan-ng-submit`).
+The sixteen rules break down as seven original (`no-hand-set-change-detection`, `no-component-subscribe`, `no-forms-module`, `no-ng-model`, `no-restated-validator`, `no-presentational-inject`, `no-reactive-form`), four MVVM (added by the capstone), four capstone-residue (`no-explicit-standalone`, `no-legacy-icon-module`, `no-unregistered-icon`, `no-orphan-ng-submit`), and one house-layout rule (`no-inline-template`, rule 15).
 
 | Rule | What it forbids |
 | --- | --- |
@@ -49,6 +49,7 @@ The fifteen rules break down as seven original (`no-hand-set-change-detection`, 
 | [no-unregistered-icon](rules/no-unregistered-icon.md) | Lucide glyph imports with no `provideIcons` anywhere in the file |
 | [no-ng-model](rules/no-ng-model.md) | An `ngModel` binding in a template |
 | [no-orphan-ng-submit](rules/no-orphan-ng-submit.md) | An `(ngSubmit)` binding, which no forms module in this repo can ever supply |
+| [no-inline-template](rules/no-inline-template.md) | An inline `template` (`inlineTemplate`) or `styles` (`inlineStyles`) in `@Component`; spec files exempt |
 
 ## The MVVM argument (added by the capstone)
 
@@ -71,6 +72,12 @@ That is the refinement working, not a regression, and the fix is emphatically NO
 ## The capstone-residue rules
 
 Four more gated kinds, plus two widenings of existing rules ([no-component-subscribe](rules/no-component-subscribe.md) and [no-state-outside-view-model](rules/no-state-outside-view-model.md); see each doc), added after the capstone run. Every one of them comes from drift the capstone measured getting past the full gate set, and none of them was tested by that run. They are the answer to the question the capstone actually asked, which was not "does this constitution work" but "does it catch everything," and the honest answer was no.
+
+## The inline-template rule (rule 15)
+
+The owner's house rule: every `@Component` keeps its template in a separate `.html` file and any component-local styles in a separate stylesheet. [no-inline-template](rules/no-inline-template.md) keys on the presence of a `template` or `styles` property in the decorator object, quoted or unquoted, the same shape as `no-explicit-standalone`. It does not require a stylesheet: a component with no styles of its own needs none, because Kata's `.k-*` classes live globally in `src/styles/kata/`. Files named `*.spec.ts` are exempt in both engines, since test-host components legitimately use inline templates. The mapping is `inlineTemplate` to `inline-template` and `inlineStyles` to `inline-styles`.
+
+The pre-existing fixtures under `counter/fixtures/` declare their templates inline and are kept byte-identical as records of the shapes they pin, so their tests assert the inline-template hits explicitly and then require zero of every other kind.
 
 ## Counter-only heuristics (measured, never gated)
 
@@ -103,6 +110,8 @@ A component under `src/app/ui/` that declares writable non-input state (a `signa
     "legacy-icon-module": 0,
     "unregistered-icon": 0,
     "orphan-ng-submit": 0,
+    "inline-template": 0,
+    "inline-styles": 0,
     "hand-written-form-model": 0,
     "dumb-holds-state": 0,
     "all": 0
@@ -113,11 +122,11 @@ A component under `src/app/ui/` that declares writable non-input state (a `signa
 }
 ```
 
-`totals.all` is the sum of the fourteen gated kinds only; the two heuristics are in `totals` but excluded from `all`, so `all` counts what the gate could have blocked. `violations` is ordered by file, then line, then kind, so the same committed input serializes byte-identically. That ordering is what makes the determinism self-test (same diff in, identical tally out) meaningful. A full audit runs all three counters (Part 1, Part 2, Part 3 kinds) and reports each, because the series is cumulative.
+`totals.all` is the sum of the sixteen gated kinds only; the two heuristics are in `totals` but excluded from `all`, so `all` counts what the gate could have blocked. `violations` is ordered by file, then line, then kind, so the same committed input serializes byte-identically. That ordering is what makes the determinism self-test (same diff in, identical tally out) meaningful. A full audit runs all three counters (Part 1, Part 2, Part 3 kinds) and reports each, because the series is cumulative.
 
 ## What each engine parses
 
-- TypeScript (`hand-set-change-detection`, `component-subscribe`, `restated-validator`, the `FormsModule` half of `template-driven-form`, `presentational-injects-data`, `reactive-form`, all four MVVM kinds, `explicit-standalone`, `legacy-icon-module`, `unregistered-icon`, and both heuristics): the gate runs custom typescript-eslint rules over the TypeScript AST (`@typescript-eslint/typescript-estree` node types); the counter walks the TypeScript compiler's own AST via the compiler API (`ts.createSourceFile`, `ts.forEachChild`). Different AST shapes, no shared code.
+- TypeScript (`hand-set-change-detection`, `component-subscribe`, `restated-validator`, the `FormsModule` half of `template-driven-form`, `presentational-injects-data`, `reactive-form`, all four MVVM kinds, `explicit-standalone`, `legacy-icon-module`, `unregistered-icon`, `inline-template`, `inline-styles`, and both heuristics): the gate runs custom typescript-eslint rules over the TypeScript AST (`@typescript-eslint/typescript-estree` node types); the counter walks the TypeScript compiler's own AST via the compiler API (`ts.createSourceFile`, `ts.forEachChild`). Different AST shapes, no shared code.
 - Templates (the `ngModel` half of `template-driven-form`, and `orphan-ng-submit`): the gate uses the angular-eslint template parser; the counter uses `@angular/compiler`'s `parseTemplate`, reading `.html` files and inline `template:` strings.
 
 Two engines, one spec, and the spec is the docs. If they ever disagree on a fixture, that disagreement is the finding.
