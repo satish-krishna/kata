@@ -99,16 +99,13 @@ describe("specFor", () => {
     expect(s.task).toBe("Use the ai-sdlc spec skill for system claims on change folder 2026-10-12-fnol.");
     expect(Object.keys(s.plugins)).toEqual(["ai-sdlc"]);
   });
-  it("plan with superpowers", () => {
-    const s = specFor("plan", "start-plan", ctx, bypass, both);
-    expect(s.name).toBe("sdlc-claims-2026-10-12-fnol-plan");
-    expect(s.task).toBe("Use the ai-sdlc plan skill for system claims on change folder 2026-10-12-fnol.");
-    expect(Object.keys(s.plugins).sort()).toEqual(["ai-sdlc", "superpowers"]);
-  });
-  it("plan without superpowers is standalone", () => {
-    const s = specFor("plan", "start-plan", ctx, bypass, [plugin("ai-sdlc")]);
-    expect(s.task).toBe("Use the ai-sdlc plan skill for system claims on change folder 2026-10-12-fnol. --standalone");
-    expect(Object.keys(s.plugins)).toEqual(["ai-sdlc"]);
+  it("plan loads only ai-sdlc, even when superpowers is installed", () => {
+    for (const catalog of [both, [plugin("ai-sdlc")]]) {
+      const s = specFor("plan", "start-plan", ctx, bypass, catalog);
+      expect(s.name).toBe("sdlc-claims-2026-10-12-fnol-plan");
+      expect(s.task).toBe("Use the ai-sdlc plan skill for system claims on change folder 2026-10-12-fnol.");
+      expect(Object.keys(s.plugins)).toEqual(["ai-sdlc"]);
+    }
   });
   it("rerun plan carries the confirmation", () => {
     const s = specFor("plan", "rerun-plan", ctx, bypass, both);

@@ -86,7 +86,6 @@ export type RunContext = {
 export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan";
 
 const AI_SDLC = "ai-sdlc";
-const SUPERPOWERS = "superpowers";
 
 const hasPlugin = (catalog: CatalogEntry[], name: string): boolean =>
   catalog.some((e) => e.kind === "plugin" && e.name === name);
@@ -106,7 +105,7 @@ function nameFor(kind: SdlcKind, ctx: RunContext): string {
   }
 }
 
-function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext, catalog: CatalogEntry[]): string {
+function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): string {
   const { system, change } = ctx;
   switch (kind) {
     case "setup":
@@ -128,7 +127,6 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext, ca
     }
     case "plan": {
       let task = `Use the ai-sdlc plan skill for system ${system} on change folder ${change}.`;
-      if (!hasPlugin(catalog, SUPERPOWERS)) task += " --standalone";
       if (action === "rerun-plan") task += " The user has already confirmed replacing the existing plan; do not ask again.";
       return task;
     }
@@ -145,10 +143,9 @@ export function specFor(
 ): RunSpec {
   const spec = defaultSpec();
   const plugins: Record<string, PluginConfig> = { [AI_SDLC]: {} };
-  if (kind === "plan" && hasPlugin(catalog, SUPERPOWERS)) plugins[SUPERPOWERS] = {};
   spec.name = nameFor(kind, ctx);
   const feedback = ctx.feedback?.trim() ?? "";
-  spec.task = taskFor(kind, action, ctx, catalog) + (feedback ? `\n\nOperator feedback:\n${feedback}` : "");
+  spec.task = taskFor(kind, action, ctx) + (feedback ? `\n\nOperator feedback:\n${feedback}` : "");
   spec.workdir = ctx.folder;
   spec.plugins = plugins;
   // Outside the empty room: `--bare` ignores the operator's claude login and accepts only an API key.
