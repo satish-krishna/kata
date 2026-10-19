@@ -16,8 +16,11 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { Stage } from '@bindings/Stage';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
+import type { ScriptStep } from './mock';
 
 export const MOCK_WORKSPACE_FOLDER = 'D:/Work/acme-claims';
+/** A folder the demo can add that has repos but no committed `.ai-sdlc.json`, so adding it runs setup. */
+export const MOCK_SETUP_FOLDER = 'D:/Work/globex-billing';
 export const MOCK_MASTER = 'claims-intent';
 export const MOCK_SYSTEM = 'claims';
 export const MOCK_PENDING_BRANCH = 'change/pending-20261018T000000Z';
@@ -31,6 +34,60 @@ export const MOCK_SDLC_CATALOG: CatalogEntry[] = [
   plugin('ai-sdlc', 'intent, spec and plan skills for a change'),
   plugin('superpowers', 'planning and review skills'),
 ];
+
+const TRANSCRIPT_DIR = 'C:/Users/demo/.kata/runs';
+
+/** Scripted `spec` run for `?demo=sdlc`: reads two files, then pauses on one question; the answer finishes it. */
+export const sdlcSpecScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
+  head: [
+    { delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-claims-2026-10-12-fnol-photo-upload-spec-20261018T101500Z.jsonl` } },
+    { delay: 350, ev: { type: 'turn', n: 1 } },
+    { delay: 250, ev: { type: 'tool.use', name: 'Read', input_summary: 'claims/2026-10-12-fnol-photo-upload/intent.md', id: 'toolu_s1', input: { file_path: 'claims/2026-10-12-fnol-photo-upload/intent.md' } } },
+    { delay: 300, ev: { type: 'tool.result', name: 'Read', ok: true, summary: 'intent.md - 9 lines', id: 'toolu_s1', output: '# Photo upload at first notice of loss' } },
+    { delay: 300, ev: { type: 'tool.use', name: 'Grep', input_summary: 'upload', id: 'toolu_s2', input: { pattern: 'upload', path: 'claims-core/src' } } },
+    { delay: 300, ev: { type: 'tool.result', name: 'Grep', ok: true, summary: '6 matches', id: 'toolu_s2', output: 'claims-core/src/attachments.rs:12' } },
+    { delay: 350, ev: { type: 'ask.requested', id: 'q1', questions: [
+      { kind: 'select', header: 'failure', question: 'If an upload fails midway, should the claim still be filed without the photos?',
+        options: [ { label: 'Yes, file it', description: 'photos can be added later' }, { label: 'No, block filing', description: 'all or nothing' } ],
+        multi_select: false },
+    ] } },
+  ],
+  mid: [
+    { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: 'claims/2026-10-12-fnol-photo-upload/spec.md', id: 'toolu_s3', input: { file_path: 'claims/2026-10-12-fnol-photo-upload/spec.md' } } },
+    { delay: 400, ev: { type: 'tool.result', name: 'Write', ok: true, summary: 'spec.md written', id: 'toolu_s3', output: 'ok' } },
+    { delay: 400, ev: { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 21000, result: 'Spec drafted in spec.md.' } },
+  ],
+};
+
+/** Scripted `setup` run for `?demo=sdlc-setup`: one question about where the intent artifacts live. */
+export const sdlcSetupScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
+  head: [
+    { delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-setup-20261018T101000Z.jsonl` } },
+    { delay: 350, ev: { type: 'turn', n: 1 } },
+    { delay: 250, ev: { type: 'tool.use', name: 'Bash', input_summary: 'git -C billing-intent status --short', id: 'toolu_u1', input: { command: 'git -C billing-intent status --short' } } },
+    { delay: 300, ev: { type: 'tool.result', name: 'Bash', ok: true, summary: 'clean', id: 'toolu_u1', output: '' } },
+    { delay: 350, ev: { type: 'ask.requested', id: 'q1', questions: [
+      { kind: 'select', header: 'master', question: 'Which repo should hold the intent artifacts?',
+        options: [ { label: 'billing-intent', description: 'holds docs only' }, { label: 'billing-core', description: 'also holds product code' } ],
+        multi_select: false },
+    ] } },
+  ],
+  mid: [
+    { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: '.ai-sdlc.json', id: 'toolu_u2', input: { file_path: 'billing-intent/.ai-sdlc.json' } } },
+    { delay: 400, ev: { type: 'tool.result', name: 'Write', ok: true, summary: '.ai-sdlc.json written', id: 'toolu_u2', output: 'ok' } },
+    { delay: 400, ev: { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.02, duration_ms: 15000, result: 'Setup committed.' } },
+  ],
+};
+
+/** What a cancelled demo run leaves behind: a new file, a draft that must not be pre-checked, a file that was already dirty. */
+const LEFTOVERS: Leftovers = {
+  new_commits: [],
+  discardable: ['claims/2026-10-12-fnol-photo-upload/notes.tmp', 'claims/2026-10-12-fnol-photo-upload/intent.md'],
+  touched_dirty: ['claims/2026-10-16-fraud-flag/intent.md'],
+  product_repos_changed: [],
+};
+
+const MOCK_SETUP_REPOS = ['billing-intent', 'billing-core'];
 
 const MOCK_REPOS = ['claims-intent', 'claims-core', 'customer-portal', 'billing-api'];
 
@@ -76,6 +133,9 @@ export class SdlcMock {
     change('2026-10-09-adjuster-reassign', doc('accepted'), doc('accepted'), doc('draft'), 'plan-written'),
   ];
   private docs: Record<string, string> = { ...DOCS };
+  private setupDone = false;
+  private cancelledRun = false;
+  private discarded = new Set<string>();
 
   getSettings(): Settings { return { ...this.settings }; }
   saveSettings(s: Settings): void { this.settings = { ...s }; }
@@ -83,6 +143,15 @@ export class SdlcMock {
   saveWorkspaces(w: WorkspaceEntry[]): void { this.workspaces = w.map((e) => ({ ...e })); }
 
   scan(folder: string): WorkspaceScan {
+    if (folder === MOCK_SETUP_FOLDER) {
+      return {
+        folder,
+        repos: MOCK_SETUP_REPOS,
+        master: { kind: 'one', repo: 'billing-intent', committed: true },
+        marker: this.setupDone ? { version: 1, systems: { billing: { repos: MOCK_SETUP_REPOS } } } : null,
+        marker_error: null,
+      };
+    }
     return {
       folder,
       repos: MOCK_REPOS,
@@ -105,7 +174,18 @@ export class SdlcMock {
   readDoc(changeName: string, docName: string): string | null { return this.docs[`${changeName}/${docName}`] ?? null; }
 
   snapshot(): Snapshot { return { head: '0000000000000000000000000000000000000000', dirty: {} }; }
-  leftovers(): Leftovers { return { new_commits: [], discardable: [], touched_dirty: [], product_repos_changed: [] }; }
+  /** Only a cancelled AI-SDLC run leaves anything behind; discarded paths drop out of the list. */
+  leftovers(): Leftovers {
+    if (!this.cancelledRun) return { new_commits: [], discardable: [], touched_dirty: [], product_repos_changed: [] };
+    const keep = (paths: string[]) => paths.filter((p) => !this.discarded.has(p));
+    return { ...LEFTOVERS, discardable: keep(LEFTOVERS.discardable), touched_dirty: keep(LEFTOVERS.touched_dirty) };
+  }
+
+  discard(paths: string[]): void { paths.forEach((p) => this.discarded.add(p)); }
+  /** A new AI-SDLC run starts clean; cancelling it is what leaves files behind. */
+  beginRun(): void { this.cancelledRun = false; this.discarded.clear(); }
+  cancelRun(): void { this.cancelledRun = true; }
+  finishSetup(): void { this.setupDone = true; }
 
   startChange(): string {
     this.current = MOCK_PENDING_BRANCH;

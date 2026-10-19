@@ -12,7 +12,9 @@ import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
+import { inTauri } from '../../lib/mock';
 import { hasAiSdlcPlugin, specFor } from '../../lib/sdlc';
+import { MOCK_SETUP_FOLDER } from '../../lib/sdlc-mock';
 import {
   folderName,
   isSetUp,
@@ -148,7 +150,8 @@ export class SdlcHomeViewModel {
     return w && repo ? masterPath(w.folder, repo) : null;
   });
 
-  async init(): Promise<void> {
+  /** `demo` is the `?demo=` query value: `sdlc-setup` opens the add-workspace flow on a folder that needs setup. Browser only. */
+  async init(demo: string | null = null): Promise<void> {
     try {
       await this.modes.load();
     } catch (e) {
@@ -164,6 +167,8 @@ export class SdlcHomeViewModel {
     }
     await Promise.all([this.loadCatalog(), this.loadCurrent(), this.probeOthers()]);
     this.loaded.set(true);
+    // Browser dev/review only: never fires under Tauri.
+    if (!inTauri() && demo === 'sdlc-setup') await this.addWorkspace(MOCK_SETUP_FOLDER);
   }
 
   // --- workspace list
@@ -205,11 +210,11 @@ export class SdlcHomeViewModel {
 
   // --- add workspace
 
-  async addWorkspace(): Promise<void> {
+  async addWorkspace(picked: string | null = null): Promise<void> {
     if (this.refuseWhileLocked()) return;
-    let folder: string | null;
+    let folder: string | null = picked;
     try {
-      folder = await this.transport.pickDirectory();
+      folder ??= await this.transport.pickDirectory();
     } catch (e) {
       this.toasts.error(`Could not open the folder picker: ${message(e)}`);
       return;

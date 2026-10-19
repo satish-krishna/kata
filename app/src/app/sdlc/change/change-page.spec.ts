@@ -19,7 +19,7 @@ async function mount(change = FNOL, transport = new MockTransport()) {
   const out = await render(ChangePage, {}, [
     provideRouter([]),
     { provide: KataTransport, useValue: transport },
-    { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change })) } },
+    { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
   ]);
   await settle();
   return { ...out, transport };

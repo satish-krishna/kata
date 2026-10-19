@@ -15,7 +15,7 @@ import { spawn, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve, isAbsolute } from "node:path";
 import { mkdir } from "node:fs/promises";
-import { answerAsk, launchBrowser } from "../parity/capture.mjs";
+import { answerAsk, launchBrowser, VIEWS } from "../parity/capture.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(here, "..");
@@ -131,6 +131,23 @@ async function capture(base) {
   await page.goto(base + "/library", { waitUntil: "networkidle" });
   await ready(".wb-kata");
   await shoot("04-library");
+
+  // AI-SDLC mode: the same views the parity gate freezes, so the two cannot drift apart.
+  await page.close();
+  for (const v of VIEWS.filter((x) => x.name.startsWith("sdlc-"))) {
+    const shot = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: SCALE });
+    await shot.emulateMedia({ reducedMotion: "reduce" });
+    await shot.goto(base + v.path, { waitUntil: "networkidle" });
+    await shot.waitForSelector(v.ready, { state: "visible", timeout: 30_000 });
+    if (v.act) await v.act(shot);
+    await shot.evaluate(() => document.fonts.ready);
+    await shot.waitForTimeout(450);
+    const file = join(outDir, `${v.name}.png`);
+    await shot.screenshot({ path: file, animations: "disabled", caret: "hide" });
+    written.push(file);
+    console.log(`captured ${v.name}`);
+    await shot.close();
+  }
 
   await browser.close();
 

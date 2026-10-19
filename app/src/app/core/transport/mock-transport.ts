@@ -17,8 +17,11 @@ import type { RunLink } from '@bindings/RunLink';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import { seedCatalog, validateLocal, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
 import { history, runDetailFixture, katasFixture, presetsFixture } from '../../lib/library';
-import { MOCK_SDLC_CATALOG, MOCK_WORKSPACE_FOLDER, SdlcMock } from '../../lib/sdlc-mock';
+import { MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, SdlcMock, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
 import { KataTransport, NO_BACKEND } from './kata-transport';
+
+/** How long the first scan of the demo setup folder takes, long enough to see the checking steps. */
+const SETUP_SCAN_MS = 1800;
 
 /** Browser stand-in: fixtures plus the scripted run timeline (head, ask,
  *  mid, permission, tail), unblocked by submitAnswer / submitDecision. */
@@ -26,12 +29,20 @@ export class MockTransport extends KataTransport {
   private cb: ((ev: KataEvent) => void) | null = null;
   private timers: ReturnType<typeof setTimeout>[] = [];
   private readonly sdlc = new SdlcMock();
+  /** Which scripted run is live: the Workbench one, or an AI-SDLC one picked by the spec name. */
+  private setupScanned = false;
+  private script: 'workbench' | 'sdlc-spec' | 'sdlc-setup' = 'workbench';
+
+  private sdlcScript() { return this.script === 'sdlc-setup' ? sdlcSetupScript : sdlcSpecScript; }
 
   private play(segment: ScriptStep[]): void {
     let acc = 0;
     for (const step of segment) {
       acc += step.delay;
-      this.timers.push(setTimeout(() => this.cb?.(step.ev), acc));
+      this.timers.push(setTimeout(() => {
+        if (step.ev.type === 'run.completed' && this.script === 'sdlc-setup') this.sdlc.finishSetup();
+        this.cb?.(step.ev);
+      }, acc));
     }
   }
 
@@ -53,14 +64,21 @@ export class MockTransport extends KataTransport {
   sdlcSaveSettings(settings: Settings): Promise<void> { this.sdlc.saveSettings(settings); return Promise.resolve(); }
   sdlcWorkspaces(): Promise<WorkspaceEntry[]> { return Promise.resolve(this.sdlc.getWorkspaces()); }
   sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]): Promise<void> { this.sdlc.saveWorkspaces(workspaces); return Promise.resolve(); }
-  sdlcScan(folder: string): Promise<WorkspaceScan> { return Promise.resolve(this.sdlc.scan(folder)); }
+  sdlcScan(folder: string): Promise<WorkspaceScan> {
+    // The first scan of the demo folder that needs setup is slow, so the "Checking workspace" steps are visible.
+    if (folder === MOCK_SETUP_FOLDER && !this.setupScanned) {
+      this.setupScanned = true;
+      return new Promise((ok) => setTimeout(() => ok(this.sdlc.scan(folder)), SETUP_SCAN_MS));
+    }
+    return Promise.resolve(this.sdlc.scan(folder));
+  }
   sdlcContextHealth(_folder: string, _master: string, _system: string, repo: string): Promise<ContextState> { return Promise.resolve(this.sdlc.contextHealth(repo)); }
   sdlcChanges(_master: string, _system: string): Promise<ChangeInfo[]> { return Promise.resolve(this.sdlc.listChanges()); }
   sdlcBranches(_master: string): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }
   sdlcReadDoc(_master: string, _system: string, change: string, doc: string): Promise<string | null> { return Promise.resolve(this.sdlc.readDoc(change, doc)); }
   sdlcSnapshot(_master: string): Promise<Snapshot> { return Promise.resolve(this.sdlc.snapshot()); }
   sdlcLeftovers(_master: string, _before: Snapshot, _productRepos: string[]): Promise<Leftovers> { return Promise.resolve(this.sdlc.leftovers()); }
-  sdlcDiscard(_master: string, _before: Snapshot, _paths: string[]): Promise<void> { return Promise.resolve(); }
+  sdlcDiscard(_master: string, _before: Snapshot, paths: string[]): Promise<void> { this.sdlc.discard(paths); return Promise.resolve(); }
   sdlcStartChange(_master: string, _base: string): Promise<string> { return Promise.resolve(this.sdlc.startChange()); }
   sdlcFinishChange(_master: string, _pending: string, base: string): Promise<FinishOutcome> { return Promise.resolve(this.sdlc.finishChange(base)); }
   sdlcCheckout(_master: string, branch: string): Promise<void> { this.sdlc.checkout(branch); return Promise.resolve(); }
@@ -75,11 +93,24 @@ export class MockTransport extends KataTransport {
     this.cb = cb;
     return () => { if (this.cb === cb) this.cb = null; };
   }
-  async runSpec(_spec: RunSpec): Promise<void> { this.play(runScriptHead); }
-  async cancelRun(): Promise<void> { this.timers.forEach(clearTimeout); this.timers = []; }
+  async runSpec(spec: RunSpec): Promise<void> {
+    if (spec.name.startsWith('sdlc-')) {
+      this.script = spec.name === 'sdlc-setup' ? 'sdlc-setup' : 'sdlc-spec';
+      this.sdlc.beginRun();
+      this.play(this.sdlcScript().head);
+      return;
+    }
+    this.script = 'workbench';
+    this.play(runScriptHead);
+  }
+  async cancelRun(): Promise<void> {
+    this.timers.forEach(clearTimeout);
+    this.timers = [];
+    if (this.script !== 'workbench') this.sdlc.cancelRun();
+  }
   async submitAnswer(id: string, answers: string[][]): Promise<void> {
     this.cb?.({ type: 'ask.answered', id, answers });
-    this.play(runScriptMid);
+    this.play(this.script === 'workbench' ? runScriptMid : this.sdlcScript().mid);
   }
   async submitDecision(id: string, allow: boolean, message: string | null): Promise<void> {
     this.cb?.({ type: 'permission.decided', id, ...PENDING_PERMISSION, allow, decided_by: 'operator', message: message ?? undefined });

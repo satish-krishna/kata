@@ -41,6 +41,19 @@ async function newSpec(page) {
   await page.waitForSelector('.wb-banner');
 }
 
+const CHANGE_SPEC = '/sdlc/claims/2026-10-12-fnol-photo-upload';
+
+// The lock overlay is a dialog; its questionnaire is the first thing the scripted run asks.
+async function lockAsk(page) {
+  await page.locator('fieldset[hlmQuestionnaireItem]:visible').first().waitFor({ timeout: 15000 });
+}
+
+async function cancelToLeftovers(page) {
+  await lockAsk(page);
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await page.waitForSelector('.k-left', { state: 'visible', timeout: 15000 });
+}
+
 export const VIEWS = [
   { name: 'compose-seeded', path: '/', ready: '.wb-toolbar' },
   { name: 'compose-kit-search', path: '/', ready: '.wb-toolbar',
@@ -68,6 +81,15 @@ export const VIEWS = [
     act: async (p) => { await p.locator('.wb-hist').nth(3).click(); await p.waitForSelector('.wb-detail'); } },
   { name: 'focus-primary', path: '/', ready: '.wb-toolbar',
     act: async (p) => { await p.keyboard.press('Tab'); await p.getByRole('button', { name: /^Run/ }).focus(); } },
+  { name: 'sdlc-mode', path: '/mode', ready: '.k-mode' },
+  { name: 'sdlc-home', path: '/sdlc', ready: '.k-rowlink' },
+  { name: 'sdlc-switcher-open', path: '/sdlc', ready: '.k-rowlink',
+    act: async (p) => { await p.getByRole('combobox').click(); await p.getByRole('option').first().waitFor({ state: 'visible' }); } },
+  { name: 'sdlc-add-workspace-steps', path: '/sdlc?demo=sdlc-setup', ready: '.k-lock__steps' },
+  { name: 'sdlc-lock-ask', path: CHANGE_SPEC + '?demo=sdlc', ready: '.k-lock', act: lockAsk },
+  { name: 'sdlc-leftovers', path: CHANGE_SPEC + '?demo=sdlc', ready: '.k-lock', act: cancelToLeftovers },
+  { name: 'sdlc-change-spec', path: CHANGE_SPEC, ready: '.k-doc' },
+  { name: 'sdlc-change-plan', path: '/sdlc/claims/2026-10-09-adjuster-reassign', ready: '.k-doc' },
   { name: 'hover-secondary', path: '/', ready: '.wb-toolbar',
     act: async (p) => { await p.getByRole('button', { name: 'Open spec' }).hover(); } },
 ];

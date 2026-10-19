@@ -15,6 +15,7 @@ The `kata` binary is the single execution path the GUI, the Shokunin orchestrato
 A Cargo workspace plus a Tauri app. Three crates in `[workspace].members`:
 
 - `crates/kata-core` — the engine library (`kata_core`). Also builds the `fake-claude` test binary. Modules: `spec` (the `RunSpec` contract: TOML/JSON load/save + pure `validate`), `catalog` (`discover` skills/plugins from user+project scopes, plus the embedded builtin kit), `builtin` (the repo's `.claude/plugins/kata/` workflow plugin, embedded at build time by `build.rs` and materialized under `<kata-home>/builtin/` so `[plugins.kata]` resolves in any workdir; user/project plugins of the same name shadow it), `command` (`build_invocation` pins the exact claude flag set), `assemble` (build the disposable `--plugin-dir` with RAII temp cleanup), `ask` (the localhost bridge and the `mcp-ask` MCP server behind the `ask_user` and `approve_tool` tools), `run` (orchestrate the child, stream `KataEvent`s, enforce the leash, clean up), `event` (the normalized `KataEvent` protocol + `parse_stream_line` translating claude `stream-json`), `permission` (rule *syntax* validation and call-target rendering for `[permissions] mode = "prompt"` — it does not match rules; claude does, from a generated settings file), `fsutil`.
+- `crates/kata-sdlc` — the AI-SDLC mode backend library (`kata_sdlc`): workspace scanning, change and stage detection, the branch and snapshot operations around a run, acceptance commits, and the local `<KATA_HOME>/workbench/` JSON data. It never touches the run-spec or the event protocol; the Workbench backend links it in-process.
 - `crates/kata-cli` — the `kata` binary. Thin CLI over `kata-core` with five subcommands: `init`, `validate`, `catalog`, `run`, `bundle`.
 - `app/src-tauri` — the Workbench desktop backend (`kata-app`). See "The Workbench" below.
 
@@ -33,6 +34,8 @@ The **run-spec** is also published as a JSON Schema at `schema/kata-runspec.sche
 
 The **event protocol** is published as a JSON Schema at `schema/kata-events.schema.json`, generated from `KataEvent` via `schemars` (gated behind the `schema` Cargo feature) and stamped with `protocolVersion`. Regenerate after changing any event type: `KATA_BLESS_SCHEMA=1 cargo test -p kata-core --features schema schema_artifact_is_fresh`. The Workbench's TS event types (`app/src/bindings/kata-events.ts`) are generated from that schema with `cd app && npm run gen:events`; `app/src/lib/events.ts` re-exports them and adds hand-written render/status helpers. CI fails on drift in either direction.
 
+The `kata-sdlc` types the frontend reads (`Settings`, `WorkspaceEntry`, `ChangeInfo`, `Snapshot`, `Leftovers`, and friends) are mirrored to `app/src/bindings/` the same way: `cargo test -p kata-sdlc --features ts export_bindings`. Do not hand-edit them.
+
 ## Exit-code semantics (the leash)
 
 The engine maps run outcomes to process exit codes, and the CLI surfaces them: turn cap → **125**, wall-clock timeout → **124**, answer deadline exceeded → **123**, budget ceiling reached → **122**, cancel → **130**. The CLI itself uses **1** for validation failure and **2** for load/parse error. Preserve these — they are part of the CI/orchestrator contract. Exit 123 is reached when an operator wait exceeds `answer_timeout_secs`, or at once when nobody can answer (the engine's answer channel is closed — kata-cli's stdin at EOF); it is distinct from 124 so CI logs can tell "work ran too long" from "nobody answered." Exit 122 is reached only when `leash.max_budget_usd` is set and claude stops on its native `--max-budget-usd` (a post-turn check, so the actual spend can overshoot the ceiling by up to one turn); the engine detects the `error_max_budget_usd` result subtype and overrides claude's generic exit 1. Exit 125 is only reachable when `leash.max_turns` is set; an unset cap means unlimited turns, bounded only by the wall-clock timeout (exit 124). Exit 123 covers both kinds of operator wait — an unanswered `ask.requested` and an undecided `permission.requested`.
@@ -49,7 +52,7 @@ Permission mode governs tool *approval*, not whether claude asks questions — u
 
 ## The Workbench (`app/`)
 
-A Tauri v2 desktop app: Angular 22 SPA frontend (`app/src/`, the angular-jig template, SpartanNG primitives, TypeScript) over a Rust backend (`app/src-tauri/`). Layout A: compose the run-spec on the left, observe the run on the right.
+A Tauri v2 desktop app: Angular 22 SPA frontend (`app/src/`, the angular-jig template, SpartanNG primitives, TypeScript) over a Rust backend (`app/src-tauri/`). Layout A: compose the run-spec on the left, observe the run on the right. A second mode, AI-SDLC, lives on three more routes: `/mode` (pick the mode), `/sdlc` (workspace home) and `/sdlc/:system/:change` (one change). Its runs go through the same `run_spec` sidecar path; the frontend side is `core/sdlc/sdlc-runner.ts`, `core/lock/lock.store.ts` and the `sdlc-*` mock fixtures in `app/src/app/lib/sdlc-mock.ts`.
 
 The backend splits its relationship with the engine deliberately (see `app/src-tauri/src/lib.rs`):
 

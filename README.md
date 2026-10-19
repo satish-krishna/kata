@@ -29,6 +29,14 @@ The Workbench is a desktop app — Layout A: compose the run-spec on the left, o
 | **Answer a mid-run question** | **Saved katas & run history** |
 | ![Interactive ask](docs/images/02-observe-ask.png) | ![Library](docs/images/04-library.png) |
 
+## AI-SDLC mode
+
+The same app has a second mode for taking a change through intent, spec and plan inside a workspace of git repos: one master repo holds the intents, specs and plans, and the product repos hold the code they describe. Kata drives the `ai-sdlc` plugin through the same `kata run` path, locks the screen while the agent works, and shows what a stopped run left behind before anything is discarded. Pick the mode on first launch and switch any time from the toolbar.
+
+| Work a change | Answer the agent mid-run |
+| --- | --- |
+| ![AI-SDLC workspace home](docs/images/sdlc-home.png) | ![A run paused on a question](docs/images/sdlc-lock-ask.png) |
+
 ## Quickstart
 
 ### Install

@@ -34,6 +34,7 @@ Keep every session on the Workbench on-brand and on-convention. The Kata design 
 ## Dev / review (browser without the native app)
 - `npm start` serves on `http://localhost:1420`. Tauri `invoke`/`listen` are unreachable in a plain browser, so `provideKataTransport` picks the Mock transport (fixtures and the scripted timeline in `src/app/lib/mock.ts`) outside Tauri and the Tauri transport inside it.
 - `http://localhost:1420/?demo=run` auto-starts the scripted Observe-pane run (browser-only, never under Tauri) — useful for screenshots.
+- `http://localhost:1420/sdlc/claims/2026-10-12-fnol-photo-upload?demo=sdlc` starts a scripted AI-SDLC spec run that pauses on a question, and `http://localhost:1420/sdlc?demo=sdlc-setup` adds an un-set-up folder and plays the scripted setup run (both browser-only, never under Tauri). Cancelling either demo run opens the leftover dialog with fixture files.
 - The run bridge (`run_spec`/`cancel_run` in `src-tauri/src/lib.rs`) relays `KataEvent`s over the `kata://event` channel; the frontend stays presentational (store: `src/app/core/run/run.store.ts`).
 - The real engine path runs under Tauri only: `npm run tauri:dev` stages the `kata` sidecar (builds `kata-cli`, copies it to `src-tauri/binaries/kata-<target-triple>`) then launches the desktop app, which spawns `kata run` and relays its live JSON-lines. A real run needs an authenticated `claude` on PATH.
 - The production build outputs to `dist/angular-jig/browser`; Tauri's `frontendDist` points there.

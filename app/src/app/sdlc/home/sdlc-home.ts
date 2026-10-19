@@ -1,4 +1,5 @@
 import { Component, inject } from '@angular/core';
+import { ActivatedRoute } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideFolderPlus, lucidePlus } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
@@ -34,7 +35,9 @@ import { SdlcHomeViewModel } from './sdlc-home.view-model';
 export class SdlcHome {
   protected readonly vm = inject(SdlcHomeViewModel);
 
+  private readonly route = inject(ActivatedRoute);
+
   constructor() {
-    void this.vm.init();
+    void this.vm.init(this.route.snapshot.queryParamMap.get('demo'));
   }
 }

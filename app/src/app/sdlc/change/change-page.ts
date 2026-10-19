@@ -1,4 +1,5 @@
 import { Component, inject } from '@angular/core';
+import { ActivatedRoute } from '@angular/router';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
 import { DocView } from '../../ui/doc-view';
@@ -16,4 +17,9 @@ import { ChangePageViewModel } from './change-page.view-model';
 })
 export class ChangePage {
   protected readonly vm = inject(ChangePageViewModel);
+  private readonly route = inject(ActivatedRoute);
+
+  constructor() {
+    void this.vm.startDemo(this.route.snapshot.queryParamMap.get('demo'));
+  }
 }

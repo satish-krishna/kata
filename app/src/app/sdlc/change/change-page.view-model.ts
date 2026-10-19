@@ -25,6 +25,7 @@ import {
   type StageAction,
   type StepCounts,
 } from '../../lib/sdlc';
+import { inTauri } from '../../lib/mock';
 import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
 
 export type ChangeState = 'loading' | 'ready' | 'not-found';
@@ -145,6 +146,13 @@ export class ChangePageViewModel {
       this.changeName();
       untracked(() => void this.load());
     });
+  }
+
+  /** `?demo=sdlc` starts the scripted spec run once the change has loaded. Browser only, never under Tauri. */
+  async startDemo(demo: string | null): Promise<void> {
+    if (inTauri() || demo !== 'sdlc') return;
+    await this.load();
+    if (this.state() === 'ready') await this.act('continue-spec');
   }
 
   // --- actions

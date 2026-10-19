@@ -2,6 +2,8 @@ import { MockTransport } from './mock-transport';
 import { NO_BACKEND } from './kata-transport';
 import { runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, seedSpec } from '../../lib/mock';
 import type { KataEvent } from '../../lib/events';
+import { transcriptRunId } from '../../lib/sdlc';
+import { MOCK_SETUP_FOLDER, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
 
 const total = (steps: { delay: number }[]) => steps.reduce((a, s) => a + s.delay, 0);
 
@@ -113,5 +115,74 @@ describe('MockTransport', () => {
     expect(out).toEqual({ kind: 'committed' });
     const after = (await t.sdlcChanges('D:/Work/acme-claims/claims-intent', 'claims')).find((c) => c.change === '2026-10-12-fnol-photo-upload');
     expect(after?.stage).toBe('plan-ready');
+  });
+
+  describe('scripted AI-SDLC runs', () => {
+    const sdlcSpec = (name: string) => ({ ...seedSpec(), name });
+
+    it('plays the spec script for a sdlc- run: transcript log, the ask, then completion after the answer', async () => {
+      const t = new MockTransport();
+      const seen: KataEvent[] = [];
+      await t.onRunEvent((e) => seen.push(e));
+      await t.runSpec(sdlcSpec('sdlc-claims-2026-10-12-fnol-photo-upload-spec'));
+      vi.advanceTimersByTime(total(sdlcSpecScript.head));
+      expect(seen).toEqual(sdlcSpecScript.head.map((s) => s.ev));
+      expect(transcriptRunId(seen)).toBe('sdlc-claims-2026-10-12-fnol-photo-upload-spec-20261018T101500Z');
+      const ask = seen.find((e) => e.type === 'ask.requested');
+      expect(ask?.type === 'ask.requested' && ask.questions[0].question).toBe('If an upload fails midway, should the claim still be filed without the photos?');
+      expect(seen.some((e) => e.type === 'run.completed')).toBe(false);
+
+      await t.submitAnswer('q1', [['Yes']]);
+      vi.advanceTimersByTime(total(sdlcSpecScript.mid));
+      const done = seen.at(-1);
+      expect(done?.type === 'run.completed' && done.exit_code).toBe(0);
+    });
+
+    it('plays the setup script when the run is named sdlc-setup', async () => {
+      const t = new MockTransport();
+      const seen: KataEvent[] = [];
+      await t.onRunEvent((e) => seen.push(e));
+      await t.runSpec(sdlcSpec('sdlc-setup'));
+      vi.advanceTimersByTime(total(sdlcSetupScript.head));
+      const ask = seen.find((e) => e.type === 'ask.requested');
+      expect(ask?.type === 'ask.requested' && ask.questions[0].question).toBe('Which repo should hold the intent artifacts?');
+    });
+
+    it('leaves the Workbench script alone for other names', async () => {
+      const t = new MockTransport();
+      const seen: KataEvent[] = [];
+      await t.onRunEvent((e) => seen.push(e));
+      await t.runSpec(sdlcSpec('triage-flaky-test'));
+      vi.advanceTimersByTime(total(runScriptHead));
+      expect(seen).toEqual(runScriptHead.map((s) => s.ev));
+    });
+
+    it('reports leftovers after a cancelled sdlc run, and discarding removes the chosen paths', async () => {
+      const t = new MockTransport();
+      expect((await t.sdlcLeftovers('/m', { head: null, dirty: {} }, [])).discardable).toEqual([]);
+      await t.runSpec(sdlcSpec('sdlc-claims-x-spec'));
+      await t.cancelRun();
+      const left = await t.sdlcLeftovers('/m', { head: null, dirty: {} }, []);
+      expect(left.discardable.length).toBe(2);
+      expect(left.touched_dirty.length).toBe(1);
+      await t.sdlcDiscard('/m', { head: null, dirty: {} }, left.discardable);
+      expect((await t.sdlcLeftovers('/m', { head: null, dirty: {} }, [])).discardable).toEqual([]);
+    });
+
+    it('the demo setup folder is not set up until the setup run completes', async () => {
+      const t = new MockTransport();
+      await t.onRunEvent(() => undefined);
+      const scan = async () => {
+        const p = t.sdlcScan(MOCK_SETUP_FOLDER);
+        await vi.advanceTimersByTimeAsync(2000);
+        return p;
+      };
+      expect((await scan()).marker).toBeNull();
+      await t.runSpec(sdlcSpec('sdlc-setup'));
+      vi.advanceTimersByTime(total(sdlcSetupScript.head));
+      await t.submitAnswer('q1', [['claims-intent']]);
+      vi.advanceTimersByTime(total(sdlcSetupScript.mid));
+      expect((await scan()).marker).not.toBeNull();
+    });
   });
 });
