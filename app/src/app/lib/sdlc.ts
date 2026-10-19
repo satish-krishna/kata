@@ -4,6 +4,8 @@
 
 import type { CatalogEntry } from "@bindings/CatalogEntry";
 import type { PluginConfig } from "@bindings/PluginConfig";
+import type { RunLink } from "@bindings/RunLink";
+import type { RunRecord } from "@bindings/RunRecord";
 import type { RunSpec } from "@bindings/RunSpec";
 import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
@@ -155,4 +157,69 @@ export function transcriptRunId(events: readonly KataEvent[]): string | null {
     }
   }
   return null;
+}
+
+const LABEL: Record<StageAction, string> = {
+  "continue-intent": "Continue intent",
+  "accept-intent": "Accept intent",
+  "reject-intent": "Reject intent",
+  "commit-acceptance": "Commit acceptance",
+  "start-spec": "Start spec",
+  "continue-spec": "Continue spec",
+  "accept-spec": "Accept spec",
+  "start-plan": "Start plan",
+  "rerun-plan": "Re-run plan",
+  "reopen-intent": "Reopen intent",
+};
+
+export function actionLabel(action: StageAction): string {
+  return LABEL[action];
+}
+
+const PRIMARY_ORDER: RegExp[] = [/^accept-/, /^commit-acceptance$/, /^start-/, /^continue-/];
+
+/** The one primary action of a view: accept, commit, start, then continue. Reopen, re-run and reject are never primary. */
+export function primaryAction(actions: readonly StageAction[]): StageAction | null {
+  for (const rule of PRIMARY_ORDER) {
+    const hit = actions.find((a) => rule.test(a));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Split a leading `---` front-matter block off a document. The block becomes one `key: value · key: value` line. */
+export function splitFrontMatter(text: string): { frontMatter: string | null; body: string } {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
+  if (!m) return { frontMatter: null, body: text };
+  const line = m[1].split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "").join(" · ");
+  return { frontMatter: line === "" ? null : line, body: text.slice(m[0].length) };
+}
+
+export type StepCounts = Record<"intent" | "spec" | "plan", number>;
+
+/**
+ * Runs so far per stage: the transcript links recorded for this change, plus history records that carry the
+ * stage's deterministic run name and are not linked yet (the fallback for a run whose link was never written).
+ */
+export function runCounts(
+  links: readonly RunLink[],
+  records: readonly RunRecord[],
+  workspaceId: string,
+  system: string,
+  change: string,
+): StepCounts {
+  const out: StepCounts = { intent: 0, spec: 0, plan: 0 };
+  const linked = new Set<string>();
+  for (const l of links) {
+    if (l.workspace_id !== workspaceId || l.system !== system || l.change !== change) continue;
+    linked.add(l.run_id);
+    if (l.stage === "intent" || l.stage === "spec" || l.stage === "plan") out[l.stage] += 1;
+  }
+  for (const r of records) {
+    if (linked.has(r.id)) continue;
+    for (const stage of ["intent", "spec", "plan"] as const) {
+      if (r.kata === `sdlc-${system}-${change}-${stage}`) out[stage] += 1;
+    }
+  }
+  return out;
 }

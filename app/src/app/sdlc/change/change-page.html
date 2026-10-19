@@ -1,0 +1,79 @@
+<div class="k-home">
+  <app-sdlc-toolbar
+    [workspaces]="vm.workspaces()"
+    [current]="vm.current()"
+    [counts]="vm.counts()"
+    [branch]="vm.masterBranch()"
+    [crumbs]="vm.crumbs()"
+    [locked]="vm.locked()"
+    (switchMode)="vm.switchMode()"
+    (select)="vm.selectWorkspace($event)"
+    (add)="vm.toHome()"
+    (remove)="vm.toHome()"
+    (openSettings)="vm.toHome()"
+  >
+    @for (a of vm.actions(); track a) {
+      <button
+        hlmBtn
+        [variant]="vm.primary() === a ? 'primary' : 'secondary'"
+        type="button"
+        [disabled]="vm.locked()"
+        (click)="vm.act(a)"
+      >{{ vm.labelOf(a) }}</button>
+    }
+  </app-sdlc-toolbar>
+
+  @switch (vm.state()) {
+    @case ('loading') {
+      <main class="k-home__state"><p class="k-state__body" role="status">Reading the change…</p></main>
+    }
+    @case ('not-found') {
+      <main class="k-home__state">
+        <section class="k-state" aria-labelledby="state-title">
+          <h1 id="state-title" class="k-state__title">Change not found</h1>
+          <p class="k-state__body">
+            <code class="k-mono">{{ vm.changeName() }}</code> is not on the branch checked out in the master repo. It may live on another change branch.
+          </p>
+          <button hlmBtn variant="secondary" type="button" (click)="vm.toHome()">Back to the workspace</button>
+        </section>
+      </main>
+    }
+    @case ('ready') {
+      <main class="k-change">
+        <h1 class="sr-only">{{ vm.changeName() }}</h1>
+        @if (vm.change(); as c) {
+          <app-stage-stepper [stage]="c.stage" [counts]="vm.runCounts()" />
+        }
+        <div class="k-change__doc">
+          @if (vm.doc() === null) {
+            <p class="k-state__body">{{ vm.docName() }} is not in this change folder.</p>
+          } @else {
+            <app-doc-view [name]="vm.docName()" [frontMatter]="vm.docParts().frontMatter" [body]="vm.docParts().body" />
+          }
+        </div>
+      </main>
+    }
+  }
+
+  <app-lock-overlay
+    [view]="vm.lockView()"
+    [elapsed]="vm.lockElapsed()"
+    [lastTool]="vm.lockLastTool()"
+    [turn]="vm.lockTurn()"
+    [model]="vm.lockModel()"
+    [ask]="vm.lockAsk()"
+    [permission]="vm.lockPermission()"
+    [deadlineSecs]="vm.lockDeadline()"
+    (cancel)="vm.cancelLock()"
+    (answer)="vm.answer($event)"
+    (decide)="vm.decide($event)"
+  />
+  <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
+  <app-confirm-dialog
+    [open]="vm.confirmPrompt() !== null"
+    [message]="vm.confirmPrompt() ?? ''"
+    confirmLabel="Commit"
+    (confirm)="vm.confirmDecision()"
+    (cancel)="vm.cancelConfirm()"
+  />
+</div>

@@ -3,7 +3,7 @@ import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
 import type { KataEvent } from "./events";
 import { validateLocal } from "./mock";
-import { actionsFor, hasAiSdlcPlugin, specFor, stageLabel, transcriptRunId, type RunContext } from "./sdlc";
+import { actionLabel, actionsFor, hasAiSdlcPlugin, primaryAction, runCounts, specFor, splitFrontMatter, stageLabel, transcriptRunId, type RunContext } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -145,5 +145,58 @@ describe("transcriptRunId", () => {
   it("returns null without a transcript event", () => {
     expect(transcriptRunId([log("hello")])).toBeNull();
     expect(transcriptRunId([])).toBeNull();
+  });
+});
+
+describe("splitFrontMatter", () => {
+  it("separates a leading front-matter block into one mono line and the body", () => {
+    const out = splitFrontMatter("---\nstatus: accepted\ndate: 2026-10-12\n---\n# Title\n\nBody\n");
+    expect(out.frontMatter).toBe("status: accepted · date: 2026-10-12");
+    expect(out.body).toBe("# Title\n\nBody\n");
+  });
+
+  it("returns the whole text as the body when there is no front matter", () => {
+    expect(splitFrontMatter("# Title\n")).toEqual({ frontMatter: null, body: "# Title\n" });
+    expect(splitFrontMatter("---\nstatus: draft\n# never closed")).toEqual({ frontMatter: null, body: "---\nstatus: draft\n# never closed" });
+  });
+
+  it("handles Windows line endings", () => {
+    const out = splitFrontMatter("---\r\nstatus: draft\r\n---\r\n# T\r\n");
+    expect(out.frontMatter).toBe("status: draft");
+    expect(out.body).toBe("# T\r\n");
+  });
+});
+
+describe("runCounts", () => {
+  const link = (stage: string, run_id: string, change = "c1", system = "claims", workspace_id = "ws") =>
+    ({ workspace_id, system, change, stage, run_id, started_at: 1 });
+  const rec = (id: string, kata: string) => ({ id, kata, started_at: 1, isolation: "none" });
+
+  it("counts linked runs per stage for this workspace, system and change only", () => {
+    const links = [link("intent", "a"), link("intent", "b"), link("spec", "c"), link("spec", "x", "other"), link("plan", "y", "c1", "claims", "ws2")];
+    expect(runCounts(links, [], "ws", "claims", "c1")).toEqual({ intent: 2, spec: 1, plan: 0 });
+  });
+
+  it("adds history records that carry the stage's deterministic name and are not already linked", () => {
+    const links = [link("spec", "r1")];
+    const records = [rec("r1", "sdlc-claims-c1-spec"), rec("r2", "sdlc-claims-c1-spec"), rec("r3", "sdlc-claims-c1-plan"), rec("r4", "sdlc-claims-other-spec")];
+    expect(runCounts(links, records, "ws", "claims", "c1")).toEqual({ intent: 0, spec: 2, plan: 1 });
+  });
+});
+
+describe("actionLabel and primaryAction", () => {
+  it("labels every action in sentence case", () => {
+    expect(actionsFor("spec-awaiting").map(actionLabel)).toEqual(["Continue spec", "Accept spec", "Reopen intent"]);
+    expect(actionLabel("commit-acceptance")).toBe("Commit acceptance");
+    expect(actionLabel("rerun-plan")).toBe("Re-run plan");
+  });
+
+  it("picks one primary: accept, then commit, then start, then continue; never reopen or re-run", () => {
+    expect(primaryAction(actionsFor("intent-awaiting"))).toBe("accept-intent");
+    expect(primaryAction(actionsFor("spec-accepted-uncommitted"))).toBe("commit-acceptance");
+    expect(primaryAction(actionsFor("spec-ready"))).toBe("start-spec");
+    expect(primaryAction(actionsFor("intent-in-progress"))).toBe("continue-intent");
+    expect(primaryAction(actionsFor("plan-written"))).toBeNull();
+    expect(primaryAction(actionsFor("rejected"))).toBeNull();
   });
 });

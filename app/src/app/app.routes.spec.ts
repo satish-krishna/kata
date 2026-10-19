@@ -1,7 +1,7 @@
 import { routes } from './app.routes';
 
 describe('routes', () => {
-  it('maps the Workbench screens the AI-SDLC home and the mode choice', () => {
-    expect(routes.map((r) => r.path)).toEqual(['', 'library', 'sdlc', 'mode']);
+  it('maps the Workbench screens the AI-SDLC home, the change page and the mode choice', () => {
+    expect(routes.map((r) => r.path)).toEqual(['', 'library', 'sdlc', 'sdlc/:system/:change', 'mode']);
   });
 });
