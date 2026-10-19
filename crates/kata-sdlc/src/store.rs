@@ -31,6 +31,7 @@ pub enum SdlcPermissionMode {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(default)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct Settings {
@@ -39,7 +40,8 @@ pub struct Settings {
     pub permission_mode: SdlcPermissionMode,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(default)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct WorkspaceEntry {
@@ -189,6 +191,24 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("settings.json"), "not json").unwrap();
         assert_eq!(load_settings(), Settings::default());
+    }
+
+    #[test]
+    fn missing_fields_load_the_rest() {
+        let s: Settings = serde_json::from_str(r#"{"remember":true}"#).unwrap();
+        assert_eq!(
+            s,
+            Settings {
+                remember: true,
+                ..Settings::default()
+            }
+        );
+        let w: Vec<WorkspaceEntry> =
+            serde_json::from_str(r#"[{"id":"w1","name":"Acme","folder":"D:/acme"}]"#).unwrap();
+        assert_eq!(w[0].id, "w1");
+        assert_eq!(w[0].folder, "D:/acme");
+        assert_eq!(w[0].base_branch, "");
+        assert_eq!(w[0].last_opened, 0);
     }
 
     #[test]

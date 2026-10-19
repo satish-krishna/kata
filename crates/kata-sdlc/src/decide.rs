@@ -1,4 +1,4 @@
-use crate::{changes, git};
+use crate::{branch, changes, git};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -26,6 +26,8 @@ pub enum DecideOutcome {
 pub enum DecideError {
     #[error("invalid system or change name")]
     InvalidName,
+    #[error("the master repo is on a detached HEAD")]
+    Detached,
     #[error("cannot read or write the decision file: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -119,6 +121,9 @@ pub fn apply(
 ) -> Result<DecideOutcome, DecideError> {
     if !changes::is_safe_system(system) || !changes::is_change_name(change) {
         return Err(DecideError::InvalidName);
+    }
+    if branch::current_branch(master).is_none() {
+        return Err(DecideError::Detached);
     }
     let (file, status) = match decision {
         Decision::AcceptIntent => ("intent.md", "accepted"),
@@ -305,6 +310,19 @@ mod tests {
         }
         assert_eq!(status_of(&repo).as_deref(), Some("accepted"));
         assert_eq!(head(&repo), h);
+    }
+
+    #[test]
+    fn refuses_detached_head() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        git::run(&repo, &["checkout", "-q", "--detach"]).unwrap();
+        let h = head(&repo);
+        let err = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, true).unwrap_err();
+        assert!(matches!(err, DecideError::Detached));
+        assert_eq!(err.to_string(), "the master repo is on a detached HEAD");
+        assert_eq!(head(&repo), h);
+        assert_eq!(status_of(&repo).as_deref(), Some("draft"));
     }
 
     #[test]
