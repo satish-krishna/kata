@@ -169,6 +169,25 @@ describe('SdlcRunner.run', () => {
     expect(toasts.error).toHaveBeenCalledWith('Running setup failed · 0 commits landed, 0 files left uncommitted');
   });
 
+  it("names the run's own result in the failure toast", async () => {
+    const ctx = setup(() => { ctx.summary.set({ result: 'Not logged in · Please run /login' }); return 'error'; });
+    await ctx.runner.run('Running setup', seedSpec(), TARGET);
+    expect(ctx.toasts.error).toHaveBeenCalledWith(
+      'Running setup failed · Not logged in · Please run /login · 0 commits landed, 0 files left uncommitted',
+    );
+  });
+
+  it('names the engine error when the run ended without a result', async () => {
+    const ctx = setup(() => {
+      ctx.events.set([{ type: 'log', level: 'error', message: 'claude not found on PATH' }]);
+      return 'error';
+    });
+    await ctx.runner.run('Running setup', seedSpec(), { ...TARGET, master: null, link: null });
+    expect(ctx.toasts.error).toHaveBeenCalledWith(
+      'Running setup failed · claude not found on PATH · there was no master repo to compare against',
+    );
+  });
+
   it('skips the snapshot and the leftover report when no master repo exists yet', async () => {
     const { runner, fake, toasts } = setup(() => 'error');
     await runner.run('Running setup', seedSpec(), { ...TARGET, master: null, link: null });

@@ -64,6 +64,10 @@ describe("specFor", () => {
     expect(s.permissions.mode).toBe("bypass");
     expect(s.interactive.enabled).toBe(false);
   });
+  it("runs outside the empty room, so the operator's claude login applies", () => {
+    const s = specFor("intent", null, { folder: "/ws", system: "claims", change: null, idea: "x" }, bypass, both);
+    expect(s.auth).toEqual({ bare: false, token_env: null });
+  });
   it("setup with a system", () => {
     const s = specFor("setup", null, { folder: "/ws", system: "claims", change: null }, bypass, both);
     expect(s.task).toBe("Use the ai-sdlc setup skill. System: claims");

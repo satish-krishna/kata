@@ -136,6 +136,8 @@ export function specFor(
   spec.task = taskFor(kind, action, ctx, catalog);
   spec.workdir = ctx.folder;
   spec.plugins = plugins;
+  // Outside the empty room: `--bare` ignores the operator's claude login and accepts only an API key.
+  spec.auth = { bare: false, token_env: null };
   spec.interactive = { enabled: false, answer_timeout_secs: 3600 };
   if (settings.permission_mode === "prompt") {
     spec.permissions = { mode: "prompt", allow: [], deny: [], unmatched: "ask" };

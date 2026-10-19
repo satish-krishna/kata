@@ -256,7 +256,8 @@ export class SdlcRunner {
     snapshot: Snapshot | null,
     candidates: Map<string, Snapshot> | null,
   ): Promise<void> {
-    const verb = state === 'warning' ? 'stopped' : 'failed';
+    const why = this.failureReason();
+    const verb = `${state === 'warning' ? 'stopped' : 'failed'}${why ? ` · ${why}` : ''}`;
     let where: Baseline | null =
       target.master !== null && snapshot !== null ? { master: target.master, snapshot, productRepos: target.productRepos } : null;
     if (where === null && target.firstSetup && candidates) where = await this.masterAfterSetup(target.firstSetup.folder, candidates);
@@ -269,6 +270,14 @@ export class SdlcRunner {
     const files = plural(data.discardable.length + data.touched_dirty.length, 'file', 'files');
     this.toasts.error(`${label} ${verb} · ${commits} landed, ${files} left uncommitted`);
     if (hasLeftovers(data)) this.pending.set({ master: where.master, snapshot: where.snapshot, data });
+  }
+
+  /** Why the run ended, in its own words: claude's result, else the engine's last error log; null when neither says. */
+  private failureReason(): string | null {
+    const result = this.runs.summary()?.result;
+    const errors = this.runs.events().flatMap((ev) => (ev.type === 'log' && ev.level === 'error' ? [ev.message] : []));
+    const text = result || (errors.at(-1) ?? '');
+    return text ? summarize(text) : null;
   }
 
   /** Snapshot every repo of a folder that has no master yet. A repo that cannot be read is skipped. */
