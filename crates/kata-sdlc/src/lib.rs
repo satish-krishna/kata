@@ -4,6 +4,7 @@ pub mod branch;
 pub mod changes;
 pub mod frontmatter;
 pub mod git;
+pub mod snapshot;
 pub mod store;
 pub mod workspace;
 
