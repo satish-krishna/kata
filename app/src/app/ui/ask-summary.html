@@ -1,0 +1,37 @@
+@for (q of questions(); track $index; let i = $index) {
+  <div class="k-ask__q">
+    <div class="k-ask__q-head">
+      <span class="k-ask__q-eyebrow">{{ q.header }}</span>
+    </div>
+    <div class="k-ask__q-text">{{ q.question }}</div>
+
+    @if (q.kind === 'text') {
+      <div class="k-ask__answer" [class.k-ask__answer--empty]="!textOf(i)">{{ textOf(i) || '(no answer)' }}</div>
+    } @else if (chosen(q, i).length === 0 && custom(q, i).length === 0) {
+      <div class="k-ask__answer k-ask__answer--empty">(skipped)</div>
+    } @else {
+      <div class="k-ask__opts">
+        @for (opt of chosen(q, i); track opt.label) {
+          <div class="k-ask__opt k-ask__opt--selected k-ask__opt--static">
+            <span class="k-ask__opt-text">
+              <span class="k-ask__opt-label">{{ opt.label }}</span>
+              @if (opt.description) {
+                <span class="k-ask__opt-desc">{{ opt.description }}</span>
+              }
+            </span>
+          </div>
+        }
+        @if (custom(q, i).length > 0) {
+          <div class="k-ask__opt k-ask__opt--selected k-ask__opt--static">
+            <span class="k-ask__opt-text">
+              <span class="k-ask__opt-label">Other</span>
+              @for (c of custom(q, i); track $index) {
+                <span class="k-ask__opt-desc k-ask__other-answer">{{ c }}</span>
+              }
+            </span>
+          </div>
+        }
+      </div>
+    }
+  </div>
+}

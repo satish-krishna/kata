@@ -5,24 +5,7 @@ import { HlmToggleGroupImports } from '@spartan-ng/helm/toggle-group';
   selector: 'app-segmented',
   host: { class: 'contents' },
   imports: [HlmToggleGroupImports],
-  template: `<hlm-toggle-group
-    type="single"
-    role="radiogroup"
-    [attr.aria-label]="ariaLabel() ?? null"
-    [value]="value()"
-    (valueChange)="pick($event)"
-  >
-    @for (opt of options(); track opt.value) {
-      <button
-        hlmToggleGroupItem
-        role="radio"
-        [attr.aria-checked]="opt.value === value()"
-        [value]="opt.value"
-      >
-        {{ opt.label }}
-      </button>
-    }
-  </hlm-toggle-group>`,
+  templateUrl: './segmented.html',
 })
 export class Segmented<T extends string> {
   readonly options = input.required<{ value: T; label: string }[]>();

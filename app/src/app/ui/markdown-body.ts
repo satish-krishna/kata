@@ -7,7 +7,7 @@ import { renderMarkdownForDom } from './render-markdown';
   // Click handling is event delegation for the rendered markdown's own links,
   // which are independently keyboard-accessible; the div is not itself an
   // interactive widget, so no role or key handler belongs on it.
-  template: `<div #root class="k-md" [innerHTML]="html()" (click)="onClick($event)"></div>`,
+  templateUrl: './markdown-body.html',
 })
 export class MarkdownBody {
   readonly md = input.required<string>();

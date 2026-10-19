@@ -1,0 +1,52 @@
+<header class="wb-toolbar">
+  <div class="wb-brand">
+    <span class="wb-seal">型</span>
+  </div>
+  <div class="wb-sep"></div>
+  <div class="wb-spec">
+    <input hlmInput variant="bare" class="wb-specname" placeholder="spec name" aria-label="Spec name" [value]="name()" (input)="onName($event)" />
+    <span class="wb-dirty" [class.wb-dirty--on]="dirty()">
+      @if (dirty()) {
+        <span class="wb-dirty__dot"></span>unsaved
+      } @else {
+        saved
+      }
+    </span>
+  </div>
+  <div class="wb-toolbar__spacer"></div>
+  <div class="wb-toolbar__group">
+    <button hlmBtn variant="bare" size="bare" class="k-iconbtn" type="button" title="New" aria-label="New spec" (click)="newSpec.emit()">
+      <ng-icon name="lucideFilePlus" size="16" />
+    </button>
+    <button hlmBtn variant="bare" size="bare" class="k-iconbtn" type="button" title="Open" aria-label="Open spec" (click)="openSpec.emit()">
+      <ng-icon name="lucideFolderOpen" size="16" />
+    </button>
+    <button hlmBtn variant="bare" size="bare" class="k-iconbtn" type="button" title="Save  Ctrl+S" aria-label="Save spec" (click)="save.emit()">
+      <ng-icon name="lucideSave" size="16" />
+    </button>
+    <button hlmBtn variant="bare" size="bare" class="k-iconbtn" type="button" title="Export bundle" aria-label="Export bundle" (click)="exportBundle.emit()">
+      <ng-icon name="lucidePackage" size="16" />
+    </button>
+  </div>
+  <div class="wb-sep"></div>
+  <button
+    hlmBtn
+    variant="bare"
+    size="bare"
+    class="k-modebadge"
+    type="button"
+    title="Switch mode"
+    aria-label="Switch mode (workbench)"
+    [disabled]="running() || modeSwitchDisabled()"
+    (click)="switchMode.emit()"
+  >workbench</button>
+  <a hlmBtn variant="secondary" routerLink="/library"><ng-icon name="lucideLibrary" size="14" />Library</a>
+  <div class="wb-sep"></div>
+  @if (running()) {
+    <button hlmBtn variant="danger" type="button" (click)="cancel.emit()"><ng-icon name="lucideSquare" size="14" />Cancel</button>
+  } @else {
+    <button hlmBtn variant="primary" type="button" [disabled]="!canRun()" (click)="run.emit()">
+      <ng-icon name="lucidePlay" size="14" />Run<span class="k-kbd">Ctrl ↵</span>
+    </button>
+  }
+</header>

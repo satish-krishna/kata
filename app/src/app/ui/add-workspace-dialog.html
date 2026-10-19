@@ -1,0 +1,61 @@
+<hlm-dialog [state]="candidate() ? 'open' : 'closed'" (stateChanged)="onState($event)">
+  <hlm-dialog-content *hlmDialogPortal="let ctx">
+    @if (candidate(); as c) {
+      <div hlmDialogTitle>Add workspace</div>
+      <div class="k-form">
+        <p class="k-mono">{{ c.folder }}</p>
+        @if (c.scan.repos.length === 0) {
+          <p class="k-left__warn">No git repositories found in this folder. Nothing to add.</p>
+        } @else if (masters().length > 1) {
+          <p class="k-left__warn">A workspace has exactly one .ai-sdlc.json. Found it in:</p>
+          <ul class="k-left__list">
+            @for (m of masters(); track m) {
+              <li class="k-mono">{{ m }}</li>
+            }
+          </ul>
+        } @else if (!ready()) {
+          <p class="k-left__warn">This workspace is not set up yet: there is no committed .ai-sdlc.json.</p>
+        } @else {
+          <dl class="k-facts">
+            <dt>Base branch</dt>
+            <dd class="k-mono">{{ c.baseBranch }}</dd>
+            <dt>Systems</dt>
+            <dd class="k-mono">{{ systems().join(', ') }}</dd>
+          </dl>
+          <div hlmTableContainer>
+            <table hlmTable>
+              <thead hlmTableHeader>
+                <tr hlmTableRow>
+                  <th hlmTableHead>Repository</th>
+                  <th hlmTableHead>Role</th>
+                  <th hlmTableHead>Context</th>
+                </tr>
+              </thead>
+              <tbody hlmTableBody>
+                @for (r of rows(); track r.name) {
+                  <tr hlmTableRow>
+                    <td hlmTableCell class="k-mono">{{ r.name }}</td>
+                    <td hlmTableCell>{{ role(r.role) }}</td>
+                    <td hlmTableCell>
+                      @if (r.role === 'master') {
+                        <span class="k-faint">—</span>
+                      } @else {
+                        <span [class]="'k-status k-status--' + state(r).tone"><span class="k-status__dot"></span>{{ state(r).text }}</span>
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </div>
+      <hlm-dialog-footer>
+        <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">{{ canAdd() ? 'Cancel' : 'Close' }}</button>
+        @if (canAdd()) {
+          <button hlmBtn variant="primary" size="sm" type="button" (click)="add.emit()">Add workspace</button>
+        }
+      </hlm-dialog-footer>
+    }
+  </hlm-dialog-content>
+</hlm-dialog>

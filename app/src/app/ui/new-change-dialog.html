@@ -1,0 +1,28 @@
+<hlm-dialog [state]="open() ? 'open' : 'closed'" (stateChanged)="onState($event)">
+  <hlm-dialog-content *hlmDialogPortal="let ctx">
+    <div hlmDialogTitle>New change</div>
+    <div class="k-form">
+      @if (systems().length > 1) {
+        <app-field label="System" key="system">
+          <hlm-select [(value)]="system">
+            <hlm-select-trigger aria-label="System">
+              <hlm-select-value placeholder="Choose a system" />
+            </hlm-select-trigger>
+            <hlm-select-content *hlmSelectPortal>
+              @for (s of systems(); track s) {
+                <hlm-select-item [value]="s">{{ s }}</hlm-select-item>
+              }
+            </hlm-select-content>
+          </hlm-select>
+        </app-field>
+      }
+      <app-field label="Idea" hint="A sentence or two. The agent proposes the title and the folder name and asks you to confirm.">
+        <textarea hlmTextarea rows="4" aria-label="Idea" [value]="idea()" (input)="onIdea($event)"></textarea>
+      </app-field>
+    </div>
+    <hlm-dialog-footer>
+      <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
+      <button hlmBtn variant="primary" size="sm" type="button" [disabled]="!ready()" (click)="submit()">Start</button>
+    </hlm-dialog-footer>
+  </hlm-dialog-content>
+</hlm-dialog>

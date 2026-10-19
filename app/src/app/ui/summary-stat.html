@@ -1,0 +1,9 @@
+<div class="k-stat">
+  <span class="k-stat__label">{{ label() }}</span>
+  <span
+    class="k-stat__value"
+    [class.k-stat__value--success]="tone() === 'success'"
+    [class.k-stat__value--error]="tone() === 'error'"
+    >{{ value() }}</span
+  >
+</div>

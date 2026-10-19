@@ -1,0 +1,43 @@
+<button
+  hlmBtn
+  variant="bare"
+  size="bare"
+  class="k-wstrigger"
+  type="button"
+  aria-label="Switch workspace"
+  [hlmDropdownMenuTrigger]="menu"
+  [disabled]="locked()"
+>
+  <span class="k-wstrigger__name">{{ current()?.name ?? 'No workspace' }}</span>
+  <ng-icon name="lucideChevronDown" size="14" />
+</button>
+<ng-template #menu>
+  <hlm-dropdown-menu>
+    @if (workspaces().length) {
+      <hlm-dropdown-menu-label>Workspaces</hlm-dropdown-menu-label>
+      @for (w of workspaces(); track w.id) {
+        <button hlmDropdownMenuRadio type="button" [checked]="w.id === current()?.id" [keepOpen]="false" (triggered)="onPick(w.id)">
+          <span class="k-wsitem">
+            <span class="k-wsitem__name">{{ w.name }}</span>
+            <span class="k-wsitem__folder">{{ w.folder }}</span>
+            @if (missing().includes(w.id)) {
+              <span class="k-wsitem__note k-wsitem__note--warn">folder missing</span>
+            } @else if (counts()[w.id] !== undefined) {
+              <span class="k-wsitem__note">{{ counts()[w.id] }} {{ counts()[w.id] === 1 ? 'change' : 'changes' }}</span>
+            }
+          </span>
+          <hlm-dropdown-menu-radio-indicator />
+        </button>
+      }
+      <hlm-dropdown-menu-separator />
+    }
+    <button hlmDropdownMenuItem type="button" (triggered)="add.emit()">
+      <ng-icon name="lucideFolderPlus" />Add workspace…
+    </button>
+    @if (current()) {
+      <button hlmDropdownMenuItem type="button" (triggered)="remove.emit()">
+        <ng-icon name="lucideX" />Remove from list…
+      </button>
+    }
+  </hlm-dropdown-menu>
+</ng-template>

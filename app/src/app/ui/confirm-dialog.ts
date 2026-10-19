@@ -6,17 +6,7 @@ import { HlmAlertDialogImports } from '@spartan-ng/helm/alert-dialog';
   selector: 'app-confirm-dialog',
   host: { class: 'contents' },
   imports: [HlmAlertDialogImports],
-  template: `
-    <hlm-alert-dialog [state]="open() ? 'open' : 'closed'" (stateChanged)="onState($event)">
-      <hlm-alert-dialog-content *hlmAlertDialogPortal="let ctx">
-        <div hlmAlertDialogTitle>{{ message() }}</div>
-        <hlm-alert-dialog-footer>
-          <button hlmAlertDialogCancel size="sm">Cancel</button>
-          <button hlmAlertDialogAction variant="primary" size="sm" (click)="confirm.emit()">{{ confirmLabel() }}</button>
-        </hlm-alert-dialog-footer>
-      </hlm-alert-dialog-content>
-    </hlm-alert-dialog>
-  `,
+  templateUrl: './confirm-dialog.html',
 })
 export class ConfirmDialog {
   readonly open = input.required<boolean>();

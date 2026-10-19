@@ -10,20 +10,7 @@ import { LockPanel } from './lock-panel';
   selector: 'app-lock-overlay',
   host: { class: 'contents' },
   imports: [HlmDialogImports, LockPanel],
-  template: `
-    <hlm-dialog [state]="view() ? 'open' : 'closed'" [disableClose]="true">
-      <hlm-dialog-content *hlmDialogPortal="let ctx">
-        @if (view(); as v) {
-          <h2 hlmDialogTitle class="sr-only">{{ v.title }}</h2>
-          <app-lock-panel
-            [view]="v"
-            [elapsed]="elapsed()"
-            (cancel)="cancel.emit()"
-          />
-        }
-      </hlm-dialog-content>
-    </hlm-dialog>
-  `,
+  templateUrl: './lock-overlay.html',
 })
 export class LockOverlay {
   readonly view = input.required<StepsView | null>();

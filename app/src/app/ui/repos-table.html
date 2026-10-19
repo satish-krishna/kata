@@ -1,0 +1,45 @@
+<div hlmTableContainer>
+  <table hlmTable>
+    <thead hlmTableHeader>
+      <tr hlmTableRow>
+        <th hlmTableHead>Repository</th>
+        <th hlmTableHead>Role</th>
+        <th hlmTableHead>Context</th>
+        <th hlmTableHead><span class="sr-only">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody hlmTableBody>
+      @for (r of rows(); track r.name) {
+        <tr hlmTableRow>
+          <td hlmTableCell class="k-mono">{{ r.name }}</td>
+          <td hlmTableCell>{{ role(r.role) }}</td>
+          <td hlmTableCell>
+            @if (r.role === 'master') {
+              <span class="k-faint">—</span>
+            } @else {
+              <span [class]="'k-status k-status--' + state(r).tone">
+                <span class="k-status__dot"></span>{{ state(r).text }}
+              </span>
+            }
+          </td>
+          <td hlmTableCell class="k-cell-end">
+            @if (r.role !== 'master' && action(r); as label) {
+              <button
+                hlmBtn
+                variant="secondary"
+                size="sm"
+                type="button"
+                [attr.aria-label]="label + ' for ' + r.name"
+                [disabled]="disabled()"
+                (click)="runContext.emit(r.name)"
+              >{{ label }}</button>
+            }
+          </td>
+        </tr>
+      }
+    </tbody>
+  </table>
+</div>
+@if (marker()) {
+  <p class="k-marker">{{ marker() }}</p>
+}

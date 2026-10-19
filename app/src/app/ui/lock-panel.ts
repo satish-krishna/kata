@@ -7,32 +7,7 @@ import type { StepsView } from '../core/lock/lock.store';
 @Component({
   selector: 'app-lock-panel',
   imports: [HlmButtonImports],
-  template: `
-    <div class="k-lock">
-      <div class="k-lock__head">
-        <div class="k-lock__title" aria-hidden="true">{{ view().title }}</div>
-        <span class="k-lock__clock"><span class="sr-only">Elapsed </span>{{ clock(elapsed()) }}</span>
-      </div>
-
-      <div class="k-lock__count">{{ progress() }}</div>
-      <ol class="k-lock__steps">
-        @for (s of view().steps; track $index) {
-          <li class="k-lock__step" [attr.data-state]="s.state">
-            <span class="k-lock__dot"></span>
-            <span class="k-lock__step-label">{{ s.label }}</span>
-            <span class="k-lock__step-state">{{ s.state }}</span>
-            @if (s.detail) {
-              <span class="k-lock__step-detail">{{ s.detail }}</span>
-            }
-          </li>
-        }
-      </ol>
-
-      <div class="k-lock__foot">
-        <button hlmBtn variant="secondary" size="sm" type="button" (click)="onCancel()">Cancel</button>
-      </div>
-    </div>
-  `,
+  templateUrl: './lock-panel.html',
 })
 export class LockPanel {
   readonly view = input.required<StepsView>();

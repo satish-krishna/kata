@@ -4,7 +4,7 @@ import { HlmCodeBlockImports } from '@spartan-ng/helm/code-block';
 @Component({
   selector: 'app-json-body',
   imports: [HlmCodeBlockImports],
-  template: `<hlm-code-block size="sm"><pre hlmCodeBlockContent wrap [code]="json()"></pre></hlm-code-block>`,
+  templateUrl: './json-body.html',
 })
 export class JsonBody {
   readonly value = input.required<unknown>();

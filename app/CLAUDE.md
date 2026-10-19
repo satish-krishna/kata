@@ -5,10 +5,12 @@ Keep every session on the Workbench on-brand and on-convention. The Kata design 
 # Part 1: Kata design rules
 
 ## Foundation
+
 - The app uses the **Kata design system**. `app/src/styles.css` imports `app/src/styles/kata/` once; it carries the dark "sumi-ink" theme, IBM Plex fonts, all tokens, and the `.k-*` component classes. The app-shell layout lives in `app/src/styles/kata/workbench.css`. Everything below is already defined there.
 - **Style only against the CSS custom properties. Never hard-code a hex value.** The accent must stay a single-token change. `npx stylelint "src/**/*.css"` enforces it.
 
 ## Non-negotiables
+
 - **Theme:** dark only — warm sumi-ink surfaces (`--surface-app/-panel/-card/-inset`), washi-paper text (`--text-primary/-secondary/-muted/-faint`). Never pure black/white, never a light theme.
 - **Accent:** one — **Hanada azure** `--accent` (#1e92d8). Run button, focus rings, links, active segments, the seal, selection. One primary action per view.
 - **Status:** the andon set — `--success` jade / `--warning` amber / `--error` crimson. Never reuse the accent for status; always pair a status colour with a dot **and** a label.
@@ -21,6 +23,7 @@ Keep every session on the Workbench on-brand and on-convention. The Kata design 
 - **Desktop only** (laptop → ultrawide). No mobile breakpoints. (`check:responsive` runs at 1280 and 1600 only, as a no-overflow check.)
 
 ## Where things live
+
 - Tokens: `app/src/styles/kata/tokens/{colors,typography,spacing}.css`
 - Component classes: `app/src/styles/kata/components.css`; base: `base.css`; shell layout: `workbench.css`
 - Self-hosted fonts: `app/src/styles/kata/fonts/` + `app/src/styles/kata/fonts.css` (CSP blocks the CDN — the woff2 files are vendored and came from `@fontsource/ibm-plex-sans` and `@fontsource/ibm-plex-mono`, which are no longer dependencies; install them temporarily to refresh)
@@ -32,6 +35,7 @@ Keep every session on the Workbench on-brand and on-convention. The Kata design 
 - Pixel reference: `design/prototype/` (don't copy its code — it's HTML/React; recreate in Angular)
 
 ## Dev / review (browser without the native app)
+
 - `npm start` serves on `http://localhost:1420`. Tauri `invoke`/`listen` are unreachable in a plain browser, so `provideKataTransport` picks the Mock transport (fixtures and the scripted timeline in `src/app/lib/mock.ts`) outside Tauri and the Tauri transport inside it.
 - `http://localhost:1420/?demo=run` auto-starts the scripted Observe-pane run (browser-only, never under Tauri) — useful for screenshots.
 - `http://localhost:1420/sdlc/claims/2026-10-12-fnol-photo-upload?demo=sdlc` starts a scripted AI-SDLC spec run that pauses on a question, and `http://localhost:1420/sdlc?demo=sdlc-setup` adds an un-set-up folder and plays the scripted setup run (both browser-only, never under Tauri). Cancelling either demo run opens the leftover dialog with fixture files.
@@ -76,12 +80,12 @@ You are an expert in TypeScript, Angular, and scalable web application developme
 - Use `model()` for two-way bound properties with `[(prop)]` syntax instead of pairing `input()` with `output()`
 - Use `computed()` for derived state
 - Use `linkedSignal()` for state derived from multiple reactive sources that must stay synchronized
-- Prefer inline templates for small components
+- Every component keeps its template in a `.html` file beside it (`templateUrl`), never an inline `template:`, and never inline `styles:`. A component that needs its own styles gets a `styleUrl` file; one that doesn't gets none, since Kata's `.k-*` classes live in `src/styles/kata/`. Spec-file test hosts are exempt. `shape/no-inline-template` enforces it.
 - Prefer Signal Forms (`@angular/forms/signals`) for new forms. They are stable in Angular v22+ and provide signal-based state, type-safe field access, and schema-based validation
 - When not using Signal Forms, prefer Reactive forms instead of Template-driven ones
 - Do NOT use `ngClass`, use `class` bindings instead
 - Do NOT use `ngStyle`, use `style` bindings instead
-- When using external templates/styles, use paths relative to the component TS file.
+- Template and style paths are relative to the component TS file, and the template file shares its basename (`event-row.ts` → `event-row.html`).
 
 ## State Management
 
@@ -107,7 +111,7 @@ Every routed screen is a thin component over a component-scoped ViewModel. This 
 Run these before claiming anything is done. A green board from an earlier state proves nothing about the tree in front of you.
 
 ```bash
-npm run lint             # the 27 house rules
+npm run lint             # the 28 house rules
 npm test -- --watch=false # unit tests (plain `npm test` watches)
 npm run build            # production build
 npm run check:boot       # every route renders without a runtime error

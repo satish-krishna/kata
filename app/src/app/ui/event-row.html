@@ -1,0 +1,20 @@
+<div class="k-event" [class]="'k-event--' + variant()">
+  @if (ev().type === 'turn') {
+    <hlm-marker variant="separator">
+      <hlm-marker-content>{{ gutter() }}</hlm-marker-content>
+    </hlm-marker>
+  } @else {
+    <span class="k-event__gutter">{{ gutter() }}</span>
+    <div class="k-event__body">
+      @if (text() !== null) {
+        <app-markdown-body [md]="text() ?? ''" />
+      } @else {
+        @if (tool()) {
+          <span class="k-event__tool">{{ tool() }}</span
+          >{{ ' ' }}
+        }
+        {{ body() }}
+      }
+    </div>
+  }
+</div>

@@ -1,0 +1,11 @@
+<div class="wb-detail__actions" [attr.title]="hint()">
+  <button hlmBtn variant="primary" size="sm" type="button" [disabled]="!kataSaved()" (click)="reRun.emit()">
+    <ng-icon name="lucidePlay" size="13" />Re-run
+  </button>
+  <button hlmBtn variant="secondary" size="sm" type="button" [disabled]="!kataSaved()" (click)="openInCompose.emit()">
+    <ng-icon name="lucideFolderOpen" size="14" />Open in compose
+  </button>
+  <button hlmBtn variant="ghost" size="sm" type="button" [disabled]="!kataSaved()" (click)="exportBundle.emit()">
+    <ng-icon name="lucidePackage" size="14" />Export bundle
+  </button>
+</div>

@@ -12,78 +12,7 @@ type Group = { system: string; changes: ChangeInfo[] };
 @Component({
   selector: 'app-changes-table',
   imports: [HlmButtonImports, HlmTableImports],
-  template: `
-    <div hlmTableContainer>
-      <table hlmTable>
-        <thead hlmTableHeader>
-          <tr hlmTableRow>
-            <th hlmTableHead>Change</th>
-            <th hlmTableHead>Stage</th>
-            <th hlmTableHead>Last run</th>
-          </tr>
-        </thead>
-        @for (g of groups(); track g.system) {
-          <tbody hlmTableBody [attr.data-testid]="'system-' + g.system">
-            <tr hlmTableRow>
-              <th hlmTableHead colspan="3" scope="colgroup" class="k-group">{{ g.system }}</th>
-            </tr>
-            @for (c of g.changes; track c.change) {
-              <tr hlmTableRow>
-                <td hlmTableCell>
-                  <button
-                    hlmBtn
-                    variant="bare"
-                    size="bare"
-                    class="k-rowlink"
-                    type="button"
-                    [attr.aria-label]="'Open change ' + c.change"
-                    [disabled]="disabled()"
-                    (click)="open.emit(c)"
-                  >{{ c.change }}</button>
-                </td>
-                <td hlmTableCell>
-                  <span class="k-status" [class]="'k-status k-status--' + tone(c)">
-                    <span class="k-status__dot"></span>{{ label(c) }}
-                  </span>
-                </td>
-                <td hlmTableCell class="k-mono">{{ lastRun(c) }}</td>
-              </tr>
-            }
-          </tbody>
-        }
-        @if (groups().length === 0) {
-          <tbody hlmTableBody>
-            <tr hlmTableRow>
-              <td hlmTableCell colspan="3" class="k-empty-cell">No changes yet. Start one with New change.</td>
-            </tr>
-          </tbody>
-        }
-        @if (others().length > 0) {
-          <tbody hlmTableBody data-testid="other-branches">
-            <tr hlmTableRow>
-              <th hlmTableHead colspan="3" scope="colgroup" class="k-group">In progress on other branches</th>
-            </tr>
-            @for (b of others(); track b) {
-              <tr hlmTableRow>
-                <td hlmTableCell colspan="3">
-                  <button
-                    hlmBtn
-                    variant="bare"
-                    size="bare"
-                    class="k-rowlink"
-                    type="button"
-                    [attr.aria-label]="'Switch to branch change/' + b"
-                    [disabled]="disabled()"
-                    (click)="openOther.emit(b)"
-                  >{{ b }}</button>
-                </td>
-              </tr>
-            }
-          </tbody>
-        }
-      </table>
-    </div>
-  `,
+  templateUrl: './changes-table.html',
 })
 export class ChangesTable {
   /** Changes on the currently checked-out branch. */

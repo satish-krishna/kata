@@ -1,0 +1,12 @@
+<div class="k-field">
+  <div class="k-field__label">
+    {{ label() }}
+    @if (key()) {
+      <code>{{ key() }}</code>
+    }
+  </div>
+  <ng-content />
+  @if (hint()) {
+    <div class="k-field__hint" [class.k-field__hint--error]="error()">{{ hint() }}</div>
+  }
+</div>

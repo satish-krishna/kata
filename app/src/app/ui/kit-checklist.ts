@@ -26,64 +26,7 @@ const match = (e: CatalogEntry, q: string): boolean => {
   selector: 'app-kit-checklist',
   imports: [NgIcon, HlmInput, HlmLabel, HlmCheckbox, Field],
   providers: [provideIcons({ lucideSearch })],
-  template: `
-    <div class="wb-kit">
-      <div class="wb-kit__search">
-        <ng-icon name="lucideSearch" size="15" />
-        <input hlmInput placeholder="search kit…" aria-label="Search kit" [value]="query()" (input)="onQuery($event)" />
-      </div>
-
-      <div>
-        <div class="wb-kit__group">Skills</div>
-        @for (e of filtered().skills; track e.name) {
-          <div class="k-kit" [class.k-kit--selected]="skillOn(e.name)">
-            <label hlmLabel class="k-kit__main">
-              <hlm-checkbox class="k-kit__check" [checked]="skillOn(e.name)" (checkedChange)="toggleSkillNamed(e.name)" />
-              <span class="k-tag k-tag--skill">skill</span>
-              <span class="k-kit__name">{{ e.name }}</span>
-              <span class="k-kit__desc">{{ e.description }}</span>
-            </label>
-          </div>
-        }
-      </div>
-
-      <div>
-        <div class="wb-kit__group">Plugins</div>
-        @for (e of filtered().plugins; track e.name) {
-          <div class="k-kit" [class.k-kit--selected]="pluginOn(e.name)">
-            <label hlmLabel class="k-kit__main">
-              <hlm-checkbox class="k-kit__check" [checked]="pluginOn(e.name)" (checkedChange)="togglePluginNamed(e.name)" />
-              <span class="k-tag k-tag--plugin">plugin</span>
-              <span class="k-kit__name">{{ e.name }}</span>
-              <span class="k-kit__desc">{{ e.description }}</span>
-            </label>
-            @if (pluginOn(e.name)) {
-              <div class="k-kit__detail">
-                @if (e.provides.length) {
-                  <div class="k-kit__provides"><b>provides:</b> {{ e.provides.join(', ') }}</div>
-                }
-                @if (e.mcp_servers.length) {
-                  <label hlmLabel class="k-kit__mcp">
-                    <hlm-checkbox [checked]="spec().plugins[e.name]?.mcp ?? true" (checkedChange)="setMcp(e.name, $event)" />
-                    start MCP servers ({{ e.mcp_servers.join(', ') }})
-                  </label>
-                  <app-field label="env passthrough" key="env" hint="Names only — never values. Forwarded from the runtime env.">
-                    <input
-                      hlmInput
-                      variant="mono"
-                      placeholder="GITHUB_TOKEN, GH_HOST"
-                      [value]="envText(e.name)"
-                      (change)="onEnvInput(e.name, $event)"
-                    />
-                  </app-field>
-                }
-              </div>
-            }
-          </div>
-        }
-      </div>
-    </div>
-  `,
+  templateUrl: './kit-checklist.html',
 })
 export class KitChecklist {
   readonly spec = input.required<RunSpec>();

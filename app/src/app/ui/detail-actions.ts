@@ -16,19 +16,7 @@ const MISSING_KATA_HINT =
   providers: [provideIcons({ lucideFolderOpen, lucidePackage, lucidePlay })],
   // The hint lives on the container, not the buttons: a disabled <button> doesn't
   // fire pointer events, so a title on it never shows on hover.
-  template: `
-    <div class="wb-detail__actions" [attr.title]="hint()">
-      <button hlmBtn variant="primary" size="sm" type="button" [disabled]="!kataSaved()" (click)="reRun.emit()">
-        <ng-icon name="lucidePlay" size="13" />Re-run
-      </button>
-      <button hlmBtn variant="secondary" size="sm" type="button" [disabled]="!kataSaved()" (click)="openInCompose.emit()">
-        <ng-icon name="lucideFolderOpen" size="14" />Open in compose
-      </button>
-      <button hlmBtn variant="ghost" size="sm" type="button" [disabled]="!kataSaved()" (click)="exportBundle.emit()">
-        <ng-icon name="lucidePackage" size="14" />Export bundle
-      </button>
-    </div>
-  `,
+  templateUrl: './detail-actions.html',
 })
 export class DetailActions {
   readonly kataSaved = input.required<boolean>();

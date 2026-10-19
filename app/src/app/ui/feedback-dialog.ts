@@ -11,25 +11,7 @@ import { Field } from './field';
   selector: 'app-feedback-dialog',
   host: { class: 'contents' },
   imports: [HlmDialogImports, HlmButtonImports, HlmTextareaImports, Field],
-  template: `
-    <hlm-dialog [state]="open() ? 'open' : 'closed'" (stateChanged)="onState($event)">
-      <hlm-dialog-content *hlmDialogPortal="let ctx">
-        <div hlmDialogTitle>{{ action() }}</div>
-        <div class="k-form">
-          <app-field
-            label="What should change?"
-            hint="Optional. The agent regenerates the whole document with your corrections; where they disagree with the current version, they win."
-          >
-            <textarea hlmTextarea rows="6" aria-label="What should change?" [value]="text()" (input)="onText($event)"></textarea>
-          </app-field>
-        </div>
-        <hlm-dialog-footer>
-          <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
-          <button hlmBtn variant="primary" size="sm" type="button" (click)="run.emit(text().trim())">Run</button>
-        </hlm-dialog-footer>
-      </hlm-dialog-content>
-    </hlm-dialog>
-  `,
+  templateUrl: './feedback-dialog.html',
 })
 export class FeedbackDialog {
   /** The label of the action waiting on the box, or null while it is closed. */

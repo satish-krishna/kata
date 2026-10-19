@@ -11,32 +11,7 @@ import { ObservePane } from './observe-pane';
   selector: 'app-sdlc-session',
   host: { class: 'contents' },
   imports: [HlmButtonImports, ObservePane],
-  template: `
-    <main class="wb-pane wb-pane--observe k-session" aria-labelledby="session-title">
-      <div class="wb-pane__head">
-        <h1 id="session-title" class="kata-eyebrow k-session__title">{{ title() }}</h1>
-        <span class="k-lock__clock"><span class="sr-only">Elapsed </span>{{ clock(elapsed()) }}</span>
-        <span class="k-lock__deadline">{{ deadlineLabel() }}</span>
-        <span class="k-session__actions">
-          @if (finished() === null) {
-            <button hlmBtn variant="secondary" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
-          } @else {
-            <button hlmBtn variant="primary" size="sm" type="button" [disabled]="closeBlocked()" (click)="close.emit()">Close</button>
-          }
-        </span>
-      </div>
-      <app-observe-pane
-        [state]="state()"
-        [events]="events()"
-        [spec]="spec()"
-        [summary]="summary()"
-        [asks]="asks()"
-        [permissions]="permissions()"
-        (answer)="answer.emit($event)"
-        (decide)="decide.emit($event)"
-      />
-    </main>
-  `,
+  templateUrl: './sdlc-session.html',
 })
 export class SdlcSession {
   readonly title = input.required<string>();

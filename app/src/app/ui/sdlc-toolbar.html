@@ -1,0 +1,54 @@
+<header class="wb-toolbar">
+  <div class="wb-brand">
+    <span class="wb-seal">型</span>
+  </div>
+  <button
+    hlmBtn
+    variant="bare"
+    size="bare"
+    class="k-modebadge"
+    type="button"
+    title="Switch mode"
+    aria-label="Switch mode (ai-sdlc)"
+    [disabled]="locked()"
+    (click)="switchMode.emit()"
+  >ai-sdlc</button>
+  <div class="wb-sep"></div>
+  @if (!blocked()) {
+    <app-workspace-switcher
+      [workspaces]="workspaces()"
+      [current]="current()"
+      [missing]="missing()"
+      [counts]="counts()"
+      [locked]="locked()"
+      (select)="select.emit($event)"
+      (add)="add.emit()"
+      (remove)="remove.emit()"
+    />
+  }
+  <nav class="k-crumbs" aria-label="Breadcrumb">
+    @for (crumb of crumbs(); track $index) {
+      <ng-icon name="lucideChevronRight" size="14" />
+      <span class="k-crumbs__item">{{ crumb }}</span>
+    }
+  </nav>
+  @if (!blocked() && branch(); as b) {
+    <span class="k-branch" data-testid="branch" title="Branch checked out in the master repo">{{ b }}</span>
+  }
+  <div class="wb-toolbar__spacer"></div>
+  <button
+    hlmBtn
+    variant="bare"
+    size="bare"
+    class="k-iconbtn"
+    type="button"
+    title="Settings"
+    aria-label="AI-SDLC settings"
+    [disabled]="locked()"
+    (click)="openSettings.emit()"
+  >
+    <ng-icon name="lucideSettings" size="16" />
+  </button>
+  <div class="wb-sep"></div>
+  <ng-content />
+</header>

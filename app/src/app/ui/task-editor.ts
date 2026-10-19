@@ -12,20 +12,7 @@ import { HlmTextareaImports } from '@spartan-ng/helm/textarea';
   host: { class: 'contents' },
   imports: [NgIcon, HlmDialogImports, HlmButtonImports, HlmTextareaImports],
   providers: [provideIcons({ lucidePlay })],
-  template: `
-    <hlm-dialog state="open" autoFocus="textarea" (stateChanged)="onState($event)">
-      <hlm-dialog-content *hlmDialogPortal="let ctx" aria-label="Re-run with a new task">
-        <div hlmDialogTitle>Re-run · new task</div>
-        <textarea hlmTextarea rows="4" aria-label="Task" [value]="draft()" (input)="onDraft($event)" (keydown)="onKey($event)"></textarea>
-        <hlm-dialog-footer>
-          <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
-          <button hlmBtn variant="primary" size="sm" type="button" [disabled]="!draft().trim()" (click)="run.emit(draft())">
-            <ng-icon name="lucidePlay" size="13" />Run
-          </button>
-        </hlm-dialog-footer>
-      </hlm-dialog-content>
-    </hlm-dialog>
-  `,
+  templateUrl: './task-editor.html',
 })
 export class TaskEditor {
   readonly task = input.required<string>();

@@ -1,0 +1,6 @@
+<hlm-code-block size="sm">
+  <pre hlmCodeBlockContent wrap [code]="text() || '(no output)'"></pre>
+  @if (truncated()) {
+    <hlm-code-block-footer>… truncated at 256 KB</hlm-code-block-footer>
+  }
+</hlm-code-block>

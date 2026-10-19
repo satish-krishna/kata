@@ -23,24 +23,7 @@ const runs = (n: number): string => (n === 0 ? 'No runs' : n === 1 ? '1 run' : `
 @Component({
   selector: 'app-stage-stepper',
   imports: [HlmTabsImports, NgTemplateOutlet],
-  template: `
-    <div hlmTabsList variant="bare" class="k-steps" aria-label="Stage documents">
-      <button hlmTabsTrigger="intent" variant="bare" class="k-step" [disabled]="!docs().intent" [attr.aria-current]="current('intent')">
-        <ng-container *ngTemplateOutlet="tile; context: { $implicit: steps()[0] }" />
-      </button>
-      <button hlmTabsTrigger="spec" variant="bare" class="k-step" [disabled]="!docs().spec" [attr.aria-current]="current('spec')">
-        <ng-container *ngTemplateOutlet="tile; context: { $implicit: steps()[1] }" />
-      </button>
-      <button hlmTabsTrigger="plan" variant="bare" class="k-step" [disabled]="!docs().plan" [attr.aria-current]="current('plan')">
-        <ng-container *ngTemplateOutlet="tile; context: { $implicit: steps()[2] }" />
-      </button>
-    </div>
-    <ng-template #tile let-s>
-      <span class="k-step__name">{{ s.title }}</span>
-      <span [class]="'k-status k-status--' + s.tone"><span class="k-status__dot"></span>{{ s.text }}</span>
-      <span class="k-step__runs">{{ s.runs }}</span>
-    </ng-template>
-  `,
+  templateUrl: './stage-stepper.html',
 })
 export class StageStepper {
   readonly stage = input.required<Stage>();
