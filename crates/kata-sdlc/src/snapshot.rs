@@ -123,16 +123,18 @@ pub fn leftovers(
 
     let mut discardable = Vec::new();
     let mut touched_dirty = Vec::new();
-    for (path, hash) in dirty_map(master)? {
-        match before.dirty.get(&path) {
-            None => discardable.push(path),
-            Some(old) if *old != hash => touched_dirty.push(path),
+    let now = dirty_map(master)?;
+    for (path, hash) in &now {
+        match before.dirty.get(path) {
+            None => discardable.push(path.clone()),
+            Some(old) if old != hash => touched_dirty.push(path.clone()),
             Some(_) => {}
         }
     }
-    // A pre-dirty file the run reverted to clean is no longer in the status list.
+    // A pre-dirty file that dropped out of the status list (reverted or recreated clean)
+    // is still touched when its content differs from the snapshot.
     for (path, old) in &before.dirty {
-        if !old.is_empty() && !master.join(path).exists() && !touched_dirty.contains(path) {
+        if !now.contains_key(path.as_str()) && hash_of(master, path)? != *old {
             touched_dirty.push(path.clone());
         }
     }
@@ -207,6 +209,32 @@ mod tests {
         assert_eq!(l.touched_dirty, vec!["intent.md"]);
         assert_eq!(l.new_commits, vec!["docs(claims): x"]);
         assert!(l.product_repos_changed.is_empty());
+    }
+
+    #[test]
+    fn reverted_pre_dirty_file_is_touched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = repo(tmp.path(), "master");
+        commit_file(&m, "a.md", "orig", "add a");
+        std::fs::write(m.join("a.md"), "mine").unwrap();
+        let before = take(&m).unwrap();
+        git::run(&m, &["checkout", "--", "a.md"]).unwrap();
+        let l = leftovers(&m, &before, &[]).unwrap();
+        assert_eq!(l.touched_dirty, vec!["a.md"]);
+        assert!(l.discardable.is_empty());
+    }
+
+    #[test]
+    fn recreated_pre_dirty_deleted_file_is_touched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = repo(tmp.path(), "master");
+        commit_file(&m, "a.md", "orig", "add a");
+        std::fs::remove_file(m.join("a.md")).unwrap();
+        let before = take(&m).unwrap();
+        assert_eq!(before.dirty["a.md"], "");
+        std::fs::write(m.join("a.md"), "orig").unwrap();
+        let l = leftovers(&m, &before, &[]).unwrap();
+        assert_eq!(l.touched_dirty, vec!["a.md"]);
     }
 
     #[test]
