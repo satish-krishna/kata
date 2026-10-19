@@ -35,7 +35,7 @@ export function defaultSpec(): RunSpec {
     model: { id: "" },
     leash: { max_turns: null, timeout_secs: null, max_budget_usd: null, isolation: "none" },
     auth: { bare: true, token_env: null },
-    interactive: { enabled: false, answer_timeout_secs: null },
+    interactive: { enabled: true, answer_timeout_secs: null },
     permissions: { mode: "bypass", allow: [], deny: [], unmatched: "ask" },
   };
 }
