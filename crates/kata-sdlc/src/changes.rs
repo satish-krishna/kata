@@ -112,7 +112,7 @@ pub(crate) fn is_change_name(name: &str) -> bool {
 }
 
 /// A single normal path component: not empty, not `.`/`..`, no separators.
-fn is_safe_system(system: &str) -> bool {
+pub(crate) fn is_safe_system(system: &str) -> bool {
     use std::path::Component;
     let mut parts = Path::new(system).components();
     matches!(parts.next(), Some(Component::Normal(_)))

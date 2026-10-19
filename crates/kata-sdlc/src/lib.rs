@@ -2,6 +2,7 @@
 
 pub mod branch;
 pub mod changes;
+pub mod decide;
 pub mod frontmatter;
 pub mod git;
 pub mod snapshot;
