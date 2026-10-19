@@ -7,7 +7,13 @@ import { ModeStore } from './mode.store';
 export const modeGuard: CanActivateFn = async () => {
   const store = inject(ModeStore);
   const router = inject(Router);
-  const settings = await store.load();
+  let settings;
+  try {
+    settings = await store.load();
+  } catch {
+    // An unreadable settings file must not lock the operator out: ask, as on a first launch.
+    return router.createUrlTree(['/mode']);
+  }
   if (store.launched) return true;
   if (settings.mode === null) return router.createUrlTree(['/mode']);
   store.markLaunched();

@@ -43,6 +43,27 @@ describe('modeGuard', () => {
     expect(await go()).toBe(true);
   });
 
+  it('redirects a remembered sdlc launch once, then lets the operator through', async () => {
+    const { go, url } = run({ mode: 'sdlc', remember: true, permission_mode: 'bypass' });
+    expect(url(await go())).toBe('/sdlc');
+    expect(await go()).toBe(true);
+  });
+
+  it('falls back to /mode when the settings read fails, and a later load retries', async () => {
+    const good: Settings = { mode: 'workbench', remember: true, permission_mode: 'bypass' };
+    const sdlcSettings = vi.fn().mockRejectedValueOnce(new Error('disk')).mockResolvedValue(good);
+    TestBed.configureTestingModule({
+      providers: [provideRouter([]), { provide: KataTransport, useValue: { sdlcSettings, sdlcSaveSettings: () => Promise.resolve() } }],
+    });
+    const router = TestBed.inject(Router);
+    const result = (await TestBed.runInInjectionContext(() =>
+      modeGuard({} as ActivatedRouteSnapshot, {} as RouterStateSnapshot),
+    )) as UrlTree;
+    expect(router.serializeUrl(result)).toBe('/mode');
+    expect(await TestBed.inject(ModeStore).load()).toEqual(good);
+    expect(sdlcSettings).toHaveBeenCalledTimes(2);
+  });
+
   it('stops redirecting once the operator has chosen this session', async () => {
     const { go } = run({ mode: null, remember: false, permission_mode: 'bypass' }, async (s) => {
       await s.choose('workbench', false);

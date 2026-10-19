@@ -30,10 +30,17 @@ export class ModeStore {
 
   /** Read the settings from the backend once; later calls return the cached value. */
   load(): Promise<Settings> {
-    this.loading ??= this.transport.sdlcSettings().then((s) => {
-      this.state.set(s);
-      return s;
-    });
+    this.loading ??= this.transport
+      .sdlcSettings()
+      .then((s) => {
+        this.state.set(s);
+        return s;
+      })
+      .catch((e: unknown) => {
+        // Do not cache a failure: the next call must retry the read.
+        this.loading = null;
+        throw e;
+      });
     return this.loading;
   }
 
