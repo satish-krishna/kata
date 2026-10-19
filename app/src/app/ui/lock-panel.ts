@@ -1,4 +1,3 @@
-import { CdkTrapFocus } from '@angular/cdk/a11y';
 import { Component, computed, input, output } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import type { LockStep, LockView } from '../core/lock/lock.store';
@@ -6,57 +5,54 @@ import type { AskRecord, PermissionRecord } from '../lib/events';
 import { AskPanel } from './ask-panel';
 import { PermissionPanel } from './permission-panel';
 
-/* The scrim and panel shown while the app is locked on long work. It only reports what is
+/* The body of the lock dialog (see LockOverlay for the shell, which also carries the accessible title). It only reports what is
  * known: a done/total count for Kata's own checks, live activity for an agent run, and the
- * time left before an unanswered question reaps the run. No percentage, no ETA. Focus is
- * trapped inside, so only Cancel and the question or permission card can be reached. */
+ * time left before an unanswered question reaps the run. No percentage, no ETA. */
 @Component({
   selector: 'app-lock-panel',
-  imports: [CdkTrapFocus, HlmButtonImports, AskPanel, PermissionPanel],
+  imports: [HlmButtonImports, AskPanel, PermissionPanel],
   template: `
-    <div class="k-lock" role="dialog" aria-modal="true" aria-labelledby="k-lock-title" cdkTrapFocus [cdkTrapFocusAutoCapture]="true">
-      <div class="k-lock__panel">
-        <div class="k-lock__head">
-          <h2 id="k-lock-title" class="k-lock__title">{{ view().title }}</h2>
-          <span class="k-lock__clock" aria-label="elapsed time">{{ clock(elapsed()) }}</span>
-        </div>
+    <div class="k-lock">
+      <div class="k-lock__head">
+        <div class="k-lock__title" aria-hidden="true">{{ view().title }}</div>
+        <span class="k-lock__clock"><span class="sr-only">Elapsed </span>{{ clock(elapsed()) }}</span>
+      </div>
 
-        @if (steps(); as list) {
-          <div class="k-lock__count">{{ progress() }}</div>
-          <ol class="k-lock__steps">
-            @for (s of list; track $index) {
-              <li class="k-lock__step" [attr.data-state]="s.state">
-                <span class="k-lock__dot"></span>
-                <span class="k-lock__step-label">{{ s.label }}</span>
-                <span class="k-lock__step-state">{{ s.state }}</span>
-                @if (s.detail) {
-                  <span class="k-lock__step-detail">{{ s.detail }}</span>
-                }
-              </li>
-            }
-          </ol>
-        } @else {
-          <dl class="k-lock__activity">
-            <dt>turn</dt>
-            <dd>{{ turn() ?? '-' }}</dd>
-            <dt>model</dt>
-            <dd>{{ model() ?? '-' }}</dd>
-            <dt>last tool</dt>
-            <dd>{{ lastTool() ?? '-' }}</dd>
-          </dl>
-        }
+      @if (steps(); as list) {
+        <div class="k-lock__count">{{ progress() }}</div>
+        <ol class="k-lock__steps">
+          @for (s of list; track $index) {
+            <li class="k-lock__step" [attr.data-state]="s.state">
+              <span class="k-lock__dot"></span>
+              <span class="k-lock__step-label">{{ s.label }}</span>
+              <span class="k-lock__step-state">{{ s.state }}</span>
+              @if (s.detail) {
+                <span class="k-lock__step-detail">{{ s.detail }}</span>
+              }
+            </li>
+          }
+        </ol>
+      } @else {
+        <dl class="k-lock__activity">
+          <dt>turn</dt>
+          <dd>{{ turn() ?? '-' }}</dd>
+          <dt>model</dt>
+          <dd>{{ model() ?? '-' }}</dd>
+          <dt>last tool</dt>
+          <dd>{{ lastTool() ?? '-' }}</dd>
+        </dl>
+      }
 
-        @if (ask(); as a) {
-          <app-ask-panel [ask]="a" (answer)="answer.emit($event)" />
-        }
-        @if (permission(); as p) {
-          <app-permission-panel [record]="p" (decide)="decide.emit($event)" />
-        }
+      @if (ask(); as a) {
+        <app-ask-panel [ask]="a" (answer)="answer.emit($event)" />
+      }
+      @if (permission(); as p) {
+        <app-permission-panel [record]="p" (decide)="decide.emit($event)" />
+      }
 
-        <div class="k-lock__foot">
-          <span class="k-lock__deadline">{{ deadlineLabel() }}</span>
-          <button hlmBtn variant="secondary" size="sm" type="button" (click)="onCancel()">Cancel</button>
-        </div>
+      <div class="k-lock__foot">
+        <span class="k-lock__deadline">{{ deadlineLabel() }}</span>
+        <button hlmBtn variant="secondary" size="sm" type="button" (click)="onCancel()">Cancel</button>
       </div>
     </div>
   `,

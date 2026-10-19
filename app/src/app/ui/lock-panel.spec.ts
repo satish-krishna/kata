@@ -28,11 +28,9 @@ const base = { elapsed: 75, lastTool: null, turn: null, model: null, ask: null, 
 const mount = (inputs: Record<string, unknown>) => render(LockPanel, { ...base, ...inputs });
 
 describe('LockPanel', () => {
-  it('is a modal dialog', async () => {
+  it('names the elapsed time for screen readers', async () => {
     const { container } = await mount({ view: STEPS });
-    const dialog = container.querySelector('[role="dialog"]')!;
-    expect(dialog.getAttribute('aria-modal')).toBe('true');
-    expect(dialog.textContent).toContain('Preparing workspace');
+    expect(container.querySelector('.k-lock__clock .sr-only')?.textContent).toBe('Elapsed ');
   });
 
   it('shows done over total for steps and the elapsed clock', async () => {
