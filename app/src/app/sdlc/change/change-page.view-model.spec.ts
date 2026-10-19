@@ -72,6 +72,66 @@ describe('ChangePageViewModel', () => {
     expect(read).toHaveBeenCalledWith(expect.any(String), 'claims', FNOL, 'spec');
   });
 
+  it('shows an earlier document when its tile is picked, and the current one again after a reload', async () => {
+    const { vm } = setup(FNOL);
+    await ready(vm);
+    expect(vm.docs()).toEqual({ intent: true, spec: true, plan: false });
+    await vm.showDoc('intent');
+    expect(vm.shownDoc()).toBe('intent');
+    expect(vm.docName()).toBe('intent.md');
+    expect(vm.doc()).toContain('# Photo upload at first notice of loss');
+    await vm.act('accept-spec');
+    expect(vm.shownDoc()).toBe('spec');
+    expect(vm.doc()).toContain('# Spec: photo upload');
+  });
+
+  it('a pick during a reload neither cancels the reload nor lands on top of it', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(FNOL, transport);
+    await ready(vm);
+    const realChanges = transport.sdlcChanges.bind(transport);
+    let reloading!: () => void;
+    const started = new Promise<void>((r) => (reloading = r));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, sys) => {
+      reloading();
+      await gate;
+      return realChanges(m, sys);
+    });
+    const decided = vm.act('accept-spec');
+    await started;
+    await vm.showDoc('intent');
+    expect(vm.doc()).toContain('# Photo upload at first notice of loss');
+    release();
+    await decided;
+    expect(vm.change()!.stage).toBe('plan-ready');
+    expect(vm.shownDoc()).toBe('spec');
+    expect(vm.doc()).toContain('# Spec: photo upload');
+  });
+
+  it('stays on the shown document and says why when the picked one cannot be read', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(FNOL, transport);
+    await ready(vm);
+    vi.spyOn(transport, 'sdlcReadDoc').mockRejectedValue('permission denied');
+    await vm.showDoc('intent');
+    expect(vm.shownDoc()).toBe('spec');
+    expect(vm.docName()).toBe('spec.md');
+    expect(vm.doc()).toContain('# Spec: photo upload');
+    expect(toastText()).toContain('Could not read intent.md: permission denied');
+  });
+
+  it('ignores a pick for a document that does not exist yet', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(FNOL, transport);
+    await ready(vm);
+    const read = vi.spyOn(transport, 'sdlcReadDoc');
+    await vm.showDoc('plan');
+    expect(vm.shownDoc()).toBe('spec');
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it('shows the intent while the spec has not been started', async () => {
     const transport = new MockTransport();
     withStage(transport, FNOL, 'spec-ready', { spec: { exists: false, committed: false, status: null } });

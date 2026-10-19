@@ -23,6 +23,7 @@ import {
   specFor,
   splitFrontMatter,
   stageLabel,
+  type DocsPresent,
   type StageAction,
   type StepCounts,
 } from '../../lib/sdlc';
@@ -63,6 +64,8 @@ type DocStem = 'intent' | 'spec' | 'plan';
  * The document the page shows for a change: the current stage's, falling back to the last one that exists.
  * A stem, because that is what the backend's `read_doc` accepts; the page shows it as `<stem>.md`.
  */
+const isDocStem = (s: string): s is DocStem => s === 'intent' || s === 'spec' || s === 'plan';
+
 function docFor(c: ChangeInfo): DocStem {
   const step = stageLabel(c.stage).step;
   if (step === 'plan') return c.plan.exists ? 'plan' : c.spec.exists ? 'spec' : 'intent';
@@ -98,9 +101,13 @@ export class ChangePageViewModel {
   private readonly records = signal<RunRecord[]>([]);
   private readonly changeTotal = signal<number | null>(null);
   readonly change = signal<ChangeInfo | null>(null);
-  /** The current stage's document, raw as it is on disk, or null when the file is missing. */
+  /** The shown document, raw as it is on disk, or null when the file is missing. */
   readonly doc = signal<string | null>(null);
+  /** The document the operator picked from the tiles; null shows the current stage's. Every load clears it. */
+  private readonly picked = signal<DocStem | null>(null);
   private loadSeq = 0;
+  /** Picks have their own sequence, so a pick never cancels a load; a finished load cancels any pick still reading. */
+  private pickSeq = 0;
 
   readonly masterBranch = computed(() => this.branches()?.current ?? null);
   readonly crumbs = computed(() => (this.changeName() === '' ? [] : [this.changeName()]));
@@ -110,10 +117,16 @@ export class ChangePageViewModel {
     return w && n !== null ? { [w.id]: n } : {};
   });
 
-  readonly docName = computed(() => {
+  readonly shownDoc = computed<DocStem>(() => {
     const c = this.change();
-    return `${c ? docFor(c) : 'intent'}.md`;
+    return this.picked() ?? (c ? docFor(c) : 'intent');
   });
+  readonly docs = computed<DocsPresent>(() => {
+    const c = this.change();
+    return { intent: c?.intent.exists ?? false, spec: c?.spec.exists ?? false, plan: c?.plan.exists ?? false };
+  });
+  readonly docName = computed(() => `${this.shownDoc()}.md`);
+  readonly stems: readonly DocStem[] = ['intent', 'spec', 'plan'];
   readonly docParts = computed(() => splitFrontMatter(this.doc() ?? ''));
   readonly actions = computed(() => {
     const c = this.change();
@@ -200,6 +213,25 @@ export class ChangePageViewModel {
 
   cancelConfirm(): void {
     this.pendingDecision.set(null);
+  }
+
+  /** Show another of the change's documents. A newer pick, or a load that finishes, supersedes one still reading. */
+  async showDoc(stem: string): Promise<void> {
+    if (!isDocStem(stem) || stem === this.shownDoc() || !this.docs()[stem]) return;
+    const master = this.masterDir();
+    if (!master) return;
+    const seq = ++this.pickSeq;
+    const before = this.picked();
+    this.picked.set(stem);
+    try {
+      const text = await this.transport.sdlcReadDoc(master, this.system(), this.changeName(), stem);
+      if (seq === this.pickSeq) this.doc.set(text);
+    } catch (e) {
+      if (seq !== this.pickSeq) return;
+      // The doc text is still the one shown before; put the selection back with it, never a name over another's text.
+      this.picked.set(before);
+      this.toasts.error(`Could not read ${stem}.md: ${message(e)}`);
+    }
   }
 
   // --- navigation and toolbar
@@ -321,6 +353,8 @@ export class ChangePageViewModel {
     const name = this.changeName();
     const finish = (state: ChangeState, change: ChangeInfo | null, doc: string | null) => {
       if (seq !== this.loadSeq) return;
+      this.pickSeq++;
+      this.picked.set(null);
       this.change.set(change);
       this.doc.set(doc);
       this.state.set(state);

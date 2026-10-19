@@ -17,8 +17,10 @@ import { classes } from '@spartan-ng/helm/utils';
 })
 export class HlmTabs {
   public readonly tab = input.required<string>();
+  /** `bare` emits no classes, so a Kata class (`.k-step`, ...) supplies the whole look, as `hlmBtn variant="bare"` does. */
+  public readonly variant = input<'default' | 'bare'>('default');
 
   constructor() {
-    classes(() => 'group/tabs flex gap-2 data-[orientation=horizontal]:flex-col');
+    classes(() => (this.variant() === 'bare' ? '' : 'group/tabs flex gap-2 data-[orientation=horizontal]:flex-col'));
   }
 }

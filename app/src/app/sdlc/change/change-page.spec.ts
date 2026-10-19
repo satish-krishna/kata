@@ -37,6 +37,20 @@ describe('ChangePage', () => {
     expect(container.querySelector('.k-doc__front')!.textContent!.trim()).toBe('status: draft');
   });
 
+  it('crosses the seam: clicking the Intent tile shows the accepted intent in its tab panel', async () => {
+    const { container } = await mount();
+    const tab = (name: string) =>
+      Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.querySelector('.k-step__name')!.textContent!.trim() === name)!;
+    expect(tab('Plan').disabled).toBe(true);
+    tab('Intent').click();
+    await vi.waitFor(() => expect(container.querySelector('app-doc-view h1')?.textContent).toBe('Photo upload at first notice of loss'));
+    expect(tab('Intent').getAttribute('aria-selected')).toBe('true');
+    const panel = container.querySelector('[role="tabpanel"]:not([hidden])')!;
+    expect(panel.getAttribute('aria-labelledby')).toBe(tab('Intent').id);
+    expect(panel.querySelector('.k-doc__name')!.textContent).toBe('intent.md');
+    expect(tab('Spec').getAttribute('aria-current')).toBe('step');
+  });
+
   it('offers the toolbar actions for the stage', async () => {
     const { container } = await mount();
     const all = labels(container);

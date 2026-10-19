@@ -198,6 +198,8 @@ export function splitFrontMatter(text: string): { frontMatter: string | null; bo
 }
 
 export type StepCounts = Record<"intent" | "spec" | "plan", number>;
+/** Which of a change's three documents exist on disk. */
+export type DocsPresent = Record<keyof StepCounts, boolean>;
 
 /**
  * Runs so far per stage: the transcript links recorded for this change, plus history records that carry the

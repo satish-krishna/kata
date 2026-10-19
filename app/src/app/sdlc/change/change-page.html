@@ -58,18 +58,22 @@
         </main>
       }
       @case ('ready') {
-        <main class="k-change">
+        <main class="k-change" hlmTabs variant="bare" [tab]="vm.shownDoc()" (tabActivated)="vm.showDoc($event)">
           <h1 class="sr-only">{{ vm.changeName() }}</h1>
           @if (vm.change(); as c) {
-            <app-stage-stepper [stage]="c.stage" [counts]="vm.runCounts()" />
+            <app-stage-stepper [stage]="c.stage" [counts]="vm.runCounts()" [docs]="vm.docs()" />
           }
-          <div class="k-change__doc">
-            @if (vm.doc() === null) {
-              <p class="k-state__body">{{ vm.docName() }} is not in this change folder.</p>
-            } @else {
-              <app-doc-view [name]="vm.docName()" [frontMatter]="vm.docParts().frontMatter" [body]="vm.docParts().body" />
-            }
-          </div>
+          @for (stem of vm.stems; track stem) {
+            <div class="k-change__doc" [hlmTabsContent]="stem" variant="bare">
+              @if (stem === vm.shownDoc()) {
+                @if (vm.doc() === null) {
+                  <p class="k-state__body">{{ vm.docName() }} is not in this change folder.</p>
+                } @else {
+                  <app-doc-view [name]="vm.docName()" [frontMatter]="vm.docParts().frontMatter" [body]="vm.docParts().body" />
+                }
+              }
+            </div>
+          }
         </main>
       }
     }

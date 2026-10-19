@@ -28,9 +28,13 @@ type ListVariants = VariantProps<typeof listVariants>;
   },
 })
 export class HlmTabsList {
-  public readonly variant = input<ListVariants['variant']>('default');
+  /** `bare` emits no classes, so a Kata class supplies the whole look, as `hlmBtn variant="bare"` does. */
+  public readonly variant = input<ListVariants['variant'] | 'bare'>('default');
 
   constructor() {
-    classes(() => listVariants({ variant: this.variant() }));
+    classes(() => {
+      const variant = this.variant();
+      return variant === 'bare' ? '' : listVariants({ variant });
+    });
   }
 }

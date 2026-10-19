@@ -89,6 +89,11 @@ export const VIEWS = [
   { name: 'sdlc-lock-ask', path: CHANGE_SPEC + '?demo=sdlc', ready: '.k-session', act: lockAsk },
   { name: 'sdlc-leftovers', path: CHANGE_SPEC + '?demo=sdlc', ready: '.k-session', act: cancelToLeftovers },
   { name: 'sdlc-change-spec', path: CHANGE_SPEC, ready: '.k-md__diagram svg' },
+  { name: 'sdlc-change-intent', path: CHANGE_SPEC, ready: '.k-md__diagram svg',
+    act: async (p) => {
+      await p.getByRole('tab', { name: /^Intent/ }).click();
+      await p.getByRole('heading', { name: 'Photo upload at first notice of loss' }).waitFor();
+    } },
   { name: 'sdlc-change-plan', path: '/sdlc/claims/2026-10-09-adjuster-reassign', ready: '.k-doc' },
   { name: 'hover-secondary', path: '/', ready: '.wb-toolbar',
     act: async (p) => { await p.getByRole('button', { name: 'Open spec' }).hover(); } },
