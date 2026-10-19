@@ -1,0 +1,158 @@
+/* Pure AI-SDLC stage logic: which actions a stage offers, how it is labeled,
+ * how a stage run-spec is built, and how a run's transcript id is found.
+ * No Angular, no I/O. */
+
+import type { CatalogEntry } from "@bindings/CatalogEntry";
+import type { PluginConfig } from "@bindings/PluginConfig";
+import type { RunSpec } from "@bindings/RunSpec";
+import type { Settings } from "@bindings/Settings";
+import type { Stage } from "@bindings/Stage";
+import type { KataEvent } from "./events";
+import { defaultSpec } from "./spec";
+
+export type StageAction =
+  | "continue-intent"
+  | "accept-intent"
+  | "reject-intent"
+  | "commit-acceptance"
+  | "start-spec"
+  | "continue-spec"
+  | "accept-spec"
+  | "start-plan"
+  | "rerun-plan"
+  | "reopen-intent";
+
+const ACTIONS: Record<Stage, StageAction[]> = {
+  "intent-in-progress": ["continue-intent"],
+  "intent-awaiting": ["continue-intent", "accept-intent", "reject-intent"],
+  "intent-accepted-uncommitted": ["commit-acceptance", "continue-intent"],
+  rejected: [],
+  "spec-ready": ["start-spec", "reopen-intent"],
+  "spec-awaiting": ["continue-spec", "accept-spec", "reopen-intent"],
+  "spec-accepted-uncommitted": ["commit-acceptance", "continue-spec"],
+  "plan-ready": ["start-plan", "reopen-intent"],
+  "plan-written": ["rerun-plan", "reopen-intent"],
+  "plan-superseded": ["start-plan"],
+};
+
+/** The spec's "Stage derivation and actions" table, Actions column, in order. */
+export function actionsFor(stage: Stage): StageAction[] {
+  return [...ACTIONS[stage]];
+}
+
+export type StageLabel = {
+  step: "intent" | "spec" | "plan" | "closed";
+  text: string;
+  tone: "success" | "warning" | "muted" | "error";
+};
+
+const LABELS: Record<Stage, StageLabel> = {
+  "intent-in-progress": { step: "intent", text: "Intent · in progress (not committed)", tone: "muted" },
+  "intent-awaiting": { step: "intent", text: "Intent · awaiting acceptance", tone: "warning" },
+  "intent-accepted-uncommitted": { step: "intent", text: "Intent · accepted, not committed", tone: "warning" },
+  rejected: { step: "closed", text: "Closed · rejected", tone: "error" },
+  "spec-ready": { step: "spec", text: "Spec · ready to start", tone: "muted" },
+  "spec-awaiting": { step: "spec", text: "Spec · awaiting acceptance", tone: "warning" },
+  "spec-accepted-uncommitted": { step: "spec", text: "Spec · accepted, not committed", tone: "warning" },
+  "plan-ready": { step: "plan", text: "Plan · ready to start", tone: "muted" },
+  "plan-written": { step: "plan", text: "Plan · written", tone: "success" },
+  "plan-superseded": { step: "plan", text: "Plan · superseded", tone: "warning" },
+};
+
+export function stageLabel(stage: Stage): StageLabel {
+  return { ...LABELS[stage] };
+}
+
+export type RunContext = {
+  folder: string;
+  system: string;
+  change: string | null;
+  idea?: string;
+  repos?: string[];
+};
+
+export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan";
+
+const AI_SDLC = "ai-sdlc";
+const SUPERPOWERS = "superpowers";
+
+const hasPlugin = (catalog: CatalogEntry[], name: string): boolean =>
+  catalog.some((e) => e.kind === "plugin" && e.name === name);
+
+export function hasAiSdlcPlugin(catalog: CatalogEntry[]): boolean {
+  return hasPlugin(catalog, AI_SDLC);
+}
+
+function nameFor(kind: SdlcKind, ctx: RunContext): string {
+  switch (kind) {
+    case "setup":
+      return "sdlc-setup";
+    case "context":
+      return `sdlc-${ctx.system}-context`;
+    default:
+      return `sdlc-${ctx.system}-${ctx.change ?? "new"}-${kind}`;
+  }
+}
+
+function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext, catalog: CatalogEntry[]): string {
+  const { system, change } = ctx;
+  switch (kind) {
+    case "setup":
+      return system ? `Use the ai-sdlc setup skill. System: ${system}` : "Use the ai-sdlc setup skill.";
+    case "context":
+      return `Use the ai-sdlc context skill for system ${system}, repositories: ${(ctx.repos ?? []).join(", ")}.`;
+    case "intent": {
+      if (change === null) return `Use the ai-sdlc intent skill for system ${system}. The idea: ${ctx.idea ?? ""}`;
+      const resume = `Use the ai-sdlc intent skill for system ${system} on the existing change folder ${change}. Resume the draft.`;
+      return action === "reopen-intent"
+        ? `${resume} The user has already confirmed reopening this accepted intent; do not ask again.`
+        : resume;
+    }
+    case "spec":
+      return `Use the ai-sdlc spec skill for system ${system} on change folder ${change}.`;
+    case "plan": {
+      let task = `Use the ai-sdlc plan skill for system ${system} on change folder ${change}.`;
+      if (!hasPlugin(catalog, SUPERPOWERS)) task += " --standalone";
+      if (action === "rerun-plan") task += " The user has already confirmed replacing the existing plan; do not ask again.";
+      return task;
+    }
+  }
+}
+
+/** Build the run-spec for one AI-SDLC run. Always bypass-valid: allow/deny/ask stay empty. */
+export function specFor(
+  kind: SdlcKind,
+  action: StageAction | null,
+  ctx: RunContext,
+  settings: Settings,
+  catalog: CatalogEntry[],
+): RunSpec {
+  const spec = defaultSpec();
+  const plugins: Record<string, PluginConfig> = { [AI_SDLC]: {} };
+  if (kind === "plan" && hasPlugin(catalog, SUPERPOWERS)) plugins[SUPERPOWERS] = {};
+  spec.name = nameFor(kind, ctx);
+  spec.task = taskFor(kind, action, ctx, catalog);
+  spec.workdir = ctx.folder;
+  spec.plugins = plugins;
+  spec.interactive = { enabled: false, answer_timeout_secs: 3600 };
+  if (settings.permission_mode === "prompt") {
+    spec.permissions = { mode: "prompt", allow: [], deny: [], unmatched: "ask" };
+    spec.interactive.enabled = true;
+  }
+  return spec;
+}
+
+const TRANSCRIPT = "transcript: ";
+
+/** The run id (transcript file stem) from the first `transcript: <path>` log event. */
+export function transcriptRunId(events: readonly KataEvent[]): string | null {
+  for (const ev of events) {
+    if (ev.type === "log" && ev.message.startsWith(TRANSCRIPT)) {
+      const path = ev.message.slice(TRANSCRIPT.length).trim();
+      const file = path.split(/[\\/]/).pop() ?? "";
+      const stem = file.replace(/\.[^.]*$/, "");
+      return stem || null;
+    }
+  }
+  return null;
+}
