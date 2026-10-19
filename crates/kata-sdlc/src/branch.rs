@@ -44,8 +44,18 @@ pub enum BranchError {
         "the pending branch has commits but created no change folder; leave it for manual cleanup"
     )]
     PendingHasCommits,
+    #[error("invalid branch name: {0}")]
+    InvalidName(String),
     #[error(transparent)]
     Git(#[from] GitError),
+}
+
+/// A name that cannot be read as a git option and names an existing local branch.
+fn require_local_branch(master: &Path, name: &str) -> Result<(), BranchError> {
+    if name.is_empty() || name.starts_with('-') || !branch_exists(master, name) {
+        return Err(BranchError::InvalidName(name.to_string()));
+    }
+    Ok(())
 }
 
 /// What became of a pending branch once its run finished.
@@ -97,6 +107,7 @@ pub fn start_pending(master: &Path, base: &str, now_unix: u64) -> Result<String,
     if current_branch(master).is_none() {
         return Err(BranchError::Detached);
     }
+    require_local_branch(master, base)?;
     ensure_clean(master)?;
     let name = format!("change/pending-{}", utc_stamp(now_unix));
     git::run(master, &["checkout", "-q", "-b", &name, base])?;
@@ -143,6 +154,11 @@ pub fn finish_pending(
     pending: &str,
     base: &str,
 ) -> Result<FinishOutcome, BranchError> {
+    if !pending.starts_with("change/pending-") {
+        return Err(BranchError::InvalidName(pending.to_string()));
+    }
+    require_local_branch(master, pending)?;
+    require_local_branch(master, base)?;
     let mut paths: Vec<String> = status_entries(master)?
         .into_iter()
         .map(|e| e.path)
@@ -174,8 +190,9 @@ pub fn finish_pending(
 
 /// Switch branches. Refuses a dirty working tree.
 pub fn checkout(master: &Path, branch: &str) -> Result<(), BranchError> {
+    require_local_branch(master, branch)?;
     ensure_clean(master)?;
-    git::run(master, &["checkout", "-q", branch])?;
+    git::run(master, &["checkout", "-q", branch, "--"])?;
     Ok(())
 }
 
@@ -195,6 +212,42 @@ mod tests {
 
         git::run(&repo, &["branch", "-m", "master", "trunk"]).unwrap();
         assert_eq!(default_base(&repo).as_deref(), Some("trunk"));
+    }
+
+    #[test]
+    fn branch_names_are_validated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        for bad in ["-b", "--detach", "", "nope"] {
+            assert!(
+                matches!(
+                    start_pending(&repo, bad, 0),
+                    Err(BranchError::InvalidName(_))
+                ),
+                "start {bad}"
+            );
+            assert!(
+                matches!(checkout(&repo, bad), Err(BranchError::InvalidName(_))),
+                "checkout {bad}"
+            );
+        }
+        // Only a pending branch may be settled; a real branch is never deleted or renamed.
+        for bad in ["main", "-D", "change/2026-10-18-x"] {
+            assert!(
+                matches!(
+                    finish_pending(&repo, bad, "main"),
+                    Err(BranchError::InvalidName(_))
+                ),
+                "finish {bad}"
+            );
+        }
+        let pending = start_pending(&repo, "main", 1_792_368_000).unwrap();
+        assert!(matches!(
+            finish_pending(&repo, &pending, "--force"),
+            Err(BranchError::InvalidName(_))
+        ));
+        assert!(branch_exists(&repo, "main"));
+        assert!(branch_exists(&repo, &pending));
     }
 
     #[test]

@@ -58,7 +58,8 @@ export class SdlcMock {
   }];
   private links: RunLink[] = [];
   private current = 'main';
-  private others = ['change/2026-10-17-claim-notes'];
+  /** Other change branches, without the `change/` prefix, like the real `other_change_branches`. */
+  private others = ['2026-10-17-claim-notes'];
   private changes: ChangeInfo[] = [
     change('2026-10-16-fraud-flag', doc('draft'), doc(null), doc(null), 'intent-awaiting'),
     change('2026-10-12-fnol-photo-upload', doc('accepted'), doc('draft'), doc(null), 'spec-awaiting'),
@@ -102,9 +103,11 @@ export class SdlcMock {
   }
 
   finishChange(base: string): FinishOutcome {
-    const branch = `change/${MOCK_NEW_CHANGE}`;
     this.current = base;
-    this.others = [...this.others, branch];
+    // A pending branch whose run created no new change folder is deleted.
+    if (this.changes.some((c) => c.change === MOCK_NEW_CHANGE)) return 'deleted';
+    const branch = `change/${MOCK_NEW_CHANGE}`;
+    this.others = [...this.others, MOCK_NEW_CHANGE];
     this.changes = [
       change(MOCK_NEW_CHANGE, doc('draft', false), doc(null), doc(null), 'intent-awaiting'),
       ...this.changes,
@@ -114,8 +117,10 @@ export class SdlcMock {
   }
 
   checkout(branch: string): void {
-    this.others = this.others.filter((b) => b !== branch);
-    if (this.current !== branch && this.current !== MOCK_PENDING_BRANCH) this.others.push(this.current);
+    const bare = (b: string) => b.replace(/^change\//, '');
+    const leaving = this.current;
+    this.others = this.others.filter((b) => b !== bare(branch));
+    if (leaving !== branch && leaving.startsWith('change/') && !leaving.startsWith('change/pending-')) this.others.push(bare(leaving));
     this.current = branch;
   }
 

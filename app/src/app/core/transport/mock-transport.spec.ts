@@ -72,6 +72,39 @@ describe('MockTransport', () => {
     expect(await t.pickSaveSpec()).toBeNull();
   });
 
+  it('checkout records the previous change branch without its prefix and drops the target', async () => {
+    const t = new MockTransport();
+    await t.sdlcCheckout('/m', 'change/2026-10-17-claim-notes');
+    expect(await t.sdlcBranches('/m')).toEqual({ current: 'change/2026-10-17-claim-notes', others: [], default_base: 'main' });
+    await t.sdlcCheckout('/m', 'main');
+    expect((await t.sdlcBranches('/m')).others).toEqual(['2026-10-17-claim-notes']);
+  });
+
+  it('finishing a change renames it once, then deletes a pending branch that created nothing', async () => {
+    const t = new MockTransport();
+    const pending = await t.sdlcStartChange('/m', 'main');
+    const out = await t.sdlcFinishChange('/m', pending, 'main');
+    expect(out).toEqual({ renamed: { branch: 'change/2026-10-18-new-change', change: '2026-10-18-new-change' } });
+    const b = await t.sdlcBranches('/m');
+    expect(b.current).toBe('main');
+    expect(b.others).toEqual(['2026-10-17-claim-notes', '2026-10-18-new-change']);
+    expect((await t.sdlcChanges('/m', 'claims'))[0].change).toBe('2026-10-18-new-change');
+
+    const again = await t.sdlcStartChange('/m', 'main');
+    expect(await t.sdlcFinishChange('/m', again, 'main')).toBe('deleted');
+    const after = await t.sdlcBranches('/m');
+    expect(after.current).toBe('main');
+    expect(after.others).toEqual(b.others);
+  });
+
+  it('rejecting an intent moves its change to rejected', async () => {
+    const t = new MockTransport();
+    expect(await t.sdlcDecide('/m', 'claims', '2026-10-16-fraud-flag', 'reject-intent', false)).toEqual({ kind: 'committed' });
+    const c = (await t.sdlcChanges('/m', 'claims')).find((x) => x.change === '2026-10-16-fraud-flag');
+    expect(c?.stage).toBe('rejected');
+    expect(c?.intent.status).toBe('rejected');
+  });
+
   it('accepting the fnol spec moves its change to plan-ready', async () => {
     const t = new MockTransport();
     const before = (await t.sdlcChanges('D:/Work/acme-claims/claims-intent', 'claims')).find((c) => c.change === '2026-10-12-fnol-photo-upload');

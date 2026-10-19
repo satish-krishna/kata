@@ -161,12 +161,12 @@ fn sdlc_save_workspaces(workspaces: Vec<sdlc::store::WorkspaceEntry>) -> Result<
     sdlc::store::save_workspaces(&workspaces).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sdlc_scan(folder: String) -> Result<sdlc::workspace::WorkspaceScan, String> {
     sdlc::workspace::scan(Path::new(&folder)).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sdlc_context_health(
     folder: String,
     master: String,
@@ -176,27 +176,27 @@ fn sdlc_context_health(
     sdlc::workspace::context_health(Path::new(&folder), &master, &system, &repo)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sdlc_changes(master: String, system: String) -> Vec<sdlc::changes::ChangeInfo> {
     sdlc::changes::list(Path::new(&master), &system)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sdlc_branches(master: String) -> sdlc::changes::BranchInfo {
     sdlc::changes::branch_info(Path::new(&master))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sdlc_read_doc(master: String, system: String, change: String, doc: String) -> Option<String> {
     sdlc::changes::read_doc(Path::new(&master), &system, &change, &doc)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sdlc_snapshot(master: String) -> Result<sdlc::snapshot::Snapshot, String> {
     sdlc::snapshot::take(Path::new(&master)).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sdlc_leftovers(
     master: String,
     before: sdlc::snapshot::Snapshot,
@@ -206,7 +206,7 @@ fn sdlc_leftovers(
     sdlc::snapshot::leftovers(Path::new(&master), &before, &repos).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sdlc_discard(
     master: String,
     before: sdlc::snapshot::Snapshot,
@@ -215,7 +215,7 @@ fn sdlc_discard(
     sdlc::snapshot::discard(Path::new(&master), &before, &paths).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sdlc_start_change(master: String, base: String) -> Result<String, String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -224,7 +224,7 @@ fn sdlc_start_change(master: String, base: String) -> Result<String, String> {
     sdlc::branch::start_pending(Path::new(&master), &base, now).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sdlc_finish_change(
     master: String,
     pending: String,
@@ -233,12 +233,12 @@ fn sdlc_finish_change(
     sdlc::branch::finish_pending(Path::new(&master), &pending, &base).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sdlc_checkout(master: String, branch: String) -> Result<(), String> {
     sdlc::branch::checkout(Path::new(&master), &branch).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn sdlc_decide(
     master: String,
     system: String,
