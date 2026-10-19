@@ -16,11 +16,12 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { Stage } from '@bindings/Stage';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
+import { DEMO_SETUP_FOLDER, DEMO_WORKSPACE_FOLDER } from './demo';
 import type { ScriptStep } from './mock';
 
-export const MOCK_WORKSPACE_FOLDER = 'D:/Work/acme-claims';
+export const MOCK_WORKSPACE_FOLDER = DEMO_WORKSPACE_FOLDER;
 /** A folder the demo can add that has repos but no committed `.ai-sdlc.json`, so adding it runs setup. */
-export const MOCK_SETUP_FOLDER = 'D:/Work/globex-billing';
+export const MOCK_SETUP_FOLDER = DEMO_SETUP_FOLDER;
 export const MOCK_MASTER = 'claims-intent';
 export const MOCK_SYSTEM = 'claims';
 export const MOCK_PENDING_BRANCH = 'change/pending-20261018T000000Z';
@@ -85,6 +86,7 @@ const LEFTOVERS: Leftovers = {
   discardable: ['claims/2026-10-12-fnol-photo-upload/notes.tmp', 'claims/2026-10-12-fnol-photo-upload/intent.md'],
   touched_dirty: ['claims/2026-10-16-fraud-flag/intent.md'],
   product_repos_changed: [],
+  product_repos_unchecked: [],
 };
 
 const MOCK_SETUP_REPOS = ['billing-intent', 'billing-core'];
@@ -97,13 +99,16 @@ const doc = (status: string | null, committed = true): DocState =>
 const change = (name: string, intent: DocState, spec: DocState, plan: DocState, stage: Stage): ChangeInfo =>
   ({ system: MOCK_SYSTEM, change: name, intent, spec, plan, stage });
 
+const DOC_STEMS = new Set(['intent', 'spec', 'plan']);
+
+/** Document text keyed by `<change>/<stem>`, the way the backend names them. */
 const DOCS: Record<string, string> = {
-  '2026-10-16-fraud-flag/intent.md': '---\nstatus: draft\n---\n# Flag suspected fraud on intake\n\nAdjusters need a visible fraud flag on a claim so that suspicious submissions are reviewed before payout.\n\n## Outcomes\n\n- A claim can be flagged at intake.\n- Flagged claims are routed to the special investigations queue.\n',
-  '2026-10-12-fnol-photo-upload/intent.md': '---\nstatus: accepted\n---\n# Photo upload at first notice of loss\n\nPolicyholders attach damage photos when they report a claim.\n',
-  '2026-10-12-fnol-photo-upload/spec.md': '---\nstatus: draft\n---\n# Spec: photo upload\n\n## Requirements\n\n1. Up to 10 photos per claim, 10 MB each.\n2. JPEG and PNG only.\n3. Photos are virus-scanned before they are attached.\n',
-  '2026-10-09-adjuster-reassign/intent.md': '---\nstatus: accepted\n---\n# Reassign a claim to another adjuster\n\nSupervisors move a claim between adjusters without losing its history.\n',
-  '2026-10-09-adjuster-reassign/spec.md': '---\nstatus: accepted\n---\n# Spec: reassign\n\n1. Only supervisors can reassign.\n2. Reassignment is recorded in the claim history.\n',
-  '2026-10-09-adjuster-reassign/plan.md': '---\nstatus: draft\n---\n# Plan: reassign\n\n- [ ] Add the reassign endpoint to claims-core.\n- [ ] Add the reassign action to customer-portal.\n',
+  '2026-10-16-fraud-flag/intent': '---\nstatus: draft\n---\n# Flag suspected fraud on intake\n\nAdjusters need a visible fraud flag on a claim so that suspicious submissions are reviewed before payout.\n\n## Outcomes\n\n- A claim can be flagged at intake.\n- Flagged claims are routed to the special investigations queue.\n',
+  '2026-10-12-fnol-photo-upload/intent': '---\nstatus: accepted\n---\n# Photo upload at first notice of loss\n\nPolicyholders attach damage photos when they report a claim.\n',
+  '2026-10-12-fnol-photo-upload/spec': '---\nstatus: draft\n---\n# Spec: photo upload\n\n## Requirements\n\n1. Up to 10 photos per claim, 10 MB each.\n2. JPEG and PNG only.\n3. Photos are virus-scanned before they are attached.\n',
+  '2026-10-09-adjuster-reassign/intent': '---\nstatus: accepted\n---\n# Reassign a claim to another adjuster\n\nSupervisors move a claim between adjusters without losing its history.\n',
+  '2026-10-09-adjuster-reassign/spec': '---\nstatus: accepted\n---\n# Spec: reassign\n\n1. Only supervisors can reassign.\n2. Reassignment is recorded in the claim history.\n',
+  '2026-10-09-adjuster-reassign/plan': '---\nstatus: draft\n---\n# Plan: reassign\n\n- [ ] Add the reassign endpoint to claims-core.\n- [ ] Add the reassign action to customer-portal.\n',
 };
 
 /** What accepting or rejecting does to a change's documents and stage. */
@@ -171,12 +176,16 @@ export class SdlcMock {
 
   listChanges(): ChangeInfo[] { return this.changes.map((c) => ({ ...c })); }
   branches(): BranchInfo { return { current: this.current, others: [...this.others], default_base: 'main' }; }
-  readDoc(changeName: string, docName: string): string | null { return this.docs[`${changeName}/${docName}`] ?? null; }
+  /** Like the backend's `read_doc`: the document is named by its stem; anything else is a caller bug. */
+  readDoc(changeName: string, docName: string): string | null {
+    if (!DOC_STEMS.has(docName)) throw new Error(`read_doc takes a document stem (intent, spec or plan), not "${docName}"`);
+    return this.docs[`${changeName}/${docName}`] ?? null;
+  }
 
   snapshot(): Snapshot { return { head: '0000000000000000000000000000000000000000', dirty: {} }; }
   /** Only a cancelled AI-SDLC run leaves anything behind; discarded paths drop out of the list. */
   leftovers(): Leftovers {
-    if (!this.cancelledRun) return { new_commits: [], discardable: [], touched_dirty: [], product_repos_changed: [] };
+    if (!this.cancelledRun) return { new_commits: [], discardable: [], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [] };
     const keep = (paths: string[]) => paths.filter((p) => !this.discarded.has(p));
     return { ...LEFTOVERS, discardable: keep(LEFTOVERS.discardable), touched_dirty: keep(LEFTOVERS.touched_dirty) };
   }
@@ -202,7 +211,7 @@ export class SdlcMock {
       change(MOCK_NEW_CHANGE, doc('draft', false), doc(null), doc(null), 'intent-awaiting'),
       ...this.changes,
     ];
-    this.docs[`${MOCK_NEW_CHANGE}/intent.md`] = '---\nstatus: draft\n---\n# New change\n\nDrafted from the idea you gave the agent.\n';
+    this.docs[`${MOCK_NEW_CHANGE}/intent`] = '---\nstatus: draft\n---\n# New change\n\nDrafted from the idea you gave the agent.\n';
     return { renamed: { branch, change: MOCK_NEW_CHANGE } };
   }
 

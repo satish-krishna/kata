@@ -162,7 +162,7 @@ describe('SdlcHomeViewModel add workspace', () => {
   it('opens the leftover dialog and adds nothing when setup is cancelled', async () => {
     const { vm, transport, runAgent, saveWorkspaces } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
-    vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], product_repos_changed: [] });
+    vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [] });
     runAgent.mockResolvedValue('warning');
     await vm.init();
     vi.spyOn(transport, 'sdlcScan').mockResolvedValueOnce(
@@ -172,6 +172,25 @@ describe('SdlcHomeViewModel add workspace', () => {
     expect(vm.leftovers()?.discardable).toEqual(['.ai-sdlc.json']);
     expect(vm.candidate()).toBeNull();
     expect(saveWorkspaces).not.toHaveBeenCalled();
+  });
+
+  it('reports leftovers in the master a cancelled first setup created, against its pre-run snapshot', async () => {
+    const { vm, transport, runAgent } = setup();
+    vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
+    runAgent.mockResolvedValue('warning');
+    await vm.init();
+    const snap = vi.spyOn(transport, 'sdlcSnapshot');
+    const left = vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({
+      new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [],
+    });
+    vi.spyOn(transport, 'sdlcScan')
+      .mockResolvedValueOnce(scanOf({ master: { kind: 'none' }, marker: null }))
+      .mockResolvedValueOnce(scanOf({ master: { kind: 'one', repo: 'claims-intent', committed: false }, marker: null }));
+    await vm.addWorkspace();
+    expect(snap.mock.calls.map((c) => c[0])).toEqual([`${NEW_FOLDER}/claims-intent`, `${NEW_FOLDER}/customer-portal`]);
+    expect(left).toHaveBeenCalledWith(`${NEW_FOLDER}/claims-intent`, expect.anything(), [`${NEW_FOLDER}/customer-portal`]);
+    expect(vm.leftovers()?.discardable).toEqual(['.ai-sdlc.json']);
+    expect(vm.candidate()).toBeNull();
   });
 
   it('says so when the workspace check is cancelled, and adds nothing', async () => {
@@ -227,6 +246,18 @@ describe('SdlcHomeViewModel add workspace', () => {
   it('selects the existing entry instead of adding a folder that is already listed', async () => {
     const { vm, transport, runSteps } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(MOCK_WORKSPACE_FOLDER);
+    await vm.init();
+    await vm.addWorkspace();
+    expect(runSteps).not.toHaveBeenCalled();
+    expect(toastText()).toContain('already in the list');
+  });
+
+  it('treats a listed folder as already listed despite slashes, a trailing separator and case', async () => {
+    const { vm, transport, runSteps } = setup();
+    vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
+      { id: 'acme-claims', name: 'acme-claims', folder: 'D:\\Work\\acme-claims\\', base_branch: 'main', last_opened: 1 },
+    ]);
+    vi.spyOn(transport, 'pickDirectory').mockResolvedValue('d:/work/acme-claims');
     await vm.init();
     await vm.addWorkspace();
     expect(runSteps).not.toHaveBeenCalled();
@@ -314,6 +345,24 @@ describe('SdlcHomeViewModel runs', () => {
     expect(runAgent).not.toHaveBeenCalled();
   });
 
+  it('aborts context with an error when the master repo is not on a branch', async () => {
+    const { vm, transport, runAgent } = setup();
+    await vm.init();
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main' });
+    await vm.runContext('customer-portal');
+    expect(toastText()).toContain(`${MOCK_MASTER} is not on a branch`);
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it('aborts setup with an error when the master repo is not on a branch', async () => {
+    const { vm, transport, runAgent } = setup();
+    await vm.init();
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main' });
+    await vm.addSystem();
+    expect(toastText()).toContain('is not on a branch');
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
   it('refuses a second task while one holds the lock', async () => {
     const { vm, lock, runAgent } = setup();
     await vm.init();
@@ -341,7 +390,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('shows leftovers from the runner and discards through it', async () => {
     const { vm, runner, transport } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['a.md'], touched_dirty: [], product_repos_changed: [] });
+    vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['a.md'], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [] });
     const discard = vi.spyOn(transport, 'sdlcDiscard');
     vi.spyOn(TestBed.inject(LockStore), 'runAgent').mockResolvedValue('error');
     await vm.runContext('customer-portal');

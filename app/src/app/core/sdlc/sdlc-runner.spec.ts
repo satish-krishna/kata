@@ -13,7 +13,7 @@ import { KataTransport } from '../transport/kata-transport';
 import { SdlcRunner, type RunTarget } from './sdlc-runner';
 
 const SNAPSHOT = { head: 'abc', dirty: {} };
-const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], product_repos_changed: [] };
+const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [] };
 const WORKSPACE: WorkspaceEntry = { id: 'acme', name: 'acme', folder: '/ws', base_branch: 'main', last_opened: 1 };
 const TARGET: RunTarget = {
   workspaceId: 'acme',
@@ -27,7 +27,11 @@ class FakeTransport {
   calls: string[] = [];
   leftovers: Leftovers = EMPTY;
   finishResults: (() => Promise<unknown>)[] = [];
-  sdlcSnapshot = vi.fn(async () => { this.calls.push('snapshot'); return SNAPSHOT; });
+  exited = true;
+  scan: unknown = null;
+  sdlcSnapshot = vi.fn(async (..._a: unknown[]) => { this.calls.push('snapshot'); return SNAPSHOT; });
+  sdlcWaitRunExit = vi.fn(async (..._a: unknown[]) => { this.calls.push('wait'); return this.exited; });
+  sdlcScan = vi.fn(async (..._a: unknown[]) => { this.calls.push('scan'); return this.scan; });
   sdlcLeftovers = vi.fn(async () => { this.calls.push('leftovers'); return this.leftovers; });
   sdlcDiscard = vi.fn(async (..._a: unknown[]) => { this.calls.push('discard'); });
   sdlcLinkRun = vi.fn(async (..._a: unknown[]) => { this.calls.push('link'); });
@@ -67,7 +71,8 @@ describe('SdlcRunner.run', () => {
   it('snapshots before the agent run and toasts the result on success', async () => {
     const ctx = setup(() => { ctx.summary.set({ result: 'Wrote intent.md' }); return 'success'; });
     const out = await ctx.runner.run('Running setup', seedSpec(), { ...TARGET, label: 'Setup' });
-    expect(ctx.fake.calls).toEqual(['snapshot', 'agent']);
+    expect(ctx.fake.calls).toEqual(['snapshot', 'agent', 'wait']);
+    expect(ctx.fake.sdlcWaitRunExit).toHaveBeenCalledWith(15000);
     expect(out.state).toBe('success');
     expect(ctx.toasts.success).toHaveBeenCalledWith('Setup finished · Wrote intent.md');
     expect(ctx.runner.leftovers()).toBeNull();
@@ -125,9 +130,36 @@ describe('SdlcRunner.run', () => {
     const { runner, fake, toasts } = setup(() => 'warning');
     fake.leftovers = { ...EMPTY, new_commits: ['docs: a'], discardable: ['intent.md', 'x.txt'] };
     await runner.run('Running setup', seedSpec(), TARGET);
-    expect(fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/claims-intent', SNAPSHOT, ['claims-core']);
+    expect(fake.calls).toEqual(['snapshot', 'agent', 'wait', 'leftovers']);
+    expect(fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/claims-intent', SNAPSHOT, ['/ws/claims-core']);
     expect(runner.leftovers()?.discardable).toEqual(['intent.md', 'x.txt']);
     expect(toasts.error).toHaveBeenCalledWith('Running setup stopped · 1 commit landed, 2 files left uncommitted');
+  });
+
+  it('touches nothing while the engine is still stopping after a cancel', async () => {
+    const { runner, fake, toasts } = setup(() => 'warning');
+    fake.exited = false;
+    fake.leftovers = { ...EMPTY, discardable: ['x.txt'] };
+    await runner.run('Running setup', seedSpec(), TARGET);
+    expect(fake.sdlcLeftovers).not.toHaveBeenCalled();
+    expect(runner.leftovers()).toBeNull();
+    expect(toasts.error).toHaveBeenCalledWith('The engine is still stopping. Nothing was cleaned up.');
+    expect(toasts.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a failed wait as an engine that is still stopping', async () => {
+    const { runner, fake, toasts } = setup(() => 'error');
+    fake.sdlcWaitRunExit.mockRejectedValueOnce(new Error('no backend'));
+    await runner.run('Running setup', seedSpec(), TARGET);
+    expect(fake.sdlcLeftovers).not.toHaveBeenCalled();
+    expect(toasts.error).toHaveBeenCalledWith('The engine is still stopping. Nothing was cleaned up.');
+  });
+
+  it('opens the dialog when only a product repo could not be checked', async () => {
+    const { runner, fake } = setup(() => 'error');
+    fake.leftovers = { ...EMPTY, product_repos_unchecked: ['claims-core'] };
+    await runner.run('Running setup', seedSpec(), TARGET);
+    expect(runner.leftovers()?.product_repos_unchecked).toEqual(['claims-core']);
   });
 
   it('toasts a failure without a dialog when nothing was left behind', async () => {
@@ -144,6 +176,44 @@ describe('SdlcRunner.run', () => {
     expect(fake.sdlcLeftovers).not.toHaveBeenCalled();
     expect(runner.leftovers()).toBeNull();
     expect(toasts.error).toHaveBeenCalledWith('Running setup failed · there was no master repo to compare against');
+  });
+
+  it('first setup snapshots every repo and reports leftovers against the master it created', async () => {
+    const { runner, fake, toasts } = setup(() => 'warning');
+    const before = { a: { head: 'a1', dirty: {} }, b: { head: 'b1', dirty: {} } };
+    fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => {
+      fake.calls.push('snapshot');
+      return a[0] === '/ws/a-intent' ? before.a : before.b;
+    });
+    fake.scan = { folder: '/ws', repos: ['a-intent', 'a-core'], master: { kind: 'one', repo: 'a-intent', committed: false }, marker: null, marker_error: null };
+    fake.leftovers = { ...EMPTY, discardable: ['.ai-sdlc.json'] };
+    await runner.run('Running setup', seedSpec(), {
+      ...TARGET, master: null, link: null, productRepos: [], firstSetup: { folder: '/ws', repos: ['a-intent', 'a-core'] },
+    });
+    expect(fake.sdlcSnapshot.mock.calls.map((c) => c[0])).toEqual(['/ws/a-intent', '/ws/a-core']);
+    expect(fake.calls).toEqual(['snapshot', 'snapshot', 'agent', 'wait', 'scan', 'leftovers']);
+    expect(fake.sdlcScan).toHaveBeenCalledWith('/ws');
+    expect(fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/a-intent', before.a, ['/ws/a-core']);
+    expect(runner.leftovers()?.discardable).toEqual(['.ai-sdlc.json']);
+    expect(toasts.error).toHaveBeenCalledWith('Running setup stopped · 0 commits landed, 1 file left uncommitted');
+  });
+
+  it('first setup that created no master keeps the plain toast', async () => {
+    const { runner, fake, toasts } = setup(() => 'error');
+    fake.scan = { folder: '/ws', repos: ['a-intent', 'a-core'], master: { kind: 'none' }, marker: null, marker_error: null };
+    await runner.run('Running setup', seedSpec(), {
+      ...TARGET, master: null, link: null, productRepos: [], firstSetup: { folder: '/ws', repos: ['a-intent', 'a-core'] },
+    });
+    expect(fake.sdlcLeftovers).not.toHaveBeenCalled();
+    expect(toasts.error).toHaveBeenCalledWith('Running setup failed · there was no master repo to compare against');
+  });
+
+  it('a first setup that succeeds does not rescan', async () => {
+    const { runner, fake } = setup();
+    await runner.run('Running setup', seedSpec(), {
+      ...TARGET, master: null, link: null, productRepos: [], firstSetup: { folder: '/ws', repos: ['a-intent'] },
+    });
+    expect(fake.sdlcScan).not.toHaveBeenCalled();
   });
 
   it('discard sends the chosen paths with the snapshot and clears the dialog', async () => {
@@ -172,7 +242,7 @@ describe('SdlcRunner.newChange', () => {
     const { runner, fake, lock, navigate } = setup();
     fake.finishResults.push(async () => ({ renamed: { branch: 'change/2026-10-18-x', change: '2026-10-18-x' } }));
     await runner.newChange(target, 'claims', 'flag fraud');
-    expect(fake.calls.filter((c) => c !== 'link')).toEqual(['start', 'snapshot', 'agent', 'finish']);
+    expect(fake.calls.filter((c) => c !== 'link')).toEqual(['start', 'snapshot', 'agent', 'wait', 'finish']);
     expect(fake.sdlcStartChange).toHaveBeenCalledWith('/ws/claims-intent', 'main');
     expect(fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/claims-intent', 'change/pending-1', 'main');
     const spec = lock.runAgent.mock.calls[0][1];
@@ -207,6 +277,19 @@ describe('SdlcRunner.newChange', () => {
     fake.finishResults.push(async () => 'deleted');
     await runner.newChange(target, 'claims', 'idea');
     expect(fake.sdlcFinishChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the pending branch and finishes nothing while the engine is still stopping', async () => {
+    const { runner, fake, toasts, navigate } = setup(() => 'warning');
+    fake.exited = false;
+    await runner.newChange(target, 'claims', 'idea');
+    expect(fake.sdlcFinishChange).not.toHaveBeenCalled();
+    expect(fake.sdlcLeftovers).not.toHaveBeenCalled();
+    expect(toasts.error).toHaveBeenCalledWith(
+      'The engine is still stopping. Nothing was cleaned up; the pending branch change/pending-1 was kept.',
+    );
+    expect(toasts.error).toHaveBeenCalledTimes(1);
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it('shows the leftover dialog on a dirty finish and calls finish again after it closes', async () => {

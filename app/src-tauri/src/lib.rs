@@ -290,6 +290,45 @@ fn cancel_run(control: State<RunControl>) {
     }
 }
 
+/// Poll until no run is active (the reader task has seen the engine exit and
+/// cleared `id`), or until `timeout` passes. True when the engine is gone.
+fn wait_idle(
+    state: &Mutex<RunState>,
+    timeout: std::time::Duration,
+    every: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if state.lock().unwrap().id == 0 {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(every);
+    }
+}
+
+/// Wait for the engine process to exit after a run ends or is cancelled. The UI
+/// sees the terminal event before the sidecar has finished tearing down, so
+/// anything that touches the repo afterwards waits here first.
+#[tauri::command]
+async fn sdlc_wait_run_exit(
+    control: State<'_, RunControl>,
+    timeout_ms: u64,
+) -> Result<bool, String> {
+    let state = control.state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        wait_idle(
+            &state,
+            std::time::Duration::from_millis(timeout_ms),
+            std::time::Duration::from_millis(50),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// List all completed runs from the history store.
 #[tauri::command]
 fn list_runs() -> Result<Vec<kata_core::history::RunRecord>, String> {
@@ -423,8 +462,47 @@ pub fn run() {
             sdlc_checkout,
             sdlc_decide,
             sdlc_run_links,
-            sdlc_link_run
+            sdlc_link_run,
+            sdlc_wait_run_exit
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn wait_idle_returns_true_once_the_reader_clears_the_run() {
+        let state = Arc::new(Mutex::new(RunState { id: 3, child: None }));
+        let clearer = state.clone();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(120));
+            clearer.lock().unwrap().id = 0;
+        });
+        assert!(wait_idle(
+            &state,
+            Duration::from_secs(5),
+            Duration::from_millis(10)
+        ));
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn wait_idle_returns_false_on_timeout() {
+        let state = Arc::new(Mutex::new(RunState { id: 3, child: None }));
+        assert!(!wait_idle(
+            &state,
+            Duration::from_millis(60),
+            Duration::from_millis(10)
+        ));
+    }
+
+    #[test]
+    fn wait_idle_is_immediate_with_no_run() {
+        let state = Arc::new(Mutex::new(RunState::default()));
+        assert!(wait_idle(&state, Duration::ZERO, Duration::from_millis(10)));
+    }
 }

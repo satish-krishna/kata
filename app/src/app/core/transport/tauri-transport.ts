@@ -66,6 +66,7 @@ export class TauriTransport extends KataTransport {
   sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean) { return this.ipc.invoke<DecideOutcome>('sdlc_decide', { master, system, change, decision, confirmed }); }
   sdlcRunLinks() { return this.ipc.invoke<RunLink[]>('sdlc_run_links'); }
   sdlcLinkRun(link: RunLink) { return this.ipc.invoke<void>('sdlc_link_run', { link }); }
+  sdlcWaitRunExit(timeoutMs: number) { return this.ipc.invoke<boolean>('sdlc_wait_run_exit', { timeoutMs }); }
   pickDirectory() { return this.ipc.open({ directory: true, multiple: false }) as Promise<string | null>; }
   pickOpenSpec() { return this.ipc.open({ multiple: false, filters: SPEC_FILTERS }) as Promise<string | null>; }
   pickSaveSpec() { return this.ipc.save({ filters: SPEC_FILTERS }) as Promise<string | null>; }

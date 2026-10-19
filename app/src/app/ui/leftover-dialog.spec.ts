@@ -8,6 +8,7 @@ const LEFT: Leftovers = {
   discardable: ['claims/2026-10-18-x/intent.md', 'claims/2026-10-18-x/spec.md', 'scratch.txt'],
   touched_dirty: ['notes.md'],
   product_repos_changed: ['claims-core'],
+  product_repos_unchecked: [],
 };
 const dialog = () => document.body.querySelector('[role="dialog"]');
 const button = (label: string) =>
@@ -35,6 +36,13 @@ describe('LeftoverDialog', () => {
     expect(t).toContain('notes.md');
     expect(t).toContain('changed before and during this run');
     expect(t).toContain('the run changed files in claims-core; ai-sdlc should not write there');
+  });
+
+  it('warns about a product repo whose status could not be read', async () => {
+    const { container } = await render(LeftoverDialog, { leftovers: { ...LEFT, product_repos_unchecked: ['billing-api'] } });
+    const warns = [...document.body.querySelectorAll('.k-left__warn')].map((e) => e.textContent!.trim());
+    expect(warns).toContain('could not check billing-api');
+    expect(container).toBeTruthy();
   });
 
   it('gives touched files no checkbox', async () => {

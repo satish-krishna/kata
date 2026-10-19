@@ -11,7 +11,7 @@ const isDraft = (path: string): boolean => DRAFTS.has(path.split(/[\\/]/).pop() 
 
 /* What a run that did not succeed left behind: commits that landed, files that can be discarded (with a
  * checkbox each), files already dirty that the run touched (no checkbox: kata cannot tell whose edits they are)
- * and a warning for product repos that changed. Nothing outside the checked list is ever discarded. */
+ * and a warning for product repos that changed or could not be checked. Nothing outside the checked list is ever discarded. */
 @Component({
   selector: 'app-leftover-dialog',
   host: { class: 'contents' },
@@ -58,6 +58,9 @@ const isDraft = (path: string): boolean => DRAFTS.has(path.split(/[\\/]/).pop() 
             }
             @for (repo of l.product_repos_changed; track repo) {
               <p class="k-left__warn">the run changed files in {{ repo }}; ai-sdlc should not write there</p>
+            }
+            @for (repo of l.product_repos_unchecked; track repo) {
+              <p class="k-left__warn">could not check {{ repo }}</p>
             }
           </div>
           <hlm-dialog-footer>

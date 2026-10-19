@@ -59,6 +59,8 @@ export abstract class KataTransport {
   abstract sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean): Promise<DecideOutcome>;
   abstract sdlcRunLinks(): Promise<RunLink[]>;
   abstract sdlcLinkRun(link: RunLink): Promise<void>;
+  /** Wait until the engine process of the last run has exited. False when it is still alive after `timeoutMs`. */
+  abstract sdlcWaitRunExit(timeoutMs: number): Promise<boolean>;
   /** Register for relayed run events. Resolves to the unlisten function. */
   abstract onRunEvent(cb: (ev: KataEvent) => void): Promise<() => void>;
 }

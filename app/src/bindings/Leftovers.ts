@@ -19,4 +19,8 @@ touched_dirty: Array<string>,
 /**
  * Folder names of product repos with uncommitted changes.
  */
-product_repos_changed: Array<string>, };
+product_repos_changed: Array<string>, 
+/**
+ * Folder names of product repos whose status could not be read.
+ */
+product_repos_unchecked: Array<string>, };

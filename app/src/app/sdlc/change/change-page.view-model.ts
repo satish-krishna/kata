@@ -56,12 +56,17 @@ const DONE: Record<Decision, string> = {
   'accept-spec': 'Accepted spec',
 };
 
-/** The document the page shows for a change: the current stage's, falling back to the last one that exists. */
-function docFor(c: ChangeInfo): 'intent.md' | 'spec.md' | 'plan.md' {
+type DocStem = 'intent' | 'spec' | 'plan';
+
+/**
+ * The document the page shows for a change: the current stage's, falling back to the last one that exists.
+ * A stem, because that is what the backend's `read_doc` accepts; the page shows it as `<stem>.md`.
+ */
+function docFor(c: ChangeInfo): DocStem {
   const step = stageLabel(c.stage).step;
-  if (step === 'plan') return c.plan.exists ? 'plan.md' : c.spec.exists ? 'spec.md' : 'intent.md';
-  if (step === 'spec') return c.spec.exists ? 'spec.md' : 'intent.md';
-  return 'intent.md';
+  if (step === 'plan') return c.plan.exists ? 'plan' : c.spec.exists ? 'spec' : 'intent';
+  if (step === 'spec') return c.spec.exists ? 'spec' : 'intent';
+  return 'intent';
 }
 
 /**
@@ -105,7 +110,7 @@ export class ChangePageViewModel {
 
   readonly docName = computed(() => {
     const c = this.change();
-    return c ? docFor(c) : 'intent.md';
+    return `${c ? docFor(c) : 'intent'}.md`;
   });
   readonly docParts = computed(() => splitFrontMatter(this.doc() ?? ''));
   readonly actions = computed(() => {

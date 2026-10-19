@@ -169,6 +169,16 @@ describe('MockTransport', () => {
       expect((await t.sdlcLeftovers('/m', { head: null, dirty: {} }, [])).discardable).toEqual([]);
     });
 
+    it('reads documents by stem and rejects a file name, like the backend contract', async () => {
+      const t = new MockTransport();
+      expect(await t.sdlcReadDoc('/m', 'claims', '2026-10-12-fnol-photo-upload', 'spec')).toContain('# Spec: photo upload');
+      await expect(t.sdlcReadDoc('/m', 'claims', '2026-10-12-fnol-photo-upload', 'spec.md')).rejects.toThrow(/stem/);
+    });
+
+    it('waits for the engine to exit at once', async () => {
+      expect(await new MockTransport().sdlcWaitRunExit(15000)).toBe(true);
+    });
+
     it('the demo setup folder is not set up until the setup run completes', async () => {
       const t = new MockTransport();
       await t.onRunEvent(() => undefined);

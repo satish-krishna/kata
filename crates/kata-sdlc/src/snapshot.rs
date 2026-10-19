@@ -28,6 +28,8 @@ pub struct Leftovers {
     pub touched_dirty: Vec<String>,
     /// Folder names of product repos with uncommitted changes.
     pub product_repos_changed: Vec<String>,
+    /// Folder names of product repos whose status could not be read.
+    pub product_repos_unchecked: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -140,12 +142,18 @@ pub fn leftovers(
     }
     touched_dirty.sort();
 
+    // One unreadable product repo must not hide the master leftovers.
     let mut product_repos_changed = Vec::new();
+    let mut product_repos_unchecked = Vec::new();
     for repo in product_repos {
-        if !git::run(repo, &["status", "--porcelain"])?.is_empty() {
-            if let Some(name) = repo.file_name() {
-                product_repos_changed.push(name.to_string_lossy().into_owned());
-            }
+        let name = repo
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| repo.to_string_lossy().into_owned());
+        match git::run(repo, &["status", "--porcelain"]) {
+            Ok(out) if !out.is_empty() => product_repos_changed.push(name),
+            Ok(_) => {}
+            Err(_) => product_repos_unchecked.push(name),
         }
     }
 
@@ -154,6 +162,7 @@ pub fn leftovers(
         discardable,
         touched_dirty,
         product_repos_changed,
+        product_repos_unchecked,
     })
 }
 
@@ -247,6 +256,22 @@ mod tests {
         std::fs::write(svc.join("dirty.txt"), "x").unwrap();
         let l = leftovers(&m, &before, &[svc, other]).unwrap();
         assert_eq!(l.product_repos_changed, vec!["svc"]);
+    }
+
+    #[test]
+    fn unreadable_product_repo_is_unchecked_not_fatal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = repo(tmp.path(), "master");
+        let svc = repo(tmp.path(), "svc");
+        let plain = tmp.path().join("plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        let before = take(&m).unwrap();
+        std::fs::write(m.join("new.md"), "x").unwrap();
+        std::fs::write(svc.join("dirty.txt"), "x").unwrap();
+        let l = leftovers(&m, &before, &[plain, svc]).unwrap();
+        assert_eq!(l.discardable, vec!["new.md"]);
+        assert_eq!(l.product_repos_changed, vec!["svc"]);
+        assert_eq!(l.product_repos_unchecked, vec!["plain"]);
     }
 
     #[test]

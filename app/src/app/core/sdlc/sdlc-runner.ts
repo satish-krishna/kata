@@ -7,6 +7,7 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunState } from '../../lib/events';
 import { specFor, transcriptRunId } from '../../lib/sdlc';
+import { masterPath, masterRepo, productRepos as productReposOf } from '../../lib/sdlc-workspace';
 import { LockStore } from '../lock/lock.store';
 import { RunStore } from '../run/run.store';
 import { ToastStore } from '../toast/toast.store';
@@ -23,22 +24,43 @@ export type RunTarget = {
   link: { system: string; change: string; stage: string } | null;
   /** Names the run in the finished/failed toast; defaults to the lock title. */
   label?: string;
+  /**
+   * First-time setup with no master yet: every repo in the workspace folder is snapshotted before the run,
+   * so a run that stops after creating the master can still report what it left behind there.
+   */
+  firstSetup?: { folder: string; repos: string[] };
+  /** The pending branch of a new change, named in the toast when the engine does not exit in time. */
+  pendingBranch?: string;
 };
 
-export type RunOutcome = { state: RunState; runId: string | null; snapshot: Snapshot | null };
+/** `exited` is false when the engine was still alive after the wait: nothing was read or cleaned up then. */
+export type RunOutcome = { state: RunState; runId: string | null; snapshot: Snapshot | null; exited: boolean };
 
 /** What the screen needs to place a new change: the workspace, its master repo path and the product repos. */
 export type ChangeTarget = { workspace: WorkspaceEntry; master: string; productRepos: string[] };
 
+/** The master repo a stopped run is compared against, with its pre-run snapshot. */
+type Baseline = { master: string; snapshot: Snapshot; productRepos: string[] };
 type PendingLeftovers = { master: string; snapshot: Snapshot; data: Leftovers };
 type PendingLink = { workspace_id: string; system: string; change: string; stage: string; started_at: number };
 
 const RESULT_MAX = 120;
+/** How long to wait for the engine process to exit before touching the repo. */
+const EXIT_WAIT_MS = 15000;
 const DIRTY = 'uncommitted changes';
-const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], product_repos_changed: [] };
+const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [] };
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+/** Product repos are named by folder; they sit next to the master repo in the workspace folder. */
+const siblingsOf = (master: string, repos: string[]): string[] => {
+  const root = master.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '');
+  return repos.map((r) => masterPath(root, r));
+};
+const stillStopping = (branch: string | undefined): string =>
+  branch
+    ? `The engine is still stopping. Nothing was cleaned up; the pending branch ${branch} was kept.`
+    : 'The engine is still stopping. Nothing was cleaned up.';
 
 function summarize(result: string | null | undefined): string {
   const flat = (result ?? '').replace(/\s+/g, ' ').trim();
@@ -47,7 +69,7 @@ function summarize(result: string | null | undefined): string {
 }
 
 const hasLeftovers = (l: Leftovers): boolean =>
-  l.new_commits.length + l.discardable.length + l.touched_dirty.length + l.product_repos_changed.length > 0;
+  [l.new_commits, l.discardable, l.touched_dirty, l.product_repos_changed, l.product_repos_unchecked].some((xs) => xs.length > 0);
 
 /**
  * Runs AI-SDLC agent work end to end: snapshot the master repo, hold the lock, link the transcript to its
@@ -85,16 +107,19 @@ export class SdlcRunner {
   async run(title: string, spec: RunSpec, target: RunTarget): Promise<RunOutcome> {
     if (this.isBusy()) {
       this.toasts.error('Another task is already running.');
-      return { state: 'error', runId: null, snapshot: null };
+      return { state: 'error', runId: null, snapshot: null, exited: true };
     }
     let snapshot: Snapshot | null = null;
+    let candidates: Map<string, Snapshot> | null = null;
     if (target.master !== null) {
       try {
         snapshot = await this.transport.sdlcSnapshot(target.master);
       } catch (e) {
         this.toasts.error(`Could not read the master repo before the run: ${message(e)}`);
-        return { state: 'error', runId: null, snapshot: null };
+        return { state: 'error', runId: null, snapshot: null, exited: true };
       }
+    } else if (target.firstSetup) {
+      candidates = await this.snapshotAll(target.firstSetup);
     }
     this.linkTarget = target.link
       ? { workspace_id: target.workspaceId, ...target.link, started_at: Math.floor(Date.now() / 1000) }
@@ -103,13 +128,19 @@ export class SdlcRunner {
     const runId = transcriptRunId(this.runs.events());
     this.linkOnce(runId);
     this.linkTarget = null;
+    // The terminal event reaches the UI before the engine process is gone; a cancelled engine may still be
+    // writing. Nothing reads or changes the repo until it has exited.
+    if (!(await this.engineExited())) {
+      this.toasts.error(stillStopping(target.pendingBranch));
+      return { state, runId, snapshot, exited: false };
+    }
     const label = target.label ?? title;
     if (state === 'success') {
       this.toasts.success(`${label} finished · ${summarize(this.runs.summary()?.result)}`);
     } else {
-      await this.reportStopped(label, state, target, snapshot);
+      await this.reportStopped(label, state, target, snapshot, candidates);
     }
-    return { state, runId, snapshot };
+    return { state, runId, snapshot, exited: true };
   }
 
   /** Discard the chosen leftover paths. The dialog stays open if the discard fails. */
@@ -164,7 +195,9 @@ export class SdlcRunner {
       productRepos,
       link: null,
       label: 'Intent',
+      pendingBranch: branch,
     });
+    if (!out.exited) return;
     await this.leftoversClosed();
     const outcome = await this.finish(master, branch, base, out.snapshot, productRepos);
     if (outcome === null) return;
@@ -216,22 +249,66 @@ export class SdlcRunner {
     }
   }
 
-  private async reportStopped(label: string, state: RunState, target: RunTarget, snapshot: Snapshot | null): Promise<void> {
+  private async reportStopped(
+    label: string,
+    state: RunState,
+    target: RunTarget,
+    snapshot: Snapshot | null,
+    candidates: Map<string, Snapshot> | null,
+  ): Promise<void> {
     const verb = state === 'warning' ? 'stopped' : 'failed';
-    if (target.master === null || snapshot === null) {
+    let where: Baseline | null =
+      target.master !== null && snapshot !== null ? { master: target.master, snapshot, productRepos: target.productRepos } : null;
+    if (where === null && target.firstSetup && candidates) where = await this.masterAfterSetup(target.firstSetup.folder, candidates);
+    if (where === null) {
       this.toasts.error(`${label} ${verb} · there was no master repo to compare against`);
       return;
     }
-    const data = await this.readLeftovers(target.master, snapshot, target.productRepos);
+    const data = await this.readLeftovers(where.master, where.snapshot, where.productRepos);
     const commits = plural(data.new_commits.length, 'commit', 'commits');
     const files = plural(data.discardable.length + data.touched_dirty.length, 'file', 'files');
     this.toasts.error(`${label} ${verb} · ${commits} landed, ${files} left uncommitted`);
-    if (hasLeftovers(data)) this.pending.set({ master: target.master, snapshot, data });
+    if (hasLeftovers(data)) this.pending.set({ master: where.master, snapshot: where.snapshot, data });
+  }
+
+  /** Snapshot every repo of a folder that has no master yet. A repo that cannot be read is skipped. */
+  private async snapshotAll(setup: { folder: string; repos: string[] }): Promise<Map<string, Snapshot>> {
+    const out = new Map<string, Snapshot>();
+    for (const repo of setup.repos) {
+      try {
+        out.set(repo, await this.transport.sdlcSnapshot(masterPath(setup.folder, repo)));
+      } catch {
+        // Not a readable repo: it cannot become the master's baseline, and setup still runs.
+      }
+    }
+    return out;
+  }
+
+  /** After a first setup stopped: the master it created, compared against that repo's pre-run snapshot. */
+  private async masterAfterSetup(folder: string, candidates: Map<string, Snapshot>): Promise<Baseline | null> {
+    try {
+      const scan = await this.transport.sdlcScan(folder);
+      const repo = masterRepo(scan);
+      const snapshot = repo === null ? undefined : candidates.get(repo);
+      if (repo === null || snapshot === undefined) return null;
+      return { master: masterPath(folder, repo), snapshot, productRepos: productReposOf(scan) };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Wait for the engine process to exit. A failed wait counts as "still running": better to touch nothing. */
+  private async engineExited(): Promise<boolean> {
+    try {
+      return await this.transport.sdlcWaitRunExit(EXIT_WAIT_MS);
+    } catch {
+      return false;
+    }
   }
 
   private async readLeftovers(master: string, snapshot: Snapshot, productRepos: string[]): Promise<Leftovers> {
     try {
-      return await this.transport.sdlcLeftovers(master, snapshot, productRepos);
+      return await this.transport.sdlcLeftovers(master, snapshot, siblingsOf(master, productRepos));
     } catch (e) {
       this.toasts.error(`Could not read what the run left behind: ${message(e)}`);
       return EMPTY;

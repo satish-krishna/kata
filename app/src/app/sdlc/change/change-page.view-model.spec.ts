@@ -64,6 +64,14 @@ describe('ChangePageViewModel', () => {
     expect(vm.docParts().body).toContain('Up to 10 photos');
   });
 
+  it('asks the backend for the document by its stem, as read_doc expects', async () => {
+    const transport = new MockTransport();
+    const read = vi.spyOn(transport, 'sdlcReadDoc');
+    const { vm } = setup(FNOL, transport);
+    await ready(vm);
+    expect(read).toHaveBeenCalledWith(expect.any(String), 'claims', FNOL, 'spec');
+  });
+
   it('shows the intent while the spec has not been started', async () => {
     const transport = new MockTransport();
     withStage(transport, FNOL, 'spec-ready', { spec: { exists: false, committed: false, status: null } });

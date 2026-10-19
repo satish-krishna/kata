@@ -75,7 +75,13 @@ export class MockTransport extends KataTransport {
   sdlcContextHealth(_folder: string, _master: string, _system: string, repo: string): Promise<ContextState> { return Promise.resolve(this.sdlc.contextHealth(repo)); }
   sdlcChanges(_master: string, _system: string): Promise<ChangeInfo[]> { return Promise.resolve(this.sdlc.listChanges()); }
   sdlcBranches(_master: string): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }
-  sdlcReadDoc(_master: string, _system: string, change: string, doc: string): Promise<string | null> { return Promise.resolve(this.sdlc.readDoc(change, doc)); }
+  sdlcReadDoc(_master: string, _system: string, change: string, doc: string): Promise<string | null> {
+    try {
+      return Promise.resolve(this.sdlc.readDoc(change, doc));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
   sdlcSnapshot(_master: string): Promise<Snapshot> { return Promise.resolve(this.sdlc.snapshot()); }
   sdlcLeftovers(_master: string, _before: Snapshot, _productRepos: string[]): Promise<Leftovers> { return Promise.resolve(this.sdlc.leftovers()); }
   sdlcDiscard(_master: string, _before: Snapshot, paths: string[]): Promise<void> { this.sdlc.discard(paths); return Promise.resolve(); }
@@ -85,6 +91,8 @@ export class MockTransport extends KataTransport {
   sdlcDecide(_master: string, _system: string, change: string, decision: Decision, _confirmed: boolean): Promise<DecideOutcome> { return Promise.resolve(this.sdlc.decide(change, decision)); }
   sdlcRunLinks(): Promise<RunLink[]> { return Promise.resolve(this.sdlc.runLinks()); }
   sdlcLinkRun(link: RunLink): Promise<void> { this.sdlc.linkRun(link); return Promise.resolve(); }
+  /** The scripted run has no process to wait for. */
+  sdlcWaitRunExit(_timeoutMs: number): Promise<boolean> { return Promise.resolve(true); }
   pickDirectory(): Promise<string | null> { return Promise.resolve(null); }
   pickOpenSpec(): Promise<string | null> { return Promise.resolve(null); }
   pickSaveSpec(): Promise<string | null> { return Promise.resolve(null); }

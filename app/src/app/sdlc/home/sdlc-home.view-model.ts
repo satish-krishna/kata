@@ -14,7 +14,7 @@ import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { inTauri } from '../../lib/mock';
 import { hasAiSdlcPlugin, specFor } from '../../lib/sdlc';
-import { MOCK_SETUP_FOLDER } from '../../lib/sdlc-mock';
+import { DEMO_SETUP_FOLDER } from '../../lib/demo';
 import {
   folderName,
   isSetUp,
@@ -45,6 +45,11 @@ type Health = { missing: boolean; changes: number | null };
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 const nowSecs = (): number => Math.floor(Date.now() / 1000);
+/** One spelling per folder: forward slashes, no trailing separator, case-insensitive (Windows paths). */
+const sameFolder = (a: string, b: string): boolean => {
+  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  return norm(a) === norm(b);
+};
 
 /**
  * The AI-SDLC workspace home: which workspace is open, what it contains, and every action that starts from
@@ -168,7 +173,7 @@ export class SdlcHomeViewModel {
     await Promise.all([this.loadCatalog(), this.loadCurrent(), this.probeOthers()]);
     this.loaded.set(true);
     // Browser dev/review only: never fires under Tauri.
-    if (!inTauri() && demo === 'sdlc-setup') await this.addWorkspace(MOCK_SETUP_FOLDER);
+    if (!inTauri() && demo === 'sdlc-setup') await this.addWorkspace(DEMO_SETUP_FOLDER);
   }
 
   // --- workspace list
@@ -220,7 +225,8 @@ export class SdlcHomeViewModel {
       return;
     }
     if (!folder) return;
-    const existing = this.workspaces().find((w) => w.folder === folder);
+    const dir = folder;
+    const existing = this.workspaces().find((w) => sameFolder(w.folder, dir));
     if (existing) {
       this.toasts.info('That folder is already in the list.');
       await this.selectWorkspace(existing.id);
@@ -228,7 +234,6 @@ export class SdlcHomeViewModel {
     }
 
     const found: { scan: WorkspaceScan | null; contexts: Record<string, ContextState> } = { scan: null, contexts: {} };
-    const dir = folder;
     const outcome = await this.lock.runSteps('Checking workspace', [
       {
         label: 'Scan folder for repos',
@@ -501,6 +506,8 @@ export class SdlcHomeViewModel {
       productRepos: productRepos(scan),
       link: null,
       label: 'Setup',
+      // No master yet: snapshot every repo so a stopped setup can still report what it left in the master it made.
+      firstSetup: master === null ? { folder, repos: scan.repos } : undefined,
     });
     if (out.state !== 'success') return null;
     let after: WorkspaceScan;
@@ -530,8 +537,13 @@ export class SdlcHomeViewModel {
       this.toasts.error(`Could not read the master repo's branch: ${message(e)}`);
       return false;
     }
+    if (info.current === null) {
+      // Detached or unreadable HEAD: there is no telling which branch a commit would land on.
+      this.toasts.error(`${repo} is not on a branch (detached or unknown HEAD). Check out a branch first.`);
+      return false;
+    }
     const target = base ?? info.default_base;
-    if (info.current === null || target === null || info.current === target) return true;
+    if (target === null || info.current === target) return true;
     if (!(await this.confirmSwitch(`Switch ${repo} to ${target} first?`))) return false;
     try {
       await this.transport.sdlcCheckout(master, target);
