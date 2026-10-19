@@ -253,3 +253,27 @@
 .k-toolcard__todo-item { display: flex; gap: var(--space-2); align-items: center; color: var(--text-muted); }
 .k-toolcard__todo-item--completed { color: var(--text-faint); text-decoration: line-through; }
 .k-toolcard__todo-item--in_progress { color: var(--accent-text); }
+
+/* lock panel: full-viewport scrim over the app while long work runs */
+.k-lock { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: var(--space-6); background: var(--scrim); }
+.k-lock__panel { width: min(100%, 640px); max-height: 100%; overflow-y: auto; display: grid; gap: var(--space-4); padding: var(--space-5); background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
+.k-lock__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); }
+.k-lock__title { margin: 0; font: var(--weight-medium) var(--text-md)/1.3 var(--font-sans); color: var(--text-primary); }
+.k-lock__clock { font: var(--font-code-sm); color: var(--text-muted); }
+.k-lock__count { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); color: var(--text-secondary); }
+.k-lock__steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.k-lock__step { display: flex; align-items: baseline; gap: var(--space-3); font: var(--font-code-sm); color: var(--text-muted); }
+.k-lock__dot { flex: none; width: 7px; height: 7px; border-radius: var(--radius-full); border: 1px solid var(--text-faint); }
+.k-lock__step[data-state='running'] { color: var(--text-primary); }
+.k-lock__step[data-state='running'] .k-lock__dot { background: var(--text-faint); }
+.k-lock__step[data-state='done'] .k-lock__dot { background: var(--success); border-color: var(--success); }
+.k-lock__step[data-state='done'] .k-lock__step-state { color: var(--success-text); }
+.k-lock__step[data-state='failed'] .k-lock__dot { background: var(--error); border-color: var(--error); }
+.k-lock__step[data-state='failed'] .k-lock__step-state { color: var(--error-text); }
+.k-lock__step-state { margin-left: auto; flex: none; font-size: var(--text-2xs); color: var(--text-faint); }
+.k-lock__step-detail { flex-basis: 100%; padding-left: var(--space-5); color: var(--text-faint); }
+.k-lock__activity { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-5); font: var(--font-code-sm); }
+.k-lock__activity dt { color: var(--text-faint); }
+.k-lock__activity dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.k-lock__foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+.k-lock__deadline { font: var(--font-code-sm); color: var(--warning-text); }
