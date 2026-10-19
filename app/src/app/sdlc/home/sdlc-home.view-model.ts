@@ -8,6 +8,7 @@ import type { Settings } from '@bindings/Settings';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { LockStore } from '../../core/lock/lock.store';
+import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
@@ -59,6 +60,7 @@ const sameFolder = (a: string, b: string): boolean => {
 export class SdlcHomeViewModel {
   private readonly transport = inject(KataTransport);
   private readonly lock = inject(LockStore);
+  private readonly runs = inject(RunStore);
   private readonly runner = inject(SdlcRunner);
   private readonly modes = inject(ModeStore);
   private readonly toasts = inject(ToastStore);
@@ -137,17 +139,28 @@ export class SdlcHomeViewModel {
     return w ? `Remove ${w.name} from the list? Nothing on disk is touched.` : null;
   });
   readonly leftovers = this.runner.leftovers;
+  /** The session view's Close waits for the run's after-run work and for any leftover decision. */
+  readonly closeBlocked = computed(() => this.runner.settling() || this.runner.leftovers() !== null);
 
-  // --- the lock, as the overlay reads it
+  // --- the lock: Kata's own checks in the overlay, an agent run as the session view
   readonly locked = computed(() => this.lock.active() !== null);
-  readonly lockView = this.lock.active;
+  readonly lockView = computed(() => {
+    const v = this.lock.active();
+    return v?.kind === 'steps' ? v : null;
+  });
   readonly lockElapsed = this.lock.elapsedSecs;
-  readonly lockLastTool = this.lock.lastTool;
-  readonly lockTurn = this.lock.turn;
-  readonly lockModel = this.lock.model;
-  readonly lockAsk = this.lock.ask;
-  readonly lockPermission = this.lock.permission;
   readonly lockDeadline = this.lock.deadlineSecs;
+  /** The agent run that holds the page, live or finished, or null. */
+  readonly session = computed(() => {
+    const v = this.lock.active();
+    const spec = this.lock.spec();
+    return v?.kind === 'run' && spec ? { ...v, spec } : null;
+  });
+  readonly runState = this.runs.state;
+  readonly events = this.runs.events;
+  readonly summary = this.runs.summary;
+  readonly asks = this.runs.asks;
+  readonly permissions = this.runs.permissions;
 
   private readonly masterDir = computed(() => {
     const w = this.current();
@@ -446,6 +459,10 @@ export class SdlcHomeViewModel {
 
   cancelLock(): void {
     this.lock.cancel();
+  }
+
+  closeSession(): void {
+    this.lock.close();
   }
 
   answer(e: { id: string; answers: string[][] }): void {

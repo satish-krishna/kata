@@ -6,7 +6,9 @@ import { ToastStore } from '../toast/toast.store';
 
 export type StepState = 'pending' | 'running' | 'done' | 'failed';
 export type LockStep = { label: string; state: StepState; detail: string | null };
-export type LockView = { kind: 'steps'; title: string; steps: LockStep[] } | { kind: 'run'; title: string };
+/** A run view stays after its run ends (`finished` set) until the operator closes it. */
+export type StepsView = { kind: 'steps'; title: string; steps: LockStep[] };
+export type LockView = StepsView | { kind: 'run'; title: string; finished: RunState | null };
 
 const TERMINAL: readonly RunState[] = ['success', 'warning', 'error'];
 
@@ -15,10 +17,12 @@ function lastWhere<T>(items: readonly T[], test: (item: T) => boolean): T | null
   return null;
 }
 
+const finishedRun = (v: LockView | null): boolean => v?.kind === 'run' && v.finished !== null;
+
 /**
- * The only owner of "is the app locked". Long work runs behind a scrim: either Kata's own
- * checks (a step list with a counter) or one agent run (live activity). Progress is only ever
- * what is known: counts and clocks, never a percentage or an ETA.
+ * The only owner of "is the app locked". Long work is either Kata's own checks (a step list with a
+ * counter, behind a scrim) or one agent run (the session view, which stays after the run ends until
+ * the operator closes it). Progress is only ever what is known: counts and clocks, never a percentage or an ETA.
  */
 @Injectable({ providedIn: 'root' })
 export class LockStore {
@@ -27,32 +31,22 @@ export class LockStore {
 
   private readonly view = signal<LockView | null>(null);
   private readonly elapsed = signal(0);
-  private readonly runModel = signal<string | null>(null);
+  private readonly runSpec = signal<RunSpec | null>(null);
   private readonly answerTimeout = signal<number | null>(null);
   private readonly pendingSince = signal(0);
 
   private cancelRequested = false;
   private waiter: ((state: RunState) => void) | null = null;
+  private closeWaiters: (() => void)[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private startedAt = 0;
 
   readonly active = this.view.asReadonly();
   readonly elapsedSecs = this.elapsed.asReadonly();
+  /** The spec of the run the lock holds, live or finished. */
+  readonly spec = this.runSpec.asReadonly();
 
   private readonly inRun = computed(() => this.view()?.kind === 'run');
-
-  readonly model = computed(() => (this.inRun() ? this.runModel() : null));
-  readonly turn = computed(() => {
-    if (!this.inRun()) return null;
-    const ev = lastWhere(this.runs.events(), (e) => e.type === 'turn' && !e.parent_id);
-    return ev?.type === 'turn' ? ev.n : null;
-  });
-  readonly lastTool = computed(() => {
-    if (!this.inRun()) return null;
-    const ev = lastWhere(this.runs.events(), (e) => e.type === 'tool.use');
-    if (ev?.type !== 'tool.use') return null;
-    return ev.input_summary ? `${ev.name} ${ev.input_summary}` : ev.name;
-  });
   /** The question the run is waiting on, if any. */
   readonly ask = computed<AskRecord | null>(() => (this.inRun() ? lastWhere(this.runs.asks(), (a) => a.answers === null) : null));
   /** The permission check the run is waiting on, if any. */
@@ -118,25 +112,43 @@ export class LockStore {
       this.toasts.error('Another task is already running.');
       return 'error';
     }
-    this.runModel.set(spec.model.id || null);
+    this.runSpec.set(spec);
     this.answerTimeout.set(spec.interactive?.answer_timeout_secs ?? null);
-    this.begin({ kind: 'run', title });
+    this.begin({ kind: 'run', title, finished: null });
     const done = new Promise<RunState>((resolve) => (this.waiter = resolve));
+    let state: RunState | null = null;
     try {
       await this.runs.startRun(spec);
       this.settle(this.runs.state());
-      return await done;
+      state = await done;
+      return state;
     } finally {
       this.waiter = null;
-      this.end();
+      if (state === null) this.end();
+      else this.hold(title, state);
     }
   }
 
-  /** Stops before the next step in a steps lock; cancels the run in a run lock. */
+  /** Resolves once the operator has closed the finished run; at once when no finished run is held. */
+  dismissed(): Promise<void> {
+    if (!finishedRun(this.view())) return Promise.resolve();
+    return new Promise((resolve) => this.closeWaiters.push(resolve));
+  }
+
+  /** Close a finished run's session view and release the lock. A live run cannot be closed, only cancelled. */
+  close(): void {
+    if (!finishedRun(this.view())) return;
+    this.end();
+    const waiters = this.closeWaiters;
+    this.closeWaiters = [];
+    for (const wake of waiters) wake();
+  }
+
+  /** Stops before the next step in a steps lock; cancels a live run in a run lock. */
   cancel(): void {
     const view = this.view();
     if (view?.kind === 'steps') this.cancelRequested = true;
-    else if (view?.kind === 'run') void this.runs.cancelRun();
+    else if (view?.kind === 'run' && view.finished === null) void this.runs.cancelRun();
   }
 
   answer(id: string, answers: string[][]): void {
@@ -169,11 +181,21 @@ export class LockStore {
     this.timer = setInterval(() => this.elapsed.set(Math.floor((Date.now() - this.startedAt) / 1000)), 1000);
   }
 
-  private end(): void {
+  /** The run is over: freeze the clock and keep its view until the operator closes it. */
+  private hold(title: string, finished: RunState): void {
+    this.stopClock();
+    this.view.set({ kind: 'run', title, finished });
+  }
+
+  private stopClock(): void {
     if (this.timer !== null) clearInterval(this.timer);
     this.timer = null;
+  }
+
+  private end(): void {
+    this.stopClock();
     this.view.set(null);
-    this.runModel.set(null);
+    this.runSpec.set(null);
     this.answerTimeout.set(null);
   }
 }

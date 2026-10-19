@@ -47,6 +47,20 @@ describe('SdlcHome', () => {
     expect(run.mock.calls[0][0].name).toBe('sdlc-claims-context');
   });
 
+  it('crosses the seam: a running agent takes the page with the session view and locks every control outside it', async () => {
+    const { container } = await mount();
+    vi.spyOn(TestBed.inject(KataTransport), 'runSpec').mockResolvedValue();
+    container.querySelector<HTMLButtonElement>('[aria-label="Run context for customer-portal"]')!.click();
+    await vi.waitFor(() => expect(container.querySelector('app-sdlc-session')).not.toBeNull());
+    await settle();
+    expect(container.querySelector('app-observe-pane')).not.toBeNull();
+    expect(container.querySelector('app-changes-table')).toBeNull();
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    const outside = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter((b) => !b.closest('app-sdlc-session'));
+    expect(outside.length).toBeGreaterThan(0);
+    expect(outside.filter((b) => !b.disabled).map((b) => b.textContent!.trim() || b.getAttribute('aria-label'))).toEqual([]);
+  });
+
   it('is a blocking empty state naming where kata looked, with every workspace action withheld, when the plugin is missing', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'catalog').mockResolvedValue(seedCatalog);

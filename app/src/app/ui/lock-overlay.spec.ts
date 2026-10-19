@@ -1,9 +1,9 @@
 import { TestBed } from '@angular/core/testing';
 import { render } from '../../testing/render';
-import type { LockView } from '../core/lock/lock.store';
+import type { StepsView } from '../core/lock/lock.store';
 import { LockOverlay } from './lock-overlay';
 
-const RUN: LockView = { kind: 'run', title: 'Reading context' };
+const STEPS: StepsView = { kind: 'steps', title: 'Checking the workspace', steps: [{ label: 'Scan', state: 'running', detail: null }] };
 const dialog = () => document.body.querySelector('[role="dialog"]');
 const settle = async () => {
   TestBed.tick();
@@ -19,17 +19,17 @@ describe('LockOverlay', () => {
 
   it('opens as a labelled modal dialog when a view arrives', async () => {
     const { fixture } = await render(LockOverlay, { view: null });
-    fixture.componentRef.setInput('view', RUN);
+    fixture.componentRef.setInput('view', STEPS);
     await settle();
     const d = dialog()!;
     expect(d).not.toBeNull();
     expect(d.getAttribute('aria-modal')).toBe('true');
-    expect(document.getElementById(d.getAttribute('aria-labelledby')!)?.textContent).toBe('Reading context');
-    expect(d.textContent).toContain('Reading context');
+    expect(document.getElementById(d.getAttribute('aria-labelledby')!)?.textContent).toBe('Checking the workspace');
+    expect(d.textContent).toContain('Checking the workspace');
   });
 
   it('stays open on Escape', async () => {
-    await render(LockOverlay, { view: RUN });
+    await render(LockOverlay, { view: STEPS });
     await settle();
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     dialog()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -38,7 +38,7 @@ describe('LockOverlay', () => {
   });
 
   it('stays open on a backdrop click', async () => {
-    await render(LockOverlay, { view: RUN });
+    await render(LockOverlay, { view: STEPS });
     await settle();
     document.body.querySelector<HTMLElement>('.cdk-overlay-backdrop')?.click();
     await settle();
@@ -46,7 +46,7 @@ describe('LockOverlay', () => {
   });
 
   it('closes when the view clears', async () => {
-    const { fixture } = await render(LockOverlay, { view: RUN });
+    const { fixture } = await render(LockOverlay, { view: STEPS });
     await settle();
     fixture.componentRef.setInput('view', null);
     await settle();
@@ -55,7 +55,7 @@ describe('LockOverlay', () => {
   });
 
   it('emits cancel from the panel', async () => {
-    const { fixture } = await render(LockOverlay, { view: RUN });
+    const { fixture } = await render(LockOverlay, { view: STEPS });
     await settle();
     const cancel = vi.fn();
     fixture.componentInstance.cancel.subscribe(cancel);

@@ -91,6 +91,10 @@ export class SdlcRunner {
   /** What the last non-successful run left behind; the screen's leftover dialog renders it. */
   readonly leftovers = computed(() => this.pending()?.data ?? null);
 
+  private readonly afterRun = signal(false);
+  /** A run has ended but its after-run work (engine exit, report) is still going: the session view cannot close yet. */
+  readonly settling = this.afterRun.asReadonly();
+
   constructor() {
     // Link the transcript the moment its id shows up, not at the end: a run that never ends still gets linked.
     effect(() => {
@@ -124,23 +128,38 @@ export class SdlcRunner {
     this.linkTarget = target.link
       ? { workspace_id: target.workspaceId, ...target.link, started_at: Math.floor(Date.now() / 1000) }
       : null;
-    const state = await this.lock.runAgent(title, spec);
+    // Settling from before the run ends, so the finished view never shows an enabled Close ahead of the work below.
+    this.afterRun.set(true);
+    let state: RunState;
+    try {
+      state = await this.lock.runAgent(title, spec);
+    } catch (e) {
+      this.afterRun.set(false);
+      throw e;
+    }
     const runId = transcriptRunId(this.runs.events());
     this.linkOnce(runId);
     this.linkTarget = null;
-    // The terminal event reaches the UI before the engine process is gone; a cancelled engine may still be
-    // writing. Nothing reads or changes the repo until it has exited.
-    if (!(await this.engineExited())) {
-      this.toasts.error(stillStopping(target.pendingBranch));
-      return { state, runId, snapshot, exited: false };
+    // The session view stays up after the run: the after-run work below happens under it, and the caller
+    // (finish a branch, navigate) carries on only once the operator has closed it.
+    try {
+      // The terminal event reaches the UI before the engine process is gone; a cancelled engine may still be
+      // writing. Nothing reads or changes the repo until it has exited.
+      if (!(await this.engineExited())) {
+        this.toasts.error(stillStopping(target.pendingBranch));
+        return { state, runId, snapshot, exited: false };
+      }
+      const label = target.label ?? title;
+      if (state === 'success') {
+        this.toasts.success(`${label} finished · ${summarize(this.runs.summary()?.result)}`);
+      } else {
+        await this.reportStopped(label, state, target, snapshot, candidates);
+      }
+      return { state, runId, snapshot, exited: true };
+    } finally {
+      this.afterRun.set(false);
+      await this.lock.dismissed();
     }
-    const label = target.label ?? title;
-    if (state === 'success') {
-      this.toasts.success(`${label} finished · ${summarize(this.runs.summary()?.result)}`);
-    } else {
-      await this.reportStopped(label, state, target, snapshot, candidates);
-    }
-    return { state, runId, snapshot, exited: true };
   }
 
   /** Discard the chosen leftover paths. The dialog stays open if the discard fails. */

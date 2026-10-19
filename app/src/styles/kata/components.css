@@ -274,5 +274,5 @@
 .k-lock__activity { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-5); font: var(--font-code-sm); }
 .k-lock__activity dt { color: var(--text-faint); }
 .k-lock__activity dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
-.k-lock__foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
+.k-lock__foot { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-4); }
 .k-lock__deadline { font: var(--font-code-sm); color: var(--warning-text); }

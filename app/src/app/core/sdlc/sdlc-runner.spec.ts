@@ -52,6 +52,9 @@ function setup(agent: (spec: RunSpec) => Promise<RunState> | RunState = () => 's
       fake.calls.push('agent');
       return agent(spec);
     }),
+    dismissed: vi.fn(async () => {
+      fake.calls.push('dismissed');
+    }),
   };
   const state = signal('idle');
   const toasts = { error: vi.fn(), success: vi.fn(), info: vi.fn() };
@@ -71,7 +74,7 @@ describe('SdlcRunner.run', () => {
   it('snapshots before the agent run and toasts the result on success', async () => {
     const ctx = setup(() => { ctx.summary.set({ result: 'Wrote intent.md' }); return 'success'; });
     const out = await ctx.runner.run('Running setup', seedSpec(), { ...TARGET, label: 'Setup' });
-    expect(ctx.fake.calls).toEqual(['snapshot', 'agent', 'wait']);
+    expect(ctx.fake.calls).toEqual(['snapshot', 'agent', 'wait', 'dismissed']);
     expect(ctx.fake.sdlcWaitRunExit).toHaveBeenCalledWith(15000);
     expect(out.state).toBe('success');
     expect(ctx.toasts.success).toHaveBeenCalledWith('Setup finished · Wrote intent.md');
@@ -130,7 +133,7 @@ describe('SdlcRunner.run', () => {
     const { runner, fake, toasts } = setup(() => 'warning');
     fake.leftovers = { ...EMPTY, new_commits: ['docs: a'], discardable: ['intent.md', 'x.txt'] };
     await runner.run('Running setup', seedSpec(), TARGET);
-    expect(fake.calls).toEqual(['snapshot', 'agent', 'wait', 'leftovers']);
+    expect(fake.calls).toEqual(['snapshot', 'agent', 'wait', 'leftovers', 'dismissed']);
     expect(fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/claims-intent', SNAPSHOT, ['/ws/claims-core']);
     expect(runner.leftovers()?.discardable).toEqual(['intent.md', 'x.txt']);
     expect(toasts.error).toHaveBeenCalledWith('Running setup stopped · 1 commit landed, 2 files left uncommitted');
@@ -167,6 +170,44 @@ describe('SdlcRunner.run', () => {
     await runner.run('Running setup', seedSpec(), TARGET);
     expect(runner.leftovers()).toBeNull();
     expect(toasts.error).toHaveBeenCalledWith('Running setup failed · 0 commits landed, 0 files left uncommitted');
+  });
+
+  it('returns only once the operator has closed the session view, after the toast', async () => {
+    const ctx = setup(() => 'success');
+    let close!: () => void;
+    ctx.lock.dismissed.mockImplementationOnce(() => new Promise<void>((r) => (close = r)));
+    let done = false;
+    const p = ctx.runner.run('Reading context', seedSpec(), TARGET).then(() => (done = true));
+    await vi.waitFor(() => expect(ctx.lock.dismissed).toHaveBeenCalled());
+    expect(ctx.toasts.success).toHaveBeenCalled();
+    expect(done).toBe(false);
+    close();
+    await p;
+    expect(done).toBe(true);
+  });
+
+  it('is settling from the end of the run until its after-run work is done', async () => {
+    const ctx = setup(() => 'warning');
+    let exit!: (v: boolean) => void;
+    ctx.fake.sdlcWaitRunExit.mockImplementationOnce(() => new Promise<boolean>((r) => (exit = r)));
+    let close!: () => void;
+    ctx.lock.dismissed.mockImplementationOnce(() => new Promise<void>((r) => (close = r)));
+    expect(ctx.runner.settling()).toBe(false);
+    const p = ctx.runner.run('Reading context', seedSpec(), TARGET);
+    await vi.waitFor(() => expect(ctx.fake.sdlcWaitRunExit).toHaveBeenCalled());
+    expect(ctx.runner.settling()).toBe(true);
+    exit(true);
+    await vi.waitFor(() => expect(ctx.lock.dismissed).toHaveBeenCalled());
+    expect(ctx.runner.settling()).toBe(false);
+    close();
+    await p;
+  });
+
+  it('waits for the close even when the engine is still stopping', async () => {
+    const { runner, fake, lock } = setup(() => 'warning');
+    fake.sdlcWaitRunExit.mockResolvedValueOnce(false);
+    await runner.run('Reading context', seedSpec(), TARGET);
+    expect(lock.dismissed).toHaveBeenCalled();
   });
 
   it("names the run's own result in the failure toast", async () => {
@@ -210,7 +251,7 @@ describe('SdlcRunner.run', () => {
       ...TARGET, master: null, link: null, productRepos: [], firstSetup: { folder: '/ws', repos: ['a-intent', 'a-core'] },
     });
     expect(fake.sdlcSnapshot.mock.calls.map((c) => c[0])).toEqual(['/ws/a-intent', '/ws/a-core']);
-    expect(fake.calls).toEqual(['snapshot', 'snapshot', 'agent', 'wait', 'scan', 'leftovers']);
+    expect(fake.calls).toEqual(['snapshot', 'snapshot', 'agent', 'wait', 'scan', 'leftovers', 'dismissed']);
     expect(fake.sdlcScan).toHaveBeenCalledWith('/ws');
     expect(fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/a-intent', before.a, ['/ws/a-core']);
     expect(runner.leftovers()?.discardable).toEqual(['.ai-sdlc.json']);
@@ -261,7 +302,7 @@ describe('SdlcRunner.newChange', () => {
     const { runner, fake, lock, navigate } = setup();
     fake.finishResults.push(async () => ({ renamed: { branch: 'change/2026-10-18-x', change: '2026-10-18-x' } }));
     await runner.newChange(target, 'claims', 'flag fraud');
-    expect(fake.calls.filter((c) => c !== 'link')).toEqual(['start', 'snapshot', 'agent', 'wait', 'finish']);
+    expect(fake.calls.filter((c) => c !== 'link')).toEqual(['start', 'snapshot', 'agent', 'wait', 'dismissed', 'finish']);
     expect(fake.sdlcStartChange).toHaveBeenCalledWith('/ws/claims-intent', 'main');
     expect(fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/claims-intent', 'change/pending-1', 'main');
     const spec = lock.runAgent.mock.calls[0][1];

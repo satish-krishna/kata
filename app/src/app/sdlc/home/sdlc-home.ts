@@ -8,6 +8,7 @@ import { ChangesTable } from '../../ui/changes-table';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
 import { LeftoverDialog } from '../../ui/leftover-dialog';
 import { LockOverlay } from '../../ui/lock-overlay';
+import { SdlcSession } from '../../ui/sdlc-session';
 import { NewChangeDialog } from '../../ui/new-change-dialog';
 import { ReposTable } from '../../ui/repos-table';
 import { SdlcSettingsDialog } from '../../ui/sdlc-settings-dialog';
@@ -21,6 +22,7 @@ import { SdlcHomeViewModel } from './sdlc-home.view-model';
     NgIcon,
     HlmButtonImports,
     SdlcToolbar,
+    SdlcSession,
     ChangesTable,
     ReposTable,
     AddWorkspaceDialog,

@@ -238,7 +238,7 @@ describe('ChangePageViewModel', () => {
       const { vm, runAgent, transport } = setup(FNOL);
       await ready(vm);
       const decide = vi.spyOn(transport, 'sdlcDecide');
-      vi.spyOn(TestBed.inject(LockStore), 'active').mockReturnValue({ kind: 'run', title: 'x' });
+      vi.spyOn(TestBed.inject(LockStore), 'active').mockReturnValue({ kind: 'run', title: 'x', finished: null });
       await vm.act('accept-spec');
       await vm.act('continue-spec');
       expect(decide).not.toHaveBeenCalled();

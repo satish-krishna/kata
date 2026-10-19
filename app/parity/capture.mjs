@@ -43,7 +43,7 @@ async function newSpec(page) {
 
 const CHANGE_SPEC = '/sdlc/claims/2026-10-12-fnol-photo-upload';
 
-// The lock overlay is a dialog; its questionnaire is the first thing the scripted run asks.
+// An AI-SDLC agent run takes the page as the session view; its questionnaire is the first thing the scripted run asks.
 async function lockAsk(page) {
   await page.locator('fieldset[hlmQuestionnaireItem]:visible').first().waitFor({ timeout: 15000 });
 }
@@ -86,8 +86,8 @@ export const VIEWS = [
   { name: 'sdlc-switcher-open', path: '/sdlc', ready: '.k-rowlink',
     act: async (p) => { await p.getByRole('button', { name: 'Switch workspace' }).click(); await p.getByRole('menuitemradio').first().waitFor({ state: 'visible' }); } },
   { name: 'sdlc-add-workspace-steps', path: '/sdlc?demo=sdlc-setup', ready: '.k-lock__steps' },
-  { name: 'sdlc-lock-ask', path: CHANGE_SPEC + '?demo=sdlc', ready: '.k-lock', act: lockAsk },
-  { name: 'sdlc-leftovers', path: CHANGE_SPEC + '?demo=sdlc', ready: '.k-lock', act: cancelToLeftovers },
+  { name: 'sdlc-lock-ask', path: CHANGE_SPEC + '?demo=sdlc', ready: '.k-session', act: lockAsk },
+  { name: 'sdlc-leftovers', path: CHANGE_SPEC + '?demo=sdlc', ready: '.k-session', act: cancelToLeftovers },
   { name: 'sdlc-change-spec', path: CHANGE_SPEC, ready: '.k-doc' },
   { name: 'sdlc-change-plan', path: '/sdlc/claims/2026-10-09-adjuster-reassign', ready: '.k-doc' },
   { name: 'hover-secondary', path: '/', ready: '.wb-toolbar',

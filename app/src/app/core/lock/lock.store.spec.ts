@@ -97,15 +97,55 @@ describe('LockStore.runSteps', () => {
 });
 
 describe('LockStore.runAgent', () => {
-  it('locks as a run and resolves success when the run completes', async () => {
+  it('locks as a run and holds the finished run until the operator closes it', async () => {
     const { store, fake } = setup();
     const p = store.runAgent('Reading context', seedSpec());
     await flush();
-    expect(store.active()).toEqual({ kind: 'run', title: 'Reading context' });
+    expect(store.active()).toEqual({ kind: 'run', title: 'Reading context', finished: null });
     fake.listeners[0](completed(0));
     await flush();
     expect(await p).toBe('success');
+    expect(store.active()).toEqual({ kind: 'run', title: 'Reading context', finished: 'success' });
+    let dismissed = false;
+    const d = store.dismissed().then(() => (dismissed = true));
+    await flush();
+    expect(dismissed).toBe(false);
+    store.close();
+    await d;
     expect(store.active()).toBeNull();
+  });
+
+  it('ignores close while the run is still going', async () => {
+    const { store, fake } = setup();
+    const p = store.runAgent('Reading context', seedSpec());
+    await flush();
+    store.close();
+    expect(store.active()).toEqual({ kind: 'run', title: 'Reading context', finished: null });
+    fake.listeners[0](completed(0));
+    await flush();
+    await p;
+  });
+
+  it('resolves dismissed at once when no finished run is held', async () => {
+    const { store } = setup();
+    await expect(store.dismissed()).resolves.toBeUndefined();
+  });
+
+  it('stops the clock when the run ends', async () => {
+    vi.useFakeTimers();
+    try {
+      const { store, fake } = setup();
+      const p = store.runAgent('Reading context', seedSpec());
+      await vi.advanceTimersByTimeAsync(3000);
+      fake.listeners[0](completed(0));
+      await vi.advanceTimersByTimeAsync(10);
+      await p;
+      const at = store.elapsedSecs();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(store.elapsedSecs()).toBe(at);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('resolves error on a non-zero exit', async () => {
@@ -127,30 +167,17 @@ describe('LockStore.runAgent', () => {
     expect(await p).toBe('warning');
   });
 
-  it('derives model, turn and last tool from the run', async () => {
-    const { store, fake } = setup();
-    const p = store.runAgent('Reading context', seedSpec());
-    await flush();
-    expect(store.model()).toBe('claude-sonnet-4-6');
-    expect(store.turn()).toBeNull();
-    fake.listeners[0]({ type: 'turn', n: 2 });
-    fake.listeners[0]({ type: 'tool.use', id: 't1', name: 'Read', input_summary: 'src/a.ts' } as unknown as KataEvent);
-    expect(store.turn()).toBe(2);
-    expect(store.lastTool()).toBe('Read src/a.ts');
-    fake.listeners[0](completed(0));
-    await flush();
-    await p;
-  });
-
-  it('reports no model when the spec leaves the model id empty', async () => {
+  it('exposes the spec of the run it holds', async () => {
     const { store, fake } = setup();
     const spec = seedSpec();
-    const p = store.runAgent('Reading context', { ...spec, model: { ...spec.model, id: '' } });
+    const p = store.runAgent('Reading context', spec);
     await flush();
-    expect(store.model()).toBeNull();
+    expect(store.spec()).toEqual(spec);
     fake.listeners[0](completed(0));
     await flush();
     await p;
+    store.close();
+    expect(store.spec()).toBeNull();
   });
 
   it('counts down to the answer deadline from the moment an ask arrives', async () => {
