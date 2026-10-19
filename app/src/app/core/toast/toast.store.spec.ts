@@ -20,6 +20,12 @@ describe('ToastStore', () => {
     expect(spy).toHaveBeenCalledWith('done', expect.objectContaining({ duration: 6000 }));
   });
 
+  it('info delegates to sonner with the message and the 6000 ms lifetime', () => {
+    const spy = vi.spyOn(toast, 'info');
+    TestBed.inject(ToastStore).info('fyi');
+    expect(spy).toHaveBeenCalledWith('fyi', expect.objectContaining({ duration: 6000 }));
+  });
+
   it('error returns the sonner id and each call is its own toast', () => {
     const store = TestBed.inject(ToastStore);
     const a = store.error('boom one');

@@ -11,6 +11,11 @@ export class ToastStore {
     return toast.success(message, { duration: TTL_MS });
   }
 
+  /** Raise a neutral note: something the operator should know that is neither a success nor a failure. */
+  info(message: string): string | number {
+    return toast.info(message, { duration: TTL_MS });
+  }
+
   /** Raise an error toast. Errors are announced assertively, matching the `role="alert"` the old toaster had. */
   error(message: string): string | number {
     return toast.error(message, { duration: TTL_MS, important: true });
