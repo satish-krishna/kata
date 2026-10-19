@@ -5,6 +5,8 @@ import { App } from './app';
 import { ToastStore } from './core/toast/toast.store';
 
 describe('App toasts', () => {
+  // Spec files share one worker and its modules (isolate is off), so a toast another file raised can still be in sonner's list.
+  beforeEach(() => toastState.reset());
   afterEach(() => toastState.reset());
 
   it('shows two errors raised after the toaster renders, each with a named dismiss control', async () => {
