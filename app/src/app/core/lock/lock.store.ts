@@ -118,7 +118,7 @@ export class LockStore {
       this.toasts.error('Another task is already running.');
       return 'error';
     }
-    this.runModel.set(spec.model.id ?? null);
+    this.runModel.set(spec.model.id || null);
     this.answerTimeout.set(spec.interactive?.answer_timeout_secs ?? null);
     this.begin({ kind: 'run', title });
     const done = new Promise<RunState>((resolve) => (this.waiter = resolve));

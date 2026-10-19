@@ -142,6 +142,17 @@ describe('LockStore.runAgent', () => {
     await p;
   });
 
+  it('reports no model when the spec leaves the model id empty', async () => {
+    const { store, fake } = setup();
+    const spec = seedSpec();
+    const p = store.runAgent('Reading context', { ...spec, model: { ...spec.model, id: '' } });
+    await flush();
+    expect(store.model()).toBeNull();
+    fake.listeners[0](completed(0));
+    await flush();
+    await p;
+  });
+
   it('counts down to the answer deadline from the moment an ask arrives', async () => {
     vi.useFakeTimers();
     try {

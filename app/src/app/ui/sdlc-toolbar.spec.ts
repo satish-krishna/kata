@@ -14,7 +14,7 @@ const byLabel = (c: HTMLElement, label: string) => c.querySelector<HTMLButtonEle
 describe('SdlcToolbar', () => {
   it('shows the ai-sdlc badge, the workspace, and the master branch in mono', async () => {
     const { container } = await render(SdlcToolbar, inputs());
-    expect(byLabel(container, 'Switch mode').textContent!.trim()).toBe('ai-sdlc');
+    expect(byLabel(container, 'Switch mode (ai-sdlc)').textContent!.trim()).toBe('ai-sdlc');
     expect(container.textContent).toContain('acme-claims');
     expect(container.querySelector('[data-testid="branch"]')!.textContent!.trim()).toBe('main');
   });
@@ -34,14 +34,14 @@ describe('SdlcToolbar', () => {
     const got: string[] = [];
     fixture.componentInstance.switchMode.subscribe(() => got.push('mode'));
     fixture.componentInstance.openSettings.subscribe(() => got.push('settings'));
-    byLabel(container, 'Switch mode').click();
+    byLabel(container, 'Switch mode (ai-sdlc)').click();
     byLabel(container, 'AI-SDLC settings').click();
     expect(got).toEqual(['mode', 'settings']);
   });
 
   it('disables the mode badge and settings while locked', async () => {
     const { container } = await render(SdlcToolbar, inputs({ locked: true }));
-    expect(byLabel(container, 'Switch mode').disabled).toBe(true);
+    expect(byLabel(container, 'Switch mode (ai-sdlc)').disabled).toBe(true);
     expect(byLabel(container, 'AI-SDLC settings').disabled).toBe(true);
   });
 
@@ -66,7 +66,7 @@ describe('SdlcToolbar', () => {
     expect(container.querySelector('button[aria-label="Switch workspace"]')).toBeNull();
     expect(container.querySelector('[data-testid="branch"]')).toBeNull();
     expect(container.querySelector('button[aria-label="Add workspace"]')).toBeNull();
-    expect(byLabel(container, 'Switch mode')).not.toBeNull();
+    expect(byLabel(container, 'Switch mode (ai-sdlc)')).not.toBeNull();
   });
 
   it('projects the primary action', async () => {

@@ -67,7 +67,7 @@ import { RouterLink } from '@angular/router';
         class="k-modebadge"
         type="button"
         title="Switch mode"
-        aria-label="Switch mode"
+        aria-label="Switch mode (workbench)"
         [disabled]="running() || modeSwitchDisabled()"
         (click)="switchMode.emit()"
       >workbench</button>

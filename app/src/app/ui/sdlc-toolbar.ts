@@ -24,7 +24,7 @@ import { WorkspaceSwitcher } from './workspace-switcher';
         class="k-modebadge"
         type="button"
         title="Switch mode"
-        aria-label="Switch mode"
+        aria-label="Switch mode (ai-sdlc)"
         [disabled]="locked()"
         (click)="switchMode.emit()"
       >ai-sdlc</button>

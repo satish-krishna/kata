@@ -47,6 +47,12 @@ describe('LockPanel', () => {
     expect(text).toContain('Read src/a.ts');
   });
 
+  it('shows a dash, not a blank, when the run names no model', async () => {
+    const { container } = await mount({ view: RUN, turn: 1, model: '', lastTool: null });
+    const dd = [...container.querySelectorAll('.k-lock__activity dd')].map((d) => d.textContent!.trim());
+    expect(dd[1]).toBe('-');
+  });
+
   it('shows the ask card and the deadline footer', async () => {
     const { container } = await mount({ view: RUN, ask: ASK, deadlineSecs: 125 });
     expect(container.querySelector('app-ask-panel')).not.toBeNull();

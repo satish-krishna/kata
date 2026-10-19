@@ -37,7 +37,7 @@ import { PermissionPanel } from './permission-panel';
           <dt>turn</dt>
           <dd>{{ turn() ?? '-' }}</dd>
           <dt>model</dt>
-          <dd>{{ model() ?? '-' }}</dd>
+          <dd>{{ model() || '-' }}</dd>
           <dt>last tool</dt>
           <dd>{{ lastTool() ?? '-' }}</dd>
         </dl>

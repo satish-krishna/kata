@@ -76,7 +76,7 @@ describe('Toolbar', () => {
 
   it('shows a workbench mode badge that emits switchMode', async () => {
     const { fixture, container } = await render(Toolbar, base, routes);
-    const badge = labeled(container, 'Switch mode') as HTMLButtonElement;
+    const badge = labeled(container, 'Switch mode (workbench)') as HTMLButtonElement;
     expect(badge.textContent?.trim()).toBe('workbench');
     let n = 0;
     fixture.componentInstance.switchMode.subscribe(() => n++);
@@ -88,7 +88,7 @@ describe('Toolbar', () => {
     const disabled = async (inputs: Record<string, unknown>) => {
       TestBed.resetTestingModule();
       const { container } = await render(Toolbar, { ...base, ...inputs }, routes);
-      return (labeled(container, 'Switch mode') as HTMLButtonElement).disabled;
+      return (labeled(container, 'Switch mode (workbench)') as HTMLButtonElement).disabled;
     };
     expect(await disabled({ running: true })).toBe(true);
     expect(await disabled({ modeSwitchDisabled: true })).toBe(true);
