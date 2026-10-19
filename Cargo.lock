@@ -1799,6 +1799,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kata-sdlc"
+version = "3.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serial_test",
+ "tempfile",
+ "thiserror 1.0.69",
+ "ts-rs",
+]
+
+[[package]]
 name = "keyboard-types"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
