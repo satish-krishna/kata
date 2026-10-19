@@ -5,6 +5,8 @@ import type { Question, QuestionOption } from '../lib/events';
 /** Read-only view of a settled ask: the questions with what the operator answered. */
 @Component({
   selector: 'app-ask-summary',
+  // The questions are items of the card body's column, so its gap separates them.
+  host: { class: 'contents' },
   template: `
     @for (q of questions(); track $index; let i = $index) {
       <div class="k-ask__q">
