@@ -92,7 +92,7 @@ pub fn derive_stage(intent: &DocState, spec: &DocState, plan: &DocState) -> Stag
 }
 
 /// `^\d{4}-\d{2}-\d{2}-[a-z0-9-]+$`, matched by hand.
-fn is_change_name(name: &str) -> bool {
+pub(crate) fn is_change_name(name: &str) -> bool {
     let b = name.as_bytes();
     if b.len() < 12 {
         return false;
@@ -166,13 +166,7 @@ pub fn list(master: &Path, system: &str) -> Vec<ChangeInfo> {
         .collect()
 }
 
-/// The checked-out branch; `None` on a detached or unborn HEAD.
-pub fn current_branch(master: &Path) -> Option<String> {
-    git::run(master, &["rev-parse", "--verify", "-q", "HEAD"]).ok()?;
-    git::run(master, &["symbolic-ref", "--short", "-q", "HEAD"])
-        .ok()
-        .filter(|b| !b.is_empty())
-}
+pub use crate::branch::current_branch;
 
 /// `change/*` branches other than the current one and `change/pending-*`, without the `change/` prefix.
 pub fn other_change_branches(master: &Path) -> Vec<String> {

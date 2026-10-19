@@ -41,14 +41,14 @@ pub enum DiscardError {
 }
 
 /// One `git status` entry: the two-letter code and the repo-relative path.
-struct Entry {
-    xy: String,
-    path: String,
+pub(crate) struct Entry {
+    pub(crate) xy: String,
+    pub(crate) path: String,
 }
 
 /// Parse `git status --porcelain=v1 -uall -z`. A rename or copy yields its new path
 /// (code kept) and its origin (reported as a deletion).
-fn status_entries(dir: &Path) -> Result<Vec<Entry>, GitError> {
+pub(crate) fn status_entries(dir: &Path) -> Result<Vec<Entry>, GitError> {
     let out = git::run(dir, &["status", "--porcelain=v1", "-uall", "-z"])?;
     let mut tokens = out.split('\0').filter(|t| !t.is_empty());
     let mut entries = Vec::new();
