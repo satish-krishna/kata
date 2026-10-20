@@ -429,4 +429,34 @@ describe('BuildDriver', () => {
     expect(w.log).toEqual(['app', 'api']);
     expect(w.driver.going().has('app')).toBe(false);
   });
+
+  it.each([
+    [124, null],
+    [123, null],
+    [1, 'the agent crashed'],
+  ])('a run that recorded every task for its repository is finished whatever its exit code (exit %s)', async (exit, error) => {
+    const w = world([
+      { id: 'T1', repo: 'app' },
+      { id: 'T2', repo: 'app' },
+    ]);
+    w.heads['app'] = 'a1';
+    await w.driver.begin(3600);
+    await flush();
+    await w.of('app')[0].end(['T1', 'T2'], { exit, error });
+    expect(w.driver.stopped().size).toBe(0);
+    expect(w.driver.phase()).toBe('reviewing');
+    expect(w.log).toEqual(['app', 'review']);
+  });
+
+  it('a round that recorded every task but failed stays stopped (R6.1, R8.1)', async () => {
+    const w = world([
+      { id: 'T1', repo: 'app' },
+      { id: 'T2', repo: 'app' },
+    ]);
+    await w.driver.begin(3600, { repo: 'app', instructions: 'finish it' });
+    await flush();
+    await w.of('app')[0].end(['T1', 'T2'], { exit: 124 });
+    expect(w.driver.stopped().has('app')).toBe(true);
+    expect(w.driver.phase()).toBe('stopped');
+  });
 });
