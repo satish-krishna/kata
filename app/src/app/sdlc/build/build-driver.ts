@@ -223,8 +223,9 @@ export class BuildDriver {
     if (cancelled) {
       const current = now?.state.kind === 'ready' ? now.state.task : task;
       if (now?.state.kind !== 'done') this.markStopped(repo, current, stopMessage(end.exit, end.error));
-    } else if (task === '' ? failed : !recorded && !blocked) {
-      this.markStopped(repo, task, stopMessage(end.exit, end.error));
+    } else if (task === '' ? failed : failed || (!recorded && !blocked)) {
+      const current = now?.state.kind === 'ready' || now?.state.kind === 'waiting' ? now.state.task : task;
+      this.markStopped(repo, current, stopMessage(end.exit, end.error));
     }
   }
 }
