@@ -4,6 +4,7 @@ import type { KataEvent } from '../../lib/events';
 import { seedSpec } from '../../lib/mock';
 import { KataTransport } from '../transport/kata-transport';
 import { ToastStore } from '../toast/toast.store';
+import { RunStore } from '../run/run.store';
 import { LockStore, type LockView } from './lock.store';
 
 class FakeTransport {
@@ -198,5 +199,136 @@ describe('LockStore.runAgent', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+class MultiTransport {
+  callbacks: ((runId: string, ev: KataEvent) => void)[] = [];
+  private next = 0;
+  runSpec = vi.fn((..._a: unknown[]) => Promise.resolve(`run-${String.fromCharCode(97 + this.next++)}`));
+  cancelRun = vi.fn((_id: string): Promise<void> => Promise.resolve());
+  submitAnswer = vi.fn((..._a: unknown[]) => Promise.resolve());
+  submitDecision = vi.fn((..._a: unknown[]) => Promise.resolve());
+  onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
+    this.callbacks.push(cb);
+    return Promise.resolve(() => undefined);
+  }
+  emit(runId: string, ev: KataEvent) {
+    for (const cb of [...this.callbacks]) cb(runId, ev);
+  }
+}
+
+function setupBuild() {
+  const fake = new MultiTransport();
+  const toasts = { error: vi.fn(), success: vi.fn() };
+  TestBed.configureTestingModule({
+    providers: [
+      { provide: KataTransport, useValue: fake },
+      { provide: ToastStore, useValue: toasts },
+    ],
+  });
+  return { store: TestBed.inject(LockStore), runs: TestBed.inject(RunStore), fake, toasts };
+}
+const ask = (id: string): KataEvent => ({ type: 'ask.requested', id, questions: [] }) as unknown as KataEvent;
+
+describe('LockStore build view', () => {
+  it('a build holds the lock across its runs', async () => {
+    const { store, runs, toasts } = setupBuild();
+    expect(store.beginBuild('Building')).toBe(true);
+    expect(store.active()).toEqual({ kind: 'build', title: 'Building', runs: [], finished: false });
+    const a = (await runs.startRun(seedSpec(), 'build:s/c'))!;
+    store.addRun(a);
+    const b = (await runs.startRun(seedSpec(), 'build:s/c'))!;
+    store.addRun(b);
+    expect(store.active()).toEqual({ kind: 'build', title: 'Building', runs: [a, b], finished: false });
+    expect(store.beginBuild('Again')).toBe(false);
+    expect(toasts.error).toHaveBeenCalledWith('Another task is already running.');
+    expect(await store.runSteps('Steps', [])).toBe('failed');
+    store.close();
+    expect(store.active()).not.toBeNull();
+    store.endBuild();
+    expect(store.active()).toEqual({ kind: 'build', title: 'Building', runs: [a, b], finished: true });
+    let dismissed = false;
+    const d = store.dismissed().then(() => (dismissed = true));
+    await flush();
+    expect(dismissed).toBe(false);
+    store.close();
+    await d;
+    expect(store.active()).toBeNull();
+  });
+
+  it('refuses a build while the solo run is busy', async () => {
+    const { store, runs, toasts } = setupBuild();
+    await runs.startRun(seedSpec());
+    expect(store.beginBuild('Building')).toBe(false);
+    expect(toasts.error).toHaveBeenCalledWith('Another task is already running.');
+  });
+
+  it('waiting lists every run with an open pause and clears on answer or end', async () => {
+    const { store, runs, fake } = setupBuild();
+    store.beginBuild('Building');
+    const a = (await runs.startRun(seedSpec(), 'build:s/c'))!;
+    store.addRun(a);
+    const b = (await runs.startRun(seedSpec(), 'build:s/c'))!;
+    store.addRun(b);
+    expect(store.waiting()).toEqual([]);
+    fake.emit(b, ask('q1'));
+    fake.emit(a, { type: 'permission.requested', id: 'p1', tool: 'Bash', input_summary: 'ls' });
+    expect(store.waiting()).toHaveLength(2);
+    expect(store.waiting()).toEqual(expect.arrayContaining([{ runId: b, kind: 'answer' }, { runId: a, kind: 'approval' }]));
+    expect(store.ask(b)?.id).toBe('q1');
+    expect(store.ask(a)).toBeNull();
+    expect(store.permission(a)?.id).toBe('p1');
+    fake.emit(b, { type: 'ask.answered', id: 'q1', answers: [['x']] } as unknown as KataEvent);
+    expect(store.waiting()).toEqual([{ runId: a, kind: 'approval' }]);
+    fake.emit(a, { type: 'run.error', message: 'boom', exit_code: 1 } as never);
+    expect(store.waiting()).toEqual([]);
+  });
+
+  it('deadlineSecs counts per run', async () => {
+    vi.useFakeTimers();
+    try {
+      const { store, runs, fake } = setupBuild();
+      const spec: RunSpec = { ...seedSpec(), interactive: { enabled: false, answer_timeout_secs: 60 } };
+      store.beginBuild('Building');
+      const a = (await runs.startRun(spec, 'build:s/c'))!;
+      store.addRun(a, spec);
+      const b = (await runs.startRun(spec, 'build:s/c'))!;
+      store.addRun(b, spec);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(store.deadlineSecs(a)).toBeNull();
+      fake.emit(a, ask('qa'));
+      await vi.advanceTimersByTimeAsync(10000);
+      fake.emit(b, ask('qb'));
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(store.deadlineSecs(a)).toBe(40);
+      expect(store.deadlineSecs(b)).toBe(50);
+      fake.emit(a, { type: 'run.completed', exit_code: 0 } as never);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(store.deadlineSecs(a)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the solo run API still drives a Part 1 stage after a build is closed', async () => {
+    const { store, runs, fake } = setupBuild();
+    store.beginBuild('Building');
+    const a = (await runs.startRun(seedSpec(), 'build:s/c'))!;
+    store.addRun(a);
+    fake.emit(a, { type: 'run.completed', exit_code: 0 } as never);
+    store.endBuild();
+    store.close();
+    const p = store.runAgent('Reading context', seedSpec());
+    await flush();
+    const solo = runs.lastRunId()!;
+    fake.emit(solo, ask('s1'));
+    await flush();
+    expect(store.ask()?.id).toBe('s1');
+    store.answer('s1', [['y']]);
+    expect(fake.submitAnswer).toHaveBeenCalledWith(solo, 's1', [['y']]);
+    fake.emit(solo, { type: 'run.completed', exit_code: 0 } as never);
+    await flush();
+    expect(await p).toBe('success');
   });
 });
