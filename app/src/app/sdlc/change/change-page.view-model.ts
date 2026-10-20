@@ -13,6 +13,7 @@ import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
+import type { BuildContext } from '../build/build-view.view-model';
 import type { BuildDialogMode, BuildStartRequest } from '../../ui/build-dialog';
 import { LockStore } from '../../core/lock/lock.store';
 import { RunStore } from '../../core/run/run.store';
@@ -90,6 +91,8 @@ export type BuildHandoff = {
   timeoutSecs: number;
   round: { instructions: string; repo: string } | null;
   checksDir: string;
+  /** True when the engineer confirmed continuing on top of leftovers, so the run is told not to ask again. */
+  continueOnLeftovers?: boolean;
 };
 
 type DocStem = 'intent' | 'spec' | 'plan';
@@ -219,6 +222,10 @@ export class ChangePageViewModel {
   });
   /** What the build view (T45) starts from; set when a build is prepared and ready. */
   readonly handoff = signal<BuildHandoff | null>(null);
+  /** What the build view runs against: the workspace, the system and the change; null until the workspace is known. */
+  readonly buildContext = computed<BuildContext | null>(() => null);
+  /** The build view was closed: forget the handoff and read the change again. */
+  async closeBuild(): Promise<void> {}
   /** What the dialog asked for, kept so confirming the leftovers prepares the same build again. */
   private asked: BuildStartRequest | null = null;
 

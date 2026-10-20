@@ -3,9 +3,9 @@ import type { ChangeInfo } from "@bindings/ChangeInfo";
 import type { OutOfDate } from "@bindings/OutOfDate";
 import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
-import type { KataEvent } from "./events";
+import type { KataEvent, RunDetail } from "./events";
 import { validateLocal } from "./mock";
-import { DONE_LABEL, actionLabel, actionsFor, actionsForChange, canBuild, hasAiSdlcPlugin, primaryAction, revisits, runCounts, specFor, splitFrontMatter, stageLabel, stopMessage, transcriptRunId, type BuildRun, type RunContext, type StageAction } from "./sdlc";
+import { DONE_LABEL, actionLabel, actionsFor, actionsForChange, canBuild, hasAiSdlcPlugin, primaryAction, reviewFindings, revisits, runCounts, specFor, splitFrontMatter, stageLabel, stopMessage, transcriptRunId, type BuildRun, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -431,5 +431,55 @@ describe("runCounts for build", () => {
     const link = (stage: string, run_id: string) => ({ workspace_id: "ws", system: "claims", change: "c1", stage, run_id, started_at: 1 });
     const got = runCounts([link("build:app", "a"), link("build:api", "b"), link("review", "c"), link("spec", "d")], [], "ws", "claims", "c1");
     expect(got).toEqual({ intent: 0, spec: 1, plan: 0, build: 2, review: 1 });
+  });
+});
+
+describe("reviewFindings", () => {
+  const detail = (result: string | null | undefined, extra: KataEvent[] = []): RunDetail => ({
+    record: {} as RunDetail["record"],
+    events: [...extra, { type: "run.completed", exit_code: 0, is_error: false, num_turns: 1, cost_usd: 0, duration_ms: 1, result } as unknown as KataEvent],
+  });
+
+  it("splits a numbered closing text into findings, in the order written when none names a severity", () => {
+    const got = reviewFindings(detail("2 findings. 1. The upload limit is duplicated in claims-core and customer-portal. 2. The refusal message has no test."));
+    expect(got).toEqual([
+      { severity: null, text: "The upload limit is duplicated in claims-core and customer-portal." },
+      { severity: null, text: "The refusal message has no test." },
+    ]);
+  });
+
+  it("reads one finding per line from a numbered or bulleted list", () => {
+    const got = reviewFindings(detail("Findings:\n1. First thing\n2. Second thing\n"));
+    expect(got.map((f) => f.text)).toEqual(["First thing", "Second thing"]);
+    expect(reviewFindings(detail("- one\n- two")).map((f) => f.text)).toEqual(["one", "two"]);
+  });
+
+  it("puts the most serious first, keeping the written order within a severity, and drops the severity tag from the text", () => {
+    const got = reviewFindings(detail("1. [Low] Rename the helper\n2. [High] The limit is not enforced on retry\n3. **Medium**: No test for the refusal\n4. [High] A second serious one"));
+    expect(got).toEqual([
+      { severity: "high", text: "The limit is not enforced on retry" },
+      { severity: "high", text: "A second serious one" },
+      { severity: "medium", text: "No test for the refusal" },
+      { severity: "low", text: "Rename the helper" },
+    ]);
+  });
+
+  it("does not split on a number out of sequence", () => {
+    const got = reviewFindings(detail("1. Upgrade to version 3. Then retest. 2. Another"));
+    expect(got.map((f) => f.text)).toEqual(["Upgrade to version 3. Then retest.", "Another"]);
+  });
+
+  it("is one finding when the text is not a list, and none when it says there are none", () => {
+    expect(reviewFindings(detail("The retry loop never stops."))).toEqual([{ severity: null, text: "The retry loop never stops." }]);
+    expect(reviewFindings(detail("No findings."))).toEqual([]);
+    expect(reviewFindings(detail("No issues found; the change matches the plan."))).toEqual([]);
+  });
+
+  it("is empty without a closing text, and reads the last run.completed", () => {
+    expect(reviewFindings(detail(null))).toEqual([]);
+    expect(reviewFindings(detail(undefined))).toEqual([]);
+    expect(reviewFindings({ record: {} as RunDetail["record"], events: [] })).toEqual([]);
+    const twice = detail("1. new one", [{ type: "run.completed", exit_code: 0, result: "1. old one" } as unknown as KataEvent]);
+    expect(reviewFindings(twice).map((f) => f.text)).toEqual(["new one"]);
   });
 });

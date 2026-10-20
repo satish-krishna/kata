@@ -424,6 +424,37 @@ describe('ChangePageViewModel', () => {
       expect(h.checksDir).toBe(await transport.sdlcChecksDir());
     });
 
+    it('the handoff records whether the leftovers were confirmed, so the run is not asked to ask again', async () => {
+      const { vm, transport } = setup(BUILD);
+      const real = transport.sdlcBuildPrepare.bind(transport);
+      vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['a'] }] }).mockImplementation(real);
+      await ready(vm);
+      await vm.submitBuild(REQUEST);
+      await vm.confirmLeftovers();
+      expect(vm.handoff()!.continueOnLeftovers).toBe(true);
+      await vm.closeBuild();
+      await vm.submitBuild(REQUEST);
+      expect(vm.handoff()!.continueOnLeftovers).toBe(false);
+    });
+
+    it('names the workspace, folder, system and change for the build view', async () => {
+      const { vm, transport } = setup(BUILD);
+      await ready(vm);
+      const w = (await transport.sdlcWorkspaces())[0];
+      expect(vm.buildContext()).toEqual({ workspaceId: w.id, folder: w.folder, system: 'claims', change: BUILD });
+    });
+
+    it('closing the build forgets the handoff and reads the change again', async () => {
+      const { vm, transport } = setup(BUILD);
+      await ready(vm);
+      await vm.submitBuild(REQUEST);
+      expect(vm.handoff()).not.toBeNull();
+      const changes = vi.spyOn(transport, 'sdlcChanges');
+      await vm.closeBuild();
+      expect(vm.handoff()).toBeNull();
+      expect(changes).toHaveBeenCalled();
+    });
+
     it('reads the checks folder once, however often the page loads', async () => {
       const transport = new MockTransport();
       const checks = vi.spyOn(transport, 'sdlcChecksDir');

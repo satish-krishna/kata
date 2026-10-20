@@ -257,6 +257,34 @@ describe('LockStore build view', () => {
     expect(store.active()).toBeNull();
   });
 
+  it('resumeBuild reopens a finished build and starts the clock again from where it stopped', async () => {
+    vi.useFakeTimers();
+    try {
+      const { store } = setupBuild();
+      store.beginBuild('Building');
+      await vi.advanceTimersByTimeAsync(3000);
+      store.endBuild();
+      const at = store.elapsedSecs();
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(store.elapsedSecs()).toBe(at);
+      store.resumeBuild();
+      expect(store.active()).toEqual({ kind: 'build', title: 'Building', runs: [], finished: false });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(store.elapsedSecs()).toBe(at + 2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resumeBuild does nothing unless a finished build is held', () => {
+    const { store } = setupBuild();
+    store.resumeBuild();
+    expect(store.active()).toBeNull();
+    store.beginBuild('Building');
+    store.resumeBuild();
+    expect(store.active()).toEqual({ kind: 'build', title: 'Building', runs: [], finished: false });
+  });
+
   it('refuses a build while the solo run is busy', async () => {
     const { store, runs, toasts } = setupBuild();
     await runs.startRun(seedSpec());

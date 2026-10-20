@@ -64,7 +64,16 @@ export type PrepareResult =
   | { kind: 'refused'; reason: string };
 /** A repository run of the build, or the review of the whole change (which runs in the master repository). */
 export type BuildRunTarget = { repo: string; path: string; kind: 'repo' | 'review' };
-export type BuildLink = { workspaceId: string; system: string; change: string; folder: string; master: string; repos: string[] };
+export type BuildLink = {
+  workspaceId: string;
+  system: string;
+  change: string;
+  folder: string;
+  master: string;
+  repos: string[];
+  /** Called with the run's id as soon as the run has started and joined the build's lock. */
+  onRun?: (runId: string) => void;
+};
 export type RunEnd = { exit: number | null; error: string | null };
 export type DiscardChoice = { repo: string; paths: string[] };
 

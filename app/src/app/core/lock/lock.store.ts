@@ -235,6 +235,9 @@ export class LockStore {
     this.view.update((v) => (v?.kind === 'build' ? { ...v, finished: true } : v));
   }
 
+  /** A stopped build is continued: reopen its finished view and start the clock again from where it stopped. */
+  resumeBuild(): void {}
+
   /** Answer a question: `(askId, answers)` for the solo run, `(runId, askId, answers)` for a build run. */
   answer(askId: string, answers: string[][]): void;
   answer(runId: string, askId: string, answers: string[][]): void;

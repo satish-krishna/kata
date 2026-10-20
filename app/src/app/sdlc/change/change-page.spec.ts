@@ -8,6 +8,7 @@ import { MockTransport } from '../../core/transport/mock-transport';
 import { diagrams } from '../../lib/mermaid';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { ChangePage } from './change-page';
+import { ChangePageViewModel } from './change-page.view-model';
 
 const settle = async () => {
   for (let i = 0; i < 4; i++) {
@@ -125,6 +126,17 @@ describe('ChangePage', () => {
       expect(table).not.toBeNull();
       expect(text(table.querySelector('h2')!)).toBe('Build log');
       expect(table.querySelectorAll('tbody tr').length).toBe(status.tasks.length);
+    });
+
+    it('shows the build view in place of the session view once a build is prepared, and the session view otherwise', async () => {
+      const { container, fixture } = await mount(MOCK_BUILD_CHANGE);
+      expect(container.querySelector('app-build-view')).toBeNull();
+      const vm = fixture.debugElement.injector.get(ChangePageViewModel);
+      await vm.submitBuild({ timeoutSecs: 5400, instructions: null, repo: null });
+      await settle();
+      expect(container.querySelector('app-build-view')).not.toBeNull();
+      expect(container.querySelector('app-sdlc-session')).toBeNull();
+      expect(container.querySelector('main.k-change')).toBeNull();
     });
 
     it('shows no build log on a change without tasks', async () => {

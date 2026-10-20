@@ -10,7 +10,7 @@ import type { RunRecord } from "@bindings/RunRecord";
 import type { RunSpec } from "@bindings/RunSpec";
 import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
-import type { KataEvent } from "./events";
+import type { KataEvent, RunDetail } from "./events";
 import { defaultSpec } from "./spec";
 
 export type StageAction =
@@ -411,4 +411,13 @@ export function runCounts(
     else if (r.kata === `sdlc-${system}-${change}-review`) out.review += 1;
   }
   return out;
+}
+
+export type Severity = "critical" | "high" | "medium" | "low";
+/** One finding of the review, with the severity its text opens with, if it names one. */
+export type Finding = { severity: Severity | null; text: string };
+
+/** The review's findings, most serious first, read from the closing text of its `run.completed`. */
+export function reviewFindings(_detail: RunDetail): Finding[] {
+  return [];
 }
