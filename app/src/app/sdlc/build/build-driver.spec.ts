@@ -294,6 +294,47 @@ describe('BuildDriver', () => {
     expect(w.driver.phase()).toBe('building');
   });
 
+  it('a round for the master that fails stops the build instead of finishing it, and Continue runs it again (R6.1, R8.1)', async () => {
+    const w = world([{ id: 'T1', repo: 'api' }], ['T1']);
+    await w.driver.begin(3600, { repo: 'master', instructions: 'tidy the notes' });
+    await flush();
+    await w.started[0].end([], { exit: 124 });
+    expect(w.driver.stopped().get('master')).toEqual({ task: '', reason: stopMessage(124, null) });
+    expect(w.driver.phase()).toBe('stopped');
+    expect(w.log).toEqual(['master']);
+    await w.driver.continueRepo('master');
+    await flush();
+    expect(w.log).toEqual(['master', 'master']);
+    expect(w.started[1].opts.instructions).toBe('tidy the notes');
+    await w.started[1].end([]);
+    expect(w.driver.stopped().size).toBe(0);
+    expect(w.driver.round()).toBeNull();
+    expect(w.driver.phase()).toBe('finished');
+  });
+
+  it('a round on a finished repository that fails stops the build, and Continue runs it again (R6.1, R8.1)', async () => {
+    const w = world([{ id: 'T1', repo: 'api' }, { id: 'T2', repo: 'app' }], ['T1', 'T2']);
+    await w.driver.begin(3600, { repo: 'api', instructions: 'rename it' });
+    await flush();
+    await w.started[0].end([], { exit: 124 });
+    expect(w.driver.phase()).toBe('stopped');
+    expect(w.driver.stopped().get('api')?.reason).toBe(stopMessage(124, null));
+    await w.driver.continueRepo('api');
+    await flush();
+    expect(w.of('api')).toHaveLength(2);
+    expect(w.of('api')[1].opts.instructions).toBe('rename it');
+  });
+
+  it('a committing round for the master is reviewed again (R8.4)', async () => {
+    const w = world([{ id: 'T1', repo: 'api' }], ['T1']);
+    w.heads['master'] = 'm1';
+    await w.driver.begin(3600, { repo: 'master', instructions: 'tidy the notes' });
+    await flush();
+    w.heads['master'] = 'm2';
+    await w.started[0].end([]);
+    expect(w.log).toEqual(['master', 'review']);
+  });
+
   it('a round for a waiting repository is not dropped silently (R8.3)', async () => {
     const w = world([{ id: 'T1', repo: 'app' }, { id: 'T2', repo: 'api', dependsOn: ['T1'] }]);
     await w.driver.begin(3600, { repo: 'api', instructions: 'rename it' });

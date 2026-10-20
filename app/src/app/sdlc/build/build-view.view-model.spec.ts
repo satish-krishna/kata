@@ -368,6 +368,76 @@ describe('BuildViewModel', () => {
     expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
   });
 
+  describe('a round for the master repository', () => {
+    const doneTask = (id: string, repo: string) => ({
+      id, name: id, repo, dependsOn: [], row: { task: id, repo, commits: ['abc1234'], departure: null },
+    });
+    const allDone: BuildStatus = {
+      hasTasks: true,
+      departures: [],
+      tasks: [doneTask('T1', 'claims-core'), doneTask('T2', 'customer-portal')],
+      repos: [
+        { repo: 'claims-core', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
+        { repo: 'customer-portal', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
+      ],
+    };
+    const round = { instructions: 'tidy the notes', repo: MOCK_MASTER };
+
+    it('has a row, shows why it stopped and Continue runs it again (R6.1, R8.1)', async () => {
+      const { vm, transport, runner } = setup();
+      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
+      const targets: string[] = [];
+      const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
+        targets.push(target.kind === 'review' ? 'review' : target.repo);
+        link.onRun?.(`fake-${targets.length}`);
+        return targets.length === 1 ? { exit: 124, error: null } : { exit: 0, error: null };
+      });
+      await vm.start(await handoffFor(transport, { round }), CTX);
+      await advance(500);
+      expect(targets).toEqual([MOCK_MASTER]);
+      expect(vm.phase()).toBe('stopped');
+      expect(row(vm, MOCK_MASTER)).toMatchObject({ tone: 'error', label: 'Stopped: reached the time limit' });
+      vm.select(MOCK_MASTER);
+      expect(vm.action()).toBe('continue');
+      expect(vm.shown()).toHaveLength(1);
+
+      await vm.continueRun();
+      await advance(500);
+      expect(targets.slice(0, 2)).toEqual([MOCK_MASTER, MOCK_MASTER]);
+      expect(run.mock.calls[1][1].task).toContain('tidy the notes');
+      expect(run.mock.calls[1][0].path).toBe(`${FOLDER}/${MOCK_MASTER}`);
+    });
+
+    it('shows its row while it waits to start and after it ran', async () => {
+      const { vm, transport, runner } = setup();
+      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
+      vi.spyOn(runner, 'runInRepo').mockImplementation(async (_target, _spec, link) => {
+        link.onRun?.('fake-master');
+        return { exit: 0, error: null };
+      });
+      await vm.start(await handoffFor(transport, { round }), CTX);
+      await advance(500);
+      expect(row(vm, MOCK_MASTER)).toMatchObject({ tone: 'success', label: 'Finished' });
+    });
+
+    it('a round that commits there is reviewed again, from heads that include the master (R8.4)', async () => {
+      const { vm, transport, runner } = setup();
+      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
+      const heads = vi.spyOn(transport, 'sdlcBuildHeads');
+      heads.mockImplementation(async (_folder, repos) => Object.fromEntries(repos.map((r) => [r, r === MOCK_MASTER && run.mock.calls.length > 0 ? 'm2' : 'm1'])));
+      const targets: string[] = [];
+      const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
+        targets.push(target.kind === 'review' ? 'review' : target.repo);
+        link.onRun?.(`fake-${targets.length}`);
+        return { exit: 0, error: null };
+      });
+      await vm.start(await handoffFor(transport, { round }), CTX);
+      await advance(500);
+      expect(heads.mock.calls.every(([, repos]) => repos.includes(MOCK_MASTER))).toBe(true);
+      expect(targets).toEqual([MOCK_MASTER, 'review']);
+    });
+  });
+
   it('Cancel build cancels every run and starts none', async () => {
     const { vm, transport } = setup();
     const runSpec = vi.spyOn(transport, 'runSpec');
