@@ -44,7 +44,7 @@ const REVIEW = 'review';
  */
 export class BuildDriver {
   readonly going = signal<ReadonlySet<string>>(new Set());
-  readonly stopped = signal<ReadonlyMap<string, { task: string; reason: string }>>(new Map());
+  readonly stopped = signal<ReadonlyMap<string, { task: string; reason: string; held?: boolean }>>(new Map());
   readonly round = signal<{ repo: string; instructions: string } | null>(null);
   readonly phase = signal<BuildPhase>('building');
   readonly waiting = signal<WaitingRepo[]>([]);
@@ -109,8 +109,8 @@ export class BuildDriver {
     return run;
   }
 
-  private markStopped(key: string, task: string, reason: string): void {
-    this.stopped.set(new Map(this.stopped()).set(key, { task, reason }));
+  private markStopped(key: string, task: string, reason: string, held = false): void {
+    this.stopped.set(new Map(this.stopped()).set(key, held ? { task, reason, held } : { task, reason }));
   }
 
   private async look(): Promise<void> {
@@ -130,7 +130,9 @@ export class BuildDriver {
       const round = this.round();
       const picked = round?.repo === r.repo && !this.roundStarted;
       if (r.state.kind === 'done' && !picked) continue;
-      if (this.stopped().get(r.repo)?.task === task) continue;
+      const stop = this.stopped().get(r.repo);
+      // A held stop (the status could not be read when the run ended) does not know the task the repository is on now.
+      if (stop && (stop.held || stop.task === task)) continue;
       ready.push({ repo: r.repo, task });
     }
     this.waiting.set(waiting);
@@ -223,7 +225,12 @@ export class BuildDriver {
         this.markStopped(REVIEW, REVIEW, stopMessage(end.exit, end.error));
       }
     } else {
-      await this.judge(key, task, end, cancelled);
+      try {
+        await this.judge(key, task, end, cancelled);
+      } catch {
+        // The result must not be lost: without a stop entry the repository would look ready again and be relaunched.
+        this.markStopped(key, task, `${stopMessage(end.exit, end.error)} · could not read build status`, true);
+      }
       // A round that stopped is not over: it stays, so Continue runs it again with its instructions.
       if (this.round()?.repo === key && this.roundStarted) {
         if (this.stopped().has(key)) this.roundStarted = false;
