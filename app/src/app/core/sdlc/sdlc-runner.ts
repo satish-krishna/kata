@@ -85,7 +85,7 @@ const EXIT_WAIT_MS = 15000;
 const TERMINAL: readonly RunState[] = ['success', 'warning', 'error'];
 const UPDATE_PLUGIN = 'Update the ai-sdlc plugin to 0.6.0 or later, then start the build again.';
 const DIRTY = 'uncommitted changes';
-const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [] };
+const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
 
 const repoName = (path: string): string => path.replace(/[\/]+$/, '').split(/[\/]/).pop() ?? path;
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));

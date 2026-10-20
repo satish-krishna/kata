@@ -7,6 +7,7 @@ const LEFT: Leftovers = {
   new_commits: ['docs(claims): add context', 'chore: marker'],
   discardable: ['claims/2026-10-18-x/intent.md', 'claims/2026-10-18-x/spec.md', 'scratch.txt'],
   touched_dirty: ['notes.md'],
+  created: [],
   product_repos_changed: ['claims-core'],
   product_repos_unchecked: [],
 };
@@ -37,6 +38,16 @@ describe('LeftoverDialog', () => {
     expect(t).toContain('notes.md');
     expect(t).toContain('changed before and during this run');
     expect(t).toContain('the run changed files in claims-core; ai-sdlc should not write there');
+  });
+
+  it('tags a file the run created that cannot be discarded as changed during this run only', async () => {
+    const row = 'intent/claims/x/build/claims-core.md';
+    await render(LeftoverDialog, { leftovers: [{ repo: 'claims-core', data: { ...LEFT, touched_dirty: [], created: [row] } }] });
+    await settle();
+    const li = [...document.body.querySelectorAll('.k-left__row')].find((e) => e.textContent!.includes(row))!;
+    expect(li.textContent!.replace(/s+/g, ' ')).toContain('changed during this run');
+    expect(li.textContent).not.toContain('before and during');
+    expect(boxes().map((b) => b.getAttribute('aria-label'))).not.toContain(row);
   });
 
   it('warns about a product repo whose status could not be read', async () => {

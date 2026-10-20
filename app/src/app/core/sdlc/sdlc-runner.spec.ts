@@ -18,7 +18,7 @@ import { KataTransport } from '../transport/kata-transport';
 import { SdlcRunner, type BuildLink, type BuildRequest, type RunTarget } from './sdlc-runner';
 
 const SNAPSHOT = { head: 'abc', dirty: {} };
-const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [] };
+const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
 const WORKSPACE: WorkspaceEntry = { id: 'acme', name: 'acme', folder: '/ws', base_branch: 'main', last_opened: 1 };
 const TARGET: RunTarget = {
   workspaceId: 'acme',
@@ -622,8 +622,29 @@ describe('SdlcRunner build', () => {
       await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
       const shown = ctx.runner.leftovers()!;
       expect(shown.map((l) => l.repo)).toEqual(['claims-core']);
-      expect(shown[0].data.touched_dirty).toEqual([row]);
+      // The run wrote the row: it is listed as created by this run, not as changed before it too.
+      expect(shown[0].data.created).toEqual([row]);
+      expect(shown[0].data.touched_dirty).toEqual([]);
       expect(shown[0].data.discardable).toEqual([]);
+      ctx.runner.closeLeftovers();
+      await finished;
+    });
+
+    it('a build log row that was already unsaved before the run is listed as changed before and during it (R6.6)', async () => {
+      const ctx = setup();
+      const row = 'intent/claims/2026-10-12-fnol/build/claims-core.md';
+      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'claims-intent', files: [], rows });
+      ctx.fake.participants = [owned('claims-intent', []), owned('claims-core', [row])];
+      ctx.fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => ({ head: String(a[0]), dirty: { [row]: 'abc' } }));
+      const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
+      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
+      end(ctx, 'r1', 'warning', 124);
+      await drive(core);
+      const finished = ctx.runner.finishBuild(BUILD_START);
+      await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
+      const shown = ctx.runner.leftovers()!;
+      expect(shown[0].data.touched_dirty).toEqual([row]);
+      expect(shown[0].data.created).toEqual([]);
       ctx.runner.closeLeftovers();
       await finished;
     });

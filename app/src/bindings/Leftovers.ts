@@ -17,6 +17,10 @@ discardable: Array<string>,
  */
 touched_dirty: Array<string>, 
 /**
+ * Build log rows this run wrote that were not unsaved before it. They are never discarded.
+ */
+created: Array<string>, 
+/**
  * Folder names of product repos with uncommitted changes.
  */
 product_repos_changed: Array<string>, 

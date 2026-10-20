@@ -26,6 +26,8 @@ pub struct Leftovers {
     pub discardable: Vec<String>,
     /// Paths that were already dirty before the run and changed again during it.
     pub touched_dirty: Vec<String>,
+    /// Build log rows this run wrote that were not unsaved before it. They are never discarded.
+    pub created: Vec<String>,
     /// Folder names of product repos with uncommitted changes.
     pub product_repos_changed: Vec<String>,
     /// Folder names of product repos whose status could not be read.
@@ -178,6 +180,7 @@ pub fn leftovers(
         new_commits,
         discardable,
         touched_dirty,
+        created: Vec::new(),
         product_repos_changed,
         product_repos_unchecked,
     })

@@ -109,6 +109,7 @@ const LEFTOVERS: Leftovers = {
   new_commits: [],
   discardable: ['claims/2026-10-12-fnol-photo-upload/notes.tmp', 'claims/2026-10-12-fnol-photo-upload/intent.md'],
   touched_dirty: ['claims/2026-10-16-fraud-flag/intent.md'],
+  created: [],
   product_repos_changed: [],
   product_repos_unchecked: [],
 };
@@ -246,7 +247,7 @@ export class SdlcMock {
   snapshot(): Snapshot { return { head: '0000000000000000000000000000000000000000', dirty: {} }; }
   /** Only a cancelled AI-SDLC run leaves anything behind; discarded paths drop out of the list. */
   leftovers(): Leftovers {
-    if (!this.cancelledRun) return { new_commits: [], discardable: [], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [] };
+    if (!this.cancelledRun) return { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
     const keep = (paths: string[]) => paths.filter((p) => !this.discarded.has(p));
     return { ...LEFTOVERS, discardable: keep(LEFTOVERS.discardable), touched_dirty: keep(LEFTOVERS.touched_dirty) };
   }

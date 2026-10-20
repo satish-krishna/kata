@@ -162,7 +162,7 @@ describe('SdlcHomeViewModel add workspace', () => {
   it('opens the leftover dialog and adds nothing when setup is cancelled', async () => {
     const { vm, transport, runAgent, saveWorkspaces } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
-    vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [] });
+    vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] });
     runAgent.mockResolvedValue('warning');
     await vm.init();
     vi.spyOn(transport, 'sdlcScan').mockResolvedValueOnce(
@@ -181,7 +181,7 @@ describe('SdlcHomeViewModel add workspace', () => {
     await vm.init();
     const snap = vi.spyOn(transport, 'sdlcSnapshot');
     const left = vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({
-      new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [],
+      new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [],
     });
     vi.spyOn(transport, 'sdlcScan')
       .mockResolvedValueOnce(scanOf({ master: { kind: 'none' }, marker: null }))
@@ -390,7 +390,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('shows leftovers from the runner and discards through it', async () => {
     const { vm, runner, transport } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['a.md'], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [] });
+    vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['a.md'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] });
     const discard = vi.spyOn(transport, 'sdlcDiscard');
     vi.spyOn(TestBed.inject(LockStore), 'runAgent').mockResolvedValue('error');
     await vm.runContext('customer-portal');
