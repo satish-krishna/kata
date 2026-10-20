@@ -1,6 +1,6 @@
 //! Starting a build: one `change/<change>` branch in every repository an unfinished task names,
 //! checked before anything is created or switched, and the cleanup of branches that stayed empty.
-use crate::base::{base_branch, base_info_for, commits_ahead, BaseError};
+use crate::base::{base_branch, base_info_for, commits_ahead_of_local_base, BaseError};
 use crate::branch::{branch_exists, current_branch};
 use crate::build::{self, RepoState};
 use crate::changes::{is_change_name, is_safe_system};
@@ -290,7 +290,7 @@ pub fn settle(start: &BuildStart) -> Result<Vec<String>, BuildError> {
     for r in &start.repos {
         let path = Path::new(&r.path);
         if current_branch(path).as_deref() != Some(r.branch.as_str())
-            || commits_ahead(path)? != 0
+            || commits_ahead_of_local_base(path, "HEAD")? != 0
             || !dirty_files(path)?.is_empty()
         {
             continue;

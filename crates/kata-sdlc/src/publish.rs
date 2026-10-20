@@ -1,7 +1,7 @@
 //! Declaring a change done: is GitHub reachable and signed in, and one pull request per touched
 //! repository, the master last. Every GitHub call goes through the `Gh` trait; Kata keeps no
 //! credential, `gh` owns the engineer's sign-in.
-use crate::base::{base_branch, base_info, base_info_for, BaseInfo};
+use crate::base::{base_branch, base_info, base_info_for, commits_ahead_of_local_base, BaseInfo};
 use crate::branch::branch_exists;
 use crate::changes::{is_change_name, is_safe_system, read_doc};
 use crate::commits::{offenders_to, Offender};
@@ -144,15 +144,9 @@ pub fn touched_repos(
             continue;
         }
         let info = base_info_for(&path, &tip)?;
-        let ahead = git::run(
-            &path,
-            &[
-                "rev-list",
-                "--count",
-                &format!("{}..{tip}", info.merge_base),
-            ],
-        )?;
-        if ahead.trim().parse::<u32>().unwrap_or(0) > 0 {
+        // This departs from the literal text of R7.7: the base commits not yet on origin are not
+        // build work, so they do not make a repository touched.
+        if commits_ahead_of_local_base(&path, &tip)? > 0 {
             out.push(PublishRepo {
                 repo: name,
                 path: path.to_string_lossy().into_owned(),
