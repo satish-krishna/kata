@@ -462,45 +462,96 @@ describe('BuildDriver', () => {
 });
 
 describe('runOutcome', () => {
-  const kinds: Facts['kind'][] = ['task', 'round'];
-  const bools = [false, true];
-  const states: Facts['stateAfter'][] = ['ready', 'waiting', 'done', 'unknown'];
-  const cross: Facts[] = kinds.flatMap((kind) =>
-    bools.flatMap((cancelled) =>
-      bools.flatMap((failed) => bools.flatMap((recorded) => states.map((stateAfter) => ({ kind, cancelled, failed, recorded, stateAfter })))),
-    ),
-  );
+  const stop: Outcome = { kind: 'stop' };
+  const held: Outcome = { kind: 'stop', held: true };
+  const finished: Outcome = { kind: 'finished' };
+  const carryOn: Outcome = { kind: 'continue' };
+  const keepRound: Outcome = { kind: 'continue', keepRound: true };
+  const impossible = 'impossible';
 
-  /** The rules, stated once in prose form, independent of the table the code carries. */
-  function expected(f: Facts): Outcome | 'impossible' {
-    // A round always has its row; a task run cannot have recorded everything without recording its own task; an unreadable status has no row to show.
-    if (f.kind === 'round' && !f.recorded) return 'impossible';
-    if (f.kind === 'task' && f.stateAfter === 'done' && !f.recorded) return 'impossible';
-    if (f.kind === 'task' && f.stateAfter === 'unknown' && f.recorded) return 'impossible';
-    if (f.stateAfter === 'unknown') return { kind: 'stop', held: true };
-    if (f.cancelled) return f.kind === 'task' && f.stateAfter === 'done' ? { kind: 'finished' } : { kind: 'stop' };
-    if (f.kind === 'round') {
-      if (f.failed) return { kind: 'stop' };
-      return f.stateAfter === 'done' ? { kind: 'finished' } : { kind: 'continue' };
-    }
-    if (f.stateAfter === 'done') return { kind: 'finished' };
-    if (f.failed) return { kind: 'stop' };
-    if (!f.recorded && f.stateAfter !== 'waiting') return { kind: 'stop' };
-    return { kind: 'continue' };
-  }
+  /** Every combination, with its outcome written out by hand: nothing here is derived from the code's table. */
+  const cases: [Facts['kind'], boolean, boolean, boolean, Facts['stateAfter'], Outcome | typeof impossible][] = [
+    // kind, cancelled, failed, recorded, stateAfter, outcome
+    ['task', false, false, true, 'ready', carryOn],
+    ['task', false, false, true, 'waiting', carryOn],
+    ['task', false, false, true, 'done', finished],
+    ['task', false, false, true, 'unknown', impossible],
+    ['task', false, false, false, 'ready', stop],
+    ['task', false, false, false, 'waiting', carryOn],
+    ['task', false, false, false, 'done', impossible],
+    ['task', false, false, false, 'unknown', held],
+    ['task', false, true, true, 'ready', stop],
+    ['task', false, true, true, 'waiting', stop],
+    ['task', false, true, true, 'done', finished],
+    ['task', false, true, true, 'unknown', impossible],
+    ['task', false, true, false, 'ready', stop],
+    ['task', false, true, false, 'waiting', stop],
+    ['task', false, true, false, 'done', impossible],
+    ['task', false, true, false, 'unknown', held],
+    ['task', true, false, true, 'ready', stop],
+    ['task', true, false, true, 'waiting', stop],
+    ['task', true, false, true, 'done', finished],
+    ['task', true, false, true, 'unknown', impossible],
+    ['task', true, false, false, 'ready', stop],
+    ['task', true, false, false, 'waiting', stop],
+    ['task', true, false, false, 'done', impossible],
+    ['task', true, false, false, 'unknown', held],
+    ['task', true, true, true, 'ready', stop],
+    ['task', true, true, true, 'waiting', stop],
+    ['task', true, true, true, 'done', finished],
+    ['task', true, true, true, 'unknown', impossible],
+    ['task', true, true, false, 'ready', stop],
+    ['task', true, true, false, 'waiting', stop],
+    ['task', true, true, false, 'done', impossible],
+    ['task', true, true, false, 'unknown', held],
+    ['round', false, false, true, 'ready', keepRound],
+    ['round', false, false, true, 'waiting', keepRound],
+    ['round', false, false, true, 'done', finished],
+    ['round', false, false, true, 'unknown', held],
+    ['round', false, false, false, 'ready', impossible],
+    ['round', false, false, false, 'waiting', impossible],
+    ['round', false, false, false, 'done', impossible],
+    ['round', false, false, false, 'unknown', impossible],
+    ['round', false, true, true, 'ready', stop],
+    ['round', false, true, true, 'waiting', stop],
+    ['round', false, true, true, 'done', stop],
+    ['round', false, true, true, 'unknown', held],
+    ['round', false, true, false, 'ready', impossible],
+    ['round', false, true, false, 'waiting', impossible],
+    ['round', false, true, false, 'done', impossible],
+    ['round', false, true, false, 'unknown', impossible],
+    ['round', true, false, true, 'ready', stop],
+    ['round', true, false, true, 'waiting', stop],
+    ['round', true, false, true, 'done', stop],
+    ['round', true, false, true, 'unknown', held],
+    ['round', true, false, false, 'ready', impossible],
+    ['round', true, false, false, 'waiting', impossible],
+    ['round', true, false, false, 'done', impossible],
+    ['round', true, false, false, 'unknown', impossible],
+    ['round', true, true, true, 'ready', stop],
+    ['round', true, true, true, 'waiting', stop],
+    ['round', true, true, true, 'done', stop],
+    ['round', true, true, true, 'unknown', held],
+    ['round', true, true, false, 'ready', impossible],
+    ['round', true, true, false, 'waiting', impossible],
+    ['round', true, true, false, 'done', impossible],
+    ['round', true, true, false, 'unknown', impossible],
+  ];
 
   const label = (f: Facts) =>
     `${f.kind} cancelled=${f.cancelled} failed=${f.failed} recorded=${f.recorded} stateAfter=${f.stateAfter}`;
+  const factsOf = ([kind, cancelled, failed, recorded, stateAfter]: (typeof cases)[number]): Facts => ({ kind, cancelled, failed, recorded, stateAfter });
 
   it('the table has one row for every combination of the facts', () => {
-    expect(cross).toHaveLength(64);
+    expect(cases).toHaveLength(64);
+    expect(new Set(cases.map((c) => label(factsOf(c)))).size).toBe(64);
     expect(OUTCOME_RULES.size).toBe(64);
   });
 
-  it.each(cross.map((f) => [label(f), f] as const))('%s', (_name, f) => {
-    const want = expected(f);
-    if (want === 'impossible') expect(() => runOutcome(f)).toThrow();
-    else expect(runOutcome(f)).toEqual(want);
+  it.each(cases.map((c) => [label(factsOf(c)), c] as const))('%s', (_name, c) => {
+    const want = c[5];
+    if (want === impossible) expect(() => runOutcome(factsOf(c))).toThrow();
+    else expect(runOutcome(factsOf(c))).toEqual(want);
   });
 });
 
@@ -537,5 +588,24 @@ describe('BuildDriver outcomes', () => {
     await w.of('api')[0].end(['T2']);
     expect(w.driver.stopped().size).toBe(0);
     expect(w.log).toEqual(['app', 'api', 'api']);
+  });
+
+  it('a round that blocks on another repository keeps its instructions for the relaunch (R6.2)', async () => {
+    const w = world([
+      { id: 'T1', repo: 'app' },
+      { id: 'T2', repo: 'api' },
+      { id: 'T3', repo: 'app', dependsOn: ['T2'] },
+    ]);
+    await w.driver.begin(3600, { repo: 'app', instructions: 'another round' });
+    await flush();
+    expect(w.of('app')[0].opts.instructions).toBe('another round');
+    await w.of('app')[0].end(['T1']);
+    expect(w.driver.waiting().map((x) => x.repo)).toEqual(['app']);
+    expect(w.driver.round()).not.toBeNull();
+    expect(w.of('app')).toHaveLength(1);
+    await w.of('api')[0].end(['T2']);
+    await flush();
+    expect(w.of('app')).toHaveLength(2);
+    expect(w.of('app')[1].opts.instructions).toBe('another round');
   });
 });

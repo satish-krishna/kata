@@ -310,7 +310,7 @@ export interface Facts {
   stateAfter: 'ready' | 'waiting' | 'done' | 'unknown';
 }
 
-export type Outcome = { kind: 'stop'; held?: boolean } | { kind: 'finished' } | { kind: 'continue' };
+export type Outcome = { kind: 'stop'; held?: boolean } | { kind: 'finished' } | { kind: 'continue'; keepRound?: true };
 
 const STOP: Outcome = { kind: 'stop' };
 /** The status could not be read, so the repository's current task is unknown and the stop must hold until it is read again. */
