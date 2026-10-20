@@ -238,10 +238,11 @@ export class BuildDriver {
       }
     } else {
       const outcome = await this.judge(key, task, end, run.cancelled, isRound);
-      // A round that stopped is not over: it stays, so Continue runs it again with its instructions. Any other outcome ends it.
+      // A round is over only when it finished. One that stopped, or that neither stopped nor finished, stays pending
+      // so its instructions go with the next launch of the repository.
       if (this.round()?.repo === key && this.roundStarted) {
-        if (outcome.kind === 'stop') this.roundStarted = false;
-        else this.round.set(null);
+        if (outcome.kind === 'finished') this.round.set(null);
+        else this.roundStarted = false;
       }
     }
     if (this.cancelledAll) return this.settleCancel();
@@ -317,6 +318,8 @@ const STOP: Outcome = { kind: 'stop' };
 const HELD: Outcome = { kind: 'stop', held: true };
 const FINISHED: Outcome = { kind: 'finished' };
 const CONTINUE: Outcome = { kind: 'continue' };
+/** A round that neither stopped nor finished: the repository goes on, and the round's instructions go with its next launch. */
+const KEEP_ROUND: Outcome = { kind: 'continue', keepRound: true };
 const IMPOSSIBLE = 'impossible';
 
 type Rule = [Facts['kind'], boolean, boolean, boolean, Facts['stateAfter'], Outcome | typeof IMPOSSIBLE];
@@ -329,6 +332,7 @@ type Rule = [Facts['kind'], boolean, boolean, boolean, Facts['stateAfter'], Outc
  *  - a cancelled task run stops unless the repository is done;
  *  - a task run that left the repository done is finished whatever its exit code;
  *  - a failed round stops;
+ *  - a round that did not stop and did not finish keeps the round pending, and is cleared only when it finishes;
  *  - a task run that failed, or that recorded nothing while not waiting, stops;
  *  - an unreadable status stops and holds.
  */
@@ -366,8 +370,8 @@ const RULES: Rule[] = [
   ['task',    true,     true,   false,   'waiting',  STOP],
   ['task',    true,     true,   false,   'done',     IMPOSSIBLE],
   ['task',    true,     true,   false,   'unknown',  HELD],
-  ['round',   false,    false,  true,    'ready',    CONTINUE],
-  ['round',   false,    false,  true,    'waiting',  CONTINUE],
+  ['round',   false,    false,  true,    'ready',    KEEP_ROUND],
+  ['round',   false,    false,  true,    'waiting',  KEEP_ROUND],
   ['round',   false,    false,  true,    'done',     FINISHED],
   ['round',   false,    false,  true,    'unknown',  HELD],
   ['round',   false,    false,  false,   'ready',    IMPOSSIBLE],
