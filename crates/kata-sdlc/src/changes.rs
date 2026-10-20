@@ -99,27 +99,48 @@ pub struct BranchInfo {
 }
 
 /// Why the plan cannot be built, or `None` when it can; the first cause in document order.
+/// The causes are checked in document order so the engineer is told the earliest document to settle.
 pub fn out_of_date(
-    _intent: &DocState,
-    _spec: &DocState,
+    intent: &DocState,
+    spec: &DocState,
     _plan: &DocState,
-    _facts: &PlanFacts,
+    facts: &PlanFacts,
 ) -> Option<OutOfDate> {
-    None
+    if !intent.is("accepted") {
+        Some(OutOfDate::IntentReopened)
+    } else if !spec.is("accepted") {
+        Some(OutOfDate::SpecReopened)
+    } else if !facts.spec_pin {
+        Some(OutOfDate::SpecPin)
+    } else if !facts.plan_pin {
+        Some(OutOfDate::PlanPin)
+    } else if !facts.has_tasks {
+        Some(OutOfDate::NoTasks)
+    } else {
+        None
+    }
 }
 
-/// The spec's "Stage derivation and actions" table, rows in order.
+/// The spec's "Stage derivation and actions" table, rows in order. Once a plan exists, a reopened
+/// intent or spec is a plan cause (R1.5) and not an intent or spec stage, so the plan rows come
+/// before the intent and spec ones; the two "accepted, not committed" rows still come first.
 pub fn derive_stage(
     intent: &DocState,
     spec: &DocState,
     plan: &DocState,
-    _facts: &PlanFacts,
+    facts: &PlanFacts,
 ) -> Stage {
     if intent.is("rejected") {
         return Stage::Rejected;
     }
     if intent.is("accepted") && !intent.committed {
         return Stage::IntentAcceptedUncommitted;
+    }
+    if plan.exists {
+        if intent.is("accepted") && spec.is("accepted") && !spec.committed {
+            return Stage::SpecAcceptedUncommitted;
+        }
+        return plan_stage(intent, spec, plan, facts);
     }
     if !intent.is("accepted") {
         return if intent.committed {
@@ -137,13 +158,29 @@ pub fn derive_stage(
     if !spec.is("accepted") {
         return Stage::SpecAwaiting;
     }
-    if !plan.exists {
-        return Stage::PlanReady;
-    }
+    Stage::PlanReady
+}
+
+/// The rows of a change whose plan exists.
+fn plan_stage(intent: &DocState, spec: &DocState, plan: &DocState, facts: &PlanFacts) -> Stage {
     if plan.is("superseded") {
-        Stage::PlanSuperseded
+        return Stage::PlanSuperseded;
+    }
+    if out_of_date(intent, spec, plan, facts).is_some() {
+        return Stage::PlanOutOfDate;
+    }
+    if plan.is("accepted") && !plan.committed {
+        return Stage::PlanAcceptedUncommitted;
+    }
+    if !plan.is("accepted") {
+        return Stage::PlanAwaiting;
+    }
+    if facts.finished == 0 {
+        Stage::BuildReady
+    } else if facts.finished >= facts.tasks {
+        Stage::BuildFinished
     } else {
-        Stage::PlanAwaiting
+        Stage::BuildStopped
     }
 }
 
@@ -188,6 +225,32 @@ fn doc_state(master: &Path, system: &str, change: &str, file: &str) -> DocState 
     }
 }
 
+/// The plan's tasks from the working tree, the finished ones from the committed build logs, and
+/// whether both source pins hold. A plan or log git cannot read counts no finished task.
+fn plan_facts(master: &Path, system: &str, change: &str) -> (PlanFacts, BuildCounts) {
+    let text = read_doc(master, system, change, "plan").unwrap_or_default();
+    let tasks = crate::build::plan_tasks(&text);
+    let mut repos: Vec<&str> = tasks.iter().map(|t| t.repo.as_str()).collect();
+    repos.sort_unstable();
+    repos.dedup();
+    let finished = crate::build::status(master, system, change)
+        .map(|s| s.tasks.iter().filter(|t| t.row.is_some()).count() as u32)
+        .unwrap_or(0);
+    let counts = BuildCounts {
+        tasks: tasks.len() as u32,
+        finished,
+        repos: repos.len() as u32,
+    };
+    let facts = PlanFacts {
+        spec_pin: crate::pins::spec_pin_holds(master, system, change),
+        plan_pin: crate::pins::plan_pin_holds(master, system, change),
+        has_tasks: !tasks.is_empty(),
+        tasks: counts.tasks,
+        finished,
+    };
+    (facts, counts)
+}
+
 /// The changes of `system` in the master repo, newest folder name first.
 pub fn list(master: &Path, system: &str) -> Vec<ChangeInfo> {
     if !is_safe_system(system) {
@@ -209,7 +272,18 @@ pub fn list(master: &Path, system: &str) -> Vec<ChangeInfo> {
             let intent = doc_state(master, system, &change, "intent.md");
             let spec = doc_state(master, system, &change, "spec.md");
             let plan = doc_state(master, system, &change, "plan.md");
-            let stage = derive_stage(&intent, &spec, &plan, &PlanFacts::default());
+            let (facts, build) = if plan.exists {
+                plan_facts(master, system, &change)
+            } else {
+                (PlanFacts::default(), BuildCounts::default())
+            };
+            let stage = derive_stage(&intent, &spec, &plan, &facts);
+            let out_of_date = if plan.exists && stage == Stage::PlanOutOfDate {
+                out_of_date(&intent, &spec, &plan, &facts)
+            } else {
+                None
+            };
+            let scope = crate::decide::change_scope(master, system, &change);
             ChangeInfo {
                 system: system.to_string(),
                 change,
@@ -217,9 +291,9 @@ pub fn list(master: &Path, system: &str) -> Vec<ChangeInfo> {
                 spec,
                 plan,
                 stage,
-                build: BuildCounts::default(),
-                scope: String::new(),
-                out_of_date: None,
+                build,
+                scope,
+                out_of_date,
             }
         })
         .collect()

@@ -54,7 +54,7 @@ fn is_scope(s: &str) -> bool {
 
 /// The change's scope, as the ai-sdlc plugin resolves it: the intent's `scope`, then the
 /// marker's `systems.<system>.commitScope`, then the system name. A malformed value is skipped.
-fn scope(master: &Path, system: &str, change: &str) -> String {
+pub fn change_scope(master: &Path, system: &str, change: &str) -> String {
     let intent =
         std::fs::read_to_string(master.join(format!("intent/{system}/{change}/intent.md")))
             .ok()
@@ -171,7 +171,7 @@ pub fn apply(
         std::fs::write(&path, edited)?;
     }
 
-    let msg = message(decision, &scope(master, system, change), change);
+    let msg = message(decision, &change_scope(master, system, change), change);
     let committed = git::run(master, &["add", "--", &rel])
         .and_then(|_| git::run(master, &["commit", "-m", &msg, "--", &rel]));
     Ok(match committed {
