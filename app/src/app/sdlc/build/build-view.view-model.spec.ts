@@ -508,4 +508,47 @@ describe('BuildViewModel', () => {
     expect(row(vm, 'claims-core')).toMatchObject({ tone: 'error', label: 'Stopped: cancelled' });
     expect(row(vm, 'customer-portal').tone).not.toBe('error');
   });
+
+  it('Another round on a finished repository, then Cancel, shows Stopped and Continue runs the round again with its instructions (B1)', async () => {
+    const { vm, transport, runner } = setup();
+    const doneTask = (id: string, repo: string) => ({
+      id, name: id, repo, dependsOn: [], row: { task: id, repo, commits: ['abc1234'], departure: null },
+    });
+    vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({
+      hasTasks: true,
+      departures: [],
+      tasks: [doneTask('T1', 'claims-core'), doneTask('T2', 'customer-portal')],
+      repos: [
+        { repo: 'claims-core', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
+        { repo: 'customer-portal', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
+      ],
+    });
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    vi.spyOn(transport, 'cancelRun').mockImplementation(async () => release());
+    const targets: string[] = [];
+    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
+      targets.push(target.kind === 'review' ? 'review' : target.repo);
+      link.onRun?.(`fake-${targets.length}`);
+      if (targets.length > 1) return { exit: 0, error: null };
+      await gate;
+      return { exit: 130, error: null };
+    });
+    const round = { instructions: 'rename the status field', repo: 'claims-core' };
+    await vm.start(await handoffFor(transport, { round }), CTX);
+    await advance(300);
+    vm.select('claims-core');
+    vm.cancelRun();
+    await advance(500);
+    expect(targets).toEqual(['claims-core']);
+    expect(vm.phase()).toBe('stopped');
+    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'error', label: 'Stopped: cancelled' });
+    vm.select('claims-core');
+    expect(vm.action()).toBe('continue');
+
+    await vm.continueRun();
+    await advance(500);
+    expect(targets.slice(0, 2)).toEqual(['claims-core', 'claims-core']);
+    expect(run.mock.calls[1][1].task).toContain('rename the status field');
+  });
 });

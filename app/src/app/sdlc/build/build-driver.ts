@@ -270,3 +270,19 @@ function sameHeads(a: Record<string, string>, b: Record<string, string>): boolea
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   return [...keys].every((k) => a[k] === b[k]);
 }
+
+export interface Facts {
+  kind: 'task' | 'round';
+  cancelled: boolean;
+  failed: boolean;
+  recorded: boolean;
+  stateAfter: 'ready' | 'waiting' | 'done' | 'unknown';
+}
+
+export type Outcome = { kind: 'stop'; held?: boolean } | { kind: 'finished' } | { kind: 'continue' };
+
+export const OUTCOME_RULES = new Map<string, Outcome | 'impossible'>();
+
+export function runOutcome(_facts: Facts): Outcome {
+  return { kind: 'continue' };
+}

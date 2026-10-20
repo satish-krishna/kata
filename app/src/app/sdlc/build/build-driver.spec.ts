@@ -1,7 +1,7 @@
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { RepoState } from '@bindings/RepoState';
 import { stopMessage } from '../../lib/sdlc';
-import { BuildDriver, type RunEnd, type RunOptions, type RunTarget } from './build-driver';
+import { BuildDriver, OUTCOME_RULES, runOutcome, type Facts, type Outcome, type RunEnd, type RunOptions, type RunTarget } from './build-driver';
 
 interface PlanTask {
   id: string;
@@ -458,5 +458,84 @@ describe('BuildDriver', () => {
     await w.of('app')[0].end(['T1', 'T2'], { exit: 124 });
     expect(w.driver.stopped().has('app')).toBe(true);
     expect(w.driver.phase()).toBe('stopped');
+  });
+});
+
+describe('runOutcome', () => {
+  const kinds: Facts['kind'][] = ['task', 'round'];
+  const bools = [false, true];
+  const states: Facts['stateAfter'][] = ['ready', 'waiting', 'done', 'unknown'];
+  const cross: Facts[] = kinds.flatMap((kind) =>
+    bools.flatMap((cancelled) =>
+      bools.flatMap((failed) => bools.flatMap((recorded) => states.map((stateAfter) => ({ kind, cancelled, failed, recorded, stateAfter })))),
+    ),
+  );
+
+  /** The rules, stated once in prose form, independent of the table the code carries. */
+  function expected(f: Facts): Outcome | 'impossible' {
+    // A round always has its row; a task run cannot have recorded everything without recording its own task; an unreadable status has no row to show.
+    if (f.kind === 'round' && !f.recorded) return 'impossible';
+    if (f.kind === 'task' && f.stateAfter === 'done' && !f.recorded) return 'impossible';
+    if (f.kind === 'task' && f.stateAfter === 'unknown' && f.recorded) return 'impossible';
+    if (f.stateAfter === 'unknown') return { kind: 'stop', held: true };
+    if (f.cancelled) return f.kind === 'task' && f.stateAfter === 'done' ? { kind: 'finished' } : { kind: 'stop' };
+    if (f.kind === 'round') {
+      if (f.failed) return { kind: 'stop' };
+      return f.stateAfter === 'done' ? { kind: 'finished' } : { kind: 'continue' };
+    }
+    if (f.stateAfter === 'done') return { kind: 'finished' };
+    if (f.failed) return { kind: 'stop' };
+    if (!f.recorded && f.stateAfter !== 'waiting') return { kind: 'stop' };
+    return { kind: 'continue' };
+  }
+
+  const label = (f: Facts) =>
+    `${f.kind} cancelled=${f.cancelled} failed=${f.failed} recorded=${f.recorded} stateAfter=${f.stateAfter}`;
+
+  it('the table has one row for every combination of the facts', () => {
+    expect(cross).toHaveLength(64);
+    expect(OUTCOME_RULES.size).toBe(64);
+  });
+
+  it.each(cross.map((f) => [label(f), f] as const))('%s', (_name, f) => {
+    const want = expected(f);
+    if (want === 'impossible') expect(() => runOutcome(f)).toThrow();
+    else expect(runOutcome(f)).toEqual(want);
+  });
+});
+
+describe('BuildDriver outcomes', () => {
+  it('cancelling a round on a finished repository stops it with Continue, never finishing or reviewing (B1)', async () => {
+    const w = world([{ id: 'T1', repo: 'api' }, { id: 'T2', repo: 'app' }], ['T1', 'T2']);
+    await w.driver.begin(3600, { repo: 'app', instructions: 'rename it' });
+    await flush();
+    w.driver.cancel('app');
+    await w.of('app')[0].end([], { exit: 130 });
+    expect(w.driver.stopped().get('app')?.reason).toBe(stopMessage(130, null));
+    expect(w.driver.phase()).toBe('stopped');
+    expect(w.log).toEqual(['app']);
+    expect(w.driver.round()).not.toBeNull();
+    await w.driver.continueRepo('app');
+    await flush();
+    expect(w.of('app')).toHaveLength(2);
+    expect(w.of('app')[1].opts.instructions).toBe('rename it');
+  });
+
+  it('a cancel that reaches a repository with no run going does not mark its next run cancelled (B7)', async () => {
+    const w = world([
+      { id: 'T1', repo: 'app' },
+      { id: 'T2', repo: 'api', dependsOn: ['T1'] },
+      { id: 'T3', repo: 'api' },
+    ]);
+    await w.driver.begin(3600);
+    await flush();
+    expect(w.log).toEqual(['app']);
+    w.driver.cancel('api');
+    await w.of('app')[0].end(['T1']);
+    expect(w.log).toEqual(['app', 'api']);
+    expect(w.of('api')[0].opts.signal.aborted).toBe(false);
+    await w.of('api')[0].end(['T2']);
+    expect(w.driver.stopped().size).toBe(0);
+    expect(w.log).toEqual(['app', 'api', 'api']);
   });
 });
