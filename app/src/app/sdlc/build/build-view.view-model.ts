@@ -323,6 +323,13 @@ export class BuildViewModel {
     await this.driver.continueRepo(key);
   }
 
+  /** The confirm for continuing on top of the stopped repository's leftovers: one line per repository and file; null while closed. */
+  readonly leftoverPrompt = computed<{ lines: string[] } | null>(() => null);
+
+  async confirmContinue(): Promise<void> {}
+
+  cancelContinue(): void {}
+
   answer(runId: string, e: { id: string; answers: string[][] }): void {
     this.lock.answer(runId, e.id, e.answers);
   }

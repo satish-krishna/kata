@@ -184,10 +184,87 @@ describe('BuildViewModel', () => {
     await vm.continueRun();
     await advance(500);
     expect(prepare).toHaveBeenCalledTimes(2);
-    expect(prepare.mock.calls[1][4]).toBe(true);
+    expect(prepare.mock.calls[1][4]).toBe(false);
     expect(run).toHaveBeenCalledTimes(3);
     expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
     expect(row(vm, 'claims-core').label).toBe('Working · T1');
+  });
+
+  it('Continue after the branches were settled asks before going on top of leftovers, and starts nothing until confirmed (R6.4)', async () => {
+    const { vm, transport, runner } = setup();
+    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    const real = runner.runInRepo.bind(runner);
+    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
+      if (run.mock.calls.length <= 2) {
+        link.onRun?.(`fake-${target.repo}`);
+        return { exit: 124, error: null };
+      }
+      return real(target, spec, link);
+    });
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    vm.select('claims-core');
+    prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['src/new.rs'] }] });
+    await vm.continueRun();
+    await advance(500);
+    expect(vm.leftoverPrompt()).toEqual({ lines: ['claims-core: src/new.rs'] });
+    expect(prepare.mock.calls[1][4]).toBe(false);
+    expect(run).toHaveBeenCalledTimes(2);
+
+    await vm.confirmContinue();
+    await advance(500);
+    expect(vm.leftoverPrompt()).toBeNull();
+    expect(prepare.mock.calls.at(-1)![4]).toBe(true);
+    expect(run).toHaveBeenCalledTimes(3);
+  });
+
+  it('declining the leftovers starts nothing (R6.4)', async () => {
+    const { vm, transport, runner } = setup();
+    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
+      link.onRun?.(`fake-${target.repo}`);
+      return { exit: 124, error: null };
+    });
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    vm.select('claims-core');
+    prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['src/new.rs'] }] });
+    await vm.continueRun();
+    vm.cancelContinue();
+    await advance(500);
+    expect(vm.leftoverPrompt()).toBeNull();
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('Continue while other repositories still run asks about the stopped repository\'s uncommitted edits first (R6.4, R6.7)', async () => {
+    const { vm, transport, runner } = setup();
+    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    vi.spyOn(transport, 'sdlcSnapshot').mockResolvedValue({ head: 'abc', dirty: { 'src/half.rs': 'x1' } });
+    const real = runner.runInRepo.bind(runner);
+    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
+      if (target.kind === 'repo' && target.repo === 'claims-core' && run.mock.calls.length <= 2) {
+        link.onRun?.('fake-claims-core');
+        return { exit: 124, error: null };
+      }
+      return real(target, spec, link);
+    });
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    expect(vm.phase()).toBe('building');
+    vm.select('claims-core');
+    expect(vm.action()).toBe('continue');
+    const calls = run.mock.calls.length;
+
+    await vm.continueRun();
+    await advance(100);
+    expect(vm.leftoverPrompt()).toEqual({ lines: ['claims-core: src/half.rs'] });
+    expect(run).toHaveBeenCalledTimes(calls);
+    expect(prepare).toHaveBeenCalledTimes(1);
+
+    await vm.confirmContinue();
+    await advance(100);
+    expect(vm.leftoverPrompt()).toBeNull();
+    expect(run).toHaveBeenCalledTimes(calls + 1);
   });
 
   it('the review starts by itself and its findings are shown most serious first (R8.2)', async () => {
