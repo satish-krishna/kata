@@ -1,6 +1,6 @@
 //! Starting a build: one `change/<change>` branch in every repository an unfinished task names,
 //! checked before anything is created or switched, and the cleanup of branches that stayed empty.
-use crate::base::{base_branch, base_info_for, commits_ahead_of_local_base, BaseError};
+use crate::base::{base_branch, commits_ahead_of_local_base, local_base_ref, BaseError};
 use crate::branch::{branch_exists, current_branch};
 use crate::build::{self, RepoState};
 use crate::changes::{is_change_name, is_safe_system};
@@ -108,8 +108,8 @@ fn classify(
     let exists = branch_exists(path, branch);
     if exists {
         let tip = format!("refs/heads/{branch}");
-        let info = base_info_for(path, &tip)?;
-        if !offenders_to(path, repo, &info.merge_base, &tip, scope)?.is_empty() {
+        let from = local_base_ref(path, &tip)?;
+        if !offenders_to(path, repo, &from, &tip, scope)?.is_empty() {
             return refuse(format!(
                 "{repo} already has a branch {branch} holding work from outside this change"
             ));

@@ -94,14 +94,21 @@ pub fn commits_ahead(repo: &Path) -> Result<u32, BaseError> {
 /// view still compares against the merge base with the remote (R7.7); only the decision whether
 /// a repository was changed at all uses this count (R10.1).
 pub fn commits_ahead_of_local_base(repo: &Path, rev: &str) -> Result<u32, BaseError> {
+    let local = local_base_ref(repo, rev)?;
+    let count = git::run(repo, &["rev-list", "--count", &format!("{local}..{rev}")])?;
+    Ok(count.trim().parse().unwrap_or(0))
+}
+
+/// The ref work on a change branch is counted from: the local base branch, or `origin/<base>`
+/// when no local one exists. Every "what did the build add" computation starts here, so base
+/// commits the engineer has yet to push are never taken for build work.
+pub fn local_base_ref(repo: &Path, rev: &str) -> Result<String, BaseError> {
     let info = base_info_for(repo, rev)?;
-    let local = if ref_exists(repo, &format!("refs/heads/{}", info.base)) {
+    Ok(if ref_exists(repo, &format!("refs/heads/{}", info.base)) {
         info.base
     } else {
         info.reference
-    };
-    let count = git::run(repo, &["rev-list", "--count", &format!("{local}..{rev}")])?;
-    Ok(count.trim().parse().unwrap_or(0))
+    })
 }
 
 #[cfg(test)]
