@@ -320,6 +320,7 @@ fn sdlc_build_prepare(
     system: String,
     change: String,
     continue_with_leftovers: bool,
+    pending: Option<String>,
 ) -> Result<sdlc::start::PrepareOutcome, String> {
     sdlc::start::prepare(
         Path::new(&folder),
@@ -327,6 +328,25 @@ fn sdlc_build_prepare(
         &system,
         &change,
         continue_with_leftovers,
+        pending.as_deref(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_build_participants(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+    pending: Option<String>,
+) -> Result<Vec<sdlc::participants::Participant>, String> {
+    sdlc::participants::participants(
+        Path::new(&folder),
+        &master_repo,
+        &system,
+        &change,
+        pending.as_deref(),
     )
     .map_err(|e| e.to_string())
 }
@@ -740,6 +760,7 @@ pub fn run() {
             sdlc_build_status,
             sdlc_unsaved_rows,
             sdlc_build_prepare,
+            sdlc_build_participants,
             sdlc_build_settle,
             sdlc_build_heads,
             sdlc_plugin_version,

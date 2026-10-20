@@ -334,8 +334,9 @@ mod tests {
         write_rows(&m);
         let l = leftovers(&m, &before, &[]).unwrap();
         assert_eq!(l.discardable, vec!["scratch.txt"]);
-        // Another repository's row is not this run's; the run's own row is kept, never offered.
-        assert_eq!(l.touched_dirty, vec![OWN_ROW]);
+        // A build log row is owned by its repository and reported through the build's participants,
+        // never as the leftover of whichever working tree happens to hold the file.
+        assert!(l.touched_dirty.is_empty(), "{:?}", l.touched_dirty);
     }
 
     #[test]

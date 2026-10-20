@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { Participant } from '@bindings/Participant';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { LockStore } from '../../core/lock/lock.store';
 import { RunStore } from '../../core/run/run.store';
@@ -50,6 +51,11 @@ async function drive(vm: BuildViewModel, lock: LockStore, done: () => boolean, l
   await advance(200);
   expect(done()).toBe(true);
 }
+
+/** The build's participants as the backend answers them: the master and the two product repositories, each with what it owns. */
+const part = (repo: string, over: Partial<Participant> = {}): Participant => ({ repo, path: `${FOLDER}/${repo}`, master: repo === MOCK_MASTER, files: [], rows: [], ...over });
+const everyone = (over: Record<string, Partial<Participant>> = {}): Participant[] => [MOCK_MASTER, 'claims-core', 'customer-portal'].map((r) => part(r, over[r]));
+const ROW = (repo: string) => `intent/claims/${MOCK_BUILD_CHANGE}/build/${repo}.md`;
 
 const row = (vm: BuildViewModel, name: string) => vm.rows().find((r) => r.name === name)!;
 const finished = (vm: BuildViewModel) => () => vm.phase() === 'finished' && vm.findings().length > 0;
@@ -280,7 +286,7 @@ describe('BuildViewModel', () => {
   it('Continue while other repositories still run asks about the stopped repository\'s uncommitted edits first (R6.4, R6.7)', async () => {
     const { vm, transport, runner } = setup();
     const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-    vi.spyOn(transport, 'sdlcSnapshot').mockResolvedValue({ head: 'abc', dirty: { 'src/half.rs': 'x1' } });
+    vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone({ 'claims-core': { files: ['src/half.rs'] } }));
     const real = runner.runInRepo.bind(runner);
     const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
       if (target.kind === 'repo' && target.repo === 'claims-core' && run.mock.calls.length <= 2) {
@@ -551,5 +557,156 @@ describe('BuildViewModel', () => {
     await advance(500);
     expect(targets.slice(0, 2)).toEqual(['claims-core', 'claims-core']);
     expect(run.mock.calls[1][1].task).toContain('rename the status field');
+  });
+
+  describe('Continue asks about what its own repository left, wherever it was written (R6.4, R6.6)', () => {
+    const doneTask = (id: string, repo: string) => ({
+      id, name: id, repo, dependsOn: [], row: { task: id, repo, commits: ['abc1234'], departure: null },
+    });
+    const allDone: BuildStatus = {
+      hasTasks: true,
+      departures: [],
+      tasks: [doneTask('T1', 'claims-core'), doneTask('T2', 'customer-portal')],
+      repos: [
+        { repo: 'claims-core', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
+        { repo: 'customer-portal', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
+      ],
+    };
+    const coreDonePortalReady: BuildStatus = {
+      hasTasks: true,
+      departures: [],
+      tasks: [doneTask('T1', 'claims-core'), { id: 'T2', name: 'two', repo: 'customer-portal', dependsOn: [], row: null }],
+      repos: [
+        { repo: 'claims-core', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
+        { repo: 'customer-portal', firstUnfinished: 'T2', state: { kind: 'ready', task: 'T2' }, tasks: 1, finished: 0 },
+      ],
+    };
+
+    /** The first run of `stopper` stops at once; every other repository's run is held (never ends) when `hold` is set. */
+    function stopFirstRunOf(runner: SdlcRunner, stopper: string, hold: boolean) {
+      const seen: string[] = [];
+      const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
+        const key = target.kind === 'review' ? 'review' : target.repo;
+        seen.push(key);
+        link.onRun?.(`fake-${seen.length}`);
+        if (key === stopper) return seen.filter((k) => k === key).length === 1 ? { exit: 124, error: null } : { exit: 0, error: null };
+        if (hold) await new Promise<void>(() => undefined);
+        return { exit: 0, error: null };
+      });
+      return run;
+    }
+    const told = (run: ReturnType<typeof stopFirstRunOf>, repo: string) => run.mock.calls.filter(([t]) => t.kind === 'repo' && t.repo === repo).at(-1)![1].task;
+
+    it('a stopped master round that left edits goes through the confirmation while other runs go, like any repository (B2)', async () => {
+      const { vm, transport, runner } = setup();
+      const asked = vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone({ [MOCK_MASTER]: { files: ['notes/half.md'] } }));
+      const run = stopFirstRunOf(runner, MOCK_MASTER, true);
+      await vm.start(await handoffFor(transport, { round: { instructions: 'tidy the notes', repo: MOCK_MASTER } }), CTX);
+      await advance(500);
+      expect(vm.phase()).toBe('building');
+      vm.select(MOCK_MASTER);
+      expect(vm.action()).toBe('continue');
+      const calls = run.mock.calls.length;
+
+      await vm.continueRun();
+      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'claims', MOCK_BUILD_CHANGE, MOCK_MASTER);
+      expect(vm.leftoverPrompt()).toEqual({ lines: [`${MOCK_MASTER}: notes/half.md`] });
+      expect(run).toHaveBeenCalledTimes(calls);
+
+      await vm.confirmContinue();
+      await advance(100);
+      expect(run).toHaveBeenCalledTimes(calls + 1);
+      expect(told(run, MOCK_MASTER)).toContain('already confirmed');
+    });
+
+    it("a stopped master round that left edits goes through the confirmation after the build ended, and the backend is told the round is the master's (B2)", async () => {
+      const { vm, transport, runner } = setup();
+      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+      const run = stopFirstRunOf(runner, MOCK_MASTER, false);
+      await vm.start(await handoffFor(transport, { round: { instructions: 'tidy the notes', repo: MOCK_MASTER } }), CTX);
+      await advance(500);
+      expect(vm.phase()).toBe('stopped');
+      vm.select(MOCK_MASTER);
+      prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: MOCK_MASTER, files: ['notes/half.md'] }] });
+
+      await vm.continueRun();
+      expect(prepare.mock.calls[1][4]).toBe(false);
+      expect(prepare.mock.calls[1][5]).toBe(MOCK_MASTER);
+      expect(vm.leftoverPrompt()).toEqual({ lines: [`${MOCK_MASTER}: notes/half.md`] });
+      expect(run).toHaveBeenCalledTimes(1);
+
+      await vm.confirmContinue();
+      await advance(100);
+      expect(prepare.mock.calls.at(-1)![4]).toBe(true);
+      expect(prepare.mock.calls.at(-1)![5]).toBe(MOCK_MASTER);
+      expect(told(run, MOCK_MASTER)).toContain('already confirmed');
+    });
+
+    it("an unsaved row in a repository's build log is shown as that repository's leftover and its run is told it was confirmed (B3)", async () => {
+      const { vm, transport, runner } = setup();
+      const asked = vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone({ 'claims-core': { rows: [ROW('claims-core')] } }));
+      const run = stopFirstRunOf(runner, 'claims-core', true);
+      await vm.start(await handoffFor(transport), CTX);
+      await advance(500);
+      vm.select('claims-core');
+      expect(vm.action()).toBe('continue');
+      const calls = run.mock.calls.length;
+
+      await vm.continueRun();
+      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'claims', MOCK_BUILD_CHANGE, 'claims-core');
+      expect(vm.leftoverPrompt()).toEqual({ lines: [`claims-core: ${ROW('claims-core')}`] });
+      expect(run).toHaveBeenCalledTimes(calls);
+
+      await vm.confirmContinue();
+      await advance(100);
+      expect(run).toHaveBeenCalledTimes(calls + 1);
+      expect(told(run, 'claims-core')).toContain('already confirmed');
+    });
+
+    it('a round on a finished repository that stopped with edits asks on Continue while other runs go (B4)', async () => {
+      const { vm, transport, runner } = setup();
+      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(coreDonePortalReady);
+      const asked = vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone({ 'claims-core': { files: ['src/half.rs'] } }));
+      const run = stopFirstRunOf(runner, 'claims-core', true);
+      await vm.start(await handoffFor(transport, { round: { instructions: 'rename the status field', repo: 'claims-core' } }), CTX);
+      await advance(500);
+      expect(vm.phase()).toBe('building');
+      vm.select('claims-core');
+      expect(vm.action()).toBe('continue');
+      const calls = run.mock.calls.length;
+
+      await vm.continueRun();
+      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'claims', MOCK_BUILD_CHANGE, 'claims-core');
+      expect(vm.leftoverPrompt()).toEqual({ lines: ['claims-core: src/half.rs'] });
+      expect(run).toHaveBeenCalledTimes(calls);
+
+      await vm.confirmContinue();
+      await advance(100);
+      expect(run).toHaveBeenCalledTimes(calls + 1);
+      expect(told(run, 'claims-core')).toContain('rename the status field');
+    });
+
+    it('a round on a finished repository that stopped with edits asks on Continue after the build ended (B4)', async () => {
+      const { vm, transport, runner } = setup();
+      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+      const run = stopFirstRunOf(runner, 'claims-core', false);
+      await vm.start(await handoffFor(transport, { round: { instructions: 'rename the status field', repo: 'claims-core' } }), CTX);
+      await advance(500);
+      expect(vm.phase()).toBe('stopped');
+      vm.select('claims-core');
+      prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['src/half.rs'] }] });
+
+      await vm.continueRun();
+      expect(prepare.mock.calls[1][5]).toBe('claims-core');
+      expect(vm.leftoverPrompt()).toEqual({ lines: ['claims-core: src/half.rs'] });
+      expect(run).toHaveBeenCalledTimes(1);
+
+      await vm.confirmContinue();
+      await advance(100);
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(told(run, 'claims-core')).toContain('already confirmed');
+    });
   });
 });

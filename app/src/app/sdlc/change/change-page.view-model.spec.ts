@@ -415,7 +415,7 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.act('start-build');
       await vm.submitBuild(REQUEST);
-      expect(prepare).toHaveBeenCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false);
+      expect(prepare).toHaveBeenCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false, null);
       expect(vm.buildMode()).toBeNull();
       const h = vm.handoff()!;
       expect(h.timeoutSecs).toBe(5400);
@@ -435,6 +435,20 @@ describe('ChangePageViewModel', () => {
       await vm.closeBuild();
       await vm.submitBuild(REQUEST);
       expect(vm.handoff()!.continueOnLeftovers).toEqual([]);
+    });
+
+    it('Another round names its repository, so the backend counts it as taking part even when its tasks are all done or it is the master (R6.4)', async () => {
+      const transport = new MockTransport();
+      withStage(transport, BUILD, 'build-finished');
+      const { vm } = setup(BUILD, transport);
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+      await ready(vm);
+      for (const repo of ['claims-core', 'claims-intent']) {
+        await vm.act('another-round');
+        await vm.submitBuild({ timeoutSecs: 14400, instructions: 'tidy up', repo });
+        expect(prepare).toHaveBeenLastCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false, repo);
+        await vm.closeBuild();
+      }
     });
 
     it('names the workspace, folder, system, change and every product repository of the system for the build view (R18.5)', async () => {

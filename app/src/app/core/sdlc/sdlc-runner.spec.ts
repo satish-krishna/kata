@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { Leftovers } from '@bindings/Leftovers';
+import type { Participant } from '@bindings/Participant';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { BuildStart } from '@bindings/BuildStart';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
@@ -64,6 +65,8 @@ class FakeTransport {
     this.calls.push('prepare');
     return typeof this.prepared === 'function' ? this.prepared() : this.prepared;
   });
+  participants: Participant[] = [];
+  sdlcBuildParticipants = vi.fn(async (..._a: unknown[]) => this.participants);
   sdlcBuildSettle = vi.fn(async (..._a: unknown[]) => { this.calls.push('settle'); return [] as string[]; });
   sdlcBuildHeads = vi.fn(async (..._a: unknown[]) => ({ 'claims-core': 'c0ffee' }));
 }
@@ -488,7 +491,7 @@ describe('SdlcRunner build', () => {
       const ctx = setup();
       const out = await ctx.runner.prepareBuild({ ...REQUEST, continueWithLeftovers: true });
       expect(out).toEqual({ kind: 'ready', start: BUILD_START });
-      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', true);
+      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', true, null);
     });
 
     it('answers needs-confirm with the files each repository holds', async () => {
@@ -602,6 +605,27 @@ describe('SdlcRunner build', () => {
       await finished;
       expect(ctx.fake.sdlcBuildSettle).toHaveBeenCalledWith(BUILD_START);
       expect(ctx.runner.leftovers()).toBeNull();
+    });
+
+    it("an unsaved build log row is listed at the end of the build under the repository that owns it, not under the master (R6.6)", async () => {
+      const ctx = setup();
+      const row = 'intent/claims/2026-10-12-fnol/build/claims-core.md';
+      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'claims-intent', files: [], rows });
+      ctx.fake.participants = [owned('claims-intent', []), owned('claims-core', [row])];
+      const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
+      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
+      end(ctx, 'r1', 'warning', 124);
+      await drive(core);
+      expect(ctx.fake.sdlcBuildParticipants).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', null);
+
+      const finished = ctx.runner.finishBuild(BUILD_START);
+      await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
+      const shown = ctx.runner.leftovers()!;
+      expect(shown.map((l) => l.repo)).toEqual(['claims-core']);
+      expect(shown[0].data.touched_dirty).toEqual([row]);
+      expect(shown[0].data.discardable).toEqual([]);
+      ctx.runner.closeLeftovers();
+      await finished;
     });
 
     it('discardAll discards every chosen repository, then closes and keeps the rest', async () => {

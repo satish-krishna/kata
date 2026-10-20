@@ -10,6 +10,7 @@ pub mod decide;
 pub mod diff;
 pub mod frontmatter;
 pub mod git;
+pub mod participants;
 pub mod pins;
 pub mod plugin;
 mod process;
