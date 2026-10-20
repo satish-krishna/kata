@@ -6,7 +6,7 @@ import { ChangesTable } from './changes-table';
 const doc = (status: string | null): DocState =>
   status === null ? { exists: false, committed: false, status: null } : { exists: true, committed: true, status };
 const change = (name: string, stage: ChangeInfo['stage']): ChangeInfo =>
-  ({ system: 'claims', change: name, intent: doc('accepted'), spec: doc(null), plan: doc(null), stage });
+  ({ system: 'claims', change: name, intent: doc('accepted'), spec: doc(null), plan: doc(null), stage, build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null });
 
 const text = (c: HTMLElement) => c.textContent!.replace(/\s+/g, ' ');
 const buttons = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLButtonElement>('button'));
@@ -14,13 +14,13 @@ const buttons = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLButtonElem
 describe('ChangesTable', () => {
   it('groups changes by system and shows each stage as a labelled status', async () => {
     const { container } = await render(ChangesTable, {
-      changes: [change('2026-10-12-fnol', 'spec-awaiting'), change('2026-10-09-reassign', 'plan-written')],
+      changes: [change('2026-10-12-fnol', 'spec-awaiting'), change('2026-10-09-reassign', 'plan-awaiting')],
       others: [], lastRuns: {},
     });
     expect(container.querySelector('[data-testid="system-claims"]')).not.toBeNull();
     expect(text(container)).toContain('2026-10-12-fnol');
     expect(text(container)).toContain('Spec · awaiting acceptance');
-    expect(text(container)).toContain('Plan · written');
+    expect(text(container)).toContain('Plan · awaiting acceptance');
     expect(container.querySelectorAll('.k-status__dot').length).toBe(2);
   });
 

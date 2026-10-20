@@ -9,7 +9,7 @@ const COUNTS = { intent: 2, spec: 1, plan: 0 };
 const ALL_DOCS: DocsPresent = { intent: true, spec: true, plan: true };
 const ALL: Stage[] = [
   'intent-in-progress', 'intent-awaiting', 'intent-accepted-uncommitted', 'rejected', 'spec-ready',
-  'spec-awaiting', 'spec-accepted-uncommitted', 'plan-ready', 'plan-written', 'plan-superseded',
+  'spec-awaiting', 'spec-accepted-uncommitted', 'plan-ready', 'plan-awaiting', 'plan-accepted-uncommitted', 'plan-out-of-date', 'plan-superseded', 'build-ready', 'build-stopped', 'build-finished',
 ];
 const text = (c: HTMLElement) => c.textContent!.replace(/\s+/g, ' ');
 

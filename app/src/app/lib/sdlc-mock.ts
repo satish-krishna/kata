@@ -97,7 +97,10 @@ const doc = (status: string | null, committed = true): DocState =>
   status === null ? { exists: false, committed: false, status: null } : { exists: true, committed, status };
 
 const change = (name: string, intent: DocState, spec: DocState, plan: DocState, stage: Stage): ChangeInfo =>
-  ({ system: MOCK_SYSTEM, change: name, intent, spec, plan, stage });
+  ({
+    system: MOCK_SYSTEM, change: name, intent, spec, plan, stage,
+    build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null,
+  });
 
 const DOC_STEMS = new Set(['intent', 'spec', 'plan']);
 
@@ -141,7 +144,7 @@ export class SdlcMock {
   private changes: ChangeInfo[] = [
     change('2026-10-16-fraud-flag', doc('draft'), doc(null), doc(null), 'intent-awaiting'),
     change('2026-10-12-fnol-photo-upload', doc('accepted'), doc('draft'), doc(null), 'spec-awaiting'),
-    change('2026-10-09-adjuster-reassign', doc('accepted'), doc('accepted'), doc('draft'), 'plan-written'),
+    change('2026-10-09-adjuster-reassign', doc('accepted'), doc('accepted'), doc('draft'), 'plan-awaiting'),
   ];
   private docs: Record<string, string> = { ...DOCS };
   private setupDone = false;

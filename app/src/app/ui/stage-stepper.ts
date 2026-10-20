@@ -32,7 +32,8 @@ export class StageStepper {
 
   protected readonly steps = computed<Step[]>(() => {
     const label = stageLabel(this.stage());
-    const at = STEPS.findIndex((s) => s.name === (label.step === 'closed' ? 'intent' : label.step));
+    const tile = label.step === 'closed' ? 'intent' : label.step === 'build' || label.step === 'done' ? 'plan' : label.step;
+    const at = STEPS.findIndex((s) => s.name === tile);
     return STEPS.map((s, i) => {
       const base = { name: s.name, title: s.title, current: i === at, runs: runs(this.counts()[s.name]) };
       if (i === at) return { ...base, text: label.text, tone: label.tone === 'muted' ? 'idle' : label.tone };

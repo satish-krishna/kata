@@ -17,7 +17,7 @@ import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import {
   actionLabel,
-  actionsFor,
+  actionsForChange,
   primaryAction,
   revisits,
   runCounts,
@@ -70,7 +70,7 @@ const isDocStem = (s: string): s is DocStem => s === 'intent' || s === 'spec' ||
 
 function docFor(c: ChangeInfo): DocStem {
   const step = stageLabel(c.stage).step;
-  if (step === 'plan') return c.plan.exists ? 'plan' : c.spec.exists ? 'spec' : 'intent';
+  if (step === 'plan' || step === 'build' || step === 'done') return c.plan.exists ? 'plan' : c.spec.exists ? 'spec' : 'intent';
   if (step === 'spec') return c.spec.exists ? 'spec' : 'intent';
   return 'intent';
 }
@@ -132,7 +132,7 @@ export class ChangePageViewModel {
   readonly docParts = computed(() => splitFrontMatter(this.doc() ?? ''));
   readonly actions = computed(() => {
     const c = this.change();
-    return c ? actionsFor(c.stage) : [];
+    return c ? actionsForChange(c) : [];
   });
   readonly primary = computed(() => primaryAction(this.actions()));
   readonly labelOf = actionLabel;

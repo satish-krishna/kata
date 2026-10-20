@@ -3,6 +3,7 @@
  * No Angular, no I/O. */
 
 import type { CatalogEntry } from "@bindings/CatalogEntry";
+import type { ChangeInfo } from "@bindings/ChangeInfo";
 import type { PluginConfig } from "@bindings/PluginConfig";
 import type { RunLink } from "@bindings/RunLink";
 import type { RunRecord } from "@bindings/RunRecord";
@@ -23,7 +24,13 @@ export type StageAction =
   | "start-plan"
   | "rerun-plan"
   | "reopen-spec"
-  | "reopen-intent";
+  | "reopen-intent"
+  | "accept-plan"
+  | "start-build"
+  | "continue-build"
+  | "another-round"
+  | "run-review"
+  | "declare-done";
 
 const ACTIONS: Record<Stage, StageAction[]> = {
   "intent-in-progress": ["continue-intent"],
@@ -34,8 +41,14 @@ const ACTIONS: Record<Stage, StageAction[]> = {
   "spec-awaiting": ["continue-spec", "accept-spec", "reopen-intent"],
   "spec-accepted-uncommitted": ["commit-acceptance", "continue-spec"],
   "plan-ready": ["start-plan", "reopen-spec", "reopen-intent"],
-  "plan-written": ["rerun-plan", "reopen-spec", "reopen-intent"],
-  "plan-superseded": ["rerun-plan", "reopen-spec"],
+  "plan-awaiting": ["accept-plan", "rerun-plan", "reopen-intent"],
+  "plan-accepted-uncommitted": ["commit-acceptance", "rerun-plan"],
+  // The actions depend on the cause; see `actionsForChange`.
+  "plan-out-of-date": [],
+  "plan-superseded": ["rerun-plan"],
+  "build-ready": ["start-build", "reopen-intent"],
+  "build-stopped": ["continue-build", "another-round"],
+  "build-finished": ["declare-done", "another-round", "run-review"],
 };
 
 const REVISITS: readonly StageAction[] = ["continue-intent", "reopen-intent", "continue-spec", "reopen-spec", "rerun-plan"];
@@ -50,8 +63,25 @@ export function actionsFor(stage: Stage): StageAction[] {
   return [...ACTIONS[stage]];
 }
 
+/**
+ * The actions of a change. An out-of-date plan depends on its cause: a broken spec pin means the spec is
+ * reopened; a reopened intent or spec is settled on its own tab; any other cause means the plan is rewritten.
+ */
+export function actionsForChange(c: ChangeInfo): StageAction[] {
+  if (c.stage !== "plan-out-of-date") return actionsFor(c.stage);
+  switch (c.out_of_date) {
+    case "spec-pin":
+      return ["reopen-spec"];
+    case "intent-reopened":
+    case "spec-reopened":
+      return [];
+    default:
+      return ["rerun-plan"];
+  }
+}
+
 export type StageLabel = {
-  step: "intent" | "spec" | "plan" | "closed";
+  step: "intent" | "spec" | "plan" | "build" | "done" | "closed";
   text: string;
   tone: "success" | "warning" | "muted" | "error";
 };
@@ -65,9 +95,17 @@ const LABELS: Record<Stage, StageLabel> = {
   "spec-awaiting": { step: "spec", text: "Spec · awaiting acceptance", tone: "warning" },
   "spec-accepted-uncommitted": { step: "spec", text: "Spec · accepted, not committed", tone: "warning" },
   "plan-ready": { step: "plan", text: "Plan · ready to start", tone: "muted" },
-  "plan-written": { step: "plan", text: "Plan · written", tone: "success" },
+  "plan-awaiting": { step: "plan", text: "Plan · awaiting acceptance", tone: "warning" },
+  "plan-accepted-uncommitted": { step: "plan", text: "Plan · accepted, not committed", tone: "warning" },
+  "plan-out-of-date": { step: "plan", text: "Plan · out of date", tone: "warning" },
   "plan-superseded": { step: "plan", text: "Plan · superseded", tone: "warning" },
+  "build-ready": { step: "build", text: "Build · ready to start", tone: "muted" },
+  "build-stopped": { step: "build", text: "Build · in progress (stopped)", tone: "warning" },
+  "build-finished": { step: "build", text: "Build · finished, not yet done", tone: "success" },
 };
+
+/** The label of a change that is done: its pull requests are open. Not a stage; the Workbench records it. */
+export const DONE_LABEL: StageLabel = { step: "done", text: "Done · pull requests open", tone: "success" };
 
 export function stageLabel(stage: Stage): StageLabel {
   return { ...LABELS[stage] };
@@ -189,13 +227,19 @@ const LABEL: Record<StageAction, string> = {
   "rerun-plan": "Re-run plan",
   "reopen-spec": "Reopen spec",
   "reopen-intent": "Reopen intent",
+  "accept-plan": "Accept plan",
+  "start-build": "Start build",
+  "continue-build": "Continue build",
+  "another-round": "Another round",
+  "run-review": "Run review",
+  "declare-done": "Declare done",
 };
 
 export function actionLabel(action: StageAction): string {
   return LABEL[action];
 }
 
-const PRIMARY_ORDER: RegExp[] = [/^accept-/, /^commit-acceptance$/, /^start-/, /^continue-/];
+const PRIMARY_ORDER: RegExp[] = [/^accept-/, /^commit-acceptance$/, /^start-/, /^continue-/, /^declare-done$/];
 
 /** The one primary action of a view: accept, commit, start, then continue. Reopen, re-run and reject are never primary. */
 export function primaryAction(actions: readonly StageAction[]): StageAction | null {
