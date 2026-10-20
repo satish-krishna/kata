@@ -45,7 +45,7 @@ describe('LeftoverDialog', () => {
     await render(LeftoverDialog, { leftovers: [{ repo: 'claims-core', data: { ...LEFT, touched_dirty: [], created: [row] } }] });
     await settle();
     const li = [...document.body.querySelectorAll('.k-left__row')].find((e) => e.textContent!.includes(row))!;
-    expect(li.textContent!.replace(/s+/g, ' ')).toContain('changed during this run');
+    expect(li.textContent!.replace(/\s+/g, ' ')).toContain('changed during this run');
     expect(li.textContent).not.toContain('before and during');
     expect(boxes().map((b) => b.getAttribute('aria-label'))).not.toContain(row);
   });
