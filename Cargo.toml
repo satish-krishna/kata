@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/kata-core", "crates/kata-cli", "app/src-tauri"]
+members = ["crates/kata-core", "crates/kata-cli", "crates/kata-sdlc", "app/src-tauri"]
 
 [workspace.package]
 edition = "2021"

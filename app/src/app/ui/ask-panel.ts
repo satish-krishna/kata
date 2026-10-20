@@ -8,75 +8,19 @@ import { AskSummary } from './ask-summary';
 @Component({
   selector: 'app-ask-panel',
   imports: [FormRoot, FormField, HlmQuestionnaireImports, AskSummary],
-  template: `
-    <div class="k-ask" [class.k-ask--answered]="settled() !== null">
-      <div class="k-ask__banner">
-        <span class="k-ask__banner-dot"></span>
-        <span class="k-ask__banner-label">{{ settled() !== null ? 'answered · run resumed' : 'awaiting your input' }}</span>
-        <span class="k-ask__banner-tool">ask_user</span>
-      </div>
-      <div class="k-ask__body">
-        @if (settled(); as answers) {
-          <app-ask-summary [questions]="ask().questions" [answers]="answers" />
-        } @else {
-          <form hlmQuestionnaire [formRoot]="state().form" shortcuts="numbers">
-            @if (ask().questions.length > 1) {
-              <div hlmQuestionnaireProgress></div>
-            }
-            @for (q of ask().questions; track $index; let i = $index) {
-              <fieldset hlmQuestionnaireItem [name]="key(i)" [multiple]="isMulti(q)" [formField]="state().form[key(i)]">
-                <legend hlmQuestionnaireTitle>
-                  <span class="k-ask__q-eyebrow">{{ q.header }}</span>
-                  {{ q.question }}
-                </legend>
-                @if (isMulti(q)) {
-                  <p hlmQuestionnaireDescription>choose any</p>
-                }
-                <div hlmQuestionnaireChoices #choices>
-                  @for (opt of choicesOf(q); track opt.label) {
-                    <label hlmQuestionnaireChoice [value]="opt.label" (checkedChange)="onChecked(choices, q, $event)">
-                      {{ opt.label }}
-                      @if (opt.description) {
-                        <span hlmQuestionnaireChoiceDescription>{{ opt.description }}</span>
-                      }
-                    </label>
-                  }
-                  @if (q.kind === 'select') {
-                    <input hlmQuestionnaireInput aria-label="Other answer" placeholder="Other — type your own answer" />
-                  } @else if (q.kind === 'text') {
-                    <input hlmQuestionnaireInput [attr.aria-label]="q.question" [attr.placeholder]="q.placeholder ?? ''" />
-                  }
-                </div>
-                @if (q.kind === 'text') {
-                  <p hlmQuestionnaireError requiredMessage="Type an answer to continue."></p>
-                } @else {
-                  <p hlmQuestionnaireError></p>
-                }
-              </fieldset>
-            }
-            <div class="k-ask__foot">
-              <span class="k-ask__hint">the run is paused on the leash</span>
-              <div hlmQuestionnaireActions>
-                <button hlmQuestionnairePrevious>Previous</button>
-                <button hlmQuestionnaireSkip>Skip</button>
-                <button hlmQuestionnaireNext>Next</button>
-                <button hlmQuestionnaireSubmit>Send answer · resume</button>
-              </div>
-            </div>
-          </form>
-        }
-      </div>
-    </div>
-  `,
+  templateUrl: './ask-panel.html',
 })
 export class AskPanel {
   readonly ask = input.required<AskRecord>();
+  /** The run is over, so an unanswered ask can no longer be answered. */
+  readonly ended = input(false);
   readonly answer = output<{ id: string; answers: string[][] }>();
 
   // The Signal Form is built per ask, so it needs an injector outside a field initializer.
   private readonly injector = inject(Injector);
 
   protected readonly settled = computed(() => this.ask().answers);
+  protected readonly lapsed = computed(() => this.ended() && this.ask().answers === null);
 
   // Keyed on the ask id so a re-delivered record (same ask, new object) keeps what was typed.
   private readonly askId = computed(() => this.ask().id);

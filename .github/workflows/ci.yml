@@ -65,8 +65,10 @@ jobs:
         # CRLF vs the committed LF; `git add -N` makes a brand-new, uncommitted
         # binding surface as drift too. Regenerate locally with:
         #   cargo test -p kata-core --features ts export_bindings
+        #   cargo test -p kata-sdlc --features ts export_bindings
         run: |
           cargo test -p kata-core --features ts export_bindings
+          cargo test -p kata-sdlc --features ts export_bindings
           git add --intent-to-add app/src/bindings/
           git diff --ignore-cr-at-eol --exit-code app/src/bindings/
 

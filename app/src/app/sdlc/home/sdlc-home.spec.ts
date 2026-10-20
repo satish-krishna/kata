@@ -1,0 +1,131 @@
+import { TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
+import { render } from '../../../testing/render';
+import { KataTransport } from '../../core/transport/kata-transport';
+import { MockTransport } from '../../core/transport/mock-transport';
+import { seedCatalog } from '../../lib/mock';
+import { SdlcHome } from './sdlc-home';
+
+const settle = async () => {
+  for (let i = 0; i < 4; i++) {
+    TestBed.tick();
+    await new Promise((r) => setTimeout(r, 0));
+  }
+};
+const labels = (c: HTMLElement) => Array.from(c.querySelectorAll('button')).map((b) => (b.textContent ?? '').replace(/\s+/g, ' ').trim());
+
+async function mount(transport = new MockTransport()) {
+  const out = await render(SdlcHome, {}, [provideRouter([]), { provide: KataTransport, useValue: transport }]);
+  await settle();
+  return { ...out, transport };
+}
+
+describe('SdlcHome', () => {
+  it('renders the changes and repositories of the open workspace with the New change action', async () => {
+    const { container } = await mount();
+    const text = container.textContent!.replace(/\s+/g, ' ');
+    expect(text).toContain('2026-10-12-fnol-photo-upload');
+    expect(text).toContain('Spec · awaiting acceptance');
+    expect(text).toContain('In progress on other branches');
+    expect(text).toContain('2026-10-17-claim-notes');
+    expect(text).toContain('customer-portal');
+    expect(text).toContain('stale · 14 commits');
+    expect(container.querySelector('[data-testid="branch"]')!.textContent!.trim()).toBe('main');
+    expect(labels(container)).toContain('New change');
+    expect(labels(container)).toContain('Add system');
+  });
+
+  it('offers Refresh context on every product repo with a context file, and crosses the seam when clicked', async () => {
+    const { container, transport } = await mount();
+    const run = vi.spyOn(transport, 'runSpec').mockResolvedValue();
+    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter((b) =>
+      / context for /.test(b.getAttribute('aria-label') ?? ''),
+    );
+    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual(['Refresh context for claims-core', 'Refresh context for customer-portal']);
+    buttons[1].click();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0][0].name).toBe('sdlc-claims-context');
+  });
+
+  it('crosses the seam: a running agent takes the page with the session view and locks every control outside it', async () => {
+    const { container } = await mount();
+    vi.spyOn(TestBed.inject(KataTransport), 'runSpec').mockResolvedValue();
+    container.querySelector<HTMLButtonElement>('[aria-label="Refresh context for customer-portal"]')!.click();
+    await vi.waitFor(() => expect(container.querySelector('app-sdlc-session')).not.toBeNull());
+    await settle();
+    expect(container.querySelector('app-observe-pane')).not.toBeNull();
+    expect(container.querySelector('app-changes-table')).toBeNull();
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    const outside = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter((b) => !b.closest('app-sdlc-session'));
+    expect(outside.length).toBeGreaterThan(0);
+    expect(outside.filter((b) => !b.disabled).map((b) => b.textContent!.trim() || b.getAttribute('aria-label'))).toEqual([]);
+  });
+
+  it('is a blocking empty state naming where kata looked, with every workspace action withheld, when the plugin is missing', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'catalog').mockResolvedValue(seedCatalog);
+    const { container } = await mount(transport);
+    const text = container.textContent!.replace(/\s+/g, ' ');
+    expect(text).toContain('The ai-sdlc plugin was not found');
+    expect(text).toContain('~/.claude');
+    expect(text).toContain('the .claude folder of the workspace');
+    expect(text).toContain('installed marketplace plugins');
+    const all = labels(container);
+    expect(all).not.toContain('New change');
+    expect(all).not.toContain('Add system');
+    expect(all).not.toContain('Add workspace');
+    expect(container.querySelector('button[aria-label="Switch workspace"]')).toBeNull();
+    expect(container.querySelector('app-changes-table')).toBeNull();
+    expect(container.querySelector('app-repos-table')).toBeNull();
+  });
+
+  it('invites the first workspace when none is saved', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([]);
+    vi.spyOn(transport, 'catalog').mockResolvedValue([
+      ...seedCatalog,
+      { kind: 'plugin', name: 'ai-sdlc', description: '', source: 'user', path: '', provides: [], mcp_servers: [] },
+    ]);
+    const { container } = await mount(transport);
+    expect(container.textContent).toContain('No workspace yet');
+    expect(labels(container)).toContain('Add workspace');
+    expect(labels(container)).not.toContain('New change');
+  });
+
+  it('names a workspace folder that cannot be read and offers to forget it', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcScan').mockRejectedValue('no such folder');
+    const { container } = await mount(transport);
+    expect(container.textContent).toContain('Workspace folder not found');
+    expect(container.textContent).toContain('no such folder');
+    expect(labels(container)).toContain('Remove from list…');
+    expect(labels(container)).not.toContain('New change');
+  });
+
+  it('lists every master when there is more than one', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcScan').mockResolvedValue({
+      folder: 'D:/Work/acme-claims', repos: ['a', 'b'], master: { kind: 'many', repos: ['a', 'b'] }, marker: null, marker_error: null,
+    });
+    const { container } = await mount(transport);
+    expect(container.textContent).toContain('More than one master repo');
+    const items = Array.from(container.querySelectorAll('.k-state__list li')).map((li) => li.textContent);
+    expect(items).toEqual(['a', 'b']);
+  });
+
+  it('says the master repo is gone when no repo holds the marker', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcScan').mockResolvedValue({
+      folder: 'D:/Work/acme-claims', repos: ['a'], master: { kind: 'none' }, marker: null, marker_error: null,
+    });
+    const { container } = await mount(transport);
+    expect(container.textContent).toContain('No master repo found');
+  });
+
+  it('opens the New change dialog from the toolbar action', async () => {
+    const { container } = await mount();
+    Array.from(container.querySelectorAll('button')).find((b) => b.textContent!.includes('New change'))!.click();
+    await settle();
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Idea');
+  });
+});

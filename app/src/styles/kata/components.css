@@ -130,6 +130,10 @@
 .k-md a:hover { color: var(--accent); }
 /* Lists */
 .k-md ul, .k-md ol { padding-left: var(--space-6); margin: var(--space-2) 0 var(--space-3); }
+/* Tailwind's preflight strips list markers; a numbered requirement needs its number back. */
+.k-md ul { list-style: disc; }
+.k-md ol { list-style: decimal; }
+.k-md ul.contains-task-list { list-style: none; padding-left: 0; }
 .k-md li { margin-bottom: var(--space-1); }
 .k-md li:last-child { margin-bottom: 0; }
 /* Blockquote */
@@ -158,6 +162,15 @@
 .k-md__task--done { background: var(--accent); border-color: var(--accent); }
 .k-md__task--done::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid var(--text-on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 /* Strong and em — pin colors so they override inherited muted tones */
+/* Gherkin highlighting: weight and brightness, not hue, so the andon and accent colors keep their meaning. */
+.k-md .hljs-keyword { color: var(--text-primary); font-weight: var(--weight-semibold); }
+.k-md .hljs-string, .k-md .hljs-variable { color: var(--text-primary); }
+.k-md .hljs-meta, .k-md .hljs-symbol { color: var(--text-muted); }
+.k-md .hljs-comment { color: var(--text-muted); font-style: italic; }
+/* Mermaid diagrams, drawn in place of their source block */
+.k-md__diagram { background: var(--surface-inset); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: var(--space-4); margin: var(--space-3) 0; overflow-x: auto; }
+.k-md__diagram svg { display: block; margin-inline: auto; height: auto; }
+.k-md__diagram-error { font: var(--font-code-sm); color: var(--text-muted); margin: calc(-1 * var(--space-2)) 0 var(--space-3); }
 .k-md strong { font-weight: var(--weight-semibold); color: var(--text-primary); }
 .k-md em { font-style: italic; color: var(--text-secondary); }
 
@@ -222,6 +235,10 @@
 .k-ask--answered .k-ask__banner { background: var(--surface-inset); border-bottom-color: var(--border-subtle); }
 .k-ask--answered .k-ask__banner-dot { background: var(--success); animation: none; }
 .k-ask--answered .k-ask__banner-label { color: var(--success-text); }
+.k-ask--lapsed { border-color: var(--border-default); box-shadow: none; }
+.k-ask--lapsed .k-ask__banner { background: var(--surface-inset); border-bottom-color: var(--border-subtle); }
+.k-ask--lapsed .k-ask__banner-dot { background: var(--text-faint); animation: none; }
+.k-ask--lapsed .k-ask__banner-label { color: var(--text-muted); }
 
 /* toasts: skinned in libs/ui/sonner (hlm-toaster.ts). Sonner's styles are unlayered, so a rule in this file's `components` layer can never beat them. */
 
@@ -253,3 +270,26 @@
 .k-toolcard__todo-item { display: flex; gap: var(--space-2); align-items: center; color: var(--text-muted); }
 .k-toolcard__todo-item--completed { color: var(--text-faint); text-decoration: line-through; }
 .k-toolcard__todo-item--in_progress { color: var(--accent-text); }
+
+/* lock panel: the body of the non-dismissible lock dialog (scrim and shell come from the Helm dialog) */
+.k-lock { display: grid; gap: var(--space-4); }
+.k-lock__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); }
+.k-lock__title { margin: 0; font: var(--weight-medium) var(--text-md)/1.3 var(--font-sans); color: var(--text-primary); }
+.k-lock__clock { font: var(--font-code-sm); color: var(--text-muted); }
+.k-lock__count { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); color: var(--text-secondary); }
+.k-lock__steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.k-lock__step { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3); font: var(--font-code-sm); color: var(--text-muted); }
+.k-lock__dot { flex: none; width: 7px; height: 7px; border-radius: var(--radius-full); border: 1px solid var(--text-faint); }
+.k-lock__step[data-state='running'] { color: var(--text-primary); }
+.k-lock__step[data-state='running'] .k-lock__dot { background: var(--text-faint); }
+.k-lock__step[data-state='done'] .k-lock__dot { background: var(--success); border-color: var(--success); }
+.k-lock__step[data-state='done'] .k-lock__step-state { color: var(--success-text); }
+.k-lock__step[data-state='failed'] .k-lock__dot { background: var(--error); border-color: var(--error); }
+.k-lock__step[data-state='failed'] .k-lock__step-state { color: var(--error-text); }
+.k-lock__step-state { margin-left: auto; flex: none; font-size: var(--text-2xs); color: var(--text-faint); }
+.k-lock__step-detail { flex-basis: 100%; padding-left: var(--space-5); color: var(--text-faint); }
+.k-lock__activity { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-5); font: var(--font-code-sm); }
+.k-lock__activity dt { color: var(--text-faint); }
+.k-lock__activity dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.k-lock__foot { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-4); }
+.k-lock__deadline { font: var(--font-code-sm); color: var(--warning-text); }

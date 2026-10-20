@@ -70,6 +70,7 @@ const shapeEslintConfig = [
       'shape/no-explicit-standalone': 'error',
       'shape/no-legacy-icon-module': 'error',
       'shape/no-unregistered-icon': 'error',
+      'shape/no-inline-template': 'error',
     },
   },
   {
@@ -150,7 +151,7 @@ async function main() {
       `\n` +
       formatDocPointerBlock(docLines) +
       `Component shape (see harness/component-shape-spec.md): no hand-set changeDetection or explicit standalone ` +
-      `(both are Angular v20+/v22+ defaults), no .subscribe in a component or ViewModel (use the async pipe or toSignal), ` +
+      `(both are Angular v20+/v22+ defaults), templates and styles live in separate files (templateUrl, styleUrl; no inline template or styles), no .subscribe in a component or ViewModel (use the async pipe or toSignal), ` +
       `template-driven forms are not used (no FormsModule, no ngModel), ` +
       `validation lives in the zod schema (validateStandardSchema, not a restated per-field validator), a presentational ` +
       `(src/app/ui/) component injects no data service, and a feature component owns its state and its data access through a ` +

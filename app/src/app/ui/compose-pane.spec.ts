@@ -31,6 +31,13 @@ function specWith(mutate: (s: RunSpec) => void = () => {}): RunSpec {
   return s;
 }
 
+/** A headless spec: interactive off, which the ask/interactive warning is about. */
+const headless = (mutate: (s: RunSpec) => void = () => {}) =>
+  specWith((s) => {
+    s.interactive.enabled = false;
+    mutate(s);
+  });
+
 const radio = (c: HTMLElement, name: string) =>
   Array.from(c.querySelectorAll<HTMLElement>('[role="radio"]')).find((e) => e.textContent!.trim() === name)!;
 const byPlaceholder = (c: HTMLElement, p: string) =>
@@ -186,14 +193,14 @@ describe('ComposePane permissions: the ask/interactive warning', () => {
   });
 
   it('warns when prompt + ask has interactive off', async () => {
-    const { container, fixture } = await mount(specWith());
+    const { container, fixture } = await mount(headless());
     radio(container, 'prompt').click();
     await fixture.whenStable();
     expect(container.textContent).toMatch(ASK_WARNING);
   });
 
   it('renders the warning as one hlm-alert with the fix button inside it', async () => {
-    const { container, fixture } = await mount(specWith());
+    const { container, fixture } = await mount(headless());
     radio(container, 'prompt').click();
     await fixture.whenStable();
     const alerts = container.querySelectorAll('[role="alert"]');
@@ -208,7 +215,7 @@ describe('ComposePane permissions: the ask/interactive warning', () => {
 
   it('renders the ask-rules warning as one hlm-alert', async () => {
     const { container } = await mount(
-      specWith((s) => {
+      headless((s) => {
         s.permissions.mode = 'prompt';
         s.permissions.unmatched = 'deny';
         s.permissions.ask = ['Bash(git push *)'];
@@ -238,7 +245,7 @@ describe('ComposePane permissions: the ask/interactive warning', () => {
   });
 
   it('enables interactive from the fix button and dismisses the warning', async () => {
-    const { container, fixture, model } = await mount(specWith((s) => (s.permissions.mode = 'prompt')));
+    const { container, fixture, model } = await mount(headless((s) => (s.permissions.mode = 'prompt')));
     buttonNamed(container, 'Enable interactive').click();
     await fixture.whenStable();
     expect(model().interactive.enabled).toBe(true);

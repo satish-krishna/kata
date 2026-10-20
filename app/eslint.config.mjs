@@ -43,6 +43,7 @@ export default [
       'shape/no-explicit-standalone': 'error',
       'shape/no-legacy-icon-module': 'error',
       'shape/no-unregistered-icon': 'error',
+      'shape/no-inline-template': 'error'
     },
   },
   {

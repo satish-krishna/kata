@@ -38,4 +38,25 @@ describe('renderMarkdown', () => {
     expect(html).toContain('k-md__task k-md__task--done');
     expect(html).toContain('aria-checked="false"');
   });
+
+  it('highlights gherkin blocks, including the Rule keyword', () => {
+    const html = renderMarkdownForDom('```gherkin\nFeature: Upload\n  Rule: R1\n    Scenario: <one>\n      Given a claim # note\n```');
+    expect(html).toContain('<span class="hljs-keyword">Feature</span>');
+    expect(html).toContain('<span class="hljs-keyword">Rule</span>');
+    expect(html).toContain('<span class="hljs-keyword">Given</span>');
+    expect(html).toContain('<span class="hljs-variable">&#x3C;one></span>');
+    expect(html).toContain('<span class="hljs-comment"># note</span>');
+  });
+
+  it('leaves other fenced languages, mermaid included, as plain code for the DOM', () => {
+    const html = renderMarkdownForDom('```mermaid\nflowchart LR\n  A --> B\n```\n\n```rust\nfn main() {}\n```');
+    expect(html).toMatch(/<code class="[^"]*language-mermaid[^"]*">flowchart LR\n {2}A --> B/);
+    expect(html).toMatch(/<code class="[^"]*language-rust[^"]*">fn main\(\) \{\}/);
+    expect(html).not.toContain('hljs-');
+  });
+
+  it('cannot smuggle markup through a highlighted block', () => {
+    const html = renderMarkdownForDom('```gherkin\nGiven "<img src=x onerror=alert(1)>"\n```');
+    expect(html).not.toContain('<img');
+  });
 });

@@ -1,0 +1,64 @@
+<div class="wb-status">
+  <span class="k-status" [class]="'k-status--' + state()">
+    <span class="k-status__dot"></span>{{ statusLabel() }}
+  </span>
+  <div class="wb-sep"></div>
+  <div class="wb-status__meta"><ng-icon name="lucideCpu" size="14" /> {{ spec().model.id || 'default' }}</div>
+  @if (spec().leash.isolation === 'worktree') {
+    <span class="k-badge k-badge--warning"><ng-icon name="lucideGitBranch" size="11" /> worktree</span>
+  }
+</div>
+
+<div hlmMessageScrollerProvider [autoScroll]="true">
+  <hlm-message-scroller class="wb-stream">
+    <hlm-message-scroller-viewport aria-label="Event stream">
+      <hlm-message-scroller-content aria-live="off">
+        @if (empty()) {
+          <hlm-empty class="wb-stream__empty">
+            <hlm-empty-header>
+              <hlm-empty-media><ng-icon name="lucideTerminal" size="28" /></hlm-empty-media>
+              <p hlmEmptyDescription>Press <b class="wb-accent">Run</b> to drive <code>claude -p</code> to completion. The normalized event stream renders here.</p>
+            </hlm-empty-header>
+          </hlm-empty>
+        } @else {
+          @for (item of streamItems(); track trackKey(item)) {
+            <hlm-message-scroller-item [messageId]="trackKey(item)">
+              @if (item.kind === 'event') {
+                <div class="wb-event-enter"><app-event-row [ev]="item.ev" /></div>
+              } @else if (item.kind === 'call') {
+                <div class="wb-event-enter"><app-tool-card [call]="item.call" /></div>
+              } @else if (item.kind === 'perm') {
+                <div class="wb-event-enter"><app-permission-panel [record]="item.p" [ended]="ended()" (decide)="decide.emit($event)" /></div>
+              } @else {
+                <div class="wb-event-enter"><app-ask-panel [ask]="item.a" [ended]="ended()" (answer)="answer.emit($event)" /></div>
+              }
+            </hlm-message-scroller-item>
+          }
+        }
+      </hlm-message-scroller-content>
+    </hlm-message-scroller-viewport>
+    <button hlmMessageScrollerButton aria-label="Scroll to latest event"></button>
+  </hlm-message-scroller>
+</div>
+
+@if (summary(); as s) {
+  <div class="wb-summary">
+    <div class="wb-summary__head">
+      @if (s.is_error) {
+        <span class="k-badge k-badge--error"><ng-icon name="lucideXCircle" size="12" /> run.completed</span>
+      } @else {
+        <span class="k-badge k-badge--success"><ng-icon name="lucideCheckCircle" size="12" /> run.completed</span>
+      }
+      <span class="wb-summary__note">the form performed</span>
+    </div>
+    <div class="wb-summary__stats">
+      <app-summary-stat label="EXIT" [value]="s.exit_code" [tone]="s.is_error ? 'error' : 'success'" />
+      <app-summary-stat label="TURNS" [value]="s.num_turns" />
+      <app-summary-stat label="COST" [value]="cost()" />
+      <app-summary-stat label="DURATION" [value]="duration()" />
+    </div>
+    @if (s.result) {
+      <div class="wb-summary__result"><app-markdown-body [md]="s.result" /></div>
+    }
+  </div>
+}

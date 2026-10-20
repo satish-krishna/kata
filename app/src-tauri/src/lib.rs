@@ -1,10 +1,13 @@
+mod zoom;
+
 use kata_core::catalog::{self, CatalogEntry};
 use kata_core::spec::{self, RunSpec};
+use kata_sdlc as sdlc;
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -138,6 +141,142 @@ fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) -> Result
     Ok(())
 }
 
+/// Step the window's zoom and remember the new level for the next launch.
+#[tauri::command]
+fn zoom(
+    webview: tauri::Webview,
+    level: State<zoom::Level>,
+    step: zoom::Step,
+) -> Result<f64, String> {
+    zoom::apply(
+        &level.0,
+        step,
+        |z| webview.set_zoom(z).map_err(|e| e.to_string()),
+        zoom::save,
+    )
+}
+
+// ---- AI-SDLC mode: thin wrappers over `kata-sdlc` ----
+
+#[tauri::command]
+fn sdlc_settings() -> sdlc::store::Settings {
+    sdlc::store::load_settings()
+}
+
+#[tauri::command]
+fn sdlc_save_settings(settings: sdlc::store::Settings) -> Result<(), String> {
+    sdlc::store::save_settings(&settings).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sdlc_workspaces() -> Vec<sdlc::store::WorkspaceEntry> {
+    sdlc::store::load_workspaces()
+}
+
+#[tauri::command]
+fn sdlc_save_workspaces(workspaces: Vec<sdlc::store::WorkspaceEntry>) -> Result<(), String> {
+    sdlc::store::save_workspaces(&workspaces).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_scan(folder: String) -> Result<sdlc::workspace::WorkspaceScan, String> {
+    sdlc::workspace::scan(Path::new(&folder)).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_context_health(
+    folder: String,
+    master: String,
+    system: String,
+    repo: String,
+) -> sdlc::workspace::ContextState {
+    sdlc::workspace::context_health(Path::new(&folder), &master, &system, &repo)
+}
+
+#[tauri::command(async)]
+fn sdlc_changes(master: String, system: String) -> Vec<sdlc::changes::ChangeInfo> {
+    sdlc::changes::list(Path::new(&master), &system)
+}
+
+#[tauri::command(async)]
+fn sdlc_branches(master: String) -> sdlc::changes::BranchInfo {
+    sdlc::changes::branch_info(Path::new(&master))
+}
+
+#[tauri::command(async)]
+fn sdlc_read_doc(master: String, system: String, change: String, doc: String) -> Option<String> {
+    sdlc::changes::read_doc(Path::new(&master), &system, &change, &doc)
+}
+
+#[tauri::command(async)]
+fn sdlc_snapshot(master: String) -> Result<sdlc::snapshot::Snapshot, String> {
+    sdlc::snapshot::take(Path::new(&master)).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_leftovers(
+    master: String,
+    before: sdlc::snapshot::Snapshot,
+    product_repos: Vec<String>,
+) -> Result<sdlc::snapshot::Leftovers, String> {
+    let repos: Vec<std::path::PathBuf> = product_repos.into_iter().map(Into::into).collect();
+    sdlc::snapshot::leftovers(Path::new(&master), &before, &repos).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_discard(
+    master: String,
+    before: sdlc::snapshot::Snapshot,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    sdlc::snapshot::discard(Path::new(&master), &before, &paths).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_start_change(master: String, base: String) -> Result<String, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    sdlc::branch::start_pending(Path::new(&master), &base, now).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_finish_change(
+    master: String,
+    pending: String,
+    base: String,
+) -> Result<sdlc::branch::FinishOutcome, String> {
+    sdlc::branch::finish_pending(Path::new(&master), &pending, &base).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_checkout(master: String, branch: String) -> Result<(), String> {
+    sdlc::branch::checkout(Path::new(&master), &branch).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_decide(
+    master: String,
+    system: String,
+    change: String,
+    decision: sdlc::decide::Decision,
+    confirmed: bool,
+) -> Result<sdlc::decide::DecideOutcome, String> {
+    sdlc::decide::apply(Path::new(&master), &system, &change, decision, confirmed)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sdlc_run_links() -> Vec<sdlc::store::RunLink> {
+    sdlc::store::load_run_links()
+}
+
+#[tauri::command]
+fn sdlc_link_run(link: sdlc::store::RunLink) -> Result<(), String> {
+    sdlc::store::append_run_link(link).map_err(|e| e.to_string())
+}
+
 /// Relay a non-JSON stdout/stderr line as a warn-level log event.
 fn relay_log(app: &AppHandle, bytes: &[u8]) {
     let line = String::from_utf8_lossy(bytes);
@@ -166,6 +305,45 @@ fn cancel_run(control: State<RunControl>) {
             let _ = child.kill();
         }
     }
+}
+
+/// Poll until no run is active (the reader task has seen the engine exit and
+/// cleared `id`), or until `timeout` passes. True when the engine is gone.
+fn wait_idle(
+    state: &Mutex<RunState>,
+    timeout: std::time::Duration,
+    every: std::time::Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if state.lock().unwrap().id == 0 {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(every);
+    }
+}
+
+/// Wait for the engine process to exit after a run ends or is cancelled. The UI
+/// sees the terminal event before the sidecar has finished tearing down, so
+/// anything that touches the repo afterwards waits here first.
+#[tauri::command]
+async fn sdlc_wait_run_exit(
+    control: State<'_, RunControl>,
+    timeout_ms: u64,
+) -> Result<bool, String> {
+    let state = control.state.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        wait_idle(
+            &state,
+            std::time::Duration::from_millis(timeout_ms),
+            std::time::Duration::from_millis(50),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// List all completed runs from the history store.
@@ -267,6 +445,19 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(RunControl::default())
+        .setup(|app| {
+            // Open at the remembered zoom; a failure leaves the window at 100%.
+            let saved = zoom::load();
+            let applied = app
+                .get_webview_window("main")
+                .is_some_and(|w| w.set_zoom(saved).is_ok());
+            app.manage(zoom::Level(std::sync::Mutex::new(if applied {
+                saved
+            } else {
+                1.0
+            })));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             catalog,
             load_spec,
@@ -283,8 +474,66 @@ pub fn run() {
             load_kata,
             list_presets,
             save_preset,
-            export_bundle
+            export_bundle,
+            sdlc_settings,
+            sdlc_save_settings,
+            sdlc_workspaces,
+            sdlc_save_workspaces,
+            sdlc_scan,
+            sdlc_context_health,
+            sdlc_changes,
+            sdlc_branches,
+            sdlc_read_doc,
+            sdlc_snapshot,
+            sdlc_leftovers,
+            sdlc_discard,
+            sdlc_start_change,
+            sdlc_finish_change,
+            sdlc_checkout,
+            sdlc_decide,
+            sdlc_run_links,
+            sdlc_link_run,
+            sdlc_wait_run_exit,
+            zoom
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn wait_idle_returns_true_once_the_reader_clears_the_run() {
+        let state = Arc::new(Mutex::new(RunState { id: 3, child: None }));
+        let clearer = state.clone();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(120));
+            clearer.lock().unwrap().id = 0;
+        });
+        assert!(wait_idle(
+            &state,
+            Duration::from_secs(5),
+            Duration::from_millis(10)
+        ));
+        t.join().unwrap();
+    }
+
+    #[test]
+    fn wait_idle_returns_false_on_timeout() {
+        let state = Arc::new(Mutex::new(RunState { id: 3, child: None }));
+        assert!(!wait_idle(
+            &state,
+            Duration::from_millis(60),
+            Duration::from_millis(10)
+        ));
+    }
+
+    #[test]
+    fn wait_idle_is_immediate_with_no_run() {
+        let state = Arc::new(Mutex::new(RunState::default()));
+        assert!(wait_idle(&state, Duration::ZERO, Duration::from_millis(10)));
+    }
 }

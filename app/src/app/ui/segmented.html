@@ -1,0 +1,18 @@
+<hlm-toggle-group
+  type="single"
+  role="radiogroup"
+  [attr.aria-label]="ariaLabel() ?? null"
+  [value]="value()"
+  (valueChange)="pick($event)"
+>
+  @for (opt of options(); track opt.value) {
+    <button
+      hlmToggleGroupItem
+      role="radio"
+      [attr.aria-checked]="opt.value === value()"
+      [value]="opt.value"
+    >
+      {{ opt.label }}
+    </button>
+  }
+</hlm-toggle-group>

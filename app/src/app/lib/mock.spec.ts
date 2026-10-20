@@ -26,6 +26,7 @@ describe("validateLocal — permission coherence", () => {
   it("rejects unmatched = ask when interactive is off", () => {
     const s = runnableSpec();
     s.permissions.mode = "prompt";
+    s.interactive.enabled = false;
     expect(validateLocal(s)).toContain(
       'permissions.unmatched = "ask" needs an operator to ask: set [interactive] enabled = true, or choose unmatched = "deny" / "allow" for a headless run',
     );

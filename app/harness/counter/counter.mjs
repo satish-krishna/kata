@@ -8,7 +8,7 @@
 // closes the circularity objection, so keep it that way. Do not import anything
 // the gate imports here.
 
-import { parseTemplate } from '@angular/compiler';
+import { BindingType, parseTemplate } from '@angular/compiler';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { relative, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -182,6 +182,21 @@ const PRIMITIVE_ATTRS = new Set([
   'hlmMarker',
   'hlmMarkerContent',
   'hlmMarkerIcon',
+  'hlmDropdownMenu',
+  'hlmDropdownMenuCheckbox',
+  'hlmDropdownMenuCheckboxCdk',
+  'hlmDropdownMenuCheckboxItem',
+  'hlmDropdownMenuFocusOnHover',
+  'hlmDropdownMenuGroup',
+  'hlmDropdownMenuItem',
+  'hlmDropdownMenuLabel',
+  'hlmDropdownMenuRadio',
+  'hlmDropdownMenuRadioCdk',
+  'hlmDropdownMenuSeparator',
+  'hlmDropdownMenuShortcut',
+  'hlmDropdownMenuSub',
+  'hlmDropdownMenuSubTrigger',
+  'hlmDropdownMenuTrigger',
 ]);
 const PRIMITIVE_ELEMENTS = new Set([
   'hlm-card',
@@ -272,6 +287,16 @@ const PRIMITIVE_ELEMENTS = new Set([
   'hlm-marker',
   'hlm-marker-content',
   'hlm-marker-icon',
+  'hlm-dropdown-menu',
+  'hlm-dropdown-menu-checkbox-indicator',
+  'hlm-dropdown-menu-group',
+  'hlm-dropdown-menu-item',
+  'hlm-dropdown-menu-item-sub-indicator',
+  'hlm-dropdown-menu-label',
+  'hlm-dropdown-menu-radio-indicator',
+  'hlm-dropdown-menu-separator',
+  'hlm-dropdown-menu-shortcut',
+  'hlm-dropdown-menu-sub',
 ]);
 
 // Rule 1's table: a native element -> the set of acceptable primitive
@@ -303,7 +328,13 @@ const CONTROL_PRIMITIVE_ATTRS = {
     'hlmAlertDialogAction',
     'hlmAlertDialogCancel',
     'hlmCodeBlockCopyButton',
-    'hlmMessageScrollerButton'
+    'hlmMessageScrollerButton',
+    'hlmDropdownMenuTrigger',
+    'hlmDropdownMenuItem',
+    'hlmDropdownMenuCheckbox',
+    'hlmDropdownMenuCheckboxItem',
+    'hlmDropdownMenuRadio',
+    'hlmDropdownMenuSubTrigger'
   ],
   input: ['hlmInput', 'hlmSidebarInput', 'hlmQuestionnaireInput'],
   textarea: ['hlmTextarea'],
@@ -406,8 +437,11 @@ function elementViolations(el, file, lineOffset) {
   // (any one of its acceptable attributes satisfies the rule), and a
   // replacement-only native element (no attribute is acceptable - the
   // element itself is the violation).
+  // A primitive also applies as a property binding of its key ([hlmTabsTrigger]="s.name" in a
+  // loop). [attr.hlmBtn] is an attribute binding that applies no directive, so it does not count.
+  const boundNames = new Set((el.inputs ?? []).filter((i) => i.type === BindingType.Property).map((i) => i.name));
   const acceptableAttrs = CONTROL_PRIMITIVE_ATTRS[el.name];
-  if (acceptableAttrs && !acceptableAttrs.some((a) => attrNames.has(a))) {
+  if (acceptableAttrs && !acceptableAttrs.some((a) => attrNames.has(a) || boundNames.has(a))) {
     out.push({
       kind: 'raw-control',
       file,

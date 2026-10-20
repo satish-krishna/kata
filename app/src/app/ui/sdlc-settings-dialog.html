@@ -1,0 +1,23 @@
+<hlm-dialog [state]="open() ? 'open' : 'closed'" (stateChanged)="onState($event)">
+  <hlm-dialog-content *hlmDialogPortal="let ctx">
+    <div hlmDialogTitle>AI-SDLC settings</div>
+    <div class="k-form">
+      <app-field
+        label="Permissions"
+        key="permissions.mode"
+        hint="bypass runs without asking; prompt pauses on every tool call that is not pre-approved."
+      >
+        <app-segmented ariaLabel="Permission mode" [options]="modes" [(value)]="mode" />
+      </app-field>
+      @if (workspace(); as w) {
+        <app-field label="Base branch" key="base_branch" [hint]="'New changes branch from this branch in ' + w.name + '.'">
+          <input hlmInput variant="mono" aria-label="Base branch" [value]="branch()" (input)="onBranch($event)" />
+        </app-field>
+      }
+    </div>
+    <hlm-dialog-footer>
+      <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
+      <button hlmBtn variant="primary" size="sm" type="button" [disabled]="!valid()" (click)="submit()">Save</button>
+    </hlm-dialog-footer>
+  </hlm-dialog-content>
+</hlm-dialog>

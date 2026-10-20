@@ -6,26 +6,7 @@ import { MarkdownBody } from './markdown-body';
 @Component({
   selector: 'app-event-row',
   imports: [MarkdownBody, HlmMarkerImports],
-  template: `<div class="k-event" [class]="'k-event--' + variant()">
-    @if (ev().type === 'turn') {
-      <hlm-marker variant="separator">
-        <hlm-marker-content>{{ gutter() }}</hlm-marker-content>
-      </hlm-marker>
-    } @else {
-      <span class="k-event__gutter">{{ gutter() }}</span>
-      <div class="k-event__body">
-        @if (text() !== null) {
-          <app-markdown-body [md]="text() ?? ''" />
-        } @else {
-          @if (tool()) {
-            <span class="k-event__tool">{{ tool() }}</span
-            >{{ ' ' }}
-          }
-          {{ body() }}
-        }
-      </div>
-    }
-  </div>`,
+  templateUrl: './event-row.html',
 })
 export class EventRow {
   readonly ev = input.required<StreamEvent>();

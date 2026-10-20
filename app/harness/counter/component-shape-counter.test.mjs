@@ -6,6 +6,15 @@ import { countTsSource, countTemplateSource } from './component-shape-counter.mj
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fx = (n) => join(here, 'fixtures', n);
+// The pre-existing fixtures declare their templates inline, which rule 15
+// (inline-template) now counts. They are kept byte-identical as records of the
+// shapes they pin, so a "clean" assertion strips exactly the stated number of
+// inline-template hits (and fails if that number is off) and then requires
+// zero of everything else.
+const sansInline = (vs, n) => {
+  expect(vs.filter((v) => v.kind === 'inline-template')).toHaveLength(n);
+  return vs.filter((v) => v.kind !== 'inline-template');
+};
 const tallyOf = (vs) => {
   const t = {};
   for (const v of vs) t[v.kind] = (t[v.kind] ?? 0) + 1;
@@ -26,6 +35,7 @@ describe('component-shape counter', () => {
       'hand-written-form-model': 1,
       'reactive-form': 1,
       'dumb-holds-state': 1,
+      'inline-template': 1,
     });
   });
 
@@ -69,7 +79,7 @@ describe('component-shape counter', () => {
     );
     // inject(HeroService) in a feature component, and signal() state on the
     // component class. toSignal() is deliberately NOT state and must not count.
-    expect(t).toEqual({ 'feature-injects-data': 1, 'state-outside-vm': 1 });
+    expect(t).toEqual({ 'feature-injects-data': 1, 'state-outside-vm': 1, 'inline-template': 1 });
   });
 
   it('flags ngModel in a template and passes the clean template', () => {
@@ -98,11 +108,12 @@ describe('component-shape counter: MVVM rules (capstone, rules 7-10)', () => {
       'state-outside-vm': 2,
       'feature-injects-data': 2,
       'vm-not-provided': 1,
+      'inline-template': 1,
     });
   });
 
   it('passes the clean MVVM fixture with zero violations at the same feature path', () => {
-    expect(countTsSource(mvvmClean, { file: featurePath })).toEqual([]);
+    expect(sansInline(countTsSource(mvvmClean, { file: featurePath }), 1)).toEqual([]);
   });
 
   it('does not fire the ui/-gated MVVM rules (state-outside-vm, feature-injects-data) under src/app/ui/', () => {
@@ -146,6 +157,7 @@ describe('component-shape counter: capstone-residue rules (11-14, plus two widen
       'unregistered-icon': 1,
       'component-subscribe': 1,
       'state-outside-vm': 1,
+      'inline-template': 2,
     });
   });
 
@@ -162,11 +174,13 @@ it('does not flag the app-level icon registration pattern (rule 13 regression gu
     // NgIcon imported, no glyph symbols, no provideIcons: the documented
     // 'or app' pattern. An earlier draft of rule 13 flagged this and would
     // have blocked the only capstone builds whose icons worked.
-    expect(countTsSource(readFileSync(fx('capstone-residue-icon-applevel.ts'), 'utf8'), { file: 'src/app/hero-detail/hero-detail.ts' })).toEqual([]);
+    expect(
+      sansInline(countTsSource(readFileSync(fx('capstone-residue-icon-applevel.ts'), 'utf8'), { file: 'src/app/hero-detail/hero-detail.ts' }), 2),
+    ).toEqual([]);
   });
 
   it('passes the clean residue fixture with zero violations at the same feature path', () => {
-    expect(countTsSource(residueClean, { file: featurePath })).toEqual([]);
+    expect(sansInline(countTsSource(residueClean, { file: featurePath }), 1)).toEqual([]);
   });
 
   it('is deterministic: same bytes in, identical residue tally out', () => {
@@ -189,5 +203,27 @@ it('does not flag the app-level icon registration pattern (rule 13 regression gu
     const a = JSON.stringify(countTemplateSource(dirtyHtml, { file: 'd.html' }));
     const b = JSON.stringify(countTemplateSource(dirtyHtml, { file: 'd.html' }));
     expect(a).toBe(b);
+  });
+});
+
+describe('component-shape counter: inline-template and inline-styles (rule 15)', () => {
+  const comp = (body) => "@Component({ selector: 'app-x', " + body + ' })\nexport class X {}\n';
+  const kinds = (code, file = 'src/app/x.ts') => countTsSource(code, { file }).map((v) => v.kind);
+
+  it('flags an inline template and inline styles, one hit each', () => {
+    expect(kinds(comp('template: `<p></p>`, styles: [`p { margin: 0 }`],'))).toEqual(['inline-template', 'inline-styles']);
+  });
+
+  it('flags quoted keys the same as bare ones', () => {
+    expect(kinds(comp("'template': '<p></p>', 'styles': ['p {}'],"))).toEqual(['inline-template', 'inline-styles']);
+  });
+
+  it('passes templateUrl and styleUrl, and a component with no styles at all', () => {
+    expect(kinds(comp("templateUrl: './x.html', styleUrl: './x.css',"))).toEqual([]);
+    expect(kinds(comp("templateUrl: './x.html',"))).toEqual([]);
+  });
+
+  it('exempts spec files', () => {
+    expect(kinds(comp('template: `<p></p>`, styles: [],'), 'src/app/x.spec.ts')).toEqual([]);
   });
 });

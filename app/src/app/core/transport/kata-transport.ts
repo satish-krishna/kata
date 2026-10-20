@@ -2,7 +2,20 @@ import type { RunSpec } from '@bindings/RunSpec';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { Preset } from '@bindings/Preset';
 import type { KataListing } from '@bindings/KataListing';
+import type { Settings } from '@bindings/Settings';
+import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
+import type { WorkspaceScan } from '@bindings/WorkspaceScan';
+import type { ContextState } from '@bindings/ContextState';
+import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { BranchInfo } from '@bindings/BranchInfo';
+import type { Snapshot } from '@bindings/Snapshot';
+import type { Leftovers } from '@bindings/Leftovers';
+import type { FinishOutcome } from '@bindings/FinishOutcome';
+import type { Decision } from '@bindings/Decision';
+import type { DecideOutcome } from '@bindings/DecideOutcome';
+import type { RunLink } from '@bindings/RunLink';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
+import type { ZoomStep } from '../../lib/zoom-keys';
 
 /** The one seam between the Workbench and its backend. TauriTransport talks to
  *  the Rust commands; MockTransport stands in with fixtures and a scripted run
@@ -29,6 +42,28 @@ export abstract class KataTransport {
   abstract pickDirectory(): Promise<string | null>;
   abstract pickOpenSpec(): Promise<string | null>;
   abstract pickSaveSpec(): Promise<string | null>;
+  abstract sdlcSettings(): Promise<Settings>;
+  abstract sdlcSaveSettings(settings: Settings): Promise<void>;
+  abstract sdlcWorkspaces(): Promise<WorkspaceEntry[]>;
+  abstract sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]): Promise<void>;
+  abstract sdlcScan(folder: string): Promise<WorkspaceScan>;
+  abstract sdlcContextHealth(folder: string, master: string, system: string, repo: string): Promise<ContextState>;
+  abstract sdlcChanges(master: string, system: string): Promise<ChangeInfo[]>;
+  abstract sdlcBranches(master: string): Promise<BranchInfo>;
+  abstract sdlcReadDoc(master: string, system: string, change: string, doc: string): Promise<string | null>;
+  abstract sdlcSnapshot(master: string): Promise<Snapshot>;
+  abstract sdlcLeftovers(master: string, before: Snapshot, productRepos: string[]): Promise<Leftovers>;
+  abstract sdlcDiscard(master: string, before: Snapshot, paths: string[]): Promise<void>;
+  abstract sdlcStartChange(master: string, base: string): Promise<string>;
+  abstract sdlcFinishChange(master: string, pending: string, base: string): Promise<FinishOutcome>;
+  abstract sdlcCheckout(master: string, branch: string): Promise<void>;
+  abstract sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean): Promise<DecideOutcome>;
+  abstract sdlcRunLinks(): Promise<RunLink[]>;
+  abstract sdlcLinkRun(link: RunLink): Promise<void>;
+  /** Wait until the engine process of the last run has exited. False when it is still alive after `timeoutMs`. */
+  abstract sdlcWaitRunExit(timeoutMs: number): Promise<boolean>;
+  /** Step the window's zoom. Resolves to the new level, which the backend remembers for the next launch. */
+  abstract zoom(step: ZoomStep): Promise<number>;
   /** Register for relayed run events. Resolves to the unlisten function. */
   abstract onRunEvent(cb: (ev: KataEvent) => void): Promise<() => void>;
 }

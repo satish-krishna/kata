@@ -9,6 +9,7 @@ A native control element used where a spartan primitive exists for it.
 Two shapes of violation:
 
 - Most native elements have a directive twin. Any **one** of the listed attributes on the element satisfies the rule, because several Helm directives style the same native element in different compositions — `<button hlmBtn>` and `<button hlmSidebarMenuButton>` are both acceptable buttons.
+- The attribute may also be a property binding of the primitive's key, as a tab list built from data needs: `<button [hlmTabsTrigger]="s.name">` applies the directive and passes. An attribute binding such as `[attr.hlmBtn]` writes a DOM attribute and applies no directive, so it does not.
 - Two elements, `<select>` and `<dialog>`, have no directive twin at all. No attribute makes them acceptable; the element itself must be replaced with `<hlm-select>` or `<hlm-dialog>`.
 
 ## Why

@@ -1,0 +1,202 @@
+<div class="k-home">
+  <app-sdlc-toolbar
+    [workspaces]="vm.workspaces()"
+    [current]="vm.current()"
+    [missing]="vm.missing()"
+    [counts]="vm.counts()"
+    [branch]="vm.masterBranch()"
+    [locked]="vm.locked()"
+    [blocked]="vm.state() === 'plugin-missing'"
+    (switchMode)="vm.switchMode()"
+    (select)="vm.selectWorkspace($event)"
+    (add)="vm.addWorkspace()"
+    (remove)="vm.askRemove()"
+    (openSettings)="vm.openSettings()"
+  >
+    @if (vm.canWork()) {
+      <button hlmBtn variant="primary" type="button" [disabled]="vm.locked()" (click)="vm.openNewChange()">
+        <ng-icon name="lucidePlus" size="14" />New change
+      </button>
+    }
+  </app-sdlc-toolbar>
+
+  @if (vm.session(); as s) {
+    <app-sdlc-session
+      [title]="s.title"
+      [finished]="s.finished"
+      [elapsed]="vm.lockElapsed()"
+      [deadlineSecs]="vm.lockDeadline()"
+      [closeBlocked]="vm.closeBlocked()"
+      [state]="vm.runState()"
+      [events]="vm.events()"
+      [spec]="s.spec"
+      [summary]="vm.summary()"
+      [asks]="vm.asks()"
+      [permissions]="vm.permissions()"
+      (cancel)="vm.cancelLock()"
+      (close)="vm.closeSession()"
+      (answer)="vm.answer($event)"
+      (decide)="vm.decide($event)"
+    />
+  } @else {
+    @switch (vm.state()) {
+      @case ('loading') {
+        <main class="k-home__state"><p class="k-state__body" role="status">Reading the workspace…</p></main>
+      }
+      @case ('plugin-missing') {
+        <main class="k-home__state">
+          <section class="k-state" aria-labelledby="state-title">
+            <h1 id="state-title" class="k-state__title">The ai-sdlc plugin was not found</h1>
+            <p class="k-state__body">Kata looked for a plugin named ai-sdlc in these places:</p>
+            <ul class="k-state__list">
+              <li>~/.claude</li>
+              <li>the .claude folder of the workspace</li>
+              <li>installed marketplace plugins</li>
+            </ul>
+            <p class="k-state__body">Install it in one of them, then check again. Nothing else in this mode works until it is found.</p>
+            <button hlmBtn variant="primary" type="button" (click)="vm.recheckPlugin()">Check again</button>
+          </section>
+        </main>
+      }
+      @case ('no-workspaces') {
+        <main class="k-home__state">
+          <section class="k-state" aria-labelledby="state-title">
+            <h1 id="state-title" class="k-state__title">No workspace yet</h1>
+            <p class="k-state__body">
+              A workspace is a folder of git repos: one master repo that holds the intents, specs and plans, and the product repos they describe.
+            </p>
+            <button hlmBtn variant="primary" type="button" (click)="vm.addWorkspace()">
+              <ng-icon name="lucideFolderPlus" size="14" />Add workspace
+            </button>
+          </section>
+        </main>
+      }
+      @case ('folder-missing') {
+        <main class="k-home__state">
+          <section class="k-state" aria-labelledby="state-title">
+            <h1 id="state-title" class="k-state__title">Workspace folder not found</h1>
+            <p class="k-state__body">Kata could not read <code class="k-mono">{{ vm.current()?.folder }}</code>: {{ vm.scanError() }}</p>
+            <p class="k-state__body">Move the folder back, or forget this workspace. Forgetting touches nothing on disk.</p>
+            <button hlmBtn variant="secondary" type="button" (click)="vm.askRemove()">Remove from list…</button>
+          </section>
+        </main>
+      }
+      @case ('master-gone') {
+        <main class="k-home__state">
+          <section class="k-state" aria-labelledby="state-title">
+            <h1 id="state-title" class="k-state__title">No master repo found</h1>
+            <p class="k-state__body">
+              The master repo is the one that holds <code class="k-mono">.ai-sdlc.json</code>. None of the repos in
+              <code class="k-mono">{{ vm.current()?.folder }}</code> has it any more.
+            </p>
+            <button hlmBtn variant="secondary" type="button" (click)="vm.askRemove()">Remove from list…</button>
+          </section>
+        </main>
+      }
+      @case ('many-masters') {
+        <main class="k-home__state">
+          <section class="k-state" aria-labelledby="state-title">
+            <h1 id="state-title" class="k-state__title">More than one master repo</h1>
+            <p class="k-state__body">A workspace has exactly one <code class="k-mono">.ai-sdlc.json</code>. These repos each have one:</p>
+            <ul class="k-state__list">
+              @for (m of vm.masters(); track m) {
+                <li>{{ m }}</li>
+              }
+            </ul>
+            <p class="k-state__body">Remove the extra markers, then reopen the workspace.</p>
+          </section>
+        </main>
+      }
+      @case ('marker-error') {
+        <main class="k-home__state">
+          <section class="k-state" aria-labelledby="state-title">
+            <h1 id="state-title" class="k-state__title">.ai-sdlc.json could not be read</h1>
+            <p class="k-state__body">{{ vm.scan()?.marker_error }}</p>
+          </section>
+        </main>
+      }
+      @case ('not-set-up') {
+        <main class="k-home__state">
+          <section class="k-state" aria-labelledby="state-title">
+            <h1 id="state-title" class="k-state__title">This workspace is not set up</h1>
+            <p class="k-state__body">
+              <code class="k-mono">.ai-sdlc.json</code> is not committed in the master repo. A cancelled setup leaves it uncommitted.
+            </p>
+            <button hlmBtn variant="primary" type="button" [disabled]="vm.locked()" (click)="vm.addSystem()">Run setup</button>
+          </section>
+        </main>
+      }
+      @case ('ready') {
+        <main class="k-home__panes">
+          <h1 class="sr-only">{{ vm.current()?.name }}</h1>
+          <section class="k-home__pane" aria-labelledby="changes-heading">
+            <div class="wb-pane__head"><h2 id="changes-heading" class="kata-eyebrow">Changes</h2></div>
+            <div class="k-home__body">
+              <app-changes-table
+                [changes]="vm.changes()"
+                [others]="vm.otherBranches()"
+                [lastRuns]="vm.lastRuns()"
+                [disabled]="vm.locked()"
+                (open)="vm.openChange($event.system, $event.change)"
+                (openOther)="vm.openOtherBranch($event)"
+              />
+            </div>
+          </section>
+          <section class="k-home__pane" aria-labelledby="repos-heading">
+            <div class="wb-pane__head"><h2 id="repos-heading" class="kata-eyebrow">Repositories</h2></div>
+            <div class="k-home__body">
+              <app-repos-table
+                [rows]="vm.repoRows()"
+                [marker]="vm.markerLine()"
+                [disabled]="vm.locked()"
+                (runContext)="vm.runContext($event)"
+              />
+              <div>
+                <button hlmBtn variant="secondary" size="sm" type="button" [disabled]="vm.locked()" (click)="vm.addSystem()">
+                  <ng-icon name="lucidePlus" size="14" />Add system
+                </button>
+              </div>
+            </div>
+          </section>
+        </main>
+      }
+    }
+  }
+
+  <app-lock-overlay
+    [view]="vm.lockView()"
+    [elapsed]="vm.lockElapsed()"
+    (cancel)="vm.cancelLock()"
+  />
+  <app-add-workspace-dialog [candidate]="vm.candidate()" (add)="vm.confirmAddWorkspace()" (cancel)="vm.cancelAddWorkspace()" />
+  <app-new-change-dialog
+    [open]="vm.newChangeOpen()"
+    [systems]="vm.systems()"
+    (start)="vm.newChange($event.system, $event.idea)"
+    (cancel)="vm.closeNewChange()"
+  />
+  @if (vm.settings(); as s) {
+    <app-sdlc-settings-dialog
+      [open]="vm.settingsOpen()"
+      [settings]="s"
+      [workspace]="vm.current()"
+      (save)="vm.saveSettings($event)"
+      (cancel)="vm.closeSettings()"
+    />
+  }
+  <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
+  <app-confirm-dialog
+    [open]="vm.switchPrompt() !== null"
+    [message]="vm.switchPrompt() ?? ''"
+    confirmLabel="Switch branch"
+    (confirm)="vm.answerSwitch(true)"
+    (cancel)="vm.answerSwitch(false)"
+  />
+  <app-confirm-dialog
+    [open]="vm.removePrompt() !== null"
+    [message]="vm.removePrompt() ?? ''"
+    confirmLabel="Remove"
+    (confirm)="vm.confirmRemove()"
+    (cancel)="vm.cancelRemove()"
+  />
+</div>

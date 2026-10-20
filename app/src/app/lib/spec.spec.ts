@@ -11,6 +11,12 @@ describe("spec helpers", () => {
     expect(s.plugins).toEqual({});
   });
 
+  it("a new draft is interactive, and a loaded spec keeps its own setting", () => {
+    expect(defaultSpec().interactive.enabled).toBe(true);
+    const loaded = { ...defaultSpec(), interactive: { enabled: false, answer_timeout_secs: null } };
+    expect(draftFrom(loaded).interactive.enabled).toBe(false);
+  });
+
   it("normalize converts blank optionals to null", () => {
     const s = defaultSpec();
     s.description = "  ";

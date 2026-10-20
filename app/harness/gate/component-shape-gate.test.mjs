@@ -27,6 +27,8 @@ const GATED = new Set([
   'legacy-icon-module',
   'unregistered-icon',
   'orphan-ng-submit',
+  'inline-template',
+  'inline-styles',
 ]);
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -53,6 +55,7 @@ const TS_RULES = {
   'shape/no-explicit-standalone': 'error',
   'shape/no-legacy-icon-module': 'error',
   'shape/no-unregistered-icon': 'error',
+  'shape/no-inline-template': 'error',
 };
 
 function lintTs(code, filename) {
@@ -83,6 +86,16 @@ function lintHtml(code) {
   );
 }
 
+// The pre-existing fixtures declare their templates inline, which
+// no-inline-template now flags. They are kept byte-identical as records of the
+// shapes they pin, so a "clean" assertion strips exactly the stated number of
+// inlineTemplate reports (and fails if that number is off) and then requires
+// zero of everything else.
+const sansInline = (ms, n) => {
+  expect(ms.filter((m) => m.messageId === 'inlineTemplate')).toHaveLength(n);
+  return ms.filter((m) => m.messageId !== 'inlineTemplate');
+};
+
 const byId = (ms) => {
   const o = {};
   for (const m of ms) o[m.messageId] = (o[m.messageId] ?? 0) + 1;
@@ -102,6 +115,7 @@ describe('component-shape gate: TS rules', () => {
       restatedValidator: 1,
       presentationalInject: 1,
       reactiveForm: 1,
+      inlineTemplate: 1,
     });
   });
 
@@ -134,7 +148,7 @@ describe('component-shape gate: TS rules', () => {
   it('flags the pre-capstone clean fixture under the MVVM refinement', () => {
     const ids = byId(lintTs(readFileSync(fx('part3-clean.ts'), 'utf8'), 'src/app/heroes/hero-list.ts'));
     // toSignal() is deliberately NOT state and must not count.
-    expect(ids).toEqual({ featureInjectsData: 1, stateOutsideVm: 1 });
+    expect(ids).toEqual({ featureInjectsData: 1, stateOutsideVm: 1, inlineTemplate: 1 });
   });
 });
 
@@ -150,11 +164,12 @@ describe('component-shape gate: MVVM rules (capstone)', () => {
       stateOutsideVm: 2,
       featureInjectsData: 2,
       vmNotProvided: 1,
+      inlineTemplate: 1,
     });
   });
 
   it('passes the clean MVVM fixture with zero reports, at a non-ui feature path', () => {
-    expect(lintTs(clean, 'src/app/roster/roster.ts')).toEqual([]);
+    expect(sansInline(lintTs(clean, 'src/app/roster/roster.ts'), 1)).toEqual([]);
   });
 
   it('does not fire state-outside-vm or feature-injects-data when the file is under src/app/ui/', () => {
@@ -182,6 +197,7 @@ describe('component-shape gate: capstone-residue rules (11-14, plus the two wide
       unregisteredIcon: 1,
       componentSubscribe: 1,
       stateOutsideVm: 1,
+      inlineTemplate: 2,
     });
   });
 
@@ -189,11 +205,43 @@ it('does not flag the app-level icon registration pattern (rule 13 regression gu
     // NgIcon imported, no glyph symbols, no provideIcons: the documented
     // 'or app' pattern. An earlier draft of rule 13 flagged this and would
     // have blocked the only capstone builds whose icons worked.
-    expect(lintTs(readFileSync(fx('capstone-residue-icon-applevel.ts'), 'utf8'), 'src/app/hero-detail/hero-detail.ts')).toEqual([]);
+    expect(
+      sansInline(lintTs(readFileSync(fx('capstone-residue-icon-applevel.ts'), 'utf8'), 'src/app/hero-detail/hero-detail.ts'), 2),
+    ).toEqual([]);
   });
 
   it('passes the clean residue fixture with zero reports, at a non-ui feature path', () => {
-    expect(lintTs(clean, 'src/app/roster/roster.ts')).toEqual([]);
+    expect(sansInline(lintTs(clean, 'src/app/roster/roster.ts'), 1)).toEqual([]);
+  });
+});
+
+describe('component-shape gate: no-inline-template (rule 15)', () => {
+  const comp = (body) => "@Component({ selector: 'app-x', " + body + ' })\nexport class X {}\n';
+  const ids = (code, file = 'src/app/x.ts') => lintTs(code, file).map((m) => m.messageId);
+
+  it('flags an inline template and inline styles, one report each', () => {
+    expect(ids(comp('template: `<p></p>`, styles: [`p { margin: 0 }`],'))).toEqual(['inlineTemplate', 'inlineStyles']);
+  });
+
+  it('flags quoted keys the same as bare ones', () => {
+    expect(ids(comp("'template': '<p></p>', 'styles': ['p {}'],"))).toEqual(['inlineTemplate', 'inlineStyles']);
+  });
+
+  it('passes templateUrl and styleUrl, and a component with no styles at all', () => {
+    expect(ids(comp("templateUrl: './x.html', styleUrl: './x.css',"))).toEqual([]);
+    expect(ids(comp("templateUrl: './x.html',"))).toEqual([]);
+  });
+
+  it('exempts spec files, and only spec files', () => {
+    const code = comp('template: `<p></p>`, styles: [],');
+    expect(ids(code, 'src/app/x.spec.ts')).toEqual([]);
+    expect(ids(code, 'src/app/x.ts')).toEqual(['inlineTemplate', 'inlineStyles']);
+  });
+
+  it('agrees with the counter on the same source', () => {
+    const code = comp('template: `<p></p>`, styles: [],');
+    const counter = countTsSource(code, { file: 'src/app/x.ts' }).filter((v) => GATED.has(v.kind)).length;
+    expect(lintTs(code, 'src/app/x.ts').length).toBe(counter);
   });
 });
 

@@ -103,3 +103,13 @@ describe('PermissionPanel - settled', () => {
     expect(m.container.textContent).toContain('allowed · run resumed');
   });
 });
+
+describe('PermissionPanel - run ended undecided', () => {
+  it('drops the reason box and verdict buttons and says the run ended', async () => {
+    const { container } = await render(PermissionPanel, { record: PENDING, ended: true });
+    expect(container.querySelector('textarea')).toBeNull();
+    expect(container.querySelectorAll('button')).toHaveLength(0);
+    expect(container.textContent).toContain('not decided · run ended');
+    expect(container.textContent).toContain('rm -rf build/');
+  });
+});

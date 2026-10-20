@@ -87,7 +87,7 @@ import { lucideTrash2 } from '@ng-icons/lucide';
 @Component({
   imports: [NgIcon],
   providers: [provideIcons({ lucideTrash2 })],
-  template: `<button hlmBtn size="icon" variant="ghost"><ng-icon name="lucideTrash2" /></button>`,
+  templateUrl: './retire-button.html', // <button hlmBtn size="icon" variant="ghost"><ng-icon name="lucideTrash2" /></button>
 })
 export class RetireButton {}
 ```
@@ -207,7 +207,7 @@ Bad:
 
 ## No raw literals in hand-written CSS
 
-Prefer Tailwind utilities and the spartan primitives over hand-written component stylesheets. When you do write a component stylesheet (an inline `styles: []` block or a `styleUrl` file), every color and length is a design token, never a raw literal:
+Prefer Tailwind utilities and the spartan primitives over hand-written component stylesheets. When you do write a component stylesheet (always a `styleUrl` file; inline `styles:` is banned by `shape/no-inline-template`), every color and length is a design token, never a raw literal:
 
 - Colors come from the semantic token variables (`var(--primary)`, `var(--border)`, `var(--card)`), never a raw hex, `rgb()`, or `hsl()`.
 - Lengths come from a token or the spacing scale, never a raw `px` value.
@@ -303,7 +303,7 @@ export class HeroDetailViewModel {
   selector: 'app-hero-detail',
   providers: [HeroDetailViewModel],
   imports: [HlmCardImports],
-  template: `<h1>{{ vm.hero()?.name }}</h1>`,
+  templateUrl: './hero-detail.html', // <h1>{{ vm.hero()?.name }}</h1>
 })
 export class HeroDetail {
   protected readonly vm = inject(HeroDetailViewModel);
@@ -314,7 +314,7 @@ Bad:
 
 ```ts
 // state in the component class, and the data service injected past the ViewModel
-@Component({ selector: 'app-hero-detail', template: `...` })
+@Component({ selector: 'app-hero-detail', templateUrl: './hero-detail.html' })
 export class HeroDetail {
   private readonly heroes = inject(HeroService);   // belongs in the ViewModel
   readonly hero = signal<Hero | null>(null);       // belongs in the ViewModel
@@ -330,7 +330,7 @@ export class HeroDetailViewModel {}
 ```ts
 // a ViewModel injected but never provided: this is a runtime NullInjectorError,
 // and nothing in the build catches it for you
-@Component({ selector: 'app-roster', template: `...` })  // no providers: [RosterViewModel]
+@Component({ selector: 'app-roster', templateUrl: './roster.html' })  // no providers: [RosterViewModel]
 export class Roster {
   protected readonly vm = inject(RosterViewModel);
 }

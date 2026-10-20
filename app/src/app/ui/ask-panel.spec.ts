@@ -273,3 +273,19 @@ describe('AskPanel - isolation', () => {
     expect(fixture.componentInstance.gotB).toEqual([]);
   });
 });
+
+describe('AskPanel - run ended unanswered', () => {
+  it('shows the questions read-only with no form and says the run ended', async () => {
+    const { container } = await render(AskPanel, { ask: rec([single, text]), ended: true });
+    expect(container.querySelector('form')).toBeNull();
+    expect(container.querySelectorAll('button')).toHaveLength(0);
+    expect(container.textContent).toContain('not answered · run ended');
+    expect(container.textContent).toContain('Which store?');
+    expect(container.textContent).toContain('Name?');
+  });
+
+  it('keeps the answered summary when the run ends after an answer', async () => {
+    const { container } = await render(AskPanel, { ask: rec([confirm], [['Yes']]), ended: true });
+    expect(container.textContent).toContain('answered · run resumed');
+  });
+});

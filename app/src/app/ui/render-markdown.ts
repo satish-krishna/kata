@@ -4,6 +4,9 @@ import remarkGfm from 'remark-gfm';
 import remarkRehype from 'remark-rehype';
 import rehypeSanitize from 'rehype-sanitize';
 import rehypeStringify from 'rehype-stringify';
+import rehypeHighlight from 'rehype-highlight';
+import gherkin from 'highlight.js/lib/languages/gherkin';
+import type { HLJSApi, Language } from 'highlight.js';
 import type { Element, Nodes, Root } from 'hast';
 
 /** The same remark + GFM parse the original markdown renderer used, sanitized and serialized
@@ -45,11 +48,21 @@ function taskCheckboxesToSpans() {
   return (tree: Root): void => walk(tree);
 }
 
+/** highlight.js's Gherkin grammar predates Gherkin 6, so it misses `Rule` and `Example`, which ai-sdlc specs use. */
+function gherkin6(hljs: HLJSApi): Language {
+  const g = gherkin(hljs);
+  return { ...g, keywords: `${String(g.keywords)} Rule Example` };
+}
+
+/* Highlighting runs after sanitizing: the GitHub schema would strip the hljs-* classes, and the
+ * spans it adds are generated from the already-sanitized text. Only Gherkin is registered, so any
+ * other fenced language, Mermaid included, stays plain for MarkdownBody to pick up. */
 const domProcessor = unified()
   .use(remarkParse)
   .use(remarkGfm)
   .use(remarkRehype)
   .use(rehypeSanitize)
+  .use(rehypeHighlight, { languages: { gherkin: gherkin6 }, detect: false })
   .use(taskCheckboxesToSpans)
   .use(rehypeStringify);
 

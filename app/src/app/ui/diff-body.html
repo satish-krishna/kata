@@ -1,0 +1,8 @@
+@if (lines(); as ls) {
+  <hlm-code-block size="sm" variant="flush"><pre hlmCodeBlockContent>@for (l of ls; track $index) {<span hlmCodeBlockLine [variant]="variant(l.kind)"><span class="k-toolcard__dm">{{ mark(l.kind) }}</span>{{ l.text }}</span>}</pre></hlm-code-block>
+} @else {
+  <div class="k-toolcard__label">before</div>
+  <app-output-body [text]="oldText()" />
+  <div class="k-toolcard__label">after</div>
+  <app-output-body [text]="newText()" />
+}
