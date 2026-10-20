@@ -1,9 +1,11 @@
 import type { CatalogEntry } from "@bindings/CatalogEntry";
+import type { ChangeInfo } from "@bindings/ChangeInfo";
+import type { OutOfDate } from "@bindings/OutOfDate";
 import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
 import type { KataEvent } from "./events";
 import { validateLocal } from "./mock";
-import { actionLabel, actionsFor, hasAiSdlcPlugin, primaryAction, revisits, runCounts, specFor, splitFrontMatter, stageLabel, transcriptRunId, type RunContext, type StageAction } from "./sdlc";
+import { DONE_LABEL, actionLabel, actionsFor, actionsForChange, hasAiSdlcPlugin, primaryAction, revisits, runCounts, specFor, splitFrontMatter, stageLabel, transcriptRunId, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -23,9 +25,22 @@ const ACTIONS: Record<Stage, string[]> = {
   "spec-awaiting": ["continue-spec", "accept-spec", "reopen-intent"],
   "spec-accepted-uncommitted": ["commit-acceptance", "continue-spec"],
   "plan-ready": ["start-plan", "reopen-spec", "reopen-intent"],
-  "plan-written": ["rerun-plan", "reopen-spec", "reopen-intent"],
-  "plan-superseded": ["rerun-plan", "reopen-spec"],
+  "plan-awaiting": ["accept-plan", "rerun-plan", "reopen-intent"],
+  "plan-accepted-uncommitted": ["commit-acceptance", "rerun-plan"],
+  "plan-out-of-date": [],
+  "plan-superseded": ["rerun-plan"],
+  "build-ready": ["start-build", "reopen-intent"],
+  "build-stopped": ["continue-build", "another-round"],
+  "build-finished": ["declare-done", "another-round", "run-review"],
 };
+
+const changeAt = (stage: Stage, outOfDate: OutOfDate | null = null): ChangeInfo => ({
+  system: "claims", change: "2026-10-12-fnol", stage, scope: "claims", out_of_date: outOfDate,
+  intent: { exists: true, committed: true, status: "accepted" },
+  spec: { exists: true, committed: true, status: "accepted" },
+  plan: { exists: true, committed: true, status: "accepted" },
+  build: { tasks: 2, finished: 0, repos: 1 },
+});
 
 describe("actionsFor", () => {
   for (const [stage, actions] of Object.entries(ACTIONS)) {
@@ -33,13 +48,48 @@ describe("actionsFor", () => {
   }
 });
 
+describe("plan and build actions", () => {
+  it("plan-awaiting offers accept, rerun, reopen and no build (R1.1)", () => {
+    const got = actionsFor("plan-awaiting");
+    expect(got).toEqual(["accept-plan", "rerun-plan", "reopen-intent"]);
+    expect(got).not.toContain("start-build");
+    expect(got).not.toContain("continue-build");
+  });
+
+  it("declare-done only in build-finished (R11.4)", () => {
+    for (const stage of Object.keys(ACTIONS) as Stage[]) {
+      expect(actionsFor(stage).includes("declare-done")).toBe(stage === "build-finished");
+    }
+    expect(actionsForChange(changeAt("build-stopped"))).not.toContain("declare-done");
+  });
+
+  it("out-of-date actions follow the cause", () => {
+    expect(actionsForChange(changeAt("plan-out-of-date", "spec-pin"))).toEqual(["reopen-spec"]);
+    expect(actionsForChange(changeAt("plan-out-of-date", "intent-reopened"))).toEqual([]);
+    expect(actionsForChange(changeAt("plan-out-of-date", "spec-reopened"))).toEqual([]);
+    expect(actionsForChange(changeAt("plan-out-of-date", "plan-pin"))).toEqual(["rerun-plan"]);
+    expect(actionsForChange(changeAt("plan-out-of-date", "no-tasks"))).toEqual(["rerun-plan"]);
+    expect(actionsForChange(changeAt("build-ready"))).toEqual(["start-build", "reopen-intent"]);
+  });
+});
+
 describe("stageLabel", () => {
+  it("build stage labels (R14.1)", () => {
+    expect(stageLabel("build-ready")).toMatchObject({ step: "build", text: "Build · ready to start" });
+    expect(stageLabel("build-stopped")).toMatchObject({ step: "build", text: "Build · in progress (stopped)" });
+    expect(stageLabel("build-finished")).toMatchObject({ step: "build", text: "Build · finished, not yet done" });
+    expect(stageLabel("plan-awaiting").text).toBe("Plan · awaiting acceptance");
+    expect(stageLabel("plan-accepted-uncommitted").text).toBe("Plan · accepted, not committed");
+    expect(stageLabel("plan-out-of-date").text).toBe("Plan · out of date");
+    expect(DONE_LABEL).toEqual({ step: "done", text: "Done · pull requests open", tone: "success" });
+  });
+
   it("gives every stage non-empty text", () => {
     for (const s of Object.keys(ACTIONS)) expect(stageLabel(s as Stage).text.length).toBeGreaterThan(0);
   });
   it("maps representative stages", () => {
     expect(stageLabel("rejected")).toMatchObject({ step: "closed", tone: "error" });
-    expect(stageLabel("plan-written")).toMatchObject({ step: "plan", tone: "success" });
+    expect(stageLabel("plan-awaiting")).toMatchObject({ step: "plan", tone: "warning" });
     expect(stageLabel("spec-awaiting")).toMatchObject({ step: "spec", tone: "warning" });
     expect(stageLabel("intent-in-progress").step).toBe("intent");
   });
@@ -228,7 +278,10 @@ describe("actionLabel and primaryAction", () => {
     expect(primaryAction(actionsFor("spec-accepted-uncommitted"))).toBe("commit-acceptance");
     expect(primaryAction(actionsFor("spec-ready"))).toBe("start-spec");
     expect(primaryAction(actionsFor("intent-in-progress"))).toBe("continue-intent");
-    expect(primaryAction(actionsFor("plan-written"))).toBeNull();
+    expect(primaryAction(actionsFor("plan-awaiting"))).toBe("accept-plan");
+    expect(primaryAction(actionsFor("build-finished"))).toBe("declare-done");
+    expect(primaryAction(actionsFor("build-stopped"))).toBe("continue-build");
+    expect(primaryAction(actionsFor("plan-superseded"))).toBeNull();
     expect(primaryAction(actionsFor("rejected"))).toBeNull();
   });
 });
