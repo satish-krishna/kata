@@ -13,21 +13,56 @@ pub struct Offender {
     pub subject: String,
 }
 
+const TYPES: [&str; 11] = [
+    "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
+];
+
 /// Whether `message` has a `<type>(<scope>)!?: <non-space>` header with exactly `scope`
 /// and a later `Generated-By: ai-sdlc` line.
-pub fn follows_rules(_message: &str, _scope: &str) -> bool {
-    todo!()
+pub fn follows_rules(message: &str, scope: &str) -> bool {
+    let mut lines = message
+        .split('\n')
+        .map(|l| l.strip_suffix('\r').unwrap_or(l));
+    let header = lines.next().unwrap_or("");
+    header_ok(header, scope) && lines.any(|l| l == "Generated-By: ai-sdlc")
+}
+
+fn header_ok(header: &str, scope: &str) -> bool {
+    let Some((kind, rest)) = header.split_once('(') else {
+        return false;
+    };
+    if !TYPES.contains(&kind) {
+        return false;
+    }
+    let Some(rest) = rest.strip_prefix(scope).and_then(|r| r.strip_prefix(')')) else {
+        return false;
+    };
+    let rest = rest.strip_prefix('!').unwrap_or(rest);
+    rest.strip_prefix(": ")
+        .and_then(|r| r.chars().next())
+        .is_some_and(|c| !c.is_whitespace())
 }
 
 /// Commits in `<merge_base>..HEAD` of `repo_dir` that break the rules.
 pub fn offenders(
-    _repo_dir: &Path,
-    _repo: &str,
-    _merge_base: &str,
-    _scope: &str,
+    repo_dir: &Path,
+    repo: &str,
+    merge_base: &str,
+    scope: &str,
 ) -> Result<Vec<Offender>, GitError> {
-    let _ = git::run;
-    todo!()
+    let range = format!("{merge_base}..HEAD");
+    let log = git::run(repo_dir, &["log", "--format=%h%x1f%B%x1e", range.as_str()])?;
+    Ok(log
+        .split('\x1e')
+        .filter_map(|rec| {
+            let (hash, message) = rec.trim_start_matches('\n').split_once('\x1f')?;
+            (!follows_rules(message, scope)).then(|| Offender {
+                repo: repo.to_string(),
+                hash: hash.to_string(),
+                subject: message.lines().next().unwrap_or("").trim_end().to_string(),
+            })
+        })
+        .collect())
 }
 
 #[cfg(test)]
