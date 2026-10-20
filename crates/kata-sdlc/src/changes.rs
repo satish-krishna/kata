@@ -428,10 +428,10 @@ mod tests {
             derive_stage(&acc, &acc, &sup, &facts(2, 0)),
             Stage::PlanSuperseded
         );
-        // Superseded wins even over a reopened intent.
+        // A reopened intent is settled first; the plan is rewritten once it is accepted again.
         assert_eq!(
             derive_stage(&doc(true, "draft"), &acc, &sup, &facts(2, 0)),
-            Stage::PlanSuperseded
+            Stage::IntentAwaiting
         );
     }
 
@@ -491,12 +491,25 @@ mod tests {
         let plan = doc(true, "accepted");
         let f = facts(2, 1);
         let draft = doc(true, "draft");
-        assert_eq!(derive_stage(&draft, &acc, &plan, &f), Stage::PlanOutOfDate);
+        // A reopened document is settled at its own stage, which carries the actions to settle it.
+        assert_eq!(derive_stage(&draft, &acc, &plan, &f), Stage::IntentAwaiting);
+        assert_eq!(
+            derive_stage(&doc(false, "draft"), &acc, &plan, &f),
+            Stage::IntentInProgress
+        );
+        assert_eq!(
+            derive_stage(&draft, &acc, &doc(true, "superseded"), &f),
+            Stage::IntentAwaiting
+        );
+        assert_eq!(derive_stage(&acc, &draft, &plan, &f), Stage::SpecAwaiting);
+        assert_eq!(
+            derive_stage(&acc, &draft, &doc(true, "superseded"), &f),
+            Stage::SpecAwaiting
+        );
         assert_eq!(
             out_of_date(&draft, &acc, &plan, &f),
             Some(OutOfDate::IntentReopened)
         );
-        assert_eq!(derive_stage(&acc, &draft, &plan, &f), Stage::PlanOutOfDate);
         assert_eq!(
             out_of_date(&acc, &draft, &plan, &f),
             Some(OutOfDate::SpecReopened)
