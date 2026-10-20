@@ -135,6 +135,18 @@ export class BuildDriver {
     }
     this.waiting.set(waiting);
 
+    // A round for a repository the plan names no task in (the master) has no state row; it still runs.
+    const pending = this.round();
+    if (
+      pending &&
+      !this.roundStarted &&
+      !status.repos.some((r) => r.repo === pending.repo) &&
+      !this.going().has(pending.repo) &&
+      !this.stopped().has(pending.repo)
+    ) {
+      ready.push({ repo: pending.repo, task: '' });
+    }
+
     for (const r of ready) {
       const round = this.round();
       const picked = round?.repo === r.repo && !this.roundStarted;
