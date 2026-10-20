@@ -5,6 +5,7 @@ import { lucideTriangleAlert } from '@ng-icons/lucide';
 import { HlmAlertImports } from '@spartan-ng/helm/alert';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
+import { BuildView } from '../build/build-view';
 import { BuildDialog } from '../../ui/build-dialog';
 import { BuildLogTable } from '../../ui/build-log-table';
 import { BuildRefusalDialog } from '../../ui/build-refusal-dialog';
@@ -21,7 +22,7 @@ import { ChangePageViewModel } from './change-page.view-model';
 @Component({
   selector: 'app-change-page',
   providers: [ChangePageViewModel, provideIcons({ lucideTriangleAlert })],
-  imports: [NgIcon, HlmAlertImports, HlmButtonImports, HlmTabsImports, SdlcToolbar, StageStepper, DocView, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildLogTable, BuildRefusalDialog, SdlcSession],
+  imports: [NgIcon, HlmAlertImports, HlmButtonImports, HlmTabsImports, SdlcToolbar, StageStepper, DocView, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildLogTable, BuildRefusalDialog, SdlcSession, BuildView],
   templateUrl: './change-page.html',
 })
 export class ChangePage {

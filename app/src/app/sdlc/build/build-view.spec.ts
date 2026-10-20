@@ -1,7 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { toastState } from '@spartan-ng/brain/sonner';
-import { render } from '../../../testing/render';
 import { LockStore } from '../../core/lock/lock.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
@@ -16,7 +15,13 @@ async function mount(transport = new MockTransport()) {
   const out = await transport.sdlcBuildPrepare(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'claims', MOCK_BUILD_CHANGE, false);
   if (out.kind !== 'ready') throw new Error('the mock build did not prepare');
   const handoff: BuildHandoff = { start: out.start, timeoutSecs: 5400, round: null, checksDir: await transport.sdlcChecksDir() };
-  const view = await render(BuildView, { handoff, context: CTX }, [provideRouter([]), { provide: KataTransport, useValue: transport }]);
+  // Not `render()`: under fake timers `whenStable` would wait on a change detection that only a timer can run.
+  TestBed.configureTestingModule({ imports: [BuildView], providers: [provideRouter([]), { provide: KataTransport, useValue: transport }] });
+  const fixture = TestBed.createComponent(BuildView);
+  fixture.componentRef.setInput('handoff', handoff);
+  fixture.componentRef.setInput('context', CTX);
+  fixture.detectChanges();
+  const view = { fixture, container: fixture.nativeElement as HTMLElement };
   const vm = view.fixture.debugElement.injector.get(BuildViewModel);
   const advance = async (ms: number) => {
     for (let t = 0; t < ms; t += 50) {

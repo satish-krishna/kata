@@ -417,7 +417,75 @@ export type Severity = "critical" | "high" | "medium" | "low";
 /** One finding of the review, with the severity its text opens with, if it names one. */
 export type Finding = { severity: Severity | null; text: string };
 
-/** The review's findings, most serious first, read from the closing text of its `run.completed`. */
-export function reviewFindings(_detail: RunDetail): Finding[] {
-  return [];
+
+const SEVERITY_RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+const SEVERITY_WORDS: Record<string, Severity> = {
+  critical: "critical", blocker: "critical", high: "high", major: "high", medium: "medium", moderate: "medium", low: "low", minor: "low", nit: "low",
+};
+const WORDS = Object.keys(SEVERITY_WORDS).join("|");
+// A tag opens an item as [High], (high), **High**, or High: / High -.
+const SEVERITY_TAG = new RegExp(
+  String.raw`^\s*(?:[\[(]\s*(${WORDS})\s*[\])]|\*\*\s*(${WORDS})\s*\*\*|(${WORDS})(?=\s*[:\u2013-]))\s*[:\u2013-]?\s*`,
+  "i",
+);
+const NO_FINDINGS = /^\s*no\s+(?:issues|findings|problems|concerns)\b/i;
+
+/** The items of a list numbered 1, 2, 3 in order, on one line or several; null when the text has no such list. */
+function numberedItems(text: string): string[] | null {
+  const marks: { start: number; end: number }[] = [];
+  let from = 0;
+  for (let n = 1; ; n++) {
+    const re = new RegExp(String.raw`(^|\s)${n}[.)]\s+`, "g");
+    re.lastIndex = from;
+    const m = re.exec(text);
+    if (!m) break;
+    marks.push({ start: m.index, end: m.index + m[0].length });
+    from = m.index + m[0].length;
+  }
+  if (marks.length === 0) return null;
+  return marks.map((m, i) => text.slice(m.end, marks[i + 1]?.start ?? text.length).trim());
+}
+
+/** The items of a `-`, `*` or bullet list, one per line, with a wrapped line joined to the item above it. */
+function bulletItems(text: string): string[] | null {
+  const items: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*[-*\u2022]\s+(.*)$/.exec(line);
+    if (m) items.push(m[1].trim());
+    else if (items.length > 0 && line.trim() !== "") items[items.length - 1] += ` ${line.trim()}`;
+  }
+  return items.length > 0 ? items : null;
+}
+
+function asFinding(item: string): Finding {
+  const m = SEVERITY_TAG.exec(item);
+  if (!m) return { severity: null, text: item };
+  const word = (m[1] ?? m[2] ?? m[3]).toLowerCase();
+  return { severity: SEVERITY_WORDS[word], text: item.slice(m[0].length).trim() };
+}
+
+/**
+ * The review's findings, most serious first, read from the closing text of its `run.completed`.
+ * The text is a list numbered in order or bulleted; a severity tag at the start of an item ranks it.
+ * Items without a tag rank as medium, and equal ranks keep the order written.
+ */
+export function reviewFindings(detail: RunDetail): Finding[] {
+  let result = "";
+  for (let i = detail.events.length - 1; i >= 0; i--) {
+    const ev = detail.events[i];
+    if (ev.type === "run.completed") {
+      result = (ev.result ?? "").trim();
+      break;
+    }
+  }
+  if (result === "") return [];
+  const items = numberedItems(result) ?? bulletItems(result);
+  if (items === null) return NO_FINDINGS.test(result) ? [] : [asFinding(result)];
+  const rank = (f: Finding) => SEVERITY_RANK[f.severity ?? "medium"];
+  return items
+    .filter((t) => t !== "")
+    .map(asFinding)
+    .map((f, index) => ({ f, index }))
+    .sort((a, b) => rank(a.f) - rank(b.f) || a.index - b.index)
+    .map(({ f }) => f);
 }

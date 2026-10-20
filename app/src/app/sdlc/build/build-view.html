@@ -1,0 +1,84 @@
+<main class="wb-pane wb-pane--observe k-session k-build" aria-labelledby="build-title">
+  <div class="wb-pane__head">
+    <h1 id="build-title" class="kata-eyebrow k-session__title">Build</h1>
+    <span class="k-session__actions">
+      @if (!vm.active()) {
+        <button hlmBtn variant="primary" size="sm" type="button" [disabled]="vm.closeBlocked()" (click)="close()">Close</button>
+      }
+    </span>
+  </div>
+  <div class="grid grid-cols-1 md:grid-cols-[16rem_1fr] k-build__body">
+    <aside class="k-build__left" aria-label="Repositories">
+      <div class="k-build__top">
+        <span class="k-lock__count">{{ vm.tasksLabel() }}</span>
+        @if (vm.active()) {
+          <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.cancelBuild()">Cancel build</button>
+        }
+      </div>
+      <app-repo-status-list [rows]="vm.rows()" [selected]="vm.selected()" (select)="vm.select($event)" />
+    </aside>
+    <section class="k-build__main" aria-label="Runs">
+      @switch (vm.phase()) {
+        @case ('finished') {
+          <section class="k-build__end" aria-labelledby="build-end">
+            <h2 id="build-end" class="k-state__title">Every task is in the build log.</h2>
+            @if (vm.reviewShown()) {
+              <app-findings-list [findings]="vm.findings()" [replaced]="vm.replaced()" />
+            }
+          </section>
+        }
+        @case ('stopped') {
+          <section class="k-build__stop" aria-labelledby="build-stop">
+            <h2 id="build-stop" class="k-state__title">The build stopped. Nothing more can run.</h2>
+            @if (vm.report(); as report) {
+              <ul class="k-state__list">
+                @for (u of report.unfinished; track u.repo) {
+                  <li><span class="k-mono">{{ u.repo }}</span> has unfinished tasks: {{ u.tasks.join(', ') }}</li>
+                }
+                @for (w of report.waiting; track w.repo) {
+                  <li><span class="k-mono">{{ w.repo }}</span> is waiting for {{ w.onTask }} in <span class="k-mono">{{ w.onRepo }}</span></li>
+                }
+              </ul>
+            }
+          </section>
+        }
+        @case ('cancelled') {
+          <section class="k-build__stop" aria-labelledby="build-stop">
+            <h2 id="build-stop" class="k-state__title">The build was cancelled.</h2>
+            <p class="k-state__body">Continue a repository to go on, or close the build. Commits already made are kept.</p>
+          </section>
+        }
+      }
+      @if (vm.selected(); as name) {
+        <div class="k-build__repo-head">
+          <h2 class="k-left__repo-name">{{ name }}</h2>
+          @switch (vm.action()) {
+            @case ('cancel') {
+              <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.cancelRun()">Cancel</button>
+            }
+            @case ('continue') {
+              <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.continueRun()">Continue {{ name }}</button>
+            }
+          }
+        </div>
+        @for (r of vm.shown(); track r.id) {
+          <div class="k-build__run-start">Started <span class="k-mono">{{ r.startedAt }}</span></div>
+          <div class="k-build__pane">
+            <app-observe-pane
+              [state]="r.state"
+              [events]="r.events"
+              [spec]="r.spec"
+              [summary]="r.summary"
+              [asks]="r.asks"
+              [permissions]="r.permissions"
+              (answer)="vm.answer(r.id, $event)"
+              (decide)="vm.decide(r.id, $event)"
+            />
+          </div>
+        } @empty {
+          <p class="k-state__body">Nothing has run in <span class="k-mono">{{ name }}</span> yet.</p>
+        }
+      }
+    </section>
+  </div>
+</main>

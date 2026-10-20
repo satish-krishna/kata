@@ -252,6 +252,7 @@ export class SdlcRunner {
     const id = await this.runs.startRun(spec, `build:${link.system}/${link.change}`);
     if (id === null) return { exit: null, error: 'The run did not start' };
     this.lock.addRun(id, spec);
+    link.onRun?.(id);
     const startedAt = Math.floor(Date.now() / 1000);
     let linked = false;
     const end = await this.untilEnded(id, (runId) => {

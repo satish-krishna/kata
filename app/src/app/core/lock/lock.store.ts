@@ -236,7 +236,14 @@ export class LockStore {
   }
 
   /** A stopped build is continued: reopen its finished view and start the clock again from where it stopped. */
-  resumeBuild(): void {}
+  resumeBuild(): void {
+    const v = this.view();
+    if (v?.kind !== 'build' || !v.finished) return;
+    this.stopClock();
+    this.startedAt = Date.now() - this.elapsed() * 1000;
+    this.view.set({ ...v, finished: false });
+    this.timer = setInterval(() => this.elapsed.set(Math.floor((Date.now() - this.startedAt) / 1000)), 1000);
+  }
 
   /** Answer a question: `(askId, answers)` for the solo run, `(runId, askId, answers)` for a build run. */
   answer(askId: string, answers: string[][]): void;

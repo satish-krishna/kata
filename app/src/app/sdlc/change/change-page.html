@@ -23,7 +23,11 @@
     }
   </app-sdlc-toolbar>
 
-  @if (vm.session(); as s) {
+  @if (vm.handoff(); as h) {
+    @if (vm.buildContext(); as ctx) {
+      <app-build-view [handoff]="h" [context]="ctx" (closed)="vm.closeBuild()" />
+    }
+  } @else if (vm.session(); as s) {
     <app-sdlc-session
       [title]="s.title"
       [finished]="s.finished"

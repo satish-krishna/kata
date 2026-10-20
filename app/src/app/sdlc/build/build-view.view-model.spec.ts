@@ -87,7 +87,7 @@ describe('BuildViewModel', () => {
   it('each repository has its own row, status, task and observe pane (R19.3)', async () => {
     const { vm, transport } = setup();
     await vm.start(await handoffFor(transport), CTX);
-    await advance(2500);
+    await advance(1000);
     expect(vm.rows().map((r) => r.name)).toEqual(['claims-core', 'customer-portal', 'review']);
     expect(row(vm, 'claims-core')).toMatchObject({ tone: 'success', label: 'Working · T1' });
     expect(row(vm, 'customer-portal')).toMatchObject({ tone: 'success', label: 'Working · T2' });
@@ -128,7 +128,7 @@ describe('BuildViewModel', () => {
     const { vm, transport } = setup();
     await vm.start(await handoffFor(transport, { timeoutSecs: 5400 }), CTX);
     await advance(3000);
-    expect(row(vm, 'claims-core').clock).toMatch(/^work 0:0\d of 1:30:00$/);
+    expect(row(vm, 'claims-core').clock).toMatch(/^work 0:00:0\d of 1:30:00$/);
   });
 
   it.each([

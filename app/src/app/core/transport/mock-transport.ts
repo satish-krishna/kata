@@ -51,11 +51,16 @@ interface ScriptedRun {
  *  tail), unblocked by submitAnswer / submitDecision. Several runs play at once,
  *  each tagged with its own id. */
 export class MockTransport extends KataTransport {
-  private cb: ((runId: string, ev: KataEvent) => void) | null = null;
+  /** Every run store listening for events: a build starts several runs, each with its own listener. */
+  private readonly listeners = new Set<(runId: string, ev: KataEvent) => void>();
   private readonly runs = new Map<string, ScriptedRun>();
   private nextRun = 0;
   private readonly sdlc = new SdlcMock();
   private setupScanned = false;
+
+  private emit(runId: string, ev: KataEvent): void {
+    for (const listen of [...this.listeners]) listen(runId, ev);
+  }
 
   private play(runId: string, segment: ScriptStep[]): void {
     const run = this.runs.get(runId) ?? this.adopt(runId);
@@ -64,7 +69,7 @@ export class MockTransport extends KataTransport {
       acc += step.delay;
       run.timers.push(setTimeout(() => {
         if (step.ev.type === 'run.completed') run.onDone?.();
-        this.cb?.(runId, step.ev);
+        this.emit(runId, step.ev);
       }, acc));
     }
   }
@@ -101,7 +106,12 @@ export class MockTransport extends KataTransport {
     return Promise.resolve(workdir === MOCK_WORKSPACE_FOLDER ? [...seedCatalog, ...MOCK_SDLC_CATALOG] : seedCatalog);
   }
   listRuns(): Promise<RunRecord[]> { return Promise.resolve(history); }
-  loadRun(id: string): Promise<RunDetail> { return Promise.resolve(runDetailFixture(id)); }
+  loadRun(id: string): Promise<RunDetail> {
+    const detail = runDetailFixture(id);
+    // The scripted review run: its transcript closes with the findings the build view reads.
+    if (id.includes('-review-')) return Promise.resolve({ record: { ...detail.record, id }, events: reviewRunScript.head.map((step) => step.ev) });
+    return Promise.resolve(detail);
+  }
   loadSpec(_path: string): Promise<RunSpec> { return Promise.reject(new Error(NO_BACKEND)); }
   saveSpec(_path: string, _spec: RunSpec): Promise<void> { return Promise.reject(new Error(NO_BACKEND)); }
   validateSpec(spec: RunSpec): Promise<string[]> { return Promise.resolve(validateLocal(spec)); }
@@ -172,8 +182,8 @@ export class MockTransport extends KataTransport {
   pickSaveSpec(): Promise<string | null> { return Promise.resolve(null); }
 
   async onRunEvent(cb: (runId: string, ev: KataEvent) => void): Promise<() => void> {
-    this.cb = cb;
-    return () => { if (this.cb === cb) this.cb = null; };
+    this.listeners.add(cb);
+    return () => { this.listeners.delete(cb); };
   }
   async runSpec(spec: RunSpec, group?: string): Promise<string> {
     const id = String(++this.nextRun);
@@ -190,11 +200,11 @@ export class MockTransport extends KataTransport {
     if (run.kind === 'sdlc-spec' || run.kind === 'sdlc-setup') this.sdlc.cancelRun();
   }
   async submitAnswer(runId: string, id: string, answers: string[][]): Promise<void> {
-    this.cb?.(runId, { type: 'ask.answered', id, answers });
+    this.emit(runId, { type: 'ask.answered', id, answers });
     this.play(runId, (this.runs.get(runId) ?? this.adopt(runId)).mid);
   }
   async submitDecision(runId: string, id: string, allow: boolean, message: string | null): Promise<void> {
-    this.cb?.(runId, { type: 'permission.decided', id, ...PENDING_PERMISSION, allow, decided_by: 'operator', message: message ?? undefined });
+    this.emit(runId, { type: 'permission.decided', id, ...PENDING_PERMISSION, allow, decided_by: 'operator', message: message ?? undefined });
     this.play(runId, runScriptTail);
   }
 }

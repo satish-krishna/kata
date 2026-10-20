@@ -223,9 +223,15 @@ export class ChangePageViewModel {
   /** What the build view (T45) starts from; set when a build is prepared and ready. */
   readonly handoff = signal<BuildHandoff | null>(null);
   /** What the build view runs against: the workspace, the system and the change; null until the workspace is known. */
-  readonly buildContext = computed<BuildContext | null>(() => null);
+  readonly buildContext = computed<BuildContext | null>(() => {
+    const w = this.current();
+    return w ? { workspaceId: w.id, folder: w.folder, system: this.system(), change: this.changeName() } : null;
+  });
   /** The build view was closed: forget the handoff and read the change again. */
-  async closeBuild(): Promise<void> {}
+  async closeBuild(): Promise<void> {
+    this.handoff.set(null);
+    await this.load();
+  }
   /** What the dialog asked for, kept so confirming the leftovers prepares the same build again. */
   private asked: BuildStartRequest | null = null;
 
@@ -461,6 +467,7 @@ export class ChangePageViewModel {
           timeoutSecs: asked.timeoutSecs,
           round: asked.instructions !== null && asked.repo !== null ? { instructions: asked.instructions, repo: asked.repo } : null,
           checksDir,
+          continueOnLeftovers: continueWithLeftovers,
         });
     }
   }
