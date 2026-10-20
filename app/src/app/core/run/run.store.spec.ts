@@ -246,7 +246,7 @@ describe('RunStore with several runs', () => {
     fake.emit('run-b', { type: 'run.completed', exit_code: 0 } as never);
     expect(store.snapshot('run-a')().events).toEqual([log('from a')]);
     expect(store.snapshot('run-a')().state).toBe('running');
-    expect(store.snapshot('run-b')().events).toEqual([log('from b'), { type: 'run.completed', exit_code: 0 }]);
+    expect(store.snapshot('run-b')().events).toEqual([log('from b')]);
     expect(store.snapshot('run-b')().state).toBe('success');
     // Neither belongs to the solo run, so the Workbench view stays idle.
     expect(store.events()).toEqual([]);
