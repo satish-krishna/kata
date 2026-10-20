@@ -48,6 +48,7 @@
     "diff": "9.0.0",
     "highlight.js": "11.11.2",
     "mermaid": "12.2.0",
+    "monaco-editor": "0.57.0",
     "rehype-highlight": "7.0.2",
     "rehype-sanitize": "^6.0.0",
     "rehype-stringify": "^10.0.1",
