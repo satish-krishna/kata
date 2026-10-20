@@ -124,6 +124,19 @@ describe('BuildViewModel', () => {
     expect(row(vm, 'customer-portal')).toMatchObject({ tone: 'success', paused: null });
   });
 
+  it('an agent is denied edits in every product repository of the system, even one the plan does not name (R18.5)', async () => {
+    const { vm, transport } = setup();
+    const runSpec = vi.spyOn(transport, 'runSpec');
+    const ctx = { ...CTX, systemRepos: ['claims-core', 'customer-portal', 'billing-api'] } as BuildContext;
+    await vm.start(await handoffFor(transport), ctx);
+    await advance(100);
+    const core = runSpec.mock.calls.map(([spec]) => spec).find((s) => s.workdir === `${FOLDER}/claims-core`)!;
+    const denied = (core.permissions?.deny ?? []).join('\n');
+    expect(denied).toContain('/billing-api/**');
+    expect(denied).toContain('/customer-portal/**');
+    expect(denied).not.toContain('/claims-core/**');
+  });
+
   it('names the work clock against the time limit', async () => {
     const { vm, transport } = setup();
     await vm.start(await handoffFor(transport, { timeoutSecs: 5400 }), CTX);

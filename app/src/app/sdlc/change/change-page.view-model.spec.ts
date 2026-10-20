@@ -437,11 +437,11 @@ describe('ChangePageViewModel', () => {
       expect(vm.handoff()!.continueOnLeftovers).toBe(false);
     });
 
-    it('names the workspace, folder, system and change for the build view', async () => {
+    it('names the workspace, folder, system, change and every product repository of the system for the build view (R18.5)', async () => {
       const { vm, transport } = setup(BUILD);
       await ready(vm);
       const w = (await transport.sdlcWorkspaces())[0];
-      expect(vm.buildContext()).toEqual({ workspaceId: w.id, folder: w.folder, system: 'claims', change: BUILD });
+      expect(vm.buildContext()).toEqual({ workspaceId: w.id, folder: w.folder, system: 'claims', change: BUILD, systemRepos: ['claims-core', 'customer-portal', 'billing-api'] });
     });
 
     it('closing the build forgets the handoff and reads the change again', async () => {
