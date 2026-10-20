@@ -374,7 +374,7 @@ pub fn publish(
             )
         };
         let outcome = if is_change_name(change) {
-            open_one(gh, r, &branch, &title, &body)
+            open_one(gh, r, is_master, &branch, &title, &body)
         } else {
             PrOutcome::Failed {
                 error: format!("invalid change name: {change}"),
@@ -404,16 +404,26 @@ fn list_open(gh: &dyn Gh, r: &PublishRepo, branch: &str) -> Result<Option<String
     Ok((!url.is_empty()).then(|| url.to_string()))
 }
 
-fn open_one(gh: &dyn Gh, r: &PublishRepo, branch: &str, title: &str, body: &str) -> PrOutcome {
+fn open_one(
+    gh: &dyn Gh,
+    r: &PublishRepo,
+    is_master: bool,
+    branch: &str,
+    title: &str,
+    body: &str,
+) -> PrOutcome {
     let failed = |error: String| PrOutcome::Failed { error };
     let path = Path::new(&r.path);
-    match list_open(gh, r, branch) {
-        Ok(Some(url)) => return PrOutcome::Reused { url },
-        Ok(None) => {}
+    let existing = match list_open(gh, r, branch) {
+        Ok(url) => url,
         Err(e) => return failed(e),
-    }
+    };
     if let Err(e) = git::run(path, &["push", "-u", "origin", branch]) {
         return failed(e.to_string());
+    }
+    // A reused pull request keeps its title and, except the master's, its body.
+    if let (Some(url), false) = (&existing, is_master) {
+        return PrOutcome::Reused { url: url.clone() };
     }
     let file = match tempfile::NamedTempFile::new().and_then(|mut f| {
         f.write_all(body.as_bytes())?;
@@ -424,6 +434,14 @@ fn open_one(gh: &dyn Gh, r: &PublishRepo, branch: &str, title: &str, body: &str)
         Err(e) => return failed(e.to_string()),
     };
     let file_arg = file.to_string_lossy().into_owned();
+    if let Some(url) = existing {
+        let edited = gh.run(path, &["pr", "edit", &url, "--body-file", &file_arg]);
+        drop(file);
+        return match edited {
+            Ok(_) => PrOutcome::Reused { url },
+            Err(e) => failed(e),
+        };
+    }
     let created = gh.run(
         path,
         &[
