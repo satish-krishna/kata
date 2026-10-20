@@ -28,7 +28,12 @@ function world(plan: PlanTask[], initialRows: string[] = []) {
   const log: string[] = [];
   const repos = [...new Set(plan.map((t) => t.repo))];
 
+  const failures = { status: 0 };
   const status = async (): Promise<BuildStatus> => {
+    if (failures.status > 0) {
+      failures.status -= 1;
+      throw new Error('status read failed');
+    }
     const tasks = plan.map((t) => ({
       id: t.id,
       name: t.id,
@@ -68,7 +73,7 @@ function world(plan: PlanTask[], initialRows: string[] = []) {
 
   const driver = new BuildDriver({ status, start, heads: async () => ({ ...heads }) });
   const of = (repo: string) => started.filter((s) => s.target !== 'review' && s.target.repo === repo);
-  return { driver, started, log, rows, heads, of, status };
+  return { driver, started, log, rows, heads, of, status, failures };
 }
 
 const going = (d: BuildDriver) => [...d.going()].sort();
@@ -300,6 +305,25 @@ describe('BuildDriver', () => {
     await flush();
     await w.started[1].end(['T1']);
     expect(w.of('api')[0].opts.instructions).toBe('rename it');
+  });
+
+  it('a failed status read while other runs go does not stop the build (R6.7, R10.1)', async () => {
+    const w = world([{ id: 'T1', repo: 'app' }, { id: 'T2', repo: 'api' }]);
+    await w.driver.begin(3600);
+    await flush();
+    w.failures.status = 1;
+    await w.of('app')[0].end(['T1']);
+    expect(w.driver.going().has('api')).toBe(true);
+    expect(w.driver.phase()).toBe('building');
+  });
+
+  it('a failed status read with nothing else going stops the build', async () => {
+    const w = world([{ id: 'T1', repo: 'app' }]);
+    await w.driver.begin(3600);
+    await flush();
+    w.failures.status = 1;
+    await w.of('app')[0].end(['T1']);
+    expect(w.driver.phase()).toBe('stopped');
   });
 
   it('cancel all starts nothing new', async () => {
