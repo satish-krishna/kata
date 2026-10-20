@@ -1,0 +1,157 @@
+//! Which branch a repository's change is compared with, where the change forked from it, and
+//! how many commits the change carries. Never fetches: it reads only refs already present.
+
+use crate::git::{self, GitError};
+use std::path::Path;
+
+/// The base a change is compared with.
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct BaseInfo {
+    /// The base branch name, such as `main`.
+    pub base: String,
+    /// The ref the comparison uses: `origin/<base>` when it exists, else `<base>`.
+    pub reference: String,
+    /// The commit where HEAD forked from `reference`.
+    pub merge_base: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BaseError {
+    #[error("{0} has no base branch: no origin/HEAD, main or master")]
+    Unresolved(String),
+    #[error(transparent)]
+    Git(#[from] GitError),
+}
+
+/// `origin/HEAD`'s target, else `main`, else `master`, each accepted when it exists locally or
+/// on `origin`.
+pub fn base_branch(_repo: &Path) -> Option<String> {
+    None
+}
+
+pub fn base_info(_repo: &Path) -> Result<BaseInfo, BaseError> {
+    Err(BaseError::Unresolved(String::new()))
+}
+
+/// Commits HEAD has past the merge base: what a pull request would carry.
+pub fn commits_ahead(_repo: &Path) -> Result<u32, BaseError> {
+    Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::{bare_origin, checkout, commit_file, repo};
+
+    fn tmp() -> tempfile::TempDir {
+        tempfile::tempdir().unwrap()
+    }
+
+    #[test]
+    fn origin_head_wins_over_everything_else() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        bare_origin(&r, Some("trunk"));
+        checkout(&r, "develop", true);
+        git::run(&r, &["update-ref", "refs/remotes/origin/develop", "HEAD"]).unwrap();
+        git::run(
+            &r,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/develop",
+            ],
+        )
+        .unwrap();
+        assert_eq!(base_branch(&r).as_deref(), Some("develop"));
+    }
+
+    #[test]
+    fn a_local_bare_origin_without_origin_head_falls_through_to_local_main() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        bare_origin(&r, None);
+        assert_eq!(base_branch(&r).as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn without_a_remote_local_main_is_the_default() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        assert_eq!(base_branch(&r).as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn without_main_local_master_is_the_default() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        git::run(&r, &["branch", "-m", "main", "master"]).unwrap();
+        assert_eq!(base_branch(&r).as_deref(), Some("master"));
+    }
+
+    #[test]
+    fn with_no_candidate_the_base_is_unresolved() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        git::run(&r, &["branch", "-m", "main", "trunk"]).unwrap();
+        assert_eq!(base_branch(&r), None);
+    }
+
+    #[test]
+    fn counts_commits_on_a_feature_branch_since_the_merge_base() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        checkout(&r, "feature", true);
+        commit_file(&r, "a.txt", "a\n", "one");
+        commit_file(&r, "b.txt", "b\n", "two");
+        assert_eq!(commits_ahead(&r).unwrap(), 2);
+    }
+
+    #[test]
+    fn the_base_branch_itself_is_zero_ahead() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        assert_eq!(commits_ahead(&r).unwrap(), 0);
+    }
+
+    #[test]
+    fn commits_on_base_after_branching_are_not_counted() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        checkout(&r, "feature", true);
+        commit_file(&r, "a.txt", "a\n", "on feature");
+        checkout(&r, "main", false);
+        commit_file(&r, "m.txt", "m\n", "on main");
+        checkout(&r, "feature", false);
+        assert_eq!(commits_ahead(&r).unwrap(), 1);
+    }
+
+    #[test]
+    fn an_unresolvable_base_is_base_branch_unresolved() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        git::run(&r, &["branch", "-m", "main", "trunk"]).unwrap();
+        let err = commits_ahead(&r).unwrap_err();
+        assert!(matches!(err, BaseError::Unresolved(_)), "got: {err}");
+        assert_eq!(
+            err.to_string(),
+            "app has no base branch: no origin/HEAD, main or master"
+        );
+    }
+
+    #[test]
+    fn local_base_commits_not_on_origin_are_in_the_change_r7_7() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        bare_origin(&r, None);
+        commit_file(&r, "unpushed.txt", "u\n", "never pushed");
+        checkout(&r, "change/x", true);
+        commit_file(&r, "c.txt", "c\n", "the change");
+        let info = base_info(&r).unwrap();
+        assert_eq!(info.reference, "origin/main");
+        assert_eq!(commits_ahead(&r).unwrap(), 2);
+    }
+}
