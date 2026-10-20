@@ -763,10 +763,61 @@ mod tests {
             }
         );
         assert_eq!(gh.creates(), ["api", "m"]);
-        assert!(!fx.pushed("app"));
         assert!(gh
             .body("m")
             .contains("- app: https://github.com/o/app/pull/1"));
+    }
+
+    #[test]
+    fn publish_pushes_new_commits_on_reused_pull_request_r13_3() {
+        let fx = fixture(true);
+        let gh = FakeGh::default().answer("pr create", Ok("https://github.com/o/x/pull/1"));
+        publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        commit_file(&fx.path("app"), "more.txt", "more\n", "another round");
+        let head = git::run(&fx.path("app"), &["rev-parse", "HEAD"]).unwrap();
+        let gh = FakeGh::default()
+            .answer("app pr list", Ok("https://github.com/o/app/pull/1\n"))
+            .answer("api pr list", Ok("https://github.com/o/api/pull/2\n"))
+            .answer("m pr list", Ok("https://github.com/o/m/pull/3\n"));
+        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        assert!(matches!(results[0].outcome, PrOutcome::Reused { .. }));
+        let pushed = git::run(
+            &fx.origin("app"),
+            &["rev-parse", "refs/heads/change/2026-10-19-c"],
+        )
+        .unwrap();
+        assert_eq!(pushed, head);
+        assert!(gh.creates().is_empty());
+    }
+
+    #[test]
+    fn publish_updates_reused_master_body_with_full_list_r13_1() {
+        let fx = fixture(true);
+        let gh = FakeGh::default()
+            .answer("app pr list", Ok("https://github.com/o/app/pull/1\n"))
+            .answer("m pr list", Ok("https://github.com/o/m/pull/3\n"))
+            .answer("api pr create", Ok("https://github.com/o/api/pull/2"));
+        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        assert_eq!(
+            results[2].outcome,
+            PrOutcome::Reused {
+                url: "https://github.com/o/m/pull/3".into()
+            }
+        );
+        assert!(gh.creates() == ["api"], "{:?}", gh.creates());
+        assert!(
+            gh.calls()
+                .iter()
+                .any(|c| c.starts_with("m pr edit https://github.com/o/m/pull/3 ")),
+            "{:?}",
+            gh.calls()
+        );
+        let body = gh.body("m");
+        assert!(
+            body.contains("- app: https://github.com/o/app/pull/1")
+                && body.contains("- api: https://github.com/o/api/pull/2"),
+            "{body}"
+        );
     }
 
     #[test]
