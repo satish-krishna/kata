@@ -367,6 +367,27 @@ describe('BuildDriver', () => {
     expect(w.driver.phase()).toBe('stopped');
   });
 
+  it('a run whose status read fails is marked stopped and is not relaunched when another run ends (R6.1)', async () => {
+    const w = world([
+      { id: 'T1', repo: 'app' },
+      { id: 'T2', repo: 'app' },
+      { id: 'T3', repo: 'app' },
+      { id: 'T4', repo: 'app' },
+      { id: 'T5', repo: 'api' },
+    ]);
+    await w.driver.begin(3600);
+    await flush();
+    w.rows.add('T1');
+    w.rows.add('T2');
+    w.failures.status = 1;
+    await w.of('app')[0].end([], { exit: 124 });
+    expect(w.driver.stopped().get('app')?.reason).toContain('could not read build status');
+    await w.of('api')[0].end(['T5']);
+    expect(w.of('app')).toHaveLength(1);
+    expect(w.driver.going().has('app')).toBe(false);
+    expect(w.driver.phase()).toBe('stopped');
+  });
+
   it('cancel all starts nothing new', async () => {
     const w = world([{ id: 'T1', repo: 'app' }, { id: 'T2', repo: 'api' }, { id: 'T3', repo: 'app' }]);
     await w.driver.begin(3600);
