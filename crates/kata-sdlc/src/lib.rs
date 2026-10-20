@@ -7,6 +7,7 @@ pub mod changes;
 pub mod checks;
 pub mod commits;
 pub mod decide;
+pub mod diff;
 pub mod frontmatter;
 pub mod git;
 pub mod pins;
