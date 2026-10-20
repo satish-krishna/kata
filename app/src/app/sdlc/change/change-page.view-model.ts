@@ -218,9 +218,11 @@ export class ChangePageViewModel {
     const c = this.change();
     if (c === null) return null;
     // A reopened intent or spec keeps its own stage once a plan exists (R1.5); name it on whichever tab is shown.
+    // A superseded plan must also be rewritten once the document is accepted again (R1.3), so say so now.
     if (c.plan.exists) {
-      if (c.stage === 'intent-awaiting' || c.stage === 'intent-in-progress') return OUT_OF_DATE_BANNER['intent-reopened'];
-      if (c.stage === 'spec-awaiting') return OUT_OF_DATE_BANNER['spec-reopened'];
+      const rewrite = c.plan.status === 'superseded' ? ' The plan must be rewritten first.' : '';
+      if (c.stage === 'intent-awaiting' || c.stage === 'intent-in-progress') return OUT_OF_DATE_BANNER['intent-reopened'] + rewrite;
+      if (c.stage === 'spec-awaiting') return OUT_OF_DATE_BANNER['spec-reopened'] + rewrite;
     }
     if (this.shownDoc() !== 'plan') return null;
     if (c.stage === 'plan-superseded') return SUPERSEDED_BANNER;
