@@ -172,25 +172,35 @@ const GITHUB_TOKENS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"];
 
 const slashes = (p: string): string => p.replace(/\\/g, "/").replace(/\/+$/, "");
 
-/** A path in claude's absolute-path rule form: `//` then the path with forward slashes. */
+/**
+ * A path in claude's absolute-path rule form: `//` then the path with forward slashes. On Windows claude
+ * matches only the colon-less, lowercase-drive form (`D:\ws` becomes `//d/ws`). T36's proofs in
+ * `crates/kata-core/tests/run_it.rs` copy the rule strings built here.
+ */
 function rulePath(p: string): string {
-  return `//${slashes(p).replace(/^\/+/, "")}`;
+  const drive = /^([A-Za-z]):(?:\/|$)/.exec(slashes(p));
+  const rest = drive ? `${drive[1].toLowerCase()}/${slashes(p).slice(drive[0].length)}` : slashes(p).replace(/^\/+/, "");
+  return `//${rest}`;
 }
 
-const editWrite = (path: string): string[] => [`Edit(${path})`, `Write(${path})`];
-
+/** Only `Edit(path)` rules are checked by claude's file permissions; they cover Write and every other editing tool. */
 function buildPermissions(run: BuildRun, ctx: RunContext) {
   const ws = slashes(run.workspaceFolder);
-  const deny = [...BUILD_DENY, ...editWrite(`${rulePath(run.checksDir)}/**`)];
+  const deny = [...BUILD_DENY, `Edit(${rulePath(run.checksDir)}/**)`];
   const allow = [`Read(${rulePath(ws)}/**)`];
   if (run.target === "review") {
-    deny.push(...editWrite(`${rulePath(ws)}/**`));
+    deny.push(`Edit(${rulePath(ws)}/**)`);
   } else {
     const repo = run.target.repo;
-    for (const other of run.systemRepos) {
-      if (other !== repo && other !== run.masterRepo) deny.push(...editWrite(`${rulePath(`${ws}/${other}`)}/**`));
+    const buildDir = `${ws}/${run.masterRepo}/intent/${ctx.system}/${ctx.change}/build`;
+    // Deny beats allow in claude, so a `build/**` deny would block this run's own log; deny the others by name.
+    const repos = new Set([...run.systemRepos, run.masterRepo]);
+    for (const other of repos) {
+      if (other === repo) continue;
+      deny.push(`Edit(${rulePath(`${buildDir}/${other}.md`)})`);
+      if (other !== run.masterRepo) deny.push(`Edit(${rulePath(`${ws}/${other}`)}/**)`);
     }
-    allow.push(...editWrite(rulePath(`${ws}/${run.masterRepo}/intent/${ctx.system}/${ctx.change}/build/${repo}.md`)));
+    allow.push(`Edit(${rulePath(`${buildDir}/${repo}.md`)})`);
   }
   return { deny, allow };
 }
