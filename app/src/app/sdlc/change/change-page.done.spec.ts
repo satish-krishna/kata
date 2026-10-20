@@ -51,7 +51,7 @@ async function finished(tweak: (t: MockTransport) => void = () => undefined) {
   tweak(transport);
   const s = setup(transport);
   await ready(s.vm);
-  const heads = await transport.sdlcBuildHeads('', REPOS, BUILD);
+  const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], BUILD);
   await transport.sdlcLinkRun({ workspace_id: s.vm.current()!.id, system: 'claims', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
   const lock = TestBed.inject(LockStore);
   return { ...s, lock, steps: vi.spyOn(lock, 'runSteps') };
@@ -216,6 +216,14 @@ describe('declaring done', () => {
     await vm.act('declare-done');
     expect(vm.doneReport()!.review).toEqual({ missing });
     expect(canConfirm(vm.doneReport()!)).toBe(false);
+  });
+
+  it('done compares the master repository head as well as the product repositories (R20.3)', async () => {
+    const { vm, transport } = await finished();
+    const heads = vi.spyOn(transport, 'sdlcBuildHeads');
+    await vm.act('declare-done');
+    expect(heads).toHaveBeenCalledWith(expect.anything(), ['claims-intent', ...REPOS], BUILD);
+    expect(vm.doneReport()!.review).toMatchObject({ findings: expect.anything() });
   });
 
   it('Run review prepares a build with no round, which runs the review only', async () => {
