@@ -709,6 +709,20 @@ mod tests {
     }
 
     #[test]
+    fn change_offenders_ignore_unpushed_base_commits_r11_5() {
+        let fx = fixture(true);
+        let app = fx.path("app");
+        git::run(&app, &["checkout", "-q", "main"]).unwrap();
+        commit_file(&app, "mine.txt", "mine\n", "engineer's own work");
+        git::run(&app, &["checkout", "-q", "change/2026-10-19-c"]).unwrap();
+        git::run(&app, &["rebase", "-q", "main"]).unwrap();
+        let got = change_offenders(fx.dir.path(), "m", "s", "2026-10-19-c").unwrap();
+        let subjects: Vec<&str> = got.iter().map(|o| o.subject.as_str()).collect();
+        assert!(subjects.contains(&"work"), "{subjects:?}");
+        assert!(!subjects.contains(&"engineer's own work"), "{subjects:?}");
+    }
+
+    #[test]
     fn publish_opens_product_then_master_r13_1() {
         let fx = fixture(true);
         let gh = FakeGh::default()

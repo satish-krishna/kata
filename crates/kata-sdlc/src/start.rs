@@ -698,6 +698,25 @@ mod tests {
     }
 
     #[test]
+    fn continue_is_not_blocked_by_unpushed_base_commits_r3_1() {
+        let fx = fixture();
+        testutil::bare_origin(&fx.repo("api"), None);
+        testutil::commit_msg(
+            &fx.repo("api"),
+            "mine.txt",
+            "m\n",
+            "fix: engineer's own work",
+        );
+        ready(prep(&fx, false));
+        testutil::commit_msg(&fx.repo("api"), "a.txt", "a\n", OWN);
+        let again = prep(&fx, false);
+        assert!(
+            matches!(again, Ok(PrepareOutcome::Ready { .. })),
+            "got: {again:?}"
+        );
+    }
+
+    #[test]
     fn heads_after_settle_skips_repos_without_the_branch() {
         let fx = fixture();
         let start = ready(prep(&fx, false));
