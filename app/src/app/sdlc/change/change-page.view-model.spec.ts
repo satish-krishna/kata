@@ -182,6 +182,35 @@ describe('ChangePageViewModel', () => {
       expect(vm.actions()).toEqual(actionsFor('plan-ready'));
     });
 
+    it('accept plan commits through sdlcDecide and opens the build (R1.2)', async () => {
+      const { vm, transport } = setup(REASSIGN);
+      const decide = vi.spyOn(transport, 'sdlcDecide');
+      await ready(vm);
+      expect(vm.primary()).toBe('accept-plan');
+      await vm.act('accept-plan');
+      expect(decide).toHaveBeenCalledWith(expect.stringContaining('claims-intent'), 'claims', REASSIGN, 'accept-plan', false);
+      expect(toastText()).toContain('Accepted plan · committed');
+      expect(vm.change()?.stage).toBe('build-ready');
+    });
+
+    it('commit-acceptance on a plan accepted but not committed decides accept-plan', async () => {
+      const transport = new MockTransport();
+      withStage(transport, REASSIGN, 'plan-accepted-uncommitted');
+      const { vm } = setup(REASSIGN, transport);
+      const decide = vi.spyOn(transport, 'sdlcDecide');
+      await ready(vm);
+      await vm.act('commit-acceptance');
+      expect(decide.mock.calls[0][3]).toBe('accept-plan');
+    });
+
+    it('names plan.md in the confirm for a plan decision', async () => {
+      const { vm, transport } = setup(REASSIGN);
+      vi.spyOn(transport, 'sdlcDecide').mockResolvedValue({ kind: 'needsConfirm', other_edits: true });
+      await ready(vm);
+      await vm.act('accept-plan');
+      expect(vm.confirmPrompt()).toBe('plan.md has other uncommitted edits; accepting commits them too.');
+    });
+
     it('accept-intent moves a draft intent on to spec-ready', async () => {
       const { vm, transport } = setup(FRAUD);
       const decide = vi.spyOn(transport, 'sdlcDecide');

@@ -49,15 +49,17 @@ const RUNS: Partial<Record<StageAction, { kind: 'intent' | 'spec' | 'plan'; titl
   'rerun-plan': { kind: 'plan', title: 'Re-running plan', label: 'Plan' },
 };
 
-const FILE: Record<Decision, 'intent.md' | 'spec.md'> = {
+const FILE: Record<Decision, 'intent.md' | 'spec.md' | 'plan.md'> = {
   'accept-intent': 'intent.md',
   'reject-intent': 'intent.md',
   'accept-spec': 'spec.md',
+  'accept-plan': 'plan.md',
 };
 const DONE: Record<Decision, string> = {
   'accept-intent': 'Accepted intent',
   'reject-intent': 'Rejected intent',
   'accept-spec': 'Accepted spec',
+  'accept-plan': 'Accepted plan',
 };
 
 type DocStem = 'intent' | 'spec' | 'plan';
