@@ -1,3 +1,4 @@
+mod runs;
 mod zoom;
 
 use kata_core::catalog::{self, CatalogEntry};
