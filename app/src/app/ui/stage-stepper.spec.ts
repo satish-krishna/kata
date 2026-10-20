@@ -5,7 +5,7 @@ import { HlmTabsImports } from '@spartan-ng/helm/tabs';
 import type { DocsPresent } from '../lib/sdlc';
 import { StageStepper } from './stage-stepper';
 
-const COUNTS = { intent: 2, spec: 1, plan: 0 };
+const COUNTS = { intent: 2, spec: 1, plan: 0, build: 0, review: 0 };
 const ALL_DOCS: DocsPresent = { intent: true, spec: true, plan: true };
 const ALL: Stage[] = [
   'intent-in-progress', 'intent-awaiting', 'intent-accepted-uncommitted', 'rejected', 'spec-ready',

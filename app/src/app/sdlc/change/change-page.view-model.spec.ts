@@ -152,7 +152,7 @@ describe('ChangePageViewModel', () => {
     ]);
     const { vm } = setup(FNOL, transport);
     await ready(vm);
-    expect(vm.runCounts()).toEqual({ intent: 1, spec: 2, plan: 0 });
+    expect(vm.runCounts()).toEqual({ intent: 1, spec: 2, plan: 0, build: 0, review: 0 });
   });
 
   it('says so when the change is not in the workspace', async () => {

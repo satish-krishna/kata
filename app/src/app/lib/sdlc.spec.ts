@@ -5,7 +5,7 @@ import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
 import type { KataEvent } from "./events";
 import { validateLocal } from "./mock";
-import { DONE_LABEL, actionLabel, actionsFor, actionsForChange, hasAiSdlcPlugin, primaryAction, revisits, runCounts, specFor, splitFrontMatter, stageLabel, transcriptRunId, type RunContext, type StageAction } from "./sdlc";
+import { DONE_LABEL, actionLabel, actionsFor, actionsForChange, canBuild, hasAiSdlcPlugin, primaryAction, revisits, runCounts, specFor, splitFrontMatter, stageLabel, stopMessage, transcriptRunId, type BuildRun, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -255,13 +255,13 @@ describe("runCounts", () => {
 
   it("counts linked runs per stage for this workspace, system and change only", () => {
     const links = [link("intent", "a"), link("intent", "b"), link("spec", "c"), link("spec", "x", "other"), link("plan", "y", "c1", "claims", "ws2")];
-    expect(runCounts(links, [], "ws", "claims", "c1")).toEqual({ intent: 2, spec: 1, plan: 0 });
+    expect(runCounts(links, [], "ws", "claims", "c1")).toEqual({ intent: 2, spec: 1, plan: 0, build: 0, review: 0 });
   });
 
   it("adds history records that carry the stage's deterministic name and are not already linked", () => {
     const links = [link("spec", "r1")];
     const records = [rec("r1", "sdlc-claims-c1-spec"), rec("r2", "sdlc-claims-c1-spec"), rec("r3", "sdlc-claims-c1-plan"), rec("r4", "sdlc-claims-other-spec")];
-    expect(runCounts(links, records, "ws", "claims", "c1")).toEqual({ intent: 0, spec: 2, plan: 1 });
+    expect(runCounts(links, records, "ws", "claims", "c1")).toEqual({ intent: 0, spec: 2, plan: 1, build: 0, review: 0 });
   });
 });
 
@@ -283,5 +283,149 @@ describe("actionLabel and primaryAction", () => {
     expect(primaryAction(actionsFor("build-stopped"))).toBe("continue-build");
     expect(primaryAction(actionsFor("plan-superseded"))).toBeNull();
     expect(primaryAction(actionsFor("rejected"))).toBeNull();
+  });
+});
+
+describe("build run-specs", () => {
+  const run = (over: Partial<BuildRun> = {}): BuildRun => ({
+    target: { repo: "app" },
+    timeoutSecs: 7200,
+    instructions: null,
+    workspaceFolder: "/home/u/ws",
+    masterRepo: "master",
+    systemRepos: ["master", "app", "api"],
+    checksDir: "/home/u/.kata/checks/claims",
+    continueOnLeftovers: false,
+    ...over,
+  });
+  const build = (r: BuildRun, settings: Settings = bypass) =>
+    specFor("build", null, { ...ctx, folder: r.workspaceFolder }, settings, both, r);
+
+  it("each repository run carries its own time limit (R2.6)", () => {
+    const app = build(run({ target: { repo: "app" }, timeoutSecs: 4 * 3600 }));
+    const api = build(run({ target: { repo: "api" }, timeoutSecs: 4 * 3600 }));
+    expect(app.leash.timeout_secs).toBe(14400);
+    expect(api.leash.timeout_secs).toBe(14400);
+    expect(build(run({ target: { repo: "api" }, timeoutSecs: 600 })).leash.timeout_secs).toBe(600);
+    expect(app.name).toBe("sdlc-claims-2026-10-12-fnol-build-app");
+  });
+
+  it("build spec has no turn cap and no budget (R2.3)", () => {
+    const s = build(run());
+    expect(s.leash.max_turns ?? null).toBeNull();
+    expect(s.leash.max_budget_usd ?? null).toBeNull();
+  });
+
+  it("build spec is interactive with an answer deadline (R4.1)", () => {
+    expect(build(run()).interactive).toEqual({ enabled: true, answer_timeout_secs: 3600 });
+  });
+
+  it("build spec runs under auto even when settings say bypass", () => {
+    for (const settings of [bypass, prompt]) {
+      for (const r of [run(), run({ target: "review" })]) {
+        const s = build(r, settings);
+        expect(s.permissions.mode).toBe("auto");
+        expect(s.permissions.ask ?? []).toEqual([]);
+        expect(Object.keys(s.plugins)).toEqual(["ai-sdlc"]);
+        expect(validateLocal(s)).toEqual([]);
+      }
+    }
+  });
+
+  it("build spec denies push, gh and remote edits and strips GitHub tokens (R4.3)", () => {
+    const s = build(run());
+    expect(s.permissions.deny).toEqual(expect.arrayContaining(["Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)"]));
+    expect(s.env_remove).toEqual(["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"]);
+  });
+
+  it("build spec denies edits to the checks folder (R11.7)", () => {
+    const posix = build(run({ checksDir: "/home/u/.kata/checks/claims" }));
+    expect(posix.permissions.deny).toEqual(expect.arrayContaining(["Edit(//home/u/.kata/checks/claims/**)", "Write(//home/u/.kata/checks/claims/**)"]));
+    const win = build(run({ checksDir: "C:\\Users\\u\\.kata\\checks\\claims", workspaceFolder: "D:\\ws" }));
+    expect(win.permissions.deny).toEqual(expect.arrayContaining(["Edit(//C:/Users/u/.kata/checks/claims/**)", "Write(//C:/Users/u/.kata/checks/claims/**)"]));
+    expect(win.workdir).toBe("D:/ws/app");
+    expect(win.permissions.allow).toContain("Read(//D:/ws/**)");
+    expect(validateLocal(win)).toEqual([]);
+  });
+
+  it("a repository run starts inside its repository (R18.1)", () => {
+    const app = build(run({ target: { repo: "app" } }));
+    const api = build(run({ target: { repo: "api" } }));
+    expect(app.workdir).toBe("/home/u/ws/app");
+    expect(api.workdir).toBe("/home/u/ws/api");
+    expect(app.auth.bare).toBe(false);
+    expect(build(run({ target: { repo: "master" } })).workdir).toBe("/home/u/ws/master");
+    expect(build(run({ target: "review" })).workdir).toBe("/home/u/ws/master");
+  });
+
+  it("a repository run cannot edit another repository but can write its own log (R18.5)", () => {
+    const s = build(run({ target: { repo: "app" } }));
+    const log = "//home/u/ws/master/intent/claims/2026-10-12-fnol/build/app.md";
+    expect(s.permissions.deny).toEqual(expect.arrayContaining(["Edit(//home/u/ws/api/**)", "Write(//home/u/ws/api/**)"]));
+    expect(s.permissions.deny).not.toContain("Edit(//home/u/ws/app/**)");
+    expect((s.permissions.deny ?? []).some((d) => d.includes("/ws/master"))).toBe(false);
+    expect(s.permissions.allow).toEqual(["Read(//home/u/ws/**)", `Edit(${log})`, `Write(${log})`]);
+  });
+
+  it("the review run changes nothing", () => {
+    const s = build(run({ target: "review" }));
+    expect(s.permissions.deny).toEqual(expect.arrayContaining(["Edit(//home/u/ws/**)", "Write(//home/u/ws/**)"]));
+    expect(s.permissions.allow).toEqual(["Read(//home/u/ws/**)"]);
+    expect(s.name).toBe("sdlc-claims-2026-10-12-fnol-review");
+  });
+
+  it("build task hands the repository run to the ai-sdlc build skill (R5.1)", () => {
+    const s = build(run());
+    expect(s.task).toBe("Use the ai-sdlc build skill for system claims on change folder 2026-10-12-fnol with --repo app.");
+    expect(build(run({ target: "review" })).task).toBe("Use the ai-sdlc build skill for system claims on change folder 2026-10-12-fnol with --review.");
+    expect(s.task).not.toMatch(/commit|order|log|test/i);
+    expect(build(run({ continueOnLeftovers: true })).task).toBe(
+      `${s.task} The engineer has already confirmed continuing on top of the uncommitted edits the previous run left; do not ask again.`,
+    );
+  });
+
+  it("a round's run carries the instructions inside the picked repository (R8.1)", () => {
+    const s = build(run({ target: { repo: "api" }, instructions: "  rename the status field to state \n" }));
+    expect(s.workdir).toBe("/home/u/ws/api");
+    expect(s.task.endsWith("\n\nInstructions from the engineer for this run:\nrename the status field to state")).toBe(true);
+    expect(build(run({ instructions: "   " })).task).not.toContain("Instructions");
+    expect(build(run({ target: "review", instructions: "x" })).task).not.toContain("Instructions");
+  });
+
+  it("throws without a build run", () => {
+    expect(() => specFor("build", null, ctx, bypass, both)).toThrow();
+  });
+});
+
+describe("stopMessage", () => {
+  it("maps each exit code (R6.1)", () => {
+    expect(stopMessage(124, null)).toBe("Stopped: reached the time limit");
+    expect(stopMessage(130, null)).toBe("Stopped: cancelled");
+    expect(stopMessage(123, null)).toBe("Stopped: nobody answered");
+    expect(stopMessage(1, null)).toBe("Stopped: the agent failed");
+    expect(stopMessage(null, null)).toBe("Stopped: the agent failed");
+    expect(stopMessage(1, "boom")).toBe("Stopped: the agent failed · boom");
+    expect(stopMessage(124, "late")).toBe("Stopped: reached the time limit · late");
+  });
+});
+
+describe("canBuild", () => {
+  const withSkill: CatalogEntry[] = [{ ...plugin("ai-sdlc"), provides: ["skill:build"] }];
+  it("needs the build skill and 0.6.0 or later", () => {
+    expect(canBuild(withSkill, "0.6.0")).toBe(true);
+    expect(canBuild(withSkill, "0.10.1")).toBe(true);
+    expect(canBuild(withSkill, "1.0.0")).toBe(true);
+    expect(canBuild(withSkill, "0.5.9")).toBe(false);
+    expect(canBuild(withSkill, null)).toBe(false);
+    expect(canBuild([{ ...plugin("ai-sdlc"), provides: ["skill:plan"] }], "0.6.0")).toBe(false);
+    expect(canBuild([], "0.6.0")).toBe(false);
+  });
+});
+
+describe("runCounts for build", () => {
+  it("counts build:<repo> links as build and review links as review", () => {
+    const link = (stage: string, run_id: string) => ({ workspace_id: "ws", system: "claims", change: "c1", stage, run_id, started_at: 1 });
+    const got = runCounts([link("build:app", "a"), link("build:api", "b"), link("review", "c"), link("spec", "d")], [], "ws", "claims", "c1");
+    expect(got).toEqual({ intent: 0, spec: 1, plan: 0, build: 2, review: 1 });
   });
 });

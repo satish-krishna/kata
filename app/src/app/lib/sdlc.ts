@@ -121,7 +121,7 @@ export type RunContext = {
   feedback?: string;
 };
 
-export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan";
+export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan" | "build";
 
 const AI_SDLC = "ai-sdlc";
 
@@ -168,6 +168,8 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): s
       if (action === "rerun-plan") task += " The user has already confirmed replacing the existing plan; do not ask again.";
       return task;
     }
+    case "build":
+      return "";
   }
 }
 
@@ -180,7 +182,9 @@ export function specFor(
   ctx: RunContext,
   settings: Settings,
   catalog: CatalogEntry[],
+  run?: BuildRun,
 ): RunSpec {
+  void run;
   const spec = defaultSpec();
   const plugins: Record<string, PluginConfig> = { [AI_SDLC]: {} };
   spec.name = nameFor(kind, ctx);
@@ -287,4 +291,22 @@ export function runCounts(
     }
   }
   return out;
+}
+
+export type BuildRun = {
+  target: { repo: string } | "review";
+  timeoutSecs: number;
+  instructions: string | null;
+  workspaceFolder: string;
+  masterRepo: string;
+  systemRepos: string[];
+  checksDir: string;
+  continueOnLeftovers: boolean;
+};
+export const DEFAULT_BUILD_SECS = 7200;
+export function canBuild(_catalog: CatalogEntry[], _version: string | null): boolean {
+  return false;
+}
+export function stopMessage(_exit: number | null, _error: string | null): string {
+  return "";
 }
