@@ -88,6 +88,7 @@ const DIRTY = 'uncommitted changes';
 const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
 
 const repoName = (path: string): string => path.replace(/[\/]+$/, '').split(/[\/]/).pop() ?? path;
+const sameDir = (a: string, b: string): boolean => a.replace(/[\\/]+$/, '') === b.replace(/[\\/]+$/, '');
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 /** Product repos are named by folder; they sit next to the master repo in the workspace folder. */
@@ -242,6 +243,15 @@ export class SdlcRunner {
     } catch (e) {
       return { exit: null, error: `Could not read ${target.repo} before the run: ${message(e)}` };
     }
+    // A build log row sits in the master's tree, so it is classified against the master's snapshot; a repository's own covers only its own tree.
+    let masterSnapshot = snapshot;
+    if (!sameDir(target.path, link.master)) {
+      try {
+        masterSnapshot = await this.transport.sdlcSnapshot(link.master);
+      } catch (e) {
+        return { exit: null, error: `Could not read ${repoName(link.master)} before the run: ${message(e)}` };
+      }
+    }
     const review = target.kind === 'review';
     let heads: Record<string, string> | undefined;
     if (review) {
@@ -289,8 +299,8 @@ export class SdlcRunner {
     const kept = uncommittedOnly(data);
     // A row that was already unsaved before the run changed before and during it; any other row, this run wrote.
     const unsaved = rows.filter((r) => !kept.touched_dirty.includes(r) && !kept.created.includes(r));
-    kept.touched_dirty = [...kept.touched_dirty, ...unsaved.filter((r) => r in snapshot.dirty)];
-    kept.created = [...kept.created, ...unsaved.filter((r) => !(r in snapshot.dirty))];
+    kept.touched_dirty = [...kept.touched_dirty, ...unsaved.filter((r) => r in masterSnapshot.dirty)];
+    kept.created = [...kept.created, ...unsaved.filter((r) => !(r in masterSnapshot.dirty))];
     if (hasUncommitted(kept)) this.held = [...this.held.filter((h) => h.repo !== target.repo), { repo: target.repo, path: target.path, snapshot, data: kept }];
     return { exit, error };
   }
