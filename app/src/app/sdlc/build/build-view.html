@@ -122,4 +122,12 @@
       </div>
     </section>
   </div>
+  <app-confirm-dialog
+    [open]="vm.leftoverPrompt() !== null"
+    message="Continue on top of leftovers?"
+    [details]="vm.leftoverPrompt()?.lines ?? []"
+    confirmLabel="Continue"
+    (confirm)="vm.confirmContinue()"
+    (cancel)="vm.cancelContinue()"
+  />
 </main>

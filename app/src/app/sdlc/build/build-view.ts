@@ -1,6 +1,7 @@
 import { Component, ElementRef, Injector, afterNextRender, effect, inject, input, output, untracked } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
+import { ConfirmDialog } from '../../ui/confirm-dialog';
 import { FindingsList } from '../../ui/findings-list';
 import { ObservePane } from '../../ui/observe-pane';
 import { RepoStatusList } from '../../ui/repo-status-list';
@@ -17,7 +18,7 @@ import { BuildViewModel, type BuildContext } from './build-view.view-model';
   selector: 'app-build-view',
   host: { class: 'contents' },
   providers: [BuildViewModel],
-  imports: [HlmButtonImports, HlmTabsImports, ObservePane, RepoStatusList, FindingsList, WaitingNotice, ChangesView],
+  imports: [HlmButtonImports, ConfirmDialog,HlmTabsImports, ObservePane, RepoStatusList, FindingsList, WaitingNotice, ChangesView],
   templateUrl: './build-view.html',
   styleUrl: './build-view.css',
 })

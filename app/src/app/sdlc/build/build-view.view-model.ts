@@ -115,6 +115,15 @@ export class BuildViewModel {
   private announced = new Set<string>();
   private focusCount = 0;
 
+  /** The row Continue is waiting to confirm, and the lines the confirm lists. */
+  private asking: string | null = null;
+  private readonly pendingLeftovers = signal<string[] | null>(null);
+  /** The confirm for continuing on top of the stopped repository's leftovers: one line per repository and file; null while closed. */
+  readonly leftoverPrompt = computed(() => {
+    const lines = this.pendingLeftovers();
+    return lines === null ? null : { lines };
+  });
+
   readonly tab = signal<BuildTab>('activity');
   readonly announcement = signal('');
   /** A request to bring a repository's open question into view and focus it; the view carries it out. */
@@ -297,13 +306,49 @@ export class BuildViewModel {
     if (key !== null) this.driver.cancel(key);
   }
 
-  /** Run the selected, stopped row again. After the branches were settled they are prepared again first. */
+  /**
+   * Run the selected, stopped row again, after the engineer confirms continuing on top of whatever it left (R6.4).
+   * After the branches were settled they are prepared again, which reports the leftovers; while other repositories
+   * still run nothing is prepared, so the stopped repository's uncommitted files are read from a snapshot (R6.7).
+   */
   async continueRun(): Promise<void> {
     const key = this.selected();
     const h = this.handoff;
     const ctx = this.ctx;
     if (key === null || h === null || ctx === null) return;
     await this.pendingFinish;
+    try {
+      if (this.settled) {
+        const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, false);
+        if (out.kind === 'needsConfirm') {
+          this.ask(key, out.leftovers.flatMap((r) => r.files.map((f) => `${r.repo}: ${f}`)));
+          return;
+        }
+        this.handoff = { ...h, start: out.start };
+        this.settled = false;
+      } else {
+        const path = key === REVIEW ? h.start.master.path : h.start.repos.find((r) => r.repo === key)?.path;
+        const dirty = path === undefined ? [] : Object.keys((await this.transport.sdlcSnapshot(path)).dirty);
+        if (dirty.length > 0) {
+          this.ask(key, dirty.map((f) => `${key === REVIEW ? h.start.master.repo : key}: ${f}`));
+          return;
+        }
+      }
+    } catch (e) {
+      this.toasts.error(`Could not prepare the branches to continue the build: ${message(e)}`);
+      return;
+    }
+    await this.resume(key);
+  }
+
+  /** The engineer confirmed continuing on top of the leftovers: the run starts without discarding them. */
+  async confirmContinue(): Promise<void> {
+    const key = this.asking;
+    const h = this.handoff;
+    const ctx = this.ctx;
+    this.asking = null;
+    this.pendingLeftovers.set(null);
+    if (key === null || h === null || ctx === null) return;
     if (this.settled) {
       try {
         const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, true);
@@ -318,17 +363,25 @@ export class BuildViewModel {
         return;
       }
     }
+    this.handoff = { ...this.handoff!, continueOnLeftovers: true };
+    await this.resume(key);
+  }
+
+  cancelContinue(): void {
+    this.asking = null;
+    this.pendingLeftovers.set(null);
+  }
+
+  private ask(key: string, lines: string[]): void {
+    this.asking = key;
+    this.pendingLeftovers.set(lines);
+  }
+
+  private async resume(key: string): Promise<void> {
     this.broken.set(false);
     this.lock.resumeBuild();
     await this.driver.continueRepo(key);
   }
-
-  /** The confirm for continuing on top of the stopped repository's leftovers: one line per repository and file; null while closed. */
-  readonly leftoverPrompt = computed<{ lines: string[] } | null>(() => null);
-
-  async confirmContinue(): Promise<void> {}
-
-  cancelContinue(): void {}
 
   answer(runId: string, e: { id: string; answers: string[][] }): void {
     this.lock.answer(runId, e.id, e.answers);
