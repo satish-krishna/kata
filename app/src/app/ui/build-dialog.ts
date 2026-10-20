@@ -1,5 +1,5 @@
 import { Component, Injector, computed, inject, input, output, signal, untracked } from '@angular/core';
-import { FormField, form, min, required, submit, validate } from '@angular/forms/signals';
+import { FormField, REQUIRED, form, metadata, submit, validate } from '@angular/forms/signals';
 import type { BrnDialogState } from '@spartan-ng/brain/dialog';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmDialogImports } from '@spartan-ng/helm/dialog';
@@ -47,14 +47,17 @@ export class BuildDialog {
       form(
         model,
         (p) => {
-          required(p.hours);
-          required(p.minutes);
-          min(p.hours, 0);
-          min(p.minutes, 0);
+          // The house lint rule reserves required()/min() for a zod schema, which this repo does not use; each rule is a validate(), as in ask-panel.
+          for (const field of [p.hours, p.minutes]) {
+            metadata(field, REQUIRED, () => true);
+            validate(field, ({ value }) => (value() === null ? { kind: 'required' } : undefined));
+            validate(field, ({ value }) => ((value() ?? 0) < 0 ? { kind: 'min' } : undefined));
+          }
           validate(p.minutes, ({ valueOf }) => ((valueOf(p.hours) ?? 0) * 60 + (valueOf(p.minutes) ?? 0) > 0 ? undefined : { kind: 'zero-limit' }));
-          required(p.instructions, { when: isRound });
+          metadata(p.instructions, REQUIRED, isRound);
           validate(p.instructions, ({ value }) => (isRound() && value().trim() === '' ? { kind: 'required' } : undefined));
-          required(p.repo, { when: isRound });
+          metadata(p.repo, REQUIRED, isRound);
+          validate(p.repo, ({ value }) => (isRound() && value() === '' ? { kind: 'required' } : undefined));
         },
         { injector: this.injector },
       ),

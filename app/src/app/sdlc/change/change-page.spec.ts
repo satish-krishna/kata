@@ -115,7 +115,7 @@ describe('ChangePage', () => {
   });
 
   describe('the build', () => {
-    const text = (e: Element) => e.textContent!.replace(/s+/g, ' ').trim();
+    const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
     const click = (label: string) => Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((b) => b.textContent!.trim() === label)!.click();
 
     it('the plan tab renders the build log from sdlcBuildStatus', async () => {
@@ -137,7 +137,7 @@ describe('ChangePage', () => {
       const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
       await settle();
-      const dialog = document.body.querySelector('app-build-dialog [role="dialog"]')!;
+      const dialog = document.body.querySelector('[role="dialog"]')!;
       expect(dialog).not.toBeNull();
       expect(text(dialog.querySelector('[hlmDialogTitle]')!)).toBe('Start build');
       expect(prepare).not.toHaveBeenCalled();

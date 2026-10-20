@@ -77,6 +77,9 @@
                 } @else {
                   <app-doc-view [name]="vm.docName()" [frontMatter]="vm.docParts().frontMatter" [body]="vm.docParts().body" />
                 }
+                @if (stem === 'plan' && vm.buildTasks().length > 0) {
+                  <app-build-log-table [tasks]="vm.buildTasks()" />
+                }
               }
             </div>
           }
@@ -92,6 +95,22 @@
   />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
   <app-feedback-dialog [action]="vm.feedbackFor()" (run)="vm.runWithFeedback($event)" (cancel)="vm.cancelFeedback()" />
+  <app-build-dialog
+    [open]="vm.buildMode() !== null"
+    [mode]="vm.buildMode() ?? 'start'"
+    [repos]="vm.buildRepos()"
+    (start)="vm.submitBuild($event)"
+    (cancel)="vm.cancelBuild()"
+  />
+  <app-confirm-dialog
+    [open]="vm.leftoverPrompt() !== null"
+    message="Continue on top of leftovers?"
+    [details]="vm.leftoverPrompt()?.lines ?? []"
+    confirmLabel="Continue"
+    (confirm)="vm.confirmLeftovers()"
+    (cancel)="vm.cancelLeftovers()"
+  />
+  <app-build-refusal-dialog [reason]="vm.refusal()" (close)="vm.closeRefusal()" />
   <app-confirm-dialog
     [open]="vm.confirmPrompt() !== null"
     [message]="vm.confirmPrompt() ?? ''"

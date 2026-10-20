@@ -4,6 +4,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildStart } from '@bindings/BuildStart';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { TaskStatus } from '@bindings/TaskStatus';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { Decision } from '@bindings/Decision';
@@ -195,18 +196,57 @@ export class ChangePageViewModel {
     return a === null ? null : actionLabel(a);
   });
 
-  // --- the build dialog and what it hands to the build view (STUB)
+  // --- the build: its dialog, the leftovers confirm, the refusal, and what is handed to the build view
+  private readonly status = signal<BuildStatus | null>(null);
+  private readonly checksDir = signal<string | null>(null);
+  /** The mode of the open build dialog, or null while it is closed. */
   readonly buildMode = signal<BuildDialogMode | null>(null);
-  readonly buildRepos = computed<string[]>(() => []);
-  readonly buildTasks = computed<BuildStatus['tasks']>(() => []);
+  /** The master repository first, then every repository the plan names. */
+  readonly buildRepos = computed<string[]>(() => {
+    const master = this.scanMaster();
+    const planned = (this.status()?.repos ?? []).map((r) => r.repo);
+    return [...new Set([...(master === null ? [] : [master]), ...planned])];
+  });
+  /** The plan's tasks with their build rows, shown under the plan document; empty when there is no plan. */
+  readonly buildTasks = computed<TaskStatus[]>(() => this.status()?.tasks ?? []);
+  /** Why the build did not start, or null. */
   readonly refusal = signal<string | null>(null);
-  readonly leftoverPrompt = computed<{ lines: string[] } | null>(() => null);
+  private readonly pendingLeftovers = signal<RepoFiles[] | null>(null);
+  /** The confirm for continuing on top of the build's own leftovers: one line per repository and file; null while closed. */
+  readonly leftoverPrompt = computed(() => {
+    const left = this.pendingLeftovers();
+    return left === null ? null : { lines: left.flatMap((r) => r.files.map((f) => `${r.repo}: ${f}`)) };
+  });
+  /** What the build view (T45) starts from; set when a build is prepared and ready. */
   readonly handoff = signal<BuildHandoff | null>(null);
-  async submitBuild(_req: BuildStartRequest): Promise<void> {}
-  cancelBuild(): void {}
-  async confirmLeftovers(): Promise<void> {}
-  cancelLeftovers(): void {}
-  closeRefusal(): void {}
+  /** What the dialog asked for, kept so confirming the leftovers prepares the same build again. */
+  private asked: BuildStartRequest | null = null;
+
+  /** The operator filled the dialog: prepare the build, never continuing on top of leftovers yet. */
+  async submitBuild(req: BuildStartRequest): Promise<void> {
+    this.buildMode.set(null);
+    this.asked = req;
+    await this.prepare(false);
+  }
+
+  cancelBuild(): void {
+    this.buildMode.set(null);
+  }
+
+  /** The operator accepted the leftovers: prepare the same build again, this time continuing on top of them. */
+  async confirmLeftovers(): Promise<void> {
+    this.pendingLeftovers.set(null);
+    if (this.asked !== null) await this.prepare(true);
+  }
+
+  cancelLeftovers(): void {
+    this.pendingLeftovers.set(null);
+    this.asked = null;
+  }
+
+  closeRefusal(): void {
+    this.refusal.set(null);
+  }
 
   // --- the lock: Kata's own checks in the overlay, an agent run as the session view
   readonly locked = computed(() => this.lock.active() !== null);
@@ -260,6 +300,15 @@ export class ChangePageViewModel {
         return;
       case 'commit-acceptance':
         await this.commitDecision(ACCEPTED_UNCOMMITTED[this.change()?.stage ?? ''] ?? 'accept-spec', false);
+        return;
+      case 'start-build':
+        this.buildMode.set('start');
+        return;
+      case 'continue-build':
+        this.buildMode.set('continue');
+        return;
+      case 'another-round':
+        this.buildMode.set('round');
         return;
       default:
         // Regenerating an existing document first asks what should change; a first draft just runs.
@@ -367,6 +416,48 @@ export class ChangePageViewModel {
     return true;
   }
 
+  private readonly scanMaster = computed(() => {
+    const scan = this.scan();
+    return scan ? masterRepo(scan) : null;
+  });
+
+  private async prepare(continueWithLeftovers: boolean): Promise<void> {
+    const w = this.current();
+    const master = this.scanMaster();
+    const asked = this.asked;
+    const checksDir = this.checksDir();
+    if (!w || master === null || asked === null) return;
+    if (checksDir === null) {
+      this.toasts.error("Could not read Kata's checks folder.");
+      return;
+    }
+    const out = await this.runner.prepareBuild({
+      folder: w.folder,
+      masterRepo: master,
+      system: this.system(),
+      change: this.changeName(),
+      catalog: this.catalog(),
+      continueWithLeftovers,
+    });
+    switch (out.kind) {
+      case 'refused':
+        this.asked = null;
+        this.refusal.set(out.reason);
+        return;
+      case 'needs-confirm':
+        this.pendingLeftovers.set(out.leftovers);
+        return;
+      case 'ready':
+        this.asked = null;
+        this.handoff.set({
+          start: out.start,
+          timeoutSecs: asked.timeoutSecs,
+          round: asked.instructions !== null && asked.repo !== null ? { instructions: asked.instructions, repo: asked.repo } : null,
+          checksDir,
+        });
+    }
+  }
+
   private masterDir(): string | null {
     const w = this.current();
     const scan = this.scan();
@@ -422,6 +513,25 @@ export class ChangePageViewModel {
     await this.load();
   }
 
+  /** The plan's tasks and rows; a failure is reported and leaves the log empty, never the whole page. */
+  private async readStatus(master: string, system: string, name: string): Promise<BuildStatus | null> {
+    try {
+      return await this.transport.sdlcBuildStatus(master, system, name);
+    } catch (e) {
+      this.toasts.error(`Could not read the build log: ${message(e)}`);
+      return null;
+    }
+  }
+
+  private async readChecksDir(): Promise<string | null> {
+    try {
+      return await this.transport.sdlcChecksDir();
+    } catch (e) {
+      this.toasts.error(`Could not read Kata's checks folder: ${message(e)}`);
+      return null;
+    }
+  }
+
   /** Read the change from disk. A newer call supersedes an older one still in flight. */
   private async load(): Promise<void> {
     const seq = ++this.loadSeq;
@@ -467,7 +577,11 @@ export class ChangePageViewModel {
       ]);
       const found = changes.find((c) => c.change === name) ?? null;
       const doc = found ? await this.transport.sdlcReadDoc(master, system, name, docFor(found)) : null;
+      const status = found?.plan.exists ? await this.readStatus(master, system, name) : null;
+      const checksDir = this.checksDir() ?? (await this.readChecksDir());
       if (seq !== this.loadSeq) return;
+      this.status.set(status);
+      this.checksDir.set(checksDir);
       this.scan.set(scan);
       this.branches.set(branches);
       this.links.set(links);

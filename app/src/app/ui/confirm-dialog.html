@@ -1,6 +1,13 @@
 <hlm-alert-dialog [state]="open() ? 'open' : 'closed'" (stateChanged)="onState($event)">
   <hlm-alert-dialog-content *hlmAlertDialogPortal="let ctx">
     <div hlmAlertDialogTitle>{{ message() }}</div>
+    @if (details().length > 0) {
+      <ul hlmAlertDialogDescription class="grid gap-1">
+        @for (d of details(); track $index) {
+          <li class="k-mono">{{ d }}</li>
+        }
+      </ul>
+    }
     <hlm-alert-dialog-footer>
       <button hlmAlertDialogCancel size="sm">Cancel</button>
       <button hlmAlertDialogAction variant="primary" size="sm" (click)="confirm.emit()">{{ confirmLabel() }}</button>
