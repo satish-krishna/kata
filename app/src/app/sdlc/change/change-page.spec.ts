@@ -272,7 +272,7 @@ describe('ChangePage after the pull requests', () => {
     expect(container.querySelector('app-stage-stepper')!.textContent).toContain('Done · pull requests open');
     expect(container.textContent).not.toContain('Build · finished, not yet done');
     expect(labels(container)).not.toContain('Declare done');
-    expect(container.querySelectorAll('app-sdlc-toolbar button[hlmBtn]').length).toBe(0);
+    expect(labels(container)).not.toContain('Another round');
     const card = container.querySelector('app-pr-card')!;
     expect(card.querySelector('h2')!.textContent).toBe('Pull requests');
     expect(card.querySelectorAll('a').length).toBe(3);

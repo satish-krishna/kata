@@ -5,6 +5,8 @@ import type { ChangedFile } from '@bindings/ChangedFile';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { Part } from '@bindings/Part';
+import type { PrState } from '@bindings/PrState';
+import { prNumber } from '../../lib/pull-request';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import type { DiffLayout } from '../../ui/diff-bar';
@@ -69,6 +71,15 @@ export class ChangesViewModel {
   readonly sideBySide = computed(() => this.layout() === 'side' && !this.narrow());
 
   readonly partOptions = PART_OPTIONS;
+  private readonly prStates = signal<PrState[]>([]);
+  /** What the pull request is titled. */
+  readonly prTitle = signal('');
+  /** The open repository's pull request, or null while it has none. */
+  readonly pr = computed(() => {
+    const a = this.active();
+    const url = a === null ? null : (this.prStates().find((p) => p.repo === a.repo)?.url ?? null);
+    return url === null ? null : { url, number: prNumber(url) };
+  });
   readonly active = computed(() => this.repos().find((r) => r.repo === this.activeName()) ?? null);
   readonly base = computed(() => {
     const a = this.active();
@@ -103,6 +114,12 @@ export class ChangesViewModel {
     this.activeName.set(null);
     this.expanded.set([]);
     await this.reload('open');
+  }
+
+  /** The pull requests the page knows of, and what they are titled. */
+  setPullRequests(states: PrState[], title: string): void {
+    this.prStates.set(states);
+    this.prTitle.set(title);
   }
 
   /** Read the lists, the base and the open file again, without moving the engineer. */

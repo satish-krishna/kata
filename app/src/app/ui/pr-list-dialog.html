@@ -1,1 +1,29 @@
-
+<hlm-dialog [state]="results() ? 'open' : 'closed'" (stateChanged)="onState($event)">
+  <hlm-dialog-content *hlmDialogPortal="let ctx" class="[--dialog-w:40rem]">
+    @if (results()) {
+      <h2 hlmDialogTitle>Pull requests</h2>
+      <ul class="k-left__list max-h-[65vh] overflow-y-auto">
+        @for (row of rows(); track row.repo) {
+          <li class="k-left__row">
+            <span class="k-mono">{{ row.repo }}</span>
+            <span [class]="'k-status k-status--' + row.tone"><span class="k-status__dot"></span>{{ row.label }}</span>
+            @if (row.url !== null) {
+              <a class="k-mono" [href]="row.url" target="_blank" rel="noopener noreferrer">{{ row.url }}</a>
+            }
+            @if (row.error !== null) {
+              <span class="k-left__tag">{{ row.error }}</span>
+            }
+          </li>
+        }
+      </ul>
+      <hlm-dialog-footer>
+        @if (anyFailed()) {
+          <button hlmBtn variant="ghost" size="sm" type="button" (click)="close.emit()">Close</button>
+          <button hlmBtn variant="primary" size="sm" type="button" (click)="retry.emit()">Retry</button>
+        } @else {
+          <button hlmBtn variant="primary" size="sm" type="button" (click)="close.emit()">Close</button>
+        }
+      </hlm-dialog-footer>
+    }
+  </hlm-dialog-content>
+</hlm-dialog>

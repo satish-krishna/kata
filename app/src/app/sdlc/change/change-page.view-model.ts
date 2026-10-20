@@ -14,6 +14,7 @@ import type { RunRecord } from '@bindings/RunRecord';
 import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { Offender } from '@bindings/Offender';
 import type { PrResult } from '@bindings/PrResult';
+import type { PrState } from '@bindings/PrState';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
@@ -156,6 +157,15 @@ export class ChangePageViewModel {
   /** Some repository has the change's branch with something changed, so there is something to look at. */
   private readonly hasBranch = signal(false);
   readonly change = signal<ChangeInfo | null>(null);
+  /** The pull request of each touched repository, read at build-finished; empty at any other stage or when GitHub could not be asked. */
+  readonly pullRequests = signal<PrState[]>([]);
+  /** GitHub could not be asked about the pull requests, so the finished label stays. */
+  readonly prCheckFailed = signal(false);
+  /** Every touched repository has a pull request: the change is done and has no actions left. */
+  readonly done = computed(() => {
+    const prs = this.pullRequests();
+    return this.change()?.stage === 'build-finished' && prs.length > 0 && prs.every((p) => p.url !== null);
+  });
   /** The shown document, raw as it is on disk, or null when the file is missing. */
   readonly doc = signal<string | null>(null);
   /** The document the operator picked from the tiles; null shows the current stage's. Every load clears it. */
@@ -201,7 +211,7 @@ export class ChangePageViewModel {
   readonly docParts = computed(() => splitFrontMatter(this.doc() ?? ''));
   readonly actions = computed(() => {
     const c = this.change();
-    return c ? actionsForChange(c) : [];
+    return c && !this.done() ? actionsForChange(c) : [];
   });
   /** What blocks the build, shown above the plan; null when nothing does or another document is shown. */
   readonly planBanner = computed(() => {
@@ -299,17 +309,31 @@ export class ChangePageViewModel {
   /** What the done dialog shows; the dialog is open exactly while this is set. */
   readonly doneReport = signal<DoneReport | null>(null);
   private doneRepos: PublishRepo[] = [];
+  /** The results of opening the pull requests, shown in a dialog that is open exactly while this is set. */
   readonly prList = signal<PrResult[] | null>(null);
-  async retryPublish(): Promise<void> {}
-  closePrList(): void {}
 
   /** The operator confirmed: open the pull requests. */
   async confirmDone(): Promise<void> {
     const report = this.doneReport();
+    if (report === null || !canConfirm(report)) return;
+    this.doneReport.set(null);
+    await this.publish();
+  }
+
+  /** Open the pull requests again after some failed; the ones already open are reused. */
+  async retryPublish(): Promise<void> {
+    this.prList.set(null);
+    await this.publish();
+  }
+
+  closePrList(): void {
+    this.prList.set(null);
+  }
+
+  private async publish(): Promise<void> {
     const w = this.current();
     const master = this.scanMaster();
-    if (report === null || !canConfirm(report) || !w || master === null) return;
-    this.doneReport.set(null);
+    if (!w || master === null) return;
     let results: PrResult[] = [];
     const out = await this.lock.runSteps('Opening pull requests', [
       {
@@ -320,14 +344,7 @@ export class ChangePageViewModel {
         },
       },
     ]);
-    if (out === 'done') {
-      let opened = 0;
-      for (const r of results) {
-        if (r.outcome.kind === 'failed') this.toasts.error(`${r.repo}: ${r.outcome.error}`);
-        else opened++;
-      }
-      if (opened > 0) this.toasts.success(`Opened ${plural(opened, 'pull request', 'pull requests')}`);
-    }
+    if (out === 'done') this.prList.set(results);
     await this.load();
   }
 
@@ -772,6 +789,16 @@ export class ChangePageViewModel {
     }
   }
 
+  /** The pull request of each touched repository; a failed read is not an error, it just leaves the change unfinished. */
+  private async readPullRequests(folder: string, master: string, system: string, name: string): Promise<{ states: PrState[]; failed: boolean }> {
+    try {
+      const repos = await this.transport.sdlcTouchedRepos(folder, master, system, name);
+      return { states: await this.transport.sdlcPullRequests(repos, name), failed: false };
+    } catch {
+      return { states: [], failed: true };
+    }
+  }
+
   private async readChecksDir(): Promise<string | null> {
     try {
       return await this.transport.sdlcChecksDir();
@@ -828,9 +855,12 @@ export class ChangePageViewModel {
       const doc = found ? await this.transport.sdlcReadDoc(master, system, name, docFor(found)) : null;
       const status = found?.plan.exists ? await this.readStatus(master, system, name) : null;
       const checksDir = this.checksDir() ?? (await this.readChecksDir());
+      const prs = found?.stage === 'build-finished' ? await this.readPullRequests(w.folder, repo, system, name) : { states: [], failed: false };
       const branch = found !== null && ACCEPTED.has(stageLabel(found.stage).step) && (await this.readHasBranch(w.folder, repo, system, name));
       if (seq !== this.loadSeq) return;
       this.hasBranch.set(branch);
+      this.pullRequests.set(prs.states);
+      this.prCheckFailed.set(prs.failed);
       this.status.set(status);
       this.checksDir.set(checksDir);
       this.scan.set(scan);

@@ -1,5 +1,6 @@
 import { Component, effect, inject, input, untracked } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
+import type { PrState } from '@bindings/PrState';
 import { lucideTriangleAlert } from '@ng-icons/lucide';
 import { HlmAlertImports } from '@spartan-ng/helm/alert';
 import { DiffBar } from '../../ui/diff-bar';
@@ -28,11 +29,19 @@ export class ChangesView {
   readonly change = input.required<string>();
   readonly turns = input(0);
   readonly banner = input<string | null>(null);
+  /** The pull request of each repository, once there are any, and the title they carry. */
+  readonly pullRequests = input<PrState[]>([]);
+  readonly prTitle = input('');
 
   constructor() {
     effect(() => {
       const ctx = { folder: this.folder(), masterRepo: this.masterRepo(), system: this.system(), change: this.change() };
       untracked(() => void this.vm.open(ctx));
+    });
+    effect(() => {
+      const states = this.pullRequests();
+      const title = this.prTitle();
+      untracked(() => this.vm.setPullRequests(states, title));
     });
     effect(() => {
       const turns = this.turns();

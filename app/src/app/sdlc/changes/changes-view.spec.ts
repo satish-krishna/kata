@@ -168,4 +168,20 @@ describe('ChangesView', () => {
     await settle();
     expect(editor().sideBySide()).toBe(false);
   });
+
+  it('says no pull request yet until the repository has one', async () => {
+    const { container } = await mount();
+    expect(text(container.querySelector<HTMLElement>('[data-testid="changes-pr"]')!)).toBe('No pull request yet. Pull requests open when you declare the change done.');
+  });
+
+  it('shows the number, the title and a link to GitHub once the repository has a pull request', async () => {
+    const url = 'https://github.com/acme/claims-intent/pull/7';
+    const { container } = await mount(new MockTransport(), { pullRequests: [{ repo: MOCK_MASTER, url }], prTitle: MOCK_BUILD_CHANGE });
+    const row = container.querySelector<HTMLElement>('[data-testid="changes-pr"]')!;
+    expect(text(row)).toContain('#7 open');
+    expect(text(row)).toContain(MOCK_BUILD_CHANGE);
+    const link = row.querySelector('a')!;
+    expect(link.textContent).toBe('View on GitHub');
+    expect(link.getAttribute('href')).toBe(url);
+  });
 });

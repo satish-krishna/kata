@@ -16,6 +16,8 @@ import { DoneDialog } from '../../ui/done-dialog';
 import { FeedbackDialog } from '../../ui/feedback-dialog';
 import { LeftoverDialog } from '../../ui/leftover-dialog';
 import { LockOverlay } from '../../ui/lock-overlay';
+import { PrCard } from '../../ui/pr-card';
+import { PrListDialog } from '../../ui/pr-list-dialog';
 import { SdlcSession } from '../../ui/sdlc-session';
 import { SdlcToolbar } from '../../ui/sdlc-toolbar';
 import { StageStepper } from '../../ui/stage-stepper';
@@ -24,7 +26,7 @@ import { ChangePageViewModel } from './change-page.view-model';
 @Component({
   selector: 'app-change-page',
   providers: [ChangePageViewModel, provideIcons({ lucideTriangleAlert })],
-  imports: [NgIcon, HlmAlertImports, HlmButtonImports, HlmTabsImports, SdlcToolbar, StageStepper, DocView, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildLogTable, BuildRefusalDialog, DoneDialog, SdlcSession, BuildView, ChangesView],
+  imports: [NgIcon, HlmAlertImports, HlmButtonImports, HlmTabsImports, SdlcToolbar, StageStepper, DocView, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildLogTable, BuildRefusalDialog, DoneDialog, PrCard, PrListDialog, SdlcSession, BuildView, ChangesView],
   templateUrl: './change-page.html',
 })
 export class ChangePage {

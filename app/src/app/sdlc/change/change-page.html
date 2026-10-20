@@ -62,10 +62,15 @@
         </main>
       }
       @case ('ready') {
+        @if (vm.done()) {
+          <app-pr-card [pullRequests]="vm.pullRequests()" />
+        } @else if (vm.prCheckFailed()) {
+          <p class="k-left__note px-5 pt-5" data-testid="pr-note">Could not check pull requests</p>
+        }
         <main class="k-change" hlmTabs variant="bare" [tab]="vm.shownDoc()" (tabActivated)="vm.showDoc($event)">
           <h1 class="sr-only">{{ vm.changeName() }}</h1>
           @if (vm.change(); as c) {
-            <app-stage-stepper [stage]="c.stage" [counts]="vm.runCounts()" [docs]="vm.docs()" [build]="vm.buildTile()" />
+            <app-stage-stepper [stage]="c.stage" [counts]="vm.runCounts()" [docs]="vm.docs()" [build]="vm.buildTile()" [done]="vm.done()" />
           }
           @for (stem of vm.stems; track stem) {
             <div class="k-change__doc" [hlmTabsContent]="stem" variant="bare">
@@ -97,6 +102,8 @@
                   [change]="ctx.change"
                   [turns]="0"
                   [banner]="null"
+                  [pullRequests]="vm.pullRequests()"
+                  [prTitle]="vm.changeName()"
                 />
               }
             }
@@ -136,6 +143,7 @@
     (runReview)="vm.doneRunReview()"
     (cancel)="vm.cancelDone()"
   />
+  <app-pr-list-dialog [results]="vm.prList()" (retry)="vm.retryPublish()" (close)="vm.closePrList()" />
   <app-build-refusal-dialog [reason]="vm.refusal()" (close)="vm.closeRefusal()" />
   <app-confirm-dialog
     [open]="vm.confirmPrompt() !== null"

@@ -36,7 +36,15 @@
             }
           </ul>
         }
-        <div class="k-changes__pr" data-slot="pull-requests"></div>
+        <div class="k-changes__pr" data-testid="changes-pr">
+          @if (vm.pr(); as pr) {
+            <span class="k-status k-status--success"><span class="k-status__dot"></span>{{ pr.number === null ? 'Open' : '#' + pr.number + ' open' }}</span>
+            <span class="k-mono">{{ vm.prTitle() }}</span>
+            <a [href]="pr.url" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+          } @else {
+            <p class="k-changes__readonly">No pull request yet. Pull requests open when you declare the change done.</p>
+          }
+        </div>
         <p class="k-changes__readonly">Read-only. Nothing here changes a file, commit or branch.</p>
       </header>
     } @else if (vm.loaded()) {

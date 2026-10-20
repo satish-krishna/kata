@@ -2,7 +2,7 @@ import { NgTemplateOutlet } from '@angular/common';
 import { Component, computed, input } from '@angular/core';
 import type { Stage } from '@bindings/Stage';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
-import { stageLabel, type DocsPresent, type StepCounts } from '../lib/sdlc';
+import { DONE_LABEL, stageLabel, type DocsPresent, type StepCounts } from '../lib/sdlc';
 
 type StepName = keyof DocsPresent | 'build';
 type Tone = 'success' | 'warning' | 'error' | 'idle';
@@ -36,16 +36,19 @@ export class StageStepper {
   readonly counts = input.required<StepCounts>();
   readonly docs = input.required<DocsPresent>();
   readonly build = input<BuildTile>(NO_BUILD_TILE);
+  /** Every pull request is open: the stage reads as done. */
+  readonly done = input(false);
 
+  private readonly label = computed(() => (this.done() ? DONE_LABEL : stageLabel(this.stage())));
   private readonly accepted = computed(() => {
-    const step = stageLabel(this.stage()).step;
+    const step = this.label().step;
     return step === 'build' || step === 'done';
   });
   /** The Build tile cannot be opened before the plan is accepted, nor before any repository has the branch. */
   protected readonly buildDisabled = computed(() => !this.accepted() || !this.build().hasBranch);
 
   protected readonly steps = computed<Step[]>(() => {
-    const label = stageLabel(this.stage());
+    const label = this.label();
     const tile = label.step === 'closed' ? 'intent' : label.step === 'done' ? 'build' : label.step;
     const at = STEPS.findIndex((s) => s.name === tile);
     return STEPS.map((s, i) => {
