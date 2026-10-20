@@ -121,9 +121,9 @@ pub fn out_of_date(
     }
 }
 
-/// The spec's "Stage derivation and actions" table, rows in order. Once a plan exists, a reopened
-/// intent or spec is a plan cause (R1.5) and not an intent or spec stage, so the plan rows come
-/// before the intent and spec ones; the two "accepted, not committed" rows still come first.
+/// The spec's "Stage derivation and actions" table, rows in order. A reopened intent or spec keeps
+/// its own stage even when a plan exists (R1.5), so the change has the actions to settle it; the
+/// plan rows apply only while both documents are accepted.
 pub fn derive_stage(
     intent: &DocState,
     spec: &DocState,
@@ -136,8 +136,9 @@ pub fn derive_stage(
     if intent.is("accepted") && !intent.committed {
         return Stage::IntentAcceptedUncommitted;
     }
-    if plan.exists {
-        if intent.is("accepted") && spec.is("accepted") && !spec.committed {
+    // A reopened intent or spec is settled at its own stage, which carries the actions to settle it.
+    if plan.exists && intent.is("accepted") && spec.is("accepted") {
+        if !spec.committed {
             return Stage::SpecAcceptedUncommitted;
         }
         return plan_stage(intent, spec, plan, facts);
