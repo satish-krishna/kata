@@ -107,11 +107,11 @@ function summarize(result: string | null | undefined): string {
 }
 
 const hasLeftovers = (l: Leftovers): boolean =>
-  [l.new_commits, l.discardable, l.touched_dirty, l.product_repos_changed, l.product_repos_unchecked].some((xs) => xs.length > 0);
+  [l.new_commits, l.discardable, l.touched_dirty, l.created, l.product_repos_changed, l.product_repos_unchecked].some((xs) => xs.length > 0);
 
 /** Commits are what a build is for, so only uncommitted edits count as left behind. */
-const uncommittedOnly = (l: Leftovers): Leftovers => ({ ...EMPTY, discardable: l.discardable, touched_dirty: l.touched_dirty });
-const hasUncommitted = (l: Leftovers): boolean => l.discardable.length > 0 || l.touched_dirty.length > 0;
+const uncommittedOnly = (l: Leftovers): Leftovers => ({ ...EMPTY, discardable: l.discardable, touched_dirty: l.touched_dirty, created: l.created });
+const hasUncommitted = (l: Leftovers): boolean => l.discardable.length > 0 || l.touched_dirty.length > 0 || l.created.length > 0;
 
 /**
  * Runs AI-SDLC agent work end to end: snapshot the master repo, hold the lock, link the transcript to its
@@ -287,7 +287,10 @@ export class SdlcRunner {
     // A build log row sits in the master's tree but belongs to the repository it records: it is listed there.
     const rows = await this.rowsOwnedBy(target.repo, link);
     const kept = uncommittedOnly(data);
-    kept.touched_dirty = [...kept.touched_dirty, ...rows.filter((r) => !kept.touched_dirty.includes(r))];
+    // A row that was already unsaved before the run changed before and during it; any other row, this run wrote.
+    const unsaved = rows.filter((r) => !kept.touched_dirty.includes(r) && !kept.created.includes(r));
+    kept.touched_dirty = [...kept.touched_dirty, ...unsaved.filter((r) => r in snapshot.dirty)];
+    kept.created = [...kept.created, ...unsaved.filter((r) => !(r in snapshot.dirty))];
     if (hasUncommitted(kept)) this.held = [...this.held.filter((h) => h.repo !== target.repo), { repo: target.repo, path: target.path, snapshot, data: kept }];
     return { exit, error };
   }
@@ -488,7 +491,7 @@ export class SdlcRunner {
     }
     const data = await this.readLeftovers(where.master, where.snapshot, where.productRepos);
     const commits = plural(data.new_commits.length, 'commit', 'commits');
-    const files = plural(data.discardable.length + data.touched_dirty.length, 'file', 'files');
+    const files = plural(data.discardable.length + data.touched_dirty.length + data.created.length, 'file', 'files');
     this.toasts.error(`${label} ${verb} · ${commits} landed, ${files} left uncommitted`);
     if (hasLeftovers(data)) this.setPending([this.entry(where.master, where.snapshot, data)]);
   }

@@ -17,7 +17,7 @@ discardable: Array<string>,
  */
 touched_dirty: Array<string>, 
 /**
- * Build log rows this run wrote that were not unsaved before it. They are never discarded.
+ * Build log rows the run wrote that were not unsaved before it. A row belongs to the repository it records, so this is never filled here: the Workbench fills it from the build's participants. Never discarded.
  */
 created: Array<string>, 
 /**

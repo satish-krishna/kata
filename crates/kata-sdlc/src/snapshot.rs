@@ -26,7 +26,7 @@ pub struct Leftovers {
     pub discardable: Vec<String>,
     /// Paths that were already dirty before the run and changed again during it.
     pub touched_dirty: Vec<String>,
-    /// Build log rows this run wrote that were not unsaved before it. They are never discarded.
+    /// Build log rows the run wrote that were not unsaved before it. A row belongs to the repository it records, so this is never filled here: the Workbench fills it from the build's participants. Never discarded.
     pub created: Vec<String>,
     /// Folder names of product repos with uncommitted changes.
     pub product_repos_changed: Vec<String>,
