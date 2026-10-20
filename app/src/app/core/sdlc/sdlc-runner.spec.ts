@@ -441,7 +441,7 @@ describe('SdlcRunner.newChange', () => {
 });
 
 describe('SdlcRunner build', () => {
-  const LINK: BuildLink = { workspaceId: 'acme', system: 'claims', change: '2026-10-12-fnol', folder: '/ws', master: 'claims-intent', repos: ['claims-core'] };
+  const LINK: BuildLink = { workspaceId: 'acme', system: 'claims', change: '2026-10-12-fnol', folder: '/ws', master: '/ws/claims-intent', repos: ['claims-core'] };
   const CORE = { repo: 'claims-core', path: '/ws/claims-core', kind: 'repo' } as const;
   const REVIEW = { repo: 'claims-intent', path: '/ws/claims-intent', kind: 'review' } as const;
   const GROUP = 'build:claims/2026-10-12-fnol';
@@ -520,7 +520,8 @@ describe('SdlcRunner build', () => {
       expect(ctx.fake.sdlcSnapshot).toHaveBeenCalledWith('/ws/claims-core');
       expect(ctx.startRun).toHaveBeenCalledWith(expect.anything(), GROUP);
       expect(ctx.lock.addRun).toHaveBeenCalledWith('r1', expect.anything());
-      expect(ctx.fake.calls.slice(0, 3)).toEqual(['snapshot', 'startRun', 'addRun']);
+      expect(ctx.fake.sdlcSnapshot).toHaveBeenCalledWith('/ws/claims-intent');
+      expect(ctx.fake.calls.slice(0, 4)).toEqual(['snapshot', 'snapshot', 'startRun', 'addRun']);
       expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledTimes(1);
       const link = ctx.fake.sdlcLinkRun.mock.calls[0][0] as Record<string, unknown>;
       expect(link).toMatchObject({ workspace_id: 'acme', system: 'claims', change: '2026-10-12-fnol', stage: 'build:claims-core', run_id: 'sdlc-claims-r1' });
@@ -645,6 +646,45 @@ describe('SdlcRunner build', () => {
       const shown = ctx.runner.leftovers()!;
       expect(shown[0].data.touched_dirty).toEqual([row]);
       expect(shown[0].data.created).toEqual([]);
+      ctx.runner.closeLeftovers();
+      await finished;
+    });
+
+    it("a build log row is classified against the master's snapshot, not the repository's (R6.6)", async () => {
+      const ctx = setup();
+      const row = 'intent/claims/2026-10-12-fnol/build/claims-core.md';
+      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'claims-intent', files: [], rows });
+      ctx.fake.participants = [owned('claims-intent', []), owned('claims-core', [row])];
+      // The row sits in the master's tree and was unsaved before the run; the repository's own tree knows nothing of it.
+      ctx.fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => ({ head: String(a[0]), dirty: a[0] === '/ws/claims-intent' ? { [row]: 'abc' } : {} }));
+      const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
+      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
+      end(ctx, 'r1', 'warning', 124);
+      await drive(core);
+      const finished = ctx.runner.finishBuild(BUILD_START);
+      await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
+      const shown = ctx.runner.leftovers()!;
+      expect(shown[0].data.touched_dirty).toEqual([row]);
+      expect(shown[0].data.created).toEqual([]);
+      ctx.runner.closeLeftovers();
+      await finished;
+    });
+
+    it("a build log row the master did not hold dirty is created by the run, whatever the repository's own tree held (R6.6)", async () => {
+      const ctx = setup();
+      const row = 'intent/claims/2026-10-12-fnol/build/claims-core.md';
+      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'claims-intent', files: [], rows });
+      ctx.fake.participants = [owned('claims-intent', []), owned('claims-core', [row])];
+      ctx.fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => ({ head: String(a[0]), dirty: a[0] === '/ws/claims-core' ? { [row]: 'abc' } : {} }));
+      const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
+      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
+      end(ctx, 'r1', 'warning', 124);
+      await drive(core);
+      const finished = ctx.runner.finishBuild(BUILD_START);
+      await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
+      const shown = ctx.runner.leftovers()!;
+      expect(shown[0].data.created).toEqual([row]);
+      expect(shown[0].data.touched_dirty).toEqual([]);
       ctx.runner.closeLeftovers();
       await finished;
     });
