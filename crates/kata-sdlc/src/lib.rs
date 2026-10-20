@@ -11,6 +11,7 @@ pub mod diff;
 pub mod frontmatter;
 pub mod git;
 pub mod pins;
+pub mod plugin;
 mod process;
 pub mod publish;
 pub mod snapshot;

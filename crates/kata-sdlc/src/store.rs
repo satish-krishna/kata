@@ -64,6 +64,8 @@ pub struct RunLink {
     pub run_id: String,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub started_at: u64,
+    #[serde(skip)]
+    pub heads: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// `<kata-home>/workbench`. Mirrors kata-core's home resolution: `KATA_HOME` if
@@ -152,6 +154,7 @@ mod tests {
             stage: "spec".into(),
             run_id: run_id.into(),
             started_at: 1,
+            heads: None,
         }
     }
 
@@ -209,6 +212,28 @@ mod tests {
         assert_eq!(w[0].folder, "D:/acme");
         assert_eq!(w[0].base_branch, "");
         assert_eq!(w[0].last_opened, 0);
+    }
+
+    #[test]
+    fn run_links_without_heads_still_load() {
+        let old = r#"[{"workspace_id":"w1","system":"billing","change":"0001-x","stage":"spec","run_id":"a","started_at":1}]"#;
+        let links: Vec<RunLink> = serde_json::from_str(old).unwrap();
+        assert_eq!(links[0].heads, None);
+        assert_eq!(links[0], link("a"));
+    }
+
+    #[test]
+    #[serial]
+    fn run_link_heads_round_trip() {
+        let _home = with_home();
+        let mut l = link("a");
+        l.heads = Some(
+            [("api".to_string(), "abc123".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        append_run_link(l.clone()).unwrap();
+        assert_eq!(load_run_links(), vec![l]);
     }
 
     #[test]
