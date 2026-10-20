@@ -12,6 +12,7 @@ pub mod git;
 pub mod pins;
 mod process;
 pub mod snapshot;
+pub mod start;
 pub mod store;
 pub mod workspace;
 
