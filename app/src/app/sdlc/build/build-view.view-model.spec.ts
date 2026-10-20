@@ -218,6 +218,35 @@ describe('BuildViewModel', () => {
     expect(run).toHaveBeenCalledTimes(3);
   });
 
+  it('the confirmation covers only the run it was given for: another repository is not told to skip asking (R6.4)', async () => {
+    const { vm, transport, runner } = setup();
+    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    vi.spyOn(transport, 'sdlcSnapshot').mockResolvedValue({ head: 'abc', dirty: {} });
+    const real = runner.runInRepo.bind(runner);
+    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
+      if (run.mock.calls.length <= 2) {
+        link.onRun?.(`fake-${target.repo}`);
+        return { exit: 124, error: null };
+      }
+      return real(target, spec, link);
+    });
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    vm.select('claims-core');
+    prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['src/new.rs'] }] });
+    await vm.continueRun();
+    await vm.confirmContinue();
+    await advance(100);
+    const told = (repo: string) => run.mock.calls.filter(([t]) => t.repo === repo).at(-1)![1].task;
+    expect(told('claims-core')).toContain('already confirmed');
+
+    vm.select('customer-portal');
+    await vm.continueRun();
+    await advance(100);
+    expect(run).toHaveBeenCalledTimes(4);
+    expect(told('customer-portal')).not.toContain('already confirmed');
+  });
+
   it('declining the leftovers starts nothing (R6.4)', async () => {
     const { vm, transport, runner } = setup();
     const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
