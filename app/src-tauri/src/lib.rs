@@ -293,6 +293,202 @@ fn sdlc_link_run(link: sdlc::store::RunLink) -> Result<(), String> {
     sdlc::store::append_run_link(link).map_err(|e| e.to_string())
 }
 
+// ---- AI-SDLC mode: the build, the diff, checks and publishing ----
+
+#[tauri::command(async)]
+fn sdlc_build_status(
+    master: String,
+    system: String,
+    change: String,
+) -> Result<sdlc::build::BuildStatus, String> {
+    sdlc::build::status(Path::new(&master), &system, &change).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_unsaved_rows(
+    master: String,
+    system: String,
+    change: String,
+) -> Result<Vec<sdlc::build::UnsavedRows>, String> {
+    sdlc::build::unsaved_rows(Path::new(&master), &system, &change).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_build_prepare(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+    continue_with_leftovers: bool,
+) -> Result<sdlc::start::PrepareOutcome, String> {
+    sdlc::start::prepare(
+        Path::new(&folder),
+        &master_repo,
+        &system,
+        &change,
+        continue_with_leftovers,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_build_settle(start: sdlc::start::BuildStart) -> Result<Vec<String>, String> {
+    sdlc::start::settle(&start).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_build_heads(
+    folder: String,
+    repos: Vec<String>,
+    change: String,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    sdlc::start::heads(Path::new(&folder), &repos, &change).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_plugin_version(path: String) -> Option<String> {
+    sdlc::plugin::version(Path::new(&path))
+}
+
+#[tauri::command(async)]
+fn sdlc_change_repos(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+) -> Result<Vec<sdlc::publish::ChangeRepo>, String> {
+    sdlc::publish::change_repos(Path::new(&folder), &master_repo, &system, &change)
+}
+
+#[tauri::command(async)]
+fn sdlc_diff_files(
+    repo_path: String,
+    part: sdlc::diff::Part,
+) -> Result<sdlc::diff::DiffListing, String> {
+    let files =
+        sdlc::diff::changed_files(Path::new(&repo_path), part).map_err(|e| e.to_string())?;
+    let loc = sdlc::diff::loc_by_file_type(&files);
+    Ok(sdlc::diff::DiffListing { files, loc })
+}
+
+#[tauri::command(async)]
+fn sdlc_diff_pair(
+    repo_path: String,
+    part: sdlc::diff::Part,
+    path: String,
+) -> Result<sdlc::diff::FilePair, String> {
+    sdlc::diff::file_pair(Path::new(&repo_path), part, &path).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_diff_base(repo_path: String) -> Result<sdlc::base::BaseInfo, String> {
+    sdlc::base::base_info(Path::new(&repo_path)).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_touched_repos(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+) -> Result<Vec<sdlc::publish::PublishRepo>, String> {
+    sdlc::publish::touched_repos(Path::new(&folder), &master_repo, &system, &change)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_commit_offenders(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+) -> Result<Vec<sdlc::commits::Offender>, String> {
+    sdlc::publish::change_offenders(Path::new(&folder), &master_repo, &system, &change)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sdlc_checks_dir() -> String {
+    sdlc::checks::checks_dir()
+        .map(|d| d.display().to_string())
+        .unwrap_or_default()
+}
+
+/// The checks file of a system, with the system's repositories and the master as the names a
+/// check may target.
+fn load_checks(
+    folder: &Path,
+    master_repo: &str,
+    system: &str,
+) -> Result<sdlc::checks::ChecksPlan, String> {
+    let scan = sdlc::workspace::scan(folder).map_err(|e| e.to_string())?;
+    let mut allowed = sdlc::workspace::system_repos(&scan, system);
+    if !allowed.iter().any(|r| r == master_repo) {
+        allowed.push(master_repo.to_string());
+    }
+    sdlc::checks::load(system, folder, &allowed).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_checks_load(
+    folder: String,
+    master_repo: String,
+    system: String,
+) -> Result<sdlc::checks::ChecksPlan, String> {
+    load_checks(Path::new(&folder), &master_repo, &system)
+}
+
+#[tauri::command(async)]
+fn sdlc_run_checks(
+    folder: String,
+    master_repo: String,
+    system: String,
+    repo: sdlc::publish::PublishRepo,
+) -> Result<sdlc::checks::RepoChecks, String> {
+    let plan = load_checks(Path::new(&folder), &master_repo, &system)?;
+    Ok(sdlc::checks::run_repo(
+        &plan,
+        &repo.repo,
+        Path::new(&repo.path),
+    ))
+}
+
+#[tauri::command(async)]
+fn sdlc_gh_signed_in(repos: Vec<sdlc::publish::PublishRepo>) -> Result<String, String> {
+    sdlc::publish::signed_in(&sdlc::publish::GhCli, &repos).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_gh_origins(repos: Vec<sdlc::publish::PublishRepo>) -> Result<(), String> {
+    sdlc::publish::origins(&sdlc::publish::GhCli, &repos).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_publish(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+    repos: Vec<sdlc::publish::PublishRepo>,
+) -> Vec<sdlc::publish::PrResult> {
+    let _ = folder;
+    sdlc::publish::publish(
+        &sdlc::publish::GhCli,
+        &master_repo,
+        &system,
+        &change,
+        &repos,
+    )
+}
+
+#[tauri::command(async)]
+fn sdlc_pull_requests(
+    repos: Vec<sdlc::publish::PublishRepo>,
+    change: String,
+) -> Result<Vec<sdlc::publish::PrState>, String> {
+    sdlc::publish::open_pull_requests(&sdlc::publish::GhCli, &repos, &change)
+}
+
 /// Relay a non-JSON stdout/stderr line as a warn-level log event.
 fn relay_log(app: &AppHandle, run_id: u64, bytes: &[u8]) {
     let line = String::from_utf8_lossy(bytes);
@@ -541,6 +737,25 @@ pub fn run() {
             sdlc_run_links,
             sdlc_link_run,
             sdlc_wait_run_exit,
+            sdlc_build_status,
+            sdlc_unsaved_rows,
+            sdlc_build_prepare,
+            sdlc_build_settle,
+            sdlc_build_heads,
+            sdlc_plugin_version,
+            sdlc_change_repos,
+            sdlc_diff_files,
+            sdlc_diff_pair,
+            sdlc_diff_base,
+            sdlc_touched_repos,
+            sdlc_commit_offenders,
+            sdlc_checks_dir,
+            sdlc_checks_load,
+            sdlc_run_checks,
+            sdlc_gh_signed_in,
+            sdlc_gh_origins,
+            sdlc_publish,
+            sdlc_pull_requests,
             zoom
         ])
         .run(tauri::generate_context!())
