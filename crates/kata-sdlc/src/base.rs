@@ -28,17 +28,60 @@ pub enum BaseError {
 
 /// `origin/HEAD`'s target, else `main`, else `master`, each accepted when it exists locally or
 /// on `origin`.
-pub fn base_branch(_repo: &Path) -> Option<String> {
-    None
+pub fn base_branch(repo: &Path) -> Option<String> {
+    let from_origin = git::run(
+        repo,
+        &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+    )
+    .ok()
+    .and_then(|t| t.strip_prefix("refs/remotes/origin/").map(String::from));
+    from_origin
+        .into_iter()
+        .chain(["main", "master"].map(String::from))
+        .find(|b| branch_exists(repo, b))
 }
 
-pub fn base_info(_repo: &Path) -> Result<BaseInfo, BaseError> {
-    Err(BaseError::Unresolved(String::new()))
+fn ref_exists(repo: &Path, name: &str) -> bool {
+    git::run(repo, &["rev-parse", "--verify", "--quiet", name]).is_ok()
+}
+
+fn branch_exists(repo: &Path, b: &str) -> bool {
+    ref_exists(repo, &format!("refs/heads/{b}"))
+        || ref_exists(repo, &format!("refs/remotes/origin/{b}"))
+}
+
+/// The base branch, the ref to compare with (`origin/<base>` when it exists, else `<base>`), and
+/// the merge base of HEAD and that ref.
+pub fn base_info(repo: &Path) -> Result<BaseInfo, BaseError> {
+    let base = base_branch(repo).ok_or_else(|| {
+        BaseError::Unresolved(
+            repo.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| repo.display().to_string()),
+        )
+    })?;
+    let remote = format!("origin/{base}");
+    let reference = if ref_exists(repo, &format!("refs/remotes/{remote}")) {
+        remote
+    } else {
+        base.clone()
+    };
+    let merge_base = git::run(repo, &["merge-base", "HEAD", &reference])?;
+    Ok(BaseInfo {
+        base,
+        reference,
+        merge_base,
+    })
 }
 
 /// Commits HEAD has past the merge base: what a pull request would carry.
-pub fn commits_ahead(_repo: &Path) -> Result<u32, BaseError> {
-    Ok(0)
+pub fn commits_ahead(repo: &Path) -> Result<u32, BaseError> {
+    let info = base_info(repo)?;
+    let count = git::run(
+        repo,
+        &["rev-list", "--count", &format!("{}..HEAD", info.merge_base)],
+    )?;
+    Ok(count.trim().parse().unwrap_or(0))
 }
 
 #[cfg(test)]
