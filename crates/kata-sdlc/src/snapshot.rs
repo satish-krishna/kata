@@ -75,6 +75,16 @@ pub(crate) fn status_entries(dir: &Path) -> Result<Vec<Entry>, GitError> {
     Ok(entries)
 }
 
+/// The repository a build log row (`intent/<system>/<change>/build/<repo>.md`) records, or `None`
+/// for any other path. Build log rows are R6.6 data: nothing here may delete them.
+fn build_log_repo(path: &str) -> Option<&str> {
+    let parts: Vec<&str> = path.split(['/', '\\']).collect();
+    match parts.as_slice() {
+        ["intent", _, _, "build", file] => file.strip_suffix(".md"),
+        _ => None,
+    }
+}
+
 fn current_head(master: &Path) -> Option<String> {
     git::run(master, &["rev-parse", "--verify", "-q", "HEAD"]).ok()
 }
@@ -126,7 +136,16 @@ pub fn leftovers(
     let mut discardable = Vec::new();
     let mut touched_dirty = Vec::new();
     let now = dirty_map(master)?;
+    let own = master.file_name().map(|n| n.to_string_lossy().into_owned());
     for (path, hash) in &now {
+        if let Some(repo) = build_log_repo(path) {
+            // The run's own row is kept and shown, never offered for discard; another
+            // repository's row was written by another run and is not this run's leftover.
+            if before.dirty.get(path) != Some(hash) && own.as_deref() == Some(repo) {
+                touched_dirty.push(path.clone());
+            }
+            continue;
+        }
         match before.dirty.get(path) {
             None => discardable.push(path.clone()),
             Some(old) if old != hash => touched_dirty.push(path.clone()),
@@ -136,7 +155,8 @@ pub fn leftovers(
     // A pre-dirty file that dropped out of the status list (reverted or recreated clean)
     // is still touched when its content differs from the snapshot.
     for (path, old) in &before.dirty {
-        if !now.contains_key(path.as_str()) && hash_of(master, path)? != *old {
+        let foreign_row = build_log_repo(path).is_some_and(|r| own.as_deref() != Some(r));
+        if !foreign_row && !now.contains_key(path.as_str()) && hash_of(master, path)? != *old {
             touched_dirty.push(path.clone());
         }
     }
@@ -172,6 +192,9 @@ pub fn discard(master: &Path, before: &Snapshot, paths: &[String]) -> Result<(),
     let entries = status_entries(master)?;
     let mut plan = Vec::new();
     for path in paths {
+        if build_log_repo(path).is_some() {
+            return Err(DiscardError::NotDiscardable(path.clone()));
+        }
         let entry = entries
             .iter()
             .find(|e| &e.path == path && !before.dirty.contains_key(&e.path))
