@@ -216,7 +216,13 @@ export class ChangePageViewModel {
   /** What blocks the build, shown above the plan; null when nothing does or another document is shown. */
   readonly planBanner = computed(() => {
     const c = this.change();
-    if (c === null || this.shownDoc() !== 'plan') return null;
+    if (c === null) return null;
+    // A reopened intent or spec keeps its own stage once a plan exists (R1.5); name it on whichever tab is shown.
+    if (c.plan.exists) {
+      if (c.stage === 'intent-awaiting' || c.stage === 'intent-in-progress') return OUT_OF_DATE_BANNER['intent-reopened'];
+      if (c.stage === 'spec-awaiting') return OUT_OF_DATE_BANNER['spec-reopened'];
+    }
+    if (this.shownDoc() !== 'plan') return null;
     if (c.stage === 'plan-superseded') return SUPERSEDED_BANNER;
     return c.stage === 'plan-out-of-date' && c.out_of_date !== null ? OUT_OF_DATE_BANNER[c.out_of_date] : null;
   });

@@ -65,7 +65,8 @@ export function actionsFor(stage: Stage): StageAction[] {
 
 /**
  * The actions of a change. An out-of-date plan depends on its cause: a broken spec pin means the spec is
- * reopened; a reopened intent or spec is settled on its own tab; any other cause means the plan is rewritten.
+ * reopened; a reopened intent or spec keeps its own stage, so it only reaches here from older data and has
+ * no action; any other cause means the plan is rewritten.
  */
 export function actionsForChange(c: ChangeInfo): StageAction[] {
   if (c.stage !== "plan-out-of-date") return actionsFor(c.stage);
