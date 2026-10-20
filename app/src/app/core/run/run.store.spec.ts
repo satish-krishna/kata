@@ -320,4 +320,34 @@ describe('RunStore with several runs', () => {
     expect(store.snapshot('A')().events).toEqual([]);
     expect(store.snapshot('B')().events).toEqual([log('for b')]);
   });
+
+  it('a start still waiting for its id never takes in the ending of a run that already has one (R19.5)', async () => {
+    const { store, fake } = setupMulti();
+    const x = (await store.startRun(seedSpec(), 'build:s/c'))!;
+    const pending = deferred<string>();
+    fake.runSpec.mockReturnValueOnce(pending.promise);
+    const py = store.startRun(seedSpec(), 'build:s/c');
+    await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalledTimes(2));
+    fake.emit(x, log('late stderr from x'));
+    fake.emit(x, { type: 'run.completed', exit_code: 0 } as never);
+    expect(store.snapshot(x)().state).toBe('success');
+    pending.resolve('run-y');
+    const y = (await py)!;
+    expect(store.snapshot(y)().state).toBe('running');
+    expect(store.snapshot(y)().events).toEqual([]);
+    fake.emit(y, log('from y'));
+    expect(store.snapshot(y)().events).toEqual([log('from y')]);
+  });
+
+  it('a lone start still takes its own early events once its id arrives', async () => {
+    const { store, fake } = setupMulti();
+    const pending = deferred<string>();
+    fake.runSpec.mockReturnValueOnce(pending.promise);
+    const p = store.startRun(seedSpec(), 'build:s/c');
+    await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalledTimes(1));
+    fake.emit('run-y', log('before the answer'));
+    pending.resolve('run-y');
+    const y = (await p)!;
+    expect(store.snapshot(y)().events).toEqual([log('before the answer')]);
+  });
 });
