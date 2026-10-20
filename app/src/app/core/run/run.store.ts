@@ -117,13 +117,12 @@ export class RunStore {
     } else {
       // Another live run owns that id.
       for (const other of this.recs.values()) if (other !== rec && !other.ended && other.id === runId) return;
-      // With one start waiting for its id, whatever arrives unclaimed is that run's. With several the
-      // event cannot be placed yet: the oldest one holds it until an answer names its owner.
+      // A start still waiting for its id cannot tell whose event this is, not even when it is the only
+      // one waiting: a run that already ended (or a late line of one) must not land in it. The oldest
+      // waiting start holds the event until an answer names its owner; claim() folds only that id's.
       const waiting = [...this.recs.values()].filter((r) => r.awaitingId);
-      if (waiting.length > 1) {
-        if (waiting[0] === rec) this.early.set(runId, [...(this.early.get(runId) ?? []), ev]);
-        return;
-      }
+      if (waiting[0] === rec) this.early.set(runId, [...(this.early.get(runId) ?? []), ev]);
+      return;
     }
     this.fold(rec, ev);
   }

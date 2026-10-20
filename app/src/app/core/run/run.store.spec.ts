@@ -155,9 +155,9 @@ describe('RunStore', () => {
     const started = store.startRun(seedSpec());
     await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalled());
     fake.listeners[0]({ type: 'run.error', message: 'boom', exit_code: 1 } as never);
-    expect(store.state()).toBe('error');
     d.resolve('1');
     await started;
+    expect(store.state()).toBe('error');
     expect(fake.cancelRun).not.toHaveBeenCalled();
   });
 
