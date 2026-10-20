@@ -3,6 +3,7 @@
 pub mod branch;
 pub mod build;
 pub mod changes;
+pub mod commits;
 pub mod decide;
 pub mod frontmatter;
 pub mod git;

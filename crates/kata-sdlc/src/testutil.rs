@@ -24,3 +24,14 @@ pub fn commit_file(repo: &Path, rel: &str, contents: &str, msg: &str) {
     git::run(repo, &["add", "--", rel]).unwrap();
     git::run(repo, &["commit", "-q", "-m", msg]).unwrap();
 }
+
+/// Like `commit_file`, but with a multi-line commit message taken verbatim.
+pub fn commit_msg(repo: &Path, rel: &str, contents: &str, message: &str) {
+    let file = repo.join(rel);
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(&file, contents).unwrap();
+    git::run(repo, &["add", "--", rel]).unwrap();
+    git::run(repo, &["commit", "-q", "--cleanup=verbatim", "-m", message]).unwrap();
+}
