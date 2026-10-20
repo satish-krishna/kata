@@ -107,36 +107,373 @@ pub struct UnsavedRows {
     pub tasks: Vec<String>,
 }
 
+/// `T<digits>` as a whole token, or `None`.
+fn is_task_id(s: &str) -> bool {
+    s.strip_prefix('T')
+        .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// A folder-like name: the plugin's own template heading carries `<repo>`, which is not one.
+fn is_repo_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// `### T<digits>: <name> (`<repo>`)` -> (id, name, repo).
+fn task_heading(line: &str) -> Option<(String, String, String)> {
+    let rest = line.trim_end().strip_prefix("### T")?;
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    let id = format!("T{}", &rest[..digits]);
+    let rest = rest[digits..].strip_prefix(": ")?;
+    let rest = rest.strip_suffix("`)")?;
+    let at = rest.rfind(" (`")?;
+    let (name, repo) = (rest[..at].trim(), &rest[at + 3..]);
+    if name.is_empty() || !is_repo_name(repo) {
+        return None;
+    }
+    Some((id, name.to_string(), repo.to_string()))
+}
+
+/// The task IDs a `- **Depends on:**` value names; `none` and prose without IDs give none.
+fn dependency_ids(value: &str) -> Vec<String> {
+    value
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| is_task_id(w))
+        .map(str::to_string)
+        .collect()
+}
+
+/// One heading found in the plan: where its section starts and ends, in lines.
+struct Section {
+    task: PlanTask,
+    text: String,
+}
+
+fn sections(plan: &str) -> Vec<Section> {
+    let lines: Vec<&str> = plan.lines().collect();
+    let heads: Vec<(usize, (String, String, String))> = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(i, l)| task_heading(l).map(|h| (i, h)))
+        .collect();
+    let mut out: Vec<Section> = Vec::new();
+    for (n, (start, (id, name, repo))) in heads.iter().enumerate() {
+        let limit = heads.get(n + 1).map_or(lines.len(), |(i, _)| *i);
+        let end = (start + 1..limit)
+            .find(|&i| lines[i].starts_with("## ") || lines[i].starts_with("### "))
+            .unwrap_or(limit);
+        let text = lines[*start..end].join("\n").trim_end().to_string();
+        let depends = lines[start + 1..end].iter().find_map(|l| {
+            l.trim_start()
+                .strip_prefix("- **Depends on:**")
+                .map(dependency_ids)
+        });
+        let depends_on = depends.unwrap_or_else(|| out.iter().map(|s| s.task.id.clone()).collect());
+        out.push(Section {
+            task: PlanTask {
+                id: id.clone(),
+                name: name.clone(),
+                repo: repo.clone(),
+                depends_on,
+            },
+            text,
+        });
+    }
+    out
+}
+
 /// Every `### T<digits>: <name> (`<repo>`)` heading in document order, with its dependencies.
-pub fn plan_tasks(_plan: &str) -> Vec<PlanTask> {
-    todo!()
+/// A task with no `Depends on` line depends on every task above it.
+pub fn plan_tasks(plan: &str) -> Vec<PlanTask> {
+    sections(plan).into_iter().map(|s| s.task).collect()
 }
 
-fn rows_in(_text: &str, _repo: &str) -> Vec<BuildRow> {
-    todo!()
+fn cells(line: &str) -> Option<Vec<&str>> {
+    let line = line.trim();
+    let inner = line.strip_prefix('|')?;
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    Some(inner.split('|').map(str::trim).collect())
 }
 
-/// Every build log row as committed at `HEAD`, plus the committed plan's legacy `## Build log`.
-pub fn committed_rows(
-    _master: &Path,
-    _system: &str,
-    _change: &str,
+fn is_separator(cells: &[&str]) -> bool {
+    cells
+        .iter()
+        .all(|c| !c.is_empty() && c.chars().all(|ch| matches!(ch, '-' | ':' | ' ')))
+}
+
+fn commits_in(cell: &str) -> Vec<String> {
+    if cell.contains('`') {
+        cell.split('`')
+            .skip(1)
+            .step_by(2)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect()
+    } else {
+        cell.split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+}
+
+/// The table rows of a build log (or a legacy plan's `## Build log` table). A header naming a
+/// `Repository` column makes the rows carry their own repository; otherwise it is `repo`.
+fn rows_in(text: &str, repo: &str) -> Vec<BuildRow> {
+    // Column positions; the defaults are the build log's `Task | Commits | Departure`.
+    let (mut task_at, mut repo_at, mut commits_at, mut departure_at) = (0, None, 1, 2);
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let Some(row) = cells(line) else { continue };
+        if is_separator(&row) {
+            continue;
+        }
+        if row[0].eq_ignore_ascii_case("task") {
+            let find = |name: &str| row.iter().position(|c| c.eq_ignore_ascii_case(name));
+            task_at = 0;
+            repo_at = find("repository");
+            commits_at = find("commits").unwrap_or(commits_at);
+            departure_at = find("departure").unwrap_or(departure_at);
+            continue;
+        }
+        if !is_task_id(row[task_at]) {
+            continue;
+        }
+        let cell = |i: usize| row.get(i).copied().unwrap_or("");
+        // The last column takes the rest of the line, so a `|` in a departure survives.
+        let departure = if departure_at + 1 == row.len() || departure_at >= row.len() {
+            cell(departure_at).to_string()
+        } else {
+            row[departure_at..].join("|")
+        };
+        let departure = Some(departure.trim().to_string())
+            .filter(|d| !d.is_empty() && !d.eq_ignore_ascii_case("none"));
+        out.push(BuildRow {
+            task: row[task_at].to_string(),
+            repo: repo_at
+                .map(|i| cell(i).to_string())
+                .filter(|r| !r.is_empty())
+                .unwrap_or_else(|| repo.to_string()),
+            commits: commits_in(cell(commits_at)),
+            departure,
+        });
+    }
+    out
+}
+
+/// The legacy plan's `## Build log` section, up to the next `## ` heading.
+fn legacy_log(plan: &str) -> String {
+    let mut inside = false;
+    let mut out = Vec::new();
+    for line in plan.lines() {
+        if line.trim_end().eq_ignore_ascii_case("## Build log") {
+            inside = true;
+        } else if line.starts_with("## ") {
+            inside = false;
+        } else if inside {
+            out.push(line);
+        }
+    }
+    out.join("\n")
+}
+
+fn change_dir(system: &str, change: &str) -> String {
+    format!("intent/{system}/{change}")
+}
+
+fn committed_plan(master: &Path, system: &str, change: &str) -> Result<String, GitError> {
+    let path = format!("HEAD:{}/plan.md", change_dir(system, change));
+    git::run(master, &["show", &path])
+}
+
+/// The file stem of a build log path: the repository it logs.
+fn log_repo(path: &str) -> &str {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.rsplit_once('.').map_or(name, |(stem, _)| stem)
+}
+
+fn rows_from(
+    master: &Path,
+    system: &str,
+    change: &str,
+    plan: &str,
 ) -> Result<Vec<BuildRow>, GitError> {
-    let _ = git::run;
-    todo!()
+    let dir = format!("{}/build/", change_dir(system, change));
+    let listing = git::run(
+        master,
+        &["ls-tree", "-z", "--name-only", "HEAD", "--", &dir],
+    )?;
+    let mut paths: Vec<&str> = listing.split('\0').filter(|p| !p.is_empty()).collect();
+    paths.sort_unstable();
+    let mut rows = Vec::new();
+    for path in paths {
+        let text = git::run(master, &["show", &format!("HEAD:{path}")])?;
+        rows.extend(rows_in(&text, log_repo(path)));
+    }
+    rows.extend(rows_in(&legacy_log(plan), ""));
+    Ok(rows)
 }
 
-pub fn status(_master: &Path, _system: &str, _change: &str) -> Result<BuildStatus, GitError> {
-    todo!()
+/// Every build log row as committed at `HEAD` (never the working tree), plus the committed
+/// plan's legacy `## Build log`.
+pub fn committed_rows(
+    master: &Path,
+    system: &str,
+    change: &str,
+) -> Result<Vec<BuildRow>, GitError> {
+    let plan = committed_plan(master, system, change)?;
+    rows_from(master, system, change, &plan)
 }
 
-/// Build log rows written to the working tree and not committed.
+pub fn status(master: &Path, system: &str, change: &str) -> Result<BuildStatus, GitError> {
+    let plan = committed_plan(master, system, change)?;
+    let rows = rows_from(master, system, change, &plan)?;
+    let sections = sections(&plan);
+    let row_of = |id: &str| rows.iter().find(|r| r.task == id);
+
+    let tasks: Vec<TaskStatus> = sections
+        .iter()
+        .map(|s| TaskStatus {
+            id: s.task.id.clone(),
+            name: s.task.name.clone(),
+            repo: s.task.repo.clone(),
+            depends_on: s.task.depends_on.clone(),
+            row: row_of(&s.task.id).cloned(),
+        })
+        .collect();
+
+    let mut names: Vec<&str> = Vec::new();
+    for t in &tasks {
+        if !names.contains(&t.repo.as_str()) {
+            names.push(&t.repo);
+        }
+    }
+    let repos = names
+        .into_iter()
+        .map(|repo| {
+            let mine: Vec<&TaskStatus> = tasks.iter().filter(|t| t.repo == repo).collect();
+            let first = mine.iter().find(|t| t.row.is_none());
+            let state = match first {
+                None => RepoState::Done,
+                Some(t) => match t.depends_on.iter().find(|d| row_of(d).is_none()) {
+                    None => RepoState::Ready { task: t.id.clone() },
+                    Some(dep) => RepoState::Waiting {
+                        task: t.id.clone(),
+                        on_task: dep.clone(),
+                        on_repo: tasks
+                            .iter()
+                            .find(|o| &o.id == dep)
+                            .map(|o| o.repo.clone())
+                            .unwrap_or_default(),
+                    },
+                },
+            };
+            RepoStatus {
+                repo: repo.to_string(),
+                first_unfinished: first.map(|t| t.id.clone()),
+                state,
+                tasks: mine.len() as u32,
+                finished: mine.iter().filter(|t| t.row.is_some()).count() as u32,
+            }
+        })
+        .collect();
+
+    let departures = sections
+        .iter()
+        .zip(&tasks)
+        .filter_map(|(s, t)| {
+            let row = t.row.as_ref()?;
+            Some(Departure {
+                task: t.id.clone(),
+                repo: row.repo.clone(),
+                plan_text: s.text.clone(),
+                departure: row.departure.clone()?,
+            })
+        })
+        .collect();
+
+    Ok(BuildStatus {
+        has_tasks: !tasks.is_empty(),
+        tasks,
+        repos,
+        departures,
+    })
+}
+
+fn lf(text: &str) -> String {
+    text.replace("\r\n", "\n")
+}
+
+/// Build log rows written to the working tree and not committed. A log is unsaved when it is
+/// untracked, or when its text is the committed text plus added rows (CRLF-insensitive). Any
+/// other change to a log is an error naming the file, since the build skill would refuse it.
 pub fn unsaved_rows(
-    _master: &Path,
-    _system: &str,
-    _change: &str,
+    master: &Path,
+    system: &str,
+    change: &str,
 ) -> Result<Vec<UnsavedRows>, GitError> {
-    todo!()
+    let rel_dir = format!("{}/build", change_dir(system, change));
+    let Ok(entries) = std::fs::read_dir(master.join(&rel_dir)) else {
+        return Ok(Vec::new());
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    names.sort_unstable();
+    let mut out = Vec::new();
+    for name in names {
+        let rel = format!("{rel_dir}/{name}");
+        let refuse = |why: &str| GitError {
+            args: rel.clone(),
+            stderr: why.to_string(),
+        };
+        let working =
+            lf(&std::fs::read_to_string(master.join(&rel)).map_err(|e| refuse(&e.to_string()))?);
+        let repo = log_repo(&rel);
+        let listed = git::run(master, &["ls-tree", "--name-only", "HEAD", "--", &rel])?;
+        if listed.is_empty() {
+            out.push(UnsavedRows {
+                repo: repo.to_string(),
+                tasks: rows_in(&working, repo)
+                    .into_iter()
+                    .map(|r| r.task)
+                    .collect(),
+            });
+            continue;
+        }
+        let committed = lf(&git::run(master, &["show", &format!("HEAD:{rel}")])?);
+        let committed = committed.trim_end();
+        let Some(added) = working.trim_end().strip_prefix(committed) else {
+            return Err(refuse(
+                "an uncommitted change to a build log other than added rows",
+            ));
+        };
+        if added.is_empty() {
+            continue;
+        }
+        let only_rows = added.starts_with('\n')
+            && added
+                .lines()
+                .all(|l| l.trim().is_empty() || l.trim_start().starts_with('|'));
+        if !only_rows {
+            return Err(refuse(
+                "an uncommitted change to a build log other than added rows",
+            ));
+        }
+        out.push(UnsavedRows {
+            repo: repo.to_string(),
+            tasks: rows_in(added, repo).into_iter().map(|r| r.task).collect(),
+        });
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
