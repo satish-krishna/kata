@@ -106,8 +106,8 @@ export type BuildHandoff = {
   timeoutSecs: number;
   round: { instructions: string; repo: string } | null;
   checksDir: string;
-  /** True when the engineer confirmed continuing on top of leftovers, so the run is told not to ask again. */
-  continueOnLeftovers?: boolean;
+  /** The repositories whose leftovers the engineer confirmed continuing on top of: only their first run is told not to ask again. */
+  continueOnLeftovers?: string[];
 };
 
 type DocStem = 'intent' | 'spec' | 'plan';
@@ -303,8 +303,9 @@ export class ChangePageViewModel {
 
   /** The operator accepted the leftovers: prepare the same build again, this time continuing on top of them. */
   async confirmLeftovers(): Promise<void> {
+    const confirmed = (this.pendingLeftovers() ?? []).map((r) => r.repo);
     this.pendingLeftovers.set(null);
-    if (this.asked !== null) await this.prepare(true);
+    if (this.asked !== null) await this.prepare(true, confirmed);
   }
 
   cancelLeftovers(): void {
@@ -688,7 +689,7 @@ export class ChangePageViewModel {
     });
   }
 
-  private async prepare(continueWithLeftovers: boolean): Promise<void> {
+  private async prepare(continueWithLeftovers: boolean, confirmedRepos: string[] = []): Promise<void> {
     const w = this.current();
     const master = this.scanMaster();
     const asked = this.asked;
@@ -721,7 +722,7 @@ export class ChangePageViewModel {
           timeoutSecs: asked.timeoutSecs,
           round: asked.instructions !== null && asked.repo !== null ? { instructions: asked.instructions, repo: asked.repo } : null,
           checksDir,
-          continueOnLeftovers: continueWithLeftovers,
+          continueOnLeftovers: confirmedRepos,
         });
     }
   }

@@ -247,6 +247,17 @@ describe('BuildViewModel', () => {
     expect(told('customer-portal')).not.toContain('already confirmed');
   });
 
+  it('a first-handoff confirmation covers the named repository once, not its later runs or the review (R6.4)', async () => {
+    const { vm, transport, runner, lock } = setup();
+    const run = vi.spyOn(runner, 'runInRepo');
+    await vm.start(await handoffFor(transport, { continueOnLeftovers: ['claims-core'] }), CTX);
+    await drive(vm, lock, finished(vm));
+    const told = (pick: (t: { repo?: string; kind: string }) => boolean) => run.mock.calls.filter(([t]) => pick(t)).map(([, spec]) => spec.task);
+    expect(told((t) => t.repo === 'claims-core' && t.kind === 'repo')[0]).toContain('already confirmed');
+    expect(told((t) => t.repo === 'customer-portal')[0]).not.toContain('already confirmed');
+    expect(told((t) => t.kind === 'review')[0]).not.toContain('already confirmed');
+  });
+
   it('declining the leftovers starts nothing (R6.4)', async () => {
     const { vm, transport, runner } = setup();
     const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');

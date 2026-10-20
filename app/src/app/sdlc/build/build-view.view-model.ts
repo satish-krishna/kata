@@ -85,6 +85,8 @@ export class BuildViewModel {
   private readonly toasts = inject(ToastStore);
 
   private handoff: BuildHandoff | null = null;
+  /** The runs the engineer's leftovers confirmation still covers; a run's launch spends its entry. */
+  private confirmed = new Set<string>();
   private ctx: BuildContext | null = null;
   private productRepos: string[] = [];
   /** True once the build's branches were settled; continuing then prepares them again. */
@@ -268,6 +270,7 @@ export class BuildViewModel {
     if (this.handoff !== null) return true;
     if (!this.lock.beginBuild('Build')) return false;
     this.handoff = handoff;
+    this.confirmed = new Set(handoff.continueOnLeftovers ?? []);
     this.ctx = ctx;
     try {
       const status = await this.readStatus();
@@ -366,7 +369,7 @@ export class BuildViewModel {
         return;
       }
     }
-    this.handoff = { ...this.handoff!, continueOnLeftovers: true };
+    this.confirmed.add(key);
     await this.resume(key);
   }
 
@@ -576,7 +579,7 @@ export class BuildViewModel {
       masterRepo: h.start.master.repo,
       systemRepos: [...new Set([...ctx.systemRepos, ...this.productRepos])],
       checksDir: h.checksDir,
-      continueOnLeftovers: h.continueOnLeftovers ?? false,
+      continueOnLeftovers: this.confirmed.delete(review ? REVIEW : repo),
     };
     const settings = this.modes.settings() ?? (await this.modes.load());
     const spec = specFor('build', null, { folder: ctx.folder, system: ctx.system, change: ctx.change }, settings, [], run);

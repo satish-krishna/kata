@@ -431,10 +431,10 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.submitBuild(REQUEST);
       await vm.confirmLeftovers();
-      expect(vm.handoff()!.continueOnLeftovers).toBe(true);
+      expect(vm.handoff()!.continueOnLeftovers).toEqual(['claims-core']);
       await vm.closeBuild();
       await vm.submitBuild(REQUEST);
-      expect(vm.handoff()!.continueOnLeftovers).toBe(false);
+      expect(vm.handoff()!.continueOnLeftovers).toEqual([]);
     });
 
     it('names the workspace, folder, system, change and every product repository of the system for the build view (R18.5)', async () => {
