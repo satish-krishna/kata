@@ -299,6 +299,9 @@ export class ChangePageViewModel {
   /** What the done dialog shows; the dialog is open exactly while this is set. */
   readonly doneReport = signal<DoneReport | null>(null);
   private doneRepos: PublishRepo[] = [];
+  readonly prList = signal<PrResult[] | null>(null);
+  async retryPublish(): Promise<void> {}
+  closePrList(): void {}
 
   /** The operator confirmed: open the pull requests. */
   async confirmDone(): Promise<void> {

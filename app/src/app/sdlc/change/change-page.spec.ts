@@ -245,3 +245,53 @@ describe('ChangePage', () => {
     });
   });
 });
+
+describe('ChangePage after the pull requests', () => {
+  let draw: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    draw = vi.spyOn(diagrams, 'render').mockResolvedValue('<svg></svg>');
+  });
+  afterEach(() => draw.mockRestore());
+
+  const finishedTransport = () => {
+    const transport = new MockTransport();
+    const real = transport.sdlcChanges.bind(transport);
+    vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
+      (await real(m, s)).map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage: 'build-finished' as const } : c)),
+    );
+    return transport;
+  };
+  const openAll = async (transport: MockTransport) => {
+    await transport.sdlcPublish('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE));
+  };
+
+  it('change page shows Done when every pull request is open (R14.1)', async () => {
+    const transport = finishedTransport();
+    await openAll(transport);
+    const { container } = await mount(MOCK_BUILD_CHANGE, transport);
+    expect(container.querySelector('app-stage-stepper')!.textContent).toContain('Done · pull requests open');
+    expect(container.textContent).not.toContain('Build · finished, not yet done');
+    expect(labels(container)).not.toContain('Declare done');
+    expect(container.querySelectorAll('app-sdlc-toolbar button[hlmBtn]').length).toBe(0);
+    const card = container.querySelector('app-pr-card')!;
+    expect(card.querySelector('h2')!.textContent).toBe('Pull requests');
+    expect(card.querySelectorAll('a').length).toBe(3);
+  });
+
+  it('an unfinished set of pull requests keeps the finished label and its action', async () => {
+    const { container } = await mount(MOCK_BUILD_CHANGE, finishedTransport());
+    expect(container.textContent).toContain('Build · finished, not yet done');
+    expect(labels(container)).toContain('Declare done');
+    expect(container.querySelector('app-pr-card')).toBeNull();
+  });
+
+  it('unreachable GitHub keeps the finished label with a note', async () => {
+    const transport = finishedTransport();
+    await openAll(transport);
+    vi.spyOn(transport, 'sdlcPullRequests').mockRejectedValue(new Error('GitHub could not be reached. Try again later.'));
+    const { container } = await mount(MOCK_BUILD_CHANGE, transport);
+    expect(container.textContent).toContain('Build · finished, not yet done');
+    expect(container.querySelector('[data-testid="pr-note"]')!.textContent).toContain('Could not check pull requests');
+    expect(container.querySelector('app-pr-card')).toBeNull();
+  });
+});

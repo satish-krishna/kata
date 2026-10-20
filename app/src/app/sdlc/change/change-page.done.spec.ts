@@ -185,7 +185,25 @@ describe('declaring done', () => {
     expect(publish).toHaveBeenCalledTimes(1);
     expect(publish.mock.calls[0][4].map((r) => r.repo)).toEqual(['claims-intent', ...REPOS]);
     expect(vm.doneReport()).toBeNull();
-    expect(toastText()).toContain('Opened 3 pull requests');
+    expect(vm.prList()!.map((r) => r.outcome.kind)).toEqual(['opened', 'opened', 'opened']);
+  });
+
+  it('a failed pull request lists why, and Retry publishes again (R13.2)', async () => {
+    const { vm, transport, steps } = await finished();
+    const real = transport.sdlcPublish.bind(transport);
+    const publish = vi.spyOn(transport, 'sdlcPublish').mockImplementationOnce(async (f, m, s, c, repos) => {
+      const out = await real(f, m, s, c, repos);
+      return out.map((r) => (r.repo === 'customer-portal' ? { repo: r.repo, outcome: { kind: 'failed' as const, error: 'gh: HTTP 502' } } : r));
+    });
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    expect(vm.prList()!.find((r) => r.repo === 'customer-portal')!.outcome).toEqual({ kind: 'failed', error: 'gh: HTTP 502' });
+    await vm.retryPublish();
+    expect(publish).toHaveBeenCalledTimes(2);
+    expect(steps.mock.calls.filter((c) => c[0] === 'Opening pull requests').length).toBe(2);
+    expect(vm.prList()!.every((r) => r.outcome.kind === 'opened')).toBe(true);
+    vm.closePrList();
+    expect(vm.prList()).toBeNull();
   });
 
   it.each([
