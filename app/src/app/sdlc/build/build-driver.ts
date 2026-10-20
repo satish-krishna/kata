@@ -201,7 +201,10 @@ export class BuildDriver {
     void (async () => this.deps.start(target, opts))()
       .catch((e: unknown): RunEnd => ({ exit: null, error: e instanceof Error ? e.message : String(e) }))
       .then((end) =>
-        this.enqueue(() => this.ended(key, task, end)).catch(() => this.phase.set('stopped')),
+        this.enqueue(() => this.ended(key, task, end)).catch(() => {
+          // Other runs still going end through `look` and settle the phase then; stopping now would end the build under them.
+          if (this.going().size === 0 && !this.reviewing) this.phase.set('stopped');
+        }),
       );
   }
 
