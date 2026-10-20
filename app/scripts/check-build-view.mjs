@@ -39,8 +39,10 @@ try {
 
   // Go to the waiting repository, answer, and the notice is gone while the run carries on.
   await notices.first().getByRole('button', { name: 'Go to customer-portal' }).click();
-  check((await selected('Activity')) === 'true', 'Go to customer-portal switches to Activity');
-  check((await page.locator('.k-build__repo-head h2').innerText()) === 'customer-portal', 'customer-portal is the selected repository');
+  const onActivity = await eventually(page, () => selected('Activity'), (v) => v === 'true', 'switching to Activity').catch(() => 'false');
+  check(onActivity === 'true', 'Go to customer-portal switches to Activity');
+  const head = await eventually(page, () => page.locator('.k-build__repo-head h2').innerText(), (v) => v === 'customer-portal', 'selecting customer-portal').catch((e) => e.message);
+  check(head === 'customer-portal', `customer-portal is the selected repository (${head})`);
   await page.locator('label', { hasText: 'Reuse it' }).click();
   await page.getByRole('button', { name: /Send answer/ }).click();
   await eventually(page, () => notices.count(), (n) => n === 0, 'the notice going away');

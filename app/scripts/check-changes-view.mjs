@@ -28,11 +28,11 @@ try {
   const sheet = await page.evaluate(() => {
     const link = [...document.querySelectorAll('link[rel="stylesheet"]')].find((l) => /(^|\/)monaco\.css$/.test(new URL(l.href).pathname));
     const rules = link?.sheet ? link.sheet.cssRules.length : 0;
-    const probe = document.querySelector('.monaco-editor');
-    return { linked: !!link, rules, position: probe ? getComputedStyle(probe).position : null };
+    const lines = document.querySelector('.monaco-editor .view-lines');
+    return { linked: !!link, rules, whiteSpace: lines ? getComputedStyle(lines).whiteSpace : null };
   });
   check(sheet.linked && sheet.rules > 0, `monaco.css loaded under the desktop CSP (${sheet.rules} rules)`);
-  check(sheet.position === 'relative', `the Monaco stylesheet is applied to the editor (position ${sheet.position})`);
+  check(sheet.whiteSpace === 'nowrap', `the Monaco stylesheet is applied to the editor (view-lines white-space ${sheet.whiteSpace})`);
   check((await editor.innerText()).includes('limit'), 'the modified file text rendered in the editor');
 
   // 2. Zoom alignment, emulating Workbench zoom as the CSS viewport shrinking while the pixel ratio grows.
@@ -63,7 +63,7 @@ try {
   // 3. Zoom keys reach the document from inside the editor, with the default prevented.
   await page.evaluate(() => {
     window.__keys = [];
-    window.addEventListener('keydown', (e) => window.__keys.push({ key: e.key, ctrl: e.ctrlKey, defaultPrevented: e.defaultPrevented }));
+    window.addEventListener('keydown', (e) => e.key !== 'Control' && window.__keys.push({ key: e.key, ctrl: e.ctrlKey, defaultPrevented: e.defaultPrevented }));
   });
   await page.locator('.monaco-diff-editor .editor.modified .view-lines').click();
   const insideEditor = await page.evaluate(() => !!document.activeElement?.closest('.editor.modified'));
@@ -71,7 +71,7 @@ try {
   for (const [combo, key] of [['Control+=', '='], ['Control+-', '-'], ['Control+0', '0']]) {
     await page.evaluate(() => (window.__keys = []));
     await page.keyboard.press(combo);
-    const seen = await page.evaluate(() => window.__keys.filter((k) => k.ctrl));
+    const seen = await page.evaluate(() => window.__keys);
     check(seen.length === 1 && seen[0].key === key && seen[0].defaultPrevented === true, `${combo} inside the editor reached the document with defaultPrevented true (${JSON.stringify(seen)})`);
   }
 
