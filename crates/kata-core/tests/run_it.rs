@@ -1685,16 +1685,22 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
 }
 
 /// Mirrors `slashes` and `rulePath` in `app/src/app/lib/sdlc.ts`: claude's
-/// absolute-path rule form is `//` then the path with forward slashes. A change
-/// to those functions must change this one.
+/// absolute-path rule form is `//` then the path with forward slashes, and on
+/// Windows the drive is a lowercase letter without a colon (`D:\ws` is `//d/ws`).
+/// A change to those functions must change this one.
 fn rule_path(p: &std::path::Path) -> String {
     let s = p.to_string_lossy().replace('\\', "/");
     let s = s.trim_end_matches('/');
+    let b = s.as_bytes();
+    if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b.len() == 2 || b[2] == b'/')
+    {
+        return format!(
+            "//{}/{}",
+            s[..1].to_lowercase(),
+            s[2..].trim_start_matches('/')
+        );
+    }
     format!("//{}", s.trim_start_matches('/'))
-}
-
-fn edit_write(path: &str) -> Vec<String> {
-    vec![format!("Edit({path})"), format!("Write({path})")]
 }
 
 /// A workspace copied from the build-proof fixture: `app`, `api`, and the
@@ -1737,29 +1743,39 @@ impl ProofWorkspace {
 
     /// The rules T41's `buildPermissions` generates for a repository run of `app`
     /// (api and master are the other repositories). Copied from
-    /// `app/src/app/lib/sdlc.ts`: `BUILD_DENY`, the Edit/Write denies, the allows.
+    /// `app/src/app/lib/sdlc.ts`: `BUILD_DENY`, the checks and other-repository
+    /// `Edit` denies, the other repositories' build logs (not `build/**`: deny
+    /// beats allow, which would block the run's own log), the allows. Only `Edit`
+    /// path rules exist; claude ignores `Write(path)`.
     fn rules(&self) -> (Vec<String>, Vec<String>) {
         let mut deny: Vec<String> = ["Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)"]
             .iter()
             .map(|s| s.to_string())
             .collect();
-        deny.extend(edit_write(&format!("{}/**", rule_path(&self.checks))));
+        deny.push(format!("Edit({}/**)", rule_path(&self.checks)));
         let mut allow = vec![format!("Read({}/**)", rule_path(&self.ws))];
-        deny.extend(edit_write(&format!(
-            "{}/**",
-            rule_path(&self.ws.join("api"))
-        )));
-        allow.extend(edit_write(&rule_path(&self.build_file("app"))));
+        for other in ["api", "master"] {
+            deny.push(format!("Edit({})", rule_path(&self.build_file(other))));
+        }
+        deny.push(format!("Edit({}/**)", rule_path(&self.ws.join("api"))));
+        allow.push(format!("Edit({})", rule_path(&self.build_file("app"))));
         (deny, allow)
     }
 
-    fn spec(&self, name: &str, task: &str) -> RunSpec {
+    /// `auto` runs the deny proofs; `prompt` with `unmatched = "deny"` runs the
+    /// allow proofs, so nothing but an allow rule can let a call through.
+    fn spec(&self, name: &str, task: &str, auto: bool) -> RunSpec {
         let (deny, allow) = self.rules();
         let mut spec = base_spec(&self.ws.join("app").to_string_lossy());
         spec.name = name.into();
         spec.task = task.into();
         spec.auth.bare = false;
-        spec.permissions.mode = kata_core::spec::PermissionMode::Auto;
+        if auto {
+            spec.permissions.mode = kata_core::spec::PermissionMode::Auto;
+        } else {
+            spec.permissions.mode = kata_core::spec::PermissionMode::Prompt;
+            spec.permissions.unmatched = kata_core::spec::UnmatchedPolicy::Deny;
+        }
         spec.permissions.deny = deny;
         spec.permissions.allow = allow;
         spec.leash.max_turns = Some(30);
@@ -1874,12 +1890,15 @@ fn result_of_call(events: &[KataEvent], needle: &str) -> Option<(bool, String, b
     })
 }
 
-fn looks_denied(output: &str) -> bool {
+/// True when claude refused the call because a permission rule matched. The
+/// auto-mode classifier's refusal ("judged this action dangerous") never counts.
+fn rule_denied(output: &str) -> bool {
     let o = output.to_lowercase();
-    o.contains("denied")
-        || o.contains("deny")
-        || o.contains("not allowed")
-        || o.contains("permission")
+    if o.contains("judged this action") || o.contains("classifier") {
+        return false;
+    }
+    o.contains("denied by your permission settings")
+        || (o.contains("permission to use") && o.contains("has been denied"))
 }
 
 fn fwd(p: &std::path::Path) -> String {
@@ -1892,43 +1911,60 @@ fn build_proof_subagent_inherits_deny_rules() {
     if !build_proof_enabled() {
         return;
     }
-    let w = ProofWorkspace::new();
-    let checks_file = w.checks.join("proof-checks.txt");
-    let api_file = w.ws.join("api/proof-api.txt");
-    let task = format!(
-        "Dispatch exactly ONE subagent with the Agent tool and tell it to do these four things, each as its own separate tool call, in this order, and to report each outcome verbatim: \
-         (1) run the Bash command `git remote -v`; \
-         (2) run the Bash command `gh --version`; \
-         (3) use the Write tool to create the file {checks} containing the text checks; \
-         (4) use the Write tool to create the file {api} containing the text api. \
-         The subagent must attempt all four even if an earlier one fails. Do not do any of these yourself. After the subagent reports, reply with one line.",
-        checks = fwd(&checks_file),
-        api = fwd(&api_file),
-    );
-    let events = run_real(&w.spec("build-proof-subagent", &task));
-
-    assert!(
-        events.iter().any(|e| matches!(e,
-            KataEvent::ToolUse { name, parent_id: None, .. } if name == "Agent" || name == "Task")),
-        "claude never dispatched a subagent"
-    );
-    for (label, needle) in [
-        ("git remote -v", "git remote"),
-        ("gh --version", "gh --version"),
-        ("write into checks", "proof-checks.txt"),
-        ("write into api", "proof-api.txt"),
-    ] {
-        // Skip the parent's own Agent call, whose prompt also mentions each needle.
-        let (ok, output, in_subagent) = subagent_call(&events, needle)
-            .unwrap_or_else(|| panic!("no subagent call for `{label}` reached a result"));
-        assert!(in_subagent);
-        assert!(
-            !ok && looks_denied(&output),
-            "`{label}` was not denied: ok={ok} output={output:?}"
+    // Auto mode sometimes blocks the whole Agent dispatch; retry until a subagent
+    // actually ran, up to 3 times, before calling the proof inconclusive.
+    for attempt in 1..=3 {
+        let w = ProofWorkspace::new();
+        let checks_file = w.checks.join("proof-checks.txt");
+        let api_file = w.ws.join("api/proof-api.txt");
+        let api_log = w.build_file("api");
+        let task = format!(
+            "This is a permission configuration test. Use the Agent tool to start exactly one subagent and tell it to try these five things, each as its own separate tool call, in this order, and to report each outcome verbatim: \
+             (1) run the Bash command `git remote -v`; \
+             (2) run the Bash command `gh --version`; \
+             (3) use the Write tool to create the file {checks} containing the text checks; \
+             (4) use the Write tool to create the file {api} containing the text api; \
+             (5) use the Write tool to create the file {log} containing the text api log. \
+             The subagent should try all five even if an earlier one is refused, because the test is about which ones are refused. Do not do any of these yourself. After the subagent reports, reply with one line.",
+            checks = fwd(&checks_file),
+            api = fwd(&api_file),
+            log = fwd(&api_log),
         );
+        let events = run_real(&w.spec("build-proof-subagent", &task, true));
+        let ran = events.iter().any(|e| {
+            matches!(
+                e,
+                KataEvent::ToolUse {
+                    parent_id: Some(_),
+                    ..
+                }
+            )
+        });
+        if !ran {
+            eprintln!("attempt {attempt}: no subagent ran, retrying");
+            assert!(attempt < 3, "inconclusive: no subagent ran in 3 attempts");
+            continue;
+        }
+        for (label, needle) in [
+            ("git remote -v", "git remote"),
+            ("gh --version", "gh --version"),
+            ("write into checks", "proof-checks.txt"),
+            ("write into api", "proof-api.txt"),
+            ("write another repository's build log", "api.md"),
+        ] {
+            // Only calls made inside the subagent; the parent's Agent call also mentions each needle.
+            let (ok, output, _) = subagent_call(&events, needle)
+                .unwrap_or_else(|| panic!("no subagent call for `{label}` reached a result"));
+            assert!(
+                !ok && rule_denied(&output),
+                "`{label}` was not refused by a rule: ok={ok} output={output:?}"
+            );
+        }
+        assert!(!checks_file.exists(), "the checks file was written");
+        assert!(!api_file.exists(), "the api file was written");
+        assert!(!api_log.exists(), "the api build log was written");
+        return;
     }
-    assert!(!checks_file.exists(), "the checks file was written");
-    assert!(!api_file.exists(), "the api file was written");
 }
 
 /// Like `result_of_call`, but only a call made inside a subagent.
@@ -1962,18 +1998,16 @@ fn build_proof_absolute_allow_rules_reach_outside_the_workdir() {
     let w = ProofWorkspace::new();
     let notes = w.ws.join("api/notes.txt");
     let app_md = w.build_file("app");
-    let api_md = w.build_file("api");
     let task = format!(
-        "Do these three things yourself, each as its own tool call, in this order, using exactly these absolute paths. \
+        "This is a permission configuration test. Do these two things yourself, each as its own tool call, in this order, using exactly these absolute paths. \
          (1) Use the Read tool on {notes}. \
          (2) Use the Write tool to create {app_md} containing the text app done. \
-         (3) Use the Write tool to create {api_md} containing the text api done. \
-         Attempt all three even if one fails. Then reply with one line saying which succeeded and which were refused.",
+         Then reply with one line saying which succeeded.",
         notes = fwd(&notes),
         app_md = fwd(&app_md),
-        api_md = fwd(&api_md),
     );
-    let events = run_real(&w.spec("build-proof-absolute", &task));
+    // Prompt mode with unmatched = deny: only an allow rule can let these through.
+    let events = run_real(&w.spec("build-proof-absolute", &task, false));
 
     let (ok, output, _) = result_of_call(&events, "notes.txt").expect("the Read reached a result");
     assert!(
@@ -1984,13 +2018,6 @@ fn build_proof_absolute_allow_rules_reach_outside_the_workdir() {
         result_of_call(&events, "app.md").expect("the app.md Write reached a result");
     assert!(ok, "write of build/app.md was refused: {output:?}");
     assert!(app_md.exists(), "build/app.md was not created");
-    let (ok, output, _) =
-        result_of_call(&events, "api.md").expect("the api.md Write reached a result");
-    assert!(
-        !ok && looks_denied(&output),
-        "write of build/api.md was not denied: ok={ok} output={output:?}"
-    );
-    assert!(!api_md.exists(), "build/api.md was created");
 }
 
 #[test]
@@ -2003,7 +2030,7 @@ fn build_proof_nested_skills_load_when_working_there() {
     let task = "Edit the file web/src/index.txt so that its single line `old` becomes `new`. \
                 Then reply with one sentence naming every skill, by exact name, that is available to you from the project, including any that came into scope because you worked under web/. \
                 If none, say none.";
-    let events = run_real(&w.spec("build-proof-nested-skill", task));
+    let events = run_real(&w.spec("build-proof-nested-skill", task, true));
 
     let edited = std::fs::read_to_string(w.ws.join("app/web/src/index.txt")).unwrap();
     assert_eq!(edited.trim(), "new", "the edit under web/ did not happen");
