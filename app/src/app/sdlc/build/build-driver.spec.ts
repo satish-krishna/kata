@@ -412,4 +412,21 @@ describe('BuildDriver', () => {
     expect(w.driver.stopped().get('app')?.reason).toBe(stopMessage(130, null));
     expect(going(w.driver)).toEqual(['api']);
   });
+
+  it('a cancelled repository that is now waiting is not relaunched when its dependency gets a row (R6.1)', async () => {
+    const w = world([
+      { id: 'T1', repo: 'app' },
+      { id: 'T2', repo: 'app', dependsOn: ['T3'] },
+      { id: 'T3', repo: 'api' },
+    ]);
+    await w.driver.begin(3600);
+    await flush();
+    expect(w.log).toEqual(['app', 'api']);
+    w.driver.cancel('app');
+    await w.of('app')[0].end(['T1'], { exit: 130 });
+    expect(w.driver.stopped().get('app')).toEqual({ task: 'T2', reason: stopMessage(130, null) });
+    await w.of('api')[0].end(['T3']);
+    expect(w.log).toEqual(['app', 'api']);
+    expect(w.driver.going().has('app')).toBe(false);
+  });
 });
