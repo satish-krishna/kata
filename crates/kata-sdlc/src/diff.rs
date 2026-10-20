@@ -161,14 +161,12 @@ pub fn loc_by_file_type(files: &[ChangedFile]) -> Vec<FileTypeStats> {
     let mut by_type: BTreeMap<String, FileTypeStats> = BTreeMap::new();
     for file in files.iter().filter(|f| !f.binary) {
         let extension = file.file_type();
-        let stats = by_type
-            .entry(extension.clone())
-            .or_insert(FileTypeStats {
-                extension,
-                files: 0,
-                added: 0,
-                removed: 0,
-            });
+        let stats = by_type.entry(extension.clone()).or_insert(FileTypeStats {
+            extension,
+            files: 0,
+            added: 0,
+            removed: 0,
+        });
         stats.files += 1;
         stats.added += file.added;
         stats.removed += file.removed;
@@ -183,13 +181,51 @@ pub fn loc_by_file_type(files: &[ChangedFile]) -> Vec<FileTypeStats> {
 }
 
 /// The files of one part of the change, sorted by path.
-pub fn changed_files(_repo: &Path, _part: Part) -> Result<Vec<ChangedFile>, DiffError> {
-    todo!()
+pub fn changed_files(repo: &Path, part: Part) -> Result<Vec<ChangedFile>, DiffError> {
+    let mut files = list(repo, part)?;
+    match part {
+        Part::Uncommitted => files.iter_mut().for_each(|f| f.uncommitted = true),
+        Part::Whole | Part::Committed => {
+            let dirty: BTreeSet<String> = list(repo, Part::Uncommitted)?
+                .into_iter()
+                .map(|f| f.path)
+                .collect();
+            for f in &mut files {
+                f.uncommitted = dirty.contains(&f.path);
+            }
+        }
+    }
+    Ok(files)
 }
 
 /// The two sides of `path`, which must be one of the part's changed files.
-pub fn file_pair(_repo: &Path, _part: Part, _path: &str) -> Result<FilePair, DiffError> {
-    todo!()
+pub fn file_pair(repo: &Path, part: Part, path: &str) -> Result<FilePair, DiffError> {
+    let file = changed_files(repo, part)?
+        .into_iter()
+        .find(|f| f.path == path)
+        .ok_or_else(|| DiffError::FileNotChanged(path.to_string()))?;
+    if file.binary {
+        return Ok(binary_pair(path));
+    }
+    let left = left_side(repo, part)?;
+    let original = match file.status {
+        ChangeStatus::Added | ChangeStatus::Untracked => String::new(),
+        _ => {
+            let old = file.old_path.as_deref().unwrap_or(path);
+            show(repo, &format!("{left}:{old}"))?
+        }
+    };
+    let modified = match (file.status, part) {
+        (ChangeStatus::Deleted, _) => String::new(),
+        (_, Part::Committed) => show(repo, &format!("HEAD:{path}"))?,
+        _ => lossy(&std::fs::read(repo.join(path))?),
+    };
+    Ok(FilePair {
+        original,
+        modified,
+        language_hint: language_for(path).to_string(),
+        binary: false,
+    })
 }
 
 fn lossy(bytes: &[u8]) -> String {
@@ -381,6 +417,8 @@ mod tests {
     fn fixture() -> (tempfile::TempDir, PathBuf) {
         let d = tempfile::tempdir().unwrap();
         let r = repo(d.path(), "app");
+        // Line endings are not under test; keep a global autocrlf from rewriting checkouts.
+        git::run(&r, &["config", "core.autocrlf", "false"]).unwrap();
         commit_file(&r, "modified.txt", "one\ntwo\nthree\n", "files");
         commit_file(&r, "deleted.txt", "gone\n", "more");
         (d, r)
@@ -823,7 +861,12 @@ mod tests {
     fn paths_with_spaces_and_non_ascii_round_trip() {
         let (_d, r) = fixture();
         checkout(&r, "change/x", true);
-        commit_file(&r, "dir with space/h\u{e9}llo w\u{f6}rld.txt", "hi\n", "add");
+        commit_file(
+            &r,
+            "dir with space/h\u{e9}llo w\u{f6}rld.txt",
+            "hi\n",
+            "add",
+        );
         write(&r, "d\u{fc}r/na\u{ef}ve file.rs", "fn n() {}\n");
 
         let files = changed_files(&r, Part::Whole).unwrap();
@@ -831,8 +874,8 @@ mod tests {
         assert_eq!(
             paths(&files),
             vec![
-                "d\u{fc}r/na\u{ef}ve file.rs",
-                "dir with space/h\u{e9}llo w\u{f6}rld.txt"
+                "dir with space/h\u{e9}llo w\u{f6}rld.txt",
+                "d\u{fc}r/na\u{ef}ve file.rs"
             ]
         );
         for f in &files {
