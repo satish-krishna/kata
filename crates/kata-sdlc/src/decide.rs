@@ -11,6 +11,7 @@ pub enum Decision {
     AcceptIntent,
     RejectIntent,
     AcceptSpec,
+    AcceptPlan,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -39,6 +40,7 @@ pub fn message(decision: Decision, scope: &str, change: &str) -> String {
         Decision::AcceptIntent => "accept intent",
         Decision::RejectIntent => "reject intent",
         Decision::AcceptSpec => "accept spec",
+        Decision::AcceptPlan => "accept spec",
     };
     format!("docs({scope}): {verb} {change}\n\nGenerated-By: ai-sdlc")
 }
@@ -157,6 +159,7 @@ pub fn apply(
         Decision::AcceptIntent => ("intent.md", "accepted"),
         Decision::RejectIntent => ("intent.md", "rejected"),
         Decision::AcceptSpec => ("spec.md", "accepted"),
+        Decision::AcceptPlan => ("plan.md", "accepted"),
     };
     let rel = format!("intent/{system}/{change}/{file}");
     let path = master.join(&rel);
@@ -217,6 +220,53 @@ mod tests {
             message(Decision::AcceptSpec, "claims", CHANGE),
             "docs(claims): accept spec 2026-10-12-fnol\n\nGenerated-By: ai-sdlc"
         );
+    }
+
+    #[test]
+    fn accept_plan_message_uses_scope_and_trailer_r15_1() {
+        assert_eq!(
+            message(Decision::AcceptPlan, "sdlc", CHANGE),
+            format!("docs(sdlc): accept plan {CHANGE}\n\nGenerated-By: ai-sdlc")
+        );
+    }
+
+    #[test]
+    fn accept_plan_commits_and_opens_build_r1_2() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let dir = "intent/claims/2026-10-12-fnol";
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/intent.md"),
+            "---\nstatus: accepted\nscope: sdlc\n---\nintent\n",
+            "intent",
+        );
+        let intent_pin = git::run(&repo, &["rev-parse", "HEAD"]).unwrap();
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/spec.md"),
+            &format!("---\nstatus: accepted\nsource_intent_commit: {intent_pin}\n---\nspec\n"),
+            "spec",
+        );
+        let spec_pin = git::run(&repo, &["rev-parse", "HEAD"]).unwrap();
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/plan.md"),
+            &format!(
+                "---\nstatus: draft\nsource_spec_commit: {spec_pin}\n---\n\n## Tasks\n\n### T1: One (`app`)\n\n- **Depends on:** none\n"
+            ),
+            "plan",
+        );
+        let out = apply(&repo, "claims", CHANGE, Decision::AcceptPlan, false).unwrap();
+        assert_eq!(out, DecideOutcome::Committed);
+        assert_eq!(
+            git::run(&repo, &["log", "-1", "--format=%B"])
+                .unwrap()
+                .trim_end(),
+            format!("docs(sdlc): accept plan {CHANGE}\n\nGenerated-By: ai-sdlc")
+        );
+        let got = changes::list(&repo, "claims");
+        assert_eq!(got[0].stage, changes::Stage::BuildReady);
     }
 
     fn subject(repo: &Path) -> String {
