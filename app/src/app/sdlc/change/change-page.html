@@ -128,6 +128,14 @@
     (confirm)="vm.confirmLeftovers()"
     (cancel)="vm.cancelLeftovers()"
   />
+  <app-done-dialog
+    [report]="vm.doneReport()"
+    [change]="vm.changeName()"
+    (confirm)="vm.confirmDone()"
+    (anotherRound)="vm.doneRound()"
+    (runReview)="vm.doneRunReview()"
+    (cancel)="vm.cancelDone()"
+  />
   <app-build-refusal-dialog [reason]="vm.refusal()" (close)="vm.closeRefusal()" />
   <app-confirm-dialog
     [open]="vm.confirmPrompt() !== null"

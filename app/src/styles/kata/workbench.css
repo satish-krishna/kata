@@ -279,6 +279,10 @@
 .k-findings__text { font: var(--text-base)/1.5 var(--font-sans); color: var(--text-primary); }
 .k-findings__replaced { display: grid; gap: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); }
 .k-findings__replaced > summary { font: var(--font-code-sm); color: var(--text-muted); cursor: pointer; }
+/* A check that did not pass: its words, then the tail of its output in an inset block. */
+.k-check { display: grid; gap: var(--space-3); }
+.k-check > p { margin: 0; }
+.k-check__tail { margin: 0; max-height: 14rem; overflow: auto; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-inset); color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---------- AI-SDLC: change page ---------- */
 .k-change { flex: 1; min-height: 0; display: grid; grid-template-rows: auto 1fr; }

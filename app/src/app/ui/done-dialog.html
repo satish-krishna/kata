@@ -1,0 +1,112 @@
+<hlm-dialog [state]="report() ? 'open' : 'closed'" (stateChanged)="onState($event)">
+  <hlm-dialog-content *hlmDialogPortal="let ctx" class="[--dialog-w:60rem]">
+    @if (report(); as r) {
+      <h2 hlmDialogTitle>Declare the change done</h2>
+      <div class="k-left max-h-[65vh] overflow-y-auto">
+        @if (r.notReady !== null) {
+          <p class="k-status k-status--error" role="alert"><span class="k-status__dot"></span>{{ r.notReady }}</p>
+        } @else {
+          <p class="k-status k-status--success">
+            <span class="k-status__dot"></span>Signed in to github.com as {{ r.account }} · every origin is a GitHub repository
+          </p>
+        }
+        @if (r.checksError !== null) {
+          <p class="k-status k-status--error" role="alert"><span class="k-status__dot"></span>{{ r.checksError }}</p>
+        }
+
+        <div hlmTableContainer>
+          <table hlmTable>
+            <thead hlmTableHeader>
+              <tr hlmTableRow>
+                <th hlmTableHead>Repository</th>
+                <th hlmTableHead>Branch</th>
+                <th hlmTableHead>Checks</th>
+              </tr>
+            </thead>
+            <tbody hlmTableBody>
+              @for (repo of r.repos; track repo.repo) {
+                <tr hlmTableRow>
+                  <td hlmTableCell class="k-mono">{{ repo.repo }}</td>
+                  <td hlmTableCell class="k-mono">change/{{ change() }} → {{ repo.base }}</td>
+                  <td hlmTableCell>
+                    <ul class="k-left__list">
+                      @for (spec of repo.checks; track spec.name) {
+                        <li class="k-left__row">
+                          <span class="k-mono">{{ spec.name }}</span>
+                          <span class="k-mono k-faint">{{ spec.argv.join(' ') }}</span>
+                          <span [class]="'k-status k-status--' + tone(label(repo, spec))">
+                            <span class="k-status__dot"></span>{{ label(repo, spec) }}
+                          </span>
+                        </li>
+                      } @empty {
+                        <li>
+                          <span [class]="'k-status k-status--' + tone(bare(repo))">
+                            <span class="k-status__dot"></span>{{ bare(repo) }}
+                          </span>
+                        </li>
+                      }
+                    </ul>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="k-left__note">Checks from <span class="k-mono">{{ r.checksPath }}</span></p>
+
+        <app-check-results [repos]="r.repos" />
+
+        @if (r.offenders.length > 0) {
+          <section class="k-left__group" aria-labelledby="done-offenders">
+            <h3 id="done-offenders" class="k-left__head">Commits that break the commit rules</h3>
+            <ul class="k-left__list">
+              @for (o of r.offenders; track o.repo + o.hash) {
+                <li class="k-left__row">
+                  <span class="k-mono">{{ o.repo }}</span>
+                  <span class="k-mono">{{ o.hash.slice(0, 7) }}</span>
+                  <span>{{ o.subject }}</span>
+                </li>
+              }
+            </ul>
+          </section>
+        }
+
+        @if (r.departures.length > 0) {
+          <section class="k-left__group" aria-labelledby="done-departures">
+            <h3 id="done-departures" class="k-left__head">Departures from the plan</h3>
+            <ul class="k-left__list">
+              @for (d of r.departures; track d.task + d.repo) {
+                <li class="k-left__row">
+                  <span class="k-mono">{{ d.task }}</span>
+                  <span class="k-mono">{{ d.repo }}</span>
+                  <span class="k-left__note">The plan said: {{ d.planText }}</span>
+                  <span>Done instead: {{ d.departure }}</span>
+                </li>
+              }
+            </ul>
+          </section>
+        }
+
+        @if (review(); as rv) {
+          <app-findings-list [findings]="rv.findings" />
+          <p class="k-left__note">Reviewed at <span class="k-mono">{{ reviewed(rv.at) }}</span></p>
+        } @else if (missing(); as why) {
+          <section class="k-left__group" aria-labelledby="done-review">
+            <h3 id="done-review" class="k-left__head">Review</h3>
+            <p class="k-status k-status--warning"><span class="k-status__dot"></span>{{ missingText[why] }}</p>
+            <div>
+              <button hlmBtn variant="secondary" size="sm" type="button" (click)="runReview.emit()">Run review</button>
+            </div>
+          </section>
+        }
+      </div>
+      <hlm-dialog-footer>
+        @if (roundOffered()) {
+          <button hlmBtn variant="secondary" size="sm" type="button" (click)="anotherRound.emit()">Another round</button>
+        }
+        <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
+        <button hlmBtn variant="primary" size="sm" type="button" [disabled]="!confirmable()" (click)="confirm.emit()">Open pull requests</button>
+      </hlm-dialog-footer>
+    }
+  </hlm-dialog-content>
+</hlm-dialog>

@@ -12,6 +12,7 @@ import { BuildLogTable } from '../../ui/build-log-table';
 import { BuildRefusalDialog } from '../../ui/build-refusal-dialog';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
 import { DocView } from '../../ui/doc-view';
+import { DoneDialog } from '../../ui/done-dialog';
 import { FeedbackDialog } from '../../ui/feedback-dialog';
 import { LeftoverDialog } from '../../ui/leftover-dialog';
 import { LockOverlay } from '../../ui/lock-overlay';
@@ -23,7 +24,7 @@ import { ChangePageViewModel } from './change-page.view-model';
 @Component({
   selector: 'app-change-page',
   providers: [ChangePageViewModel, provideIcons({ lucideTriangleAlert })],
-  imports: [NgIcon, HlmAlertImports, HlmButtonImports, HlmTabsImports, SdlcToolbar, StageStepper, DocView, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildLogTable, BuildRefusalDialog, SdlcSession, BuildView, ChangesView],
+  imports: [NgIcon, HlmAlertImports, HlmButtonImports, HlmTabsImports, SdlcToolbar, StageStepper, DocView, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildLogTable, BuildRefusalDialog, DoneDialog, SdlcSession, BuildView, ChangesView],
   templateUrl: './change-page.html',
 })
 export class ChangePage {

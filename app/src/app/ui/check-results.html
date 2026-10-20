@@ -1,0 +1,10 @@
+@for (p of problems(); track $index) {
+  <section class="k-check" [attr.aria-label]="p.repo + ' · ' + p.name">
+    <h3 class="k-left__head">{{ p.repo }} · {{ p.name }} · last 50 lines</h3>
+    <p [class]="'k-status k-status--' + (p.kind === 'failed' ? 'error' : 'warning')">
+      <span class="k-status__dot"></span>{{ p.heading }}
+    </p>
+    <p class="k-left__note">{{ p.note }}</p>
+    <pre class="k-check__tail k-mono" tabindex="0">{{ p.tail }}</pre>
+  </section>
+}

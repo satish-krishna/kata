@@ -11,6 +11,11 @@ import type { Decision } from '@bindings/Decision';
 import type { RepoFiles } from '@bindings/RepoFiles';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
+import type { ChecksPlan } from '@bindings/ChecksPlan';
+import type { Offender } from '@bindings/Offender';
+import type { PrResult } from '@bindings/PrResult';
+import type { PublishRepo } from '@bindings/PublishRepo';
+import type { RepoChecks } from '@bindings/RepoChecks';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { BuildTile } from '../../ui/stage-stepper';
@@ -27,6 +32,7 @@ import {
   actionLabel,
   actionsForChange,
   primaryAction,
+  reviewFindings,
   revisits,
   runCounts,
   specFor,
@@ -36,6 +42,7 @@ import {
   type StageAction,
   type StepCounts,
 } from '../../lib/sdlc';
+import { REVIEW_MISSING_TEXT, canConfirm, checkLabel, reviewState, type DoneReport, type DoneReview } from '../../lib/sdlc-done';
 import { inTauri } from '../../lib/mock';
 import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
 
@@ -87,6 +94,9 @@ const OUT_OF_DATE_BANNER: Record<NonNullable<ChangeInfo['out_of_date']>, string>
   'plan-pin': 'This plan was not written from the spec accepted now. Rewrite the plan before building.',
   'no-tasks': 'This plan has no tasks. Rewrite the plan before building.',
 };
+/** The time limit of a review started from the done dialog: the build dialog's default. */
+const REVIEW_TIMEOUT_SECS = 2 * 60 * 60;
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const SUPERSEDED_BANNER = 'The intent was reopened after this plan was written. Rewrite the plan before building.';
 
 /** What the build view starts from: the prepared branches, the time limit, the round if one was asked for, and Kata's checks folder. */
@@ -285,6 +295,56 @@ export class ChangePageViewModel {
     this.refusal.set(null);
   }
 
+  // --- declaring done: Kata's own checks first, then the confirmation
+  /** What the done dialog shows; the dialog is open exactly while this is set. */
+  readonly doneReport = signal<DoneReport | null>(null);
+  private doneRepos: PublishRepo[] = [];
+
+  /** The operator confirmed: open the pull requests. */
+  async confirmDone(): Promise<void> {
+    const report = this.doneReport();
+    const w = this.current();
+    const master = this.scanMaster();
+    if (report === null || !canConfirm(report) || !w || master === null) return;
+    this.doneReport.set(null);
+    let results: PrResult[] = [];
+    const out = await this.lock.runSteps('Opening pull requests', [
+      {
+        label: 'Open pull requests',
+        run: async () => {
+          results = await this.transport.sdlcPublish(w.folder, master, this.system(), this.changeName(), this.doneRepos);
+          return plural(results.length, 'repository', 'repositories');
+        },
+      },
+    ]);
+    if (out === 'done') {
+      let opened = 0;
+      for (const r of results) {
+        if (r.outcome.kind === 'failed') this.toasts.error(`${r.repo}: ${r.outcome.error}`);
+        else opened++;
+      }
+      if (opened > 0) this.toasts.success(`Opened ${plural(opened, 'pull request', 'pull requests')}`);
+    }
+    await this.load();
+  }
+
+  /** Ask for another round instead of opening the pull requests. */
+  doneRound(): void {
+    this.doneReport.set(null);
+    this.buildMode.set('round');
+  }
+
+  /** Start the build view with a review only: every task has a row, so nothing else runs. */
+  async doneRunReview(): Promise<void> {
+    this.doneReport.set(null);
+    this.asked = { timeoutSecs: REVIEW_TIMEOUT_SECS, instructions: null, repo: null };
+    await this.prepare(false);
+  }
+
+  cancelDone(): void {
+    this.doneReport.set(null);
+  }
+
   // --- the lock: Kata's own checks in the overlay, an agent run as the session view
   readonly locked = computed(() => this.lock.active() !== null);
   readonly lockView = computed(() => {
@@ -346,6 +406,9 @@ export class ChangePageViewModel {
         return;
       case 'another-round':
         this.buildMode.set('round');
+        return;
+      case 'declare-done':
+        await this.declareDone();
         return;
       default:
         // Regenerating an existing document first asks what should change; a first draft just runs.
@@ -464,6 +527,135 @@ export class ChangePageViewModel {
     const scan = this.scan();
     return scan ? masterRepo(scan) : null;
   });
+
+  /**
+   * Check that GitHub, the commits, the review and every repository's checks are in order, then show the dialog.
+   * A step that refuses is recorded and the steps after it do not run. Nothing throws.
+   */
+  private async declareDone(): Promise<void> {
+    const w = this.current();
+    const master = this.scanMaster();
+    if (this.change()?.stage !== 'build-finished' || !w || master === null) return;
+    const folder = w.folder;
+    const system = this.system();
+    const change = this.changeName();
+    let touched: PublishRepo[];
+    try {
+      touched = await this.transport.sdlcTouchedRepos(folder, master, system, change);
+      for (const r of touched) {
+        if ((await this.transport.sdlcDiffFiles(r.path, 'uncommitted')).files.length > 0) {
+          this.toasts.error(`Commit or discard the uncommitted edits in ${r.repo} before declaring done.`);
+          return;
+        }
+      }
+    } catch (e) {
+      this.toasts.error(`Could not read the repositories: ${message(e)}`);
+      return;
+    }
+
+    const productRepos = (this.status()?.repos ?? []).map((r) => r.repo).filter((r) => r !== master);
+    const got = {
+      account: null as string | null,
+      notReady: null as string | null,
+      offenders: [] as Offender[],
+      review: { missing: 'none' } as DoneReview,
+      plan: null as ChecksPlan | null,
+      checksError: null as string | null,
+      results: new Map<string, RepoChecks>(),
+    };
+    const refuse = (e: unknown): never => {
+      got.notReady = message(e);
+      throw new Error(got.notReady);
+    };
+    let planLoaded = false;
+    const loadPlan = async () => {
+      if (planLoaded) return;
+      planLoaded = true;
+      try {
+        got.plan = await this.transport.sdlcChecksLoad(folder, master, system);
+      } catch (e) {
+        got.checksError = message(e);
+      }
+    };
+
+    const out = await this.lock.runSteps('Declaring done', [
+      {
+        label: 'Signed in to GitHub',
+        run: async () => {
+          try {
+            got.account = await this.transport.sdlcGhSignedIn(touched);
+          } catch (e) {
+            refuse(e);
+          }
+          return got.account;
+        },
+      },
+      {
+        label: 'Origins are GitHub repositories',
+        run: async () => {
+          try {
+            await this.transport.sdlcGhOrigins(touched);
+          } catch (e) {
+            refuse(e);
+          }
+          return plural(touched.length, 'repository', 'repositories');
+        },
+      },
+      {
+        label: 'Commit rules',
+        run: async () => {
+          got.offenders = await this.transport.sdlcCommitOffenders(folder, master, system, change);
+          return got.offenders.length === 0 ? 'all follow the rules' : plural(got.offenders.length, 'commit breaks', 'commits break') + ' them';
+        },
+      },
+      {
+        label: 'Review covers the current work',
+        run: async () => {
+          const [links, records, heads] = await Promise.all([
+            this.transport.sdlcRunLinks(),
+            this.transport.listRuns(),
+            this.transport.sdlcBuildHeads(folder, productRepos, change),
+          ]);
+          const state = reviewState(links, records, heads, { workspaceId: w.id, system, change });
+          if (state.kind !== 'current') {
+            got.review = { missing: state.kind };
+            return REVIEW_MISSING_TEXT[state.kind];
+          }
+          const findings = reviewFindings(await this.transport.loadRun(state.link.run_id));
+          got.review = { at: state.link.started_at * 1000, findings };
+          return plural(findings.length, 'finding', 'findings');
+        },
+      },
+      ...touched.map((r) => ({
+        label: `Checks · ${r.repo}`,
+        run: async () => {
+          await loadPlan();
+          if (got.checksError !== null) return 'not run';
+          const result = await this.transport.sdlcRunChecks(folder, master, system, r);
+          got.results.set(r.repo, result);
+          return checkLabel(result);
+        },
+      })),
+    ]);
+    if (out === 'cancelled' || (out === 'failed' && got.notReady === null)) return;
+
+    this.doneRepos = touched;
+    this.doneReport.set({
+      account: got.account,
+      notReady: got.notReady,
+      repos: touched.map((r) => ({
+        repo: r.repo,
+        base: r.base,
+        checks: (got.plan?.checks ?? []).filter((c) => c.repo === r.repo),
+        result: got.results.get(r.repo) ?? null,
+      })),
+      offenders: got.offenders,
+      departures: this.status()?.departures ?? [],
+      review: got.review,
+      checksPath: got.plan?.path ?? `${this.checksDir() ?? ''}/${system}.toml`,
+      checksError: got.checksError,
+    });
+  }
 
   private async prepare(continueWithLeftovers: boolean): Promise<void> {
     const w = this.current();
