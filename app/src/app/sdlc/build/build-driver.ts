@@ -204,14 +204,14 @@ export class BuildDriver {
     void (async () => this.deps.start(target, opts))()
       .catch((e: unknown): RunEnd => ({ exit: null, error: e instanceof Error ? e.message : String(e) }))
       .then((end) =>
-        this.enqueue(() => this.ended(key, task, end)).catch(() => {
+        this.enqueue(() => this.ended(key, task, end, instructions !== undefined)).catch(() => {
           // Other runs still going end through `look` and settle the phase then; stopping now would end the build under them.
           if (this.going().size === 0 && !this.reviewing) this.phase.set('stopped');
         }),
       );
   }
 
-  private async ended(key: string, task: string, end: RunEnd): Promise<void> {
+  private async ended(key: string, task: string, end: RunEnd, isRound: boolean): Promise<void> {
     this.controllers.delete(key);
     const next = new Set(this.going());
     next.delete(key);
@@ -226,7 +226,7 @@ export class BuildDriver {
       }
     } else {
       try {
-        await this.judge(key, task, end, cancelled);
+        await this.judge(key, task, end, cancelled, isRound);
       } catch {
         // The result must not be lost: without a stop entry the repository would look ready again and be relaunched.
         this.markStopped(key, task, `${stopMessage(end.exit, end.error)} · could not read build status`, true);
@@ -241,14 +241,18 @@ export class BuildDriver {
     await this.look();
   }
 
-  private async judge(repo: string, task: string, end: RunEnd, cancelled: boolean): Promise<void> {
+  private async judge(repo: string, task: string, end: RunEnd, cancelled: boolean, isRound: boolean): Promise<void> {
     const status = await this.deps.status();
     const now = status.repos.find((r) => r.repo === repo);
     const recorded = task === '' || status.tasks.some((t) => t.id === task && t.row !== null);
     const blocked = now?.state.kind === 'waiting';
     const failed = end.exit !== 0 || end.error !== null;
+    // A plan-task run that recorded every task for its repository is finished whatever its exit code; a round that was asked for and failed is not.
+    const finished = !isRound && task !== '' && now?.state.kind === 'done';
     if (cancelled) {
       if (now?.state.kind !== 'done') this.stopAtCurrentTask(repo, task, now, end);
+    } else if (finished) {
+      return;
     } else if (task === '' ? failed : failed || (!recorded && !blocked)) {
       this.stopAtCurrentTask(repo, task, now, end);
     }
@@ -256,7 +260,8 @@ export class BuildDriver {
 
   /** Records the stop at the task the repository is on now (ready or waiting), so it never relaunches by itself when that task becomes ready. */
   private stopAtCurrentTask(repo: string, launchedOn: string, now: BuildStatus['repos'][number] | undefined, end: RunEnd): void {
-    const current = now?.state.kind === 'ready' || now?.state.kind === 'waiting' ? now.state.task : launchedOn;
+    // A repository with every task recorded has no task: `look` sees '' for it, so the stop must match that.
+    const current = now?.state.kind === 'ready' || now?.state.kind === 'waiting' ? now.state.task : now?.state.kind === 'done' ? '' : launchedOn;
     this.markStopped(repo, current, stopMessage(end.exit, end.error));
   }
 }
