@@ -36,7 +36,7 @@ export type ChangeState = 'loading' | 'ready' | 'not-found';
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const nowSecs = (): number => Math.floor(Date.now() / 1000);
 const BUSY = 'Another task is already running.';
-const NO_COUNTS: StepCounts = { intent: 0, spec: 0, plan: 0 };
+const NO_COUNTS: StepCounts = { intent: 0, spec: 0, plan: 0, build: 0, review: 0 };
 
 /** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result. */
 const RUNS: Partial<Record<StageAction, { kind: 'intent' | 'spec' | 'plan'; title: string; label: string }>> = {

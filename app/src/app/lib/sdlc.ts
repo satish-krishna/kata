@@ -123,7 +123,88 @@ export type RunContext = {
 
 export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan" | "build";
 
+/** One build run: a repository's run or the whole-change review, with everything its run-spec needs. */
+export type BuildRun = {
+  target: { repo: string } | "review";
+  timeoutSecs: number;
+  instructions: string | null;
+  workspaceFolder: string;
+  /** Folder name of the master repository, inside the workspace folder. */
+  masterRepo: string;
+  /** Folder names of the system's product repositories, inside the workspace folder. */
+  systemRepos: string[];
+  /** Absolute path of Kata's checks folder; no build run may edit it. */
+  checksDir: string;
+  continueOnLeftovers: boolean;
+};
+
+export const DEFAULT_BUILD_SECS = 7200;
+
 const AI_SDLC = "ai-sdlc";
+const MIN_BUILD_VERSION = [0, 6, 0];
+
+const versionParts = (v: string): number[] => v.split(/[.+-]/).slice(0, 3).map((p) => Number.parseInt(p, 10) || 0);
+
+/** True when the ai-sdlc plugin provides the build skill and is at least 0.6.0. */
+export function canBuild(catalog: CatalogEntry[], version: string | null): boolean {
+  const entry = catalog.find((e) => e.kind === "plugin" && e.name === AI_SDLC);
+  if (!entry || !entry.provides.includes("skill:build") || version === null) return false;
+  const have = versionParts(version);
+  for (let i = 0; i < MIN_BUILD_VERSION.length; i++) {
+    const h = have[i] ?? 0;
+    if (h !== MIN_BUILD_VERSION[i]) return h > MIN_BUILD_VERSION[i];
+  }
+  return true;
+}
+
+/** The text of a repository's stop, by the exit code the engine reported (R6.1). */
+export function stopMessage(exit: number | null, error: string | null): string {
+  const base =
+    exit === 124 ? "Stopped: reached the time limit"
+    : exit === 130 ? "Stopped: cancelled"
+    : exit === 123 ? "Stopped: nobody answered"
+    : "Stopped: the agent failed";
+  return error ? `${base} · ${error}` : base;
+}
+
+const BUILD_DENY = ["Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)"];
+const GITHUB_TOKENS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"];
+
+const slashes = (p: string): string => p.replace(/\\/g, "/").replace(/\/+$/, "");
+
+/** A path in claude's absolute-path rule form: `//` then the path with forward slashes. */
+function rulePath(p: string): string {
+  return `//${slashes(p).replace(/^\/+/, "")}`;
+}
+
+const editWrite = (path: string): string[] => [`Edit(${path})`, `Write(${path})`];
+
+function buildPermissions(run: BuildRun, ctx: RunContext) {
+  const ws = slashes(run.workspaceFolder);
+  const deny = [...BUILD_DENY, ...editWrite(`${rulePath(run.checksDir)}/**`)];
+  const allow = [`Read(${rulePath(ws)}/**)`];
+  if (run.target === "review") {
+    deny.push(...editWrite(`${rulePath(ws)}/**`));
+  } else {
+    const repo = run.target.repo;
+    for (const other of run.systemRepos) {
+      if (other !== repo && other !== run.masterRepo) deny.push(...editWrite(`${rulePath(`${ws}/${other}`)}/**`));
+    }
+    allow.push(...editWrite(rulePath(`${ws}/${run.masterRepo}/intent/${ctx.system}/${ctx.change}/build/${repo}.md`)));
+  }
+  return { deny, allow };
+}
+
+function buildTask(run: BuildRun, ctx: RunContext): string {
+  const flag = run.target === "review" ? "--review" : `--repo ${run.target.repo}`;
+  let task = `Use the ai-sdlc build skill for system ${ctx.system} on change folder ${ctx.change} with ${flag}.`;
+  if (run.continueOnLeftovers) {
+    task += " The engineer has already confirmed continuing on top of the uncommitted edits the previous run left; do not ask again.";
+  }
+  const instructions = run.instructions?.trim() ?? "";
+  if (run.target !== "review" && instructions) task += `\n\nInstructions from the engineer for this run:\n${instructions}`;
+  return task;
+}
 
 const hasPlugin = (catalog: CatalogEntry[], name: string): boolean =>
   catalog.some((e) => e.kind === "plugin" && e.name === name);
@@ -169,11 +250,34 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): s
       return task;
     }
     case "build":
-      return "";
+      throw new Error("a build run-spec is made from its BuildRun");
   }
 }
 
 const SDLC_TIMEOUT_SECS = 6 * 60 * 60;
+
+/**
+ * The run-spec of one build run. Always auto: bypass forbids the deny rules that keep an agent from publishing,
+ * and `settings.permission_mode` does not apply. No turn cap and no budget; the time limit is per run.
+ */
+function buildSpec(ctx: RunContext, run: BuildRun): RunSpec {
+  const spec = defaultSpec();
+  const ws = slashes(run.workspaceFolder);
+  const repo = run.target === "review" ? run.masterRepo : run.target.repo;
+  spec.name = `sdlc-${ctx.system}-${ctx.change}-${run.target === "review" ? "review" : `build-${run.target.repo}`}`;
+  spec.task = buildTask(run, ctx);
+  spec.workdir = `${ws}/${repo}`;
+  spec.plugins = { [AI_SDLC]: {} };
+  spec.auth = { bare: false, token_env: null };
+  spec.interactive = { enabled: true, answer_timeout_secs: 3600 };
+  spec.leash.timeout_secs = run.timeoutSecs;
+  spec.leash.max_turns = null;
+  spec.leash.max_budget_usd = null;
+  spec.env_remove = [...GITHUB_TOKENS];
+  const { allow, deny } = buildPermissions(run, ctx);
+  spec.permissions = { mode: "auto", allow, deny, ask: [], unmatched: "ask" };
+  return spec;
+}
 
 /** Build the run-spec for one AI-SDLC run. Always bypass-valid: allow/deny/ask stay empty. */
 export function specFor(
@@ -184,7 +288,10 @@ export function specFor(
   catalog: CatalogEntry[],
   run?: BuildRun,
 ): RunSpec {
-  void run;
+  if (kind === "build") {
+    if (!run) throw new Error("a build run-spec needs its BuildRun");
+    return buildSpec(ctx, run);
+  }
   const spec = defaultSpec();
   const plugins: Record<string, PluginConfig> = { [AI_SDLC]: {} };
   spec.name = nameFor(kind, ctx);
@@ -262,9 +369,9 @@ export function splitFrontMatter(text: string): { frontMatter: string | null; bo
   return { frontMatter: line === "" ? null : line, body: text.slice(m[0].length) };
 }
 
-export type StepCounts = Record<"intent" | "spec" | "plan", number>;
+export type StepCounts = Record<"intent" | "spec" | "plan" | "build" | "review", number>;
 /** Which of a change's three documents exist on disk. */
-export type DocsPresent = Record<keyof StepCounts, boolean>;
+export type DocsPresent = Record<"intent" | "spec" | "plan", boolean>;
 
 /**
  * Runs so far per stage: the transcript links recorded for this change, plus history records that carry the
@@ -277,36 +384,21 @@ export function runCounts(
   system: string,
   change: string,
 ): StepCounts {
-  const out: StepCounts = { intent: 0, spec: 0, plan: 0 };
+  const out: StepCounts = { intent: 0, spec: 0, plan: 0, build: 0, review: 0 };
   const linked = new Set<string>();
   for (const l of links) {
     if (l.workspace_id !== workspaceId || l.system !== system || l.change !== change) continue;
     linked.add(l.run_id);
-    if (l.stage === "intent" || l.stage === "spec" || l.stage === "plan") out[l.stage] += 1;
+    if (l.stage === "intent" || l.stage === "spec" || l.stage === "plan" || l.stage === "review") out[l.stage] += 1;
+    else if (l.stage.startsWith("build:")) out.build += 1;
   }
   for (const r of records) {
     if (linked.has(r.id)) continue;
     for (const stage of ["intent", "spec", "plan"] as const) {
       if (r.kata === `sdlc-${system}-${change}-${stage}`) out[stage] += 1;
     }
+    if (r.kata.startsWith(`sdlc-${system}-${change}-build-`)) out.build += 1;
+    else if (r.kata === `sdlc-${system}-${change}-review`) out.review += 1;
   }
   return out;
-}
-
-export type BuildRun = {
-  target: { repo: string } | "review";
-  timeoutSecs: number;
-  instructions: string | null;
-  workspaceFolder: string;
-  masterRepo: string;
-  systemRepos: string[];
-  checksDir: string;
-  continueOnLeftovers: boolean;
-};
-export const DEFAULT_BUILD_SECS = 7200;
-export function canBuild(_catalog: CatalogEntry[], _version: string | null): boolean {
-  return false;
-}
-export function stopMessage(_exit: number | null, _error: string | null): string {
-  return "";
 }

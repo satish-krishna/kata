@@ -4,7 +4,7 @@ import type { Stage } from '@bindings/Stage';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
 import { stageLabel, type DocsPresent, type StepCounts } from '../lib/sdlc';
 
-type StepName = keyof StepCounts;
+type StepName = keyof DocsPresent;
 type Tone = 'success' | 'warning' | 'error' | 'idle';
 type Step = { name: StepName; title: string; current: boolean; text: string; tone: Tone; runs: string };
 
