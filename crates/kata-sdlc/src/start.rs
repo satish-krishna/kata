@@ -7,8 +7,9 @@ use crate::changes::{is_change_name, is_safe_system};
 use crate::commits::offenders_to;
 use crate::decide::change_scope;
 use crate::git::{self, GitError};
-use crate::snapshot::status_entries;
-use crate::workspace::{self, system_repos, ScanError};
+use crate::participants;
+use crate::snapshot::dirty_files;
+use crate::workspace::ScanError;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -72,12 +73,8 @@ pub enum BuildError {
     Scan(#[from] ScanError),
 }
 
-fn refuse<T>(message: impl Into<String>) -> Result<T, BuildError> {
+pub(crate) fn refuse<T>(message: impl Into<String>) -> Result<T, BuildError> {
     Err(BuildError::Refused(message.into()))
-}
-
-fn dirty_files(repo: &Path) -> Result<Vec<String>, GitError> {
-    Ok(status_entries(repo)?.into_iter().map(|e| e.path).collect())
 }
 
 enum Action {
@@ -93,12 +90,14 @@ struct Classified {
     action: Action,
 }
 
-/// Where one product repository stands, per the start table. Changes nothing.
+/// Where one product repository stands, per the start table. Changes nothing. `dirty` is what the
+/// participants model read in its working tree.
 fn classify(
     path: &Path,
     repo: &str,
     branch: &str,
     scope: &str,
+    dirty: &[String],
 ) -> Result<(Classified, Option<RepoFiles>), BuildError> {
     let Some(base) = base_branch(path) else {
         return refuse(format!(
@@ -129,19 +128,17 @@ fn classify(
     };
     match current.as_deref() {
         Some(c) if c == branch => {
-            let files = dirty_files(path)?;
-            let leftovers = (!files.is_empty()).then(|| RepoFiles {
+            let leftovers = (!dirty.is_empty()).then(|| RepoFiles {
                 repo: repo.to_string(),
-                files,
+                files: dirty.to_vec(),
             });
             Ok(done(Action::Continue, leftovers))
         }
         Some(c) if c == base => {
-            let files = dirty_files(path)?;
-            if !files.is_empty() {
+            if !dirty.is_empty() {
                 return refuse(format!(
                     "{repo} has uncommitted files: {}",
-                    files.join(", ")
+                    dirty.join(", ")
                 ));
             }
             let action = if exists {
@@ -159,14 +156,19 @@ fn classify(
 }
 
 /// Check every precondition of a build, then create or check out `change/<change>` in the master
-/// and in every product repository an unfinished task names. Nothing is touched until all pass.
+/// and in every product repository an unfinished task names, or that `pending` names. Nothing is
+/// touched until all pass.
+///
+/// `pending` is the repository a run is about to start in on the engineer's ask: a round, or
+/// Continue. Its uncommitted files are leftovers to confirm, whether it is a finished product
+/// repository (skipped otherwise) or the master (whose uncommitted files refuse a fresh start, R3.2).
 pub fn prepare(
     folder: &Path,
     master_repo: &str,
     system: &str,
     change: &str,
     continue_with_leftovers: bool,
-    _pending: Option<&str>,
+    pending: Option<&str>,
 ) -> Result<PrepareOutcome, BuildError> {
     if !is_safe_system(master_repo) || !is_safe_system(system) || !is_change_name(change) {
         return refuse(format!(
@@ -175,66 +177,80 @@ pub fn prepare(
     }
     let master = folder.join(master_repo);
     let branch = format!("change/{change}");
-    let mut leftovers = Vec::new();
-
-    let dirty = dirty_files(&master)?;
-    if !dirty.is_empty() {
-        let logs: Vec<String> = build::unsaved_rows(&master, system, change)
-            .map(|rows| {
-                rows.iter()
-                    .map(|u| format!("intent/{system}/{change}/build/{}.md", u.repo))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let (saved, other): (Vec<String>, Vec<String>) =
-            dirty.into_iter().partition(|f| logs.contains(f));
-        if !other.is_empty() {
-            return refuse(format!(
-                "the master repo has uncommitted files: {}",
-                other.join(", ")
-            ));
-        }
-        leftovers.push(RepoFiles {
-            repo: master_repo.to_string(),
-            files: saved,
-        });
-    }
     if !branch_exists(&master, &branch) {
         return refuse(format!("the master repo has no branch {branch}"));
     }
 
-    let status = build::status(&master, system, change)?;
-    let scan = workspace::scan(folder)?;
-    let in_system = system_repos(&scan, system);
-    let mut products = Vec::new();
-    for r in &status.repos {
-        if r.state == RepoState::Done || r.repo == master_repo {
-            continue;
-        }
-        let name = &r.repo;
-        if !is_safe_system(name) {
-            return refuse(format!(
-                "the plan names {name}, which is not a valid repository name"
-            ));
-        }
-        if !in_system.contains(name) {
-            return refuse(format!(
-                "the plan names {name}, which is not in system {system}"
-            ));
-        }
-        if !scan.repos.contains(name) {
-            return refuse(format!(
-                "the plan names {name}, which is not checked out in this workspace"
-            ));
-        }
-        products.push(name.clone());
+    let (parts, status) = participants::model(folder, master_repo, system, change, pending)?;
+    // A log is a leftover to save only when it is new or only gained rows; any other edit to one is
+    // an uncommitted file like any other.
+    let saved: Vec<String> = build::unsaved_rows(&master, system, change)
+        .map(|rows| {
+            rows.iter()
+                .map(|u| format!("intent/{system}/{change}/build/{}.md", u.repo))
+                .collect()
+        })
+        .unwrap_or_default();
+    let (saved_rows, edited_rows): (Vec<String>, Vec<String>) = parts
+        .iter()
+        .flat_map(|p| p.rows.iter().cloned())
+        .partition(|r| saved.contains(r));
+    let mut refused = edited_rows;
+    let master_part = &parts[0];
+    if pending != Some(master_repo) {
+        refused.splice(0..0, master_part.files.iter().cloned());
     }
+    if !refused.is_empty() {
+        return refuse(format!(
+            "the master repo has uncommitted files: {}",
+            refused.join(", ")
+        ));
+    }
+
+    let mut leftovers = Vec::new();
+    let mut take = |repo: &str, mut files: Vec<String>| {
+        files.extend(
+            parts
+                .iter()
+                .find(|p| p.repo == repo)
+                .map(|p| {
+                    p.rows
+                        .iter()
+                        .filter(|r| saved_rows.contains(r))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        );
+        if !files.is_empty() {
+            leftovers.push(RepoFiles {
+                repo: repo.to_string(),
+                files,
+            });
+        }
+    };
+    take(
+        master_repo,
+        if pending == Some(master_repo) {
+            master_part.files.clone()
+        } else {
+            Vec::new()
+        },
+    );
 
     let scope = change_scope(&master, system, change);
     let mut classified = Vec::new();
-    for name in &products {
-        let (c, files) = classify(&folder.join(name), name, &branch, &scope)?;
-        leftovers.extend(files);
+    for p in &parts[1..] {
+        let finished = status
+            .repos
+            .iter()
+            .any(|r| r.repo == p.repo && r.state == RepoState::Done);
+        if finished && pending != Some(p.repo.as_str()) {
+            take(&p.repo, Vec::new());
+            continue;
+        }
+        let (c, files) = classify(Path::new(&p.path), &p.repo, &branch, &scope, &p.files)?;
+        take(&p.repo, files.map(|f| f.files).unwrap_or_default());
         classified.push(c);
     }
     if !leftovers.is_empty() && !continue_with_leftovers {

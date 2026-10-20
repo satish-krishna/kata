@@ -708,6 +708,7 @@ export class ChangePageViewModel {
       change: this.changeName(),
       catalog: this.catalog(),
       continueWithLeftovers,
+      pending: asked.repo,
     });
     switch (out.kind) {
       case 'refused':

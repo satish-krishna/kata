@@ -1,5 +1,6 @@
 import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { Participant } from '@bindings/Participant';
 import type { RunSpec } from '@bindings/RunSpec';
 import { LockStore } from '../../core/lock/lock.store';
 import { ModeStore } from '../../core/mode/mode.store';
@@ -88,6 +89,8 @@ export class BuildViewModel {
   /** The runs the engineer's leftovers confirmation still covers; a run's launch spends its entry. */
   private confirmed = new Set<string>();
   private ctx: BuildContext | null = null;
+  /** Who takes part in the build and where each is checked out, as the backend last answered. */
+  private participants: Participant[] = [];
   private productRepos: string[] = [];
   /** True once the build's branches were settled; continuing then prepares them again. */
   private settled = false;
@@ -275,7 +278,7 @@ export class BuildViewModel {
     try {
       const status = await this.readStatus();
       const master = handoff.start.master.repo;
-      this.productRepos = [...new Set([...status.repos.map((r) => r.repo), ...handoff.start.repos.map((r) => r.repo)])].filter((r) => r !== master);
+      this.productRepos = (await this.readParticipants(handoff.round?.repo ?? null)).filter((p) => !p.master).map((p) => p.repo);
       this.status.set(status);
       this.changes.set({ folder: ctx.folder, masterRepo: master, system: ctx.system, change: ctx.change });
       if (handoff.round !== null) await this.loadEarlierReview(ctx);
@@ -314,8 +317,9 @@ export class BuildViewModel {
 
   /**
    * Run the selected, stopped row again, after the engineer confirms continuing on top of whatever it left (R6.4).
-   * After the branches were settled they are prepared again, which reports the leftovers; while other repositories
-   * still run nothing is prepared, so the stopped repository's uncommitted files are read from a snapshot (R6.7).
+   * What it left is what the build's participants say its repository owns: its own uncommitted files and the unsaved
+   * rows of its build log, in the master or not. After the branches were settled they are prepared again, which reports
+   * the same leftovers; while other repositories still run nothing is prepared and the participants are read directly (R6.7).
    */
   async continueRun(): Promise<void> {
     const key = this.selected();
@@ -323,9 +327,10 @@ export class BuildViewModel {
     const ctx = this.ctx;
     if (key === null || h === null || ctx === null) return;
     await this.pendingFinish;
+    const owner = this.ownerOf(key);
     try {
       if (this.settled) {
-        const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, false);
+        const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, false, owner);
         if (out.kind === 'needsConfirm') {
           this.ask(key, out.leftovers.flatMap((r) => r.files.map((f) => `${r.repo}: ${f}`)));
           return;
@@ -333,10 +338,10 @@ export class BuildViewModel {
         this.handoff = { ...h, start: out.start };
         this.settled = false;
       } else {
-        const path = key === REVIEW ? h.start.master.path : this.pathOf(key);
-        const dirty = path === undefined ? [] : Object.keys((await this.transport.sdlcSnapshot(path)).dirty);
-        if (dirty.length > 0) {
-          this.ask(key, dirty.map((f) => `${key === REVIEW ? h.start.master.repo : key}: ${f}`));
+        const mine = (await this.readParticipants(owner)).find((p) => p.repo === owner);
+        const left = [...(mine?.files ?? []), ...(mine?.rows ?? [])];
+        if (left.length > 0) {
+          this.ask(key, left.map((f) => `${owner}: ${f}`));
           return;
         }
       }
@@ -357,7 +362,7 @@ export class BuildViewModel {
     if (key === null || h === null || ctx === null) return;
     if (this.settled) {
       try {
-        const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, true);
+        const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, true, this.ownerOf(key));
         if (out.kind !== 'ready') {
           this.toasts.error('Could not prepare the branches to continue the build.');
           return;
@@ -378,11 +383,22 @@ export class BuildViewModel {
     this.pendingLeftovers.set(null);
   }
 
-  /** Where a repository of the build lives: a product repository or the master. */
+  /** The repository a row of the build is about: the review runs in the master. */
+  private ownerOf(key: string): string {
+    return key === REVIEW ? this.handoff!.start.master.repo : key;
+  }
+
+  /** Ask the backend who takes part in the build now; `pending` is the repository a run is about to start in. */
+  private async readParticipants(pending: string | null): Promise<Participant[]> {
+    const h = this.handoff!;
+    const ctx = this.ctx!;
+    this.participants = await this.transport.sdlcBuildParticipants(ctx.folder, h.start.master.repo, ctx.system, ctx.change, pending);
+    return this.participants;
+  }
+
+  /** Where a repository of the build is checked out. */
   private pathOf(repo: string): string | undefined {
-    const start = this.handoff?.start;
-    if (start === undefined) return undefined;
-    return repo === start.master.repo ? start.master.path : start.repos.find((r) => r.repo === repo)?.path;
+    return this.participants.find((p) => p.repo === repo)?.path;
   }
 
   private ask(key: string, lines: string[]): void {

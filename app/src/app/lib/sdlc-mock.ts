@@ -12,6 +12,7 @@ import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { Part } from '@bindings/Part';
+import type { Participant } from '@bindings/Participant';
 import type { PlanTask } from '@bindings/PlanTask';
 import type { PrResult } from '@bindings/PrResult';
 import type { PrState } from '@bindings/PrState';
@@ -336,6 +337,11 @@ export class SdlcMock {
   prepare(folder: string, changeName: string): BuildStart {
     const at = (repo: string) => ({ repo, path: `${folder}/${repo}`, base: 'main', branch: `change/${changeName}`, created: false });
     return { master: at(MOCK_MASTER), repos: BUILD_REPOS.map(at) };
+  }
+
+  /** The master and the plan's repositories, each checked out beside the master with nothing left uncommitted. */
+  participants(folder: string): Participant[] {
+    return [MOCK_MASTER, ...BUILD_REPOS].map((repo) => ({ repo, path: `${folder}/${repo}`, master: repo === MOCK_MASTER, files: [], rows: [] }));
   }
 
   heads(repos: string[]): Record<string, string> {

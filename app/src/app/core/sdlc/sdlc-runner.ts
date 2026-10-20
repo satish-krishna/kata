@@ -57,6 +57,8 @@ export type BuildRequest = {
   change: string;
   catalog: CatalogEntry[];
   continueWithLeftovers: boolean;
+  /** The repository a round is aimed at: its uncommitted files are its own to confirm, even when its tasks are all done or it is the master. */
+  pending?: string | null;
 };
 export type PrepareResult =
   | { kind: 'ready'; start: BuildStart }
@@ -218,7 +220,7 @@ export class SdlcRunner {
     }
     if (!entry || !canBuild(req.catalog, version)) return { kind: 'refused', reason: UPDATE_PLUGIN };
     try {
-      const out = await this.transport.sdlcBuildPrepare(req.folder, req.masterRepo, req.system, req.change, req.continueWithLeftovers);
+      const out = await this.transport.sdlcBuildPrepare(req.folder, req.masterRepo, req.system, req.change, req.continueWithLeftovers, req.pending ?? null);
       if (out.kind === 'ready') {
         this.held = [];
         return { kind: 'ready', start: out.start };
@@ -282,9 +284,23 @@ export class SdlcRunner {
     } catch (e) {
       this.toasts.error(`Could not read what the run left in ${target.repo}: ${message(e)}`);
     }
+    // A build log row sits in the master's tree but belongs to the repository it records: it is listed there.
+    const rows = await this.rowsOwnedBy(target.repo, link);
     const kept = uncommittedOnly(data);
+    kept.touched_dirty = [...kept.touched_dirty, ...rows.filter((r) => !kept.touched_dirty.includes(r))];
     if (hasUncommitted(kept)) this.held = [...this.held.filter((h) => h.repo !== target.repo), { repo: target.repo, path: target.path, snapshot, data: kept }];
     return { exit, error };
+  }
+
+  /** The unsaved build log rows a repository owns, read from the build's participants; none when they cannot be read. */
+  private async rowsOwnedBy(repo: string, link: BuildLink): Promise<string[]> {
+    try {
+      const parts = await this.transport.sdlcBuildParticipants(link.folder, repoName(link.master), link.system, link.change, null);
+      return parts.find((p) => p.repo === repo)?.rows ?? [];
+    } catch (e) {
+      this.toasts.error(`Could not read the build log rows of ${repo}: ${message(e)}`);
+      return [];
+    }
   }
 
   /** The build is over: show what its runs left uncommitted, wait for the engine's operator to decide, then settle the branches. */
