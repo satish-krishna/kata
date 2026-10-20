@@ -27,6 +27,8 @@ export class ObservePane {
   readonly summary = input.required<RunSummary | null>();
   readonly asks = input<AskRecord[]>([]);
   readonly permissions = input<PermissionRecord[]>([]);
+  /** The index of the first event the engineer has not seen, when they come back to a pane that kept running. */
+  readonly unseenFrom = input<number | null>(null);
   readonly answer = output<{ id: string; answers: string[][] }>();
   readonly decide = output<{ id: string; allow: boolean; message: string | null }>();
 
@@ -40,6 +42,17 @@ export class ObservePane {
    * transcript. Tool calls are paired first, then each ask and permission
    * record is spliced back by its `at` (see withPauses). */
   protected readonly streamItems = computed(() => withPauses(pairToolEvents(this.events()), this.permissions(), this.asks()));
+  protected readonly unseenCount = computed(() => {
+    const from = this.unseenFrom();
+    return from === null ? 0 : Math.max(0, this.events().length - from);
+  });
+  /** The item the "new below" marker sits in front of: the first one that opened at or after the first unseen event. */
+  protected readonly markerKey = computed(() => {
+    const from = this.unseenFrom();
+    if (from === null || this.unseenCount() === 0) return null;
+    const at = (item: PausedItem): number => (item.kind === 'perm' ? item.p.at : item.kind === 'ask' ? item.a.at : item.at);
+    return this.streamItems().find((item) => at(item) >= from)?.key ?? null;
+  });
   protected readonly cost = computed(() => {
     const c = this.summary()?.cost_usd;
     return c != null ? `$${c.toFixed(3)}` : '—';

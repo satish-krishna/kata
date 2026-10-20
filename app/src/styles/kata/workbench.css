@@ -266,6 +266,13 @@
 .k-repos__name { color: var(--text-primary); }
 .k-repos__clock { color: var(--text-muted); }
 .k-repos__paused { color: var(--warning-text); }
+.k-repos__new { color: var(--text-muted); }
+/* A notice that an agent waits on the engineer: amber dot and words, with the way to it. */
+.k-waiting { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5); padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border-subtle); background: var(--warning-subtle); color: var(--warning-text); font: var(--font-code-sm); }
+.k-waiting--line { padding-block: var(--space-2); }
+.k-waiting__stop { color: var(--text-secondary); }
+/* Where the engineer stopped looking in a pane that kept running. */
+.k-unseen { padding: var(--space-1) 0; border-top: 1px solid var(--accent); font: var(--font-code-sm); color: var(--text-secondary); }
 .k-findings { display: grid; gap: var(--space-3); }
 .k-findings__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
 .k-findings__item { display: grid; grid-template-columns: 7rem 1fr; gap: var(--space-4); align-items: baseline; }

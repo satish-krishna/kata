@@ -15,6 +15,9 @@
         @if (r.clock) {
           <span class="k-mono k-repos__clock">{{ r.clock }}</span>
         }
+        @if (r.unseen) {
+          <span class="k-mono k-repos__new">{{ r.unseen }} new</span>
+        }
         @if (r.paused) {
           <span class="k-mono k-repos__paused">{{ r.paused }}</span>
         }

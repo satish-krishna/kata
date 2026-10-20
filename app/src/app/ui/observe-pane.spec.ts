@@ -413,7 +413,7 @@ describe('ObservePane unseen marker', () => {
   ];
 
   it('marks the first event the engineer has not seen with how many are new below', async () => {
-    const { container } = await renderPane({ events, unseen: 2 });
+    const { container } = await renderPane({ events, unseenFrom: 3 });
     const marker = container.querySelector('[data-unseen]')!;
     expect(marker.textContent!.replace(/\s+/g, ' ').trim()).toBe('2 new below');
     expect(marker.closest('hlm-message-scroller-item')!.textContent).toContain('first unseen');
@@ -421,7 +421,7 @@ describe('ObservePane unseen marker', () => {
   });
 
   it('has no marker when nothing is unseen', async () => {
-    const { container } = await renderPane({ events, unseen: 0 });
+    const { container } = await renderPane({ events, unseenFrom: null });
     expect(container.querySelector('[data-unseen]')).toBeNull();
   });
 });

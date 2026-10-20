@@ -67,7 +67,7 @@ describe('BuildView', () => {
     expect(rows.map((r) => r.querySelector('.k-mono')!.textContent!.trim())).toEqual(['claims-core', 'customer-portal', 'review']);
     expect(text(container)).toContain('0/3 tasks');
     expect(button(container, 'Cancel build')).toBeDefined();
-    expect(container.querySelectorAll('app-observe-pane')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-repo-runs]:not([hidden]) app-observe-pane')).toHaveLength(1);
     expect(container.querySelector('.k-build__run-start')!.textContent).toContain('09:00:00');
     expect(button(container, 'Cancel')).toBeDefined();
   });
@@ -78,7 +78,7 @@ describe('BuildView', () => {
     (container.querySelectorAll('app-repo-status-list button')[1] as HTMLButtonElement).click();
     await advance(100);
     fixture.detectChanges();
-    expect(container.querySelectorAll('app-observe-pane')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-repo-runs]:not([hidden]) app-observe-pane')).toHaveLength(1);
     expect(text(container)).toContain('The report form already has a file picker');
   });
 
@@ -248,7 +248,7 @@ describe('BuildView watching and reviewing', () => {
 
   it('the waiting notice names the repository and the countdown and does not switch (R17.5)', async () => {
     const m = await mount();
-    await settle(m, 2500);
+    await settle(m, 1600);
     await choose(m, 'Changes');
     const picked = m.vm.selected();
     const focused = document.activeElement;
@@ -309,7 +309,7 @@ describe('BuildView watching and reviewing', () => {
 
   it('the waiting repository is flagged in every view while the others keep folding (R19.4)', async () => {
     const m = await mount();
-    await settle(m, 2500);
+    await settle(m, 1600);
     const flagged = (name: string) => norm(rowBtn(m.container, name).textContent).includes('Waiting for you');
     const lines = () => Array.from(m.container.querySelectorAll('[role="tabpanel"]:not([hidden]) [data-waiting]')).map((e) => norm(e.textContent));
 

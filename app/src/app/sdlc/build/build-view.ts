@@ -1,23 +1,30 @@
-import { Component, effect, inject, input, output, untracked } from '@angular/core';
+import { Component, ElementRef, Injector, afterNextRender, effect, inject, input, output, untracked } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { HlmTabsImports } from '@spartan-ng/helm/tabs';
 import { FindingsList } from '../../ui/findings-list';
 import { ObservePane } from '../../ui/observe-pane';
 import { RepoStatusList } from '../../ui/repo-status-list';
+import { WaitingNotice } from '../../ui/waiting-notice';
 import type { BuildHandoff } from '../change/change-page.view-model';
+import { ChangesView } from '../changes/changes-view';
 import { BuildViewModel, type BuildContext } from './build-view.view-model';
 
-/* The build, in the page's main region: a row per repository on the left, and on the right the runs of the one picked,
- * each in its own observe pane. It takes the lock when it opens and gives it back when the engineer closes it. */
+/* The build, in the page's main region: a row per repository on the left, and on the right two views of the same build,
+ * Activity (the runs of the repository picked, each in its own observe pane) and Changes (what the agents changed so far).
+ * Both stay mounted for the whole build; the one not shown is hidden, so nothing is read again or lost by switching.
+ * It takes the lock when it opens and gives it back when the engineer closes it. */
 @Component({
   selector: 'app-build-view',
   host: { class: 'contents' },
   providers: [BuildViewModel],
-  imports: [HlmButtonImports, ObservePane, RepoStatusList, FindingsList],
+  imports: [HlmButtonImports, HlmTabsImports, ObservePane, RepoStatusList, FindingsList, WaitingNotice, ChangesView],
   templateUrl: './build-view.html',
   styleUrl: './build-view.css',
 })
 export class BuildView {
   protected readonly vm = inject(BuildViewModel);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
 
   readonly handoff = input.required<BuildHandoff>();
   readonly context = input.required<BuildContext>();
@@ -35,6 +42,21 @@ export class BuildView {
         }),
       );
     });
+    // "Go to <repo>" is asked of the view model; the DOM half (scroll and focus) waits until the panel is shown.
+    effect(() => {
+      const request = this.vm.focusRequest();
+      if (request === null) return;
+      untracked(() => afterNextRender(() => this.focusOpenCard(request.repo), { injector: this.injector }));
+    });
+  }
+
+  /** Bring the repository's open question or approval into view and put the focus on its first control. */
+  private focusOpenCard(repo: string): void {
+    const group = this.host.nativeElement.querySelector(`[data-repo-runs="${repo}"]`);
+    const card = group?.querySelector<HTMLElement>('.k-ask:not(.k-ask--answered):not(.k-ask--lapsed)');
+    if (!card) return;
+    card.scrollIntoView({ block: 'center' });
+    card.querySelector<HTMLElement>('button:not([disabled]), input, textarea, select, [tabindex="0"]')?.focus();
   }
 
   protected async close(): Promise<void> {

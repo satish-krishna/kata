@@ -11,6 +11,7 @@ import type { AskRecord, PermissionRecord, RunState, RunSummary, StreamEvent } f
 import { reviewFindings, specFor, transcriptRunId, type BuildRun, type Finding } from '../../lib/sdlc';
 import type { ReplacedFindings } from '../../ui/findings-list';
 import type { RepoRow } from '../../ui/repo-status-list';
+import type { WaitingItem } from '../../ui/waiting-notice';
 import type { BuildHandoff } from '../change/change-page.view-model';
 import { BuildDriver, type BuildPhase, type RunEnd, type RunOptions, type RunTarget } from './build-driver';
 
@@ -27,7 +28,17 @@ export type ShownRun = {
   summary: RunSummary | null;
   asks: AskRecord[];
   permissions: PermissionRecord[];
+  /** The index of the first event the engineer has not seen since they came back to this run, or null. */
+  unseenFrom: number | null;
 };
+
+/** The two views of a running build: what the agents say and do, and what they changed. */
+export type BuildTab = 'activity' | 'changes';
+
+/** What the Changes view looks at. */
+export type BuildChanges = { folder: string; masterRepo: string; system: string; change: string };
+
+export const CHANGES_BANNER = "The build is running. Uncommitted edits are the agents' work in progress and are marked with a dot.";
 
 /** A run the build started: which row it belongs to, its spec, and when it started. */
 type Entry = { id: string; key: string; spec: RunSpec; at: number };
@@ -88,6 +99,20 @@ export class BuildViewModel {
   private readonly broken = signal(false);
   private readonly finishing = signal(false);
   private readonly reading = signal(false);
+  private readonly changes = signal<BuildChanges | null>(null);
+  /** How many events of each run the engineer had seen when its Activity was last on show, by run id. */
+  private readonly seen = signal<Readonly<Record<string, number>>>({});
+  /** Where the events the engineer missed begin in each run of the pane they just came back to, by run id. */
+  private readonly marks = signal<Readonly<Record<string, number>>>({});
+  private lastOnShow: string | null = null;
+  private announced = new Set<string>();
+  private focusCount = 0;
+
+  readonly tab = signal<BuildTab>('activity');
+  readonly announcement = signal('');
+  /** A request to bring a repository's open question into view and focus it; the view carries it out. */
+  readonly focusRequest = signal<{ repo: string; n: number } | null>(null);
+  readonly changesBanner = CHANGES_BANNER;
 
   readonly phase = computed<BuildPhase>(() => (this.broken() ? 'stopped' : this.driver.phase()));
   readonly active = computed(() => this.phase() === 'building' || this.phase() === 'reviewing');
@@ -109,17 +134,59 @@ export class BuildViewModel {
   });
 
   /** The row on show: the one picked, else the first. */
-  readonly selected = computed(() => this.picked() ?? this.rows()[0]?.name ?? null);
+  readonly selected = computed(() => {
+    // Read from the status, not from the rows: a row says how much is unseen in a repository, which depends on the one on show.
+    const status = this.status();
+    return this.picked() ?? (status === null ? null : (status.repos[0]?.repo ?? REVIEW));
+  });
 
+  /** Every run of the build, grouped by the repository (or the review) it belongs to. All stay mounted; only the selected group shows. */
+  readonly groups = computed<{ key: string; runs: ShownRun[] }[]>(() => {
+    const marks = this.marks();
+    const out = new Map<string, ShownRun[]>();
+    for (const e of this.log()) {
+      const snap = this.runs.snapshot(e.id)();
+      const run: ShownRun = {
+        id: e.id,
+        startedAt: timeOf(e.at),
+        spec: e.spec,
+        state: snap.state,
+        events: snap.events,
+        summary: snap.summary,
+        asks: snap.asks,
+        permissions: snap.permissions,
+        unseenFrom: marks[e.id] ?? null,
+      };
+      out.set(e.key, [...(out.get(e.key) ?? []), run]);
+    }
+    return [...out].map(([key, runs]) => ({ key, runs }));
+  });
+
+  /** The runs of the selected repository. */
   readonly shown = computed<ShownRun[]>(() => {
     const key = this.selected();
-    return this.log()
-      .filter((e) => e.key === key)
-      .map((e) => {
-        const snap = this.runs.snapshot(e.id)();
-        return { id: e.id, startedAt: timeOf(e.at), spec: e.spec, state: snap.state, events: snap.events, summary: snap.summary, asks: snap.asks, permissions: snap.permissions };
-      });
+    return this.groups().find((g) => g.key === key)?.runs ?? [];
   });
+
+  /** What the Changes view reads, once the build has started. */
+  readonly changesContext = this.changes.asReadonly();
+  /** Turns taken by every run of the build, so the Changes view reads again as the agents work. */
+  readonly turns = computed(() => this.log().reduce((n, e) => n + this.runs.snapshot(e.id)().events.filter((ev) => ev.type === 'turn').length, 0));
+  /** Events that arrived in the views not on show: for the Activity tab, only while Changes is open. */
+  readonly activityNew = computed(() => (this.tab() === 'changes' ? this.log().reduce((n, e) => n + this.unseenOfRun(e), 0) : 0));
+  /** The runs waiting on the engineer, whichever view is on show. */
+  readonly waitingNotices = computed<WaitingItem[]>(() => {
+    const out: WaitingItem[] = [];
+    for (const w of this.lock.waiting()) {
+      const repo = this.log().find((e) => e.id === w.runId)?.key;
+      if (repo === undefined) continue;
+      const left = this.lock.deadlineSecs(w.runId);
+      out.push({ repo, kind: w.kind, countdown: left === null ? null : ms(left) });
+    }
+    return out;
+  });
+  /** On Activity, the runs waiting in a repository other than the one on show. */
+  readonly otherWaiting = computed(() => (this.tab() === 'activity' ? this.waitingNotices().filter((w) => w.repo !== this.selected()) : []));
 
   /** What the selected row offers: Cancel while its run goes, Continue once it stopped. */
   readonly action = computed<'cancel' | 'continue' | null>(() => {
@@ -156,6 +223,17 @@ export class BuildViewModel {
       const waiting = new Set(this.lock.waiting().map((w) => w.runId));
       untracked(() => this.tick(t, waiting));
     });
+    // What the engineer has seen: a pane on show is seen as it grows; coming back to one marks where the missed events begin.
+    effect(() => {
+      const key = this.onShow();
+      const counts = this.log().map((e) => ({ e, count: this.runs.snapshot(e.id)().events.length }));
+      untracked(() => this.markSeen(key, counts));
+    });
+    // A run that starts waiting on the engineer is announced once; an announcement never moves the focus.
+    effect(() => {
+      const waiting = this.waitingNotices();
+      untracked(() => this.announce(waiting));
+    });
     // The build is over, or stopped: free the lock, show what the runs left, settle the branches, read the review.
     effect(() => {
       const phase = this.phase();
@@ -177,6 +255,7 @@ export class BuildViewModel {
       const master = handoff.start.master.repo;
       this.productRepos = [...new Set([...status.repos.map((r) => r.repo), ...handoff.start.repos.map((r) => r.repo)])].filter((r) => r !== master);
       this.status.set(status);
+      this.changes.set({ folder: ctx.folder, masterRepo: master, system: ctx.system, change: ctx.change });
       if (handoff.round !== null) await this.loadEarlierReview(ctx);
       await this.driver.begin(handoff.timeoutSecs, handoff.round ?? undefined);
     } catch (e) {
@@ -188,6 +267,18 @@ export class BuildViewModel {
 
   select(name: string): void {
     this.picked.set(name);
+  }
+
+  /** Show one of the views. This changes what is on show and nothing else: no run, read or lock is touched. */
+  showTab(tab: string): void {
+    if (tab === 'activity' || tab === 'changes') this.tab.set(tab);
+  }
+
+  /** Go to a waiting repository: its Activity, with its open question brought into view and focused. */
+  goTo(repo: string): void {
+    this.picked.set(repo);
+    this.tab.set('activity');
+    this.focusRequest.set({ repo, n: ++this.focusCount });
   }
 
   cancelBuild(): void {
@@ -241,6 +332,47 @@ export class BuildViewModel {
     return true;
   }
 
+  // --- what the engineer has seen
+
+  /** The repository whose Activity is on show, if Activity is. */
+  private readonly onShow = computed(() => (this.tab() === 'activity' ? this.selected() : null));
+
+  private unseenOfRun(e: Entry): number {
+    if (e.key === this.onShow()) return 0;
+    return Math.max(0, this.runs.snapshot(e.id)().events.length - (this.seen()[e.id] ?? 0));
+  }
+
+  private unseenOf(key: string): number {
+    return this.log().filter((e) => e.key === key).reduce((n, e) => n + this.unseenOfRun(e), 0);
+  }
+
+  private markSeen(key: string | null, counts: { e: Entry; count: number }[]): void {
+    const known = this.seen();
+    const next: Record<string, number> = { ...known };
+    if (key !== this.lastOnShow) {
+      let marks: Record<string, number> = {};
+      if (key !== null) for (const { e, count } of counts) if (e.key === key && count > (known[e.id] ?? 0)) marks = { ...marks, [e.id]: known[e.id] ?? 0 };
+      this.marks.set(marks);
+      this.lastOnShow = key;
+    }
+    if (key !== null) for (const { e, count } of counts) if (e.key === key) next[e.id] = count;
+    if (Object.keys(next).some((id) => next[id] !== known[id])) this.seen.set(next);
+  }
+
+  /** Say once, and out loud, that a run started waiting on the engineer. Nothing here moves the tab, the repository or the focus. */
+  private announce(waiting: WaitingItem[]): void {
+    const now = new Set(waiting.map((w) => w.repo + ':' + w.kind));
+    const fresh = waiting.filter((w) => !this.announced.has(w.repo + ':' + w.kind));
+    this.announced = now;
+    if (now.size === 0) {
+      this.announcement.set('');
+      return;
+    }
+    if (fresh.length > 0) {
+      this.announcement.set(fresh.map((w) => 'The agent in ' + w.repo + ' is waiting for your ' + (w.kind === 'answer' ? 'answer' : 'approval') + '.').join(' '));
+    }
+  }
+
   // --- rows
 
   private repoRow(name: string, status: BuildStatus): RepoRow {
@@ -248,7 +380,8 @@ export class BuildViewModel {
     const entry = this.latest(name);
     const clock = entry ? this.clockOf(entry) : null;
     const paused = entry && this.isWaiting(entry.id) ? this.pausedOf(entry.id) : null;
-    const row = (tone: RepoRow['tone'], label: string): RepoRow => ({ name, tone, label, clock, paused });
+    const unseen = this.unseenOf(name);
+    const row = (tone: RepoRow['tone'], label: string): RepoRow => ({ name, tone, label, clock, paused, unseen });
     const stop = this.driver.stopped().get(name);
     if (stop) return row('error', stop.reason);
     if (this.driver.going().has(name)) {
@@ -269,7 +402,8 @@ export class BuildViewModel {
     const entry = this.latest(REVIEW);
     const clock = entry ? this.clockOf(entry) : null;
     const paused = entry && this.phase() === 'reviewing' && this.isWaiting(entry.id) ? this.pausedOf(entry.id) : null;
-    const row = (tone: RepoRow['tone'], label: string): RepoRow => ({ name: REVIEW, tone, label, clock, paused });
+    const unseen = this.unseenOf(REVIEW);
+    const row = (tone: RepoRow['tone'], label: string): RepoRow => ({ name: REVIEW, tone, label, clock, paused, unseen });
     const stop = this.driver.stopped().get(REVIEW);
     if (stop) return row('error', stop.reason);
     if (this.phase() === 'reviewing') return paused !== null ? row('warning', 'Waiting for you') : row('success', 'Working');
