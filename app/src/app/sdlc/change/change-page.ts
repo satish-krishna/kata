@@ -1,5 +1,8 @@
 import { Component, inject } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideTriangleAlert } from '@ng-icons/lucide';
+import { HlmAlertImports } from '@spartan-ng/helm/alert';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
@@ -14,8 +17,8 @@ import { ChangePageViewModel } from './change-page.view-model';
 
 @Component({
   selector: 'app-change-page',
-  providers: [ChangePageViewModel],
-  imports: [HlmButtonImports, HlmTabsImports, SdlcToolbar, StageStepper, DocView, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, SdlcSession],
+  providers: [ChangePageViewModel, provideIcons({ lucideTriangleAlert })],
+  imports: [NgIcon, HlmAlertImports, HlmButtonImports, HlmTabsImports, SdlcToolbar, StageStepper, DocView, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, SdlcSession],
   templateUrl: './change-page.html',
 })
 export class ChangePage {

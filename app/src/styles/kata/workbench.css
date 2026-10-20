@@ -41,6 +41,7 @@
 /* ---------- Validation banner ---------- */
 .wb-banner { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-5); font: var(--font-code-sm); flex: none; border-bottom: 1px solid var(--border-subtle); }
 .wb-banner--error { background: var(--error-subtle); color: var(--error-text); }
+.wb-banner--warn { background: var(--warning-subtle); color: var(--warning-text); }
 .wb-banner__list { display: flex; gap: var(--space-4); flex-wrap: wrap; }
 .wb-banner svg { width: 15px; height: 15px; flex: none; }
 
@@ -265,6 +266,7 @@
 .k-step:disabled { cursor: default; }
 .k-step__name { font: var(--weight-semibold) var(--text-base)/1.2 var(--font-sans); color: var(--text-primary); }
 .k-step__runs { font: var(--font-code-sm); color: var(--text-muted); }
+.k-change__doc > .wb-banner { margin-bottom: var(--space-4); }
 .k-change__doc { min-height: 0; overflow-y: auto; padding: var(--space-5); }
 /* AI-SDLC session view: an agent run in the page main region under the toolbar. */
 .k-session { flex: 1; }

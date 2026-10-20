@@ -140,29 +140,25 @@ describe('ChangePage', () => {
       expect(all).not.toContain('Accept plan');
     });
 
-    it('out-of-date plan and spec banners and actions (R1.4)', async () => {
-      const plan = await mount(REASSIGN, staged('plan-out-of-date', 'plan-pin'));
-      expect(banner(plan.container)).toBe('This plan was not written from the spec accepted now. Rewrite the plan before building.');
-      expect(labels(plan.container)).toContain('Re-run plan');
-      expect(labels(plan.container)).not.toContain('Start build');
-      plan.fixture.destroy();
-      const spec = await mount(REASSIGN, staged('plan-out-of-date', 'spec-pin'));
-      expect(banner(spec.container)).toBe('This spec was not written from the intent accepted now. Rewrite the spec, then the plan.');
-      expect(labels(spec.container)).toContain('Reopen spec');
-      expect(labels(spec.container)).not.toContain('Re-run plan');
-      expect(labels(spec.container)).not.toContain('Start build');
+    it.each([
+      ['plan-pin', 'This plan was not written from the spec accepted now. Rewrite the plan before building.', 'Re-run plan'],
+      ['spec-pin', 'This spec was not written from the intent accepted now. Rewrite the spec, then the plan.', 'Reopen spec'],
+    ] as const)('out-of-date plan and spec banners and actions (R1.4) %s', async (cause, text, action) => {
+      const { container } = await mount(REASSIGN, staged('plan-out-of-date', cause));
+      expect(banner(container)).toBe(text);
+      expect(labels(container)).toContain(action);
+      expect(labels(container)).not.toContain(action === 'Re-run plan' ? 'Reopen spec' : 'Re-run plan');
+      expect(labels(container)).not.toContain('Start build');
     });
 
-    it('a reopened intent or spec is named and blocks the build (R1.5)', async () => {
-      const intent = await mount(REASSIGN, staged('plan-out-of-date', 'intent-reopened'));
-      expect(banner(intent.container)).toBe('The intent was reopened.');
-      expect(labels(intent.container)).not.toContain('Start build');
-      expect(labels(intent.container)).not.toContain('Continue build');
-      intent.fixture.destroy();
-      const spec = await mount(REASSIGN, staged('plan-out-of-date', 'spec-reopened'));
-      expect(banner(spec.container)).toBe('The spec was reopened.');
-      expect(labels(spec.container)).not.toContain('Start build');
-      expect(labels(spec.container)).not.toContain('Continue build');
+    it.each([
+      ['intent-reopened', 'The intent was reopened.'],
+      ['spec-reopened', 'The spec was reopened.'],
+    ] as const)('a reopened intent or spec is named and blocks the build (R1.5) %s', async (cause, text) => {
+      const { container } = await mount(REASSIGN, staged('plan-out-of-date', cause));
+      expect(banner(container)).toBe(text);
+      expect(labels(container)).not.toContain('Start build');
+      expect(labels(container)).not.toContain('Continue build');
     });
   });
 });

@@ -130,7 +130,7 @@ function applyDecision(c: ChangeInfo, decision: Decision): ChangeInfo {
     case 'accept-spec':
       return { ...c, spec: doc('accepted'), stage: 'plan-ready' };
     case 'accept-plan':
-      return c;
+      return { ...c, plan: doc('accepted'), stage: 'build-ready' };
   }
 }
 

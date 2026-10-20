@@ -62,6 +62,23 @@ const DONE: Record<Decision, string> = {
   'accept-plan': 'Accepted plan',
 };
 
+/** The decision that commits a document already accepted in the working tree, by the stage that says so. */
+const ACCEPTED_UNCOMMITTED: Partial<Record<string, Decision>> = {
+  'intent-accepted-uncommitted': 'accept-intent',
+  'spec-accepted-uncommitted': 'accept-spec',
+  'plan-accepted-uncommitted': 'accept-plan',
+};
+
+/** Why the plan cannot be built, in the words the plan tab shows. */
+const OUT_OF_DATE_BANNER: Record<NonNullable<ChangeInfo['out_of_date']>, string> = {
+  'intent-reopened': 'The intent was reopened.',
+  'spec-reopened': 'The spec was reopened.',
+  'spec-pin': 'This spec was not written from the intent accepted now. Rewrite the spec, then the plan.',
+  'plan-pin': 'This plan was not written from the spec accepted now. Rewrite the plan before building.',
+  'no-tasks': 'This plan has no tasks. Rewrite the plan before building.',
+};
+const SUPERSEDED_BANNER = 'The intent was reopened after this plan was written. Rewrite the plan before building.';
+
 type DocStem = 'intent' | 'spec' | 'plan';
 
 /**
@@ -136,6 +153,13 @@ export class ChangePageViewModel {
     const c = this.change();
     return c ? actionsForChange(c) : [];
   });
+  /** What blocks the build, shown above the plan; null when nothing does or another document is shown. */
+  readonly planBanner = computed(() => {
+    const c = this.change();
+    if (c === null || this.shownDoc() !== 'plan') return null;
+    if (c.stage === 'plan-superseded') return SUPERSEDED_BANNER;
+    return c.stage === 'plan-out-of-date' && c.out_of_date !== null ? OUT_OF_DATE_BANNER[c.out_of_date] : null;
+  });
   readonly primary = computed(() => primaryAction(this.actions()));
   readonly labelOf = actionLabel;
   readonly runCounts = computed<StepCounts>(() => {
@@ -206,10 +230,11 @@ export class ChangePageViewModel {
       case 'accept-intent':
       case 'reject-intent':
       case 'accept-spec':
+      case 'accept-plan':
         await this.commitDecision(action, false);
         return;
       case 'commit-acceptance':
-        await this.commitDecision(this.change()?.stage === 'intent-accepted-uncommitted' ? 'accept-intent' : 'accept-spec', false);
+        await this.commitDecision(ACCEPTED_UNCOMMITTED[this.change()?.stage ?? ''] ?? 'accept-spec', false);
         return;
       default:
         // Regenerating an existing document first asks what should change; a first draft just runs.
