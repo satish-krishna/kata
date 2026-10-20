@@ -133,6 +133,8 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): s
   }
 }
 
+const SDLC_TIMEOUT_SECS = 6 * 60 * 60;
+
 /** Build the run-spec for one AI-SDLC run. Always bypass-valid: allow/deny/ask stay empty. */
 export function specFor(
   kind: SdlcKind,
@@ -151,6 +153,8 @@ export function specFor(
   // Outside the empty room: `--bare` ignores the operator's claude login and accepts only an API key.
   spec.auth = { bare: false, token_env: null };
   spec.interactive = { enabled: false, answer_timeout_secs: 3600 };
+  // A build works task by task through a whole plan and outlasts the engine's 30-minute default.
+  spec.leash.timeout_secs = SDLC_TIMEOUT_SECS;
   if (settings.permission_mode === "prompt") {
     spec.permissions = { mode: "prompt", allow: [], deny: [], unmatched: "ask" };
     spec.interactive.enabled = true;

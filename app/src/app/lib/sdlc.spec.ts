@@ -68,6 +68,10 @@ describe("specFor", () => {
     const s = specFor("intent", null, { folder: "/ws", system: "claims", change: null, idea: "x" }, bypass, both);
     expect(s.auth).toEqual({ bare: false, token_env: null });
   });
+  it("gets a six-hour wall clock, since a build outlasts the engine's 30-minute default", () => {
+    const s = specFor("plan", null, ctx, bypass, both);
+    expect(s.leash.timeout_secs).toBe(6 * 60 * 60);
+  });
   it("setup with a system", () => {
     const s = specFor("setup", null, { folder: "/ws", system: "claims", change: null }, bypass, both);
     expect(s.task).toBe("Use the ai-sdlc setup skill. System: claims");
