@@ -413,6 +413,26 @@ describe('BuildDriver', () => {
     expect(going(w.driver)).toEqual(['api']);
   });
 
+  it.each([[0, null], [1, 'boom'], [124, null], [null, null]] as const)(
+    'a repository the engineer cancelled says "Stopped: cancelled" whatever the engine exited with (exit %s)',
+    async (exit, error) => {
+      const w = world([{ id: 'T1', repo: 'app' }, { id: 'T2', repo: 'api' }]);
+      await w.driver.begin(3600);
+      await flush();
+      w.driver.cancel('app');
+      await w.of('app')[0].end([], error === null ? { exit } : { exit, error });
+      expect(w.driver.stopped().get('app')?.reason).toBe('Stopped: cancelled');
+    },
+  );
+
+  it('a run nobody cancelled that exits 1 still says the agent failed', async () => {
+    const w = world([{ id: 'T1', repo: 'app' }]);
+    await w.driver.begin(3600);
+    await flush();
+    await w.of('app')[0].end([], { exit: 1 });
+    expect(w.driver.stopped().get('app')?.reason).toBe('Stopped: the agent failed');
+  });
+
   it('a cancelled repository that is now waiting is not relaunched when its dependency gets a row (R6.1)', async () => {
     const w = world([
       { id: 'T1', repo: 'app' },

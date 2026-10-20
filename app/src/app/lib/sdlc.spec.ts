@@ -411,6 +411,14 @@ describe("stopMessage", () => {
     expect(stopMessage(1, "boom")).toBe("Stopped: the agent failed · boom");
     expect(stopMessage(124, "late")).toBe("Stopped: reached the time limit · late");
   });
+
+  it("says cancelled first when the run was cancelled, whatever the exit code", () => {
+    expect(stopMessage(0, null, true)).toBe("Stopped: cancelled");
+    expect(stopMessage(1, null, true)).toBe("Stopped: cancelled");
+    expect(stopMessage(124, null, true)).toBe("Stopped: cancelled");
+    expect(stopMessage(null, null, true)).toBe("Stopped: cancelled");
+    expect(stopMessage(1, "boom", true)).toBe("Stopped: cancelled · boom");
+  });
 });
 
 describe("canBuild", () => {
