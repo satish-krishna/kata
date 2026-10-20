@@ -40,7 +40,7 @@ pub fn message(decision: Decision, scope: &str, change: &str) -> String {
         Decision::AcceptIntent => "accept intent",
         Decision::RejectIntent => "reject intent",
         Decision::AcceptSpec => "accept spec",
-        Decision::AcceptPlan => "accept spec",
+        Decision::AcceptPlan => "accept plan",
     };
     format!("docs({scope}): {verb} {change}\n\nGenerated-By: ai-sdlc")
 }
