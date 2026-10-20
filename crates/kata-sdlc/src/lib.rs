@@ -4,6 +4,7 @@ pub mod base;
 pub mod branch;
 pub mod build;
 pub mod changes;
+pub mod checks;
 pub mod commits;
 pub mod decide;
 pub mod frontmatter;
