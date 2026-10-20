@@ -1,4 +1,5 @@
-import { TestBed } from '@angular/core/testing';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { render } from '../../testing/render';
 import { BuildDialog, type BuildStartRequest } from './build-dialog';
 
@@ -20,10 +21,9 @@ const hours = () => dialog().querySelector<HTMLInputElement>('input[aria-label="
 const minutes = () => dialog().querySelector<HTMLInputElement>('input[aria-label="Minutes"]')!;
 const instructions = () => dialog().querySelector<HTMLTextAreaElement>('textarea')!;
 
-/** jsdom cannot drive a CDK overlay, so a repository is picked through the select's own event. */
-const pickRepo = async (repo: string) => {
-  const select = dialog().querySelector('hlm-select')!;
-  select.dispatchEvent(new CustomEvent('valueChange', { detail: repo }));
+/** jsdom cannot drive a CDK overlay, so the pick goes through the select's own valueChange output, which is what a click on an item raises. */
+const pickRepo = async (fixture: ComponentFixture<BuildDialog>, repo: string) => {
+  fixture.debugElement.query(By.css('hlm-select')).triggerEventHandler('valueChange', repo);
   await settle();
 };
 
@@ -84,13 +84,13 @@ describe('BuildDialog', () => {
   });
 
   it('round mode shows the time limit and needs instructions and a repository (R8.1)', async () => {
-    const { got } = await open('round');
+    const { got, fixture } = await open('round');
     expect(text(dialog())).toContain('The agent works on the instructions inside this repository, after any of its unfinished tasks.');
     expect(hours()).not.toBeNull();
     expect(button('Start round').disabled).toBe(true);
     await typeInto(instructions(), '  rename the status field to state  ');
     expect(button('Start round').disabled).toBe(true);
-    await pickRepo('claims-core');
+    await pickRepo(fixture, 'claims-core');
     expect(button('Start round').disabled).toBe(false);
     await typeInto(hours(), '4');
     await typeInto(minutes(), '0');
@@ -109,8 +109,8 @@ describe('BuildDialog', () => {
   });
 
   it('round mode cannot start on blank instructions', async () => {
-    await open('round');
-    await pickRepo('claims-core');
+    const { fixture } = await open('round');
+    await pickRepo(fixture, 'claims-core');
     await typeInto(instructions(), '   ');
     expect(button('Start round').disabled).toBe(true);
   });
