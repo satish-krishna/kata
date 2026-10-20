@@ -89,26 +89,34 @@ pub fn commits_ahead(repo: &Path) -> Result<u32, BaseError> {
     Ok(count.trim().parse().unwrap_or(0))
 }
 
-/// Commits `rev` has past the local base branch (`origin/<base>` when no local one exists): the
-/// work done on a change branch, not the base commits the engineer has yet to push. The Changes
-/// view still compares against the merge base with the remote (R7.7); only the decision whether
-/// a repository was changed at all uses this count (R10.1).
+/// Commits `rev` has that neither the local base branch nor `origin/<base>` has: the work done
+/// on a change branch, not base commits the engineer has yet to push and not base commits others
+/// pushed that a rebase carried in. The Changes view still compares against the merge base with
+/// the remote (R7.7); only the decision whether a repository was changed at all, and whose
+/// commits are judged, use this (R10.1).
 pub fn commits_ahead_of_local_base(repo: &Path, rev: &str) -> Result<u32, BaseError> {
-    let local = local_base_ref(repo, rev)?;
-    let count = git::run(repo, &["rev-list", "--count", &format!("{local}..{rev}")])?;
+    let revs = build_work_revs(repo, rev)?;
+    let mut args = vec!["rev-list".to_string(), "--count".to_string()];
+    args.extend(revs);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let count = git::run(repo, &args)?;
     Ok(count.trim().parse().unwrap_or(0))
 }
 
-/// The ref work on a change branch is counted from: the local base branch, or `origin/<base>`
-/// when no local one exists. Every "what did the build add" computation starts here, so base
-/// commits the engineer has yet to push are never taken for build work.
-pub fn local_base_ref(repo: &Path, rev: &str) -> Result<String, BaseError> {
+/// The revision arguments naming the work on a change branch: `rev ^<local base> ^origin/<base>`.
+/// Each exclusion is present only when that ref exists, so a repository with no remote uses the
+/// local base alone and one with no local base uses `origin/<base>` alone. Every "what did the
+/// build add" computation (`rev-list`, `log`) starts here.
+pub fn build_work_revs(repo: &Path, rev: &str) -> Result<Vec<String>, BaseError> {
     let info = base_info_for(repo, rev)?;
-    Ok(if ref_exists(repo, &format!("refs/heads/{}", info.base)) {
-        info.base
-    } else {
-        info.reference
-    })
+    let mut revs = vec![rev.to_string()];
+    if ref_exists(repo, &format!("refs/heads/{}", info.base)) {
+        revs.push(format!("^{}", info.base));
+    }
+    if ref_exists(repo, &format!("refs/remotes/origin/{}", info.base)) {
+        revs.push(format!("^origin/{}", info.base));
+    }
+    Ok(revs)
 }
 
 #[cfg(test)]

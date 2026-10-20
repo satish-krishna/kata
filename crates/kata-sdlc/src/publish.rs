@@ -2,7 +2,7 @@
 //! repository, the master last. Every GitHub call goes through the `Gh` trait; Kata keeps no
 //! credential, `gh` owns the engineer's sign-in.
 use crate::base::{
-    base_branch, base_info, base_info_for, commits_ahead_of_local_base, local_base_ref, BaseInfo,
+    base_branch, base_info, base_info_for, build_work_revs, commits_ahead_of_local_base, BaseInfo,
 };
 use crate::branch::branch_exists;
 use crate::changes::{is_change_name, is_safe_system, read_doc};
@@ -183,8 +183,8 @@ pub fn change_offenders(
     let mut out = Vec::new();
     for r in touched_repos(folder, master_repo, system, change)? {
         let path = Path::new(&r.path);
-        let from = local_base_ref(path, &tip)?;
-        out.extend(offenders_to(path, &r.repo, &from, &tip, &scope)?);
+        let revs = build_work_revs(path, &tip)?;
+        out.extend(offenders_to(path, &r.repo, &revs, &scope)?);
     }
     Ok(out)
 }

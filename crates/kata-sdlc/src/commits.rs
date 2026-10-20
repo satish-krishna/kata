@@ -50,19 +50,20 @@ pub fn offenders(
     merge_base: &str,
     scope: &str,
 ) -> Result<Vec<Offender>, GitError> {
-    offenders_to(repo_dir, repo, merge_base, "HEAD", scope)
+    offenders_to(repo_dir, repo, &[format!("{merge_base}..HEAD")], scope)
 }
 
-/// Commits in `<merge_base>..<tip>` of `repo_dir` that break the rules.
+/// Commits selected by `revs` (revision arguments such as `a..b`, or `tip ^x ^y`) in `repo_dir`
+/// that break the rules.
 pub fn offenders_to(
     repo_dir: &Path,
     repo: &str,
-    merge_base: &str,
-    tip: &str,
+    revs: &[String],
     scope: &str,
 ) -> Result<Vec<Offender>, GitError> {
-    let range = format!("{merge_base}..{tip}");
-    let log = git::run(repo_dir, &["log", "--format=%h%x1f%B%x1e", range.as_str()])?;
+    let mut args = vec!["log", "--format=%h%x1f%B%x1e"];
+    args.extend(revs.iter().map(String::as_str));
+    let log = git::run(repo_dir, &args)?;
     Ok(log
         .split('\x1e')
         .filter_map(|rec| {
