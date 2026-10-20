@@ -256,6 +256,24 @@ describe('ChangePage', () => {
       expect(labels(container)).not.toContain('Continue build');
     });
 
+    it.each([
+      ['intent-awaiting', 'The intent was reopened. The plan must be rewritten first.', 'Accept intent'],
+      ['intent-in-progress', 'The intent was reopened. The plan must be rewritten first.', 'Continue intent'],
+      ['spec-awaiting', 'The spec was reopened. The plan must be rewritten first.', 'Accept spec'],
+    ] as const)('a reopened document over a superseded plan also says the plan must be rewritten first (R1.3) %s', async (stage, text, action) => {
+      const transport = new MockTransport();
+      const real = transport.sdlcChanges.bind(transport);
+      vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
+        (await real(m, s)).map((c) =>
+          c.change === REASSIGN ? { ...c, stage, out_of_date: null, plan: { ...c.plan, exists: true, status: 'superseded' } } : c,
+        ),
+      );
+      const { container } = await mount(REASSIGN, transport);
+      expect(banner(container)).toBe(text);
+      expect(labels(container)).toContain(action);
+      expect(labels(container)).not.toContain('Start build');
+    });
+
     it('a change without a plan has no reopened banner at intent-awaiting', async () => {
       const transport = new MockTransport();
       const real = transport.sdlcChanges.bind(transport);
