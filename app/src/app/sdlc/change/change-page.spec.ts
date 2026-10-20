@@ -7,6 +7,7 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { diagrams } from '../../lib/mermaid';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
+import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
@@ -126,6 +127,20 @@ describe('ChangePage', () => {
       expect(table).not.toBeNull();
       expect(text(table.querySelector('h2')!)).toBe('Build log');
       expect(table.querySelectorAll('tbody tr').length).toBe(status.tasks.length);
+    });
+
+    it('crosses the seam: clicking the Build tile shows what changed in the build panel', async () => {
+      vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
+      const { container } = await mount(MOCK_BUILD_CHANGE);
+      const tile = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.querySelector('.k-step__name')!.textContent!.trim() === 'Build')!;
+      expect(tile.disabled).toBe(false);
+      expect(container.querySelector('app-changes-view')).toBeNull();
+      tile.click();
+      await settle();
+      expect(tile.getAttribute('aria-selected')).toBe('true');
+      expect(container.querySelector('app-changes-view')).not.toBeNull();
+      expect(container.querySelector('app-changes-view [data-repo]')).not.toBeNull();
+      vi.restoreAllMocks();
     });
 
     it('shows the build view in place of the session view once a build is prepared, and the session view otherwise', async () => {
