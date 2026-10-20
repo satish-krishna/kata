@@ -5,12 +5,16 @@ import type { Settings } from '@bindings/Settings';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { RunLink } from '@bindings/RunLink';
+import type { BuildStart } from '@bindings/BuildStart';
+import type { PublishRepo } from '@bindings/PublishRepo';
 
 const spec = seedSpec();
 const settings: Settings = { mode: 'sdlc', remember: true, permission_mode: 'bypass' };
 const entry: WorkspaceEntry = { id: 'w', name: 'w', folder: '/w', base_branch: 'main', last_opened: 1 };
 const snap: Snapshot = { head: 'abc', dirty: {} };
 const link: RunLink = { workspace_id: 'w', system: 's', change: 'c', stage: 'intent', run_id: 'r', started_at: 1 };
+const start: BuildStart = { master: { repo: 'm', path: '/w/m', base: 'main', branch: 'change/c', created: false }, repos: [] };
+const publishRepo: PublishRepo = { repo: 'r', path: '/w/r', base: 'main' };
 const FILTERS = [{ name: 'Run-spec', extensions: ['toml', 'json'] }];
 
 function fakeIpc() {
@@ -32,9 +36,10 @@ const rows: Row[] = [
   ['saveSpec', (t) => t.saveSpec('a.toml', spec), 'save_spec', { path: 'a.toml', spec }],
   ['validateSpec', (t) => t.validateSpec(spec), 'validate_spec', { spec }],
   ['runSpec', (t) => t.runSpec(spec), 'run_spec', { spec }],
-  ['cancelRun', (t) => t.cancelRun(), 'cancel_run', undefined],
-  ['submitAnswer', (t) => t.submitAnswer('q', [['a']]), 'submit_answer', { id: 'q', answers: [['a']] }],
-  ['submitDecision', (t) => t.submitDecision('p', true, null), 'submit_decision', { id: 'p', allow: true, message: null }],
+  ['runSpec with a group', (t) => t.runSpec(spec, 'build:claims/c'), 'run_spec', { spec, group: 'build:claims/c' }],
+  ['cancelRun', (t) => t.cancelRun('7'), 'cancel_run', { runId: '7' }],
+  ['submitAnswer', (t) => t.submitAnswer('7', 'q', [['a']]), 'submit_answer', { runId: '7', id: 'q', answers: [['a']] }],
+  ['submitDecision', (t) => t.submitDecision('7', 'p', true, null), 'submit_decision', { runId: '7', id: 'p', allow: true, message: null }],
   ['listKatas', (t) => t.listKatas(), 'list_katas', undefined],
   ['loadKata', (t) => t.loadKata('k'), 'load_kata', { name: 'k' }],
   ['saveKata', (t) => t.saveKata(spec), 'save_kata', { spec }],
@@ -49,7 +54,7 @@ const rows: Row[] = [
   ['sdlcContextHealth', (t) => t.sdlcContextHealth('/w', 'm', 's', 'r'), 'sdlc_context_health', { folder: '/w', master: 'm', system: 's', repo: 'r' }],
   ['sdlcChanges', (t) => t.sdlcChanges('/m', 's'), 'sdlc_changes', { master: '/m', system: 's' }],
   ['sdlcBranches', (t) => t.sdlcBranches('/m'), 'sdlc_branches', { master: '/m' }],
-  ['sdlcWaitRunExit', (t) => t.sdlcWaitRunExit(15000), 'sdlc_wait_run_exit', { timeoutMs: 15000 }],
+  ['sdlcWaitRunExit', (t) => t.sdlcWaitRunExit('7', 15000), 'sdlc_wait_run_exit', { runId: '7', timeoutMs: 15000 }],
   ['zoom', (t) => t.zoom('in'), 'zoom', { step: 'in' }],
   ['sdlcReadDoc', (t) => t.sdlcReadDoc('/m', 's', 'c', 'intent'), 'sdlc_read_doc', { master: '/m', system: 's', change: 'c', doc: 'intent' }],
   ['sdlcSnapshot', (t) => t.sdlcSnapshot('/m'), 'sdlc_snapshot', { master: '/m' }],
@@ -61,6 +66,25 @@ const rows: Row[] = [
   ['sdlcDecide', (t) => t.sdlcDecide('/m', 's', 'c', 'accept-spec', true), 'sdlc_decide', { master: '/m', system: 's', change: 'c', decision: 'accept-spec', confirmed: true }],
   ['sdlcRunLinks', (t) => t.sdlcRunLinks(), 'sdlc_run_links', undefined],
   ['sdlcLinkRun', (t) => t.sdlcLinkRun(link), 'sdlc_link_run', { link }],
+  ['sdlcBuildStatus', (t) => t.sdlcBuildStatus('/m', 's', 'c'), 'sdlc_build_status', { master: '/m', system: 's', change: 'c' }],
+  ['sdlcUnsavedRows', (t) => t.sdlcUnsavedRows('/m', 's', 'c'), 'sdlc_unsaved_rows', { master: '/m', system: 's', change: 'c' }],
+  ['sdlcBuildPrepare', (t) => t.sdlcBuildPrepare('/w', 'm', 's', 'c', true), 'sdlc_build_prepare', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', continueWithLeftovers: true }],
+  ['sdlcBuildSettle', (t) => t.sdlcBuildSettle(start), 'sdlc_build_settle', { start }],
+  ['sdlcBuildHeads', (t) => t.sdlcBuildHeads('/w', ['r'], 'c'), 'sdlc_build_heads', { folder: '/w', repos: ['r'], change: 'c' }],
+  ['sdlcPluginVersion', (t) => t.sdlcPluginVersion('/p'), 'sdlc_plugin_version', { path: '/p' }],
+  ['sdlcChangeRepos', (t) => t.sdlcChangeRepos('/w', 'm', 's', 'c'), 'sdlc_change_repos', { folder: '/w', masterRepo: 'm', system: 's', change: 'c' }],
+  ['sdlcDiffFiles', (t) => t.sdlcDiffFiles('/r', 'whole'), 'sdlc_diff_files', { repoPath: '/r', part: 'whole' }],
+  ['sdlcDiffPair', (t) => t.sdlcDiffPair('/r', 'committed', 'a.ts'), 'sdlc_diff_pair', { repoPath: '/r', part: 'committed', path: 'a.ts' }],
+  ['sdlcDiffBase', (t) => t.sdlcDiffBase('/r'), 'sdlc_diff_base', { repoPath: '/r' }],
+  ['sdlcTouchedRepos', (t) => t.sdlcTouchedRepos('/w', 'm', 's', 'c'), 'sdlc_touched_repos', { folder: '/w', masterRepo: 'm', system: 's', change: 'c' }],
+  ['sdlcCommitOffenders', (t) => t.sdlcCommitOffenders('/w', 'm', 's', 'c'), 'sdlc_commit_offenders', { folder: '/w', masterRepo: 'm', system: 's', change: 'c' }],
+  ['sdlcChecksDir', (t) => t.sdlcChecksDir(), 'sdlc_checks_dir', undefined],
+  ['sdlcChecksLoad', (t) => t.sdlcChecksLoad('/w', 'm', 's'), 'sdlc_checks_load', { folder: '/w', masterRepo: 'm', system: 's' }],
+  ['sdlcRunChecks', (t) => t.sdlcRunChecks('/w', 'm', 's', publishRepo), 'sdlc_run_checks', { folder: '/w', masterRepo: 'm', system: 's', repo: publishRepo }],
+  ['sdlcGhSignedIn', (t) => t.sdlcGhSignedIn([publishRepo]), 'sdlc_gh_signed_in', { repos: [publishRepo] }],
+  ['sdlcGhOrigins', (t) => t.sdlcGhOrigins([publishRepo]), 'sdlc_gh_origins', { repos: [publishRepo] }],
+  ['sdlcPublish', (t) => t.sdlcPublish('/w', 'm', 's', 'c', [publishRepo]), 'sdlc_publish', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', repos: [publishRepo] }],
+  ['sdlcPullRequests', (t) => t.sdlcPullRequests([publishRepo], 'c'), 'sdlc_pull_requests', { repos: [publishRepo], change: 'c' }],
 ];
 
 describe('TauriTransport', () => {
@@ -84,15 +108,21 @@ describe('TauriTransport', () => {
     expect(ipc.save).toHaveBeenCalledWith({ filters: FILTERS });
   });
 
-  it('forwards the payload of kata://event to the callback', async () => {
+  it('unwraps the { runId, event } payload of kata://event and hands the id over as a string', async () => {
     const ipc = fakeIpc();
     const t = new TauriTransport(asIpc(ipc));
-    const seen: KataEvent[] = [];
-    await t.onRunEvent((e) => seen.push(e));
-    const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: KataEvent }) => void];
+    const seen: [string, KataEvent][] = [];
+    await t.onRunEvent((runId, e) => seen.push([runId, e]));
+    const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: { runId: number; event: KataEvent } }) => void];
     expect(event).toBe('kata://event');
     const ev: KataEvent = { type: 'log', level: 'info', message: 'x' };
-    handler({ payload: ev });
-    expect(seen).toEqual([ev]);
+    handler({ payload: { runId: 3, event: ev } });
+    expect(seen).toEqual([['3', ev]]);
+  });
+
+  it('runSpec resolves to the run id the backend returned', async () => {
+    const ipc = fakeIpc();
+    ipc.invoke.mockResolvedValueOnce('12' as never);
+    expect(await new TauriTransport(asIpc(ipc)).runSpec(spec)).toBe('12');
   });
 });
