@@ -145,6 +145,9 @@ export class BuildViewModel {
     const status = this.status();
     if (status === null) return [];
     const rows = status.repos.map((r) => this.repoRow(r.repo, status));
+    const master = this.masterName();
+    const masterRow = master !== null && !status.repos.some((r) => r.repo === master) ? this.masterRow(master) : null;
+    if (masterRow !== null) rows.push(masterRow);
     rows.push(this.reviewRow());
     return rows;
   });
@@ -327,7 +330,7 @@ export class BuildViewModel {
         this.handoff = { ...h, start: out.start };
         this.settled = false;
       } else {
-        const path = key === REVIEW ? h.start.master.path : h.start.repos.find((r) => r.repo === key)?.path;
+        const path = key === REVIEW ? h.start.master.path : this.pathOf(key);
         const dirty = path === undefined ? [] : Object.keys((await this.transport.sdlcSnapshot(path)).dirty);
         if (dirty.length > 0) {
           this.ask(key, dirty.map((f) => `${key === REVIEW ? h.start.master.repo : key}: ${f}`));
@@ -370,6 +373,13 @@ export class BuildViewModel {
   cancelContinue(): void {
     this.asking = null;
     this.pendingLeftovers.set(null);
+  }
+
+  /** Where a repository of the build lives: a product repository or the master. */
+  private pathOf(repo: string): string | undefined {
+    const start = this.handoff?.start;
+    if (start === undefined) return undefined;
+    return repo === start.master.repo ? start.master.path : start.repos.find((r) => r.repo === repo)?.path;
   }
 
   private ask(key: string, lines: string[]): void {
@@ -465,6 +475,25 @@ export class BuildViewModel {
     }
   }
 
+  private masterName(): string | null {
+    return this.handoff?.start.master.repo ?? null;
+  }
+
+  /** The master repository's row, once it has a round pending, running, stopped or done; null when it has nothing to show. */
+  private masterRow(name: string): RepoRow | null {
+    const entry = this.latest(name);
+    const stop = this.driver.stopped().get(name);
+    const going = this.driver.going().has(name);
+    const pending = this.driver.round()?.repo === name;
+    if (!stop && !going && !pending && entry === null) return null;
+    const clock = entry ? this.clockOf(entry) : null;
+    const paused = entry && going && this.isWaiting(entry.id) ? this.pausedOf(entry.id) : null;
+    const row = (tone: RepoRow['tone'], label: string): RepoRow => ({ name, tone, label, clock, paused, unseen: this.unseenOf(name) });
+    if (stop) return row('error', stop.reason);
+    if (going) return paused !== null ? row('warning', 'Waiting for you') : row('success', 'Working');
+    return pending ? row('idle', 'Not started') : row('success', 'Finished');
+  }
+
   private reviewRow(): RepoRow {
     const entry = this.latest(REVIEW);
     const clock = entry ? this.clockOf(entry) : null;
@@ -520,7 +549,8 @@ export class BuildViewModel {
 
   private readHeads(): Promise<Record<string, string>> {
     const ctx = this.ctx!;
-    return this.transport.sdlcBuildHeads(ctx.folder, this.productRepos, ctx.change);
+    // The master is a build participant: a round there that commits makes the review stale like any product repository's.
+    return this.transport.sdlcBuildHeads(ctx.folder, [this.handoff!.start.master.repo, ...this.productRepos], ctx.change);
   }
 
   private async refresh(): Promise<void> {
@@ -537,7 +567,7 @@ export class BuildViewModel {
     const ctx = this.ctx!;
     const review = target === 'review';
     const repo = review ? h.start.master.repo : target.repo;
-    const path = review ? h.start.master.path : (h.start.repos.find((r) => r.repo === repo)?.path ?? `${ctx.folder}/${repo}`);
+    const path = review ? h.start.master.path : (this.pathOf(repo) ?? `${ctx.folder}/${repo}`);
     const run: BuildRun = {
       target,
       timeoutSecs: opts.timeoutSecs,

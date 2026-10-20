@@ -160,7 +160,8 @@ export class BuildDriver {
     if (this.going().size > 0 || this.reviewing) return;
 
     const complete = status.hasTasks && status.tasks.every((t) => t.row !== null);
-    if (!complete || this.stopped().has(REVIEW)) {
+    // A repository that stopped (a round on a finished one, or on the master, has no unfinished task) is never "finished".
+    if (!complete || this.stopped().size > 0) {
       this.phase.set('stopped');
       this.report.set(this.reportFor(status, waiting));
       return;
@@ -222,8 +223,12 @@ export class BuildDriver {
         this.markStopped(REVIEW, REVIEW, stopMessage(end.exit, end.error));
       }
     } else {
-      if (this.round()?.repo === key && this.roundStarted)this.round.set(null);
       await this.judge(key, task, end, cancelled);
+      // A round that stopped is not over: it stays, so Continue runs it again with its instructions.
+      if (this.round()?.repo === key && this.roundStarted) {
+        if (this.stopped().has(key)) this.roundStarted = false;
+        else this.round.set(null);
+      }
     }
     if (this.cancelledAll) return this.settleCancel();
     await this.look();
