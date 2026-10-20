@@ -18,6 +18,7 @@ import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import { seedCatalog, validateLocal, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
 import { history, runDetailFixture, katasFixture, presetsFixture } from '../../lib/library';
 import { MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, SdlcMock, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
+import type { ZoomStep } from '../../lib/zoom-keys';
 import { KataTransport, NO_BACKEND } from './kata-transport';
 
 /** How long the first scan of the demo setup folder takes, long enough to see the checking steps. */
@@ -93,6 +94,8 @@ export class MockTransport extends KataTransport {
   sdlcLinkRun(link: RunLink): Promise<void> { this.sdlc.linkRun(link); return Promise.resolve(); }
   /** The scripted run has no process to wait for. */
   sdlcWaitRunExit(_timeoutMs: number): Promise<boolean> { return Promise.resolve(true); }
+  /** A plain browser has no window to zoom. */
+  zoom(_step: ZoomStep): Promise<number> { return Promise.resolve(1); }
   pickDirectory(): Promise<string | null> { return Promise.resolve(null); }
   pickOpenSpec(): Promise<string | null> { return Promise.resolve(null); }
   pickSaveSpec(): Promise<string | null> { return Promise.resolve(null); }

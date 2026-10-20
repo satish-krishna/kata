@@ -18,6 +18,7 @@ import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
+import type { ZoomStep } from '../../lib/zoom-keys';
 import { KataTransport } from './kata-transport';
 
 /** The Tauri functions the transport needs, injectable so tests need no module mocking. */
@@ -67,6 +68,7 @@ export class TauriTransport extends KataTransport {
   sdlcRunLinks() { return this.ipc.invoke<RunLink[]>('sdlc_run_links'); }
   sdlcLinkRun(link: RunLink) { return this.ipc.invoke<void>('sdlc_link_run', { link }); }
   sdlcWaitRunExit(timeoutMs: number) { return this.ipc.invoke<boolean>('sdlc_wait_run_exit', { timeoutMs }); }
+  zoom(step: ZoomStep) { return this.ipc.invoke<number>('zoom', { step }); }
   pickDirectory() { return this.ipc.open({ directory: true, multiple: false }) as Promise<string | null>; }
   pickOpenSpec() { return this.ipc.open({ multiple: false, filters: SPEC_FILTERS }) as Promise<string | null>; }
   pickSaveSpec() { return this.ipc.save({ filters: SPEC_FILTERS }) as Promise<string | null>; }

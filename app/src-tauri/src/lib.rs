@@ -1,3 +1,5 @@
+mod zoom;
+
 use kata_core::catalog::{self, CatalogEntry};
 use kata_core::spec::{self, RunSpec};
 use kata_sdlc as sdlc;
@@ -5,7 +7,7 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -137,6 +139,21 @@ fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) -> Result
     });
 
     Ok(())
+}
+
+/// Step the window's zoom and remember the new level for the next launch.
+#[tauri::command]
+fn zoom(
+    webview: tauri::Webview,
+    level: State<zoom::Level>,
+    step: zoom::Step,
+) -> Result<f64, String> {
+    zoom::apply(
+        &level.0,
+        step,
+        |z| webview.set_zoom(z).map_err(|e| e.to_string()),
+        zoom::save,
+    )
 }
 
 // ---- AI-SDLC mode: thin wrappers over `kata-sdlc` ----
@@ -428,6 +445,19 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(RunControl::default())
+        .setup(|app| {
+            // Open at the remembered zoom; a failure leaves the window at 100%.
+            let saved = zoom::load();
+            let applied = app
+                .get_webview_window("main")
+                .is_some_and(|w| w.set_zoom(saved).is_ok());
+            app.manage(zoom::Level(std::sync::Mutex::new(if applied {
+                saved
+            } else {
+                1.0
+            })));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             catalog,
             load_spec,
@@ -463,7 +493,8 @@ pub fn run() {
             sdlc_decide,
             sdlc_run_links,
             sdlc_link_run,
-            sdlc_wait_run_exit
+            sdlc_wait_run_exit,
+            zoom
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

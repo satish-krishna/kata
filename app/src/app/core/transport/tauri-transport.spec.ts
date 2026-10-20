@@ -50,6 +50,7 @@ const rows: Row[] = [
   ['sdlcChanges', (t) => t.sdlcChanges('/m', 's'), 'sdlc_changes', { master: '/m', system: 's' }],
   ['sdlcBranches', (t) => t.sdlcBranches('/m'), 'sdlc_branches', { master: '/m' }],
   ['sdlcWaitRunExit', (t) => t.sdlcWaitRunExit(15000), 'sdlc_wait_run_exit', { timeoutMs: 15000 }],
+  ['zoom', (t) => t.zoom('in'), 'zoom', { step: 'in' }],
   ['sdlcReadDoc', (t) => t.sdlcReadDoc('/m', 's', 'c', 'intent'), 'sdlc_read_doc', { master: '/m', system: 's', change: 'c', doc: 'intent' }],
   ['sdlcSnapshot', (t) => t.sdlcSnapshot('/m'), 'sdlc_snapshot', { master: '/m' }],
   ['sdlcLeftovers', (t) => t.sdlcLeftovers('/m', snap, ['r']), 'sdlc_leftovers', { master: '/m', before: snap, productRepos: ['r'] }],

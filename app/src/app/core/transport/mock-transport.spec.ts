@@ -175,6 +175,10 @@ describe('MockTransport', () => {
       await expect(t.sdlcReadDoc('/m', 'claims', '2026-10-12-fnol-photo-upload', 'spec.md')).rejects.toThrow(/stem/);
     });
 
+    it('has no window to zoom, so the level stays at 100%', async () => {
+      expect(await new MockTransport().zoom('in')).toBe(1);
+    });
+
     it('waits for the engine to exit at once', async () => {
       expect(await new MockTransport().sdlcWaitRunExit(15000)).toBe(true);
     });

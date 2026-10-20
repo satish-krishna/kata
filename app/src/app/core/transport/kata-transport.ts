@@ -15,6 +15,7 @@ import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
+import type { ZoomStep } from '../../lib/zoom-keys';
 
 /** The one seam between the Workbench and its backend. TauriTransport talks to
  *  the Rust commands; MockTransport stands in with fixtures and a scripted run
@@ -61,6 +62,8 @@ export abstract class KataTransport {
   abstract sdlcLinkRun(link: RunLink): Promise<void>;
   /** Wait until the engine process of the last run has exited. False when it is still alive after `timeoutMs`. */
   abstract sdlcWaitRunExit(timeoutMs: number): Promise<boolean>;
+  /** Step the window's zoom. Resolves to the new level, which the backend remembers for the next launch. */
+  abstract zoom(step: ZoomStep): Promise<number>;
   /** Register for relayed run events. Resolves to the unlisten function. */
   abstract onRunEvent(cb: (ev: KataEvent) => void): Promise<() => void>;
 }
