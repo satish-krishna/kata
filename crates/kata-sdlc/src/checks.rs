@@ -1,9 +1,11 @@
 //! The checks file: the commands that judge a system's repositories when a change is declared
 //! done. One TOML file per system under the Workbench's `checks` folder, kept outside every
 //! workspace so no agent can edit the checks it is judged by.
+use crate::process::{self, ProcessError};
 use crate::store;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// Upper bound on a check's timeout (24 hours).
 const MAX_TIMEOUT_SECS: i64 = 86_400;
@@ -166,8 +168,44 @@ pub struct RepoChecks {
 /// Runs the checks of `repo` in file order inside `repo_dir`, stopping at the first one that
 /// fails or could not run.
 pub fn run_repo(plan: &ChecksPlan, repo: &str, repo_dir: &Path) -> RepoChecks {
-    let _ = (plan, repo, repo_dir);
-    todo!()
+    let specs = for_repo(plan, repo);
+    let mut results = Vec::with_capacity(specs.len());
+    for spec in &specs {
+        let (outcome, tail) =
+            match process::run(&spec.argv, repo_dir, Duration::from_secs(spec.timeout_secs)) {
+                Ok(exit) => {
+                    let outcome = match exit.code {
+                        Some(0) => CheckOutcome::Passed,
+                        code => CheckOutcome::Failed { exit: code },
+                    };
+                    (outcome, exit.tail)
+                }
+                Err(ProcessError::SpawnFailed(reason)) => {
+                    (CheckOutcome::CouldNotRun { reason }, String::new())
+                }
+                Err(ProcessError::TimedOut { secs, tail }) => (
+                    CheckOutcome::CouldNotRun {
+                        reason: format!("ran past its time limit of {secs}s"),
+                    },
+                    tail,
+                ),
+            };
+        let stop = outcome != CheckOutcome::Passed;
+        results.push(CheckResult {
+            name: spec.name.clone(),
+            argv: spec.argv.clone(),
+            outcome,
+            tail,
+        });
+        if stop {
+            break;
+        }
+    }
+    RepoChecks {
+        repo: repo.to_string(),
+        none: specs.is_empty(),
+        results,
+    }
 }
 
 fn parse(label: &str, text: &str, allowed_repos: &[String]) -> Result<Vec<CheckSpec>, ChecksError> {

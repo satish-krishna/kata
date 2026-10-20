@@ -1,8 +1,27 @@
 //! Runs one command to completion with a bounded output tail and a hard timeout.
 //! The command is spawned inside a Windows job object (Unix: its own process group) so a timeout
 //! kills the whole process tree, not just the direct child.
+use process_wrap::std::CommandWrap;
+#[cfg(windows)]
+use process_wrap::std::JobObject;
+#[cfg(unix)]
+use process_wrap::std::ProcessGroup;
+use std::collections::VecDeque;
+use std::io::Read;
 use std::path::Path;
-use std::time::Duration;
+use std::process::{Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const MAX_LINES: usize = 50;
+const MAX_BYTES: usize = 64 * 1024;
+/// How often the runner checks whether the process has exited.
+const POLL: Duration = Duration::from_millis(20);
+/// How long to wait for the output readers after the process ended, in case a surviving
+/// grandchild still holds a pipe open.
+const DRAIN: Duration = Duration::from_secs(2);
 
 /// How a command could not be run to completion.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,27 +41,247 @@ pub(crate) struct ProcessExit {
     pub tail: String,
 }
 
-/// Runs `argv` in `cwd` with a null stdin and the inherited environment.
+/// Runs `argv` in `cwd` with a null stdin and the inherited environment. A timeout kills the
+/// process tree and returns `TimedOut` with the output captured so far.
 pub(crate) fn run(
-    _argv: &[String],
-    _cwd: &Path,
-    _timeout: Duration,
+    argv: &[String],
+    cwd: &Path,
+    timeout: Duration,
 ) -> Result<ProcessExit, ProcessError> {
-    todo!()
+    let (program, args) = argv
+        .split_first()
+        .ok_or_else(|| ProcessError::SpawnFailed("the command is empty".into()))?;
+    let not_found =
+        || ProcessError::SpawnFailed(format!("{program} was not found on this machine"));
+    #[cfg(windows)]
+    let resolved = resolve_program(
+        program,
+        cwd,
+        &std::env::var("PATH").unwrap_or_default(),
+        std::env::var("PATHEXT").ok().as_deref(),
+    )
+    .ok_or_else(not_found)?;
+    #[cfg(not(windows))]
+    let resolved = std::path::PathBuf::from(program);
+    let mut command = Command::new(resolved);
+    command
+        .args(args)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut wrapped = CommandWrap::from(command);
+    #[cfg(windows)]
+    wrapped.wrap(JobObject);
+    #[cfg(unix)]
+    wrapped.wrap(ProcessGroup::leader());
+    let mut child = wrapped.spawn().map_err(|_| not_found())?;
+
+    let tail = Arc::new(Mutex::new(Tail::default()));
+    let mut readers = Vec::new();
+    if let Some(stdout) = child.stdout().take() {
+        readers.push(spawn_reader(stdout, Arc::clone(&tail)));
+    }
+    if let Some(stderr) = child.stderr().take() {
+        readers.push(spawn_reader(stderr, Arc::clone(&tail)));
+    }
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) if Instant::now() >= deadline => break None,
+            Ok(None) => thread::sleep(POLL),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ProcessError::SpawnFailed(format!(
+                    "{program} could not be waited on: {e}"
+                )));
+            }
+        }
+    };
+
+    if status.is_none() {
+        // Killing the job object / process group closes the pipes, so the readers finish.
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    drain(readers);
+    let tail = tail.lock().unwrap_or_else(|e| e.into_inner()).render();
+    match status {
+        Some(status) => Ok(ProcessExit {
+            code: status.code(),
+            tail,
+        }),
+        None => Err(ProcessError::TimedOut {
+            secs: timeout.as_secs(),
+            tail,
+        }),
+    }
 }
 
+/// Windows only: the full path to spawn for `argv0`. Rust's `Command` appends only `.exe` and
+/// resolves relative paths against Kata's own directory, so this does what a shell would:
+/// a relative path with a separator is joined to the repository root `cwd`, and a bare name
+/// without an extension is searched along `path_var` trying each `pathext_var` extension
+/// (default `.COM;.EXE;.BAT;.CMD`). A bare name that is not found yields `None`.
 #[cfg(windows)]
 fn resolve_program(
-    _argv0: &str,
-    _cwd: &Path,
-    _path_var: &str,
-    _pathext_var: Option<&str>,
+    argv0: &str,
+    cwd: &Path,
+    path_var: &str,
+    pathext_var: Option<&str>,
 ) -> Option<std::path::PathBuf> {
-    todo!()
+    use std::path::PathBuf;
+    let exts: Vec<String> = pathext_var
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or(".COM;.EXE;.BAT;.CMD")
+        .split(';')
+        .filter(|e| !e.is_empty())
+        .map(str::to_string)
+        .collect();
+    let with_exts = |base: PathBuf| -> Option<PathBuf> {
+        if base.is_file() {
+            return Some(base);
+        }
+        exts.iter()
+            .map(|e| PathBuf::from(format!("{}{e}", base.display())))
+            .find(|c| c.is_file())
+    };
+    let given = Path::new(argv0);
+    if argv0.contains(['/', '\\']) {
+        let full = if given.is_absolute() {
+            given.to_path_buf()
+        } else {
+            cwd.join(given)
+        };
+        if given.extension().is_some() {
+            return Some(full);
+        }
+        return Some(with_exts(full.clone()).unwrap_or(full));
+    }
+    if given.extension().is_some() {
+        return Some(given.to_path_buf());
+    }
+    std::env::split_paths(path_var).find_map(|dir| {
+        exts.iter()
+            .map(|e| dir.join(format!("{argv0}{e}")))
+            .find(|c| c.is_file())
+    })
 }
 
-fn strip_ansi(_text: &str) -> String {
-    todo!()
+/// Waits for the reader threads to reach end of stream, giving up after `DRAIN` overall.
+fn drain(readers: Vec<Receiver<()>>) {
+    let deadline = Instant::now() + DRAIN;
+    for done in readers {
+        let _ = done.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+    }
+}
+
+/// Reads `source` to the end on its own thread, feeding whole lines into `tail`.
+/// The returned receiver yields (or disconnects) once the thread is finished.
+fn spawn_reader(mut source: impl Read + Send + 'static, tail: Arc<Mutex<Tail>>) -> Receiver<()> {
+    let (finished, done) = mpsc::channel();
+    thread::spawn(move || {
+        let mut chunk = [0u8; 8192];
+        let mut line: Vec<u8> = Vec::new();
+        loop {
+            let read = match source.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            for &byte in &chunk[..read] {
+                if byte == b'\n' {
+                    push_line(&tail, &line);
+                    line.clear();
+                } else {
+                    line.push(byte);
+                    if line.len() > 2 * MAX_BYTES {
+                        line.drain(..line.len() - MAX_BYTES);
+                    }
+                }
+            }
+        }
+        if !line.is_empty() {
+            push_line(&tail, &line);
+        }
+        let _ = finished.send(());
+    });
+    done
+}
+
+fn push_line(tail: &Mutex<Tail>, raw: &[u8]) {
+    let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
+    let text = strip_ansi(&String::from_utf8_lossy(raw));
+    tail.lock().unwrap_or_else(|e| e.into_inner()).push(text);
+}
+
+/// The most recent whole lines of output, bounded by line count and total size.
+#[derive(Default)]
+struct Tail {
+    lines: VecDeque<String>,
+    /// Length of the lines joined with newlines.
+    bytes: usize,
+}
+
+impl Tail {
+    fn push(&mut self, mut line: String) {
+        if line.len() > MAX_BYTES {
+            let mut cut = line.len() - MAX_BYTES;
+            while !line.is_char_boundary(cut) {
+                cut += 1;
+            }
+            line.drain(..cut);
+        }
+        self.bytes += line.len() + usize::from(!self.lines.is_empty());
+        self.lines.push_back(line);
+        while self.lines.len() > MAX_LINES || (self.bytes > MAX_BYTES && self.lines.len() > 1) {
+            if let Some(oldest) = self.lines.pop_front() {
+                self.bytes -= oldest.len() + 1;
+            }
+        }
+    }
+
+    fn render(&self) -> String {
+        self.lines
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Removes CSI sequences (`ESC [ ... final byte`), OSC sequences (`ESC ] ... BEL` or `ESC \`),
+/// and other two-character escapes.
+fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                for next in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                while let Some(next) = chars.next() {
+                    if next == '\u{7}' || (next == '\u{1b}' && chars.next() == Some('\\')) {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 #[cfg(test)]
