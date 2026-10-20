@@ -244,7 +244,7 @@ export class SdlcRunner {
     let heads: Record<string, string> | undefined;
     if (review) {
       try {
-        heads = await this.transport.sdlcBuildHeads(link.folder, link.repos, link.change);
+        heads = await this.transport.sdlcBuildHeads(link.folder, [target.repo, ...link.repos], link.change);
       } catch (e) {
         this.toasts.error(`Could not record where each repository stood: ${message(e)}`);
       }

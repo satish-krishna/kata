@@ -645,7 +645,7 @@ export class ChangePageViewModel {
           const [links, records, heads] = await Promise.all([
             this.transport.sdlcRunLinks(),
             this.transport.listRuns(),
-            this.transport.sdlcBuildHeads(folder, productRepos, change),
+            this.transport.sdlcBuildHeads(folder, [master, ...productRepos], change),
           ]);
           const state = reviewState(links, records, heads, { workspaceId: w.id, system, change });
           if (state.kind !== 'current') {
