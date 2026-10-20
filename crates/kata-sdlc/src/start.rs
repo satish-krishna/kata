@@ -679,6 +679,18 @@ mod tests {
     }
 
     #[test]
+    fn heads_after_settle_skips_repos_without_the_branch() {
+        let fx = fixture();
+        let start = ready(prep(&fx, false));
+        testutil::commit_msg(&fx.repo("app"), "a.txt", "a\n", OWN);
+        assert_eq!(settle(&start).unwrap(), ["api"]);
+        let got = heads(&fx.folder, &["app".into(), "api".into()], C).unwrap();
+        let want = git::run(&fx.repo("app"), &["rev-parse", &format!("change/{C}")]).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got["app"], want);
+    }
+
+    #[test]
     fn settle_keeps_a_dirty_empty_branch() {
         let fx = fixture();
         let start = ready(prep(&fx, false));
