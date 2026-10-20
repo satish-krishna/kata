@@ -123,6 +123,53 @@ pub fn for_repo(plan: &ChecksPlan, repo: &str) -> Vec<CheckSpec> {
         .collect()
 }
 
+/// How one check ended.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "kind")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum CheckOutcome {
+    Passed,
+    /// The command ran and exited non-zero (`exit: None`: it was ended without an exit code).
+    Failed {
+        exit: Option<i32>,
+    },
+    /// The command could not be run to a verdict: a fault of the machine, not of the code.
+    CouldNotRun {
+        reason: String,
+    },
+}
+
+/// The result of one check, with the last lines of its output.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct CheckResult {
+    pub name: String,
+    pub argv: Vec<String>,
+    pub outcome: CheckOutcome,
+    /// The last 50 lines (at most 64 KiB) of output.
+    pub tail: String,
+}
+
+/// The checks of one repository, run in file order up to the first that did not pass.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct RepoChecks {
+    pub repo: String,
+    pub results: Vec<CheckResult>,
+    /// True when the repository has no checks at all.
+    pub none: bool,
+}
+
+/// Runs the checks of `repo` in file order inside `repo_dir`, stopping at the first one that
+/// fails or could not run.
+pub fn run_repo(plan: &ChecksPlan, repo: &str, repo_dir: &Path) -> RepoChecks {
+    let _ = (plan, repo, repo_dir);
+    todo!()
+}
+
 fn parse(label: &str, text: &str, allowed_repos: &[String]) -> Result<Vec<CheckSpec>, ChecksError> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let file: ChecksFile =
@@ -448,5 +495,127 @@ mod tests {
         assert!(plan.path.ends_with("claims.toml"), "{}", plan.path);
         assert!(plan.path.starts_with(&home.display().to_string()));
         assert!(for_repo(&plan, "api").is_empty());
+    }
+
+    fn sh(windows: &str, unix: &str) -> Vec<String> {
+        if cfg!(windows) {
+            vec!["cmd".into(), "/C".into(), windows.into()]
+        } else {
+            vec!["sh".into(), "-c".into(), unix.into()]
+        }
+    }
+
+    fn spec(name: &str, argv: Vec<String>, timeout_secs: u64) -> CheckSpec {
+        CheckSpec {
+            repo: "api".into(),
+            name: name.into(),
+            argv,
+            timeout_secs,
+        }
+    }
+
+    fn plan_of(checks: Vec<CheckSpec>) -> ChecksPlan {
+        ChecksPlan {
+            path: "claims.toml".into(),
+            exists: true,
+            checks,
+        }
+    }
+
+    #[test]
+    fn exit_zero_passes() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan = plan_of(vec![spec("ok", sh("exit 0", "exit 0"), 10)]);
+        let run = run_repo(&plan, "api", dir.path());
+        assert!(!run.none);
+        assert_eq!(run.results.len(), 1);
+        assert_eq!(run.results[0].outcome, CheckOutcome::Passed);
+        assert_eq!(run.results[0].name, "ok");
+    }
+
+    #[test]
+    fn non_zero_fails_with_the_tail_as_detail() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan = plan_of(vec![spec(
+            "bad",
+            sh("echo boom&& exit 2", "echo boom; exit 2"),
+            10,
+        )]);
+        let run = run_repo(&plan, "api", dir.path());
+        assert_eq!(
+            run.results[0].outcome,
+            CheckOutcome::Failed { exit: Some(2) }
+        );
+        assert!(run.results[0].tail.contains("boom"));
+    }
+
+    #[test]
+    fn runs_in_the_repository_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan = plan_of(vec![spec("where", sh("cd", "pwd"), 10)]);
+        let run = run_repo(&plan, "api", dir.path());
+        assert_eq!(run.results[0].outcome, CheckOutcome::Passed);
+        let name = dir
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(run.results[0].tail.contains(&name), "{:?}", run.results[0]);
+    }
+
+    #[test]
+    fn no_checks_for_a_repository_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let run = run_repo(&plan_of(vec![]), "api", dir.path());
+        assert!(run.none);
+        assert!(run.results.is_empty());
+        assert_eq!(run.repo, "api");
+    }
+
+    #[test]
+    fn run_repo_stops_at_first_failure_r11_2() {
+        let dir = tempfile::tempdir().unwrap();
+        let plan = plan_of(vec![
+            spec("bad", vec!["git".into(), "not-a-command".into()], 30),
+            spec("never", vec!["git".into(), "--version".into()], 30),
+        ]);
+        let run = run_repo(&plan, "api", dir.path());
+        assert_eq!(run.results.len(), 1, "{run:?}");
+        assert!(matches!(
+            run.results[0].outcome,
+            CheckOutcome::Failed { exit: Some(_) }
+        ));
+        assert!(
+            run.results[0].tail.contains("not-a-command"),
+            "{:?}",
+            run.results[0].tail
+        );
+    }
+
+    #[test]
+    fn could_not_run_is_not_failed_r11_6() {
+        let dir = tempfile::tempdir().unwrap();
+        let slow = sh("ping -n 30 127.0.0.1 >NUL", "echo waiting; sleep 30");
+        let run = run_repo(&plan_of(vec![spec("slow", slow, 1)]), "api", dir.path());
+        match &run.results[0].outcome {
+            CheckOutcome::CouldNotRun { reason } => {
+                assert_eq!(reason, "ran past its time limit of 1s")
+            }
+            other => panic!("expected CouldNotRun, got {other:?}"),
+        }
+        if !cfg!(windows) {
+            assert!(run.results[0].tail.contains("waiting"));
+        }
+
+        let missing = vec!["kata-no-such-binary".to_string()];
+        let run = run_repo(&plan_of(vec![spec("gone", missing, 5)]), "api", dir.path());
+        assert_eq!(
+            run.results[0].outcome,
+            CheckOutcome::CouldNotRun {
+                reason: "kata-no-such-binary was not found on this machine".into()
+            }
+        );
+        assert_eq!(run.results[0].tail, "");
     }
 }

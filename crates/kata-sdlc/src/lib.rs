@@ -10,6 +10,7 @@ pub mod decide;
 pub mod frontmatter;
 pub mod git;
 pub mod pins;
+mod process;
 pub mod snapshot;
 pub mod store;
 pub mod workspace;

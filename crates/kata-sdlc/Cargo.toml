@@ -9,6 +9,7 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 thiserror.workspace = true
+process-wrap = { version = "9.1", features = ["std", "job-object", "process-group"] }
 ts-rs = { version = "10", optional = true, default-features = false, features = ["serde-compat"] }
 
 [features]
