@@ -1,6 +1,7 @@
 //! The checks file: the commands that judge a system's repositories when a change is declared
 //! done. One TOML file per system under the Workbench's `checks` folder, kept outside every
 //! workspace so no agent can edit the checks it is judged by.
+use crate::store;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -45,30 +46,156 @@ pub enum ChecksError {
     NoHome,
 }
 
-/// `<workbench>/checks`.
-pub fn checks_dir() -> Option<PathBuf> {
-    todo!()
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChecksFile {
+    #[serde(default)]
+    checks: Vec<CheckEntry>,
 }
 
-/// Reads the checks file of `system`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CheckEntry {
+    repo: String,
+    name: Option<String>,
+    argv: Vec<String>,
+    timeout_secs: i64,
+}
+
+/// `<workbench>/checks`.
+pub fn checks_dir() -> Option<PathBuf> {
+    store::workbench_dir().map(|d| d.join("checks"))
+}
+
+/// Reads the checks file of `system`, `<checks folder>/<system>.toml`. Refuses before reading
+/// when the checks folder and the workspace contain one another. A missing file is a plan with
+/// no checks; `allowed_repos` are the system's repositories plus the master.
 pub fn load(
     system: &str,
     workspace_folder: &Path,
     allowed_repos: &[String],
 ) -> Result<ChecksPlan, ChecksError> {
-    let _ = (system, workspace_folder, allowed_repos);
-    todo!()
+    let dir = checks_dir().ok_or(ChecksError::NoHome)?;
+    let folder = canonical_lenient(&dir);
+    let root = canonical_lenient(workspace_folder);
+    if folder.starts_with(&root) || root.starts_with(&folder) {
+        return Err(ChecksError::InsideWorkspace {
+            folder: dir.display().to_string(),
+            workspace: workspace_folder.display().to_string(),
+        });
+    }
+    let file = dir.join(format!("{system}.toml"));
+    let path = file.display().to_string();
+    let bytes = match std::fs::read(&file) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ChecksPlan {
+                path,
+                exists: false,
+                checks: Vec::new(),
+            })
+        }
+        Err(e) => {
+            return Err(ChecksError::Unreadable {
+                path,
+                reason: e.to_string(),
+            })
+        }
+    };
+    let text = String::from_utf8(bytes).map_err(|_| ChecksError::Unreadable {
+        path: path.clone(),
+        reason: "the file is not valid UTF-8".into(),
+    })?;
+    let checks = parse(&path, &text, allowed_repos)?;
+    Ok(ChecksPlan {
+        path,
+        exists: true,
+        checks,
+    })
 }
 
 /// The checks that apply to `repo`, in file order.
 pub fn for_repo(plan: &ChecksPlan, repo: &str) -> Vec<CheckSpec> {
-    let _ = (plan, repo);
-    todo!()
+    plan.checks
+        .iter()
+        .filter(|c| c.repo == repo)
+        .cloned()
+        .collect()
 }
 
 fn parse(label: &str, text: &str, allowed_repos: &[String]) -> Result<Vec<CheckSpec>, ChecksError> {
-    let _ = (label, text, allowed_repos, MAX_TIMEOUT_SECS);
-    todo!()
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let file: ChecksFile =
+        toml::from_str(text).map_err(|e| ChecksError::Parse(parse_message(label, text, &e)))?;
+    let mut checks = Vec::with_capacity(file.checks.len());
+    for (i, entry) in file.checks.into_iter().enumerate() {
+        let invalid =
+            |problem: String| ChecksError::Invalid(format!("{label}: check {}: {problem}", i + 1));
+        if !allowed_repos.contains(&entry.repo) {
+            return Err(invalid(format!(
+                "repo `{}` is not part of this system (repositories: {})",
+                entry.repo,
+                allowed_repos.join(", ")
+            )));
+        }
+        if entry.argv.first().is_none_or(|p| p.trim().is_empty()) {
+            return Err(invalid(
+                "`argv` must have at least one element, the program to run".into(),
+            ));
+        }
+        if entry.timeout_secs < 1 {
+            return Err(invalid(format!(
+                "`timeout_secs` must be at least 1, got {}",
+                entry.timeout_secs
+            )));
+        }
+        if entry.timeout_secs > MAX_TIMEOUT_SECS {
+            return Err(invalid(format!(
+                "`timeout_secs` must be at most {MAX_TIMEOUT_SECS} (24 hours), got {}",
+                entry.timeout_secs
+            )));
+        }
+        let name = entry.name.unwrap_or_else(|| entry.argv.join(" "));
+        checks.push(CheckSpec {
+            repo: entry.repo,
+            name,
+            argv: entry.argv,
+            timeout_secs: entry.timeout_secs as u64,
+        });
+    }
+    Ok(checks)
+}
+
+/// `file:line:col: message` from the toml error span, or `file: message` without one.
+fn parse_message(label: &str, text: &str, e: &toml::de::Error) -> String {
+    match e.span() {
+        Some(span) => {
+            let before = &text[..span.start.min(text.len())];
+            let line = before.matches('\n').count() + 1;
+            let column = before.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+            format!("{label}:{line}:{column}: {}", e.message())
+        }
+        None => format!("{label}: {}", e.message()),
+    }
+}
+
+/// Canonicalizes the longest existing ancestor and re-appends the rest, so a folder that
+/// does not exist yet is still compared by its real location.
+fn canonical_lenient(path: &Path) -> PathBuf {
+    let mut missing = Vec::new();
+    let mut current = path;
+    loop {
+        if let Ok(real) = current.canonicalize() {
+            return missing.iter().rev().fold(real, |acc, part| acc.join(part));
+        }
+        match (current.parent(), current.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name.to_owned());
+                current = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
 }
 
 #[cfg(test)]
