@@ -37,6 +37,13 @@ export interface StopReport {
 
 const REVIEW = 'review';
 
+/** One launched run: its id is never reused, so a cancel aimed at it cannot be mistaken for one aimed at the repository's next run. */
+interface RunInstance {
+  id: number;
+  ctl: AbortController;
+  cancelled: boolean;
+}
+
 /**
  * Drives a build: one run per repository at a time, every repository whose turn it is started at once,
  * a repository that has to wait left waiting, and one review of the whole change when every task has a row.
@@ -55,8 +62,9 @@ export class BuildDriver {
   private reviewing = false;
   private cancelledAll = false;
   private compare: Record<string, string> | null = null;
-  private readonly controllers = new Map<string, AbortController>();
-  private readonly cancelling = new Set<string>();
+  /** The run going in each repository (or the review), by key. A cancel marks the instance it found, so it can never reach a later run. */
+  private readonly instances = new Map<string, RunInstance>();
+  private instanceSeq = 0;
   private tail: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: BuildDriverDeps) {}
@@ -84,14 +92,19 @@ export class BuildDriver {
   }
 
   cancel(repo: string): void {
-    this.cancelling.add(repo);
-    this.controllers.get(repo)?.abort();
+    const run = this.instances.get(repo);
+    if (run) this.cancelInstance(run);
   }
 
   cancelAll(): void {
     this.cancelledAll = true;
-    this.controllers.forEach((c) => c.abort());
-    if (this.controllers.size === 0) this.phase.set('cancelled');
+    this.instances.forEach((run) => this.cancelInstance(run));
+    if (this.instances.size === 0) this.phase.set('cancelled');
+  }
+
+  private cancelInstance(run: RunInstance): void {
+    run.cancelled = true;
+    run.ctl.abort();
   }
 
   private release(repos: string[]): void {
@@ -191,32 +204,31 @@ export class BuildDriver {
   }
 
   private settleCancel(): void {
-    if (this.controllers.size === 0) this.phase.set('cancelled');
+    if (this.instances.size === 0) this.phase.set('cancelled');
   }
 
   private launch(key: string, task: string, instructions?: string): void {
-    const ctl = new AbortController();
-    this.controllers.set(key, ctl);
+    const run: RunInstance = { id: ++this.instanceSeq, ctl: new AbortController(), cancelled: false };
+    this.instances.set(key, run);
     if (key !== REVIEW) this.going.set(new Set(this.going()).add(key));
-    const opts: RunOptions = { timeoutSecs: this.timeoutSecs, signal: ctl.signal };
+    const opts: RunOptions = { timeoutSecs: this.timeoutSecs, signal: run.ctl.signal };
     if (instructions !== undefined) opts.instructions = instructions;
     const target: RunTarget = key === REVIEW ? REVIEW : { repo: key };
     void (async () => this.deps.start(target, opts))()
       .catch((e: unknown): RunEnd => ({ exit: null, error: e instanceof Error ? e.message : String(e) }))
       .then((end) =>
-        this.enqueue(() => this.ended(key, task, end, instructions !== undefined)).catch(() => {
+        this.enqueue(() => this.ended(key, run, task, end, instructions !== undefined)).catch(() => {
           // Other runs still going end through `look` and settle the phase then; stopping now would end the build under them.
           if (this.going().size === 0 && !this.reviewing) this.phase.set('stopped');
         }),
       );
   }
 
-  private async ended(key: string, task: string, end: RunEnd, isRound: boolean): Promise<void> {
-    this.controllers.delete(key);
+  private async ended(key: string, run: RunInstance, task: string, end: RunEnd, isRound: boolean): Promise<void> {
+    if (this.instances.get(key) === run) this.instances.delete(key);
     const next = new Set(this.going());
     next.delete(key);
     this.going.set(next);
-    const cancelled = this.cancelling.delete(key);
 
     if (key === REVIEW) {
       this.reviewing = false;
@@ -225,15 +237,10 @@ export class BuildDriver {
         this.markStopped(REVIEW, REVIEW, stopMessage(end.exit, end.error));
       }
     } else {
-      try {
-        await this.judge(key, task, end, cancelled, isRound);
-      } catch {
-        // The result must not be lost: without a stop entry the repository would look ready again and be relaunched.
-        this.markStopped(key, task, `${stopMessage(end.exit, end.error)} · could not read build status`, true);
-      }
-      // A round that stopped is not over: it stays, so Continue runs it again with its instructions.
+      const outcome = await this.judge(key, task, end, run.cancelled, isRound);
+      // A round that stopped is not over: it stays, so Continue runs it again with its instructions. Any other outcome ends it.
       if (this.round()?.repo === key && this.roundStarted) {
-        if (this.stopped().has(key)) this.roundStarted = false;
+        if (outcome.kind === 'stop') this.roundStarted = false;
         else this.round.set(null);
       }
     }
@@ -241,28 +248,48 @@ export class BuildDriver {
     await this.look();
   }
 
-  private async judge(repo: string, task: string, end: RunEnd, cancelled: boolean, isRound: boolean): Promise<void> {
-    const status = await this.deps.status();
-    const now = status.repos.find((r) => r.repo === repo);
-    const recorded = task === '' || status.tasks.some((t) => t.id === task && t.row !== null);
-    const blocked = now?.state.kind === 'waiting';
-    const failed = end.exit !== 0 || end.error !== null;
-    // A plan-task run that recorded every task for its repository is finished whatever its exit code; a round that was asked for and failed is not.
-    const finished = !isRound && task !== '' && now?.state.kind === 'done';
-    if (cancelled) {
-      if (now?.state.kind !== 'done') this.stopAtCurrentTask(repo, task, now, end);
-    } else if (finished) {
-      return;
-    } else if (task === '' ? failed : failed || (!recorded && !blocked)) {
-      this.stopAtCurrentTask(repo, task, now, end);
+  /** Reads the status, looks the outcome up and acts on it. A status that cannot be read is 'unknown'; it never loses the result. */
+  private async judge(repo: string, task: string, end: RunEnd, cancelled: boolean, isRound: boolean): Promise<Outcome> {
+    let status: BuildStatus | null = null;
+    try {
+      status = await this.deps.status();
+    } catch {
+      status = null;
     }
+    const now = status?.repos.find((r) => r.repo === repo);
+    const facts: Facts = {
+      kind: isRound ? 'round' : 'task',
+      cancelled,
+      failed: end.exit !== 0 || end.error !== null,
+      recorded: isRound || (status?.tasks.some((t) => t.id === task && t.row !== null) ?? false),
+      // A repository the plan names no task in (the master) has no state row and nothing unfinished.
+      stateAfter: status === null ? 'unknown' : (now?.state.kind ?? 'done'),
+    };
+    let outcome: Outcome;
+    let why = facts.stateAfter === 'unknown' ? ' · could not read build status' : '';
+    try {
+      outcome = runOutcome(facts);
+    } catch {
+      // A combination the table calls impossible happened anyway: hold the stop rather than guess.
+      outcome = HELD;
+      why = ' · could not tell where the build stands';
+    }
+    if (outcome.kind === 'stop') this.stopAtCurrentTask(repo, task, now, end, outcome.held === true, why);
+    return outcome;
   }
 
   /** Records the stop at the task the repository is on now (ready or waiting), so it never relaunches by itself when that task becomes ready. */
-  private stopAtCurrentTask(repo: string, launchedOn: string, now: BuildStatus['repos'][number] | undefined, end: RunEnd): void {
+  private stopAtCurrentTask(
+    repo: string,
+    launchedOn: string,
+    now: BuildStatus['repos'][number] | undefined,
+    end: RunEnd,
+    held: boolean,
+    why: string,
+  ): void {
     // A repository with every task recorded has no task: `look` sees '' for it, so the stop must match that.
     const current = now?.state.kind === 'ready' || now?.state.kind === 'waiting' ? now.state.task : now?.state.kind === 'done' ? '' : launchedOn;
-    this.markStopped(repo, current, stopMessage(end.exit, end.error));
+    this.markStopped(repo, current, stopMessage(end.exit, end.error) + why, held);
   }
 }
 
@@ -271,18 +298,117 @@ function sameHeads(a: Record<string, string>, b: Record<string, string>): boolea
   return [...keys].every((k) => a[k] === b[k]);
 }
 
+/** What a finished run of one repository tells the driver, with nothing about how it was found out. */
 export interface Facts {
   kind: 'task' | 'round';
   cancelled: boolean;
+  /** Nonzero exit or an error. */
   failed: boolean;
+  /** The launched task has a committed row. Always true for a round. */
   recorded: boolean;
+  /** Where the repository stands once the run is over; 'unknown' when the status read threw. */
   stateAfter: 'ready' | 'waiting' | 'done' | 'unknown';
 }
 
 export type Outcome = { kind: 'stop'; held?: boolean } | { kind: 'finished' } | { kind: 'continue' };
 
-export const OUTCOME_RULES = new Map<string, Outcome | 'impossible'>();
+const STOP: Outcome = { kind: 'stop' };
+/** The status could not be read, so the repository's current task is unknown and the stop must hold until it is read again. */
+const HELD: Outcome = { kind: 'stop', held: true };
+const FINISHED: Outcome = { kind: 'finished' };
+const CONTINUE: Outcome = { kind: 'continue' };
+const IMPOSSIBLE = 'impossible';
 
-export function runOutcome(_facts: Facts): Outcome {
-  return { kind: 'continue' };
+type Rule = [Facts['kind'], boolean, boolean, boolean, Facts['stateAfter'], Outcome | typeof IMPOSSIBLE];
+
+/**
+ * Every combination of the facts, one row each. An IMPOSSIBLE row cannot be produced by `judge`: a round always has its row,
+ * a task run cannot leave the repository done without having recorded its own task, and an unreadable status shows no row for a task.
+ * The rows that decide something:
+ *  - a cancelled round always stops, so Continue can run it again (it is never finished, and never reviewed);
+ *  - a cancelled task run stops unless the repository is done;
+ *  - a task run that left the repository done is finished whatever its exit code;
+ *  - a failed round stops;
+ *  - a task run that failed, or that recorded nothing while not waiting, stops;
+ *  - an unreadable status stops and holds.
+ */
+const RULES: Rule[] = [
+  // kind     cancelled failed  recorded stateAfter  outcome
+  ['task',    false,    false,  true,    'ready',    CONTINUE],
+  ['task',    false,    false,  true,    'waiting',  CONTINUE],
+  ['task',    false,    false,  true,    'done',     FINISHED],
+  ['task',    false,    false,  true,    'unknown',  IMPOSSIBLE],
+  ['task',    false,    false,  false,   'ready',    STOP],
+  ['task',    false,    false,  false,   'waiting',  CONTINUE],
+  ['task',    false,    false,  false,   'done',     IMPOSSIBLE],
+  ['task',    false,    false,  false,   'unknown',  HELD],
+  ['task',    false,    true,   true,    'ready',    STOP],
+  ['task',    false,    true,   true,    'waiting',  STOP],
+  ['task',    false,    true,   true,    'done',     FINISHED],
+  ['task',    false,    true,   true,    'unknown',  IMPOSSIBLE],
+  ['task',    false,    true,   false,   'ready',    STOP],
+  ['task',    false,    true,   false,   'waiting',  STOP],
+  ['task',    false,    true,   false,   'done',     IMPOSSIBLE],
+  ['task',    false,    true,   false,   'unknown',  HELD],
+  ['task',    true,     false,  true,    'ready',    STOP],
+  ['task',    true,     false,  true,    'waiting',  STOP],
+  ['task',    true,     false,  true,    'done',     FINISHED],
+  ['task',    true,     false,  true,    'unknown',  IMPOSSIBLE],
+  ['task',    true,     false,  false,   'ready',    STOP],
+  ['task',    true,     false,  false,   'waiting',  STOP],
+  ['task',    true,     false,  false,   'done',     IMPOSSIBLE],
+  ['task',    true,     false,  false,   'unknown',  HELD],
+  ['task',    true,     true,   true,    'ready',    STOP],
+  ['task',    true,     true,   true,    'waiting',  STOP],
+  ['task',    true,     true,   true,    'done',     FINISHED],
+  ['task',    true,     true,   true,    'unknown',  IMPOSSIBLE],
+  ['task',    true,     true,   false,   'ready',    STOP],
+  ['task',    true,     true,   false,   'waiting',  STOP],
+  ['task',    true,     true,   false,   'done',     IMPOSSIBLE],
+  ['task',    true,     true,   false,   'unknown',  HELD],
+  ['round',   false,    false,  true,    'ready',    CONTINUE],
+  ['round',   false,    false,  true,    'waiting',  CONTINUE],
+  ['round',   false,    false,  true,    'done',     FINISHED],
+  ['round',   false,    false,  true,    'unknown',  HELD],
+  ['round',   false,    false,  false,   'ready',    IMPOSSIBLE],
+  ['round',   false,    false,  false,   'waiting',  IMPOSSIBLE],
+  ['round',   false,    false,  false,   'done',     IMPOSSIBLE],
+  ['round',   false,    false,  false,   'unknown',  IMPOSSIBLE],
+  ['round',   false,    true,   true,    'ready',    STOP],
+  ['round',   false,    true,   true,    'waiting',  STOP],
+  ['round',   false,    true,   true,    'done',     STOP],
+  ['round',   false,    true,   true,    'unknown',  HELD],
+  ['round',   false,    true,   false,   'ready',    IMPOSSIBLE],
+  ['round',   false,    true,   false,   'waiting',  IMPOSSIBLE],
+  ['round',   false,    true,   false,   'done',     IMPOSSIBLE],
+  ['round',   false,    true,   false,   'unknown',  IMPOSSIBLE],
+  ['round',   true,     false,  true,    'ready',    STOP],
+  ['round',   true,     false,  true,    'waiting',  STOP],
+  ['round',   true,     false,  true,    'done',     STOP],
+  ['round',   true,     false,  true,    'unknown',  HELD],
+  ['round',   true,     false,  false,   'ready',    IMPOSSIBLE],
+  ['round',   true,     false,  false,   'waiting',  IMPOSSIBLE],
+  ['round',   true,     false,  false,   'done',     IMPOSSIBLE],
+  ['round',   true,     false,  false,   'unknown',  IMPOSSIBLE],
+  ['round',   true,     true,   true,    'ready',    STOP],
+  ['round',   true,     true,   true,    'waiting',  STOP],
+  ['round',   true,     true,   true,    'done',     STOP],
+  ['round',   true,     true,   true,    'unknown',  HELD],
+  ['round',   true,     true,   false,   'ready',    IMPOSSIBLE],
+  ['round',   true,     true,   false,   'waiting',  IMPOSSIBLE],
+  ['round',   true,     true,   false,   'done',     IMPOSSIBLE],
+  ['round',   true,     true,   false,   'unknown',  IMPOSSIBLE],
+];
+
+const factsKey = (f: Facts): string => [f.kind, f.cancelled, f.failed, f.recorded, f.stateAfter].join('|');
+
+export const OUTCOME_RULES: ReadonlyMap<string, Outcome | typeof IMPOSSIBLE> = new Map(
+  RULES.map(([kind, cancelled, failed, recorded, stateAfter, outcome]) => [factsKey({ kind, cancelled, failed, recorded, stateAfter }), outcome]),
+);
+
+/** What to do with a repository once its run is over. Pure: a combination with no row, or an impossible one, throws. */
+export function runOutcome(facts: Facts): Outcome {
+  const rule = OUTCOME_RULES.get(factsKey(facts));
+  if (rule === undefined || rule === IMPOSSIBLE) throw new Error(`no outcome for ${factsKey(facts)}`);
+  return rule;
 }

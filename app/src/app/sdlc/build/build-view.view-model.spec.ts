@@ -3,6 +3,7 @@ import { provideRouter } from '@angular/router';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { LockStore } from '../../core/lock/lock.store';
+import { RunStore } from '../../core/run/run.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
@@ -525,7 +526,7 @@ describe('BuildViewModel', () => {
     });
     let release: () => void = () => undefined;
     const gate = new Promise<void>((r) => (release = r));
-    vi.spyOn(transport, 'cancelRun').mockImplementation(async () => release());
+    vi.spyOn(TestBed.inject(RunStore), 'cancelRun').mockImplementation(async () => release());
     const targets: string[] = [];
     const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
       targets.push(target.kind === 'review' ? 'review' : target.repo);
