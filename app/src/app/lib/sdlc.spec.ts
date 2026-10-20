@@ -340,11 +340,12 @@ describe("build run-specs", () => {
 
   it("build spec denies edits to the checks folder (R11.7)", () => {
     const posix = build(run({ checksDir: "/home/u/.kata/checks/claims" }));
-    expect(posix.permissions.deny).toEqual(expect.arrayContaining(["Edit(//home/u/.kata/checks/claims/**)", "Write(//home/u/.kata/checks/claims/**)"]));
+    expect(posix.permissions.deny).toContain("Edit(//home/u/.kata/checks/claims/**)");
     const win = build(run({ checksDir: "C:\\Users\\u\\.kata\\checks\\claims", workspaceFolder: "D:\\ws" }));
-    expect(win.permissions.deny).toEqual(expect.arrayContaining(["Edit(//C:/Users/u/.kata/checks/claims/**)", "Write(//C:/Users/u/.kata/checks/claims/**)"]));
+    expect(win.permissions.deny).toContain("Edit(//c/Users/u/.kata/checks/claims/**)");
     expect(win.workdir).toBe("D:/ws/app");
-    expect(win.permissions.allow).toContain("Read(//D:/ws/**)");
+    expect(win.permissions.allow).toContain("Read(//d/ws/**)");
+    expect((win.permissions.deny ?? []).concat(win.permissions.allow ?? []).some((r) => r.startsWith("Write("))).toBe(false);
     expect(validateLocal(win)).toEqual([]);
   });
 
@@ -361,15 +362,18 @@ describe("build run-specs", () => {
   it("a repository run cannot edit another repository but can write its own log (R18.5)", () => {
     const s = build(run({ target: { repo: "app" } }));
     const log = "//home/u/ws/master/intent/claims/2026-10-12-fnol/build/app.md";
-    expect(s.permissions.deny).toEqual(expect.arrayContaining(["Edit(//home/u/ws/api/**)", "Write(//home/u/ws/api/**)"]));
+    const build_ = "//home/u/ws/master/intent/claims/2026-10-12-fnol/build";
+    expect(s.permissions.deny).toContain("Edit(//home/u/ws/api/**)");
     expect(s.permissions.deny).not.toContain("Edit(//home/u/ws/app/**)");
-    expect((s.permissions.deny ?? []).some((d) => d.includes("/ws/master"))).toBe(false);
-    expect(s.permissions.allow).toEqual(["Read(//home/u/ws/**)", `Edit(${log})`, `Write(${log})`]);
+    expect(s.permissions.deny).toEqual(expect.arrayContaining([`Edit(${build_}/api.md)`, `Edit(${build_}/master.md)`]));
+    expect(s.permissions.deny).not.toContain(`Edit(${log})`);
+    expect((s.permissions.deny ?? []).some((d) => d.includes("build/**") || d.startsWith("Write("))).toBe(false);
+    expect(s.permissions.allow).toEqual(["Read(//home/u/ws/**)", `Edit(${log})`]);
   });
 
   it("the review run changes nothing", () => {
     const s = build(run({ target: "review" }));
-    expect(s.permissions.deny).toEqual(expect.arrayContaining(["Edit(//home/u/ws/**)", "Write(//home/u/ws/**)"]));
+    expect(s.permissions.deny).toEqual(expect.arrayContaining(["Edit(//home/u/ws/**)"]));
     expect(s.permissions.allow).toEqual(["Read(//home/u/ws/**)"]);
     expect(s.name).toBe("sdlc-claims-2026-10-12-fnol-review");
   });
