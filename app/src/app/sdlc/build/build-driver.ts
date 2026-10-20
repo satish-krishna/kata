@@ -248,12 +248,16 @@ export class BuildDriver {
     const blocked = now?.state.kind === 'waiting';
     const failed = end.exit !== 0 || end.error !== null;
     if (cancelled) {
-      const current = now?.state.kind === 'ready' ? now.state.task : task;
-      if (now?.state.kind !== 'done') this.markStopped(repo, current, stopMessage(end.exit, end.error));
+      if (now?.state.kind !== 'done') this.stopAtCurrentTask(repo, task, now, end);
     } else if (task === '' ? failed : failed || (!recorded && !blocked)) {
-      const current = now?.state.kind === 'ready' || now?.state.kind === 'waiting' ? now.state.task : task;
-      this.markStopped(repo, current, stopMessage(end.exit, end.error));
+      this.stopAtCurrentTask(repo, task, now, end);
     }
+  }
+
+  /** Records the stop at the task the repository is on now (ready or waiting), so it never relaunches by itself when that task becomes ready. */
+  private stopAtCurrentTask(repo: string, launchedOn: string, now: BuildStatus['repos'][number] | undefined, end: RunEnd): void {
+    const current = now?.state.kind === 'ready' || now?.state.kind === 'waiting' ? now.state.task : launchedOn;
+    this.markStopped(repo, current, stopMessage(end.exit, end.error));
   }
 }
 
