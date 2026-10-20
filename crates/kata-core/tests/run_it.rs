@@ -762,6 +762,53 @@ fn interactive_run_pauses_and_resumes_on_answer() {
 
 #[test]
 #[serial]
+fn awaiting_does_not_count_against_the_wall_clock_r4_1() {
+    with_fake("ask");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.interactive.enabled = true;
+    spec.leash.timeout_secs = Some(1);
+    let cancel = CancelToken::new();
+    let (answer_tx, answers) = kata_core::run::answer_channel();
+
+    // The operator takes 3 seconds to answer, three times the time limit.
+    let mut events: Vec<KataEvent> = Vec::new();
+    let tx = answer_tx.clone();
+    let outcome = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &cancel,
+        &answers,
+        &kata_core::run::DecisionRx::default(),
+        |e| {
+            if let KataEvent::AskRequested { id, .. } = &e {
+                let tx = tx.clone();
+                let id = id.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    let _ = tx.send(kata_core::run::Answer {
+                        id,
+                        answers: vec![vec!["JWT".into()]],
+                    });
+                });
+            }
+            events.push(e);
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        outcome.exit_code, 0,
+        "waiting on the operator must not trip the time limit"
+    );
+    assert!(matches!(
+        events.last().unwrap(),
+        KataEvent::RunCompleted { exit_code: 0, .. }
+    ));
+}
+
+#[test]
+#[serial]
 fn interactive_run_answer_deadline_reaps_with_123() {
     with_fake("ask"); // asks, then waits forever for an answer that never comes
     let work = tempfile::tempdir().unwrap();
