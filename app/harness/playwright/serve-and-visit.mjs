@@ -11,7 +11,8 @@ const MIME = {
   '.txt': 'text/plain', '.wasm': 'application/wasm',
 };
 
-export async function serveStatic(dir, { spaFallback = true } = {}) {
+/** `headers` are added to every response, so a check can serve the build under the desktop app's CSP. */
+export async function serveStatic(dir, { spaFallback = true, headers = {} } = {}) {
   const rootNorm = normalize(dir);
   const server = createServer(async (req, res) => {
     try {
@@ -30,7 +31,7 @@ export async function serveStatic(dir, { spaFallback = true } = {}) {
         if (spaFallback) { filePath = join(dir, 'index.html'); body = await readFile(filePath); }
         else { res.writeHead(404).end('not found'); return; }
       }
-      res.writeHead(200, { 'content-type': MIME[extname(filePath)] ?? 'application/octet-stream' });
+      res.writeHead(200, { ...headers, 'content-type': MIME[extname(filePath)] ?? 'application/octet-stream' });
       res.end(body);
     } catch (e) { res.writeHead(500).end(String(e && e.message)); }
   });
