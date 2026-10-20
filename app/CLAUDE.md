@@ -21,6 +21,7 @@ Keep every session on the Workbench on-brand and on-convention. The Kata design 
 - **Controls are Helm primitives skinned in `libs/ui/`** (button, input, select, dialog, tabs, switch, ...). The Kata look is applied by editing the vendored copy under `libs/ui/`, or through the primitive's `variant`/`size` input — never by restyling a control at the call site. Use `variant="bare"` on a primitive when a Kata class (`.k-btn`, `.k-input`, ...) supplies the look.
 - **Kata's non-control classes** (`.k-*` cards, event rows, toolcards, shell layout) live in `src/styles/kata/`, not in component stylesheets.
 - **Desktop only** (laptop → ultrawide). No mobile breakpoints. (`check:responsive` runs at 1280 and 1600 only, as a no-overflow check.)
+- **The one exception is the build view and the Changes view.** Below 768 CSS pixels the repository list stacks above the main column and the diff editor goes inline, because the house responsive rule asks for a clean render at 375. They are checked at 375, 768 and 1280 by `npm run check:build` and `npm run check:changes`; `check:responsive` stays at 1280 and 1600 for the whole app. Width is CSS pixels, so zoom moves the breakpoint.
 
 ## Where things live
 
@@ -103,6 +104,10 @@ Every routed screen is a thin component over a component-scoped ViewModel. This 
 - A feature component does not inject a data service — its ViewModel does. A `src/app/ui/` component injects nothing at all: inputs and outputs only. Note that any class whose name ends in `Service` counts, including `PreferencesService`.
 - Never `.subscribe()` in a component or a ViewModel. Convert at the edge with `toSignal`, and prefer it to `route.snapshot`: the router reuses a component when only the id changes, so a snapshot read in `ngOnInit` shows the first record forever.
 - Forms are Signal Forms over the generated `RunSpec` type. There is no zod: validation belongs to the engine (`validate_spec` under Tauri, `validateLocal` in browser mode), so never restate an engine rule in the form. Never reach for `FormsModule`, `ReactiveFormsModule`, `ngModel` or `(ngSubmit)` — submission goes through `submission.action`.
+
+**`RunStore` folds every run, whatever is on screen.** A build runs several agents at once, and `LockStore.waiting()` reads `RunStore`, so a run in a hidden pane must keep folding its events or a waiting agent goes unseen. The build view therefore keeps all its panes mounted and hides them, and never removes one. `npm run check:build` guards this; do not swap a hidden pane for an `@if`.
+
+**Monaco never loads in a unit test.** Any spec that renders the diff editor stubs the loader with `vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined))`, where `monaco` is `app/src/app/ui/diff-editor/monaco.loader.ts`, so the editor waits forever instead of fetching a few megabytes.
 
 **A method nobody calls is a bug, not dead weight.** `npm run check:wiring` fails on any public ViewModel or component member that no template references. The classic instance is a dialog that opens onto an empty body because the template never calls the ViewModel method that fills it. Every drift counter reads zero through that, because absent code is perfectly conformant.
 
