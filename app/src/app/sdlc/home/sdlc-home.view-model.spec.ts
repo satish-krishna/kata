@@ -169,7 +169,7 @@ describe('SdlcHomeViewModel add workspace', () => {
       scanOf({ master: { kind: 'one', repo: 'claims-intent', committed: false }, marker: null }),
     );
     await vm.addWorkspace();
-    expect(vm.leftovers()?.discardable).toEqual(['.ai-sdlc.json']);
+    expect(vm.leftovers()?.[0].data.discardable).toEqual(['.ai-sdlc.json']);
     expect(vm.candidate()).toBeNull();
     expect(saveWorkspaces).not.toHaveBeenCalled();
   });
@@ -189,7 +189,7 @@ describe('SdlcHomeViewModel add workspace', () => {
     await vm.addWorkspace();
     expect(snap.mock.calls.map((c) => c[0])).toEqual([`${NEW_FOLDER}/claims-intent`, `${NEW_FOLDER}/customer-portal`]);
     expect(left).toHaveBeenCalledWith(`${NEW_FOLDER}/claims-intent`, expect.anything(), [`${NEW_FOLDER}/customer-portal`]);
-    expect(vm.leftovers()?.discardable).toEqual(['.ai-sdlc.json']);
+    expect(vm.leftovers()?.[0].data.discardable).toEqual(['.ai-sdlc.json']);
     expect(vm.candidate()).toBeNull();
   });
 
@@ -394,8 +394,8 @@ describe('SdlcHomeViewModel runs', () => {
     const discard = vi.spyOn(transport, 'sdlcDiscard');
     vi.spyOn(TestBed.inject(LockStore), 'runAgent').mockResolvedValue('error');
     await vm.runContext('customer-portal');
-    expect(vm.leftovers()?.discardable).toEqual(['a.md']);
-    await vm.discardLeftovers(['a.md']);
+    expect(vm.leftovers()?.[0].data.discardable).toEqual(['a.md']);
+    await vm.discardLeftovers([{ repo: vm.leftovers()![0].repo, paths: ['a.md'] }]);
     expect(discard).toHaveBeenCalled();
     expect(vm.leftovers()).toBeNull();
     expect(runner.leftovers()).toBeNull();

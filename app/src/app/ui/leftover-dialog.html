@@ -1,6 +1,6 @@
 <hlm-dialog [state]="leftovers() ? 'open' : 'closed'" (stateChanged)="onState($event)">
   <hlm-dialog-content *hlmDialogPortal="let ctx">
-    @if (leftovers(); as l) {
+    @if (leftovers()?.[0]?.data; as l) {
       <div hlmDialogTitle>What the run left behind</div>
       <div class="k-left">
         @if (l.new_commits.length > 0) {
@@ -52,7 +52,7 @@
           size="sm"
           type="button"
           [disabled]="chosen().length === 0"
-          (click)="discard.emit(chosen())"
+          (click)="discard.emit([{ repo: leftovers()![0].repo, paths: chosen() }])"
         >Discard selected ({{ chosen().length }})</button>
       </hlm-dialog-footer>
     }

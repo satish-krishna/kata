@@ -1,16 +1,20 @@
-import { signal } from '@angular/core';
+import { signal, type WritableSignal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
+import type { BuildStart } from '@bindings/BuildStart';
+import type { CatalogEntry } from '@bindings/CatalogEntry';
+import type { PrepareOutcome } from '@bindings/PrepareOutcome';
+import type { RepoStart } from '@bindings/RepoStart';
 import type { KataEvent, RunState } from '../../lib/events';
 import { seedCatalog, seedSpec } from '../../lib/mock';
 import { LockStore } from '../lock/lock.store';
 import { RunStore } from '../run/run.store';
 import { ToastStore } from '../toast/toast.store';
 import { KataTransport } from '../transport/kata-transport';
-import { SdlcRunner, type RunTarget } from './sdlc-runner';
+import { SdlcRunner, type BuildLink, type BuildRequest, type RunTarget } from './sdlc-runner';
 
 const SNAPSHOT = { head: 'abc', dirty: {} };
 const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [] };
@@ -22,6 +26,20 @@ const TARGET: RunTarget = {
   link: { system: 'claims', change: '2026-10-12-fnol', stage: 'spec' },
 };
 const transcript = (path: string): KataEvent => ({ type: 'log', level: 'info', message: `transcript: ${path}` }) as KataEvent;
+const repoStart = (repo: string): RepoStart => ({ repo, path: `/ws/${repo}`, base: 'main', branch: 'change/2026-10-12-fnol', created: true });
+const BUILD_START: BuildStart = { master: repoStart('claims-intent'), repos: [repoStart('claims-core')] };
+const AI_SDLC: CatalogEntry = { kind: 'plugin', name: 'ai-sdlc', description: '', source: 'user', path: '/plugins/ai-sdlc', provides: ['skill:build'], mcp_servers: [] };
+const REQUEST: BuildRequest = {
+  folder: '/ws',
+  masterRepo: 'claims-intent',
+  system: 'claims',
+  change: '2026-10-12-fnol',
+  catalog: [AI_SDLC],
+  continueWithLeftovers: false,
+};
+const UPDATE_PLUGIN = 'Update the ai-sdlc plugin to 0.6.0 or later, then start the build again.';
+
+type FakeSnapshot = { state: RunState; events: KataEvent[]; summary: null; asks: []; permissions: []; exit?: number | null };
 
 class FakeTransport {
   calls: string[] = [];
@@ -39,6 +57,15 @@ class FakeTransport {
   sdlcFinishChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('finish'); return this.finishResults.shift()!(); });
   sdlcSettings = vi.fn(async () => ({ mode: null, remember: false, permission_mode: 'bypass' as const }));
   catalog = vi.fn(async (..._a: unknown[]) => seedCatalog);
+  pluginVersion: string | null = '0.6.0';
+  prepared: PrepareOutcome | (() => Promise<PrepareOutcome>) = { kind: 'ready', start: BUILD_START };
+  sdlcPluginVersion = vi.fn(async (..._a: unknown[]) => { this.calls.push('version'); return this.pluginVersion; });
+  sdlcBuildPrepare = vi.fn(async (..._a: unknown[]) => {
+    this.calls.push('prepare');
+    return typeof this.prepared === 'function' ? this.prepared() : this.prepared;
+  });
+  sdlcBuildSettle = vi.fn(async (..._a: unknown[]) => { this.calls.push('settle'); return [] as string[]; });
+  sdlcBuildHeads = vi.fn(async (..._a: unknown[]) => ({ 'claims-core': 'c0ffee' }));
 }
 
 function setup(agent: (spec: RunSpec) => Promise<RunState> | RunState = () => 'success') {
@@ -55,19 +82,28 @@ function setup(agent: (spec: RunSpec) => Promise<RunState> | RunState = () => 's
     dismissed: vi.fn(async () => {
       fake.calls.push('dismissed');
     }),
+    addRun: vi.fn((..._a: unknown[]) => { fake.calls.push('addRun'); }),
   };
+  const snaps = new Map<string, WritableSignal<FakeSnapshot>>();
+  const snap = (id: string): WritableSignal<FakeSnapshot> => {
+    let s = snaps.get(id);
+    if (!s) snaps.set(id, (s = signal<FakeSnapshot>({ state: 'running', events: [], summary: null, asks: [], permissions: [] })));
+    return s;
+  };
+  let started = 0;
+  const startRun = vi.fn(async (..._a: unknown[]) => { fake.calls.push('startRun'); return `r${++started}`; });
   const state = signal('idle');
   const toasts = { error: vi.fn(), success: vi.fn(), info: vi.fn() };
   TestBed.configureTestingModule({
     providers: [
       { provide: KataTransport, useValue: fake },
       { provide: LockStore, useValue: lock },
-      { provide: RunStore, useValue: { events, summary, state, lastRunId: () => '1' } },
+      { provide: RunStore, useValue: { events, summary, state, lastRunId: () => '1', startRun, snapshot: snap } },
       { provide: ToastStore, useValue: toasts },
     ],
   });
   const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
-  return { runner: TestBed.inject(SdlcRunner), fake, lock, toasts, events, summary, active, navigate, state };
+  return { runner: TestBed.inject(SdlcRunner), fake, lock, toasts, events, summary, active, navigate, state, startRun, snap };
 }
 
 describe('SdlcRunner.run', () => {
@@ -135,7 +171,7 @@ describe('SdlcRunner.run', () => {
     await runner.run('Running setup', seedSpec(), TARGET);
     expect(fake.calls).toEqual(['snapshot', 'agent', 'wait', 'leftovers', 'dismissed']);
     expect(fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/claims-intent', SNAPSHOT, ['/ws/claims-core']);
-    expect(runner.leftovers()?.discardable).toEqual(['intent.md', 'x.txt']);
+    expect(runner.leftovers()?.[0].data.discardable).toEqual(['intent.md', 'x.txt']);
     expect(toasts.error).toHaveBeenCalledWith('Running setup stopped · 1 commit landed, 2 files left uncommitted');
   });
 
@@ -162,7 +198,7 @@ describe('SdlcRunner.run', () => {
     const { runner, fake } = setup(() => 'error');
     fake.leftovers = { ...EMPTY, product_repos_unchecked: ['claims-core'] };
     await runner.run('Running setup', seedSpec(), TARGET);
-    expect(runner.leftovers()?.product_repos_unchecked).toEqual(['claims-core']);
+    expect(runner.leftovers()?.[0].data.product_repos_unchecked).toEqual(['claims-core']);
   });
 
   it('toasts a failure without a dialog when nothing was left behind', async () => {
@@ -254,7 +290,7 @@ describe('SdlcRunner.run', () => {
     expect(fake.calls).toEqual(['snapshot', 'snapshot', 'agent', 'wait', 'scan', 'leftovers', 'dismissed']);
     expect(fake.sdlcScan).toHaveBeenCalledWith('/ws');
     expect(fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/a-intent', before.a, ['/ws/a-core']);
-    expect(runner.leftovers()?.discardable).toEqual(['.ai-sdlc.json']);
+    expect(runner.leftovers()?.[0].data.discardable).toEqual(['.ai-sdlc.json']);
     expect(toasts.error).toHaveBeenCalledWith('Running setup stopped · 0 commits landed, 1 file left uncommitted');
   });
 
@@ -280,7 +316,7 @@ describe('SdlcRunner.run', () => {
     const { runner, fake } = setup(() => 'error');
     fake.leftovers = { ...EMPTY, discardable: ['a.md', 'b.md'] };
     await runner.run('Running setup', seedSpec(), TARGET);
-    await runner.discard(['b.md']);
+    await runner.discard('claims-intent', ['b.md']);
     expect(fake.sdlcDiscard).toHaveBeenCalledWith('/ws/claims-intent', SNAPSHOT, ['b.md']);
     expect(runner.leftovers()).toBeNull();
   });
@@ -362,7 +398,7 @@ describe('SdlcRunner.newChange', () => {
     const done = runner.newChange(target, 'claims', 'idea');
     await vi.waitFor(() => expect(runner.leftovers()).not.toBeNull());
     expect(fake.sdlcFinishChange).toHaveBeenCalledTimes(1);
-    await runner.discard(['scratch.txt']);
+    await runner.discard('claims-intent', ['scratch.txt']);
     await done;
     expect(fake.sdlcFinishChange).toHaveBeenCalledTimes(2);
     expect(toasts.error).not.toHaveBeenCalled();
@@ -398,5 +434,224 @@ describe('SdlcRunner.newChange', () => {
     await runner.newChange(target, 'claims', 'idea');
     expect(lock.runAgent).not.toHaveBeenCalled();
     expect(toasts.error).toHaveBeenCalledWith(expect.stringContaining('uncommitted changes'));
+  });
+});
+
+describe('SdlcRunner build', () => {
+  const LINK: BuildLink = { workspaceId: 'acme', system: 'claims', change: '2026-10-12-fnol', folder: '/ws', master: 'claims-intent', repos: ['claims-core'] };
+  const CORE = { repo: 'claims-core', path: '/ws/claims-core', kind: 'repo' } as const;
+  const REVIEW = { repo: 'claims-intent', path: '/ws/claims-intent', kind: 'review' } as const;
+  const GROUP = 'build:claims/2026-10-12-fnol';
+  const LEFT = (paths: string[]): Leftovers => ({ ...EMPTY, new_commits: ['feat: a task'], discardable: paths });
+
+  /** Ticks the root effects until the promise settles: the run end is observed by an effect. */
+  async function drive<T>(p: Promise<T>): Promise<T> {
+    let done = false;
+    void p.then(() => (done = true), () => (done = true));
+    for (let i = 0; i < 200 && !done; i++) {
+      TestBed.tick();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    return p;
+  }
+
+  const end = (ctx: ReturnType<typeof setup>, id: string, state: RunState, exit: number | null, extra: KataEvent[] = []) =>
+    ctx.snap(id).set({
+      state,
+      events: [transcript(`/home/u/.kata/runs/sdlc-claims-${id}.jsonl`), ...extra],
+      summary: null,
+      asks: [],
+      permissions: [],
+      exit,
+    });
+
+  describe('prepareBuild', () => {
+    it('start refuses a plugin older than 0.6.0 before preparing (R2.5)', async () => {
+      const ctx = setup();
+      ctx.fake.pluginVersion = '0.5.0';
+      const out = await ctx.runner.prepareBuild(REQUEST);
+      expect(out).toEqual({ kind: 'refused', reason: UPDATE_PLUGIN });
+      expect(ctx.fake.sdlcPluginVersion).toHaveBeenCalledWith('/plugins/ai-sdlc');
+      expect(ctx.fake.sdlcBuildPrepare).not.toHaveBeenCalled();
+      expect(ctx.startRun).not.toHaveBeenCalled();
+      expect(ctx.fake.calls).toEqual(['version']);
+    });
+
+    it('refuses when the plugin is not in the catalog at all', async () => {
+      const ctx = setup();
+      const out = await ctx.runner.prepareBuild({ ...REQUEST, catalog: [] });
+      expect(out).toEqual({ kind: 'refused', reason: UPDATE_PLUGIN });
+      expect(ctx.fake.sdlcBuildPrepare).not.toHaveBeenCalled();
+    });
+
+    it('answers ready with the start the backend made', async () => {
+      const ctx = setup();
+      const out = await ctx.runner.prepareBuild({ ...REQUEST, continueWithLeftovers: true });
+      expect(out).toEqual({ kind: 'ready', start: BUILD_START });
+      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', true);
+    });
+
+    it('answers needs-confirm with the files each repository holds', async () => {
+      const ctx = setup();
+      ctx.fake.prepared = { kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['a.txt'] }] };
+      const out = await ctx.runner.prepareBuild(REQUEST);
+      expect(out).toEqual({ kind: 'needs-confirm', leftovers: [{ repo: 'claims-core', files: ['a.txt'] }] });
+    });
+
+    it('refuses with the backend text when preparing fails (R3.1)', async () => {
+      const ctx = setup();
+      ctx.fake.prepared = () => Promise.reject('claims-core has uncommitted files: a.txt');
+      const out = await ctx.runner.prepareBuild(REQUEST);
+      expect(out).toEqual({ kind: 'refused', reason: 'claims-core has uncommitted files: a.txt' });
+    });
+  });
+
+  describe('runInRepo', () => {
+    it('runInRepo snapshots before the run and links build:<repo>', async () => {
+      const ctx = setup();
+      const done = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
+      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalled());
+      end(ctx, 'r1', 'success', 0);
+      const out = await drive(done);
+      expect(out).toEqual({ exit: 0, error: null });
+      expect(ctx.fake.sdlcSnapshot).toHaveBeenCalledWith('/ws/claims-core');
+      expect(ctx.startRun).toHaveBeenCalledWith(expect.anything(), GROUP);
+      expect(ctx.lock.addRun).toHaveBeenCalledWith('r1', expect.anything());
+      expect(ctx.fake.calls.slice(0, 3)).toEqual(['snapshot', 'startRun', 'addRun']);
+      expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledTimes(1);
+      const link = ctx.fake.sdlcLinkRun.mock.calls[0][0] as Record<string, unknown>;
+      expect(link).toMatchObject({ workspace_id: 'acme', system: 'claims', change: '2026-10-12-fnol', stage: 'build:claims-core', run_id: 'sdlc-claims-r1' });
+      expect(link['heads']).toBeUndefined();
+      expect(ctx.fake.sdlcBuildHeads).not.toHaveBeenCalled();
+      expect(ctx.fake.sdlcWaitRunExit).toHaveBeenCalledWith('r1', 15000);
+    });
+
+    it("a review run's link records the heads", async () => {
+      const ctx = setup();
+      const done = ctx.runner.runInRepo(REVIEW, seedSpec(), LINK);
+      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalled());
+      end(ctx, 'r1', 'success', 0);
+      await drive(done);
+      expect(ctx.fake.sdlcBuildHeads).toHaveBeenCalledWith('/ws', ['claims-core'], '2026-10-12-fnol');
+      expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledWith(expect.objectContaining({ stage: 'review', heads: { 'claims-core': 'c0ffee' } }));
+      expect(ctx.fake.sdlcBuildHeads.mock.invocationCallOrder[0]).toBeLessThan(ctx.startRun.mock.invocationCallOrder[0]);
+    });
+
+    it('answers the exit code and the last engine error of a stopped run', async () => {
+      const ctx = setup();
+      const done = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
+      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalled());
+      end(ctx, 'r1', 'warning', 124, [{ type: 'log', level: 'error', message: 'the wall clock ran out' } as KataEvent]);
+      expect(await drive(done)).toEqual({ exit: 124, error: 'the wall clock ran out' });
+    });
+
+    it('answers a failed start without reading anything afterwards', async () => {
+      const ctx = setup();
+      ctx.startRun.mockResolvedValueOnce(null as never);
+      const out = await ctx.runner.runInRepo(CORE, seedSpec(), LINK);
+      expect(out.exit).toBeNull();
+      expect(out.error).toBe('The run did not start');
+      expect(ctx.lock.addRun).not.toHaveBeenCalled();
+      expect(ctx.fake.sdlcLeftovers).not.toHaveBeenCalled();
+    });
+
+    it('touches nothing while the engine is still stopping', async () => {
+      const ctx = setup();
+      ctx.fake.exited = false;
+      const done = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
+      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalled());
+      end(ctx, 'r1', 'warning', 130);
+      const out = await drive(done);
+      expect(out.exit).toBe(130);
+      expect(out.error).toBe('The engine is still stopping');
+      expect(ctx.fake.sdlcLeftovers).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('leftovers and finishBuild', () => {
+    async function runBoth(ctx: ReturnType<typeof setup>) {
+      ctx.fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => { ctx.fake.calls.push('snapshot'); return { head: String(a[0]), dirty: {} }; });
+      ctx.fake.sdlcLeftovers.mockImplementation((async (path: string) => LEFT(path === '/ws/claims-core' ? ['src/x.rs'] : ['notes.md'])) as never);
+      const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
+      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
+      end(ctx, 'r1', 'warning', 124);
+      await drive(core);
+      const review = ctx.runner.runInRepo(REVIEW, seedSpec(), LINK);
+      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(2));
+      end(ctx, 'r2', 'warning', 130);
+      await drive(review);
+    }
+
+    it("leftovers are reported per repository and discard touches only that run's files (R6.3)", async () => {
+      const ctx = setup();
+      await runBoth(ctx);
+      expect(ctx.fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/claims-core', { head: '/ws/claims-core', dirty: {} }, []);
+      // The build is still going when a repository ends: nothing opens until the build is over.
+      expect(ctx.runner.leftovers()).toBeNull();
+      const finished = ctx.runner.finishBuild(BUILD_START);
+      await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
+      expect(ctx.runner.leftovers()!.map((l) => l.repo)).toEqual(['claims-intent', 'claims-core']);
+      expect(ctx.runner.leftovers()![1].data.new_commits).toEqual([]);
+      expect(ctx.fake.sdlcBuildSettle).not.toHaveBeenCalled();
+      await expect(ctx.runner.discard('claims-core', ['src/x.rs'])).resolves.toBe(true);
+      expect(ctx.fake.sdlcDiscard).toHaveBeenCalledTimes(1);
+      expect(ctx.fake.sdlcDiscard).toHaveBeenCalledWith('/ws/claims-core', { head: '/ws/claims-core', dirty: {} }, ['src/x.rs']);
+      expect(ctx.runner.leftovers()!.map((l) => l.repo)).toEqual(['claims-intent']);
+      expect(ctx.fake.sdlcBuildSettle).not.toHaveBeenCalled();
+      ctx.runner.closeLeftovers();
+      await finished;
+      expect(ctx.fake.sdlcBuildSettle).toHaveBeenCalledWith(BUILD_START);
+      expect(ctx.runner.leftovers()).toBeNull();
+    });
+
+    it('discardAll discards every chosen repository, then closes and keeps the rest', async () => {
+      const ctx = setup();
+      await runBoth(ctx);
+      const finished = ctx.runner.finishBuild(BUILD_START);
+      await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
+      await expect(ctx.runner.discardAll([{ repo: 'claims-core', paths: ['src/x.rs'] }, { repo: 'claims-intent', paths: [] }])).resolves.toBe(true);
+      expect(ctx.fake.sdlcDiscard).toHaveBeenCalledTimes(1);
+      await finished;
+      expect(ctx.fake.sdlcBuildSettle).toHaveBeenCalledTimes(1);
+    });
+
+    it('a failed discard keeps the dialog open', async () => {
+      const ctx = setup();
+      await runBoth(ctx);
+      const finished = ctx.runner.finishBuild(BUILD_START);
+      await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
+      ctx.fake.sdlcDiscard.mockRejectedValueOnce(new Error('locked'));
+      await expect(ctx.runner.discardAll([{ repo: 'claims-core', paths: ['src/x.rs'] }])).resolves.toBe(false);
+      expect(ctx.toasts.error).toHaveBeenCalledWith('Could not discard: locked');
+      expect(ctx.runner.leftovers()).toHaveLength(2);
+      expect(ctx.fake.sdlcBuildSettle).not.toHaveBeenCalled();
+      ctx.runner.closeLeftovers();
+      await finished;
+    });
+
+    it('settles at once when no repository left anything', async () => {
+      const ctx = setup();
+      const done = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
+      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalled());
+      end(ctx, 'r1', 'success', 0);
+      await drive(done);
+      await ctx.runner.finishBuild(BUILD_START);
+      expect(ctx.fake.sdlcBuildSettle).toHaveBeenCalledWith(BUILD_START);
+      expect(ctx.runner.leftovers()).toBeNull();
+    });
+
+    it('a settle error toasts and does not throw', async () => {
+      const ctx = setup();
+      ctx.fake.sdlcBuildSettle.mockRejectedValueOnce(new Error('git is busy'));
+      await expect(ctx.runner.finishBuild(BUILD_START)).resolves.toBeUndefined();
+      expect(ctx.toasts.error).toHaveBeenCalledWith(expect.stringContaining('git is busy'));
+    });
+  });
+
+  it('part 1 runs still report master leftovers as one entry', async () => {
+    const { runner, fake } = setup(() => 'warning');
+    fake.leftovers = { ...EMPTY, new_commits: ['docs: a'], discardable: ['x.txt'] };
+    await runner.run('Running setup', seedSpec(), TARGET);
+    expect(runner.leftovers()).toEqual([{ repo: 'claims-intent', path: '/ws/claims-intent', snapshot: SNAPSHOT, data: fake.leftovers }]);
   });
 });

@@ -1,8 +1,11 @@
 import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Router } from '@angular/router';
+import type { BuildStart } from '@bindings/BuildStart';
+import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { RunSpec } from '@bindings/RunSpec';
+import type { RepoFiles } from '@bindings/RepoFiles';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunState } from '../../lib/events';
@@ -43,6 +46,27 @@ export type ChangeTarget = { workspace: WorkspaceEntry; master: string; productR
 type Baseline = { master: string; snapshot: Snapshot; productRepos: string[] };
 type PendingLeftovers = { master: string; snapshot: Snapshot; data: Leftovers };
 type PendingLink = { workspace_id: string; system: string; change: string; stage: string; started_at: number };
+
+/** One repository's uncommitted edits left by a run, with the snapshot that run started from. */
+export type RepoLeftovers = { repo: string; path: string; snapshot: Snapshot; data: Leftovers };
+/** What the engine needs to start the build: the change and the plugin that can run it. */
+export type BuildRequest = {
+  folder: string;
+  masterRepo: string;
+  system: string;
+  change: string;
+  catalog: CatalogEntry[];
+  continueWithLeftovers: boolean;
+};
+export type PrepareResult =
+  | { kind: 'ready'; start: BuildStart }
+  | { kind: 'needs-confirm'; leftovers: RepoFiles[] }
+  | { kind: 'refused'; reason: string };
+/** A repository run of the build, or the review of the whole change (which runs in the master repository). */
+export type BuildRunTarget = { repo: string; path: string; kind: 'repo' | 'review' };
+export type BuildLink = { workspaceId: string; system: string; change: string; folder: string; master: string; repos: string[] };
+export type RunEnd = { exit: number | null; error: string | null };
+export type DiscardChoice = { repo: string; paths: string[] };
 
 const RESULT_MAX = 120;
 /** How long to wait for the engine process to exit before touching the repo. */
@@ -89,7 +113,7 @@ export class SdlcRunner {
   private linkTarget: PendingLink | null = null;
 
   /** What the last non-successful run left behind; the screen's leftover dialog renders it. */
-  readonly leftovers = computed(() => this.pending()?.data ?? null);
+  readonly leftovers = computed<RepoLeftovers[] | null>(() => (this.pending() === null ? null : []));
 
   private readonly afterRun = signal(false);
   /** A run has ended but its after-run work (engine exit, report) is still going: the session view cannot close yet. */
@@ -162,17 +186,34 @@ export class SdlcRunner {
     }
   }
 
+  async prepareBuild(_req: BuildRequest): Promise<PrepareResult> {
+    throw new Error('not implemented');
+  }
+
+  async runInRepo(_target: BuildRunTarget, _spec: RunSpec, _link: BuildLink): Promise<RunEnd> {
+    throw new Error('not implemented');
+  }
+
+  async finishBuild(_start: BuildStart): Promise<void> {
+    throw new Error('not implemented');
+  }
+
+  async discardAll(_choices: DiscardChoice[]): Promise<boolean> {
+    throw new Error('not implemented');
+  }
+
   /** Discard the chosen leftover paths. The dialog stays open if the discard fails. */
-  async discard(paths: string[]): Promise<void> {
+  async discard(_repo: string, paths: string[]): Promise<boolean> {
     const p = this.pending();
-    if (!p) return;
+    if (!p) return false;
     try {
       await this.transport.sdlcDiscard(p.master, p.snapshot, paths);
     } catch (e) {
       this.toasts.error(`Could not discard: ${message(e)}`);
-      return;
+      return false;
     }
     this.closeLeftovers();
+    return true;
   }
 
   closeLeftovers(): void {

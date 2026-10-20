@@ -1,6 +1,9 @@
 import { Component, computed, input, linkedSignal, output } from '@angular/core';
 import type { BrnDialogState } from '@spartan-ng/brain/dialog';
 import type { Leftovers } from '@bindings/Leftovers';
+
+/** One repository's report as the dialog shows it. */
+export type RepoReport = { repo: string; data: Leftovers };
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmCheckbox } from '@spartan-ng/helm/checkbox';
 import { HlmDialogImports } from '@spartan-ng/helm/dialog';
@@ -20,19 +23,20 @@ const isDraft = (path: string): boolean => DRAFTS.has(path.split(/[\\/]/).pop() 
 })
 export class LeftoverDialog {
   /** What to show; the dialog is open exactly while this is set. */
-  readonly leftovers = input.required<Leftovers | null>();
+  readonly leftovers = input.required<RepoReport[] | null>();
 
-  readonly discard = output<string[]>();
+  readonly build = input(false);
+  readonly discard = output<{ repo: string; paths: string[] }[]>();
   readonly close = output<void>();
 
   /** The checked paths. Restarts from the pre-checked set whenever a new report arrives. */
-  protected readonly selected = linkedSignal<Leftovers | null, Set<string>>({
+  protected readonly selected = linkedSignal<RepoReport[] | null, Set<string>>({
     source: this.leftovers,
-    computation: (l) => new Set((l?.discardable ?? []).filter((p) => !isDraft(p))),
+    computation: (l) => new Set((l?.[0]?.data.discardable ?? []).filter((p) => !isDraft(p))),
   });
 
   /** The checked paths, in the order the report lists them. */
-  protected readonly chosen = computed(() => (this.leftovers()?.discardable ?? []).filter((p) => this.selected().has(p)));
+  protected readonly chosen = computed(() => (this.leftovers()?.[0]?.data.discardable ?? []).filter((p) => this.selected().has(p)));
 
   protected toggle(path: string, on: boolean): void {
     this.selected.update((s) => {
