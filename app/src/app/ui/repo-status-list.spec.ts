@@ -43,3 +43,13 @@ describe('RepoStatusList', () => {
     expect(picked).toHaveBeenCalledWith('customer-portal');
   });
 });
+
+describe('RepoStatusList unseen events', () => {
+  it('says how many events arrived since the repository was last shown, and nothing when none did', async () => {
+    const { container } = await mount({ rows: [{ ...rows[0], unseen: 3 }, { ...rows[1], unseen: 0 }, rows[2]] });
+    const [first, second, third] = items(container);
+    expect(first.textContent).toContain('3 new');
+    expect(second.textContent).not.toContain('new');
+    expect(third.textContent).not.toContain('new');
+  });
+});

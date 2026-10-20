@@ -402,3 +402,26 @@ describe('ObservePane - pauses left open when the run ends', () => {
     expect(m.button('Send answer · resume')).toBeDefined();
   });
 });
+
+describe('ObservePane unseen marker', () => {
+  const events: StreamEvent[] = [
+    { type: 'turn', n: 1 },
+    { type: 'assistant.text', text: 'first seen' },
+    { type: 'assistant.text', text: 'second seen' },
+    { type: 'assistant.text', text: 'first unseen' },
+    { type: 'assistant.text', text: 'second unseen' },
+  ];
+
+  it('marks the first event the engineer has not seen with how many are new below', async () => {
+    const { container } = await renderPane({ events, unseen: 2 });
+    const marker = container.querySelector('[data-unseen]')!;
+    expect(marker.textContent!.replace(/\s+/g, ' ').trim()).toBe('2 new below');
+    expect(marker.closest('hlm-message-scroller-item')!.textContent).toContain('first unseen');
+    expect(container.querySelectorAll('[data-unseen]')).toHaveLength(1);
+  });
+
+  it('has no marker when nothing is unseen', async () => {
+    const { container } = await renderPane({ events, unseen: 0 });
+    expect(container.querySelector('[data-unseen]')).toBeNull();
+  });
+});
