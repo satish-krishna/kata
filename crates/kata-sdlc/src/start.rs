@@ -302,7 +302,8 @@ pub fn settle(start: &BuildStart) -> Result<Vec<String>, BuildError> {
     Ok(gone)
 }
 
-/// The commit each repository's `change/<change>` points at.
+/// The commit each repository's `change/<change>` points at. A repository without that branch
+/// is left out.
 pub fn heads(
     folder: &Path,
     repos: &[String],
@@ -316,8 +317,13 @@ pub fn heads(
         if !is_safe_system(repo) {
             return refuse(format!("invalid repository name: {repo}"));
         }
+        let path = folder.join(repo);
+        // settle removed the branch of a repository the build never changed (R10.1).
+        if !branch_exists(&path, &format!("change/{change}")) {
+            continue;
+        }
         let head = git::run(
-            &folder.join(repo),
+            &path,
             &["rev-parse", &format!("refs/heads/change/{change}")],
         )?;
         out.insert(repo.clone(), head);
