@@ -65,7 +65,8 @@ describe('ChangesView', () => {
     const transport = new MockTransport();
     const proto = MockTransport.prototype as unknown as Record<string, unknown>;
     const names = Object.getOwnPropertyNames(MockTransport.prototype).filter((n) => n !== 'constructor' && typeof proto[n] === 'function');
-    const spies = names.map((n) => [n, vi.spyOn(transport as never, n as never)] as const);
+    const target = transport as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const spies = names.map((n) => [n, vi.spyOn(target, n)] as const);
     const { button, row, turns } = await mount(transport);
     button('Committed')!.click();
     await settle();
@@ -145,6 +146,19 @@ describe('ChangesView', () => {
     const { editor, button } = await mount();
     expect(editor().sideBySide()).toBe(false);
     expect(button('Side by side')).toBeUndefined();
+  });
+
+  it('asks the editor to step between changes from the diff bar', async () => {
+    const { editor, button, row } = await mount();
+    row('src/limits.rs').click();
+    await settle();
+    expect(editor().stepRequest()).toBeNull();
+    button('Next change')!.click();
+    await settle();
+    expect(editor().stepRequest()).toEqual({ direction: 'next', serial: 1 });
+    button('Previous change')!.click();
+    await settle();
+    expect(editor().stepRequest()).toEqual({ direction: 'previous', serial: 2 });
   });
 
   it('lets the engineer choose inline or side by side on a wide screen', async () => {

@@ -13,6 +13,8 @@ import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
+import type { BuildTile } from '../../ui/stage-stepper';
+import type { ChangesContext } from '../changes/changes-view.view-model';
 import type { BuildContext } from '../build/build-view.view-model';
 import type { BuildDialogMode, BuildStartRequest } from '../../ui/build-dialog';
 import { LockStore } from '../../core/lock/lock.store';
@@ -42,6 +44,8 @@ export type ChangeState = 'loading' | 'ready' | 'not-found';
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const nowSecs = (): number => Math.floor(Date.now() / 1000);
 const BUSY = 'Another task is already running.';
+/** The stage steps that mean the plan is accepted. */
+const ACCEPTED: ReadonlySet<string> = new Set(['build', 'done']);
 const NO_COUNTS: StepCounts = { intent: 0, spec: 0, plan: 0, build: 0, review: 0 };
 
 /** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result. */
@@ -96,6 +100,8 @@ export type BuildHandoff = {
 };
 
 type DocStem = 'intent' | 'spec' | 'plan';
+/** What the stage tiles select: a document, or what the build changed. */
+type Tab = DocStem | 'build';
 
 /**
  * The document the page shows for a change: the current stage's, falling back to the last one that exists.
@@ -137,11 +143,13 @@ export class ChangePageViewModel {
   private readonly links = signal<RunLink[]>([]);
   private readonly records = signal<RunRecord[]>([]);
   private readonly changeTotal = signal<number | null>(null);
+  /** Some repository has the change's branch with something changed, so there is something to look at. */
+  private readonly hasBranch = signal(false);
   readonly change = signal<ChangeInfo | null>(null);
   /** The shown document, raw as it is on disk, or null when the file is missing. */
   readonly doc = signal<string | null>(null);
   /** The document the operator picked from the tiles; null shows the current stage's. Every load clears it. */
-  private readonly picked = signal<DocStem | null>(null);
+  private readonly picked = signal<Tab | null>(null);
   private loadSeq = 0;
   /** Picks have their own sequence, so a pick never cancels a load; a finished load cancels any pick still reading. */
   private pickSeq = 0;
@@ -154,13 +162,29 @@ export class ChangePageViewModel {
     return w && n !== null ? { [w.id]: n } : {};
   });
 
-  readonly shownDoc = computed<DocStem>(() => {
+  readonly shownDoc = computed<Tab>(() => {
     const c = this.change();
     return this.picked() ?? (c ? docFor(c) : 'intent');
   });
   readonly docs = computed<DocsPresent>(() => {
     const c = this.change();
     return { intent: c?.intent.exists ?? false, spec: c?.spec.exists ?? false, plan: c?.plan.exists ?? false };
+  });
+  /** The Build tile's facts beyond the stage: whether a repository has the change's branch, and the tasks and repositories. */
+  readonly buildTile = computed<BuildTile>(() => {
+    const repos = this.status()?.repos ?? [];
+    return {
+      hasBranch: this.hasBranch(),
+      done: repos.reduce((n, r) => n + r.finished, 0),
+      total: repos.reduce((n, r) => n + r.tasks, 0),
+      repos: repos.length,
+    };
+  });
+  /** What the Changes view in the build panel looks at; null until the workspace and master repository are known. */
+  readonly changesContext = computed<ChangesContext | null>(() => {
+    const w = this.current();
+    const master = this.scanMaster();
+    return w && master !== null ? { folder: w.folder, masterRepo: master, system: this.system(), change: this.changeName() } : null;
   });
   readonly docName = computed(() => `${this.shownDoc()}.md`);
   readonly stems: readonly DocStem[] = ['intent', 'spec', 'plan'];
@@ -355,6 +379,13 @@ export class ChangePageViewModel {
 
   /** Show another of the change's documents. A newer pick, or a load that finishes, supersedes one still reading. */
   async showDoc(stem: string): Promise<void> {
+    if (stem === 'build') {
+      if (this.shownDoc() !== 'build' && this.change() !== null && this.hasBranch()) {
+        this.pickSeq++;
+        this.picked.set('build');
+      }
+      return;
+    }
     if (!isDocStem(stem) || stem === this.shownDoc() || !this.docs()[stem]) return;
     const master = this.masterDir();
     if (!master) return;
@@ -537,6 +568,15 @@ export class ChangePageViewModel {
     }
   }
 
+  /** Whether the Changes view has any repository to list. A failed read counts as none, without a toast: the tile just stays closed. */
+  private async readHasBranch(folder: string, master: string, system: string, name: string): Promise<boolean> {
+    try {
+      return (await this.transport.sdlcChangeRepos(folder, master, system, name)).length > 0;
+    } catch {
+      return false;
+    }
+  }
+
   private async readChecksDir(): Promise<string | null> {
     try {
       return await this.transport.sdlcChecksDir();
@@ -593,7 +633,9 @@ export class ChangePageViewModel {
       const doc = found ? await this.transport.sdlcReadDoc(master, system, name, docFor(found)) : null;
       const status = found?.plan.exists ? await this.readStatus(master, system, name) : null;
       const checksDir = this.checksDir() ?? (await this.readChecksDir());
+      const branch = found !== null && ACCEPTED.has(stageLabel(found.stage).step) && (await this.readHasBranch(w.folder, repo, system, name));
       if (seq !== this.loadSeq) return;
+      this.hasBranch.set(branch);
       this.status.set(status);
       this.checksDir.set(checksDir);
       this.scan.set(scan);

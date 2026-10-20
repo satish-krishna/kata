@@ -275,7 +275,7 @@
 
 /* ---------- AI-SDLC: change page ---------- */
 .k-change { flex: 1; min-height: 0; display: grid; grid-template-rows: auto 1fr; }
-.k-steps { list-style: none; margin: 0; padding: var(--space-5); display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-4); border-bottom: 1px solid var(--border-subtle); }
+.k-steps { list-style: none; margin: 0; padding: var(--space-5); display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); border-bottom: 1px solid var(--border-subtle); }
 .k-step { display: grid; gap: var(--space-2); padding: var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-card); font: inherit; color: inherit; text-align: start; cursor: pointer; }
 /* Each tile is the tab for its document: the selected one carries the accent; the current stage keeps its status label. */
 .k-step[aria-selected="true"] { border-color: var(--accent); }
@@ -293,3 +293,23 @@
 .k-doc__head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-4); padding-bottom: var(--space-3); border-bottom: 1px solid var(--border-subtle); }
 .k-doc__name { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-muted); }
 .k-doc__front { font: var(--font-code-sm); color: var(--text-secondary); }
+
+/* ---------- AI-SDLC: the Changes view's file list and diff bar ---------- */
+.k-files, .k-files__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.k-files__group { display: grid; gap: var(--space-2); }
+.k-files__repo { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-card); color: var(--text-primary); text-align: start; cursor: pointer; }
+.k-files__repo:hover, .k-files__file:hover { background: var(--surface-hover); }
+.k-files__name { overflow-wrap: anywhere; }
+.k-files__count { color: var(--text-muted); }
+.k-files__file { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); text-align: start; cursor: pointer; }
+.k-files__file[aria-current="true"] { border-color: var(--accent); background: var(--surface-card); }
+.k-files__path { overflow-wrap: anywhere; }
+.k-files__letter--success { color: var(--success-text); }
+.k-files__letter--error { color: var(--error-text); }
+.k-files__letter--warning { color: var(--warning-text); }
+.k-files__letter--idle { color: var(--text-secondary); }
+.k-files__dot { width: var(--space-3); height: var(--space-3); border-radius: var(--radius-full); background: var(--warning); }
+.k-files__lines { color: var(--text-muted); white-space: nowrap; }
+.k-diffbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.k-diffbar__file, .k-diffbar__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.k-diffbar__rename { color: var(--text-muted); }

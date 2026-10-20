@@ -65,7 +65,7 @@
         <main class="k-change" hlmTabs variant="bare" [tab]="vm.shownDoc()" (tabActivated)="vm.showDoc($event)">
           <h1 class="sr-only">{{ vm.changeName() }}</h1>
           @if (vm.change(); as c) {
-            <app-stage-stepper [stage]="c.stage" [counts]="vm.runCounts()" [docs]="vm.docs()" />
+            <app-stage-stepper [stage]="c.stage" [counts]="vm.runCounts()" [docs]="vm.docs()" [build]="vm.buildTile()" />
           }
           @for (stem of vm.stems; track stem) {
             <div class="k-change__doc" [hlmTabsContent]="stem" variant="bare">
@@ -87,6 +87,20 @@
               }
             </div>
           }
+          <div class="k-change__doc" hlmTabsContent="build" variant="bare">
+            @if (vm.shownDoc() === 'build') {
+              @if (vm.changesContext(); as ctx) {
+                <app-changes-view
+                  [folder]="ctx.folder"
+                  [masterRepo]="ctx.masterRepo"
+                  [system]="ctx.system"
+                  [change]="ctx.change"
+                  [turns]="0"
+                  [banner]="null"
+                />
+              }
+            }
+          </div>
         </main>
       }
     }

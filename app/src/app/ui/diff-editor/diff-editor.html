@@ -1,11 +1,3 @@
-<div class="flex items-center justify-end gap-1">
-  <button hlmBtn variant="ghost" size="icon-sm" type="button" aria-label="Previous change" [disabled]="binary()" (click)="previousChange()">
-    <ng-icon name="lucideChevronUp" />
-  </button>
-  <button hlmBtn variant="ghost" size="icon-sm" type="button" aria-label="Next change" [disabled]="binary()" (click)="nextChange()">
-    <ng-icon name="lucideChevronDown" />
-  </button>
-</div>
 @if (binary()) {
   <p class="k-diff-editor__note" data-slot="binary">Binary file. No line diff.</p>
 }

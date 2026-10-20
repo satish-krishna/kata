@@ -1,12 +1,12 @@
-import { Component, DestroyRef, ElementRef, afterNextRender, computed, effect, inject, input, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, afterNextRender, computed, effect, inject, input, untracked, viewChild } from '@angular/core';
 import type { FilePair } from '@bindings/FilePair';
-import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideChevronDown, lucideChevronUp } from '@ng-icons/lucide';
-import { HlmButtonImports } from '@spartan-ng/helm/button';
 import type * as Monaco from 'monaco-editor/editor/editor.api';
 import { nextChangeLine, previousChangeLine } from './change-navigation';
 import { KATA_THEME, defineKataTheme } from './kata-theme';
 import { monaco, type MonacoApi } from './monaco.loader';
+
+/** A request to move to the next or previous change; the serial makes two requests in a row different. */
+export type StepRequest = { direction: 'next' | 'previous'; serial: number };
 
 /**
  * The one Monaco diff editor of the Changes view. Read-only, folds unchanged regions, and
@@ -16,8 +16,6 @@ import { monaco, type MonacoApi } from './monaco.loader';
  */
 @Component({
   selector: 'app-diff-editor',
-  imports: [NgIcon, HlmButtonImports],
-  providers: [provideIcons({ lucideChevronDown, lucideChevronUp })],
   templateUrl: './diff-editor.html',
   styleUrl: './diff-editor.css',
 })
@@ -26,6 +24,8 @@ export class DiffEditor {
   readonly sideBySide = input(true);
   /** Fresh text for the new side of the current file, for a refresh that keeps scroll and expanded regions. Clear it when the file changes. */
   readonly modifiedText = input<string | null>(null);
+  /** Moves to the next or previous change each time it is a new request. */
+  readonly stepRequest = input<StepRequest | null>(null);
 
   protected readonly binary = computed(() => this.pair()?.binary === true);
   private readonly host = viewChild.required<ElementRef<HTMLElement>>('host');
@@ -47,6 +47,11 @@ export class DiffEditor {
     effect(() => {
       const text = this.modifiedText();
       if (text !== null) this.updateModified(text);
+    });
+    effect(() => {
+      const request = this.stepRequest();
+      if (request === null) return;
+      untracked(() => (request.direction === 'next' ? this.nextChange() : this.previousChange()));
     });
     inject(DestroyRef).onDestroy(() => {
       this.destroyed = true;

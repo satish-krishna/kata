@@ -93,6 +93,21 @@ describe('DiffEditor', () => {
     expect(fake.editor.updateOptions).toHaveBeenLastCalledWith({ renderSideBySide: false });
   });
 
+  it('steps to the next and previous change on each new step request', async () => {
+    const fake = fakeMonaco([
+      { modifiedStartLineNumber: 5, modifiedEndLineNumber: 6 },
+      { modifiedStartLineNumber: 30, modifiedEndLineNumber: 31 },
+    ]);
+    const { fixture } = await mount(fake, { pair: pair('a', 'b') });
+    fixture.componentRef.setInput('stepRequest', { direction: 'next', serial: 1 });
+    await fixture.whenStable();
+    expect(fake.modifiedEditor.setPosition).toHaveBeenLastCalledWith({ lineNumber: 5, column: 1 });
+    fake.modifiedEditor.getPosition.mockReturnValue({ lineNumber: 30, column: 1 });
+    fixture.componentRef.setInput('stepRequest', { direction: 'previous', serial: 2 });
+    await fixture.whenStable();
+    expect(fake.modifiedEditor.setPosition).toHaveBeenLastCalledWith({ lineNumber: 5, column: 1 });
+  });
+
   it('binds no keybinding of its own, so the window zoom keys pass through', async () => {
     const fake = fakeMonaco();
     await mount(fake, { pair: pair('a', 'b') });
