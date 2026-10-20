@@ -30,8 +30,25 @@ impl<C> Default for RunTable<C> {
 impl<C> RunTable<C> {
     /// Decide whether a run in `workdir` (optionally part of `group`) may start.
     pub fn claim(&self, workdir: &Path, group: Option<&str>) -> Result<(), String> {
-        let _ = (workdir, group, &self.runs);
-        todo!()
+        let folder = normalize(workdir);
+        if self.runs.values().any(|r| normalize(&r.workdir) == folder) {
+            return Err(format!(
+                "Another run is already working in {}.",
+                workdir.display()
+            ));
+        }
+        let is_build = |g: &Option<String>| g.as_deref().is_some_and(|g| g.starts_with("build:"));
+        if self
+            .runs
+            .values()
+            .any(|r| is_build(&r.group) && r.group.as_deref() != group)
+        {
+            return Err("A build is running. Everything else waits until it ends.".into());
+        }
+        if self.runs.values().any(|r| r.group.is_none()) {
+            return Err("Another task is already running.".into());
+        }
+        Ok(())
     }
 
     pub fn insert(&mut self, run: LiveRun<C>) {
@@ -40,8 +57,7 @@ impl<C> RunTable<C> {
 
     /// Remove only `id`, so a stale reader never clears a newer run.
     pub fn remove(&mut self, id: u64) -> Option<LiveRun<C>> {
-        let _ = id;
-        todo!()
+        self.runs.remove(&id)
     }
 
     pub fn get_mut(&mut self, id: u64) -> Option<&mut LiveRun<C>> {
@@ -55,8 +71,29 @@ impl<C> RunTable<C> {
 
 /// Put the run id around a kata event, leaving the event itself unchanged.
 pub fn wrap(run_id: u64, event: Value) -> Value {
-    let _ = (run_id, event);
-    todo!()
+    serde_json::json!({ "runId": run_id, "event": event })
+}
+
+/// A lexical key for a working folder: separators unified, `.` and repeated or
+/// trailing separators dropped, and case folded on Windows. The folder may not
+/// exist yet, so nothing here touches the filesystem.
+fn normalize(path: &Path) -> String {
+    let unified = path.to_string_lossy().replace('\\', "/");
+    let parts: Vec<&str> = unified
+        .split('/')
+        .filter(|p| !p.is_empty() && *p != ".")
+        .collect();
+    let joined = parts.join("/");
+    let key = if unified.starts_with('/') {
+        format!("/{joined}")
+    } else {
+        joined
+    };
+    if cfg!(windows) {
+        key.to_lowercase()
+    } else {
+        key
+    }
 }
 
 #[cfg(test)]
