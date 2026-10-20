@@ -1,14 +1,17 @@
 //! Declaring a change done: is GitHub reachable and signed in, and one pull request per touched
 //! repository, the master last. Every GitHub call goes through the `Gh` trait; Kata keeps no
 //! credential, `gh` owns the engineer's sign-in.
-use crate::base::{base_branch, base_info_for};
+use crate::base::{base_branch, base_info, base_info_for, BaseInfo};
 use crate::branch::branch_exists;
 use crate::changes::{is_change_name, is_safe_system, read_doc};
+use crate::commits::{offenders_to, Offender};
+use crate::decide::change_scope;
+use crate::diff::{changed_files, Part};
 use crate::frontmatter;
 use crate::git;
 use crate::start::BuildError;
 use crate::workspace::{self, system_repos};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::Path;
 
@@ -93,7 +96,7 @@ fn origin_url(path: &Path) -> Option<String> {
 }
 
 /// A repository a change opens a pull request in.
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
@@ -168,6 +171,79 @@ pub fn touched_repos(
         path: master.to_string_lossy().into_owned(),
         base,
     });
+    Ok(out)
+}
+
+/// Commits on `change/<change>` of every touched repository that break the commit rules, judged
+/// against the change's scope.
+pub fn change_offenders(
+    folder: &Path,
+    master_repo: &str,
+    system: &str,
+    change: &str,
+) -> Result<Vec<Offender>, BuildError> {
+    let scope = change_scope(&folder.join(master_repo), system, change);
+    let tip = format!("refs/heads/change/{change}");
+    let mut out = Vec::new();
+    for r in touched_repos(folder, master_repo, system, change)? {
+        let path = Path::new(&r.path);
+        let info = base_info_for(path, &tip)?;
+        out.extend(offenders_to(path, &r.repo, &info.merge_base, &tip, &scope)?);
+    }
+    Ok(out)
+}
+
+/// A repository the Changes view lists: the master, or a product repository with a change branch
+/// and something changed.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct ChangeRepo {
+    pub repo: String,
+    pub path: String,
+    pub branch: String,
+    pub base: BaseInfo,
+}
+
+/// The master first, then every system repository that has `change/<change>` and any change in
+/// the whole-change part of its diff.
+pub fn change_repos(
+    folder: &Path,
+    master_repo: &str,
+    system: &str,
+    change: &str,
+) -> Result<Vec<ChangeRepo>, String> {
+    if !is_safe_system(master_repo) || !is_safe_system(system) || !is_change_name(change) {
+        return Err(format!(
+            "invalid master repository, system or change name: {master_repo}, {system}, {change}"
+        ));
+    }
+    let branch = format!("change/{change}");
+    let scan = workspace::scan(folder).map_err(|e| e.to_string())?;
+    let entry = |name: &str, path: &Path| -> Result<ChangeRepo, String> {
+        Ok(ChangeRepo {
+            repo: name.to_string(),
+            path: path.to_string_lossy().into_owned(),
+            branch: branch.clone(),
+            base: base_info(path).map_err(|e| e.to_string())?,
+        })
+    };
+    let master = folder.join(master_repo);
+    let mut out = vec![entry(master_repo, &master)?];
+    for name in system_repos(&scan, system) {
+        if name == master_repo || !is_safe_system(&name) || !scan.repos.contains(&name) {
+            continue;
+        }
+        let path = folder.join(&name);
+        if !branch_exists(&path, &branch) {
+            continue;
+        }
+        let changed = changed_files(&path, Part::Whole).map_err(|e| e.to_string())?;
+        if !changed.is_empty() {
+            out.push(entry(&name, &path)?);
+        }
+    }
     Ok(out)
 }
 

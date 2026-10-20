@@ -156,6 +156,16 @@ fn binary_pair(path: &str) -> FilePair {
     }
 }
 
+/// The files of one part of a change and their line counts by file type.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct DiffListing {
+    pub files: Vec<ChangedFile>,
+    pub loc: Vec<FileTypeStats>,
+}
+
 /// Groups changed text files by file type, largest change first. Binaries are excluded.
 pub fn loc_by_file_type(files: &[ChangedFile]) -> Vec<FileTypeStats> {
     let mut by_type: BTreeMap<String, FileTypeStats> = BTreeMap::new();

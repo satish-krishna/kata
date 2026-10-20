@@ -64,7 +64,9 @@ pub struct RunLink {
     pub run_id: String,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub started_at: u64,
-    #[serde(skip)]
+    /// The commit each repository's change branch pointed at when the run started.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub heads: Option<std::collections::BTreeMap<String, String>>,
 }
 
