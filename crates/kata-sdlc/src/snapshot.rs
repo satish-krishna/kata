@@ -293,6 +293,42 @@ mod tests {
         );
     }
 
+    const OWN_ROW: &str = "intent/s/c/build/master.md";
+    const OTHER_ROW: &str = "intent/s/c/build/api.md";
+
+    fn write_rows(m: &Path) {
+        std::fs::create_dir_all(m.join("intent/s/c/build")).unwrap();
+        std::fs::write(m.join(OWN_ROW), "own").unwrap();
+        std::fs::write(m.join(OTHER_ROW), "other").unwrap();
+        std::fs::write(m.join("scratch.txt"), "x").unwrap();
+    }
+
+    #[test]
+    fn leftovers_never_offer_a_build_log_row_for_discard() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = repo(tmp.path(), "master");
+        let before = take(&m).unwrap();
+        write_rows(&m);
+        let l = leftovers(&m, &before, &[]).unwrap();
+        assert_eq!(l.discardable, vec!["scratch.txt"]);
+        // Another repository's row is not this run's; the run's own row is kept, never offered.
+        assert_eq!(l.touched_dirty, vec![OWN_ROW]);
+    }
+
+    #[test]
+    fn discard_refuses_a_build_log_row_even_when_it_is_new_and_dirty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = repo(tmp.path(), "master");
+        let before = take(&m).unwrap();
+        write_rows(&m);
+        for row in [OWN_ROW, OTHER_ROW] {
+            let err = discard(&m, &before, &["scratch.txt".into(), row.into()]).unwrap_err();
+            assert!(matches!(err, DiscardError::NotDiscardable(p) if p == row));
+            assert!(m.join(row).exists());
+            assert!(m.join("scratch.txt").exists(), "nothing acted on");
+        }
+    }
+
     #[test]
     fn status_handles_spaces_unicode_and_renames() {
         let tmp = tempfile::tempdir().unwrap();
