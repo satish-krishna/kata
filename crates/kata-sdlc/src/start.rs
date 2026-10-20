@@ -685,6 +685,19 @@ mod tests {
     }
 
     #[test]
+    fn settle_ignores_unpushed_base_commits_r10_1() {
+        let fx = fixture();
+        testutil::bare_origin(&fx.repo("api"), None);
+        testutil::commit_msg(&fx.repo("api"), "mine.txt", "m\n", OWN);
+        let start = ready(prep(&fx, false));
+        testutil::commit_msg(&fx.repo("app"), "a.txt", "a\n", OWN);
+        let gone = settle(&start).unwrap();
+        assert_eq!(gone, ["api"]);
+        assert!(!has_branch(&fx.repo("api")));
+        assert_eq!(branch_of(&fx.repo("api")), "main");
+    }
+
+    #[test]
     fn heads_after_settle_skips_repos_without_the_branch() {
         let fx = fixture();
         let start = ready(prep(&fx, false));

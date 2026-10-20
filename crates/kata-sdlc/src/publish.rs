@@ -702,6 +702,19 @@ mod tests {
     }
 
     #[test]
+    fn touched_repos_ignores_unpushed_base_commits_r10_1() {
+        let fx = fixture(false);
+        let api = fx.path("api");
+        git::run(&api, &["checkout", "-q", "main"]).unwrap();
+        commit_file(&api, "mine.txt", "mine\n", "engineer's own work");
+        git::run(&api, &["checkout", "-q", "change/2026-10-19-c"]).unwrap();
+        git::run(&api, &["reset", "-q", "--hard", "main"]).unwrap();
+        let repos = all(&fx);
+        let names: Vec<&str> = repos.iter().map(|r| r.repo.as_str()).collect();
+        assert_eq!(names, ["app", "m"]);
+    }
+
+    #[test]
     fn publish_opens_product_then_master_r13_1() {
         let fx = fixture(true);
         let gh = FakeGh::default()
