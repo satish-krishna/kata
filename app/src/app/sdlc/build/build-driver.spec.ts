@@ -172,6 +172,29 @@ describe('BuildDriver', () => {
     expect(w.driver.phase()).toBe('building');
   });
 
+  it.each([
+    [124, null],
+    [123, null],
+    [1, 'the agent crashed'],
+  ])('a run that stops on its second task stays stopped and is not relaunched (R6.1, exit %s)', async (exit, error) => {
+    const w = world([
+      { id: 'T1', repo: 'app' },
+      { id: 'T2', repo: 'app' },
+      { id: 'T3', repo: 'app' },
+      { id: 'T4', repo: 'app' },
+    ]);
+    await w.driver.begin(3600);
+    await flush();
+    await w.of('app')[0].end(['T1', 'T2'], { exit, error });
+    expect(w.driver.stopped().get('app')).toEqual({ task: 'T3', reason: stopMessage(exit, error) });
+    expect(w.log).toEqual(['app']);
+    expect(w.driver.going().size).toBe(0);
+    expect(w.driver.phase()).toBe('stopped');
+    await w.driver.continueRepo('app');
+    await flush();
+    expect(w.log).toEqual(['app', 'app']);
+  });
+
   it('the build stops with the unfinished tasks by repository when nothing can run (R19.6)', async () => {
     const w = world([
       { id: 'T1', repo: 'api' },
