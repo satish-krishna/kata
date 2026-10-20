@@ -327,8 +327,11 @@ export class SdlcRunner {
 
   /** Wait for the engine process to exit. A failed wait counts as "still running": better to touch nothing. */
   private async engineExited(): Promise<boolean> {
+    const runId = this.runs.lastRunId();
+    // No id means the engine was never spawned, so there is no process to wait for.
+    if (runId === null) return true;
     try {
-      return await this.transport.sdlcWaitRunExit(EXIT_WAIT_MS);
+      return await this.transport.sdlcWaitRunExit(runId, EXIT_WAIT_MS);
     } catch {
       return false;
     }

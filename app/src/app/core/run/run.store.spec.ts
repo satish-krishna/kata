@@ -7,12 +7,12 @@ import type { KataEvent } from '../../lib/events';
 class FakeTransport {
   listeners: ((ev: KataEvent) => void)[] = [];
   unlistened = 0;
-  runSpec = vi.fn((..._a: unknown[]) => Promise.resolve());
+  runSpec = vi.fn((..._a: unknown[]) => Promise.resolve('1'));
   cancelRun = vi.fn((): Promise<void> => Promise.resolve());
   submitAnswer = vi.fn((..._a: unknown[]) => Promise.resolve());
   submitDecision = vi.fn((..._a: unknown[]) => Promise.resolve());
-  onRunEvent(cb: (ev: KataEvent) => void) {
-    this.listeners.push(cb);
+  onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
+    this.listeners.push((ev) => cb('1', ev));
     return Promise.resolve(() => { this.unlistened++; });
   }
 }
@@ -91,7 +91,7 @@ describe('RunStore', () => {
     expect(fake.submitAnswer).not.toHaveBeenCalled();
     fake.listeners[0]({ type: 'ask.requested', id: 'a', questions: [] });
     await store.submitAnswer('a', [['x']]);
-    expect(fake.submitAnswer).toHaveBeenCalledWith('a', [['x']]);
+    expect(fake.submitAnswer).toHaveBeenCalledWith('1', 'a', [['x']]);
   });
 
   it('forwards decisions only while awaiting', async () => {
@@ -101,7 +101,7 @@ describe('RunStore', () => {
     expect(fake.submitDecision).not.toHaveBeenCalled();
     fake.listeners[0]({ type: 'permission.requested', id: 'p1', tool: 'Bash', input_summary: 'ls' });
     await store.submitDecision('p1', false, 'no');
-    expect(fake.submitDecision).toHaveBeenCalledWith('p1', false, 'no');
+    expect(fake.submitDecision).toHaveBeenCalledWith('1', 'p1', false, 'no');
   });
 
   it('exposes asks and permissions as signals', async () => {
@@ -132,15 +132,17 @@ describe('RunStore', () => {
 
   it('cancel while runSpec is pending cancels again when it resolves and drops that run events', async () => {
     const { store, fake } = setup();
-    const d = deferred();
+    const d = deferred<string>();
     fake.runSpec.mockReturnValueOnce(d.promise);
     const started = store.startRun(seedSpec());
     await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalled());
     await store.cancelRun();
-    expect(fake.cancelRun).toHaveBeenCalledTimes(1);
-    d.resolve();
+    // No run id yet, so nothing to signal until runSpec answers.
+    expect(fake.cancelRun).not.toHaveBeenCalled();
+    d.resolve('1');
     await started;
-    expect(fake.cancelRun).toHaveBeenCalledTimes(2);
+    expect(fake.cancelRun).toHaveBeenCalledTimes(1);
+    expect(fake.cancelRun).toHaveBeenCalledWith('1');
     const before = store.events().length;
     fake.listeners[0](log('late'));
     expect(store.events().length).toBe(before);
@@ -148,13 +150,13 @@ describe('RunStore', () => {
 
   it('a fast-failing run (terminal event before runSpec resolves) does not issue a stray cancel', async () => {
     const { store, fake } = setup();
-    const d = deferred();
+    const d = deferred<string>();
     fake.runSpec.mockReturnValueOnce(d.promise);
     const started = store.startRun(seedSpec());
     await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalled());
     fake.listeners[0]({ type: 'run.error', message: 'boom', exit_code: 1 } as never);
     expect(store.state()).toBe('error');
-    d.resolve();
+    d.resolve('1');
     await started;
     expect(fake.cancelRun).not.toHaveBeenCalled();
   });

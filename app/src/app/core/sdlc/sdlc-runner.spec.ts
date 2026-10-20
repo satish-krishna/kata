@@ -62,7 +62,7 @@ function setup(agent: (spec: RunSpec) => Promise<RunState> | RunState = () => 's
     providers: [
       { provide: KataTransport, useValue: fake },
       { provide: LockStore, useValue: lock },
-      { provide: RunStore, useValue: { events, summary, state } },
+      { provide: RunStore, useValue: { events, summary, state, lastRunId: () => '1' } },
       { provide: ToastStore, useValue: toasts },
     ],
   });
@@ -75,7 +75,7 @@ describe('SdlcRunner.run', () => {
     const ctx = setup(() => { ctx.summary.set({ result: 'Wrote intent.md' }); return 'success'; });
     const out = await ctx.runner.run('Running setup', seedSpec(), { ...TARGET, label: 'Setup' });
     expect(ctx.fake.calls).toEqual(['snapshot', 'agent', 'wait', 'dismissed']);
-    expect(ctx.fake.sdlcWaitRunExit).toHaveBeenCalledWith(15000);
+    expect(ctx.fake.sdlcWaitRunExit).toHaveBeenCalledWith('1', 15000);
     expect(out.state).toBe('success');
     expect(ctx.toasts.success).toHaveBeenCalledWith('Setup finished · Wrote intent.md');
     expect(ctx.runner.leftovers()).toBeNull();

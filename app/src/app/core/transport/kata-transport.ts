@@ -14,6 +14,21 @@ import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
+import type { BuildStatus } from '@bindings/BuildStatus';
+import type { UnsavedRows } from '@bindings/UnsavedRows';
+import type { PrepareOutcome } from '@bindings/PrepareOutcome';
+import type { BuildStart } from '@bindings/BuildStart';
+import type { ChangeRepo } from '@bindings/ChangeRepo';
+import type { Part } from '@bindings/Part';
+import type { DiffListing } from '@bindings/DiffListing';
+import type { FilePair } from '@bindings/FilePair';
+import type { BaseInfo } from '@bindings/BaseInfo';
+import type { PublishRepo } from '@bindings/PublishRepo';
+import type { Offender } from '@bindings/Offender';
+import type { ChecksPlan } from '@bindings/ChecksPlan';
+import type { RepoChecks } from '@bindings/RepoChecks';
+import type { PrResult } from '@bindings/PrResult';
+import type { PrState } from '@bindings/PrState';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
 
@@ -29,10 +44,11 @@ export abstract class KataTransport {
   abstract loadSpec(path: string): Promise<RunSpec>;
   abstract saveSpec(path: string, spec: RunSpec): Promise<void>;
   abstract validateSpec(spec: RunSpec): Promise<string[]>;
-  abstract runSpec(spec: RunSpec): Promise<void>;
-  abstract cancelRun(): Promise<void>;
-  abstract submitAnswer(id: string, answers: string[][]): Promise<void>;
-  abstract submitDecision(id: string, allow: boolean, message: string | null): Promise<void>;
+  /** Start a run. Resolves to its run id. `group` (`build:<system>/<change>`) tells the backend which runs belong to one build. */
+  abstract runSpec(spec: RunSpec, group?: string): Promise<string>;
+  abstract cancelRun(runId: string): Promise<void>;
+  abstract submitAnswer(runId: string, id: string, answers: string[][]): Promise<void>;
+  abstract submitDecision(runId: string, id: string, allow: boolean, message: string | null): Promise<void>;
   abstract listKatas(): Promise<KataListing>;
   abstract loadKata(name: string): Promise<RunSpec>;
   abstract saveKata(spec: RunSpec): Promise<void>;
@@ -60,12 +76,31 @@ export abstract class KataTransport {
   abstract sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean): Promise<DecideOutcome>;
   abstract sdlcRunLinks(): Promise<RunLink[]>;
   abstract sdlcLinkRun(link: RunLink): Promise<void>;
-  /** Wait until the engine process of the last run has exited. False when it is still alive after `timeoutMs`. */
-  abstract sdlcWaitRunExit(timeoutMs: number): Promise<boolean>;
+  /** Wait until the engine process of run `runId` has exited. False when it is still alive after `timeoutMs`. */
+  abstract sdlcWaitRunExit(runId: string, timeoutMs: number): Promise<boolean>;
+  abstract sdlcBuildStatus(master: string, system: string, change: string): Promise<BuildStatus>;
+  abstract sdlcUnsavedRows(master: string, system: string, change: string): Promise<UnsavedRows[]>;
+  abstract sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean): Promise<PrepareOutcome>;
+  abstract sdlcBuildSettle(start: BuildStart): Promise<string[]>;
+  abstract sdlcBuildHeads(folder: string, repos: string[], change: string): Promise<Record<string, string>>;
+  abstract sdlcPluginVersion(path: string): Promise<string | null>;
+  abstract sdlcChangeRepos(folder: string, masterRepo: string, system: string, change: string): Promise<ChangeRepo[]>;
+  abstract sdlcDiffFiles(repoPath: string, part: Part): Promise<DiffListing>;
+  abstract sdlcDiffPair(repoPath: string, part: Part, path: string): Promise<FilePair>;
+  abstract sdlcDiffBase(repoPath: string): Promise<BaseInfo>;
+  abstract sdlcTouchedRepos(folder: string, masterRepo: string, system: string, change: string): Promise<PublishRepo[]>;
+  abstract sdlcCommitOffenders(folder: string, masterRepo: string, system: string, change: string): Promise<Offender[]>;
+  abstract sdlcChecksDir(): Promise<string>;
+  abstract sdlcChecksLoad(folder: string, masterRepo: string, system: string): Promise<ChecksPlan>;
+  abstract sdlcRunChecks(folder: string, masterRepo: string, system: string, repo: PublishRepo): Promise<RepoChecks>;
+  abstract sdlcGhSignedIn(repos: PublishRepo[]): Promise<string>;
+  abstract sdlcGhOrigins(repos: PublishRepo[]): Promise<void>;
+  abstract sdlcPublish(folder: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]): Promise<PrResult[]>;
+  abstract sdlcPullRequests(repos: PublishRepo[], change: string): Promise<PrState[]>;
   /** Step the window's zoom. Resolves to the new level, which the backend remembers for the next launch. */
   abstract zoom(step: ZoomStep): Promise<number>;
-  /** Register for relayed run events. Resolves to the unlisten function. */
-  abstract onRunEvent(cb: (ev: KataEvent) => void): Promise<() => void>;
+  /** Register for relayed run events, each tagged with the id of the run it came from. Resolves to the unlisten function. */
+  abstract onRunEvent(cb: (runId: string, ev: KataEvent) => void): Promise<() => void>;
 }
 
 export const NO_BACKEND = 'this action needs the Kata desktop app (Tauri backend unavailable)';

@@ -16,6 +16,10 @@ export class RunStore {
   /** The generation a cancel ended, so only a cancelled run (not a finished one) triggers the post-spawn cancel. */
   private cancelledGen = -1;
   private unlisten: (() => void) | null = null;
+  /** The id the backend gave the run, once `runSpec` has answered. Kept after the run ends so a caller can still wait on its process. */
+  private runId: string | null = null;
+  /** The generation of the latest `startRun`, so a slow `runSpec` answer from a superseded start cannot overwrite the id. */
+  private startedGen = -1;
 
   readonly state = computed(() => this.snap().state);
   readonly events = computed(() => this.snap().events);
@@ -37,8 +41,10 @@ export class RunStore {
     this.snap.update((s) => ({ ...s, events: [...s.events, { type: 'log', level, message }] }));
   }
 
-  private receive(gen: number, ev: KataEvent): void {
+  private receive(gen: number, runId: string, ev: KataEvent): void {
     if (gen !== this.generation) return;
+    // Before runSpec answers the id is unknown, and this store holds one run, so whatever arrives is that run's.
+    if (this.runId !== null && runId !== this.runId) return;
     this.snap.update((s) => reduce(s, ev));
     if (terminalStateFor(ev)) {
       this.generation++;
@@ -50,17 +56,20 @@ export class RunStore {
     if (this.active()) return;
     this.teardown();
     const gen = ++this.generation;
+    this.startedGen = gen;
+    this.runId = null;
     this.snap.set({ ...IDLE, state: 'running' });
-    const unlisten = await this.transport.onRunEvent((ev) => this.receive(gen, ev));
+    const unlisten = await this.transport.onRunEvent((id, ev) => this.receive(gen, id, ev));
     if (gen !== this.generation) {
       unlisten();
       return;
     }
     this.unlisten = unlisten;
     try {
-      await this.transport.runSpec(spec);
+      const id = await this.transport.runSpec(spec);
+      if (this.startedGen === gen) this.runId = id;
       // A cancel landed while run_spec was spawning; the backend had no child to signal then.
-      if (this.cancelledGen === gen) void this.transport.cancelRun();
+      if (this.cancelledGen === gen) void this.transport.cancelRun(id);
     } catch (e) {
       if (gen !== this.generation) return;
       this.generation++;
@@ -79,7 +88,8 @@ export class RunStore {
     this.append('warn', 'run cancelled — engine stopped claude and cleaned up the plugin-dir');
     this.snap.update((s) => ({ ...s, state: 'warning' }));
     try {
-      await this.transport.cancelRun();
+      // Still spawning: there is no id to signal yet, and startRun cancels the child as soon as it has one.
+      if (this.runId !== null) await this.transport.cancelRun(this.runId);
     } catch (e) {
       if (gen !== this.generation) return;
       this.append('error', `cancel failed: ${e}`);
@@ -87,13 +97,18 @@ export class RunStore {
     }
   }
 
+  /** The id of the latest run, or null before the backend has answered. Stays set after the run ends. */
+  lastRunId(): string | null {
+    return this.runId;
+  }
+
   async submitAnswer(id: string, answers: string[][]): Promise<void> {
-    if (this.snap().state !== 'awaiting') return;
-    await this.transport.submitAnswer(id, answers);
+    if (this.snap().state !== 'awaiting' || this.runId === null) return;
+    await this.transport.submitAnswer(this.runId, id, answers);
   }
 
   async submitDecision(id: string, allow: boolean, message: string | null): Promise<void> {
-    if (this.snap().state !== 'awaiting') return;
-    await this.transport.submitDecision(id, allow, message);
+    if (this.snap().state !== 'awaiting' || this.runId === null) return;
+    await this.transport.submitDecision(this.runId, id, allow, message);
   }
 }

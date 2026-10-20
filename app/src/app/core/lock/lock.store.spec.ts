@@ -8,12 +8,12 @@ import { LockStore, type LockView } from './lock.store';
 
 class FakeTransport {
   listeners: ((ev: KataEvent) => void)[] = [];
-  runSpec = vi.fn((..._a: unknown[]) => Promise.resolve());
+  runSpec = vi.fn((..._a: unknown[]) => Promise.resolve('1'));
   cancelRun = vi.fn((): Promise<void> => Promise.resolve());
   submitAnswer = vi.fn((..._a: unknown[]) => Promise.resolve());
   submitDecision = vi.fn((..._a: unknown[]) => Promise.resolve());
-  onRunEvent(cb: (ev: KataEvent) => void) {
-    this.listeners.push(cb);
+  onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
+    this.listeners.push((ev) => cb('1', ev));
     return Promise.resolve(() => undefined);
   }
 }

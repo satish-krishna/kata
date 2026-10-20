@@ -63,7 +63,7 @@ describe('ChangePage', () => {
 
   it('crosses the seam: Reopen spec opens the feedback box, and Run starts a spec run carrying the corrections', async () => {
     const transport = new MockTransport();
-    const run = vi.spyOn(transport, 'runSpec').mockResolvedValue();
+    const run = vi.spyOn(transport, 'runSpec').mockResolvedValue('1');
     // A plan awaiting acceptance no longer offers Reopen spec; a plan that is ready to start does.
     const real = transport.sdlcChanges.bind(transport);
     vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>

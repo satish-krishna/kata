@@ -1,7 +1,25 @@
 /* In-memory AI-SDLC fixtures for the browser demo. Each MockTransport owns one
  * instance, mutated by mock decisions and branch operations, so the demo
  * reflects what the operator did. Deterministic: no clocks, no randomness. */
+import type { BaseInfo } from '@bindings/BaseInfo';
+import type { BuildRow } from '@bindings/BuildRow';
+import type { BuildStart } from '@bindings/BuildStart';
+import type { BuildStatus } from '@bindings/BuildStatus';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
+import type { ChangedFile } from '@bindings/ChangedFile';
+import type { ChangeRepo } from '@bindings/ChangeRepo';
+import type { ChecksPlan } from '@bindings/ChecksPlan';
+import type { DiffListing } from '@bindings/DiffListing';
+import type { FilePair } from '@bindings/FilePair';
+import type { Part } from '@bindings/Part';
+import type { PlanTask } from '@bindings/PlanTask';
+import type { PrResult } from '@bindings/PrResult';
+import type { PrState } from '@bindings/PrState';
+import type { PublishRepo } from '@bindings/PublishRepo';
+import type { RepoChecks } from '@bindings/RepoChecks';
+import type { RepoState } from '@bindings/RepoState';
+import type { RepoStatus } from '@bindings/RepoStatus';
+import type { TaskStatus } from '@bindings/TaskStatus';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ContextState } from '@bindings/ContextState';
@@ -27,12 +45,17 @@ export const MOCK_SYSTEM = 'claims';
 export const MOCK_PENDING_BRANCH = 'change/pending-20261018T000000Z';
 export const MOCK_NEW_CHANGE = '2026-10-18-new-change';
 
-const plugin = (name: string, description: string): CatalogEntry =>
-  ({ kind: 'plugin', name, description, source: 'user', path: `~/.claude/plugins/${name}`, provides: [], mcp_servers: [] });
+/** The change the browser demo builds: three tasks across two repositories. */
+export const MOCK_BUILD_CHANGE = '2026-10-19-build-demo';
+/** The version the demo's `ai-sdlc` plugin reports. */
+export const MOCK_PLUGIN_VERSION = '0.6.0';
+
+const plugin = (name: string, description: string, provides: string[] = []): CatalogEntry =>
+  ({ kind: 'plugin', name, description, source: 'user', path: `~/.claude/plugins/${name}`, provides, mcp_servers: [] });
 
 /** Plugins the catalog finds for the demo workspace, so the AI-SDLC screens render in a plain browser. */
 export const MOCK_SDLC_CATALOG: CatalogEntry[] = [
-  plugin('ai-sdlc', 'intent, spec and plan skills for a change'),
+  plugin('ai-sdlc', 'intent, spec, plan and build skills for a change', ['skill:build', 'skill:intent', 'skill:spec', 'skill:plan', 'skill:context', 'skill:setup']),
   plugin('superpowers', 'planning and review skills'),
 ];
 
@@ -102,6 +125,17 @@ const change = (name: string, intent: DocState, spec: DocState, plan: DocState, 
     build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null,
   });
 
+/** The demo build's plan: T3 waits for T1, which lives in the other repository. */
+const BUILD_PLAN: PlanTask[] = [
+  { id: 'T1', name: 'Refuse an eleventh photo in the attachment store', repo: 'claims-core', dependsOn: [] },
+  { id: 'T2', name: 'Add the photo picker to the report form', repo: 'customer-portal', dependsOn: [] },
+  { id: 'T3', name: 'Show the upload limit message', repo: 'customer-portal', dependsOn: ['T1'] },
+];
+const BUILD_REPOS = ['claims-core', 'customer-portal'];
+/** The one task whose row records a departure from the plan. */
+const DEPARTED_TASK = 'T2';
+const DEPARTURE_TEXT = 'Reused the existing file picker instead of building a new one.';
+
 const DOC_STEMS = new Set(['intent', 'spec', 'plan']);
 
 /** Document text keyed by `<change>/<stem>`, the way the backend names them. */
@@ -114,6 +148,12 @@ const DOCS: Record<string, string> = {
     '## Requirements\n\n1. Up to 10 photos per claim, 10 MB each.\n2. JPEG and PNG only.\n3. Photos are virus-scanned before they are attached.\n',
     '```gherkin\nFeature: Photo upload at first notice of loss\n\n  Rule: R1 - A policyholder attaches up to 10 photos\n\n    Scenario: R1.1 - An eleventh photo is refused\n      Given a claim with 10 photos attached\n      When the policyholder adds "kitchen.jpg"\n      Then the upload is refused # the limit is per claim\n```\n',
     '## Flow\n\n```mermaid\nflowchart LR\n  A[Policyholder] -->|uploads| B(Virus scan)\n  B -->|clean| C[Claim]\n  B -->|infected| D[Rejected]\n```\n',
+  ].join('\n'),
+  [`${MOCK_BUILD_CHANGE}/intent`]: '---\nstatus: accepted\n---\n# Upload limits at first notice of loss\n\nPolicyholders see why a photo is refused.\n',
+  [`${MOCK_BUILD_CHANGE}/spec`]: '---\nstatus: accepted\n---\n# Spec: upload limits\n\n1. The store refuses an eleventh photo.\n2. The portal says why.\n',
+  [`${MOCK_BUILD_CHANGE}/plan`]: [
+    '---\nstatus: accepted\n---\n# Plan: upload limits\n',
+    ...BUILD_PLAN.map((t) => `### ${t.id}: ${t.name} (\`${t.repo}\`)\n\n${t.dependsOn.length ? `Depends on: ${t.dependsOn.join(', ')}\n` : ''}`),
   ].join('\n'),
   '2026-10-09-adjuster-reassign/intent': '---\nstatus: accepted\n---\n# Reassign a claim to another adjuster\n\nSupervisors move a claim between adjusters without losing its history.\n',
   '2026-10-09-adjuster-reassign/spec': '---\nstatus: accepted\n---\n# Spec: reassign\n\n1. Only supervisors can reassign.\n2. Reassignment is recorded in the claim history.\n',
@@ -147,7 +187,12 @@ export class SdlcMock {
     change('2026-10-16-fraud-flag', doc('draft'), doc(null), doc(null), 'intent-awaiting'),
     change('2026-10-12-fnol-photo-upload', doc('accepted'), doc('draft'), doc(null), 'spec-awaiting'),
     change('2026-10-09-adjuster-reassign', doc('accepted'), doc('accepted'), doc('draft'), 'plan-awaiting'),
+    change(MOCK_BUILD_CHANGE, doc('accepted'), doc('accepted'), doc('accepted'), 'build-ready'),
   ];
+  /** Rows the scripted build has committed, by task id. */
+  private rows = new Map<string, BuildRow>();
+  /** Repositories whose pull request the demo has opened. */
+  private published = new Set<string>();
   private docs: Record<string, string> = { ...DOCS };
   private setupDone = false;
   private cancelledRun = false;
@@ -185,7 +230,11 @@ export class SdlcMock {
     }
   }
 
-  listChanges(): ChangeInfo[] { return this.changes.map((c) => ({ ...c })); }
+  listChanges(): ChangeInfo[] {
+    return this.changes.map((c) => (c.change === MOCK_BUILD_CHANGE
+      ? { ...c, build: { tasks: BUILD_PLAN.length, finished: this.rows.size, repos: BUILD_REPOS.length } }
+      : { ...c }));
+  }
   branches(): BranchInfo { return { current: this.current, others: [...this.others], default_base: 'main' }; }
   /** Like the backend's `read_doc`: the document is named by its stem; anything else is a caller bug. */
   readDoc(changeName: string, docName: string): string | null {
@@ -241,4 +290,177 @@ export class SdlcMock {
 
   runLinks(): RunLink[] { return this.links.map((l) => ({ ...l })); }
   linkRun(link: RunLink): void { this.links = [...this.links, { ...link }]; }
+
+  // ---- the build ----
+
+  buildStatus(changeName: string): BuildStatus {
+    if (changeName !== MOCK_BUILD_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false };
+    const tasks: TaskStatus[] = BUILD_PLAN.map((t) => ({ ...t, dependsOn: [...t.dependsOn], row: this.rows.get(t.id) ?? null }));
+    const departures = tasks.flatMap((t) => (t.row?.departure ? [{ task: t.id, repo: t.repo, planText: t.name, departure: t.row.departure }] : []));
+    return { tasks, repos: BUILD_REPOS.map((r) => this.repoStatus(r)), departures, hasTasks: true };
+  }
+
+  private repoStatus(repo: string): RepoStatus {
+    const mine = BUILD_PLAN.filter((t) => t.repo === repo);
+    const first = mine.find((t) => !this.rows.has(t.id));
+    const finished = mine.filter((t) => this.rows.has(t.id)).length;
+    let state: RepoState = { kind: 'done' };
+    if (first) {
+      const blocker = first.dependsOn.find((d) => !this.rows.has(d));
+      const onRepo = BUILD_PLAN.find((t) => t.id === blocker)?.repo ?? '';
+      state = blocker ? { kind: 'waiting', task: first.id, onTask: blocker, onRepo } : { kind: 'ready', task: first.id };
+    }
+    return { repo, firstUnfinished: first?.id ?? null, state, tasks: mine.length, finished };
+  }
+
+  /** The tasks a run in `repo` would do if it started now: the unfinished ones, in order, up to the first that waits. */
+  readyTasks(repo: string): PlanTask[] {
+    const out: PlanTask[] = [];
+    for (const t of BUILD_PLAN.filter((x) => x.repo === repo && !this.rows.has(x.id))) {
+      if (t.dependsOn.some((d) => !this.rows.has(d))) break;
+      out.push(t);
+    }
+    return out;
+  }
+
+  /** A finished build run commits one row per task it did. */
+  commitRows(tasks: PlanTask[]): void {
+    for (const t of tasks) {
+      this.rows.set(t.id, {
+        task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`],
+        departure: t.id === DEPARTED_TASK ? DEPARTURE_TEXT : null,
+      });
+    }
+  }
+
+  prepare(folder: string, changeName: string): BuildStart {
+    const at = (repo: string) => ({ repo, path: `${folder}/${repo}`, base: 'main', branch: `change/${changeName}`, created: false });
+    return { master: at(MOCK_MASTER), repos: BUILD_REPOS.map(at) };
+  }
+
+  heads(repos: string[]): Record<string, string> {
+    return Object.fromEntries(repos.map((r, i) => [r, `${String(i + 1).repeat(7)}`]));
+  }
+
+  changeRepos(folder: string, changeName: string): ChangeRepo[] {
+    const base = this.diffBase();
+    return [MOCK_MASTER, ...BUILD_REPOS].map((repo) => ({ repo, path: `${folder}/${repo}`, branch: `change/${changeName}`, base }));
+  }
+
+  diffFiles(part: Part): DiffListing {
+    const files = DIFF_FILES.filter((f) => part === 'whole' || (part === 'uncommitted') === f.uncommitted);
+    const byType = new Map<string, { extension: string; files: number; added: number; removed: number }>();
+    for (const f of files.filter((x) => !x.binary)) {
+      const extension = f.path.includes('.') ? f.path.slice(f.path.lastIndexOf('.') + 1) : '(none)';
+      const t = byType.get(extension) ?? { extension, files: 0, added: 0, removed: 0 };
+      byType.set(extension, { extension, files: t.files + 1, added: t.added + f.added, removed: t.removed + f.removed });
+    }
+    return { files: files.map((f) => ({ ...f })), loc: [...byType.values()] };
+  }
+
+  diffPair(path: string): FilePair {
+    return DIFF_PAIRS[path] ?? { original: '', modified: '', languageHint: 'plaintext', binary: false };
+  }
+
+  diffBase(): BaseInfo { return { base: 'main', reference: 'origin/main', mergeBase: '3f9a1c27d0b8e45a6c1f2e9b7d3a508c4e6f1b29' }; }
+
+  touchedRepos(folder: string): PublishRepo[] {
+    return [MOCK_MASTER, ...BUILD_REPOS].map((repo) => ({ repo, path: `${folder}/${repo}`, base: 'main' }));
+  }
+
+  checksPlan(): ChecksPlan {
+    return {
+      path: `${MOCK_CHECKS_DIR}/claims.toml`, exists: true,
+      checks: [{ repo: 'claims-core', name: 'cargo test', argv: ['cargo', 'test'], timeout_secs: 600 }],
+    };
+  }
+
+  runChecks(repo: string): RepoChecks {
+    if (repo !== 'claims-core') return { repo, results: [], none: true };
+    return { repo, none: false, results: [{ name: 'cargo test', argv: ['cargo', 'test'], outcome: { kind: 'Passed' }, tail: 'test result: ok. 14 passed; 0 failed' }] };
+  }
+
+  publish(repos: PublishRepo[]): PrResult[] {
+    repos.forEach((r) => this.published.add(r.repo));
+    return repos.map((r) => ({ repo: r.repo, outcome: { kind: 'opened', url: prUrl(r.repo) } }));
+  }
+
+  pullRequests(repos: PublishRepo[]): PrState[] {
+    return repos.map((r) => ({ repo: r.repo, url: this.published.has(r.repo) ? prUrl(r.repo) : null }));
+  }
 }
+
+const MOCK_CHECKS_DIR = 'C:/Users/demo/.kata/checks';
+const prUrl = (repo: string) => `https://github.com/acme/${repo}/pull/7`;
+
+/** The canned diff: one file of each kind the Changes view tells apart. */
+const DIFF_FILES: ChangedFile[] = [
+  { path: 'src/attachments.rs', oldPath: null, status: 'added', binary: false, added: 18, removed: 0, uncommitted: false },
+  { path: 'src/limits.rs', oldPath: null, status: 'modified', binary: false, added: 6, removed: 2, uncommitted: true },
+  { path: 'src/store.rs', oldPath: 'src/storage.rs', status: 'renamed', binary: false, added: 3, removed: 3, uncommitted: false },
+  { path: 'notes/todo.txt', oldPath: null, status: 'untracked', binary: false, added: 4, removed: 0, uncommitted: true },
+  { path: 'assets/sample.png', oldPath: null, status: 'added', binary: true, added: 0, removed: 0, uncommitted: false },
+];
+
+const ATTACHMENTS = [
+  'pub const MAX_PHOTOS: usize = 10;', '', 'pub struct Attachment {', '    pub name: String,', '    pub bytes: Vec<u8>,', '}', '',
+  'pub fn accepts(count: usize) -> bool {', '    count < MAX_PHOTOS', '}', '',
+].join('\n');
+const LIMITS_BEFORE = ['pub fn limit() -> usize {', '    5', '}', '', 'pub fn limit_bytes() -> usize {', '    5 * 1024 * 1024', '}', ''].join('\n');
+const LIMITS_AFTER = ['pub fn limit() -> usize {', '    crate::attachments::MAX_PHOTOS', '}', '', 'pub fn limit_bytes() -> usize {', '    10 * 1024 * 1024', '}', ''].join('\n');
+const STORE_BEFORE = ['// storage.rs', 'pub fn open() -> Store {', '    Store::default()', '}', ''].join('\n');
+const STORE_AFTER = ['// store.rs', 'pub fn open() -> Store {', '    Store::with_limit(limit())', '}', ''].join('\n');
+
+const DIFF_PAIRS: Record<string, FilePair> = {
+  'src/attachments.rs': { original: '', modified: ATTACHMENTS, languageHint: 'rust', binary: false },
+  'src/limits.rs': { original: LIMITS_BEFORE, modified: LIMITS_AFTER, languageHint: 'rust', binary: false },
+  'src/store.rs': { original: STORE_BEFORE, modified: STORE_AFTER, languageHint: 'rust', binary: false },
+  'notes/todo.txt': { original: '', modified: 'check the limit with the portal team\nask about HEIC\n', languageHint: 'plaintext', binary: false },
+  'assets/sample.png': { original: '', modified: '', languageHint: 'plaintext', binary: true },
+};
+
+// ---- scripted build runs ----
+
+const buildTranscript = (repo: string) =>
+  ({ delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-claims-${MOCK_BUILD_CHANGE}-build-${repo}-20261019T090000Z.jsonl` } }) as ScriptStep;
+
+/** The steps for one task: read what it needs, then commit it. */
+const taskSteps = (t: PlanTask): ScriptStep[] => [
+  { delay: 300, ev: { type: 'tool.use', name: 'Edit', input_summary: `${t.repo}: ${t.name}`, id: `toolu_${t.id}e`, input: { file_path: `${t.repo}/src/lib` } } },
+  { delay: 300, ev: { type: 'tool.result', name: 'Edit', ok: true, summary: 'edited', id: `toolu_${t.id}e`, output: 'ok' } },
+  { delay: 300, ev: { type: 'tool.use', name: 'Bash', input_summary: `git commit -m "feat(sdlc): ${t.name}"`, id: `toolu_${t.id}c`, input: { command: `git commit -m "feat(sdlc): ${t.name}"` } } },
+  { delay: 300, ev: { type: 'tool.result', name: 'Bash', ok: true, summary: `committed ${t.id}`, id: `toolu_${t.id}c`, output: '' } },
+];
+
+const completed = (result: string): ScriptStep =>
+  ({ delay: 350, ev: { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 3, cost_usd: 0.04, duration_ms: 30000, result } });
+
+/** A repository run: it does `tasks` and commits each. With `ask`, it pauses on one question before the first task. */
+export function buildRunScript(repo: string, tasks: PlanTask[], ask: boolean): { head: ScriptStep[]; mid: ScriptStep[] } {
+  const read: ScriptStep[] = [
+    buildTranscript(repo),
+    { delay: 300, ev: { type: 'turn', n: 1 } },
+    { delay: 300, ev: { type: 'tool.use', name: 'Read', input_summary: `${MOCK_SYSTEM}/${MOCK_BUILD_CHANGE}/plan.md`, id: 'toolu_plan', input: { file_path: `${MOCK_SYSTEM}/${MOCK_BUILD_CHANGE}/plan.md` } } },
+    { delay: 300, ev: { type: 'tool.result', name: 'Read', ok: true, summary: 'plan.md', id: 'toolu_plan', output: '### T1' } },
+  ];
+  const work = [...tasks.flatMap(taskSteps), completed(`${tasks.length} task(s) done in ${repo}.`)];
+  if (!ask) return { head: [...read, ...work], mid: [] };
+  const question: ScriptStep = { delay: 300, ev: { type: 'ask.requested', id: 'q1', questions: [
+    { kind: 'select', header: 'picker', question: 'The report form already has a file picker. Reuse it for photos?',
+      options: [ { label: 'Reuse it', description: 'smaller change' }, { label: 'Build a new one', description: 'matches the plan text' } ],
+      multi_select: false },
+  ] } };
+  return { head: [...read, question], mid: work };
+}
+
+/** The review run: reads the change and closes with two findings. */
+export const reviewRunScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
+  head: [
+    { delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-claims-${MOCK_BUILD_CHANGE}-review-20261019T093000Z.jsonl` } },
+    { delay: 300, ev: { type: 'turn', n: 1 } },
+    { delay: 300, ev: { type: 'tool.use', name: 'Bash', input_summary: 'git diff origin/main...HEAD', id: 'toolu_rv1', input: { command: 'git diff origin/main...HEAD' } } },
+    { delay: 300, ev: { type: 'tool.result', name: 'Bash', ok: true, summary: '5 files changed', id: 'toolu_rv1', output: '' } },
+    completed('2 findings. 1. The upload limit is duplicated in claims-core and customer-portal. 2. The refusal message has no test.'),
+  ],
+  mid: [],
+};
