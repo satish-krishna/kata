@@ -1,6 +1,7 @@
 //! Workspace, git, and local-store logic for the Workbench's AI-SDLC mode.
 
 pub mod branch;
+pub mod build;
 pub mod changes;
 pub mod decide;
 pub mod frontmatter;
