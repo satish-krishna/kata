@@ -6,6 +6,7 @@ import { render } from '../../../testing/render';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { diagrams } from '../../lib/mermaid';
+import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { ChangePage } from './change-page';
 
 const settle = async () => {
@@ -111,6 +112,61 @@ describe('ChangePage', () => {
     const { container } = await mount();
     expect(container.querySelector('app-lock-overlay')).not.toBeNull();
     expect(container.querySelector('app-leftover-dialog')).not.toBeNull();
+  });
+
+  describe('the build', () => {
+    const text = (e: Element) => e.textContent!.replace(/s+/g, ' ').trim();
+    const click = (label: string) => Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((b) => b.textContent!.trim() === label)!.click();
+
+    it('the plan tab renders the build log from sdlcBuildStatus', async () => {
+      const { container, transport } = await mount(MOCK_BUILD_CHANGE);
+      const status = await transport.sdlcBuildStatus('', 'claims', MOCK_BUILD_CHANGE);
+      const table = container.querySelector('app-build-log-table')!;
+      expect(table).not.toBeNull();
+      expect(text(table.querySelector('h2')!)).toBe('Build log');
+      expect(table.querySelectorAll('tbody tr').length).toBe(status.tasks.length);
+    });
+
+    it('shows no build log on a change without tasks', async () => {
+      const { container } = await mount();
+      expect(container.querySelector('app-build-log-table')).toBeNull();
+    });
+
+    it('crosses the seam: clicking the rendered Start build opens the dialog, and Start build prepares the build', async () => {
+      const { container, transport } = await mount(MOCK_BUILD_CHANGE);
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
+      await settle();
+      const dialog = document.body.querySelector('app-build-dialog [role="dialog"]')!;
+      expect(dialog).not.toBeNull();
+      expect(text(dialog.querySelector('[hlmDialogTitle]')!)).toBe('Start build');
+      expect(prepare).not.toHaveBeenCalled();
+      click('Start build');
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+      expect(prepare.mock.calls[0][4]).toBe(false);
+    });
+
+    it('a refused build opens the refusal dialog', async () => {
+      const { container, transport } = await mount(MOCK_BUILD_CHANGE);
+      vi.spyOn(transport, 'sdlcPluginVersion').mockResolvedValue(null);
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
+      await settle();
+      click('Start build');
+      await vi.waitFor(() => expect(document.body.textContent).toContain('The build did not start'));
+      expect(document.body.textContent).toContain('Update the ai-sdlc plugin to 0.6.0 or later');
+    });
+
+    it('leftovers open the confirm dialog titled and listing each repository and file', async () => {
+      const { container, transport } = await mount(MOCK_BUILD_CHANGE);
+      vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['src/new.rs'] }] });
+      Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
+      await settle();
+      click('Start build');
+      await vi.waitFor(() => expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull());
+      const confirm = document.body.querySelector('[role="alertdialog"]')!;
+      expect(text(confirm)).toContain('Continue on top of leftovers?');
+      expect(Array.from(confirm.querySelectorAll('li')).map((li) => text(li))).toEqual(['claims-core: src/new.rs']);
+    });
   });
 
   describe('plan tab banners', () => {

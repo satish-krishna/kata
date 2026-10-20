@@ -39,4 +39,15 @@ describe('ConfirmDialog', () => {
     await fixture.whenStable();
     expect(n).toBe(1);
   });
+
+  it('lists its details under the message', async () => {
+    await render(ConfirmDialog, { open: true, message: 'Continue on top of leftovers?', details: ['claims-core: src/new.rs', 'customer-portal: a.ts'] });
+    const items = Array.from(document.body.querySelectorAll('[role="alertdialog"] li')).map((li) => li.textContent!.trim());
+    expect(items).toEqual(['claims-core: src/new.rs', 'customer-portal: a.ts']);
+  });
+
+  it('shows no list without details', async () => {
+    await render(ConfirmDialog, { open: true, message: 'Discard changes?' });
+    expect(document.body.querySelector('[role="alertdialog"] li')).toBeNull();
+  });
 });

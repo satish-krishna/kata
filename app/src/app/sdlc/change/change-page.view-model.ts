@@ -2,13 +2,17 @@ import { Injectable, computed, effect, inject, signal, untracked } from '@angula
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
 import type { BranchInfo } from '@bindings/BranchInfo';
+import type { BuildStart } from '@bindings/BuildStart';
+import type { BuildStatus } from '@bindings/BuildStatus';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { Decision } from '@bindings/Decision';
+import type { RepoFiles } from '@bindings/RepoFiles';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
+import type { BuildDialogMode, BuildStartRequest } from '../../ui/build-dialog';
 import { LockStore } from '../../core/lock/lock.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
@@ -78,6 +82,14 @@ const OUT_OF_DATE_BANNER: Record<NonNullable<ChangeInfo['out_of_date']>, string>
   'no-tasks': 'This plan has no tasks. Rewrite the plan before building.',
 };
 const SUPERSEDED_BANNER = 'The intent was reopened after this plan was written. Rewrite the plan before building.';
+
+/** What the build view starts from: the prepared branches, the time limit, the round if one was asked for, and Kata's checks folder. */
+export type BuildHandoff = {
+  start: BuildStart;
+  timeoutSecs: number;
+  round: { instructions: string; repo: string } | null;
+  checksDir: string;
+};
 
 type DocStem = 'intent' | 'spec' | 'plan';
 
@@ -182,6 +194,19 @@ export class ChangePageViewModel {
     const a = this.pendingRevisit();
     return a === null ? null : actionLabel(a);
   });
+
+  // --- the build dialog and what it hands to the build view (STUB)
+  readonly buildMode = signal<BuildDialogMode | null>(null);
+  readonly buildRepos = computed<string[]>(() => []);
+  readonly buildTasks = computed<BuildStatus['tasks']>(() => []);
+  readonly refusal = signal<string | null>(null);
+  readonly leftoverPrompt = computed<{ lines: string[] } | null>(() => null);
+  readonly handoff = signal<BuildHandoff | null>(null);
+  async submitBuild(_req: BuildStartRequest): Promise<void> {}
+  cancelBuild(): void {}
+  async confirmLeftovers(): Promise<void> {}
+  cancelLeftovers(): void {}
+  closeRefusal(): void {}
 
   // --- the lock: Kata's own checks in the overlay, an agent run as the session view
   readonly locked = computed(() => this.lock.active() !== null);

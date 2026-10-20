@@ -8,6 +8,7 @@ import { LockStore } from '../../core/lock/lock.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { actionsFor } from '../../lib/sdlc';
+import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { ChangePageViewModel } from './change-page.view-model';
 
 const FNOL = '2026-10-12-fnol-photo-upload';
@@ -378,5 +379,129 @@ describe('ChangePageViewModel', () => {
     navigate.mockClear();
     await vm.toHome();
     expect(navigate).toHaveBeenCalledWith(['/sdlc']);
+  });
+
+  describe('the build', () => {
+    const BUILD = MOCK_BUILD_CHANGE;
+    const REQUEST = { timeoutSecs: 5400, instructions: null, repo: null };
+
+    it('Start build, Continue build and Another round open the dialog in their own mode', async () => {
+      const transport = new MockTransport();
+      withStage(transport, BUILD, 'build-stopped');
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      expect(vm.buildMode()).toBeNull();
+      await vm.act('continue-build');
+      expect(vm.buildMode()).toBe('continue');
+      vm.cancelBuild();
+      expect(vm.buildMode()).toBeNull();
+      await vm.act('another-round');
+      expect(vm.buildMode()).toBe('round');
+      expect(vm.buildRepos()).toEqual(['claims-intent', 'claims-core', 'customer-portal']);
+    });
+
+    it('Start build opens the dialog and prepares nothing yet', async () => {
+      const { vm, transport } = setup(BUILD);
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+      await ready(vm);
+      await vm.act('start-build');
+      expect(vm.buildMode()).toBe('start');
+      expect(prepare).not.toHaveBeenCalled();
+    });
+
+    it('a ready preparation hands the start, the time limit and the checks folder to the build view', async () => {
+      const { vm, transport } = setup(BUILD);
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+      await ready(vm);
+      await vm.act('start-build');
+      await vm.submitBuild(REQUEST);
+      expect(prepare).toHaveBeenCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false);
+      expect(vm.buildMode()).toBeNull();
+      const h = vm.handoff()!;
+      expect(h.timeoutSecs).toBe(5400);
+      expect(h.round).toBeNull();
+      expect(h.start.repos.map((r) => r.repo)).toEqual(['claims-core', 'customer-portal']);
+      expect(h.checksDir).toBe(await transport.sdlcChecksDir());
+    });
+
+    it('reads the checks folder once, however often the page loads', async () => {
+      const transport = new MockTransport();
+      const checks = vi.spyOn(transport, 'sdlcChecksDir');
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      await vm.discardLeftovers([]);
+      expect(checks).toHaveBeenCalledTimes(1);
+    });
+
+    it('a round carries its instructions and repository to the build view', async () => {
+      const transport = new MockTransport();
+      withStage(transport, BUILD, 'build-finished');
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      await vm.act('another-round');
+      await vm.submitBuild({ timeoutSecs: 14400, instructions: 'rename the status field to state', repo: 'claims-core' });
+      expect(vm.handoff()!.round).toEqual({ instructions: 'rename the status field to state', repo: 'claims-core' });
+      expect(vm.handoff()!.timeoutSecs).toBe(14400);
+    });
+
+    it('the change page confirms and retries with leftovers (R6.4)', async () => {
+      const { vm, transport } = setup(BUILD);
+      const left = [{ repo: 'claims-core', files: ['src/new.rs'] }];
+      const real = transport.sdlcBuildPrepare.bind(transport);
+      const prepare = vi
+        .spyOn(transport, 'sdlcBuildPrepare')
+        .mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: left })
+        .mockImplementation(real);
+      await ready(vm);
+      await vm.act('start-build');
+      await vm.submitBuild(REQUEST);
+      expect(vm.leftoverPrompt()!.lines).toEqual(['claims-core: src/new.rs']);
+      expect(vm.handoff()).toBeNull();
+      expect(prepare).toHaveBeenCalledTimes(1);
+      await vm.confirmLeftovers();
+      expect(prepare).toHaveBeenCalledTimes(2);
+      expect(prepare.mock.calls[0][4]).toBe(false);
+      expect(prepare.mock.calls[1][4]).toBe(true);
+      expect(vm.leftoverPrompt()).toBeNull();
+      expect(vm.handoff()!.timeoutSecs).toBe(5400);
+    });
+
+    it('declining the leftovers prepares nothing more', async () => {
+      const { vm, transport } = setup(BUILD);
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValue({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['a'] }] });
+      await ready(vm);
+      await vm.submitBuild(REQUEST);
+      vm.cancelLeftovers();
+      expect(vm.leftoverPrompt()).toBeNull();
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(vm.handoff()).toBeNull();
+    });
+
+    it('a refusal is shown and starts nothing', async () => {
+      const { vm, transport } = setup(BUILD);
+      vi.spyOn(transport, 'sdlcPluginVersion').mockResolvedValue('0.5.0');
+      await ready(vm);
+      await vm.submitBuild(REQUEST);
+      expect(vm.refusal()).toBe('Update the ai-sdlc plugin to 0.6.0 or later, then start the build again.');
+      expect(vm.handoff()).toBeNull();
+      vm.closeRefusal();
+      expect(vm.refusal()).toBeNull();
+    });
+
+    it('reads the build status once the plan exists and lists its tasks', async () => {
+      const { vm, transport } = setup(BUILD);
+      const status = vi.spyOn(transport, 'sdlcBuildStatus');
+      await ready(vm);
+      expect(status).toHaveBeenCalled();
+      expect(vm.buildTasks().map((t) => t.id).length).toBeGreaterThan(0);
+    });
+
+    it('does not read the build status before there is a plan', async () => {
+      const { vm, transport } = setup(FNOL);
+      const status = vi.spyOn(transport, 'sdlcBuildStatus');
+      await ready(vm);
+      expect(status).not.toHaveBeenCalled();
+      expect(vm.buildTasks()).toEqual([]);
+    });
   });
 });
