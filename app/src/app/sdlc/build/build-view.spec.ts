@@ -10,7 +10,7 @@ import type { BuildHandoff } from '../change/change-page.view-model';
 import { BuildView } from './build-view';
 import { BuildViewModel, type BuildContext } from './build-view.view-model';
 
-const CTX: BuildContext = { workspaceId: 'acme-claims', folder: MOCK_WORKSPACE_FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE };
+const CTX: BuildContext = { workspaceId: 'acme-claims', folder: MOCK_WORKSPACE_FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE, systemRepos: [] };
 
 async function mount(transport = new MockTransport()) {
   const out = await transport.sdlcBuildPrepare(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'claims', MOCK_BUILD_CHANGE, false);

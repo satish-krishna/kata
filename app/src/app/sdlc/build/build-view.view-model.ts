@@ -16,7 +16,14 @@ import type { BuildHandoff } from '../change/change-page.view-model';
 import { BuildDriver, type BuildPhase, type RunEnd, type RunOptions, type RunTarget } from './build-driver';
 
 /** What the build runs against: the workspace, the system and the change. */
-export type BuildContext = { workspaceId: string; folder: string; system: string; change: string };
+export type BuildContext = {
+  workspaceId: string;
+  folder: string;
+  system: string;
+  change: string;
+  /** Every product repository the system names, whether or not the plan does: the agents are denied edits in all of them (R18.5). */
+  systemRepos: string[];
+};
 
 /** One run of the selected repository, as the observe pane shows it. */
 export type ShownRun = {
@@ -477,7 +484,7 @@ export class BuildViewModel {
       instructions: opts.instructions ?? null,
       workspaceFolder: ctx.folder,
       masterRepo: h.start.master.repo,
-      systemRepos: this.productRepos,
+      systemRepos: [...new Set([...ctx.systemRepos, ...this.productRepos])],
       checksDir: h.checksDir,
       continueOnLeftovers: h.continueOnLeftovers ?? false,
     };

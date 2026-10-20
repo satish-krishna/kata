@@ -275,7 +275,12 @@ export class ChangePageViewModel {
   /** What the build view runs against: the workspace, the system and the change; null until the workspace is known. */
   readonly buildContext = computed<BuildContext | null>(() => {
     const w = this.current();
-    return w ? { workspaceId: w.id, folder: w.folder, system: this.system(), change: this.changeName() } : null;
+    if (!w) return null;
+    const scan = this.scan();
+    const master = scan ? masterRepo(scan) : null;
+    const system = this.system();
+    const systemRepos = (scan?.marker?.systems[system]?.repos ?? []).filter((r) => r !== master);
+    return { workspaceId: w.id, folder: w.folder, system, change: this.changeName(), systemRepos };
   });
   /** The build view was closed: forget the handoff and read the change again. */
   async closeBuild(): Promise<void> {

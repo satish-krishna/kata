@@ -11,7 +11,7 @@ import type { BuildHandoff } from '../change/change-page.view-model';
 import { BuildViewModel, type BuildContext } from './build-view.view-model';
 
 const FOLDER = MOCK_WORKSPACE_FOLDER;
-const CTX: BuildContext = { workspaceId: 'acme-claims', folder: FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE };
+const CTX: BuildContext = { workspaceId: 'acme-claims', folder: FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE, systemRepos: [] };
 const REVIEW_NAME = `sdlc-claims-${MOCK_BUILD_CHANGE}-review`;
 
 function setup(transport = new MockTransport()) {
@@ -127,7 +127,7 @@ describe('BuildViewModel', () => {
   it('an agent is denied edits in every product repository of the system, even one the plan does not name (R18.5)', async () => {
     const { vm, transport } = setup();
     const runSpec = vi.spyOn(transport, 'runSpec');
-    const ctx = { ...CTX, systemRepos: ['claims-core', 'customer-portal', 'billing-api'] } as BuildContext;
+    const ctx = { ...CTX, systemRepos: ['claims-core', 'customer-portal', 'billing-api'] };
     await vm.start(await handoffFor(transport), ctx);
     await advance(100);
     const core = runSpec.mock.calls.map(([spec]) => spec).find((s) => s.workdir === `${FOLDER}/claims-core`)!;
