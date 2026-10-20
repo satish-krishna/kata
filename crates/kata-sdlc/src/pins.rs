@@ -7,8 +7,14 @@ use std::path::Path;
 /// unchanged at `HEAD`. A missing or empty pin, one that could be read as a git option, an
 /// unknown commit, and any git error are all false.
 pub fn holds(master: &Path, pin: Option<&str>, upstream_rel: &str) -> bool {
-    let _ = (master, pin, upstream_rel);
-    todo!()
+    let Some(pin) = pin.filter(|p| !p.is_empty() && !p.starts_with('-')) else {
+        return false;
+    };
+    git::run(
+        master,
+        &["diff", "--quiet", pin, "HEAD", "--", upstream_rel],
+    )
+    .is_ok()
 }
 
 /// Whether the spec's `source_intent_commit` still matches `intent.md`.
@@ -43,17 +49,15 @@ fn pin_holds(
     key: &str,
     upstream: &str,
 ) -> bool {
-    let _ = (
+    let dir = master.join(format!("intent/{system}/{change}"));
+    let pin = std::fs::read_to_string(dir.join(doc))
+        .ok()
+        .and_then(|t| frontmatter::field(&t, key));
+    holds(
         master,
-        system,
-        change,
-        doc,
-        key,
-        upstream,
-        frontmatter::field,
-        git::run,
-    );
-    todo!()
+        pin.as_deref(),
+        &format!("intent/{system}/{change}/{upstream}"),
+    )
 }
 
 #[cfg(test)]
