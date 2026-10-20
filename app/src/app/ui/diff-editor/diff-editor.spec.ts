@@ -133,6 +133,24 @@ describe('DiffEditor', () => {
     expect(fake.models.some((m) => m.disposed)).toBe(false);
   });
 
+  it('the modifiedText input refreshes the new side in place', async () => {
+    const fake = fakeMonaco();
+    const { fixture } = await mount(fake, { pair: pair('same', 'before') });
+
+    fixture.componentRef.setInput('modifiedText', 'refreshed');
+    await fixture.whenStable();
+
+    expect(fake.models[1].setValue).toHaveBeenCalledWith('refreshed');
+    expect(fake.editor.setModel).toHaveBeenCalledTimes(1);
+  });
+
+  it('a window resize lays the editor out again', async () => {
+    const fake = fakeMonaco();
+    await mount(fake, { pair: pair('a', 'b') });
+    window.dispatchEvent(new Event('resize'));
+    expect(fake.editor.layout).toHaveBeenCalled();
+  });
+
   it('a binary pair shows no editor', async () => {
     const fake = fakeMonaco();
     const { fixture, container } = await mount(fake, { pair: pair('', '', true) });

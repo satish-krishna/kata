@@ -34,7 +34,10 @@
                 "inject": false
               }
             ],
-            "webWorkerTsConfig": "tsconfig.worker.json"
+            "webWorkerTsConfig": "tsconfig.worker.json",
+            "loader": {
+              ".css": "empty"
+            }
           },
           "configurations": {
             "production": {
