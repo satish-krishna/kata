@@ -98,3 +98,16 @@ pub fn bare_origin(repo: &Path, origin_head: Option<&str>) -> PathBuf {
     }
     bare
 }
+
+/// Commit `rel` as someone else's work that reached `origin/<branch>` while local `<branch>`
+/// stayed behind: commit on `branch`, push it, move local `branch` back, then return to the
+/// branch that was checked out. Leaves `origin/<branch>` one commit ahead of local `<branch>`.
+#[allow(dead_code)]
+pub fn advance_origin_only(repo: &Path, branch: &str, rel: &str, msg: &str) {
+    let back = git::run(repo, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+    checkout(repo, branch, false);
+    commit_file(repo, rel, "others\n", msg);
+    git::run(repo, &["push", "-q", "origin", branch]).unwrap();
+    git::run(repo, &["reset", "-q", "--hard", "HEAD~1"]).unwrap();
+    checkout(repo, &back, false);
+}

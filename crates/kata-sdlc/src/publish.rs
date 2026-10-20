@@ -711,6 +711,33 @@ mod tests {
     }
 
     #[test]
+    fn a_change_rebased_onto_a_newer_origin_base_is_judged_on_its_own_commits() {
+        let fx = fixture(true);
+        let app = fx.path("app");
+        crate::testutil::advance_origin_only(&app, "main", "others.txt", "someone else's work");
+        git::run(&app, &["rebase", "-q", "origin/main"]).unwrap();
+        let api = fx.path("api");
+        crate::testutil::advance_origin_only(&api, "main", "others.txt", "someone else's work");
+        git::run(&api, &["rebase", "-q", "origin/main"]).unwrap();
+        let names: Vec<String> = all(&fx).into_iter().map(|r| r.repo).collect();
+        assert_eq!(names, ["app", "api", "m"]);
+        let got = change_offenders(fx.dir.path(), "m", "s", "2026-10-19-c").unwrap();
+        let subjects: Vec<&str> = got.iter().map(|o| o.subject.as_str()).collect();
+        assert!(subjects.contains(&"work"), "{subjects:?}");
+        assert!(!subjects.contains(&"someone else's work"), "{subjects:?}");
+    }
+
+    #[test]
+    fn an_empty_branch_rebased_onto_a_newer_origin_base_is_not_touched_r10_1() {
+        let fx = fixture(false);
+        let api = fx.path("api");
+        crate::testutil::advance_origin_only(&api, "main", "others.txt", "someone else's work");
+        git::run(&api, &["rebase", "-q", "origin/main"]).unwrap();
+        let names: Vec<String> = all(&fx).into_iter().map(|r| r.repo).collect();
+        assert_eq!(names, ["app", "m"]);
+    }
+
+    #[test]
     fn change_offenders_ignore_unpushed_base_commits_r11_5() {
         let fx = fixture(true);
         let app = fx.path("app");

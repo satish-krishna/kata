@@ -851,6 +851,46 @@ mod tests {
     }
 
     #[test]
+    fn continue_is_not_blocked_by_a_newer_origin_base_r3_1() {
+        let fx = fixture();
+        testutil::bare_origin(&fx.repo("api"), None);
+        ready(prep(&fx, false));
+        testutil::commit_msg(
+            &fx.repo("api"),
+            "a.txt",
+            "a
+",
+            OWN,
+        );
+        testutil::advance_origin_only(&fx.repo("api"), "main", "others.txt", "fix: someone else");
+        git::run(&fx.repo("api"), &["rebase", "-q", "origin/main"]).unwrap();
+        let again = prep(&fx, false);
+        assert!(
+            matches!(again, Ok(PrepareOutcome::Ready { .. })),
+            "got: {again:?}"
+        );
+    }
+
+    #[test]
+    fn settle_removes_an_empty_branch_rebased_onto_a_newer_origin_base_r10_1() {
+        let fx = fixture();
+        testutil::bare_origin(&fx.repo("api"), None);
+        let start = ready(prep(&fx, false));
+        testutil::commit_msg(
+            &fx.repo("app"),
+            "a.txt",
+            "a
+",
+            OWN,
+        );
+        testutil::advance_origin_only(&fx.repo("api"), "main", "others.txt", "fix: someone else");
+        git::run(&fx.repo("api"), &["rebase", "-q", "origin/main"]).unwrap();
+        let gone = settle(&start).unwrap();
+        assert_eq!(gone, ["api"]);
+        assert!(!has_branch(&fx.repo("api")));
+    }
+
+    #[test]
     fn heads_after_settle_skips_repos_without_the_branch() {
         let fx = fixture();
         let start = ready(prep(&fx, false));

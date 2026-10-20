@@ -213,6 +213,40 @@ mod tests {
     }
 
     #[test]
+    fn a_change_rebased_onto_a_newer_origin_base_does_not_count_others_commits_r10_1() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        bare_origin(&r, None);
+        checkout(&r, "change/x", true);
+        commit_file(
+            &r,
+            "c.txt",
+            "c
+",
+            "the change",
+        );
+        crate::testutil::advance_origin_only(&r, "main", "others.txt", "someone else's work");
+        git::run(&r, &["rebase", "-q", "origin/main"]).unwrap();
+        assert_eq!(commits_ahead_of_local_base(&r, "HEAD").unwrap(), 1);
+    }
+
+    #[test]
+    fn unpushed_local_base_commits_do_not_count_as_change_work_r10_1() {
+        let d = tmp();
+        let r = repo(d.path(), "app");
+        bare_origin(&r, None);
+        commit_file(
+            &r,
+            "unpushed.txt",
+            "u
+",
+            "never pushed",
+        );
+        checkout(&r, "change/x", true);
+        assert_eq!(commits_ahead_of_local_base(&r, "HEAD").unwrap(), 0);
+    }
+
+    #[test]
     fn local_base_commits_not_on_origin_are_in_the_change_r7_7() {
         let d = tmp();
         let r = repo(d.path(), "app");
