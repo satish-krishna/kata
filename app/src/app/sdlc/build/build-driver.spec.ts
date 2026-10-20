@@ -280,6 +280,28 @@ describe('BuildDriver', () => {
     expect(w.driver.round()?.repo).toBe('api');
   });
 
+  it('a round for a repository the plan does not name still runs (R8.1)', async () => {
+    const w = world([{ id: 'T1', repo: 'api' }], ['T1']);
+    await w.driver.begin(3600, { repo: 'master', instructions: 'tidy the notes' });
+    await flush();
+    expect(w.log).toEqual(['master']);
+    expect(w.started[0].opts.instructions).toBe('tidy the notes');
+    expect(w.driver.phase()).toBe('building');
+  });
+
+  it('a round for a waiting repository is not dropped silently (R8.3)', async () => {
+    const w = world([{ id: 'T1', repo: 'app' }, { id: 'T2', repo: 'api', dependsOn: ['T1'] }]);
+    await w.driver.begin(3600, { repo: 'api', instructions: 'rename it' });
+    await flush();
+    await w.started[0].end([], { exit: 1 });
+    expect(w.driver.phase()).toBe('stopped');
+    expect(w.driver.round()?.repo).toBe('api');
+    await w.driver.continueRepo('app');
+    await flush();
+    await w.started[1].end(['T1']);
+    expect(w.of('api')[0].opts.instructions).toBe('rename it');
+  });
+
   it('cancel all starts nothing new', async () => {
     const w = world([{ id: 'T1', repo: 'app' }, { id: 'T2', repo: 'api' }, { id: 'T3', repo: 'app' }]);
     await w.driver.begin(3600);
