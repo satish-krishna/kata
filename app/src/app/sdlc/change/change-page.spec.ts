@@ -4,6 +4,7 @@ import { of } from 'rxjs';
 import { render } from '../../../testing/render';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
+import { diagrams } from '../../lib/mermaid';
 import { ChangePage } from './change-page';
 
 const settle = async () => {
@@ -26,6 +27,14 @@ async function mount(change = FNOL, transport = new MockTransport()) {
 }
 
 describe('ChangePage', () => {
+  // The FNOL spec has a Mermaid diagram. A cold import of Mermaid under full-suite load blocks the
+  // first mount's settle for seconds, past the 5s test timeout; these tests don't look at diagrams.
+  let draw: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    draw = vi.spyOn(diagrams, 'render').mockResolvedValue('<svg></svg>');
+  });
+  afterEach(() => draw.mockRestore());
+
   it('shows the breadcrumb, the branch, the stepper and the stage document', async () => {
     const { container } = await mount();
     expect(container.querySelector('nav')!.textContent).toContain(FNOL);
