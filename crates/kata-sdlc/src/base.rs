@@ -53,6 +53,11 @@ fn branch_exists(repo: &Path, b: &str) -> bool {
 /// The base branch, the ref to compare with (`origin/<base>` when it exists, else `<base>`), and
 /// the merge base of HEAD and that ref.
 pub fn base_info(repo: &Path) -> Result<BaseInfo, BaseError> {
+    base_info_for(repo, "HEAD")
+}
+
+/// Like `base_info`, with the merge base taken for `rev` instead of HEAD.
+pub fn base_info_for(repo: &Path, rev: &str) -> Result<BaseInfo, BaseError> {
     let base = base_branch(repo).ok_or_else(|| {
         BaseError::Unresolved(
             repo.file_name()
@@ -66,7 +71,7 @@ pub fn base_info(repo: &Path) -> Result<BaseInfo, BaseError> {
     } else {
         base.clone()
     };
-    let merge_base = git::run(repo, &["merge-base", "HEAD", &reference])?;
+    let merge_base = git::run(repo, &["merge-base", rev, &reference])?;
     Ok(BaseInfo {
         base,
         reference,

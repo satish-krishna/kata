@@ -1,11 +1,17 @@
 //! Starting a build: one `change/<change>` branch in every repository an unfinished task names,
 //! checked before anything is created or switched, and the cleanup of branches that stayed empty.
-use crate::base::BaseError;
-use crate::git::GitError;
-use crate::workspace::ScanError;
+use crate::base::{base_branch, base_info_for, commits_ahead, BaseError};
+use crate::branch::{branch_exists, current_branch};
+use crate::build::{self, RepoState};
+use crate::changes::{is_change_name, is_safe_system};
+use crate::commits::offenders_to;
+use crate::decide::change_scope;
+use crate::git::{self, GitError};
+use crate::snapshot::status_entries;
+use crate::workspace::{self, system_repos, ScanError};
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// One repository of a started build and the branch it works on.
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -66,26 +72,257 @@ pub enum BuildError {
     Scan(#[from] ScanError),
 }
 
+fn refuse<T>(message: impl Into<String>) -> Result<T, BuildError> {
+    Err(BuildError::Refused(message.into()))
+}
+
+fn dirty_files(repo: &Path) -> Result<Vec<String>, GitError> {
+    Ok(status_entries(repo)?.into_iter().map(|e| e.path).collect())
+}
+
+enum Action {
+    Create,
+    Checkout,
+    Continue,
+}
+
+struct Classified {
+    repo: String,
+    path: PathBuf,
+    base: String,
+    action: Action,
+}
+
+/// Where one product repository stands, per the start table. Changes nothing.
+fn classify(
+    path: &Path,
+    repo: &str,
+    branch: &str,
+    scope: &str,
+) -> Result<(Classified, Option<RepoFiles>), BuildError> {
+    let Some(base) = base_branch(path) else {
+        return refuse(format!(
+            "{repo} has no base branch: no origin/HEAD, main or master"
+        ));
+    };
+    let exists = branch_exists(path, branch);
+    if exists {
+        let tip = format!("refs/heads/{branch}");
+        let info = base_info_for(path, &tip)?;
+        if !offenders_to(path, repo, &info.merge_base, &tip, scope)?.is_empty() {
+            return refuse(format!(
+                "{repo} already has a branch {branch} holding work from outside this change"
+            ));
+        }
+    }
+    let current = current_branch(path);
+    let done = |action, leftovers| {
+        (
+            Classified {
+                repo: repo.to_string(),
+                path: path.to_path_buf(),
+                base: base.clone(),
+                action,
+            },
+            leftovers,
+        )
+    };
+    match current.as_deref() {
+        Some(c) if c == branch => {
+            let files = dirty_files(path)?;
+            let leftovers = (!files.is_empty()).then(|| RepoFiles {
+                repo: repo.to_string(),
+                files,
+            });
+            Ok(done(Action::Continue, leftovers))
+        }
+        Some(c) if c == base => {
+            let files = dirty_files(path)?;
+            if !files.is_empty() {
+                return refuse(format!(
+                    "{repo} has uncommitted files: {}",
+                    files.join(", ")
+                ));
+            }
+            let action = if exists {
+                Action::Checkout
+            } else {
+                Action::Create
+            };
+            Ok(done(action, None))
+        }
+        other => refuse(format!(
+            "{repo} is on branch {}; switch it to {base} first",
+            other.unwrap_or("(detached HEAD)")
+        )),
+    }
+}
+
+/// Check every precondition of a build, then create or check out `change/<change>` in the master
+/// and in every product repository an unfinished task names. Nothing is touched until all pass.
 pub fn prepare(
-    _folder: &Path,
-    _master_repo: &str,
-    _system: &str,
-    _change: &str,
-    _continue_with_leftovers: bool,
+    folder: &Path,
+    master_repo: &str,
+    system: &str,
+    change: &str,
+    continue_with_leftovers: bool,
 ) -> Result<PrepareOutcome, BuildError> {
-    todo!()
+    if !is_safe_system(master_repo) || !is_safe_system(system) || !is_change_name(change) {
+        return refuse(format!(
+            "invalid master repository, system or change name: {master_repo}, {system}, {change}"
+        ));
+    }
+    let master = folder.join(master_repo);
+    let branch = format!("change/{change}");
+    let mut leftovers = Vec::new();
+
+    let dirty = dirty_files(&master)?;
+    if !dirty.is_empty() {
+        let logs: Vec<String> = build::unsaved_rows(&master, system, change)
+            .map(|rows| {
+                rows.iter()
+                    .map(|u| format!("intent/{system}/{change}/build/{}.md", u.repo))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (saved, other): (Vec<String>, Vec<String>) =
+            dirty.into_iter().partition(|f| logs.contains(f));
+        if !other.is_empty() {
+            return refuse(format!(
+                "the master repo has uncommitted files: {}",
+                other.join(", ")
+            ));
+        }
+        leftovers.push(RepoFiles {
+            repo: master_repo.to_string(),
+            files: saved,
+        });
+    }
+    if !branch_exists(&master, &branch) {
+        return refuse(format!("the master repo has no branch {branch}"));
+    }
+
+    let status = build::status(&master, system, change)?;
+    let scan = workspace::scan(folder)?;
+    let in_system = system_repos(&scan, system);
+    let mut products = Vec::new();
+    for r in &status.repos {
+        if r.state == RepoState::Done || r.repo == master_repo {
+            continue;
+        }
+        let name = &r.repo;
+        if !is_safe_system(name) {
+            return refuse(format!(
+                "the plan names {name}, which is not a valid repository name"
+            ));
+        }
+        if !in_system.contains(name) {
+            return refuse(format!(
+                "the plan names {name}, which is not in system {system}"
+            ));
+        }
+        if !scan.repos.contains(name) {
+            return refuse(format!(
+                "the plan names {name}, which is not checked out in this workspace"
+            ));
+        }
+        products.push(name.clone());
+    }
+
+    let scope = change_scope(&master, system, change);
+    let mut classified = Vec::new();
+    for name in &products {
+        let (c, files) = classify(&folder.join(name), name, &branch, &scope)?;
+        leftovers.extend(files);
+        classified.push(c);
+    }
+    if !leftovers.is_empty() && !continue_with_leftovers {
+        return Ok(PrepareOutcome::NeedsConfirm { leftovers });
+    }
+
+    if current_branch(&master).as_deref() != Some(branch.as_str()) {
+        git::run(&master, &["checkout", "-q", &branch, "--"])?;
+    }
+    let mut repos = Vec::new();
+    for c in classified {
+        let created = matches!(c.action, Action::Create);
+        match c.action {
+            Action::Create => {
+                let from = if branch_exists(&c.path, &c.base) {
+                    c.base.clone()
+                } else {
+                    format!("origin/{}", c.base)
+                };
+                git::run(&c.path, &["checkout", "-q", "-b", &branch, &from])?;
+            }
+            Action::Checkout => {
+                git::run(&c.path, &["checkout", "-q", &branch, "--"])?;
+            }
+            Action::Continue => {}
+        }
+        repos.push(RepoStart {
+            repo: c.repo,
+            path: c.path.to_string_lossy().into_owned(),
+            base: c.base,
+            branch: branch.clone(),
+            created,
+        });
+    }
+    Ok(PrepareOutcome::Ready {
+        start: BuildStart {
+            master: RepoStart {
+                repo: master_repo.to_string(),
+                path: master.to_string_lossy().into_owned(),
+                base: base_branch(&master).unwrap_or_default(),
+                branch,
+                created: false,
+            },
+            repos,
+        },
+    })
 }
 
-pub fn settle(_start: &BuildStart) -> Result<Vec<String>, BuildError> {
-    todo!()
+/// Put every product repository whose change branch stayed empty (no commits past the merge
+/// base, clean tree) back on its base and delete the branch. Returns those repositories. A
+/// branch with commits is never deleted.
+pub fn settle(start: &BuildStart) -> Result<Vec<String>, BuildError> {
+    let mut gone = Vec::new();
+    for r in &start.repos {
+        let path = Path::new(&r.path);
+        if current_branch(path).as_deref() != Some(r.branch.as_str())
+            || commits_ahead(path)? != 0
+            || !dirty_files(path)?.is_empty()
+        {
+            continue;
+        }
+        git::run(path, &["checkout", "-q", &r.base, "--"])?;
+        git::run(path, &["branch", "-D", &r.branch])?;
+        gone.push(r.repo.clone());
+    }
+    Ok(gone)
 }
 
+/// The commit each repository's `change/<change>` points at.
 pub fn heads(
-    _folder: &Path,
-    _repos: &[String],
-    _change: &str,
+    folder: &Path,
+    repos: &[String],
+    change: &str,
 ) -> Result<BTreeMap<String, String>, BuildError> {
-    todo!()
+    if !is_change_name(change) {
+        return refuse(format!("invalid change name: {change}"));
+    }
+    let mut out = BTreeMap::new();
+    for repo in repos {
+        if !is_safe_system(repo) {
+            return refuse(format!("invalid repository name: {repo}"));
+        }
+        let head = git::run(
+            &folder.join(repo),
+            &["rev-parse", &format!("refs/heads/change/{change}")],
+        )?;
+        out.insert(repo.clone(), head);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
