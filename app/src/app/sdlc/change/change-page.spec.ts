@@ -243,6 +243,30 @@ describe('ChangePage', () => {
       expect(labels(container)).not.toContain('Start build');
       expect(labels(container)).not.toContain('Continue build');
     });
+
+    it.each([
+      ['intent-awaiting', 'The intent was reopened.', 'Accept intent'],
+      ['intent-in-progress', 'The intent was reopened.', 'Continue intent'],
+      ['spec-awaiting', 'The spec was reopened.', 'Accept spec'],
+    ] as const)('a reopened document of a change with a plan is named beside its own actions (R1.5) %s', async (stage, text, action) => {
+      const { container } = await mount(REASSIGN, staged(stage));
+      expect(banner(container)).toBe(text);
+      expect(labels(container)).toContain(action);
+      expect(labels(container)).not.toContain('Start build');
+      expect(labels(container)).not.toContain('Continue build');
+    });
+
+    it('a change without a plan has no reopened banner at intent-awaiting', async () => {
+      const transport = new MockTransport();
+      const real = transport.sdlcChanges.bind(transport);
+      vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
+        (await real(m, s)).map((c) =>
+          c.change === REASSIGN ? { ...c, stage: 'intent-awaiting' as const, plan: { ...c.plan, exists: false } } : c,
+        ),
+      );
+      const { container } = await mount(REASSIGN, transport);
+      expect(banner(container)).toBeNull();
+    });
   });
 });
 
