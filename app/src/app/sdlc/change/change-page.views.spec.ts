@@ -66,6 +66,7 @@ const SPEC = [
   '',
 ].join('\n');
 const SPEC_NO_DESIGN = SPEC.replace(/## Design[\s\S]*$/, '');
+const SPEC_RULES_ONLY = ['---', 'status: accepted', '---', '# Spec: demo', '', '```gherkin', 'Feature: Demo', '', '  Rule: R1 — A rule (from: D1)', '', '  Rule: R2 — Another rule (from: D2)', '```', '', 'Whole text of the rules-only spec.', ''].join('\n');
 const SPEC_NO_REQUIREMENTS = '---\nstatus: accepted\n---\n# Spec: demo\n\n## Rules\n\n1. Plain numbered rules.\n';
 
 const PLAN = [
@@ -206,6 +207,13 @@ describe('ChangePage spec views', () => {
     expect(container.querySelector('app-doc-layout article')!.textContent).toContain('Plain numbered rules.');
   });
 
+  it('shows only the whole document when the rules parse but no scenario does, never a list of 0 scenarios', async () => {
+    const { container } = await mount(FNOL, { spec: SPEC_RULES_ONLY });
+    expect(toggle(container)).toEqual([]);
+    expect(container.querySelector('nav[aria-label="Requirements"]')).toBeNull();
+    expect(container.querySelector('app-doc-layout article')!.textContent).toContain('Whole text of the rules-only spec.');
+  });
+
   it('puts the view back to the default on another tab, and has no toggle on the intent', async () => {
     const { container } = await mount(FNOL, { spec: SPEC, intent: '# Intent\n\nWords.\n' });
     toggle(container)[1].click();
@@ -326,6 +334,36 @@ describe('ChangePage plan views', () => {
     });
     expect(pill(container, 'Spec').getAttribute('aria-selected')).toBe('true');
     expect(checked(container)).toEqual(['Requirements · 3']);
+  });
+
+  it('opens the Spec tab on its whole document, not on R1, for a requirement id the spec does not have', async () => {
+    const tasks = TASKS.map((t) => (t.id === 'T3' ? { ...t, text: t.text.replace('R1.1', 'R99.1') } : t));
+    const { container } = await mount(MOCK_BUILD_CHANGE, docs, tasks);
+    tasksNav(container)[2].click();
+    await settle();
+    const ref = container.querySelector<HTMLAnchorElement>('[data-testid="task"] a[href="#req-R99.1"]')!;
+    expect(text(ref)).toBe('R99.1');
+    ref.click();
+    await vi.waitFor(() => {
+      TestBed.tick();
+      expect(pill(container, 'Spec').getAttribute('aria-selected')).toBe('true');
+    });
+    await settle();
+    expect(checked(container)).toEqual(['Whole document']);
+    expect(container.querySelector('[data-testid="requirement"]')).toBeNull();
+    expect(container.querySelector('app-doc-layout article')!.textContent).toContain('The design text.');
+  });
+
+  it('shows the lines between a task heading and its first field above the labeled sections', async () => {
+    const lead = task('T5', 'Lead first', 'claims-core', [], '### T5: Lead first (`claims-core`)\n\nRead this before you start.\n\n- **Depends on:** none\n- **Change:** Do it.\n', null);
+    const { container } = await mount(MOCK_BUILD_CHANGE, docs, [...TASKS, lead]);
+    tasksNav(container)[4].click();
+    await settle();
+    const detail = container.querySelector('[data-testid="task"]')!;
+    expect(text(detail.querySelector('.k-task__plain')!)).toBe('Read this before you start.');
+    const sections = Array.from(detail.querySelectorAll('section'));
+    expect(sections.map((x) => text(x.querySelector('h3')!))).toEqual(['Change']);
+    expect(detail.querySelector('.k-task__plain')!.compareDocumentPosition(sections[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('shows the Approach section, or the whole document, in the document layout', async () => {

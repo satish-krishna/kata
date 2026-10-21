@@ -6,7 +6,8 @@ import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertResponsive } from '../harness/gate/check-responsive.mjs';
-import { serveStatic } from '../harness/playwright/serve-and-visit.mjs';
+import { launchChromium, serveStatic } from '../harness/playwright/serve-and-visit.mjs';
+import { CHANGE_ROUTES, checkChangeToolbar } from './check-change-toolbar.mjs';
 import { formatCorrectiveMessage } from '../harness/gate/responsive-guidance.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -27,6 +28,21 @@ try {
       process.stderr.write(`route "/${route}":\n${formatCorrectiveMessage(failures)}\n`);
       failed = true;
     }
+  }
+  // The change page's toolbar: pills, links, badge and name must fit side by side, not wrap or overlap.
+  const browser = await launchChromium();
+  try {
+    for (const spec of CHANGE_ROUTES) {
+      for (const width of BREAKPOINTS) {
+        const fails = await checkChangeToolbar(browser, srv.origin, spec, width);
+        if (fails.length) {
+          process.stderr.write(`${fails.map((f) => `route "/${spec.route}": ${f}`).join('\n')}\n`);
+          failed = true;
+        }
+      }
+    }
+  } finally {
+    await browser.close();
   }
 } finally {
   await srv.close();

@@ -103,6 +103,16 @@ describe('requirements', () => {
     expect(requirements('')).toEqual([]);
   });
 
+  it('is empty when the rules parse but none has a scenario, so no requirement shows 0 scenarios', () => {
+    const rulesOnly = ['```gherkin', 'Feature: Demo', '', '  Rule: R1 — First (from: D1)', '', '    Scenario: one without an id', '      Given a thing', '', '  Rule: R2 — Second (from: D2)', '```'].join('\n');
+    expect(requirements(rulesOnly)).toEqual([]);
+  });
+
+  it('keeps a rule that has no scenario next to one that has', () => {
+    const mixed = ['```gherkin', 'Feature: Demo', '  Rule: R1 — First (from: D1)', '  Rule: R2 — Second (from: D2)', '    Scenario: R2.1 — Only one', '      Given a thing', '```'].join('\n');
+    expect(requirements(mixed).map((r) => [r.id, r.scenarios.length])).toEqual([['R1', 0], ['R2', 1]]);
+  });
+
   it('reads Windows line endings', () => {
     expect(requirements(EXCERPT.replace(/\n/g, '\r\n'))[0].scenarios[1].examples).toEqual([
       ['document', 'upstream', 'action'],

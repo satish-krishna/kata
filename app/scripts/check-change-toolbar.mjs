@@ -1,0 +1,99 @@
+// The change page toolbar, measured in a real browser. `check:responsive` runs it at 1280 and 1600 for a change in an
+// early stage and for a finished one with three pull request links. jsdom has no layout, so a wrapped badge or a link
+// painted over a pill can only be seen here.
+//
+// Every assertion is about what the person sees: the header does not scroll sideways, no two items in it share any
+// pixels, the mode badge and the change name are each one line, and a truncated name carries its full text in a title.
+
+export const CHANGE_ROUTES = [
+  { route: 'sdlc/claims/2026-10-16-fraud-flag', name: 'a change in an early stage', pills: 4, links: 0 },
+  { route: 'sdlc/claims/2026-10-18-photo-limits-shipped', name: 'a finished change with three pull request links', pills: 4, links: 3 },
+];
+
+/** Runs in the page: reads the toolbar's geometry. Returns plain data so the node side can judge it. */
+function measure() {
+  const header = document.querySelector('app-sdlc-toolbar header');
+  if (!header) return null;
+  const box = (el) => {
+    const r = el.getBoundingClientRect();
+    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height };
+  };
+  const label = (el) => (el.getAttribute('aria-label') || el.textContent || el.className || el.tagName).trim().replace(/\s+/g, ' ');
+  const lines = (el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return new Set(Array.from(range.getClientRects(), (r) => Math.round(r.top))).size;
+  };
+  const items = [
+    ...header.querySelectorAll('.wb-seal, .k-modebadge, app-workspace-switcher, .k-crumbs, .k-branch, .k-pill, .k-prlinks__label, .k-prlinks a, :scope > button'),
+  ]
+    .filter((el) => el.getBoundingClientRect().width > 0)
+    .map((el) => ({ el, name: label(el), ...box(el) }));
+  const nested = (a, b) => a.el.contains(b.el) || b.el.contains(a.el);
+  const overlaps = [];
+  for (let i = 0; i < items.length; i += 1) {
+    for (let j = i + 1; j < items.length; j += 1) {
+      const a = items[i];
+      const b = items[j];
+      if (nested(a, b)) continue;
+      const x = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+      const y = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+      if (x > 0.5 && y > 0.5) overlaps.push(`"${a.name}" over "${b.name}" (${Math.round(x)}px wide)`);
+    }
+  }
+  const head = box(header);
+  const beyond = items.filter((i) => i.right > head.right + 0.5).map((i) => `"${i.name}" ends at ${Math.round(i.right)}, header at ${Math.round(head.right)}`);
+  const badge = header.querySelector('.k-modebadge');
+  const crumb = header.querySelector('.k-crumbs__item');
+  const links = Array.from(header.querySelectorAll('.k-prlinks a'));
+  const root = document.documentElement;
+  return {
+    pageScroll: root.scrollWidth - root.clientWidth,
+    headerScroll: header.scrollWidth - header.clientWidth,
+    overlaps,
+    beyond,
+    pills: header.querySelectorAll('.k-pill').length,
+    links: links.length,
+    badgeLines: badge ? lines(badge) : 0,
+    crumbLines: crumb ? lines(crumb) : 0,
+    crumbTitle: crumb ? crumb.getAttribute('title') : null,
+    crumbText: crumb ? crumb.textContent.trim() : null,
+    linkTitles: links.map((a) => ({ title: a.getAttribute('title'), text: a.textContent.trim() })),
+  };
+}
+
+/** Opens one change route at one width and returns the failures as readable lines; empty means the toolbar is sound. */
+export async function checkChangeToolbar(browser, origin, { route, name, pills, links }, width) {
+  const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1 });
+  const page = await context.newPage();
+  const fails = [];
+  try {
+    await page.goto(`${origin}/${route}`, { waitUntil: 'networkidle' });
+    await page.evaluate(() => document.fonts && document.fonts.ready);
+    try {
+      await page.waitForFunction(
+        ([p, l]) => document.querySelectorAll('app-sdlc-toolbar header .k-pill').length === p && document.querySelectorAll('app-sdlc-toolbar header .k-prlinks a').length === l,
+        [pills, links],
+        { timeout: 5000 },
+      );
+    } catch {
+      /* the measurement below reports what is actually there */
+    }
+    const m = await page.evaluate(measure);
+    const at = `${name} at ${width}`;
+    if (m === null) return [`${at}: no toolbar rendered`];
+    if (m.pills !== pills) fails.push(`${at}: expected ${pills} stage pills, found ${m.pills}`);
+    if (m.links !== links) fails.push(`${at}: expected ${links} pull request links, found ${m.links}`);
+    if (m.pageScroll > 1) fails.push(`${at}: the page scrolls sideways by ${m.pageScroll}px`);
+    if (m.headerScroll > 0) fails.push(`${at}: the toolbar's content is ${m.headerScroll}px wider than the toolbar (scrollWidth > clientWidth)`);
+    for (const o of m.overlaps) fails.push(`${at}: toolbar items overlap: ${o}`);
+    for (const b of m.beyond) fails.push(`${at}: an item runs past the toolbar: ${b}`);
+    if (m.badgeLines !== 1) fails.push(`${at}: the mode badge is on ${m.badgeLines} lines, not one`);
+    if (m.crumbLines !== 1) fails.push(`${at}: the change name is on ${m.crumbLines} lines, not one`);
+    if (m.crumbTitle !== m.crumbText) fails.push(`${at}: the change name's title is ${JSON.stringify(m.crumbTitle)}, not its full text ${JSON.stringify(m.crumbText)}`);
+    for (const l of m.linkTitles) if (l.title !== l.text) fails.push(`${at}: the pull request link "${l.text}" has title ${JSON.stringify(l.title)}, not its full text`);
+  } finally {
+    await context.close();
+  }
+  return fails;
+}

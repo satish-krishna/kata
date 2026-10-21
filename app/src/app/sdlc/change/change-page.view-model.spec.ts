@@ -593,6 +593,18 @@ describe('ChangePageViewModel', () => {
       expect(links.every((l) => l.url.startsWith('https://') && /^\d+$/.test(l.number ?? ''))).toBe(true);
     });
 
+    it('has no pills and no pull request links while a skill run holds the page', async () => {
+      const { vm } = setup(BUILD, await finished());
+      const lock = TestBed.inject(LockStore);
+      vi.spyOn(lock, 'active').mockReturnValue({ kind: 'run', title: 'Starting spec', finished: null });
+      vi.spyOn(lock, 'spec').mockReturnValue({} as RunSpec);
+      await ready(vm);
+      expect(vm.session()).not.toBeNull();
+      expect(vm.change()?.stage).toBe('build-finished');
+      expect(vm.pills()).toEqual([]);
+      expect(vm.pullLinks()).toEqual([]);
+    });
+
     it('has no pull request links before any is open', async () => {
       const { vm } = setup(FNOL);
       await ready(vm);
@@ -627,6 +639,89 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.showDoc('build');
       expect(vm.stripStatus()).toEqual({ text: 'Build · ready to start', tone: 'idle' });
+    });
+
+    it('says the build facts on the Build tab, with no stage label beside them', async () => {
+      const transport = new MockTransport();
+      vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, sys, name) => {
+        const real = await MockTransport.prototype.sdlcBuildStatus.call(transport, m, sys, name);
+        return { ...real, tasks: real.tasks.map((t, i) => (i < 2 ? { ...t, row: { task: t.id, repo: t.repo, commits: ['abc1234'], departure: null } } : { ...t, row: null })) };
+      });
+      const link = (stage: string, run_id: string) => ({ workspace_id: 'acme-claims', system: 'claims', change: BUILD, stage, run_id, started_at: 100 });
+      vi.spyOn(transport, 'sdlcRunLinks').mockResolvedValue([link('build:claims-core', 'a'), link('build:customer-portal', 'b'), link('review', 'c'), link('spec', 'd')]);
+      vi.spyOn(transport, 'listRuns').mockResolvedValue([]);
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      await vm.showDoc('build');
+      expect(vm.buildFacts()).toBe('2/3 tasks · 2 repositories · 2 build runs');
+      expect(vm.stripStatus()).toBeNull();
+    });
+
+    it('says the singular for one repository and one build run', async () => {
+      const transport = new MockTransport();
+      vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, sys, name) => {
+        const real = await MockTransport.prototype.sdlcBuildStatus.call(transport, m, sys, name);
+        return { ...real, repos: real.repos.slice(0, 1) };
+      });
+      vi.spyOn(transport, 'sdlcRunLinks').mockResolvedValue([{ workspace_id: 'acme-claims', system: 'claims', change: BUILD, stage: 'build:claims-core', run_id: 'a', started_at: 100 }]);
+      vi.spyOn(transport, 'listRuns').mockResolvedValue([]);
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      await vm.showDoc('build');
+      expect(vm.buildFacts()).toBe('0/3 tasks · 1 repository · 1 build run');
+    });
+
+    it('says only what it has: no tasks yet, no runs yet', async () => {
+      const transport = new MockTransport();
+      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({ tasks: [], repos: [], departures: [], hasTasks: false });
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      await vm.showDoc('build');
+      expect(vm.buildFacts()).toBeNull();
+    });
+
+    it('never puts the stage label on the Build tab strip: the pills own it, so "Build · done" has no "Done · pull requests open" beside it', async () => {
+      const { vm } = setup(BUILD, await finished());
+      await ready(vm);
+      await vm.showDoc('build');
+      expect(vm.done()).toBe(true);
+      expect(vm.pills()[3].text).toBe('Build · done');
+      expect(vm.stripStatus()).toBeNull();
+      expect(vm.buildFacts() ?? '').not.toMatch(/done/i);
+    });
+
+    it('draws no strip on the Build tab when there is no status, no facts and no action', async () => {
+      const transport = await finished();
+      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({ tasks: [], repos: [], departures: [], hasTasks: false });
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      await vm.showDoc('build');
+      expect(vm.actions()).toEqual([]);
+      expect(vm.buildFacts()).toBeNull();
+      expect(vm.stripShown()).toBe(false);
+    });
+
+    it('keeps the strip on a document tab, where the status and the file name are always something to say', async () => {
+      const { vm } = setup(FNOL);
+      await ready(vm);
+      expect(vm.stripShown()).toBe(true);
+    });
+
+    it('opens a requirement the spec has, in the Requirements view', async () => {
+      const { vm } = setup(BUILD);
+      await ready(vm);
+      await vm.openRequirement('R2.1');
+      expect(vm.shownDoc()).toBe('spec');
+      expect(vm.shownView()).toBe('list');
+      expect(vm.pickedRequirement()?.id).toBe('R2');
+    });
+
+    it('opens the whole spec, not R1, for a requirement the spec does not have', async () => {
+      const { vm } = setup(BUILD);
+      await ready(vm);
+      await vm.openRequirement('R99.1');
+      expect(vm.shownDoc()).toBe('spec');
+      expect(vm.shownView()).toBe('whole');
     });
 
     it('gives the rail the front matter fields except the status, which the strip says', async () => {

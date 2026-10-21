@@ -44,6 +44,23 @@ describe('taskFields', () => {
     expect(taskFields('')).toEqual([]);
   });
 
+  it('keeps the lines between the heading and the first field as a leading section with no label', () => {
+    expect(taskFields('### T1: x (`a`)\n\nRead this first.\n\nThen this.\n\n- **Depends on:** none\n- **Files:** a.rs\n')).toEqual([
+      { field: '', body: 'Read this first.\n\nThen this.' },
+      { field: 'Depends on', body: 'none' },
+      { field: 'Files', body: 'a.rs' },
+    ]);
+  });
+
+  it('gives a task with no field bullets its prose as the one unlabeled section', () => {
+    expect(taskFields('### T1: x (`a`)\n\nSome prose.\n')).toEqual([{ field: '', body: 'Some prose.' }]);
+  });
+
+  it('has no leading section when the heading goes straight to the first field', () => {
+    expect(taskFields('### T1: x (`a`)\n- **Files:** a.rs\n')).toEqual([{ field: 'Files', body: 'a.rs' }]);
+    expect(taskFields('### T1: x (`a`)')).toEqual([]);
+  });
+
   it('reads Windows line endings', () => {
     expect(taskFields('### T1: x (`a`)\r\n\r\n- **Files:** a.rs\r\n- **Change:** b\r\n')).toEqual([
       { field: 'Files', body: 'a.rs' },

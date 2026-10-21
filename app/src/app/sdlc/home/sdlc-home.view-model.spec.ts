@@ -51,7 +51,7 @@ describe('SdlcHomeViewModel init', () => {
     await vm.init();
     expect(vm.current()?.name).toBe('acme-claims');
     expect(vm.state()).toBe('ready');
-    expect(vm.changes().length).toBe(4);
+    expect(vm.changes().length).toBe(5);
     expect(vm.branches()?.others).toEqual(['2026-10-17-claim-notes']);
     expect(vm.masterBranch()).toBe('main');
     expect(vm.contexts()['customer-portal']).toEqual({ kind: 'stale', commits: 14 });

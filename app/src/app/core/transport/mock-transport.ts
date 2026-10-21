@@ -178,7 +178,7 @@ export class MockTransport extends KataTransport {
   sdlcGhSignedIn(_repos: PublishRepo[]): Promise<string> { return Promise.resolve('demo-user'); }
   sdlcGhOrigins(_repos: PublishRepo[]): Promise<void> { return Promise.resolve(); }
   sdlcPublish(_folder: string, _masterRepo: string, _system: string, _change: string, repos: PublishRepo[]): Promise<PrResult[]> { return Promise.resolve(this.sdlc.publish(repos)); }
-  sdlcPullRequests(repos: PublishRepo[], _change: string): Promise<PrState[]> { return Promise.resolve(this.sdlc.pullRequests(repos)); }
+  sdlcPullRequests(repos: PublishRepo[], change: string): Promise<PrState[]> { return Promise.resolve(this.sdlc.pullRequests(repos, change)); }
   /** A plain browser has no window to zoom. */
   zoom(_step: ZoomStep): Promise<number> { return Promise.resolve(1); }
   pickDirectory(): Promise<string | null> { return Promise.resolve(null); }

@@ -257,6 +257,10 @@ export class ChangePageViewModel {
     }
     return docStatus(this.docParts().fields.find(([key]) => key === 'status')?.[1]);
   });
+  /** The Build tab's facts line; a stub until the next commit, so the tests above it fail on behavior, not on a missing name. */
+  readonly buildFacts = computed<string | null>(() => null);
+  /** Whether the strip under the toolbar draws; a stub until the next commit. */
+  readonly stripShown = computed(() => true);
   /** The document built from the open one; none on the plan and the Build tab. */
   readonly usedBy = computed<UsedBy | null>(() => {
     const c = this.change();

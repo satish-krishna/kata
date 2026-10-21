@@ -129,6 +129,22 @@ describe('DocLayout', () => {
       expect(section.querySelector('a, button')).toBeNull();
     });
 
+    it('says how each run ended in words, not by the color of its dot alone', async () => {
+      const { container } = await render(DocLayout, {
+        body: BODY,
+        runs: [
+          { id: 'r3', kind: 'Spec', time: 'Oct 21 09:00', tone: 'success' },
+          { id: 'r2', kind: 'Spec', time: 'Oct 20 10:05', tone: 'error' },
+          { id: 'r1', kind: 'Spec', time: 'Oct 19 18:12', tone: 'idle' },
+        ],
+        runTotal: 3,
+      });
+      const rows = Array.from(container.querySelectorAll('[data-testid="recent-runs"] li'));
+      expect(rows.map((r) => /Succeeded|Failed|No result/.exec(text(r))?.[0])).toEqual(['Succeeded', 'Failed', 'No result']);
+      // The word is on screen for everyone, so the dot beside it is decoration, not a second announcement.
+      expect(container.querySelectorAll('[data-testid="recent-runs"] [role="img"]').length).toBe(0);
+    });
+
     it('says there are no runs yet when there are none', async () => {
       const { container } = await render(DocLayout, { body: BODY });
       expect(text(container.querySelector('[data-testid="recent-runs"]')!)).toContain('No runs yet');
