@@ -365,27 +365,27 @@ pub fn status(
     })
 }
 
-/// The task IDs in the first cell of the table rows of `text`. A stopgap for `unsaved_rows`, which
-/// does not read entries through the format program yet.
-fn table_task_ids(text: &str) -> Vec<String> {
-    text.lines()
-        .filter_map(|line| {
-            let first = line.trim().strip_prefix('|')?.split('|').next()?.trim();
-            let digits = first.strip_prefix('T')?;
-            (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
-                .then(|| first.to_string())
-        })
-        .collect()
+/// A build log read by the format program: the entries it holds, whatever layout each is in.
+fn read_log(program: &Path, file: &Path, shown: &str) -> Result<ParsedBuildLog, GitError> {
+    match format::read(program, file).map_err(unreadable)? {
+        ReadResult::BuildLog { document, .. } => Ok(document),
+        _ => Err(unreadable(FormatError::BadOutput(format!(
+            "{shown} was not read as a build log"
+        )))),
+    }
 }
 
-fn lf(text: &str) -> String {
-    text.replace("\r\n", "\n")
+/// Entries compare by what they record; the line they sit on moves when a row is added above them.
+fn same_entry(a: &format::ParsedBuildEntry, b: &format::ParsedBuildEntry) -> bool {
+    (&a.task, &a.commits, &a.departure) == (&b.task, &b.commits, &b.departure)
 }
 
-/// Build log rows written to the working tree and not committed. A log is unsaved when it is
-/// untracked, or when its text is the committed text plus added rows (CRLF-insensitive). Any
-/// other change to a log is an error naming the file, since the build skill would refuse it.
+/// Build log entries written to the working tree and not committed. A log is unsaved when it is
+/// untracked, or when the format program reads its working copy as the committed entries followed
+/// by added entries, in either layout or both. Any other change to a log is an error naming the
+/// file, since the build skill would refuse it.
 pub fn unsaved_rows(
+    plugin: &Path,
     master: &Path,
     system: &str,
     change: &str,
@@ -398,48 +398,50 @@ pub fn unsaved_rows(
         .filter_map(Result::ok)
         .filter(|e| e.path().is_file())
         .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.ends_with(".md") && log_repo(n) != "review")
         .collect();
     names.sort_unstable();
+    let program = program(plugin);
     let mut out = Vec::new();
     for name in names {
         let rel = format!("{rel_dir}/{name}");
-        let refuse = |why: &str| GitError {
-            args: rel.clone(),
-            stderr: why.to_string(),
-        };
-        let working =
-            lf(&std::fs::read_to_string(master.join(&rel)).map_err(|e| refuse(&e.to_string()))?);
         let repo = log_repo(&rel);
+        let working = read_log(&program, &master.join(&rel), &rel)?;
         let listed = git::run(master, &["ls-tree", "--name-only", "HEAD", "--", &rel])?;
-        if listed.is_empty() {
-            out.push(UnsavedRows {
-                repo: repo.to_string(),
-                tasks: table_task_ids(&working),
-            });
-            continue;
-        }
-        let committed = lf(&git::run(master, &["show", &format!("HEAD:{rel}")])?);
-        let committed = committed.trim_end();
-        let Some(added) = working.trim_end().strip_prefix(committed) else {
-            return Err(refuse(
-                "an uncommitted change to a build log other than added rows",
-            ));
+        let added = if listed.is_empty() {
+            &working.entries[..]
+        } else {
+            let text = git::run(master, &["show", &format!("HEAD:{rel}")])?;
+            let committed = {
+                let _one_reader = READING.lock().unwrap_or_else(|e| e.into_inner());
+                let file = staging_dir(master, system, change)
+                    .join("unsaved")
+                    .join("build")
+                    .join(format!("{repo}.md"));
+                put(&file, &text)?;
+                read_log(&program, &file, &rel)?
+            };
+            let n = committed.entries.len();
+            let kept = working.entries.len() >= n
+                && committed
+                    .entries
+                    .iter()
+                    .zip(&working.entries)
+                    .all(|(a, b)| same_entry(a, b));
+            if !kept {
+                return Err(GitError {
+                    args: rel,
+                    stderr: "an uncommitted change to a build log other than added entries".into(),
+                });
+            }
+            &working.entries[n..]
         };
-        if added.is_empty() {
+        if !listed.is_empty() && added.is_empty() {
             continue;
-        }
-        let only_rows = added.starts_with('\n')
-            && added
-                .lines()
-                .all(|l| l.trim().is_empty() || l.trim_start().starts_with('|'));
-        if !only_rows {
-            return Err(refuse(
-                "an uncommitted change to a build log other than added rows",
-            ));
         }
         out.push(UnsavedRows {
             repo: repo.to_string(),
-            tasks: table_task_ids(added),
+            tasks: added.iter().map(|e| e.task.clone()).collect(),
         });
     }
     Ok(out)
@@ -741,7 +743,7 @@ mod tests {
         text.push_str("| T3 | `c333333` | none |\n");
         // CRLF-insensitive: an editor on Windows may have rewritten the line endings.
         std::fs::write(&api, text.replace('\n', "\r\n")).unwrap();
-        let found = unsaved_rows(&master, SYS, CHG).unwrap();
+        let found = unsaved_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert_eq!(
             found,
             vec![
@@ -763,7 +765,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let err = unsaved_rows(&master, SYS, CHG).unwrap_err();
+        let err = unsaved_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap_err();
         assert!(err.to_string().contains("api.md"), "got: {err}");
     }
 
@@ -784,7 +786,7 @@ mod tests {
         let working =
             format!("{committed}\n### T3\n\n```yaml\ntask: T3\ncommits: [c333333]\n```\n");
         std::fs::write(master.join(format!("{DIR}/build/app.md")), working).unwrap();
-        let found = unsaved_rows(&master, SYS, CHG).unwrap();
+        let found = unsaved_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert_eq!(
             found,
             vec![UnsavedRows {
@@ -798,22 +800,19 @@ mod tests {
     fn an_added_layout_1_row_is_still_an_unsaved_row() {
         let tmp = tempfile::tempdir().unwrap();
         let master = master_with(tmp.path(), &app_tasks());
-        let committed = layout_2_log(
-            &["| T1 | `a111111` | none |"],
-            "### T2\n\n```yaml\ntask: T2\ncommits: [b222222]\n```\n",
-        );
-        testutil::commit_file(
+        commit_log(
             &master,
-            &format!("{DIR}/build/app.md"),
-            &committed,
-            "log app",
+            "app",
+            &["| T1 | `a111111` | none |", "| T2 | `b222222` | none |"],
         );
-        let working = committed.replace(
-            "| T1 | `a111111` | none |\n",
-            "| T1 | `a111111` | none |\n| T3 | `c333333` | none |\n",
+        let path = master.join(format!("{DIR}/build/app.md"));
+        let mut working = std::fs::read_to_string(&path).unwrap();
+        working.push_str(
+            "| T3 | `c333333` | none |
+",
         );
-        std::fs::write(master.join(format!("{DIR}/build/app.md")), working).unwrap();
-        let found = unsaved_rows(&master, SYS, CHG).unwrap();
+        std::fs::write(&path, working).unwrap();
+        let found = unsaved_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert_eq!(
             found,
             vec![UnsavedRows {
@@ -839,7 +838,7 @@ mod tests {
         );
         let working = committed.replace("b222222", "edited1");
         std::fs::write(master.join(format!("{DIR}/build/app.md")), working).unwrap();
-        let err = unsaved_rows(&master, SYS, CHG).unwrap_err();
+        let err = unsaved_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap_err();
         assert!(err.to_string().contains("app.md"), "got: {err}");
     }
 
@@ -854,7 +853,7 @@ mod tests {
         let build = master.join(format!("{DIR}/build"));
         std::fs::create_dir_all(&build).unwrap();
         std::fs::write(build.join("app.md"), log).unwrap();
-        let found = unsaved_rows(&master, SYS, CHG).unwrap();
+        let found = unsaved_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert_eq!(
             found,
             vec![UnsavedRows {
@@ -869,7 +868,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let master = master_with(tmp.path(), &app_tasks());
         commit_log(&master, "app", &["| T1 | `a111111` | none |"]);
-        assert!(unsaved_rows(&master, SYS, CHG).unwrap().is_empty());
+        assert!(unsaved_rows(testutil::plugin_dir(), &master, SYS, CHG)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

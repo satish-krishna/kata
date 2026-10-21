@@ -316,7 +316,9 @@ fn sdlc_unsaved_rows(
     system: String,
     change: String,
 ) -> Result<Vec<sdlc::build::UnsavedRows>, String> {
-    sdlc::build::unsaved_rows(Path::new(&master), &system, &change).map_err(|e| e.to_string())
+    let plugin = ai_sdlc_dir(&master)?;
+    sdlc::build::unsaved_rows(&plugin, Path::new(&master), &system, &change)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]

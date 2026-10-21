@@ -186,7 +186,7 @@ pub fn prepare(
         participants::model(plugin, folder, master_repo, system, change, pending)?;
     // A log is a leftover to save only when it is new or only gained rows; any other edit to one is
     // an uncommitted file like any other.
-    let saved: Vec<String> = build::unsaved_rows(&master, system, change)
+    let saved: Vec<String> = build::unsaved_rows(plugin, &master, system, change)
         .map(|rows| {
             rows.iter()
                 .map(|u| format!("intent/{system}/{change}/build/{}.md", u.repo))
