@@ -194,6 +194,23 @@ describe('declaring done', () => {
     expect(canConfirm(vm.doneReport()!)).toBe(true);
   });
 
+  it('a review run that committed under plugin/ is not current when the change page is opened again (F17)', async () => {
+    const { vm, transport } = await finished();
+    const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], BUILD);
+    const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
+    const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
+    // The backend reports what the master committed since the head the review recorded; a fresh view model asks again and gets the same answer.
+    vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({
+      layout: 2,
+      problems: [],
+      reviews: [{ number: 1, reviewed_at: '2026-10-22', commits, findings: [finding] }],
+      master_moved: ['plugin/format/check.mjs'],
+    } as never);
+    await vm.act('declare-done');
+    expect(vm.doneReport()!.review).toEqual({ missing: 'stale' });
+    expect(canConfirm(vm.doneReport()!)).toBe(false);
+  });
+
   it('open findings do not block Open pull requests, and confirming publishes (R20.2)', async () => {
     const { vm, transport } = await finished();
     const publish = vi.spyOn(transport, 'sdlcPublish');

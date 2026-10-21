@@ -139,3 +139,21 @@ describe('reviewState with a review document', () => {
     expect(reviewState([link()], [record('r1', 0)], FULL, SCOPE, doc(), 'master')).toEqual({ kind: 'none' });
   });
 });
+
+describe('reviewState judges the master repository by what it committed since the review (F17)', () => {
+  const FULL = { a: '1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', master: '9999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' };
+  const document = (movedInMaster: string[]) => ({
+    layout: 2,
+    problems: [],
+    reviews: [{ number: 1, reviewed_at: '2026-10-22', commits: { a: '1111111', master: '0123456' }, findings: [] }],
+    master_moved: movedInMaster,
+  });
+
+  it('a master that gained a product commit after the review makes the review stale', () => {
+    expect(reviewState([], [], FULL, SCOPE, document(['plugin/format/check.mjs']), 'master')).toEqual({ kind: 'stale' });
+  });
+
+  it('a master that gained only the review document commit leaves the review current', () => {
+    expect(reviewState([], [], FULL, SCOPE, document([]), 'master')).toMatchObject({ kind: 'current-document' });
+  });
+});

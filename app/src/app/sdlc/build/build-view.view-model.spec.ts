@@ -489,6 +489,36 @@ describe('BuildViewModel', () => {
       expect(vm.emptyText()).toBe('The review did not record its findings');
     });
 
+    /** A master whose tree holds `now` when the review run ends and `before` when it starts; the check gets the starting tree to compare with. */
+    const treeCheck = (transport: MockTransport, before: Record<string, string>, now: Record<string, string>) => {
+      const snapshot = transport.sdlcSnapshot.bind(transport);
+      vi.spyOn(transport, 'sdlcSnapshot').mockImplementation(async (path) => ({ ...(await snapshot(path)), dirty: before }));
+      return vi.spyOn(transport, 'sdlcReviewVerify').mockImplementation((...args: unknown[]) => {
+        const start = (args[4] ?? {}) as Record<string, string>;
+        return Promise.resolve(Object.keys(now).filter((file) => start[file] !== now[file]));
+      });
+    };
+
+    it('a stray file left dirty before the review run does not hide a correctly recorded review (F18)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
+      treeCheck(transport, { 'notes/stray.md': 'aaaa' }, { 'notes/stray.md': 'aaaa' });
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.reviewNotice()).toBeNull();
+      expect(vm.findings().map((f) => f.text)).toEqual(['one']);
+    });
+
+    it('a file the review run left dirty is still flagged beside one that was dirty before (F18)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
+      treeCheck(transport, { 'notes/stray.md': 'aaaa' }, { 'notes/stray.md': 'aaaa', 'plugin/format/check.mjs': 'bbbb' });
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.reviewNotice()?.lines).toEqual(['plugin/format/check.mjs']);
+      expect(vm.findings()).toEqual([]);
+    });
+
     it('a review run that touched only the review document is the current review (F7)', async () => {
       const { vm, transport, lock } = setup();
       withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
