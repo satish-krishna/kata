@@ -4,7 +4,9 @@ import { ActivatedRoute, Router } from '@angular/router';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildStart } from '@bindings/BuildStart';
 import type { BuildStatus } from '@bindings/BuildStatus';
-import type { TaskStatus } from '@bindings/TaskStatus';
+import type { BuildRow } from '@bindings/BuildRow';
+import type { ParsedRequirement } from '@bindings/ParsedRequirement';
+import type { ReadResult } from '@bindings/ReadResult';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { Decision } from '@bindings/Decision';
@@ -50,8 +52,7 @@ import { prNumber } from '../../lib/pull-request';
 import { REVIEW_MISSING_TEXT, canConfirm, checkLabel, reviewState, type DoneReport, type DoneReview } from '../../lib/sdlc-done';
 import { section } from '../../lib/doc';
 import { inTauri } from '../../lib/mock';
-import { taskRecord } from '../../lib/plan-doc';
-import { requirements, type Requirement } from '../../lib/spec-doc';
+import { taskRecord, withRows, type TaskView } from '../../lib/task-view';
 import { shownSection } from '../../lib/sdlc-review';
 import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
 
@@ -109,7 +110,7 @@ const OUT_OF_DATE_BANNER: Record<NonNullable<ChangeInfo['out_of_date']>, string>
 const REVIEW_TIMEOUT_SECS = 2 * 60 * 60;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 /** A task is built once the build log has a row for it; the record is the one reader of that. */
-const isBuilt = (t: TaskStatus): boolean => taskRecord(t).kind !== 'unbuilt';
+const isBuilt = (t: { row: BuildRow | null }): boolean => taskRecord(t).kind !== 'unbuilt';
 const SUPERSEDED_BANNER = 'The intent was reopened after this plan was written. Rewrite the plan before building.';
 
 /** What the build view starts from: the prepared branches, the time limit, the round if one was asked for, and Kata's checks folder. */
@@ -180,6 +181,8 @@ export class ChangePageViewModel {
   });
   /** The shown document, raw as it is on disk, or null when the file is missing. */
   readonly doc = signal<string | null>(null);
+  /** The shown spec or plan as the format program read it; null for the other documents, or when the program could not run. */
+  private readonly parsed = signal<ReadResult | null>(null);
   /** The document the operator picked from the tiles; null shows the current stage's. Every load clears it. */
   private readonly picked = signal<Tab | null>(null);
   /** The document whose pill the operator just clicked while its text is still being read; null otherwise. */
@@ -328,7 +331,7 @@ export class ChangePageViewModel {
     return [...new Set([...(master === null ? [] : [master]), ...planned])];
   });
   /** The plan's tasks with their build rows, for the plan tab's Tasks view; empty when there is no plan. */
-  readonly buildTasks = computed<TaskStatus[]>(() => this.status()?.tasks ?? []);
+  readonly buildTasks = computed(() => this.status()?.tasks ?? []);
   // --- the spec and plan views: which one is shown and what is picked in it; all of it starts over with the tab or the change
   private readonly view = linkedSignal<DocView | null>(() => {
     this.shownDoc();
@@ -346,21 +349,29 @@ export class ChangePageViewModel {
     return null;
   });
   /** The spec's requirements while the spec tab is open. */
-  readonly requirementList = computed<Requirement[]>(() => (this.shownDoc() === 'spec' ? requirements(this.docParts().body) : []));
+  readonly requirementList = computed<ParsedRequirement[]>(() => {
+    const read = this.parsed();
+    return this.shownDoc() === 'spec' && read?.kind === 'spec' ? read.document.requirements : [];
+  });
   /** The requirement shown on the right: the picked one, else the first. */
-  readonly pickedRequirement = computed<Requirement | null>(() => {
+  readonly pickedRequirement = computed<ParsedRequirement | null>(() => {
     const all = this.requirementList();
     return all.find((r) => r.id === this.requirementPick()) ?? all[0] ?? null;
   });
+  /** The plan's tasks while the plan tab is open, each with the build log row that records it. */
+  readonly taskList = computed<TaskView[]>(() => {
+    const read = this.parsed();
+    return this.shownDoc() === 'plan' && read?.kind === 'plan' ? withRows(read.document.tasks, this.buildTasks()) : [];
+  });
   /** The task shown in the middle: the picked one, else the first that is not built, else the first. */
-  readonly pickedTask = computed<TaskStatus | null>(() => {
-    const all = this.buildTasks();
+  readonly pickedTask = computed<TaskView | null>(() => {
+    const all = this.taskList();
     return all.find((t) => t.id === this.taskPick()) ?? all.find((t) => !isBuilt(t)) ?? all[0] ?? null;
   });
   /** The open tab has a list view: a spec with requirements, a plan with tasks. */
   private readonly hasList = computed(() => {
     const stem = this.shownDoc();
-    return stem === 'spec' ? this.requirementList().length > 0 : stem === 'plan' && this.buildTasks().length > 0;
+    return stem === 'spec' ? this.requirementList().length > 0 : stem === 'plan' && this.taskList().length > 0;
   });
   /** The strip's toggle for the open tab; none on the intent and the Build tab, nor when there is no list to show. */
   readonly viewOptions = computed<{ value: DocView; label: string }[]>(() => {
@@ -368,8 +379,8 @@ export class ChangePageViewModel {
     if (this.shownDoc() === 'spec') {
       return [{ value: 'list', label: `Requirements · ${this.requirementList().length}` }, { value: 'section', label: 'Design' }, { value: 'whole', label: 'Whole document' }];
     }
-    const built = this.buildTasks().filter(isBuilt).length;
-    return [{ value: 'list', label: `Tasks · ${built}/${this.buildTasks().length} built` }, { value: 'section', label: 'Approach' }, { value: 'whole', label: 'Whole document' }];
+    const built = this.taskList().filter(isBuilt).length;
+    return [{ value: 'list', label: `Tasks · ${built}/${this.taskList().length} built` }, { value: 'section', label: 'Approach' }, { value: 'whole', label: 'Whole document' }];
   });
   readonly viewLabel = computed(() => (this.shownDoc() === 'spec' ? 'Spec view' : 'Plan view'));
   readonly shownView = computed<DocView>(() => (this.hasList() ? (this.view() ?? 'list') : 'whole'));
@@ -650,9 +661,11 @@ export class ChangePageViewModel {
     this.pendingDoc.set(stem);
     try {
       const text = await this.transport.sdlcReadDoc(master, this.system(), this.changeName(), stem);
+      const read = await this.readParsed(master, this.system(), this.changeName(), stem);
       // The tab and its text change together, once the text is here, so no tab ever shows another document's text.
       if (seq !== this.pickSeq) return;
       this.doc.set(text);
+      this.parsed.set(read);
       this.picked.set(stem);
       this.pendingDoc.set(null);
     } catch (e) {
@@ -956,6 +969,19 @@ export class ChangePageViewModel {
     await this.load();
   }
 
+  /**
+   * The spec or plan as the format program reads it, for the list views. The intent has no parsed form, and a program
+   * that cannot run leaves the document as plain text with no list, never a failed page.
+   */
+  private async readParsed(master: string, system: string, name: string, stem: string): Promise<ReadResult | null> {
+    if (stem !== 'spec' && stem !== 'plan') return null;
+    try {
+      return await this.transport.sdlcReadParsed(master, system, name, stem);
+    } catch {
+      return null;
+    }
+  }
+
   /** The plan's tasks and rows; a failure is reported and leaves the log empty, never the whole page. */
   private async readStatus(master: string, system: string, name: string): Promise<BuildStatus | null> {
     try {
@@ -999,13 +1025,14 @@ export class ChangePageViewModel {
     const seq = ++this.loadSeq;
     const system = this.system();
     const name = this.changeName();
-    const finish = (state: ChangeState, change: ChangeInfo | null, doc: string | null) => {
+    const finish = (state: ChangeState, change: ChangeInfo | null, doc: string | null, read: ReadResult | null = null) => {
       if (seq !== this.loadSeq) return;
       this.pickSeq++;
       this.pendingDoc.set(null);
       this.picked.set(null);
       this.change.set(change);
       this.doc.set(doc);
+      this.parsed.set(read);
       this.state.set(state);
     };
     let workspaces: WorkspaceEntry[];
@@ -1040,6 +1067,7 @@ export class ChangePageViewModel {
       ]);
       const found = changes.find((c) => c.change === name) ?? null;
       const doc = found ? await this.transport.sdlcReadDoc(master, system, name, docFor(found)) : null;
+      const read = found ? await this.readParsed(master, system, name, docFor(found)) : null;
       const status = found?.plan.exists ? await this.readStatus(master, system, name) : null;
       const checksDir = this.checksDir() ?? (await this.readChecksDir());
       const prs = found?.stage === 'build-finished' ? await this.readPullRequests(w.folder, repo, system, name) : { states: [], failed: false };
@@ -1056,7 +1084,7 @@ export class ChangePageViewModel {
       this.records.set(records);
       this.catalog.set(catalog);
       this.changeTotal.set(changes.length);
-      finish(found ? 'ready' : 'not-found', found, doc);
+      finish(found ? 'ready' : 'not-found', found, doc, read);
     } catch (e) {
       this.toasts.error(`Could not read the change: ${message(e)}`);
       finish('not-found', null, null);

@@ -18,6 +18,7 @@ import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { ReadResult } from '@bindings/ReadResult';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { UnsavedRows } from '@bindings/UnsavedRows';
 import type { Participant } from '@bindings/Participant';
@@ -86,6 +87,8 @@ export abstract class KataTransport {
   abstract sdlcWaitRunExit(runId: string, timeoutMs: number): Promise<boolean>;
   abstract sdlcBuildStatus(master: string, system: string, change: string): Promise<BuildStatus>;
   /** The change's review document as committed, or null when it has none. */
+  /** A change's spec or plan as the format program reads it; null when the file is not there. Rejects when the program cannot run. */
+  abstract sdlcReadParsed(master: string, system: string, change: string, doc: string): Promise<ReadResult | null>;
   abstract sdlcReviewRecord(master: string, system: string, change: string): Promise<ReviewRecord | null>;
   abstract sdlcUnsavedRows(master: string, system: string, change: string): Promise<UnsavedRows[]>;
   /** `pending` names the repository a run is about to start in on the engineer's ask (a round, or Continue): its leftovers are its own to confirm. */

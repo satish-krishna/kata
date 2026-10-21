@@ -225,6 +225,20 @@ fn sdlc_read_doc(master: String, system: String, change: String, doc: String) ->
     sdlc::changes::read_doc(Path::new(&master), &system, &change, &doc)
 }
 
+/// The spec or plan of a change read by the format program, for the Workbench's list views. An error
+/// (no plugin, no Node.js) is the caller's cue to show the document as plain text.
+#[tauri::command(async)]
+fn sdlc_read_parsed(
+    master: String,
+    system: String,
+    change: String,
+    doc: String,
+) -> Result<Option<sdlc::format::ReadResult>, String> {
+    let plugin = ai_sdlc_dir(&master)?;
+    sdlc::changes::read_parsed(&plugin, Path::new(&master), &system, &change, &doc)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command(async)]
 fn sdlc_snapshot(master: String) -> Result<sdlc::snapshot::Snapshot, String> {
     sdlc::snapshot::take(Path::new(&master)).map_err(|e| e.to_string())
@@ -812,6 +826,7 @@ pub fn run() {
             sdlc_changes,
             sdlc_branches,
             sdlc_read_doc,
+            sdlc_read_parsed,
             sdlc_snapshot,
             sdlc_leftovers,
             sdlc_discard,

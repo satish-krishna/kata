@@ -1,3 +1,5 @@
+use crate::build::program;
+use crate::format::{self, FormatError, ReadResult};
 use crate::{branch, frontmatter, git, workspace::is_committed};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -350,6 +352,30 @@ pub fn read_doc(master: &Path, system: &str, change: &str, doc: &str) -> Option<
     .ok()
 }
 
+/// The change's spec or plan as the file holds it now, read by the format program in `plugin` (the
+/// ai-sdlc plugin folder): the same read the checks make, so what the Workbench shows is what they
+/// check. `None` for any other document, a bad name, or a file that is not there.
+pub fn read_parsed(
+    plugin: &Path,
+    master: &Path,
+    system: &str,
+    change: &str,
+    doc: &str,
+) -> Result<Option<ReadResult>, FormatError> {
+    if !matches!(doc, "spec" | "plan") || !is_change_name(change) || !is_safe_system(system) {
+        return Ok(None);
+    }
+    let file = master
+        .join("intent")
+        .join(system)
+        .join(change)
+        .join(format!("{doc}.md"));
+    if !file.is_file() {
+        return Ok(None);
+    }
+    format::read(&program(plugin), &file).map(Some)
+}
+
 pub fn branch_info(master: &Path) -> BranchInfo {
     BranchInfo {
         current: current_branch(master),
@@ -696,6 +722,32 @@ mod tests {
         assert_eq!(current_branch(&repo), None);
         assert_eq!(branch::default_base(&repo), None);
         assert!(other_change_branches(&repo).is_empty());
+    }
+
+    #[test]
+    fn read_parsed_reads_a_spec_and_a_plan_and_refuses_the_rest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let spec = include_str!("../tests/ai-sdlc-format/examples/spec/2/valid.md");
+        let plan = include_str!("../tests/ai-sdlc-format/examples/plan/2/valid.md");
+        testutil::write(&repo, "intent/s/2026-10-12-x/spec.md", spec);
+        testutil::write(&repo, "intent/s/2026-10-12-x/plan.md", plan);
+        let plugin = testutil::plugin_dir();
+        let read = |system: &str, change: &str, doc: &str| {
+            read_parsed(plugin, &repo, system, change, doc).unwrap()
+        };
+        match read("s", "2026-10-12-x", "spec") {
+            Some(ReadResult::Spec { document, .. }) => assert!(!document.requirements.is_empty()),
+            other => panic!("not a spec: {other:?}"),
+        }
+        match read("s", "2026-10-12-x", "plan") {
+            Some(ReadResult::Plan { document, .. }) => assert!(!document.tasks.is_empty()),
+            other => panic!("not a plan: {other:?}"),
+        }
+        assert_eq!(read("s", "2026-10-12-x", "intent"), None);
+        assert_eq!(read("s", "2026-10-12-y", "spec"), None);
+        assert_eq!(read("s", "../..", "spec"), None);
+        assert_eq!(read("..", "2026-10-12-x", "spec"), None);
     }
 
     #[test]

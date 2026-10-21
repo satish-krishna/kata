@@ -40,7 +40,7 @@ describe('ChangePage parsed documents', () => {
     );
     vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_m, _s, _c, stem) => PROSE(stem));
     const documents: Record<string, ReadResult> = { spec: parsedSpec(), plan: parsedPlan() };
-    Object.assign(transport, { sdlcReadParsed: async (_m: string, _s: string, _c: string, stem: string) => documents[stem] ?? null });
+    vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_m, _s, _c, stem) => documents[stem] ?? null);
     const status = transport.sdlcBuildStatus.bind(transport);
     vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => ({ ...(await status(m, s, c)), tasks: builtTasks() }));
     vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({ files: [], loc: [] });

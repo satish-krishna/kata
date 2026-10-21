@@ -22,12 +22,12 @@
         <p class="k-task__meta k-mono">{{ task.id }} · {{ task.repo }} · depends on {{ dependsOn(task) }}</p>
         <h2 class="k-detail__title">{{ task.name }}</h2>
       </header>
-      @for (f of fields(); track f.field) {
-        @if (f.field === '') {
+      @for (f of sections(); track $index) {
+        @if (f.title === '') {
           <div class="k-task__plain"><app-markdown-body [md]="link(f.body)" /></div>
         } @else {
           <section class="k-task__sec">
-            <h3 class="k-docview__label">{{ f.field }}</h3>
+            <h3 class="k-docview__label">{{ f.title }}</h3>
             <app-markdown-body [md]="link(f.body)" />
           </section>
         }
