@@ -24,6 +24,23 @@ describe('SdlcToolbar', () => {
     expect(container.querySelector('[data-testid="branch"]')).toBeNull();
   });
 
+  it('names the branch chip for a reader who cannot see its text: title and accessible name say which branch is out of place', async () => {
+    const { container } = await render(SdlcToolbar, inputs({ branch: 'main', crumbs: ['2026-10-16-fraud-flag'] }));
+    const chip = container.querySelector('[data-testid="branch"]')!;
+    const said = 'Master repository is on main, not change/2026-10-16-fraud-flag';
+    expect(chip.getAttribute('title')).toBe(said);
+    expect(chip.getAttribute('aria-label')).toBe(said);
+    expect(chip.querySelector('ng-icon[name="lucideGitBranch"]')).not.toBeNull();
+    expect(chip.textContent!.trim()).toBe('main');
+  });
+
+  it('names the branch chip without a change when the toolbar has no change crumb', async () => {
+    const { container } = await render(SdlcToolbar, inputs({ branch: 'main' }));
+    const chip = container.querySelector('[data-testid="branch"]')!;
+    expect(chip.getAttribute('title')).toBe('Master repository is on main');
+    expect(chip.getAttribute('aria-label')).toBe('Master repository is on main');
+  });
+
   it('shows the breadcrumb after the workspace', async () => {
     const { container } = await render(SdlcToolbar, inputs({ crumbs: ['claims', '2026-10-12-fnol'] }));
     expect(container.querySelector('nav')!.textContent).toContain('2026-10-12-fnol');

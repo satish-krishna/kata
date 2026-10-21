@@ -69,6 +69,23 @@ function measure() {
       const box = a.getBoundingClientRect();
       return { text: num.textContent.trim(), visible: n.width > 0 && n.left >= box.left - 0.5 && n.right <= box.right + 0.5 && n.right <= head.right + 0.5 };
     }),
+    branch: (() => {
+      const chip = header.querySelector('[data-testid="branch"]');
+      if (!chip) return null;
+      const icon = chip.querySelector('.k-branch__icon');
+      const text = chip.querySelector('.k-branch__text');
+      const c = chip.getBoundingClientRect();
+      return {
+        inside: c.width > 0 && c.height > 0 && c.left >= head.left - 0.5 && c.right <= head.right + 0.5 && c.top >= head.top - 0.5 && c.bottom <= head.bottom + 0.5,
+        iconShown: !!icon && icon.getBoundingClientRect().width > 0,
+        textShown: !!text && text.getBoundingClientRect().width > 0,
+        textClipped: text ? text.scrollWidth - text.clientWidth : 0,
+        chipClipped: chip.scrollWidth - chip.clientWidth,
+        textWhole: text ? text.textContent.trim() : null,
+        label: chip.getAttribute('aria-label'),
+        title: chip.getAttribute('title'),
+      };
+    })(),
     crumbClipped: crumb ? crumb.scrollWidth - crumb.clientWidth : 0,
     linkTitles: links.map((a) => ({ title: a.getAttribute('title'), text: a.textContent.trim() })),
   };
@@ -108,6 +125,22 @@ export async function checkChangeToolbar(browser, origin, { route, name, pills, 
     if (menu !== null && (m.menuClipped > 0 || !m.menuInside)) fails.push(`${at}: the "${menu}" button is clipped or runs past the toolbar (${m.menuClipped}px cut off)`);
     if (m.crumbClipped > 0) fails.push(`${at}: the change name is truncated (${m.crumbClipped}px of it is cut off)`);
     for (const l of m.linkTitles) if (l.title !== l.text) fails.push(`${at}: the pull request link "${l.text}" has title ${JSON.stringify(l.title)}, not its full text`);
+    // The mock master repository is on main, never on change/<change>, so the warning chip is always there: an icon below 1280, the whole text from 1280.
+    const b = m.branch;
+    if (b === null) fails.push(`${at}: the master repository is not on change/<change> but no branch warning is shown`);
+    else {
+      if (!b.inside) fails.push(`${at}: the branch warning has no box or is not inside the toolbar`);
+      if (!b.label || !b.label.includes(b.textWhole) || b.title !== b.label) fails.push(`${at}: the branch warning's title ${JSON.stringify(b.title)} and accessible name ${JSON.stringify(b.label)} must match and name the branch ${JSON.stringify(b.textWhole)}`);
+      if (b.chipClipped > 0) fails.push(`${at}: the branch warning is ${b.chipClipped}px wider than its box`);
+      if (width < 1280) {
+        if (!b.iconShown) fails.push(`${at}: below 1280 the branch warning must be the icon, and the icon is not visible`);
+        if (b.textShown) fails.push(`${at}: below 1280 the branch warning must be the icon only, but its text is also shown`);
+      } else {
+        if (!b.textShown) fails.push(`${at}: from 1280 the branch warning shows its full text, and the text is not visible`);
+        if (b.textClipped > 0) fails.push(`${at}: the branch name is truncated (${b.textClipped}px of it is cut off)`);
+        if (b.iconShown) fails.push(`${at}: from 1280 the branch warning is the full chip, but the icon form is also shown`);
+      }
+    }
   } finally {
     await context.close();
   }
