@@ -297,7 +297,7 @@ export class SdlcMock {
 
   buildStatus(changeName: string): BuildStatus {
     if (changeName !== MOCK_BUILD_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false };
-    const tasks: TaskStatus[] = BUILD_PLAN.map((t) => ({ ...t, dependsOn: [...t.dependsOn], row: this.rows.get(t.id) ?? null }));
+    const tasks: TaskStatus[] = BUILD_PLAN.map((t) => ({ ...t, dependsOn: [...t.dependsOn], text: `### ${t.id}: ${t.name}`, row: this.rows.get(t.id) ?? null }));
     const departures = tasks.flatMap((t) => (t.row?.departure ? [{ task: t.id, repo: t.repo, planText: t.name, departure: t.row.departure }] : []));
     return { tasks, repos: BUILD_REPOS.map((r) => this.repoStatus(r)), departures, hasTasks: true };
   }

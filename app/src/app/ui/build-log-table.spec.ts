@@ -3,7 +3,7 @@ import { render } from '../../testing/render';
 import { BuildLogTable } from './build-log-table';
 
 const task = (id: string, repo: string, dependsOn: string[], row: TaskStatus['row'] = null): TaskStatus =>
-  ({ id, name: `Task ${id}`, repo, dependsOn, row });
+  ({ id, name: `Task ${id}`, repo, dependsOn, text: `### ${id}`, row });
 
 const text = (c: Element) => c.textContent!.replace(/\s+/g, ' ').trim();
 const rows = (c: HTMLElement) => Array.from(c.querySelectorAll('tbody tr')).map((r) => text(r));

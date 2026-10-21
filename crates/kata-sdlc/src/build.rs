@@ -59,6 +59,8 @@ pub struct TaskStatus {
     pub name: String,
     pub repo: String,
     pub depends_on: Vec<String>,
+    /// The task's own section of the plan, from its heading to the next task heading.
+    pub text: String,
     pub row: Option<BuildRow>,
 }
 
@@ -344,6 +346,7 @@ pub fn status(master: &Path, system: &str, change: &str) -> Result<BuildStatus, 
             name: s.task.name.clone(),
             repo: s.task.repo.clone(),
             depends_on: s.task.depends_on.clone(),
+            text: s.text.clone(),
             row: row_of(&s.task.id).cloned(),
         })
         .collect();

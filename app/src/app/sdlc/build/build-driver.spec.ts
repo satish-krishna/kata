@@ -39,6 +39,7 @@ function world(plan: PlanTask[], initialRows: string[] = []) {
       name: t.id,
       repo: t.repo,
       dependsOn: t.dependsOn ?? [],
+      text: `### ${t.id}`,
       row: rows.has(t.id) ? { task: t.id, repo: t.repo, commits: [], departure: null } : null,
     }));
     const states = repos.map((repo) => {
