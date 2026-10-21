@@ -93,6 +93,7 @@ export class TauriTransport extends KataTransport {
   sdlcBuildHeads(folder: string, repos: string[], change: string) { return this.ipc.invoke<Record<string, string>>('sdlc_build_heads', { folder, repos, change }); }
   sdlcPluginVersion(path: string) { return this.ipc.invoke<string | null>('sdlc_plugin_version', { path }); }
   sdlcChangeRepos(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<ChangeRepo[]>('sdlc_change_repos', { folder, masterRepo, system, change }); }
+  sdlcMissingChangeBranches(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<string[]>('sdlc_missing_change_branches', { folder, masterRepo, system, change }); }
   sdlcDiffFiles(repoPath: string, part: Part) { return this.ipc.invoke<DiffListing>('sdlc_diff_files', { repoPath, part }); }
   sdlcDiffPair(repoPath: string, part: Part, path: string) { return this.ipc.invoke<FilePair>('sdlc_diff_pair', { repoPath, part, path }); }
   sdlcDiffBase(repoPath: string) { return this.ipc.invoke<BaseInfo>('sdlc_diff_base', { repoPath }); }

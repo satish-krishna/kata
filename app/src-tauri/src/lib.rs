@@ -385,6 +385,17 @@ fn sdlc_change_repos(
 }
 
 #[tauri::command(async)]
+fn sdlc_missing_change_branches(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+) -> Result<Vec<String>, String> {
+    sdlc::participants::missing_change_branches(Path::new(&folder), &master_repo, &system, &change)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
 fn sdlc_diff_files(
     repo_path: String,
     part: sdlc::diff::Part,
@@ -769,6 +780,7 @@ pub fn run() {
             sdlc_build_heads,
             sdlc_plugin_version,
             sdlc_change_repos,
+            sdlc_missing_change_branches,
             sdlc_diff_files,
             sdlc_diff_pair,
             sdlc_diff_base,

@@ -793,9 +793,11 @@ mod tests {
             ["api"]
         );
         testutil::checkout(&fx.repo("api"), &format!("change/{C}"), true);
-        assert!(crate::participants::missing_change_branches(&fx.folder, "m", S, C)
-            .unwrap()
-            .is_empty());
+        assert!(
+            crate::participants::missing_change_branches(&fx.folder, "m", S, C)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     /// A fixture whose repository "api" has all its tasks finished and is not checked out.

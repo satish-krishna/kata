@@ -1,6 +1,7 @@
 //! Who takes part in a build: the one answer to which repositories are in it, where each is checked
 //! out, and which uncommitted files each one owns. Starting a build, continuing a stopped run and
 //! listing what a run left behind all read it; none of them keeps its own list.
+use crate::branch::branch_exists;
 use crate::build::{self, BuildStatus, RepoState};
 use crate::changes::{is_change_name, is_safe_system};
 use crate::snapshot::{build_log_owner, dirty_files};
@@ -37,6 +38,23 @@ pub fn participants(
     pending: Option<&str>,
 ) -> Result<Vec<Participant>, BuildError> {
     Ok(model(folder, master_repo, system, change, pending)?.0)
+}
+
+/// The product repositories taking part in the change's build that have no `change/<change>`
+/// branch. The Changes view lists only repositories with that branch, so it names these rather
+/// than leaving them out without a word.
+pub fn missing_change_branches(
+    folder: &Path,
+    master_repo: &str,
+    system: &str,
+    change: &str,
+) -> Result<Vec<String>, BuildError> {
+    let branch = format!("change/{change}");
+    Ok(participants(folder, master_repo, system, change, None)?
+        .into_iter()
+        .filter(|p| !p.master && !branch_exists(Path::new(&p.path), &branch))
+        .map(|p| p.repo)
+        .collect())
 }
 
 /// The participants together with the build status they were read against.

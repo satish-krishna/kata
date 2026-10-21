@@ -166,6 +166,7 @@ export class MockTransport extends KataTransport {
   sdlcBuildHeads(_folder: string, repos: string[], _change: string): Promise<Record<string, string>> { return Promise.resolve(this.sdlc.heads(repos)); }
   sdlcPluginVersion(_path: string): Promise<string | null> { return Promise.resolve(MOCK_PLUGIN_VERSION); }
   sdlcChangeRepos(folder: string, _masterRepo: string, _system: string, change: string): Promise<ChangeRepo[]> { return Promise.resolve(this.sdlc.changeRepos(folder, change)); }
+  sdlcMissingChangeBranches(_folder: string, _masterRepo: string, _system: string, _change: string): Promise<string[]> { return Promise.resolve([]); }
   sdlcDiffFiles(_repoPath: string, part: Part): Promise<DiffListing> { return Promise.resolve(this.sdlc.diffFiles(part)); }
   sdlcDiffPair(_repoPath: string, _part: Part, path: string): Promise<FilePair> { return Promise.resolve(this.sdlc.diffPair(path)); }
   sdlcDiffBase(_repoPath: string): Promise<BaseInfo> { return Promise.resolve(this.sdlc.diffBase()); }

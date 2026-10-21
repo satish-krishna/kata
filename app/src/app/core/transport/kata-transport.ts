@@ -91,6 +91,8 @@ export abstract class KataTransport {
   abstract sdlcBuildHeads(folder: string, repos: string[], change: string): Promise<Record<string, string>>;
   abstract sdlcPluginVersion(path: string): Promise<string | null>;
   abstract sdlcChangeRepos(folder: string, masterRepo: string, system: string, change: string): Promise<ChangeRepo[]>;
+  /** The product repositories in the build that have no `change/<change>` branch, which the Changes view cannot list. */
+  abstract sdlcMissingChangeBranches(folder: string, masterRepo: string, system: string, change: string): Promise<string[]>;
   abstract sdlcDiffFiles(repoPath: string, part: Part): Promise<DiffListing>;
   abstract sdlcDiffPair(repoPath: string, part: Part, path: string): Promise<FilePair>;
   abstract sdlcDiffBase(repoPath: string): Promise<BaseInfo>;

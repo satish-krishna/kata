@@ -6,6 +6,9 @@
       (toggle)="vm.toggle($event)"
       (select)="vm.select($event.repo, $event.path)"
     />
+    @for (repo of vm.missingBranches(); track repo) {
+      <p class="k-changes__readonly" data-testid="changes-missing">{{ repo }} has no change/{{ change() }} branch, so its changes are not listed.</p>
+    }
   </aside>
   <section class="k-changes__main" aria-label="What changed">
     @if (banner(); as text) {

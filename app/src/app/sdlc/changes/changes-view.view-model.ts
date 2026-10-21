@@ -48,6 +48,8 @@ export class ChangesViewModel {
   private lastTurns = 0;
 
   readonly repos = signal<ChangeRepo[]>([]);
+  /** Product repositories in the build with no change branch, which the list cannot show; empty when that could not be read. */
+  readonly missingBranches = signal<string[]>([]);
   readonly loaded = signal(false);
   readonly part = signal<Part>('whole');
   private readonly listings = signal<Record<string, DiffListing>>({});
@@ -199,6 +201,8 @@ export class ChangesViewModel {
     const part = this.part();
     const sel = this.selected();
     try {
+      // A failure here only loses the note; the repositories with changes still list.
+      const missing = this.transport.sdlcMissingChangeBranches(ctx.folder, ctx.masterRepo, ctx.system, ctx.change).catch(() => []);
       const found = await this.transport.sdlcChangeRepos(ctx.folder, ctx.masterRepo, ctx.system, ctx.change);
       const repos = [...found.filter((r) => r.repo === ctx.masterRepo), ...found.filter((r) => r.repo !== ctx.masterRepo)];
       const lists = await Promise.all(repos.map((r) => this.transport.sdlcDiffFiles(r.path, part)));
@@ -208,8 +212,10 @@ export class ChangesViewModel {
       const at = sel ? repos.findIndex((r) => r.repo === sel.repo) : -1;
       const file = sel && at >= 0 ? lists[at].files.find((f) => f.path === sel.path) : undefined;
       const pair = file && sel ? await this.transport.sdlcDiffPair(repos[at].path, part, sel.path) : null;
+      const noBranch = await missing;
       if (seq !== this.seq) return;
       this.repos.set(repos);
+      this.missingBranches.set(noBranch);
       this.listings.set(Object.fromEntries(repos.map((r, i) => [r.repo, lists[i]])));
       this.activeName.set(name);
       if (active && base) this.bases.update((b) => ({ ...b, [active.repo]: base }));
