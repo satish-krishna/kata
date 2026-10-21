@@ -197,6 +197,8 @@ function buildPermissions(run: BuildRun, ctx: RunContext) {
       deny.push(`Edit(${rulePath(`${buildDir}/${other}.md`)})`);
       if (other !== run.masterRepo) deny.push(`Edit(${rulePath(`${ws}/${other}`)}/**)`);
     }
+    // Earlier reviews are the review run's record; a build run does not rewrite them.
+    deny.push(`Edit(${rulePath(`${buildDir}/review.md`)})`);
     allow.push(`Edit(${rulePath(`${buildDir}/${repo}.md`)})`);
   }
   return { deny, allow };

@@ -7,6 +7,7 @@ use crate::build::{change_dir, program, put, reading, staging_dir, unreadable};
 use crate::format::{self, FormatError, ParsedReviewSection, Problem, ReadResult};
 use crate::git::{self, GitError};
 use serde::Serialize;
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// What the review document of a change holds.
@@ -62,14 +63,62 @@ pub fn record(
     }
 }
 
-/// Checks what a review run left in the master repository. Stub: the check is not written yet.
+/// Checks what a review run left in the master repository: the commits made since `since` (the head
+/// the run started from) may touch only the change's `build/review.md`, and the working tree may hold
+/// no other change. The run may edit nothing else, but a deny rule cannot stop a shell write, so this
+/// is the check that catches one (it also covers `plugin/`, which holds the program Kata executes).
+///
+/// `Err` lists the other files, sorted, or says why the check could not run.
 pub fn verify_run(
-    _master: &Path,
-    _system: &str,
-    _change: &str,
-    _since: &str,
+    master: &Path,
+    system: &str,
+    change: &str,
+    since: &str,
 ) -> Result<(), Vec<String>> {
-    Ok(())
+    let allowed = format!("{}/build/review.md", change_dir(system, change));
+    let could_not = |e: GitError| vec![format!("could not check the master repository: {e}")];
+    let range = format!("{since}..HEAD");
+    let committed = git::run_bytes(
+        master,
+        &[
+            "log",
+            "-z",
+            "--name-only",
+            "--no-renames",
+            "--pretty=format:",
+            &range,
+        ],
+    )
+    .map_err(could_not)?;
+    let status =
+        git::run_bytes(master, &["status", "--porcelain", "-z", "-uall"]).map_err(could_not)?;
+    let mut touched: BTreeSet<String> = nul_split(&committed).map(str::to_string).collect();
+    let mut entries = nul_split(&status);
+    while let Some(entry) = entries.next() {
+        let Some((code, path)) = entry.split_at_checked(3) else {
+            continue;
+        };
+        touched.insert(path.to_string());
+        // A rename or copy lists its source as a separate entry.
+        if code.starts_with(['R', 'C']) {
+            if let Some(from) = entries.next() {
+                touched.insert(from.to_string());
+            }
+        }
+    }
+    touched.remove(&allowed);
+    if touched.is_empty() {
+        Ok(())
+    } else {
+        Err(touched.into_iter().collect())
+    }
+}
+
+fn nul_split(bytes: &[u8]) -> impl Iterator<Item = &str> {
+    bytes
+        .split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| std::str::from_utf8(s).unwrap_or("(unreadable file name)"))
 }
 
 #[cfg(test)]

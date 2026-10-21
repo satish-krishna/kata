@@ -91,6 +91,8 @@ export abstract class KataTransport {
   abstract sdlcReadParsed(master: string, system: string, change: string, doc: string): Promise<ReadResult | ReadError | null>;
   /** The change's review document as committed, or null when it has none. */
   abstract sdlcReviewRecord(master: string, system: string, change: string): Promise<ReviewRecord | null>;
+  /** The files a review run changed in the master besides the change's review document, since the head `since`; empty when it kept to the document. */
+  abstract sdlcReviewVerify(master: string, system: string, change: string, since: string): Promise<string[]>;
   abstract sdlcUnsavedRows(master: string, system: string, change: string): Promise<UnsavedRows[]>;
   /** `pending` names the repository a run is about to start in on the engineer's ask (a round, or Continue): its leftovers are its own to confirm. */
   abstract sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending: string | null, action: BuildAction): Promise<PrepareOutcome>;

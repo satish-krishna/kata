@@ -345,6 +345,19 @@ fn sdlc_review_record(
     sdlc::review::record(&plugin, Path::new(&master), &system, &change).map_err(|e| e.to_string())
 }
 
+/// The files a review run changed besides the change's review document (none when it kept to it).
+#[tauri::command(async)]
+fn sdlc_review_verify(
+    master: String,
+    system: String,
+    change: String,
+    since: String,
+) -> Vec<String> {
+    sdlc::review::verify_run(Path::new(&master), &system, &change, &since)
+        .err()
+        .unwrap_or_default()
+}
+
 #[tauri::command(async)]
 fn sdlc_build_prepare(
     folder: String,
@@ -855,6 +868,7 @@ pub fn run() {
             sdlc_build_settle,
             sdlc_build_heads,
             sdlc_review_record,
+            sdlc_review_verify,
             sdlc_plugin_readiness,
             sdlc_change_repos,
             sdlc_missing_change_branches,

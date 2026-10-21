@@ -473,9 +473,7 @@ describe('BuildViewModel', () => {
 
     /** Stands in for the check of what the review run left in the master repository. */
     const verifying = (transport: MockTransport, flagged: string[]) => {
-      const verify = vi.fn(async (..._args: string[]) => flagged);
-      (transport as unknown as { sdlcReviewVerify: typeof verify }).sdlcReviewVerify = verify;
-      return verify;
+      return vi.spyOn(transport, 'sdlcReviewVerify').mockResolvedValue(flagged);
     };
 
     it('a review run that also changed plugin/ names the file and is not the current review (F7)', async () => {
@@ -484,7 +482,7 @@ describe('BuildViewModel', () => {
       const verify = verifying(transport, ['plugin/format/check.mjs']);
       await vm.start(await handoffFor(transport), CTX);
       await drive(vm, lock, shown(vm));
-      expect(verify).toHaveBeenCalledWith(expect.any(String), 'claims', MOCK_BUILD_CHANGE, '1111111');
+      expect(verify).toHaveBeenCalledWith(expect.any(String), 'claims', MOCK_BUILD_CHANGE, '0'.repeat(40));
       expect(vm.reviewNotice()?.tone).toBe('warning');
       expect(vm.reviewNotice()?.lines).toEqual(['plugin/format/check.mjs']);
       expect(vm.findings()).toEqual([]);

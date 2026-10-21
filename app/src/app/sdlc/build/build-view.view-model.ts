@@ -120,6 +120,10 @@ export class BuildViewModel {
   private readonly reviewDocNotice = signal<DocNotice | null>(null);
   /** How many reviews the review document held when the review run started; the run is judged by what it added. */
   private sectionsBefore = 0;
+  /** Where the master repository stood when the review run started; null when it could not be read. */
+  private masterBefore: string | null = null;
+  /** The warning naming the other files a review run changed in the master; null when it kept to the review document. */
+  private readonly runNotice = signal<DocNotice | null>(null);
   private readonly picked = signal<string | null>(null);
   private readonly broken = signal(false);
   private readonly finishing = signal(false);
@@ -240,7 +244,7 @@ export class BuildViewModel {
   /** The findings are on show once the build has finished and its review has been read. */
   readonly reviewShown = computed(() => this.phase() === 'finished' && !this.reading() && (this.reviews().length > 0 || this.unrecorded()));
   /** The notice above the findings: the review document's problems or its older layout; null when it needs none. */
-  readonly reviewNotice = this.reviewDocNotice.asReadonly();
+  readonly reviewNotice = computed(() => this.runNotice() ?? this.reviewDocNotice());
   /** The latest review's findings, most serious first. */
   readonly findings = computed<Finding[]>(() => this.reviews().at(-1)?.findings ?? []);
   /** Earlier reviews, each with the time of the review that replaced it (or its own number and date, from the document), newest first. */
@@ -726,7 +730,11 @@ export class BuildViewModel {
     const document = await this.readDocument();
     if (document === undefined) return;
     await this.noteReviewNotice(document);
-    if (document === null || document.reviews.length <= this.sectionsBefore) {
+    const strayed = await this.strayedFiles();
+    this.runNotice.set(
+      strayed.length === 0 ? null : { tone: 'warning', text: 'The review run changed more than the review document', lines: strayed },
+    );
+    if (strayed.length > 0 || document === null || document.reviews.length <= this.sectionsBefore) {
       // The run's check failed three times, or it never wrote: whatever the document holds is an earlier review, not this one.
       this.reviews.set([]);
       this.fromWords.set(false);
@@ -737,9 +745,25 @@ export class BuildViewModel {
     this.showReviews(shownReview(document, null), null);
   }
 
+  /** The files the review run changed in the master besides the review document; none when it kept to it. */
+  private async strayedFiles(): Promise<string[]> {
+    if (this.masterBefore === null) return ['could not check the master repository: its head before the run is unknown'];
+    try {
+      return await this.transport.sdlcReviewVerify(this.handoff!.start.master.path, this.ctx!.system, this.ctx!.change, this.masterBefore);
+    } catch (e) {
+      return [`could not check the master repository: ${message(e)}`];
+    }
+  }
+
   /** Counts the reviews in the review document before a review run starts. A document that cannot be read counts as none. */
   private async noteSectionsBefore(): Promise<void> {
     this.unrecorded.set(false);
+    this.runNotice.set(null);
+    try {
+      this.masterBefore = (await this.transport.sdlcSnapshot(this.handoff!.start.master.path)).head;
+    } catch {
+      this.masterBefore = null;
+    }
     try {
       const document = await this.transport.sdlcReviewRecord(this.handoff!.start.master.path, this.ctx!.system, this.ctx!.change);
       this.sectionsBefore = document?.reviews.length ?? 0;
