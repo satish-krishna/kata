@@ -5,6 +5,15 @@ import { stopMessage } from '../../lib/sdlc';
 export interface RunEnd {
   exit: number | null;
   error: string | null;
+  /** The run never started because its repository is not checked out (R2.4): the stop says so alone, not that the agent failed. */
+  refused?: true;
+}
+
+/** A repository the build needs has no checkout in this workspace (R2.4). */
+export class NotCheckedOut extends Error {
+  constructor(repo: string) {
+    super(`${repo} is not checked out in this workspace`);
+  }
 }
 
 export interface RunOptions {
@@ -215,7 +224,10 @@ export class BuildDriver {
     if (instructions !== undefined) opts.instructions = instructions;
     const target: RunTarget = key === REVIEW ? REVIEW : { repo: key };
     void (async () => this.deps.start(target, opts))()
-      .catch((e: unknown): RunEnd => ({ exit: null, error: e instanceof Error ? e.message : String(e) }))
+      .catch((e: unknown): RunEnd => {
+        const error = e instanceof Error ? e.message : String(e);
+        return e instanceof NotCheckedOut ? { exit: null, error, refused: true } : { exit: null, error };
+      })
       .then((end) =>
         this.enqueue(() => this.ended(key, run, task, end, instructions !== undefined)).catch(() => {
           // Other runs still going end through `look` and settle the phase then; stopping now would end the build under them.
@@ -238,7 +250,7 @@ export class BuildDriver {
       }
     } else {
       const outcome = await this.judge(key, task, end, run.cancelled, isRound);
-      // A round is over only when it finished. One that stopped, or that neither stopped nor finished, stays pending
+      // The one place a round is cleared: only when it finished. Every other outcome keeps it pending,
       // so its instructions go with the next launch of the repository.
       if (this.round()?.repo === key && this.roundStarted) {
         if (outcome.kind === 'finished') this.round.set(null);
@@ -262,7 +274,8 @@ export class BuildDriver {
       kind: isRound ? 'round' : 'task',
       cancelled,
       failed: end.exit !== 0 || end.error !== null,
-      recorded: isRound || (status?.tasks.some((t) => t.id === task && t.row !== null) ?? false),
+      // A launch task of '' (the master, or a repository with every task recorded) has nothing to record; any other needs its committed row.
+      recorded: task === '' || (status?.tasks.some((t) => t.id === task && t.row !== null) ?? false),
       // A repository the plan names no task in (the master) has no state row and nothing unfinished.
       stateAfter: status === null ? 'unknown' : (now?.state.kind ?? 'done'),
     };
@@ -291,7 +304,8 @@ export class BuildDriver {
   ): void {
     // A repository with every task recorded has no task: `look` sees '' for it, so the stop must match that.
     const current = now?.state.kind === 'ready' || now?.state.kind === 'waiting' ? now.state.task : now?.state.kind === 'done' ? '' : launchedOn;
-    this.markStopped(repo, current, stopMessage(end.exit, end.error, cancelled) + why, held);
+    const text = end.refused && !cancelled ? `Stopped: ${end.error}` : stopMessage(end.exit, end.error, cancelled);
+    this.markStopped(repo, current, text + why, held);
   }
 }
 
@@ -306,34 +320,37 @@ export interface Facts {
   cancelled: boolean;
   /** Nonzero exit or an error. */
   failed: boolean;
-  /** The launched task has a committed row. Always true for a round. */
+  /** The launched task has a committed row, or there was no launched task (''). The same for a task run and a round. */
   recorded: boolean;
   /** Where the repository stands once the run is over; 'unknown' when the status read threw. */
   stateAfter: 'ready' | 'waiting' | 'done' | 'unknown';
 }
 
-export type Outcome = { kind: 'stop'; held?: boolean } | { kind: 'finished' } | { kind: 'continue'; keepRound?: true };
+export type Outcome = { kind: 'stop'; held?: boolean } | { kind: 'finished' } | { kind: 'continue' };
 
 const STOP: Outcome = { kind: 'stop' };
 /** The status could not be read, so the repository's current task is unknown and the stop must hold until it is read again. */
 const HELD: Outcome = { kind: 'stop', held: true };
 const FINISHED: Outcome = { kind: 'finished' };
 const CONTINUE: Outcome = { kind: 'continue' };
-/** A round that neither stopped nor finished: the repository goes on, and the round's instructions go with its next launch. */
-const KEEP_ROUND: Outcome = { kind: 'continue', keepRound: true };
 const IMPOSSIBLE = 'impossible';
 
 type Rule = [Facts['kind'], boolean, boolean, boolean, Facts['stateAfter'], Outcome | typeof IMPOSSIBLE];
 
 /**
- * Every combination of the facts, one row each. An IMPOSSIBLE row cannot be produced by `judge`: a round always has its row,
- * a task run cannot leave the repository done without having recorded its own task, and an unreadable status shows no row for a task.
+ * Every combination of the facts, one row each. An IMPOSSIBLE row cannot be produced by `judge`: a run whose launch task is not ''
+ * cannot leave the repository done without having recorded that task, and an unreadable status shows no row for it. A launch
+ * task of '' (the master, or a repository with every task recorded) counts as recorded without reading the status, so only
+ * such a round can reach recorded with an unknown state (held).
+ * One rule about the round, stated here and applied in `ended()` only: a round is cleared only on `finished`. Every other
+ * outcome (stop, held stop, continue) keeps it pending, so the next launch of the repository carries its instructions.
  * The rows that decide something:
  *  - a cancelled round always stops, so Continue can run it again (it is never finished, and never reviewed);
+ *  - a round whose launch task got no row stops (R8.1: the unfinished task is built first), so it never relaunches by itself;
  *  - a cancelled task run stops unless the repository is done;
  *  - a task run that left the repository done is finished whatever its exit code;
  *  - a failed round stops;
- *  - a round that did not stop and did not finish keeps the round pending, and is cleared only when it finishes;
+ *  - a round that did not stop and did not finish carries on, and stays pending until it finishes;
  *  - a task run that failed, or that recorded nothing while not waiting, stops;
  *  - an unreadable status stops and holds.
  */
@@ -371,38 +388,38 @@ const RULES: Rule[] = [
   ['task',    true,     true,   false,   'waiting',  STOP],
   ['task',    true,     true,   false,   'done',     IMPOSSIBLE],
   ['task',    true,     true,   false,   'unknown',  HELD],
-  ['round',   false,    false,  true,    'ready',    KEEP_ROUND],
-  ['round',   false,    false,  true,    'waiting',  KEEP_ROUND],
+  ['round',   false,    false,  true,    'ready',    CONTINUE],
+  ['round',   false,    false,  true,    'waiting',  CONTINUE],
   ['round',   false,    false,  true,    'done',     FINISHED],
   ['round',   false,    false,  true,    'unknown',  HELD],
-  ['round',   false,    false,  false,   'ready',    IMPOSSIBLE],
-  ['round',   false,    false,  false,   'waiting',  IMPOSSIBLE],
+  ['round',   false,    false,  false,   'ready',    STOP],
+  ['round',   false,    false,  false,   'waiting',  STOP],
   ['round',   false,    false,  false,   'done',     IMPOSSIBLE],
-  ['round',   false,    false,  false,   'unknown',  IMPOSSIBLE],
+  ['round',   false,    false,  false,   'unknown',  HELD],
   ['round',   false,    true,   true,    'ready',    STOP],
   ['round',   false,    true,   true,    'waiting',  STOP],
   ['round',   false,    true,   true,    'done',     STOP],
   ['round',   false,    true,   true,    'unknown',  HELD],
-  ['round',   false,    true,   false,   'ready',    IMPOSSIBLE],
-  ['round',   false,    true,   false,   'waiting',  IMPOSSIBLE],
+  ['round',   false,    true,   false,   'ready',    STOP],
+  ['round',   false,    true,   false,   'waiting',  STOP],
   ['round',   false,    true,   false,   'done',     IMPOSSIBLE],
-  ['round',   false,    true,   false,   'unknown',  IMPOSSIBLE],
+  ['round',   false,    true,   false,   'unknown',  HELD],
   ['round',   true,     false,  true,    'ready',    STOP],
   ['round',   true,     false,  true,    'waiting',  STOP],
   ['round',   true,     false,  true,    'done',     STOP],
   ['round',   true,     false,  true,    'unknown',  HELD],
-  ['round',   true,     false,  false,   'ready',    IMPOSSIBLE],
-  ['round',   true,     false,  false,   'waiting',  IMPOSSIBLE],
+  ['round',   true,     false,  false,   'ready',    STOP],
+  ['round',   true,     false,  false,   'waiting',  STOP],
   ['round',   true,     false,  false,   'done',     IMPOSSIBLE],
-  ['round',   true,     false,  false,   'unknown',  IMPOSSIBLE],
+  ['round',   true,     false,  false,   'unknown',  HELD],
   ['round',   true,     true,   true,    'ready',    STOP],
   ['round',   true,     true,   true,    'waiting',  STOP],
   ['round',   true,     true,   true,    'done',     STOP],
   ['round',   true,     true,   true,    'unknown',  HELD],
-  ['round',   true,     true,   false,   'ready',    IMPOSSIBLE],
-  ['round',   true,     true,   false,   'waiting',  IMPOSSIBLE],
+  ['round',   true,     true,   false,   'ready',    STOP],
+  ['round',   true,     true,   false,   'waiting',  STOP],
   ['round',   true,     true,   false,   'done',     IMPOSSIBLE],
-  ['round',   true,     true,   false,   'unknown',  IMPOSSIBLE],
+  ['round',   true,     true,   false,   'unknown',  HELD],
 ];
 
 const factsKey = (f: Facts): string => [f.kind, f.cancelled, f.failed, f.recorded, f.stateAfter].join('|');

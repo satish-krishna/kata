@@ -14,7 +14,7 @@ import type { ReplacedFindings } from '../../ui/findings-list';
 import type { RepoRow } from '../../ui/repo-status-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
 import type { BuildHandoff } from '../change/change-page.view-model';
-import { BuildDriver, type BuildPhase, type RunEnd, type RunOptions, type RunTarget } from './build-driver';
+import { BuildDriver, NotCheckedOut, type BuildPhase, type RunEnd, type RunOptions, type RunTarget } from './build-driver';
 
 /** What the build runs against: the workspace, the system and the change. */
 export type BuildContext = {
@@ -588,7 +588,7 @@ export class BuildViewModel {
     const repo = review ? h.start.master.repo : target.repo;
     const path = review ? h.start.master.path : this.pathOf(repo);
     // The backend names where each participant is checked out; a repository it does not name has no folder to run in.
-    if (path === undefined) throw new Error(`${repo} is not checked out in this workspace`);
+    if (path === undefined) throw new NotCheckedOut(repo);
     const run: BuildRun = {
       target,
       timeoutSecs: opts.timeoutSecs,
