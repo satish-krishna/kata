@@ -288,10 +288,34 @@ pub fn check_change(
     folder: &Path,
     documents: &[&str],
 ) -> Result<Vec<Problem>, FormatError> {
+    // Like `read`, an unchanged change starts nothing: the key is the program, each document's name and
+    // bytes, and the marker above them. A document that cannot be read is left to the program to report.
+    let key = documents
+        .iter()
+        .map(|d| std::fs::read(folder.join(d)).map(|bytes| (d.to_string(), hash_of(&bytes))))
+        .collect::<Result<Vec<_>, _>>()
+        .ok()
+        .map(|hashes| {
+            (
+                program.canonicalize().unwrap_or_else(|_| program.into()),
+                hashes,
+                marker_hash(&folder.join("plan.md")),
+            )
+        });
+    if let Some(hit) = key.as_ref().and_then(|k| {
+        check_cache()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(k)
+            .cloned()
+    }) {
+        return Ok(hit);
+    }
+
     let mut args = vec!["check"];
     args.extend(documents);
     let output = run(program, folder, &args)?;
-    String::from_utf8_lossy(&output.stdout)
+    let problems: Vec<Problem> = String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter(|line| !line.trim().is_empty())
         .map(|line| {
@@ -302,7 +326,22 @@ pub fn check_change(
                 ))
             })
         })
-        .collect()
+        .collect::<Result<_, _>>()?;
+    if let Some(key) = key {
+        check_cache()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key, problems.clone());
+    }
+    Ok(problems)
+}
+
+/// What a check depends on: the program, each checked document's name and bytes, and the marker above them.
+type CheckKey = (PathBuf, Vec<(String, u64)>, u64);
+
+fn check_cache() -> &'static Mutex<HashMap<CheckKey, Vec<Problem>>> {
+    static CACHE: OnceLock<Mutex<HashMap<CheckKey, Vec<Problem>>>> = OnceLock::new();
+    CACHE.get_or_init(Default::default)
 }
 
 fn hash_of(bytes: &[u8]) -> u64 {
