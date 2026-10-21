@@ -23,7 +23,7 @@ const text = (e: Element | null) => e?.textContent?.replace(/\s+/g, ' ').trim() 
 const PROSE = (title: string) => `---\nstatus: accepted\n---\n# ${title}\n\nWords only.\n`;
 const READY: Readiness = { kind: 'ready', dir: '~/.claude/plugins/ai-sdlc', version: '0.8.0' };
 
-type Setup = { readiness?: Readiness; spec?: ReadResult; plan?: ReadResult };
+type Setup = { readiness?: Readiness; spec?: ReadResult; plan?: ReadResult; logLayouts?: { repo: string; layout: number }[] };
 
 async function open(setup: Setup) {
   const transport = new MockTransport();
@@ -33,6 +33,10 @@ async function open(setup: Setup) {
   );
   vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_m, _s, _c, stem) => PROSE(stem));
   vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(setup.readiness ?? READY);
+  if (setup.logLayouts) {
+    const status = transport.sdlcBuildStatus.bind(transport);
+    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (...args) => ({ ...(await status(...args)), logLayouts: setup.logLayouts }) as never);
+  }
   const documents: Record<string, ReadResult> = { spec: setup.spec ?? parsedSpec(), plan: setup.plan ?? parsedPlan() };
   vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_m, _s, _c, stem) => documents[stem] ?? null);
   const view = await render(ChangePage, {}, [
@@ -77,6 +81,12 @@ describe('ChangePage document notices', () => {
     await page.tab('Plan');
     expect(text(page.notice())).toBe('Older layout');
     expect(page.tasks()).toBe(NUMBERS.tasks);
+  });
+
+  it('an older-layout change labels its Build tab when a build log is in the older layout', async () => {
+    const page = await open({ logLayouts: [{ repo: 'app', layout: 2 }, { repo: 'api', layout: 1 }] });
+    await page.tab('Build');
+    expect(text(page.notice())).toBe('Older layout');
   });
 
   it('a newer layout and a too-old plugin each get their notice', async () => {
