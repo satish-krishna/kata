@@ -1,0 +1,44 @@
+{
+  "kind": "plan",
+  "layout": 2,
+  "document": {
+    "tasks": [
+      {
+        "id": "T1",
+        "name": "Quiet task",
+        "repo": "app",
+        "depends_on": [],
+        "uses": [],
+        "files": [],
+        "covers": [],
+        "supports": [],
+        "sections": [
+          {
+            "title": "Change",
+            "body": "Write it."
+          },
+          {
+            "title": "Done when",
+            "body": "It passes."
+          }
+        ],
+        "text": "### T1: Quiet task\n\n```yaml\nid: T1\nrepo: app\n```\n\n#### Change\n\nWrite it.\n\n#### Done when\n\nIt passes.",
+        "line": 18
+      }
+    ],
+    "shared_decisions": [
+      {
+        "question": "How a problem is reported",
+        "owner": "T1",
+        "function": "formatProblem(p)"
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "plan.md",
+      "line": 18,
+      "message": "task T1 has no Tests section"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "kind": "spec",
+  "layout": 2,
+  "document": {
+    "requirements": [
+      {
+        "id": "R5",
+        "title": "Empty",
+        "from": [
+          "D1"
+        ],
+        "scenarios": [],
+        "line": 11
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "spec.md",
+      "line": 11,
+      "message": "requirement R5 has no scenario"
+    }
+  ]
+}

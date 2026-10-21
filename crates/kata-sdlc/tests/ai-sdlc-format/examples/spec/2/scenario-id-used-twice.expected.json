@@ -1,0 +1,45 @@
+{
+  "kind": "spec",
+  "layout": 2,
+  "document": {
+    "requirements": [
+      {
+        "id": "R2",
+        "title": "Two",
+        "from": [
+          "D1"
+        ],
+        "scenarios": [
+          {
+            "id": "R2.1",
+            "title": "First",
+            "outline": false,
+            "steps": [
+              "Given x"
+            ],
+            "examples": null,
+            "line": 13
+          },
+          {
+            "id": "R2.1",
+            "title": "Second",
+            "outline": false,
+            "steps": [
+              "Given y"
+            ],
+            "examples": null,
+            "line": 17
+          }
+        ],
+        "line": 11
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "spec.md",
+      "line": 17,
+      "message": "scenario ID R2.1 is used twice"
+    }
+  ]
+}

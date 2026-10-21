@@ -1,0 +1,13 @@
+{
+  "problems": [
+    { "file": "build/app.md", "line": 14, "message": "build log entry T12 is not a task in the plan" },
+    { "file": "build/other.md", "line": 7, "message": "build log entry T1 belongs to repository app" },
+    { "file": "plan.md", "line": 40, "message": "T2 depends on T9, which is not in the plan" },
+    { "file": "plan.md", "line": 56, "message": "T3 depends on T4, which comes after it" },
+    { "file": "plan.md", "line": 57, "message": "T3 uses \"base branch\", which no shared decision owns" },
+    { "file": "plan.md", "line": 74, "message": "T4 uses \"log format\" but does not depend on T1" },
+    { "file": "plan.md", "line": 75, "message": "T4 covers R9.2, which is not in the spec" },
+    { "file": "plan.md", "line": 86, "message": "task ID T4 is used twice" },
+    { "file": "spec.md", "line": 18, "message": "scenario R1.2 is covered by no task" }
+  ]
+}

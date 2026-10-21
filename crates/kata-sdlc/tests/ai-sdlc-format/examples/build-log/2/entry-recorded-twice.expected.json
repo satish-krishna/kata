@@ -1,0 +1,32 @@
+{
+  "kind": "build-log",
+  "layout": 2,
+  "document": {
+    "repo": "entry-recorded-twice",
+    "entries": [
+      {
+        "task": "T1",
+        "commits": [
+          "abc1234"
+        ],
+        "departure": null,
+        "line": 7
+      },
+      {
+        "task": "T1",
+        "commits": [
+          "def5678"
+        ],
+        "departure": null,
+        "line": 14
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "build/entry-recorded-twice.md",
+      "line": 14,
+      "message": "entry T1 is recorded twice, first on line 7"
+    }
+  ]
+}
