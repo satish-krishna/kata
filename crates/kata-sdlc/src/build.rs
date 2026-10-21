@@ -1355,4 +1355,88 @@ mod tests {
             );
         }
     }
+
+    /// Commits the master's marker listing `repos` under the system `demo`, which the plans in this test name.
+    fn commit_marker(master: &Path, repos: &[&str]) {
+        let listed: Vec<String> = repos.iter().map(|r| format!("\"{r}\"")).collect();
+        testutil::commit_file(
+            master,
+            ".ai-sdlc.json",
+            &format!(
+                "{{\"version\":1,\"systems\":{{\"demo\":{{\"repos\":[{}]}}}}}}",
+                listed.join(",")
+            ),
+            "marker",
+        );
+    }
+
+    #[test]
+    fn build_gate_refuses_what_only_the_checks_across_documents_find() {
+        let two_repos = VALID_PLAN.replace(
+            "id: T2
+repo: app",
+            "id: T2
+repo: api",
+        );
+        assert_ne!(two_repos, VALID_PLAN);
+        let log_on_other_repo = VALID_LOG.replace("app", "api");
+        // (name, plan, marker repos, build logs as (repository, text), message, a word in a problem)
+        type Case<'a> = (
+            &'a str,
+            String,
+            &'a [&'a str],
+            Vec<(&'a str, String)>,
+            &'a str,
+            &'a str,
+        );
+        let cases: Vec<Case> = vec![
+            (
+                "a log entry on another repository's task",
+                two_repos.clone(),
+                &["app", "api"],
+                vec![("api", log_on_other_repo)],
+                "A build log does not pass the check",
+                "belongs to repository app",
+            ),
+            (
+                "a task naming a repository the system does not list",
+                two_repos,
+                &["app"],
+                vec![],
+                "The plan does not pass the check",
+                "api",
+            ),
+            (
+                "a dependency on a task the plan does not hold",
+                VALID_PLAN.replace("depends_on: [T1]", "depends_on: [T99]"),
+                &["app"],
+                vec![],
+                "The plan does not pass the check",
+                "T99",
+            ),
+        ];
+        let plugin = ready(testutil::plugin_dir());
+        let mut wrong = Vec::new();
+        for (name, plan, repos, logs, message, word) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let master = master_with(tmp.path(), &plan);
+            commit_marker(&master, repos);
+            for (repo, text) in logs {
+                testutil::commit_file(
+                    &master,
+                    &format!("{DIR}/build/{repo}.md"),
+                    &text,
+                    &format!("log {repo}"),
+                );
+            }
+            match gate(&plugin, &master, SYS, CHG, BuildAction::Start).unwrap() {
+                Gate::Refuse {
+                    message: got,
+                    problems,
+                } if got == message && problems.iter().any(|p| p.message.contains(word)) => {}
+                other => wrong.push(format!("{name}: {other:?}")),
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
 }
