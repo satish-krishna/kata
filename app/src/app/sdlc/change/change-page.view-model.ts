@@ -7,6 +7,8 @@ import type { BuildStatus } from '@bindings/BuildStatus';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { ParsedRequirement } from '@bindings/ParsedRequirement';
 import type { ReadResult } from '@bindings/ReadResult';
+import type { Readiness } from '@bindings/Readiness';
+import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { Decision } from '@bindings/Decision';
@@ -47,6 +49,7 @@ import {
   type StageAction,
   type StagePill,
 } from '../../lib/sdlc';
+import { docNotice, type DocNotice } from '../../lib/doc-notice';
 import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
 import { prNumber } from '../../lib/pull-request';
 import { REVIEW_MISSING_TEXT, canConfirm, checkLabel, reviewState, type DoneReport, type DoneReview } from '../../lib/sdlc-done';
@@ -182,7 +185,28 @@ export class ChangePageViewModel {
   /** The shown document, raw as it is on disk, or null when the file is missing. */
   readonly doc = signal<string | null>(null);
   /** The shown spec or plan as the format program read it; null for the other documents, or when the program could not run. */
-  private readonly parsed = signal<ReadResult | null>(null);
+  private readonly read = signal<ReadResult | null>(null);
+  /** Whether the ai-sdlc plugin can be used; null until the first load has asked. */
+  private readonly readiness = signal<Readiness | null>(null);
+  /** The review document as the format program reads it; null when the change has none or it could not be read. */
+  private readonly reviewRecord = signal<ReviewRecord | null>(null);
+  /** The notice above the open spec or plan; null when it needs none. */
+  readonly docNotice = computed<DocNotice | null>(() => {
+    const read = this.read();
+    const readiness = this.readiness();
+    const stem = this.shownDoc();
+    if (readiness === null || (stem !== 'spec' && stem !== 'plan')) return null;
+    return docNotice(read?.layout ?? 2, read?.problems ?? [], readiness);
+  });
+  /** The notice above the Build tab, from the plan and build log problems and the review document. */
+  readonly buildNotice = computed<DocNotice | null>(() => {
+    const readiness = this.readiness();
+    if (readiness === null || this.shownDoc() !== 'build') return null;
+    const problems = [...(this.status()?.problems ?? []), ...(this.reviewRecord()?.problems ?? [])];
+    return docNotice(this.reviewRecord()?.layout ?? 2, problems, readiness);
+  });
+  /** The shown spec or plan as the format program read it, unless a notice says the document is shown as plain text. */
+  private readonly parsed = computed<ReadResult | null>(() => (this.docNotice()?.plain ? null : this.read()));
   /** The document the operator picked from the tiles; null shows the current stage's. Every load clears it. */
   private readonly picked = signal<Tab | null>(null);
   /** The document whose pill the operator just clicked while its text is still being read; null otherwise. */
@@ -665,7 +689,7 @@ export class ChangePageViewModel {
       // The tab and its text change together, once the text is here, so no tab ever shows another document's text.
       if (seq !== this.pickSeq) return;
       this.doc.set(text);
-      this.parsed.set(read);
+      this.read.set(read);
       this.picked.set(stem);
       this.pendingDoc.set(null);
     } catch (e) {
@@ -982,6 +1006,24 @@ export class ChangePageViewModel {
     }
   }
 
+  /** Whether the plugin can be used; a failed check counts as a missing plugin, which only shows the documents as plain text. */
+  private async readReadiness(folder: string): Promise<Readiness> {
+    try {
+      return await this.transport.sdlcPluginReadiness(folder);
+    } catch {
+      return { kind: 'missing' };
+    }
+  }
+
+  /** The review document; a failed read leaves the notice to the build logs alone. */
+  private async readReviewRecord(master: string, system: string, name: string): Promise<ReviewRecord | null> {
+    try {
+      return await this.transport.sdlcReviewRecord(master, system, name);
+    } catch {
+      return null;
+    }
+  }
+
   /** The plan's tasks and rows; a failure is reported and leaves the log empty, never the whole page. */
   private async readStatus(master: string, system: string, name: string): Promise<BuildStatus | null> {
     try {
@@ -1032,7 +1074,7 @@ export class ChangePageViewModel {
       this.picked.set(null);
       this.change.set(change);
       this.doc.set(doc);
-      this.parsed.set(read);
+      this.read.set(read);
       this.state.set(state);
     };
     let workspaces: WorkspaceEntry[];
@@ -1069,6 +1111,8 @@ export class ChangePageViewModel {
       const doc = found ? await this.transport.sdlcReadDoc(master, system, name, docFor(found)) : null;
       const read = found ? await this.readParsed(master, system, name, docFor(found)) : null;
       const status = found?.plan.exists ? await this.readStatus(master, system, name) : null;
+      const readiness = await this.readReadiness(w.folder);
+      const review = found?.plan.exists ? await this.readReviewRecord(master, system, name) : null;
       const checksDir = this.checksDir() ?? (await this.readChecksDir());
       const prs = found?.stage === 'build-finished' ? await this.readPullRequests(w.folder, repo, system, name) : { states: [], failed: false };
       const branch = found !== null && ACCEPTED.has(stageLabel(found.stage).step) && (await this.readHasBranch(w.folder, repo, system, name));
@@ -1077,6 +1121,8 @@ export class ChangePageViewModel {
       this.pullRequests.set(prs.states);
       this.prCheckFailed.set(prs.failed);
       this.status.set(status);
+      this.readiness.set(readiness);
+      this.reviewRecord.set(review);
       this.checksDir.set(checksDir);
       this.scan.set(scan);
       this.branches.set(branches);

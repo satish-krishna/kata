@@ -351,8 +351,8 @@ export class SdlcMock {
     if (docName !== 'spec' && docName !== 'plan') throw new Error(`read_parsed takes spec or plan, not "${docName}"`);
     if (this.docs[`${changeName}/${docName}`] === undefined) return null;
     const demo = changeName === MOCK_BUILD_CHANGE || changeName === MOCK_DONE_CHANGE;
-    if (docName === 'spec') return { kind: 'spec', layout: 1, document: { requirements: changeName === MOCK_BUILD_CHANGE ? BUILD_SPEC : [] }, problems: [] };
-    return { kind: 'plan', layout: 1, document: { tasks: demo ? BUILD_TASKS : [], shared_decisions: [] }, problems: [] };
+    if (docName === 'spec') return { kind: 'spec', layout: 2, document: { requirements: changeName === MOCK_BUILD_CHANGE ? BUILD_SPEC : [] }, problems: [] };
+    return { kind: 'plan', layout: 2, document: { tasks: demo ? BUILD_TASKS : [], shared_decisions: [] }, problems: [] };
   }
 
   snapshot(): Snapshot { return { head: '0000000000000000000000000000000000000000', dirty: {} }; }

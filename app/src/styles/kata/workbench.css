@@ -75,6 +75,9 @@
 .wb-banner--error { background: var(--error-subtle); color: var(--error-text); }
 .wb-banner--warn { background: var(--warning-subtle); color: var(--warning-text); }
 .wb-banner__list { display: flex; gap: var(--space-4); flex-wrap: wrap; }
+.wb-banner--quiet { background: transparent; color: var(--text-muted); }
+.wb-banner .k-status { color: inherit; }
+.wb-banner__list--lines { flex-direction: column; gap: var(--space-1); max-height: 8rem; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
 .wb-banner svg { width: 15px; height: 15px; flex: none; }
 
 /* ---------- Panes ---------- */
@@ -328,8 +331,10 @@
 .k-change__doc--layout { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
 .k-change__doc--layout[hidden] { display: none; }
 .k-change__doc--layout > .wb-banner { flex: none; margin: var(--space-4) var(--space-5) 0; }
+.k-change__doc--layout > .wb-banner + .wb-banner { margin-top: var(--space-3); }
 /* The Changes view fills its panel edge to edge: no padding and no frame, its own strip, columns and editor do the scrolling. */
 .k-change__doc--flush { display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; padding: 0; }
+.k-change__doc--flush:has(> .wb-banner) { grid-template-rows: auto minmax(0, 1fr); }
 .k-change__doc--flush[hidden] { display: none; }
 .k-change__missing { padding: var(--space-5); }
 

@@ -84,7 +84,7 @@ describe('ChangePage document notices', () => {
     await newer.tab('Plan');
     expect(text(newer.notice())).toContain('This document needs a newer Workbench');
     expect(newer.tasks()).toBe(NUMBERS.tasks);
-    newer.fixture.destroy();
+    TestBed.resetTestingModule();
 
     const old = await open({ readiness: { kind: 'tooOld', have: '0.6.0', need: '0.8.0' } });
     await old.tab('Spec');
