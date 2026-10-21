@@ -1489,4 +1489,55 @@ repo: api",
         }
         assert!(wrong.is_empty(), "{wrong:#?}");
     }
+
+    #[test]
+    fn two_changes_are_read_at_the_same_time() {
+        // The stand-in program starts, then waits until another copy of it has started too. If the
+        // reads of two changes took turns, the first would give up waiting and never meet the other.
+        let rendezvous = tempfile::tempdir().unwrap();
+        let plugin = tempfile::tempdir().unwrap();
+        let format_dir = plugin.path().join("format");
+        std::fs::create_dir_all(&format_dir).unwrap();
+        std::fs::write(
+            format_dir.join("check.mjs"),
+            format!(
+                "import {{ readdirSync, writeFileSync }} from 'node:fs';
+                 if (process.argv[2] === 'check') process.exit(0);
+                 const dir = {dir:?};
+                 writeFileSync(dir + '/start-' + process.pid, '');
+                 const give_up = Date.now() + 10000;
+                 const started = () => readdirSync(dir).filter((n) => n.startsWith('start-')).length;
+                 while (started() < 2 && Date.now() < give_up) {{}}
+                 if (started() >= 2) writeFileSync(dir + '/met-' + process.pid, '');
+                 console.log(JSON.stringify({{ kind: 'plan', layout: 1, document: {{ tasks: [], shared_decisions: [] }}, problems: [] }}));
+",
+                dir = rendezvous.path().display().to_string()
+            ),
+        )
+        .unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let master = testutil::repo(tmp.path(), "master");
+        let changes = ["2026-10-12-fnol", "2026-10-13-other"];
+        for (change, repo) in changes.iter().zip(["app", "api"]) {
+            testutil::commit_file(
+                &master,
+                &format!("intent/{SYS}/{change}/plan.md"),
+                &plan_with(&[("T1", repo, Some("none"))]),
+                "plan",
+            );
+        }
+        std::thread::scope(|s| {
+            for change in changes {
+                let (plugin, master) = (plugin.path(), &master);
+                s.spawn(move || status(plugin, master, SYS, change).unwrap());
+            }
+        });
+        let met = std::fs::read_dir(rendezvous.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("met-"))
+            .count();
+        assert_eq!(met, 2, "each read should have met the other");
+    }
 }
