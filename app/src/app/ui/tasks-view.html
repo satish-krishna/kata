@@ -1,0 +1,65 @@
+<div class="k-split k-split--task">
+  <nav class="k-list" aria-label="Tasks">
+    @for (t of tasks(); track t.id) {
+      <button
+        hlmBtn
+        variant="bare"
+        size="bare"
+        type="button"
+        class="k-list__row k-list__row--task"
+        [attr.aria-current]="t.id === picked()?.id ? 'true' : null"
+        (click)="pick.emit(t.id)"
+      >
+        <span [class]="'k-status k-status--' + (t.row !== null ? 'success' : 'idle')"><span class="k-status__dot" role="img" [attr.aria-label]="t.row !== null ? 'built' : 'not built'"></span></span>&ngsp;
+        <b class="k-mono k-list__id">{{ t.id }}</b>&ngsp;
+        <span class="k-list__name">{{ t.name }}</span>
+      </button>
+    }
+  </nav>
+  @if (picked(); as task) {
+    <article class="k-detail" data-testid="task" [attr.aria-label]="task.id" (click)="onDetailClick($event)">
+      <header class="k-detail__head">
+        <p class="k-task__meta k-mono">{{ task.id }} · {{ task.repo }} · depends on {{ dependsOn(task) }}</p>
+        <h2 class="k-detail__title">{{ task.name }}</h2>
+      </header>
+      @for (f of fields(); track f.field) {
+        <section class="k-task__sec">
+          <h3 class="k-docview__label">{{ f.field }}</h3>
+          <app-markdown-body [md]="link(f.body)" />
+        </section>
+      }
+      @if (plain() !== '') {
+        <div class="k-task__plain"><app-markdown-body [md]="link(plain())" /></div>
+      }
+    </article>
+    <aside class="k-task__rail" aria-label="Build record">
+      @if (record(); as rec) {
+        <section class="k-card k-docview__card">
+          <h3 [class]="'k-docview__label k-record__label k-record__label--' + rec.kind">{{ rec.label }}</h3>
+          @if (task.row; as row) {
+            <p class="k-chips">
+              @for (c of row.commits; track c) {
+                <span class="k-chip k-mono">{{ c }}</span>
+              }
+            </p>
+          }
+          @if (rec.text; as departure) {
+            <p class="k-record__text">{{ departure }}</p>
+          }
+        </section>
+      }
+      <section class="k-card k-docview__card" data-testid="needed-by">
+        <h3 class="k-docview__label">Needed by</h3>
+        @if (needed().length === 0) {
+          <p class="k-left__note">No task needs this one</p>
+        } @else {
+          <p class="k-chips">
+            @for (id of needed(); track id) {
+              <button hlmBtn variant="bare" size="bare" type="button" class="k-ref k-mono" (click)="pick.emit(id)">{{ id }}</button>
+            }
+          </p>
+        }
+      </section>
+    </aside>
+  }
+</div>

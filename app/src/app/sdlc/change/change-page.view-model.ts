@@ -1,4 +1,4 @@
-import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Injectable, computed, effect, inject, linkedSignal, signal, untracked } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
 import type { BranchInfo } from '@bindings/BranchInfo';
@@ -47,10 +47,15 @@ import {
 import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
 import { prNumber } from '../../lib/pull-request';
 import { REVIEW_MISSING_TEXT, canConfirm, checkLabel, reviewState, type DoneReport, type DoneReview } from '../../lib/sdlc-done';
+import { section } from '../../lib/doc';
 import { inTauri } from '../../lib/mock';
+import { requirements, type Requirement } from '../../lib/spec-doc';
 import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
 
 export type ChangeState = 'loading' | 'ready' | 'not-found';
+
+/** The spec and plan tabs' views: the list (requirements, tasks), the one `##` section (Design, Approach), the whole text. */
+export type DocView = 'list' | 'section' | 'whole';
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const nowSecs = (): number => Math.floor(Date.now() / 1000);
@@ -294,8 +299,77 @@ export class ChangePageViewModel {
     const planned = (this.status()?.repos ?? []).map((r) => r.repo);
     return [...new Set([...(master === null ? [] : [master]), ...planned])];
   });
-  /** The plan's tasks with their build rows, shown under the plan document; empty when there is no plan. */
+  /** The plan's tasks with their build rows, for the plan tab's Tasks view; empty when there is no plan. */
   readonly buildTasks = computed<TaskStatus[]>(() => this.status()?.tasks ?? []);
+  // --- the spec and plan views: which one is shown and what is picked in it; all of it starts over with the tab or the change
+  private readonly view = linkedSignal<DocView | null>(() => {
+    this.shownDoc();
+    this.changeName();
+    return null;
+  });
+  private readonly requirementPick = linkedSignal<string | null>(() => {
+    this.shownDoc();
+    this.changeName();
+    return null;
+  });
+  private readonly taskPick = linkedSignal<string | null>(() => {
+    this.shownDoc();
+    this.changeName();
+    return null;
+  });
+  /** The spec's requirements while the spec tab is open. */
+  readonly requirementList = computed<Requirement[]>(() => (this.shownDoc() === 'spec' ? requirements(this.docParts().body) : []));
+  /** The requirement shown on the right: the picked one, else the first. */
+  readonly pickedRequirement = computed<Requirement | null>(() => {
+    const all = this.requirementList();
+    return all.find((r) => r.id === this.requirementPick()) ?? all[0] ?? null;
+  });
+  /** The task shown in the middle: the picked one, else the first that is not built, else the first. */
+  readonly pickedTask = computed<TaskStatus | null>(() => {
+    const all = this.buildTasks();
+    return all.find((t) => t.id === this.taskPick()) ?? all.find((t) => t.row === null) ?? all[0] ?? null;
+  });
+  /** The open tab has a list view: a spec with requirements, a plan with tasks. */
+  private readonly hasList = computed(() => {
+    const stem = this.shownDoc();
+    return stem === 'spec' ? this.requirementList().length > 0 : stem === 'plan' && this.buildTasks().length > 0;
+  });
+  /** The strip's toggle for the open tab; none on the intent and the Build tab, nor when there is no list to show. */
+  readonly viewOptions = computed<{ value: DocView; label: string }[]>(() => {
+    if (!this.hasList()) return [];
+    if (this.shownDoc() === 'spec') {
+      return [{ value: 'list', label: `Requirements · ${this.requirementList().length}` }, { value: 'section', label: 'Design' }, { value: 'whole', label: 'Whole document' }];
+    }
+    const built = this.buildTasks().filter((t) => t.row !== null).length;
+    return [{ value: 'list', label: `Tasks · ${built}/${this.buildTasks().length} built` }, { value: 'section', label: 'Approach' }, { value: 'whole', label: 'Whole document' }];
+  });
+  readonly viewLabel = computed(() => (this.shownDoc() === 'spec' ? 'Spec view' : 'Plan view'));
+  readonly shownView = computed<DocView>(() => (this.hasList() ? (this.view() ?? 'list') : 'whole'));
+  /** The `##` section the section view shows, or null when the document has none by that name. */
+  readonly sectionText = computed(() => section(this.docParts().body, this.sectionName()));
+  /** The name of that section: Design in a spec, Approach in a plan. */
+  readonly sectionName = computed(() => (this.shownDoc() === 'spec' ? 'Design' : 'Approach'));
+  /** What the document layout shows: the section in the section view, else the whole text; null for a missing section. */
+  readonly layoutBody = computed(() => (this.shownView() === 'section' ? this.sectionText() : this.docParts().body));
+
+  setView(view: DocView): void {
+    this.view.set(view);
+  }
+
+  pickRequirement(id: string): void {
+    this.requirementPick.set(id);
+  }
+
+  pickTask(id: string): void {
+    this.taskPick.set(id);
+  }
+
+  /** Open a requirement from a task's text on the Spec tab, in its Requirements view. `R7.7` opens R7. */
+  async openRequirement(ref: string): Promise<void> {
+    await this.showDoc('spec');
+    if (this.shownDoc() === 'spec') this.requirementPick.set(ref.split('.')[0]);
+  }
+
   /** Why the build did not start, or null. */
   readonly refusal = signal<string | null>(null);
   private readonly pendingLeftovers = signal<RepoFiles[] | null>(null);

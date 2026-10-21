@@ -1,0 +1,62 @@
+<div class="k-split k-split--req">
+  <nav class="k-list" aria-label="Requirements">
+    @for (r of requirements(); track r.id) {
+      <button
+        hlmBtn
+        variant="bare"
+        size="bare"
+        type="button"
+        class="k-list__row k-list__row--req"
+        [attr.aria-current]="r.id === picked()?.id ? 'true' : null"
+        (click)="pick.emit(r.id)"
+      >
+        <b class="k-mono k-list__id">{{ r.id }}</b>&ngsp;
+        <span class="k-list__name">{{ r.title }}</span>&ngsp;
+        <span class="k-mono k-list__count">{{ r.scenarios.length }}</span>
+      </button>
+    }
+  </nav>
+  @if (picked(); as req) {
+    <section class="k-detail" data-testid="requirement" [attr.aria-label]="req.id">
+      <header class="k-detail__head">
+        <p class="k-req__meta k-mono">{{ req.id }}@if (req.from !== '') { · from {{ req.from }}} · {{ countOf(req) }}</p>
+        <h2 class="k-detail__title">{{ req.title }}</h2>
+      </header>
+      <div class="k-scenarios">
+        @for (s of req.scenarios; track s.id) {
+          <article class="k-card k-scenario" [class.k-scenario--wide]="s.examples !== null">
+            <h3 class="k-scenario__title">{{ s.id }} {{ s.title }}</h3>
+            <p class="k-gherkin">
+              @for (step of s.steps; track $index) {
+                @let parts = split(step);
+                <span class="k-gherkin__step"><span class="k-gherkin__kw">{{ parts[0] }}</span> {{ parts[1] }}</span>
+              }
+            </p>
+            @if (s.examples; as rows) {
+              <div hlmTableContainer>
+                <table hlmTable>
+                  <thead hlmTableHeader>
+                    <tr hlmTableRow>
+                      @for (cell of rows[0]; track $index) {
+                        <th hlmTableHead>{{ cell }}</th>
+                      }
+                    </tr>
+                  </thead>
+                  <tbody hlmTableBody>
+                    @for (row of rows.slice(1); track $index) {
+                      <tr hlmTableRow>
+                        @for (cell of row; track $index) {
+                          <td hlmTableCell>{{ cell }}</td>&ngsp;
+                        }
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            }
+          </article>
+        }
+      </div>
+    </section>
+  }
+</div>

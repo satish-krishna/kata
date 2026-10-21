@@ -335,6 +335,42 @@
 .k-docview__runs li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; }
 .k-docview__when { color: var(--text-muted); white-space: nowrap; }
 
+/* The spec and plan list views: a list that scrolls on its own, then the picked record (and, for a task, its build record). */
+.k-split { flex: 1; min-height: 0; display: grid; }
+.k-split--req { grid-template-columns: 380px minmax(0, 1fr); }
+.k-split--task { grid-template-columns: 340px minmax(0, 1fr) 340px; }
+.k-list { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; min-height: 0; overflow-y: auto; padding: var(--space-4) var(--space-3); border-right: 1px solid var(--border-subtle); }
+.k-list__row { display: grid; align-items: baseline; gap: var(--space-3); min-width: 0; padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm); font: var(--text-sm)/1.4 var(--font-sans); color: var(--text-secondary); text-align: start; cursor: pointer; }
+.k-list__row--req { grid-template-columns: 34px minmax(0, 1fr) auto; }
+.k-list__row--task { grid-template-columns: auto auto minmax(0, 1fr); }
+.k-list__row:hover { background: var(--surface-hover); }
+.k-list__row[aria-current="true"] { background: var(--accent-subtle); box-shadow: inset 0 0 0 1px var(--accent-border); color: var(--text-primary); }
+.k-list__id { font-weight: var(--weight-medium); color: var(--text-muted); }
+.k-list__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.k-list__count { font-size: var(--text-xs); color: var(--text-muted); }
+.k-detail { min-width: 0; min-height: 0; overflow-y: auto; padding: var(--space-7) var(--space-8); display: flex; flex-direction: column; gap: var(--space-6); }
+.k-detail__head { display: grid; gap: var(--space-2); max-width: 880px; }
+.k-detail__title { margin: 0; font: var(--font-heading); overflow-wrap: anywhere; }
+.k-req__meta, .k-task__meta { margin: 0; font-size: var(--text-xs); color: var(--text-muted); overflow-wrap: anywhere; }
+.k-scenarios { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+.k-scenario { display: grid; align-content: start; gap: var(--space-3); min-width: 0; padding: var(--space-4) var(--space-5); }
+.k-scenario--wide { grid-column: 1 / -1; }
+.k-scenario__title { margin: 0; font: var(--weight-semibold) var(--text-base)/1.3 var(--font-sans); overflow-wrap: anywhere; }
+.k-gherkin { margin: 0; font: var(--font-code-sm); line-height: 1.6; color: var(--text-secondary); }
+.k-gherkin__step { display: block; overflow-wrap: anywhere; }
+.k-gherkin__kw { color: var(--accent-text); }
+.k-task__sec { display: grid; gap: var(--space-2); max-width: 880px; min-width: 0; }
+.k-task__plain { max-width: 880px; min-width: 0; }
+.k-detail a[href^="#req-"] { padding: 0 var(--space-2); border: 1px solid var(--accent-border); border-radius: var(--radius-xs); font: var(--weight-medium) var(--text-xs)/1.5 var(--font-mono); color: var(--accent-text); text-decoration: none; }
+.k-detail a[href^="#req-"]:hover { background: var(--accent-subtle); }
+.k-task__rail { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; min-height: 0; overflow-y: auto; padding: var(--space-7) var(--space-6); border-left: 1px solid var(--border-subtle); background: var(--surface-panel); }
+.k-record__label--differs { color: var(--warning); }
+.k-record__text { margin: 0; font: var(--text-sm)/1.6 var(--font-sans); color: var(--text-secondary); overflow-wrap: anywhere; }
+.k-chips { margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.k-chip { padding: var(--space-1) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-xs); background: var(--surface-inset); font-size: var(--text-sm); color: var(--text-secondary); white-space: nowrap; }
+.k-ref { padding: 0 var(--space-2); border: 1px solid var(--accent-border); border-radius: var(--radius-xs); font-size: var(--text-xs); color: var(--accent-text); cursor: pointer; }
+.k-ref:hover { background: var(--accent-subtle); }
+
 /* ---------- AI-SDLC: the Changes view's file list and diff bar ---------- */
 .k-files, .k-files__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
 .k-files__group { display: grid; gap: var(--space-2); }

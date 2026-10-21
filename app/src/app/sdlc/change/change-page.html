@@ -71,6 +71,9 @@
           @if (vm.shownDoc() !== 'build') {
             <span class="k-strip__file">{{ vm.docName() }}</span>
           }
+          @if (vm.viewOptions().length > 0) {
+            <app-segmented [options]="vm.viewOptions()" [value]="vm.shownView()" (valueChange)="vm.setView($event)" [ariaLabel]="vm.viewLabel()" />
+          }
           @if (vm.prCheckFailed()) {
             <span class="k-left__note" data-testid="pr-note">Could not check pull requests</span>
           }
@@ -96,20 +99,28 @@
                     <div hlmAlertDescription>{{ banner }}</div>
                   </hlm-alert>
                 }
+                @let body = vm.layoutBody();
                 @if (vm.doc() === null) {
                   <p class="k-state__body k-change__missing">{{ vm.docName() }} is not in this change folder.</p>
+                } @else if (vm.shownView() === 'list' && stem === 'spec') {
+                  <app-requirements-view [requirements]="vm.requirementList()" [picked]="vm.pickedRequirement()" (pick)="vm.pickRequirement($event)" />
+                } @else if (vm.shownView() === 'list') {
+                  <app-tasks-view
+                    [tasks]="vm.buildTasks()"
+                    [picked]="vm.pickedTask()"
+                    (pick)="vm.pickTask($event)"
+                    (openRequirement)="vm.openRequirement($event)"
+                  />
+                } @else if (body === null) {
+                  <p class="k-state__body k-change__missing" data-testid="no-section">This {{ stem }} has no {{ vm.sectionName() }} section.</p>
                 } @else {
                   <app-doc-layout
-                    [body]="vm.docParts().body"
+                    [body]="body"
                     [fields]="vm.railFields()"
                     [usedBy]="vm.usedBy()"
                     [runs]="vm.railRuns().rows"
                     [runTotal]="vm.railRuns().total"
-                  >
-                    @if (stem === 'plan' && vm.buildTasks().length > 0) {
-                      <app-build-log-table [tasks]="vm.buildTasks()" />
-                    }
-                  </app-doc-layout>
+                  />
                 }
               }
             </div>

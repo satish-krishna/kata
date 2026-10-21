@@ -120,13 +120,13 @@ describe('ChangePage', () => {
     const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
     const click = (label: string) => Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((b) => b.textContent!.trim() === label)!.click();
 
-    it('the plan tab renders the build log from sdlcBuildStatus', async () => {
+    it('the plan tab lists the tasks from sdlcBuildStatus in the Tasks view', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
       const status = await transport.sdlcBuildStatus('', 'claims', MOCK_BUILD_CHANGE);
-      const table = container.querySelector('app-build-log-table')!;
-      expect(table).not.toBeNull();
-      expect(text(table.querySelector('h2')!)).toBe('Build log');
-      expect(table.querySelectorAll('tbody tr').length).toBe(status.tasks.length);
+      const nav = container.querySelector('nav[aria-label="Tasks"]')!;
+      expect(nav).not.toBeNull();
+      expect(nav.querySelectorAll('button').length).toBe(status.tasks.length);
+      expect(container.querySelector('app-build-log-table')).toBeNull();
     });
 
     it('crosses the seam: clicking the Build pill shows what changed in the build panel', async () => {
@@ -154,9 +154,9 @@ describe('ChangePage', () => {
       expect(container.querySelector('main.k-change')).toBeNull();
     });
 
-    it('shows no build log on a change without tasks', async () => {
+    it('shows no task list on a change without tasks', async () => {
       const { container } = await mount();
-      expect(container.querySelector('app-build-log-table')).toBeNull();
+      expect(container.querySelector('nav[aria-label="Tasks"]')).toBeNull();
     });
 
     it('crosses the seam: clicking the rendered Start build opens the dialog, and Start build prepares the build', async () => {

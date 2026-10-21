@@ -34,3 +34,19 @@ export function taskRecord(task: TaskStatus): TaskRecord {
   if (task.row.departure === null) return { kind: 'planned', label: 'As planned', text: null };
   return { kind: 'differs', label: 'Differs from plan', text: task.row.departure };
 }
+
+/** A task's own text without its `### T<n>: ...` heading line: what to show for a task that has no field bullets. */
+export function taskBody(text: string): string {
+  return text.replace(/^[^\n]*(?:\n|$)/, '').trim();
+}
+
+const REQUIREMENT_ID = /(?<![\w.])R\d+(?:\.\d+)?(?![\w]|\.\d)/g;
+
+/**
+ * Turns each requirement or scenario id (`R7`, `R7.7`) outside code into a link to `#req-<id>`, which the task detail
+ * catches to open that requirement on the Spec tab.
+ */
+export function linkRequirements(md: string): string {
+  const parts = md.split(/(```[\s\S]*?```|`[^`\n]*`)/);
+  return parts.map((part, i) => (i % 2 === 1 ? part : part.replace(REQUIREMENT_ID, (id) => `[${id}](#req-${id})`))).join('');
+}

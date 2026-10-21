@@ -78,6 +78,8 @@ const PLAN = [
   '',
   'The approach text.',
   '',
+  '## Tasks',
+  '',
   '### T1: Refuse an eleventh photo (`claims-core`)',
   '',
 ].join('\n');

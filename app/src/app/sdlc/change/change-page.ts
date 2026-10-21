@@ -8,7 +8,6 @@ import { HlmTabsImports } from '@spartan-ng/helm/tabs';
 import { BuildView } from '../build/build-view';
 import { ChangesView } from '../changes/changes-view';
 import { BuildDialog } from '../../ui/build-dialog';
-import { BuildLogTable } from '../../ui/build-log-table';
 import { BuildRefusalDialog } from '../../ui/build-refusal-dialog';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
 import { DocLayout } from '../../ui/doc-layout';
@@ -17,15 +16,18 @@ import { FeedbackDialog } from '../../ui/feedback-dialog';
 import { LeftoverDialog } from '../../ui/leftover-dialog';
 import { LockOverlay } from '../../ui/lock-overlay';
 import { PrListDialog } from '../../ui/pr-list-dialog';
+import { RequirementsView } from '../../ui/requirements-view';
+import { Segmented } from '../../ui/segmented';
 import { SdlcSession } from '../../ui/sdlc-session';
 import { SdlcToolbar } from '../../ui/sdlc-toolbar';
 import { StagePills } from '../../ui/stage-pills';
+import { TasksView } from '../../ui/tasks-view';
 import { ChangePageViewModel } from './change-page.view-model';
 
 @Component({
   selector: 'app-change-page',
   providers: [ChangePageViewModel, provideIcons({ lucideTriangleAlert })],
-  imports: [NgIcon, HlmAlertImports, HlmButtonImports, HlmTabsImports, SdlcToolbar, StagePills, DocLayout, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildLogTable, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildView, ChangesView],
+  imports: [NgIcon, HlmAlertImports, HlmButtonImports, HlmTabsImports, SdlcToolbar, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildView, ChangesView],
   templateUrl: './change-page.html',
 })
 export class ChangePage {
