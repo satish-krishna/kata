@@ -12,6 +12,7 @@ const problems: Problem[] = [
   { file: 'spec.md', line: 31, message: 'scenario is outside a requirement' },
 ];
 const lines = ['line 14: requirement has no ID', 'line 31: scenario is outside a requirement'];
+const filed = ['spec.md line 14: requirement has no ID', 'spec.md line 31: scenario is outside a requirement'];
 const read = (layout: number, over: Problem[] = []): ReadResult => ({ kind: 'spec', layout, document: { requirements: [] }, problems: over });
 const error: ReadError = { kind: 'error', message: 'front matter is not closed' };
 const warn = (text: string, withLines: string[] = []): DocNotice => ({ tone: 'warning', text, lines: withLines });
@@ -54,7 +55,7 @@ describe('shownBuild', () => {
 
   it('problems from a layout 2 log are not hidden behind the older-layout label of another log (F3)', () => {
     const got = shownBuild([older, { layout: 2, problems }], ready);
-    expect(got.notice).toEqual(warn('This document does not follow the layout', lines));
+    expect(got.notice).toEqual(warn('This document does not follow the layout', filed));
   });
 
   it('names the file of each problem when the problems span more than one document (F22)', () => {
@@ -65,8 +66,13 @@ describe('shownBuild', () => {
     expect(shownBuild([{ layout: 2, problems: [plan] }, { layout: 2, problems: [log] }], ready).notice).toEqual(expected);
   });
 
+  it('names the file of each problem even when every problem comes from one document (F24)', () => {
+    const log: Problem = { file: 'build/kata.md', line: 14, message: 'entry T7 has no commits' };
+    expect(shownBuild([{ layout: 2, problems: [log] }], ready).notice).toEqual(warn('This document does not follow the layout', ['build/kata.md line 14: entry T7 has no commits']));
+  });
+
   it('problems with no layout of their own still show', () => {
-    expect(shownBuild([current, { layout: null, problems }], ready).notice).toEqual(warn('This document does not follow the layout', lines));
+    expect(shownBuild([current, { layout: null, problems }], ready).notice).toEqual(warn('This document does not follow the layout', filed));
   });
 
   it('one older log labels the tab when nothing has problems', () => {
