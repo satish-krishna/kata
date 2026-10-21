@@ -11,6 +11,7 @@ import { installClipping } from './clipping.mjs';
 export const CHANGE_ROUTES = [
   { route: 'sdlc/claims/2026-10-16-fraud-flag', name: 'a change in an early stage', pills: 4, links: 0 },
   { route: 'sdlc/claims/2026-10-18-photo-limits-shipped', name: 'a finished change with three pull requests', pills: 4, links: 0, menu: '3 PRs' },
+  { route: 'sdlc/claims/2026-10-18-photo-limits-shipped?demo=one-pr', name: 'a finished change with one pull request', pills: 4, links: 1 },
 ];
 
 const LONG_WORKSPACE = 'acme-claims-regional-underwriting-plat-x'; // 40 characters
