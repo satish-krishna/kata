@@ -202,14 +202,16 @@
 .k-modecard__body { font: var(--text-sm)/1.5 var(--font-sans); color: var(--text-secondary); }
 .k-mode__foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
 .k-mode__remember { display: flex; align-items: center; gap: var(--space-3); color: var(--text-secondary); cursor: pointer; }
-.k-modebadge { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--accent-text); padding: var(--space-1-5) var(--space-2-5); border: 1px solid var(--border-default); border-radius: var(--radius-xs); cursor: pointer; }
+.k-modebadge { flex: none; white-space: nowrap; font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--accent-text); padding: var(--space-1-5) var(--space-2-5); border: 1px solid var(--border-default); border-radius: var(--radius-xs); cursor: pointer; }
 .k-modebadge:hover:not(:disabled) { border-color: var(--accent); }
 .k-modebadge:disabled { opacity: 0.5; cursor: default; }
 
 /* ---------- AI-SDLC: toolbar, workspace home, dialogs ---------- */
-.k-crumbs { display: flex; align-items: center; gap: var(--space-2); color: var(--text-faint); }
-.k-crumbs__item { font: var(--weight-medium) var(--text-base)/1 var(--font-sans); color: var(--text-secondary); }
-.k-branch { font: var(--font-code-sm); color: var(--text-secondary); padding: var(--space-1-5) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-inset); }
+.k-crumbs { display: flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--text-faint); }
+.k-crumbs > ng-icon { flex: none; }
+/* A change name is long; it gives way first, on one line, and the full name sits in its title. */
+.k-crumbs__item { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--weight-medium) var(--text-base)/1 var(--font-sans); color: var(--text-secondary); }
+.k-branch { flex: none; white-space: nowrap; font: var(--font-code-sm); color: var(--text-secondary); padding: var(--space-1-5) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-inset); }
 .k-wstrigger { display: inline-flex; align-items: center; justify-content: space-between; gap: var(--space-3); width: 16rem; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-inset); color: var(--text-primary); cursor: pointer; }
 .k-wstrigger:hover:not(:disabled) { border-color: var(--border-strong); }
 .k-wstrigger:disabled { opacity: 0.5; cursor: default; }
@@ -298,15 +300,15 @@
 .k-change__missing { padding: var(--space-5); }
 
 /* The stage pills in the toolbar: each is the tab for its panel; the open one carries the accent, the current stage keeps aria-current. */
-.k-pills { display: flex; align-items: center; gap: var(--space-1); margin-inline-start: var(--space-4); min-width: 0; }
+.k-pills { display: flex; flex: none; align-items: center; gap: var(--space-1); margin-inline-start: var(--space-4); }
 .k-pill { padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; font: inherit; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
 .k-pill:not(:disabled):hover { background: var(--surface-hover); }
 .k-pill[aria-selected="true"] { border-color: var(--accent-border); background: var(--accent-subtle); color: var(--text-primary); }
 .k-pill:disabled { cursor: default; color: var(--text-muted); }
 .k-pill .k-status { color: inherit; }
-.k-prlinks { display: flex; align-items: center; gap: var(--space-4); white-space: nowrap; }
-.k-prlinks__label { font: var(--text-xs)/1 var(--font-mono); color: var(--text-muted); }
-.k-prlinks a { color: var(--accent-text); text-decoration: none; }
+.k-prlinks { display: flex; align-items: center; gap: var(--space-4); min-width: 0; white-space: nowrap; }
+.k-prlinks__label { flex: none; font: var(--text-xs)/1 var(--font-mono); color: var(--text-muted); }
+.k-prlinks a { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--accent-text); text-decoration: none; }
 .k-prlinks a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 /* The strip under the toolbar belongs to the open tab: its status in words, its file, and the stage actions. */

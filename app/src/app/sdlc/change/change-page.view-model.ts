@@ -211,7 +211,13 @@ export class ChangePageViewModel {
   });
   /** The pull requests that have an address, for the toolbar's links; none while a build or a skill run holds the page. */
   readonly pullLinks = computed(() =>
-    this.held() ? [] : this.pullRequests().flatMap((p) => (p.url === null ? [] : [{ repo: p.repo, url: p.url, number: prNumber(p.url) }])),
+    this.held()
+      ? []
+      : this.pullRequests().flatMap((p) => {
+          if (p.url === null) return [];
+          const number = prNumber(p.url);
+          return [{ repo: p.repo, url: p.url, number, label: number === null ? p.repo : `${p.repo} #${number}` }];
+        }),
   );
   /** The master repository's branch, unless it is the change's own branch, which the pills already imply. */
   readonly branchChip = computed(() => {

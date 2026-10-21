@@ -29,7 +29,7 @@
   <nav class="k-crumbs" aria-label="Breadcrumb">
     @for (crumb of crumbs(); track $index) {
       <ng-icon name="lucideChevronRight" size="14" />
-      <span class="k-crumbs__item">{{ crumb }}</span>
+      <span class="k-crumbs__item" [attr.title]="crumb">{{ crumb }}</span>
     }
   </nav>
   @if (!blocked() && branch(); as b) {

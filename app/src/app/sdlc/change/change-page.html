@@ -19,7 +19,7 @@
       <nav toolbarLinks class="k-prlinks" aria-label="Pull requests">
         <span class="k-prlinks__label">PRs</span>
         @for (link of vm.pullLinks(); track link.repo) {
-          <a class="k-mono" [href]="link.url" target="_blank" rel="noopener noreferrer">{{ link.repo }}@if (link.number !== null) { #{{ link.number }}}</a>
+          <a class="k-mono" [href]="link.url" [attr.title]="link.label" target="_blank" rel="noopener noreferrer">{{ link.label }}</a>
         }
       </nav>
     }
