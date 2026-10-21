@@ -758,6 +758,43 @@ mod tests {
         assert!(matches!(out, Err(BuildError::Refused(_))), "{out:?}");
     }
 
+    /// A fixture whose repository "api" has all its tasks finished and is not checked out.
+    fn finished_api_missing() -> Fx {
+        let fx = fixture_with(&[("T1", "app"), ("T2", "api")], &["app", "api"], &["app"]);
+        testutil::commit_file(
+            &fx.master,
+            &format!("intent/{S}/{C}/build/api.md"),
+            "# Build log: api\n\n| Task | Commits | Departure |\n|---|---|---|\n| T2 | `abc1234` | none |\n",
+            "log",
+        );
+        fx
+    }
+
+    #[test]
+    fn participants_skip_a_finished_repo_that_is_not_checked_out_unless_a_round_names_it_r2_4() {
+        let fx = finished_api_missing();
+        let names = |p: Vec<Participant>| p.into_iter().map(|p| p.repo).collect::<Vec<_>>();
+        assert_eq!(
+            names(participants(&fx.folder, "m", S, C, None).unwrap()),
+            ["m", "app"]
+        );
+        let out = participants(&fx.folder, "m", S, C, Some("api"));
+        let Err(BuildError::Refused(msg)) = out else {
+            panic!("a round aimed at a repository that is not checked out must be refused: {out:?}")
+        };
+        assert!(msg.contains("api"), "{msg}");
+    }
+
+    #[test]
+    fn prepare_refuses_a_round_aimed_at_a_finished_repo_that_is_not_checked_out_r2_4() {
+        let fx = finished_api_missing();
+        let start = ready(prep_pending(&fx, false, None));
+        let names: Vec<&str> = start.repos.iter().map(|r| r.repo.as_str()).collect();
+        assert_eq!(names, ["app"]);
+        let msg = refusal(prep_pending(&fx, false, Some("api")));
+        assert!(msg.contains("api"), "{msg}");
+    }
+
     #[test]
     fn prepare_skips_repos_whose_tasks_are_all_finished() {
         let fx = fixture();

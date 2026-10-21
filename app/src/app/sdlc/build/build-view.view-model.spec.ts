@@ -144,6 +144,20 @@ describe('BuildViewModel', () => {
     expect(denied).not.toContain('/claims-core/**');
   });
 
+  it('a repository the backend does not report as checked out stops with an error and never runs in a guessed folder (R2.4)', async () => {
+    const { vm, transport, runner } = setup();
+    vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone().filter((p) => p.repo !== 'claims-core'));
+    const runInRepo = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
+      link.onRun?.(`fake-${target.repo}`);
+      return { exit: 0, error: null };
+    });
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    expect(runInRepo.mock.calls.some(([t]) => t.repo === 'claims-core')).toBe(false);
+    expect(row(vm, 'claims-core').tone).toBe('error');
+    expect(row(vm, 'claims-core').label).toContain('claims-core');
+  });
+
   it('names the work clock against the time limit', async () => {
     const { vm, transport } = setup();
     await vm.start(await handoffFor(transport, { timeoutSecs: 5400 }), CTX);
