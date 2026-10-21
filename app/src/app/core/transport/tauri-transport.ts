@@ -76,8 +76,8 @@ export class TauriTransport extends KataTransport {
   sdlcBranches(master: string) { return this.ipc.invoke<BranchInfo>('sdlc_branches', { master }); }
   sdlcReadDoc(master: string, system: string, change: string, doc: string) { return this.ipc.invoke<string | null>('sdlc_read_doc', { master, system, change, doc }); }
   sdlcSnapshot(master: string) { return this.ipc.invoke<Snapshot>('sdlc_snapshot', { master }); }
-  sdlcLeftovers(master: string, before: Snapshot, productRepos: string[], _build?: BuildScope) { return this.ipc.invoke<Leftovers>('sdlc_leftovers', { master, before, productRepos }); }
-  sdlcDiscard(master: string, before: Snapshot, paths: string[], _build?: BuildScope) { return this.ipc.invoke<void>('sdlc_discard', { master, before, paths }); }
+  sdlcLeftovers(master: string, before: Snapshot, productRepos: string[], build?: BuildScope) { return this.ipc.invoke<Leftovers>('sdlc_leftovers', { master, before, productRepos, build }); }
+  sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope) { return this.ipc.invoke<void>('sdlc_discard', { master, before, paths, build }); }
   sdlcStartChange(master: string, base: string) { return this.ipc.invoke<string>('sdlc_start_change', { master, base }); }
   sdlcFinishChange(master: string, pending: string, base: string) { return this.ipc.invoke<FinishOutcome>('sdlc_finish_change', { master, pending, base }); }
   sdlcCheckout(master: string, branch: string) { return this.ipc.invoke<void>('sdlc_checkout', { master, branch }); }

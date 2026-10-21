@@ -1,5 +1,6 @@
 import { Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Router } from '@angular/router';
+import type { BuildScope } from '@bindings/BuildScope';
 import type { BuildStart } from '@bindings/BuildStart';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { FinishOutcome } from '@bindings/FinishOutcome';
@@ -48,7 +49,8 @@ type Baseline = { master: string; snapshot: Snapshot; productRepos: string[] };
 type PendingLink = { workspace_id: string; system: string; change: string; stage: string; started_at: number };
 
 /** One repository's uncommitted edits left by a run, with the snapshot that run started from. */
-export type RepoLeftovers = { repo: string; path: string; snapshot: Snapshot; data: Leftovers };
+/** What one repository's run left behind. `build` is set when the run belonged to a build: only that change's build log rows are build log data. */
+export type RepoLeftovers = { repo: string; path: string; snapshot: Snapshot; data: Leftovers; build?: BuildScope };
 /** What the engine needs to start the build: the change and the plugin that can run it. */
 export type BuildRequest = {
   folder: string;
@@ -288,9 +290,10 @@ export class SdlcRunner {
       this.toasts.error(`${target.repo}: the engine is still stopping. Nothing was cleaned up.`);
       return { exit, error: 'The engine is still stopping' };
     }
+    const build: BuildScope = { system: link.system, change: link.change };
     let data = EMPTY;
     try {
-      data = await this.transport.sdlcLeftovers(target.path, snapshot, []);
+      data = await this.transport.sdlcLeftovers(target.path, snapshot, [], build);
     } catch (e) {
       this.toasts.error(`Could not read what the run left in ${target.repo}: ${message(e)}`);
     }
@@ -301,7 +304,7 @@ export class SdlcRunner {
     const unsaved = rows.filter((r) => !kept.touched_dirty.includes(r) && !kept.created.includes(r));
     kept.touched_dirty = [...kept.touched_dirty, ...unsaved.filter((r) => r in masterSnapshot.dirty)];
     kept.created = [...kept.created, ...unsaved.filter((r) => !(r in masterSnapshot.dirty))];
-    if (hasUncommitted(kept)) this.held = [...this.held.filter((h) => h.repo !== target.repo), { repo: target.repo, path: target.path, snapshot, data: kept }];
+    if (hasUncommitted(kept)) this.held = [...this.held.filter((h) => h.repo !== target.repo), { repo: target.repo, path: target.path, snapshot, data: kept, build }];
     return { exit, error };
   }
 
@@ -346,7 +349,7 @@ export class SdlcRunner {
     const entry = this.pending().find((p) => p.repo === repo);
     if (!entry) return false;
     try {
-      await this.transport.sdlcDiscard(entry.path, entry.snapshot, paths);
+      await this.transport.sdlcDiscard(entry.path, entry.snapshot, paths, ...(entry.build ? [entry.build] : []));
     } catch (e) {
       this.toasts.error(`Could not discard: ${message(e)}`);
       return false;

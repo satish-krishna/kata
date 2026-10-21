@@ -96,10 +96,12 @@ pub(crate) fn dirty_files(dir: &Path) -> Result<Vec<String>, GitError> {
 /// change, or `None` for any other path. Rows are R6.6 data of the build they belong to: nothing
 /// here may delete them, and no working tree's leftovers include one. `participants` reports a row
 /// under the repository it names. Another change's row is an ordinary file of the master.
-pub(crate) fn build_log_owner<'a>(path: &'a str, _system: &str, _change: &str) -> Option<&'a str> {
+pub(crate) fn build_log_owner<'a>(path: &'a str, system: &str, change: &str) -> Option<&'a str> {
     let parts: Vec<&str> = path.split(['/', '\\']).collect();
     match parts.as_slice() {
-        ["intent", _, _, "build", file] => file.strip_suffix(".md").filter(|repo| !repo.is_empty()),
+        ["intent", s, c, "build", file] if *s == system && *c == change => {
+            file.strip_suffix(".md").filter(|repo| !repo.is_empty())
+        }
         _ => None,
     }
 }
@@ -394,7 +396,7 @@ mod tests {
         let l = leftovers(&m, &before, &[], Some(&scope())).unwrap();
         assert_eq!(
             l.discardable,
-            vec![OTHER_CHANGE_ROW, OTHER_SYSTEM_ROW, "scratch.txt"]
+            vec![OTHER_SYSTEM_ROW, OTHER_CHANGE_ROW, "scratch.txt"]
         );
     }
 
