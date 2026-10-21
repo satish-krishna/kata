@@ -29,7 +29,7 @@ async function open(setup: Setup) {
   const transport = new MockTransport();
   const real = transport.sdlcChanges.bind(transport);
   vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
-    (await real(m, s)).map((c): ChangeInfo => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage: 'plan-awaiting' } : c)),
+    (await real(m, s)).map((c): ChangeInfo => (c.change === MOCK_BUILD_CHANGE && !setup.logLayouts ? { ...c, stage: 'plan-awaiting' } : c)),
   );
   vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_m, _s, _c, stem) => PROSE(stem));
   vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(setup.readiness ?? READY);

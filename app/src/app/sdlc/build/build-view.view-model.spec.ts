@@ -487,7 +487,7 @@ describe('BuildViewModel', () => {
     });
     const status: BuildStatus = {
       hasTasks: true,
-      problems: [],
+      problems: [], logLayouts: [],
       departures: [],
       tasks: [task('T1', 'one', 'claims-core', [], false), task('T2', 'two', 'customer-portal', [], true), task('T3', 'three', 'customer-portal', ['T1'], false)],
       repos: [
@@ -524,7 +524,7 @@ describe('BuildViewModel', () => {
     });
     const allDone: BuildStatus = {
       hasTasks: true,
-      problems: [],
+      problems: [], logLayouts: [],
       departures: [],
       tasks: [doneTask('T1', 'claims-core'), doneTask('T2', 'customer-portal')],
       repos: [
@@ -627,7 +627,7 @@ describe('BuildViewModel', () => {
     });
     vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({
       hasTasks: true,
-      problems: [],
+      problems: [], logLayouts: [],
       departures: [],
       tasks: [doneTask('T1', 'claims-core'), doneTask('T2', 'customer-portal')],
       repos: [
@@ -670,7 +670,7 @@ describe('BuildViewModel', () => {
     });
     const allDone: BuildStatus = {
       hasTasks: true,
-      problems: [],
+      problems: [], logLayouts: [],
       departures: [],
       tasks: [doneTask('T1', 'claims-core'), doneTask('T2', 'customer-portal')],
       repos: [
@@ -680,7 +680,7 @@ describe('BuildViewModel', () => {
     };
     const coreDonePortalReady: BuildStatus = {
       hasTasks: true,
-      problems: [],
+      problems: [], logLayouts: [],
       departures: [],
       tasks: [doneTask('T1', 'claims-core'), { id: 'T2', name: 'two', repo: 'customer-portal', dependsOn: [], text: '### T2', row: null }],
       repos: [

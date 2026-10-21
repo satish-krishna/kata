@@ -203,7 +203,9 @@ export class ChangePageViewModel {
     const readiness = this.readiness();
     if (readiness === null || this.shownDoc() !== 'build') return null;
     const problems = [...(this.status()?.problems ?? []), ...(this.reviewRecord()?.problems ?? [])];
-    return docNotice(this.reviewRecord()?.layout ?? 2, problems, readiness);
+    // The oldest layout among the build logs and the review decides the label.
+    const layout = Math.min(this.reviewRecord()?.layout ?? 2, ...(this.status()?.logLayouts ?? []).map((l) => l.layout));
+    return docNotice(layout, problems, readiness);
   });
   /** The shown spec or plan as the format program read it, unless a notice says the document is shown as plain text. */
   private readonly parsed = computed<ReadResult | null>(() => (this.docNotice()?.plain ? null : this.read()));

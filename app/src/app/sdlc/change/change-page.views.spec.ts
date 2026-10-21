@@ -139,7 +139,7 @@ const TASKS: TaskStatus[] = [
   task('T3', 'Show the message', 'customer-portal', ['T1'], null),
   task('T4', 'Notes only', 'customer-portal', [], null),
 ];
-const status = (tasks: TaskStatus[]): BuildStatus => ({ tasks, repos: [], departures: [], hasTasks: tasks.length > 0, problems: [] });
+const status = (tasks: TaskStatus[]): BuildStatus => ({ tasks, repos: [], departures: [], hasTasks: tasks.length > 0, problems: [], logLayouts: [] });
 
 /**
  * `tasks` are the build status's tasks (their rows); `parsed` overrides what the format program reads: by default the

@@ -407,13 +407,13 @@ export class SdlcMock {
   // ---- the build ----
 
   buildStatus(changeName: string): BuildStatus {
-    if (changeName !== MOCK_BUILD_CHANGE && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false, problems: [] };
+    if (changeName !== MOCK_BUILD_CHANGE && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] };
     // The finished change has every task built; the demo build commits its rows one run at a time.
     const rowOf = (t: PlanTask): BuildRow | null =>
       changeName === MOCK_DONE_CHANGE ? { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } : (this.rows.get(t.id) ?? null);
     const tasks: TaskStatus[] = BUILD_PLAN.map((t) => ({ ...t, dependsOn: [...t.dependsOn], text: taskText(t), row: rowOf(t) }));
     const departures = tasks.flatMap((t) => (t.row?.departure ? [{ task: t.id, repo: t.repo, planText: t.name, departure: t.row.departure }] : []));
-    return { tasks, repos: BUILD_REPOS.map((r) => this.repoStatus(r)), departures, hasTasks: true, problems: [] };
+    return { tasks, repos: BUILD_REPOS.map((r) => this.repoStatus(r)), departures, hasTasks: true, problems: [], logLayouts: [] };
   }
 
   private repoStatus(repo: string): RepoStatus {

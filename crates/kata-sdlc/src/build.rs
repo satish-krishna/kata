@@ -104,6 +104,18 @@ pub struct BuildStatus {
     pub has_tasks: bool,
     /// Everything the format program found wrong in the plan and the build logs.
     pub problems: Vec<Problem>,
+    /// The layout each build log is written in, so the Build tab can label an older one.
+    pub log_layouts: Vec<LogLayout>,
+}
+
+/// The layout one build log is written in.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct LogLayout {
+    pub repo: String,
+    pub layout: u32,
 }
 
 /// Rows a build log holds in the working tree and not yet in `HEAD`.
@@ -382,6 +394,15 @@ pub fn status(
         repos,
         departures,
         problems: committed.problems(),
+        log_layouts: committed
+            .logs
+            .iter()
+            .zip(&committed.log_layouts)
+            .map(|(log, layout)| LogLayout {
+                repo: log.repo.clone(),
+                layout: *layout,
+            })
+            .collect(),
     })
 }
 
@@ -628,6 +649,13 @@ mod tests {
         assert_eq!(st.tasks.len(), 30);
         assert!(st.tasks.iter().all(|t| t.row.is_some()), "{st:?}");
         assert!(st.repos.iter().all(|r| r.state == RepoState::Done));
+        assert_eq!(
+            st.log_layouts,
+            vec![LogLayout {
+                repo: "kata".into(),
+                layout: 1
+            }]
+        );
     }
 
     #[test]
@@ -644,6 +672,7 @@ mod tests {
         assert_eq!(st.tasks[1].row.as_ref().unwrap().commits, vec!["b222222"]);
         assert!(st.tasks[2].row.is_none());
         assert_eq!((st.repos[0].tasks, st.repos[0].finished), (3, 2));
+        assert_eq!(st.log_layouts[0].layout, 2);
     }
 
     #[test]
