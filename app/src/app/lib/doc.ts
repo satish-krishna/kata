@@ -1,10 +1,11 @@
 import remarkGfm from 'remark-gfm';
 import remarkParse from 'remark-parse';
 import { unified } from 'unified';
+import { parseFrontMatter } from './sdlc';
 
 /* Helpers over a markdown document that the change page's document layout shares: the heading outline and one `##`
- * section. The heading slug lives here too, so the outline's ids and the ids on the rendered heading elements come
- * from one function and a click on an outline entry can find its heading. */
+ * section. The heading slug lives here too; MarkdownBody puts the outline's ids on the rendered heading elements, so a
+ * click on an outline entry can find its heading. */
 
 export type Heading = { level: number; text: string; id: string };
 
@@ -18,7 +19,7 @@ function slug(text: string): string {
 }
 
 /** One slugger per document, fed headings in document order: the second `Approach` becomes `approach-1`. */
-export function headingSlugger(): (text: string) => string {
+function headingSlugger(): (text: string) => string {
   const used = new Map<string, number>();
   return (text) => {
     const base = slug(text);
@@ -54,9 +55,8 @@ const parser = unified().use(remarkParse).use(remarkGfm);
 
 /** Every heading of a markdown document in order. A leading front-matter block is not a heading. */
 export function outline(md: string): Heading[] {
-  const body = md.replace(/^---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/, '');
   const found: Node[] = [];
-  headingsIn(parser.parse(body) as unknown as Node, found);
+  headingsIn(parser.parse(parseFrontMatter(md).body) as unknown as Node, found);
   const next = headingSlugger();
   return found.map((h) => {
     const text = textOf(h).trim();

@@ -5,7 +5,7 @@ import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
 import type { KataEvent, RunDetail } from "./events";
 import { validateLocal } from "./mock";
-import { DONE_LABEL, actionLabel, actionsFor, actionsForChange, canBuild, hasAiSdlcPlugin, primaryAction, reviewFindings, revisits, runCounts, specFor, splitFrontMatter, stageLabel, stopMessage, transcriptRunId, type BuildRun, type RunContext, type StageAction } from "./sdlc";
+import { DONE_LABEL, actionLabel, actionsFor, actionsForChange, canBuild, hasAiSdlcPlugin, primaryAction, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildRun, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -229,42 +229,6 @@ describe("transcriptRunId", () => {
   });
 });
 
-describe("splitFrontMatter", () => {
-  it("separates a leading front-matter block into one mono line and the body", () => {
-    const out = splitFrontMatter("---\nstatus: accepted\ndate: 2026-10-12\n---\n# Title\n\nBody\n");
-    expect(out.frontMatter).toBe("status: accepted · date: 2026-10-12");
-    expect(out.body).toBe("# Title\n\nBody\n");
-  });
-
-  it("returns the whole text as the body when there is no front matter", () => {
-    expect(splitFrontMatter("# Title\n")).toEqual({ frontMatter: null, body: "# Title\n" });
-    expect(splitFrontMatter("---\nstatus: draft\n# never closed")).toEqual({ frontMatter: null, body: "---\nstatus: draft\n# never closed" });
-  });
-
-  it("handles Windows line endings", () => {
-    const out = splitFrontMatter("---\r\nstatus: draft\r\n---\r\n# T\r\n");
-    expect(out.frontMatter).toBe("status: draft");
-    expect(out.body).toBe("# T\r\n");
-  });
-});
-
-describe("runCounts", () => {
-  const link = (stage: string, run_id: string, change = "c1", system = "claims", workspace_id = "ws") =>
-    ({ workspace_id, system, change, stage, run_id, started_at: 1 });
-  const rec = (id: string, kata: string) => ({ id, kata, started_at: 1, isolation: "none" });
-
-  it("counts linked runs per stage for this workspace, system and change only", () => {
-    const links = [link("intent", "a"), link("intent", "b"), link("spec", "c"), link("spec", "x", "other"), link("plan", "y", "c1", "claims", "ws2")];
-    expect(runCounts(links, [], "ws", "claims", "c1")).toEqual({ intent: 2, spec: 1, plan: 0, build: 0, review: 0 });
-  });
-
-  it("adds history records that carry the stage's deterministic name and are not already linked", () => {
-    const links = [link("spec", "r1")];
-    const records = [rec("r1", "sdlc-claims-c1-spec"), rec("r2", "sdlc-claims-c1-spec"), rec("r3", "sdlc-claims-c1-plan"), rec("r4", "sdlc-claims-other-spec")];
-    expect(runCounts(links, records, "ws", "claims", "c1")).toEqual({ intent: 0, spec: 2, plan: 1, build: 0, review: 0 });
-  });
-});
-
 describe("actionLabel and primaryAction", () => {
   it("labels every action in sentence case", () => {
     expect(actionsFor("spec-awaiting").map(actionLabel)).toEqual(["Continue spec", "Accept spec", "Reopen intent"]);
@@ -431,14 +395,6 @@ describe("canBuild", () => {
     expect(canBuild(withSkill, null)).toBe(false);
     expect(canBuild([{ ...plugin("ai-sdlc"), provides: ["skill:plan"] }], "0.6.0")).toBe(false);
     expect(canBuild([], "0.6.0")).toBe(false);
-  });
-});
-
-describe("runCounts for build", () => {
-  it("counts build:<repo> links as build and review links as review", () => {
-    const link = (stage: string, run_id: string) => ({ workspace_id: "ws", system: "claims", change: "c1", stage, run_id, started_at: 1 });
-    const got = runCounts([link("build:app", "a"), link("build:api", "b"), link("review", "c"), link("spec", "d")], [], "ws", "claims", "c1");
-    expect(got).toEqual({ intent: 0, spec: 1, plan: 0, build: 2, review: 1 });
   });
 });
 

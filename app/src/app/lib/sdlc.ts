@@ -379,14 +379,6 @@ function frontMatterBlock(text: string): { lines: string[]; body: string } | nul
   return m ? { lines: m[1].split(/\r?\n/), body: text.slice(m[0].length) } : null;
 }
 
-/** Split a leading `---` front-matter block off a document. The block becomes one `key: value · key: value` line. */
-export function splitFrontMatter(text: string): { frontMatter: string | null; body: string } {
-  const block = frontMatterBlock(text);
-  if (!block) return { frontMatter: null, body: text };
-  const line = block.lines.map((l) => l.trim()).filter((l) => l !== "").join(" · ");
-  return { frontMatter: line === "" ? null : line, body: block.body };
-}
-
 /**
  * A document's front matter as `[key, value]` fields in the order written, and the text after the block. A value is
  * the raw scalar text: a list stays as written (`[kata@7226252]`). Lines that are not `key: value` are skipped.
@@ -402,12 +394,10 @@ export function parseFrontMatter(text: string): { fields: [string, string][]; bo
   return { fields, body: block.body };
 }
 
-export type StepCounts = Record<"intent" | "spec" | "plan" | "build" | "review", number>;
 /** Which of a change's three documents exist on disk. */
 export type DocsPresent = Record<"intent" | "spec" | "plan", boolean>;
 
-export type RunStage = keyof StepCounts;
-const RUN_STAGES: readonly RunStage[] = ["intent", "spec", "plan", "build", "review"];
+export type RunStage = "intent" | "spec" | "plan" | "build" | "review";
 
 /** The stage a transcript link belongs to: `build:<repo>` is the build; an unknown stage belongs to none. */
 function linkStage(stage: string): RunStage | null {
@@ -444,19 +434,6 @@ export function stageRuns(
     if (own) out.set(r.id, r);
   }
   return [...out.values()].sort((a, b) => b.started_at - a.started_at);
-}
-
-/** Runs so far per stage: the length of each stage's `stageRuns`, so a count and its list cannot disagree. */
-export function runCounts(
-  links: readonly RunLink[],
-  records: readonly RunRecord[],
-  workspaceId: string,
-  system: string,
-  change: string,
-): StepCounts {
-  const out: StepCounts = { intent: 0, spec: 0, plan: 0, build: 0, review: 0 };
-  for (const stage of RUN_STAGES) out[stage] = stageRuns(links, records, workspaceId, system, change, stage).length;
-  return out;
 }
 
 export type PillStep = "intent" | "spec" | "plan" | "build";

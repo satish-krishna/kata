@@ -1,7 +1,7 @@
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { Stage } from '@bindings/Stage';
-import { parseFrontMatter, runCounts, stagePills, stageRuns, type StagePill } from './sdlc';
+import { parseFrontMatter, stagePills, stageRuns, type StagePill } from './sdlc';
 
 describe('parseFrontMatter', () => {
   // The three real Part 2 documents' front matter, copied.
@@ -89,16 +89,6 @@ describe('stageRuns', () => {
   it('lists a run once even when two links name it', () => {
     const links = [link('spec', 'r1', 5), link('spec', 'r1', 5)];
     expect(stageRuns(links, [rec('r1', 'sdlc-claims-c1-spec', 5)], 'ws', 'claims', 'c1', 'spec')).toHaveLength(1);
-  });
-
-  it('is what runCounts counts, for every stage', () => {
-    const links = [link('intent', 'i1', 1), link('spec', 's1', 2), link('build:app', 'b1', 3), link('review', 'v1', 4)];
-    const records = [rec('s1', 'sdlc-claims-c1-spec', 2), rec('s2', 'sdlc-claims-c1-spec', 7), rec('b2', 'sdlc-claims-c1-build-api', 8), rec('x', 'sdlc-claims-other-plan', 9)];
-    const counts = runCounts(links, records, 'ws', 'claims', 'c1');
-    for (const stage of ['intent', 'spec', 'plan', 'build', 'review'] as const) {
-      expect(counts[stage]).toBe(stageRuns(links, records, 'ws', 'claims', 'c1', stage).length);
-    }
-    expect(counts).toEqual({ intent: 1, spec: 2, plan: 0, build: 2, review: 1 });
   });
 });
 

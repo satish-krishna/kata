@@ -1,5 +1,3 @@
-import { renderMarkdownForDom } from '../ui/render-markdown';
-import { parseFrontMatter } from './sdlc';
 import { outline, section } from './doc';
 
 // An excerpt of the real Part 2 spec: heading levels, parentheses, a fence that holds "#" lines.
@@ -69,14 +67,6 @@ describe('outline', () => {
   it('is empty for a document with no headings', () => {
     expect(outline('Just text.\n')).toEqual([]);
     expect(outline('')).toEqual([]);
-  });
-
-  it('gives the same ids as the heading elements MarkdownBody renders', () => {
-    const md = `${SPEC}\n## Design\n\ntwice\n`;
-    const doc = new DOMParser().parseFromString(renderMarkdownForDom(parseFrontMatter(md).body), 'text/html');
-    const rendered = Array.from(doc.querySelectorAll('h1, h2, h3, h4, h5, h6')).map((h) => ({ text: h.textContent, id: h.id }));
-    expect(rendered).toEqual(outline(md).map((h) => ({ text: h.text, id: h.id })));
-    expect(rendered.at(-1)).toEqual({ text: 'Design', id: 'design-1' });
   });
 });
 
