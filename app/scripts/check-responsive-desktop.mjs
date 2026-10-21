@@ -1,14 +1,16 @@
-// Desktop-only responsive gate. Kata is a desktop app (laptop to ultrawide, no
-// mobile breakpoints), so jig's 375/768/1280 check is narrowed to 1280/1600.
-// Builds, serves dist/angular-jig/browser statically, and asserts that neither
-// route scrolls the page horizontally or clips content at either width.
+// Desktop-only responsive gate. Kata is a desktop app (laptop to ultrawide, no mobile breakpoints), so jig's 375/768/1280 check is
+// narrowed to 1280/1600, and the window's 1024 minimum is covered for the change page and the workspace home page.
+// Builds, serves dist/angular-jig/browser statically, and asserts that no route scrolls the page horizontally or clips content at
+// either width, then measures the change page's toolbar (real and long content), its Build strip and the home page in a real browser
+// with the fractional clipping measure of scripts/clipping.mjs.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertResponsive } from '../harness/gate/check-responsive.mjs';
 import { launchChromium, serveStatic } from '../harness/playwright/serve-and-visit.mjs';
-import { CHANGE_ROUTES, STRIP_STATES, checkBuildStrip, checkChangeToolbar, checkPrPopover, checkStripHeight } from './check-change-toolbar.mjs';
+import { checkHomePage } from './check-home-page.mjs';
+import { CHANGE_ROUTES, LONG_FIXTURES, STRIP_STATES, checkBuildStrip, checkChangeToolbar, checkPrPopover, checkStripHeight } from './check-change-toolbar.mjs';
 import { formatCorrectiveMessage } from '../harness/gate/responsive-guidance.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -46,10 +48,10 @@ try {
       failed = true;
     }
   }
-  // The change page's toolbar: pills, links, badge and name must fit side by side, not wrap or overlap.
+  // The change page's toolbar: pills, links, badge and name must fit side by side, not wrap or overlap, and long content must give way in the table's order.
   const browser = await launchChromium();
   try {
-    for (const spec of CHANGE_ROUTES) {
+    for (const spec of [...CHANGE_ROUTES, ...LONG_FIXTURES]) {
       for (const width of CHANGE_WIDTHS) {
         const fails = await checkChangeToolbar(browser, srv.origin, spec, width);
         if (fails.length) {
@@ -76,6 +78,14 @@ try {
           process.stderr.write(`route "/${state.route}": ${fails.join('\n')}\n`);
           failed = true;
         }
+      }
+    }
+    // The workspace home page, down to the window's minimum width.
+    for (const width of CHANGE_WIDTHS) {
+      const fails = await checkHomePage(browser, srv.origin, width);
+      if (fails.length) {
+        process.stderr.write(`${fails.join('\n')}\n`);
+        failed = true;
       }
     }
     for (const width of CHANGE_WIDTHS) {

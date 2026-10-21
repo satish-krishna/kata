@@ -14,6 +14,7 @@
 //      the window, the view sits flush under the tab strip with no frame of its own, and each repository header is one line.
 //   6. The strip never cuts a control off: for a build-ready change and for a finished build with three actions and the pull request note,
 //      at 768, 1024, 1280 and 1440 every control sits inside the strip and the strip inside the window, and at 1280 and up it is one row.
+//   7. The live build view's Changes strip has no actions, so it is one row at 1024 and 1280 (4b in the code, run on the page that is inside the build).
 import { STRIP_STATES, checkBuildStrip } from './check-change-toolbar.mjs';
 import { MD, WIDTHS, eventually, noHorizontalScroll, open, reporter, startBuild } from './check-build-support.mjs';
 
@@ -105,6 +106,19 @@ try {
     else if (!state.error) check(true, `${width}px: the list sits beside the diff`);
   }
 
+  // 4b. The live build view's Changes strip has no actions, so it is one row from 768 up: at the window's minimum width (1024) and its opening width (1280) too.
+  for (const width of [1024, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.waitForTimeout(300);
+    const row = await page.evaluate(() => {
+      const strip = document.querySelector('[data-testid="changes-strip"]');
+      const kids = [...strip.children, ...strip.querySelectorAll('.k-changes__end > *')].filter((el) => el.getBoundingClientRect().width > 0);
+      const mids = kids.map((el) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; });
+      return { spread: Math.max(...mids) - Math.min(...mids), count: kids.length, slotted: strip.querySelectorAll('.k-changes__end > :not(.k-changes__note)').length };
+    });
+    check(row.count > 0 && row.slotted === 0 && row.spread <= 4, `${width}x900: the live build view's Changes strip is one row (${row.count} items, ${row.slotted} slotted, vertical centers ${Math.round(row.spread)}px apart)`);
+  }
+
   check(errors.length === 0, `no page error, console error or failed request${errors.length ? `: ${errors.join(' | ')}` : ''}`);
 } finally {
   await close();
@@ -159,10 +173,7 @@ try {
           repoName: (() => {
             const el = [...document.querySelectorAll('[data-repo] .k-files__name')].find((n) => n.textContent.trim() === 'claims-intent');
             if (!el) return null;
-            // scrollWidth and clientWidth are whole pixels, so a name a fraction of a pixel too wide still reads as fitting while it paints an ellipsis; the text's own box is exact.
-            const range = document.createRange();
-            range.selectNodeContents(el);
-            return Math.max(el.scrollWidth - el.clientWidth, range.getBoundingClientRect().width - el.getBoundingClientRect().width > 0.02 ? 1 : 0);
+            return window.kataClip.textClipped(el);
           })(),
           repos: [...document.querySelectorAll('[data-repo]')].map((r) => ({ h: r.getBoundingClientRect().height, wraps: wraps(r) })),
         };
@@ -174,7 +185,7 @@ try {
       check(Math.abs(m.rootLeft - m.stripLeft) <= 1, `${width}x900: the Changes view lines up with the tab strip (${m.rootLeft} / ${m.stripLeft})`);
       check(m.listScroll <= 0, `${width}x900: the file list does not scroll sideways (scrollWidth - clientWidth = ${m.listScroll})`);
       check(m.stripRow.count > 0 && m.stripRow.spread <= 4, `${width}x900: the Changes strip is a single row (${m.stripRow.count} items, vertical centers ${m.stripRow.spread}px apart)`);
-      if (width === 1280) check(m.repoName !== null && m.repoName <= 0, `${width}x900: the claims-intent group name is not truncated (scrollWidth - clientWidth = ${m.repoName})`);
+      if (width === 1280) check(m.repoName !== null && m.repoName <= 0, `${width}x900: the claims-intent group name is not truncated (${m.repoName}px of it is cut off)`);
       check(m.strips === 1, `${width}x900: the Build tab has exactly one strip (${m.strips})`);
       check(m.repos.length > 0 && m.repos.every((r) => r.h <= m.fileH * 1.5), `${width}x900: every repository header is at most 1.5 file rows tall (file row ${m.fileH}; headers ${m.repos.map((r) => r.h)})`);
       check(m.repos.every((r) => !r.wraps), `${width}x900: no repository header wraps its branch (${m.repos.map((r) => r.wraps)})`);

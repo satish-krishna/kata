@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchChromium, serveStatic } from '../harness/playwright/serve-and-visit.mjs';
+import { installClipping } from './clipping.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = join(ROOT, 'dist', 'angular-jig', 'browser');
@@ -31,6 +32,7 @@ export async function open({ width = 1280, height = 900 } = {}) {
   const srv = await serveStatic(DIST, { spaFallback: true, headers: { 'content-security-policy': desktopCsp() } });
   const browser = await launchChromium();
   const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1 });
+  await installClipping(context);
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));

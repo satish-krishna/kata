@@ -10,6 +10,7 @@ const inputs = (over: Record<string, unknown> = {}) => ({
   workspaces: [WS], current: WS, missing: [], counts: {}, branch: 'main', locked: false, ...over,
 });
 const byLabel = (c: HTMLElement, label: string) => c.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+const switcher = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('button[aria-label^="Switch workspace"]')!;
 
 describe('SdlcToolbar', () => {
   it('shows the ai-sdlc badge, the workspace, and the master branch in mono', async () => {
@@ -64,12 +65,12 @@ describe('SdlcToolbar', () => {
 
   it('disables the workspace switcher while locked', async () => {
     const { container } = await render(SdlcToolbar, inputs({ locked: true }));
-    expect(byLabel(container, 'Switch workspace').disabled).toBe(true);
+    expect(switcher(container).disabled).toBe(true);
   });
 
   it('withholds the workspace switcher and branch while blocked', async () => {
     const { container } = await render(SdlcToolbar, inputs({ blocked: true }));
-    expect(container.querySelector('button[aria-label="Switch workspace"]')).toBeNull();
+    expect(switcher(container)).toBeNull();
     expect(container.querySelector('[data-testid="branch"]')).toBeNull();
     expect(byLabel(container, 'Switch mode (ai-sdlc)')).not.toBeNull();
   });

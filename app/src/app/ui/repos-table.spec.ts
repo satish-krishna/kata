@@ -26,6 +26,13 @@ describe('ReposTable', () => {
     expect(t).toContain('.ai-sdlc.json · 1 system');
   });
 
+  it('lets only the context cell wrap, so the table fits its pane at the 1024 minimum width', async () => {
+    const { container } = await render(ReposTable, { rows, marker: '' });
+    const row = container.querySelector<HTMLElement>('tbody tr')!;
+    const wraps = Array.from(row.children).map((td) => td.classList.contains('whitespace-normal'));
+    expect(wraps).toEqual([false, false, true, false]);
+  });
+
   it('offers Refresh context on fresh and stale rows, Run context on missing ones, nothing on the rest', async () => {
     const { container } = await render(ReposTable, { rows, marker: '' });
     expect(runButtons(container).map((b) => b.getAttribute('aria-label'))).toEqual([
