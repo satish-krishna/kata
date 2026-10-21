@@ -712,6 +712,97 @@ source_spec_commit: {spec_pin}
         assert_eq!(json["plan_unreadable"], serde_json::json!(false));
     }
 
+    /// An accepted intent and spec in `repo`; returns the spec commit a plan pins.
+    fn accepted_spec(repo: &Path, dir: &str) -> String {
+        testutil::commit_file(
+            repo,
+            &format!("{dir}/intent.md"),
+            "---
+status: accepted
+---
+intent
+",
+            "intent",
+        );
+        let intent_pin = git::run(repo, &["rev-parse", "HEAD"]).unwrap();
+        testutil::commit_file(
+            repo,
+            &format!("{dir}/spec.md"),
+            &format!(
+                "---
+status: accepted
+source_intent_commit: {intent_pin}
+---
+spec
+"
+            ),
+            "spec",
+        );
+        git::run(repo, &["rev-parse", "HEAD"]).unwrap()
+    }
+
+    /// F20: a written plan that is not committed yet has no tasks, which is a fact and not a failure to read.
+    #[test]
+    fn an_uncommitted_empty_plan_has_no_tasks_f20() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let dir = "intent/claims/2026-10-12-fnol";
+        let spec_pin = accepted_spec(&repo, dir);
+        testutil::write(
+            &repo,
+            &format!("{dir}/plan.md"),
+            &format!(
+                "---
+status: draft
+source_spec_commit: {spec_pin}
+---
+
+## Tasks
+"
+            ),
+        );
+        let got = list(Some(testutil::plugin_dir()), &repo, "claims");
+        let json = serde_json::to_value(&got[0]).unwrap();
+        assert_eq!(json["plan_unreadable"], serde_json::json!(false));
+        assert_eq!(json["stage"], serde_json::json!("plan-out-of-date"));
+        assert_eq!(json["out_of_date"], serde_json::json!("no-tasks"));
+    }
+
+    /// F20: an accepted plan the program could not read is neither a plan with no tasks nor a build to start.
+    #[test]
+    fn an_unreadable_accepted_plan_is_kept_out_of_the_build_stages_f20() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let dir = "intent/claims/2026-10-12-fnol";
+        let spec_pin = accepted_spec(&repo, dir);
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/plan.md"),
+            &format!(
+                "---
+status: accepted
+source_spec_commit: {spec_pin}
+---
+
+## Tasks
+
+### T1: One (`app`)
+
+- **Depends on:** none
+"
+            ),
+            "plan",
+        );
+        // No plugin: nothing could read the plan.
+        let got = list(None, &repo, "claims");
+        let json = serde_json::to_value(&got[0]).unwrap();
+        assert_eq!(json["plan_unreadable"], serde_json::json!(true));
+        assert_eq!(json["stage"], serde_json::json!("plan-unreadable"));
+        // With the plugin the same plan is a build to start.
+        let got = list(Some(testutil::plugin_dir()), &repo, "claims");
+        assert_eq!(got[0].stage, Stage::BuildReady);
+    }
+
     #[test]
     fn list_skips_non_change_folders() {
         let tmp = tempfile::tempdir().unwrap();

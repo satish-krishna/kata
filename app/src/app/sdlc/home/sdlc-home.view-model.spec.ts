@@ -501,3 +501,45 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     expect(saveWorkspaces).not.toHaveBeenCalled();
   });
 });
+
+describe("SdlcHomeViewModel plan notice (F20)", () => {
+  // The notice does not exist yet; read it through a cast so the tests fail on what they assert.
+  const noticeOf = (vm: SdlcHomeViewModel) => (vm as unknown as { listNotice?: () => { text: string; tone: string } | null }).listNotice?.() ?? null;
+  const withUnreadablePlan = (transport: MockTransport) => {
+    const real = transport.sdlcChanges.bind(transport);
+    vi.spyOn(transport, "sdlcChanges").mockImplementation(async (master, system) => {
+      const list = await real(master, system);
+      return list.map((c, i) => (i === 0 ? { ...c, stage: "plan-unreadable" as never, plan_unreadable: true } : c));
+    });
+  };
+
+  it("says to install the plugin on the change list when a plan could not be read and the plugin is missing", async () => {
+    const { vm, transport } = setup();
+    withUnreadablePlan(transport);
+    vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "missing" });
+    await vm.init();
+    expect(noticeOf(vm)?.text).toBe("Install the ai-sdlc plugin to read this document");
+    expect(noticeOf(vm)?.tone).toBe("warning");
+  });
+
+  it("says to update the plugin when it is too old", async () => {
+    const { vm, transport } = setup();
+    withUnreadablePlan(transport);
+    vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "tooOld", have: "0.6.0", need: "0.8.0" });
+    await vm.init();
+    expect(noticeOf(vm)?.text).toBe("Update the ai-sdlc plugin to 0.8.0 or later");
+  });
+
+  it("says a plan could not be read when the plugin is usable but the program did not run", async () => {
+    const { vm, transport } = setup();
+    withUnreadablePlan(transport);
+    await vm.init();
+    expect(noticeOf(vm)?.text).toContain("could not be read");
+  });
+
+  it("shows no notice when every plan was read", async () => {
+    const { vm } = setup();
+    await vm.init();
+    expect(noticeOf(vm)).toBeNull();
+  });
+});

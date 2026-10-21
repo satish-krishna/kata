@@ -454,3 +454,12 @@ describe("reviewFindings", () => {
     expect(reviewFindings(twice).map((f) => f.text)).toEqual(["new one"]);
   });
 });
+
+describe("the unreadable plan stage (F20)", () => {
+  it("offers no action, so no build can start from it", () => {
+    expect(actionsFor("plan-unreadable" as Stage)).toEqual([]);
+  });
+  it("is labeled as a plan that could not be read, in the warning tone", () => {
+    expect(stageLabel("plan-unreadable" as Stage)).toEqual({ step: "plan", text: "Plan · could not be read", tone: "warning" });
+  });
+});
