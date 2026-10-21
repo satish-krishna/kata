@@ -503,8 +503,7 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
 });
 
 describe("SdlcHomeViewModel plan notice (F20)", () => {
-  // The notice does not exist yet; read it through a cast so the tests fail on what they assert.
-  const noticeOf = (vm: SdlcHomeViewModel) => (vm as unknown as { listNotice?: () => { text: string; tone: string } | null }).listNotice?.() ?? null;
+  const noticeOf = (vm: SdlcHomeViewModel) => vm.listNotice();
   const withUnreadablePlan = (transport: MockTransport) => {
     const real = transport.sdlcChanges.bind(transport);
     vi.spyOn(transport, "sdlcChanges").mockImplementation(async (master, system) => {

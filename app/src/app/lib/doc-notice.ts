@@ -76,3 +76,14 @@ export function shownBuild(parts: readonly Part[], readiness: Readiness): Shown 
   if (readiness.kind !== 'ready') return { show: 'plain', notice: null };
   return { show: 'parsed', notice: judge(readiness.layouts, parts) };
 }
+
+/**
+ * The notice above the change list when some plan could not be read, so its stage is withheld. The plugin rows
+ * keep their wording from `shownDocument`; a usable plugin means the program itself could not run or read the plan.
+ */
+export function shownChangeList(readiness: Readiness, anyUnreadable: boolean): DocNotice | null {
+  if (!anyUnreadable) return null;
+  const stop = unusable(readiness);
+  if (stop !== null) return stop.notice;
+  return warning('A plan could not be read, so its stage is not shown. Check that Node.js 20 or later is installed');
+}

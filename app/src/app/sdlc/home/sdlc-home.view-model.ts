@@ -4,6 +4,7 @@ import type { BranchInfo } from '@bindings/BranchInfo';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ContextState } from '@bindings/ContextState';
+import type { Readiness } from '@bindings/Readiness';
 import type { Settings } from '@bindings/Settings';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
@@ -14,6 +15,7 @@ import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { inTauri } from '../../lib/mock';
+import { shownChangeList } from '../../lib/doc-notice';
 import { hasAiSdlcPlugin, specFor } from '../../lib/sdlc';
 import { DEMO_SETUP_FOLDER } from '../../lib/demo';
 import {
@@ -87,6 +89,9 @@ export class SdlcHomeViewModel {
   readonly changes = signal<ChangeInfo[]>([]);
   readonly contexts = signal<Record<string, ContextState>>({});
   readonly lastRuns = signal<Record<string, number>>({});
+  private readonly readiness = signal<Readiness>({ kind: 'missing' });
+  /** Above the change list when a plan could not be read; null when every plan was. */
+  readonly listNotice = computed(() => shownChangeList(this.readiness(), this.changes().some((c) => c.plan_unreadable)));
   private readonly loaded = signal(false);
   private loadSeq = 0;
 
@@ -678,6 +683,12 @@ export class SdlcHomeViewModel {
     let contexts: Record<string, ContextState> = {};
     let lastRuns: Record<string, number> = {};
     const repo = masterRepo(scan);
+    let readiness: Readiness = { kind: 'missing' };
+    try {
+      readiness = await this.transport.sdlcPluginReadiness(w.folder);
+    } catch {
+      // Nothing decided the plugin is usable, so the notice says to install it.
+    }
     if (isSetUp(scan) && repo !== null) {
       try {
         const master = masterPath(w.folder, repo);
@@ -695,6 +706,7 @@ export class SdlcHomeViewModel {
     this.scan.set(scan);
     this.branches.set(branches);
     this.changes.set(changes);
+    this.readiness.set(readiness);
     this.contexts.set(contexts);
     this.lastRuns.set(lastRuns);
     this.markHealth(w.id, { missing: false, changes: isSetUp(scan) ? changes.length : null });

@@ -45,6 +45,8 @@ const ACTIONS: Record<Stage, StageAction[]> = {
   "plan-accepted-uncommitted": ["commit-acceptance", "rerun-plan"],
   // The actions depend on the cause; see `actionsForChange`.
   "plan-out-of-date": [],
+  // The plan could not be read, so nothing may be built or rewritten from what is shown; the list says why.
+  "plan-unreadable": [],
   "plan-superseded": ["rerun-plan"],
   "build-ready": ["start-build", "reopen-intent"],
   "build-stopped": ["continue-build", "another-round"],
@@ -99,6 +101,7 @@ const LABELS: Record<Stage, StageLabel> = {
   "plan-awaiting": { step: "plan", text: "Plan · awaiting acceptance", tone: "warning" },
   "plan-accepted-uncommitted": { step: "plan", text: "Plan · accepted, not committed", tone: "warning" },
   "plan-out-of-date": { step: "plan", text: "Plan · out of date", tone: "warning" },
+  "plan-unreadable": { step: "plan", text: "Plan · could not be read", tone: "warning" },
   "plan-superseded": { step: "plan", text: "Plan · superseded", tone: "warning" },
   "build-ready": { step: "build", text: "Build · ready to start", tone: "muted" },
   "build-stopped": { step: "build", text: "Build · in progress (stopped)", tone: "warning" },

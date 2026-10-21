@@ -21,6 +21,9 @@ pub enum Stage {
     PlanAwaiting,
     PlanAcceptedUncommitted,
     PlanOutOfDate,
+    /// The plan is accepted, but the format program could not read it, so its tasks are unknown. It is
+    /// kept out of the build stages until it can be read.
+    PlanUnreadable,
     PlanSuperseded,
     BuildReady,
     BuildStopped,
@@ -184,6 +187,9 @@ fn plan_stage(intent: &DocState, spec: &DocState, plan: &DocState, facts: &PlanF
     if !plan.is("accepted") {
         return Stage::PlanAwaiting;
     }
+    if facts.unreadable {
+        return Stage::PlanUnreadable;
+    }
     if facts.finished == 0 {
         Stage::BuildReady
     } else if facts.finished >= facts.tasks {
@@ -236,8 +242,8 @@ fn doc_state(master: &Path, system: &str, change: &str, file: &str) -> DocState 
 
 /// The plan's tasks from the working tree, the finished ones from the committed build logs, and
 /// whether both source pins hold. Both are read by the format program in `plugin`. Without a usable
-/// plugin, or when the program cannot read a document, the facts are marked unreadable: the counts are
-/// unknown, not zero.
+/// plugin, or when the program cannot run or read a document, the facts are marked unreadable: the counts
+/// are unknown, not zero. A plan that is not committed yet is not unreadable; it has no finished tasks.
 fn plan_facts(
     plugin: Option<&Path>,
     master: &Path,
@@ -255,6 +261,7 @@ fn plan_facts(
     repos.dedup();
     let finished = match plugin.map(|p| crate::build::status(p, master, system, change)) {
         Some(Ok(status)) => status.tasks.iter().filter(|t| t.row.is_some()).count() as u32,
+        Some(Err(e)) if !crate::build::is_unreadable(&e) => 0,
         _ => {
             unreadable = true;
             0

@@ -131,6 +131,11 @@
           <h1 class="sr-only">{{ vm.current()?.name }}</h1>
           <section class="k-home__pane" aria-labelledby="changes-heading">
             <div class="wb-pane__head"><h2 id="changes-heading" class="kata-eyebrow">Changes</h2></div>
+            @if (vm.listNotice(); as notice) {
+              <div class="wb-banner wb-banner--warn" data-testid="list-notice" role="status">
+                <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ notice.text }}</span>
+              </div>
+            }
             <div class="k-home__body">
               <app-changes-table
                 [changes]="vm.changes()"

@@ -132,10 +132,17 @@ pub(crate) fn change_dir(system: &str, change: &str) -> String {
     format!("intent/{system}/{change}")
 }
 
+const FORMAT_PROGRAM: &str = "ai-sdlc format program";
+
+/// True when `error` came from the format program (it could not run or could not read), not from git.
+pub(crate) fn is_unreadable(error: &GitError) -> bool {
+    error.args == FORMAT_PROGRAM
+}
+
 /// A format-program failure reported the way a git failure is, so one error type serves both.
 pub(crate) fn unreadable(error: FormatError) -> GitError {
     GitError {
-        args: "ai-sdlc format program".into(),
+        args: FORMAT_PROGRAM.into(),
         stderr: error.to_string(),
     }
 }

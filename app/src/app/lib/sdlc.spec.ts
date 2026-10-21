@@ -28,6 +28,7 @@ const ACTIONS: Record<Stage, string[]> = {
   "plan-awaiting": ["accept-plan", "rerun-plan", "reopen-intent"],
   "plan-accepted-uncommitted": ["commit-acceptance", "rerun-plan"],
   "plan-out-of-date": [],
+  "plan-unreadable": [],
   "plan-superseded": ["rerun-plan"],
   "build-ready": ["start-build", "reopen-intent"],
   "build-stopped": ["continue-build", "another-round"],
