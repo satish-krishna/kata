@@ -125,7 +125,7 @@ describe('DocLayout', () => {
       });
       const section = container.querySelector('[data-testid="recent-runs"]')!;
       expect(text(section.querySelector('h2')!)).toBe('Recent runs · 5');
-      expect(Array.from(section.querySelectorAll('li')).map(text)).toEqual(['Intent Oct 20 10:05', 'Intent Oct 19 18:12']);
+      expect(Array.from(section.querySelectorAll('li')).map(text)).toEqual(['Succeeded Intent Oct 20 10:05', 'Failed Intent Oct 19 18:12']);
       expect(section.querySelector('a, button')).toBeNull();
     });
 

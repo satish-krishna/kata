@@ -127,7 +127,7 @@ describe('ChangePage layout', () => {
     expect(text(runs.querySelector('h2')!)).toBe('Recent runs · 2');
     const rows = Array.from(runs.querySelectorAll('li')).map(text);
     expect(rows.length).toBe(2);
-    expect(rows.every((r) => /^Spec [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}$/.test(r))).toBe(true);
+    expect(rows.every((r) => /^(Succeeded|Failed|No result) Spec [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}$/.test(r))).toBe(true);
     expect(runs.querySelector('a, button')).toBeNull();
   });
 

@@ -62,7 +62,8 @@ export function requirements(md: string): Requirement[] {
       scenario.steps.push(line);
     }
   }
-  return out;
+  // Rules that parse without a single scenario are not a requirements list: every row would read "0 scenarios".
+  return out.some((r) => r.scenarios.length > 0) ? out : [];
 }
 
 /** A step split into its keyword (`Given`, `When`, ...) and the rest of the line. */

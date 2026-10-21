@@ -1,7 +1,7 @@
 import { Component, computed, input, output } from '@angular/core';
 import type { TaskStatus } from '@bindings/TaskStatus';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
-import { linkRequirements, neededBy, taskBody, taskFields, taskRecord } from '../lib/plan-doc';
+import { linkRequirements, neededBy, taskFields, taskRecord } from '../lib/plan-doc';
 import { MarkdownBody } from './markdown-body';
 
 /* The plan tab's Tasks view: the tasks in plan order on the left, the picked task in the middle (each field of its
@@ -21,15 +21,10 @@ export class TasksView {
   /** A requirement or scenario id (`R7`, `R7.7`) was clicked in a task's text. */
   readonly openRequirement = output<string>();
 
-  /** Every field but Depends on, which the muted line above the name already says. */
+  /** Every field but Depends on, which the muted line above the name already says. The prose before the first field has no label. */
   protected readonly fields = computed(() => {
     const t = this.picked();
     return t === null ? [] : taskFields(t.text).filter((f) => f.field !== 'Depends on');
-  });
-  /** The task's own text, for a task whose plan text has no field bullets at all. */
-  protected readonly plain = computed(() => {
-    const t = this.picked();
-    return t === null || taskFields(t.text).length > 0 ? '' : taskBody(t.text);
   });
   protected readonly record = computed(() => {
     const t = this.picked();
@@ -40,6 +35,11 @@ export class TasksView {
     return t === null ? [] : neededBy(this.tasks(), t.id);
   });
   protected readonly link = linkRequirements;
+
+  /** Whether the build log has a row for the task. */
+  protected built(t: TaskStatus): boolean {
+    return taskRecord(t).kind !== 'unbuilt';
+  }
 
   protected dependsOn(t: TaskStatus): string {
     return t.dependsOn.length === 0 ? 'none' : t.dependsOn.join(', ');

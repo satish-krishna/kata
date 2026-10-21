@@ -634,11 +634,12 @@ describe('ChangePageViewModel', () => {
       expect(vm.stripStatus()).toEqual({ text: 'Accepted', tone: 'success' });
     });
 
-    it('reads the strip status of the build tab from the stage label', async () => {
+    it('leaves the status of the Build tab to its pill, so the strip does not word it a second way', async () => {
       const { vm } = setup(BUILD);
       await ready(vm);
       await vm.showDoc('build');
-      expect(vm.stripStatus()).toEqual({ text: 'Build · ready to start', tone: 'idle' });
+      expect(vm.pills()[3]).toMatchObject({ step: 'build', text: 'Build · ready to start', tone: 'idle' });
+      expect(vm.stripStatus()).toBeNull();
     });
 
     it('says the build facts on the Build tab, with no stage label beside them', async () => {

@@ -10,7 +10,7 @@
         [attr.aria-current]="t.id === picked()?.id ? 'true' : null"
         (click)="pick.emit(t.id)"
       >
-        <span [class]="'k-status k-status--' + (t.row !== null ? 'success' : 'idle')"><span class="k-status__dot" role="img" [attr.aria-label]="t.row !== null ? 'built' : 'not built'"></span></span>&ngsp;
+        <span [class]="'k-status k-status--' + (built(t) ? 'success' : 'idle')"><span class="k-status__dot" role="img" [attr.aria-label]="built(t) ? 'built' : 'not built'"></span></span>&ngsp;
         <b class="k-mono k-list__id">{{ t.id }}</b>&ngsp;
         <span class="k-list__name">{{ t.name }}</span>
       </button>
@@ -23,13 +23,14 @@
         <h2 class="k-detail__title">{{ task.name }}</h2>
       </header>
       @for (f of fields(); track f.field) {
-        <section class="k-task__sec">
-          <h3 class="k-docview__label">{{ f.field }}</h3>
-          <app-markdown-body [md]="link(f.body)" />
-        </section>
-      }
-      @if (plain() !== '') {
-        <div class="k-task__plain"><app-markdown-body [md]="link(plain())" /></div>
+        @if (f.field === '') {
+          <div class="k-task__plain"><app-markdown-body [md]="link(f.body)" /></div>
+        } @else {
+          <section class="k-task__sec">
+            <h3 class="k-docview__label">{{ f.field }}</h3>
+            <app-markdown-body [md]="link(f.body)" />
+          </section>
+        }
       }
     </article>
     <aside class="k-task__rail" aria-label="Build record">

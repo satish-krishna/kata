@@ -9,16 +9,18 @@ const FIELD = /^- \*\*(.+?):\*\*\s*(.*)$/;
 
 /**
  * The `- **<Field>:** ...` bullets of a task's text, in order. A field's body is the rest of its line and the lines
- * below it up to the next field, dedented by the two spaces of a nested bullet.
+ * below it up to the next field, dedented by the two spaces of a nested bullet. The lines between the heading and the
+ * first field come first as a section with an empty `field`: prose the plan wrote before its bullets.
  */
 export function taskFields(text: string): TaskField[] {
-  const out: { field: string; lines: string[] }[] = [];
-  for (const line of text.split(/\r?\n/)) {
+  const lines = text.split(/\r?\n/);
+  const out: { field: string; lines: string[] }[] = [{ field: '', lines: [] }];
+  for (const line of lines.slice(/^#{1,6}\s/.test(lines[0]) ? 1 : 0)) {
     const m = FIELD.exec(line);
     if (m) out.push({ field: m[1], lines: [m[2]] });
-    else out.at(-1)?.lines.push(line.replace(/^ {1,2}/, ''));
+    else out.at(-1)!.lines.push(out.length > 1 ? line.replace(/^ {1,2}/, '') : line);
   }
-  return out.map((f) => ({ field: f.field, body: f.lines.join('\n').trim() }));
+  return out.map((f) => ({ field: f.field, body: f.lines.join('\n').trim() })).filter((f) => f.field !== '' || f.body !== '');
 }
 
 /** The tasks whose `Depends on` names `id`, in plan order. */
@@ -33,11 +35,6 @@ export function taskRecord(task: TaskStatus): TaskRecord {
   if (task.row === null) return { kind: 'unbuilt', label: 'Not built yet', text: null };
   if (task.row.departure === null) return { kind: 'planned', label: 'As planned', text: null };
   return { kind: 'differs', label: 'Differs from plan', text: task.row.departure };
-}
-
-/** A task's own text without its `### T<n>: ...` heading line: what to show for a task that has no field bullets. */
-export function taskBody(text: string): string {
-  return text.replace(/^[^\n]*(?:\n|$)/, '').trim();
 }
 
 const REQUIREMENT_ID = /(?<![\w.])R\d+(?:\.\d+)?(?![\w]|\.\d)/g;

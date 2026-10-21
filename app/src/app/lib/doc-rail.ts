@@ -30,6 +30,11 @@ export function runTime(epochSecs: number): string {
   return `${MONTHS[d.getMonth()]} ${d.getDate()} ${two(d.getHours())}:${two(d.getMinutes())}`;
 }
 
+/** How a run ended, in words, from the tone its row carries. */
+export function runOutcome(tone: DocTone): string {
+  return tone === 'success' ? 'Succeeded' : tone === 'error' ? 'Failed' : 'No result';
+}
+
 const RECENT = 3;
 
 /** The first three of a stage's runs (newest first, as `stageRuns` gives them) as rail rows, and how many there are. */

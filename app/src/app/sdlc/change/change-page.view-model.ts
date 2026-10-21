@@ -29,7 +29,6 @@ import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import {
-  DONE_LABEL,
   actionLabel,
   actionsForChange,
   primaryAction,
@@ -49,6 +48,7 @@ import { prNumber } from '../../lib/pull-request';
 import { REVIEW_MISSING_TEXT, canConfirm, checkLabel, reviewState, type DoneReport, type DoneReview } from '../../lib/sdlc-done';
 import { section } from '../../lib/doc';
 import { inTauri } from '../../lib/mock';
+import { taskRecord } from '../../lib/plan-doc';
 import { requirements, type Requirement } from '../../lib/spec-doc';
 import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
 
@@ -105,6 +105,8 @@ const OUT_OF_DATE_BANNER: Record<NonNullable<ChangeInfo['out_of_date']>, string>
 /** The time limit of a review started from the done dialog: the build dialog's default. */
 const REVIEW_TIMEOUT_SECS = 2 * 60 * 60;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+/** A task is built once the build log has a row for it; the record is the one reader of that. */
+const isBuilt = (t: TaskStatus): boolean => taskRecord(t).kind !== 'unbuilt';
 const SUPERSEDED_BANNER = 'The intent was reopened after this plan was written. Rewrite the plan before building.';
 
 /** What the build view starts from: the prepared branches, the time limit, the round if one was asked for, and Kata's checks folder. */
@@ -197,17 +199,19 @@ export class ChangePageViewModel {
     const c = this.change();
     return { intent: c?.intent.exists ?? false, spec: c?.spec.exists ?? false, plan: c?.plan.exists ?? false };
   });
+  /** A build or a skill run holds the page: its view stands in for the change's tabs, so nothing here may be clicked. */
+  private readonly held = computed(() => this.handoff() !== null || this.session() !== null);
   /**
-   * The four stage pills for the toolbar; none until the change is read, nor while a build is live (the build view
-   * holds the page then).
+   * The four stage pills for the toolbar; none until the change is read, nor while a build or a skill run holds the
+   * page (the build view or the session view stands in for the tabs then).
    */
   readonly pills = computed<StagePill[]>(() => {
     const c = this.change();
-    return c === null || this.handoff() !== null ? [] : stagePills(c.stage, this.done(), this.docs(), { hasBranch: this.hasBranch() });
+    return c === null || this.held() ? [] : stagePills(c.stage, this.done(), this.docs(), { hasBranch: this.hasBranch() });
   });
-  /** The pull requests that have an address, for the toolbar's links; none while a build is live. */
+  /** The pull requests that have an address, for the toolbar's links; none while a build or a skill run holds the page. */
   readonly pullLinks = computed(() =>
-    this.handoff() !== null ? [] : this.pullRequests().flatMap((p) => (p.url === null ? [] : [{ repo: p.repo, url: p.url, number: prNumber(p.url) }])),
+    this.held() ? [] : this.pullRequests().flatMap((p) => (p.url === null ? [] : [{ repo: p.repo, url: p.url, number: prNumber(p.url) }])),
   );
   /** The master repository's branch, unless it is the change's own branch, which the pills already imply. */
   readonly branchChip = computed(() => {
@@ -247,20 +251,31 @@ export class ChangePageViewModel {
   readonly labelOf = actionLabel;
   /** The front matter fields the rail shows: all but the status, which the strip says in words. */
   readonly railFields = computed(() => this.docParts().fields.filter(([key]) => key !== 'status'));
-  /** What the strip says about the open tab: the document's status, or the stage label on the Build tab. */
+  /**
+   * What the strip says about the open document: its status. The Build tab has none: the Build pill already says where
+   * the build stands, and a second wording of it beside the pill is how "Build · done" ended up next to "Done · pull
+   * requests open". The strip says the build's facts there instead.
+   */
   readonly stripStatus = computed<DocStatus | null>(() => {
-    const c = this.change();
-    if (c === null) return null;
-    if (this.shownDoc() === 'build') {
-      const label = this.done() ? DONE_LABEL : stageLabel(c.stage);
-      return { text: label.text, tone: label.tone === 'muted' ? 'idle' : label.tone };
-    }
+    if (this.change() === null || this.shownDoc() === 'build') return null;
     return docStatus(this.docParts().fields.find(([key]) => key === 'status')?.[1]);
   });
-  /** The Build tab's facts line; a stub until the next commit, so the tests above it fail on behavior, not on a missing name. */
-  readonly buildFacts = computed<string | null>(() => null);
-  /** Whether the strip under the toolbar draws; a stub until the next commit. */
-  readonly stripShown = computed(() => true);
+  /** The Build tab's facts: tasks built, repositories and build runs, leaving out what the change does not have yet. */
+  readonly buildFacts = computed<string | null>(() => {
+    const w = this.current();
+    if (w === null || this.shownDoc() !== 'build') return null;
+    const tasks = this.buildTasks();
+    const repos = this.status()?.repos.length ?? 0;
+    const runs = stageRuns(this.links(), this.records(), w.id, this.system(), this.changeName(), 'build').length;
+    const parts = [
+      tasks.length > 0 ? `${tasks.filter(isBuilt).length}/${tasks.length} tasks` : '',
+      repos > 0 ? plural(repos, 'repository', 'repositories') : '',
+      runs > 0 ? plural(runs, 'build run', 'build runs') : '',
+    ].filter((p) => p !== '');
+    return parts.length > 0 ? parts.join(' · ') : null;
+  });
+  /** The strip under the toolbar draws when it has something to say: a document tab always does; the Build tab needs facts, an action or a note. */
+  readonly stripShown = computed(() => this.shownDoc() !== 'build' || this.buildFacts() !== null || this.actions().length > 0 || this.prCheckFailed());
   /** The document built from the open one; none on the plan and the Build tab. */
   readonly usedBy = computed<UsedBy | null>(() => {
     const c = this.change();
@@ -331,7 +346,7 @@ export class ChangePageViewModel {
   /** The task shown in the middle: the picked one, else the first that is not built, else the first. */
   readonly pickedTask = computed<TaskStatus | null>(() => {
     const all = this.buildTasks();
-    return all.find((t) => t.id === this.taskPick()) ?? all.find((t) => t.row === null) ?? all[0] ?? null;
+    return all.find((t) => t.id === this.taskPick()) ?? all.find((t) => !isBuilt(t)) ?? all[0] ?? null;
   });
   /** The open tab has a list view: a spec with requirements, a plan with tasks. */
   private readonly hasList = computed(() => {
@@ -344,7 +359,7 @@ export class ChangePageViewModel {
     if (this.shownDoc() === 'spec') {
       return [{ value: 'list', label: `Requirements · ${this.requirementList().length}` }, { value: 'section', label: 'Design' }, { value: 'whole', label: 'Whole document' }];
     }
-    const built = this.buildTasks().filter((t) => t.row !== null).length;
+    const built = this.buildTasks().filter(isBuilt).length;
     return [{ value: 'list', label: `Tasks · ${built}/${this.buildTasks().length} built` }, { value: 'section', label: 'Approach' }, { value: 'whole', label: 'Whole document' }];
   });
   readonly viewLabel = computed(() => (this.shownDoc() === 'spec' ? 'Spec view' : 'Plan view'));
@@ -368,10 +383,20 @@ export class ChangePageViewModel {
     this.taskPick.set(id);
   }
 
-  /** Open a requirement from a task's text on the Spec tab, in its Requirements view. `R7.7` opens R7. */
+  /**
+   * Open a requirement from a task's text on the Spec tab, in its Requirements view. `R7.7` opens R7. An id the spec
+   * does not have opens the whole document instead of quietly showing some other requirement.
+   */
   async openRequirement(ref: string): Promise<void> {
     await this.showDoc('spec');
-    if (this.shownDoc() === 'spec') this.requirementPick.set(ref.split('.')[0]);
+    if (this.shownDoc() !== 'spec') return;
+    const id = ref.split('.')[0];
+    if (this.requirementList().some((r) => r.id === id)) {
+      this.requirementPick.set(id);
+      this.view.set('list');
+    } else {
+      this.view.set('whole');
+    }
   }
 
   /** Why the build did not start, or null. */

@@ -1,5 +1,5 @@
 import type { TaskStatus } from '@bindings/TaskStatus';
-import { linkRequirements, neededBy, taskBody, taskFields, taskRecord } from './plan-doc';
+import { linkRequirements, neededBy, taskFields, taskRecord } from './plan-doc';
 
 // T33 of the real Part 2 plan, shortened: a nested Change bullet, backticks and requirement ids.
 const T33 = [
@@ -39,8 +39,7 @@ describe('taskFields', () => {
     ]);
   });
 
-  it('is empty for text with no field bullets, and ignores lines before the first one', () => {
-    expect(taskFields('### T1: x (`a`)\n\nSome prose.\n')).toEqual([]);
+  it('is empty for empty text', () => {
     expect(taskFields('')).toEqual([]);
   });
 
@@ -102,13 +101,6 @@ describe('taskRecord', () => {
   it('reads a row with a departure as differing from the plan, carrying the departure text', () => {
     const row = { task: 'T1', repo: 'kata', commits: ['abc1234'], departure: 'Used a Map, not an array.' };
     expect(taskRecord(task('T1', [], row))).toEqual({ kind: 'differs', label: 'Differs from plan', text: 'Used a Map, not an array.' });
-  });
-});
-
-describe('taskBody', () => {
-  it('is the task text without its heading line, trimmed', () => {
-    expect(taskBody('### T4: Notes (`app`)\n\nJust do it.\n\nTwice.\n')).toBe('Just do it.\n\nTwice.');
-    expect(taskBody('### T4: Notes (`app`)')).toBe('');
   });
 });
 

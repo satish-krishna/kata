@@ -64,30 +64,34 @@
         </main>
       }
       @case ('ready') {
-        <div class="k-strip" data-testid="strip">
-          @if (vm.stripStatus(); as s) {
-            <span [class]="'k-status k-status--' + s.tone"><span class="k-status__dot"></span>{{ s.text }}</span>
-          }
-          @if (vm.shownDoc() !== 'build') {
-            <span class="k-strip__file">{{ vm.docName() }}</span>
-          }
-          @if (vm.viewOptions().length > 0) {
-            <app-segmented [options]="vm.viewOptions()" [value]="vm.shownView()" (valueChange)="vm.setView($event)" [ariaLabel]="vm.viewLabel()" />
-          }
-          @if (vm.prCheckFailed()) {
-            <span class="k-left__note" data-testid="pr-note">Could not check pull requests</span>
-          }
-          <div class="wb-toolbar__spacer"></div>
-          @for (a of vm.actions(); track a) {
-            <button
-              hlmBtn
-              [variant]="vm.primary() === a ? 'primary' : 'secondary'"
-              type="button"
-              [disabled]="vm.locked()"
-              (click)="vm.act(a)"
-            >{{ vm.labelOf(a) }}</button>
-          }
-        </div>
+        @if (vm.stripShown()) {
+          <div class="k-strip" data-testid="strip">
+            @if (vm.stripStatus(); as s) {
+              <span [class]="'k-status k-status--' + s.tone"><span class="k-status__dot"></span>{{ s.text }}</span>
+            }
+            @if (vm.shownDoc() !== 'build') {
+              <span class="k-strip__file">{{ vm.docName() }}</span>
+            } @else if (vm.buildFacts(); as facts) {
+              <span class="k-strip__file" data-testid="build-facts">{{ facts }}</span>
+            }
+            @if (vm.viewOptions().length > 0) {
+              <app-segmented [options]="vm.viewOptions()" [value]="vm.shownView()" (valueChange)="vm.setView($event)" [ariaLabel]="vm.viewLabel()" />
+            }
+            @if (vm.prCheckFailed()) {
+              <span class="k-left__note" data-testid="pr-note">Could not check pull requests</span>
+            }
+            <div class="wb-toolbar__spacer"></div>
+            @for (a of vm.actions(); track a) {
+              <button
+                hlmBtn
+                [variant]="vm.primary() === a ? 'primary' : 'secondary'"
+                type="button"
+                [disabled]="vm.locked()"
+                (click)="vm.act(a)"
+              >{{ vm.labelOf(a) }}</button>
+            }
+          </div>
+        }
         <main class="k-change">
           <h1 class="sr-only">{{ vm.changeName() }}</h1>
           @for (stem of vm.stems; track stem) {
