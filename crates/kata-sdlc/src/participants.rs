@@ -100,7 +100,7 @@ pub(crate) fn model(
     let mut master_files = Vec::new();
     let mut rows: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for path in dirty_files(&master)? {
-        match build_log_owner(&path) {
+        match build_log_owner(&path, system, change) {
             Some(owner) => rows.entry(owner.to_string()).or_default().push(path),
             None => master_files.push(path),
         }

@@ -11,6 +11,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { BranchInfo } from '@bindings/BranchInfo';
+import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { FinishOutcome } from '@bindings/FinishOutcome';
@@ -75,8 +76,8 @@ export class TauriTransport extends KataTransport {
   sdlcBranches(master: string) { return this.ipc.invoke<BranchInfo>('sdlc_branches', { master }); }
   sdlcReadDoc(master: string, system: string, change: string, doc: string) { return this.ipc.invoke<string | null>('sdlc_read_doc', { master, system, change, doc }); }
   sdlcSnapshot(master: string) { return this.ipc.invoke<Snapshot>('sdlc_snapshot', { master }); }
-  sdlcLeftovers(master: string, before: Snapshot, productRepos: string[]) { return this.ipc.invoke<Leftovers>('sdlc_leftovers', { master, before, productRepos }); }
-  sdlcDiscard(master: string, before: Snapshot, paths: string[]) { return this.ipc.invoke<void>('sdlc_discard', { master, before, paths }); }
+  sdlcLeftovers(master: string, before: Snapshot, productRepos: string[], _build?: BuildScope) { return this.ipc.invoke<Leftovers>('sdlc_leftovers', { master, before, productRepos }); }
+  sdlcDiscard(master: string, before: Snapshot, paths: string[], _build?: BuildScope) { return this.ipc.invoke<void>('sdlc_discard', { master, before, paths }); }
   sdlcStartChange(master: string, base: string) { return this.ipc.invoke<string>('sdlc_start_change', { master, base }); }
   sdlcFinishChange(master: string, pending: string, base: string) { return this.ipc.invoke<FinishOutcome>('sdlc_finish_change', { master, pending, base }); }
   sdlcCheckout(master: string, branch: string) { return this.ipc.invoke<void>('sdlc_checkout', { master, branch }); }

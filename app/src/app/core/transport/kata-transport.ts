@@ -8,6 +8,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { BranchInfo } from '@bindings/BranchInfo';
+import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { FinishOutcome } from '@bindings/FinishOutcome';
@@ -69,8 +70,9 @@ export abstract class KataTransport {
   abstract sdlcBranches(master: string): Promise<BranchInfo>;
   abstract sdlcReadDoc(master: string, system: string, change: string, doc: string): Promise<string | null>;
   abstract sdlcSnapshot(master: string): Promise<Snapshot>;
-  abstract sdlcLeftovers(master: string, before: Snapshot, productRepos: string[]): Promise<Leftovers>;
-  abstract sdlcDiscard(master: string, before: Snapshot, paths: string[]): Promise<void>;
+  /** `build` scopes the run to a build: only that change's build log rows are build log data. A run outside a build passes none. */
+  abstract sdlcLeftovers(master: string, before: Snapshot, productRepos: string[], build?: BuildScope): Promise<Leftovers>;
+  abstract sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope): Promise<void>;
   abstract sdlcStartChange(master: string, base: string): Promise<string>;
   abstract sdlcFinishChange(master: string, pending: string, base: string): Promise<FinishOutcome>;
   abstract sdlcCheckout(master: string, branch: string): Promise<void>;

@@ -234,9 +234,11 @@ fn sdlc_leftovers(
     master: String,
     before: sdlc::snapshot::Snapshot,
     product_repos: Vec<String>,
+    build: Option<sdlc::snapshot::BuildScope>,
 ) -> Result<sdlc::snapshot::Leftovers, String> {
     let repos: Vec<std::path::PathBuf> = product_repos.into_iter().map(Into::into).collect();
-    sdlc::snapshot::leftovers(Path::new(&master), &before, &repos).map_err(|e| e.to_string())
+    sdlc::snapshot::leftovers(Path::new(&master), &before, &repos, build.as_ref())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -244,8 +246,10 @@ fn sdlc_discard(
     master: String,
     before: sdlc::snapshot::Snapshot,
     paths: Vec<String>,
+    build: Option<sdlc::snapshot::BuildScope>,
 ) -> Result<(), String> {
-    sdlc::snapshot::discard(Path::new(&master), &before, &paths).map_err(|e| e.to_string())
+    sdlc::snapshot::discard(Path::new(&master), &before, &paths, build.as_ref())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]

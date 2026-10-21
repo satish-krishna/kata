@@ -34,6 +34,16 @@ pub struct Leftovers {
     pub product_repos_unchecked: Vec<String>,
 }
 
+/// The change a build is for. Only a build log row of this system and change is build log data
+/// to a run's leftovers; a run outside a build has no scope, so no path is a build log row.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct BuildScope {
+    pub system: String,
+    pub change: String,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum DiscardError {
     #[error("not discardable: {0}")]
@@ -82,11 +92,11 @@ pub(crate) fn dirty_files(dir: &Path) -> Result<Vec<String>, GitError> {
     Ok(status_entries(dir)?.into_iter().map(|e| e.path).collect())
 }
 
-/// The repository that owns a build log row (`intent/<system>/<change>/build/<repo>.md`), or `None`
-/// for any other path. Rows are R6.6 data of whichever change they belong to: nothing here may
-/// delete them, and no working tree's leftovers include one. `participants` reports a row under the
-/// repository it names.
-pub(crate) fn build_log_owner(path: &str) -> Option<&str> {
+/// The repository that owns a build log row (`intent/<system>/<change>/build/<repo>.md`) of this
+/// change, or `None` for any other path. Rows are R6.6 data of the build they belong to: nothing
+/// here may delete them, and no working tree's leftovers include one. `participants` reports a row
+/// under the repository it names. Another change's row is an ordinary file of the master.
+pub(crate) fn build_log_owner<'a>(path: &'a str, _system: &str, _change: &str) -> Option<&'a str> {
     let parts: Vec<&str> = path.split(['/', '\\']).collect();
     match parts.as_slice() {
         ["intent", _, _, "build", file] => file.strip_suffix(".md").filter(|repo| !repo.is_empty()),
@@ -94,8 +104,8 @@ pub(crate) fn build_log_owner(path: &str) -> Option<&str> {
     }
 }
 
-fn is_build_log(path: &str) -> bool {
-    build_log_owner(path).is_some()
+fn is_build_log(path: &str, build: Option<&BuildScope>) -> bool {
+    build.is_some_and(|b| build_log_owner(path, &b.system, &b.change).is_some())
 }
 
 fn current_head(master: &Path) -> Option<String> {
@@ -130,6 +140,7 @@ pub fn leftovers(
     master: &Path,
     before: &Snapshot,
     product_repos: &[PathBuf],
+    build: Option<&BuildScope>,
 ) -> Result<Leftovers, GitError> {
     let new_commits = match (&before.head, current_head(master)) {
         (_, None) => Vec::new(),
@@ -150,7 +161,7 @@ pub fn leftovers(
     let mut touched_dirty = Vec::new();
     let now = dirty_map(master)?;
     for (path, hash) in &now {
-        if is_build_log(path) {
+        if is_build_log(path, build) {
             continue;
         }
         match before.dirty.get(path) {
@@ -162,7 +173,9 @@ pub fn leftovers(
     // A pre-dirty file that dropped out of the status list (reverted or recreated clean)
     // is still touched when its content differs from the snapshot.
     for (path, old) in &before.dirty {
-        if !is_build_log(path) && !now.contains_key(path.as_str()) && hash_of(master, path)? != *old
+        if !is_build_log(path, build)
+            && !now.contains_key(path.as_str())
+            && hash_of(master, path)? != *old
         {
             touched_dirty.push(path.clone());
         }
@@ -196,11 +209,16 @@ pub fn leftovers(
 
 /// Discard run leftovers. Every path must be dirty now and absent from `before.dirty`;
 /// anything else refuses the whole call before touching the disk.
-pub fn discard(master: &Path, before: &Snapshot, paths: &[String]) -> Result<(), DiscardError> {
+pub fn discard(
+    master: &Path,
+    before: &Snapshot,
+    paths: &[String],
+    build: Option<&BuildScope>,
+) -> Result<(), DiscardError> {
     let entries = status_entries(master)?;
     let mut plan = Vec::new();
     for path in paths {
-        if is_build_log(path) {
+        if is_build_log(path, build) {
             return Err(DiscardError::NotDiscardable(path.clone()));
         }
         let entry = entries
@@ -244,7 +262,7 @@ mod tests {
         std::fs::write(m.join("new.md"), "x").unwrap();
         commit_file(&m, "c.md", "c", "docs(claims): x");
 
-        let l = leftovers(&m, &before, &[]).unwrap();
+        let l = leftovers(&m, &before, &[], None).unwrap();
         assert_eq!(l.discardable, vec!["new.md"]);
         assert_eq!(l.touched_dirty, vec!["intent.md"]);
         assert_eq!(l.new_commits, vec!["docs(claims): x"]);
@@ -259,7 +277,7 @@ mod tests {
         std::fs::write(m.join("a.md"), "mine").unwrap();
         let before = take(&m).unwrap();
         git::run(&m, &["checkout", "--", "a.md"]).unwrap();
-        let l = leftovers(&m, &before, &[]).unwrap();
+        let l = leftovers(&m, &before, &[], None).unwrap();
         assert_eq!(l.touched_dirty, vec!["a.md"]);
         assert!(l.discardable.is_empty());
     }
@@ -273,7 +291,7 @@ mod tests {
         let before = take(&m).unwrap();
         assert_eq!(before.dirty["a.md"], "");
         std::fs::write(m.join("a.md"), "orig").unwrap();
-        let l = leftovers(&m, &before, &[]).unwrap();
+        let l = leftovers(&m, &before, &[], None).unwrap();
         assert_eq!(l.touched_dirty, vec!["a.md"]);
     }
 
@@ -285,7 +303,7 @@ mod tests {
         let other = repo(tmp.path(), "web");
         let before = take(&m).unwrap();
         std::fs::write(svc.join("dirty.txt"), "x").unwrap();
-        let l = leftovers(&m, &before, &[svc, other]).unwrap();
+        let l = leftovers(&m, &before, &[svc, other], None).unwrap();
         assert_eq!(l.product_repos_changed, vec!["svc"]);
     }
 
@@ -299,7 +317,7 @@ mod tests {
         let before = take(&m).unwrap();
         std::fs::write(m.join("new.md"), "x").unwrap();
         std::fs::write(svc.join("dirty.txt"), "x").unwrap();
-        let l = leftovers(&m, &before, &[plain, svc]).unwrap();
+        let l = leftovers(&m, &before, &[plain, svc], None).unwrap();
         assert_eq!(l.discardable, vec!["new.md"]);
         assert_eq!(l.product_repos_changed, vec!["svc"]);
         assert_eq!(l.product_repos_unchecked, vec!["plain"]);
@@ -316,49 +334,116 @@ mod tests {
         git::run(&m, &["config", "commit.gpgsign", "false"]).unwrap();
         let before = take(&m).unwrap();
         assert_eq!(before.head, None);
-        assert!(leftovers(&m, &before, &[]).unwrap().new_commits.is_empty());
+        assert!(leftovers(&m, &before, &[], None)
+            .unwrap()
+            .new_commits
+            .is_empty());
         commit_file(&m, "a.md", "a", "first");
         assert_eq!(
-            leftovers(&m, &before, &[]).unwrap().new_commits,
+            leftovers(&m, &before, &[], None).unwrap().new_commits,
             vec!["first"]
         );
     }
 
     const OWN_ROW: &str = "intent/s/c/build/master.md";
     const OTHER_ROW: &str = "intent/s/c/build/api.md";
+    const OTHER_CHANGE_ROW: &str = "intent/s/other-change/build/api.md";
+    const OTHER_SYSTEM_ROW: &str = "intent/other-system/c/build/api.md";
+
+    fn scope() -> BuildScope {
+        BuildScope {
+            system: "s".into(),
+            change: "c".into(),
+        }
+    }
 
     fn write_rows(m: &Path) {
-        std::fs::create_dir_all(m.join("intent/s/c/build")).unwrap();
-        std::fs::write(m.join(OWN_ROW), "own").unwrap();
-        std::fs::write(m.join(OTHER_ROW), "other").unwrap();
+        for row in [OWN_ROW, OTHER_ROW, OTHER_CHANGE_ROW, OTHER_SYSTEM_ROW] {
+            let path = m.join(row);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "row").unwrap();
+        }
         std::fs::write(m.join("scratch.txt"), "x").unwrap();
     }
 
     #[test]
-    fn leftovers_never_offer_a_build_log_row_for_discard() {
+    fn leftovers_never_offer_this_change_s_build_log_row_for_discard() {
         let tmp = tempfile::tempdir().unwrap();
         let m = repo(tmp.path(), "master");
         let before = take(&m).unwrap();
         write_rows(&m);
-        let l = leftovers(&m, &before, &[]).unwrap();
-        assert_eq!(l.discardable, vec!["scratch.txt"]);
-        // A build log row is owned by its repository and reported through the build's participants,
-        // never as the leftover of whichever working tree happens to hold the file.
+        let l = leftovers(&m, &before, &[], Some(&scope())).unwrap();
+        // This change's rows are owned by their repository and reported through the build's
+        // participants, never as the leftover of whichever working tree happens to hold the file.
+        for row in [OWN_ROW, OTHER_ROW] {
+            assert!(
+                !l.discardable.iter().any(|p| p == row),
+                "{:?}",
+                l.discardable
+            );
+        }
         assert!(l.touched_dirty.is_empty(), "{:?}", l.touched_dirty);
     }
 
     #[test]
-    fn discard_refuses_a_build_log_row_even_when_it_is_new_and_dirty() {
+    fn leftovers_list_another_change_s_build_log_row_as_an_ordinary_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = repo(tmp.path(), "master");
+        let before = take(&m).unwrap();
+        write_rows(&m);
+        let l = leftovers(&m, &before, &[], Some(&scope())).unwrap();
+        assert_eq!(
+            l.discardable,
+            vec![OTHER_CHANGE_ROW, OTHER_SYSTEM_ROW, "scratch.txt"]
+        );
+    }
+
+    #[test]
+    fn leftovers_see_no_build_log_row_outside_a_build() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = repo(tmp.path(), "master");
+        let before = take(&m).unwrap();
+        write_rows(&m);
+        let l = leftovers(&m, &before, &[], None).unwrap();
+        assert_eq!(l.discardable.len(), 5, "{:?}", l.discardable);
+    }
+
+    #[test]
+    fn discard_refuses_this_change_s_build_log_row_even_when_it_is_new_and_dirty() {
         let tmp = tempfile::tempdir().unwrap();
         let m = repo(tmp.path(), "master");
         let before = take(&m).unwrap();
         write_rows(&m);
         for row in [OWN_ROW, OTHER_ROW] {
-            let err = discard(&m, &before, &["scratch.txt".into(), row.into()]).unwrap_err();
+            let err = discard(
+                &m,
+                &before,
+                &["scratch.txt".into(), row.into()],
+                Some(&scope()),
+            )
+            .unwrap_err();
             assert!(matches!(err, DiscardError::NotDiscardable(p) if p == row));
             assert!(m.join(row).exists());
             assert!(m.join("scratch.txt").exists(), "nothing acted on");
         }
+    }
+
+    #[test]
+    fn discard_treats_another_change_s_build_log_row_like_any_other_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = repo(tmp.path(), "master");
+        let before = take(&m).unwrap();
+        write_rows(&m);
+        discard(
+            &m,
+            &before,
+            &[OTHER_CHANGE_ROW.into(), OTHER_SYSTEM_ROW.into()],
+            Some(&scope()),
+        )
+        .unwrap();
+        assert!(!m.join(OTHER_CHANGE_ROW).exists());
+        assert!(!m.join(OTHER_SYSTEM_ROW).exists());
+        assert!(m.join(OWN_ROW).exists() && m.join(OTHER_ROW).exists());
     }
 
     #[test]
@@ -390,6 +475,7 @@ mod tests {
             &m,
             &before,
             &["new.md".into(), "a.md".into(), "staged.md".into()],
+            None,
         )
         .unwrap();
         assert!(!m.join("new.md").exists());
@@ -404,7 +490,7 @@ mod tests {
         let m = repo(tmp.path(), "master");
         std::fs::write(m.join("notes.md"), "mine").unwrap();
         let before = take(&m).unwrap();
-        let err = discard(&m, &before, &["notes.md".into()]).unwrap_err();
+        let err = discard(&m, &before, &["notes.md".into()], None).unwrap_err();
         assert!(matches!(err, DiscardError::NotDiscardable(p) if p == "notes.md"));
         assert_eq!(std::fs::read_to_string(m.join("notes.md")).unwrap(), "mine");
     }
@@ -416,12 +502,12 @@ mod tests {
         let before = take(&m).unwrap();
         std::fs::write(m.join("new.md"), "x").unwrap();
         for bad in ["README.md", "../outside.md", "missing.md", "/etc/passwd"] {
-            let err = discard(&m, &before, &["new.md".into(), bad.into()]).unwrap_err();
+            let err = discard(&m, &before, &["new.md".into(), bad.into()], None).unwrap_err();
             assert!(matches!(err, DiscardError::NotDiscardable(p) if p == bad));
             assert!(m.join("new.md").exists(), "nothing acted on for {bad}");
         }
         std::fs::write(tmp.path().join("outside.md"), "keep").unwrap();
-        assert!(discard(&m, &before, &["../outside.md".into()]).is_err());
+        assert!(discard(&m, &before, &["../outside.md".into()], None).is_err());
         assert!(tmp.path().join("outside.md").exists());
     }
 }

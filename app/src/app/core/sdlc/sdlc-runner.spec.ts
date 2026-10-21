@@ -445,6 +445,8 @@ describe('SdlcRunner build', () => {
   const CORE = { repo: 'claims-core', path: '/ws/claims-core', kind: 'repo' } as const;
   const REVIEW = { repo: 'claims-intent', path: '/ws/claims-intent', kind: 'review' } as const;
   const GROUP = 'build:claims/2026-10-12-fnol';
+  /** A build's leftovers and discards are scoped to its own change: only that change's build log rows are build log data. */
+  const BUILD = { system: 'claims', change: '2026-10-12-fnol' };
   const LEFT = (paths: string[]): Leftovers => ({ ...EMPTY, new_commits: ['feat: a task'], discardable: paths });
 
   /** Ticks the root effects until the promise settles: the run end is observed by an effect. */
@@ -589,7 +591,7 @@ describe('SdlcRunner build', () => {
     it("leftovers are reported per repository and discard touches only that run's files (R6.3)", async () => {
       const ctx = setup();
       await runBoth(ctx);
-      expect(ctx.fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/claims-core', { head: '/ws/claims-core', dirty: {} }, []);
+      expect(ctx.fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/claims-core', { head: '/ws/claims-core', dirty: {} }, [], BUILD);
       // The build is still going when a repository ends: nothing opens until the build is over.
       expect(ctx.runner.leftovers()).toBeNull();
       const finished = ctx.runner.finishBuild(BUILD_START);
@@ -599,7 +601,7 @@ describe('SdlcRunner build', () => {
       expect(ctx.fake.sdlcBuildSettle).not.toHaveBeenCalled();
       await expect(ctx.runner.discard('claims-core', ['src/x.rs'])).resolves.toBe(true);
       expect(ctx.fake.sdlcDiscard).toHaveBeenCalledTimes(1);
-      expect(ctx.fake.sdlcDiscard).toHaveBeenCalledWith('/ws/claims-core', { head: '/ws/claims-core', dirty: {} }, ['src/x.rs']);
+      expect(ctx.fake.sdlcDiscard).toHaveBeenCalledWith('/ws/claims-core', { head: '/ws/claims-core', dirty: {} }, ['src/x.rs'], BUILD);
       expect(ctx.runner.leftovers()!.map((l) => l.repo)).toEqual(['claims-intent']);
       expect(ctx.fake.sdlcBuildSettle).not.toHaveBeenCalled();
       ctx.runner.closeLeftovers();

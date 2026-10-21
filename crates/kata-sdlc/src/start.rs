@@ -743,22 +743,26 @@ mod tests {
     }
 
     #[test]
-    fn participants_keep_another_change_s_build_log_row_out_of_the_ordinary_files() {
+    fn participants_list_another_change_s_build_log_row_among_the_master_s_ordinary_files() {
         let fx = fixture();
         let other = format!("intent/{S}/2026-01-01-other/build/api.md");
         let elsewhere = "intent/other-system/2026-01-01-other/build/m.md".to_string();
-        let text = "# Build log\n";
+        let text = "# Build log
+";
         testutil::write(&fx.master, "stray.txt", "x");
         testutil::write(&fx.master, &other, text);
         testutil::write(&fx.master, &elsewhere, text);
         let got = participants(&fx.folder, "m", S, C, None).unwrap();
-        // A row is build log data wherever it sits, so it never lands among the ordinary files.
+        // Only this change's rows are build log data: another change's row is an ordinary file of
+        // the master, whichever repository its name matches.
+        let mut files = vec![other.as_str(), elsewhere.as_str(), "stray.txt"];
+        files.sort();
         assert_eq!(
             got,
             [
-                part(&fx, "m", &["stray.txt"], &[&elsewhere]),
+                part(&fx, "m", &files, &[]),
                 part(&fx, "app", &[], &[]),
-                part(&fx, "api", &[], &[&other]),
+                part(&fx, "api", &[], &[]),
             ]
         );
     }

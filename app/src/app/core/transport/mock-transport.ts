@@ -8,6 +8,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { BranchInfo } from '@bindings/BranchInfo';
+import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { FinishOutcome } from '@bindings/FinishOutcome';
@@ -145,8 +146,8 @@ export class MockTransport extends KataTransport {
     }
   }
   sdlcSnapshot(_master: string): Promise<Snapshot> { return Promise.resolve(this.sdlc.snapshot()); }
-  sdlcLeftovers(_master: string, _before: Snapshot, _productRepos: string[]): Promise<Leftovers> { return Promise.resolve(this.sdlc.leftovers()); }
-  sdlcDiscard(_master: string, _before: Snapshot, paths: string[]): Promise<void> { this.sdlc.discard(paths); return Promise.resolve(); }
+  sdlcLeftovers(_master: string, _before: Snapshot, _productRepos: string[], _build?: BuildScope): Promise<Leftovers> { return Promise.resolve(this.sdlc.leftovers()); }
+  sdlcDiscard(_master: string, _before: Snapshot, paths: string[], _build?: BuildScope): Promise<void> { this.sdlc.discard(paths); return Promise.resolve(); }
   sdlcStartChange(_master: string, _base: string): Promise<string> { return Promise.resolve(this.sdlc.startChange()); }
   sdlcFinishChange(_master: string, _pending: string, base: string): Promise<FinishOutcome> { return Promise.resolve(this.sdlc.finishChange(base)); }
   sdlcCheckout(_master: string, branch: string): Promise<void> { this.sdlc.checkout(branch); return Promise.resolve(); }
