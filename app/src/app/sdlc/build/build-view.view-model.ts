@@ -586,7 +586,9 @@ export class BuildViewModel {
     const ctx = this.ctx!;
     const review = target === 'review';
     const repo = review ? h.start.master.repo : target.repo;
-    const path = review ? h.start.master.path : (this.pathOf(repo) ?? `${ctx.folder}/${repo}`);
+    const path = review ? h.start.master.path : this.pathOf(repo);
+    // The backend names where each participant is checked out; a repository it does not name has no folder to run in.
+    if (path === undefined) throw new Error(`${repo} is not checked out in this workspace`);
     const run: BuildRun = {
       target,
       timeoutSecs: opts.timeoutSecs,

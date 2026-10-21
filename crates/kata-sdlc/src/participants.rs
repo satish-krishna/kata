@@ -97,8 +97,9 @@ pub(crate) fn model(
             .iter()
             .any(|r| r.repo == name && r.state == RepoState::Done);
         match problem {
-            // A repository whose tasks are all done needs nothing from this workspace.
-            Some(_) if finished => {}
+            // A repository whose tasks are all done needs nothing from this workspace, unless a round
+            // is about to run in it: that run needs the checkout.
+            Some(_) if finished && pending != Some(name) => {}
             Some(why) => return refuse(format!("{who}, {why}")),
             None => taking_part.push(name),
         }
