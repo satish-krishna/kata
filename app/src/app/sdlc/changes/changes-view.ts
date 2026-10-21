@@ -1,22 +1,23 @@
 import { Component, effect, inject, input, untracked } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import type { PrState } from '@bindings/PrState';
-import { lucideTriangleAlert } from '@ng-icons/lucide';
+import { lucideChevronDown, lucideTriangleAlert } from '@ng-icons/lucide';
 import { HlmAlertImports } from '@spartan-ng/helm/alert';
+import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { HlmPopoverImports } from '@spartan-ng/helm/popover';
 import { DiffBar } from '../../ui/diff-bar';
 import { DiffEditor } from '../../ui/diff-editor/diff-editor';
 import { RepoFileList } from '../../ui/repo-file-list';
 import { Segmented } from '../../ui/segmented';
 import { ChangesViewModel } from './changes-view.view-model';
 
-/* What changed in a change, read only: the repositories with changes on the left, and on the right which base they
- * are compared with, the part of the change on show, and the diff of the open file. `turns` counts the build's
- * turns; when it grows the view reads again and keeps the engineer's place. */
+/* What changed in a change, read only: a strip across the top (the part of the change on show, its totals, the lines by type and
+ * which base it is compared with), the repositories with changes on the left, and the diff of the open file on the right.
+ * `turns` counts the build's turns; when it grows the view reads again and keeps the engineer's place. */
 @Component({
   selector: 'app-changes-view',
   host: { class: 'block h-full min-h-0' },
-  providers: [ChangesViewModel, provideIcons({ lucideTriangleAlert })],
-  imports: [NgIcon, HlmAlertImports, RepoFileList, Segmented, DiffBar, DiffEditor],
+  providers: [ChangesViewModel, provideIcons({ lucideChevronDown, lucideTriangleAlert })],
+  imports: [NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, RepoFileList, Segmented, DiffBar, DiffEditor],
   templateUrl: './changes-view.html',
   styleUrl: './changes-view.css',
 })
@@ -29,19 +30,11 @@ export class ChangesView {
   readonly change = input.required<string>();
   readonly turns = input(0);
   readonly banner = input<string | null>(null);
-  /** The pull request of each repository, once there are any, and the title they carry. */
-  readonly pullRequests = input<PrState[]>([]);
-  readonly prTitle = input('');
 
   constructor() {
     effect(() => {
       const ctx = { folder: this.folder(), masterRepo: this.masterRepo(), system: this.system(), change: this.change() };
       untracked(() => void this.vm.open(ctx));
-    });
-    effect(() => {
-      const states = this.pullRequests();
-      const title = this.prTitle();
-      untracked(() => this.vm.setPullRequests(states, title));
     });
     effect(() => {
       const turns = this.turns();

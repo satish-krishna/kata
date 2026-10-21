@@ -374,13 +374,18 @@
 /* ---------- AI-SDLC: the Changes view's file list and diff bar ---------- */
 .k-files, .k-files__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
 .k-files__group { display: grid; gap: var(--space-2); }
-.k-files__repo { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-card); color: var(--text-primary); text-align: start; cursor: pointer; }
+.k-files__repo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-card); color: var(--text-primary); text-align: start; cursor: pointer; }
 .k-files__repo:hover, .k-files__file:hover { background: var(--surface-hover); }
 .k-files__name { overflow-wrap: anywhere; }
 .k-files__count { color: var(--text-muted); }
-.k-files__file { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); text-align: start; cursor: pointer; }
+.k-files__branch { min-width: 0; margin-inline-start: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--text-muted); }
+.k-files__file { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); text-align: start; cursor: pointer; }
 .k-files__file[aria-current="true"] { border-color: var(--accent); background: var(--surface-card); }
-.k-files__path { overflow-wrap: anywhere; }
+.k-files__path { display: grid; min-width: 0; }
+.k-files__file-name, .k-files__folder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.k-files__file-name { font-size: var(--text-sm); }
+/* The folder is cut from its start so its end stays on show; the bdi inside keeps the text itself reading left to right. */
+.k-files__folder { direction: rtl; text-align: left; font-size: var(--text-xs); color: var(--text-muted); }
 .k-files__letter--success { color: var(--success-text); }
 .k-files__letter--error { color: var(--error-text); }
 .k-files__letter--warning { color: var(--warning-text); }
@@ -389,4 +394,5 @@
 .k-files__lines { color: var(--text-muted); white-space: nowrap; }
 .k-diffbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .k-diffbar__file, .k-diffbar__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
-.k-diffbar__rename { color: var(--text-muted); }
+.k-diffbar__rename, .k-diffbar__folder { color: var(--text-muted); }
+.k-diffbar__path { overflow-wrap: anywhere; }

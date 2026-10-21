@@ -4,7 +4,8 @@
       @if (status(); as s) {
         <span [class]="'k-status k-status--' + s.tone"><span class="k-status__dot"></span>{{ s.name }}</span>
       }
-      <span class="k-mono k-diffbar__path">{{ f.path }}</span>
+      @let parts = splitPath(f.path);
+      <span class="k-mono k-diffbar__path" [attr.title]="f.path">@if (parts.folder !== "") {<span class="k-diffbar__folder" data-folder>{{ parts.folder }}/</span>}<span data-name>{{ parts.name }}</span></span>
       @if (f.oldPath) {
         <span class="k-mono k-diffbar__rename">{{ f.oldPath }} → {{ f.path }}</span>
       }

@@ -127,7 +127,7 @@ describe('ChangesView', () => {
     expect(t).not.toContain('No pull request yet');
     expect(t).not.toContain('Read-only. Nothing here changes');
     const strip = container.querySelector<HTMLElement>('[data-testid="changes-strip"]')!;
-    expect(strip.querySelector('[role="group"][aria-label="Part of the change"]')).not.toBeNull();
+    expect(strip.querySelector('[role="radiogroup"][aria-label="Part of the change"]')).not.toBeNull();
   });
 
   it('counts the files and the lines of the open part across every listed repository, binary files as zero', async () => {
