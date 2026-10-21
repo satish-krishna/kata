@@ -322,6 +322,16 @@ fn sdlc_unsaved_rows(
 }
 
 #[tauri::command(async)]
+fn sdlc_review_record(
+    master: String,
+    system: String,
+    change: String,
+) -> Result<Option<sdlc::review::ReviewRecord>, String> {
+    let plugin = ai_sdlc_dir(&master)?;
+    sdlc::review::record(&plugin, Path::new(&master), &system, &change).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
 fn sdlc_build_prepare(
     folder: String,
     master_repo: String,
@@ -818,6 +828,7 @@ pub fn run() {
             sdlc_build_participants,
             sdlc_build_settle,
             sdlc_build_heads,
+            sdlc_review_record,
             sdlc_plugin_readiness,
             sdlc_change_repos,
             sdlc_missing_change_branches,

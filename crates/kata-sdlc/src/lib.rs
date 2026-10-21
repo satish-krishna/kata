@@ -16,6 +16,7 @@ pub mod pins;
 pub mod plugin;
 mod process;
 pub mod publish;
+pub mod review;
 pub mod snapshot;
 pub mod start;
 pub mod store;

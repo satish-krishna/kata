@@ -1,6 +1,7 @@
 import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { Problem } from '@bindings/Problem';
+import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { Participant } from '@bindings/Participant';
 import type { RunSpec } from '@bindings/RunSpec';
 import { LockStore } from '../../core/lock/lock.store';
@@ -10,6 +11,7 @@ import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import type { AskRecord, PermissionRecord, RunState, RunSummary, StreamEvent } from '../../lib/events';
+import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { reviewFindings, specFor, transcriptRunId, type BuildRun, type Finding } from '../../lib/sdlc';
 import type { ReplacedFindings } from '../../ui/findings-list';
 import type { RepoRow } from '../../ui/repo-status-list';
@@ -53,8 +55,8 @@ export const CHANGES_BANNER = "The build is running. Uncommitted edits are the a
 type Entry = { id: string; key: string; spec: RunSpec; at: number };
 /** Seconds of a run's work (waiting for the engineer excluded), of all its waiting, and of the wait it is in now. */
 type Clock = { work: number; paused: number; current: number };
-/** A review of the whole change, read from its run's closing text. */
-type Review = { at: number; findings: Finding[] };
+/** A review of the whole change: one section of its review document, or the closing text of its run. */
+type Review = { at: number | null; label: string | null; findings: Finding[] };
 
 const REVIEW = 'review';
 const RUNNING: readonly RunState[] = ['running', 'awaiting'];
@@ -108,6 +110,8 @@ export class BuildViewModel {
   private readonly log = signal<Entry[]>([]);
   private readonly clocks = signal<Readonly<Record<string, Clock>>>({});
   private readonly reviews = signal<Review[]>([]);
+  /** True when the findings come from a review run's closing words because the change has no review document. */
+  private readonly fromWords = signal(false);
   private readonly picked = signal<string | null>(null);
   private readonly broken = signal(false);
   private readonly finishing = signal(false);
@@ -229,14 +233,18 @@ export class BuildViewModel {
   readonly reviewShown = computed(() => this.phase() === 'finished' && !this.reading() && this.reviews().length > 0);
   /** The latest review's findings, most serious first. */
   readonly findings = computed<Finding[]>(() => this.reviews().at(-1)?.findings ?? []);
-  /** Earlier reviews, each with the time of the review that replaced it, newest first. */
+  /** Earlier reviews, each with the time of the review that replaced it (or its own number and date, from the document), newest first. */
   readonly replaced = computed<ReplacedFindings[]>(() => {
     const all = this.reviews();
     return all
       .slice(0, -1)
-      .map((r, i) => ({ at: timeOf(all[i + 1].at), findings: r.findings }))
+      .map((r, i) => ({ at: all[i + 1].at === null ? '' : timeOf(all[i + 1].at!), findings: r.findings, ...(r.label === null ? {} : { label: r.label }) }))
       .reverse();
   });
+  /** True when the findings are read from the review run's words, the layout before the review document. */
+  readonly older = computed(() => this.fromWords() && this.reviews().length > 0);
+  /** What the findings list says when the latest review found nothing. */
+  readonly emptyText = computed(() => (this.older() ? 'The review found nothing.' : 'Reviewed, nothing found.'));
 
   constructor() {
     // The rows follow the build log: read it again whenever a run starts or ends.
@@ -659,7 +667,7 @@ export class BuildViewModel {
     }
   }
 
-  /** The review run the build just finished: its findings come from the closing text of its transcript. */
+  /** The review run the build just finished: its findings come from the change's review document, or from the closing text of its transcript when it has none. */
   private async readReview(): Promise<void> {
     const entry = this.latest(REVIEW);
     if (entry === null || this.readRuns.has(entry.id)) return;
@@ -672,15 +680,51 @@ export class BuildViewModel {
     }
   }
 
+  /** The review document of the change, null when it has none, undefined when it cannot be read (reported). */
+  private async readDocument(): Promise<ReviewRecord | null | undefined> {
+    const h = this.handoff!;
+    const ctx = this.ctx!;
+    try {
+      return await this.transport.sdlcReviewRecord(h.start.master.path, ctx.system, ctx.change);
+    } catch (e) {
+      this.toasts.error(`Could not read the review document: ${message(e)}`);
+      return undefined;
+    }
+  }
+
+  /** Sets the reviews on show from what `shownReview` decided; false when there is no review to show. */
+  private showReviews(shown: ReviewShown, at: number | null): boolean {
+    if (shown.kind === 'none') return false;
+    if (shown.kind === 'words') {
+      this.fromWords.set(true);
+      this.reviews.update((r) => [...r, { at, label: null, findings: shown.findings }]);
+      return true;
+    }
+    this.fromWords.set(false);
+    const labeled = (r: { number: number; reviewedAt: string; findings: Finding[] }): Review => ({
+      at: null,
+      label: `Review ${r.number} of ${r.reviewedAt}`,
+      findings: r.findings,
+    });
+    this.reviews.set([...shown.earlier].reverse().map(labeled).concat({ at: null, label: null, findings: shown.latest.findings }));
+    return true;
+  }
+
   private async readReviewOf(entry: Entry): Promise<void> {
+    const document = await this.readDocument();
+    if (document === undefined) return;
+    if (document !== null) {
+      this.showReviews(shownReview(document, null), null);
+      return;
+    }
     const stem = transcriptRunId(this.runs.snapshot(entry.id)().events);
     if (stem === null) {
       this.toasts.error('Could not find the review run\'s transcript, so its findings cannot be shown.');
       return;
     }
     try {
-      const findings = reviewFindings(await this.transport.loadRun(stem));
-      this.reviews.update((r) => [...r, { at: entry.at, findings }]);
+      const words = reviewFindings(await this.transport.loadRun(stem));
+      this.showReviews(shownReview(null, words), entry.at);
     } catch (e) {
       this.toasts.error(`Could not read the review's findings: ${message(e)}`);
     }
@@ -688,14 +732,21 @@ export class BuildViewModel {
 
   /** A round starts from a finished review: the latest one linked to this change becomes the one the new review replaces. */
   private async loadEarlierReview(ctx: BuildContext): Promise<void> {
+    const document = await this.readDocument();
+    if (document === undefined) return;
+    if (document !== null) {
+      this.showReviews(shownReview(document, null), null);
+      return;
+    }
     try {
       const links = (await this.transport.sdlcRunLinks()).filter(
         (l) => l.workspace_id === ctx.workspaceId && l.system === ctx.system && l.change === ctx.change && l.stage === REVIEW,
       );
       const last = links.reduce<(typeof links)[number] | null>((a, l) => (a === null || l.started_at > a.started_at ? l : a), null);
       if (last === null) return;
-      const findings = reviewFindings(await this.transport.loadRun(last.run_id));
-      this.reviews.set([{ at: last.started_at * 1000, findings }]);
+      const words = reviewFindings(await this.transport.loadRun(last.run_id));
+      this.reviews.set([]);
+      this.showReviews(shownReview(null, words), last.started_at * 1000);
     } catch {
       // The earlier review's transcript may be gone; the new review is then simply the only one.
     }

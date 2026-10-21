@@ -18,6 +18,7 @@ import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { UnsavedRows } from '@bindings/UnsavedRows';
 import type { Participant } from '@bindings/Participant';
 import type { PrepareOutcome } from '@bindings/PrepareOutcome';
@@ -84,6 +85,8 @@ export abstract class KataTransport {
   /** Wait until the engine process of run `runId` has exited. False when it is still alive after `timeoutMs`. */
   abstract sdlcWaitRunExit(runId: string, timeoutMs: number): Promise<boolean>;
   abstract sdlcBuildStatus(master: string, system: string, change: string): Promise<BuildStatus>;
+  /** The change's review document as committed, or null when it has none. */
+  abstract sdlcReviewRecord(master: string, system: string, change: string): Promise<ReviewRecord | null>;
   abstract sdlcUnsavedRows(master: string, system: string, change: string): Promise<UnsavedRows[]>;
   /** `pending` names the repository a run is about to start in on the engineer's ask (a round, or Continue): its leftovers are its own to confirm. */
   abstract sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending: string | null, action: BuildAction): Promise<PrepareOutcome>;

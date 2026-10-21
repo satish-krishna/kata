@@ -42,7 +42,7 @@
             <section class="k-build__end" aria-labelledby="build-end">
               <h2 id="build-end" class="k-state__title">Every task is in the build log.</h2>
               @if (vm.reviewShown()) {
-                <app-findings-list [findings]="vm.findings()" [replaced]="vm.replaced()" />
+                <app-findings-list [findings]="vm.findings()" [replaced]="vm.replaced()" [older]="vm.older()" [emptyText]="vm.emptyText()" />
               }
             </section>
           }

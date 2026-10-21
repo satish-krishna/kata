@@ -176,6 +176,24 @@ describe('declaring done', () => {
     expect('findings' in review && review.findings[0].text).toContain('upload limit is duplicated');
   });
 
+  it('with a review document the done dialog reads its latest review against the heads, not the run exit code (R14.2)', async () => {
+    const { vm, transport } = await finished((t) => {
+      vi.spyOn(t, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', exit: 1 }]);
+    });
+    const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], BUILD);
+    const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
+    const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
+    vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({
+      layout: 2,
+      problems: [],
+      reviews: [{ number: 1, reviewed_at: '2026-10-22', commits, findings: [finding] }],
+    });
+    await vm.act('declare-done');
+    const review = vm.doneReport()!.review;
+    expect(review).toEqual({ at: '2026-10-22', findings: [finding] });
+    expect(canConfirm(vm.doneReport()!)).toBe(true);
+  });
+
   it('open findings do not block Open pull requests, and confirming publishes (R20.2)', async () => {
     const { vm, transport } = await finished();
     const publish = vi.spyOn(transport, 'sdlcPublish');

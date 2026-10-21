@@ -116,12 +116,12 @@ pub struct UnsavedRows {
     pub tasks: Vec<String>,
 }
 
-fn change_dir(system: &str, change: &str) -> String {
+pub(crate) fn change_dir(system: &str, change: &str) -> String {
     format!("intent/{system}/{change}")
 }
 
 /// A format-program failure reported the way a git failure is, so one error type serves both.
-fn unreadable(error: FormatError) -> GitError {
+pub(crate) fn unreadable(error: FormatError) -> GitError {
     GitError {
         args: "ai-sdlc format program".into(),
         stderr: error.to_string(),
@@ -136,7 +136,7 @@ pub(crate) fn program(plugin: &Path) -> PathBuf {
 /// Where the committed documents are put for the program to read: the program takes a document's
 /// kind from its path, and the cache in `format::read` keys on the path, so each change keeps one
 /// stable folder.
-fn staging_dir(master: &Path, system: &str, change: &str) -> PathBuf {
+pub(crate) fn staging_dir(master: &Path, system: &str, change: &str) -> PathBuf {
     let mut hasher = DefaultHasher::new();
     master
         .canonicalize()
@@ -148,7 +148,7 @@ fn staging_dir(master: &Path, system: &str, change: &str) -> PathBuf {
         .join(format!("{:016x}", hasher.finish()))
 }
 
-fn put(path: &Path, text: &str) -> Result<(), GitError> {
+pub(crate) fn put(path: &Path, text: &str) -> Result<(), GitError> {
     if std::fs::read_to_string(path).is_ok_and(|have| have == text) {
         return Ok(());
     }
@@ -191,7 +191,7 @@ impl Committed {
 }
 
 /// One reader at a time: the staged files are shared by every read of the same change.
-static READING: Mutex<()> = Mutex::new(());
+pub(crate) static READING: Mutex<()> = Mutex::new(());
 
 /// Reads the plan and every build log as committed at `HEAD` (never the working tree) through the
 /// format program, whatever layout each is written in. A review log is not a build log.

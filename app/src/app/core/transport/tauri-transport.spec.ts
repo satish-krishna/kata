@@ -69,6 +69,7 @@ const rows: Row[] = [
   ['sdlcRunLinks', (t) => t.sdlcRunLinks(), 'sdlc_run_links', undefined],
   ['sdlcLinkRun', (t) => t.sdlcLinkRun(link), 'sdlc_link_run', { link }],
   ['sdlcBuildStatus', (t) => t.sdlcBuildStatus('/m', 's', 'c'), 'sdlc_build_status', { master: '/m', system: 's', change: 'c' }],
+  ['sdlcReviewRecord', (t) => t.sdlcReviewRecord('/m', 's', 'c'), 'sdlc_review_record', { master: '/m', system: 's', change: 'c' }],
   ['sdlcUnsavedRows', (t) => t.sdlcUnsavedRows('/m', 's', 'c'), 'sdlc_unsaved_rows', { master: '/m', system: 's', change: 'c' }],
   ['sdlcBuildPrepare', (t) => t.sdlcBuildPrepare('/w', 'm', 's', 'c', true, 'r', 'round'), 'sdlc_build_prepare', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', action: 'round', continueWithLeftovers: true, pending: 'r' }],
   ['sdlcBuildPrepare without a pending repository', (t) => t.sdlcBuildPrepare('/w', 'm', 's', 'c', false, null, 'start'), 'sdlc_build_prepare', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', action: 'start', continueWithLeftovers: false, pending: null }],

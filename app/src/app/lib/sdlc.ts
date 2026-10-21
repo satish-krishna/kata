@@ -180,11 +180,21 @@ function buildPermissions(run: BuildRun, ctx: RunContext) {
   const ws = slashes(run.workspaceFolder);
   const deny = [...BUILD_DENY, `Edit(${rulePath(run.checksDir)}/**)`];
   const allow = [`Read(${rulePath(ws)}/**)`];
+  const changeDir = `${ws}/${run.masterRepo}/intent/${ctx.system}/${ctx.change}`;
+  const buildDir = `${changeDir}/build`;
   if (run.target === "review") {
-    deny.push(`Edit(${rulePath(ws)}/**)`);
+    // The review records its findings in the change's review document and edits nothing else. Deny beats allow in
+    // claude, so the workspace cannot be denied as a whole: every product repository and every other document of
+    // the change is denied by name instead.
+    const repos = new Set([...run.systemRepos, run.masterRepo]);
+    for (const other of repos) {
+      if (other !== run.masterRepo) deny.push(`Edit(${rulePath(`${ws}/${other}`)}/**)`);
+      deny.push(`Edit(${rulePath(`${buildDir}/${other}.md`)})`);
+    }
+    for (const doc of ["intent.md", "spec.md", "plan.md"]) deny.push(`Edit(${rulePath(`${changeDir}/${doc}`)})`);
+    allow.push(`Edit(${rulePath(`${buildDir}/review.md`)})`);
   } else {
     const repo = run.target.repo;
-    const buildDir = `${ws}/${run.masterRepo}/intent/${ctx.system}/${ctx.change}/build`;
     // Deny beats allow in claude, so a `build/**` deny would block this run's own log; deny the others by name.
     const repos = new Set([...run.systemRepos, run.masterRepo]);
     for (const other of repos) {
@@ -475,7 +485,8 @@ export function stagePills(stage: Stage, done: boolean, docs: DocsPresent, build
 
 export type Severity = "critical" | "high" | "medium" | "low";
 /** One finding of the review, with the severity its text opens with, if it names one. */
-export type Finding = { severity: Severity | null; text: string };
+export type Finding = { severity: Severity | null; text: string; id?: string; file?: string; line?: number };
+
 
 
 const SEVERITY_RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3 };

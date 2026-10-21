@@ -21,6 +21,7 @@ import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { UnsavedRows } from '@bindings/UnsavedRows';
 import type { Participant } from '@bindings/Participant';
 import type { PrepareOutcome } from '@bindings/PrepareOutcome';
@@ -88,6 +89,7 @@ export class TauriTransport extends KataTransport {
   sdlcLinkRun(link: RunLink) { return this.ipc.invoke<void>('sdlc_link_run', { link }); }
   sdlcWaitRunExit(runId: string, timeoutMs: number) { return this.ipc.invoke<boolean>('sdlc_wait_run_exit', { runId, timeoutMs }); }
   sdlcBuildStatus(master: string, system: string, change: string) { return this.ipc.invoke<BuildStatus>('sdlc_build_status', { master, system, change }); }
+  sdlcReviewRecord(master: string, system: string, change: string) { return this.ipc.invoke<ReviewRecord | null>('sdlc_review_record', { master, system, change }); }
   sdlcUnsavedRows(master: string, system: string, change: string) { return this.ipc.invoke<UnsavedRows[]>('sdlc_unsaved_rows', { master, system, change }); }
   sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending: string | null, action: BuildAction) { return this.ipc.invoke<PrepareOutcome>('sdlc_build_prepare', { folder, masterRepo, system, change, action, continueWithLeftovers, pending }); }
   sdlcBuildParticipants(folder: string, masterRepo: string, system: string, change: string, pending: string | null = null) { return this.ipc.invoke<Participant[]>('sdlc_build_participants', { folder, masterRepo, system, change, pending }); }

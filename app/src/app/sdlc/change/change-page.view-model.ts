@@ -52,6 +52,7 @@ import { section } from '../../lib/doc';
 import { inTauri } from '../../lib/mock';
 import { taskRecord } from '../../lib/plan-doc';
 import { requirements, type Requirement } from '../../lib/spec-doc';
+import { shownSection } from '../../lib/sdlc-review';
 import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
 
 export type ChangeState = 'loading' | 'ready' | 'not-found';
@@ -811,13 +812,20 @@ export class ChangePageViewModel {
             this.transport.listRuns(),
             this.transport.sdlcBuildHeads(folder, [master, ...productRepos], change),
           ]);
-          const state = reviewState(links, records, heads, { workspaceId: w.id, system, change });
+          // The review document decides when the change has one; the review run's exit code and words only when it has not.
+          const document = await this.transport.sdlcReviewRecord(masterPath(folder, master), system, change);
+          const state = reviewState(links, records, heads, { workspaceId: w.id, system, change }, document, master);
+          if (state.kind === 'current-document') {
+            const latest = shownSection(state.review);
+            got.review = { at: latest.reviewedAt, findings: latest.findings };
+            return latest.findings.length === 0 ? 'reviewed, nothing found' : plural(latest.findings.length, 'finding', 'findings');
+          }
           if (state.kind !== 'current') {
             got.review = { missing: state.kind };
             return REVIEW_MISSING_TEXT[state.kind];
           }
           const findings = reviewFindings(await this.transport.loadRun(state.link.run_id));
-          got.review = { at: state.link.started_at * 1000, findings };
+          got.review = { at: state.link.started_at * 1000, findings, older: true };
           return plural(findings.length, 'finding', 'findings');
         },
       },

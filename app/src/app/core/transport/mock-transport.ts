@@ -18,6 +18,7 @@ import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { UnsavedRows } from '@bindings/UnsavedRows';
 import type { Participant } from '@bindings/Participant';
 import type { PrepareOutcome } from '@bindings/PrepareOutcome';
@@ -159,6 +160,7 @@ export class MockTransport extends KataTransport {
   /** The scripted run has no process to wait for. */
   sdlcWaitRunExit(_runId: string, _timeoutMs: number): Promise<boolean> { return Promise.resolve(true); }
   sdlcBuildStatus(_master: string, _system: string, change: string): Promise<BuildStatus> { return Promise.resolve(this.sdlc.buildStatus(change)); }
+  sdlcReviewRecord(_master: string, _system: string, _change: string): Promise<ReviewRecord | null> { return Promise.resolve(null); }
   sdlcUnsavedRows(_master: string, _system: string, _change: string): Promise<UnsavedRows[]> { return Promise.resolve([]); }
   sdlcBuildParticipants(folder: string, _masterRepo: string, _system: string, _change: string, _pending?: string | null): Promise<Participant[]> { return Promise.resolve(this.sdlc.participants(folder)); }
   sdlcBuildPrepare(folder: string, _masterRepo: string, _system: string, change: string, _continueWithLeftovers: boolean, _pending: string | null, _action: BuildAction): Promise<PrepareOutcome> {

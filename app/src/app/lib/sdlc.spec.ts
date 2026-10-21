@@ -350,10 +350,8 @@ describe("build run-specs", () => {
     expect(deny).toEqual(expect.arrayContaining(["Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)"]));
   });
 
-  it("the review run changes nothing", () => {
+  it("the review run is named for its change", () => {
     const s = build(run({ target: "review" }));
-    expect(s.permissions.deny).toEqual(expect.arrayContaining(["Edit(//home/u/ws/**)"]));
-    expect(s.permissions.allow).toEqual(["Read(//home/u/ws/**)"]);
     expect(s.name).toBe("sdlc-claims-2026-10-12-fnol-review");
   });
 

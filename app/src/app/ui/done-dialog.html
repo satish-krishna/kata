@@ -88,7 +88,7 @@
         }
 
         @if (review(); as rv) {
-          <app-findings-list [findings]="rv.findings" />
+          <app-findings-list [findings]="rv.findings" [older]="rv.older ?? false" emptyText="Reviewed, nothing found." />
           <p class="k-left__note">Reviewed at <span class="k-mono">{{ reviewed(rv.at) }}</span></p>
         } @else if (missing(); as why) {
           <section class="k-left__group" aria-labelledby="done-review">
