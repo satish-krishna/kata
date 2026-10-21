@@ -33,7 +33,7 @@
       }
       <div class="k-changes__end">
         @if (vm.active()) {
-          <span class="k-mono k-changes__note" data-testid="changes-readonly">{{ vm.readOnlyNote() }}</span>
+          <span class="k-mono k-changes__note" data-testid="changes-readonly" [attr.title]="vm.readOnlyNote()">{{ vm.readOnlyNote() }}</span>
         }
         <ng-content />
       </div>

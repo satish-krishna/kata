@@ -620,22 +620,35 @@ export class ChangePageViewModel {
     if (stem === 'build') {
       if (this.shownDoc() !== 'build' && this.change() !== null && this.hasBranch()) {
         this.pickSeq++;
+        this.pendingDoc.set(null);
         this.picked.set('build');
       }
       return;
     }
-    if (!isDocStem(stem) || stem === this.shownDoc() || !this.docs()[stem]) return;
-    const master = this.masterDir();
-    if (!master) return;
+    if (!isDocStem(stem) || !this.docs()[stem]) return;
+    // The last click wins: a click back on the tab already shown also ends a read still pending for another tab.
     const seq = ++this.pickSeq;
+    if (stem === this.shownDoc()) {
+      this.pendingDoc.set(null);
+      return;
+    }
+    const master = this.masterDir();
+    if (!master) {
+      this.pendingDoc.set(null);
+      return;
+    }
+    // The spartan tabs move their own selection on a click, so the pill the operator clicked is held here until the text is read or the read fails; the tabs follow it.
+    this.pendingDoc.set(stem);
     try {
       const text = await this.transport.sdlcReadDoc(master, this.system(), this.changeName(), stem);
       // The tab and its text change together, once the text is here, so no tab ever shows another document's text.
       if (seq !== this.pickSeq) return;
       this.doc.set(text);
       this.picked.set(stem);
+      this.pendingDoc.set(null);
     } catch (e) {
       if (seq !== this.pickSeq) return;
+      this.pendingDoc.set(null);
       this.toasts.error(`Could not read ${stem}.md: ${message(e)}`);
     }
   }
@@ -971,6 +984,7 @@ export class ChangePageViewModel {
     const finish = (state: ChangeState, change: ChangeInfo | null, doc: string | null) => {
       if (seq !== this.loadSeq) return;
       this.pickSeq++;
+      this.pendingDoc.set(null);
       this.picked.set(null);
       this.change.set(change);
       this.doc.set(doc);

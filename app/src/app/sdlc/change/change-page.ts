@@ -2,9 +2,10 @@ import { NgTemplateOutlet } from '@angular/common';
 import { Component, inject } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideTriangleAlert } from '@ng-icons/lucide';
+import { lucideChevronDown, lucideTriangleAlert } from '@ng-icons/lucide';
 import { HlmAlertImports } from '@spartan-ng/helm/alert';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { HlmPopoverImports } from '@spartan-ng/helm/popover';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
 import { BuildView } from '../build/build-view';
 import { ChangesView } from '../changes/changes-view';
@@ -27,8 +28,8 @@ import { ChangePageViewModel } from './change-page.view-model';
 
 @Component({
   selector: 'app-change-page',
-  providers: [ChangePageViewModel, provideIcons({ lucideTriangleAlert })],
-  imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmTabsImports, SdlcToolbar, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildView, ChangesView],
+  providers: [ChangePageViewModel, provideIcons({ lucideChevronDown, lucideTriangleAlert })],
+  imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildView, ChangesView],
   templateUrl: './change-page.html',
 })
 export class ChangePage {

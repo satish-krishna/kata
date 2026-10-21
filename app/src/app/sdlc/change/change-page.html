@@ -1,4 +1,4 @@
-<div class="k-home" hlmTabs variant="bare" [tab]="vm.shownDoc()" (tabActivated)="vm.showDoc($event)">
+<div class="k-home" hlmTabs variant="bare" [tab]="vm.pendingDoc() ?? vm.shownDoc()" (tabActivated)="vm.showDoc($event)">
   <app-sdlc-toolbar
     [workspaces]="vm.workspaces()"
     [current]="vm.current()"
@@ -15,14 +15,36 @@
     @if (vm.pills().length > 0) {
       <app-stage-pills toolbarStages [pills]="vm.pills()" />
     }
-    @if (vm.pullLinks().length > 0) {
+    @let prs = vm.pullLinks();
+    @if (prs.length === 1) {
       <nav toolbarLinks class="k-prlinks" aria-label="Pull requests">
-        <span class="k-prlinks__label">PRs</span>
-        @for (link of vm.pullLinks(); track link.repo) {
-          <a class="k-mono" [href]="link.url" [attr.title]="link.label" target="_blank" rel="noopener noreferrer"
-            ><span class="k-prlinks__repo">{{ link.repo }}</span>@if (link.number !== null) {&ngsp;<span class="k-prlinks__num">#{{ link.number }}</span>}</a
-          >
-        }
+        <span class="k-prlinks__label">PR</span>
+        <a class="k-mono" [href]="prs[0].url" [attr.title]="prs[0].label" target="_blank" rel="noopener noreferrer"
+          ><span class="k-prlinks__repo">{{ prs[0].repo }}</span>@if (prs[0].number !== null) {&ngsp;<span class="k-prlinks__num">#{{ prs[0].number }}</span>}</a
+        >
+      </nav>
+    } @else if (prs.length > 1) {
+      <nav toolbarLinks class="k-prlinks" aria-label="Pull requests">
+        <hlm-popover sideOffset="4" align="end">
+          <button hlmPopoverTrigger hlmBtn variant="secondary" size="sm" type="button" data-testid="pr-menu">
+            {{ prs.length }} PRs
+            <ng-icon name="lucideChevronDown" size="14" aria-hidden="true" />
+          </button>
+          <hlm-popover-content *hlmPopoverPortal="let ctx" data-testid="pr-list">
+            <hlm-popover-header>
+              <div hlmPopoverTitle>Pull requests</div>
+            </hlm-popover-header>
+            <ul class="k-prlist" aria-label="Pull requests">
+              @for (link of prs; track link.repo) {
+                <li>
+                  <a class="k-mono k-prlist__link" [href]="link.url" target="_blank" rel="noopener noreferrer"
+                    ><span>{{ link.repo }}</span>@if (link.number !== null) {&ngsp;<span>#{{ link.number }}</span>}</a
+                  >
+                </li>
+              }
+            </ul>
+          </hlm-popover-content>
+        </hlm-popover>
       </nav>
     }
   </app-sdlc-toolbar>
@@ -116,6 +138,8 @@
                     [runTotal]="vm.railRuns().total"
                   />
                 }
+              } @else if (stem === vm.pendingDoc()) {
+                <p class="k-state__body k-change__missing" role="status">Reading {{ stem }}.md…</p>
               }
             </div>
           }

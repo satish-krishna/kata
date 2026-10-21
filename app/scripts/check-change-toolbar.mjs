@@ -49,7 +49,7 @@ function measure() {
   const menu = header.querySelector('[data-testid="pr-menu"]');
   const root = document.documentElement;
   return {
-    menuText: menu ? menu.textContent.trim().replace(/s+/g, ' ') : null,
+    menuText: menu ? menu.textContent.trim().replace(/\s+/g, ' ') : null,
     menuClipped: menu ? menu.scrollWidth - menu.clientWidth : 0,
     menuInside: menu ? menu.getBoundingClientRect().right <= head.right + 0.5 && menu.getBoundingClientRect().left >= head.left - 0.5 : false,
     pageScroll: root.scrollWidth - root.clientWidth,

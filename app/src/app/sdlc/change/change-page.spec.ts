@@ -316,7 +316,7 @@ describe('ChangePage after the pull requests', () => {
     expect(labels(container)).not.toContain('Declare done');
     expect(labels(container)).not.toContain('Another round');
     expect(container.querySelector('nav[aria-label="Pull requests"]')).not.toBeNull();
-    expect(container.querySelectorAll('header a').length).toBe(3);
+    expect(container.querySelector('header [data-testid="pr-menu"]')!.textContent).toContain('3 PRs');
   });
 
   it('an unfinished set of pull requests keeps the finished label and its action', async () => {

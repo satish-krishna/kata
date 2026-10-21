@@ -155,7 +155,11 @@ try {
           })(),
           repoName: (() => {
             const el = [...document.querySelectorAll('[data-repo] .k-files__name')].find((n) => n.textContent.trim() === 'claims-intent');
-            return el ? el.scrollWidth - el.clientWidth : null;
+            if (!el) return null;
+            // scrollWidth and clientWidth are whole pixels, so a name a fraction of a pixel too wide still reads as fitting while it paints an ellipsis; the text's own box is exact.
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            return Math.max(el.scrollWidth - el.clientWidth, range.getBoundingClientRect().width - el.getBoundingClientRect().width > 0.02 ? 1 : 0);
           })(),
           repos: [...document.querySelectorAll('[data-repo]')].map((r) => ({ h: r.getBoundingClientRect().height, wraps: wraps(r) })),
         };
