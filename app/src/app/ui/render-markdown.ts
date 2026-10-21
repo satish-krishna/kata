@@ -8,6 +8,7 @@ import rehypeHighlight from 'rehype-highlight';
 import gherkin from 'highlight.js/lib/languages/gherkin';
 import type { HLJSApi, Language } from 'highlight.js';
 import type { Element, Nodes, Root } from 'hast';
+import { headingSlugger } from '../lib/doc';
 
 /** The same remark + GFM parse the original markdown renderer used, sanitized and serialized
  *  to HTML. Raw HTML in the source is dropped (remark-rehype ignores it unless
@@ -48,6 +49,29 @@ function taskCheckboxesToSpans() {
   return (tree: Root): void => walk(tree);
 }
 
+/** The text a hast node shows. */
+function textOf(node: Nodes): string {
+  if (node.type === 'text') return node.value;
+  return 'children' in node ? node.children.map(textOf).join('') : '';
+}
+
+/** Gives each heading element the id `outline` computes for it, so an outline entry can scroll to it. Runs after
+ *  sanitizing, which would prefix a hand-written id. */
+function headingIds() {
+  return (tree: Root): void => {
+    const next = headingSlugger();
+    const walk = (node: Nodes): void => {
+      if (!('children' in node)) return;
+      for (const child of node.children) {
+        if (child.type !== 'element') continue;
+        if (/^h[1-6]$/.test(child.tagName)) child.properties['id'] = next(textOf(child).trim());
+        walk(child);
+      }
+    };
+    walk(tree);
+  };
+}
+
 /** highlight.js's Gherkin grammar predates Gherkin 6, so it misses `Rule` and `Example`, which ai-sdlc specs use. */
 function gherkin6(hljs: HLJSApi): Language {
   const g = gherkin(hljs);
@@ -63,6 +87,7 @@ const domProcessor = unified()
   .use(remarkRehype)
   .use(rehypeSanitize)
   .use(rehypeHighlight, { languages: { gherkin: gherkin6 }, detect: false })
+  .use(headingIds)
   .use(taskCheckboxesToSpans)
   .use(rehypeStringify);
 

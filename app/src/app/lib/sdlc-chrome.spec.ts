@@ -31,7 +31,7 @@ describe('parseFrontMatter', () => {
       ['scope', 'sdlc'],
       ['context', '[kata@7226252]'],
     ]);
-    expect(got.body).toBe('# Intent: Build the plan, review what changed, open pull requests\n');
+    expect(got.body).toBe('\n# Intent: Build the plan, review what changed, open pull requests\n');
   });
 
   it('keeps a value that has colons in it whole, and a list as written', () => {
