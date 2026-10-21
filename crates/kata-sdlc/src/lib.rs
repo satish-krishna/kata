@@ -8,6 +8,7 @@ pub mod checks;
 pub mod commits;
 pub mod decide;
 pub mod diff;
+pub mod format;
 pub mod frontmatter;
 pub mod git;
 pub mod participants;
