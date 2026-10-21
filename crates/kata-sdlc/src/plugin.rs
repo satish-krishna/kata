@@ -3,8 +3,8 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-/// The oldest plugin version that builds one repository per run.
-pub const MIN_VERSION: &str = "0.6.0";
+/// The oldest plugin version that ships the format program and builds one repository per run.
+pub const MIN_VERSION: &str = "0.8.0";
 
 /// Whether the ai-sdlc plugin can be used: where it is and which version, decided once for the whole app.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
@@ -26,8 +26,20 @@ pub enum Readiness {
 
 /// Whether the plugin installed at `plugin_dir` (`None` when the catalog has no such plugin) is new enough.
 pub fn readiness(plugin_dir: Option<&Path>) -> Readiness {
-    let _ = plugin_dir;
-    Readiness::Missing
+    let Some(dir) = plugin_dir else {
+        return Readiness::Missing;
+    };
+    match version(dir) {
+        None => Readiness::Missing,
+        Some(have) if at_least(&have, MIN_VERSION) => Readiness::Ready {
+            dir: dir.to_path_buf(),
+            version: have,
+        },
+        Some(have) => Readiness::TooOld {
+            have,
+            need: MIN_VERSION.to_string(),
+        },
+    }
 }
 
 /// The `version` field of `<plugin_dir>/.claude-plugin/plugin.json`.
@@ -74,7 +86,7 @@ mod tests {
 
     #[test]
     fn plugin_version_reads_plugin_json_r2_5() {
-        for ok in ["0.6.0", "0.10.1", "1.0.0"] {
+        for ok in ["0.8.0", "0.10.1", "1.0.0"] {
             let dir = plugin_with(Some(&format!(r#"{{"name":"ai-sdlc","version":"{ok}"}}"#)));
             let v = version(dir.path()).unwrap();
             assert_eq!(v, ok);
@@ -82,7 +94,7 @@ mod tests {
         }
         for (json, expect) in [
             (Some(r#"{"version":"0.5.0"}"#), Some("0.5.0")),
-            (Some(r#"{"version":"0.6.0-rc1"}"#), Some("0.6.0-rc1")),
+            (Some(r#"{"version":"0.8.0-rc1"}"#), Some("0.8.0-rc1")),
             (Some(r#"{"name":"ai-sdlc"}"#), None),
             (None, None),
         ] {

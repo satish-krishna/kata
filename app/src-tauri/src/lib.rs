@@ -370,8 +370,15 @@ fn sdlc_build_heads(
 }
 
 #[tauri::command(async)]
-fn sdlc_plugin_version(path: String) -> Option<String> {
-    sdlc::plugin::version(Path::new(&path))
+fn sdlc_plugin_readiness(workdir: Option<String>) -> sdlc::plugin::Readiness {
+    let roots = catalog::roots_for_workdir(workdir.as_deref());
+    let found = catalog::discover(&roots);
+    let plugin = found.iter().find(|e| {
+        e.kind == catalog::EntryKind::Plugin
+            && e.name == "ai-sdlc"
+            && e.provides.iter().any(|p| p == "skill:build")
+    });
+    sdlc::plugin::readiness(plugin.map(|e| e.path.as_path()))
 }
 
 #[tauri::command(async)]
@@ -778,7 +785,7 @@ pub fn run() {
             sdlc_build_participants,
             sdlc_build_settle,
             sdlc_build_heads,
-            sdlc_plugin_version,
+            sdlc_plugin_readiness,
             sdlc_change_repos,
             sdlc_missing_change_branches,
             sdlc_diff_files,

@@ -51,7 +51,7 @@ export const MOCK_BUILD_CHANGE = '2026-10-19-build-demo';
 /** A change whose build finished and whose three pull requests are open: the toolbar's links and its "Build · done" pill. */
 export const MOCK_DONE_CHANGE = '2026-10-18-photo-limits-shipped';
 /** The version the demo's `ai-sdlc` plugin reports. */
-export const MOCK_PLUGIN_VERSION = '0.6.0';
+export const MOCK_PLUGIN_VERSION = '0.8.0';
 
 const plugin = (name: string, description: string, provides: string[] = []): CatalogEntry =>
   ({ kind: 'plugin', name, description, source: 'user', path: `~/.claude/plugins/${name}`, provides, mcp_servers: [] });

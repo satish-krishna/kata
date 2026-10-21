@@ -387,14 +387,10 @@ describe("stopMessage", () => {
 
 describe("canBuild", () => {
   const withSkill: CatalogEntry[] = [{ ...plugin("ai-sdlc"), provides: ["skill:build"] }];
-  it("needs the build skill and 0.6.0 or later", () => {
-    expect(canBuild(withSkill, "0.6.0")).toBe(true);
-    expect(canBuild(withSkill, "0.10.1")).toBe(true);
-    expect(canBuild(withSkill, "1.0.0")).toBe(true);
-    expect(canBuild(withSkill, "0.5.9")).toBe(false);
-    expect(canBuild(withSkill, null)).toBe(false);
-    expect(canBuild([{ ...plugin("ai-sdlc"), provides: ["skill:plan"] }], "0.6.0")).toBe(false);
-    expect(canBuild([], "0.6.0")).toBe(false);
+  it("needs the plugin in the catalog with the build skill", () => {
+    expect(canBuild(withSkill)).toBe(true);
+    expect(canBuild([{ ...plugin("ai-sdlc"), provides: ["skill:plan"] }])).toBe(false);
+    expect(canBuild([])).toBe(false);
   });
 });
 

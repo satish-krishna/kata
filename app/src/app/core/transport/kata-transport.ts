@@ -1,5 +1,6 @@
 import type { RunSpec } from '@bindings/RunSpec';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
+import type { Readiness } from '@bindings/Readiness';
 import type { Preset } from '@bindings/Preset';
 import type { KataListing } from '@bindings/KataListing';
 import type { Settings } from '@bindings/Settings';
@@ -89,7 +90,8 @@ export abstract class KataTransport {
   abstract sdlcBuildParticipants(folder: string, masterRepo: string, system: string, change: string, pending?: string | null): Promise<Participant[]>;
   abstract sdlcBuildSettle(start: BuildStart): Promise<string[]>;
   abstract sdlcBuildHeads(folder: string, repos: string[], change: string): Promise<Record<string, string>>;
-  abstract sdlcPluginVersion(path: string): Promise<string | null>;
+  /** Whether the ai-sdlc plugin is installed and new enough, as the backend decides it for the workspace folder. */
+  abstract sdlcPluginReadiness(workdir: string | null): Promise<Readiness>;
   abstract sdlcChangeRepos(folder: string, masterRepo: string, system: string, change: string): Promise<ChangeRepo[]>;
   /** The product repositories in the build that have no `change/<change>` branch, which the Changes view cannot list. */
   abstract sdlcMissingChangeBranches(folder: string, masterRepo: string, system: string, change: string): Promise<string[]>;

@@ -158,6 +158,9 @@ pub struct ParsedReview {
     pub reviews: Vec<ParsedReviewSection>,
 }
 
+/// The document layout versions Kata can read; a document in any other layout is shown as plain text and blocks building.
+pub const ACCEPTED_LAYOUTS: &[u32] = &[1, 2];
+
 /// What `check.mjs read --json <file>` prints: the parsed document, its layout version, and every
 /// problem found in it.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

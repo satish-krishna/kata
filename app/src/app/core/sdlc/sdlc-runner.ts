@@ -5,6 +5,7 @@ import type { BuildStart } from '@bindings/BuildStart';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Leftovers } from '@bindings/Leftovers';
+import type { Readiness } from '@bindings/Readiness';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { RepoFiles } from '@bindings/RepoFiles';
 import type { Snapshot } from '@bindings/Snapshot';
@@ -85,7 +86,8 @@ const RESULT_MAX = 120;
 /** How long to wait for the engine process to exit before touching the repo. */
 const EXIT_WAIT_MS = 15000;
 const TERMINAL: readonly RunState[] = ['success', 'warning', 'error'];
-const UPDATE_PLUGIN = 'Update the ai-sdlc plugin to 0.6.0 or later, then start the build again.';
+const INSTALL_PLUGIN = 'Install the ai-sdlc plugin, then start the build again.';
+const updatePlugin = (need: string): string => `Update the ai-sdlc plugin to ${need} or later, then start the build again.`;
 const DIRTY = 'uncommitted changes';
 const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
 
@@ -212,16 +214,14 @@ export class SdlcRunner {
 
   /** Check the build can start and ask the backend to prepare it. Nothing else is touched before the plugin check passes (R2.5). */
   async prepareBuild(req: BuildRequest): Promise<PrepareResult> {
-    const entry = req.catalog.find((e) => e.kind === 'plugin' && e.name === 'ai-sdlc');
-    let version: string | null = null;
-    if (entry) {
-      try {
-        version = await this.transport.sdlcPluginVersion(entry.path);
-      } catch {
-        version = null;
-      }
+    let readiness: Readiness;
+    try {
+      readiness = await this.transport.sdlcPluginReadiness(req.folder);
+    } catch {
+      readiness = { kind: 'missing' };
     }
-    if (!entry || !canBuild(req.catalog, version)) return { kind: 'refused', reason: UPDATE_PLUGIN };
+    if (readiness.kind === 'tooOld') return { kind: 'refused', reason: updatePlugin(readiness.need) };
+    if (readiness.kind === 'missing' || !canBuild(req.catalog)) return { kind: 'refused', reason: INSTALL_PLUGIN };
     try {
       const out = await this.transport.sdlcBuildPrepare(req.folder, req.masterRepo, req.system, req.change, req.continueWithLeftovers, req.pending ?? null);
       if (out.kind === 'ready') {

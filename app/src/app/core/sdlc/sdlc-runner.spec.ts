@@ -8,6 +8,7 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { BuildStart } from '@bindings/BuildStart';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { PrepareOutcome } from '@bindings/PrepareOutcome';
+import type { Readiness } from '@bindings/Readiness';
 import type { RepoStart } from '@bindings/RepoStart';
 import type { KataEvent, RunState } from '../../lib/events';
 import { seedCatalog, seedSpec } from '../../lib/mock';
@@ -38,7 +39,8 @@ const REQUEST: BuildRequest = {
   catalog: [AI_SDLC],
   continueWithLeftovers: false,
 };
-const UPDATE_PLUGIN = 'Update the ai-sdlc plugin to 0.6.0 or later, then start the build again.';
+const UPDATE_PLUGIN = 'Update the ai-sdlc plugin to 0.8.0 or later, then start the build again.';
+const INSTALL_PLUGIN = 'Install the ai-sdlc plugin, then start the build again.';
 
 type FakeSnapshot = { state: RunState; events: KataEvent[]; summary: null; asks: []; permissions: []; exit?: number | null };
 
@@ -58,9 +60,9 @@ class FakeTransport {
   sdlcFinishChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('finish'); return this.finishResults.shift()!(); });
   sdlcSettings = vi.fn(async () => ({ mode: null, remember: false, permission_mode: 'bypass' as const }));
   catalog = vi.fn(async (..._a: unknown[]) => seedCatalog);
-  pluginVersion: string | null = '0.6.0';
+  readiness: Readiness = { kind: 'ready', dir: '/plugins/ai-sdlc', version: '0.8.0' };
   prepared: PrepareOutcome | (() => Promise<PrepareOutcome>) = { kind: 'ready', start: BUILD_START };
-  sdlcPluginVersion = vi.fn(async (..._a: unknown[]) => { this.calls.push('version'); return this.pluginVersion; });
+  sdlcPluginReadiness = vi.fn(async (..._a: unknown[]) => { this.calls.push('readiness'); return this.readiness; });
   sdlcBuildPrepare = vi.fn(async (..._a: unknown[]) => {
     this.calls.push('prepare');
     return typeof this.prepared === 'function' ? this.prepared() : this.prepared;
@@ -471,21 +473,29 @@ describe('SdlcRunner build', () => {
     });
 
   describe('prepareBuild', () => {
-    it('start refuses a plugin older than 0.6.0 before preparing (R2.5)', async () => {
+    it('start refuses a plugin the backend finds too old before preparing (R2.5, R10.1)', async () => {
       const ctx = setup();
-      ctx.fake.pluginVersion = '0.5.0';
+      ctx.fake.readiness = { kind: 'tooOld', have: '0.7.9', need: '0.8.0' };
       const out = await ctx.runner.prepareBuild(REQUEST);
       expect(out).toEqual({ kind: 'refused', reason: UPDATE_PLUGIN });
-      expect(ctx.fake.sdlcPluginVersion).toHaveBeenCalledWith('/plugins/ai-sdlc');
+      expect(ctx.fake.sdlcPluginReadiness).toHaveBeenCalledWith(REQUEST.folder);
       expect(ctx.fake.sdlcBuildPrepare).not.toHaveBeenCalled();
       expect(ctx.startRun).not.toHaveBeenCalled();
-      expect(ctx.fake.calls).toEqual(['version']);
+      expect(ctx.fake.calls).toEqual(['readiness']);
     });
 
     it('refuses when the plugin is not in the catalog at all', async () => {
       const ctx = setup();
       const out = await ctx.runner.prepareBuild({ ...REQUEST, catalog: [] });
-      expect(out).toEqual({ kind: 'refused', reason: UPDATE_PLUGIN });
+      expect(out).toEqual({ kind: 'refused', reason: INSTALL_PLUGIN });
+      expect(ctx.fake.sdlcBuildPrepare).not.toHaveBeenCalled();
+    });
+
+    it('refuses when the backend finds the plugin missing', async () => {
+      const ctx = setup();
+      ctx.fake.readiness = { kind: 'missing' };
+      const out = await ctx.runner.prepareBuild(REQUEST);
+      expect(out).toEqual({ kind: 'refused', reason: INSTALL_PLUGIN });
       expect(ctx.fake.sdlcBuildPrepare).not.toHaveBeenCalled();
     });
 

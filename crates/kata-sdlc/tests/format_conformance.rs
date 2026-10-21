@@ -117,9 +117,7 @@ fn kata_checks_every_published_change_as_the_check_does() {
 #[test]
 fn the_vendored_copy_is_at_the_minimum_plugin_version() {
     let version = fs::read_to_string(vendored().join("VERSION")).unwrap();
-    // T9 moves plugin::MIN_VERSION to the version that ships the format program; until then the
-    // minimum is stated literally.
-    assert_eq!(version.trim(), "0.8.0");
+    assert_eq!(version.trim(), kata_sdlc::plugin::MIN_VERSION);
 }
 
 /// Line endings differ between checkouts (this repository is LF, the sibling may be CRLF).
