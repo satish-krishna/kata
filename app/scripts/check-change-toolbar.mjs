@@ -16,6 +16,8 @@ export const CHANGE_ROUTES = [
 const LONG_WORKSPACE = 'acme-claims-regional-underwriting-plat-x'; // 40 characters
 const LONG_CHANGE = '2026-10-16-fraud-flag-for-repeat-claimants-xx'; // 45 characters
 const LONG_BRANCH = 'change/2026-10-09-adjuster-reassign';
+const LONG_REPO = 'claims-adjuster-reassignment-service-x'; // 38 characters
+const ONE_PR = 'sdlc/claims/2026-10-18-photo-limits-shipped?demo=one-pr';
 const THREE_PRS = 'sdlc/claims/2026-10-18-photo-limits-shipped';
 
 /** Long values set in the rendered DOM (the way checkPrPopover sets its repository name), so no fixture data is needed. */
@@ -32,6 +34,7 @@ export const LONG_FIXTURES = [
     menu: '3 PRs',
     fixture: { workspace: LONG_WORKSPACE, change: LONG_CHANGE, branch: LONG_BRANCH },
   },
+  { route: ONE_PR, name: 'one pull request with a 38-character repository name', pills: 4, links: 1, fixture: { prRepo: LONG_REPO } },
 ];
 
 // The numbers in the shrink-order table (workbench.css), in pixels at the 16px root.
@@ -54,6 +57,11 @@ function applyFixture(fixture) {
     const item = header.querySelector('.k-crumbs__item');
     item.textContent = fixture.change;
     item.setAttribute('title', fixture.change);
+  }
+  if (fixture.prRepo) {
+    const link = header.querySelector('.k-prlinks a');
+    link.querySelector('.k-prlinks__repo').textContent = fixture.prRepo;
+    link.setAttribute('title', link.textContent.trim());
   }
   if (fixture.branch) {
     const chip = header.querySelector('[data-testid="branch"]');
@@ -235,7 +243,8 @@ export async function checkChangeToolbar(browser, origin, { route, name, pills, 
     if (m.badgeClipped > 0) fails.push(`${at}: the mode badge's text is clipped (${m.badgeClipped.toFixed(2)}px)`);
     for (const p of m.pills) if (p.clipped > 0) fails.push(`${at}: the "${p.text}" pill's text is clipped (${p.clipped.toFixed(2)}px)`);
     if (menu !== null && (m.menuClipped > 0 || !m.menuInside)) fails.push(`${at}: the "${menu}" button is clipped or runs past the toolbar (${m.menuClipped.toFixed(2)}px cut off)`);
-    m.linkClipped.forEach((c, i) => c > 0 && fails.push(`${at}: pull request link ${i + 1} is clipped (${c.toFixed(2)}px)`));
+    // A fixture repository name too long for its cap may end in an ellipsis; its title carries the full name.
+    if (!(fixture && fixture.prRepo)) m.linkClipped.forEach((c, i) => c > 0 && fails.push(`${at}: pull request link ${i + 1} is clipped (${c.toFixed(2)}px)`));
     // The change name stays whole for every real change name; a fixture name that is too long for the room may be cut, and only last.
     if (!longName && m.crumbClipped > 0) fails.push(`${at}: the change name is truncated (${m.crumbClipped.toFixed(2)}px of it is cut off)`);
     for (const l of m.linkTitles) if (l.title !== l.text) fails.push(`${at}: the pull request link "${l.text}" has title ${JSON.stringify(l.title)}, not its full text`);
