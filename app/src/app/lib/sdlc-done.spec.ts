@@ -95,3 +95,31 @@ describe('canConfirm', () => {
     expect(canConfirm(report(over))).toBe(false);
   });
 });
+
+describe('reviewState with a review document', () => {
+  const doc = (...commits: Record<string, string>[]) => ({
+    layout: 2,
+    problems: [],
+    reviews: commits.map((c, i) => ({ number: i + 1, reviewed_at: '2026-10-22', commits: c, findings: [] })),
+  });
+  const FULL = { a: '1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', master: '9999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' };
+
+  it('reads the latest review commits against the heads and not the run exit code', () => {
+    const got = reviewState([link()], [record('r1', 1)], FULL, SCOPE, doc({ a: '0000000' }, { a: '1111111' }), 'master');
+    expect(got).toMatchObject({ kind: 'current-document', review: { number: 2 } });
+  });
+
+  it('is stale when a reviewed repository moved since the review', () => {
+    const got = reviewState([], [], { a: '2222222cccccccccccccccccccccccccccccccc' }, SCOPE, doc({ a: '1111111' }), 'master');
+    expect(got).toEqual({ kind: 'stale' });
+  });
+
+  it('does not judge the master by its head, since recording the review commits there', () => {
+    const got = reviewState([], [], FULL, SCOPE, doc({ a: '1111111', master: '0123456' }), 'master');
+    expect(got).toMatchObject({ kind: 'current-document' });
+  });
+
+  it('is none when the document holds no review', () => {
+    expect(reviewState([link()], [record('r1', 0)], FULL, SCOPE, doc(), 'master')).toEqual({ kind: 'none' });
+  });
+});

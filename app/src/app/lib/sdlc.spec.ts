@@ -335,6 +335,21 @@ describe("build run-specs", () => {
     expect(s.permissions.allow).toEqual(["Read(//home/u/ws/**)", `Edit(${log})`]);
   });
 
+  const MASTER_LOG_DIR = "//home/u/ws/master/intent/claims/2026-10-12-fnol";
+
+  it("the review run may edit only build/review.md", () => {
+    const s = build(run({ target: "review" }));
+    const deny = s.permissions.deny ?? [];
+    expect(s.permissions.allow).toEqual(["Read(//home/u/ws/**)", `Edit(${MASTER_LOG_DIR}/build/review.md)`]);
+    // Deny beats allow in claude, so no deny may cover the document, and the rest of the change stays closed.
+    expect(deny).not.toContain("Edit(//home/u/ws/**)");
+    expect(deny.some((d) => d.includes("build/**") || d.startsWith("Write("))).toBe(false);
+    expect(deny).toEqual(expect.arrayContaining(["Edit(//home/u/ws/app/**)", "Edit(//home/u/ws/api/**)"]));
+    expect(deny).toEqual(expect.arrayContaining([`Edit(${MASTER_LOG_DIR}/build/app.md)`, `Edit(${MASTER_LOG_DIR}/build/api.md)`, `Edit(${MASTER_LOG_DIR}/build/master.md)`]));
+    expect(deny).toEqual(expect.arrayContaining([`Edit(${MASTER_LOG_DIR}/spec.md)`, `Edit(${MASTER_LOG_DIR}/plan.md)`, `Edit(${MASTER_LOG_DIR}/intent.md)`]));
+    expect(deny).toEqual(expect.arrayContaining(["Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)"]));
+  });
+
   it("the review run changes nothing", () => {
     const s = build(run({ target: "review" }));
     expect(s.permissions.deny).toEqual(expect.arrayContaining(["Edit(//home/u/ws/**)"]));

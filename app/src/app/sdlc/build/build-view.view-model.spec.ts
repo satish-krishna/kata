@@ -380,6 +380,60 @@ describe('BuildViewModel', () => {
     expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
   });
 
+  describe('findings from the review document', () => {
+    const section = (number: number, reviewed_at: string, findings: { id: string; severity: 'high' | 'medium' | 'low'; text: string }[]) => ({
+      number,
+      reviewed_at,
+      commits: { 'claims-core': 'aaaaaaa' },
+      findings: findings.map((f) => ({ ...f, file: 'src/a.ts', line: 4 })),
+    });
+    const withDocument = (transport: MockTransport, ...reviews: ReturnType<typeof section>[]) =>
+      vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({ layout: 2, reviews, problems: [] });
+    const shown = (vm: BuildViewModel) => () => vm.phase() === 'finished' && vm.reviewShown();
+
+    it('findings come from review.md, not the run words (R14.2)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'The limit is not enforced on retry.' }]));
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.findings().map((f) => [f.severity, f.text])).toEqual([['high', 'The limit is not enforced on retry.']]);
+      expect(vm.older()).toBe(false);
+    });
+
+    it('a review with no findings shows reviewed, nothing found (R14.3)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', []));
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.findings()).toEqual([]);
+      expect(vm.emptyText()).toBe('Reviewed, nothing found.');
+    });
+
+    it('a second review is shown with the first one available (R15.1)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(
+        transport,
+        section(1, '2026-10-18', [{ id: 'F1', severity: 'high', text: 'one' }]),
+        section(2, '2026-10-19', [{ id: 'F1', severity: 'low', text: 'two' }]),
+      );
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.findings().map((f) => f.text)).toEqual(['two']);
+      expect(vm.replaced().map((r) => [r.label, r.findings.map((f) => f.text)])).toEqual([['Review 1 of 2026-10-18', ['one']]]);
+    });
+
+    it('a change without review.md reads the run words, labeled older (R16.1)', async () => {
+      const { vm, transport, lock } = setup();
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, finished(vm));
+      expect(vm.findings().map((f) => f.text)).toEqual([
+        'The upload limit is duplicated in claims-core and customer-portal.',
+        'The refusal message has no test.',
+      ]);
+      expect(vm.older()).toBe(true);
+    });
+  });
+
   it('Close releases the lock', async () => {
     const { vm, transport, lock } = setup();
     await vm.start(await handoffFor(transport), CTX);
