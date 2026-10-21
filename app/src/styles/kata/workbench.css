@@ -39,11 +39,14 @@
 .wb-sep { width: 1px; height: 22px; background: var(--border-default); flex: none; }
 /* An icon button is never squeezed narrower than its icon. */
 .wb-toolbar .k-iconbtn { flex: none; }
-/* The window is never narrower than 1024. On the change page, between 1024 and 1280 the toolbar gives up its separators and the branch chip, tightens its gaps and lets the switcher shrink a little further, so the pills and the change name fit whole. */
+/* The window is never narrower than 1024. On the change page, between 1024 and 1280 the toolbar gives up its separators, shrinks the branch chip to its warning icon, tightens its gaps and lets the switcher shrink a little further, so the pills and the change name fit whole. */
 @media (max-width: 1279px) {
   .wb-toolbar:has(.k-pills) { gap: var(--space-3); }
-  .wb-toolbar:has(.k-pills) > .wb-sep, .wb-toolbar:has(.k-pills) .k-branch { display: none; }
-  .wb-toolbar:has(.k-pills):has(.k-crumbs__item) .k-wstrigger { min-width: 6rem; }
+  .wb-toolbar:has(.k-pills) > .wb-sep { display: none; }
+  .wb-toolbar:has(.k-pills) .k-branch { padding: var(--space-1-5); color: var(--warning-text); }
+  .wb-toolbar:has(.k-pills) .k-branch .k-branch__icon { display: inline-flex; }
+  .wb-toolbar:has(.k-pills) .k-branch__text { display: none; }
+  .wb-toolbar:has(.k-pills):has(.k-crumbs__item) .k-wstrigger { min-width: 4.5rem; }
   .wb-toolbar .k-pills { margin-inline-start: 0; }
   .wb-toolbar .k-pill { padding-inline: var(--space-3); }
 }
@@ -222,6 +225,8 @@
 /* A change name is long; it gives way first, on one line, and the full name sits in its title. */
 .k-crumbs__item { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--weight-medium) var(--text-base)/1 var(--font-sans); color: var(--text-secondary); }
 .k-branch { flex: none; white-space: nowrap; font: var(--font-code-sm); color: var(--text-secondary); padding: var(--space-1-5) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-inset); }
+.k-branch { display: inline-flex; align-items: center; gap: var(--space-2); }
+.k-branch .k-branch__icon { display: none; }
 .k-wstrigger { display: inline-flex; align-items: center; justify-content: space-between; gap: var(--space-3); width: 16rem; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-inset); color: var(--text-primary); cursor: pointer; }
 /* On the change page the switcher gives way before the change name does, down to a floor that still names the workspace. */
 .wb-toolbar:has(.k-crumbs__item) .k-wstrigger { flex: 0 1000 16rem; width: auto; min-width: 8rem; }

@@ -33,7 +33,10 @@
     }
   </nav>
   @if (!blocked() && branch(); as b) {
-    <span class="k-branch" data-testid="branch" title="Branch checked out in the master repo">{{ b }}</span>
+    <span class="k-branch" data-testid="branch" role="note" [attr.title]="branchLabel()" [attr.aria-label]="branchLabel()">
+      <span class="k-branch__icon" aria-hidden="true"><ng-icon name="lucideGitBranch" size="14" /></span>
+      <span class="k-branch__text">{{ b }}</span>
+    </span>
   }
   <ng-content select="[toolbarStages]" />
   <div class="wb-toolbar__spacer"></div>
