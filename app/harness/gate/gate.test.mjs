@@ -158,6 +158,21 @@ describe('sealing gate: alert-dialog composition', () => {
   });
 });
 
+describe('sealing gate: popover composition', () => {
+  const good =
+    '<hlm-popover><button hlmPopoverTrigger hlmBtn type="button">Open</button><hlm-popover-content *hlmPopoverPortal="let ctx"><hlm-popover-header><div hlmPopoverTitle>x</div></hlm-popover-header><p hlmPopoverDescription>y</p></hlm-popover-content></hlm-popover>';
+  const noPortal =
+    '<hlm-popover><button hlmPopoverTrigger hlmBtn type="button">Open</button><hlm-popover-content><div hlmPopoverTitle>x</div></hlm-popover-content></hlm-popover>';
+
+  it('accepts popover-content under its portal as known primitives', () => {
+    expect(lintHtml(good, { 'seal/no-unportalled-overlay': 'error' })).toEqual([]);
+  });
+
+  it('flags popover-content that is not under hlmPopoverPortal', () => {
+    expect(countByMessageId(lintHtml(noPortal, { 'seal/no-unportalled-overlay': 'error' }))).toEqual({ unportalledOverlay: 1 });
+  });
+});
+
 describe('sealing gate: no suppression dial', () => {
   it('ignores an eslint-disable comment (noInlineConfig)', () => {
     const withDisable =
