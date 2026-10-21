@@ -102,4 +102,4 @@ try {
   await srv.close();
 }
 if (failed) process.exit(1);
-process.stdout.write(`responsive check passed at ${BREAKPOINTS.join(', ')} (the change page at ${CHANGE_WIDTHS.join(', ')})\n`);
+process.stdout.write(`responsive check passed at ${BREAKPOINTS.join(', ')} (the change page and the home page at ${CHANGE_WIDTHS.join(', ')})\n`);

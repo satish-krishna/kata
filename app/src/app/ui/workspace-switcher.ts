@@ -1,4 +1,4 @@
-import { Component, input, output } from '@angular/core';
+import { Component, computed, input, output } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideChevronDown, lucideFolderPlus, lucideX } from '@ng-icons/lucide';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
@@ -24,6 +24,9 @@ export class WorkspaceSwitcher {
   readonly counts = input<Record<string, number>>({});
   /** A run or locked operation is in progress. */
   readonly locked = input(false);
+
+  /** The name the trigger shows. It is cut with an ellipsis when the toolbar is short of room, so the trigger repeats it in its title and accessible name. */
+  protected readonly name = computed(() => this.current()?.name ?? 'No workspace');
 
   readonly select = output<string>();
   readonly add = output<void>();

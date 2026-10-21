@@ -6,13 +6,20 @@
   min-height: 0;
 }
 
+/* One row from 768 up: the read-only line shortens with an ellipsis instead of the strip wrapping. A strip with slotted end content (the change page's facts and actions) may wrap (the rule is in workbench.css, since the projected nodes carry no attribute of this component), and so may any strip below 768. */
 .k-changes__strip {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-panel);
+}
+
+@media (max-width: 767px) {
+  .k-changes__strip {
+    flex-wrap: wrap;
+  }
 }
 
 .k-changes__body {

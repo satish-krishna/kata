@@ -4,11 +4,12 @@
   size="bare"
   class="k-wstrigger"
   type="button"
-  aria-label="Switch workspace"
+  [attr.title]="name()"
+  [attr.aria-label]="'Switch workspace, ' + name()"
   [hlmDropdownMenuTrigger]="menu"
   [disabled]="locked()"
 >
-  <span class="k-wstrigger__name">{{ current()?.name ?? 'No workspace' }}</span>
+  <span class="k-wstrigger__name">{{ name() }}</span>
   <ng-icon name="lucideChevronDown" size="14" />
 </button>
 <ng-template #menu>

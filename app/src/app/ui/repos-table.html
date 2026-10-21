@@ -13,7 +13,7 @@
         <tr hlmTableRow>
           <td hlmTableCell class="k-mono">{{ r.name }}</td>
           <td hlmTableCell>{{ role(r.role) }}</td>
-          <td hlmTableCell>
+          <td hlmTableCell class="whitespace-normal">
             @if (r.role === 'master') {
               <span class="k-faint">—</span>
             } @else {
