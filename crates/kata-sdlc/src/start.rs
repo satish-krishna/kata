@@ -743,6 +743,27 @@ mod tests {
     }
 
     #[test]
+    fn participants_keep_another_change_s_build_log_row_out_of_the_ordinary_files() {
+        let fx = fixture();
+        let other = format!("intent/{S}/2026-01-01-other/build/api.md");
+        let elsewhere = "intent/other-system/2026-01-01-other/build/m.md".to_string();
+        let text = "# Build log\n";
+        testutil::write(&fx.master, "stray.txt", "x");
+        testutil::write(&fx.master, &other, text);
+        testutil::write(&fx.master, &elsewhere, text);
+        let got = participants(&fx.folder, "m", S, C, None).unwrap();
+        // A row is build log data wherever it sits, so it never lands among the ordinary files.
+        assert_eq!(
+            got,
+            [
+                part(&fx, "m", &["stray.txt"], &[&elsewhere]),
+                part(&fx, "app", &[], &[]),
+                part(&fx, "api", &[], &[&other]),
+            ]
+        );
+    }
+
+    #[test]
     fn participants_include_a_round_s_repo_outside_the_plan_and_refuse_a_stranger() {
         let fx = fixture_with(&[("T1", "app")], &["app", "api"], &["app", "api"]);
         let names = |p: Vec<Participant>| p.into_iter().map(|p| p.repo).collect::<Vec<_>>();
