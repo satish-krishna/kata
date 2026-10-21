@@ -1,9 +1,34 @@
 //! The ai-sdlc plugin on this machine: its version, and whether it can build one repository at a time.
 
-use std::path::Path;
+use serde::Serialize;
+use std::path::{Path, PathBuf};
 
 /// The oldest plugin version that builds one repository per run.
 pub const MIN_VERSION: &str = "0.6.0";
+
+/// Whether the ai-sdlc plugin can be used: where it is and which version, decided once for the whole app.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum Readiness {
+    /// Installed and at least [`MIN_VERSION`].
+    Ready { dir: PathBuf, version: String },
+    /// Not installed, or its version cannot be read.
+    Missing,
+    /// Installed but older than [`MIN_VERSION`].
+    TooOld { have: String, need: String },
+}
+
+/// Whether the plugin installed at `plugin_dir` (`None` when the catalog has no such plugin) is new enough.
+pub fn readiness(plugin_dir: Option<&Path>) -> Readiness {
+    let _ = plugin_dir;
+    Readiness::Missing
+}
 
 /// The `version` field of `<plugin_dir>/.claude-plugin/plugin.json`.
 pub fn version(plugin_dir: &Path) -> Option<String> {
@@ -66,5 +91,29 @@ mod tests {
             assert_eq!(v.as_deref(), expect);
             assert!(!v.is_some_and(|v| at_least(&v, MIN_VERSION)));
         }
+    }
+
+    #[test]
+    fn readiness_reports_ready_missing_and_too_old() {
+        let current = plugin_with(Some(r#"{"name":"ai-sdlc","version":"0.8.0"}"#));
+        assert_eq!(
+            readiness(Some(current.path())),
+            Readiness::Ready {
+                dir: current.path().to_path_buf(),
+                version: "0.8.0".to_string()
+            }
+        );
+        let old = plugin_with(Some(r#"{"name":"ai-sdlc","version":"0.7.9"}"#));
+        assert_eq!(
+            readiness(Some(old.path())),
+            Readiness::TooOld {
+                have: "0.7.9".to_string(),
+                need: MIN_VERSION.to_string()
+            }
+        );
+        let unreadable = plugin_with(None);
+        assert_eq!(readiness(Some(unreadable.path())), Readiness::Missing);
+        assert_eq!(readiness(None), Readiness::Missing);
+        assert_eq!(MIN_VERSION, "0.8.0");
     }
 }
