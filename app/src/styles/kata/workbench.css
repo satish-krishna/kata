@@ -350,7 +350,8 @@
 .k-prlist__link > span:last-child:not(:first-child) { flex: none; white-space: nowrap; }
 .k-prlist__link:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* The pull request control never gives way: the repository name and the number are both whole. */
-.k-prlinks__repo { flex: none; }
+/* A single inline link never shrinks, so a long repository name is capped instead; the link's title carries the full name. */
+.k-prlinks__repo { flex: none; max-width: 11rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .k-prlinks__num { flex: none; }
 .k-prlinks a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
