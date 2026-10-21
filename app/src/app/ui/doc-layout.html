@@ -55,7 +55,7 @@
         <ul class="k-docview__runs">
           @for (r of runs(); track r.id) {
             <li>
-              <span [class]="'k-status k-status--' + r.tone"><span class="k-status__dot"></span>{{ outcome(r.tone) }}</span>&ngsp;
+              <span [class]="'k-status k-status--' + r.tone"><span class="k-status__dot"></span>{{ outcome(r.exit) }}</span>&ngsp;
               <span>{{ r.kind }}</span>&ngsp;
               <span class="k-mono k-docview__when">{{ r.time }}</span>
             </li>

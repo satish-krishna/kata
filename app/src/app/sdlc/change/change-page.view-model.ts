@@ -266,22 +266,20 @@ export class ChangePageViewModel {
     if (this.change() === null || this.shownDoc() === 'build') return null;
     return docStatus(this.docParts().fields.find(([key]) => key === 'status')?.[1]);
   });
-  /** The Build tab's facts: tasks built, repositories and build runs, leaving out what the change does not have yet. */
+  /** The Build tab's facts: tasks built and build runs, leaving out what the change does not have yet. */
   readonly buildFacts = computed<string | null>(() => {
     const w = this.current();
     if (w === null || this.shownDoc() !== 'build') return null;
     const tasks = this.buildTasks();
-    const repos = this.status()?.repos.length ?? 0;
     const runs = stageRuns(this.links(), this.records(), w.id, this.system(), this.changeName(), 'build').length;
     const parts = [
       tasks.length > 0 ? `${tasks.filter(isBuilt).length}/${tasks.length} tasks` : '',
-      repos > 0 ? plural(repos, 'repository', 'repositories') : '',
       runs > 0 ? plural(runs, 'build run', 'build runs') : '',
     ].filter((p) => p !== '');
     return parts.length > 0 ? parts.join(' · ') : null;
   });
-  /** The strip under the toolbar draws when it has something to say: a document tab always does; the Build tab needs facts, an action or a note. */
-  readonly stripShown = computed(() => this.shownDoc() !== 'build' || this.buildFacts() !== null || this.actions().length > 0 || this.prCheckFailed());
+  /** The page strip belongs to the document tabs; the Build tab has none, its facts and actions sit in the Changes view strip. */
+  readonly stripShown = computed(() => this.shownDoc() !== 'build');
   /** The document built from the open one; none on the plan and the Build tab. */
   readonly usedBy = computed<UsedBy | null>(() => {
     const c = this.change();
@@ -628,15 +626,14 @@ export class ChangePageViewModel {
     const master = this.masterDir();
     if (!master) return;
     const seq = ++this.pickSeq;
-    const before = this.picked();
-    this.picked.set(stem);
     try {
       const text = await this.transport.sdlcReadDoc(master, this.system(), this.changeName(), stem);
-      if (seq === this.pickSeq) this.doc.set(text);
+      // The tab and its text change together, once the text is here, so no tab ever shows another document's text.
+      if (seq !== this.pickSeq) return;
+      this.doc.set(text);
+      this.picked.set(stem);
     } catch (e) {
       if (seq !== this.pickSeq) return;
-      // The doc text is still the one shown before; put the selection back with it, never a name over another's text.
-      this.picked.set(before);
       this.toasts.error(`Could not read ${stem}.md: ${message(e)}`);
     }
   }

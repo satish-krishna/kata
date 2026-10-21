@@ -129,12 +129,12 @@ try {
           if (el.getAttribute('role') === 'tabpanel') break;
         }
         const file = box('[data-file]');
-        // A header is one line when its branch sits at the height of its name and its own text is a single line box.
+        // A header is one line when its branch sits at the height of its name and its own text sits on a single line (a truncated text can have two boxes on that line).
         const wraps = (head) => {
           const branch = head.querySelector('[data-branch]');
           const range = document.createRange();
           range.selectNodeContents(branch);
-          return range.getClientRects().length > 1 || Math.abs(branch.getBoundingClientRect().top - head.querySelector('.k-files__name').getBoundingClientRect().top) > 2;
+          return new Set(Array.from(range.getClientRects(), (r) => Math.round(r.top))).size > 1 || Math.abs(branch.getBoundingClientRect().top - head.querySelector('.k-files__name').getBoundingClientRect().top) > 2;
         };
         return {
           viewportH: window.innerHeight,

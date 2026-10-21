@@ -1,35 +1,42 @@
 <div class="k-changes">
-  @if (vm.active()) {
+  @if (vm.active() || hasSlot()) {
     <div class="k-changes__strip" data-testid="changes-strip">
-      <app-segmented [options]="vm.partOptions" [value]="vm.part()" (valueChange)="vm.setPart($event)" ariaLabel="Part of the change" />
-      <span class="k-mono k-changes__stat" data-testid="changes-count">{{ vm.fileCountLabel() }}</span>
-      <span class="k-mono k-changes__stat k-changes__stat--added" data-testid="changes-added">+{{ vm.totals().added }}</span>
-      <span class="k-mono k-changes__stat k-changes__stat--removed" data-testid="changes-removed">−{{ vm.totals().removed }}</span>
-      <hlm-popover sideOffset="4" align="start">
-        <button hlmPopoverTrigger hlmBtn variant="secondary" size="sm" type="button" data-testid="changes-bytype">
-          By type
-          <ng-icon name="lucideChevronDown" size="14" aria-hidden="true" />
-        </button>
-        <hlm-popover-content class="k-changes__types" *hlmPopoverPortal="let ctx" data-testid="changes-types">
-          <hlm-popover-header>
-            <div hlmPopoverTitle>Lines by file type</div>
-          </hlm-popover-header>
-          @if (vm.loc().length > 0) {
-            <ul class="k-changes__type-list" aria-label="Lines by file type">
-              @for (t of vm.loc(); track t.extension) {
-                <li class="k-mono k-changes__type">
-                  <span class="k-changes__type-name">{{ t.extension }}</span>
-                  <span class="k-changes__stat k-changes__stat--added">+{{ t.added }}</span>
-                  <span class="k-changes__stat k-changes__stat--removed">−{{ t.removed }}</span>
-                </li>
-              }
-            </ul>
-          } @else {
-            <p hlmPopoverDescription>No text files in this part of the change.</p>
-          }
-        </hlm-popover-content>
-      </hlm-popover>
-      <span class="k-mono k-changes__note" data-testid="changes-readonly">{{ vm.readOnlyNote() }}</span>
+      @if (vm.active()) {
+        <app-segmented [options]="vm.partOptions" [value]="vm.part()" (valueChange)="vm.setPart($event)" ariaLabel="Part of the change" />
+        <span class="k-mono k-changes__stat" data-testid="changes-count">{{ vm.fileCountLabel() }}</span>
+        <span class="k-mono k-changes__stat k-changes__stat--added" data-testid="changes-added">+{{ vm.totals().added }}</span>
+        <span class="k-mono k-changes__stat k-changes__stat--removed" data-testid="changes-removed">−{{ vm.totals().removed }}</span>
+        <hlm-popover sideOffset="4" align="start">
+          <button hlmPopoverTrigger hlmBtn variant="secondary" size="sm" type="button" data-testid="changes-bytype">
+            By type
+            <ng-icon name="lucideChevronDown" size="14" aria-hidden="true" />
+          </button>
+          <hlm-popover-content class="k-changes__types" *hlmPopoverPortal="let ctx" data-testid="changes-types">
+            <hlm-popover-header>
+              <div hlmPopoverTitle>Lines by file type</div>
+            </hlm-popover-header>
+            @if (vm.loc().length > 0) {
+              <ul class="k-changes__type-list" aria-label="Lines by file type">
+                @for (t of vm.loc(); track t.extension) {
+                  <li class="k-mono k-changes__type">
+                    <span class="k-changes__type-name">{{ t.extension }}</span>
+                    <span class="k-changes__stat k-changes__stat--added">+{{ t.added }}</span>
+                    <span class="k-changes__stat k-changes__stat--removed">−{{ t.removed }}</span>
+                  </li>
+                }
+              </ul>
+            } @else {
+              <p hlmPopoverDescription>No text files in this part of the change.</p>
+            }
+          </hlm-popover-content>
+        </hlm-popover>
+      }
+      <div class="k-changes__end">
+        @if (vm.active()) {
+          <span class="k-mono k-changes__note" data-testid="changes-readonly">{{ vm.readOnlyNote() }}</span>
+        }
+        <ng-content />
+      </div>
     </div>
   }
   <div class="k-changes__body grid grid-cols-1 md:grid-cols-[18rem_1fr] md:grid-rows-[minmax(0,1fr)]">

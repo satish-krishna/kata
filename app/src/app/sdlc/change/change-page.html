@@ -19,7 +19,9 @@
       <nav toolbarLinks class="k-prlinks" aria-label="Pull requests">
         <span class="k-prlinks__label">PRs</span>
         @for (link of vm.pullLinks(); track link.repo) {
-          <a class="k-mono" [href]="link.url" [attr.title]="link.label" target="_blank" rel="noopener noreferrer">{{ link.label }}</a>
+          <a class="k-mono" [href]="link.url" [attr.title]="link.label" target="_blank" rel="noopener noreferrer"
+            ><span class="k-prlinks__repo">{{ link.repo }}</span>@if (link.number !== null) {&ngsp;<span class="k-prlinks__num">#{{ link.number }}</span>}</a
+          >
         }
       </nav>
     }
@@ -69,11 +71,7 @@
             @if (vm.stripStatus(); as s) {
               <span [class]="'k-status k-status--' + s.tone"><span class="k-status__dot"></span>{{ s.text }}</span>
             }
-            @if (vm.shownDoc() !== 'build') {
-              <span class="k-strip__file">{{ vm.docName() }}</span>
-            } @else if (vm.buildFacts(); as facts) {
-              <span class="k-strip__file" data-testid="build-facts">{{ facts }}</span>
-            }
+            <span class="k-strip__file">{{ vm.docName() }}</span>
             @if (vm.viewOptions().length > 0) {
               <app-segmented [options]="vm.viewOptions()" [value]="vm.shownView()" (valueChange)="vm.setView($event)" [ariaLabel]="vm.viewLabel()" />
             }
@@ -81,15 +79,7 @@
               <span class="k-left__note" data-testid="pr-note">Could not check pull requests</span>
             }
             <div class="wb-toolbar__spacer"></div>
-            @for (a of vm.actions(); track a) {
-              <button
-                hlmBtn
-                [variant]="vm.primary() === a ? 'primary' : 'secondary'"
-                type="button"
-                [disabled]="vm.locked()"
-                (click)="vm.act(a)"
-              >{{ vm.labelOf(a) }}</button>
-            }
+            <ng-container *ngTemplateOutlet="stageActions" />
           </div>
         }
         <main class="k-change">
@@ -139,7 +129,16 @@
                   [change]="ctx.change"
                   [turns]="0"
                   [banner]="null"
-                />
+                  [hasSlot]="true"
+                >
+                  @if (vm.buildFacts(); as facts) {
+                    <span class="k-strip__file" data-testid="build-facts">{{ facts }}</span>
+                  }
+                  @if (vm.prCheckFailed()) {
+                    <span class="k-left__note" data-testid="pr-note">Could not check pull requests</span>
+                  }
+                  <ng-container *ngTemplateOutlet="stageActions" />
+                </app-changes-view>
               }
             }
           </div>
@@ -147,6 +146,18 @@
       }
     }
   }
+
+  <ng-template #stageActions>
+    @for (a of vm.actions(); track a) {
+      <button
+        hlmBtn
+        [variant]="vm.primary() === a ? 'primary' : 'secondary'"
+        type="button"
+        [disabled]="vm.locked()"
+        (click)="vm.act(a)"
+      >{{ vm.labelOf(a) }}</button>
+    }
+  </ng-template>
 
   <app-lock-overlay
     [view]="vm.lockView()"

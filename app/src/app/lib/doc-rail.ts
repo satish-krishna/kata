@@ -10,7 +10,7 @@ export type DocStatus = { text: string; tone: DocTone };
 /** The document that is built from the open one, with its own status. */
 export type UsedBy = { name: string; status: DocStatus | null };
 /** One run in the rail: what it was, when it started, and how it ended. */
-export type RunRow = { id: string; kind: string; time: string; tone: DocTone };
+export type RunRow = { id: string; kind: string; time: string; tone: DocTone; exit: number | null };
 
 const TONES: Record<string, DocTone> = { accepted: 'success', draft: 'warning', superseded: 'error', rejected: 'error' };
 
@@ -30,9 +30,10 @@ export function runTime(epochSecs: number): string {
   return `${MONTHS[d.getMonth()]} ${d.getDate()} ${two(d.getHours())}:${two(d.getMinutes())}`;
 }
 
-/** How a run ended, in words, from the tone its row carries. */
-export function runOutcome(tone: DocTone): string {
-  return tone === 'success' ? 'Succeeded' : tone === 'error' ? 'Failed' : 'No result';
+/** How a run ended, in words, from its exit code: 130 is a run the operator cancelled, any other nonzero code a failure. */
+export function runResultLabel(exit: number | null | undefined): string {
+  if (exit === undefined || exit === null) return 'No result';
+  return exit === 0 ? 'Succeeded' : exit === 130 ? 'Cancelled' : 'Failed';
 }
 
 const RECENT = 3;
@@ -43,6 +44,7 @@ export function recentRuns(runs: readonly RunRecord[], kind: string): { rows: Ru
     id: r.id,
     kind,
     time: runTime(r.started_at),
+    exit: r.exit ?? null,
     tone: r.exit === undefined || r.exit === null ? ('idle' as const) : r.exit === 0 ? ('success' as const) : ('error' as const),
   }));
   return { rows, total: runs.length };

@@ -118,8 +118,8 @@ describe('DocLayout', () => {
       const { container } = await render(DocLayout, {
         body: BODY,
         runs: [
-          { id: 'r2', kind: 'Intent', time: 'Oct 20 10:05', tone: 'success' },
-          { id: 'r1', kind: 'Intent', time: 'Oct 19 18:12', tone: 'error' },
+          { id: 'r2', kind: 'Intent', time: 'Oct 20 10:05', tone: 'success', exit: 0 },
+          { id: 'r1', kind: 'Intent', time: 'Oct 19 18:12', tone: 'error', exit: 1 },
         ],
         runTotal: 5,
       });
@@ -133,9 +133,9 @@ describe('DocLayout', () => {
       const { container } = await render(DocLayout, {
         body: BODY,
         runs: [
-          { id: 'r3', kind: 'Spec', time: 'Oct 21 09:00', tone: 'success' },
-          { id: 'r2', kind: 'Spec', time: 'Oct 20 10:05', tone: 'error' },
-          { id: 'r1', kind: 'Spec', time: 'Oct 19 18:12', tone: 'idle' },
+          { id: 'r3', kind: 'Spec', time: 'Oct 21 09:00', tone: 'success', exit: 0 },
+          { id: 'r2', kind: 'Spec', time: 'Oct 20 10:05', tone: 'error', exit: 1 },
+          { id: 'r1', kind: 'Spec', time: 'Oct 19 18:12', tone: 'idle', exit: null },
         ],
         runTotal: 3,
       });

@@ -1,3 +1,4 @@
+import { NgTemplateOutlet } from '@angular/common';
 import { Component, inject } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
@@ -27,7 +28,7 @@ import { ChangePageViewModel } from './change-page.view-model';
 @Component({
   selector: 'app-change-page',
   providers: [ChangePageViewModel, provideIcons({ lucideTriangleAlert })],
-  imports: [NgIcon, HlmAlertImports, HlmButtonImports, HlmTabsImports, SdlcToolbar, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildView, ChangesView],
+  imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmTabsImports, SdlcToolbar, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildView, ChangesView],
   templateUrl: './change-page.html',
 })
 export class ChangePage {

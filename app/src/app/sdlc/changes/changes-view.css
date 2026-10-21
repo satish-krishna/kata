@@ -34,8 +34,16 @@
 }
 
 .k-changes__note {
-  margin-inline-start: auto;
   color: var(--text-muted);
+}
+
+/* The right end of the strip: the read-only line, then whatever the host projects (the change page's facts and actions). */
+.k-changes__end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+  margin-inline-start: auto;
 }
 
 .k-changes__type-list {
@@ -68,6 +76,8 @@
 }
 
 .k-changes__left {
+  /* One column that can shrink below its content, so a long repository header truncates instead of widening the list. */
+  grid-template-columns: minmax(0, 1fr);
   border-bottom: 1px solid var(--border-subtle);
 }
 

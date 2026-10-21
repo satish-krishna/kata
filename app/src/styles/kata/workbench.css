@@ -213,6 +213,8 @@
 .k-crumbs__item { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--weight-medium) var(--text-base)/1 var(--font-sans); color: var(--text-secondary); }
 .k-branch { flex: none; white-space: nowrap; font: var(--font-code-sm); color: var(--text-secondary); padding: var(--space-1-5) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-inset); }
 .k-wstrigger { display: inline-flex; align-items: center; justify-content: space-between; gap: var(--space-3); width: 16rem; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-inset); color: var(--text-primary); cursor: pointer; }
+/* On the change page the switcher gives way before the change name does, down to a floor that still names the workspace. */
+.wb-toolbar:has(.k-crumbs__item) .k-wstrigger { flex: 0 1000 16rem; width: auto; min-width: 10rem; }
 .k-wstrigger:hover:not(:disabled) { border-color: var(--border-strong); }
 .k-wstrigger:disabled { opacity: 0.5; cursor: default; }
 .k-wstrigger__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--weight-medium) var(--text-base)/1.3 var(--font-sans); }
@@ -308,11 +310,14 @@
 .k-pill .k-status { color: inherit; }
 .k-prlinks { display: flex; align-items: center; gap: var(--space-4); min-width: 0; white-space: nowrap; }
 .k-prlinks__label { flex: none; font: var(--text-xs)/1 var(--font-mono); color: var(--text-muted); }
-.k-prlinks a { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--accent-text); text-decoration: none; }
+.k-prlinks a { display: flex; gap: var(--space-1); min-width: 0; overflow: hidden; color: var(--accent-text); text-decoration: none; }
+/* The repository name gives way with an ellipsis; the pull request number never does. */
+.k-prlinks__repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.k-prlinks__num { flex: none; }
 .k-prlinks a:hover { text-decoration: underline; text-underline-offset: 2px; }
 
 /* The strip under the toolbar belongs to the open tab: its status in words, its file, and the stage actions. */
-.k-strip { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); padding: var(--space-3) var(--space-4); background: var(--surface-panel); border-bottom: 1px solid var(--border-default); }
+.k-strip { flex: none; min-height: calc(var(--control-h) + 2 * var(--space-3) + 1px); display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); padding: var(--space-3) var(--space-4); background: var(--surface-panel); border-bottom: 1px solid var(--border-default); }
 .k-strip__file { font: var(--text-xs)/1 var(--font-mono); color: var(--text-muted); }
 
 /* AI-SDLC session view: an agent run in the page main region under the toolbar. */
@@ -377,8 +382,9 @@
 .k-ref:hover { background: var(--accent-subtle); }
 
 /* ---------- AI-SDLC: the Changes view's file list and diff bar ---------- */
-.k-files, .k-files__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
-.k-files__group { display: grid; gap: var(--space-2); }
+/* Every level is one column that can shrink below its content, so a long repository header truncates instead of widening the list. */
+.k-files, .k-files__list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+.k-files__group { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
 .k-files__repo { display: flex; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-primary); text-align: start; cursor: pointer; }
 .k-files__repo:hover, .k-files__file:hover { background: var(--surface-hover); }
 .k-files__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }

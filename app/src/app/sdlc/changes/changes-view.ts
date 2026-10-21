@@ -11,7 +11,7 @@ import { Segmented } from '../../ui/segmented';
 import { ChangesViewModel } from './changes-view.view-model';
 
 /* What changed in a change, read only: a strip across the top (the part of the change on show, its totals, the lines by type and
- * which base it is compared with), the repositories with changes on the left, and the diff of the open file on the right.
+ * which base it is compared with, and whatever the host projects at its right end), the repositories with changes on the left, and the diff of the open file on the right.
  * `turns` counts the build's turns; when it grows the view reads again and keeps the engineer's place. */
 @Component({
   selector: 'app-changes-view',
@@ -30,6 +30,8 @@ export class ChangesView {
   readonly change = input.required<string>();
   readonly turns = input(0);
   readonly banner = input<string | null>(null);
+  /** True when the host projects content into the strip's right end (the change page's facts and actions); the strip then draws even before any repository has changes. */
+  readonly hasSlot = input(false);
 
   constructor() {
     effect(() => {

@@ -1,7 +1,7 @@
 import { Component, ElementRef, computed, input, linkedSignal, viewChild } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { outline } from '../lib/doc';
-import { runOutcome, type RunRow, type UsedBy } from '../lib/doc-rail';
+import { runResultLabel, type RunRow, type UsedBy } from '../lib/doc-rail';
 import { MarkdownBody } from './markdown-body';
 
 /** A heading counts as in view once it has scrolled up to this far below the top of the text column. */
@@ -27,7 +27,7 @@ export class DocLayout {
   /** How many runs the stage has had; the rail lists only the latest. */
   readonly runTotal = input(0);
 
-  protected readonly outcome = runOutcome;
+  protected readonly outcome = runResultLabel;
   protected readonly headings = computed(() => outline(this.body()).filter((h) => h.level === 2 || h.level === 3));
   /** The section in view: the first until the text scrolls, the clicked one after a click. */
   protected readonly active = linkedSignal<string | null>(() => this.headings()[0]?.id ?? null);
