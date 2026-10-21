@@ -768,6 +768,103 @@ mod tests {
     }
 
     #[test]
+    fn an_added_layout_2_entry_is_an_unsaved_row() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = master_with(tmp.path(), &app_tasks());
+        let committed = layout_2_log(
+            &["| T1 | `a111111` | none |"],
+            "### T2\n\n```yaml\ntask: T2\ncommits: [b222222]\n```\n",
+        );
+        testutil::commit_file(
+            &master,
+            &format!("{DIR}/build/app.md"),
+            &committed,
+            "log app",
+        );
+        let working =
+            format!("{committed}\n### T3\n\n```yaml\ntask: T3\ncommits: [c333333]\n```\n");
+        std::fs::write(master.join(format!("{DIR}/build/app.md")), working).unwrap();
+        let found = unsaved_rows(&master, SYS, CHG).unwrap();
+        assert_eq!(
+            found,
+            vec![UnsavedRows {
+                repo: "app".into(),
+                tasks: vec!["T3".into()]
+            }]
+        );
+    }
+
+    #[test]
+    fn an_added_layout_1_row_is_still_an_unsaved_row() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = master_with(tmp.path(), &app_tasks());
+        let committed = layout_2_log(
+            &["| T1 | `a111111` | none |"],
+            "### T2\n\n```yaml\ntask: T2\ncommits: [b222222]\n```\n",
+        );
+        testutil::commit_file(
+            &master,
+            &format!("{DIR}/build/app.md"),
+            &committed,
+            "log app",
+        );
+        let working = committed.replace(
+            "| T1 | `a111111` | none |\n",
+            "| T1 | `a111111` | none |\n| T3 | `c333333` | none |\n",
+        );
+        std::fs::write(master.join(format!("{DIR}/build/app.md")), working).unwrap();
+        let found = unsaved_rows(&master, SYS, CHG).unwrap();
+        assert_eq!(
+            found,
+            vec![UnsavedRows {
+                repo: "app".into(),
+                tasks: vec!["T3".into()]
+            }]
+        );
+    }
+
+    #[test]
+    fn an_edited_entry_is_an_error_naming_the_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = master_with(tmp.path(), &app_tasks());
+        let committed = layout_2_log(
+            &[],
+            "### T2\n\n```yaml\ntask: T2\ncommits: [b222222]\n```\n",
+        );
+        testutil::commit_file(
+            &master,
+            &format!("{DIR}/build/app.md"),
+            &committed,
+            "log app",
+        );
+        let working = committed.replace("b222222", "edited1");
+        std::fs::write(master.join(format!("{DIR}/build/app.md")), working).unwrap();
+        let err = unsaved_rows(&master, SYS, CHG).unwrap_err();
+        assert!(err.to_string().contains("app.md"), "got: {err}");
+    }
+
+    #[test]
+    fn a_new_layout_2_log_is_unsaved() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = master_with(tmp.path(), &app_tasks());
+        let log = layout_2_log(
+            &[],
+            "### T1\n\n```yaml\ntask: T1\ncommits: [a111111]\n```\n\n### T2\n\n```yaml\ntask: T2\ncommits: [b222222]\n```\n",
+        );
+        let build = master.join(format!("{DIR}/build"));
+        std::fs::create_dir_all(&build).unwrap();
+        std::fs::write(build.join("app.md"), log).unwrap();
+        let found = unsaved_rows(&master, SYS, CHG).unwrap();
+        assert_eq!(
+            found,
+            vec![UnsavedRows {
+                repo: "app".into(),
+                tasks: vec!["T1".into(), "T2".into()]
+            }]
+        );
+    }
+
+    #[test]
     fn unsaved_rows_is_empty_when_nothing_changed() {
         let tmp = tempfile::tempdir().unwrap();
         let master = master_with(tmp.path(), &app_tasks());
