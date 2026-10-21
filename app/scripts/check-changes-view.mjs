@@ -10,6 +10,8 @@
 //      by Monaco, with their default prevented by the app.
 //   4. Widths: 375, 768 and 1280 pixels have no horizontal page scroll; below 768 the file list
 //      sits above the diff and the editor is inline.
+//   5. Fit on the change page's Build tab (before a build starts), at 1280 and 1440 wide: the diff editor reaches the bottom of
+//      the window, the view sits flush under the tab strip with no frame of its own, and each repository header is one line.
 import { MD, WIDTHS, eventually, noHorizontalScroll, open, reporter, startBuild } from './check-build-support.mjs';
 
 const FILE = 'src/limits.rs';
@@ -101,5 +103,59 @@ try {
   check(errors.length === 0, `no page error, console error or failed request${errors.length ? `: ${errors.join(' | ')}` : ''}`);
 } finally {
   await close();
+}
+
+// 5. Fit on the change page's Build tab. A second page, because the first one is inside a live build.
+{
+  const fit = await open({ width: 1440, height: 900 });
+  try {
+    await fit.page.getByRole('tab', { name: /^Build/ }).click();
+    await fit.page.locator('[data-testid="changes-strip"]').waitFor();
+    await fit.page.locator(`[data-file="${FILE}"]`).first().click();
+    await fit.page.locator('.monaco-diff-editor .editor.modified .view-line').first().waitFor();
+    for (const width of [1280, 1440]) {
+      await fit.page.setViewportSize({ width, height: 900 });
+      await fit.page.waitForTimeout(300);
+      const m = await fit.page.evaluate(() => {
+        const box = (sel) => document.querySelector(sel)?.getBoundingClientRect();
+        const root = document.querySelector('app-changes-view .k-changes');
+        const sides = ['Top', 'Right', 'Bottom', 'Left'];
+        // The view and every box between it and its tab panel (the panel included): any of them can frame the view.
+        const frame = [];
+        for (let el = root; el; el = el.parentElement) {
+          frame.push(el);
+          if (el.getAttribute('role') === 'tabpanel') break;
+        }
+        const file = box('[data-file]');
+        // A header is one line when its branch sits at the height of its name and its own text is a single line box.
+        const wraps = (head) => {
+          const branch = head.querySelector('[data-branch]');
+          const range = document.createRange();
+          range.selectNodeContents(branch);
+          return range.getClientRects().length > 1 || Math.abs(branch.getBoundingClientRect().top - head.querySelector('.k-files__name').getBoundingClientRect().top) > 2;
+        };
+        return {
+          viewportH: window.innerHeight,
+          editorBottom: box('app-changes-view app-diff-editor')?.bottom,
+          padding: frame.flatMap((el) => sides.map((s) => parseFloat(getComputedStyle(el)['padding' + s]))),
+          border: frame.flatMap((el) => sides.map((s) => parseFloat(getComputedStyle(el)['border' + s + 'Width']))),
+          frameDepth: frame.length,
+          rootLeft: root.getBoundingClientRect().left,
+          stripLeft: box('[data-testid="strip"]')?.left,
+          fileH: file.height,
+          repos: [...document.querySelectorAll('[data-repo]')].map((r) => ({ h: r.getBoundingClientRect().height, wraps: wraps(r) })),
+        };
+      });
+      // The reference is the bottom of the window: the Build tab fills the page, which never scrolls (the editor scrolls itself),
+      // so a diff that ends short of the window bottom is wasted height whichever box contains it.
+      check(Math.abs(m.viewportH - m.editorBottom) <= 4, `${width}x900: the diff editor reaches the bottom of the window (editor bottom ${m.editorBottom} of ${m.viewportH})`);
+      check(m.padding.every((p) => p === 0) && m.border.every((b) => b === 0), `${width}x900: the Changes view has no padding or border (${m.frameDepth} boxes; padding ${m.padding}, border ${m.border})`);
+      check(Math.abs(m.rootLeft - m.stripLeft) <= 1, `${width}x900: the Changes view lines up with the tab strip (${m.rootLeft} / ${m.stripLeft})`);
+      check(m.repos.length > 0 && m.repos.every((r) => r.h <= m.fileH * 1.5), `${width}x900: every repository header is at most 1.5 file rows tall (file row ${m.fileH}; headers ${m.repos.map((r) => r.h)})`);
+      check(m.repos.every((r) => !r.wraps), `${width}x900: no repository header wraps its branch (${m.repos.map((r) => r.wraps)})`);
+    }
+  } finally {
+    await fit.close();
+  }
 }
 done();
