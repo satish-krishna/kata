@@ -64,7 +64,7 @@ function sameHeads(now: Record<string, string>, then: Record<string, string | un
   return Object.keys(now).every((repo) => now[repo] === then[repo]);
 }
 
-/** The state of a change's latest review in its review document: stale when a repository it covered moved since. The master is not judged, since recording the review commits there. */
+/** The state of a change's latest review in its review document: stale when a repository it covered moved since. The master's head moves when the review is recorded, so the backend judges it instead: `master_moved` lists what the master committed since the head the review records, other than the review document. */
 function documentState(document: ReviewRecord, heads: Record<string, string>, master: string | null): ReviewState {
   // A document with problems is not a review the Workbench can trust: a finding that failed its schema is dropped from the list, so "nothing found" would be a guess.
   if (document.problems.length > 0) return { kind: 'invalid' };
@@ -76,7 +76,7 @@ function documentState(document: ReviewRecord, heads: Record<string, string>, ma
     const sha = reviewed[repo];
     return sha === undefined || sha.length < 4 || !head.startsWith(sha);
   });
-  return moved ? { kind: 'stale' } : { kind: 'current-document', review: latest };
+  return moved || document.master_moved.length > 0 ? { kind: 'stale' } : { kind: 'current-document', review: latest };
 }
 
 /**

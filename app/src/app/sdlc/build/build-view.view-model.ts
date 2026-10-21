@@ -2,6 +2,7 @@ import { Injectable, computed, effect, inject, signal, untracked } from '@angula
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { Problem } from '@bindings/Problem';
 import type { Readiness } from '@bindings/Readiness';
+import type { Snapshot } from '@bindings/Snapshot';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { Participant } from '@bindings/Participant';
 import type { RunSpec } from '@bindings/RunSpec';
@@ -122,6 +123,8 @@ export class BuildViewModel {
   private sectionsBefore = 0;
   /** Where the master repository stood when the review run started; null when it could not be read. */
   private masterBefore: string | null = null;
+  /** The master's uncommitted files (path to content hash) when the review run started; the run is judged by what changed beyond them. */
+  private dirtyBefore: Snapshot['dirty'] = {};
   /** The warning naming the other files a review run changed in the master; null when it kept to the review document. */
   private readonly runNotice = signal<DocNotice | null>(null);
   private readonly picked = signal<string | null>(null);
@@ -749,7 +752,7 @@ export class BuildViewModel {
   private async strayedFiles(): Promise<string[]> {
     if (this.masterBefore === null) return ['could not check the master repository: its head before the run is unknown'];
     try {
-      return await this.transport.sdlcReviewVerify(this.handoff!.start.master.path, this.ctx!.system, this.ctx!.change, this.masterBefore);
+      return await this.transport.sdlcReviewVerify(this.handoff!.start.master.path, this.ctx!.system, this.ctx!.change, this.masterBefore, this.dirtyBefore);
     } catch (e) {
       return [`could not check the master repository: ${message(e)}`];
     }
@@ -760,9 +763,12 @@ export class BuildViewModel {
     this.unrecorded.set(false);
     this.runNotice.set(null);
     try {
-      this.masterBefore = (await this.transport.sdlcSnapshot(this.handoff!.start.master.path)).head;
+      const snapshot = await this.transport.sdlcSnapshot(this.handoff!.start.master.path);
+      this.masterBefore = snapshot.head;
+      this.dirtyBefore = snapshot.dirty;
     } catch {
       this.masterBefore = null;
+      this.dirtyBefore = {};
     }
     try {
       const document = await this.transport.sdlcReviewRecord(this.handoff!.start.master.path, this.ctx!.system, this.ctx!.change);

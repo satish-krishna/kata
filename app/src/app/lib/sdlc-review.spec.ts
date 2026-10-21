@@ -3,7 +3,7 @@ import type { Finding } from './sdlc';
 import { shownReview } from './sdlc-review';
 
 const found = (id: string, severity: 'high' | 'medium' | 'low', text: string) => ({ id, severity, file: 'src/a.ts', line: 4, text });
-const record = (...reviews: ReviewRecord['reviews']): ReviewRecord => ({ layout: 2, reviews, problems: [] });
+const record = (...reviews: ReviewRecord['reviews']): ReviewRecord => ({ layout: 2, reviews, problems: [], master_moved: [] });
 const review = (number: number, reviewed_at: string, findings: ReviewRecord['reviews'][number]['findings'], commits: Record<string, string> = { app: '840fa0c' }) => ({ number, reviewed_at, commits, findings });
 
 const WORDS: Finding[] = [

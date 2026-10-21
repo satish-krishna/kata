@@ -186,6 +186,7 @@ describe('declaring done', () => {
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({
       layout: 2,
       problems: [],
+      master_moved: [],
       reviews: [{ number: 1, reviewed_at: '2026-10-22', commits, findings: [finding] }],
     });
     await vm.act('declare-done');
@@ -205,7 +206,7 @@ describe('declaring done', () => {
       problems: [],
       reviews: [{ number: 1, reviewed_at: '2026-10-22', commits, findings: [finding] }],
       master_moved: ['plugin/format/check.mjs'],
-    } as never);
+    });
     await vm.act('declare-done');
     expect(vm.doneReport()!.review).toEqual({ missing: 'stale' });
     expect(canConfirm(vm.doneReport()!)).toBe(false);

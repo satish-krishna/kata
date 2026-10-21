@@ -105,7 +105,7 @@ export class TauriTransport extends KataTransport {
   sdlcBuildParticipants(folder: string, masterRepo: string, system: string, change: string, pending: string | null = null) { return this.ipc.invoke<Participant[]>('sdlc_build_participants', { folder, masterRepo, system, change, pending }); }
   sdlcBuildSettle(start: BuildStart) { return this.ipc.invoke<string[]>('sdlc_build_settle', { start }); }
   sdlcBuildHeads(folder: string, repos: string[], change: string) { return this.ipc.invoke<Record<string, string>>('sdlc_build_heads', { folder, repos, change }); }
-  sdlcReviewVerify(master: string, system: string, change: string, since: string) { return this.ipc.invoke<string[]>('sdlc_review_verify', { master, system, change, since }); }
+  sdlcReviewVerify(master: string, system: string, change: string, since: string, before: Snapshot['dirty']) { return this.ipc.invoke<string[]>('sdlc_review_verify', { master, system, change, since, before }); }
   sdlcPluginReadiness(workdir: string | null) { return this.ipc.invoke<Readiness>('sdlc_plugin_readiness', { workdir }); }
   sdlcChangeRepos(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<ChangeRepo[]>('sdlc_change_repos', { folder, masterRepo, system, change }); }
   sdlcMissingChangeBranches(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<string[]>('sdlc_missing_change_branches', { folder, masterRepo, system, change }); }

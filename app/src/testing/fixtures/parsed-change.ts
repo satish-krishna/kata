@@ -80,6 +80,7 @@ export function reviewOfSix(commits: Record<string, string>): ReviewRecord {
   return {
     layout: 2,
     problems: [],
+    master_moved: [],
     reviews: [
       {
         number: 1,

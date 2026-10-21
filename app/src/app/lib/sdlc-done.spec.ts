@@ -59,12 +59,12 @@ describe('reviewState with a review document', () => {
   const problem = { file: 'build/review.md', line: 14, message: 'finding F1 has no file' };
 
   it('is current for a document that passes', () => {
-    const document = { layout: 2, reviews: [section], problems: [] };
+    const document = { layout: 2, reviews: [section], problems: [], master_moved: [] };
     expect(reviewState([], [], HEADS, SCOPE, document, 'm')).toMatchObject({ kind: 'current-document' });
   });
 
   it('a review document with problems is not a current review, so done stays blocked (F6)', () => {
-    const document = { layout: 2, reviews: [section], problems: [problem] };
+    const document = { layout: 2, reviews: [section], problems: [problem], master_moved: [] };
     expect(reviewState([], [], HEADS, SCOPE, document, 'm')).toEqual({ kind: 'invalid' });
     expect(reviewState([link()], [record('r1', 0)], HEADS, SCOPE, document, 'm')).toEqual({ kind: 'invalid' });
   });
@@ -116,6 +116,7 @@ describe('reviewState with a review document', () => {
   const doc = (...commits: Record<string, string>[]) => ({
     layout: 2,
     problems: [],
+    master_moved: [] as string[],
     reviews: commits.map((c, i) => ({ number: i + 1, reviewed_at: '2026-10-22', commits: c, findings: [] })),
   });
   const FULL = { a: '1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', master: '9999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' };

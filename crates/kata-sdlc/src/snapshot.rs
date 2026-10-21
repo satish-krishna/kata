@@ -114,7 +114,7 @@ fn current_head(master: &Path) -> Option<String> {
     git::run(master, &["rev-parse", "--verify", "-q", "HEAD"]).ok()
 }
 
-fn hash_of(master: &Path, path: &str) -> Result<String, GitError> {
+pub(crate) fn hash_of(master: &Path, path: &str) -> Result<String, GitError> {
     if master.join(path).is_file() {
         git::run(master, &["hash-object", "--", path])
     } else {

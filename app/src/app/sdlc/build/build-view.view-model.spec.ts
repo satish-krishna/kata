@@ -400,7 +400,7 @@ describe('BuildViewModel', () => {
         if (args[0].name === REVIEW_NAME) reviewed = true;
         return runSpec(...args);
       });
-      return vi.spyOn(transport, 'sdlcReviewRecord').mockImplementation(async () => ({ layout: 2, reviews: reviewed ? reviews : [], problems: reviewed ? documentProblems : [] }));
+      return vi.spyOn(transport, 'sdlcReviewRecord').mockImplementation(async () => ({ layout: 2, reviews: reviewed ? reviews : [], problems: reviewed ? documentProblems : [], master_moved: [] }));
     };
     const shown = (vm: BuildViewModel) => () => vm.phase() === 'finished' && vm.reviewShown();
 
@@ -451,6 +451,7 @@ describe('BuildViewModel', () => {
         layout: 2,
         reviews: [section(1, '2026-10-18', [{ id: 'F1', severity: 'high', text: 'one' }])],
         problems: [],
+        master_moved: [],
       });
       await vm.start(await handoffFor(transport), CTX);
       await drive(vm, lock, shown(vm));
@@ -482,7 +483,7 @@ describe('BuildViewModel', () => {
       const verify = verifying(transport, ['plugin/format/check.mjs']);
       await vm.start(await handoffFor(transport), CTX);
       await drive(vm, lock, shown(vm));
-      expect(verify).toHaveBeenCalledWith(expect.any(String), 'claims', MOCK_BUILD_CHANGE, '0'.repeat(40));
+      expect(verify).toHaveBeenCalledWith(expect.any(String), 'claims', MOCK_BUILD_CHANGE, '0'.repeat(40), expect.anything());
       expect(vm.reviewNotice()?.tone).toBe('warning');
       expect(vm.reviewNotice()?.lines).toEqual(['plugin/format/check.mjs']);
       expect(vm.findings()).toEqual([]);

@@ -17,4 +17,11 @@ reviews: Array<ParsedReviewSection>,
 /**
  * Everything the format program found wrong in the document.
  */
-problems: Array<Problem>, };
+problems: Array<Problem>, 
+/**
+ * The files the master repository committed since the head the latest review records for it,
+ * other than this document; empty when the review is of the master as it stands now. A review
+ * that does not record the master's head does not cover it, so nothing is judged. When the
+ * commits cannot be read, the one entry says so.
+ */
+master_moved: Array<string>, };

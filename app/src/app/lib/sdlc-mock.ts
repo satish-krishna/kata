@@ -456,6 +456,7 @@ export class SdlcMock {
     return {
       layout: 2,
       problems: [],
+      master_moved: [],
       reviews: Array.from({ length: this.reviewRuns }, (_, i) => ({ number: i + 1, reviewed_at: '2026-10-19', commits, findings })),
     };
   }

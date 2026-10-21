@@ -345,15 +345,16 @@ fn sdlc_review_record(
     sdlc::review::record(&plugin, Path::new(&master), &system, &change).map_err(|e| e.to_string())
 }
 
-/// The files a review run changed besides the change's review document (none when it kept to it).
+/// The files a review run changed besides the change's review document (none when it kept to it); `before` is the master's dirty files when the run started.
 #[tauri::command(async)]
 fn sdlc_review_verify(
     master: String,
     system: String,
     change: String,
     since: String,
+    before: std::collections::BTreeMap<String, String>,
 ) -> Vec<String> {
-    sdlc::review::verify_run(Path::new(&master), &system, &change, &since)
+    sdlc::review::verify_run(Path::new(&master), &system, &change, &since, &before)
         .err()
         .unwrap_or_default()
 }
