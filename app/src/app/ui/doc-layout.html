@@ -1,4 +1,4 @@
-<div class="k-docview">
+<div class="k-docview" [class.k-docview--bare]="headings().length === 0">
   @if (headings().length > 0) {
     <nav class="k-docview__toc" aria-label="On this page">
       <span class="k-docview__label">On this page</span>
@@ -15,8 +15,6 @@
         >{{ h.text }}</button>
       }
     </nav>
-  } @else {
-    <div></div>
   }
   <div #column class="k-docview__column" data-testid="doc-column" (scroll)="onScroll()">
     <article class="k-docview__text">

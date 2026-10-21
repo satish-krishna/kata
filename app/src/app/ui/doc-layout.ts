@@ -7,7 +7,7 @@ import { MarkdownBody } from './markdown-body';
 /** A heading counts as in view once it has scrolled up to this far below the top of the text column. */
 const IN_VIEW_OFFSET = 24;
 
-/* One change document, read-only, in three columns: an outline of its sections on the left, the text (left-aligned,
+/* One change document, read-only, in three columns (two when it has no sections to outline): an outline of its sections on the left, the text (left-aligned,
  * at most about 880px wide) in the middle, and a rail on the right with the front matter as label and value
  * fields, what uses this document, and its recent runs. Anything projected goes under the text. The text column
  * scrolls on its own, so the outline and the rail stay put. Headings are looked up inside this document's own
