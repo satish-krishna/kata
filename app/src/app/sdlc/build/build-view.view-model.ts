@@ -1,6 +1,7 @@
 import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { Problem } from '@bindings/Problem';
+import type { Readiness } from '@bindings/Readiness';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { Participant } from '@bindings/Participant';
 import type { RunSpec } from '@bindings/RunSpec';
@@ -11,8 +12,9 @@ import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import type { AskRecord, PermissionRecord, RunState, RunSummary, StreamEvent } from '../../lib/events';
+import { shownBuild, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
-import { reviewFindings, specFor, transcriptRunId, type BuildRun, type Finding } from '../../lib/sdlc';
+import { reviewFindings, specFor, type BuildRun, type Finding } from '../../lib/sdlc';
 import type { ReplacedFindings } from '../../ui/findings-list';
 import type { RepoRow } from '../../ui/repo-status-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
@@ -112,6 +114,12 @@ export class BuildViewModel {
   private readonly reviews = signal<Review[]>([]);
   /** True when the findings come from a review run's closing words because the change has no review document. */
   private readonly fromWords = signal(false);
+  /** The review run ended without adding a review to the review document, so there is no new review to show. */
+  private readonly unrecorded = signal(false);
+  /** What the one owner of the notice table says about the review document; null when it needs none. */
+  private readonly reviewDocNotice = signal<DocNotice | null>(null);
+  /** How many reviews the review document held when the review run started; the run is judged by what it added. */
+  private sectionsBefore = 0;
   private readonly picked = signal<string | null>(null);
   private readonly broken = signal(false);
   private readonly finishing = signal(false);
@@ -230,7 +238,9 @@ export class BuildViewModel {
   });
 
   /** The findings are on show once the build has finished and its review has been read. */
-  readonly reviewShown = computed(() => this.phase() === 'finished' && !this.reading() && this.reviews().length > 0);
+  readonly reviewShown = computed(() => this.phase() === 'finished' && !this.reading() && (this.reviews().length > 0 || this.unrecorded()));
+  /** The notice above the findings: the review document's problems or its older layout; null when it needs none. */
+  readonly reviewNotice = this.reviewDocNotice.asReadonly();
   /** The latest review's findings, most serious first. */
   readonly findings = computed<Finding[]>(() => this.reviews().at(-1)?.findings ?? []);
   /** Earlier reviews, each with the time of the review that replaced it (or its own number and date, from the document), newest first. */
@@ -244,7 +254,7 @@ export class BuildViewModel {
   /** True when the findings are read from the review run's words, the layout before the review document. */
   readonly older = computed(() => this.fromWords() && this.reviews().length > 0);
   /** What the findings list says when the latest review found nothing. */
-  readonly emptyText = computed(() => (this.older() ? 'The review found nothing.' : 'Reviewed, nothing found.'));
+  readonly emptyText = computed(() => (this.unrecorded() ? 'The review did not record its findings' : this.older() ? 'The review found nothing.' : 'Reviewed, nothing found.'));
 
   constructor() {
     // The rows follow the build log: read it again whenever a run starts or ends.
@@ -609,6 +619,7 @@ export class BuildViewModel {
     const h = this.handoff!;
     const ctx = this.ctx!;
     const review = target === 'review';
+    if (review) await this.noteSectionsBefore();
     const repo = review ? h.start.master.repo : target.repo;
     const path = review ? h.start.master.path : this.pathOf(repo);
     // The backend names where each participant is checked out; a repository it does not name has no folder to run in.
@@ -674,7 +685,7 @@ export class BuildViewModel {
     this.readRuns.add(entry.id);
     this.reading.set(true);
     try {
-      await this.readReviewOf(entry);
+      await this.readReviewOf();
     } finally {
       this.reading.set(false);
     }
@@ -710,24 +721,46 @@ export class BuildViewModel {
     return true;
   }
 
-  private async readReviewOf(entry: Entry): Promise<void> {
+  /** What the review run left in the review document: a new review to show, or the plain fact that it recorded none. */
+  private async readReviewOf(): Promise<void> {
     const document = await this.readDocument();
     if (document === undefined) return;
-    if (document !== null) {
-      this.showReviews(shownReview(document, null), null);
+    await this.noteReviewNotice(document);
+    if (document === null || document.reviews.length <= this.sectionsBefore) {
+      // The run's check failed three times, or it never wrote: whatever the document holds is an earlier review, not this one.
+      this.reviews.set([]);
+      this.fromWords.set(false);
+      this.unrecorded.set(true);
       return;
     }
-    const stem = transcriptRunId(this.runs.snapshot(entry.id)().events);
-    if (stem === null) {
-      this.toasts.error('Could not find the review run\'s transcript, so its findings cannot be shown.');
-      return;
-    }
+    this.unrecorded.set(false);
+    this.showReviews(shownReview(document, null), null);
+  }
+
+  /** Counts the reviews in the review document before a review run starts. A document that cannot be read counts as none. */
+  private async noteSectionsBefore(): Promise<void> {
+    this.unrecorded.set(false);
     try {
-      const words = reviewFindings(await this.transport.loadRun(stem));
-      this.showReviews(shownReview(null, words), entry.at);
-    } catch (e) {
-      this.toasts.error(`Could not read the review's findings: ${message(e)}`);
+      const document = await this.transport.sdlcReviewRecord(this.handoff!.start.master.path, this.ctx!.system, this.ctx!.change);
+      this.sectionsBefore = document?.reviews.length ?? 0;
+    } catch {
+      this.sectionsBefore = 0;
     }
+  }
+
+  /** The notice for the review document, from the one owner of the table; a plugin that cannot be asked about counts as missing. */
+  private async noteReviewNotice(document: ReviewRecord | null): Promise<void> {
+    if (document === null) {
+      this.reviewDocNotice.set(null);
+      return;
+    }
+    let readiness: Readiness;
+    try {
+      readiness = await this.transport.sdlcPluginReadiness(this.ctx!.folder);
+    } catch {
+      readiness = { kind: 'missing' };
+    }
+    this.reviewDocNotice.set(shownBuild([{ layout: document.layout, problems: document.problems }], readiness).notice);
   }
 
   /** A round starts from a finished review: the latest one linked to this change becomes the one the new review replaces. */

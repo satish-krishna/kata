@@ -355,7 +355,7 @@ fn sdlc_build_prepare(
     continue_with_leftovers: bool,
     pending: Option<String>,
 ) -> Result<sdlc::start::PrepareOutcome, String> {
-    let plugin = ai_sdlc_dir(&folder)?;
+    let plugin = ai_sdlc_dir_in(&folder)?;
     sdlc::start::prepare(
         &plugin,
         Path::new(&folder),
@@ -377,7 +377,7 @@ fn sdlc_build_participants(
     change: String,
     pending: Option<String>,
 ) -> Result<Vec<sdlc::participants::Participant>, String> {
-    let plugin = ai_sdlc_dir(&folder)?;
+    let plugin = ai_sdlc_dir_in(&folder)?;
     sdlc::participants::participants(
         &plugin,
         Path::new(&folder),
@@ -420,9 +420,20 @@ fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
     sdlc::plugin::readiness(plugin.map(|e| e.path.as_path()))
 }
 
-/// The ai-sdlc plugin folder the format program is read from, or why the build cannot be read.
-fn ai_sdlc_dir(workdir: &str) -> Result<std::path::PathBuf, String> {
-    match ai_sdlc_readiness(Some(workdir)) {
+/// The ai-sdlc plugin folder the format program is read from, or why the build cannot be read. It is
+/// found from the workspace folder (the master repository's parent), the same place `sdlc_plugin_readiness`
+/// is asked about, so a project-scoped plugin there is the one every command uses.
+fn ai_sdlc_dir(master: &str) -> Result<std::path::PathBuf, String> {
+    let folder = Path::new(master)
+        .parent()
+        .and_then(Path::to_str)
+        .unwrap_or(master);
+    ai_sdlc_dir_in(folder)
+}
+
+/// [`ai_sdlc_dir`] for a command that is given the workspace folder itself.
+fn ai_sdlc_dir_in(folder: &str) -> Result<std::path::PathBuf, String> {
+    match ai_sdlc_readiness(Some(folder)) {
         sdlc::plugin::Readiness::Ready { dir, .. } => Ok(dir),
         sdlc::plugin::Readiness::Missing => Err("the ai-sdlc plugin is not installed".into()),
         sdlc::plugin::Readiness::TooOld { have, need } => Err(format!(
@@ -448,7 +459,7 @@ fn sdlc_missing_change_branches(
     system: String,
     change: String,
 ) -> Result<Vec<String>, String> {
-    let plugin = ai_sdlc_dir(&folder)?;
+    let plugin = ai_sdlc_dir_in(&folder)?;
     sdlc::participants::missing_change_branches(
         &plugin,
         Path::new(&folder),

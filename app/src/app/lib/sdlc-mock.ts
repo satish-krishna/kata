@@ -28,6 +28,7 @@ import type { TaskStatus } from '@bindings/TaskStatus';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ContextState } from '@bindings/ContextState';
+import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { Decision } from '@bindings/Decision';
 import type { DocState } from '@bindings/DocState';
@@ -56,6 +57,8 @@ export const MOCK_BUILD_CHANGE = '2026-10-19-build-demo';
 export const MOCK_DONE_CHANGE = '2026-10-18-photo-limits-shipped';
 /** The version the demo's `ai-sdlc` plugin reports. */
 export const MOCK_PLUGIN_VERSION = '0.8.0';
+/** The layouts the mock plugin reads, as the backend's `Readiness::Ready` sends them. */
+export const MOCK_LAYOUTS = [1, 2];
 
 const plugin = (name: string, description: string, provides: string[] = []): CatalogEntry =>
   ({ kind: 'plugin', name, description, source: 'user', path: `~/.claude/plugins/${name}`, provides, mcp_servers: [] });
@@ -130,7 +133,7 @@ const doc = (status: string | null, committed = true): DocState =>
 const change = (name: string, intent: DocState, spec: DocState, plan: DocState, stage: Stage): ChangeInfo =>
   ({
     system: MOCK_SYSTEM, change: name, intent, spec, plan, stage,
-    build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null,
+    build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false,
   });
 
 /** The demo build's plan: T3 waits for T1, which lives in the other repository. */
@@ -299,6 +302,8 @@ export class SdlcMock {
   private setupDone = false;
   private cancelledRun = false;
   private discarded = new Set<string>();
+  /** Review runs that finished: the scripted plugin records one review in the review document at the end of each. */
+  private reviewRuns = 0;
 
   getSettings(): Settings { return { ...this.settings }; }
   saveSettings(s: Settings): void { this.settings = { ...s }; }
@@ -440,6 +445,21 @@ export class SdlcMock {
   }
 
   /** A finished build run commits one row per task it did. */
+  /** The scripted review run recorded its review in the review document. */
+  recordReview(): void { this.reviewRuns++; }
+
+  /** Like the backend's `review::record`: null until a review run has finished, then one review for each run. */
+  reviewRecord(): ReviewRecord | null {
+    if (this.reviewRuns === 0) return null;
+    const commits = this.heads([MOCK_MASTER, ...BUILD_REPOS]);
+    const findings = REVIEW_FINDINGS.map((text, i) => ({ id: `F${i + 1}`, severity: 'medium' as const, file: 'src/upload.ts', line: 10 + i, text }));
+    return {
+      layout: 2,
+      problems: [],
+      reviews: Array.from({ length: this.reviewRuns }, (_, i) => ({ number: i + 1, reviewed_at: '2026-10-19', commits, findings })),
+    };
+  }
+
   commitRows(tasks: PlanTask[]): void {
     for (const t of tasks) {
       this.rows.set(t.id, {
@@ -575,6 +595,9 @@ export function buildRunScript(repo: string, tasks: PlanTask[], ask: boolean): {
   return { head: [...read, question], mid: work };
 }
 
+/** The two findings the scripted review closes with, in the order it lists them. */
+const REVIEW_FINDINGS = ['The upload limit is duplicated in claims-core and customer-portal.', 'The refusal message has no test.'];
+
 /** The review run: reads the change and closes with two findings. */
 export const reviewRunScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
   head: [
@@ -582,7 +605,7 @@ export const reviewRunScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
     { delay: 300, ev: { type: 'turn', n: 1 } },
     { delay: 300, ev: { type: 'tool.use', name: 'Bash', input_summary: 'git diff origin/main...HEAD', id: 'toolu_rv1', input: { command: 'git diff origin/main...HEAD' } } },
     { delay: 300, ev: { type: 'tool.result', name: 'Bash', ok: true, summary: '5 files changed', id: 'toolu_rv1', output: '' } },
-    completed('2 findings. 1. The upload limit is duplicated in claims-core and customer-portal. 2. The refusal message has no test.'),
+    completed(`2 findings. ${REVIEW_FINDINGS.map((text, i) => `${i + 1}. ${text}`).join(' ')}`),
   ],
   mid: [],
 };

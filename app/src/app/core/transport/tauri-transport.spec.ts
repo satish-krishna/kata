@@ -69,6 +69,7 @@ const rows: Row[] = [
   ['sdlcRunLinks', (t) => t.sdlcRunLinks(), 'sdlc_run_links', undefined],
   ['sdlcLinkRun', (t) => t.sdlcLinkRun(link), 'sdlc_link_run', { link }],
   ['sdlcBuildStatus', (t) => t.sdlcBuildStatus('/m', 's', 'c'), 'sdlc_build_status', { master: '/m', system: 's', change: 'c' }],
+  ['sdlcReadParsed', (t) => t.sdlcReadParsed('/m', 's', 'c', 'plan'), 'sdlc_read_parsed', { master: '/m', system: 's', change: 'c', doc: 'plan' }],
   ['sdlcReviewRecord', (t) => t.sdlcReviewRecord('/m', 's', 'c'), 'sdlc_review_record', { master: '/m', system: 's', change: 'c' }],
   ['sdlcUnsavedRows', (t) => t.sdlcUnsavedRows('/m', 's', 'c'), 'sdlc_unsaved_rows', { master: '/m', system: 's', change: 'c' }],
   ['sdlcBuildPrepare', (t) => t.sdlcBuildPrepare('/w', 'm', 's', 'c', true, 'r', 'round'), 'sdlc_build_prepare', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', action: 'round', continueWithLeftovers: true, pending: 'r' }],
@@ -101,6 +102,15 @@ describe('TauriTransport', () => {
     const args = ipc.invoke.mock.calls[0] as unknown[];
     expect(args[0]).toBe(cmd);
     expect(args[1]).toEqual(payload);
+  });
+
+  it("returns the program's message when it cannot read a document, never null (F4)", async () => {
+    const ipc = fakeIpc();
+    ipc.invoke.mockRejectedValueOnce('front matter is not closed');
+    const t = new TauriTransport(asIpc(ipc));
+    expect(await t.sdlcReadParsed('/m', 's', 'c', 'spec')).toEqual({ kind: 'error', message: 'front matter is not closed' });
+    ipc.invoke.mockRejectedValueOnce(new Error('node is missing'));
+    expect(await t.sdlcReadParsed('/m', 's', 'c', 'spec')).toEqual({ kind: 'error', message: 'node is missing' });
   });
 
   it('opens the native dialogs with the run-spec filters', async () => {

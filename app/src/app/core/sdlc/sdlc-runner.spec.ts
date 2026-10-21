@@ -6,7 +6,6 @@ import type { Leftovers } from '@bindings/Leftovers';
 import type { Participant } from '@bindings/Participant';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { BuildStart } from '@bindings/BuildStart';
-import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { PrepareOutcome } from '@bindings/PrepareOutcome';
 import type { Readiness } from '@bindings/Readiness';
 import type { RepoStart } from '@bindings/RepoStart';
@@ -30,14 +29,12 @@ const TARGET: RunTarget = {
 const transcript = (path: string): KataEvent => ({ type: 'log', level: 'info', message: `transcript: ${path}` }) as KataEvent;
 const repoStart = (repo: string): RepoStart => ({ repo, path: `/ws/${repo}`, base: 'main', branch: 'change/2026-10-12-fnol', created: true });
 const BUILD_START: BuildStart = { master: repoStart('claims-intent'), repos: [repoStart('claims-core')] };
-const AI_SDLC: CatalogEntry = { kind: 'plugin', name: 'ai-sdlc', description: '', source: 'user', path: '/plugins/ai-sdlc', provides: ['skill:build'], mcp_servers: [] };
 const REQUEST: BuildRequest = {
   folder: '/ws',
   masterRepo: 'claims-intent',
   system: 'claims',
   change: '2026-10-12-fnol',
   action: 'start',
-  catalog: [AI_SDLC],
   continueWithLeftovers: false,
 };
 const UPDATE_PLUGIN = 'Update the ai-sdlc plugin to 0.8.0 or later, then start the build again.';
@@ -61,7 +58,7 @@ class FakeTransport {
   sdlcFinishChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('finish'); return this.finishResults.shift()!(); });
   sdlcSettings = vi.fn(async () => ({ mode: null, remember: false, permission_mode: 'bypass' as const }));
   catalog = vi.fn(async (..._a: unknown[]) => seedCatalog);
-  readiness: Readiness = { kind: 'ready', dir: '/plugins/ai-sdlc', version: '0.8.0' };
+  readiness: Readiness = { kind: 'ready', dir: '/plugins/ai-sdlc', version: '0.8.0', layouts: [1, 2] };
   prepared: PrepareOutcome | (() => Promise<PrepareOutcome>) = { kind: 'ready', start: BUILD_START };
   sdlcPluginReadiness = vi.fn(async (..._a: unknown[]) => { this.calls.push('readiness'); return this.readiness; });
   sdlcBuildPrepare = vi.fn(async (..._a: unknown[]) => {
@@ -483,13 +480,6 @@ describe('SdlcRunner build', () => {
       expect(ctx.fake.sdlcBuildPrepare).not.toHaveBeenCalled();
       expect(ctx.startRun).not.toHaveBeenCalled();
       expect(ctx.fake.calls).toEqual(['readiness']);
-    });
-
-    it('refuses when the plugin is not in the catalog at all', async () => {
-      const ctx = setup();
-      const out = await ctx.runner.prepareBuild({ ...REQUEST, catalog: [] });
-      expect(out).toEqual({ kind: 'refused', reason: INSTALL_PLUGIN });
-      expect(ctx.fake.sdlcBuildPrepare).not.toHaveBeenCalled();
     });
 
     it('refuses when the backend finds the plugin missing', async () => {

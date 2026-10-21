@@ -49,7 +49,7 @@ import {
   type StageAction,
   type StagePill,
 } from '../../lib/sdlc';
-import { docNotice, type DocNotice } from '../../lib/doc-notice';
+import { shownBuild, shownDocument, type DocNotice, type ReadError, type Shown } from '../../lib/doc-notice';
 import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
 import { prNumber } from '../../lib/pull-request';
 import { REVIEW_MISSING_TEXT, canConfirm, checkLabel, reviewState, type DoneReport, type DoneReview } from '../../lib/sdlc-done';
@@ -185,30 +185,40 @@ export class ChangePageViewModel {
   /** The shown document, raw as it is on disk, or null when the file is missing. */
   readonly doc = signal<string | null>(null);
   /** The shown spec or plan as the format program read it; null for the other documents, or when the program could not run. */
-  private readonly read = signal<ReadResult | null>(null);
+  private readonly read = signal<ReadResult | ReadError | null>(null);
   /** Whether the ai-sdlc plugin can be used; null until the first load has asked. */
   private readonly readiness = signal<Readiness | null>(null);
   /** The review document as the format program reads it; null when the change has none or it could not be read. */
   private readonly reviewRecord = signal<ReviewRecord | null>(null);
   /** The notice above the open spec or plan; null when it needs none. */
-  readonly docNotice = computed<DocNotice | null>(() => {
-    const read = this.read();
+  readonly docNotice = computed<DocNotice | null>(() => this.shown()?.notice ?? null);
+  /** What the open spec or plan shows, decided by the one owner of that table; null for the other tabs and before the first load. */
+  private readonly shown = computed<Shown | null>(() => {
     const readiness = this.readiness();
     const stem = this.shownDoc();
-    if (readiness === null || (stem !== 'spec' && stem !== 'plan')) return null;
-    return docNotice(read?.layout ?? 2, read?.problems ?? [], readiness);
+    return readiness === null || (stem !== 'spec' && stem !== 'plan') ? null : shownDocument(this.read(), readiness);
   });
   /** The notice above the Build tab, from the plan and build log problems and the review document. */
   readonly buildNotice = computed<DocNotice | null>(() => {
     const readiness = this.readiness();
     if (readiness === null || this.shownDoc() !== 'build') return null;
-    const problems = [...(this.status()?.problems ?? []), ...(this.reviewRecord()?.problems ?? [])];
-    // The oldest layout among the build logs and the review decides the label.
-    const layout = Math.min(this.reviewRecord()?.layout ?? 2, ...(this.status()?.logLayouts ?? []).map((l) => l.layout));
-    return docNotice(layout, problems, readiness);
+    const status = this.status();
+    const review = this.reviewRecord();
+    // Every log, the plan's and logs' problems and the review are judged together: no one's label hides another's problems.
+    return shownBuild(
+      [
+        ...(status?.logLayouts ?? []).map((l) => ({ layout: l.layout, problems: [] })),
+        { layout: null, problems: status?.problems ?? [] },
+        ...(review === null ? [] : [{ layout: review.layout, problems: review.problems }]),
+      ],
+      readiness,
+    ).notice;
   });
   /** The shown spec or plan as the format program read it, unless a notice says the document is shown as plain text. */
-  private readonly parsed = computed<ReadResult | null>(() => (this.docNotice()?.plain ? null : this.read()));
+  private readonly parsed = computed<ReadResult | null>(() => {
+    const read = this.read();
+    return this.shown()?.show === 'plain' || read === null || read.kind === 'error' ? null : read;
+  });
   /** The document the operator picked from the tiles; null shows the current stage's. Every load clears it. */
   private readonly picked = signal<Tab | null>(null);
   /** The document whose pill the operator just clicked while its text is still being read; null otherwise. */
@@ -915,7 +925,6 @@ export class ChangePageViewModel {
       system: this.system(),
       change: this.changeName(),
       action: this.askedAction,
-      catalog: this.catalog(),
       continueWithLeftovers,
       pending: asked.repo,
     });
@@ -996,15 +1005,15 @@ export class ChangePageViewModel {
   }
 
   /**
-   * The spec or plan as the format program reads it, for the list views. The intent has no parsed form, and a program
-   * that cannot run leaves the document as plain text with no list, never a failed page.
+   * The spec or plan as the format program reads it, for the list views. The intent has no parsed form. A program that
+   * cannot read the document leaves it as plain text with the program's message above it, never a failed page.
    */
-  private async readParsed(master: string, system: string, name: string, stem: string): Promise<ReadResult | null> {
+  private async readParsed(master: string, system: string, name: string, stem: string): Promise<ReadResult | ReadError | null> {
     if (stem !== 'spec' && stem !== 'plan') return null;
     try {
       return await this.transport.sdlcReadParsed(master, system, name, stem);
-    } catch {
-      return null;
+    } catch (e) {
+      return { kind: 'error', message: message(e) };
     }
   }
 
@@ -1069,7 +1078,7 @@ export class ChangePageViewModel {
     const seq = ++this.loadSeq;
     const system = this.system();
     const name = this.changeName();
-    const finish = (state: ChangeState, change: ChangeInfo | null, doc: string | null, read: ReadResult | null = null) => {
+    const finish = (state: ChangeState, change: ChangeInfo | null, doc: string | null, read: ReadResult | ReadError | null = null) => {
       if (seq !== this.loadSeq) return;
       this.pickSeq++;
       this.pendingDoc.set(null);

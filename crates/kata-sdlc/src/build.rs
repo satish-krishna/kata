@@ -1242,6 +1242,7 @@ mod tests {
         Readiness::Ready {
             dir: dir.to_path_buf(),
             version: "0.8.0".into(),
+            layouts: format::ACCEPTED_LAYOUTS.to_vec(),
         }
     }
 

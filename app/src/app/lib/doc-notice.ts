@@ -1,12 +1,14 @@
 import type { Problem } from '@bindings/Problem';
+import type { ReadResult } from '@bindings/ReadResult';
 import type { Readiness } from '@bindings/Readiness';
 
-/* Which notice a document gets above it: a plugin that cannot read it, a layout newer than the Workbench knows, a
- * problem the format program found, or the quiet label of the older layout. Pure, so the change page and its tests
- * share one reading of the table. */
+/* The one owner of "the Workbench never shows less than a document holds without saying so". Every screen that
+ * shows a spec, a plan, the build logs or the review asks here what to show and which notice goes above it: the
+ * Spec, Plan and Build tabs, the Build view's findings and the done dialog. Pure, so every row of the table is
+ * tested by hand. */
 
-/** The layout versions the Workbench reads; the backend's `ACCEPTED_LAYOUTS`. */
-export const ACCEPTED_LAYOUTS: readonly number[] = [1, 2];
+/** What the format program said when it could not read a document: its own message, never a guess. */
+export type ReadError = { kind: 'error'; message: string };
 
 /** `warning` is the andon warning tone with a dot and the words; `idle` is the quiet label. */
 export type DocNotice = {
@@ -14,19 +16,63 @@ export type DocNotice = {
   text: string;
   /** One `line <n>: <message>` for each problem; empty for every other notice. */
   lines: string[];
-  /** The document is shown as plain markdown, because nothing could read it. */
-  plain: boolean;
 };
 
-/** The notice for a document, or null when it needs none. The rows are checked top to bottom. */
-export function docNotice(layout: number, problems: readonly Problem[], readiness: Readiness): DocNotice | null {
-  if (readiness.kind === 'missing') return { tone: 'warning', text: 'Install the ai-sdlc plugin to read this document', lines: [], plain: true };
-  if (readiness.kind === 'tooOld') return { tone: 'warning', text: `Update the ai-sdlc plugin to ${readiness.need} or later`, lines: [], plain: true };
-  if (layout > Math.max(...ACCEPTED_LAYOUTS)) return { tone: 'warning', text: 'This document needs a newer Workbench', lines: [], plain: false };
-  // The program reports no problems for the older layout, so a problem list there cannot happen.
-  if (layout < 2) return { tone: 'idle', text: 'Older layout', lines: [], plain: false };
-  if (problems.length > 0) {
-    return { tone: 'warning', text: 'This document does not follow the layout', lines: problems.map((p) => `line ${p.line}: ${p.message}`), plain: false };
-  }
+/** What to show for a document: `plain` is its text as markdown, because nothing could read it; `parsed` is what was read. */
+export type Shown = { show: 'plain' | 'parsed'; notice: DocNotice | null };
+
+/** One document's reading as the table sees it. `layout` is null for problems that belong to no one layout. */
+export type Part = { layout: number | null; problems: readonly Problem[] };
+
+const warning = (text: string, lines: string[] = []): DocNotice => ({ tone: 'warning', text, lines });
+
+/** The plugin rows: nothing could be read, so the text is shown plain. Null when the plugin is ready. */
+function unusable(readiness: Readiness): Shown | null {
+  if (readiness.kind === 'missing') return { show: 'plain', notice: warning('Install the ai-sdlc plugin to read this document') };
+  if (readiness.kind === 'tooOld') return { show: 'plain', notice: warning(`Update the ai-sdlc plugin to ${readiness.need} or later`) };
   return null;
+}
+
+/** The rows for what was read, checked top to bottom: a layout not accepted, then problems, then the older-layout label. */
+function judge(accepted: readonly number[], parts: readonly Part[]): DocNotice | null {
+  if (parts.some((p) => p.layout !== null && !accepted.includes(p.layout))) return warning('This document needs a newer Workbench');
+  // Problems come before the older-layout label: a label must never hide them.
+  const lines = parts.flatMap((p) => p.problems.map((problem) => `line ${problem.line}: ${problem.message}`));
+  if (lines.length > 0) return warning('This document does not follow the layout', lines);
+  if (parts.some((p) => p.layout === 1)) return { tone: 'idle', text: 'Older layout', lines: [] };
+  return null;
+}
+
+/**
+ * What to show for one spec or plan, and the notice above it. `read` is what the format program printed, its error
+ * when it could not read the document, or null when there is nothing to read. The rows, top to bottom:
+ *
+ * | readiness | read | layout | problems | shown |
+ * |---|---|---|---|---|
+ * | missing | any | any | any | plain text; install notice |
+ * | too old | any | any | any | plain text; update notice |
+ * | ready | could not read | n/a | n/a | plain text; the program's message |
+ * | ready | read | not accepted | any | what was read; needs a newer Workbench |
+ * | ready | read | accepted | some | what was read; each problem as `line <n>: <message>` |
+ * | ready | read | 1 | none | what was read; "Older layout" |
+ * | ready | read | 2 or later, accepted | none | what was read; no notice |
+ */
+export function shownDocument(read: ReadResult | ReadError | null, readiness: Readiness): Shown {
+  const stop = unusable(readiness);
+  if (stop !== null) return stop;
+  if (readiness.kind !== 'ready' || read === null) return { show: 'plain', notice: null };
+  if (read.kind === 'error') return { show: 'plain', notice: warning(`Could not read this document: ${read.message}`) };
+  return { show: 'parsed', notice: judge(readiness.layouts, [read]) };
+}
+
+/**
+ * The Build tab's notice, from every document it shows: the plan's and build logs' problems, each log's layout and
+ * the review's. The rows are the same, over all of them at once, so a problem in one is never hidden behind the
+ * older-layout label of another.
+ */
+export function shownBuild(parts: readonly Part[], readiness: Readiness): Shown {
+  const stop = unusable(readiness);
+  if (stop !== null) return stop;
+  if (readiness.kind !== 'ready') return { show: 'plain', notice: null };
+  return { show: 'parsed', notice: judge(readiness.layouts, parts) };
 }

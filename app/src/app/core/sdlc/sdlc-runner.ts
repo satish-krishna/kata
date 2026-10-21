@@ -3,7 +3,6 @@ import { Router } from '@angular/router';
 import type { BuildAction } from '@bindings/BuildAction';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { BuildStart } from '@bindings/BuildStart';
-import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { Problem } from '@bindings/Problem';
@@ -14,7 +13,7 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunState } from '../../lib/events';
 import type { RunSnapshot } from '../run/reduce';
-import { canBuild, specFor, transcriptRunId } from '../../lib/sdlc';
+import { specFor, transcriptRunId } from '../../lib/sdlc';
 import { masterPath, masterRepo, productRepos as productReposOf } from '../../lib/sdlc-workspace';
 import { LockStore } from '../lock/lock.store';
 import { RunStore } from '../run/run.store';
@@ -62,7 +61,6 @@ export type BuildRequest = {
   change: string;
   /** What the engineer asked for; every action meets the same gate. */
   action: BuildAction;
-  catalog: CatalogEntry[];
   continueWithLeftovers: boolean;
   /** The repository a round is aimed at: its uncommitted files are its own to confirm, even when its tasks are all done or it is the master. */
   pending?: string | null;
@@ -226,7 +224,7 @@ export class SdlcRunner {
       readiness = { kind: 'missing' };
     }
     if (readiness.kind === 'tooOld') return { kind: 'refused', reason: updatePlugin(readiness.need) };
-    if (readiness.kind === 'missing' || !canBuild(req.catalog)) return { kind: 'refused', reason: INSTALL_PLUGIN };
+    if (readiness.kind === 'missing') return { kind: 'refused', reason: INSTALL_PLUGIN };
     try {
       const out = await this.transport.sdlcBuildPrepare(req.folder, req.masterRepo, req.system, req.change, req.continueWithLeftovers, req.pending ?? null, req.action);
       if (out.kind === 'refused') return { kind: 'refused', reason: out.message, problems: out.problems };

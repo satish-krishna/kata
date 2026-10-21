@@ -464,8 +464,11 @@ describe('BuildViewModel', () => {
       withDocument(transport, section(1, '2026-10-19', []));
       await vm.start(await handoffFor(transport), CTX);
       await drive(vm, lock, shown(vm));
-      const problems = (vm as unknown as { reviewProblems?: () => string[] }).reviewProblems;
-      expect(problems?.()).toEqual(['line 12: finding F1 has no file']);
+      expect(vm.reviewNotice()).toEqual({
+        tone: 'warning',
+        text: 'This document does not follow the layout',
+        lines: ['line 12: finding F1 has no file'],
+      });
     });
   });
 
@@ -497,7 +500,7 @@ describe('BuildViewModel', () => {
     expect(next.findings()).toHaveLength(2);
     expect(next.replaced()).toHaveLength(1);
     expect(next.replaced()[0].findings).toHaveLength(2);
-    expect(next.replaced()[0].at).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+    expect(next.replaced()[0].label).toBe('Review 1 of 2026-10-19');
   });
 
   it('a round that adds no commits is not reviewed again', async () => {

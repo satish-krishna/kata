@@ -3,4 +3,4 @@
 /**
  * Whether the ai-sdlc plugin can be used: where it is and which version, decided once for the whole app.
  */
-export type Readiness = { "kind": "ready", dir: string, version: string, } | { "kind": "missing" } | { "kind": "tooOld", have: string, need: string, };
+export type Readiness = { "kind": "ready", dir: string, version: string, layouts: Array<number>, } | { "kind": "missing" } | { "kind": "tooOld", have: string, need: string, };

@@ -16,8 +16,13 @@ pub const MIN_VERSION: &str = "0.8.0";
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum Readiness {
-    /// Installed and at least [`MIN_VERSION`].
-    Ready { dir: PathBuf, version: String },
+    /// Installed and at least [`MIN_VERSION`]. `layouts` are the document layouts the Workbench reads
+    /// ([`crate::format::ACCEPTED_LAYOUTS`]), so the frontend tests membership instead of keeping its own list.
+    Ready {
+        dir: PathBuf,
+        version: String,
+        layouts: Vec<u32>,
+    },
     /// Not installed, or its version cannot be read.
     Missing,
     /// Installed but older than [`MIN_VERSION`].
@@ -34,6 +39,7 @@ pub fn readiness(plugin_dir: Option<&Path>) -> Readiness {
         Some(have) if at_least(&have, MIN_VERSION) => Readiness::Ready {
             dir: dir.to_path_buf(),
             version: have,
+            layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
         },
         Some(have) => Readiness::TooOld {
             have,
@@ -123,7 +129,8 @@ mod tests {
             readiness(Some(current.path())),
             Readiness::Ready {
                 dir: current.path().to_path_buf(),
-                version: "0.8.0".to_string()
+                version: "0.8.0".to_string(),
+                layouts: crate::format::ACCEPTED_LAYOUTS.to_vec()
             }
         );
         let old = plugin_with(Some(r#"{"name":"ai-sdlc","version":"0.7.9"}"#));

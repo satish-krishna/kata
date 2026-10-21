@@ -13,7 +13,7 @@ import type { RunRecord } from '@bindings/RunRecord';
 import type { Finding } from './sdlc';
 
 /** Why there is no review of the current work. */
-export type ReviewMissing = 'none' | 'unfinished' | 'stale';
+export type ReviewMissing = 'none' | 'unfinished' | 'stale' | 'invalid';
 
 /** The review of the current work with its findings, or the reason there is none. */
 export type DoneReview = ReviewOnShow | { missing: ReviewMissing };
@@ -44,6 +44,7 @@ export const REVIEW_MISSING_TEXT: Record<ReviewMissing, string> = {
   none: 'The change has not been reviewed.',
   unfinished: 'The review did not finish.',
   stale: 'The work changed since it was reviewed.',
+  invalid: 'The review document does not pass its checks.',
 };
 
 export const FAILED_NOTE = 'The check ran and failed. Ask for another round to fix it.';
@@ -65,6 +66,8 @@ function sameHeads(now: Record<string, string>, then: Record<string, string | un
 
 /** The state of a change's latest review in its review document: stale when a repository it covered moved since. The master is not judged, since recording the review commits there. */
 function documentState(document: ReviewRecord, heads: Record<string, string>, master: string | null): ReviewState {
+  // A document with problems is not a review the Workbench can trust: a finding that failed its schema is dropped from the list, so "nothing found" would be a guess.
+  if (document.problems.length > 0) return { kind: 'invalid' };
   const latest = document.reviews.at(-1);
   if (latest === undefined) return { kind: 'none' };
   const reviewed = latest.commits;

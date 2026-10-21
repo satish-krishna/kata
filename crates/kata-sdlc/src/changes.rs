@@ -58,6 +58,9 @@ pub struct PlanFacts {
     pub has_tasks: bool,
     pub tasks: u32,
     pub finished: u32,
+    /// The plan or the build logs could not be read (no usable plugin, no Node.js, a document the program
+    /// exits on). Unknown is not empty: this never counts as "the plan has no tasks".
+    pub unreadable: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -89,6 +92,9 @@ pub struct ChangeInfo {
     pub build: BuildCounts,
     pub scope: String,
     pub out_of_date: Option<OutOfDate>,
+    /// The plan could not be read, so its tasks and build counts are unknown; the Workbench shows why instead
+    /// of a stage that claims the plan is empty.
+    pub plan_unreadable: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -116,7 +122,7 @@ pub fn out_of_date(
         Some(OutOfDate::SpecPin)
     } else if !facts.plan_pin {
         Some(OutOfDate::PlanPin)
-    } else if !facts.has_tasks {
+    } else if !facts.has_tasks && !facts.unreadable {
         Some(OutOfDate::NoTasks)
     } else {
         None
@@ -229,8 +235,9 @@ fn doc_state(master: &Path, system: &str, change: &str, file: &str) -> DocState 
 }
 
 /// The plan's tasks from the working tree, the finished ones from the committed build logs, and
-/// whether both source pins hold. Both are read by the format program in `plugin`; without a usable
-/// plugin, or when the program cannot read a document, the plan counts no task and no finished task.
+/// whether both source pins hold. Both are read by the format program in `plugin`. Without a usable
+/// plugin, or when the program cannot read a document, the facts are marked unreadable: the counts are
+/// unknown, not zero.
 fn plan_facts(
     plugin: Option<&Path>,
     master: &Path,
@@ -238,20 +245,21 @@ fn plan_facts(
     change: &str,
 ) -> (PlanFacts, BuildCounts) {
     let plan_file = master.join(format!("intent/{system}/{change}/plan.md"));
-    let tasks = plugin
-        .and_then(|p| crate::format::read(&crate::build::program(p), &plan_file).ok())
-        .map(|read| match read {
-            crate::format::ReadResult::Plan { document, .. } => document.tasks,
-            _ => Vec::new(),
-        })
-        .unwrap_or_default();
+    let read = plugin.map(|p| crate::format::read(&crate::build::program(p), &plan_file));
+    let (tasks, mut unreadable) = match read {
+        Some(Ok(crate::format::ReadResult::Plan { document, .. })) => (document.tasks, false),
+        _ => (Vec::new(), true),
+    };
     let mut repos: Vec<&str> = tasks.iter().map(|t| t.repo.as_str()).collect();
     repos.sort_unstable();
     repos.dedup();
-    let finished = plugin
-        .and_then(|p| crate::build::status(p, master, system, change).ok())
-        .map(|s| s.tasks.iter().filter(|t| t.row.is_some()).count() as u32)
-        .unwrap_or(0);
+    let finished = match plugin.map(|p| crate::build::status(p, master, system, change)) {
+        Some(Ok(status)) => status.tasks.iter().filter(|t| t.row.is_some()).count() as u32,
+        _ => {
+            unreadable = true;
+            0
+        }
+    };
     let counts = BuildCounts {
         tasks: tasks.len() as u32,
         finished,
@@ -263,6 +271,7 @@ fn plan_facts(
         has_tasks: !tasks.is_empty(),
         tasks: counts.tasks,
         finished,
+        unreadable,
     };
     (facts, counts)
 }
@@ -310,6 +319,7 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
                 build,
                 scope,
                 out_of_date,
+                plan_unreadable: facts.unreadable,
             }
         })
         .collect()
@@ -408,6 +418,7 @@ mod tests {
             has_tasks: tasks > 0,
             tasks,
             finished,
+            unreadable: false,
         }
     }
 

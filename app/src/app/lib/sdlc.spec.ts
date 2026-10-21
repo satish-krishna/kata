@@ -5,7 +5,7 @@ import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
 import type { KataEvent, RunDetail } from "./events";
 import { validateLocal } from "./mock";
-import { DONE_LABEL, actionLabel, actionsFor, actionsForChange, canBuild, hasAiSdlcPlugin, primaryAction, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildRun, type RunContext, type StageAction } from "./sdlc";
+import { DONE_LABEL, actionLabel, actionsFor, actionsForChange, hasAiSdlcPlugin, primaryAction, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildRun, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -35,7 +35,7 @@ const ACTIONS: Record<Stage, string[]> = {
 };
 
 const changeAt = (stage: Stage, outOfDate: OutOfDate | null = null): ChangeInfo => ({
-  system: "claims", change: "2026-10-12-fnol", stage, scope: "claims", out_of_date: outOfDate,
+  system: "claims", change: "2026-10-12-fnol", stage, scope: "claims", out_of_date: outOfDate, plan_unreadable: false,
   intent: { exists: true, committed: true, status: "accepted" },
   spec: { exists: true, committed: true, status: "accepted" },
   plan: { exists: true, committed: true, status: "accepted" },
@@ -395,15 +395,6 @@ describe("stopMessage", () => {
     expect(stopMessage(124, null, true)).toBe("Stopped: cancelled");
     expect(stopMessage(null, null, true)).toBe("Stopped: cancelled");
     expect(stopMessage(1, "boom", true)).toBe("Stopped: cancelled");
-  });
-});
-
-describe("canBuild", () => {
-  const withSkill: CatalogEntry[] = [{ ...plugin("ai-sdlc"), provides: ["skill:build"] }];
-  it("needs the plugin in the catalog with the build skill", () => {
-    expect(canBuild(withSkill)).toBe(true);
-    expect(canBuild([{ ...plugin("ai-sdlc"), provides: ["skill:plan"] }])).toBe(false);
-    expect(canBuild([])).toBe(false);
   });
 });
 

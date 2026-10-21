@@ -88,7 +88,7 @@ describe('BuildView', () => {
     fixture.componentInstance.closed.subscribe(closed);
     await drive(() => vm.phase() === 'finished' && vm.findings().length > 0);
     expect(text(container)).toContain('Every task is in the build log.');
-    const items = Array.from(container.querySelectorAll('app-findings-list li .k-findings__text')).map((e) => e.textContent!.trim());
+    const items = Array.from(container.querySelectorAll('app-findings-list li .k-findings__text')).map((e) => e.firstChild!.textContent!.trim());
     expect(items).toEqual(['The upload limit is duplicated in claims-core and customer-portal.', 'The refusal message has no test.']);
     expect(button(container, 'Cancel build')).toBeUndefined();
     button(container, 'Close')!.click();

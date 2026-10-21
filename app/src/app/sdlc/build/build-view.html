@@ -42,6 +42,18 @@
             <section class="k-build__end" aria-labelledby="build-end">
               <h2 id="build-end" class="k-state__title">Every task is in the build log.</h2>
               @if (vm.reviewShown()) {
+                @if (vm.reviewNotice(); as notice) {
+                  <div [class]="notice.tone === 'warning' ? 'wb-banner wb-banner--warn' : 'wb-banner wb-banner--quiet'" data-testid="review-notice" role="status">
+                    <span [class]="'k-status k-status--' + (notice.tone === 'warning' ? 'warning' : 'idle')"><span class="k-status__dot"></span>{{ notice.text }}</span>
+                    @if (notice.lines.length > 0) {
+                      <ul class="wb-banner__list wb-banner__list--lines k-mono">
+                        @for (line of notice.lines; track $index) {
+                          <li>{{ line }}</li>
+                        }
+                      </ul>
+                    }
+                  </div>
+                }
                 <app-findings-list [findings]="vm.findings()" [replaced]="vm.replaced()" [older]="vm.older()" [emptyText]="vm.emptyText()" />
               }
             </section>

@@ -142,11 +142,6 @@ export type BuildRun = {
 export const DEFAULT_BUILD_SECS = 7200;
 
 const AI_SDLC = "ai-sdlc";
-/** True when the ai-sdlc plugin is in the catalog and provides the build skill. Its version is the backend's call (`Readiness`). */
-export function canBuild(catalog: CatalogEntry[]): boolean {
-  const entry = catalog.find((e) => e.kind === "plugin" && e.name === AI_SDLC);
-  return !!entry && entry.provides.includes("skill:build");
-}
 
 /** The text of a repository's stop (R6.1). The cancelled fact decides first, and a cancelled stop carries no error text; the exit code only tells the other stops apart. */
 export function stopMessage(exit: number | null, error: string | null, cancelled = false): string {
