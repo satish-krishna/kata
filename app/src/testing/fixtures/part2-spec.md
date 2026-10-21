@@ -1,0 +1,950 @@
+---
+source_intent: 2026-10-19-ai-sdlc-part-2/intent.md
+source_intent_commit: 6adf1b02c95facf74a80296588c9009eec4021e8
+system: kata
+date: 2026-10-19
+status: accepted
+policies_applied: [house-style]
+policies_not_checked: [security, compliance, brand]
+---
+
+# Spec: Build the plan, review what changed, open pull requests
+
+**Policy checks.** UX: checked. `house-style` is a project skill of the kata repository (`kata/app/.claude/skills/house-style/`); this session loaded it once it read files under `kata/app/`, and the requirements and design were checked against it. It shaped the build view's layout (grid regions, `hlm-select`, zod-schema signal forms, ViewModel-owned state) and raised area of concern 8. Brand: not checked. `policies.md` names `kata-design`, which lives at `kata/.claude/skills/kata-design/`; this session starts in the workspace folder and never offered it as a skill, so the policy check did not run. Its `SKILL.md` was read and its house rules (andon status colors always with a label, one azure accent, mono for data, flat chrome, desktop only) are followed in the design, but that is a reading, not the check (area of concern 13). Security: not checked. `policies.md` names `security-review`, which reviews the code diff of a checked-out branch, not a spec (area of concern 14). Areas of concern 1, 3, 5, 10, 12 and 18 come from reading the design for command injection, path traversal, authorization, secrets handling and data exposure; that is not the policy check. Compliance: not checked, because `policies.md` lists no skill for it.
+
+**Context freshness.** The kata context was built at `7226252`. The kata checkout in this workspace is at `5649745`, level with `origin/feat/ai-sdlc-mode`, 18 product commits after the context, and unchanged since the previous version of this spec. This design is written against `5649745`. Seven of those commits matter here: `44372d9` already fixed the acceptance-commit scope and trailer gap the intent names; `91568ca` added the "What should change?" feedback box before every revisit and made `Re-run plan` the action for a superseded plan; `a04c245` added the `shape/no-inline-template` lint rule; `fe2dbe6` moved every existing component's template into its own `.html` file; `38524e5` made plan runs load only the ai-sdlc plugin; `5d013d9` added Ctrl +, − and 0 to zoom the whole Workbench from 50% to 200%, remembered in `<kata home>/workbench/zoom.json`; and `5649745` stubbed Mermaid in the change-page tests because its cold import timed out the first test under full-suite load.
+
+**Plugin freshness.** The ai-sdlc plugin installed on this machine is 0.6.0 (`1e11fe0`). Its `build` skill is now the contract this design drives. A build run works in one repository, from inside that repository (`build <change> --repo <repo>`), so the repository's `CLAUDE.md`, skills and hooks load; it builds that repository's unfinished tasks in document order, one at a time, and stops, blocked rather than failed, at a task whose `Depends on` line names a task in another repository that has no row yet. Plan tasks carry a `Depends on` line. Each finished task is logged as a row in `<master>/intent/<system>/<change>/build/<repo>.md`, committed on its own; the build never edits `plan.md`, and a departure is written in full in its row. The final review is a separate `build <change> --review` run from the master repository, once every task has a row. Commits name their paths and retry on `index.lock`, so repository runs can go at the same time. The skill's "Modes" section describes how a tool such as Kata drives it, and this design follows that description.
+
+**Revision.** This version regenerates the spec because the intent changed (operator feedback; intent commit `6adf1b0`). The intent now has the plugin's build skill do all building and reviewing, one run per repository from inside it, with repositories that do not wait on each other building at the same time, a repository that waits starting by itself, the time limit applied to each repository's run, one review of the whole change whose findings the engineer must see before done, and every finished task recorded in the master repository. The intent retired D4 (the plan was updated alongside a departure) in favor of D17 (the plan is not rewritten; the departure is recorded with its task), and D14 (how the build is split was the builder's call) in favor of D18 (one run per repository, then one review, as the plugin defines); it added D19 (parallel repositories), D20 (the review's findings) and D21 (waiting is not failure), changed D1 and D5 to work per repository, and made D13 a "handle it". In the requirements, scenarios R2.2, R9.1, R18.2, R18.3 and R18.4 are retired because their meaning no longer holds; R1.5, R2.6, R6.7, R8.4, R9.3, R14.2 and R18.6 and rules R19 and R20 are new; every other ID keeps its meaning, with wording updated where the intent now says "agents" or "per repository". In the design, "The build log", "The build run", "Screens", "Watching and reviewing during a build" and "Declare done" are rewritten; the legs of the previous version are gone, because the plugin, not Kata, now decides where each run starts and when it stops. Areas of concern 2, 4, 5, 11, 12, 13, 15, 16 and 19 are rewritten, the others are updated for several runs at once, and 20 and 21 are new. Kata (still at `5649745`) and mekiki are unchanged since the previous version.
+
+## Requirements
+
+```gherkin
+Feature: Build the plan, review what changed, open pull requests
+  A change goes from an accepted plan to open pull requests in every touched repository without the engineer leaving the Workbench, typing a git command, or starting a build run by hand.
+
+  Background:
+    Given a workspace with a master repository and the product repositories of the system
+    And the engineer is signed in to GitHub on this machine
+
+  Rule: R1 — The engineer accepts a written plan, and only an accepted plan can be built (from: Proposed outcome 1, D13)
+
+    Scenario: R1.1 — A written plan waits for acceptance
+      Given a change whose plan has been written but not accepted
+      When the engineer opens the change
+      Then the change shows "Plan · awaiting acceptance"
+      And the engineer can accept the plan, rewrite it, or reopen the intent
+      And the engineer cannot start a build
+
+    Scenario: R1.2 — Accepting the plan opens the build
+      Given a change whose plan is awaiting acceptance
+      When the engineer accepts the plan
+      Then the plan's acceptance is committed to the master repository
+      And the change shows "Build · ready to start"
+
+    Scenario: R1.3 — A superseded plan cannot be built
+      Given a change whose intent was reopened after its plan was written
+      When the engineer opens the change
+      Then the engineer cannot start a build
+      And the engineer is told the intent was reopened and the plan must be rewritten first
+
+    Scenario Outline: R1.4 — A plan or spec written from an older version of the document above it cannot be built
+      Given a change whose plan is accepted
+      And <document> was written from a version of <upstream> that is not the one accepted now
+      When the engineer opens the change
+      Then the engineer cannot start a build
+      And the engineer is told to <action>
+
+      Examples:
+        | document  | upstream   | action                                  |
+        | the plan  | the spec   | rewrite the plan                        |
+        | the spec  | the intent | rewrite the spec, then rewrite the plan |
+
+    Scenario Outline: R1.5 — A reopened document stops the build and is named
+      Given a change whose plan is accepted
+      And <document> has been reopened
+      When the engineer opens the change
+      Then the engineer cannot start or continue a build
+      And the engineer is told that <document> was reopened
+
+      Examples:
+        | document   |
+        | the intent |
+        | the spec   |
+
+  Rule: R2 — The engineer starts a build with a time limit they can see and change, applied to each repository's run (from: Proposed outcome 1–2, D5, open question 2)
+
+    Scenario: R2.1 — Starting a build creates a branch per repository the plan names
+      Given a change whose plan is accepted
+      And the plan's tasks name the product repositories "app" and "api"
+      When the engineer starts the build with the default time limit
+      Then "app" and "api" each get a branch named after the change, starting from their base branch
+      And work starts inside every repository whose first unfinished task does not wait on another repository
+
+    Scenario: R2.3 — There is no spending ceiling
+      Given a build that has spent more than any previous run
+      When it is still within its time limit
+      Then it keeps working
+
+    Scenario: R2.4 — A plan that names a repository outside the system is refused
+      Given a plan whose tasks name a repository that is not part of the system or not in the workspace
+      When the engineer starts the build
+      Then the build does not start
+      And the engineer is told which repository is missing
+
+    Scenario: R2.5 — A plugin that cannot build is refused before anything changes
+      Given the ai-sdlc plugin on this machine is a version that cannot build one repository at a time
+      When the engineer starts the build
+      Then the build does not start and no branch is created
+      And the engineer is told to update the ai-sdlc plugin
+
+    Scenario: R2.6 — The time limit applies to each repository's run
+      Given a change whose plan names "app" and "api"
+      When the engineer sets the time limit to 4 hours and starts the build
+      Then the run inside "app" stops itself if it is still working after 4 hours
+      And the run inside "api" has its own 4 hours, whatever happens in "app"
+
+  Rule: R3 — Nothing the engineer had before the build is discarded or overwritten (from: Constraints, D9, D10)
+
+    Scenario Outline: R3.1 — A product repository's state at start decides whether the build may begin
+      Given the product repository "app" is named by the plan
+      And "app" <state>
+      When the engineer starts the build
+      Then <outcome>
+
+      Examples:
+        | state                                                             | outcome                                                              |
+        | is clean on its base branch                                       | the build starts and creates the change's branch in "app"            |
+        | has uncommitted files                                             | the build does not start and the engineer is told the files by name  |
+        | is on some other branch                                           | the build does not start and the engineer is told the branch by name |
+        | already has this change's branch, holding only this change's work | the build starts and continues on that branch                        |
+        | already has a branch of this name holding someone else's work     | the build does not start and the engineer is told the branch by name |
+
+    Scenario: R3.2 — The master repository must be clean, as today
+      Given the master repository has uncommitted files
+      When the engineer starts the build
+      Then the build does not start and the engineer is told the files by name
+
+  Rule: R4 — The engineer can watch, answer and approve while the agents build (from: Proposed outcome 2)
+
+    Scenario: R4.1 — An agent asks a question
+      Given a build in progress
+      When the agent working inside "app" asks the engineer a question
+      Then the run inside "app" waits until the engineer answers
+      And the time spent waiting does not count against its time limit
+
+    Scenario: R4.2 — The engineer refuses an action
+      Given a build in progress
+      When an agent asks to run an action that needs approval and the engineer refuses it
+      Then the agent does not run it and carries on without it
+
+    Scenario: R4.3 — No agent can publish anything itself
+      Given a build in progress
+      When an agent tries to send a branch to GitHub or open a pull request
+      Then the attempt is refused without asking the engineer
+
+  Rule: R5 — The build works task by task and records each finished task in the master repository (from: Proposed outcome 2, Constraints, D18)
+
+    Scenario: R5.1 — A finished task is committed and recorded
+      Given a build in progress on the plan's task T2 in "app"
+      When the agent finishes T2
+      Then the agent's work for T2 is committed in "app" on the change's branch
+      And T2 is recorded as finished in the master repository
+      And every commit uses the change's own scope and the ai-sdlc trailer
+
+    Scenario: R5.2 — Each task's commits name the task
+      Given a build in progress on the plan's task T2 in "app"
+      When the agent commits work for T2
+      Then the commit names T2 as the task it belongs to
+      And the record of T2 as finished is its own commit in the master repository
+
+  Rule: R6 — A repository's build that stops partway keeps its work, says why, and resumes from its last finished task, while the other repositories carry on (from: D1, D5)
+
+    Scenario Outline: R6.1 — The engineer is told which repository stopped and why
+      Given a build in which "app" has finished T1 and T2 of its four tasks
+      When the run inside "app" stops because <reason>
+      Then the commits for T1 and T2 are kept
+      And the engineer is told that "app" stopped: "<message>"
+      And the engineer can continue "app"
+
+      Examples:
+        | reason                            | message                                   |
+        | it reached its time limit         | Stopped: reached the time limit           |
+        | the engineer cancelled it         | Stopped: cancelled                        |
+        | nobody answered the agent in time | Stopped: nobody answered                  |
+        | the agent crashed                 | Stopped: the agent failed, with its error |
+
+    Scenario: R6.2 — Continuing starts from the first unfinished task
+      Given "app" stopped, and the master repository records T1 and T2 as finished
+      When the engineer continues "app"
+      Then the agent starts at T3 inside "app" on the same branch
+      And T1 and T2 are not redone
+
+    Scenario: R6.3 — Uncommitted work left by a stopped run is kept
+      Given the run inside "app" stopped with uncommitted edits in "app"
+      When the run ends
+      Then the engineer is shown the uncommitted edits
+      And they are kept unless the engineer chooses to discard them
+      And discarding only ever touches files the build changed
+
+    Scenario: R6.4 — The engineer chooses to continue on top of the build's own leftovers
+      Given "app" has uncommitted edits left by its previous run
+      When the engineer continues "app" and confirms continuing with those edits
+      Then the run starts without discarding them
+
+    Scenario: R6.5 — A task finished but not yet recorded is recorded, not redone
+      Given the run inside "app" stopped after committing the work for T3 and before recording T3 as finished
+      When the engineer continues "app"
+      Then T3's work is checked and recorded as finished
+      And T3 is not redone
+      And the agent starts at T4
+
+    Scenario: R6.6 — A record written but not yet saved is saved first
+      Given the run inside "app" stopped after writing T3's record in the master repository and before saving it
+      When the engineer continues "app" and confirms continuing with those edits
+      Then the engineer is shown the unsaved record and asked to save it
+      And T3 is not redone
+
+    Scenario: R6.7 — The other repositories carry on
+      Given "app" and "api" are building at the same time
+      And "docs" waits on a task in "app" that is not finished
+      When the run inside "app" stops
+      Then the agent inside "api" keeps working
+      And "docs" keeps waiting
+      And the build as a whole does not stop
+
+  Rule: R7 — The engineer sees, per repository, exactly what the change did compared to where it started (from: Proposed outcome 4, D2, D15)
+
+    Scenario: R7.1 — What changed after a build
+      Given a build that changed "app", "api" and the master repository
+      When the engineer opens what changed
+      Then each of the three repositories is listed with the files changed, added and removed, and the lines added and removed
+      And the engineer can read the changes of any file
+
+    Scenario: R7.2 — What changed while the build is still running
+      Given a build in progress
+      When the engineer opens what changed
+      Then the engineer sees the changes so far, including edits the agents have not yet committed, marked as uncommitted
+      And everything else stays locked while the agents work
+
+    Scenario: R7.3 — The view of changes is read-only
+      Given the engineer is looking at what changed
+      Then nothing in the view changes any file, commit or branch
+
+    Scenario: R7.4 — Work others added to the base branch is not shown as the change's work
+      Given someone added commits to the base branch of "app" after the build started
+      When the engineer opens what changed
+      Then those commits do not appear as part of the change
+
+    Scenario Outline: R7.5 — Each kind of file change is shown for what it is
+      Given the change <did something> in "app"
+      When the engineer opens what changed
+      Then the file is listed as <shown as>
+
+      Examples:
+        | did something                           | shown as                                              |
+        | added a file and committed it           | added, with its whole content                         |
+        | deleted a file                          | deleted, with its old content                         |
+        | moved a file and edited it slightly     | renamed, from its old name, with only the edits shown |
+        | created a file it has not yet committed | new and uncommitted, with its whole content           |
+        | added an image                          | binary, with no line changes                          |
+
+    Scenario Outline: R7.6 — The engineer chooses which part of the change to look at
+      Given "app" has committed changes and uncommitted edits on the change's branch
+      When the engineer chooses to look at <part>
+      Then the engineer sees <files>
+
+      Examples:
+        | part                     | files                                           |
+        | the whole change         | every file the change touched, committed or not |
+        | only what is committed   | only the files changed by the change's commits  |
+        | only what is uncommitted | only the files with edits not yet committed     |
+
+    Scenario: R7.7 — The comparison matches what the pull request will contain
+      Given "app" has commits on its base branch that were never sent to GitHub
+      When the engineer opens what changed
+      Then those commits appear as part of the change, because its pull request would include them
+      And the engineer is told which base the change is compared with
+
+    Scenario: R7.8 — The engineer moves through a long file change by change
+      Given a changed file where only a few places changed
+      When the engineer reads it
+      Then the unchanged parts are folded away
+      And the engineer can step to the next and previous change
+      And the engineer can read the old and new versions side by side or in one column
+
+  Rule: R8 — An unhappy engineer asks for another build round with written instructions for a repository, and the whole change is reviewed (from: Proposed outcome 3, D2, D20)
+
+    Scenario: R8.1 — Another round on the same branches
+      Given a build that has stopped or finished
+      When the engineer asks for another round with the instructions "rename the status field to state" for "api"
+      Then the agent works on those instructions inside "api" on the same branch
+      And any unfinished task of "api" is built first
+      And the time limit is shown and can be changed before the round starts
+
+    Scenario: R8.2 — Once every task is finished, one review of the whole change runs
+      Given a build in which the last unfinished task has just been recorded as finished
+      When the last repository's run ends
+      Then one independent review of the whole change runs without the engineer starting it
+      And the engineer sees its findings, most serious first
+      And the review changes nothing
+
+    Scenario: R8.3 — Instructions are worked inside the repository the engineer picks
+      Given a finished build that touched "app" and "api"
+      When the engineer asks for another round with instructions and picks "api" as the repository they are for
+      Then the agent works on the instructions inside "api", under the rules "api" sets for agents
+      And the engineer cannot start a round with instructions without picking a repository
+
+    Scenario: R8.4 — Work done after a review is reviewed again
+      Given a finished build whose review the engineer has read
+      When the engineer's round of instructions for "api" ends with new commits
+      Then a new review of the whole change runs without the engineer starting it
+      And the earlier findings are shown as replaced by the new ones
+
+  Rule: R9 — Every departure from the plan is recorded with its task and shown before the engineer can declare done (from: D17)
+
+    Scenario: R9.2 — Departures are shown before done
+      Given a finished build with one departure on task T3
+      When the engineer declares the change done
+      Then the engineer sees what the plan said for T3 and what was done before they can confirm
+
+    Scenario: R9.3 — A departure is recorded with its task, and the plan stays as accepted
+      Given a build in progress
+      When the agent does T3 differently from what the plan says
+      Then the record of T3 as finished says what was done differently and why
+      And the plan is not changed
+
+  Rule: R10 — A repository the plan names that ends with no changes is left as it was (from: D12)
+
+    Scenario: R10.1 — No branch, no pull request
+      Given the plan names "docs-site" but the build changed nothing there
+      When the build ends
+      Then "docs-site" has no branch for the change
+      And "docs-site" gets no pull request
+
+  Rule: R11 — Only the engineer says done, and only after every touched repository's checks pass (from: Proposed outcome 5, D3, D8, open question 1)
+
+    Scenario: R11.1 — All checks pass
+      Given a finished, reviewed build that touched "app" and "api"
+      When the engineer declares the change done
+      Then the checks of "app", "api" and the master repository run
+      And when they all pass the engineer is asked to confirm opening the pull requests
+
+    Scenario: R11.2 — One repository's checks fail
+      Given a finished, reviewed build that touched "app" and "api"
+      When the engineer declares the change done and a check of "api" fails
+      Then no pull request opens anywhere
+      And the engineer sees that "api" failed, which check failed, and the last 50 lines of its output
+
+    Scenario: R11.3 — A repository with no checks
+      Given "api" has no checks configured
+      When the engineer declares the change done
+      Then "api" counts as passing
+      And the engineer is told "api" has no checks
+
+    Scenario: R11.4 — Done is not offered while work is unfinished or uncommitted
+      Given a build in progress, or a touched repository with uncommitted edits
+      Then the engineer cannot declare the change done
+
+    Scenario: R11.5 — A commit that breaks the commit rules blocks done
+      Given a commit on the change's branch in "app" that lacks the change's scope or the ai-sdlc trailer
+      When the engineer declares the change done
+      Then the engineer is shown the commit and cannot confirm
+      And the engineer can ask for another round to correct it
+
+    Scenario Outline: R11.6 — A check that could not run is not reported as a failure
+      Given a finished, reviewed build that touched "api"
+      And a check of "api" <problem>
+      When the engineer declares the change done
+      Then no pull request opens anywhere
+      And the engineer is told the check could not run, why, and the last 50 lines of its output
+      And the engineer is told to fix the machine, not the code
+
+      Examples:
+        | problem                                     |
+        | ran past its time limit                     |
+        | names a program that is not on this machine |
+
+    Scenario: R11.7 — No agent can change the checks it is judged by
+      Given a build in progress
+      When an agent tries to change the checks of "api"
+      Then the checks are not where the agents work, and the attempt is refused
+
+  Rule: R12 — Before done is allowed, every repository is checked as ready to publish (from: D6)
+
+    Scenario Outline: R12.1 — A repository that is not ready blocks done
+      Given a finished, reviewed build that touched "app"
+      And <problem>
+      When the engineer declares the change done
+      Then no pull request opens anywhere
+      And the engineer is told <what>
+
+      Examples:
+        | problem                                                 | what                                                     |
+        | the engineer is not signed in to GitHub on this machine | to sign in to GitHub, and how                            |
+        | "app" has no GitHub remote                              | that "app" has no GitHub remote                          |
+        | GitHub cannot be reached                                | that GitHub could not be reached, and to try again later |
+
+  Rule: R13 — Every touched repository and the master repository get a pull request, opened as the engineer (from: Proposed outcome 6, Constraints, D6)
+
+    Scenario: R13.1 — Pull requests open and are listed
+      Given the engineer confirmed done for a change that touched "app" and "api"
+      Then "app", "api" and the master repository each get a pull request from the change's branch into its base branch
+      And the master repository's pull request holds the intent, spec, plan and the record of finished tasks
+      And each pull request is opened under the engineer's own GitHub account
+      And the master repository's pull request lists the other pull requests
+      And the engineer sees the list with a link to each
+
+    Scenario: R13.2 — Opening fails partway
+      Given the engineer confirmed done
+      When the pull request for "app" opens and the one for "api" fails
+      Then the engineer sees that "app" opened, "api" did not, and why
+      And the engineer can retry
+
+    Scenario: R13.3 — Retrying does not duplicate
+      Given "app" already has an open pull request for the change
+      When the engineer retries opening the pull requests
+      Then "app" keeps its one pull request and only the missing ones are opened
+
+    Scenario: R13.4 — Kata keeps no GitHub credentials
+      Given pull requests have been opened
+      Then Kata has stored no GitHub password, token or key anywhere
+
+  Rule: R14 — A change's stage and progress are read from the plan and the committed record of finished tasks (from: Constraints)
+
+    Scenario Outline: R14.1 — The stage survives closing and reopening the Workbench
+      Given a change that is <situation>
+      When the engineer closes and reopens the Workbench
+      Then the change shows "<stage>"
+
+      Examples:
+        | situation                                                  | stage                          |
+        | accepted at plan level, never built                        | Build · ready to start         |
+        | partly built, with unfinished tasks                        | Build · in progress (stopped)  |
+        | built, with every task recorded as finished                | Build · finished, not yet done |
+        | done, with a pull request open in every touched repository | Done · pull requests open      |
+
+    Scenario: R14.2 — A task counts as finished only once its record is committed
+      Given the agent inside "app" reports that it finished T3
+      And no committed record of T3 as finished exists in the master repository
+      When the run inside "app" ends
+      Then T3 counts as unfinished
+      And no repository that waits on T3 starts
+
+  Rule: R15 — Every commit the Workbench makes for a human decision uses the change's scope and the ai-sdlc trailer (from: Constraints)
+
+    Scenario: R15.1 — Accepting a plan commits in the plugin's format
+      Given a change whose intent has the scope "sdlc"
+      When the engineer accepts the plan
+      Then the acceptance commit is titled "docs(sdlc): accept plan <change>"
+      And it carries the trailer "Generated-By: ai-sdlc"
+
+  Rule: R16 — The engineer sets each system's checks on their own machine, each with a time limit (from: open question 1, D3, D8)
+
+    Scenario: R16.1 — Checks are set per system and apply to its repositories
+      Given the engineer has set checks for system "claims" naming "api" and the master repository
+      When the engineer declares a change in "claims" done
+      Then the checks of "api" and the master repository run in the order they were set
+      And a repository the checks do not name has no checks
+
+    Scenario Outline: R16.2 — Checks that are set wrongly block done and say why
+      Given the checks for system "claims" <mistake>
+      When the engineer declares a change in "claims" done
+      Then no check runs and no pull request opens
+      And the engineer is told what is wrong and where
+
+      Examples:
+        | mistake                                          |
+        | have a check with no time limit                  |
+        | name a repository that is not part of the system |
+        | are kept inside the workspace the agents work in |
+        | cannot be read                                   |
+
+    Scenario: R16.3 — The engineer sees which checks will run and where they are set
+      Given the engineer has declared a change done
+      When the confirmation is shown
+      Then each repository's checks are listed as they will run
+      And the engineer is told where the checks are set
+
+  Rule: R17 — During the build the engineer moves freely between watching the agents and what changed, without disturbing the build (from: Proposed outcome 4, D15, D16)
+
+    Scenario: R17.1 — Switching back and forth never stops or pauses the build
+      Given a build in progress
+      When the engineer switches from watching the agents to what changed, and back, several times
+      Then every agent keeps working the whole time
+      And every run's clock keeps running as before
+
+    Scenario: R17.2 — Nothing an agent says while the engineer looks at the changes is lost
+      Given a build in progress and the engineer looking at what changed
+      When the agents report on their work
+      And the engineer switches back to watching the agents
+      Then the engineer sees everything each agent said while they were away, in order, after what they saw before
+
+    Scenario: R17.3 — Each side keeps the engineer's place
+      Given the engineer has half written an answer to an agent and is reading a file in what changed
+      When the engineer switches between the two several times
+      Then the half-written answer is still there
+      And the same file is still open at the same place
+
+    Scenario: R17.4 — What changed keeps up without moving the engineer
+      Given the engineer is reading a file in what changed while the agents keep working
+      When an agent changes more files
+      Then the new changes appear in what changed
+      And the file the engineer is reading stays open, showing its latest version
+
+    Scenario Outline: R17.5 — An agent needs the engineer while they are looking at the changes
+      Given the engineer is looking at what changed during a build
+      When the agent inside "api" <needs something>
+      Then the engineer is told at once, in a way they cannot miss, that the agent inside "api" is waiting for <what>
+      And the engineer is told how long that run will wait before it stops
+      And the engineer stays on what changed until they choose to switch
+
+      Examples:
+        | needs something              | what           |
+        | asks a question              | their answer   |
+        | asks to run a guarded action | their approval |
+
+    Scenario: R17.6 — The engineer answers when they choose
+      Given the agent inside "api" is waiting for the engineer's answer and the engineer is looking at what changed
+      When the engineer switches back to watching the agents
+      Then the question is there, ready to be answered
+      And once it is answered the notice goes away and the agent carries on
+
+    Scenario: R17.7 — The notice goes away when the agent is no longer waiting
+      Given the engineer was told the agent inside "api" is waiting while they look at what changed
+      When the run inside "api" stops for any reason before the engineer answers
+      Then the notice goes away
+      And the engineer is told why "api" stopped, as for any stopped run
+
+  Rule: R18 — Each repository's part of the build is done inside that repository, under the rules that repository sets for agents (from: Proposed outcome 2, Constraints, D18)
+
+    Scenario: R18.1 — Tasks are built inside the repository they name
+      Given a plan whose tasks T1 and T2 name "app" and whose task T3 names "api"
+      And "app" sets its own instructions, skills and edit checks for agents working in it
+      When the engineer starts the build
+      Then T1 and T2 are built by an agent working inside "app", with the instructions, skills and edit checks of "app"
+      And T3 is built by an agent working inside "api", with those of "api"
+
+    Scenario: R18.5 — The agent working in one repository cannot change another
+      Given an agent working inside "app" during a build
+      When it tries to change a file in "api"
+      Then the change is refused
+      And it can still record the tasks it finished in the master repository
+
+    Scenario: R18.6 — A repository whose tasks alternate with another's takes several runs, started by the build
+      Given a plan with T1 in "app", T2 in "api" needing T1, and T3 in "app" needing T2
+      When the engineer starts the build
+      Then T1 is built inside "app", then T2 inside "api", then T3 inside "app" in a new run
+      And the engineer starts none of these runs by hand
+
+  Rule: R19 — Repositories that do not wait on each other build at the same time, and a repository that waits starts by itself (from: Proposed outcome 2, D19, D21)
+
+    Scenario: R19.1 — Independent repositories build at the same time
+      Given a plan with T1 in "app" and T2 in "api", neither needing the other
+      When the engineer starts the build
+      Then an agent works inside "app" and another inside "api" at the same time
+
+    Scenario: R19.2 — A repository that waits is not a failure and starts by itself
+      Given a plan with T1 in "api" and T2 in "app" needing T1
+      When the engineer starts the build
+      Then "app" is shown as waiting for T1 in "api"
+      And "app" is not shown as stopped or failed
+      And once T1 is recorded as finished, work starts inside "app" without the engineer doing anything
+
+    Scenario: R19.3 — Each repository's agent is shown separately
+      Given "app" and "api" building at the same time
+      When the engineer watches the build
+      Then the engineer can watch the agent inside "app" and the agent inside "api" each on its own
+      And sees, for every repository, whether it is working, waiting, stopped or finished, and on which task
+
+    Scenario: R19.4 — The repository waiting on the engineer is flagged
+      Given "app" and "api" building at the same time
+      When the agent inside "api" asks the engineer a question
+      Then "api" is clearly flagged as waiting for the engineer, whichever agent or view the engineer is looking at
+      And the agent inside "app" keeps working
+
+    Scenario: R19.5 — One agent at a time inside a repository
+      Given a plan with T1 and T2 in "app", neither needing the other
+      When the engineer starts the build
+      Then T1 and T2 are built one after the other inside "app", never at the same time
+
+    Scenario: R19.6 — The build stops when nothing more can run
+      Given the run inside "api" stopped with T2 unfinished
+      And "app" waits for T2
+      When no agent is working
+      Then the build stops
+      And the engineer is told the unfinished tasks by repository, and that "app" is waiting for T2 in "api"
+
+  Rule: R20 — The engineer sees the review's findings before declaring done, and may declare done with findings still open (from: Proposed outcome 3, 5, D20)
+
+    Scenario: R20.1 — The findings are shown before done
+      Given a finished build whose review reported two findings
+      When the engineer declares the change done
+      Then both findings are shown, most serious first, before the engineer can confirm
+
+    Scenario: R20.2 — Done with findings still open
+      Given the engineer has been shown the review's findings while declaring done
+      When the engineer confirms without asking for a fix round
+      Then the pull requests open
+
+    Scenario Outline: R20.3 — Done needs a finished review of the current work
+      Given a build with every task finished
+      And <situation>
+      When the engineer declares the change done
+      Then the engineer cannot confirm
+      And the engineer is told <what> and can start the review
+
+      Examples:
+        | situation                                       | what                                      |
+        | no review has run                               | that the change has not been reviewed     |
+        | the review stopped before it finished           | that the review did not finish            |
+        | commits were added after the last review        | that the work changed since it was reviewed |
+```
+
+## Out of scope
+
+- D7: following pull requests after they open. The Workbench shows the links and its job ends there. Reviews, merges and requested changes are not tracked.
+- D11: the base branch moving on during the build is left to the pull request and its reviewers. The Workbench does not rebase or merge the base in (R7.4 only keeps those commits out of the view of what changed).
+- A screen for editing checks. Checks are a file the engineer edits by hand, as in mekiki (R16).
+- Credentials management of any kind. The prototype's Credentials screen and its encrypted vault are dropped: publishing uses the engineer's existing `gh` sign-in and git's own credential helper (R13.4).
+- Replacing the `diff` package in the observe pane's tool cards. Only the Changes view moves to Monaco.
+- Moving the intent, spec and plan runs into a product repository. They keep the workspace as their working folder, as Part 1 built them, so a policy skill that lives in a product repository stays unavailable to the spec skill there (area of concern 19). Only the build changes where it runs.
+- A second way of building. Kata does not order tasks, run tests, check tasks, write build-log rows or review code; all of that is the plugin's `build` skill. Kata only decides, by the plugin's own rule, which repository run to start and when.
+
+## Design
+
+### Shape in one paragraph
+
+The build stage adds plan acceptance and four new stages to AI-SDLC mode. A build is driven by the Workbench exactly as the ai-sdlc 0.6.0 `build` skill describes for a tool driving it: Kata reads the plan's tasks, their `Depends on` lines and the committed build logs in `<master>/intent/<system>/<change>/build/`; a repository is ready when no run for it is going and its first unfinished task's dependencies all have rows; Kata starts one ordinary kata run per ready repository, with that repository as its working folder so its own `CLAUDE.md`, skills and gate hooks apply, several at the same time when several are ready; after any run ends it reads the logs again; when every task has a row it starts one `--review` run from the master repository; and when no run is going and no repository is ready, the build stops with the remaining tasks listed. Kata owns everything around the skill that the skill deliberately does not do: creating branches, the time limit, showing each repository's agent, the view of what changed, the checks, and publishing. Branches, pre-run checks, leftovers and the session view reuse Part 1's machinery, extended from the master repository to the product repositories and from one run to the build's several. A read-only Changes view, built on a locally bundled Monaco diff editor, shows each repository's change branch against the merge base with `origin/<base>`, computed by a port of mekiki's diff behavior onto kata-sdlc's existing git CLI helper. "Declare done" checks GitHub readiness, the commit rules and that a finished review covers the current commits, runs each repository's checks from a per-system file in Kata's own data folder, shows departures and the review's findings, and on the engineer's confirmation pushes the change branches and opens the pull requests with the engineer's own `gh` sign-in. The kata engine, run-spec and event protocol do not change.
+
+```mermaid
+flowchart TD
+    A[Plan · awaiting acceptance] -->|engineer accepts, Workbench commits| B[Build · ready to start]
+    B -->|Start build: time limit, pre-run checks, branches| C[Build running: one run per ready repository, in parallel]
+    C -->|a run ends: read the build logs again| C
+    C -->|a repository stops: others carry on| C
+    C -->|no run going, none ready, tasks left| D[Build · in progress, stopped]
+    D -->|Continue build, or continue one repository| C
+    C -->|every task has a row| R[Review run from the master repository]
+    R -->|findings shown| E[Build · finished, not yet done]
+    R -->|review stopped| E
+    D -->|Another round: instructions for a repository| C
+    E -->|Another round: instructions for a repository| C
+    E -->|Run review| R
+    E -->|Declare done| F{GitHub readiness, commit rules, current review, checks}
+    F -->|any problem, shown in the dialog| E
+    F -->|all pass, departures and findings shown, engineer confirms| G[Push branches, open pull requests]
+    G -->|some failed| H[Partial: retry]
+    H --> G
+    G -->|all open| I[Done · pull requests open]
+```
+
+### Screens, following the prototype
+
+`prototypes/index.html` is the reference for the Changes view, the dialogs and the done flow. The design matches its flows with four deliberate differences: the Credentials screen and vault are dropped (operator feedback; publishing uses `gh`); the prototype's CDN-loaded Monaco and its offline plain-diff fallback are replaced by a bundled Monaco with no fallback; the prototype shows one agent, while the build view below shows one per repository (D19); and the prototype's shortcuts are fixed where they contradict the requirements (listed at the end of this section).
+
+- **Stage strip.** The change page's stepper gains a fourth tile, **Build**, after Intent, Spec and Plan. Before the plan is accepted it reads "Build · locked until the plan is accepted" and is disabled. After that it shows the build stage and "no runs yet" or "X/Y tasks · N repositories". Selecting it opens the Changes view in the page body (read-only, refreshed on demand). The tile is enabled as soon as any repository has the change's branch.
+- **Plan tab.** The plan document renders as in Part 1. Below it, a "Build log" section shows every task in document order with its repository, its `Depends on` tasks, and, once it has a row, its commits and departure, read from the committed `build/<repo>.md` files ("No tasks built yet." when none has a row). A superseded plan shows the banner "The intent was reopened after this plan was written. Rewrite the plan before building." (R1.3). A reopened intent or spec shows "The intent was reopened." or "The spec was reopened." with the action to settle it (R1.5). A plan whose pin does not hold shows "This plan was not written from the spec accepted now. Rewrite the plan before building.", and a spec whose pin does not hold shows "This spec was not written from the intent accepted now. Rewrite the spec, then the plan." (R1.4).
+- **Toolbar actions per stage.** Plan awaiting acceptance: **Accept plan** (primary), **Re-run plan**, **Reopen intent**. Plan superseded, or plan pin broken: **Re-run plan**. Spec pin broken: **Reopen spec**. Build ready: **Start build** (primary), **Reopen intent**. Build stopped: **Continue build** (primary), **Another round**. Build finished: **Declare done** (primary), **Another round**, **Run review**. Done: none. Re-run plan and Reopen intent keep Part 1's flow, including the "What should change?" feedback box from `91568ca`.
+- **Start refusal.** An alert dialog "The build did not start" with the reason in a crimson banner (uncommitted files by name, another branch by name, a change branch holding outside work, a plan naming a repository outside the system, a dirty master repository, an ai-sdlc plugin older than 0.6.0: "Update the ai-sdlc plugin to 0.6.0 or later, then start the build again.") and "Nothing was created or switched in any repository." Close only.
+- **Start build, Continue build, Another round.** One dialog in three modes, with Hours (default 2) and Minutes (default 0) and the note "Time limit for each repository's run. Time spent waiting for your answers does not count. There is no spending ceiling." (R2.6). For a round it adds an **Instructions** field and a **Repository** field, an `hlm-select` listing the master repository and every repository the plan names, with the hint "The agent works on the instructions inside this repository, after any of its unfinished tasks." (R8.1, R8.3). The primary button is disabled until the time limit is above zero and, for a round, the instructions are not blank and a repository is picked.
+- **Continue on top of leftovers?** Shown before Continue build, continuing one repository, or Another round only when a product repository has uncommitted edits left by its previous run, listing them by repository and file.
+- **The build view.** The session view from `8eef04a`, headed "Build", becomes a grid region of two columns (`grid grid-cols-1 md:grid-cols-[16rem_1fr]`). The left column is the repository list: one row per repository the plan names, then a "review" row, each with its name in mono and a status with an andon dot and a label: **Working** · T<n> (jade), **Waiting for you** (amber, R19.4), **Waiting for T<n> in `<repo>`** (muted, R19.2, D21), **Stopped** with the reason (crimson, R6.1), **Finished** · X/X (jade), **Not started** (muted). Each row also shows its run's clock, "work H:MM:SS of H:MM:SS". Above the list, "X/Y tasks" and **Cancel build**. The main column has two tabs: **Activity**, showing the observe pane of the repository selected in the list (each repository's runs, oldest first, with a hairline divider row per run naming its start time), with **Cancel** and, when stopped, **Continue `<repo>`** for that repository; and **Changes**, the Changes view with the banner "The build is running. Uncommitted edits are the agents' work in progress and are marked with a dot.". Selecting a repository in the list never touches its run (R17.1). Switching tabs and the waiting notice are described under "Watching and reviewing during a build".
+- **End of a build.** Finished: "Every task is in the build log.", then the review row's report: the review's findings, most serious first, from the review run's closing text, so the engineer reads them before choosing Another round or Declare done (R8.2). Each repository's closing report stays in its Activity. Stopped: "The build stopped. Nothing more can run." with the unfinished tasks by repository and, for each waiting repository, what it waits for (R19.6), and the leftovers dialog "Uncommitted edits left by the build", per repository, with **Discard selected** and **Keep all** (R6.3).
+- **Declaring done.** A progress dialog with the steps "Signed in to GitHub", "Origins are GitHub repositories", "Commit rules", "Review covers the current work", then "Checks · <repo>" for each touched repository and the master repository, and the footnote "Everything else is locked while this runs."
+- **Declare done dialog.** Readiness banner (jade "Signed in to github.com as <account> · every origin is a GitHub repository", or crimson with the problem). A table Repository, Branch (`change/<folder> → <base>`), Checks. Output blocks "<repo> · <check> · last 50 lines" for failed and could-not-run checks. "Commits that break the commit rules" when there are any. "Departures from the plan", each with the plan's text for the task and the row's departure (R9.2). "Review findings", most serious first, with "Reviewed at <time>" (R20.1), or the reason there is no current review and **Run review** (R20.3). "Checks from <path>". Buttons **Another round** (shown whenever something blocks, and whenever there are findings), **Cancel**, **Open pull requests** (enabled only when nothing blocks; open findings do not block, R20.2).
+- **Pull requests dialog.** Repository and pull request per row: "opened" with the link, "already open, reused", or "failed" with `gh`'s error. **Retry** when any failed, otherwise **Close**.
+- **Done.** A "Pull requests" card above the page body on every tab, and in the Changes view a "#N open" tag, the title and **View on GitHub** per repository, or "No pull request yet. Pull requests open when you declare the change done." before that.
+
+Prototype shortcuts not carried over: the time limit is enforced by the engine (the prototype never stops on it); "nobody answered" fires from the engine's answer timeout, not a control; a build that ends with unfinished tasks is "stopped", never "finished"; leftovers are the real ones and Discard really discards; the leftover confirmation appears only when there are leftovers; Refresh really re-reads; repositories with no changes (the prototype's `docs-site`) are absent from Changes, checks and pull requests, as R10 requires.
+
+### Plan acceptance (R1, R15)
+
+Part 1 never accepts a plan: `plan-written` only offers re-run and reopen. The plan template already carries `status: draft`. This change splits `Stage::PlanWritten` in `crates/kata-sdlc/src/changes.rs` into `PlanAwaiting` (written, not accepted), `PlanAcceptedUncommitted`, `PlanOutOfDate` (a pin does not hold, or no task headings), and the build stages below, derived the same way the intent and spec stages are, with the labels and actions in `app/src/app/lib/sdlc.ts` following. Accept plan uses the existing decision path in `crates/kata-sdlc/src/decide.rs`, which since `44372d9` already resolves the scope (intent `scope`, then the marker's `commitScope`, then the system name) and adds `Generated-By: ai-sdlc`. The verb is `accept plan`, giving `docs(<scope>): accept plan <change>`. R15 is a regression guard for a fix already shipped, extended to the new verb.
+
+Pins and reopened documents (R1.3, R1.4, R1.5). The spec records `source_intent_commit` and the plan `source_spec_commit`, and the build skill stops when either does not hold, or when the intent or spec is not `accepted`, naming the one reopened. Kata reads the same pins and statuses when it derives the stage, with the plugin's check (`git diff --quiet <pin> HEAD -- <upstream file>` in the master repository; exit 1, a missing pin or an unknown commit means it does not hold), so the engineer learns this on the change page instead of minutes into a run. A plan with no pin counts as not holding, as the plugin rules. Accept plan is not offered while the plan's pin does not hold.
+
+### Stages and progress read from the repositories (R14)
+
+No new store. The stage comes from:
+
+| Stage | Read from |
+|---|---|
+| Plan · awaiting acceptance | `plan.md` exists, `status` is not `accepted` or `superseded` |
+| Plan · out of date | the plan's or the spec's pin does not hold (R1.4), or the intent or spec is not `accepted` (R1.5) |
+| Build · ready to start | `plan.md` accepted and committed, both pins hold, no task has a row |
+| Build · in progress (stopped) | at least one task has a row and at least one does not |
+| Build · finished, not yet done | every task in the plan has a row |
+| Done · pull requests open | every repository with commits on the change branch, plus the master repository, has an open pull request from that branch on GitHub |
+
+Tasks and rows are read with the build skill's own rule, so Kata and the agents never disagree about what is finished: the tasks are the headings `### T<digits>: <name> (`<repo>`)` in document order, each with its `Depends on` line (a task without one, from a plan written before 0.6.0, depends on every task above it); the rows are those of every file in the change's `build/` folder as committed (`git show HEAD:<path>`, never the working tree), plus the `## Build log` section of a plan written before 0.6.0; a task is finished when any of them has a row with its ID; a row whose ID matches no task is history and ignored. An uncommitted row does not count (R14.2). A plan with no task headings in that form is shown as "Plan · out of date" with Re-run plan, because the skill would refuse it. The rule lives in one place, a new `crates/kata-sdlc/src/build.rs`, exposed as `sdlc_build_status(change)`, which returns every task with its repository, dependencies and row, and per repository its first unfinished task and whether that task's dependencies all have rows. Its tests run against a plan and build logs copied from the plugin's templates (area of concern 2).
+
+The first five stages come from the master repository's files and git, as Part 1 does. The last one needs GitHub, which is slow and can be offline, so the workspace home list shows the git-derived stage and the change page asks `gh` when it opens. When GitHub cannot be reached, the change page shows "Build · finished, not yet done" with "could not check pull requests". "Build · running" while runs are live is not a stored stage: it is the build view, as for every other run.
+
+### The build log
+
+The build log is the plugin's, not Kata's. Every plan names each task's repository and dependencies (`### T1: <name> (`<repo>`)` with `- **Depends on:** T3, T4` or `none`), and the `build` skill adds one row per finished task to that repository's log, `build/<repo>.md` in the change folder:
+
+| Task | Commits | Departure |
+|---|---|---|
+| T1 | `a1b2c3d` | none |
+| T3 | `d4e5f6a`, `b7c8d9e` | Plan said: add a column. Done: added a table, because the column would duplicate data. |
+
+Each of the task's product commits carries two trailers, `Generated-By: ai-sdlc` and `Plan-Task: T<n>` (R5.2). After the skill's own check of the task, it appends the row and commits the log on its own in the master repository as `docs(<scope>): log T<n> of <change>` (R5.1). The build never edits `plan.md`: a departure is written in full in its row, and the plan stays as accepted (R9.3, D17). The logs are the resume point (R6.2), the readiness signal (R19) and the departure record (R9). Because each repository has its own file, two repository runs never write the same file; they still share the master repository's index, which the skill handles by naming paths on every commit and retrying on `index.lock` (area of concern 20).
+
+Two crash windows, both handled by the skill and both visible to the engineer:
+
+- **Committed, not recorded (R6.5).** A run stopped between the product commit and the log commit. On the next run for that repository the skill finds the task's commits by their `Plan-Task` trailer since the merge base, checks them, and records the task without redoing it.
+- **Recorded, not saved (R6.6).** A run stopped between writing the row and committing the log. The master repository then has `build/<repo>.md` untracked or with only added rows. Kata's leftovers dialog lists it like any other leftover; continuing that repository on top of it is the R6.4 confirmation, and the skill then shows the rows and asks the engineer to commit them.
+
+### Starting a build (R2, R3, R10)
+
+The plugin's `build` skill never creates or switches branches: it stops when the repository it builds is on its default branch. So Kata prepares every branch before the first run, for every repository any unfinished task names. First it checks that the installed ai-sdlc plugin provides the `build` skill (the catalog entry's `provides` list, which `hasAiSdlcPlugin` already reads for presence) and is 0.6.0 or later (read from `.claude-plugin/plugin.json` under the catalog entry's `path`), and refuses otherwise (R2.5). Then `kata-sdlc` does for the master repository what Part 1 does today (clean, named branch, check out `change/<folder>`), with one exception: when the only uncommitted changes are added rows in this change's build logs, the start goes ahead after the R6.4 confirmation (R6.6). For each product repository named by an unfinished task:
+
+1. The repository must be in the system's `repos` and checked out in the workspace (R2.4).
+2. Resolve its base branch with the ported rule (see "What changed"): `origin/HEAD`'s target, else `main`, else `master`. A repository with none is refused and named.
+3. Refuse with names if it has uncommitted files, including untracked ones (R3.1, the same clean check Part 1 applies to the master repository before `branch::start_pending`), unless the files are left over from this change's previous run there and the engineer confirms continuing (R6.4).
+4. If it is on its base branch and `change/<folder>` does not exist, create `change/<folder>` from the local base and check it out.
+5. If `change/<folder>` exists, continue on it only when every commit on it since the merge base carries `Generated-By: ai-sdlc` and this change's scope. Otherwise refuse and name the branch (R3.1, D10).
+6. If it is on any other branch, refuse and name the branch (R3.1, D9).
+
+Every check runs for every repository before anything is created or switched, so a refusal leaves every repository as it was. Before each run starts, its repository is snapshotted with the existing `snapshot::take`, so leftovers can be reported per repository after the run.
+
+After the build stops or finishes, a product repository whose change branch has no commits beyond its base and no uncommitted files is switched back to its base and the branch is deleted (R10, the same rule as Part 1's empty pending branch). A branch with commits is never deleted automatically.
+
+### The build run (R4, R5, R6, R8, R11.7, R18, R19)
+
+#### Each repository's run starts inside it
+
+claude reads a project's `CLAUDE.md`, `.claude/settings.json` (with its hooks) and `.claude/skills/` from the folder it starts in, and nothing loads them once the session has started. Every Part 1 stage starts in the workspace folder, which has none of these, so a build started there would build the kata app without kata's `CLAUDE.md`, its skills, and the `protect-gates` and web gate hooks kata's `.claude/settings.json` arms on every edit. The plugin's 0.6.0 build skill now refuses a repository run whose session is not inside that repository, so starting each run inside its repository is required, not only better. Skills in subfolders (`kata/app/.claude/skills/`) are picked up by claude's nested-skill discovery when the agent works on files there, which this spec session itself saw happen when it read files under `kata/app/`; the root settings already forward edits to the app's gate hooks through `web-ng-gate.mjs`. The plan proves both with a test (area of concern 18).
+
+#### The driver
+
+The Workbench drives the build with the rule the plugin's "Modes" section gives a driving tool, and with nothing else (D18, constraint "adds no second way of building"). The driver lives in the build view's ViewModel and holds only what is live: which repositories have a run going, and which repositories' last run ended without a row for the task it attempted. Everything else it reads from `sdlc_build_status` each time it looks.
+
+1. **Look.** Read the status. A repository is **ready** when no run for it is going, it has an unfinished task, its first unfinished task's dependencies all have rows, and its last run in this build did not end with that same task attempted and unrecorded. A repository whose first unfinished task has a dependency without a row is **waiting** for that task (R19.2, D21); it is shown as waiting, never as stopped.
+2. **Start.** Start one run for every ready repository, at the same time when there are several (R19.1). A repository never has two runs at once (R19.5): the skill builds its tasks one after another inside a single run.
+3. **After any run ends.** Report it (exit code mapping below), take its leftovers report, and look again. A run that ended blocked (its first unfinished task now waits on another repository) leaves its repository waiting, and it starts again by itself once that task has a row (R18.6, R19.2). A run whose attempted task got no row and was not blocked has failed, hit its time limit, been cancelled, or ended unanswered; its repository is **stopped**, the other repositories carry on (R6.7, D1), and it starts again only when the engineer chooses **Continue `<repo>`** or **Continue build** (R6.2).
+4. **Review.** When every task has a row and no run is going, start one run in the master repository with `--review` (R8.2). After an instructions round ends with new commits, the same happens again (R8.4).
+5. **Stop.** When no run is going, no repository is ready, and a task has no row, the build stops and lists the unfinished tasks by repository, with each waiting repository's dependency (R19.6).
+
+Progress is the committed logs, never the run's own account (R14.2): a run that says it finished T3 without a committed row has not, and no repository waiting on T3 starts. **Cancel** stops one repository's run; **Cancel build** stops every run and starts no new one. Kata's lock stays held from the build's first run to its last, so nothing else unlocks between runs, and the build view stays open throughout.
+
+An instructions round (R8.1, R8.3) runs the same driver with one addition: the picked repository's run carries the engineer's instructions, which the skill works after any unfinished task of that repository, with its test-first and commit rules and no build-log row. The picked repository is treated as ready even when all its tasks have rows. Other repositories with unfinished tasks are built as usual.
+
+#### The run-spec of one run
+
+Each run is one run-spec from `app/src/app/lib/sdlc.ts` `specFor`, with a new `build` kind taking the repository (or `review`) and optional instructions:
+
+- `workdir`: `<workspace>/<repo>` for a repository run, the master repository for the review run and for tasks that name it. The skill resolves the workspace as the parent of the git root it starts in, so it still reaches the master repository and every other repository.
+- `task`: run the ai-sdlc `build` skill for system `<system>` and change `<folder>` with `--repo <repo>`, or with `--review`, the same way the other stages name their skill. For an instructions round the engineer's instructions follow as the skill's instructions argument. Kata adds nothing about how to build: task order, test-first, the per-task check, commit format, resuming and the review are the skill's (R5, R6.2, R6.5, R8.2).
+- `plugins`: `ai-sdlc` only, as every stage already uses since `38524e5`. The repository's own project skills load on top because the run starts inside it and `auth.bare` stays false, as for every AI-SDLC run.
+- Subagents. The skill dispatches one fresh subagent per task (Sonnet by default, Haiku for mechanical batches, one tier up on a repeated failure) and one Opus subagent for the review. Subagents run inside the same claude session and working folder, so the run's permission settings, deny rules, project skills and hooks apply to them too.
+- `leash.timeout_secs`: the time limit the engineer set, for each run on its own (R2.6, D5); the review run gets the same limit. No `max_turns` and no `max_budget_usd` (R2.3). The engine already pauses the clock while waiting on the operator (R4.1).
+- `interactive.enabled`: true, so questions and approvals reach the engineer (R4.1, R4.2). `interactive.answer_timeout_secs`: 3600, matching the prototype's "Nobody answering in 60 minutes stops the round", which ends that run with exit 123 and stops only its repository (R6.1, R6.7).
+- `permissions`: `mode = "auto"` with `deny` rules `Bash(git push:*)`, `Bash(gh:*)` and `Bash(git remote:*)` (R4.3), `Edit` and `Write` denies on Kata's checks folder (R11.7), and `Edit` and `Write` denies on every other product repository of the system (R18.5). `allow` rules give `Read` on the workspace folder (the intent, spec, plan and build logs, the other repositories' committed work for dependencies, and every repository for the review) and `Edit` and `Write` on this repository's own `build/<repo>.md` only, so each run records its tasks in the master repository from outside it and cannot write another repository's log. The review run gets `Edit` and `Write` denies on every repository, the master repository included, because the review changes nothing. The master repository is otherwise not denied for repository runs, because deny rules win over allow rules and the run must write its log there; its other files are left to the classifier and to pull request review. Bypass is not used for builds, because under bypass the engine forbids deny rules and an agent could publish with the engineer's sign-in. See areas of concern 1 and 18.
+- `env_remove`: `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, so no agent's process holds a GitHub token from the engineer's environment.
+
+All of these are existing run-spec fields; nothing is added to the run-spec format. The engine, the event stream and the outcome codes are untouched: a build is several ordinary runs, each with its own transcript. When a run ends, the existing `reportStopped` mapping names the reason (R6.1): 124 time limit, 130 cancelled, 123 nobody answered, anything else the agent's own error. Leftovers are reported per repository with Part 1's discard rule (only files the run changed, never files already dirty before it), from the snapshot taken before that run.
+
+#### Several runs at once in the Workbench
+
+Part 1's Workbench holds one run: the Tauri backend keeps a single `Option<CommandChild>` in `RunState` (`app/src-tauri/src/lib.rs:21`) and overwrites it on a second `run_spec`; events go out on `kata://event` with no run id; `RunStore` holds one snapshot and `LockStore` one run view. Parallel repositories need this extended, not duplicated:
+
+- **Backend.** `RunState` becomes a map from a Workbench run id to its child. `run_spec` returns the id and refuses a second run with the same working folder while one is live, and refuses any run outside the build while a build run is live (area of concern 5). Each forwarded stdout line is wrapped as `{ runId, event }` on the same `kata://event` channel; the kata event itself is passed through unchanged. `cancel_run` takes the id. Each kata process already has its own ask bridge, so questions from two runs never mix.
+- **Frontend.** `RunStore` keeps one folded snapshot per run id, folding every event whatever is on screen, as it does today for its one run. `LockStore`'s run view holds the build's runs: `ask()`, `permission()` and `deadlineSecs()` take a run id, and a new `waiting()` lists every run with an open question or approval, which drives the amber flags (R19.4). The lock is the same lock: the whole build is the one task holding it, and everything outside the build view stays locked while any run of the build is live.
+- **Run links.** Each run is linked in `<workbench>/runs.json` with the existing `RunLink`, with `stage` set to `build:<repo>` or `review`, so the change page counts runs per repository and finds the latest review's transcript. A review link also records the change branch head of every repository when the review started (`heads`), which is Kata's own launch record, not anything the run reports (see "Declare done").
+
+#### What the plugin provides, and what it does not
+
+ai-sdlc 0.6.0 provides everything the driver needs: per-repository runs started from inside the repository, `Depends on` lines, per-repository build logs, blocked runs that end normally, a separate `--review` run, instructions after a repository's tasks, and commits that tolerate parallel runs. Kata refuses an older plugin (R2.5). One thing Kata needs is not provided: the review's findings live only in the review run's closing text, not in the repository. Kata reads them from that run's transcript (`run.completed`'s `result`, through `kata-core`'s `history::load_run`). That works on the machine that ran the review, and is raised as a plugin change in area of concern 11.
+
+### What changed (R7)
+
+#### One git engine: mekiki's behavior on kata-sdlc's git CLI
+
+mekiki computes diffs with libgit2 (`git2`). Kata has no `git2` or `gix` anywhere and runs every git command through `crates/kata-sdlc/src/git.rs` `run`. The port keeps it that way: a new `crates/kata-sdlc/src/diff.rs` reproduces mekiki's behavior with git CLI commands, so Kata stays on one git engine. `git::run` gains an environment-taking variant for the one case below that needs `GIT_INDEX_FILE`.
+
+- **Base branch.** `origin/HEAD`'s target, else `main`, else `master`, each accepted when it exists locally or on `origin`. mekiki's GitHub API lookup and its per-repository override are not ported: the first needs a stored credential, the second has no requirement.
+- **Base reference and merge base.** `origin/<base>` when that ref exists, otherwise the local `<base>`, then `git merge-base HEAD <ref>`. Comparing against `origin/<base>` is what makes R7.7 true: a pull request into `<base>` contains everything not on GitHub's `<base>`, including local base commits never pushed. Like mekiki, Kata never fetches: `origin/<base>` is as last fetched or pushed, and the header says so ("compared at the merge base with origin/main").
+- **Three parts of the change (R7.6).** Whole change: merge base to working tree. Committed: merge base to `HEAD` (mekiki's Branch mode). Uncommitted: `HEAD` to working tree (mekiki's WorkingTree mode). A file in the Uncommitted set carries the `uncommitted` marker in every part (R7.2).
+- **Untracked files and renames.** The working-tree parts diff through a throwaway index, never the repository's own: copy the index (`git rev-parse --git-path index`) to a temporary file outside every repository, mark untracked, non-ignored files (`git ls-files --others --exclude-standard -z`) as intent-to-add in that copy with `GIT_INDEX_FILE` set, then `git diff -M --numstat -z` and `git diff -M --name-status -z` against the left side. This lists untracked files individually with their content and lets git pair an unstaged move into a rename, as mekiki's `find_similar(renames, for_untracked)` does. The temporary index is deleted afterwards. The repository's index, refs and working tree are never written (R7.3).
+- **Binary flag.** A file is binary when `--numstat` reports `-` for its line counts. The same flag drives the list and the file pair. This deliberately drops mekiki's second binary test in `file_pair` (NUL byte or invalid UTF-8), which made a file show line counts in the list and then open as binary; Kata decodes non-UTF-8 text lossily instead.
+- **File pairs.** For a listed path: the original is `git show <left>:<old path>` (empty for added and untracked), the modified side is `git show HEAD:<path>` for the Committed part or the file read from disk for the working-tree parts (empty for deleted), plus a Monaco language id from the extension (port of mekiki's `FilePair::language_for`). A path that is not in the current list is refused (`FileNotChanged`), so the frontend can never use this command to read an arbitrary file. Binary files return no content.
+- **Lines by file type.** Port of mekiki's `loc_by_file_type`, for the prototype's "ext · N files · +a −r" chips, binaries excluded.
+
+New Tauri commands, async like the existing ones: `sdlc_diff_files(repo, part)`, `sdlc_diff_pair(repo, part, path)`, `sdlc_diff_base(repo)`. Types are ts-rs generated into `app/src/bindings/`, following mekiki's `ChangedFile { path, oldPath, status, binary, added, removed }` with `uncommitted: bool` added, and `FilePair { original, modified, languageHint, binary }`. Status is `added`, `modified`, `deleted`, `renamed` or `untracked`.
+
+#### mekiki's tests, carried over as kata tests
+
+The tests live in `kata-sdlc` and build their fixture repositories with the git CLI through the existing `testutil.rs` (`repo`, `commit_file`), extended with mekiki's fixture helpers (`write`, `remove`, `rename`, `stage`, `checkout`, and a bare `origin`).
+
+| mekiki test | In kata |
+|---|---|
+| `a_clean_repository_has_no_working_tree_changes` | carried |
+| `working_tree_reports_each_change_status` | carried |
+| `untracked_files_in_new_folders_are_listed_individually` | carried |
+| `a_staged_rename_reports_the_old_path` | carried |
+| `an_unstaged_move_is_detected_as_a_rename` | carried; it is the test that proves the throwaway-index approach |
+| `binary_files_are_flagged_without_line_counts` | carried |
+| `file_pair_returns_both_sides_with_an_empty_missing_side` | carried |
+| `file_pair_of_an_unchanged_file_is_an_error` | carried |
+| `branch_mode_diffs_against_the_merge_base_not_the_base_tip` | carried, for the Committed and Whole change parts (R7.4) |
+| `branch_mode_ignores_uncommitted_changes` | carried, for the Committed part |
+| `loc_by_file_type_groups_patch_line_stats` | carried |
+| `groups_by_lowercase_extension_and_excludes_binaries`, `language_hint_follows_the_extension` | carried |
+| `origin_head_wins_over_everything_else`, `a_local_bare_origin_without_origin_head_falls_through_to_local_main`, `without_a_remote_local_main_is_the_default`, `without_main_local_master_is_the_default`, `with_no_candidate_the_base_is_unresolved` | carried |
+| `counts_commits_on_a_feature_branch_since_the_merge_base`, `the_base_branch_itself_is_zero_ahead`, `commits_on_base_after_branching_are_not_counted`, `an_unresolvable_base_is_base_branch_unresolved` | carried; they back R10 and the "touched repository" rule |
+| GitHub-lookup and override tests in `base_branch.rs`, commit and push tests in `repository.rs` | not carried: those features are not ported |
+
+New kata tests on top: the Whole change part shows committed and uncommitted files together with the marker; local base commits not on `origin` appear in the change (R7.7); the repository's index file is byte-identical before and after every diff call (R7.3); and a non-UTF-8 text file is listed and opened as text, consistently.
+
+#### The Changes view
+
+Layout follows the prototype's Changes view, which is mekiki's PR view. The two columns are a grid region (`grid grid-cols-1 md:grid-cols-[18rem_1fr]` in the template, never nested flex and never a raw length in a stylesheet, as `house-style` requires). A left column lists repositories with changes (the master repository first) as expandable rows with a file count, and each file with its status letter (A, M, D, R, U, each with an accessible name), path, an amber dot for uncommitted, and `+N −N` or `bin`. The main column shows the repository name, the branch chips `change/<folder>` into `<base>` with "base from origin/HEAD · compared at the merge base", a toggle group "Whole change · Committed · Uncommitted · N", the lines-by-type chips, the pull request row, and the note "Read-only. Nothing here changes a file, commit or branch." Below, the diff bar (status, path, `old → new` for renames, the uncommitted tag, **Previous change**, **Next change**, and a toggle group **Side by side · Inline**), then the editor. A binary file shows "Binary file. No line diff."
+
+The editor is mekiki's diff editor, ported:
+
+- `monaco-editor`, pinned to mekiki's `0.57.0`, bundled into the app: the stylesheet as a non-injected `monaco` bundle in `angular.json`, the editor core as a lazy dynamic import, and only the editor worker (`editor.worker`), configured through `MonacoEnvironment.getWorker` with a bundled module worker. Nothing loads from a CDN, and the view works offline. Because nothing can fail to load from the network, the prototype's plain-diff fallback is dropped.
+- Options: `readOnly: true`, `originalEditable: false`, `hideUnchangedRegions: { enabled: true }`, `renderSideBySide` from the layout toggle, minimap off, `scrollBeyondLastLine: false`, IBM Plex Mono. A `kata` theme is defined from the computed values of Kata's color tokens when the editor loads, because Monaco themes take literal colors and Kata's tokens are `var()` references.
+- Next and previous change use `getLineChanges()` and the pure `nextChangeLine` and `previousChangeLine` functions from mekiki's `change-navigation.ts`, with its tests carried over.
+- Each file selection creates a fresh model pair and disposes the previous pair after the swap. The editor and models are disposed with the component.
+- The view refreshes on demand and after each `turn` event from any run of the build. Nothing in it writes (R7.3).
+- Zoom. The Workbench zooms the whole webview (`5d013d9`), which changes the device pixel ratio Monaco measures fonts against. The editor sets `automaticLayout: true` and is laid out again on window resize, so a zoom step re-measures and redraws it without reopening the file. The zoom keys are bound on `document` in `App`; Monaco must not swallow Ctrl +, − or 0 while the editor has focus, so the view registers no editor keybinding for them and leaves `mouseWheelZoom` off (its own font zoom would fight the Workbench's). Two Playwright tests cover this: the diff stays aligned after zooming in and out with a file open, and the zoom keys still step the Workbench with focus inside the editor.
+- Tests. The Monaco import is cold and several megabytes, the same problem `5649745` hit with Mermaid. Change-page and Changes-view unit tests stub the diff editor host's loader and restore it after each test; only the Playwright suite loads the real editor.
+- CSP in `tauri.conf.json` gains `font-src 'self' data:` (Monaco's codicon font is inlined) and `worker-src 'self'`. `script-src` and `style-src` are unchanged. No remote origin is added. mekiki's end-to-end test that fails on any CSP refusal is carried over to Kata's Playwright suite. mekiki hardcodes the stylesheet link as `monaco.css`, while production builds hash file names; the plan must confirm the bundle name survives a production build.
+
+### Watching and reviewing during a build (R7.2, R17, R19.3, R19.4)
+
+Switching tabs, or selecting another repository in the list, only changes what is shown. It calls no transport method, sends nothing to any engine process, and does not touch any run, its clock or its leash (R17.1). Everything below lives in the build view's component and its ViewModel; the engine and the event stream are unchanged.
+
+- **Both tabs stay mounted.** The build view uses the installed `tabs` primitive with both panels rendered for the whole build and the inactive one hidden, never removed with `@if`. Inside Activity, one observe pane per repository is kept mounted and only the selected one is shown, for the same reason. The events survive anyway, because `RunStore` is a root store that keeps folding every run's events whatever is on screen. What a remount would lose is local state: the ask panel's half-typed answers (its own form model), each observe pane's scroll position and expanded tool cards, and the Changes view's selected repository, part, file, layout and editor scroll. Keeping the panels mounted keeps all of it (R17.2, R17.3). The Monaco editor in a hidden panel is laid out again when its panel is shown, through the same `automaticLayout` setting the zoom handling relies on.
+- **New activity while away.** Each repository row in the list shows the count of its agent's events that arrived since the engineer last viewed that repository's Activity ("12 new"), and the Activity tab label shows the total while the Changes tab is open; each clears on return. On return the observe pane stays where the engineer left it, with a "12 new below" marker at the first unseen event, instead of jumping to the end (R17.2). A repository's second run (after a block, R18.6) is appended to the same pane after a divider row: a hairline rule with the run's start time in mono, no card and no shadow.
+- **Keeping the engineer's place on refresh.** The Changes view refreshes after each `turn` event from any run. A refresh keeps the selected repository, part and file when that file is still in the list, and swaps only the modified side of the editor model, keeping the scroll position and the expanded regions. If the selected file has left the list (an agent reverted it), the view keeps the last content shown with the note "This file is no longer part of the change." until the engineer picks another (R17.4).
+- **The waiting flags (D16, D19).** Whenever `LockStore.waiting()` is not empty, the repository rows it names show the amber dot and "Waiting for you", wherever the engineer is looking (R19.4). The rest depends on where they are:
+  1. On the Changes tab: a notice pinned at the top of the Changes panel, above the file list and the editor, that does not scroll away and cannot be dismissed: an amber dot, "The agent in `api` is waiting for your answer." or "… for your approval." (one line per waiting run), then "It stops if nobody answers within M:SS.", counting down from that run's `deadlineSecs()`, and a **Go to `api`** button. The Activity tab label shows an amber dot and "Waiting for you". The notice says only which agent is waiting and for what; the question or the command itself is shown only in Activity, so agent-written text is not rendered in a second place (R17.5).
+  2. On another repository's Activity: the same amber row in the list, and a one-line pinned banner above the observe pane, "The agent in `api` is waiting for you." with **Go to `api`**.
+  3. In both cases, one announcement through an `aria-live="assertive"` region in the build view, so a screen reader user hears it at once.
+
+  None of these switches the tab, the selected repository, or focus. **Go to `<repo>`**, or selecting the repository and the Activity tab, shows that repository's Activity and scrolls the open question or approval card into view with focus on its first control (R17.6). A flag clears as soon as its run is not waiting: answered, decided, or the run ended (R17.7). A run that ends while waiting is reported by the existing stopped-run path, "Stopped: nobody answered" for exit 123 (R6.1). A toast is not used, because Kata's toasts close after six seconds and could be missed.
+- **Between builds.** Outside a running build there is nothing to watch: the Build tile opens the Changes view in the page body, as described under Screens. After a build ends and before Close, both tabs and every repository's Activity stay available under the same rules.
+- **Tests.** Unit tests on the build view's ViewModel and component: switching tabs or repositories makes no transport call; a half-typed answer and the selected file survive a switch in both directions; the new-events counts per repository; a flag appears for an ask and for a permission from one run while another run keeps folding events, leaves the selected tab and repository unchanged, and clears on answer and on run end; two runs waiting at once show two lines. Driver tests with a scripted status: two independent repositories start together; a waiting repository starts when its dependency's row is committed and not before; an uncommitted row does not count; a stopped repository does not restart by itself while the others go on; the review starts only once every task has a row and no run is going; the build stops with the remaining tasks when nothing can run. One Playwright test crosses the seam the unit tests cannot: with the mock transport's scripted build of two repositories, switch to Changes, let one scripted run ask a question, check the notice names that repository and the Changes tab is still selected, then Go to the repository and answer.
+
+### Declare done (R9, R11, R12, R16, R20)
+
+Declare done is offered only in "Build · finished, not yet done", with no run going and every touched repository clean (R11.4). It runs as one locked steps job, then the confirmation dialog:
+
+1. **Signed in to GitHub (R12).** `gh` is installed and `gh auth status --hostname <host>` succeeds for each origin's host. Failure: "Not signed in to <host>. Run `gh auth login`, then declare done again."
+2. **Origins are GitHub repositories (R12).** For each touched repository plus the master repository, `origin` exists and `gh repo view` resolves it. Failures name the repository, or say GitHub could not be reached.
+3. **Commit rules (R11.5).** Every commit on each change branch since its merge base has a header matching the plugin's Conventional Commits pattern with the change's scope and carries `Generated-By: ai-sdlc`. Offenders are listed by repository, short hash and subject. Nothing has been pushed, so rewording in another round is safe.
+4. **Review covers the current work (R20).** The latest `review` run link for this change exists, its run completed with exit 0, and its recorded `heads` equal every repository's current change branch head. Otherwise the reason is one of R20.3's three, and **Run review** starts the review run from the dialog. The findings are the completed run's closing text, read from its transcript.
+5. **Checks (R11, R16).** Read and validate the system's checks file, then run each touched repository's and the master repository's checks in order, stopping that repository at its first failure or could-not-run. A repository with none counts as passing ("no checks", R11.3). Checks run every time done is declared, so a result always matches the current commits; no result is stored.
+6. **Confirm (R9.2, R16.3, R20.1).** The dialog described under Screens, with the departures from every build log beside the plan's text for each task, and the review's findings. Open findings do not block (R20.2): only a human says done. Confirm is the human's done. Cancel leaves everything as it was.
+7. **Publish (R13).** For each touched product repository, then the master repository: if `gh pr list --head change/<folder> --state open` finds a pull request, reuse it (R13.3). Otherwise `git push -u origin change/<folder>` (never forced, never to any other branch) and `gh pr create --base <base> --head change/<folder> --title "<intent title>" --body-file <temp file>`. Product pull request bodies link the change folder in the master repository. The master repository's pull request, which carries the intent, spec, plan and every build log, is opened last and its body lists the product pull requests (R13.1). A failure for one repository is recorded and the rest continue (R13.2).
+
+Pull requests are opened by `gh` under the engineer's existing sign-in, and pushes use git's own credential helper. Kata reads no token, writes none, and has no vault (R13.4).
+
+### Where checks are configured (R16, open question 1)
+
+Checks follow mekiki's model: a file per system, outside every workspace, in Kata's own data folder, so the build agents cannot edit the gate it is checked against.
+
+- **Location.** `<kata home>/workbench/checks/<system>.toml`, next to the existing `settings.json`, `workspaces.json` and `zoom.json` (`crates/kata-sdlc/src/store.rs` `workbench_dir`: `$KATA_HOME/workbench`, else `~/.kata/workbench`). One file per system name, so every workspace holding that system on this machine shares it.
+- **Shape.** TOML, every table with unknown keys refused (mekiki's `deny_unknown_fields`):
+
+  ```toml
+  [[checks]]
+  repo = "api"
+  name = "unit tests"
+  argv = ["dotnet", "test", "--nologo"]
+  timeout_secs = 600
+
+  [[checks]]
+  repo = "product-intent"
+  argv = ["npx", "markdownlint-cli2", "intent/**/*.md"]
+  timeout_secs = 120
+  ```
+
+  `repo` is required and must be one of the system's repositories or the master repository. `argv` is required, non-empty, with a non-blank program; it is an argument list and never passes through a shell. `timeout_secs` is required, at least 1 and at most 86,400. `name` is optional and defaults to the joined argv. A BOM and CRLF line endings are accepted. Any problem fails the whole file with its `file:line:col`, and declare done reports it without running anything (R16.2). A missing file means no repository has checks (D8), and every repository says "no checks".
+- **Location guard.** Before reading, Kata refuses the file when the checks folder and the workspace folder contain one another, comparing canonical paths (port of mekiki's `InsideWorkspace` check), which catches a `KATA_HOME` pointed into the workspace.
+- **Running.** Port of mekiki's `checks/process.rs`: the program is resolved on `PATH` (with `PATHEXT` on Windows) or relative to the repository root; the process runs in the repository root with stdin closed, inside a Windows job object or a Unix process group so a timeout kills the whole tree; stdout and stderr are captured with ANSI escapes stripped, keeping the last 50 lines and at most 64 KiB. mekiki's `process.rs`, `shell.rs` and `session.rs` validation tests come with it, minus the `file_exists` and `commits_ahead` check kinds, which have no requirement here.
+- **Outcomes.** **Passed**: exit 0. **Failed**: a non-zero exit, or killed without an exit code; shown in crimson as "failed", with "<check> · exit N" and "The check ran and failed. Ask for another round to fix it." **Could not run**: the program could not be started, or the time limit ran out and the process tree was killed; shown in amber as "could not run", with the reason and "The check could not run to completion. Fix the environment, not the code." Both show the last 50 lines and both block done, but they are never merged into one status (R11.2, R11.6).
+- **What it costs.** Checks are no longer versioned with the team. Each engineer writes their own file, a new teammate starts with none, two engineers can declare the same change done against different gates, and a change to the checks leaves no history. See area of concern 3.
+
+### What users see
+
+Labels follow the house voice: terse, sentence case, mono for repositories, branches, paths, hashes, task IDs, argv and commands. Status uses the andon palette, always with a label: working, passed, finished and opened in jade; failed and stopped in crimson; waiting for you, could not run and uncommitted in amber; waiting for another repository, not started, no checks and not run in muted. The azure accent is used only for the primary action on each screen (Accept plan, Start build, Continue build, Start round, Declare done, Open pull requests, Retry) and for the selected stage tile and the selected repository row. Tables use `hlmTable`, dialogs use `hlm-dialog` or `hlm-alert-dialog` with a title, the repository field uses `hlm-select`, the parts selectors and the build view's tabs use the installed `toggle-group` and `tabs` primitives, icons are Lucide through `ng-icon`, and the time-limit and round forms are zod-schema signal forms submitted with `submit(...)`.
+
+Every new component keeps its template in a sibling `.html` file and any local styles in a sibling stylesheet, as `shape/no-inline-template` requires. Presentational parts (the repository status list, the file list, the diff bar, the diff editor host, the check results table, the findings list, the pull request table) live in `src/app/ui/`. The change page, the build view and the Changes view each keep their state in a component-scoped ViewModel; the driver lives in the build view's ViewModel and reads `RunStore` and `LockStore`, which stay root stores. The Monaco instance lives in the diff editor component, not in a ViewModel, because it is a DOM object. mekiki's effect pattern applies: each effect reads its signal before touching the editor, so a first run before the editor loads still tracks its dependencies.
+
+The build view and the Changes view keep their lists and editor in scroll containers. Below 768 CSS pixels the repository list stacks above the main column, the Changes view's repository list stacks above the diff, and the editor switches to inline, so the house responsive check at 375, 768 and 1280 pixels passes. Width is measured in CSS pixels, so zoom moves the breakpoint: a 1280-pixel window at 200% is 640 CSS pixels wide and gets the stacked, inline layout. See area of concern 8.
+
+## How each constraint is met
+
+| Constraint (from intent) | Met by |
+|---|---|
+| Kata itself (job description format, live event stream, outcome codes) does not change | R4, R6, R18, R19 (each run uses existing run-spec fields, events and outcome codes only; parallel runs are several ordinary kata processes; the run id is added by the Workbench's own backend around each event, not to kata's events; see area of concern 5) |
+| The plugin's build skill does the building and the review; the Workbench drives it as the plugin describes and adds no second way of building; anything missing is raised as a plugin change | R5, R8.2, R14.2, R18, R19 (the driver is the plugin's "Modes" rule, read with the plugin's task and row rules; the one missing piece, a stored review, is raised in area of concern 11; out of scope: a second way of building) |
+| Each repository's build starts from inside that repository | R18.1, R18.5, R18.6 |
+| The build reuses the existing workspace, change, branch and one-task-at-a-time machinery | R3, R6.3, R7, R10, R14, R19.5 (same branch naming, clean check, snapshot, leftovers, session view, lock and git CLI helper, extended to product repositories and to the build's several runs rather than copied; the diff is a port onto `git::run`, not a second git engine) |
+| Progress is read from the plan and the committed record of finished tasks; no new place keeps a change's stage | R14.1, R14.2 (the review link's `heads` in the existing `runs.json` is Kata's record of what it launched, not stage; the checks file holds configuration) |
+| The agent commits what it wrote; the Workbench commits what a human decided; Conventional Commits with the change's scope and the plugin's trailer | R5, R11.5, R15 (the gap the intent names was closed by kata `44372d9`; R15 keeps it closed for plan acceptance; task commits also carry the plugin's `Plan-Task` trailer) |
+| Pull requests open as the engineer with their existing sign-in; Kata stores no credentials | R12, R13.1, R13.4 (`gh` and git's credential helper; the prototype's vault is dropped) |
+| Nothing the engineer had before the build is discarded or overwritten automatically | R3, R6.3, R6.4, R7.3, R10 |
+
+## Decisions carried from the intent
+
+| Decision | Requirement |
+|---|---|
+| D1 | R6.1, R6.2, R6.3, R6.5, R6.6, R6.7 |
+| D2 | R7.3, R8.1, R8.3, R8.4 |
+| D3 | R11.2, R11.6 |
+| D5 | R2.3, R2.6, R6.1. Engineer's call within it: the review run gets the same time limit as a repository's run. |
+| D6 | R12.1, R13.2, R13.3 |
+| D7 | out of scope |
+| D8 | engineer's call: kept the starting default. A repository with no checks, including every repository when the system has no checks file, counts as passing and the engineer is told. R11.3, R16.1 |
+| D9 | engineer's call: kept the starting default. Uncommitted files or another branch in a product repository refuses the build and names them. R3.1 |
+| D10 | engineer's call: kept the starting default, with "belongs to this change" defined as every commit since the merge base carrying the ai-sdlc trailer and this change's scope. R3.1 |
+| D11 | engineer's call: kept the starting default. Left to the pull request. The Changes view compares at the merge base so others' work is not shown. Out of scope, R7.4 |
+| D12 | engineer's call: kept the starting default. No branch and no pull request. R10.1 |
+| D13 | R1.3, R1.4, R1.5 (widened to every case the plugin's gates catch: a superseded plan, a reopened intent or spec, or a pin that does not hold) |
+| D15 | R7.2, R17.1, R17.2, R17.3, R17.4 |
+| D16 | R17.5, R17.6, R17.7, R19.4 |
+| D17 | R9.2, R9.3 |
+| D18 | R5.1, R5.2, R8.2, R18.1, R18.5, R18.6 |
+| D19 | R19.1, R19.3, R19.4, R19.5 |
+| D20 | R8.2, R8.4, R20.1, R20.2, R20.3. Engineer's call within it: after a round of instructions adds commits, the review runs again by itself, so the findings at done always describe the work being published. |
+| D21 | R19.2, R19.6 |
+
+D4 and D14 were retired by the intent and replaced by D17 and D18.
+
+## Open questions from the intent
+
+- What counts as "the repositories' own checks", and whether they are set per repository or per system: answered here as mekiki's model, a per-system file in Kata's data folder listing argv checks per repository, each with a required time limit, run by the Workbench (not the agents) at declare done (R16). Carried forward to the maintainer to accept the cost that checks are no longer versioned with the team (area of concern 3).
+- The default time limit for a repository's build: starting default of 2 hours per run, editable before every build and round. Carried forward to engineering, to be resized from the first real builds.
+
+## Areas of concern
+
+1. **The build cannot run under the bypass posture.** Owner: Maintainer (security). Under bypass the engine forbids deny rules, so nothing would stop an agent from running `git push` or `gh pr create` with the engineer's sign-in, or editing the checks file, and a prompt injected through repository content could do it. The design forces `auto` with deny rules for builds, regardless of the Workbench's permission setting for other stages. That is a behavior difference between stages the engineer will notice, and it depends on claude's classifier being available wherever builds run. Resolve by confirming the forced posture, or by choosing `prompt` instead, which with several runs at once means more approvals waiting at the same time.
+2. **Kata re-reads the plugin's build contract, and a plugin change silently breaks Kata.** Owner: Maintainer (ai-sdlc plugin). Kata reads six things the plugin defines: the task heading form, the `Depends on` line, the per-repository build log files and their table, the `Plan-Task` trailer, the source pins, and the driver rule in the build skill's "Modes" section (ready, blocked, failed). The driver rule is prose in a skill, not a schema; if the plugin changes when a run counts as blocked, Kata could restart a failed repository or leave a ready one waiting. Resolve by treating all six as a published contract of the plugin (named in its README, changed only with a version bump that Kata's R2.5 check tracks), and by having Kata's `build.rs` tests use a plan and build logs copied from the plugin's templates.
+3. **Checks are no longer versioned with the team, and the guard against the agents is location plus deny rules, not a sandbox.** Owner: Maintainer (security). Moving checks out of the master repository means each engineer's machine has its own gate, with no review and no history, and two engineers can declare the same change done against different checks; this is the price of keeping the gate out of the agents' reach. The file is trusted code: it runs commands with the engineer's privileges, the same trust as a build script, and the confirm dialog shows every argv before publishing. The agents' `Edit` and `Write` are denied on the checks folder, but a `Bash` command can still write anywhere the engineer can, so the classifier under `auto` and the engineer's approvals are the backstop. Resolve by accepting the cost and the limit, or by asking for a follow-up that records a hash of the checks file at build start and flags a change at declare done.
+4. **Departures are only as complete as the agents' record.** Owner: Maintainer. D17 asks that each departure be recorded with its task and shown. The design shows every departure the build logs record. A departure in product code that the agent did not log cannot be detected mechanically. The plugin's final review looks for exactly that, and since its findings are now shown at declare done (R20.1), an unlogged departure the review catches is seen before done, as a finding rather than in the departures list. Pull request review is the last backstop. Resolve by accepting that limit.
+5. **The Workbench backend changes from one live run to several.** Owner: Maintainer, with engineering (kata Workbench). Today `run_spec` overwrites its single child handle without checking, events carry no run id, and only the frontend refuses a second run. Parallel repositories need a map of children, a run id wrapped around each forwarded event, and a backend refusal of a second run in the same working folder or of any non-build run during a build. This design reads the intent's "Kata itself does not change" as the kata engine, its run-spec and its event protocol, which stay untouched; the Workbench's own Tauri channel and stores change. Builds run for hours with several runs live, so a reload or a second window during a build is likely, and the backend refusal is what keeps two agents out of one repository (R19.5). Resolve by confirming that reading of the constraint, and by keeping the backend refusal and its tests in the plan.
+6. **A new hard dependency on the GitHub CLI.** Owner: Maintainer. Pull requests need `gh` installed and signed in on the engineer's machine, and pushes need git's credential helper to work for each origin (`gh auth setup-git` does both). Readiness reports a missing sign-in plainly, but a push credential problem only shows when the push fails, as a per-repository failure with Retry. It is a new prerequisite to document next to "an authenticated `claude` on PATH". GitHub Enterprise hosts work only if `gh` is signed in to them.
+7. **The kata context is stale.** Owner: engineering. The workspace checkout is level with `origin/feat/ai-sdlc-mode` at `5649745`, but the context is still pinned at `7226252`, 18 product commits behind. The intent records `kata@7226252` too, but nothing in those commits contradicts it. Refresh the kata context before planning, so the plan skill reads current code and rules.
+8. **The brand and UX policies disagree on narrow screens.** Owner: Maintainer. `kata-design` says desktop only, no mobile layouts; `house-style` requires a clean render at 375 pixels. A side-by-side diff beside a repository list cannot be read at 375 pixels, so the design stacks both views and switches the editor to inline below 768 CSS pixels to pass the house check. Since `5d013d9` added Workbench zoom up to 200%, a desktop window can be narrow in CSS pixels (1280 at 200% is 640), so "desktop only" no longer means "always wide" and the narrow layout is reachable on the desktop. Resolve by confirming the stacked, inline layout, or by capping the zoom so the Workbench never falls below 768 CSS pixels.
+9. **The comparison is only as current as the last fetch.** Owner: engineering. Like mekiki, Kata never fetches, so `origin/<base>` is as last fetched or pushed. If the base moved on GitHub since then, the Changes view and the pull request can differ until the next fetch. The header names the reference compared against. Resolve by accepting it, or by adding an explicit "Fetch" action (a network call, outside the read-only view).
+10. **Monaco adds weight and widens the CSP.** Owner: Maintainer (security). The editor is a few megabytes, loaded lazily only when the Changes view opens. The CSP gains `font-src 'self' data:` and `worker-src 'self'` and no remote origin. Repository content is shown as editor text, never as HTML. Resolve by accepting the two CSP additions.
+11. **The review's findings are not stored with the change; the plugin does not provide that.** Owner: Maintainer (ai-sdlc plugin). D20 makes the review's findings a gate before done, but the plugin's `--review` run only reports them in its closing text. Kata reads them from that run's transcript on this machine and knows what the review covered from the `heads` it recorded when it started the run. So another engineer, another machine, or a cleared Kata data folder has no review and must run it again, and the findings never reach the pull requests. By the intent's constraint this is raised as a change to the plugin: the `--review` run writes its findings and each repository's reviewed head to `build/review.md` and commits it, so the review lives in the master repository like the build logs. Resolve by shipping that in a plugin release, after which Kata reads the file instead of the transcript; until then, accept the transcript as the record.
+12. **Subagents and the Opus review run under the same posture as their run, and parallel runs multiply an uncapped cost.** Owner: Maintainer (security). Every subagent the build skill dispatches runs in the same claude session as its repository run, so the deny rules on pushing, `gh`, remotes, the checks folder and the other repositories bind them too, and the classifier under `auto` judges their calls. That rests on claude applying settings-file deny rules to subagents. There is no spending ceiling by D5, the plugin uses Sonnet per task and Opus for the review and for escalations, and several repositories now build at once, so a build's cost and its pressure on the engineer's claude usage limits scale with the number of repositories; a run that hits a usage limit ends as "Stopped: the agent failed" and is continued like any stopped repository. Resolve by confirming that subagents inherit the deny rules on the claude version Kata pins, as a test in the plan, and by accepting the cost profile.
+13. **The brand policy check did not run.** Owner: Maintainer. `kata-design` is a project skill at `kata/.claude/skills/kata-design/`. This spec session starts in the workspace and was never offered it as a skill, while `house-style` under `kata/app/.claude/skills/` was offered once files there were read, so UX was checked and brand was not. The design follows `kata-design`'s house rules from reading its `SKILL.md`, which is not the check. Resolve by accepting the reading, or by rerunning the spec once area of concern 19 is settled.
+14. **The security policy check did not run.** Owner: Maintainer (security). `security-review` reviews the code diff of a checked-out branch, not a spec, so nothing in this design was checked by it, and this area will keep showing as not checked at every spec run. Areas of concern 1, 3, 5, 10, 12 and 18 are the security reading of this design. Resolve by naming a security skill in `policies.md` that reviews a design, or by accepting those areas as the security review.
+15. **"Cannot miss" holds only while the engineer is looking at the Workbench.** Owner: Maintainer. D16 and D19 ask for a waiting agent to be impossible to miss. The design meets that inside the window: amber repository rows, a pinned notice with a countdown, a tab marker, and a screen reader announcement. With several runs going for hours, an engineer is more likely to step away, and if they are in another application or the window is minimized nothing reaches them; after an hour that run stops with "nobody answered" while the others carry on. A desktop-level signal (flashing the taskbar entry with Tauri's `request_user_attention`, or an operating-system notification) would close that gap, but it is a new Tauri capability the intent did not ask for. Resolve by accepting the in-window notice, or by adding the taskbar flash to this change.
+16. **R17 and R19 depend on every run's events folding while hidden.** Owner: engineering (kata Workbench). The flags are driven by `LockStore.waiting()`, which reads `RunStore`, and the "nothing lost" guarantee rests on `RunStore` folding every run's events whatever is on screen. A later change that pauses event handling, or unmounts hidden observe panes to save work during long parallel builds, would silently break R17.2, R17.5 and R19.4. The Playwright test in the design catches that. Resolve by keeping that test in the build's gates.
+17. **The kata repository's own design skills are inconsistent, and builds now load them.** Owner: Maintainer. Running each repository's build inside it means an agent working in kata gets kata's skills, which is the point, and also their defects. `kata/.claude/skills/kata-design/SKILL.md` sends the reader to `readme.md`, `styles.css`, `tokens/`, `components/`, `guidelines/` and `ui_kits/` next to it, but the folder holds only `SKILL.md`; the design system lives at `kata/design/design_system/`. And there are two `house-style` skills: the root copy still shows inline `template:` and inline `styles:` in its examples, which `shape/no-inline-template` has banned since `a04c245`, while `kata/app/.claude/skills/house-style/` is current. An agent that loads the root copy writes code the gate hooks then refuse, which costs a subagent retry per task. Resolve, in the kata repository and before this change is built, by pointing `kata-design` at `design/design_system/` and by deleting or updating the root `house-style`.
+18. **Each run trusts its repository's settings and hooks, and the cross-repository rules rest on claude behavior the plan must prove.** Owner: Maintainer (security). A run loads the repository's `.claude/settings.json`, so its hooks run commands with the engineer's privileges during an unattended build, the same trust as opening claude in that repository by hand, but now without the engineer choosing it per run. A repository's own `allow` rules can widen what an agent may do without asking; they cannot lift Kata's deny rules, because deny wins wherever it is set. Three behaviors the design depends on are claude's, not Kata's: that a run started at the repository root discovers the skills in `app/.claude/skills/` when it works there; that `allow` rules with absolute paths grant reading the workspace and editing one `build/<repo>.md` outside the working folder, including on Windows drive paths; and that the run's settings apply to its subagents. Resolve by accepting the trust boundary (a product repository in the system is trusted as code the engineer runs), and by having the plan prove each of the three behaviors with a test against the claude version Kata pins.
+19. **Intent, spec and plan runs still start in the workspace, so the spec skill cannot load product-repository policy skills reliably.** Owner: Maintainer. `policies.md` names `kata-design` and `house-style`, which live in the kata repository. In this spec session the nested `house-style` became available only after files under `kata/app/` were read, and `kata-design` never did, so whether a policy check runs depends on what the session happened to read. This change fixes the build only (out of scope above). Resolve by a follow-up that either starts the spec run in the master repository and has the ai-sdlc spec skill load a listed policy skill from the repository that holds it, or moves the policy skills into the master repository or a plugin.
+20. **Parallel runs share the master repository.** Owner: engineering. Every repository run commits its build log in the master repository, so several runs commit there at once, sharing one index. The plugin names paths on every commit and retries on `index.lock` for two minutes, and each run writes its own file, so rows cannot collide; but a slow hook in the master repository can still exhaust the retries, which stops that run with a git error and its row uncommitted (handled as R6.6). When the master repository also holds product code and the plan names it, its code run and the other runs' log commits share that index too. Kata's own commits never join in, because the lock holds everything else while a build runs. Resolve by accepting it, with a driver test that runs two scripted repositories committing logs together.
+21. **A blocked run costs a run start.** Owner: engineering. The driver starts a repository only when its first unfinished task's dependencies have rows, but a repository whose later tasks wait on another repository runs until it reaches them and then ends blocked, and a plan whose tasks alternate (R18.6) takes one run per stretch. Each run start reloads the repository's instructions and skills and re-reads the intent, spec and plan, which costs minutes and tokens. That is the plugin's shape, not something Kata should work around. Resolve by accepting it, and by the plan skill keeping cross-repository dependencies coarse.
+
+No context rule tagged `intent unknown` is relied on by this design.
