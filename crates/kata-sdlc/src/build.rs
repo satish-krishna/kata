@@ -538,6 +538,67 @@ mod tests {
         ])
     }
 
+    const PART2_PLAN: &str = include_str!("testdata/part2-plan.md");
+    const PART2_LOG: &str = include_str!("testdata/part2-build-kata.md");
+
+    /// A layout-2 build log: front matter, then older table rows, then `entries` verbatim.
+    fn layout_2_log(table_rows: &[&str], entries: &str) -> String {
+        let mut out = String::from(
+            "---\nlayout: 2\n---\n\n# Build log: app\n\n| Task | Commits | Departure |\n|---|---|---|\n",
+        );
+        for r in table_rows {
+            out.push_str(r);
+            out.push('\n');
+        }
+        out.push('\n');
+        out.push_str(entries);
+        out
+    }
+
+    #[test]
+    fn status_reads_a_layout_1_plan_and_build_log_as_before() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = master_with(tmp.path(), PART2_PLAN);
+        testutil::commit_file(&master, &format!("{DIR}/build/kata.md"), PART2_LOG, "log");
+        let st = status(&master, SYS, CHG).unwrap();
+        assert_eq!(st.tasks.len(), 30);
+        assert!(st.tasks.iter().all(|t| t.row.is_some()), "{st:?}");
+        assert!(st.repos.iter().all(|r| r.state == RepoState::Done));
+    }
+
+    #[test]
+    fn status_reads_layout_1_and_layout_2_entries_in_one_log() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = master_with(tmp.path(), &app_tasks());
+        let log = layout_2_log(
+            &["| T1 | `a111111` | none |"],
+            "### T2\n\n```yaml\ntask: T2\ncommits: [b222222]\n```\n",
+        );
+        testutil::commit_file(&master, &format!("{DIR}/build/app.md"), &log, "log app");
+        let st = status(&master, SYS, CHG).unwrap();
+        assert_eq!(st.tasks[0].row.as_ref().unwrap().commits, vec!["a111111"]);
+        assert_eq!(st.tasks[1].row.as_ref().unwrap().commits, vec!["b222222"]);
+        assert!(st.tasks[2].row.is_none());
+        assert_eq!((st.repos[0].tasks, st.repos[0].finished), (3, 2));
+    }
+
+    #[test]
+    fn a_departure_with_a_divider_and_line_breaks_is_shown_whole() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = master_with(tmp.path(), &app_tasks());
+        let log = layout_2_log(
+            &["| T1 | `a111111` | none |"],
+            "### T2\n\n```yaml\ntask: T2\ncommits: [b222222]\ndeparture: |\n  used a | in the header; see note\n  the second line has a | too\n  and a third line\n```\n",
+        );
+        testutil::commit_file(&master, &format!("{DIR}/build/app.md"), &log, "log app");
+        let st = status(&master, SYS, CHG).unwrap();
+        assert_eq!(st.departures.len(), 1);
+        assert_eq!(
+            st.departures[0].departure,
+            "used a | in the header; see note\nthe second line has a | too\nand a third line"
+        );
+    }
+
     #[test]
     fn status_carries_each_tasks_own_plan_text() {
         let tmp = tempfile::tempdir().unwrap();
