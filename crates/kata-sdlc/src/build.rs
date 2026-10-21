@@ -536,6 +536,21 @@ mod tests {
     }
 
     #[test]
+    fn status_carries_each_tasks_own_plan_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = master_with(tmp.path(), &app_tasks());
+        let st = status(&master, SYS, CHG).unwrap();
+        assert_eq!(
+            st.tasks[0].text,
+            "### T1: Do T1 (`app`)\n\n- **Depends on:** none\n- **Change:** something"
+        );
+        assert_eq!(
+            st.tasks[2].text,
+            "### T3: Do T3 (`app`)\n\n- **Depends on:** T2\n- **Change:** something"
+        );
+    }
+
+    #[test]
     fn status_counts_a_committed_row_as_finished_r5_1() {
         let tmp = tempfile::tempdir().unwrap();
         let master = master_with(tmp.path(), &app_tasks());
