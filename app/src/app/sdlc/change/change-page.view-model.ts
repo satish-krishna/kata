@@ -618,11 +618,10 @@ export class ChangePageViewModel {
   /** Show another of the change's documents. A newer pick, or a load that finishes, supersedes one still reading. */
   async showDoc(stem: string): Promise<void> {
     if (stem === 'build') {
-      if (this.shownDoc() !== 'build' && this.change() !== null && this.hasBranch()) {
-        this.pickSeq++;
-        this.pendingDoc.set(null);
-        this.picked.set('build');
-      }
+      // The last click wins here too: a click on Build, even when it is already shown, ends a read still pending for another tab.
+      this.pickSeq++;
+      this.pendingDoc.set(null);
+      if (this.shownDoc() !== 'build' && this.change() !== null && this.hasBranch()) this.picked.set('build');
       return;
     }
     if (!isDocStem(stem) || !this.docs()[stem]) return;

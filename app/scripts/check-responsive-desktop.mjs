@@ -58,9 +58,9 @@ try {
         }
       }
     }
-    // A finished change has no stage actions and its plan has a view toggle: the two ends of what the strip can hold.
+    // A finished change has no stage actions and its plan has a view toggle: the two ends of what the strip can hold. The Build strip wraps below 1280 and is then taller than the others, so the height is compared from 1280 up.
     for (const route of ['sdlc/claims/2026-10-18-photo-limits-shipped', 'sdlc/claims/2026-10-19-build-demo']) {
-      for (const width of CHANGE_WIDTHS) {
+      for (const width of BREAKPOINTS) {
         const fails = await checkStripHeight(browser, srv.origin, route, width);
         if (fails.length) {
           process.stderr.write(`route "/${route}": ${fails.join('\n')}\n`);

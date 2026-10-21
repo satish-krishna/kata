@@ -37,6 +37,16 @@
 .wb-toolbar__group { display: flex; align-items: center; gap: var(--space-2); }
 .wb-toolbar__spacer { flex: 1; }
 .wb-sep { width: 1px; height: 22px; background: var(--border-default); flex: none; }
+/* An icon button is never squeezed narrower than its icon. */
+.wb-toolbar .k-iconbtn { flex: none; }
+/* The window is never narrower than 1024. On the change page, between 1024 and 1280 the toolbar gives up its separators and the branch chip, tightens its gaps and lets the switcher shrink a little further, so the pills and the change name fit whole. */
+@media (max-width: 1279px) {
+  .wb-toolbar:has(.k-pills) { gap: var(--space-3); }
+  .wb-toolbar:has(.k-pills) > .wb-sep, .wb-toolbar:has(.k-pills) .k-branch { display: none; }
+  .wb-toolbar:has(.k-pills):has(.k-crumbs__item) .k-wstrigger { min-width: 6rem; }
+  .wb-toolbar .k-pills { margin-inline-start: 0; }
+  .wb-toolbar .k-pill { padding-inline: var(--space-3); }
+}
 
 /* ---------- Validation banner ---------- */
 .wb-banner { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-5); font: var(--font-code-sm); flex: none; border-bottom: 1px solid var(--border-subtle); }
@@ -313,7 +323,9 @@
 .k-prlinks a { display: flex; gap: var(--space-1); min-width: 0; overflow: hidden; color: var(--accent-text); text-decoration: none; }
 .k-prlinks > hlm-popover { flex: none; }
 .k-prlist { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
-.k-prlist__link { display: flex; gap: var(--space-2); color: var(--accent-text); text-decoration: none; white-space: nowrap; }
+.k-prlist__link { display: flex; gap: var(--space-2); color: var(--accent-text); text-decoration: none; white-space: normal; overflow-wrap: anywhere; }
+/* The popover is a fixed width, so a long repository name wraps inside it; the pull request number stays whole beside the last line of the name. */
+.k-prlist__link > span:last-child:not(:first-child) { flex: none; white-space: nowrap; }
 .k-prlist__link:hover { text-decoration: underline; text-underline-offset: 2px; }
 /* The repository name gives way with an ellipsis; the pull request number never does. */
 .k-prlinks__repo { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -323,7 +335,7 @@
 /* The strip under the toolbar belongs to the open tab: its status in words, its file, and the stage actions. */
 /* The change page's strip and the Changes view's strip share one height and one inset, so the page below them does not move between tabs. */
 .k-strip, .k-changes__strip { min-height: calc(var(--control-h) + 2 * var(--space-3) + 1px); padding: var(--space-3) var(--space-4); }
-/* In the Changes strip only the read-only line shrinks; the controls, counts and the actions the page projects keep their size, so no label breaks onto a second line. */
+/* In the Changes strip only the read-only line shrinks; the controls, counts and the actions the page projects keep their size, so no label breaks onto a second line. Below 1280 the strip wraps, so none of them is ever pushed out of the panel. */
 .k-changes__strip > :not(.k-changes__end), .k-changes__end > :not(.k-changes__note) { flex: none; white-space: nowrap; }
 .k-strip { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); background: var(--surface-panel); border-bottom: 1px solid var(--border-default); }
 .k-strip__file { font: var(--text-xs)/1 var(--font-mono); color: var(--text-muted); }

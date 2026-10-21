@@ -46,6 +46,7 @@
 .k-changes__end {
   display: flex;
   flex: 0 1 auto;
+  flex-wrap: wrap;
   min-width: 0;
   align-items: center;
   gap: var(--space-3) var(--space-4);
@@ -87,9 +88,10 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
-/* Beside the file list the strip is one row; below that it wraps rather than scroll the page sideways. */
-@media (min-width: 768px) {
-  .k-changes__strip {
+/* From 1280 the strip is one row; below that it wraps, so the stage actions are never pushed out of the panel. */
+@media (min-width: 1280px) {
+  .k-changes__strip,
+  .k-changes__end {
     flex-wrap: nowrap;
   }
 }
