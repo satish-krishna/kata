@@ -158,6 +158,19 @@ describe('BuildViewModel', () => {
     expect(row(vm, 'claims-core').label).toContain('claims-core');
   });
 
+  it('a repository the backend does not name is stopped with the R2.4 message alone, not as an agent failure (R2.4)', async () => {
+    const { vm, transport, runner } = setup();
+    vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone().filter((p) => p.repo !== 'claims-core'));
+    vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
+      link.onRun?.(`fake-${target.repo}`);
+      return { exit: 0, error: null };
+    });
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'error', label: 'Stopped: claims-core is not checked out in this workspace' });
+    expect(row(vm, 'claims-core').label).not.toContain('the agent failed');
+  });
+
   it('names the work clock against the time limit', async () => {
     const { vm, transport } = setup();
     await vm.start(await handoffFor(transport, { timeoutSecs: 5400 }), CTX);

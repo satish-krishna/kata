@@ -479,6 +479,25 @@ describe('BuildDriver', () => {
     expect(w.driver.stopped().has('app')).toBe(true);
     expect(w.driver.phase()).toBe('stopped');
   });
+
+  it('a round that ends cleanly with no row for its launch task stops, is not relaunched by itself, and Continue reruns it with its instructions (R8.1)', async () => {
+    const w = world([{ id: 'T1', repo: 'app' }]);
+    await w.driver.begin(3600, { repo: 'app', instructions: 'finish it' });
+    await flush();
+    expect(w.of('app')).toHaveLength(1);
+    expect(w.of('app')[0].opts.instructions).toBe('finish it');
+    await w.of('app')[0].end([], { exit: 0 });
+    await flush();
+    expect(w.of('app')).toHaveLength(1);
+    expect(w.driver.going().has('app')).toBe(false);
+    expect(w.driver.stopped().get('app')).toEqual({ task: 'T1', reason: stopMessage(0, null) });
+    expect(w.driver.phase()).toBe('stopped');
+    expect(w.driver.round()).not.toBeNull();
+    await w.driver.continueRepo('app');
+    await flush();
+    expect(w.of('app')).toHaveLength(2);
+    expect(w.of('app')[1].opts.instructions).toBe('finish it');
+  });
 });
 
 describe('runOutcome', () => {
@@ -486,7 +505,6 @@ describe('runOutcome', () => {
   const held: Outcome = { kind: 'stop', held: true };
   const finished: Outcome = { kind: 'finished' };
   const carryOn: Outcome = { kind: 'continue' };
-  const keepRound: Outcome = { kind: 'continue', keepRound: true };
   const impossible = 'impossible';
 
   /** Every combination, with its outcome written out by hand: nothing here is derived from the code's table. */
@@ -524,38 +542,58 @@ describe('runOutcome', () => {
     ['task', true, true, false, 'waiting', stop],
     ['task', true, true, false, 'done', impossible],
     ['task', true, true, false, 'unknown', held],
-    ['round', false, false, true, 'ready', keepRound],
-    ['round', false, false, true, 'waiting', keepRound],
+    ['round', false, false, true, 'ready', carryOn],
+    ['round', false, false, true, 'waiting', carryOn],
     ['round', false, false, true, 'done', finished],
+    // Reachable only when the round launched on the task "" (the master, or a repository with every task recorded): recorded is then true without a status read (R6.1: hold until the status is read again).
     ['round', false, false, true, 'unknown', held],
-    ['round', false, false, false, 'ready', impossible],
-    ['round', false, false, false, 'waiting', impossible],
+    // R8.1: the unfinished task is built first, and no row means the round was not carried out; the round stays pending so Continue reruns it with its instructions
+    ['round', false, false, false, 'ready', stop],
+    // R8.1: the unfinished task is built first, and no row means the round was not carried out; the round stays pending so Continue reruns it with its instructions (the repository is blocked on another repository, and a stop at its current task keeps it from relaunching by itself)
+    ['round', false, false, false, 'waiting', stop],
+    // A launch task that is not "" and has no row cannot leave the repository done (R8.1: the unfinished task is built first); a launch task "" is recorded.
     ['round', false, false, false, 'done', impossible],
-    ['round', false, false, false, 'unknown', impossible],
+    // R6.1: the status could not be read, so the stop holds until it is read again.
+    ['round', false, false, false, 'unknown', held],
     ['round', false, true, true, 'ready', stop],
     ['round', false, true, true, 'waiting', stop],
     ['round', false, true, true, 'done', stop],
+    // Reachable only when the round launched on the task "" (the master, or a repository with every task recorded): recorded is then true without a status read (R6.1: hold until the status is read again).
     ['round', false, true, true, 'unknown', held],
-    ['round', false, true, false, 'ready', impossible],
-    ['round', false, true, false, 'waiting', impossible],
+    // R6.1, R8.1: a failed round with no row for its launch task stops, and Continue reruns it
+    ['round', false, true, false, 'ready', stop],
+    // R6.1, R8.1: a failed round with no row for its launch task stops, and Continue reruns it (the repository is blocked on another repository, and a stop at its current task keeps it from relaunching by itself)
+    ['round', false, true, false, 'waiting', stop],
+    // A launch task that is not "" and has no row cannot leave the repository done (R8.1: the unfinished task is built first); a launch task "" is recorded.
     ['round', false, true, false, 'done', impossible],
-    ['round', false, true, false, 'unknown', impossible],
+    // R6.1: the status could not be read, so the stop holds until it is read again.
+    ['round', false, true, false, 'unknown', held],
     ['round', true, false, true, 'ready', stop],
     ['round', true, false, true, 'waiting', stop],
     ['round', true, false, true, 'done', stop],
+    // Reachable only when the round launched on the task "" (the master, or a repository with every task recorded): recorded is then true without a status read (R6.1: hold until the status is read again).
     ['round', true, false, true, 'unknown', held],
-    ['round', true, false, false, 'ready', impossible],
-    ['round', true, false, false, 'waiting', impossible],
+    // R6.1, R8.1: a cancelled round stops, and Continue reruns it with its instructions
+    ['round', true, false, false, 'ready', stop],
+    // R6.1, R8.1: a cancelled round stops, and Continue reruns it with its instructions (the repository is blocked on another repository, and a stop at its current task keeps it from relaunching by itself)
+    ['round', true, false, false, 'waiting', stop],
+    // A launch task that is not "" and has no row cannot leave the repository done (R8.1: the unfinished task is built first); a launch task "" is recorded.
     ['round', true, false, false, 'done', impossible],
-    ['round', true, false, false, 'unknown', impossible],
+    // R6.1: the status could not be read, so the stop holds until it is read again.
+    ['round', true, false, false, 'unknown', held],
     ['round', true, true, true, 'ready', stop],
     ['round', true, true, true, 'waiting', stop],
     ['round', true, true, true, 'done', stop],
+    // Reachable only when the round launched on the task "" (the master, or a repository with every task recorded): recorded is then true without a status read (R6.1: hold until the status is read again).
     ['round', true, true, true, 'unknown', held],
-    ['round', true, true, false, 'ready', impossible],
-    ['round', true, true, false, 'waiting', impossible],
+    // R6.1, R8.1: a cancelled round stops, and Continue reruns it with its instructions
+    ['round', true, true, false, 'ready', stop],
+    // R6.1, R8.1: a cancelled round stops, and Continue reruns it with its instructions (the repository is blocked on another repository, and a stop at its current task keeps it from relaunching by itself)
+    ['round', true, true, false, 'waiting', stop],
+    // A launch task that is not "" and has no row cannot leave the repository done (R8.1: the unfinished task is built first); a launch task "" is recorded.
     ['round', true, true, false, 'done', impossible],
-    ['round', true, true, false, 'unknown', impossible],
+    // R6.1: the status could not be read, so the stop holds until it is read again.
+    ['round', true, true, false, 'unknown', held],
   ];
 
   const label = (f: Facts) =>
