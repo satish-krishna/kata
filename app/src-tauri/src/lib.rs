@@ -211,7 +211,8 @@ fn sdlc_context_health(
 
 #[tauri::command(async)]
 fn sdlc_changes(master: String, system: String) -> Vec<sdlc::changes::ChangeInfo> {
-    sdlc::changes::list(Path::new(&master), &system)
+    let plugin = ai_sdlc_dir(&master).ok();
+    sdlc::changes::list(plugin.as_deref(), Path::new(&master), &system)
 }
 
 #[tauri::command(async)]
@@ -305,7 +306,8 @@ fn sdlc_build_status(
     system: String,
     change: String,
 ) -> Result<sdlc::build::BuildStatus, String> {
-    sdlc::build::status(Path::new(&master), &system, &change).map_err(|e| e.to_string())
+    let plugin = ai_sdlc_dir(&master)?;
+    sdlc::build::status(&plugin, Path::new(&master), &system, &change).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -326,7 +328,9 @@ fn sdlc_build_prepare(
     continue_with_leftovers: bool,
     pending: Option<String>,
 ) -> Result<sdlc::start::PrepareOutcome, String> {
+    let plugin = ai_sdlc_dir(&folder)?;
     sdlc::start::prepare(
+        &plugin,
         Path::new(&folder),
         &master_repo,
         &system,
@@ -345,7 +349,9 @@ fn sdlc_build_participants(
     change: String,
     pending: Option<String>,
 ) -> Result<Vec<sdlc::participants::Participant>, String> {
+    let plugin = ai_sdlc_dir(&folder)?;
     sdlc::participants::participants(
+        &plugin,
         Path::new(&folder),
         &master_repo,
         &system,
@@ -371,7 +377,12 @@ fn sdlc_build_heads(
 
 #[tauri::command(async)]
 fn sdlc_plugin_readiness(workdir: Option<String>) -> sdlc::plugin::Readiness {
-    let roots = catalog::roots_for_workdir(workdir.as_deref());
+    ai_sdlc_readiness(workdir.as_deref())
+}
+
+/// Whether the ai-sdlc plugin that `workdir`'s catalog finds can be used, and where it is.
+fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
+    let roots = catalog::roots_for_workdir(workdir);
     let found = catalog::discover(&roots);
     let plugin = found.iter().find(|e| {
         e.kind == catalog::EntryKind::Plugin
@@ -379,6 +390,17 @@ fn sdlc_plugin_readiness(workdir: Option<String>) -> sdlc::plugin::Readiness {
             && e.provides.iter().any(|p| p == "skill:build")
     });
     sdlc::plugin::readiness(plugin.map(|e| e.path.as_path()))
+}
+
+/// The ai-sdlc plugin folder the format program is read from, or why the build cannot be read.
+fn ai_sdlc_dir(workdir: &str) -> Result<std::path::PathBuf, String> {
+    match ai_sdlc_readiness(Some(workdir)) {
+        sdlc::plugin::Readiness::Ready { dir, .. } => Ok(dir),
+        sdlc::plugin::Readiness::Missing => Err("the ai-sdlc plugin is not installed".into()),
+        sdlc::plugin::Readiness::TooOld { have, need } => Err(format!(
+            "the ai-sdlc plugin is version {have}; version {need} or later is needed"
+        )),
+    }
 }
 
 #[tauri::command(async)]
@@ -398,8 +420,15 @@ fn sdlc_missing_change_branches(
     system: String,
     change: String,
 ) -> Result<Vec<String>, String> {
-    sdlc::participants::missing_change_branches(Path::new(&folder), &master_repo, &system, &change)
-        .map_err(|e| e.to_string())
+    let plugin = ai_sdlc_dir(&folder)?;
+    sdlc::participants::missing_change_branches(
+        &plugin,
+        Path::new(&folder),
+        &master_repo,
+        &system,
+        &change,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]

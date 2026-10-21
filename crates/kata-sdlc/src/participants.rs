@@ -31,34 +31,39 @@ pub struct Participant {
 /// the plan names (finished or not), then `pending`, the repository a run is about to start in on
 /// the engineer's ask (a round, or Continue), when the plan does not name it. Reads, never changes.
 pub fn participants(
+    plugin: &Path,
     folder: &Path,
     master_repo: &str,
     system: &str,
     change: &str,
     pending: Option<&str>,
 ) -> Result<Vec<Participant>, BuildError> {
-    Ok(model(folder, master_repo, system, change, pending)?.0)
+    Ok(model(plugin, folder, master_repo, system, change, pending)?.0)
 }
 
 /// The product repositories taking part in the change's build that have no `change/<change>`
 /// branch. The Changes view lists only repositories with that branch, so it names these rather
 /// than leaving them out without a word.
 pub fn missing_change_branches(
+    plugin: &Path,
     folder: &Path,
     master_repo: &str,
     system: &str,
     change: &str,
 ) -> Result<Vec<String>, BuildError> {
     let branch = format!("change/{change}");
-    Ok(participants(folder, master_repo, system, change, None)?
-        .into_iter()
-        .filter(|p| !p.master && !branch_exists(Path::new(&p.path), &branch))
-        .map(|p| p.repo)
-        .collect())
+    Ok(
+        participants(plugin, folder, master_repo, system, change, None)?
+            .into_iter()
+            .filter(|p| !p.master && !branch_exists(Path::new(&p.path), &branch))
+            .map(|p| p.repo)
+            .collect(),
+    )
 }
 
 /// The participants together with the build status they were read against.
 pub(crate) fn model(
+    plugin: &Path,
     folder: &Path,
     master_repo: &str,
     system: &str,
@@ -71,7 +76,7 @@ pub(crate) fn model(
         ));
     }
     let master = folder.join(master_repo);
-    let status = build::status(&master, system, change)?;
+    let status = build::status(plugin, &master, system, change)?;
     let scan = workspace::scan(folder)?;
     let in_system = system_repos(&scan, system);
 

@@ -109,7 +109,7 @@ const TASKS: TaskStatus[] = [
   task('T3', 'Show the message', 'customer-portal', ['T1'], text3, null),
   task('T4', 'Notes only', 'customer-portal', [], text4, null),
 ];
-const status = (tasks: TaskStatus[]): BuildStatus => ({ tasks, repos: [], departures: [], hasTasks: tasks.length > 0 });
+const status = (tasks: TaskStatus[]): BuildStatus => ({ tasks, repos: [], departures: [], hasTasks: tasks.length > 0, problems: [] });
 
 async function mount(change: string, docs: Record<string, string | null>, tasks: TaskStatus[] = []) {
   const transport = new MockTransport();

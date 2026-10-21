@@ -227,14 +227,27 @@ fn doc_state(master: &Path, system: &str, change: &str, file: &str) -> DocState 
 }
 
 /// The plan's tasks from the working tree, the finished ones from the committed build logs, and
-/// whether both source pins hold. A plan or log git cannot read counts no finished task.
-fn plan_facts(master: &Path, system: &str, change: &str) -> (PlanFacts, BuildCounts) {
-    let text = read_doc(master, system, change, "plan").unwrap_or_default();
-    let tasks = crate::build::plan_tasks(&text);
+/// whether both source pins hold. Both are read by the format program in `plugin`; without a usable
+/// plugin, or when the program cannot read a document, the plan counts no task and no finished task.
+fn plan_facts(
+    plugin: Option<&Path>,
+    master: &Path,
+    system: &str,
+    change: &str,
+) -> (PlanFacts, BuildCounts) {
+    let plan_file = master.join(format!("intent/{system}/{change}/plan.md"));
+    let tasks = plugin
+        .and_then(|p| crate::format::read(&crate::build::program(p), &plan_file).ok())
+        .map(|read| match read {
+            crate::format::ReadResult::Plan { document, .. } => document.tasks,
+            _ => Vec::new(),
+        })
+        .unwrap_or_default();
     let mut repos: Vec<&str> = tasks.iter().map(|t| t.repo.as_str()).collect();
     repos.sort_unstable();
     repos.dedup();
-    let finished = crate::build::status(master, system, change)
+    let finished = plugin
+        .and_then(|p| crate::build::status(p, master, system, change).ok())
         .map(|s| s.tasks.iter().filter(|t| t.row.is_some()).count() as u32)
         .unwrap_or(0);
     let counts = BuildCounts {
@@ -253,7 +266,7 @@ fn plan_facts(master: &Path, system: &str, change: &str) -> (PlanFacts, BuildCou
 }
 
 /// The changes of `system` in the master repo, newest folder name first.
-pub fn list(master: &Path, system: &str) -> Vec<ChangeInfo> {
+pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInfo> {
     if !is_safe_system(system) {
         return Vec::new();
     }
@@ -274,7 +287,7 @@ pub fn list(master: &Path, system: &str) -> Vec<ChangeInfo> {
             let spec = doc_state(master, system, &change, "spec.md");
             let plan = doc_state(master, system, &change, "plan.md");
             let (facts, build) = if plan.exists {
-                plan_facts(master, system, &change)
+                plan_facts(plugin, master, system, &change)
             } else {
                 (PlanFacts::default(), BuildCounts::default())
             };
@@ -572,7 +585,7 @@ mod tests {
             "# Build log: app\n\n| Task | Commits | Departure |\n|---|---|---|\n| T1 | `a111111` | none |\n",
             "log",
         );
-        let got = list(&repo, "claims");
+        let got = list(Some(testutil::plugin_dir()), &repo, "claims");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].stage, Stage::BuildStopped);
         assert_eq!(
@@ -593,7 +606,7 @@ mod tests {
             "---\nstatus: accepted\n---\nspec v2\n",
             "spec v2",
         );
-        let got = list(&repo, "claims");
+        let got = list(Some(testutil::plugin_dir()), &repo, "claims");
         assert_eq!(got[0].stage, Stage::PlanOutOfDate);
         assert_eq!(got[0].out_of_date, Some(OutOfDate::SpecPin));
     }
@@ -611,7 +624,7 @@ mod tests {
             "---\nstatus: draft\n---\n",
             "intent",
         );
-        let got = list(&repo, "claims");
+        let got = list(Some(testutil::plugin_dir()), &repo, "claims");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].change, "2026-10-12-fnol-photo-upload");
         assert_eq!(got[0].stage, Stage::IntentAwaiting);
@@ -629,7 +642,10 @@ mod tests {
                 c,
             );
         }
-        let names: Vec<_> = list(&repo, "s").into_iter().map(|c| c.change).collect();
+        let names: Vec<_> = list(Some(testutil::plugin_dir()), &repo, "s")
+            .into_iter()
+            .map(|c| c.change)
+            .collect();
         assert_eq!(names, ["2026-10-09-b", "2026-10-01-a"]);
     }
 
@@ -643,7 +659,7 @@ mod tests {
             "no front matter\n",
             "i",
         );
-        let got = list(&repo, "s");
+        let got = list(Some(testutil::plugin_dir()), &repo, "s");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].intent.status.as_deref(), Some("unknown"));
         assert_eq!(got[0].stage, Stage::IntentAwaiting);
@@ -695,7 +711,10 @@ mod tests {
         assert_eq!(read_doc(&repo, "s", "../..", "spec"), None);
         for bad in ["../..", "..", ".", "", "a/b", "a\\b", "C:", "C:foo"] {
             assert_eq!(read_doc(&repo, bad, "2026-10-12-x", "spec"), None, "{bad}");
-            assert!(list(&repo, bad).is_empty(), "{bad}");
+            assert!(
+                list(Some(testutil::plugin_dir()), &repo, bad).is_empty(),
+                "{bad}"
+            );
         }
     }
 }

@@ -1,11 +1,15 @@
 //! The build's state, read from the plan and the build logs as committed in the master
-//! repository. This follows the ai-sdlc build skill's reading rule (section 1, step 5): nothing
-//! else in Kata parses `plan.md` headings or `build/<repo>.md`.
+//! repository. Nothing in Kata parses `plan.md` or `build/<repo>.md` itself: the ai-sdlc plugin's
+//! format program reads them, in either layout, and this module folds its answer into a status.
+use crate::format::{self, FormatError, ParsedBuildLog, ParsedTask, Problem, ReadResult};
 use crate::git::{self, GitError};
 use serde::Serialize;
-use std::path::Path;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
-/// One `### T<n>: <name> (`<repo>`)` task of the plan.
+/// One task of the plan.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
@@ -59,7 +63,7 @@ pub struct TaskStatus {
     pub name: String,
     pub repo: String,
     pub depends_on: Vec<String>,
-    /// The task's own section of the plan, from its heading to the next task heading.
+    /// The task's own section of the plan, as the format program parsed it.
     pub text: String,
     pub row: Option<BuildRow>,
 }
@@ -97,6 +101,8 @@ pub struct BuildStatus {
     pub repos: Vec<RepoStatus>,
     pub departures: Vec<Departure>,
     pub has_tasks: bool,
+    /// Everything the format program found wrong in the plan and the build logs.
+    pub problems: Vec<Problem>,
 }
 
 /// Rows a build log holds in the working tree and not yet in `HEAD`.
@@ -109,189 +115,52 @@ pub struct UnsavedRows {
     pub tasks: Vec<String>,
 }
 
-/// `T<digits>` as a whole token, or `None`.
-fn is_task_id(s: &str) -> bool {
-    s.strip_prefix('T')
-        .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
-}
-
-/// A folder-like name: the plugin's own template heading carries `<repo>`, which is not one.
-fn is_repo_name(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
-}
-
-/// `### T<digits>: <name> (`<repo>`)` -> (id, name, repo).
-fn task_heading(line: &str) -> Option<(String, String, String)> {
-    let rest = line.trim_end().strip_prefix("### T")?;
-    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-    if digits == 0 {
-        return None;
-    }
-    let id = format!("T{}", &rest[..digits]);
-    let rest = rest[digits..].strip_prefix(": ")?;
-    let rest = rest.strip_suffix("`)")?;
-    let at = rest.rfind(" (`")?;
-    let (name, repo) = (rest[..at].trim(), &rest[at + 3..]);
-    if name.is_empty() || !is_repo_name(repo) {
-        return None;
-    }
-    Some((id, name.to_string(), repo.to_string()))
-}
-
-/// The task IDs a `- **Depends on:**` value names; `none` and prose without IDs give none.
-fn dependency_ids(value: &str) -> Vec<String> {
-    value
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| is_task_id(w))
-        .map(str::to_string)
-        .collect()
-}
-
-/// One heading found in the plan: where its section starts and ends, in lines.
-struct Section {
-    task: PlanTask,
-    text: String,
-}
-
-fn sections(plan: &str) -> Vec<Section> {
-    let lines: Vec<&str> = plan.lines().collect();
-    let heads: Vec<(usize, (String, String, String))> = lines
-        .iter()
-        .enumerate()
-        .filter_map(|(i, l)| task_heading(l).map(|h| (i, h)))
-        .collect();
-    let mut out: Vec<Section> = Vec::new();
-    for (n, (start, (id, name, repo))) in heads.iter().enumerate() {
-        let limit = heads.get(n + 1).map_or(lines.len(), |(i, _)| *i);
-        let end = (start + 1..limit)
-            .find(|&i| lines[i].starts_with("## ") || lines[i].starts_with("### "))
-            .unwrap_or(limit);
-        let text = lines[*start..end].join("\n").trim_end().to_string();
-        let depends = lines[start + 1..end].iter().find_map(|l| {
-            l.trim_start()
-                .strip_prefix("- **Depends on:**")
-                .map(dependency_ids)
-        });
-        let depends_on = depends.unwrap_or_else(|| out.iter().map(|s| s.task.id.clone()).collect());
-        out.push(Section {
-            task: PlanTask {
-                id: id.clone(),
-                name: name.clone(),
-                repo: repo.clone(),
-                depends_on,
-            },
-            text,
-        });
-    }
-    out
-}
-
-/// Every `### T<digits>: <name> (`<repo>`)` heading in document order, with its dependencies.
-/// A task with no `Depends on` line depends on every task above it.
-pub fn plan_tasks(plan: &str) -> Vec<PlanTask> {
-    sections(plan).into_iter().map(|s| s.task).collect()
-}
-
-fn cells(line: &str) -> Option<Vec<&str>> {
-    let line = line.trim();
-    let inner = line.strip_prefix('|')?;
-    let inner = inner.strip_suffix('|').unwrap_or(inner);
-    Some(inner.split('|').map(str::trim).collect())
-}
-
-fn is_separator(cells: &[&str]) -> bool {
-    cells
-        .iter()
-        .all(|c| !c.is_empty() && c.chars().all(|ch| matches!(ch, '-' | ':' | ' ')))
-}
-
-fn commits_in(cell: &str) -> Vec<String> {
-    if cell.contains('`') {
-        cell.split('`')
-            .skip(1)
-            .step_by(2)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect()
-    } else {
-        cell.split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect()
-    }
-}
-
-/// The table rows of a build log (or a legacy plan's `## Build log` table). A header naming a
-/// `Repository` column makes the rows carry their own repository; otherwise it is `repo`.
-fn rows_in(text: &str, repo: &str) -> Vec<BuildRow> {
-    // Column positions; the defaults are the build log's `Task | Commits | Departure`.
-    let (mut task_at, mut repo_at, mut commits_at, mut departure_at) = (0, None, 1, 2);
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let Some(row) = cells(line) else { continue };
-        if is_separator(&row) {
-            continue;
-        }
-        if row[0].eq_ignore_ascii_case("task") {
-            let find = |name: &str| row.iter().position(|c| c.eq_ignore_ascii_case(name));
-            task_at = 0;
-            repo_at = find("repository");
-            commits_at = find("commits").unwrap_or(commits_at);
-            departure_at = find("departure").unwrap_or(departure_at);
-            continue;
-        }
-        if !is_task_id(row[task_at]) {
-            continue;
-        }
-        let cell = |i: usize| row.get(i).copied().unwrap_or("");
-        // The last column takes the rest of the line, so a `|` in a departure survives.
-        let departure = if departure_at + 1 == row.len() || departure_at >= row.len() {
-            cell(departure_at).to_string()
-        } else {
-            row[departure_at..].join("|")
-        };
-        let departure = Some(departure.trim().to_string())
-            .filter(|d| !d.is_empty() && !d.eq_ignore_ascii_case("none"));
-        out.push(BuildRow {
-            task: row[task_at].to_string(),
-            repo: repo_at
-                .map(|i| cell(i).to_string())
-                .filter(|r| !r.is_empty())
-                .unwrap_or_else(|| repo.to_string()),
-            commits: commits_in(cell(commits_at)),
-            departure,
-        });
-    }
-    out
-}
-
-/// The legacy plan's `## Build log` section, up to the next `## ` heading.
-fn legacy_log(plan: &str) -> String {
-    let mut inside = false;
-    let mut out = Vec::new();
-    for line in plan.lines() {
-        if line.trim_end().eq_ignore_ascii_case("## Build log") {
-            inside = true;
-        } else if line.starts_with("## ") {
-            inside = false;
-        } else if inside {
-            out.push(line);
-        }
-    }
-    out.join("\n")
-}
-
 fn change_dir(system: &str, change: &str) -> String {
     format!("intent/{system}/{change}")
 }
 
-fn committed_plan(master: &Path, system: &str, change: &str) -> Result<String, GitError> {
-    let path = format!("HEAD:{}/plan.md", change_dir(system, change));
-    git::run(master, &["show", &path])
+/// A format-program failure reported the way a git failure is, so one error type serves both.
+fn unreadable(error: FormatError) -> GitError {
+    GitError {
+        args: "ai-sdlc format program".into(),
+        stderr: error.to_string(),
+    }
+}
+
+/// The format program inside the ai-sdlc plugin folder.
+pub(crate) fn program(plugin: &Path) -> PathBuf {
+    plugin.join("format").join("check.mjs")
+}
+
+/// Where the committed documents are put for the program to read: the program takes a document's
+/// kind from its path, and the cache in `format::read` keys on the path, so each change keeps one
+/// stable folder.
+fn staging_dir(master: &Path, system: &str, change: &str) -> PathBuf {
+    let mut hasher = DefaultHasher::new();
+    master
+        .canonicalize()
+        .unwrap_or_else(|_| master.to_path_buf())
+        .hash(&mut hasher);
+    (system, change).hash(&mut hasher);
+    std::env::temp_dir()
+        .join("kata-format-read")
+        .join(format!("{:016x}", hasher.finish()))
+}
+
+fn put(path: &Path, text: &str) -> Result<(), GitError> {
+    if std::fs::read_to_string(path).is_ok_and(|have| have == text) {
+        return Ok(());
+    }
+    let write = || -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, text)
+    };
+    write().map_err(|e| GitError {
+        args: path.display().to_string(),
+        stderr: e.to_string(),
+    })
 }
 
 /// The file stem of a build log path: the repository it logs.
@@ -300,54 +169,141 @@ fn log_repo(path: &str) -> &str {
     name.rsplit_once('.').map_or(name, |(stem, _)| stem)
 }
 
-fn rows_from(
+/// The committed plan and build logs, parsed by the format program, with every problem it found.
+struct Committed {
+    tasks: Vec<ParsedTask>,
+    logs: Vec<ParsedBuildLog>,
+    problems: Vec<Problem>,
+}
+
+/// One reader at a time: the staged files are shared by every read of the same change.
+static READING: Mutex<()> = Mutex::new(());
+
+/// Reads the plan and every build log as committed at `HEAD` (never the working tree) through the
+/// format program, whatever layout each is written in. A review log is not a build log.
+fn read_committed(
+    plugin: &Path,
     master: &Path,
     system: &str,
     change: &str,
-    plan: &str,
-) -> Result<Vec<BuildRow>, GitError> {
+) -> Result<Committed, GitError> {
     let dir = format!("{}/build/", change_dir(system, change));
+    let plan = git::run(
+        master,
+        &[
+            "show",
+            &format!("HEAD:{}/plan.md", change_dir(system, change)),
+        ],
+    )?;
     let listing = git::run(
         master,
         &["ls-tree", "-z", "--name-only", "HEAD", "--", &dir],
     )?;
-    let mut paths: Vec<&str> = listing.split('\0').filter(|p| !p.is_empty()).collect();
+    let mut paths: Vec<&str> = listing
+        .split('\0')
+        .filter(|p| p.ends_with(".md") && log_repo(p) != "review")
+        .collect();
     paths.sort_unstable();
-    let mut rows = Vec::new();
-    for path in paths {
-        let text = git::run(master, &["show", &format!("HEAD:{path}")])?;
-        rows.extend(rows_in(&text, log_repo(path)));
+    let texts: Vec<(&str, String)> = paths
+        .into_iter()
+        .map(|p| Ok((p, git::run(master, &["show", &format!("HEAD:{p}")])?)))
+        .collect::<Result<_, GitError>>()?;
+
+    let _one_reader = READING.lock().unwrap_or_else(|e| e.into_inner());
+    let stage = staging_dir(master, system, change);
+    put(&stage.join("plan.md"), &plan)?;
+    let build = stage.join("build");
+    for (path, text) in &texts {
+        put(&build.join(format!("{}.md", log_repo(path))), text)?;
     }
-    rows.extend(rows_in(&legacy_log(plan), ""));
-    Ok(rows)
+    if let Ok(left) = std::fs::read_dir(&build) {
+        for entry in left.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !texts
+                .iter()
+                .any(|(p, _)| format!("{}.md", log_repo(p)) == name)
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+
+    let program = program(plugin);
+    let mut problems = Vec::new();
+    let read_plan = format::read(&program, &stage.join("plan.md")).map_err(unreadable)?;
+    problems.extend(read_plan.problems().iter().cloned());
+    let ReadResult::Plan { document, .. } = read_plan else {
+        return Err(unreadable(FormatError::BadOutput(
+            "plan.md was not read as a plan".into(),
+        )));
+    };
+    let mut logs = Vec::new();
+    for (path, _) in &texts {
+        let file = build.join(format!("{}.md", log_repo(path)));
+        let read_log = format::read(&program, &file).map_err(unreadable)?;
+        problems.extend(read_log.problems().iter().cloned());
+        let ReadResult::BuildLog { document, .. } = read_log else {
+            return Err(unreadable(FormatError::BadOutput(format!(
+                "{path} was not read as a build log"
+            ))));
+        };
+        logs.push(document);
+    }
+    Ok(Committed {
+        tasks: document.tasks,
+        logs,
+        problems,
+    })
 }
 
-/// Every build log row as committed at `HEAD` (never the working tree), plus the committed
-/// plan's legacy `## Build log`.
+fn rows_of(logs: &[ParsedBuildLog]) -> Vec<BuildRow> {
+    logs.iter()
+        .flat_map(|log| {
+            log.entries.iter().map(|entry| BuildRow {
+                task: entry.task.clone(),
+                repo: log.repo.clone(),
+                commits: entry.commits.clone(),
+                departure: entry.departure.clone().filter(|d| !d.trim().is_empty()),
+            })
+        })
+        .collect()
+}
+
+/// Every build log row as committed at `HEAD` (never the working tree).
 pub fn committed_rows(
+    plugin: &Path,
     master: &Path,
     system: &str,
     change: &str,
 ) -> Result<Vec<BuildRow>, GitError> {
-    let plan = committed_plan(master, system, change)?;
-    rows_from(master, system, change, &plan)
+    Ok(rows_of(
+        &read_committed(plugin, master, system, change)?.logs,
+    ))
 }
 
-pub fn status(master: &Path, system: &str, change: &str) -> Result<BuildStatus, GitError> {
-    let plan = committed_plan(master, system, change)?;
-    let rows = rows_from(master, system, change, &plan)?;
-    let sections = sections(&plan);
+/// The build's state from the plan and build logs committed at `HEAD`, read by the format program
+/// in `plugin` (the ai-sdlc plugin folder). Problems found in those documents come back in
+/// `problems` and do not stop the reading.
+pub fn status(
+    plugin: &Path,
+    master: &Path,
+    system: &str,
+    change: &str,
+) -> Result<BuildStatus, GitError> {
+    let committed = read_committed(plugin, master, system, change)?;
+    let rows = rows_of(&committed.logs);
     let row_of = |id: &str| rows.iter().find(|r| r.task == id);
 
-    let tasks: Vec<TaskStatus> = sections
+    let tasks: Vec<TaskStatus> = committed
+        .tasks
         .iter()
-        .map(|s| TaskStatus {
-            id: s.task.id.clone(),
-            name: s.task.name.clone(),
-            repo: s.task.repo.clone(),
-            depends_on: s.task.depends_on.clone(),
-            text: s.text.clone(),
-            row: row_of(&s.task.id).cloned(),
+        .map(|t| TaskStatus {
+            id: t.id.clone(),
+            name: t.name.clone(),
+            repo: t.repo.clone(),
+            depends_on: t.depends_on.clone(),
+            text: t.text.clone(),
+            row: row_of(&t.id).cloned(),
         })
         .collect();
 
@@ -387,15 +343,14 @@ pub fn status(master: &Path, system: &str, change: &str) -> Result<BuildStatus, 
         })
         .collect();
 
-    let departures = sections
+    let departures = tasks
         .iter()
-        .zip(&tasks)
-        .filter_map(|(s, t)| {
+        .filter_map(|t| {
             let row = t.row.as_ref()?;
             Some(Departure {
                 task: t.id.clone(),
                 repo: row.repo.clone(),
-                plan_text: s.text.clone(),
+                plan_text: t.text.clone(),
                 departure: row.departure.clone()?,
             })
         })
@@ -406,7 +361,21 @@ pub fn status(master: &Path, system: &str, change: &str) -> Result<BuildStatus, 
         tasks,
         repos,
         departures,
+        problems: committed.problems,
     })
+}
+
+/// The task IDs in the first cell of the table rows of `text`. A stopgap for `unsaved_rows`, which
+/// does not read entries through the format program yet.
+fn table_task_ids(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|line| {
+            let first = line.trim().strip_prefix('|')?.split('|').next()?.trim();
+            let digits = first.strip_prefix('T')?;
+            (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| first.to_string())
+        })
+        .collect()
 }
 
 fn lf(text: &str) -> String {
@@ -445,10 +414,7 @@ pub fn unsaved_rows(
         if listed.is_empty() {
             out.push(UnsavedRows {
                 repo: repo.to_string(),
-                tasks: rows_in(&working, repo)
-                    .into_iter()
-                    .map(|r| r.task)
-                    .collect(),
+                tasks: table_task_ids(&working),
             });
             continue;
         }
@@ -473,7 +439,7 @@ pub fn unsaved_rows(
         }
         out.push(UnsavedRows {
             repo: repo.to_string(),
-            tasks: rows_in(added, repo).into_iter().map(|r| r.task).collect(),
+            tasks: table_task_ids(added),
         });
     }
     Ok(out)
@@ -488,7 +454,6 @@ mod tests {
     const CHG: &str = "2026-10-12-fnol";
     const DIR: &str = "intent/claims/2026-10-12-fnol";
     const FIXTURE_PLAN: &str = include_str!("testdata/plan.md");
-    const TEMPLATE: &str = include_str!("testdata/plan-template.md");
     const BUILD_LOG: &str = include_str!("testdata/build-log.md");
 
     /// A plan of `(id, repo, depends-on text)` tasks; `None` writes no `Depends on` line.
@@ -560,7 +525,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let master = master_with(tmp.path(), PART2_PLAN);
         testutil::commit_file(&master, &format!("{DIR}/build/kata.md"), PART2_LOG, "log");
-        let st = status(&master, SYS, CHG).unwrap();
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert_eq!(st.tasks.len(), 30);
         assert!(st.tasks.iter().all(|t| t.row.is_some()), "{st:?}");
         assert!(st.repos.iter().all(|r| r.state == RepoState::Done));
@@ -575,7 +540,7 @@ mod tests {
             "### T2\n\n```yaml\ntask: T2\ncommits: [b222222]\n```\n",
         );
         testutil::commit_file(&master, &format!("{DIR}/build/app.md"), &log, "log app");
-        let st = status(&master, SYS, CHG).unwrap();
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert_eq!(st.tasks[0].row.as_ref().unwrap().commits, vec!["a111111"]);
         assert_eq!(st.tasks[1].row.as_ref().unwrap().commits, vec!["b222222"]);
         assert!(st.tasks[2].row.is_none());
@@ -591,7 +556,7 @@ mod tests {
             "### T2\n\n```yaml\ntask: T2\ncommits: [b222222]\ndeparture: |\n  used a | in the header; see note\n  the second line has a | too\n  and a third line\n```\n",
         );
         testutil::commit_file(&master, &format!("{DIR}/build/app.md"), &log, "log app");
-        let st = status(&master, SYS, CHG).unwrap();
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert_eq!(st.departures.len(), 1);
         assert_eq!(
             st.departures[0].departure,
@@ -603,7 +568,7 @@ mod tests {
     fn status_carries_each_tasks_own_plan_text() {
         let tmp = tempfile::tempdir().unwrap();
         let master = master_with(tmp.path(), &app_tasks());
-        let st = status(&master, SYS, CHG).unwrap();
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert_eq!(
             st.tasks[0].text,
             "### T1: Do T1 (`app`)\n\n- **Depends on:** none\n- **Change:** something"
@@ -619,7 +584,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let master = master_with(tmp.path(), &app_tasks());
         commit_log(&master, "app", &["| T2 | `abc1234`, `def5678` | none |"]);
-        let st = status(&master, SYS, CHG).unwrap();
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         let t2 = &st.tasks[1];
         assert_eq!(t2.id, "T2");
         let row = t2.row.as_ref().expect("T2 is finished");
@@ -637,11 +602,11 @@ mod tests {
         let master = master_with(tmp.path(), plan);
         commit_log(&master, "app", &["| T1 | `a1a1a1a` | none |"]);
         commit_log(&master, "api", &["| T2 | `b2b2b2b` | none |"]);
-        let st = status(&master, SYS, CHG).unwrap();
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert_eq!(st.tasks[0].row.as_ref().unwrap().commits, vec!["a1a1a1a"]);
         assert_eq!(st.tasks[1].row.as_ref().unwrap().commits, vec!["b2b2b2b"]);
         assert_eq!(st.tasks.iter().filter(|t| t.row.is_some()).count(), 2);
-        let rows = committed_rows(&master, SYS, CHG).unwrap();
+        let rows = committed_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert!(rows.iter().any(|r| r.repo == "app" && r.task == "T1"));
         assert!(rows.iter().any(|r| r.repo == "api" && r.task == "T2"));
     }
@@ -655,7 +620,7 @@ mod tests {
             "app",
             &["| T1 | `a111111` | none |", "| T2 | `b222222` | none |"],
         );
-        let st = status(&master, SYS, CHG).unwrap();
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         let app = &st.repos[0];
         assert_eq!(app.repo, "app");
         assert_eq!(app.first_unfinished.as_deref(), Some("T3"));
@@ -687,7 +652,7 @@ mod tests {
             ],
         )
         .unwrap();
-        let st = status(&master, SYS, CHG).unwrap();
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert!(st.tasks[2].row.is_none());
         assert_eq!(st.repos[0].first_unfinished.as_deref(), Some("T3"));
         assert_eq!(st.repos[0].finished, 2);
@@ -712,7 +677,7 @@ mod tests {
         let mut text = std::fs::read_to_string(&path).unwrap();
         text.push_str("| T3 | `c333333` | none |\n");
         std::fs::write(&path, text).unwrap();
-        let st = status(&master, SYS, CHG).unwrap();
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert!(st.tasks[2].row.is_none());
         let app2 = st.repos.iter().find(|r| r.repo == "app2").unwrap();
         assert_eq!(
@@ -744,7 +709,7 @@ mod tests {
             std::fs::read(&log_path).unwrap(),
         );
         let porcelain = git::run(&master, &["status", "--porcelain"]).unwrap();
-        let st = status(&master, SYS, CHG).unwrap();
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert_eq!(st.departures.len(), 1);
         let d = &st.departures[0];
         assert_eq!((d.task.as_str(), d.repo.as_str()), ("T2", "app"));
@@ -817,7 +782,7 @@ mod tests {
         let plan = FIXTURE_PLAN.split("## Build log").next().unwrap();
         let master = master_with(tmp.path(), plan);
         commit_log(&master, "app", &["| T1 | `a111111` | none |"]);
-        let st = status(&master, SYS, CHG).unwrap();
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         let app = st.repos.iter().find(|r| r.repo == "app").unwrap();
         assert_eq!(
             app.state,
@@ -853,51 +818,18 @@ mod tests {
                 "| T3 | `c333333` | none |",
             ],
         );
-        let st = status(&master, SYS, CHG).unwrap();
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert_eq!(st.repos[0].state, RepoState::Done);
         assert_eq!(st.repos[0].first_unfinished, None);
         assert!(st.has_tasks);
     }
 
     #[test]
-    fn a_task_without_depends_on_depends_on_every_task_above() {
-        let tasks = plan_tasks(FIXTURE_PLAN);
-        let t5 = tasks.iter().find(|t| t.id == "T5").unwrap();
-        assert_eq!(t5.depends_on, ["T1", "T2", "T3", "T4"]);
-        assert_eq!(t5.repo, "api");
-        assert_eq!(t5.name, "Audit log");
-    }
-
-    #[test]
-    fn depends_on_none_is_empty() {
-        let tasks = plan_tasks(FIXTURE_PLAN);
-        assert!(tasks[0].depends_on.is_empty());
-        assert_eq!(tasks[2].depends_on, ["T1", "T2"]);
-        assert_eq!(tasks.len(), 5);
-    }
-
-    #[test]
-    fn the_plugin_template_parses_as_an_empty_plan() {
-        assert!(plan_tasks(TEMPLATE).is_empty());
-    }
-
-    #[test]
-    fn legacy_build_log_rows_count() {
+    fn a_committed_log_fixture_gives_its_rows() {
         let tmp = tempfile::tempdir().unwrap();
-        let master = master_with(tmp.path(), FIXTURE_PLAN);
-        let rows = committed_rows(&master, SYS, CHG).unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].repo, "app");
-        assert_eq!(rows[1].repo, "api");
-        assert_eq!(rows[1].commits, vec!["bbb2222", "ccc3333"]);
-        assert!(rows[1].departure.as_deref().unwrap().starts_with("Skipped"));
-        let st = status(&master, SYS, CHG).unwrap();
-        assert!(st.tasks[0].row.is_some() && st.tasks[1].row.is_some());
-    }
-
-    #[test]
-    fn build_log_fixture_rows_parse() {
-        let rows = rows_in(BUILD_LOG, "app");
+        let master = master_with(tmp.path(), &app_tasks());
+        testutil::commit_file(&master, &format!("{DIR}/build/app.md"), BUILD_LOG, "log");
+        let rows = committed_rows(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].commits, vec!["a1b2c3d", "e4f5a6b"]);
         assert_eq!(rows[0].departure, None);
@@ -908,30 +840,49 @@ mod tests {
     }
 
     #[test]
+    fn status_reads_a_plan_with_crlf_line_endings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = master_with(tmp.path(), &app_tasks().replace('\n', "\r\n"));
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
+        assert_eq!(st.tasks.len(), 3);
+        assert_eq!(st.tasks[1].depends_on, ["T1"]);
+        assert_eq!(st.tasks[1].name, "Do T2");
+    }
+
+    #[test]
+    fn a_task_without_depends_on_depends_on_every_task_above() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = master_with(tmp.path(), FIXTURE_PLAN);
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
+        assert_eq!(st.tasks.len(), 5);
+        assert_eq!(st.tasks[4].depends_on, ["T1", "T2", "T3", "T4"]);
+        assert_eq!(st.tasks[4].repo, "api");
+        assert!(st.tasks[0].depends_on.is_empty());
+        assert_eq!(st.tasks[2].depends_on, ["T1", "T2"]);
+    }
+
+    #[test]
+    fn status_returns_problems_and_keeps_reading() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = master_with(tmp.path(), &app_tasks());
+        commit_log(&master, "app", &["| T1 | | none |"]);
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
+        assert!(
+            st.problems.iter().any(|p| p.message.contains("no commits")),
+            "{:?}",
+            st.problems
+        );
+        assert_eq!(st.tasks.len(), 3);
+    }
+
+    #[test]
     fn a_row_for_an_unknown_task_is_ignored() {
         let tmp = tempfile::tempdir().unwrap();
         let master = master_with(tmp.path(), &app_tasks());
         commit_log(&master, "app", &["| T9 | `a111111` | none |"]);
-        let st = status(&master, SYS, CHG).unwrap();
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert!(st.tasks.iter().all(|t| t.row.is_none()));
         assert_eq!(st.repos[0].finished, 0);
-    }
-
-    #[test]
-    fn parses_crlf_plans() {
-        let tasks = plan_tasks(&app_tasks().replace('\n', "\r\n"));
-        assert_eq!(tasks.len(), 3);
-        assert_eq!(tasks[1].depends_on, ["T1"]);
-        assert_eq!(tasks[1].repo, "app");
-        assert_eq!(tasks[1].name, "Do T2");
-    }
-
-    #[test]
-    fn plan_tasks_ignores_other_heading_styles() {
-        let plan = "## Tasks\n\n### Task 1: Old style\n\n#### T2: Too deep (`app`)\n\n### T3 Missing colon (`app`)\n\n### T4: No repo\n\n### T5: Real (`app`)\n";
-        let tasks = plan_tasks(plan);
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].id, "T5");
     }
 
     #[test]
@@ -969,7 +920,7 @@ mod tests {
                 });
             }
         });
-        let st = status(&master, SYS, CHG).unwrap();
+        let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert!(st.tasks.iter().all(|t| t.row.is_some()), "{st:?}");
     }
 }

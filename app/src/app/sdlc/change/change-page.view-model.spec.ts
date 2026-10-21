@@ -745,7 +745,7 @@ describe('ChangePageViewModel', () => {
 
     it('says only what it has: no tasks yet, no runs yet', async () => {
       const transport = new MockTransport();
-      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({ tasks: [], repos: [], departures: [], hasTasks: false });
+      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({ tasks: [], repos: [], departures: [], hasTasks: false, problems: [] });
       const { vm } = setup(BUILD, transport);
       await ready(vm);
       await vm.showDoc('build');
@@ -764,7 +764,7 @@ describe('ChangePageViewModel', () => {
 
     it('draws no strip on the Build tab when there is no status, no facts and no action', async () => {
       const transport = await finished();
-      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({ tasks: [], repos: [], departures: [], hasTasks: false });
+      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({ tasks: [], repos: [], departures: [], hasTasks: false, problems: [] });
       const { vm } = setup(BUILD, transport);
       await ready(vm);
       await vm.showDoc('build');

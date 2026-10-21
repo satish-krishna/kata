@@ -163,6 +163,7 @@ fn classify(
 /// Continue. Its uncommitted files are leftovers to confirm, whether it is a finished product
 /// repository (skipped otherwise) or the master (whose uncommitted files refuse a fresh start, R3.2).
 pub fn prepare(
+    plugin: &Path,
     folder: &Path,
     master_repo: &str,
     system: &str,
@@ -181,7 +182,8 @@ pub fn prepare(
         return refuse(format!("the master repo has no branch {branch}"));
     }
 
-    let (parts, status) = participants::model(folder, master_repo, system, change, pending)?;
+    let (parts, status) =
+        participants::model(plugin, folder, master_repo, system, change, pending)?;
     // A log is a leftover to save only when it is new or only gained rows; any other edit to one is
     // an uncommitted file like any other.
     let saved: Vec<String> = build::unsaved_rows(&master, system, change)
@@ -429,11 +431,11 @@ mod tests {
         go: bool,
         pending: Option<&str>,
     ) -> Result<PrepareOutcome, BuildError> {
-        prepare(&fx.folder, "m", S, C, go, pending)
+        prepare(testutil::plugin_dir(), &fx.folder, "m", S, C, go, pending)
     }
 
     fn prep(fx: &Fx, go: bool) -> Result<PrepareOutcome, BuildError> {
-        prepare(&fx.folder, "m", S, C, go, None)
+        prepare(testutil::plugin_dir(), &fx.folder, "m", S, C, go, None)
     }
 
     fn ready(out: Result<PrepareOutcome, BuildError>) -> BuildStart {
@@ -730,7 +732,7 @@ mod tests {
         testutil::write(&fx.master, &row("api"), text);
         testutil::write(&fx.master, &row("m"), text);
         testutil::write(&fx.repo("app"), "a.rs", "x");
-        let got = participants(&fx.folder, "m", S, C, None).unwrap();
+        let got = participants(testutil::plugin_dir(), &fx.folder, "m", S, C, None).unwrap();
         // A build log row is owned by its repository, never by the master that happens to hold the file.
         assert_eq!(
             got,
@@ -752,7 +754,7 @@ mod tests {
         testutil::write(&fx.master, "stray.txt", "x");
         testutil::write(&fx.master, &other, text);
         testutil::write(&fx.master, &elsewhere, text);
-        let got = participants(&fx.folder, "m", S, C, None).unwrap();
+        let got = participants(testutil::plugin_dir(), &fx.folder, "m", S, C, None).unwrap();
         // Only this change's rows are build log data: another change's row is an ordinary file of
         // the master, whichever repository its name matches.
         let mut files = vec![other.as_str(), elsewhere.as_str(), "stray.txt"];
@@ -772,14 +774,23 @@ mod tests {
         let fx = fixture_with(&[("T1", "app")], &["app", "api"], &["app", "api"]);
         let names = |p: Vec<Participant>| p.into_iter().map(|p| p.repo).collect::<Vec<_>>();
         assert_eq!(
-            names(participants(&fx.folder, "m", S, C, None).unwrap()),
+            names(participants(testutil::plugin_dir(), &fx.folder, "m", S, C, None).unwrap()),
             ["m", "app"]
         );
         assert_eq!(
-            names(participants(&fx.folder, "m", S, C, Some("api")).unwrap()),
+            names(
+                participants(testutil::plugin_dir(), &fx.folder, "m", S, C, Some("api")).unwrap()
+            ),
             ["m", "app", "api"]
         );
-        let out = participants(&fx.folder, "m", S, C, Some("nowhere"));
+        let out = participants(
+            testutil::plugin_dir(),
+            &fx.folder,
+            "m",
+            S,
+            C,
+            Some("nowhere"),
+        );
         assert!(matches!(out, Err(BuildError::Refused(_))), "{out:?}");
     }
 
@@ -789,15 +800,26 @@ mod tests {
         testutil::checkout(&fx.repo("app"), &format!("change/{C}"), true);
         // The master is never named: it holds the change's documents whatever branch it is on.
         assert_eq!(
-            crate::participants::missing_change_branches(&fx.folder, "m", S, C).unwrap(),
+            crate::participants::missing_change_branches(
+                testutil::plugin_dir(),
+                &fx.folder,
+                "m",
+                S,
+                C
+            )
+            .unwrap(),
             ["api"]
         );
         testutil::checkout(&fx.repo("api"), &format!("change/{C}"), true);
-        assert!(
-            crate::participants::missing_change_branches(&fx.folder, "m", S, C)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(crate::participants::missing_change_branches(
+            testutil::plugin_dir(),
+            &fx.folder,
+            "m",
+            S,
+            C
+        )
+        .unwrap()
+        .is_empty());
     }
 
     /// A fixture whose repository "api" has all its tasks finished and is not checked out.
@@ -817,10 +839,10 @@ mod tests {
         let fx = finished_api_missing();
         let names = |p: Vec<Participant>| p.into_iter().map(|p| p.repo).collect::<Vec<_>>();
         assert_eq!(
-            names(participants(&fx.folder, "m", S, C, None).unwrap()),
+            names(participants(testutil::plugin_dir(), &fx.folder, "m", S, C, None).unwrap()),
             ["m", "app"]
         );
-        let out = participants(&fx.folder, "m", S, C, Some("api"));
+        let out = participants(testutil::plugin_dir(), &fx.folder, "m", S, C, Some("api"));
         let Err(BuildError::Refused(msg)) = out else {
             panic!("a round aimed at a repository that is not checked out must be refused: {out:?}")
         };
@@ -860,11 +882,27 @@ mod tests {
         assert!(msg.contains(".."), "{msg}");
         assert_eq!(branch_of(&fx.repo("app")), "main");
         assert!(matches!(
-            prepare(&fx.folder, "../m", S, C, false, None),
+            prepare(
+                testutil::plugin_dir(),
+                &fx.folder,
+                "../m",
+                S,
+                C,
+                false,
+                None
+            ),
             Err(BuildError::Refused(_))
         ));
         assert!(matches!(
-            prepare(&fx.folder, "m", "../s", C, false, None),
+            prepare(
+                testutil::plugin_dir(),
+                &fx.folder,
+                "m",
+                "../s",
+                C,
+                false,
+                None
+            ),
             Err(BuildError::Refused(_))
         ));
     }
