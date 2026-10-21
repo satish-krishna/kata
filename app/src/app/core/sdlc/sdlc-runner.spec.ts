@@ -633,6 +633,15 @@ describe('SdlcRunner build', () => {
       await finished;
     });
 
+    it.each(['D:\\ws\\claims-intent', 'D:\\ws\\claims-intent\\'])('a Windows master path %s names its repository in the participants call', async (master) => {
+      const ctx = setup();
+      const core = ctx.runner.runInRepo(CORE, seedSpec(), { ...LINK, master });
+      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
+      end(ctx, 'r1', 'warning', 124);
+      await drive(core);
+      expect(ctx.fake.sdlcBuildParticipants).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', null);
+    });
+
     it('a build log row that was already unsaved before the run is listed as changed before and during it (R6.6)', async () => {
       const ctx = setup();
       const row = 'intent/claims/2026-10-12-fnol/build/claims-core.md';
