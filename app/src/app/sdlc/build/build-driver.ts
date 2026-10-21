@@ -234,7 +234,7 @@ export class BuildDriver {
       this.reviewing = false;
       if (end.exit !== 0 || end.error) {
         this.compare = null;
-        this.markStopped(REVIEW, REVIEW, stopMessage(end.exit, end.error));
+        this.markStopped(REVIEW, REVIEW, stopMessage(end.exit, end.error, run.cancelled));
       }
     } else {
       const outcome = await this.judge(key, task, end, run.cancelled, isRound);
@@ -275,7 +275,7 @@ export class BuildDriver {
       outcome = HELD;
       why = ' · could not tell where the build stands';
     }
-    if (outcome.kind === 'stop') this.stopAtCurrentTask(repo, task, now, end, outcome.held === true, why);
+    if (outcome.kind === 'stop') this.stopAtCurrentTask(repo, task, now, end, cancelled, outcome.held === true, why);
     return outcome;
   }
 
@@ -285,12 +285,13 @@ export class BuildDriver {
     launchedOn: string,
     now: BuildStatus['repos'][number] | undefined,
     end: RunEnd,
+    cancelled: boolean,
     held: boolean,
     why: string,
   ): void {
     // A repository with every task recorded has no task: `look` sees '' for it, so the stop must match that.
     const current = now?.state.kind === 'ready' || now?.state.kind === 'waiting' ? now.state.task : now?.state.kind === 'done' ? '' : launchedOn;
-    this.markStopped(repo, current, stopMessage(end.exit, end.error) + why, held);
+    this.markStopped(repo, current, stopMessage(end.exit, end.error, cancelled) + why, held);
   }
 }
 

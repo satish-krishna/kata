@@ -417,7 +417,7 @@ describe("stopMessage", () => {
     expect(stopMessage(1, null, true)).toBe("Stopped: cancelled");
     expect(stopMessage(124, null, true)).toBe("Stopped: cancelled");
     expect(stopMessage(null, null, true)).toBe("Stopped: cancelled");
-    expect(stopMessage(1, "boom", true)).toBe("Stopped: cancelled · boom");
+    expect(stopMessage(1, "boom", true)).toBe("Stopped: cancelled");
   });
 });
 

@@ -158,9 +158,9 @@ export function canBuild(catalog: CatalogEntry[], version: string | null): boole
   return true;
 }
 
-/** The text of a repository's stop, by the exit code the engine reported (R6.1). */
+/** The text of a repository's stop (R6.1). The cancelled fact decides first, and a cancelled stop carries no error text; the exit code only tells the other stops apart. */
 export function stopMessage(exit: number | null, error: string | null, cancelled = false): string {
-  void cancelled;
+  if (cancelled) return "Stopped: cancelled";
   const base =
     exit === 124 ? "Stopped: reached the time limit"
     : exit === 130 ? "Stopped: cancelled"
