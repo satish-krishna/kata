@@ -27471,7 +27471,7 @@ import { basename, dirname as dirname2, resolve as resolve2 } from "node:path";
 
 // src/change.ts
 function fieldLine(task, key) {
-  const re = new RegExp(`^${key}s*:`);
+  const re = new RegExp(`^${key}\\s*:`);
   const at = task.text.split("\n").findIndex((l) => re.test(l));
   return at < 0 ? task.line : task.line + at;
 }
@@ -27633,6 +27633,19 @@ function yamlBlock(doc, from, limit) {
   }
   return { text: doc.lines.slice(open + 1, close).join("\n"), open, first: open + 1, last: close - 1 };
 }
+function reportUnread(doc, file, problems, headings, claimed) {
+  const found = [];
+  doc.lines.forEach((line, index) => {
+    if (doc.fenced[index]) return;
+    const heading = headings.find((h) => h.prefix.test(line));
+    if (heading && !heading.strict.test(line)) {
+      found.push({ file, line: index + 1, message: `heading "${line.trimEnd()}" is not ${heading.what}` });
+    } else if (/^\s*```yaml\s*$/.test(line) && !claimed.has(index)) {
+      found.push({ file, line: index + 1, message: "yaml block is not part of any record" });
+    }
+  });
+  problems.push(...found);
+}
 function keyLine(doc, block, key) {
   const re = new RegExp(`^${key}\\s*:`);
   for (let i = block.first; i <= block.last; i++) if (re.test(doc.lines[i])) return i + 1;
@@ -27787,7 +27800,7 @@ function entryEnd(doc, heads, n) {
   const head = heads[n];
   return nextHeading(doc, head.index + 1, heads[n + 1]?.index ?? doc.lines.length, ANY_HEADING);
 }
-function readEntries(doc, file, problems) {
+function readEntries(doc, file, problems, claimed) {
   const heads = entryHeads(doc);
   const out = [];
   heads.forEach((h, n) => {
@@ -27800,6 +27813,7 @@ function readEntries(doc, file, problems) {
       problems.push({ file, line, message: `${who} has no fields block` });
       return;
     }
+    claimed.add(block.open);
     const fields = parseFields(block, who, file, problems);
     if (!fields) return;
     const f = fields.values;
@@ -27829,7 +27843,10 @@ function readBuildLog(text, file) {
       withEntries = true;
     }
   }
-  const rows = [...tableRows(doc), ...withEntries ? readEntries(doc, file, problems) : []].sort((a, b) => a.line - b.line);
+  const claimed = /* @__PURE__ */ new Set();
+  const entries = withEntries ? readEntries(doc, file, problems, claimed) : [];
+  if (withEntries) reportUnread(doc, file, problems, [{ prefix: /^### T/, strict: ENTRY_HEADING, what: "an entry heading" }], claimed);
+  const rows = [...tableRows(doc), ...entries].sort((a, b) => a.line - b.line);
   const seen = /* @__PURE__ */ new Map();
   for (const r of rows) {
     const key = `${r.repo}|${r.task}`;
@@ -27910,8 +27927,8 @@ var plan_task_schema_default = {
     depends_on: { type: "array", items: { type: "string", pattern: "^T[0-9]+$" } },
     uses: { type: "array", items: { type: "string", minLength: 1 } },
     files: { type: "array", items: { type: "string", minLength: 1 } },
-    covers: { type: "array", items: { type: "string", pattern: "^R[0-9]+\\.[0-9]+$" } },
-    supports: { type: "array", items: { type: "string", pattern: "^R[0-9]+\\.[0-9]+$" } }
+    covers: { type: "array", items: { type: "string", pattern: "^R[0-9]+(\\.[0-9]+)?$" } },
+    supports: { type: "array", items: { type: "string", pattern: "^R[0-9]+(\\.[0-9]+)?$" } }
   },
   additionalProperties: false
 };
@@ -27963,7 +27980,7 @@ function headingSections(doc, from, end) {
   }
   return out;
 }
-function readTasks2(doc, heads, file, problems, repos, system) {
+function readTasks2(doc, heads, file, problems, repos, system, claimed) {
   const tasks = [];
   heads.forEach((h, n) => {
     const limit = heads[n + 1]?.index ?? doc.lines.length;
@@ -27990,6 +28007,7 @@ function readTasks2(doc, heads, file, problems, repos, system) {
     if (!block) {
       problem(line, `task ${h.id} has no fields block`);
     } else {
+      claimed.add(block.open);
       let fields;
       let parsed = true;
       try {
@@ -28087,7 +28105,7 @@ function decisions1(doc) {
   }
   return out;
 }
-function decisions2(doc, file, problems) {
+function decisions2(doc, file, problems, claimed) {
   const section = sharedSection(doc);
   if (!section) return [];
   const problem = (line, message) => {
@@ -28098,6 +28116,7 @@ function decisions2(doc, file, problems) {
     problem(section.heading + 1, "shared decisions are not a yaml list");
     return [];
   }
+  claimed.add(block.open);
   let list;
   try {
     list = (0, import_yaml3.parse)(block.text);
@@ -28149,8 +28168,11 @@ function readPlan(text, file, marker) {
   }
   const system = typeof data["system"] === "string" ? data["system"] : "";
   const repos = marker?.systems[system]?.repos ?? null;
-  const tasks = readTasks2(doc, heads, file, problems, repos, system);
-  return { kind: "plan", layout, document: { tasks, shared_decisions: decisions2(doc, file, problems) }, problems };
+  const claimed = /* @__PURE__ */ new Set();
+  const tasks = readTasks2(doc, heads, file, problems, repos, system, claimed);
+  const shared_decisions = decisions2(doc, file, problems, claimed);
+  reportUnread(doc, file, problems, [{ prefix: /^### T/, strict: HEADING2, what: "a task heading" }], claimed);
+  return { kind: "plan", layout, document: { tasks, shared_decisions }, problems };
 }
 
 // src/review.ts
@@ -28197,7 +28219,7 @@ var validateHeader = ajv2.compile(review_header_schema_default);
 var validateFinding = ajv2.compile(finding_schema_default);
 var REVIEW_HEADING = /^## Review (\d+)\s*$/;
 var FINDING_HEADING = /^### (F\d+)\s*$/;
-function readFinding(doc, index, id, end, file, problems) {
+function readFinding(doc, index, id, end, file, problems, claimed) {
   const line = index + 1;
   const who = `finding ${id}`;
   const block = yamlBlock(doc, index + 1, end);
@@ -28205,6 +28227,7 @@ function readFinding(doc, index, id, end, file, problems) {
     problems.push({ file, line, message: `${who} has no fields block` });
     return null;
   }
+  claimed.add(block.open);
   const fields = parseFields(block, who, file, problems);
   if (!fields) return null;
   const f = fields.values;
@@ -28222,7 +28245,7 @@ function readFinding(doc, index, id, end, file, problems) {
     text: doc.lines.slice(block.last + 2, end).join("\n").trim()
   };
 }
-function readSection(doc, index, number, end, file, problems) {
+function readSection(doc, index, number, end, file, problems, claimed) {
   const section = { number, reviewed_at: "", commits: {}, findings: [] };
   const who = `review ${number}`;
   const firstFinding = nextHeading(doc, index + 1, end, /^### F\d+\s*$/);
@@ -28230,6 +28253,7 @@ function readSection(doc, index, number, end, file, problems) {
   if (!block) {
     problems.push({ file, line: index + 1, message: `${who} has no header block` });
   } else {
+    claimed.add(block.open);
     const fields = parseFields(block, who, file, problems);
     if (fields) {
       checkFields(validateHeader, fields.values, `${who} header`, block, file, problems, () => false);
@@ -28254,7 +28278,7 @@ function readSection(doc, index, number, end, file, problems) {
     if (first === void 0) seen.set(h.id, h.index + 1);
     else problems.push({ file, line: h.index + 1, message: `finding ${h.id} is recorded twice, first on line ${first}` });
     const limit = nextHeading(doc, h.index + 1, heads[n + 1]?.index ?? end, /^#{1,3} /);
-    const finding = readFinding(doc, h.index, h.id, limit, file, problems);
+    const finding = readFinding(doc, h.index, h.id, limit, file, problems, claimed);
     if (finding) section.findings.push(finding);
   });
   return section;
@@ -28271,13 +28295,25 @@ function readReview(text, file) {
     const m = doc.fenced[index] ? null : REVIEW_HEADING.exec(line);
     if (m) heads.push({ index, number: Number(m[1]) });
   });
+  const claimed = /* @__PURE__ */ new Set();
+  if (heads.length === 0) problems.push({ file, line: 1, message: "review document has no review section" });
   const reviews = heads.map((h, n) => {
     if (h.number !== n + 1) {
       problems.push({ file, line: h.index + 1, message: `review ${h.number} is out of order, expected review ${n + 1}` });
     }
     const end = nextHeading(doc, h.index + 1, doc.lines.length, /^#{1,2} /);
-    return readSection(doc, h.index, h.number, end, file, problems);
+    return readSection(doc, h.index, h.number, end, file, problems, claimed);
   });
+  reportUnread(
+    doc,
+    file,
+    problems,
+    [
+      { prefix: /^## Review/, strict: REVIEW_HEADING, what: "a review heading" },
+      { prefix: /^### F/, strict: FINDING_HEADING, what: "a finding heading" }
+    ],
+    claimed
+  );
   return { kind: "review", layout, document: { reviews }, problems };
 }
 

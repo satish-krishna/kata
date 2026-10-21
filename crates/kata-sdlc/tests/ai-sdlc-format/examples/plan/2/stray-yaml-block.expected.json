@@ -1,0 +1,42 @@
+{
+  "kind": "plan",
+  "layout": 2,
+  "document": {
+    "tasks": [
+      {
+        "id": "T1",
+        "name": "first",
+        "repo": "app",
+        "depends_on": [],
+        "uses": [],
+        "files": [],
+        "covers": [],
+        "supports": [],
+        "sections": [
+          {
+            "title": "Change",
+            "body": "Change it.\n\n```yaml\nnote: not a record\n```"
+          },
+          {
+            "title": "Tests",
+            "body": "Test it first."
+          },
+          {
+            "title": "Done when",
+            "body": "It works."
+          }
+        ],
+        "text": "### T1: first\n\n```yaml\nid: T1\nrepo: app\n```\n\n#### Change\n\nChange it.\n\n```yaml\nnote: not a record\n```\n\n#### Tests\n\nTest it first.\n\n#### Done when\n\nIt works.",
+        "line": 10
+      }
+    ],
+    "shared_decisions": []
+  },
+  "problems": [
+    {
+      "file": "plan.md",
+      "line": 21,
+      "message": "yaml block is not part of any record"
+    }
+  ]
+}

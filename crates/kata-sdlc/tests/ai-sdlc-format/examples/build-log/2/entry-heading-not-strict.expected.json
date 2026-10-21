@@ -1,0 +1,29 @@
+{
+  "kind": "build-log",
+  "layout": 2,
+  "document": {
+    "repo": "entry-heading-not-strict",
+    "entries": [
+      {
+        "task": "T1",
+        "commits": [
+          "abc1234"
+        ],
+        "departure": null,
+        "line": 7
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "build/entry-heading-not-strict.md",
+      "line": 14,
+      "message": "heading \"### T2: second\" is not an entry heading"
+    },
+    {
+      "file": "build/entry-heading-not-strict.md",
+      "line": 16,
+      "message": "yaml block is not part of any record"
+    }
+  ]
+}

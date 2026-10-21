@@ -1,0 +1,24 @@
+{
+  "kind": "build-log",
+  "layout": 2,
+  "document": {
+    "repo": "stray-yaml-block",
+    "entries": [
+      {
+        "task": "T1",
+        "commits": [
+          "abc1234"
+        ],
+        "departure": null,
+        "line": 7
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "build/stray-yaml-block.md",
+      "line": 16,
+      "message": "yaml block is not part of any record"
+    }
+  ]
+}
