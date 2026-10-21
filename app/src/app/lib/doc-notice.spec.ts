@@ -57,6 +57,14 @@ describe('shownBuild', () => {
     expect(got.notice).toEqual(warn('This document does not follow the layout', lines));
   });
 
+  it('names the file of each problem when the problems span more than one document (F22)', () => {
+    const plan: Problem = { file: 'plan.md', line: 5, message: 'task has no repository' };
+    const log: Problem = { file: 'build/kata.md', line: 5, message: 'entry recorded twice' };
+    const expected = warn('This document does not follow the layout', ['plan.md line 5: task has no repository', 'build/kata.md line 5: entry recorded twice']);
+    expect(shownBuild([{ layout: 2, problems: [plan, log] }], ready).notice).toEqual(expected);
+    expect(shownBuild([{ layout: 2, problems: [plan] }, { layout: 2, problems: [log] }], ready).notice).toEqual(expected);
+  });
+
   it('problems with no layout of their own still show', () => {
     expect(shownBuild([current, { layout: null, problems }], ready).notice).toEqual(warn('This document does not follow the layout', lines));
   });
