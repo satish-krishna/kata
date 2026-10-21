@@ -202,6 +202,26 @@ impl Committed {
     }
 }
 
+/// The text of `path` as committed at `HEAD`; `None` when `HEAD` does not hold it.
+fn committed_file(master: &Path, path: &str) -> Result<Option<String>, GitError> {
+    if git::run(master, &["ls-tree", "--name-only", "HEAD", "--", path])?.is_empty() {
+        return Ok(None);
+    }
+    git::run(master, &["show", &format!("HEAD:{path}")]).map(Some)
+}
+
+/// Writes `text` to `file`, or removes `file` when there is none.
+fn stage_or_remove(file: &Path, text: Option<&str>) {
+    match text {
+        Some(text) => {
+            let _ = put(file, text);
+        }
+        None => {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+}
+
 /// One reader at a time: the staged files are shared by every read of the same change.
 pub(crate) static READING: Mutex<()> = Mutex::new(());
 
@@ -235,9 +255,16 @@ fn read_committed(
         .map(|p| Ok((p, git::run(master, &["show", &format!("HEAD:{p}")])?)))
         .collect::<Result<_, GitError>>()?;
 
+    let spec = committed_file(master, &format!("{}/spec.md", change_dir(system, change)))?;
+    let marker = committed_file(master, crate::workspace::MARKER)?;
+
     let _one_reader = READING.lock().unwrap_or_else(|e| e.into_inner());
     let stage = staging_dir(master, system, change);
     put(&stage.join("plan.md"), &plan)?;
+    // The spec lets the check find a task covering something the spec does not hold; the marker, which the
+    // program finds by walking up from the plan, lets it find a repository the system does not list.
+    stage_or_remove(&stage.join("spec.md"), spec.as_deref());
+    stage_or_remove(&stage.join(crate::workspace::MARKER), marker.as_deref());
     let build = stage.join("build");
     for (path, text) in &texts {
         put(&build.join(format!("{}.md", log_repo(path))), text)?;
@@ -263,6 +290,7 @@ fn read_committed(
             "plan.md was not read as a plan".into(),
         )));
     };
+    let mut plan_problems = plan_problems;
     let mut logs = Vec::new();
     let mut log_layouts = Vec::new();
     let mut log_problems = Vec::new();
@@ -277,6 +305,28 @@ fn read_committed(
             ))));
         };
         logs.push(document);
+    }
+    // A document in a layout this Workbench cannot read is refused by the gate before anything else, and
+    // the checks across documents mean nothing for it.
+    let readable = std::iter::once(&plan_layout)
+        .chain(&log_layouts)
+        .all(|l| format::ACCEPTED_LAYOUTS.contains(l));
+    if readable {
+        let mut documents = vec!["plan.md".to_string()];
+        if spec.is_some() {
+            documents.push("spec.md".into());
+        }
+        documents.extend(
+            texts
+                .iter()
+                .map(|(p, _)| format!("build/{}.md", log_repo(p))),
+        );
+        let documents: Vec<&str> = documents.iter().map(String::as_str).collect();
+        // The check repeats every problem a document has on its own, so it replaces what the reads found.
+        let found = format::check_change(&program, &stage, &documents).map_err(unreadable)?;
+        (log_problems, plan_problems) = found
+            .into_iter()
+            .partition(|p| p.file.starts_with("build/"));
     }
     Ok(Committed {
         tasks: document.tasks,
