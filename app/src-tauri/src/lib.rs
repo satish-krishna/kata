@@ -931,4 +931,59 @@ mod tests {
             Duration::from_millis(10)
         ));
     }
+
+    /// F8: every command resolves the plugin the way readiness does, from the workspace folder (the master
+    /// path's parent), so a project-scoped plugin there is the one that reads, builds and shows the notice.
+    #[test]
+    fn commands_resolve_the_same_plugin_as_readiness_f8() {
+        // The catalog reads the user scope from HOME; point it at an empty folder so the machine's own
+        // plugins cannot answer. Nothing else in this test binary reads HOME.
+        static HOME: Mutex<()> = Mutex::new(());
+        let _guard = HOME.lock().unwrap();
+        let root = std::env::temp_dir().join(format!("kata-f8-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let workspace = root.join("ws");
+        let master = workspace.join("master");
+        let plugin = workspace.join(".claude").join("plugins").join("ai-sdlc");
+        std::fs::create_dir_all(master.join("intent")).unwrap();
+        std::fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
+        std::fs::create_dir_all(plugin.join("skills").join("build")).unwrap();
+        std::fs::write(
+            plugin.join("skills").join("build").join("SKILL.md"),
+            "---
+name: build
+---
+",
+        )
+        .unwrap();
+        std::fs::write(
+            plugin.join(".claude-plugin").join("plugin.json"),
+            r#"{"name":"ai-sdlc","version":"0.8.0"}"#,
+        )
+        .unwrap();
+        let empty_home = root.join("home");
+        std::fs::create_dir_all(&empty_home).unwrap();
+        let saved: Vec<_> = ["HOME", "USERPROFILE"]
+            .iter()
+            .map(|k| (*k, std::env::var_os(k)))
+            .collect();
+        for (k, _) in &saved {
+            std::env::set_var(k, &empty_home);
+        }
+
+        let readiness = ai_sdlc_readiness(Some(workspace.to_str().unwrap()));
+        let resolved = ai_sdlc_dir(master.to_str().unwrap());
+
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        let sdlc::plugin::Readiness::Ready { dir, .. } = readiness else {
+            panic!("the workspace's own plugin should be ready, got {readiness:?}");
+        };
+        assert_eq!(resolved, Ok(dir));
+    }
 }

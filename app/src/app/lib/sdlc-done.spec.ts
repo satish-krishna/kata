@@ -54,6 +54,22 @@ describe('reviewState', () => {
   });
 });
 
+describe('reviewState with a review document', () => {
+  const section = { number: 1, reviewed_at: '2026-10-19', commits: { a: '1111111' }, findings: [] };
+  const problem = { file: 'build/review.md', line: 14, message: 'finding F1 has no file' };
+
+  it('is current for a document that passes', () => {
+    const document = { layout: 2, reviews: [section], problems: [] };
+    expect(reviewState([], [], HEADS, SCOPE, document, 'm')).toMatchObject({ kind: 'current-document' });
+  });
+
+  it('a review document with problems is not a current review, so done stays blocked (F6)', () => {
+    const document = { layout: 2, reviews: [section], problems: [problem] };
+    expect(reviewState([], [], HEADS, SCOPE, document, 'm')).toEqual({ kind: 'invalid' });
+    expect(reviewState([link()], [record('r1', 0)], HEADS, SCOPE, document, 'm')).toEqual({ kind: 'invalid' });
+  });
+});
+
 describe('checkLabel', () => {
   it('names each outcome', () => {
     expect(checkLabel(checks(result('Passed')))).toBe('passed');

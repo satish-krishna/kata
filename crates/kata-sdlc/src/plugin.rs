@@ -105,6 +105,17 @@ mod tests {
         }
     }
 
+    /// F15: the layouts the Workbench accepts travel with a ready plugin, so the frontend tests membership.
+    #[test]
+    fn a_ready_plugin_carries_the_accepted_layouts_f15() {
+        let current = plugin_with(Some(r#"{"name":"ai-sdlc","version":"0.8.0"}"#));
+        let json = serde_json::to_value(readiness(Some(current.path()))).unwrap();
+        assert_eq!(
+            json["layouts"],
+            serde_json::json!(crate::format::ACCEPTED_LAYOUTS)
+        );
+    }
+
     #[test]
     fn readiness_reports_ready_missing_and_too_old() {
         let current = plugin_with(Some(r#"{"name":"ai-sdlc","version":"0.8.0"}"#));

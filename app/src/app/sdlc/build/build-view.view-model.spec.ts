@@ -387,8 +387,21 @@ describe('BuildViewModel', () => {
       commits: { 'claims-core': 'aaaaaaa' },
       findings: findings.map((f) => ({ ...f, file: 'src/a.ts', line: 4 })),
     });
-    const withDocument = (transport: MockTransport, ...reviews: ReturnType<typeof section>[]) =>
-      vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({ layout: 2, reviews, problems: [] });
+    /** What the format program reports about the review document; none unless a test sets it. */
+    let documentProblems: { file: string; line: number; message: string }[] = [];
+    beforeEach(() => {
+      documentProblems = [];
+    });
+    /** The review document as the plugin leaves it: no review until the review run starts, then `reviews`. */
+    const withDocument = (transport: MockTransport, ...reviews: ReturnType<typeof section>[]) => {
+      let reviewed = false;
+      const runSpec = transport.runSpec.bind(transport);
+      vi.spyOn(transport, 'runSpec').mockImplementation((...args: Parameters<MockTransport['runSpec']>) => {
+        if (args[0].name === REVIEW_NAME) reviewed = true;
+        return runSpec(...args);
+      });
+      return vi.spyOn(transport, 'sdlcReviewRecord').mockImplementation(async () => ({ layout: 2, reviews: reviewed ? reviews : [], problems: reviewed ? documentProblems : [] }));
+    };
     const shown = (vm: BuildViewModel) => () => vm.phase() === 'finished' && vm.reviewShown();
 
     it('findings come from review.md, not the run words (R14.2)', async () => {
@@ -422,15 +435,37 @@ describe('BuildViewModel', () => {
       expect(vm.replaced().map((r) => [r.label, r.findings.map((f) => f.text)])).toEqual([['Review 1 of 2026-10-18', ['one']]]);
     });
 
-    it('a change without review.md reads the run words, labeled older (R16.1)', async () => {
+    it('a review run that leaves no review document says the review did not record its findings (F14)', async () => {
       const { vm, transport, lock } = setup();
+      vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(null);
       await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, finished(vm));
-      expect(vm.findings().map((f) => f.text)).toEqual([
-        'The upload limit is duplicated in claims-core and customer-portal.',
-        'The refusal message has no test.',
-      ]);
-      expect(vm.older()).toBe(true);
+      await drive(vm, lock, shown(vm));
+      expect(vm.findings()).toEqual([]);
+      expect(vm.emptyText()).toBe('The review did not record its findings');
+      expect(vm.older()).toBe(false);
+    });
+
+    it('a review run that adds no section does not show the previous review as current (F14)', async () => {
+      const { vm, transport, lock } = setup();
+      vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({
+        layout: 2,
+        reviews: [section(1, '2026-10-18', [{ id: 'F1', severity: 'high', text: 'one' }])],
+        problems: [],
+      });
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.findings()).toEqual([]);
+      expect(vm.emptyText()).toBe('The review did not record its findings');
+    });
+
+    it('a review whose findings failed their schema shows its problems above the findings (F6)', async () => {
+      const { vm, transport, lock } = setup();
+      documentProblems = [{ file: 'build/review.md', line: 12, message: 'finding F1 has no file' }];
+      withDocument(transport, section(1, '2026-10-19', []));
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      const problems = (vm as unknown as { reviewProblems?: () => string[] }).reviewProblems;
+      expect(problems?.()).toEqual(['line 12: finding F1 has no file']);
     });
   });
 

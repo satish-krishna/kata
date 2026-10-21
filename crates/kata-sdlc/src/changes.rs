@@ -637,6 +637,70 @@ mod tests {
         assert_eq!(got[0].out_of_date, Some(OutOfDate::SpecPin));
     }
 
+    /// F5: a plan the program could not read (no usable plugin here) is not a plan with no tasks.
+    #[test]
+    fn an_unreadable_plan_is_not_a_plan_with_no_tasks_f5() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let dir = "intent/claims/2026-10-12-fnol";
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/intent.md"),
+            "---
+status: accepted
+---
+intent
+",
+            "intent",
+        );
+        let intent_pin = git::run(&repo, &["rev-parse", "HEAD"]).unwrap();
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/spec.md"),
+            &format!(
+                "---
+status: accepted
+source_intent_commit: {intent_pin}
+---
+spec
+"
+            ),
+            "spec",
+        );
+        let spec_pin = git::run(&repo, &["rev-parse", "HEAD"]).unwrap();
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/plan.md"),
+            &format!(
+                "---
+status: accepted
+source_spec_commit: {spec_pin}
+---
+
+## Tasks
+
+### T1: One (`app`)
+
+- **Depends on:** none
+"
+            ),
+            "plan",
+        );
+        // No plugin: nothing could read the plan.
+        let got = list(None, &repo, "claims");
+        let json = serde_json::to_value(&got[0]).unwrap();
+        assert_ne!(
+            json["out_of_date"],
+            serde_json::json!("no-tasks"),
+            "an unreadable plan was reported as having no tasks"
+        );
+        assert_eq!(json["plan_unreadable"], serde_json::json!(true));
+        // With the plugin, the same plan reads and is not flagged.
+        let got = list(Some(testutil::plugin_dir()), &repo, "claims");
+        let json = serde_json::to_value(&got[0]).unwrap();
+        assert_eq!(json["plan_unreadable"], serde_json::json!(false));
+    }
+
     #[test]
     fn list_skips_non_change_folders() {
         let tmp = tempfile::tempdir().unwrap();

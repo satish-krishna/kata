@@ -23,7 +23,16 @@ const text = (e: Element | null) => e?.textContent?.replace(/\s+/g, ' ').trim() 
 const PROSE = (title: string) => `---\nstatus: accepted\n---\n# ${title}\n\nWords only.\n`;
 const READY: Readiness = { kind: 'ready', dir: '~/.claude/plugins/ai-sdlc', version: '0.8.0' };
 
-type Setup = { readiness?: Readiness; spec?: ReadResult; plan?: ReadResult; logLayouts?: { repo: string; layout: number }[] };
+type Setup = {
+  readiness?: Readiness;
+  spec?: ReadResult;
+  plan?: ReadResult;
+  logLayouts?: { repo: string; layout: number }[];
+  /** What the format program reported across the plan and the build logs. */
+  buildProblems?: Problem[];
+  /** Stems the program cannot read: its rejection carries the message. */
+  unreadable?: Record<string, string>;
+};
 
 async function open(setup: Setup) {
   const transport = new MockTransport();
@@ -35,10 +44,15 @@ async function open(setup: Setup) {
   vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(setup.readiness ?? READY);
   if (setup.logLayouts) {
     const status = transport.sdlcBuildStatus.bind(transport);
-    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (...args) => ({ ...(await status(...args)), logLayouts: setup.logLayouts }) as never);
+    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(
+      async (...args) => ({ ...(await status(...args)), logLayouts: setup.logLayouts, problems: setup.buildProblems ?? [] }) as never,
+    );
   }
   const documents: Record<string, ReadResult> = { spec: setup.spec ?? parsedSpec(), plan: setup.plan ?? parsedPlan() };
-  vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_m, _s, _c, stem) => documents[stem] ?? null);
+  vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_m, _s, _c, stem) => {
+    if (setup.unreadable?.[stem] !== undefined) throw new Error(setup.unreadable[stem]);
+    return documents[stem] ?? null;
+  });
   const view = await render(ChangePage, {}, [
     provideRouter([]),
     { provide: KataTransport, useValue: transport },
@@ -100,5 +114,30 @@ describe('ChangePage document notices', () => {
     await old.tab('Spec');
     expect(text(old.notice())).toContain('Update the ai-sdlc plugin to 0.8.0 or later');
     expect(old.requirements()).toBe(0);
+  });
+
+  it('a layout 1 spec with problems shows the warning and the problems, not the older-layout label (F3)', async () => {
+    const problems: Problem[] = [{ file: 'spec.md', line: 7, message: 'no layout version' }];
+    const page = await open({ spec: { ...parsedSpec(), layout: 1, problems } as ReadResult });
+    await page.tab('Spec');
+    expect(text(page.notice())).toContain('line 7: no layout version');
+    expect(page.notice()!.className).toContain('wb-banner--warn');
+    expect(page.requirements()).toBe(NUMBERS.requirements);
+  });
+
+  it('an older build log does not hide the problems of the others on the Build tab (F3)', async () => {
+    const buildProblems: Problem[] = [{ file: 'build/app.md', line: 9, message: 'task T2 is recorded twice' }];
+    const page = await open({ logLayouts: [{ repo: 'app', layout: 2 }, { repo: 'api', layout: 1 }], buildProblems });
+    await page.tab('Build');
+    expect(text(page.notice())).toContain('line 9: task T2 is recorded twice');
+    expect(text(page.notice())).not.toBe('Older layout');
+  });
+
+  it("a spec the program cannot read is shown as plain text with the program's message (F4)", async () => {
+    const page = await open({ unreadable: { spec: 'front matter is not closed' } });
+    await page.tab('Spec');
+    expect(text(page.notice())).toContain('front matter is not closed');
+    expect(page.notice()!.className).toContain('wb-banner--warn');
+    expect(page.requirements()).toBe(0);
   });
 });
