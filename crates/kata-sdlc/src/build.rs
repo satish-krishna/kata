@@ -450,6 +450,7 @@ pub fn unsaved_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugin::Readiness;
     use crate::testutil;
 
     const SYS: &str = "claims";
@@ -1020,5 +1021,210 @@ mod tests {
         });
         let st = status(testutil::plugin_dir(), &master, SYS, CHG).unwrap();
         assert!(st.tasks.iter().all(|t| t.row.is_some()), "{st:?}");
+    }
+
+    // ---- the build gate (R8, R10.1) ----
+
+    const VALID_PLAN: &str = include_str!("../tests/ai-sdlc-format/examples/plan/2/valid.md");
+    const PLAN_WITHOUT_TESTS: &str =
+        include_str!("../tests/ai-sdlc-format/examples/plan/2/task-without-tests-section.md");
+    const VALID_LOG: &str = include_str!("../tests/ai-sdlc-format/examples/build-log/2/valid.md");
+    const LOG_WITH_TWICE: &str =
+        include_str!("../tests/ai-sdlc-format/examples/build-log/2/entry-recorded-twice.md");
+
+    /// A stand-in plugin folder whose format program answers every read with an empty document: a
+    /// plan in `plan_layout` and a build log in `log_layout`.
+    fn plugin_reading(plan_layout: u32, log_layout: u32) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let format = dir.path().join("format");
+        std::fs::create_dir_all(&format).unwrap();
+        std::fs::write(
+            format.join("check.mjs"),
+            format!(
+                "const file = process.argv[4] ?? '';\n\
+                 const plan = file.endsWith('plan.md');\n\
+                 const document = plan ? {{ tasks: [], shared_decisions: [] }} : {{ repo: 'app', entries: [] }};\n\
+                 console.log(JSON.stringify({{ kind: plan ? 'plan' : 'build-log', layout: plan ? {plan_layout} : {log_layout}, document, problems: [] }}));\n"
+            ),
+        )
+        .unwrap();
+        dir
+    }
+
+    fn ready(dir: &Path) -> Readiness {
+        Readiness::Ready {
+            dir: dir.to_path_buf(),
+            version: "0.8.0".into(),
+        }
+    }
+
+    fn refuse(message: &str, problems: Vec<Problem>) -> Gate {
+        Gate::Refuse {
+            message: message.into(),
+            problems,
+        }
+    }
+
+    fn problem(file: &str, line: u32, message: &str) -> Problem {
+        Problem {
+            file: file.into(),
+            line,
+            message: message.into(),
+        }
+    }
+
+    #[test]
+    fn build_gate_refuses_each_action_with_the_problems_listed() {
+        let real = testutil::plugin_dir();
+        let newer_plan = plugin_reading(3, 1);
+        let newer_both = plugin_reading(3, 3);
+        let newer_log = plugin_reading(1, 3);
+        let plan_problem = problem("plan.md", 18, "task T1 has no Tests section");
+        let log_problem = problem(
+            "build/app.md",
+            14,
+            "entry T1 is recorded twice, first on line 7",
+        );
+        // (name, plugin, plan, logs, expected): the outline's rows, then the precedence between them.
+        let rows: Vec<(&str, Readiness, &str, Vec<(&str, &str)>, Gate)> = vec![
+            (
+                "plugin missing",
+                Readiness::Missing,
+                VALID_PLAN,
+                vec![],
+                refuse("Install the ai-sdlc plugin", vec![]),
+            ),
+            (
+                "plugin too old",
+                Readiness::TooOld {
+                    have: "0.7.9".into(),
+                    need: "0.8.0".into(),
+                },
+                VALID_PLAN,
+                vec![],
+                refuse("Update the ai-sdlc plugin to 0.8.0 or later", vec![]),
+            ),
+            (
+                "plugin missing wins over a failing plan and log",
+                Readiness::Missing,
+                PLAN_WITHOUT_TESTS,
+                vec![("app", LOG_WITH_TWICE)],
+                refuse("Install the ai-sdlc plugin", vec![]),
+            ),
+            (
+                "plan in a newer layout",
+                ready(newer_plan.path()),
+                VALID_PLAN,
+                vec![],
+                refuse("This plan needs a newer Workbench", vec![]),
+            ),
+            (
+                "plan in a newer layout wins over a log in a newer layout",
+                ready(newer_both.path()),
+                VALID_PLAN,
+                vec![("app", VALID_LOG)],
+                refuse("This plan needs a newer Workbench", vec![]),
+            ),
+            (
+                "plan with problems",
+                ready(real),
+                PLAN_WITHOUT_TESTS,
+                vec![],
+                refuse(
+                    "The plan does not pass the check",
+                    vec![plan_problem.clone()],
+                ),
+            ),
+            (
+                "plan with problems wins over a log with problems",
+                ready(real),
+                PLAN_WITHOUT_TESTS,
+                vec![("app", LOG_WITH_TWICE)],
+                refuse("The plan does not pass the check", vec![plan_problem]),
+            ),
+            (
+                "build log in a newer layout",
+                ready(newer_log.path()),
+                VALID_PLAN,
+                vec![("app", VALID_LOG)],
+                refuse("A build log needs a newer Workbench", vec![]),
+            ),
+            (
+                "build log with problems",
+                ready(real),
+                VALID_PLAN,
+                vec![("app", LOG_WITH_TWICE)],
+                refuse("A build log does not pass the check", vec![log_problem]),
+            ),
+            (
+                "plan and build log pass",
+                ready(real),
+                VALID_PLAN,
+                vec![("app", VALID_LOG)],
+                Gate::Admit,
+            ),
+            (
+                "plan passes and there is no build log yet",
+                ready(real),
+                VALID_PLAN,
+                vec![],
+                Gate::Admit,
+            ),
+        ];
+        for (name, plugin, plan, logs, expected) in rows {
+            let tmp = tempfile::tempdir().unwrap();
+            let master = master_with(tmp.path(), plan);
+            for (repo, text) in logs {
+                testutil::commit_file(
+                    &master,
+                    &format!("{DIR}/build/{repo}.md"),
+                    text,
+                    &format!("log {repo}"),
+                );
+            }
+            for action in [
+                BuildAction::Start,
+                BuildAction::Continue,
+                BuildAction::Round,
+            ] {
+                assert_eq!(
+                    gate(&plugin, &master, SYS, CHG, action).unwrap(),
+                    expected,
+                    "{name}, {action:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn build_gate_admits_once_the_plan_passes_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = master_with(tmp.path(), PLAN_WITHOUT_TESTS);
+        let plugin = ready(testutil::plugin_dir());
+        let plan = format!("{DIR}/plan.md");
+        let log = format!("{DIR}/build/app.md");
+        for action in [BuildAction::Start, BuildAction::Continue] {
+            assert!(matches!(
+                gate(&plugin, &master, SYS, CHG, action).unwrap(),
+                Gate::Refuse { .. }
+            ));
+        }
+        testutil::commit_file(&master, &plan, VALID_PLAN, "fix the plan");
+        testutil::commit_file(&master, &log, LOG_WITH_TWICE, "log with a repeat");
+        assert!(matches!(
+            gate(&plugin, &master, SYS, CHG, BuildAction::Continue).unwrap(),
+            Gate::Refuse { .. }
+        ));
+        testutil::commit_file(&master, &log, VALID_LOG, "fix the log");
+        for action in [
+            BuildAction::Start,
+            BuildAction::Continue,
+            BuildAction::Round,
+        ] {
+            assert_eq!(
+                gate(&plugin, &master, SYS, CHG, action).unwrap(),
+                Gate::Admit
+            );
+        }
     }
 }
