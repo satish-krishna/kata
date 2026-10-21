@@ -70,4 +70,22 @@ describe('SdlcToolbar', () => {
     await fixture.whenStable();
     expect(fixture.nativeElement.querySelector('#primary')).not.toBeNull();
   });
+
+  it('projects the stage pills after the branch and the links before settings', async () => {
+    @Component({
+      imports: [SdlcToolbar],
+      template: `<app-sdlc-toolbar [workspaces]="[]" [current]="null" [missing]="[]" [counts]="{}" branch="main" [crumbs]="['c1']">
+        <span id="links" toolbarLinks>PRs</span>
+        <span id="pills" toolbarStages>Pills</span>
+        <span id="primary">New change</span>
+      </app-sdlc-toolbar>`,
+    })
+    class Host {}
+    TestBed.configureTestingModule({ imports: [Host], providers: [provideRouter([])] });
+    const fixture = TestBed.createComponent(Host);
+    await fixture.whenStable();
+    const root = fixture.nativeElement as HTMLElement;
+    const order = Array.from(root.querySelectorAll('[data-testid="branch"], #pills, #links, button[aria-label="AI-SDLC settings"], #primary'));
+    expect(order.map((e) => e.id || e.getAttribute('data-testid') || e.getAttribute('aria-label'))).toEqual(['branch', 'pills', 'links', 'AI-SDLC settings', 'primary']);
+  });
 });

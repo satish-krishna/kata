@@ -549,4 +549,113 @@ describe('ChangePageViewModel', () => {
       expect(vm.buildTasks()).toEqual([]);
     });
   });
+
+  describe('the page chrome', () => {
+    const BUILD = MOCK_BUILD_CHANGE;
+    const finished = async () => {
+      const transport = new MockTransport();
+      withStage(transport, BUILD, 'build-finished');
+      await transport.sdlcPublish('f', 'claims-intent', 'claims', BUILD, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', BUILD));
+      return transport;
+    };
+
+    it('has no pills before the change is read, then the four from the stage', async () => {
+      const { vm } = setup(FNOL);
+      expect(vm.pills()).toEqual([]);
+      await ready(vm);
+      expect(vm.pills().map((p) => p.text)).toEqual(['Intent', 'Spec · awaiting acceptance', 'Plan · not started', 'Build · locked']);
+    });
+
+    it('opens the Build pill once the plan is accepted and a repository has the branch', async () => {
+      const { vm } = setup(BUILD);
+      await ready(vm);
+      expect(vm.pills()[3].disabled).toBe(false);
+    });
+
+    it('has no pills and no pull request links while a build is live', async () => {
+      const { vm } = setup(BUILD, await finished());
+      await ready(vm);
+      expect(vm.pills().length).toBe(4);
+      expect(vm.pullLinks().length).toBe(3);
+      await vm.submitBuild({ timeoutSecs: 5400, instructions: null, repo: null });
+      expect(vm.handoff()).not.toBeNull();
+      expect(vm.pills()).toEqual([]);
+      expect(vm.pullLinks()).toEqual([]);
+    });
+
+    it('lists each pull request that has an address, with its number', async () => {
+      const { vm } = setup(BUILD, await finished());
+      await ready(vm);
+      const links = vm.pullLinks();
+      expect(links.map((l) => l.repo)).toEqual(['claims-intent', 'claims-core', 'customer-portal']);
+      expect(links.every((l) => l.url.startsWith('https://') && /^\d+$/.test(l.number ?? ''))).toBe(true);
+    });
+
+    it('has no pull request links before any is open', async () => {
+      const { vm } = setup(FNOL);
+      await ready(vm);
+      expect(vm.pullLinks()).toEqual([]);
+    });
+
+    it('shows the branch chip only when the master repository is not on the change branch', async () => {
+      const { vm } = setup(FNOL);
+      await ready(vm);
+      expect(vm.branchChip()).toBe('main');
+    });
+
+    it('hides the branch chip when the master repository is on the change branch', async () => {
+      const transport = new MockTransport();
+      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: `change/${FNOL}`, others: [], default_base: 'main' });
+      const { vm } = setup(FNOL, transport);
+      await ready(vm);
+      expect(vm.masterBranch()).toBe(`change/${FNOL}`);
+      expect(vm.branchChip()).toBeNull();
+    });
+
+    it('reads the strip status from the open document front matter', async () => {
+      const { vm } = setup(FNOL);
+      await ready(vm);
+      expect(vm.stripStatus()).toEqual({ text: 'Draft', tone: 'warning' });
+      await vm.showDoc('intent');
+      expect(vm.stripStatus()).toEqual({ text: 'Accepted', tone: 'success' });
+    });
+
+    it('reads the strip status of the build tab from the stage label', async () => {
+      const { vm } = setup(BUILD);
+      await ready(vm);
+      await vm.showDoc('build');
+      expect(vm.stripStatus()).toEqual({ text: 'Build · ready to start', tone: 'idle' });
+    });
+
+    it('gives the rail the front matter fields except the status, which the strip says', async () => {
+      const transport = new MockTransport();
+      vi.spyOn(transport, 'sdlcReadDoc').mockResolvedValue('---\nauthor: Sam\nstatus: draft\ndate: 2026-10-19\n---\n# Spec\n');
+      const { vm } = setup(FNOL, transport);
+      await ready(vm);
+      expect(vm.railFields()).toEqual([['author', 'Sam'], ['date', '2026-10-19']]);
+      expect(vm.docParts().body).toBe('# Spec\n');
+    });
+
+    it('names the document that uses the open one', async () => {
+      const { vm } = setup(FNOL);
+      await ready(vm);
+      expect(vm.usedBy()).toBeNull();
+      await vm.showDoc('intent');
+      expect(vm.usedBy()).toEqual({ name: 'spec.md', status: { text: 'Draft', tone: 'warning' } });
+    });
+
+    it('lists the last three runs of the open stage, newest first, and counts them all', async () => {
+      const transport = new MockTransport();
+      const link = (run_id: string, stage: string, started_at: number) => ({ workspace_id: 'acme-claims', system: 'claims', change: FNOL, stage, run_id, started_at });
+      vi.spyOn(transport, 'sdlcRunLinks').mockResolvedValue([link('a', 'spec', 100), link('b', 'spec', 300), link('c', 'spec', 200), link('d', 'spec', 400), link('e', 'intent', 50)]);
+      vi.spyOn(transport, 'listRuns').mockResolvedValue([]);
+      const { vm } = setup(FNOL, transport);
+      await ready(vm);
+      expect(vm.railRuns().total).toBe(4);
+      expect(vm.railRuns().rows.map((r) => r.id)).toEqual(['d', 'b', 'c']);
+      expect(vm.railRuns().rows[0].kind).toBe('Spec');
+      await vm.showDoc('intent');
+      expect(vm.railRuns().total).toBe(1);
+    });
+  });
 });
