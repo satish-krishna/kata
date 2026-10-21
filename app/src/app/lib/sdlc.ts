@@ -3,13 +3,14 @@
  * No Angular, no I/O. */
 
 import type { CatalogEntry } from "@bindings/CatalogEntry";
+import type { ChangeInfo } from "@bindings/ChangeInfo";
 import type { PluginConfig } from "@bindings/PluginConfig";
 import type { RunLink } from "@bindings/RunLink";
 import type { RunRecord } from "@bindings/RunRecord";
 import type { RunSpec } from "@bindings/RunSpec";
 import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
-import type { KataEvent } from "./events";
+import type { KataEvent, RunDetail } from "./events";
 import { defaultSpec } from "./spec";
 
 export type StageAction =
@@ -23,7 +24,13 @@ export type StageAction =
   | "start-plan"
   | "rerun-plan"
   | "reopen-spec"
-  | "reopen-intent";
+  | "reopen-intent"
+  | "accept-plan"
+  | "start-build"
+  | "continue-build"
+  | "another-round"
+  | "run-review"
+  | "declare-done";
 
 const ACTIONS: Record<Stage, StageAction[]> = {
   "intent-in-progress": ["continue-intent"],
@@ -34,8 +41,14 @@ const ACTIONS: Record<Stage, StageAction[]> = {
   "spec-awaiting": ["continue-spec", "accept-spec", "reopen-intent"],
   "spec-accepted-uncommitted": ["commit-acceptance", "continue-spec"],
   "plan-ready": ["start-plan", "reopen-spec", "reopen-intent"],
-  "plan-written": ["rerun-plan", "reopen-spec", "reopen-intent"],
-  "plan-superseded": ["rerun-plan", "reopen-spec"],
+  "plan-awaiting": ["accept-plan", "rerun-plan", "reopen-intent"],
+  "plan-accepted-uncommitted": ["commit-acceptance", "rerun-plan"],
+  // The actions depend on the cause; see `actionsForChange`.
+  "plan-out-of-date": [],
+  "plan-superseded": ["rerun-plan"],
+  "build-ready": ["start-build", "reopen-intent"],
+  "build-stopped": ["continue-build", "another-round"],
+  "build-finished": ["declare-done", "another-round", "run-review"],
 };
 
 const REVISITS: readonly StageAction[] = ["continue-intent", "reopen-intent", "continue-spec", "reopen-spec", "rerun-plan"];
@@ -50,8 +63,26 @@ export function actionsFor(stage: Stage): StageAction[] {
   return [...ACTIONS[stage]];
 }
 
+/**
+ * The actions of a change. An out-of-date plan depends on its cause: a broken spec pin means the spec is
+ * reopened; a reopened intent or spec keeps its own stage, so it only reaches here from older data and has
+ * no action; any other cause means the plan is rewritten.
+ */
+export function actionsForChange(c: ChangeInfo): StageAction[] {
+  if (c.stage !== "plan-out-of-date") return actionsFor(c.stage);
+  switch (c.out_of_date) {
+    case "spec-pin":
+      return ["reopen-spec"];
+    case "intent-reopened":
+    case "spec-reopened":
+      return [];
+    default:
+      return ["rerun-plan"];
+  }
+}
+
 export type StageLabel = {
-  step: "intent" | "spec" | "plan" | "closed";
+  step: "intent" | "spec" | "plan" | "build" | "done" | "closed";
   text: string;
   tone: "success" | "warning" | "muted" | "error";
 };
@@ -65,9 +96,17 @@ const LABELS: Record<Stage, StageLabel> = {
   "spec-awaiting": { step: "spec", text: "Spec · awaiting acceptance", tone: "warning" },
   "spec-accepted-uncommitted": { step: "spec", text: "Spec · accepted, not committed", tone: "warning" },
   "plan-ready": { step: "plan", text: "Plan · ready to start", tone: "muted" },
-  "plan-written": { step: "plan", text: "Plan · written", tone: "success" },
+  "plan-awaiting": { step: "plan", text: "Plan · awaiting acceptance", tone: "warning" },
+  "plan-accepted-uncommitted": { step: "plan", text: "Plan · accepted, not committed", tone: "warning" },
+  "plan-out-of-date": { step: "plan", text: "Plan · out of date", tone: "warning" },
   "plan-superseded": { step: "plan", text: "Plan · superseded", tone: "warning" },
+  "build-ready": { step: "build", text: "Build · ready to start", tone: "muted" },
+  "build-stopped": { step: "build", text: "Build · in progress (stopped)", tone: "warning" },
+  "build-finished": { step: "build", text: "Build · finished, not yet done", tone: "success" },
 };
+
+/** The label of a change that is done: its pull requests are open. Not a stage; the Workbench records it. */
+export const DONE_LABEL: StageLabel = { step: "done", text: "Done · pull requests open", tone: "success" };
 
 export function stageLabel(stage: Stage): StageLabel {
   return { ...LABELS[stage] };
@@ -83,9 +122,101 @@ export type RunContext = {
   feedback?: string;
 };
 
-export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan";
+export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan" | "build";
+
+/** One build run: a repository's run or the whole-change review, with everything its run-spec needs. */
+export type BuildRun = {
+  target: { repo: string } | "review";
+  timeoutSecs: number;
+  instructions: string | null;
+  workspaceFolder: string;
+  /** Folder name of the master repository, inside the workspace folder. */
+  masterRepo: string;
+  /** Folder names of the system's product repositories, inside the workspace folder. */
+  systemRepos: string[];
+  /** Absolute path of Kata's checks folder; no build run may edit it. */
+  checksDir: string;
+  continueOnLeftovers: boolean;
+};
+
+export const DEFAULT_BUILD_SECS = 7200;
 
 const AI_SDLC = "ai-sdlc";
+const MIN_BUILD_VERSION = [0, 6, 0];
+
+const versionParts = (v: string): number[] => v.split(/[.+-]/).slice(0, 3).map((p) => Number.parseInt(p, 10) || 0);
+
+/** True when the ai-sdlc plugin provides the build skill and is at least 0.6.0. */
+export function canBuild(catalog: CatalogEntry[], version: string | null): boolean {
+  const entry = catalog.find((e) => e.kind === "plugin" && e.name === AI_SDLC);
+  if (!entry || !entry.provides.includes("skill:build") || version === null) return false;
+  const have = versionParts(version);
+  for (let i = 0; i < MIN_BUILD_VERSION.length; i++) {
+    const h = have[i] ?? 0;
+    if (h !== MIN_BUILD_VERSION[i]) return h > MIN_BUILD_VERSION[i];
+  }
+  return true;
+}
+
+/** The text of a repository's stop (R6.1). The cancelled fact decides first, and a cancelled stop carries no error text; the exit code only tells the other stops apart. */
+export function stopMessage(exit: number | null, error: string | null, cancelled = false): string {
+  if (cancelled) return "Stopped: cancelled";
+  const base =
+    exit === 124 ? "Stopped: reached the time limit"
+    : exit === 130 ? "Stopped: cancelled"
+    : exit === 123 ? "Stopped: nobody answered"
+    : "Stopped: the agent failed";
+  return error ? `${base} · ${error}` : base;
+}
+
+const BUILD_DENY = ["Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)"];
+const GITHUB_TOKENS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"];
+
+const slashes = (p: string): string => p.replace(/\\/g, "/").replace(/\/+$/, "");
+
+/**
+ * A path in claude's absolute-path rule form: `//` then the path with forward slashes. On Windows claude
+ * matches only the colon-less, lowercase-drive form (`D:\ws` becomes `//d/ws`). T36's proofs in
+ * `crates/kata-core/tests/run_it.rs` copy the rule strings built here.
+ */
+function rulePath(p: string): string {
+  const drive = /^([A-Za-z]):(?:\/|$)/.exec(slashes(p));
+  const rest = drive ? `${drive[1].toLowerCase()}/${slashes(p).slice(drive[0].length)}` : slashes(p).replace(/^\/+/, "");
+  return `//${rest}`;
+}
+
+/** Only `Edit(path)` rules are checked by claude's file permissions; they cover Write and every other editing tool. */
+function buildPermissions(run: BuildRun, ctx: RunContext) {
+  const ws = slashes(run.workspaceFolder);
+  const deny = [...BUILD_DENY, `Edit(${rulePath(run.checksDir)}/**)`];
+  const allow = [`Read(${rulePath(ws)}/**)`];
+  if (run.target === "review") {
+    deny.push(`Edit(${rulePath(ws)}/**)`);
+  } else {
+    const repo = run.target.repo;
+    const buildDir = `${ws}/${run.masterRepo}/intent/${ctx.system}/${ctx.change}/build`;
+    // Deny beats allow in claude, so a `build/**` deny would block this run's own log; deny the others by name.
+    const repos = new Set([...run.systemRepos, run.masterRepo]);
+    for (const other of repos) {
+      if (other === repo) continue;
+      deny.push(`Edit(${rulePath(`${buildDir}/${other}.md`)})`);
+      if (other !== run.masterRepo) deny.push(`Edit(${rulePath(`${ws}/${other}`)}/**)`);
+    }
+    allow.push(`Edit(${rulePath(`${buildDir}/${repo}.md`)})`);
+  }
+  return { deny, allow };
+}
+
+function buildTask(run: BuildRun, ctx: RunContext): string {
+  const flag = run.target === "review" ? "--review" : `--repo ${run.target.repo}`;
+  let task = `Use the ai-sdlc build skill for system ${ctx.system} on change folder ${ctx.change} with ${flag}.`;
+  if (run.continueOnLeftovers) {
+    task += " The engineer has already confirmed continuing on top of the uncommitted edits the previous run left; do not ask again.";
+  }
+  const instructions = run.instructions?.trim() ?? "";
+  if (run.target !== "review" && instructions) task += `\n\nInstructions from the engineer for this run:\n${instructions}`;
+  return task;
+}
 
 const hasPlugin = (catalog: CatalogEntry[], name: string): boolean =>
   catalog.some((e) => e.kind === "plugin" && e.name === name);
@@ -130,10 +261,35 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): s
       if (action === "rerun-plan") task += " The user has already confirmed replacing the existing plan; do not ask again.";
       return task;
     }
+    case "build":
+      throw new Error("a build run-spec is made from its BuildRun");
   }
 }
 
 const SDLC_TIMEOUT_SECS = 6 * 60 * 60;
+
+/**
+ * The run-spec of one build run. Always auto: bypass forbids the deny rules that keep an agent from publishing,
+ * and `settings.permission_mode` does not apply. No turn cap and no budget; the time limit is per run.
+ */
+function buildSpec(ctx: RunContext, run: BuildRun): RunSpec {
+  const spec = defaultSpec();
+  const ws = slashes(run.workspaceFolder);
+  const repo = run.target === "review" ? run.masterRepo : run.target.repo;
+  spec.name = `sdlc-${ctx.system}-${ctx.change}-${run.target === "review" ? "review" : `build-${run.target.repo}`}`;
+  spec.task = buildTask(run, ctx);
+  spec.workdir = `${ws}/${repo}`;
+  spec.plugins = { [AI_SDLC]: {} };
+  spec.auth = { bare: false, token_env: null };
+  spec.interactive = { enabled: true, answer_timeout_secs: 3600 };
+  spec.leash.timeout_secs = run.timeoutSecs;
+  spec.leash.max_turns = null;
+  spec.leash.max_budget_usd = null;
+  spec.env_remove = [...GITHUB_TOKENS];
+  const { allow, deny } = buildPermissions(run, ctx);
+  spec.permissions = { mode: "auto", allow, deny, ask: [], unmatched: "ask" };
+  return spec;
+}
 
 /** Build the run-spec for one AI-SDLC run. Always bypass-valid: allow/deny/ask stay empty. */
 export function specFor(
@@ -142,7 +298,12 @@ export function specFor(
   ctx: RunContext,
   settings: Settings,
   catalog: CatalogEntry[],
+  run?: BuildRun,
 ): RunSpec {
+  if (kind === "build") {
+    if (!run) throw new Error("a build run-spec needs its BuildRun");
+    return buildSpec(ctx, run);
+  }
   const spec = defaultSpec();
   const plugins: Record<string, PluginConfig> = { [AI_SDLC]: {} };
   spec.name = nameFor(kind, ctx);
@@ -189,13 +350,19 @@ const LABEL: Record<StageAction, string> = {
   "rerun-plan": "Re-run plan",
   "reopen-spec": "Reopen spec",
   "reopen-intent": "Reopen intent",
+  "accept-plan": "Accept plan",
+  "start-build": "Start build",
+  "continue-build": "Continue build",
+  "another-round": "Another round",
+  "run-review": "Run review",
+  "declare-done": "Declare done",
 };
 
 export function actionLabel(action: StageAction): string {
   return LABEL[action];
 }
 
-const PRIMARY_ORDER: RegExp[] = [/^accept-/, /^commit-acceptance$/, /^start-/, /^continue-/];
+const PRIMARY_ORDER: RegExp[] = [/^accept-/, /^commit-acceptance$/, /^start-/, /^continue-/, /^declare-done$/];
 
 /** The one primary action of a view: accept, commit, start, then continue. Reopen, re-run and reject are never primary. */
 export function primaryAction(actions: readonly StageAction[]): StageAction | null {
@@ -214,9 +381,9 @@ export function splitFrontMatter(text: string): { frontMatter: string | null; bo
   return { frontMatter: line === "" ? null : line, body: text.slice(m[0].length) };
 }
 
-export type StepCounts = Record<"intent" | "spec" | "plan", number>;
+export type StepCounts = Record<"intent" | "spec" | "plan" | "build" | "review", number>;
 /** Which of a change's three documents exist on disk. */
-export type DocsPresent = Record<keyof StepCounts, boolean>;
+export type DocsPresent = Record<"intent" | "spec" | "plan", boolean>;
 
 /**
  * Runs so far per stage: the transcript links recorded for this change, plus history records that carry the
@@ -229,18 +396,98 @@ export function runCounts(
   system: string,
   change: string,
 ): StepCounts {
-  const out: StepCounts = { intent: 0, spec: 0, plan: 0 };
+  const out: StepCounts = { intent: 0, spec: 0, plan: 0, build: 0, review: 0 };
   const linked = new Set<string>();
   for (const l of links) {
     if (l.workspace_id !== workspaceId || l.system !== system || l.change !== change) continue;
     linked.add(l.run_id);
-    if (l.stage === "intent" || l.stage === "spec" || l.stage === "plan") out[l.stage] += 1;
+    if (l.stage === "intent" || l.stage === "spec" || l.stage === "plan" || l.stage === "review") out[l.stage] += 1;
+    else if (l.stage.startsWith("build:")) out.build += 1;
   }
   for (const r of records) {
     if (linked.has(r.id)) continue;
     for (const stage of ["intent", "spec", "plan"] as const) {
       if (r.kata === `sdlc-${system}-${change}-${stage}`) out[stage] += 1;
     }
+    if (r.kata.startsWith(`sdlc-${system}-${change}-build-`)) out.build += 1;
+    else if (r.kata === `sdlc-${system}-${change}-review`) out.review += 1;
   }
   return out;
+}
+
+export type Severity = "critical" | "high" | "medium" | "low";
+/** One finding of the review, with the severity its text opens with, if it names one. */
+export type Finding = { severity: Severity | null; text: string };
+
+
+const SEVERITY_RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+const SEVERITY_WORDS: Record<string, Severity> = {
+  critical: "critical", blocker: "critical", high: "high", major: "high", medium: "medium", moderate: "medium", low: "low", minor: "low", nit: "low",
+};
+const WORDS = Object.keys(SEVERITY_WORDS).join("|");
+// A tag opens an item as [High], (high), **High**, or High: / High -.
+const SEVERITY_TAG = new RegExp(
+  String.raw`^\s*(?:[\[(]\s*(${WORDS})\s*[\])]|\*\*\s*(${WORDS})\s*\*\*|(${WORDS})(?=\s*[:\u2013-]))\s*[:\u2013-]?\s*`,
+  "i",
+);
+const NO_FINDINGS = /^\s*no\s+(?:issues|findings|problems|concerns)\b/i;
+
+/** The items of a list numbered 1, 2, 3 in order, on one line or several; null when the text has no such list. */
+function numberedItems(text: string): string[] | null {
+  const marks: { start: number; end: number }[] = [];
+  let from = 0;
+  for (let n = 1; ; n++) {
+    const re = new RegExp(String.raw`(^|\s)${n}[.)]\s+`, "g");
+    re.lastIndex = from;
+    const m = re.exec(text);
+    if (!m) break;
+    marks.push({ start: m.index, end: m.index + m[0].length });
+    from = m.index + m[0].length;
+  }
+  if (marks.length === 0) return null;
+  return marks.map((m, i) => text.slice(m.end, marks[i + 1]?.start ?? text.length).trim());
+}
+
+/** The items of a `-`, `*` or bullet list, one per line, with a wrapped line joined to the item above it. */
+function bulletItems(text: string): string[] | null {
+  const items: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*[-*\u2022]\s+(.*)$/.exec(line);
+    if (m) items.push(m[1].trim());
+    else if (items.length > 0 && line.trim() !== "") items[items.length - 1] += ` ${line.trim()}`;
+  }
+  return items.length > 0 ? items : null;
+}
+
+function asFinding(item: string): Finding {
+  const m = SEVERITY_TAG.exec(item);
+  if (!m) return { severity: null, text: item };
+  const word = (m[1] ?? m[2] ?? m[3]).toLowerCase();
+  return { severity: SEVERITY_WORDS[word], text: item.slice(m[0].length).trim() };
+}
+
+/**
+ * The review's findings, most serious first, read from the closing text of its `run.completed`.
+ * The text is a list numbered in order or bulleted; a severity tag at the start of an item ranks it.
+ * Items without a tag rank as medium, and equal ranks keep the order written.
+ */
+export function reviewFindings(detail: RunDetail): Finding[] {
+  let result = "";
+  for (let i = detail.events.length - 1; i >= 0; i--) {
+    const ev = detail.events[i];
+    if (ev.type === "run.completed") {
+      result = (ev.result ?? "").trim();
+      break;
+    }
+  }
+  if (result === "") return [];
+  const items = numberedItems(result) ?? bulletItems(result);
+  if (items === null) return NO_FINDINGS.test(result) ? [] : [asFinding(result)];
+  const rank = (f: Finding) => SEVERITY_RANK[f.severity ?? "medium"];
+  return items
+    .filter((t) => t !== "")
+    .map(asFinding)
+    .map((f, index) => ({ f, index }))
+    .sort((a, b) => rank(a.f) - rank(b.f) || a.index - b.index)
+    .map(({ f }) => f);
 }

@@ -37,7 +37,7 @@ describe('SdlcHome', () => {
 
   it('offers Refresh context on every product repo with a context file, and crosses the seam when clicked', async () => {
     const { container, transport } = await mount();
-    const run = vi.spyOn(transport, 'runSpec').mockResolvedValue();
+    const run = vi.spyOn(transport, 'runSpec').mockResolvedValue('1');
     const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter((b) =>
       / context for /.test(b.getAttribute('aria-label') ?? ''),
     );
@@ -49,7 +49,7 @@ describe('SdlcHome', () => {
 
   it('crosses the seam: a running agent takes the page with the session view and locks every control outside it', async () => {
     const { container } = await mount();
-    vi.spyOn(TestBed.inject(KataTransport), 'runSpec').mockResolvedValue();
+    vi.spyOn(TestBed.inject(KataTransport), 'runSpec').mockResolvedValue('1');
     container.querySelector<HTMLButtonElement>('[aria-label="Refresh context for customer-portal"]')!.click();
     await vi.waitFor(() => expect(container.querySelector('app-sdlc-session')).not.toBeNull());
     await settle();

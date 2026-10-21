@@ -1,0 +1,15 @@
+<hlm-alert-dialog [state]="reason() !== null ? 'open' : 'closed'" (stateChanged)="onState($event)">
+  <hlm-alert-dialog-content *hlmAlertDialogPortal="let ctx">
+    <div hlmAlertDialogTitle>The build did not start</div>
+    @if (reason(); as why) {
+      <hlm-alert variant="destructive" class="wb-banner wb-banner--error">
+        <ng-icon name="lucideTriangleAlert" size="15" />
+        <div hlmAlertDescription>{{ why }}</div>
+      </hlm-alert>
+    }
+    <p hlmAlertDialogDescription>Nothing was created or switched in any repository.</p>
+    <hlm-alert-dialog-footer>
+      <button hlmAlertDialogCancel size="sm">Close</button>
+    </hlm-alert-dialog-footer>
+  </hlm-alert-dialog-content>
+</hlm-alert-dialog>

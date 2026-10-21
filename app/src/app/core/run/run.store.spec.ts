@@ -7,12 +7,12 @@ import type { KataEvent } from '../../lib/events';
 class FakeTransport {
   listeners: ((ev: KataEvent) => void)[] = [];
   unlistened = 0;
-  runSpec = vi.fn((..._a: unknown[]) => Promise.resolve());
+  runSpec = vi.fn((..._a: unknown[]) => Promise.resolve('1'));
   cancelRun = vi.fn((): Promise<void> => Promise.resolve());
   submitAnswer = vi.fn((..._a: unknown[]) => Promise.resolve());
   submitDecision = vi.fn((..._a: unknown[]) => Promise.resolve());
-  onRunEvent(cb: (ev: KataEvent) => void) {
-    this.listeners.push(cb);
+  onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
+    this.listeners.push((ev) => cb('1', ev));
     return Promise.resolve(() => { this.unlistened++; });
   }
 }
@@ -91,7 +91,7 @@ describe('RunStore', () => {
     expect(fake.submitAnswer).not.toHaveBeenCalled();
     fake.listeners[0]({ type: 'ask.requested', id: 'a', questions: [] });
     await store.submitAnswer('a', [['x']]);
-    expect(fake.submitAnswer).toHaveBeenCalledWith('a', [['x']]);
+    expect(fake.submitAnswer).toHaveBeenCalledWith('1', 'a', [['x']]);
   });
 
   it('forwards decisions only while awaiting', async () => {
@@ -101,7 +101,7 @@ describe('RunStore', () => {
     expect(fake.submitDecision).not.toHaveBeenCalled();
     fake.listeners[0]({ type: 'permission.requested', id: 'p1', tool: 'Bash', input_summary: 'ls' });
     await store.submitDecision('p1', false, 'no');
-    expect(fake.submitDecision).toHaveBeenCalledWith('p1', false, 'no');
+    expect(fake.submitDecision).toHaveBeenCalledWith('1', 'p1', false, 'no');
   });
 
   it('exposes asks and permissions as signals', async () => {
@@ -132,15 +132,17 @@ describe('RunStore', () => {
 
   it('cancel while runSpec is pending cancels again when it resolves and drops that run events', async () => {
     const { store, fake } = setup();
-    const d = deferred();
+    const d = deferred<string>();
     fake.runSpec.mockReturnValueOnce(d.promise);
     const started = store.startRun(seedSpec());
     await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalled());
     await store.cancelRun();
-    expect(fake.cancelRun).toHaveBeenCalledTimes(1);
-    d.resolve();
+    // No run id yet, so nothing to signal until runSpec answers.
+    expect(fake.cancelRun).not.toHaveBeenCalled();
+    d.resolve('1');
     await started;
-    expect(fake.cancelRun).toHaveBeenCalledTimes(2);
+    expect(fake.cancelRun).toHaveBeenCalledTimes(1);
+    expect(fake.cancelRun).toHaveBeenCalledWith('1');
     const before = store.events().length;
     fake.listeners[0](log('late'));
     expect(store.events().length).toBe(before);
@@ -148,14 +150,14 @@ describe('RunStore', () => {
 
   it('a fast-failing run (terminal event before runSpec resolves) does not issue a stray cancel', async () => {
     const { store, fake } = setup();
-    const d = deferred();
+    const d = deferred<string>();
     fake.runSpec.mockReturnValueOnce(d.promise);
     const started = store.startRun(seedSpec());
     await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalled());
     fake.listeners[0]({ type: 'run.error', message: 'boom', exit_code: 1 } as never);
-    expect(store.state()).toBe('error');
-    d.resolve();
+    d.resolve('1');
     await started;
+    expect(store.state()).toBe('error');
     expect(fake.cancelRun).not.toHaveBeenCalled();
   });
 
@@ -207,5 +209,145 @@ describe('RunStore', () => {
     await store.cancelRun();
     expect(store.state()).toBe('error');
     expect(store.events().at(-1)).toEqual({ type: 'log', level: 'error', message: 'cancel failed: nope' });
+  });
+});
+
+/** A transport that plays several runs at once: every callback hears every run's events, tagged with the run id. */
+class MultiTransport {
+  callbacks: ((runId: string, ev: KataEvent) => void)[] = [];
+  private next = 0;
+  runSpec = vi.fn((..._a: unknown[]) => Promise.resolve(`run-${String.fromCharCode(97 + this.next++)}`));
+  cancelRun = vi.fn((_id: string): Promise<void> => Promise.resolve());
+  submitAnswer = vi.fn((..._a: unknown[]) => Promise.resolve());
+  submitDecision = vi.fn((..._a: unknown[]) => Promise.resolve());
+  onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
+    this.callbacks.push(cb);
+    return Promise.resolve(() => undefined);
+  }
+  emit(runId: string, ev: KataEvent) {
+    for (const cb of [...this.callbacks]) cb(runId, ev);
+  }
+}
+
+function setupMulti() {
+  const fake = new MultiTransport();
+  TestBed.configureTestingModule({ providers: [{ provide: KataTransport, useValue: fake }] });
+  return { store: TestBed.inject(RunStore), fake };
+}
+
+describe('RunStore with several runs', () => {
+  it('events from two runs fold into their own snapshots', async () => {
+    const { store, fake } = setupMulti();
+    const a = await store.startRun(seedSpec(), 'build:s/c');
+    const b = await store.startRun(seedSpec(), 'build:s/c');
+    expect([a, b]).toEqual(['run-a', 'run-b']);
+    fake.emit('run-a', log('from a'));
+    fake.emit('run-b', log('from b'));
+    fake.emit('run-b', { type: 'run.completed', exit_code: 0 } as never);
+    expect(store.snapshot('run-a')().events).toEqual([log('from a')]);
+    expect(store.snapshot('run-a')().state).toBe('running');
+    expect(store.snapshot('run-b')().events).toEqual([log('from b')]);
+    expect(store.snapshot('run-b')().state).toBe('success');
+    // Neither belongs to the solo run, so the Workbench view stays idle.
+    expect(store.events()).toEqual([]);
+  });
+
+  it('a refused approval reaches only the run that asked (R4.2)', async () => {
+    const { store, fake } = setupMulti();
+    const a = (await store.startRun(seedSpec(), 'build:s/c'))!;
+    const b = (await store.startRun(seedSpec(), 'build:s/c'))!;
+    fake.emit(a, { type: 'permission.requested', id: 'p1', tool: 'Bash', input_summary: 'ls' });
+    fake.emit(b, { type: 'permission.requested', id: 'p2', tool: 'Bash', input_summary: 'rm -rf x' });
+    const before = store.snapshot(a)();
+    await store.submitDecision(b, 'p2', false, 'no');
+    expect(fake.submitDecision).toHaveBeenCalledTimes(1);
+    expect(fake.submitDecision).toHaveBeenCalledWith(b, 'p2', false, 'no');
+    expect(store.snapshot(a)()).toBe(before);
+    expect(store.snapshot(a)().state).toBe('awaiting');
+  });
+
+  it('cancels only the run it names', async () => {
+    const { store, fake } = setupMulti();
+    const a = (await store.startRun(seedSpec(), 'build:s/c'))!;
+    const b = (await store.startRun(seedSpec(), 'build:s/c'))!;
+    await store.cancelRun(a);
+    expect(fake.cancelRun).toHaveBeenCalledTimes(1);
+    expect(fake.cancelRun).toHaveBeenCalledWith(a);
+    expect(store.snapshot(a)().state).toBe('warning');
+    expect(store.snapshot(b)().state).toBe('running');
+    fake.emit(a, log('late'));
+    expect(store.snapshot(a)().events.filter((e) => e.type === 'log' && e.message === 'late')).toEqual([]);
+  });
+
+  it('forwards an answer to the run it names', async () => {
+    const { store, fake } = setupMulti();
+    const a = (await store.startRun(seedSpec(), 'build:s/c'))!;
+    await store.startRun(seedSpec(), 'build:s/c');
+    fake.emit(a, { type: 'ask.requested', id: 'q', questions: [] });
+    await store.submitAnswer(a, 'q', [['x']]);
+    expect(fake.submitAnswer).toHaveBeenCalledWith(a, 'q', [['x']]);
+  });
+
+  it('the workbench screen still runs one kata beside a build', async () => {
+    const { store, fake } = setupMulti();
+    const b = (await store.startRun(seedSpec(), 'build:s/c'))!;
+    const solo = (await store.startRun(seedSpec()))!;
+    expect(await store.startRun(seedSpec())).toBeNull();
+    fake.emit(b, log('build row'));
+    fake.emit(solo, log('solo row'));
+    expect(store.events()).toEqual([log('solo row')]);
+    expect(store.lastRunId()).toBe(solo);
+    await store.submitAnswer('nope', [['x']]);
+    expect(fake.submitAnswer).not.toHaveBeenCalled();
+    fake.emit(solo, { type: 'run.completed', exit_code: 0 } as never);
+    expect(store.state()).toBe('success');
+    expect(store.snapshot(b)().state).toBe('running');
+  });
+
+  it('holds events of an unclaimed run until its id is known when two starts overlap', async () => {
+    const { store, fake } = setupMulti();
+    const first = deferred<string>();
+    const second = deferred<string>();
+    fake.runSpec.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const p1 = store.startRun(seedSpec(), 'build:s/c');
+    await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalledTimes(1));
+    const p2 = store.startRun(seedSpec(), 'build:s/c');
+    await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalledTimes(2));
+    fake.emit('B', log('for b'));
+    first.resolve('A');
+    second.resolve('B');
+    await Promise.all([p1, p2]);
+    expect(store.snapshot('A')().events).toEqual([]);
+    expect(store.snapshot('B')().events).toEqual([log('for b')]);
+  });
+
+  it('a start still waiting for its id never takes in the ending of a run that already has one (R19.5)', async () => {
+    const { store, fake } = setupMulti();
+    const x = (await store.startRun(seedSpec(), 'build:s/c'))!;
+    const pending = deferred<string>();
+    fake.runSpec.mockReturnValueOnce(pending.promise);
+    const py = store.startRun(seedSpec(), 'build:s/c');
+    await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalledTimes(2));
+    fake.emit(x, log('late stderr from x'));
+    fake.emit(x, { type: 'run.completed', exit_code: 0 } as never);
+    expect(store.snapshot(x)().state).toBe('success');
+    pending.resolve('run-y');
+    const y = (await py)!;
+    expect(store.snapshot(y)().state).toBe('running');
+    expect(store.snapshot(y)().events).toEqual([]);
+    fake.emit(y, log('from y'));
+    expect(store.snapshot(y)().events).toEqual([log('from y')]);
+  });
+
+  it('a lone start still takes its own early events once its id arrives', async () => {
+    const { store, fake } = setupMulti();
+    const pending = deferred<string>();
+    fake.runSpec.mockReturnValueOnce(pending.promise);
+    const p = store.startRun(seedSpec(), 'build:s/c');
+    await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalledTimes(1));
+    fake.emit('run-y', log('before the answer'));
+    pending.resolve('run-y');
+    const y = (await p)!;
+    expect(store.snapshot(y)().events).toEqual([log('before the answer')]);
   });
 });

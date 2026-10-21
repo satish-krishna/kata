@@ -37,6 +37,34 @@ The same app has a second mode for taking a change through intent, spec and plan
 | --- | --- |
 | ![AI-SDLC workspace home](docs/images/sdlc-home.png) | ![A run paused on a question](docs/images/sdlc-lock-ask.png) |
 
+### Building a change
+
+Building and declaring a change done have prerequisites beyond an authenticated `claude` on your `PATH`:
+
+- The GitHub CLI (`gh`) installed and signed in with `gh auth login`. Run `gh auth setup-git` as well so pushes use your sign-in. Kata reads and stores no token; pull requests are opened by `gh` as you.
+- The `ai-sdlc` plugin at version 0.6.0 or later.
+
+A build runs one agent per repository, inside that repository, with several running at once. Each run has its own time limit. Builds always run under `permissions.mode = "auto"` with deny rules (no `git push`, `gh` or `git remote`, no edits to the checks folder, no edits to another repository's work), whatever permission setting the rest of the app uses, because deny rules do not exist under the default bypass posture.
+
+Checks that judge a change when you declare it done live in `<kata home>/workbench/checks/<system>.toml`, one file per system, outside every workspace so no agent can edit the gate it is checked against. Kata refuses the file when the checks folder and the workspace contain one another. The file is TOML and unknown keys are refused:
+
+```toml
+[[checks]]
+repo = "api"
+name = "unit tests"
+argv = ["dotnet", "test", "--nologo"]
+timeout_secs = 600
+
+[[checks]]
+repo = "product-intent"
+argv = ["npx", "markdownlint-cli2", "intent/**/*.md"]
+timeout_secs = 120
+```
+
+`repo` is required and must be one of the system's repositories or the master repository. `argv` is required, non-empty, and never passes through a shell. `timeout_secs` is required, from 1 to 86,400. `name` is optional and defaults to the joined argv. A missing file means no repository has checks. Any problem fails the whole file with its `file:line:col`, and declaring done runs nothing until it is fixed.
+
+Two costs to know about. Checks are per machine and unversioned: each engineer writes their own file, a new teammate starts with none, and two engineers can declare the same change done against different gates. And the review's findings are read from the review run's transcript on this machine, so they are not stored with the change and do not follow it to another machine.
+
 ## Quickstart
 
 ### Install

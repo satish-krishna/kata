@@ -23,6 +23,9 @@
         } @else {
           @for (item of streamItems(); track trackKey(item)) {
             <hlm-message-scroller-item [messageId]="trackKey(item)">
+              @if (item.key === markerKey()) {
+                <div class="k-unseen" role="separator" data-unseen>{{ unseenCount() }} new below</div>
+              }
               @if (item.kind === 'event') {
                 <div class="wb-event-enter"><app-event-row [ev]="item.ev" /></div>
               } @else if (item.kind === 'call') {

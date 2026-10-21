@@ -1,0 +1,32 @@
+<section aria-labelledby="build-log-title">
+  <h2 id="build-log-title" class="k-left__head">Build log</h2>
+  @if (tasks().length > 0) {
+    <div hlmTableContainer>
+      <table hlmTable>
+        <thead hlmTableHeader>
+          <tr hlmTableRow>
+            <th hlmTableHead>Task</th>
+            <th hlmTableHead>Repository</th>
+            <th hlmTableHead>Depends on</th>
+            <th hlmTableHead>Commits</th>
+            <th hlmTableHead>Departure</th>
+          </tr>
+        </thead>
+        <tbody hlmTableBody>
+          @for (t of tasks(); track t.id) {
+            <tr hlmTableRow>
+              <td hlmTableCell class="k-mono">{{ t.id }}</td>
+              <td hlmTableCell class="k-mono">{{ t.repo }}</td>
+              <td hlmTableCell class="k-mono">{{ depends(t) }}</td>
+              <td hlmTableCell class="k-mono">{{ t.row ? t.row.commits.join(' ') : '—' }}</td>
+              <td hlmTableCell>{{ t.row ? (t.row.departure ?? 'none') : '—' }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+  @if (!anyBuilt()) {
+    <p class="k-state__body">No tasks built yet.</p>
+  }
+</section>

@@ -1,0 +1,23 @@
+<div class="k-diffbar">
+  <div class="k-diffbar__file">
+    @if (file(); as f) {
+      @if (status(); as s) {
+        <span [class]="'k-status k-status--' + s.tone"><span class="k-status__dot"></span>{{ s.name }}</span>
+      }
+      <span class="k-mono k-diffbar__path">{{ f.path }}</span>
+      @if (f.oldPath) {
+        <span class="k-mono k-diffbar__rename">{{ f.oldPath }} → {{ f.path }}</span>
+      }
+      @if (f.uncommitted) {
+        <span class="k-status k-status--warning"><span class="k-status__dot"></span>Uncommitted</span>
+      }
+    }
+  </div>
+  <div class="k-diffbar__actions">
+    <button hlmBtn variant="secondary" size="sm" type="button" [disabled]="file() === null" (click)="previous.emit()">Previous change</button>
+    <button hlmBtn variant="secondary" size="sm" type="button" [disabled]="file() === null" (click)="next.emit()">Next change</button>
+    @if (showLayout()) {
+      <app-segmented [options]="layouts" [(value)]="layout" ariaLabel="Diff layout" />
+    }
+  </div>
+</div>

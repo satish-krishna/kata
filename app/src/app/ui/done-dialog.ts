@@ -1,0 +1,82 @@
+import { Component, computed, input, output } from '@angular/core';
+import type { CheckSpec } from '@bindings/CheckSpec';
+import type { BrnDialogState } from '@spartan-ng/brain/dialog';
+import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { HlmDialogImports } from '@spartan-ng/helm/dialog';
+import { HlmTableImports } from '@spartan-ng/helm/table';
+import {
+  REVIEW_MISSING_TEXT,
+  canConfirm,
+  checkLabel,
+  checkTone,
+  hasReview,
+  reviewedAt,
+  specLabel,
+  type CheckLabel,
+  type DoneRepo,
+  type DoneReport,
+} from '../lib/sdlc-done';
+import { CheckResults } from './check-results';
+import { FindingsList } from './findings-list';
+
+/* The confirmation before pull requests open: whether GitHub is ready, the branch and checks of each repository as they
+ * will run (and where they are set), what failed, which commits break the rules, what departed from the plan and what the
+ * review found. Open pull requests is the one primary action and waits for everything but the findings. */
+@Component({
+  selector: 'app-done-dialog',
+  host: { class: 'contents' },
+  imports: [HlmDialogImports, HlmButtonImports, HlmTableImports, CheckResults, FindingsList],
+  templateUrl: './done-dialog.html',
+})
+export class DoneDialog {
+  /** What to show; the dialog is open exactly while this is set. */
+  readonly report = input.required<DoneReport | null>();
+  /** The change folder, which names the branch in every repository. */
+  readonly change = input.required<string>();
+
+  readonly confirm = output<void>();
+  readonly anotherRound = output<void>();
+  readonly runReview = output<void>();
+  readonly cancel = output<void>();
+
+  protected readonly confirmable = computed(() => {
+    const r = this.report();
+    return r !== null && canConfirm(r);
+  });
+
+  /** A round is offered whenever something blocks, and whenever the review left findings. */
+  protected readonly roundOffered = computed(() => {
+    const r = this.report();
+    if (r === null) return false;
+    return !canConfirm(r) || (hasReview(r.review) && r.review.findings.length > 0);
+  });
+
+  protected readonly missingText = REVIEW_MISSING_TEXT;
+  protected readonly reviewed = reviewedAt;
+  protected readonly review = computed(() => {
+    const r = this.report()?.review;
+    return r && hasReview(r) ? r : null;
+  });
+  protected readonly missing = computed(() => {
+    const r = this.report()?.review;
+    return r && !hasReview(r) ? r.missing : null;
+  });
+
+  protected label(repo: DoneRepo, spec: CheckSpec): CheckLabel {
+    return specLabel(repo, spec);
+  }
+
+  /** What a repository without configured checks shows: no checks once it was looked at, not run before. */
+  protected bare(repo: DoneRepo): CheckLabel {
+    return checkLabel(repo.result);
+  }
+
+  protected tone(label: CheckLabel): string {
+    return checkTone(label);
+  }
+
+  /** Escape closes the overlay from inside; surface that as cancel. */
+  protected onState(state: BrnDialogState): void {
+    if (state === 'closed' && this.report() !== null) this.cancel.emit();
+  }
+}

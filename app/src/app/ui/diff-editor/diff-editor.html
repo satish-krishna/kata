@@ -1,0 +1,4 @@
+@if (binary()) {
+  <p class="k-diff-editor__note" data-slot="binary">Binary file. No line diff.</p>
+}
+<div #host class="k-diff-editor__host" [hidden]="binary()" data-slot="monaco"></div>

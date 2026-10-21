@@ -10,7 +10,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { LockStore } from '../../core/lock/lock.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
-import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
+import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { inTauri } from '../../lib/mock';
@@ -384,8 +384,8 @@ export class SdlcHomeViewModel {
     this.newChangeOpen.set(false);
   }
 
-  async discardLeftovers(paths: string[]): Promise<void> {
-    await this.runner.discard(paths);
+  async discardLeftovers(choices: DiscardChoice[]): Promise<void> {
+    await this.runner.discardAll(choices);
     await this.loadCurrent();
   }
 

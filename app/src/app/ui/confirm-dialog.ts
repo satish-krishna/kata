@@ -12,6 +12,8 @@ export class ConfirmDialog {
   readonly open = input.required<boolean>();
   readonly message = input.required<string>();
   readonly confirmLabel = input('Confirm');
+  /** Lines listed under the message, one per item. */
+  readonly details = input<string[]>([]);
   readonly confirm = output<void>();
   readonly cancel = output<void>();
 

@@ -4,7 +4,7 @@ description: Use this skill to generate well-branded interfaces and assets for K
 user-invocable: true
 ---
 
-Read the `readme.md` file within this skill, and explore the other available files.
+Read `design/README.md` (repo root), and explore the other files under `design/`.
 
 If creating visual artifacts (slides, mocks, throwaway prototypes, etc), copy assets out and create static HTML files for the user to view. If working on production code, you can copy assets and read the rules here to become an expert in designing with this brand.
 
@@ -12,12 +12,14 @@ If the user invokes this skill without any other guidance, ask them what they wa
 
 ## Where to look
 
-- `readme.md` — the full design guide: product context, content fundamentals, visual foundations, iconography, and a file manifest. **Start here.**
-- `styles.css` — link this one file to inherit all tokens, fonts, and base styles. It is dark by default.
-- `tokens/` — `colors.css`, `typography.css`, `spacing.css`. Reference the semantic aliases (`--surface-card`, `--text-primary`, `--accent`, `--success`/`--warning`/`--error`), not raw ramps.
-- `components/` — React primitives + `components.css` (the class layer). Compiled to `window.KataDesignSystem_dd74c7`.
-- `guidelines/` — foundation specimen cards you can crib from.
-- `ui_kits/workbench/` — a full interactive recreation of the product UI; the best reference for how the pieces fit together.
+All paths are relative to the repository root.
+
+- `design/README.md` — the full design guide: product context, content fundamentals, visual foundations, iconography, and a file manifest. **Start here.** `design/CLAUDE.md` carries the rules for working in that folder.
+- `design/design_system/styles.css` — link this one file to inherit all tokens, fonts, and base styles. It is dark by default. `fonts.css` and `base.css` sit beside it.
+- `design/design_system/tokens/` — `colors.css`, `typography.css`, `spacing.css`. Reference the semantic aliases (`--surface-card`, `--text-primary`, `--accent`, `--success`/`--warning`/`--error`), not raw ramps.
+- `design/design_system/components/components.css` — the class layer (`.k-*`). The React primitives behind it are compiled into `design/design_system/_ds_bundle.js` (`window.KataDesignSystem_dd74c7`), needed only to run the prototypes.
+- `design/prototype/` — the interactive HTML/React recreation of the product UI (`index.html`, `hitl.html`, `library.html`, `workbench.css`); the best reference for how the pieces fit together. Recreate in Angular, never copy.
+- `design/screenshots/` — rendered reference shots.
 
 ## House rules (do not drift)
 

@@ -11,11 +11,11 @@ import type { KataEvent } from '../lib/events';
 
 class FakeTransport {
   listeners: ((ev: KataEvent) => void)[] = [];
-  onRunEvent(cb: (ev: KataEvent) => void) {
-    this.listeners.push(cb);
+  onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
+    this.listeners.push((ev) => cb('1', ev));
     return Promise.resolve(() => {});
   }
-  runSpec = vi.fn(() => Promise.resolve());
+  runSpec = vi.fn(() => Promise.resolve('1'));
   cancelRun = vi.fn(() => Promise.resolve());
   submitAnswer = vi.fn(() => Promise.resolve());
   submitDecision = vi.fn(() => Promise.resolve());

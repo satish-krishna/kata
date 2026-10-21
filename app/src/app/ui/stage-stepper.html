@@ -8,9 +8,14 @@
   <button hlmTabsTrigger="plan" variant="bare" class="k-step" [disabled]="!docs().plan" [attr.aria-current]="current('plan')">
     <ng-container *ngTemplateOutlet="tile; context: { $implicit: steps()[2] }" />
   </button>
+  <button hlmTabsTrigger="build" variant="bare" class="k-step" [disabled]="buildDisabled()" [attr.aria-current]="current('build')">
+    <ng-container *ngTemplateOutlet="tile; context: { $implicit: steps()[3] }" />
+  </button>
 </div>
 <ng-template #tile let-s>
   <span class="k-step__name">{{ s.title }}</span>
   <span [class]="'k-status k-status--' + s.tone"><span class="k-status__dot"></span>{{ s.text }}</span>
-  <span class="k-step__runs">{{ s.runs }}</span>
+  @if (s.detail) {
+    <span class="k-step__runs">{{ s.detail }}</span>
+  }
 </ng-template>

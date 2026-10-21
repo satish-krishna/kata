@@ -1,0 +1,16 @@
+@for (w of items(); track w.repo + w.kind) {
+  <div class="k-waiting" [class.k-waiting--line]="compact()" data-waiting>
+    <span class="k-status k-status--warning">
+      <span class="k-status__dot"></span>
+      @if (compact()) {
+        The agent in <span class="k-mono">{{ w.repo }}</span> is waiting for you.
+      } @else {
+        The agent in <span class="k-mono">{{ w.repo }}</span> is waiting for your {{ w.kind === 'answer' ? 'answer' : 'approval' }}.
+      }
+    </span>
+    @if (!compact() && w.countdown; as countdown) {
+      <span class="k-waiting__stop">It stops if nobody answers within <span class="k-mono">{{ countdown }}</span>.</span>
+    }
+    <button hlmBtn variant="secondary" size="sm" type="button" (click)="goTo.emit(w.repo)">Go to {{ w.repo }}</button>
+  </div>
+}

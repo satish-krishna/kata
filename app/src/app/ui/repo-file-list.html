@@ -1,0 +1,51 @@
+<ul class="k-files" aria-label="Changed files by repository">
+  @for (g of groups(); track g.repo) {
+    <li class="k-files__group">
+      <button
+        hlmBtn
+        variant="bare"
+        size="bare"
+        type="button"
+        class="k-files__repo"
+        data-repo
+        [attr.aria-expanded]="g.expanded"
+        (click)="toggle.emit(g.repo)"
+      >
+        <ng-icon [name]="g.expanded ? 'lucideChevronDown' : 'lucideChevronRight'" size="14" aria-hidden="true" />
+        <span class="k-mono k-files__name">{{ g.repo }}</span>
+        &ngsp;<span class="k-mono k-files__count">{{ g.files.length }}</span>
+      </button>
+      @if (g.expanded) {
+        <ul class="k-files__list" [attr.aria-label]="'Files changed in ' + g.repo">
+          @for (f of g.files; track f.path) {
+            <li>
+              <button
+                hlmBtn
+                variant="bare"
+                size="bare"
+                type="button"
+                class="k-files__file"
+                [attr.data-file]="f.path"
+                [attr.aria-current]="isSelected(g.repo, f.path) ? 'true' : null"
+                (click)="select.emit({ repo: g.repo, path: f.path })"
+              >
+                <span [class]="'k-mono k-files__letter k-files__letter--' + status[f.status].tone" data-status aria-hidden="true">{{ status[f.status].letter }}</span>
+                <span class="sr-only">{{ status[f.status].name }}</span>
+                <span class="k-mono k-files__path">{{ f.path }}</span>
+                @if (f.uncommitted) {
+                  <span class="k-files__dot" data-uncommitted aria-hidden="true"></span>
+                  <span class="sr-only">Uncommitted</span>
+                }
+                @if (f.binary) {
+                  <span class="k-mono k-files__lines" data-lines>bin</span>
+                } @else {
+                  <span class="k-mono k-files__lines" data-lines>+{{ f.added }} −{{ f.removed }}</span>
+                }
+              </button>
+            </li>
+          }
+        </ul>
+      }
+    </li>
+  }
+</ul>

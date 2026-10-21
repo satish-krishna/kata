@@ -163,6 +163,6 @@ export class LibraryViewModel {
   }
 
   baseName(path: string): string {
-    return path.split(/[\/]/).pop() ?? path;
+    return path.split(/[\\/]/).pop() ?? path;
   }
 }

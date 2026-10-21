@@ -11,12 +11,29 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { BranchInfo } from '@bindings/BranchInfo';
+import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
+import type { BuildStatus } from '@bindings/BuildStatus';
+import type { UnsavedRows } from '@bindings/UnsavedRows';
+import type { Participant } from '@bindings/Participant';
+import type { PrepareOutcome } from '@bindings/PrepareOutcome';
+import type { BuildStart } from '@bindings/BuildStart';
+import type { ChangeRepo } from '@bindings/ChangeRepo';
+import type { Part } from '@bindings/Part';
+import type { DiffListing } from '@bindings/DiffListing';
+import type { FilePair } from '@bindings/FilePair';
+import type { BaseInfo } from '@bindings/BaseInfo';
+import type { PublishRepo } from '@bindings/PublishRepo';
+import type { Offender } from '@bindings/Offender';
+import type { ChecksPlan } from '@bindings/ChecksPlan';
+import type { RepoChecks } from '@bindings/RepoChecks';
+import type { PrResult } from '@bindings/PrResult';
+import type { PrState } from '@bindings/PrState';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import { KataTransport } from './kata-transport';
@@ -39,10 +56,10 @@ export class TauriTransport extends KataTransport {
   loadSpec(path: string) { return this.ipc.invoke<RunSpec>('load_spec', { path }); }
   saveSpec(path: string, spec: RunSpec) { return this.ipc.invoke<void>('save_spec', { path, spec }); }
   validateSpec(spec: RunSpec) { return this.ipc.invoke<string[]>('validate_spec', { spec }); }
-  runSpec(spec: RunSpec) { return this.ipc.invoke<void>('run_spec', { spec }); }
-  cancelRun() { return this.ipc.invoke<void>('cancel_run'); }
-  submitAnswer(id: string, answers: string[][]) { return this.ipc.invoke<void>('submit_answer', { id, answers }); }
-  submitDecision(id: string, allow: boolean, message: string | null) { return this.ipc.invoke<void>('submit_decision', { id, allow, message }); }
+  runSpec(spec: RunSpec, group?: string) { return this.ipc.invoke<string>('run_spec', { spec, group }); }
+  cancelRun(runId: string) { return this.ipc.invoke<void>('cancel_run', { runId }); }
+  submitAnswer(runId: string, id: string, answers: string[][]) { return this.ipc.invoke<void>('submit_answer', { runId, id, answers }); }
+  submitDecision(runId: string, id: string, allow: boolean, message: string | null) { return this.ipc.invoke<void>('submit_decision', { runId, id, allow, message }); }
   listKatas() { return this.ipc.invoke<KataListing>('list_katas'); }
   loadKata(name: string) { return this.ipc.invoke<RunSpec>('load_kata', { name }); }
   saveKata(spec: RunSpec) { return this.ipc.invoke<void>('save_kata', { spec }); }
@@ -59,18 +76,41 @@ export class TauriTransport extends KataTransport {
   sdlcBranches(master: string) { return this.ipc.invoke<BranchInfo>('sdlc_branches', { master }); }
   sdlcReadDoc(master: string, system: string, change: string, doc: string) { return this.ipc.invoke<string | null>('sdlc_read_doc', { master, system, change, doc }); }
   sdlcSnapshot(master: string) { return this.ipc.invoke<Snapshot>('sdlc_snapshot', { master }); }
-  sdlcLeftovers(master: string, before: Snapshot, productRepos: string[]) { return this.ipc.invoke<Leftovers>('sdlc_leftovers', { master, before, productRepos }); }
-  sdlcDiscard(master: string, before: Snapshot, paths: string[]) { return this.ipc.invoke<void>('sdlc_discard', { master, before, paths }); }
+  sdlcLeftovers(master: string, before: Snapshot, productRepos: string[], build?: BuildScope) { return this.ipc.invoke<Leftovers>('sdlc_leftovers', { master, before, productRepos, build }); }
+  sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope) { return this.ipc.invoke<void>('sdlc_discard', { master, before, paths, build }); }
   sdlcStartChange(master: string, base: string) { return this.ipc.invoke<string>('sdlc_start_change', { master, base }); }
   sdlcFinishChange(master: string, pending: string, base: string) { return this.ipc.invoke<FinishOutcome>('sdlc_finish_change', { master, pending, base }); }
   sdlcCheckout(master: string, branch: string) { return this.ipc.invoke<void>('sdlc_checkout', { master, branch }); }
   sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean) { return this.ipc.invoke<DecideOutcome>('sdlc_decide', { master, system, change, decision, confirmed }); }
   sdlcRunLinks() { return this.ipc.invoke<RunLink[]>('sdlc_run_links'); }
   sdlcLinkRun(link: RunLink) { return this.ipc.invoke<void>('sdlc_link_run', { link }); }
-  sdlcWaitRunExit(timeoutMs: number) { return this.ipc.invoke<boolean>('sdlc_wait_run_exit', { timeoutMs }); }
+  sdlcWaitRunExit(runId: string, timeoutMs: number) { return this.ipc.invoke<boolean>('sdlc_wait_run_exit', { runId, timeoutMs }); }
+  sdlcBuildStatus(master: string, system: string, change: string) { return this.ipc.invoke<BuildStatus>('sdlc_build_status', { master, system, change }); }
+  sdlcUnsavedRows(master: string, system: string, change: string) { return this.ipc.invoke<UnsavedRows[]>('sdlc_unsaved_rows', { master, system, change }); }
+  sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending: string | null = null) { return this.ipc.invoke<PrepareOutcome>('sdlc_build_prepare', { folder, masterRepo, system, change, continueWithLeftovers, pending }); }
+  sdlcBuildParticipants(folder: string, masterRepo: string, system: string, change: string, pending: string | null = null) { return this.ipc.invoke<Participant[]>('sdlc_build_participants', { folder, masterRepo, system, change, pending }); }
+  sdlcBuildSettle(start: BuildStart) { return this.ipc.invoke<string[]>('sdlc_build_settle', { start }); }
+  sdlcBuildHeads(folder: string, repos: string[], change: string) { return this.ipc.invoke<Record<string, string>>('sdlc_build_heads', { folder, repos, change }); }
+  sdlcPluginVersion(path: string) { return this.ipc.invoke<string | null>('sdlc_plugin_version', { path }); }
+  sdlcChangeRepos(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<ChangeRepo[]>('sdlc_change_repos', { folder, masterRepo, system, change }); }
+  sdlcMissingChangeBranches(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<string[]>('sdlc_missing_change_branches', { folder, masterRepo, system, change }); }
+  sdlcDiffFiles(repoPath: string, part: Part) { return this.ipc.invoke<DiffListing>('sdlc_diff_files', { repoPath, part }); }
+  sdlcDiffPair(repoPath: string, part: Part, path: string) { return this.ipc.invoke<FilePair>('sdlc_diff_pair', { repoPath, part, path }); }
+  sdlcDiffBase(repoPath: string) { return this.ipc.invoke<BaseInfo>('sdlc_diff_base', { repoPath }); }
+  sdlcTouchedRepos(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<PublishRepo[]>('sdlc_touched_repos', { folder, masterRepo, system, change }); }
+  sdlcCommitOffenders(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<Offender[]>('sdlc_commit_offenders', { folder, masterRepo, system, change }); }
+  sdlcChecksDir() { return this.ipc.invoke<string>('sdlc_checks_dir'); }
+  sdlcChecksLoad(folder: string, masterRepo: string, system: string) { return this.ipc.invoke<ChecksPlan>('sdlc_checks_load', { folder, masterRepo, system }); }
+  sdlcRunChecks(folder: string, masterRepo: string, system: string, repo: PublishRepo) { return this.ipc.invoke<RepoChecks>('sdlc_run_checks', { folder, masterRepo, system, repo }); }
+  sdlcGhSignedIn(repos: PublishRepo[]) { return this.ipc.invoke<string>('sdlc_gh_signed_in', { repos }); }
+  sdlcGhOrigins(repos: PublishRepo[]) { return this.ipc.invoke<void>('sdlc_gh_origins', { repos }); }
+  sdlcPublish(folder: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]) { return this.ipc.invoke<PrResult[]>('sdlc_publish', { folder, masterRepo, system, change, repos }); }
+  sdlcPullRequests(repos: PublishRepo[], change: string) { return this.ipc.invoke<PrState[]>('sdlc_pull_requests', { repos, change }); }
   zoom(step: ZoomStep) { return this.ipc.invoke<number>('zoom', { step }); }
   pickDirectory() { return this.ipc.open({ directory: true, multiple: false }) as Promise<string | null>; }
   pickOpenSpec() { return this.ipc.open({ multiple: false, filters: SPEC_FILTERS }) as Promise<string | null>; }
   pickSaveSpec() { return this.ipc.save({ filters: SPEC_FILTERS }) as Promise<string | null>; }
-  onRunEvent(cb: (ev: KataEvent) => void) { return this.ipc.listen<KataEvent>('kata://event', (e) => cb(e.payload)); }
+  onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
+    return this.ipc.listen<{ runId: number; event: KataEvent }>('kata://event', (e) => cb(String(e.payload.runId), e.payload.event));
+  }
 }

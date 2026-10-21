@@ -4,7 +4,7 @@ use crate::snapshot::status_entries;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-fn branch_exists(repo: &Path, name: &str) -> bool {
+pub(crate) fn branch_exists(repo: &Path, name: &str) -> bool {
     git::run(
         repo,
         &[
@@ -90,7 +90,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-fn ensure_clean(master: &Path) -> Result<(), BranchError> {
+pub(crate) fn ensure_clean(master: &Path) -> Result<(), BranchError> {
     let dirty: Vec<String> = status_entries(master)?
         .into_iter()
         .map(|e| e.path)

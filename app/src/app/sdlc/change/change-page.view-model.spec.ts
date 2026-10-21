@@ -8,6 +8,7 @@ import { LockStore } from '../../core/lock/lock.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { actionsFor } from '../../lib/sdlc';
+import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { ChangePageViewModel } from './change-page.view-model';
 
 const FNOL = '2026-10-12-fnol-photo-upload';
@@ -152,7 +153,7 @@ describe('ChangePageViewModel', () => {
     ]);
     const { vm } = setup(FNOL, transport);
     await ready(vm);
-    expect(vm.runCounts()).toEqual({ intent: 1, spec: 2, plan: 0 });
+    expect(vm.runCounts()).toEqual({ intent: 1, spec: 2, plan: 0, build: 0, review: 0 });
   });
 
   it('says so when the change is not in the workspace', async () => {
@@ -180,6 +181,35 @@ describe('ChangePageViewModel', () => {
       expect(decide).toHaveBeenCalledWith(expect.stringContaining('claims-intent'), 'claims', FNOL, 'accept-spec', false);
       expect(vm.change()?.stage).toBe('plan-ready');
       expect(vm.actions()).toEqual(actionsFor('plan-ready'));
+    });
+
+    it('accept plan commits through sdlcDecide and opens the build (R1.2)', async () => {
+      const { vm, transport } = setup(REASSIGN);
+      const decide = vi.spyOn(transport, 'sdlcDecide');
+      await ready(vm);
+      expect(vm.primary()).toBe('accept-plan');
+      await vm.act('accept-plan');
+      expect(decide).toHaveBeenCalledWith(expect.stringContaining('claims-intent'), 'claims', REASSIGN, 'accept-plan', false);
+      expect(toastText()).toContain('Accepted plan · committed');
+      expect(vm.change()?.stage).toBe('build-ready');
+    });
+
+    it('commit-acceptance on a plan accepted but not committed decides accept-plan', async () => {
+      const transport = new MockTransport();
+      withStage(transport, REASSIGN, 'plan-accepted-uncommitted');
+      const { vm } = setup(REASSIGN, transport);
+      const decide = vi.spyOn(transport, 'sdlcDecide');
+      await ready(vm);
+      await vm.act('commit-acceptance');
+      expect(decide.mock.calls[0][3]).toBe('accept-plan');
+    });
+
+    it('names plan.md in the confirm for a plan decision', async () => {
+      const { vm, transport } = setup(REASSIGN);
+      vi.spyOn(transport, 'sdlcDecide').mockResolvedValue({ kind: 'needsConfirm', other_edits: true });
+      await ready(vm);
+      await vm.act('accept-plan');
+      expect(vm.confirmPrompt()).toBe('plan.md has other uncommitted edits; accepting commits them too.');
     });
 
     it('accept-intent moves a draft intent on to spec-ready', async () => {
@@ -349,5 +379,174 @@ describe('ChangePageViewModel', () => {
     navigate.mockClear();
     await vm.toHome();
     expect(navigate).toHaveBeenCalledWith(['/sdlc']);
+  });
+
+  describe('the build', () => {
+    const BUILD = MOCK_BUILD_CHANGE;
+    const REQUEST = { timeoutSecs: 5400, instructions: null, repo: null };
+
+    it('Start build, Continue build and Another round open the dialog in their own mode', async () => {
+      const transport = new MockTransport();
+      withStage(transport, BUILD, 'build-stopped');
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      expect(vm.buildMode()).toBeNull();
+      await vm.act('continue-build');
+      expect(vm.buildMode()).toBe('continue');
+      vm.cancelBuild();
+      expect(vm.buildMode()).toBeNull();
+      await vm.act('another-round');
+      expect(vm.buildMode()).toBe('round');
+      expect(vm.buildRepos()).toEqual(['claims-intent', 'claims-core', 'customer-portal']);
+    });
+
+    it('Start build opens the dialog and prepares nothing yet', async () => {
+      const { vm, transport } = setup(BUILD);
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+      await ready(vm);
+      await vm.act('start-build');
+      expect(vm.buildMode()).toBe('start');
+      expect(prepare).not.toHaveBeenCalled();
+    });
+
+    it('a ready preparation hands the start, the time limit and the checks folder to the build view', async () => {
+      const { vm, transport } = setup(BUILD);
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+      await ready(vm);
+      await vm.act('start-build');
+      await vm.submitBuild(REQUEST);
+      expect(prepare).toHaveBeenCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false, null);
+      expect(vm.buildMode()).toBeNull();
+      const h = vm.handoff()!;
+      expect(h.timeoutSecs).toBe(5400);
+      expect(h.round).toBeNull();
+      expect(h.start.repos.map((r) => r.repo)).toEqual(['claims-core', 'customer-portal']);
+      expect(h.checksDir).toBe(await transport.sdlcChecksDir());
+    });
+
+    it('the handoff records whether the leftovers were confirmed, so the run is not asked to ask again', async () => {
+      const { vm, transport } = setup(BUILD);
+      const real = transport.sdlcBuildPrepare.bind(transport);
+      vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['a'] }] }).mockImplementation(real);
+      await ready(vm);
+      await vm.submitBuild(REQUEST);
+      await vm.confirmLeftovers();
+      expect(vm.handoff()!.continueOnLeftovers).toEqual(['claims-core']);
+      await vm.closeBuild();
+      await vm.submitBuild(REQUEST);
+      expect(vm.handoff()!.continueOnLeftovers).toEqual([]);
+    });
+
+    it('Another round names its repository, so the backend counts it as taking part even when its tasks are all done or it is the master (R6.4)', async () => {
+      const transport = new MockTransport();
+      withStage(transport, BUILD, 'build-finished');
+      const { vm } = setup(BUILD, transport);
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+      await ready(vm);
+      for (const repo of ['claims-core', 'claims-intent']) {
+        await vm.act('another-round');
+        await vm.submitBuild({ timeoutSecs: 14400, instructions: 'tidy up', repo });
+        expect(prepare).toHaveBeenLastCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false, repo);
+        await vm.closeBuild();
+      }
+    });
+
+    it('names the workspace, folder, system, change and every product repository of the system for the build view (R18.5)', async () => {
+      const { vm, transport } = setup(BUILD);
+      await ready(vm);
+      const w = (await transport.sdlcWorkspaces())[0];
+      expect(vm.buildContext()).toEqual({ workspaceId: w.id, folder: w.folder, system: 'claims', change: BUILD, systemRepos: ['claims-core', 'customer-portal', 'billing-api'] });
+    });
+
+    it('closing the build forgets the handoff and reads the change again', async () => {
+      const { vm, transport } = setup(BUILD);
+      await ready(vm);
+      await vm.submitBuild(REQUEST);
+      expect(vm.handoff()).not.toBeNull();
+      const changes = vi.spyOn(transport, 'sdlcChanges');
+      await vm.closeBuild();
+      expect(vm.handoff()).toBeNull();
+      expect(changes).toHaveBeenCalled();
+    });
+
+    it('reads the checks folder once, however often the page loads', async () => {
+      const transport = new MockTransport();
+      const checks = vi.spyOn(transport, 'sdlcChecksDir');
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      await vm.discardLeftovers([]);
+      expect(checks).toHaveBeenCalledTimes(1);
+    });
+
+    it('a round carries its instructions and repository to the build view', async () => {
+      const transport = new MockTransport();
+      withStage(transport, BUILD, 'build-finished');
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      await vm.act('another-round');
+      await vm.submitBuild({ timeoutSecs: 14400, instructions: 'rename the status field to state', repo: 'claims-core' });
+      expect(vm.handoff()!.round).toEqual({ instructions: 'rename the status field to state', repo: 'claims-core' });
+      expect(vm.handoff()!.timeoutSecs).toBe(14400);
+    });
+
+    it('the change page confirms and retries with leftovers (R6.4)', async () => {
+      const { vm, transport } = setup(BUILD);
+      const left = [{ repo: 'claims-core', files: ['src/new.rs'] }];
+      const real = transport.sdlcBuildPrepare.bind(transport);
+      const prepare = vi
+        .spyOn(transport, 'sdlcBuildPrepare')
+        .mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: left })
+        .mockImplementation(real);
+      await ready(vm);
+      await vm.act('start-build');
+      await vm.submitBuild(REQUEST);
+      expect(vm.leftoverPrompt()!.lines).toEqual(['claims-core: src/new.rs']);
+      expect(vm.handoff()).toBeNull();
+      expect(prepare).toHaveBeenCalledTimes(1);
+      await vm.confirmLeftovers();
+      expect(prepare).toHaveBeenCalledTimes(2);
+      expect(prepare.mock.calls[0][4]).toBe(false);
+      expect(prepare.mock.calls[1][4]).toBe(true);
+      expect(vm.leftoverPrompt()).toBeNull();
+      expect(vm.handoff()!.timeoutSecs).toBe(5400);
+    });
+
+    it('declining the leftovers prepares nothing more', async () => {
+      const { vm, transport } = setup(BUILD);
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValue({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['a'] }] });
+      await ready(vm);
+      await vm.submitBuild(REQUEST);
+      vm.cancelLeftovers();
+      expect(vm.leftoverPrompt()).toBeNull();
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(vm.handoff()).toBeNull();
+    });
+
+    it('a refusal is shown and starts nothing', async () => {
+      const { vm, transport } = setup(BUILD);
+      vi.spyOn(transport, 'sdlcPluginVersion').mockResolvedValue('0.5.0');
+      await ready(vm);
+      await vm.submitBuild(REQUEST);
+      expect(vm.refusal()).toBe('Update the ai-sdlc plugin to 0.6.0 or later, then start the build again.');
+      expect(vm.handoff()).toBeNull();
+      vm.closeRefusal();
+      expect(vm.refusal()).toBeNull();
+    });
+
+    it('reads the build status once the plan exists and lists its tasks', async () => {
+      const { vm, transport } = setup(BUILD);
+      const status = vi.spyOn(transport, 'sdlcBuildStatus');
+      await ready(vm);
+      expect(status).toHaveBeenCalled();
+      expect(vm.buildTasks().map((t) => t.id).length).toBeGreaterThan(0);
+    });
+
+    it('does not read the build status before there is a plan', async () => {
+      const { vm, transport } = setup(FNOL);
+      const status = vi.spyOn(transport, 'sdlcBuildStatus');
+      await ready(vm);
+      expect(status).not.toHaveBeenCalled();
+      expect(vm.buildTasks()).toEqual([]);
+    });
   });
 });

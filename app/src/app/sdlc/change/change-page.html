@@ -23,7 +23,11 @@
     }
   </app-sdlc-toolbar>
 
-  @if (vm.session(); as s) {
+  @if (vm.handoff(); as h) {
+    @if (vm.buildContext(); as ctx) {
+      <app-build-view [handoff]="h" [context]="ctx" (closed)="vm.closeBuild()" />
+    }
+  } @else if (vm.session(); as s) {
     <app-sdlc-session
       [title]="s.title"
       [finished]="s.finished"
@@ -58,22 +62,52 @@
         </main>
       }
       @case ('ready') {
+        @if (vm.done()) {
+          <app-pr-card [pullRequests]="vm.pullRequests()" />
+        } @else if (vm.prCheckFailed()) {
+          <p class="k-left__note px-5 pt-5" data-testid="pr-note">Could not check pull requests</p>
+        }
         <main class="k-change" hlmTabs variant="bare" [tab]="vm.shownDoc()" (tabActivated)="vm.showDoc($event)">
           <h1 class="sr-only">{{ vm.changeName() }}</h1>
           @if (vm.change(); as c) {
-            <app-stage-stepper [stage]="c.stage" [counts]="vm.runCounts()" [docs]="vm.docs()" />
+            <app-stage-stepper [stage]="c.stage" [counts]="vm.runCounts()" [docs]="vm.docs()" [build]="vm.buildTile()" [done]="vm.done()" />
           }
           @for (stem of vm.stems; track stem) {
             <div class="k-change__doc" [hlmTabsContent]="stem" variant="bare">
               @if (stem === vm.shownDoc()) {
+                @if (vm.planBanner(); as banner) {
+                  <hlm-alert class="wb-banner wb-banner--warn" data-testid="plan-banner">
+                    <ng-icon name="lucideTriangleAlert" size="15" />
+                    <div hlmAlertDescription>{{ banner }}</div>
+                  </hlm-alert>
+                }
                 @if (vm.doc() === null) {
                   <p class="k-state__body">{{ vm.docName() }} is not in this change folder.</p>
                 } @else {
                   <app-doc-view [name]="vm.docName()" [frontMatter]="vm.docParts().frontMatter" [body]="vm.docParts().body" />
                 }
+                @if (stem === 'plan' && vm.buildTasks().length > 0) {
+                  <app-build-log-table [tasks]="vm.buildTasks()" />
+                }
               }
             </div>
           }
+          <div class="k-change__doc" hlmTabsContent="build" variant="bare">
+            @if (vm.shownDoc() === 'build') {
+              @if (vm.changesContext(); as ctx) {
+                <app-changes-view
+                  [folder]="ctx.folder"
+                  [masterRepo]="ctx.masterRepo"
+                  [system]="ctx.system"
+                  [change]="ctx.change"
+                  [turns]="0"
+                  [banner]="null"
+                  [pullRequests]="vm.pullRequests()"
+                  [prTitle]="vm.changeName()"
+                />
+              }
+            }
+          </div>
         </main>
       }
     }
@@ -86,6 +120,31 @@
   />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
   <app-feedback-dialog [action]="vm.feedbackFor()" (run)="vm.runWithFeedback($event)" (cancel)="vm.cancelFeedback()" />
+  <app-build-dialog
+    [open]="vm.buildMode() !== null"
+    [mode]="vm.buildMode() ?? 'start'"
+    [repos]="vm.buildRepos()"
+    (start)="vm.submitBuild($event)"
+    (cancel)="vm.cancelBuild()"
+  />
+  <app-confirm-dialog
+    [open]="vm.leftoverPrompt() !== null"
+    message="Continue on top of leftovers?"
+    [details]="vm.leftoverPrompt()?.lines ?? []"
+    confirmLabel="Continue"
+    (confirm)="vm.confirmLeftovers()"
+    (cancel)="vm.cancelLeftovers()"
+  />
+  <app-done-dialog
+    [report]="vm.doneReport()"
+    [change]="vm.changeName()"
+    (confirm)="vm.confirmDone()"
+    (anotherRound)="vm.doneRound()"
+    (runReview)="vm.doneRunReview()"
+    (cancel)="vm.cancelDone()"
+  />
+  <app-pr-list-dialog [results]="vm.prList()" (retry)="vm.retryPublish()" (close)="vm.closePrList()" />
+  <app-build-refusal-dialog [reason]="vm.refusal()" (close)="vm.closeRefusal()" />
   <app-confirm-dialog
     [open]="vm.confirmPrompt() !== null"
     [message]="vm.confirmPrompt() ?? ''"

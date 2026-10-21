@@ -16,8 +16,46 @@ pub enum Stage {
     SpecAwaiting,
     SpecAcceptedUncommitted,
     PlanReady,
-    PlanWritten,
+    PlanAwaiting,
+    PlanAcceptedUncommitted,
+    PlanOutOfDate,
     PlanSuperseded,
+    BuildReady,
+    BuildStopped,
+    BuildFinished,
+}
+
+/// Why an accepted or written plan cannot be built, earliest document first.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum OutOfDate {
+    IntentReopened,
+    SpecReopened,
+    SpecPin,
+    PlanPin,
+    NoTasks,
+}
+
+/// Task counts of a change's plan against the committed build logs.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct BuildCounts {
+    pub tasks: u32,
+    pub finished: u32,
+    pub repos: u32,
+}
+
+/// What the plan stage needs beyond the three documents' front matter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct PlanFacts {
+    pub spec_pin: bool,
+    pub plan_pin: bool,
+    pub has_tasks: bool,
+    pub tasks: u32,
+    pub finished: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -46,6 +84,9 @@ pub struct ChangeInfo {
     pub spec: DocState,
     pub plan: DocState,
     pub stage: Stage,
+    pub build: BuildCounts,
+    pub scope: String,
+    pub out_of_date: Option<OutOfDate>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -57,13 +98,50 @@ pub struct BranchInfo {
     pub default_base: Option<String>,
 }
 
-/// The spec's "Stage derivation and actions" table, rows in order.
-pub fn derive_stage(intent: &DocState, spec: &DocState, plan: &DocState) -> Stage {
+/// Why the plan cannot be built, or `None` when it can; the first cause in document order.
+/// The causes are checked in document order so the engineer is told the earliest document to settle.
+pub fn out_of_date(
+    intent: &DocState,
+    spec: &DocState,
+    _plan: &DocState,
+    facts: &PlanFacts,
+) -> Option<OutOfDate> {
+    if !intent.is("accepted") {
+        Some(OutOfDate::IntentReopened)
+    } else if !spec.is("accepted") {
+        Some(OutOfDate::SpecReopened)
+    } else if !facts.spec_pin {
+        Some(OutOfDate::SpecPin)
+    } else if !facts.plan_pin {
+        Some(OutOfDate::PlanPin)
+    } else if !facts.has_tasks {
+        Some(OutOfDate::NoTasks)
+    } else {
+        None
+    }
+}
+
+/// The spec's "Stage derivation and actions" table, rows in order. A reopened intent or spec keeps
+/// its own stage even when a plan exists (R1.5), so the change has the actions to settle it; the
+/// plan rows apply only while both documents are accepted.
+pub fn derive_stage(
+    intent: &DocState,
+    spec: &DocState,
+    plan: &DocState,
+    facts: &PlanFacts,
+) -> Stage {
     if intent.is("rejected") {
         return Stage::Rejected;
     }
     if intent.is("accepted") && !intent.committed {
         return Stage::IntentAcceptedUncommitted;
+    }
+    // A reopened intent or spec is settled at its own stage, which carries the actions to settle it.
+    if plan.exists && intent.is("accepted") && spec.is("accepted") {
+        if !spec.committed {
+            return Stage::SpecAcceptedUncommitted;
+        }
+        return plan_stage(intent, spec, plan, facts);
     }
     if !intent.is("accepted") {
         return if intent.committed {
@@ -81,13 +159,29 @@ pub fn derive_stage(intent: &DocState, spec: &DocState, plan: &DocState) -> Stag
     if !spec.is("accepted") {
         return Stage::SpecAwaiting;
     }
-    if !plan.exists {
-        return Stage::PlanReady;
-    }
+    Stage::PlanReady
+}
+
+/// The rows of a change whose plan exists.
+fn plan_stage(intent: &DocState, spec: &DocState, plan: &DocState, facts: &PlanFacts) -> Stage {
     if plan.is("superseded") {
-        Stage::PlanSuperseded
+        return Stage::PlanSuperseded;
+    }
+    if out_of_date(intent, spec, plan, facts).is_some() {
+        return Stage::PlanOutOfDate;
+    }
+    if plan.is("accepted") && !plan.committed {
+        return Stage::PlanAcceptedUncommitted;
+    }
+    if !plan.is("accepted") {
+        return Stage::PlanAwaiting;
+    }
+    if facts.finished == 0 {
+        Stage::BuildReady
+    } else if facts.finished >= facts.tasks {
+        Stage::BuildFinished
     } else {
-        Stage::PlanWritten
+        Stage::BuildStopped
     }
 }
 
@@ -132,6 +226,32 @@ fn doc_state(master: &Path, system: &str, change: &str, file: &str) -> DocState 
     }
 }
 
+/// The plan's tasks from the working tree, the finished ones from the committed build logs, and
+/// whether both source pins hold. A plan or log git cannot read counts no finished task.
+fn plan_facts(master: &Path, system: &str, change: &str) -> (PlanFacts, BuildCounts) {
+    let text = read_doc(master, system, change, "plan").unwrap_or_default();
+    let tasks = crate::build::plan_tasks(&text);
+    let mut repos: Vec<&str> = tasks.iter().map(|t| t.repo.as_str()).collect();
+    repos.sort_unstable();
+    repos.dedup();
+    let finished = crate::build::status(master, system, change)
+        .map(|s| s.tasks.iter().filter(|t| t.row.is_some()).count() as u32)
+        .unwrap_or(0);
+    let counts = BuildCounts {
+        tasks: tasks.len() as u32,
+        finished,
+        repos: repos.len() as u32,
+    };
+    let facts = PlanFacts {
+        spec_pin: crate::pins::spec_pin_holds(master, system, change),
+        plan_pin: crate::pins::plan_pin_holds(master, system, change),
+        has_tasks: !tasks.is_empty(),
+        tasks: counts.tasks,
+        finished,
+    };
+    (facts, counts)
+}
+
 /// The changes of `system` in the master repo, newest folder name first.
 pub fn list(master: &Path, system: &str) -> Vec<ChangeInfo> {
     if !is_safe_system(system) {
@@ -153,7 +273,18 @@ pub fn list(master: &Path, system: &str) -> Vec<ChangeInfo> {
             let intent = doc_state(master, system, &change, "intent.md");
             let spec = doc_state(master, system, &change, "spec.md");
             let plan = doc_state(master, system, &change, "plan.md");
-            let stage = derive_stage(&intent, &spec, &plan);
+            let (facts, build) = if plan.exists {
+                plan_facts(master, system, &change)
+            } else {
+                (PlanFacts::default(), BuildCounts::default())
+            };
+            let stage = derive_stage(&intent, &spec, &plan, &facts);
+            let out_of_date = if plan.exists && stage == Stage::PlanOutOfDate {
+                out_of_date(&intent, &spec, &plan, &facts)
+            } else {
+                None
+            };
+            let scope = crate::decide::change_scope(master, system, &change);
             ChangeInfo {
                 system: system.to_string(),
                 change,
@@ -161,6 +292,9 @@ pub fn list(master: &Path, system: &str) -> Vec<ChangeInfo> {
                 spec,
                 plan,
                 stage,
+                build,
+                scope,
+                out_of_date,
             }
         })
         .collect()
@@ -227,9 +361,21 @@ mod tests {
         DocState::default()
     }
 
+    /// Facts of a plan whose pins hold, with `tasks` tasks of which `finished` are recorded.
+    fn facts(tasks: u32, finished: u32) -> PlanFacts {
+        PlanFacts {
+            spec_pin: true,
+            plan_pin: true,
+            has_tasks: tasks > 0,
+            tasks,
+            finished,
+        }
+    }
+
     #[test]
     fn derive_stage_table() {
-        let d = derive_stage;
+        let none_f = PlanFacts::default();
+        let d = |i: &DocState, s: &DocState, p: &DocState| derive_stage(i, s, p, &none_f);
         assert_eq!(
             d(&doc(false, "draft"), &none(), &none()),
             Stage::IntentInProgress
@@ -255,11 +401,201 @@ mod tests {
         );
         let spec = doc(true, "accepted");
         assert_eq!(d(&acc, &spec, &none()), Stage::PlanReady);
-        assert_eq!(d(&acc, &spec, &doc(true, "draft")), Stage::PlanWritten);
         assert_eq!(
             d(&acc, &spec, &doc(true, "superseded")),
             Stage::PlanSuperseded
         );
+    }
+
+    #[test]
+    fn derive_stage_written_plan_awaits_acceptance_r1_1() {
+        let acc = doc(true, "accepted");
+        let f = facts(2, 0);
+        assert_eq!(
+            derive_stage(&acc, &acc, &doc(true, "draft"), &f),
+            Stage::PlanAwaiting
+        );
+        assert_eq!(
+            derive_stage(&acc, &acc, &doc(false, "accepted"), &f),
+            Stage::PlanAcceptedUncommitted
+        );
+    }
+
+    #[test]
+    fn derive_stage_superseded_plan_cannot_build_r1_3() {
+        let acc = doc(true, "accepted");
+        let sup = doc(true, "superseded");
+        assert_eq!(
+            derive_stage(&acc, &acc, &sup, &facts(2, 0)),
+            Stage::PlanSuperseded
+        );
+        // A reopened intent is settled first; the plan is rewritten once it is accepted again.
+        assert_eq!(
+            derive_stage(&doc(true, "draft"), &acc, &sup, &facts(2, 0)),
+            Stage::IntentAwaiting
+        );
+    }
+
+    #[test]
+    fn derive_stage_broken_pins_are_out_of_date_r1_4() {
+        let acc = doc(true, "accepted");
+        let plan = doc(true, "accepted");
+        let broken_plan = PlanFacts {
+            plan_pin: false,
+            ..facts(2, 0)
+        };
+        assert_eq!(
+            derive_stage(&acc, &acc, &plan, &broken_plan),
+            Stage::PlanOutOfDate
+        );
+        assert_eq!(
+            out_of_date(&acc, &acc, &plan, &broken_plan),
+            Some(OutOfDate::PlanPin)
+        );
+        let broken_spec = PlanFacts {
+            spec_pin: false,
+            ..facts(2, 0)
+        };
+        assert_eq!(
+            derive_stage(&acc, &acc, &plan, &broken_spec),
+            Stage::PlanOutOfDate
+        );
+        assert_eq!(
+            out_of_date(&acc, &acc, &plan, &broken_spec),
+            Some(OutOfDate::SpecPin)
+        );
+        // The spec's pin is named first when both are broken.
+        let both = PlanFacts {
+            spec_pin: false,
+            plan_pin: false,
+            ..facts(2, 0)
+        };
+        assert_eq!(
+            out_of_date(&acc, &acc, &plan, &both),
+            Some(OutOfDate::SpecPin)
+        );
+        let no_tasks = facts(0, 0);
+        assert_eq!(
+            derive_stage(&acc, &acc, &doc(true, "draft"), &no_tasks),
+            Stage::PlanOutOfDate
+        );
+        assert_eq!(
+            out_of_date(&acc, &acc, &doc(true, "draft"), &no_tasks),
+            Some(OutOfDate::NoTasks)
+        );
+        assert_eq!(out_of_date(&acc, &acc, &plan, &facts(2, 0)), None);
+    }
+
+    #[test]
+    fn derive_stage_reopened_intent_or_spec_r1_5() {
+        let acc = doc(true, "accepted");
+        let plan = doc(true, "accepted");
+        let f = facts(2, 1);
+        let draft = doc(true, "draft");
+        // A reopened document is settled at its own stage, which carries the actions to settle it.
+        assert_eq!(derive_stage(&draft, &acc, &plan, &f), Stage::IntentAwaiting);
+        assert_eq!(
+            derive_stage(&doc(false, "draft"), &acc, &plan, &f),
+            Stage::IntentInProgress
+        );
+        assert_eq!(
+            derive_stage(&draft, &acc, &doc(true, "superseded"), &f),
+            Stage::IntentAwaiting
+        );
+        assert_eq!(derive_stage(&acc, &draft, &plan, &f), Stage::SpecAwaiting);
+        assert_eq!(
+            derive_stage(&acc, &draft, &doc(true, "superseded"), &f),
+            Stage::SpecAwaiting
+        );
+        assert_eq!(
+            out_of_date(&draft, &acc, &plan, &f),
+            Some(OutOfDate::IntentReopened)
+        );
+        assert_eq!(
+            out_of_date(&acc, &draft, &plan, &f),
+            Some(OutOfDate::SpecReopened)
+        );
+        // The intent is named first when both are reopened.
+        assert_eq!(
+            out_of_date(&draft, &draft, &plan, &f),
+            Some(OutOfDate::IntentReopened)
+        );
+    }
+
+    #[test]
+    fn derive_stage_build_rows_r14_1() {
+        let acc = doc(true, "accepted");
+        assert_eq!(
+            derive_stage(&acc, &acc, &acc, &facts(2, 0)),
+            Stage::BuildReady
+        );
+        assert_eq!(
+            derive_stage(&acc, &acc, &acc, &facts(2, 1)),
+            Stage::BuildStopped
+        );
+        assert_eq!(
+            derive_stage(&acc, &acc, &acc, &facts(2, 2)),
+            Stage::BuildFinished
+        );
+    }
+
+    #[test]
+    fn list_reads_counts_scope_and_pins() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let dir = "intent/claims/2026-10-12-fnol";
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/intent.md"),
+            "---\nstatus: accepted\nscope: sdlc\n---\nintent\n",
+            "intent",
+        );
+        let intent_pin = git::run(&repo, &["rev-parse", "HEAD"]).unwrap();
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/spec.md"),
+            &format!("---\nstatus: accepted\nsource_intent_commit: {intent_pin}\n---\nspec\n"),
+            "spec",
+        );
+        let spec_pin = git::run(&repo, &["rev-parse", "HEAD"]).unwrap();
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/plan.md"),
+            &format!(
+                "---\nstatus: accepted\nsource_spec_commit: {spec_pin}\n---\n\n## Tasks\n\n### T1: One (`app`)\n\n- **Depends on:** none\n\n### T2: Two (`app`)\n\n- **Depends on:** T1\n"
+            ),
+            "plan",
+        );
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/build/app.md"),
+            "# Build log: app\n\n| Task | Commits | Departure |\n|---|---|---|\n| T1 | `a111111` | none |\n",
+            "log",
+        );
+        let got = list(&repo, "claims");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].stage, Stage::BuildStopped);
+        assert_eq!(
+            got[0].build,
+            BuildCounts {
+                tasks: 2,
+                finished: 1,
+                repos: 1
+            }
+        );
+        assert_eq!(got[0].scope, "sdlc");
+        assert_eq!(got[0].out_of_date, None);
+
+        // Changing the spec breaks the plan's pin.
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/spec.md"),
+            "---\nstatus: accepted\n---\nspec v2\n",
+            "spec v2",
+        );
+        let got = list(&repo, "claims");
+        assert_eq!(got[0].stage, Stage::PlanOutOfDate);
+        assert_eq!(got[0].out_of_date, Some(OutOfDate::SpecPin));
     }
 
     #[test]

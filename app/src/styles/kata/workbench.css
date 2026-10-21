@@ -41,6 +41,7 @@
 /* ---------- Validation banner ---------- */
 .wb-banner { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-5); font: var(--font-code-sm); flex: none; border-bottom: 1px solid var(--border-subtle); }
 .wb-banner--error { background: var(--error-subtle); color: var(--error-text); }
+.wb-banner--warn { background: var(--warning-subtle); color: var(--warning-text); }
 .wb-banner__list { display: flex; gap: var(--space-4); flex-wrap: wrap; }
 .wb-banner svg { width: 15px; height: 15px; flex: none; }
 
@@ -247,6 +248,8 @@
 .k-facts dd { margin: 0; color: var(--text-primary); }
 
 .k-left { display: grid; gap: var(--space-4); }
+.k-left__repo { display: grid; gap: var(--space-4); }
+.k-left__repo-name { margin: 0; font: var(--weight-medium) var(--text-sm)/1.3 var(--font-mono); color: var(--text-primary); }
 .k-left__group { display: grid; gap: var(--space-3); }
 .k-left__head { margin: 0; font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-muted); }
 .k-left__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
@@ -255,9 +258,35 @@
 .k-left__note { margin: 0; font: var(--text-xs)/1.4 var(--font-sans); color: var(--text-faint); }
 .k-left__warn { margin: 0; font: var(--text-sm)/1.4 var(--font-sans); color: var(--warning-text); }
 
+/* ---------- AI-SDLC: build ---------- */
+.k-repos { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.k-repos__row { display: grid; justify-items: start; gap: var(--space-2); width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-card); color: var(--text-primary); text-align: start; cursor: pointer; }
+.k-repos__row:hover { background: var(--surface-hover); }
+.k-repos__row[aria-current="true"] { border-color: var(--accent); }
+.k-repos__name { color: var(--text-primary); }
+.k-repos__clock { color: var(--text-muted); }
+.k-repos__paused { color: var(--warning-text); }
+.k-repos__new { color: var(--text-muted); }
+/* A notice that an agent waits on the engineer: amber dot and words, with the way to it. */
+.k-waiting { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5); padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border-subtle); background: var(--warning-subtle); color: var(--warning-text); font: var(--font-code-sm); }
+.k-waiting--line { padding-block: var(--space-2); }
+.k-waiting__stop { color: var(--text-secondary); }
+/* Where the engineer stopped looking in a pane that kept running. */
+.k-unseen { padding: var(--space-1) 0; border-top: 1px solid var(--accent); font: var(--font-code-sm); color: var(--text-secondary); }
+.k-findings { display: grid; gap: var(--space-3); }
+.k-findings__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
+.k-findings__item { display: grid; grid-template-columns: 7rem 1fr; gap: var(--space-4); align-items: baseline; }
+.k-findings__text { font: var(--text-base)/1.5 var(--font-sans); color: var(--text-primary); }
+.k-findings__replaced { display: grid; gap: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); }
+.k-findings__replaced > summary { font: var(--font-code-sm); color: var(--text-muted); cursor: pointer; }
+/* A check that did not pass: its words, then the tail of its output in an inset block. */
+.k-check { display: grid; gap: var(--space-3); }
+.k-check > p { margin: 0; }
+.k-check__tail { margin: 0; max-height: 14rem; overflow: auto; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-inset); color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
+
 /* ---------- AI-SDLC: change page ---------- */
 .k-change { flex: 1; min-height: 0; display: grid; grid-template-rows: auto 1fr; }
-.k-steps { list-style: none; margin: 0; padding: var(--space-5); display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-4); border-bottom: 1px solid var(--border-subtle); }
+.k-steps { list-style: none; margin: 0; padding: var(--space-5); display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); border-bottom: 1px solid var(--border-subtle); }
 .k-step { display: grid; gap: var(--space-2); padding: var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-card); font: inherit; color: inherit; text-align: start; cursor: pointer; }
 /* Each tile is the tab for its document: the selected one carries the accent; the current stage keeps its status label. */
 .k-step[aria-selected="true"] { border-color: var(--accent); }
@@ -265,6 +294,7 @@
 .k-step:disabled { cursor: default; }
 .k-step__name { font: var(--weight-semibold) var(--text-base)/1.2 var(--font-sans); color: var(--text-primary); }
 .k-step__runs { font: var(--font-code-sm); color: var(--text-muted); }
+.k-change__doc > .wb-banner { margin-bottom: var(--space-4); }
 .k-change__doc { min-height: 0; overflow-y: auto; padding: var(--space-5); }
 /* AI-SDLC session view: an agent run in the page main region under the toolbar. */
 .k-session { flex: 1; }
@@ -274,3 +304,23 @@
 .k-doc__head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-4); padding-bottom: var(--space-3); border-bottom: 1px solid var(--border-subtle); }
 .k-doc__name { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-muted); }
 .k-doc__front { font: var(--font-code-sm); color: var(--text-secondary); }
+
+/* ---------- AI-SDLC: the Changes view's file list and diff bar ---------- */
+.k-files, .k-files__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.k-files__group { display: grid; gap: var(--space-2); }
+.k-files__repo { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-card); color: var(--text-primary); text-align: start; cursor: pointer; }
+.k-files__repo:hover, .k-files__file:hover { background: var(--surface-hover); }
+.k-files__name { overflow-wrap: anywhere; }
+.k-files__count { color: var(--text-muted); }
+.k-files__file { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); text-align: start; cursor: pointer; }
+.k-files__file[aria-current="true"] { border-color: var(--accent); background: var(--surface-card); }
+.k-files__path { overflow-wrap: anywhere; }
+.k-files__letter--success { color: var(--success-text); }
+.k-files__letter--error { color: var(--error-text); }
+.k-files__letter--warning { color: var(--warning-text); }
+.k-files__letter--idle { color: var(--text-secondary); }
+.k-files__dot { width: var(--space-3); height: var(--space-3); border-radius: var(--radius-full); background: var(--warning); }
+.k-files__lines { color: var(--text-muted); white-space: nowrap; }
+.k-diffbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.k-diffbar__file, .k-diffbar__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.k-diffbar__rename { color: var(--text-muted); }

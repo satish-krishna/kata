@@ -79,6 +79,12 @@ it('shows a kata load failure in the failures list', async () => {
   expect(vm.baseName(vm.failures()[0].path)).toBe('bad.toml');
 });
 
+it('shows the file name of a Windows kata load-failure path', async () => {
+  const { vm } = setup();
+  expect(vm.baseName('D:\\ws\\katas\\bad.toml')).toBe('bad.toml');
+  expect(vm.baseName('D:/ws/katas/bad.toml')).toBe('bad.toml');
+});
+
 it('Run again opens the task editor, then launches the edited spec with autorun and navigates home', async () => {
   const { vm, navigate, launches } = setup();
   await vm.init();

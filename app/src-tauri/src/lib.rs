@@ -1,33 +1,33 @@
+mod runs;
 mod zoom;
 
 use kata_core::catalog::{self, CatalogEntry};
 use kata_core::spec::{self, RunSpec};
 use kata_sdlc as sdlc;
+use runs::{LiveRun, RunTable};
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
+use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
 /// Channel the engine's normalized KataEvents are relayed on to the webview.
 const RUN_EVENT: &str = "kata://event";
 
-/// The in-flight `kata` child plus the id of the run that owns it. A stale
-/// reader task (a finished run still tearing down) must not clear a newer run's
-/// handle, so cleanup is guarded by this id. `id == 0` means no active run.
-#[derive(Default)]
-struct RunState {
-    id: u64,
-    child: Option<CommandChild>,
-}
-
-/// Shared run control: the active run's state plus a monotonic id source.
+/// Shared run control: every live run plus a monotonic id source. A stale
+/// reader task (a finished run still tearing down) removes only its own id, so
+/// it never clears a newer run's handle.
 #[derive(Default)]
 struct RunControl {
-    state: Arc<Mutex<RunState>>,
+    state: Arc<Mutex<RunTable>>,
     next_id: AtomicU64,
+}
+
+/// Run ids cross the webview as strings; anything that is not one names no run.
+fn parse_run_id(run_id: &str) -> Option<u64> {
+    run_id.trim().parse().ok()
 }
 
 /// User skills/plugins plus the workdir's project scope (if any).
@@ -55,9 +55,22 @@ fn validate_spec(spec: RunSpec) -> Vec<String> {
 
 /// Start a run: write the spec to a temp file, spawn `kata run` in the spec's
 /// workdir as a sidecar, and relay its JSON-line KataEvents over `kata://event`.
-/// Returns once spawned; an async task drains stdout for the run's lifetime.
+/// Returns the run id once spawned; an async task drains stdout for the run's
+/// lifetime. `group` (`build:<system>/<change>`) rides next to the spec, never
+/// inside it, so the table can tell which runs belong to a build. Every relayed
+/// event is wrapped as `{ runId, event }`.
 #[tauri::command]
-fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) -> Result<(), String> {
+fn run_spec(
+    app: AppHandle,
+    control: State<RunControl>,
+    spec: RunSpec,
+    group: Option<String>,
+) -> Result<String, String> {
+    // Hold the table across claim, spawn and insert so two starts cannot both
+    // pass the claim.
+    let mut table = control.state.lock().unwrap();
+    table.claim(Path::new(&spec.workdir), group.as_deref())?;
+
     // Each run gets a unique id so its reader task only ever touches its own temp
     // file and child handle. A new run can begin the moment a terminal event
     // reaches the UI, before this run's sidecar has finished tearing down.
@@ -85,11 +98,13 @@ fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) -> Result
         }
     };
 
-    {
-        let mut st = control.state.lock().unwrap();
-        st.id = id;
-        st.child = Some(child);
-    }
+    table.insert(LiveRun {
+        id,
+        workdir: std::path::PathBuf::from(&spec.workdir),
+        group,
+        child: Some(child),
+    });
+    drop(table);
     let state = control.state.clone();
 
     tauri::async_runtime::spawn(async move {
@@ -103,42 +118,43 @@ fn run_spec(app: AppHandle, control: State<RunControl>, spec: RunSpec) -> Result
                                 terminal_seen = true;
                             }
                         }
-                        let _ = app.emit(RUN_EVENT, v);
+                        let _ = app.emit(RUN_EVENT, runs::wrap(id, v));
                     }
-                    Err(_) => relay_log(&app, &bytes),
+                    Err(_) => relay_log(&app, id, &bytes),
                 },
-                CommandEvent::Stderr(bytes) => relay_log(&app, &bytes),
+                CommandEvent::Stderr(bytes) => relay_log(&app, id, &bytes),
                 CommandEvent::Terminated(payload) => {
                     if !terminal_seen {
                         let code = payload.code.unwrap_or(-1);
                         let _ = app.emit(
                             RUN_EVENT,
-                            json!({
-                                "type": "run.error",
-                                "message": format!("engine exited ({code}) without a result"),
-                            }),
+                            runs::wrap(
+                                id,
+                                json!({
+                                    "type": "run.error",
+                                    "message": format!("engine exited ({code}) without a result"),
+                                }),
+                            ),
                         );
                     }
                     break;
                 }
                 CommandEvent::Error(err) => {
                     terminal_seen = true;
-                    let _ = app.emit(RUN_EVENT, json!({ "type": "run.error", "message": err }));
+                    let _ = app.emit(
+                        RUN_EVENT,
+                        runs::wrap(id, json!({ "type": "run.error", "message": err })),
+                    );
                 }
                 _ => {}
             }
         }
         let _ = std::fs::remove_file(&tmp);
-        // Only clear the handle if this run is still the active one; a newer run
-        // may have replaced it while this sidecar was tearing down.
-        let mut st = state.lock().unwrap();
-        if st.id == id {
-            st.child = None;
-            st.id = 0;
-        }
+        // Remove only this run; a newer run keeps its own entry.
+        state.lock().unwrap().remove(id);
     });
 
-    Ok(())
+    Ok(id.to_string())
 }
 
 /// Step the window's zoom and remember the new level for the next launch.
@@ -218,9 +234,11 @@ fn sdlc_leftovers(
     master: String,
     before: sdlc::snapshot::Snapshot,
     product_repos: Vec<String>,
+    build: Option<sdlc::snapshot::BuildScope>,
 ) -> Result<sdlc::snapshot::Leftovers, String> {
     let repos: Vec<std::path::PathBuf> = product_repos.into_iter().map(Into::into).collect();
-    sdlc::snapshot::leftovers(Path::new(&master), &before, &repos).map_err(|e| e.to_string())
+    sdlc::snapshot::leftovers(Path::new(&master), &before, &repos, build.as_ref())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -228,8 +246,10 @@ fn sdlc_discard(
     master: String,
     before: sdlc::snapshot::Snapshot,
     paths: Vec<String>,
+    build: Option<sdlc::snapshot::BuildScope>,
 ) -> Result<(), String> {
-    sdlc::snapshot::discard(Path::new(&master), &before, &paths).map_err(|e| e.to_string())
+    sdlc::snapshot::discard(Path::new(&master), &before, &paths, build.as_ref())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -277,46 +297,283 @@ fn sdlc_link_run(link: sdlc::store::RunLink) -> Result<(), String> {
     sdlc::store::append_run_link(link).map_err(|e| e.to_string())
 }
 
+// ---- AI-SDLC mode: the build, the diff, checks and publishing ----
+
+#[tauri::command(async)]
+fn sdlc_build_status(
+    master: String,
+    system: String,
+    change: String,
+) -> Result<sdlc::build::BuildStatus, String> {
+    sdlc::build::status(Path::new(&master), &system, &change).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_unsaved_rows(
+    master: String,
+    system: String,
+    change: String,
+) -> Result<Vec<sdlc::build::UnsavedRows>, String> {
+    sdlc::build::unsaved_rows(Path::new(&master), &system, &change).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_build_prepare(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+    continue_with_leftovers: bool,
+    pending: Option<String>,
+) -> Result<sdlc::start::PrepareOutcome, String> {
+    sdlc::start::prepare(
+        Path::new(&folder),
+        &master_repo,
+        &system,
+        &change,
+        continue_with_leftovers,
+        pending.as_deref(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_build_participants(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+    pending: Option<String>,
+) -> Result<Vec<sdlc::participants::Participant>, String> {
+    sdlc::participants::participants(
+        Path::new(&folder),
+        &master_repo,
+        &system,
+        &change,
+        pending.as_deref(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_build_settle(start: sdlc::start::BuildStart) -> Result<Vec<String>, String> {
+    sdlc::start::settle(&start).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_build_heads(
+    folder: String,
+    repos: Vec<String>,
+    change: String,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    sdlc::start::heads(Path::new(&folder), &repos, &change).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_plugin_version(path: String) -> Option<String> {
+    sdlc::plugin::version(Path::new(&path))
+}
+
+#[tauri::command(async)]
+fn sdlc_change_repos(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+) -> Result<Vec<sdlc::publish::ChangeRepo>, String> {
+    sdlc::publish::change_repos(Path::new(&folder), &master_repo, &system, &change)
+}
+
+#[tauri::command(async)]
+fn sdlc_missing_change_branches(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+) -> Result<Vec<String>, String> {
+    sdlc::participants::missing_change_branches(Path::new(&folder), &master_repo, &system, &change)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_diff_files(
+    repo_path: String,
+    part: sdlc::diff::Part,
+) -> Result<sdlc::diff::DiffListing, String> {
+    let files =
+        sdlc::diff::changed_files(Path::new(&repo_path), part).map_err(|e| e.to_string())?;
+    let loc = sdlc::diff::loc_by_file_type(&files);
+    Ok(sdlc::diff::DiffListing { files, loc })
+}
+
+#[tauri::command(async)]
+fn sdlc_diff_pair(
+    repo_path: String,
+    part: sdlc::diff::Part,
+    path: String,
+) -> Result<sdlc::diff::FilePair, String> {
+    sdlc::diff::file_pair(Path::new(&repo_path), part, &path).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_diff_base(repo_path: String) -> Result<sdlc::base::BaseInfo, String> {
+    sdlc::base::base_info(Path::new(&repo_path)).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_touched_repos(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+) -> Result<Vec<sdlc::publish::PublishRepo>, String> {
+    sdlc::publish::touched_repos(Path::new(&folder), &master_repo, &system, &change)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_commit_offenders(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+) -> Result<Vec<sdlc::commits::Offender>, String> {
+    sdlc::publish::change_offenders(Path::new(&folder), &master_repo, &system, &change)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn sdlc_checks_dir() -> String {
+    sdlc::checks::checks_dir()
+        .map(|d| d.display().to_string())
+        .unwrap_or_default()
+}
+
+/// The checks file of a system, with the system's repositories and the master as the names a
+/// check may target.
+fn load_checks(
+    folder: &Path,
+    master_repo: &str,
+    system: &str,
+) -> Result<sdlc::checks::ChecksPlan, String> {
+    let scan = sdlc::workspace::scan(folder).map_err(|e| e.to_string())?;
+    let mut allowed = sdlc::workspace::system_repos(&scan, system);
+    if !allowed.iter().any(|r| r == master_repo) {
+        allowed.push(master_repo.to_string());
+    }
+    sdlc::checks::load(system, folder, &allowed).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_checks_load(
+    folder: String,
+    master_repo: String,
+    system: String,
+) -> Result<sdlc::checks::ChecksPlan, String> {
+    load_checks(Path::new(&folder), &master_repo, &system)
+}
+
+#[tauri::command(async)]
+fn sdlc_run_checks(
+    folder: String,
+    master_repo: String,
+    system: String,
+    repo: sdlc::publish::PublishRepo,
+) -> Result<sdlc::checks::RepoChecks, String> {
+    let plan = load_checks(Path::new(&folder), &master_repo, &system)?;
+    Ok(sdlc::checks::run_repo(
+        &plan,
+        &repo.repo,
+        Path::new(&repo.path),
+    ))
+}
+
+#[tauri::command(async)]
+fn sdlc_gh_signed_in(repos: Vec<sdlc::publish::PublishRepo>) -> Result<String, String> {
+    sdlc::publish::signed_in(&sdlc::publish::GhCli, &repos).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_gh_origins(repos: Vec<sdlc::publish::PublishRepo>) -> Result<(), String> {
+    sdlc::publish::origins(&sdlc::publish::GhCli, &repos).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_publish(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+    repos: Vec<sdlc::publish::PublishRepo>,
+) -> Vec<sdlc::publish::PrResult> {
+    let _ = folder;
+    sdlc::publish::publish(
+        &sdlc::publish::GhCli,
+        &master_repo,
+        &system,
+        &change,
+        &repos,
+    )
+}
+
+#[tauri::command(async)]
+fn sdlc_pull_requests(
+    repos: Vec<sdlc::publish::PublishRepo>,
+    change: String,
+) -> Result<Vec<sdlc::publish::PrState>, String> {
+    sdlc::publish::open_pull_requests(&sdlc::publish::GhCli, &repos, &change)
+}
+
 /// Relay a non-JSON stdout/stderr line as a warn-level log event.
-fn relay_log(app: &AppHandle, bytes: &[u8]) {
+fn relay_log(app: &AppHandle, run_id: u64, bytes: &[u8]) {
     let line = String::from_utf8_lossy(bytes);
     let line = line.trim();
     if !line.is_empty() {
         let _ = app.emit(
             RUN_EVENT,
-            json!({ "type": "log", "level": "warn", "message": line }),
+            runs::wrap(
+                run_id,
+                json!({ "type": "log", "level": "warn", "message": line }),
+            ),
         );
     }
 }
 
-/// Cancel the in-flight run: write a `cancel` line to the engine's stdin so it
-/// traps it, kills claude, cleans up, and emits run.cancelled. Falls back to a
-/// hard kill if the stdin write fails (child already gone).
+/// Cancel one run: write a `cancel` line to its engine's stdin so it traps it,
+/// kills claude, cleans up, and emits run.cancelled. Falls back to a hard kill
+/// if the stdin write fails (child already gone). Touches only that run.
 #[tauri::command]
-fn cancel_run(control: State<RunControl>) {
-    let mut st = control.state.lock().unwrap();
-    let still_alive = st
+fn cancel_run(control: State<RunControl>, run_id: String) {
+    let Some(id) = parse_run_id(&run_id) else {
+        return;
+    };
+    let mut table = control.state.lock().unwrap();
+    let Some(run) = table.get_mut(id) else {
+        return;
+    };
+    let still_alive = run
         .child
         .as_mut()
         .map(|c| c.write(b"cancel\n").is_ok())
         .unwrap_or(false);
     if !still_alive {
-        if let Some(child) = st.child.take() {
+        if let Some(child) = run.child.take() {
             let _ = child.kill();
         }
     }
 }
 
-/// Poll until no run is active (the reader task has seen the engine exit and
-/// cleared `id`), or until `timeout` passes. True when the engine is gone.
-fn wait_idle(
-    state: &Mutex<RunState>,
+/// Poll until run `id` is no longer live (the reader task has seen the engine
+/// exit and removed it), or until `timeout` passes. True when the engine is gone.
+fn wait_idle<C>(
+    state: &Mutex<RunTable<C>>,
+    id: u64,
     timeout: std::time::Duration,
     every: std::time::Duration,
 ) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        if state.lock().unwrap().id == 0 {
+        if !state.lock().unwrap().is_live(id) {
             return true;
         }
         if std::time::Instant::now() >= deadline {
@@ -326,18 +583,23 @@ fn wait_idle(
     }
 }
 
-/// Wait for the engine process to exit after a run ends or is cancelled. The UI
-/// sees the terminal event before the sidecar has finished tearing down, so
-/// anything that touches the repo afterwards waits here first.
+/// Wait for one run's engine process to exit after the run ends or is
+/// cancelled. The UI sees the terminal event before the sidecar has finished
+/// tearing down, so anything that touches the repo afterwards waits here first.
 #[tauri::command]
 async fn sdlc_wait_run_exit(
     control: State<'_, RunControl>,
+    run_id: String,
     timeout_ms: u64,
 ) -> Result<bool, String> {
+    let Some(id) = parse_run_id(&run_id) else {
+        return Ok(true);
+    };
     let state = control.state.clone();
     tauri::async_runtime::spawn_blocking(move || {
         wait_idle(
             &state,
+            id,
             std::time::Duration::from_millis(timeout_ms),
             std::time::Duration::from_millis(50),
         )
@@ -410,11 +672,24 @@ fn export_bundle(spec: kata_core::spec::RunSpec, out: String) -> Result<(), Stri
 /// `answer <id> <json>` line to the engine's stdin (the engine returns it to
 /// claude as the ask_user tool result and emits ask.answered).
 #[tauri::command]
-fn submit_answer(control: State<RunControl>, id: String, answers: Vec<Vec<String>>) {
+fn submit_answer(
+    control: State<RunControl>,
+    run_id: String,
+    id: String,
+    answers: Vec<Vec<String>>,
+) {
     let json = serde_json::to_string(&answers).unwrap_or_else(|_| "[]".into());
     let line = format!("answer {id} {json}\n");
-    let mut st = control.state.lock().unwrap();
-    if let Some(child) = st.child.as_mut() {
+    write_to_run(&control, &run_id, &line);
+}
+
+/// Write one line to the stdin of run `run_id`'s engine, and to no other run's.
+fn write_to_run(control: &RunControl, run_id: &str, line: &str) {
+    let Some(run_id) = parse_run_id(run_id) else {
+        return;
+    };
+    let mut table = control.state.lock().unwrap();
+    if let Some(child) = table.get_mut(run_id).and_then(|r| r.child.as_mut()) {
         let _ = child.write(line.as_bytes());
     }
 }
@@ -425,7 +700,13 @@ fn submit_answer(control: State<RunControl>, id: String, answers: Vec<Vec<String
 /// permission.decided). The reason is free text and must stay on one line, so
 /// newlines collapse to spaces before it goes on the wire.
 #[tauri::command]
-fn submit_decision(control: State<RunControl>, id: String, allow: bool, message: Option<String>) {
+fn submit_decision(
+    control: State<RunControl>,
+    run_id: String,
+    id: String,
+    allow: bool,
+    message: Option<String>,
+) {
     let verdict = if allow { "allow" } else { "deny" };
     let reason = message
         .map(|m| m.split_whitespace().collect::<Vec<_>>().join(" "))
@@ -433,10 +714,7 @@ fn submit_decision(control: State<RunControl>, id: String, allow: bool, message:
         .map(|m| format!(" {m}"))
         .unwrap_or_default();
     let line = format!("decide {id} {verdict}{reason}\n");
-    let mut st = control.state.lock().unwrap();
-    if let Some(child) = st.child.as_mut() {
-        let _ = child.write(line.as_bytes());
-    }
+    write_to_run(&control, &run_id, &line);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -494,6 +772,27 @@ pub fn run() {
             sdlc_run_links,
             sdlc_link_run,
             sdlc_wait_run_exit,
+            sdlc_build_status,
+            sdlc_unsaved_rows,
+            sdlc_build_prepare,
+            sdlc_build_participants,
+            sdlc_build_settle,
+            sdlc_build_heads,
+            sdlc_plugin_version,
+            sdlc_change_repos,
+            sdlc_missing_change_branches,
+            sdlc_diff_files,
+            sdlc_diff_pair,
+            sdlc_diff_base,
+            sdlc_touched_repos,
+            sdlc_commit_offenders,
+            sdlc_checks_dir,
+            sdlc_checks_load,
+            sdlc_run_checks,
+            sdlc_gh_signed_in,
+            sdlc_gh_origins,
+            sdlc_publish,
+            sdlc_pull_requests,
             zoom
         ])
         .run(tauri::generate_context!())
@@ -505,16 +804,27 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    fn live(id: u64) -> LiveRun<()> {
+        LiveRun {
+            id,
+            workdir: std::path::PathBuf::from("D:/ws/app"),
+            group: None,
+            child: None,
+        }
+    }
+
     #[test]
     fn wait_idle_returns_true_once_the_reader_clears_the_run() {
-        let state = Arc::new(Mutex::new(RunState { id: 3, child: None }));
+        let state = Arc::new(Mutex::new(RunTable::<()>::default()));
+        state.lock().unwrap().insert(live(3));
         let clearer = state.clone();
         let t = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(120));
-            clearer.lock().unwrap().id = 0;
+            clearer.lock().unwrap().remove(3);
         });
         assert!(wait_idle(
             &state,
+            3,
             Duration::from_secs(5),
             Duration::from_millis(10)
         ));
@@ -523,17 +833,36 @@ mod tests {
 
     #[test]
     fn wait_idle_returns_false_on_timeout() {
-        let state = Arc::new(Mutex::new(RunState { id: 3, child: None }));
+        let state = Arc::new(Mutex::new(RunTable::<()>::default()));
+        state.lock().unwrap().insert(live(3));
         assert!(!wait_idle(
             &state,
+            3,
             Duration::from_millis(60),
             Duration::from_millis(10)
         ));
     }
 
     #[test]
+    fn wait_idle_ignores_other_live_runs() {
+        let state = Arc::new(Mutex::new(RunTable::<()>::default()));
+        state.lock().unwrap().insert(live(4));
+        assert!(wait_idle(
+            &state,
+            3,
+            Duration::ZERO,
+            Duration::from_millis(10)
+        ));
+    }
+
+    #[test]
     fn wait_idle_is_immediate_with_no_run() {
-        let state = Arc::new(Mutex::new(RunState::default()));
-        assert!(wait_idle(&state, Duration::ZERO, Duration::from_millis(10)));
+        let state = Arc::new(Mutex::new(RunTable::<()>::default()));
+        assert!(wait_idle(
+            &state,
+            3,
+            Duration::ZERO,
+            Duration::from_millis(10)
+        ));
     }
 }

@@ -8,7 +8,11 @@ export type StepState = 'pending' | 'running' | 'done' | 'failed';
 export type LockStep = { label: string; state: StepState; detail: string | null };
 /** A run view stays after its run ends (`finished` set) until the operator closes it. */
 export type StepsView = { kind: 'steps'; title: string; steps: LockStep[] };
-export type LockView = StepsView | { kind: 'run'; title: string; finished: RunState | null };
+/** A build holds the lock once for all its runs and stays after the last one ends (`finished`) until the operator closes it. */
+export type BuildView = { kind: 'build'; title: string; runs: string[]; finished: boolean };
+export type LockView = StepsView | { kind: 'run'; title: string; finished: RunState | null } | BuildView;
+/** A run of the build that is paused on the operator. */
+export type Waiting = { runId: string; kind: 'answer' | 'approval' };
 
 const TERMINAL: readonly RunState[] = ['success', 'warning', 'error'];
 
@@ -17,7 +21,7 @@ function lastWhere<T>(items: readonly T[], test: (item: T) => boolean): T | null
   return null;
 }
 
-const finishedRun = (v: LockView | null): boolean => v?.kind === 'run' && v.finished !== null;
+const finishedRun = (v: LockView | null): boolean => (v?.kind === 'run' && v.finished !== null) || (v?.kind === 'build' && v.finished);
 
 /**
  * The only owner of "is the app locked". Long work is either Kata's own checks (a step list with a
@@ -33,7 +37,10 @@ export class LockStore {
   private readonly elapsed = signal(0);
   private readonly runSpec = signal<RunSpec | null>(null);
   private readonly answerTimeout = signal<number | null>(null);
-  private readonly pendingSince = signal(0);
+  /** When each open question or approval first showed, in elapsed seconds, keyed by run and pause id. */
+  private readonly pendingSince = signal<Readonly<Record<string, number>>>({});
+  /** The answer deadline of each build run, by run id. */
+  private readonly runTimeouts = signal<Readonly<Record<string, number | null>>>({});
 
   private cancelRequested = false;
   private waiter: ((state: RunState) => void) | null = null;
@@ -46,21 +53,65 @@ export class LockStore {
   /** The spec of the run the lock holds, live or finished. */
   readonly spec = this.runSpec.asReadonly();
 
-  private readonly inRun = computed(() => this.view()?.kind === 'run');
-  /** The question the run is waiting on, if any. */
-  readonly ask = computed<AskRecord | null>(() => (this.inRun() ? lastWhere(this.runs.asks(), (a) => a.answers === null) : null));
-  /** The permission check the run is waiting on, if any. */
-  readonly permission = computed<PermissionRecord | null>(() =>
-    this.inRun() ? lastWhere(this.runs.permissions(), (p) => p.decided === null) : null,
-  );
+  /** The question a run is waiting on, if any: the solo run's without an id (in a run view), a build run's with its id. */
+  readonly ask = (runId?: string): AskRecord | null => {
+    const asks = this.asksOf(runId);
+    return asks === null ? null : lastWhere(asks, (a) => a.answers === null);
+  };
+  /** The permission check a run is waiting on, if any: the solo run's without an id (in a run view), a build run's with its id. */
+  readonly permission = (runId?: string): PermissionRecord | null => {
+    const checks = this.permissionsOf(runId);
+    return checks === null ? null : lastWhere(checks, (p) => p.decided === null);
+  };
   /** Seconds until the engine reaps an unanswered run (exit 123), or null when nothing is pending or there is no deadline. */
-  readonly deadlineSecs = computed(() => {
-    const timeout = this.answerTimeout();
-    if (timeout === null || (this.ask() ?? this.permission()) === null) return null;
-    return Math.max(0, timeout - (this.elapsed() - this.pendingSince()));
+  readonly deadlineSecs = (runId?: string): number | null => {
+    const id = this.pendingOf(runId);
+    const timeout = runId === undefined ? this.answerTimeout() : (this.runTimeouts()[runId] ?? null);
+    if (id === null || timeout === null) return null;
+    return Math.max(0, timeout - (this.elapsed() - (this.pendingSince()[`${runId ?? ''}:${id}`] ?? 0)));
+  };
+  /** Every run of the build with an open question or approval, whichever view the operator is looking at. */
+  readonly waiting = computed<Waiting[]>(() => {
+    const v = this.view();
+    if (v?.kind !== 'build') return [];
+    const out: Waiting[] = [];
+    for (const runId of v.runs) {
+      if (this.ask(runId) !== null) out.push({ runId, kind: 'answer' });
+      else if (this.permission(runId) !== null) out.push({ runId, kind: 'approval' });
+    }
+    return out;
   });
 
-  private readonly pendingId = computed(() => this.ask()?.id ?? this.permission()?.id ?? null);
+  /** The pauses open right now as pendingSince keys. */
+  private readonly pendingKeys = computed(() => {
+    const keys: string[] = [];
+    const solo = this.pendingOf(undefined);
+    if (solo !== null) keys.push(`:${solo}`);
+    for (const w of this.waiting()) keys.push(`${w.runId}:${this.pendingOf(w.runId)}`);
+    return keys;
+  });
+
+  private asksOf(runId: string | undefined): readonly AskRecord[] | null {
+    const v = this.view();
+    if (runId === undefined) return v?.kind === 'run' ? this.runs.asks() : null;
+    return this.buildRun(runId) ? this.runs.snapshot(runId)().asks : null;
+  }
+
+  private permissionsOf(runId: string | undefined): readonly PermissionRecord[] | null {
+    const v = this.view();
+    if (runId === undefined) return v?.kind === 'run' ? this.runs.permissions() : null;
+    return this.buildRun(runId) ? this.runs.snapshot(runId)().permissions : null;
+  }
+
+  /** A run of the held build that is still going; a run that has stopped is no longer waiting on anyone. */
+  private buildRun(runId: string): boolean {
+    const v = this.view();
+    return v?.kind === 'build' && v.runs.includes(runId) && this.runs.snapshot(runId)().state === 'awaiting';
+  }
+
+  private pendingOf(runId: string | undefined): string | null {
+    return this.ask(runId)?.id ?? this.permission(runId)?.id ?? null;
+  }
 
   constructor() {
     // Resolves runAgent. It reads events and summary as well as state so a run that finishes
@@ -71,9 +122,16 @@ export class LockStore {
       this.runs.summary();
       untracked(() => this.settle(state));
     });
+    // Each pause keeps the clock reading from when it first showed; a pause that closed is forgotten.
     effect(() => {
-      const id = this.pendingId();
-      if (id !== null) untracked(() => this.pendingSince.set(this.elapsed()));
+      const keys = this.pendingKeys();
+      untracked(() => {
+        const known = this.pendingSince();
+        const next: Record<string, number> = {};
+        for (const key of keys) next[key] = known[key] ?? this.elapsed();
+        const same = keys.length === Object.keys(known).length && keys.every((k) => k in known);
+        if (!same) this.pendingSince.set(next);
+      });
     });
   }
 
@@ -137,7 +195,9 @@ export class LockStore {
 
   /** Close a finished run's session view and release the lock. A live run cannot be closed, only cancelled. */
   close(): void {
-    if (!finishedRun(this.view())) return;
+    const view = this.view();
+    if (!finishedRun(view)) return;
+    if (view?.kind === 'build') for (const id of view.runs) this.runs.forget(id);
     this.end();
     const waiters = this.closeWaiters;
     this.closeWaiters = [];
@@ -151,12 +211,54 @@ export class LockStore {
     else if (view?.kind === 'run' && view.finished === null) void this.runs.cancelRun();
   }
 
-  answer(id: string, answers: string[][]): void {
-    void this.runs.submitAnswer(id, answers);
+  /** Take the lock once for a whole build, refusing while anything else holds it. Its runs join with `addRun`. */
+  beginBuild(title: string): boolean {
+    const busy = this.runs.state();
+    if (this.view() !== null || busy === 'running' || busy === 'awaiting') {
+      this.toasts.error('Another task is already running.');
+      return false;
+    }
+    this.begin({ kind: 'build', title, runs: [], finished: false });
+    return true;
   }
 
-  decide(id: string, allow: boolean, message: string | null): void {
-    void this.runs.submitDecision(id, allow, message);
+  /** Add a started run to the held build; its spec sets the answer deadline of its pauses. */
+  addRun(runId: string, spec?: RunSpec): void {
+    this.view.update((v) => (v?.kind === 'build' && !v.runs.includes(runId) ? { ...v, runs: [...v.runs, runId] } : v));
+    if (spec) this.runTimeouts.update((t) => ({ ...t, [runId]: spec.interactive?.answer_timeout_secs ?? null }));
+  }
+
+  /** The build is over: freeze the clock and keep its view until the operator closes it. */
+  endBuild(): void {
+    if (this.view()?.kind !== 'build') return;
+    this.stopClock();
+    this.view.update((v) => (v?.kind === 'build' ? { ...v, finished: true } : v));
+  }
+
+  /** A stopped build is continued: reopen its finished view and start the clock again from where it stopped. */
+  resumeBuild(): void {
+    const v = this.view();
+    if (v?.kind !== 'build' || !v.finished) return;
+    this.stopClock();
+    this.startedAt = Date.now() - this.elapsed() * 1000;
+    this.view.set({ ...v, finished: false });
+    this.timer = setInterval(() => this.elapsed.set(Math.floor((Date.now() - this.startedAt) / 1000)), 1000);
+  }
+
+  /** Answer a question: `(askId, answers)` for the solo run, `(runId, askId, answers)` for a build run. */
+  answer(askId: string, answers: string[][]): void;
+  answer(runId: string, askId: string, answers: string[][]): void;
+  answer(...args: [string, string[][]] | [string, string, string[][]]): void {
+    if (args.length === 2) void this.runs.submitAnswer(args[0], args[1]);
+    else void this.runs.submitAnswer(args[0], args[1], args[2]);
+  }
+
+  /** Decide a permission check: `(id, allow, message)` for the solo run, `(runId, id, allow, message)` for a build run. */
+  decide(id: string, allow: boolean, message: string | null): void;
+  decide(runId: string, id: string, allow: boolean, message: string | null): void;
+  decide(...args: [string, boolean, string | null] | [string, string, boolean, string | null]): void {
+    if (args.length === 3) void this.runs.submitDecision(args[0], args[1], args[2]);
+    else void this.runs.submitDecision(args[0], args[1], args[2], args[3]);
   }
 
   private settle(state: RunState): void {
@@ -176,7 +278,7 @@ export class LockStore {
   private begin(view: LockView): void {
     this.startedAt = Date.now();
     this.elapsed.set(0);
-    this.pendingSince.set(0);
+    this.pendingSince.set({});
     this.view.set(view);
     this.timer = setInterval(() => this.elapsed.set(Math.floor((Date.now() - this.startedAt) / 1000)), 1000);
   }
@@ -197,5 +299,6 @@ export class LockStore {
     this.view.set(null);
     this.runSpec.set(null);
     this.answerTimeout.set(null);
+    this.runTimeouts.set({});
   }
 }

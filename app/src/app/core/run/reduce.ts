@@ -9,6 +9,8 @@ export type RunSnapshot = {
   summary: RunSummary | null;
   asks: AskRecord[];
   permissions: PermissionRecord[];
+  /** The engine's exit code once the run has ended; absent while it runs. */
+  exit?: number | null;
 };
 
 export const IDLE: RunSnapshot = { state: 'idle', events: [], summary: null, asks: [], permissions: [] };
@@ -52,5 +54,5 @@ export function reduce(s: RunSnapshot, ev: KataEvent): RunSnapshot {
 
 function settle(s: RunSnapshot, ev: KataEvent): RunSnapshot {
   const terminal = terminalStateFor(ev);
-  return terminal ? { ...s, state: terminal } : s;
+  return terminal ? { ...s, state: terminal, exit: ev.type === 'run.completed' || ev.type === 'run.error' || ev.type === 'run.cancelled' ? ev.exit_code : null } : s;
 }

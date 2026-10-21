@@ -51,7 +51,7 @@ describe('SdlcHomeViewModel init', () => {
     await vm.init();
     expect(vm.current()?.name).toBe('acme-claims');
     expect(vm.state()).toBe('ready');
-    expect(vm.changes().length).toBe(3);
+    expect(vm.changes().length).toBe(4);
     expect(vm.branches()?.others).toEqual(['2026-10-17-claim-notes']);
     expect(vm.masterBranch()).toBe('main');
     expect(vm.contexts()['customer-portal']).toEqual({ kind: 'stale', commits: 14 });
@@ -162,14 +162,14 @@ describe('SdlcHomeViewModel add workspace', () => {
   it('opens the leftover dialog and adds nothing when setup is cancelled', async () => {
     const { vm, transport, runAgent, saveWorkspaces } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
-    vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [] });
+    vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] });
     runAgent.mockResolvedValue('warning');
     await vm.init();
     vi.spyOn(transport, 'sdlcScan').mockResolvedValueOnce(
       scanOf({ master: { kind: 'one', repo: 'claims-intent', committed: false }, marker: null }),
     );
     await vm.addWorkspace();
-    expect(vm.leftovers()?.discardable).toEqual(['.ai-sdlc.json']);
+    expect(vm.leftovers()?.[0].data.discardable).toEqual(['.ai-sdlc.json']);
     expect(vm.candidate()).toBeNull();
     expect(saveWorkspaces).not.toHaveBeenCalled();
   });
@@ -181,7 +181,7 @@ describe('SdlcHomeViewModel add workspace', () => {
     await vm.init();
     const snap = vi.spyOn(transport, 'sdlcSnapshot');
     const left = vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({
-      new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [],
+      new_commits: [], discardable: ['.ai-sdlc.json'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [],
     });
     vi.spyOn(transport, 'sdlcScan')
       .mockResolvedValueOnce(scanOf({ master: { kind: 'none' }, marker: null }))
@@ -189,7 +189,7 @@ describe('SdlcHomeViewModel add workspace', () => {
     await vm.addWorkspace();
     expect(snap.mock.calls.map((c) => c[0])).toEqual([`${NEW_FOLDER}/claims-intent`, `${NEW_FOLDER}/customer-portal`]);
     expect(left).toHaveBeenCalledWith(`${NEW_FOLDER}/claims-intent`, expect.anything(), [`${NEW_FOLDER}/customer-portal`]);
-    expect(vm.leftovers()?.discardable).toEqual(['.ai-sdlc.json']);
+    expect(vm.leftovers()?.[0].data.discardable).toEqual(['.ai-sdlc.json']);
     expect(vm.candidate()).toBeNull();
   });
 
@@ -390,12 +390,12 @@ describe('SdlcHomeViewModel runs', () => {
   it('shows leftovers from the runner and discards through it', async () => {
     const { vm, runner, transport } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['a.md'], touched_dirty: [], product_repos_changed: [], product_repos_unchecked: [] });
+    vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue({ new_commits: [], discardable: ['a.md'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] });
     const discard = vi.spyOn(transport, 'sdlcDiscard');
     vi.spyOn(TestBed.inject(LockStore), 'runAgent').mockResolvedValue('error');
     await vm.runContext('customer-portal');
-    expect(vm.leftovers()?.discardable).toEqual(['a.md']);
-    await vm.discardLeftovers(['a.md']);
+    expect(vm.leftovers()?.[0].data.discardable).toEqual(['a.md']);
+    await vm.discardLeftovers([{ repo: vm.leftovers()![0].repo, paths: ['a.md'] }]);
     expect(discard).toHaveBeenCalled();
     expect(vm.leftovers()).toBeNull();
     expect(runner.leftovers()).toBeNull();
@@ -415,7 +415,7 @@ describe('SdlcHomeViewModel navigation', () => {
     await vm.init();
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     vi.spyOn(transport, 'sdlcChanges').mockResolvedValue([
-      { system: 'claims', change: '2026-10-17-claim-notes', intent: { exists: true, committed: true, status: 'draft' }, spec: { exists: false, committed: false, status: null }, plan: { exists: false, committed: false, status: null }, stage: 'intent-awaiting' },
+      { system: 'claims', change: '2026-10-17-claim-notes', intent: { exists: true, committed: true, status: 'draft' }, spec: { exists: false, committed: false, status: null }, plan: { exists: false, committed: false, status: null }, stage: 'intent-awaiting', build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null },
     ]);
     await vm.openOtherBranch('2026-10-17-claim-notes');
     expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'change/2026-10-17-claim-notes');

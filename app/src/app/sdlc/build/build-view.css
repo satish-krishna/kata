@@ -1,0 +1,119 @@
+.k-build__body {
+  flex: 1;
+  min-height: 0;
+}
+
+.k-build__left {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  overflow-y: auto;
+  border-right: 1px solid var(--border-subtle);
+}
+
+.k-build__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.k-build__main {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.k-build__end,
+.k-build__stop {
+  display: grid;
+  gap: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.k-build__repo-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.k-build__run-start {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  font: var(--font-code-sm);
+  color: var(--text-muted);
+}
+
+.k-build__pane {
+  display: flex;
+  flex-direction: column;
+  height: 32rem;
+  min-height: 0;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-panel);
+}
+
+.k-build__tabs {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5) 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.k-build__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  font: inherit;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.k-build__tab[aria-selected='true'] {
+  border-bottom-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.k-build__new {
+  color: var(--text-muted);
+}
+
+.k-build__panel {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  min-height: 0;
+  padding: var(--space-5);
+  overflow-y: auto;
+}
+
+.k-build__panel[hidden],
+.k-build__runs[hidden] {
+  display: none;
+}
+
+.k-build__panel--changes {
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 0;
+  overflow: hidden;
+}
+
+.k-build__pinned {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-app);
+}
+
+.k-build__runs {
+  display: grid;
+  gap: var(--space-4);
+}

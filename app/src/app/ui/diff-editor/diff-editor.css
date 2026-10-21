@@ -1,0 +1,30 @@
+:host {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--space-2);
+  height: 100%;
+  min-height: 0;
+}
+
+.k-diff-editor__note {
+  grid-row: 1;
+}
+
+/* Always the second row: without the binary note the host would otherwise auto-place into the
+   `auto` row and collapse to its border, so Monaco measured no height and drew nothing. */
+.k-diff-editor__host {
+  grid-row: 2;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+}
+
+.k-diff-editor__host[hidden] {
+  display: none;
+}
+
+.k-diff-editor__note {
+  margin: 0;
+  color: var(--text-muted);
+}
