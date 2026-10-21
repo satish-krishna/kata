@@ -61,6 +61,19 @@ describe('ChangesView', () => {
     expect(container.querySelector('app-diff-bar')!.textContent).toContain('src/limits.rs');
   });
 
+  it('says which repository has no change branch instead of leaving it out silently', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcMissingChangeBranches').mockResolvedValue(['billing']);
+    const { container } = await mount(transport);
+    const note = container.querySelector('[data-testid="changes-missing"]');
+    expect(norm(note?.textContent ?? null)).toBe(`billing has no change/${MOCK_BUILD_CHANGE} branch, so its changes are not listed.`);
+  });
+
+  it('shows no missing-branch note when every repository has its change branch', async () => {
+    const { container } = await mount();
+    expect(container.querySelector('[data-testid="changes-missing"]')).toBeNull();
+  });
+
   it('changes view calls only read commands (R7.3)', async () => {
     const transport = new MockTransport();
     const proto = MockTransport.prototype as unknown as Record<string, unknown>;
@@ -76,7 +89,7 @@ describe('ChangesView', () => {
     await settle();
     await turns(1);
     const called = spies.filter(([, s]) => s.mock.calls.length > 0).map(([n]) => n);
-    expect(called.sort()).toEqual(['sdlcChangeRepos', 'sdlcDiffBase', 'sdlcDiffFiles', 'sdlcDiffPair']);
+    expect(called.sort()).toEqual(['sdlcChangeRepos', 'sdlcDiffBase', 'sdlcDiffFiles', 'sdlcDiffPair', 'sdlcMissingChangeBranches']);
   });
 
   it('parts toggle switches the listed files (R7.6)', async () => {

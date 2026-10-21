@@ -22,6 +22,22 @@ describe('ChangesViewModel', () => {
     expect(vm.gone()).toBe(false);
   });
 
+  it('names each product repository that has no change branch, so its absence from the list is explained', async () => {
+    const { vm, transport } = setup();
+    expect(await transport.sdlcMissingChangeBranches(CTX.folder, CTX.masterRepo, CTX.system, CTX.change)).toEqual([]);
+    vi.spyOn(transport, 'sdlcMissingChangeBranches').mockResolvedValue(['billing']);
+    await vm.open(CTX);
+    expect(vm.missingBranches()).toEqual(['billing']);
+  });
+
+  it('lists the repositories with changes even when the missing branches cannot be read', async () => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'sdlcMissingChangeBranches').mockRejectedValue(new Error('boom'));
+    await vm.open(CTX);
+    expect(vm.repos().map((r) => r.repo)).toEqual([MOCK_MASTER, 'claims-core', 'customer-portal']);
+    expect(vm.missingBranches()).toEqual([]);
+  });
+
   it('refreshes only when the turn count grows', async () => {
     const { vm, transport } = setup();
     await vm.open(CTX);

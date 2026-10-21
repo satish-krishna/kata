@@ -783,6 +783,21 @@ mod tests {
         assert!(matches!(out, Err(BuildError::Refused(_))), "{out:?}");
     }
 
+    #[test]
+    fn missing_change_branches_names_each_product_repo_without_the_change_branch() {
+        let fx = fixture();
+        testutil::checkout(&fx.repo("app"), &format!("change/{C}"), true);
+        // The master is never named: it holds the change's documents whatever branch it is on.
+        assert_eq!(
+            crate::participants::missing_change_branches(&fx.folder, "m", S, C).unwrap(),
+            ["api"]
+        );
+        testutil::checkout(&fx.repo("api"), &format!("change/{C}"), true);
+        assert!(crate::participants::missing_change_branches(&fx.folder, "m", S, C)
+            .unwrap()
+            .is_empty());
+    }
+
     /// A fixture whose repository "api" has all its tasks finished and is not checked out.
     fn finished_api_missing() -> Fx {
         let fx = fixture_with(&[("T1", "app"), ("T2", "api")], &["app", "api"], &["app"]);

@@ -77,6 +77,7 @@ const rows: Row[] = [
   ['sdlcBuildHeads', (t) => t.sdlcBuildHeads('/w', ['r'], 'c'), 'sdlc_build_heads', { folder: '/w', repos: ['r'], change: 'c' }],
   ['sdlcPluginVersion', (t) => t.sdlcPluginVersion('/p'), 'sdlc_plugin_version', { path: '/p' }],
   ['sdlcChangeRepos', (t) => t.sdlcChangeRepos('/w', 'm', 's', 'c'), 'sdlc_change_repos', { folder: '/w', masterRepo: 'm', system: 's', change: 'c' }],
+  ['sdlcMissingChangeBranches', (t) => t.sdlcMissingChangeBranches('/w', 'm', 's', 'c'), 'sdlc_missing_change_branches', { folder: '/w', masterRepo: 'm', system: 's', change: 'c' }],
   ['sdlcDiffFiles', (t) => t.sdlcDiffFiles('/r', 'whole'), 'sdlc_diff_files', { repoPath: '/r', part: 'whole' }],
   ['sdlcDiffPair', (t) => t.sdlcDiffPair('/r', 'committed', 'a.ts'), 'sdlc_diff_pair', { repoPath: '/r', part: 'committed', path: 'a.ts' }],
   ['sdlcDiffBase', (t) => t.sdlcDiffBase('/r'), 'sdlc_diff_base', { repoPath: '/r' }],
