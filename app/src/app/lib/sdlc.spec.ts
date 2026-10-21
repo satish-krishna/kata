@@ -335,6 +335,13 @@ describe("build run-specs", () => {
     expect(s.permissions.allow).toEqual(["Read(//home/u/ws/**)", `Edit(${log})`]);
   });
 
+  it("a repository run cannot rewrite the change's review document (F7)", () => {
+    const review = "Edit(//home/u/ws/master/intent/claims/2026-10-12-fnol/build/review.md)";
+    expect(build(run({ target: { repo: "app" } })).permissions.deny).toContain(review);
+    expect(build(run({ target: { repo: "master" } })).permissions.deny).toContain(review);
+    expect(build(run({ target: "review" })).permissions.deny).not.toContain(review);
+  });
+
   const MASTER_LOG_DIR = "//home/u/ws/master/intent/claims/2026-10-12-fnol";
 
   it("the review run may edit only build/review.md", () => {

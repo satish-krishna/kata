@@ -470,6 +470,37 @@ describe('BuildViewModel', () => {
         lines: ['line 12: finding F1 has no file'],
       });
     });
+
+    /** Stands in for the check of what the review run left in the master repository. */
+    const verifying = (transport: MockTransport, flagged: string[]) => {
+      const verify = vi.fn(async (..._args: string[]) => flagged);
+      (transport as unknown as { sdlcReviewVerify: typeof verify }).sdlcReviewVerify = verify;
+      return verify;
+    };
+
+    it('a review run that also changed plugin/ names the file and is not the current review (F7)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
+      const verify = verifying(transport, ['plugin/format/check.mjs']);
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(verify).toHaveBeenCalledWith(expect.any(String), 'claims', MOCK_BUILD_CHANGE, '1111111');
+      expect(vm.reviewNotice()?.tone).toBe('warning');
+      expect(vm.reviewNotice()?.lines).toEqual(['plugin/format/check.mjs']);
+      expect(vm.findings()).toEqual([]);
+      expect(vm.emptyText()).toBe('The review did not record its findings');
+    });
+
+    it('a review run that touched only the review document is the current review (F7)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
+      const verify = verifying(transport, []);
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(verify).toHaveBeenCalled();
+      expect(vm.reviewNotice()).toBeNull();
+      expect(vm.findings().map((f) => f.text)).toEqual(['one']);
+    });
   });
 
   it('Close releases the lock', async () => {
