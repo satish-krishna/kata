@@ -17,6 +17,16 @@ describe('DiffBar', () => {
     expect(t).toContain('Uncommitted');
   });
 
+  it('shows the folder muted before the file name, and no folder for a file at the root', async () => {
+    const { container, fixture } = await render(DiffBar, { file: FILE, layout: 'side', showLayout: true });
+    expect(text(container.querySelector('[data-folder]')!)).toBe('src/');
+    expect(text(container.querySelector('[data-name]')!)).toBe('store.rs');
+    fixture.componentRef.setInput('file', { ...FILE, path: 'README.md', oldPath: null });
+    await fixture.whenStable();
+    expect(container.querySelector('[data-folder]')).toBeNull();
+    expect(text(container.querySelector('[data-name]')!)).toBe('README.md');
+  });
+
   it('emits previous and next change', async () => {
     const { container, fixture } = await render(DiffBar, { file: FILE, layout: 'side', showLayout: true });
     const seen: string[] = [];

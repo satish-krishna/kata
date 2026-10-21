@@ -8,6 +8,8 @@ const file = (path: string, over: Partial<ChangedFile> = {}): ChangedFile => ({
 const GROUPS: RepoFileGroup[] = [
   {
     repo: 'claims-intent',
+    branch: 'change/2026-10-19-ai-sdlc-part-2',
+    base: 'main',
     expanded: true,
     files: [
       file('a.md', { status: 'added', added: 4, removed: 0 }),
@@ -17,7 +19,7 @@ const GROUPS: RepoFileGroup[] = [
       file('f.md', { status: 'untracked', uncommitted: true }),
     ],
   },
-  { repo: 'claims-core', expanded: false, files: [file('src/x.rs')] },
+  { repo: 'claims-core', branch: 'change/2026-10-19-ai-sdlc-part-2', base: null, expanded: false, files: [file('src/deep/x.rs'), file('.github/ci.yml')] },
 ];
 const text = (e: Element | null) => (e?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
@@ -25,9 +27,16 @@ describe('RepoFileList', () => {
   it('lists each repository with its file count and expands only the open ones', async () => {
     const { container } = await render(RepoFileList, { groups: GROUPS, selected: null });
     const heads = Array.from(container.querySelectorAll('[data-repo]'));
-    expect(heads.map((h) => text(h))).toEqual(['claims-intent 5', 'claims-core 1']);
+    expect(heads.map((h) => text(h))).toEqual(['claims-intent 5 change/… → main', 'claims-core 2 change/…']);
     expect(heads.map((h) => h.getAttribute('aria-expanded'))).toEqual(['true', 'false']);
     expect(container.querySelectorAll('[data-file]')).toHaveLength(5);
+  });
+
+  it('shows each repository branch against its base, shortened, with the whole of it in a title', async () => {
+    const { container } = await render(RepoFileList, { groups: GROUPS, selected: null });
+    const branches = Array.from(container.querySelectorAll('[data-branch]'));
+    expect(branches.map((b) => text(b))).toEqual(['change/… → main', 'change/…']);
+    expect(branches.map((b) => b.getAttribute('title'))).toEqual(['change/2026-10-19-ai-sdlc-part-2 → main', 'change/2026-10-19-ai-sdlc-part-2']);
   });
 
   it('names each status letter, marks uncommitted files and shows line counts or bin', async () => {
@@ -38,6 +47,28 @@ describe('RepoFileList', () => {
     expect(rows.map((r) => r.querySelector('[data-uncommitted]') !== null)).toEqual([false, true, false, false, true]);
     expect(text(rows[0].querySelector('[data-lines]'))).toBe('+4 −0');
     expect(text(rows[2].querySelector('[data-lines]'))).toBe('bin');
+  });
+
+  it('puts the file name on one line and its folder on a second, and gives a root file no folder line', async () => {
+    const open: RepoFileGroup[] = [GROUPS[0], { ...GROUPS[1], expanded: true }];
+    const { container } = await render(RepoFileList, { groups: open, selected: null });
+    const rows = Array.from(container.querySelectorAll('[data-file="src/deep/x.rs"], [data-file=".github/ci.yml"]'));
+    expect(rows.map((r) => text(r.querySelector('[data-name]')))).toEqual(['x.rs', 'ci.yml']);
+    expect(rows.map((r) => text(r.querySelector('[data-folder]')))).toEqual(['src/deep', '.github']);
+    expect(container.querySelector('[data-file="a.md"] [data-folder]')).toBeNull();
+    expect(text(container.querySelector('[data-file="a.md"] [data-name]'))).toBe('a.md');
+  });
+
+  it('keeps the whole path as the accessible name and out of the truncated lines', async () => {
+    const open: RepoFileGroup[] = [{ ...GROUPS[1], expanded: true }];
+    const { container } = await render(RepoFileList, { groups: open, selected: null });
+    const row = container.querySelector('[data-file="src/deep/x.rs"]')!;
+    expect(text(row.querySelector('[data-fullpath]'))).toBe('src/deep/x.rs');
+    expect(row.querySelector('[data-fullpath]')!.classList.contains('sr-only')).toBe(true);
+    expect(row.querySelector('[data-name]')!.getAttribute('aria-hidden')).toBe('true');
+    expect(row.querySelector('[data-folder]')!.getAttribute('aria-hidden')).toBe('true');
+    expect(row.getAttribute('title')).toBe('src/deep/x.rs');
+    expect(row.querySelector('[data-folder] bdi')).not.toBeNull();
   });
 
   it('emits the toggled repository and the picked file, and marks the selected one', async () => {

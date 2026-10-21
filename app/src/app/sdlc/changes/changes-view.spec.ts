@@ -106,14 +106,54 @@ describe('ChangesView', () => {
     expect(paths()).toHaveLength(5);
   });
 
-  it('header names the compared base (R7.7)', async () => {
+  it('names the compared base once, in the strip, and each repository branch against its base in the list (R7.7)', async () => {
+    const { container } = await mount();
+    const strip = container.querySelector<HTMLElement>('[data-testid="changes-strip"]')!;
+    expect(norm(strip.querySelector('[data-testid="changes-readonly"]')!.textContent)).toBe('read-only · compared at the merge base with origin/main');
+    const branches = Array.from(container.querySelectorAll('app-repo-file-list [data-branch]'));
+    expect(branches).toHaveLength(3);
+    expect(norm(branches[0].textContent)).toBe('change/… → main');
+    expect(branches[0].getAttribute('title')).toBe(`change/${MOCK_BUILD_CHANGE} → main`);
+  });
+
+  it('has one strip in place of the old header block', async () => {
     const { container } = await mount();
     const t = text(container);
-    expect(t).toContain(`change/${MOCK_BUILD_CHANGE}`);
-    expect(t).toContain('into');
-    expect(t).toContain('main');
-    expect(t).toContain('base from origin/HEAD · compared at the merge base with origin/main');
-    expect(t).toContain('Read-only. Nothing here changes a file, commit or branch.');
+    expect(container.querySelector('.k-changes__main h2')).toBeNull();
+    expect(container.querySelector('[data-testid="changes-pr"]')).toBeNull();
+    expect(container.querySelector('.k-changes__branches')).toBeNull();
+    expect(container.querySelector('.k-changes__chip')).toBeNull();
+    expect(t).not.toContain('base from origin/HEAD');
+    expect(t).not.toContain('No pull request yet');
+    expect(t).not.toContain('Read-only. Nothing here changes');
+    const strip = container.querySelector<HTMLElement>('[data-testid="changes-strip"]')!;
+    expect(strip.querySelector('[role="group"][aria-label="Part of the change"]')).not.toBeNull();
+  });
+
+  it('counts the files and the lines of the open part across every listed repository, binary files as zero', async () => {
+    const { container, button } = await mount();
+    const strip = container.querySelector<HTMLElement>('[data-testid="changes-strip"]')!;
+    const read = () => ({
+      count: norm(strip.querySelector('[data-testid="changes-count"]')!.textContent),
+      added: norm(strip.querySelector('[data-testid="changes-added"]')!.textContent),
+      removed: norm(strip.querySelector('[data-testid="changes-removed"]')!.textContent),
+    });
+    expect(read()).toEqual({ count: '15 files', added: '+93', removed: '−15' });
+    button('Committed')!.click();
+    await settle();
+    expect(read()).toEqual({ count: '9 files', added: '+63', removed: '−9' });
+    button('Uncommitted')!.click();
+    await settle();
+    expect(read()).toEqual({ count: '6 files', added: '+30', removed: '−6' });
+  });
+
+  it('has a By type control in the strip that opens the per-type line counts', async () => {
+    const { container } = await mount();
+    const trigger = container.querySelector<HTMLButtonElement>('[data-testid="changes-strip"] button[data-testid="changes-bytype"]')!;
+    expect(norm(trigger.textContent)).toBe('By type');
+    expect(trigger.getAttribute('data-slot')).toBe('popover-trigger');
+    // Closed, the counts are not in the page; the browser check opens the popover.
+    expect(container.querySelector('[data-testid="changes-types"]')).toBeNull();
   });
 
   it('a refresh keeps the open file and shows its latest version (R17.4)', async () => {
@@ -180,21 +220,5 @@ describe('ChangesView', () => {
     button('Inline')!.click();
     await settle();
     expect(editor().sideBySide()).toBe(false);
-  });
-
-  it('says no pull request yet until the repository has one', async () => {
-    const { container } = await mount();
-    expect(text(container.querySelector<HTMLElement>('[data-testid="changes-pr"]')!)).toBe('No pull request yet. Pull requests open when you declare the change done.');
-  });
-
-  it('shows the number, the title and a link to GitHub once the repository has a pull request', async () => {
-    const url = 'https://github.com/acme/claims-intent/pull/7';
-    const { container } = await mount(new MockTransport(), { pullRequests: [{ repo: MOCK_MASTER, url }], prTitle: MOCK_BUILD_CHANGE });
-    const row = container.querySelector<HTMLElement>('[data-testid="changes-pr"]')!;
-    expect(text(row)).toContain('#7 open');
-    expect(text(row)).toContain(MOCK_BUILD_CHANGE);
-    const link = row.querySelector('a')!;
-    expect(link.textContent).toBe('View on GitHub');
-    expect(link.getAttribute('href')).toBe(url);
   });
 });
