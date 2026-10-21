@@ -19,7 +19,24 @@ afterEach(() => {
   delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
 });
 
+const SHORT = ['# Photo upload at first notice of loss', '', 'Policyholders attach damage photos when they report a claim.', ''].join('\n');
+
 describe('DocLayout', () => {
+  it('draws no outline column for a document with no sections, and the text column comes first', async () => {
+    const { container } = await render(DocLayout, { body: SHORT });
+    const view = container.querySelector<HTMLElement>('.k-docview')!;
+    expect(container.querySelector('nav[aria-label="On this page"]')).toBeNull();
+    expect(view.classList.contains('k-docview--bare')).toBe(true);
+    expect(Array.from(view.children).map((c) => c.getAttribute('data-testid') ?? c.tagName.toLowerCase())).toEqual(['doc-column', 'aside']);
+  });
+
+  it('draws the outline column, and not the bare layout, once the document has sections', async () => {
+    const { container } = await render(DocLayout, { body: BODY });
+    const view = container.querySelector<HTMLElement>('.k-docview')!;
+    expect(view.classList.contains('k-docview--bare')).toBe(false);
+    expect(Array.from(view.children).map((c) => c.tagName.toLowerCase())).toEqual(['nav', 'div', 'aside']);
+  });
+
   it('draws the text, an outline of its sections, and a rail', async () => {
     const { container } = await render(DocLayout, { body: BODY });
     expect(container.querySelector('article h1')!.textContent).toBe('Intent: Build the plan');

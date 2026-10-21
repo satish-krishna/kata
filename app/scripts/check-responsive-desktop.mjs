@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertResponsive } from '../harness/gate/check-responsive.mjs';
 import { launchChromium, serveStatic } from '../harness/playwright/serve-and-visit.mjs';
+import { checkDocLayoutLeft } from './check-doc-layout.mjs';
 import { checkHomePage } from './check-home-page.mjs';
 import { CHANGE_ROUTES, LONG_FIXTURES, STRIP_STATES, checkBuildStrip, checkChangeToolbar, checkPrPopover, checkStripHeight } from './check-change-toolbar.mjs';
 import { formatCorrectiveMessage } from '../harness/gate/responsive-guidance.mjs';
@@ -83,6 +84,14 @@ try {
     // The workspace home page, down to the window's minimum width.
     for (const width of CHANGE_WIDTHS) {
       const fails = await checkHomePage(browser, srv.origin, width);
+      if (fails.length) {
+        process.stderr.write(`${fails.join('\n')}\n`);
+        failed = true;
+      }
+    }
+    // A document with no sections has no outline column, so its text starts at the left edge.
+    for (const width of [1024, 1280]) {
+      const fails = await checkDocLayoutLeft(browser, srv.origin, width);
       if (fails.length) {
         process.stderr.write(`${fails.join('\n')}\n`);
         failed = true;
