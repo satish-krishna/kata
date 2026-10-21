@@ -3,8 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+  # Feature branches too, so a pull request stacked on another one is checked before its base merges.
   pull_request:
-    branches: [main]
+    branches: [main, 'feat/**']
 
 # Cancel superseded runs on the same ref (e.g. force-push to a PR branch).
 concurrency:

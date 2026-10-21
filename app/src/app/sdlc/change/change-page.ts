@@ -1,32 +1,35 @@
+import { NgTemplateOutlet } from '@angular/common';
 import { Component, inject } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideTriangleAlert } from '@ng-icons/lucide';
+import { lucideChevronDown, lucideTriangleAlert } from '@ng-icons/lucide';
 import { HlmAlertImports } from '@spartan-ng/helm/alert';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { HlmPopoverImports } from '@spartan-ng/helm/popover';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
 import { BuildView } from '../build/build-view';
 import { ChangesView } from '../changes/changes-view';
 import { BuildDialog } from '../../ui/build-dialog';
-import { BuildLogTable } from '../../ui/build-log-table';
 import { BuildRefusalDialog } from '../../ui/build-refusal-dialog';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
-import { DocView } from '../../ui/doc-view';
+import { DocLayout } from '../../ui/doc-layout';
 import { DoneDialog } from '../../ui/done-dialog';
 import { FeedbackDialog } from '../../ui/feedback-dialog';
 import { LeftoverDialog } from '../../ui/leftover-dialog';
 import { LockOverlay } from '../../ui/lock-overlay';
-import { PrCard } from '../../ui/pr-card';
 import { PrListDialog } from '../../ui/pr-list-dialog';
+import { RequirementsView } from '../../ui/requirements-view';
+import { Segmented } from '../../ui/segmented';
 import { SdlcSession } from '../../ui/sdlc-session';
 import { SdlcToolbar } from '../../ui/sdlc-toolbar';
-import { StageStepper } from '../../ui/stage-stepper';
+import { StagePills } from '../../ui/stage-pills';
+import { TasksView } from '../../ui/tasks-view';
 import { ChangePageViewModel } from './change-page.view-model';
 
 @Component({
   selector: 'app-change-page',
-  providers: [ChangePageViewModel, provideIcons({ lucideTriangleAlert })],
-  imports: [NgIcon, HlmAlertImports, HlmButtonImports, HlmTabsImports, SdlcToolbar, StageStepper, DocView, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildLogTable, BuildRefusalDialog, DoneDialog, PrCard, PrListDialog, SdlcSession, BuildView, ChangesView],
+  providers: [ChangePageViewModel, provideIcons({ lucideChevronDown, lucideTriangleAlert })],
+  imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildView, ChangesView],
   templateUrl: './change-page.html',
 })
 export class ChangePage {

@@ -408,7 +408,7 @@ describe('BuildViewModel', () => {
   it('the build stops and lists what is left', async () => {
     const { vm, transport, runner, lock } = setup();
     const task = (id: string, name: string, repo: string, dependsOn: string[], done: boolean) => ({
-      id, name, repo, dependsOn, row: done ? { task: id, repo, commits: ['abc1234'], departure: null } : null,
+      id, name, repo, dependsOn, text: `### ${id}`, row: done ? { task: id, repo, commits: ['abc1234'], departure: null } : null,
     });
     const status: BuildStatus = {
       hasTasks: true,
@@ -444,7 +444,7 @@ describe('BuildViewModel', () => {
 
   describe('a round for the master repository', () => {
     const doneTask = (id: string, repo: string) => ({
-      id, name: id, repo, dependsOn: [], row: { task: id, repo, commits: ['abc1234'], departure: null },
+      id, name: id, repo, dependsOn: [], text: `### ${id}`, row: { task: id, repo, commits: ['abc1234'], departure: null },
     });
     const allDone: BuildStatus = {
       hasTasks: true,
@@ -546,7 +546,7 @@ describe('BuildViewModel', () => {
   it('Another round on a finished repository, then Cancel, shows Stopped and Continue runs the round again with its instructions (B1)', async () => {
     const { vm, transport, runner } = setup();
     const doneTask = (id: string, repo: string) => ({
-      id, name: id, repo, dependsOn: [], row: { task: id, repo, commits: ['abc1234'], departure: null },
+      id, name: id, repo, dependsOn: [], text: `### ${id}`, row: { task: id, repo, commits: ['abc1234'], departure: null },
     });
     vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({
       hasTasks: true,
@@ -588,7 +588,7 @@ describe('BuildViewModel', () => {
 
   describe('Continue asks about what its own repository left, wherever it was written (R6.4, R6.6)', () => {
     const doneTask = (id: string, repo: string) => ({
-      id, name: id, repo, dependsOn: [], row: { task: id, repo, commits: ['abc1234'], departure: null },
+      id, name: id, repo, dependsOn: [], text: `### ${id}`, row: { task: id, repo, commits: ['abc1234'], departure: null },
     });
     const allDone: BuildStatus = {
       hasTasks: true,
@@ -602,7 +602,7 @@ describe('BuildViewModel', () => {
     const coreDonePortalReady: BuildStatus = {
       hasTasks: true,
       departures: [],
-      tasks: [doneTask('T1', 'claims-core'), { id: 'T2', name: 'two', repo: 'customer-portal', dependsOn: [], row: null }],
+      tasks: [doneTask('T1', 'claims-core'), { id: 'T2', name: 'two', repo: 'customer-portal', dependsOn: [], text: '### T2', row: null }],
       repos: [
         { repo: 'claims-core', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
         { repo: 'customer-portal', firstUnfinished: 'T2', state: { kind: 'ready', task: 'T2' }, tasks: 1, finished: 0 },

@@ -188,6 +188,13 @@ export const PRIMITIVE_ATTRS: ReadonlySet<string> = new Set([
   'hlmDropdownMenuSub',
   'hlmDropdownMenuSubTrigger',
   'hlmDropdownMenuTrigger',
+  'hlmPopover',
+  'hlmPopoverContent',
+  'hlmPopoverDescription',
+  'hlmPopoverHeader',
+  'hlmPopoverPortal',
+  'hlmPopoverTitle',
+  'hlmPopoverTrigger',
 ]);
 
 export const PRIMITIVE_ELEMENTS: ReadonlySet<string> = new Set([
@@ -289,4 +296,7 @@ export const PRIMITIVE_ELEMENTS: ReadonlySet<string> = new Set([
   'hlm-dropdown-menu-separator',
   'hlm-dropdown-menu-shortcut',
   'hlm-dropdown-menu-sub',
+  'hlm-popover',
+  'hlm-popover-content',
+  'hlm-popover-header',
 ]);

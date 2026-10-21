@@ -37,6 +37,38 @@
 .wb-toolbar__group { display: flex; align-items: center; gap: var(--space-2); }
 .wb-toolbar__spacer { flex: 1; }
 .wb-sep { width: 1px; height: 22px; background: var(--border-default); flex: none; }
+/* An icon button is never squeezed narrower than its icon. */
+.wb-toolbar .k-iconbtn { flex: none; }
+/* The change page toolbar is short of room with a long workspace name, change name, branch or pull request set, and the window is never narrower than 1024. One shrink order decides who gives way. Each item's flex-shrink weight is four orders of magnitude above the next one's, so an item reaches its minimum before the next one starts to shrink (flex scales a weight by the item's base size and freezes an item at its minimum before it redistributes the rest).
+
+   | order | item                    | gives way how                                           | minimum                                       |
+   |-------|-------------------------|---------------------------------------------------------|-----------------------------------------------|
+   | 1     | separators and gaps     | removed / tightened below 1280                          | 0                                             |
+   | 2     | branch chip text        | ellipsis in the chip; below 1280 the icon form instead  | 6rem chip from 1280; the icon below 1280      |
+   | 3     | workspace switcher name | ellipsis; full name in its title and accessible name    | 4.5rem                                        |
+   | 4     | pill padding            | tightened                                               | --space-2 each side                           |
+   | 5     | change name             | ellipsis; full name in its title                        | 6rem                                          |
+
+   Never shrink: the seal, the mode badge, the pills' text, the pull request control, the settings button. */
+.wb-toolbar:has(.k-crumbs__item) .k-branch { flex: 0 1e12 auto; min-width: calc-size(max-content, min(size, 6rem)); }
+.wb-toolbar:has(.k-crumbs__item) .k-branch__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.wb-toolbar:has(.k-crumbs__item) .k-wstrigger { flex: 0 1e8 16rem; width: auto; min-width: 4.5rem; }
+.wb-toolbar:has(.k-crumbs__item) .k-pills { flex: 0 1e4 auto; min-width: calc-size(min-content, size - 4 * 2 * (var(--space-4) - var(--space-2))); }
+.wb-toolbar:has(.k-crumbs__item) .k-pill { flex: 0 1 auto; display: flex; align-items: center; justify-content: center; min-width: calc-size(min-content, size - 2 * (var(--space-4) - var(--space-2))); }
+/* The pill keeps its full padding until it is squeezed; its minimum is the text with --space-2 each side (the strip always has four pills), and the centered text then spills evenly into the padding. */
+.wb-toolbar:has(.k-crumbs__item) .k-pill > * { flex: none; }
+.wb-toolbar:has(.k-crumbs__item) .k-crumbs { flex: 0 1 auto; min-width: calc-size(max-content, min(size, calc(6rem + var(--space-2) + 0.875rem))); }
+.wb-toolbar:has(.k-crumbs__item) .k-crumbs__item { min-width: 0; }
+.wb-toolbar:has(.k-crumbs__item) .k-prlinks { flex: none; }
+/* Order 1, and the icon form of order 2: between 1024 and 1280 the toolbar gives up its separators, tightens its gaps and shows the branch chip as its warning icon. */
+@media (max-width: 1279px) {
+  .wb-toolbar:has(.k-crumbs__item) { gap: var(--space-3); }
+  .wb-toolbar:has(.k-crumbs__item) > .wb-sep { display: none; }
+  .wb-toolbar:has(.k-crumbs__item) .k-branch { flex: none; min-width: 0; padding: var(--space-1-5); color: var(--warning-text); }
+  .wb-toolbar:has(.k-crumbs__item) .k-branch .k-branch__icon { display: inline-flex; }
+  .wb-toolbar:has(.k-crumbs__item) .k-branch__text { display: none; }
+  .wb-toolbar:has(.k-crumbs__item) .k-pills { margin-inline-start: 0; }
+}
 
 /* ---------- Validation banner ---------- */
 .wb-banner { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-5); font: var(--font-code-sm); flex: none; border-bottom: 1px solid var(--border-subtle); }
@@ -202,14 +234,18 @@
 .k-modecard__body { font: var(--text-sm)/1.5 var(--font-sans); color: var(--text-secondary); }
 .k-mode__foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
 .k-mode__remember { display: flex; align-items: center; gap: var(--space-3); color: var(--text-secondary); cursor: pointer; }
-.k-modebadge { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--accent-text); padding: var(--space-1-5) var(--space-2-5); border: 1px solid var(--border-default); border-radius: var(--radius-xs); cursor: pointer; }
+.k-modebadge { flex: none; white-space: nowrap; font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--accent-text); padding: var(--space-1-5) var(--space-2-5); border: 1px solid var(--border-default); border-radius: var(--radius-xs); cursor: pointer; }
 .k-modebadge:hover:not(:disabled) { border-color: var(--accent); }
 .k-modebadge:disabled { opacity: 0.5; cursor: default; }
 
 /* ---------- AI-SDLC: toolbar, workspace home, dialogs ---------- */
 .k-crumbs { display: flex; align-items: center; gap: var(--space-2); color: var(--text-faint); }
-.k-crumbs__item { font: var(--weight-medium) var(--text-base)/1 var(--font-sans); color: var(--text-secondary); }
-.k-branch { font: var(--font-code-sm); color: var(--text-secondary); padding: var(--space-1-5) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-inset); }
+.k-crumbs > ng-icon { flex: none; }
+/* A change name is long; it gives way last (the toolbar block above has the order), on one line, and the full name sits in its title. */
+.k-crumbs__item { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--weight-medium) var(--text-base)/1 var(--font-sans); color: var(--text-secondary); }
+.k-branch { flex: none; white-space: nowrap; font: var(--font-code-sm); color: var(--text-secondary); padding: var(--space-1-5) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-inset); }
+.k-branch { display: inline-flex; align-items: center; gap: var(--space-2); }
+.k-branch .k-branch__icon { display: none; }
 .k-wstrigger { display: inline-flex; align-items: center; justify-content: space-between; gap: var(--space-3); width: 16rem; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-inset); color: var(--text-primary); cursor: pointer; }
 .k-wstrigger:hover:not(:disabled) { border-color: var(--border-strong); }
 .k-wstrigger:disabled { opacity: 0.5; cursor: default; }
@@ -222,7 +258,7 @@
 .k-wsitem__note--warn { color: var(--warning-text); }
 
 .k-home { display: flex; flex-direction: column; height: 100vh; background: var(--surface-app); color: var(--text-primary); overflow: hidden; }
-.k-home__panes { flex: 1; display: grid; grid-template-columns: 1.3fr 1fr; min-height: 0; }
+.k-home__panes { flex: 1; display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); min-height: 0; }
 .k-home__pane { display: flex; flex-direction: column; min-height: 0; min-width: var(--pane-min); }
 .k-home__pane + .k-home__pane { border-left: 1px solid var(--border-default); background: var(--surface-panel); }
 .k-home__body { flex: 1; overflow-y: auto; min-height: 0; padding: var(--space-5); display: grid; align-content: start; gap: var(--space-4); }
@@ -285,36 +321,131 @@
 .k-check__tail { margin: 0; max-height: 14rem; overflow: auto; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-inset); color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---------- AI-SDLC: change page ---------- */
-.k-change { flex: 1; min-height: 0; display: grid; grid-template-rows: auto 1fr; }
-.k-steps { list-style: none; margin: 0; padding: var(--space-5); display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); border-bottom: 1px solid var(--border-subtle); }
-.k-step { display: grid; gap: var(--space-2); padding: var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-card); font: inherit; color: inherit; text-align: start; cursor: pointer; }
-/* Each tile is the tab for its document: the selected one carries the accent; the current stage keeps its status label. */
-.k-step[aria-selected="true"] { border-color: var(--accent); }
-.k-step:not(:disabled):hover { background: var(--surface-hover); }
-.k-step:disabled { cursor: default; }
-.k-step__name { font: var(--weight-semibold) var(--text-base)/1.2 var(--font-sans); color: var(--text-primary); }
-.k-step__runs { font: var(--font-code-sm); color: var(--text-muted); }
-.k-change__doc > .wb-banner { margin-bottom: var(--space-4); }
+.k-change { flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
 .k-change__doc { min-height: 0; overflow-y: auto; padding: var(--space-5); }
+.k-change__doc[hidden] { display: none; }
+/* A document panel hosts the three-column document layout, which scrolls inside itself. */
+.k-change__doc--layout { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.k-change__doc--layout[hidden] { display: none; }
+.k-change__doc--layout > .wb-banner { flex: none; margin: var(--space-4) var(--space-5) 0; }
+/* The Changes view fills its panel edge to edge: no padding and no frame, its own strip, columns and editor do the scrolling. */
+.k-change__doc--flush { display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; padding: 0; }
+.k-change__doc--flush[hidden] { display: none; }
+.k-change__missing { padding: var(--space-5); }
+
+/* The stage pills in the toolbar: each is the tab for its panel; the open one carries the accent, the current stage keeps aria-current. */
+.k-pills { display: flex; flex: none; align-items: center; gap: var(--space-1); margin-inline-start: var(--space-4); }
+.k-pill { padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; font: inherit; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
+.k-pill:not(:disabled):hover { background: var(--surface-hover); }
+.k-pill[aria-selected="true"] { border-color: var(--accent-border); background: var(--accent-subtle); color: var(--text-primary); }
+.k-pill:disabled { cursor: default; color: var(--text-muted); }
+.k-pill .k-status { color: inherit; }
+.k-prlinks { display: flex; align-items: center; gap: var(--space-4); white-space: nowrap; }
+.k-prlinks__label { flex: none; font: var(--text-xs)/1 var(--font-mono); color: var(--text-muted); }
+.k-prlinks a { display: flex; gap: var(--space-1); color: var(--accent-text); text-decoration: none; }
+.k-prlinks > hlm-popover { flex: none; }
+.k-prlist { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.k-prlist__link { display: flex; gap: var(--space-2); color: var(--accent-text); text-decoration: none; white-space: normal; overflow-wrap: anywhere; }
+/* The popover is a fixed width, so a long repository name wraps inside it; the pull request number stays whole beside the last line of the name. */
+.k-prlist__link > span:last-child:not(:first-child) { flex: none; white-space: nowrap; }
+.k-prlist__link:hover { text-decoration: underline; text-underline-offset: 2px; }
+/* The pull request control never gives way: the repository name and the number are both whole. */
+/* A single inline link never shrinks, so a long repository name is capped instead; the link's title carries the full name. */
+.k-prlinks__repo { flex: none; max-width: 11rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.k-prlinks__num { flex: none; }
+.k-prlinks a:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+/* The strip under the toolbar belongs to the open tab: its status in words, its file, and the stage actions. */
+/* The change page's strip and the Changes view's strip share one height and one inset, so the page below them does not move between tabs. */
+.k-strip, .k-changes__strip { min-height: calc(var(--control-h) + 2 * var(--space-3) + 1px); padding: var(--space-3) var(--space-4); }
+/* In the Changes strip only the read-only line shrinks; the controls, counts and the actions the page projects keep their size, so no label breaks onto a second line. A strip with slotted end content wraps (see changes-view.css), so none of them is ever pushed out of the panel. */
+.k-changes__strip > :not(.k-changes__end), .k-changes__end > :not(.k-changes__note) { flex: none; white-space: nowrap; }
+/* The Changes strip is one row unless the page slots content into its end (facts and actions); then it may wrap. */
+.k-changes__strip:has(.k-changes__end > :not(.k-changes__note)) { flex-wrap: wrap; }
+.k-strip { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); background: var(--surface-panel); border-bottom: 1px solid var(--border-default); }
+.k-strip__file { font: var(--text-xs)/1 var(--font-mono); color: var(--text-muted); }
+
 /* AI-SDLC session view: an agent run in the page main region under the toolbar. */
 .k-session { flex: 1; }
 .k-session__title { margin: 0; }
 .k-session__actions { margin-inline-start: auto; }
-.k-doc { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
-.k-doc__head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-4); padding-bottom: var(--space-3); border-bottom: 1px solid var(--border-subtle); }
-.k-doc__name { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-muted); }
-.k-doc__front { font: var(--font-code-sm); color: var(--text-secondary); }
+/* The document layout: outline, text, rail. The text column scrolls on its own. */
+.k-docview { flex: 1; min-height: 0; display: grid; grid-template-columns: 220px minmax(0, 1fr) 340px; }
+/* A document with no sections has no outline column; its text starts at the left edge with the strip's inset. */
+.k-docview--bare { grid-template-columns: minmax(0, 1fr) 340px; }
+.k-docview--bare .k-docview__column { padding-inline-start: var(--space-4); }
+.k-docview__toc { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-8) var(--space-5) var(--space-8) var(--space-7); border-right: 1px solid var(--border-subtle); overflow-y: auto; min-height: 0; }
+.k-docview__label { margin: 0; font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-muted); }
+.k-docview__toc > .k-docview__label { margin-bottom: var(--space-3); }
+.k-docview__toclink { display: block; text-align: start; padding: var(--space-2) 0 var(--space-2) var(--space-4); border-left: 1px solid var(--border-subtle); font: var(--text-sm)/1.3 var(--font-sans); color: var(--text-muted); cursor: pointer; }
+.k-docview__toclink[data-level="3"] { padding-left: var(--space-7); }
+.k-docview__toclink:hover { color: var(--text-primary); }
+.k-docview__toclink[aria-current="location"] { color: var(--text-primary); border-left-color: var(--accent); }
+.k-docview__column { min-width: 0; min-height: 0; overflow-y: auto; padding: var(--space-8) var(--space-9); }
+.k-docview__text { max-width: 880px; text-align: left; }
+.k-docview__rail { display: flex; flex-direction: column; align-content: start; gap: var(--space-4); padding: var(--space-8) var(--space-6); border-left: 1px solid var(--border-subtle); background: var(--surface-panel); overflow-y: auto; min-height: 0; }
+.k-docview__card { display: grid; gap: var(--space-3); padding: var(--space-4); }
+.k-docview__fields { margin: 0; display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: var(--space-2) var(--space-4); font: var(--text-sm)/1.4 var(--font-sans); }
+.k-docview__fields dt { color: var(--text-muted); }
+.k-docview__fields dd { margin: 0; font-family: var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
+.k-docview__used { margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); }
+.k-docview__runs { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); font: var(--text-sm)/1.3 var(--font-sans); }
+.k-docview__runs li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; }
+.k-docview__when { color: var(--text-muted); white-space: nowrap; }
+
+/* The spec and plan list views: a list that scrolls on its own, then the picked record (and, for a task, its build record). */
+.k-split { flex: 1; min-height: 0; display: grid; }
+.k-split--req { grid-template-columns: 380px minmax(0, 1fr); }
+.k-split--task { grid-template-columns: 340px minmax(0, 1fr) 340px; }
+.k-list { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; min-height: 0; overflow-y: auto; padding: var(--space-4) var(--space-3); border-right: 1px solid var(--border-subtle); }
+.k-list__row { display: grid; align-items: baseline; gap: var(--space-3); min-width: 0; padding: var(--space-3) var(--space-4); border-radius: var(--radius-sm); font: var(--text-sm)/1.4 var(--font-sans); color: var(--text-secondary); text-align: start; cursor: pointer; }
+.k-list__row--req { grid-template-columns: 34px minmax(0, 1fr) auto; }
+.k-list__row--task { grid-template-columns: auto auto minmax(0, 1fr); }
+.k-list__row:hover { background: var(--surface-hover); }
+.k-list__row[aria-current="true"] { background: var(--accent-subtle); box-shadow: inset 0 0 0 1px var(--accent-border); color: var(--text-primary); }
+.k-list__id { font-weight: var(--weight-medium); color: var(--text-muted); }
+.k-list__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.k-list__count { font-size: var(--text-xs); color: var(--text-muted); }
+.k-detail { min-width: 0; min-height: 0; overflow-y: auto; padding: var(--space-7) var(--space-8); display: flex; flex-direction: column; gap: var(--space-6); }
+.k-detail__head { display: grid; gap: var(--space-2); max-width: 880px; }
+.k-detail__title { margin: 0; font: var(--font-heading); overflow-wrap: anywhere; }
+.k-req__meta, .k-task__meta { margin: 0; font-size: var(--text-xs); color: var(--text-muted); overflow-wrap: anywhere; }
+.k-scenarios { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+.k-scenario { display: grid; align-content: start; gap: var(--space-3); min-width: 0; padding: var(--space-4) var(--space-5); }
+.k-scenario--wide { grid-column: 1 / -1; }
+.k-scenario__title { margin: 0; font: var(--weight-semibold) var(--text-base)/1.3 var(--font-sans); overflow-wrap: anywhere; }
+.k-gherkin { margin: 0; font: var(--font-code-sm); line-height: 1.6; color: var(--text-secondary); }
+.k-gherkin__step { display: block; overflow-wrap: anywhere; }
+.k-gherkin__kw { color: var(--accent-text); }
+.k-task__sec { display: grid; gap: var(--space-2); max-width: 880px; min-width: 0; }
+.k-task__plain { max-width: 880px; min-width: 0; }
+.k-detail a[href^="#req-"] { padding: 0 var(--space-2); border: 1px solid var(--accent-border); border-radius: var(--radius-xs); font: var(--weight-medium) var(--text-xs)/1.5 var(--font-mono); color: var(--accent-text); text-decoration: none; }
+.k-detail a[href^="#req-"]:hover { background: var(--accent-subtle); }
+.k-task__rail { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; min-height: 0; overflow-y: auto; padding: var(--space-7) var(--space-6); border-left: 1px solid var(--border-subtle); background: var(--surface-panel); }
+.k-record__label--differs { color: var(--warning); }
+.k-record__text { margin: 0; font: var(--text-sm)/1.6 var(--font-sans); color: var(--text-secondary); overflow-wrap: anywhere; }
+.k-chips { margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.k-chip { padding: var(--space-1) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-xs); background: var(--surface-inset); font-size: var(--text-sm); color: var(--text-secondary); white-space: nowrap; }
+.k-ref { padding: 0 var(--space-2); border: 1px solid var(--accent-border); border-radius: var(--radius-xs); font-size: var(--text-xs); color: var(--accent-text); cursor: pointer; }
+.k-ref:hover { background: var(--accent-subtle); }
 
 /* ---------- AI-SDLC: the Changes view's file list and diff bar ---------- */
-.k-files, .k-files__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
-.k-files__group { display: grid; gap: var(--space-2); }
-.k-files__repo { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-card); color: var(--text-primary); text-align: start; cursor: pointer; }
+/* Every level is one column that can shrink below its content, so a long repository header truncates instead of widening the list. */
+.k-files, .k-files__list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+.k-files__group { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+.k-files__repo { display: flex; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-2) var(--space-3); border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-primary); text-align: start; cursor: pointer; }
 .k-files__repo:hover, .k-files__file:hover { background: var(--surface-hover); }
-.k-files__name { overflow-wrap: anywhere; }
-.k-files__count { color: var(--text-muted); }
-.k-files__file { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); text-align: start; cursor: pointer; }
+.k-files__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.k-files__count { flex: none; color: var(--text-muted); }
+/* The branch gives way first and almost alone: the repository name only shortens once the branch has nothing left to give. */
+.k-files__branch { flex: 0 1000 auto; min-width: 0; margin-inline-start: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--text-muted); }
+.k-files__file { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); text-align: start; cursor: pointer; }
 .k-files__file[aria-current="true"] { border-color: var(--accent); background: var(--surface-card); }
-.k-files__path { overflow-wrap: anywhere; }
+.k-files__path { display: grid; min-width: 0; }
+.k-files__file-name, .k-files__folder { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.k-files__file-name { font-size: var(--text-sm); }
+/* The folder is cut from its start so its end stays on show; the bdi inside keeps the text itself reading left to right. */
+.k-files__folder { direction: rtl; text-align: left; font-size: var(--text-xs); color: var(--text-muted); }
 .k-files__letter--success { color: var(--success-text); }
 .k-files__letter--error { color: var(--error-text); }
 .k-files__letter--warning { color: var(--warning-text); }
@@ -323,4 +454,5 @@
 .k-files__lines { color: var(--text-muted); white-space: nowrap; }
 .k-diffbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .k-diffbar__file, .k-diffbar__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
-.k-diffbar__rename { color: var(--text-muted); }
+.k-diffbar__rename, .k-diffbar__folder { color: var(--text-muted); }
+.k-diffbar__path { overflow-wrap: anywhere; }

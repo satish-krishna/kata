@@ -197,6 +197,13 @@ const PRIMITIVE_ATTRS = new Set([
   'hlmDropdownMenuSub',
   'hlmDropdownMenuSubTrigger',
   'hlmDropdownMenuTrigger',
+  'hlmPopover',
+  'hlmPopoverContent',
+  'hlmPopoverDescription',
+  'hlmPopoverHeader',
+  'hlmPopoverPortal',
+  'hlmPopoverTitle',
+  'hlmPopoverTrigger',
 ]);
 const PRIMITIVE_ELEMENTS = new Set([
   'hlm-card',
@@ -297,6 +304,9 @@ const PRIMITIVE_ELEMENTS = new Set([
   'hlm-dropdown-menu-separator',
   'hlm-dropdown-menu-shortcut',
   'hlm-dropdown-menu-sub',
+  'hlm-popover',
+  'hlm-popover-content',
+  'hlm-popover-header',
 ]);
 
 // Rule 1's table: a native element -> the set of acceptable primitive

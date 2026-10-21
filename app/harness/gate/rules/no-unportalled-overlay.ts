@@ -17,6 +17,7 @@ const REQUIRED_PORTAL: Record<string, readonly [string, string]> = {
   'hlm-dialog': ['hlm-dialog-content', 'hlmDialogPortal'],
   'hlm-sheet': ['hlm-sheet-content', 'hlmSheetPortal'],
   'hlm-alert-dialog': ['hlm-alert-dialog-content', 'hlmAlertDialogPortal'],
+  'hlm-popover': ['hlm-popover-content', 'hlmPopoverPortal'],
 };
 
 // Same structural view the sibling composition rule uses: an optional `type`

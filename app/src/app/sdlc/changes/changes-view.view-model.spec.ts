@@ -60,4 +60,42 @@ describe('ChangesViewModel', () => {
     expect(vm.selected()).toBeNull();
     expect(vm.pair()).toBeNull();
   });
+
+  it('says only read-only until the base can be read, then names what the change is compared with', async () => {
+    const { vm } = setup();
+    expect(vm.readOnlyNote()).toBe('read-only');
+    await vm.open(CTX);
+    expect(vm.readOnlyNote()).toBe('read-only · compared at the merge base with origin/main');
+  });
+
+  it('totals the files and lines of the open part over every repository, counting a binary file as zero lines', async () => {
+    const { vm, transport } = setup();
+    const listing = await transport.sdlcDiffFiles('x', 'whole');
+    vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({
+      ...listing,
+      files: listing.files.map((f) => (f.binary ? { ...f, added: 9, removed: 9 } : f)),
+    });
+    await vm.open(CTX);
+    expect(vm.fileCount()).toBe(15);
+    expect(vm.totals()).toEqual({ added: 93, removed: 15 });
+  });
+
+  it('adds the lines by type up over every repository, the biggest type first', async () => {
+    const { vm } = setup();
+    await vm.open(CTX);
+    expect(vm.loc()).toEqual([
+      { extension: 'rs', files: 9, added: 81, removed: 15 },
+      { extension: 'txt', files: 3, added: 12, removed: 0 },
+    ]);
+  });
+
+  it('hands the list each repository branch and the base it is compared with', async () => {
+    const { vm } = setup();
+    await vm.open(CTX);
+    expect(vm.groups().map((g) => [g.repo, g.branch, g.base])).toEqual([
+      [MOCK_MASTER, `change/${MOCK_BUILD_CHANGE}`, 'main'],
+      ['claims-core', `change/${MOCK_BUILD_CHANGE}`, 'main'],
+      ['customer-portal', `change/${MOCK_BUILD_CHANGE}`, 'main'],
+    ]);
+  });
 });

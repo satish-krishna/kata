@@ -1,17 +1,18 @@
-import { Component, input, output } from '@angular/core';
+import { Component, computed, input, output } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideChevronRight, lucideSettings } from '@ng-icons/lucide';
+import { lucideChevronRight, lucideGitBranch, lucideSettings } from '@ng-icons/lucide';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { WorkspaceSwitcher } from './workspace-switcher';
 
-/* The AI-SDLC toolbar: seal, mode badge, workspace switcher, breadcrumb, the master repo's branch,
- * settings, and the screen's one primary action (projected). */
+/* The AI-SDLC toolbar: seal, mode badge, workspace switcher, breadcrumb, the master repo's branch, settings, and
+ * what the screen projects: stage pills after the branch (`toolbarStages`), links before settings
+ * (`toolbarLinks`), and the screen's one primary action last. */
 @Component({
   selector: 'app-sdlc-toolbar',
   host: { class: 'contents' },
   imports: [NgIcon, HlmButtonImports, WorkspaceSwitcher],
-  providers: [provideIcons({ lucideChevronRight, lucideSettings })],
+  providers: [provideIcons({ lucideChevronRight, lucideGitBranch, lucideSettings })],
   templateUrl: './sdlc-toolbar.html',
 })
 export class SdlcToolbar {
@@ -27,6 +28,12 @@ export class SdlcToolbar {
   readonly locked = input(false);
   /** Nothing in a workspace can be acted on (the ai-sdlc plugin is missing), so the workspace controls are withheld. */
   readonly blocked = input(false);
+
+  /** The chip's title and accessible name: the full branch, and on a change page the branch it should be on, so the icon form says all the text does. */
+  protected readonly branchLabel = computed(() => {
+    const change = this.crumbs()[0];
+    return `Master repository is on ${this.branch()}${change ? `, not change/${change}` : ''}`;
+  });
 
   readonly switchMode = output<void>();
   readonly select = output<string>();

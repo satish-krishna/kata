@@ -1,0 +1,65 @@
+<div class="k-docview" [class.k-docview--bare]="headings().length === 0">
+  @if (headings().length > 0) {
+    <nav class="k-docview__toc" aria-label="On this page">
+      <span class="k-docview__label">On this page</span>
+      @for (h of headings(); track h.id) {
+        <button
+          hlmBtn
+          variant="bare"
+          size="bare"
+          type="button"
+          class="k-docview__toclink"
+          [attr.data-level]="h.level"
+          [attr.aria-current]="active() === h.id ? 'location' : null"
+          (click)="go(h.id)"
+        >{{ h.text }}</button>
+      }
+    </nav>
+  }
+  <div #column class="k-docview__column" data-testid="doc-column" (scroll)="onScroll()">
+    <article class="k-docview__text">
+      <app-markdown-body [md]="body()" />
+    </article>
+    <ng-content />
+  </div>
+  <aside class="k-docview__rail" aria-label="About this document">
+    @if (fields().length > 0) {
+      <section class="k-card k-docview__card">
+        <h2 class="k-docview__label">Document</h2>
+        <dl class="k-docview__fields">
+          @for (f of fields(); track f[0]) {
+            <dt>{{ f[0] }}</dt>
+            <dd>{{ f[1] }}</dd>
+          }
+        </dl>
+      </section>
+    }
+    @if (usedBy(); as u) {
+      <section class="k-card k-docview__card" data-testid="used-by">
+        <h2 class="k-docview__label">Used by</h2>
+        <p class="k-docview__used">
+          <span class="k-mono">{{ u.name }}</span>
+          @if (u.status; as s) {
+            <span [class]="'k-status k-status--' + s.tone"><span class="k-status__dot"></span>{{ s.text }}</span>
+          }
+        </p>
+      </section>
+    }
+    <section class="k-card k-docview__card" data-testid="recent-runs">
+      <h2 class="k-docview__label">Recent runs · {{ runTotal() }}</h2>
+      @if (runs().length === 0) {
+        <p class="k-left__note">No runs yet</p>
+      } @else {
+        <ul class="k-docview__runs">
+          @for (r of runs(); track r.id) {
+            <li>
+              <span [class]="'k-status k-status--' + r.tone"><span class="k-status__dot"></span>{{ outcome(r.exit) }}</span>&ngsp;
+              <span>{{ r.kind }}</span>&ngsp;
+              <span class="k-mono k-docview__when">{{ r.time }}</span>
+            </li>
+          }
+        </ul>
+      }
+    </section>
+  </aside>
+</div>

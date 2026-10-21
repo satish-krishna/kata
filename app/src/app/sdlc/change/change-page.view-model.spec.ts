@@ -61,7 +61,7 @@ describe('ChangePageViewModel', () => {
     await ready(vm);
     expect(vm.docName()).toBe('spec.md');
     expect(vm.doc()).toContain('# Spec: photo upload');
-    expect(vm.docParts().frontMatter).toBe('status: draft');
+    expect(vm.docParts().fields).toEqual([['status', 'draft']]);
     expect(vm.docParts().body).toContain('Up to 10 photos');
   });
 
@@ -123,6 +123,77 @@ describe('ChangePageViewModel', () => {
     expect(toastText()).toContain('Could not read intent.md: permission denied');
   });
 
+  it('keeps the old tab and its document until the picked one has been read, then switches both together', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(FNOL, transport);
+    await ready(vm);
+    const old = vm.doc();
+    let release!: (text: string) => void;
+    vi.spyOn(transport, 'sdlcReadDoc').mockReturnValue(new Promise<string>((r) => (release = r)));
+    const picking = vm.showDoc('intent');
+    expect(vm.shownDoc()).toBe('spec');
+    expect(vm.docName()).toBe('spec.md');
+    expect(vm.doc()).toBe(old);
+    release('# the intent text');
+    await picking;
+    expect(vm.shownDoc()).toBe('intent');
+    expect(vm.doc()).toBe('# the intent text');
+  });
+
+  it('holds the picked tab in pendingDoc while it reads, and clears it on success and on failure', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(FNOL, transport);
+    await ready(vm);
+    expect(vm.pendingDoc()).toBeNull();
+    let release!: (text: string) => void;
+    vi.spyOn(transport, 'sdlcReadDoc').mockReturnValueOnce(new Promise<string>((r) => (release = r)));
+    const picking = vm.showDoc('intent');
+    expect(vm.pendingDoc()).toBe('intent');
+    release('# the intent text');
+    await picking;
+    expect(vm.pendingDoc()).toBeNull();
+    vi.spyOn(transport, 'sdlcReadDoc').mockRejectedValueOnce('permission denied');
+    const failing = vm.showDoc('spec');
+    expect(vm.pendingDoc()).toBe('spec');
+    await failing;
+    expect(vm.pendingDoc()).toBeNull();
+    expect(vm.shownDoc()).toBe('intent');
+  });
+
+  it('lets a click back on the shown tab cancel a pick still reading', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(FNOL, transport);
+    await ready(vm);
+    const old = vm.doc();
+    let release!: (text: string) => void;
+    vi.spyOn(transport, 'sdlcReadDoc').mockReturnValue(new Promise<string>((r) => (release = r)));
+    const picking = vm.showDoc('intent');
+    expect(vm.pendingDoc()).toBe('intent');
+    await vm.showDoc('spec');
+    expect(vm.pendingDoc()).toBeNull();
+    release('# the intent text');
+    await picking;
+    expect(vm.shownDoc()).toBe('spec');
+    expect(vm.doc()).toBe(old);
+  });
+
+  it('lets a click back on the Build tab cancel a pick still reading', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    await ready(vm);
+    await vm.showDoc('build');
+    expect(vm.shownDoc()).toBe('build');
+    let release!: (text: string) => void;
+    vi.spyOn(transport, 'sdlcReadDoc').mockReturnValue(new Promise<string>((r) => (release = r)));
+    const picking = vm.showDoc('intent');
+    expect(vm.pendingDoc()).toBe('intent');
+    await vm.showDoc('build');
+    expect(vm.pendingDoc()).toBeNull();
+    release('# the intent text');
+    await picking;
+    expect(vm.shownDoc()).toBe('build');
+  });
+
   it('ignores a pick for a document that does not exist yet', async () => {
     const transport = new MockTransport();
     const { vm } = setup(FNOL, transport);
@@ -141,7 +212,7 @@ describe('ChangePageViewModel', () => {
     expect(vm.docName()).toBe('intent.md');
   });
 
-  it('counts runs per stage from the links plus unlinked history records with the stage name', async () => {
+  it('counts the open stage runs from the links plus unlinked history records with the stage name', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcRunLinks').mockResolvedValue([
       { workspace_id: 'acme-claims', system: 'claims', change: FNOL, stage: 'intent', run_id: 'r1', started_at: 1 },
@@ -153,7 +224,9 @@ describe('ChangePageViewModel', () => {
     ]);
     const { vm } = setup(FNOL, transport);
     await ready(vm);
-    expect(vm.runCounts()).toEqual({ intent: 1, spec: 2, plan: 0, build: 0, review: 0 });
+    expect(vm.railRuns().total).toBe(2);
+    await vm.showDoc('intent');
+    expect(vm.railRuns().total).toBe(1);
   });
 
   it('says so when the change is not in the workspace', async () => {
@@ -547,6 +620,220 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       expect(status).not.toHaveBeenCalled();
       expect(vm.buildTasks()).toEqual([]);
+    });
+  });
+
+  describe('the page chrome', () => {
+    const BUILD = MOCK_BUILD_CHANGE;
+    const finished = async () => {
+      const transport = new MockTransport();
+      withStage(transport, BUILD, 'build-finished');
+      await transport.sdlcPublish('f', 'claims-intent', 'claims', BUILD, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', BUILD));
+      return transport;
+    };
+
+    it('has no pills before the change is read, then the four from the stage', async () => {
+      const { vm } = setup(FNOL);
+      expect(vm.pills()).toEqual([]);
+      await ready(vm);
+      expect(vm.pills().map((p) => p.text)).toEqual(['Intent', 'Spec · awaiting acceptance', 'Plan · not started', 'Build · locked']);
+    });
+
+    it('opens the Build pill once the plan is accepted and a repository has the branch', async () => {
+      const { vm } = setup(BUILD);
+      await ready(vm);
+      expect(vm.pills()[3].disabled).toBe(false);
+    });
+
+    it('has no pills and no pull request links while a build is live', async () => {
+      const { vm } = setup(BUILD, await finished());
+      await ready(vm);
+      expect(vm.pills().length).toBe(4);
+      expect(vm.pullLinks().length).toBe(3);
+      await vm.submitBuild({ timeoutSecs: 5400, instructions: null, repo: null });
+      expect(vm.handoff()).not.toBeNull();
+      expect(vm.pills()).toEqual([]);
+      expect(vm.pullLinks()).toEqual([]);
+    });
+
+    it('lists each pull request that has an address, with its number', async () => {
+      const { vm } = setup(BUILD, await finished());
+      await ready(vm);
+      const links = vm.pullLinks();
+      expect(links.map((l) => l.repo)).toEqual(['claims-intent', 'claims-core', 'customer-portal']);
+      expect(links.every((l) => l.url.startsWith('https://') && /^\d+$/.test(l.number ?? ''))).toBe(true);
+    });
+
+    it('has no pills and no pull request links while a skill run holds the page', async () => {
+      const { vm } = setup(BUILD, await finished());
+      const lock = TestBed.inject(LockStore);
+      vi.spyOn(lock, 'active').mockReturnValue({ kind: 'run', title: 'Starting spec', finished: null });
+      vi.spyOn(lock, 'spec').mockReturnValue({} as RunSpec);
+      await ready(vm);
+      expect(vm.session()).not.toBeNull();
+      expect(vm.change()?.stage).toBe('build-finished');
+      expect(vm.pills()).toEqual([]);
+      expect(vm.pullLinks()).toEqual([]);
+    });
+
+    it('has no pull request links before any is open', async () => {
+      const { vm } = setup(FNOL);
+      await ready(vm);
+      expect(vm.pullLinks()).toEqual([]);
+    });
+
+    it('shows the branch chip only when the master repository is not on the change branch', async () => {
+      const { vm } = setup(FNOL);
+      await ready(vm);
+      expect(vm.branchChip()).toBe('main');
+    });
+
+    it('hides the branch chip when the master repository is on the change branch', async () => {
+      const transport = new MockTransport();
+      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: `change/${FNOL}`, others: [], default_base: 'main' });
+      const { vm } = setup(FNOL, transport);
+      await ready(vm);
+      expect(vm.masterBranch()).toBe(`change/${FNOL}`);
+      expect(vm.branchChip()).toBeNull();
+    });
+
+    it('reads the strip status from the open document front matter', async () => {
+      const { vm } = setup(FNOL);
+      await ready(vm);
+      expect(vm.stripStatus()).toEqual({ text: 'Draft', tone: 'warning' });
+      await vm.showDoc('intent');
+      expect(vm.stripStatus()).toEqual({ text: 'Accepted', tone: 'success' });
+    });
+
+    it('leaves the status of the Build tab to its pill, so the strip does not word it a second way', async () => {
+      const { vm } = setup(BUILD);
+      await ready(vm);
+      await vm.showDoc('build');
+      expect(vm.pills()[3]).toMatchObject({ step: 'build', text: 'Build · ready to start', tone: 'idle' });
+      expect(vm.stripStatus()).toBeNull();
+    });
+
+    it('says the build facts on the Build tab, with no stage label beside them', async () => {
+      const transport = new MockTransport();
+      vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, sys, name) => {
+        const real = await MockTransport.prototype.sdlcBuildStatus.call(transport, m, sys, name);
+        return { ...real, tasks: real.tasks.map((t, i) => (i < 2 ? { ...t, row: { task: t.id, repo: t.repo, commits: ['abc1234'], departure: null } } : { ...t, row: null })) };
+      });
+      const link = (stage: string, run_id: string) => ({ workspace_id: 'acme-claims', system: 'claims', change: BUILD, stage, run_id, started_at: 100 });
+      vi.spyOn(transport, 'sdlcRunLinks').mockResolvedValue([link('build:claims-core', 'a'), link('build:customer-portal', 'b'), link('review', 'c'), link('spec', 'd')]);
+      vi.spyOn(transport, 'listRuns').mockResolvedValue([]);
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      await vm.showDoc('build');
+      expect(vm.buildFacts()).toBe('2/3 tasks · 2 build runs');
+      expect(vm.stripStatus()).toBeNull();
+    });
+
+    it('says the singular for one build run, and leaves the repository count out', async () => {
+      const transport = new MockTransport();
+      vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, sys, name) => {
+        const real = await MockTransport.prototype.sdlcBuildStatus.call(transport, m, sys, name);
+        return { ...real, repos: real.repos.slice(0, 1) };
+      });
+      vi.spyOn(transport, 'sdlcRunLinks').mockResolvedValue([{ workspace_id: 'acme-claims', system: 'claims', change: BUILD, stage: 'build:claims-core', run_id: 'a', started_at: 100 }]);
+      vi.spyOn(transport, 'listRuns').mockResolvedValue([]);
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      await vm.showDoc('build');
+      expect(vm.buildFacts()).toBe('0/3 tasks · 1 build run');
+    });
+
+    it('says only what it has: no tasks yet, no runs yet', async () => {
+      const transport = new MockTransport();
+      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({ tasks: [], repos: [], departures: [], hasTasks: false });
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      await vm.showDoc('build');
+      expect(vm.buildFacts()).toBeNull();
+    });
+
+    it('never puts the stage label on the Build tab strip: the pills own it, so "Build · done" has no "Done · pull requests open" beside it', async () => {
+      const { vm } = setup(BUILD, await finished());
+      await ready(vm);
+      await vm.showDoc('build');
+      expect(vm.done()).toBe(true);
+      expect(vm.pills()[3].text).toBe('Build · done');
+      expect(vm.stripStatus()).toBeNull();
+      expect(vm.buildFacts() ?? '').not.toMatch(/done/i);
+    });
+
+    it('draws no strip on the Build tab when there is no status, no facts and no action', async () => {
+      const transport = await finished();
+      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({ tasks: [], repos: [], departures: [], hasTasks: false });
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      await vm.showDoc('build');
+      expect(vm.actions()).toEqual([]);
+      expect(vm.buildFacts()).toBeNull();
+      expect(vm.stripShown()).toBe(false);
+    });
+
+    it('draws no page strip on the Build tab at all: its facts and actions sit in the Changes view strip', async () => {
+      const { vm } = setup(BUILD);
+      await ready(vm);
+      await vm.showDoc('build');
+      expect(vm.buildFacts()).not.toBeNull();
+      expect(vm.actions().length).toBeGreaterThan(0);
+      expect(vm.stripShown()).toBe(false);
+    });
+
+    it('keeps the strip on a document tab, where the status and the file name are always something to say', async () => {
+      const { vm } = setup(FNOL);
+      await ready(vm);
+      expect(vm.stripShown()).toBe(true);
+    });
+
+    it('opens a requirement the spec has, in the Requirements view', async () => {
+      const { vm } = setup(BUILD);
+      await ready(vm);
+      await vm.openRequirement('R2.1');
+      expect(vm.shownDoc()).toBe('spec');
+      expect(vm.shownView()).toBe('list');
+      expect(vm.pickedRequirement()?.id).toBe('R2');
+    });
+
+    it('opens the whole spec, not R1, for a requirement the spec does not have', async () => {
+      const { vm } = setup(BUILD);
+      await ready(vm);
+      await vm.openRequirement('R99.1');
+      expect(vm.shownDoc()).toBe('spec');
+      expect(vm.shownView()).toBe('whole');
+    });
+
+    it('gives the rail the front matter fields except the status, which the strip says', async () => {
+      const transport = new MockTransport();
+      vi.spyOn(transport, 'sdlcReadDoc').mockResolvedValue('---\nauthor: Sam\nstatus: draft\ndate: 2026-10-19\n---\n# Spec\n');
+      const { vm } = setup(FNOL, transport);
+      await ready(vm);
+      expect(vm.railFields()).toEqual([['author', 'Sam'], ['date', '2026-10-19']]);
+      expect(vm.docParts().body).toBe('# Spec\n');
+    });
+
+    it('names the document that uses the open one', async () => {
+      const { vm } = setup(FNOL);
+      await ready(vm);
+      expect(vm.usedBy()).toBeNull();
+      await vm.showDoc('intent');
+      expect(vm.usedBy()).toEqual({ name: 'spec.md', status: { text: 'Draft', tone: 'warning' } });
+    });
+
+    it('lists the last three runs of the open stage, newest first, and counts them all', async () => {
+      const transport = new MockTransport();
+      const link = (run_id: string, stage: string, started_at: number) => ({ workspace_id: 'acme-claims', system: 'claims', change: FNOL, stage, run_id, started_at });
+      vi.spyOn(transport, 'sdlcRunLinks').mockResolvedValue([link('a', 'spec', 100), link('b', 'spec', 300), link('c', 'spec', 200), link('d', 'spec', 400), link('e', 'intent', 50)]);
+      vi.spyOn(transport, 'listRuns').mockResolvedValue([]);
+      const { vm } = setup(FNOL, transport);
+      await ready(vm);
+      expect(vm.railRuns().total).toBe(4);
+      expect(vm.railRuns().rows.map((r) => r.id)).toEqual(['d', 'b', 'c']);
+      expect(vm.railRuns().rows[0].kind).toBe('Spec');
+      await vm.showDoc('intent');
+      expect(vm.railRuns().total).toBe(1);
     });
   });
 });

@@ -68,6 +68,8 @@ const TRIGGERS = [
   // HlmDropdownMenuTrigger stamps data-slot on its host; the CDK menu it opens
   // carries data-slot="dropdown-menu" once attached to the overlay.
   { name: 'dropdown-menu', trigger: '[data-slot="dropdown-menu-trigger"]', surface: '[data-slot="dropdown-menu"]' },
+  // HlmPopoverTrigger stamps data-slot on its host; the content it opens carries data-slot="popover-content" once portalled.
+  { name: 'popover', trigger: '[data-slot="popover-trigger"]', surface: '[data-slot="popover-content"]' },
 ];
 
 const DEFAULT_ROUTES = ['dashboard', 'roster', 'detail/11', 'missions', 'threats', 'recruit', 'settings'];
@@ -77,6 +79,18 @@ const asJson = argv.includes('--json');
 const routes = [];
 for (let i = 0; i < argv.length; i++) if (argv[i] === '--route') routes.push(argv[++i]);
 const targetRoutes = routes.length ? routes : DEFAULT_ROUTES;
+
+// An overlay behind a tab is not in the page until the tab is open, so a route listed here is visited a second time with
+// the step done. The change page keeps the Changes view, and its By type popover, on the Build tab.
+const ROUTE_STEPS = {
+  'sdlc/claims/2026-10-19-build-demo': async (page) => {
+    await page.getByRole('tab', { name: /^Build/ }).click();
+    await page.locator('[data-testid="changes-strip"]').waitFor();
+  },
+};
+// A trigger a route must carry: one that stops rendering would otherwise leave the route green with that overlay never clicked.
+const EXPECTED_TRIGGERS = { 'sdlc/claims/2026-10-18-photo-limits-shipped': ['[data-testid="pr-menu"]'] };
+const visits = targetRoutes.flatMap((route) => [{ route, step: null }, ...(ROUTE_STEPS[route] ? [{ route, step: ROUTE_STEPS[route] }] : [])]);
 
 async function serve() {
   const server = createServer(async (req, res) => {
@@ -108,9 +122,11 @@ let consoleErrors = [];
 page.on('console', (m) => m.type() === 'error' && consoleErrors.push(m.text()));
 page.on('pageerror', (e) => consoleErrors.push(String(e)));
 
-for (const route of targetRoutes) {
-  await page.goto(`http://localhost:${port}/${route}`, { waitUntil: 'networkidle' });
+for (const { route: path, step } of visits) {
+  const route = step ? `${path} (after its tab step)` : path;
+  await page.goto(`http://localhost:${port}/${path}`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(250);
+  if (step) await step(page);
 
   for (const kind of TRIGGERS) {
     const triggers = page.locator(kind.trigger);
@@ -165,8 +181,9 @@ for (const route of targetRoutes) {
           detail: `${kind.surface} opened by ${kind.trigger} #${i} did not close on Escape -- it has no dismissal path`,
         });
         // Reload rather than leave a modal trapping subsequent clicks.
-        await page.goto(`http://localhost:${port}/${route}`, { waitUntil: 'networkidle' });
+        await page.goto(`http://localhost:${port}/${path}`, { waitUntil: 'networkidle' });
         await page.waitForTimeout(250);
+        if (step) await step(page);
       }
 
       if (consoleErrors.length) {
@@ -177,6 +194,17 @@ for (const route of targetRoutes) {
         });
       }
     }
+  }
+}
+
+for (const [path, selectors] of Object.entries(EXPECTED_TRIGGERS)) {
+  if (!targetRoutes.includes(path)) continue;
+  await page.goto(`http://localhost:${port}/${path}`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(250);
+  for (const sel of selectors) {
+    const trigger = page.locator(sel);
+    const popover = (await trigger.count()) === 1 && (await trigger.getAttribute('data-slot')) === 'popover-trigger';
+    if (!popover) findings.push({ route: path, kind: 'expected', detail: `${sel} is not on the page as exactly one popover trigger` });
   }
 }
 

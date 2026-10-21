@@ -26,6 +26,11 @@ describe('MarkdownBody', () => {
     expect(container.querySelector('h1, h2, h3, h4, h5, h6')!.textContent).toBe('Title');
   });
 
+  it('gives each heading the id the outline lists for it, repeats numbered', async () => {
+    const { container } = await render(MarkdownBody, { md: '# Title\n\n## Approach\n\n## Approach\n\n### Why `x`?\n' });
+    expect(Array.from(container.querySelectorAll('h1, h2, h3')).map((h) => h.id)).toEqual(['title', 'approach', 'approach-1', 'why-x']);
+  });
+
   it('renders `inline code` as <code>', async () => {
     const { container } = await render(MarkdownBody, { md: 'use `fn()` here' });
     const code = container.querySelector('code');

@@ -10,6 +10,12 @@
 //      by Monaco, with their default prevented by the app.
 //   4. Widths: 375, 768 and 1280 pixels have no horizontal page scroll; below 768 the file list
 //      sits above the diff and the editor is inline.
+//   5. Fit on the change page's Build tab (before a build starts), at 1280 and 1440 wide: the diff editor reaches the bottom of
+//      the window, the view sits flush under the tab strip with no frame of its own, and each repository header is one line.
+//   6. The strip never cuts a control off: for a build-ready change and for a finished build with three actions and the pull request note,
+//      at 768, 1024, 1280 and 1440 every control sits inside the strip and the strip inside the window, and at 1280 and up it is one row.
+//   7. The live build view's Changes strip has no actions, so it is one row at 1024 and 1280 (4b in the code, run on the page that is inside the build).
+import { STRIP_STATES, checkBuildStrip } from './check-change-toolbar.mjs';
 import { MD, WIDTHS, eventually, noHorizontalScroll, open, reporter, startBuild } from './check-build-support.mjs';
 
 const FILE = 'src/limits.rs';
@@ -86,7 +92,8 @@ try {
           const left = rect('.k-changes__left');
           const main = rect('.k-changes__main');
           const diff = document.querySelector('.monaco-diff-editor');
-          return { listAbove: left && main ? left.bottom <= main.top + 1 : null, listBeside: left && main ? left.right <= main.left + 1 : null, sideBySide: !!diff?.classList.contains('side-by-side') };
+          const aside = document.querySelector('aside.k-changes__left');
+          return { listScroll: aside ? aside.scrollWidth - aside.clientWidth : null, listAbove: left && main ? left.bottom <= main.top + 1 : null, listBeside: left && main ? left.right <= main.left + 1 : null, sideBySide: !!diff?.classList.contains('side-by-side') };
         }),
       (s) => (width < MD ? s.listAbove === true && !s.sideBySide : s.listBeside === true),
       `layout at ${width}`,
@@ -94,12 +101,111 @@ try {
     const scroll = await noHorizontalScroll(page);
     check(scroll.scrollWidth <= scroll.clientWidth && scroll.body <= scroll.clientWidth, `${width}px: no horizontal page scroll (${scroll.scrollWidth} of ${scroll.clientWidth})`);
     if (state.error) check(false, state.error);
-    else if (width < MD) check(true, `${width}px: the list is above the diff and the editor is inline`);
-    else check(true, `${width}px: the list sits beside the diff`);
+    else check(state.listScroll !== null && state.listScroll <= 0, `${width}px: the file list does not scroll sideways (scrollWidth - clientWidth = ${state.listScroll})`);
+    if (!state.error && width < MD) check(true, `${width}px: the list is above the diff and the editor is inline`);
+    else if (!state.error) check(true, `${width}px: the list sits beside the diff`);
+  }
+
+  // 4b. The live build view's Changes strip has no actions, so it is one row from 768 up: at the window's minimum width (1024) and its opening width (1280) too.
+  for (const width of [1024, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.waitForTimeout(300);
+    const row = await page.evaluate(() => {
+      const strip = document.querySelector('[data-testid="changes-strip"]');
+      const kids = [...strip.children, ...strip.querySelectorAll('.k-changes__end > *')].filter((el) => el.getBoundingClientRect().width > 0);
+      const mids = kids.map((el) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; });
+      return { spread: Math.max(...mids) - Math.min(...mids), count: kids.length, slotted: strip.querySelectorAll('.k-changes__end > :not(.k-changes__note)').length };
+    });
+    check(row.count > 0 && row.slotted === 0 && row.spread <= 4, `${width}x900: the live build view's Changes strip is one row (${row.count} items, ${row.slotted} slotted, vertical centers ${Math.round(row.spread)}px apart)`);
   }
 
   check(errors.length === 0, `no page error, console error or failed request${errors.length ? `: ${errors.join(' | ')}` : ''}`);
 } finally {
   await close();
+}
+
+// 5. Fit on the change page's Build tab. A second page, because the first one is inside a live build.
+{
+  const fit = await open({ width: 1440, height: 900 });
+  try {
+    await fit.page.getByRole('tab', { name: /^Build/ }).click();
+    await fit.page.locator('[data-testid="changes-strip"]').waitFor();
+    await fit.page.locator(`[data-file="${FILE}"]`).first().click();
+    await fit.page.locator('.monaco-diff-editor .editor.modified .view-line').first().waitFor();
+    for (const width of [1280, 1440]) {
+      await fit.page.setViewportSize({ width, height: 900 });
+      await fit.page.waitForTimeout(300);
+      const m = await fit.page.evaluate(() => {
+        const box = (sel) => document.querySelector(sel)?.getBoundingClientRect();
+        const root = document.querySelector('app-changes-view .k-changes');
+        const sides = ['Top', 'Right', 'Bottom', 'Left'];
+        // The view and every box between it and its tab panel (the panel included): any of them can frame the view.
+        const frame = [];
+        for (let el = root; el; el = el.parentElement) {
+          frame.push(el);
+          if (el.getAttribute('role') === 'tabpanel') break;
+        }
+        const file = box('[data-file]');
+        // A header is one line when its branch sits at the height of its name and its own text sits on a single line (a truncated text can have two boxes on that line).
+        const wraps = (head) => {
+          const branch = head.querySelector('[data-branch]');
+          const range = document.createRange();
+          range.selectNodeContents(branch);
+          return new Set(Array.from(range.getClientRects(), (r) => Math.round(r.top))).size > 1 || Math.abs(branch.getBoundingClientRect().top - head.querySelector('.k-files__name').getBoundingClientRect().top) > 2;
+        };
+        return {
+          viewportH: window.innerHeight,
+          editorBottom: box('app-changes-view app-diff-editor')?.bottom,
+          padding: frame.flatMap((el) => sides.map((s) => parseFloat(getComputedStyle(el)['padding' + s]))),
+          border: frame.flatMap((el) => sides.map((s) => parseFloat(getComputedStyle(el)['border' + s + 'Width']))),
+          frameDepth: frame.length,
+          rootLeft: root.getBoundingClientRect().left,
+          stripLeft: box('app-sdlc-toolbar header')?.left,
+          strips: document.querySelectorAll('[data-testid="strip"], [data-testid="changes-strip"]').length,
+          listScroll: document.querySelector('aside.k-changes__left').scrollWidth - document.querySelector('aside.k-changes__left').clientWidth,
+          fileH: file.height,
+          stripRow: (() => {
+            const strip = document.querySelector('[data-testid="changes-strip"]');
+            const kids = [...strip.children, ...strip.querySelectorAll('.k-changes__end > *')].filter((el) => el.getBoundingClientRect().width > 0);
+            const mids = kids.map((el) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; });
+            return { spread: Math.max(...mids) - Math.min(...mids), count: kids.length };
+          })(),
+          repoName: (() => {
+            const el = [...document.querySelectorAll('[data-repo] .k-files__name')].find((n) => n.textContent.trim() === 'claims-intent');
+            if (!el) return null;
+            return window.kataClip.textClipped(el);
+          })(),
+          repos: [...document.querySelectorAll('[data-repo]')].map((r) => ({ h: r.getBoundingClientRect().height, wraps: wraps(r) })),
+        };
+      });
+      // The reference is the bottom of the window: the Build tab fills the page, which never scrolls (the editor scrolls itself),
+      // so a diff that ends short of the window bottom is wasted height whichever box contains it.
+      check(Math.abs(m.viewportH - m.editorBottom) <= 4, `${width}x900: the diff editor reaches the bottom of the window (editor bottom ${m.editorBottom} of ${m.viewportH})`);
+      check(m.padding.every((p) => p === 0) && m.border.every((b) => b === 0), `${width}x900: the Changes view has no padding or border (${m.frameDepth} boxes; padding ${m.padding}, border ${m.border})`);
+      check(Math.abs(m.rootLeft - m.stripLeft) <= 1, `${width}x900: the Changes view lines up with the tab strip (${m.rootLeft} / ${m.stripLeft})`);
+      check(m.listScroll <= 0, `${width}x900: the file list does not scroll sideways (scrollWidth - clientWidth = ${m.listScroll})`);
+      check(m.stripRow.count > 0 && m.stripRow.spread <= 4, `${width}x900: the Changes strip is a single row (${m.stripRow.count} items, vertical centers ${m.stripRow.spread}px apart)`);
+      if (width === 1280) check(m.repoName !== null && m.repoName <= 0, `${width}x900: the claims-intent group name is not truncated (${m.repoName}px of it is cut off)`);
+      check(m.strips === 1, `${width}x900: the Build tab has exactly one strip (${m.strips})`);
+      check(m.repos.length > 0 && m.repos.every((r) => r.h <= m.fileH * 1.5), `${width}x900: every repository header is at most 1.5 file rows tall (file row ${m.fileH}; headers ${m.repos.map((r) => r.h)})`);
+      check(m.repos.every((r) => !r.wraps), `${width}x900: no repository header wraps its branch (${m.repos.map((r) => r.wraps)})`);
+    }
+  } finally {
+    await fit.close();
+  }
+}
+// 6. The strip, in the two states that carry the most: build-ready, and finished with three actions and the note.
+{
+  const strip = await open();
+  try {
+    for (const state of STRIP_STATES) {
+      for (const width of [768, 1024, 1280, 1440]) {
+        const fails = await checkBuildStrip(strip.browser, strip.origin, state, width);
+        check(fails.length === 0, `${state.name} at ${width}: nothing in the strip is cut off${fails.length ? `: ${fails.join(' | ')}` : ''}`);
+      }
+    }
+  } finally {
+    await strip.close();
+  }
 }
 done();

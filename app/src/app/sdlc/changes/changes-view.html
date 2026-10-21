@@ -1,80 +1,93 @@
-<div class="k-changes grid grid-cols-1 md:grid-cols-[18rem_1fr] md:grid-rows-[minmax(0,1fr)]">
-  <aside class="k-changes__left" aria-label="Repositories with changes">
-    <app-repo-file-list
-      [groups]="vm.groups()"
-      [selected]="vm.selected()"
-      (toggle)="vm.toggle($event)"
-      (select)="vm.select($event.repo, $event.path)"
-    />
-    @for (repo of vm.missingBranches(); track repo) {
-      <p class="k-changes__readonly" data-testid="changes-missing">{{ repo }} has no change/{{ change() }} branch, so its changes are not listed.</p>
-    }
-  </aside>
-  <section class="k-changes__main" aria-label="What changed">
-    @if (banner(); as text) {
-      <hlm-alert class="wb-banner wb-banner--warn" data-testid="changes-banner">
-        <ng-icon name="lucideTriangleAlert" size="15" />
-        <div hlmAlertDescription>{{ text }}</div>
-      </hlm-alert>
-    }
-    @if (vm.active(); as repo) {
-      <header class="k-changes__head">
-        <h2 class="k-left__repo-name">{{ repo.repo }}</h2>
-        @if (vm.base(); as base) {
-          <div class="k-changes__branches">
-            <span class="k-mono k-changes__chip">{{ repo.branch }}</span>
-            <span class="k-changes__into">into</span>
-            <span class="k-mono k-changes__chip">{{ base.base }}</span>
-          </div>
-          <p class="k-mono k-changes__base">base from origin/HEAD · compared at the merge base with {{ base.reference }}</p>
-        }
-        <div class="k-changes__parts">
-          <app-segmented [options]="vm.partOptions" [value]="vm.part()" (valueChange)="vm.setPart($event)" ariaLabel="Part of the change" />
-          <span class="k-mono k-changes__count" [attr.aria-label]="vm.files().length + ' files'">{{ vm.files().length }}</span>
-        </div>
-        @if (vm.loc().length > 0) {
-          <ul class="k-changes__types" aria-label="Lines by file type">
-            @for (t of vm.loc(); track t.extension) {
-              <li class="k-mono k-changes__chip">{{ t.extension }} +{{ t.added }} −{{ t.removed }}</li>
+<div class="k-changes">
+  @if (vm.active() || hasSlot()) {
+    <div class="k-changes__strip" data-testid="changes-strip">
+      @if (vm.active()) {
+        <app-segmented [options]="vm.partOptions" [value]="vm.part()" (valueChange)="vm.setPart($event)" ariaLabel="Part of the change" />
+        <span class="k-mono k-changes__stat" data-testid="changes-count">{{ vm.fileCountLabel() }}</span>
+        <span class="k-mono k-changes__stat k-changes__stat--added" data-testid="changes-added">+{{ vm.totals().added }}</span>
+        <span class="k-mono k-changes__stat k-changes__stat--removed" data-testid="changes-removed">−{{ vm.totals().removed }}</span>
+        <hlm-popover sideOffset="4" align="start">
+          <button hlmPopoverTrigger hlmBtn variant="secondary" size="sm" type="button" data-testid="changes-bytype">
+            By type
+            <ng-icon name="lucideChevronDown" size="14" aria-hidden="true" />
+          </button>
+          <hlm-popover-content class="k-changes__types" *hlmPopoverPortal="let ctx" data-testid="changes-types">
+            <hlm-popover-header>
+              <div hlmPopoverTitle>Lines by file type</div>
+            </hlm-popover-header>
+            @if (vm.loc().length > 0) {
+              <ul class="k-changes__type-list" aria-label="Lines by file type">
+                @for (t of vm.loc(); track t.extension) {
+                  <li class="k-mono k-changes__type">
+                    <span class="k-changes__type-name">{{ t.extension }}</span>
+                    <span class="k-changes__stat k-changes__stat--added">+{{ t.added }}</span>
+                    <span class="k-changes__stat k-changes__stat--removed">−{{ t.removed }}</span>
+                  </li>
+                }
+              </ul>
+            } @else {
+              <p hlmPopoverDescription>No text files in this part of the change.</p>
             }
-          </ul>
+          </hlm-popover-content>
+        </hlm-popover>
+      }
+      <div class="k-changes__end">
+        @if (vm.active()) {
+          <span class="k-mono k-changes__note" data-testid="changes-readonly" [attr.title]="vm.readOnlyNote()">{{ vm.readOnlyNote() }}</span>
         }
-        <div class="k-changes__pr" data-testid="changes-pr">
-          @if (vm.pr(); as pr) {
-            <span class="k-status k-status--success"><span class="k-status__dot"></span>{{ pr.number === null ? 'Open' : '#' + pr.number + ' open' }}</span>
-            <span class="k-mono">{{ vm.prTitle() }}</span>
-            <a [href]="pr.url" target="_blank" rel="noopener noreferrer">View on GitHub</a>
-          } @else {
-            <p class="k-changes__readonly">No pull request yet. Pull requests open when you declare the change done.</p>
-          }
-        </div>
-        <p class="k-changes__readonly">Read-only. Nothing here changes a file, commit or branch.</p>
-      </header>
-    } @else if (vm.loaded()) {
-      <p class="k-state__body">No repository has changes for this change yet.</p>
-    } @else {
-      <p class="k-state__body" role="status">Reading what changed…</p>
-    }
-    <app-diff-bar
-      [file]="vm.selectedFile()"
-      [layout]="vm.layout()"
-      (layoutChange)="vm.setLayout($event)"
-      [showLayout]="!vm.narrow()"
-      (previous)="vm.step('previous')"
-      (next)="vm.step('next')"
-    />
-    @if (vm.gone()) {
-      <p class="k-changes__gone" role="status">This file is no longer part of the change.</p>
-    } @else if (vm.pair() === null) {
-      <p class="k-state__body">Pick a file to read its changes.</p>
-    }
-    <div class="k-changes__editor">
-      <app-diff-editor
-        [pair]="vm.pair()"
-        [sideBySide]="vm.sideBySide()"
-        [modifiedText]="vm.modifiedText()"
-        [stepRequest]="vm.stepRequest()"
-      />
+        <ng-content />
+      </div>
     </div>
-  </section>
+  }
+  <div class="k-changes__body grid grid-cols-1 md:grid-cols-[18rem_1fr] md:grid-rows-[minmax(0,1fr)]">
+    <aside class="k-changes__left" aria-label="Repositories with changes">
+      <app-repo-file-list
+        [groups]="vm.groups()"
+        [selected]="vm.selected()"
+        (toggle)="vm.toggle($event)"
+        (select)="vm.select($event.repo, $event.path)"
+      />
+      @for (repo of vm.missingBranches(); track repo) {
+        <p class="k-changes__readonly" data-testid="changes-missing">{{ repo }} has no change/{{ change() }} branch, so its changes are not listed.</p>
+      }
+    </aside>
+    <section class="k-changes__main" aria-label="What changed">
+      <div class="k-changes__head">
+        @if (banner(); as text) {
+          <hlm-alert class="wb-banner wb-banner--warn" data-testid="changes-banner">
+            <ng-icon name="lucideTriangleAlert" size="15" />
+            <div hlmAlertDescription>{{ text }}</div>
+          </hlm-alert>
+        }
+        @if (vm.active() === null) {
+          @if (vm.loaded()) {
+            <p class="k-state__body">No repository has changes for this change yet.</p>
+          } @else {
+            <p class="k-state__body" role="status">Reading what changed…</p>
+          }
+        }
+        <app-diff-bar
+          [file]="vm.selectedFile()"
+          [layout]="vm.layout()"
+          (layoutChange)="vm.setLayout($event)"
+          [showLayout]="!vm.narrow()"
+          (previous)="vm.step('previous')"
+          (next)="vm.step('next')"
+        />
+        @if (vm.gone()) {
+          <p class="k-changes__gone" role="status">This file is no longer part of the change.</p>
+        } @else if (vm.pair() === null) {
+          <p class="k-state__body">Pick a file to read its changes.</p>
+        }
+      </div>
+      <div class="k-changes__editor">
+        <app-diff-editor
+          [pair]="vm.pair()"
+          [sideBySide]="vm.sideBySide()"
+          [modifiedText]="vm.modifiedText()"
+          [stepRequest]="vm.stepRequest()"
+        />
+      </div>
+    </section>
+  </div>
 </div>

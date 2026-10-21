@@ -1,4 +1,4 @@
-import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Injectable, computed, effect, inject, linkedSignal, signal, untracked } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
 import type { BranchInfo } from '@bindings/BranchInfo';
@@ -19,7 +19,6 @@ import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
-import type { BuildTile } from '../../ui/stage-stepper';
 import type { ChangesContext } from '../changes/changes-view.view-model';
 import type { BuildContext } from '../build/build-view.view-model';
 import type { BuildDialogMode, BuildStartRequest } from '../../ui/build-dialog';
@@ -34,27 +33,35 @@ import {
   actionsForChange,
   primaryAction,
   reviewFindings,
+  parseFrontMatter,
   revisits,
-  runCounts,
   specFor,
-  splitFrontMatter,
   stageLabel,
+  stagePills,
+  stageRuns,
   type DocsPresent,
   type StageAction,
-  type StepCounts,
+  type StagePill,
 } from '../../lib/sdlc';
+import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
+import { prNumber } from '../../lib/pull-request';
 import { REVIEW_MISSING_TEXT, canConfirm, checkLabel, reviewState, type DoneReport, type DoneReview } from '../../lib/sdlc-done';
+import { section } from '../../lib/doc';
 import { inTauri } from '../../lib/mock';
+import { taskRecord } from '../../lib/plan-doc';
+import { requirements, type Requirement } from '../../lib/spec-doc';
 import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
 
 export type ChangeState = 'loading' | 'ready' | 'not-found';
+
+/** The spec and plan tabs' views: the list (requirements, tasks), the one `##` section (Design, Approach), the whole text. */
+export type DocView = 'list' | 'section' | 'whole';
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const nowSecs = (): number => Math.floor(Date.now() / 1000);
 const BUSY = 'Another task is already running.';
 /** The stage steps that mean the plan is accepted. */
 const ACCEPTED: ReadonlySet<string> = new Set(['build', 'done']);
-const NO_COUNTS: StepCounts = { intent: 0, spec: 0, plan: 0, build: 0, review: 0 };
 
 /** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result. */
 const RUNS: Partial<Record<StageAction, { kind: 'intent' | 'spec' | 'plan'; title: string; label: string }>> = {
@@ -98,6 +105,8 @@ const OUT_OF_DATE_BANNER: Record<NonNullable<ChangeInfo['out_of_date']>, string>
 /** The time limit of a review started from the done dialog: the build dialog's default. */
 const REVIEW_TIMEOUT_SECS = 2 * 60 * 60;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+/** A task is built once the build log has a row for it; the record is the one reader of that. */
+const isBuilt = (t: TaskStatus): boolean => taskRecord(t).kind !== 'unbuilt';
 const SUPERSEDED_BANNER = 'The intent was reopened after this plan was written. Rewrite the plan before building.';
 
 /** What the build view starts from: the prepared branches, the time limit, the round if one was asked for, and Kata's checks folder. */
@@ -170,6 +179,8 @@ export class ChangePageViewModel {
   readonly doc = signal<string | null>(null);
   /** The document the operator picked from the tiles; null shows the current stage's. Every load clears it. */
   private readonly picked = signal<Tab | null>(null);
+  /** The document whose pill the operator just clicked while its text is still being read; null otherwise. */
+  readonly pendingDoc = signal<Tab | null>(null);
   private loadSeq = 0;
   /** Picks have their own sequence, so a pick never cancels a load; a finished load cancels any pick still reading. */
   private pickSeq = 0;
@@ -190,15 +201,30 @@ export class ChangePageViewModel {
     const c = this.change();
     return { intent: c?.intent.exists ?? false, spec: c?.spec.exists ?? false, plan: c?.plan.exists ?? false };
   });
-  /** The Build tile's facts beyond the stage: whether a repository has the change's branch, and the tasks and repositories. */
-  readonly buildTile = computed<BuildTile>(() => {
-    const repos = this.status()?.repos ?? [];
-    return {
-      hasBranch: this.hasBranch(),
-      done: repos.reduce((n, r) => n + r.finished, 0),
-      total: repos.reduce((n, r) => n + r.tasks, 0),
-      repos: repos.length,
-    };
+  /** A build or a skill run holds the page: its view stands in for the change's tabs, so nothing here may be clicked. */
+  private readonly held = computed(() => this.handoff() !== null || this.session() !== null);
+  /**
+   * The four stage pills for the toolbar; none until the change is read, nor while a build or a skill run holds the
+   * page (the build view or the session view stands in for the tabs then).
+   */
+  readonly pills = computed<StagePill[]>(() => {
+    const c = this.change();
+    return c === null || this.held() ? [] : stagePills(c.stage, this.done(), this.docs(), { hasBranch: this.hasBranch() });
+  });
+  /** The pull requests that have an address, for the toolbar's links; none while a build or a skill run holds the page. */
+  readonly pullLinks = computed(() =>
+    this.held()
+      ? []
+      : this.pullRequests().flatMap((p) => {
+          if (p.url === null) return [];
+          const number = prNumber(p.url);
+          return [{ repo: p.repo, url: p.url, number, label: number === null ? p.repo : `${p.repo} #${number}` }];
+        }),
+  );
+  /** The master repository's branch, unless it is the change's own branch, which the pills already imply. */
+  readonly branchChip = computed(() => {
+    const branch = this.masterBranch();
+    return branch === `change/${this.changeName()}` ? null : branch;
   });
   /** What the Changes view in the build panel looks at; null until the workspace and master repository are known. */
   readonly changesContext = computed<ChangesContext | null>(() => {
@@ -208,7 +234,8 @@ export class ChangePageViewModel {
   });
   readonly docName = computed(() => `${this.shownDoc()}.md`);
   readonly stems: readonly DocStem[] = ['intent', 'spec', 'plan'];
-  readonly docParts = computed(() => splitFrontMatter(this.doc() ?? ''));
+  /** The shown document split into its front matter fields and the text under them. */
+  readonly docParts = computed(() => parseFrontMatter(this.doc() ?? ''));
   readonly actions = computed(() => {
     const c = this.change();
     return c && !this.done() ? actionsForChange(c) : [];
@@ -230,9 +257,44 @@ export class ChangePageViewModel {
   });
   readonly primary = computed(() => primaryAction(this.actions()));
   readonly labelOf = actionLabel;
-  readonly runCounts = computed<StepCounts>(() => {
+  /** The front matter fields the rail shows: all but the status, which the strip says in words. */
+  readonly railFields = computed(() => this.docParts().fields.filter(([key]) => key !== 'status'));
+  /**
+   * What the strip says about the open document: its status. The Build tab has none: the Build pill already says where
+   * the build stands, and a second wording of it beside the pill is how "Build · done" ended up next to "Done · pull
+   * requests open". The strip says the build's facts there instead.
+   */
+  readonly stripStatus = computed<DocStatus | null>(() => {
+    if (this.change() === null || this.shownDoc() === 'build') return null;
+    return docStatus(this.docParts().fields.find(([key]) => key === 'status')?.[1]);
+  });
+  /** The Build tab's facts: tasks built and build runs, leaving out what the change does not have yet. */
+  readonly buildFacts = computed<string | null>(() => {
     const w = this.current();
-    return w ? runCounts(this.links(), this.records(), w.id, this.system(), this.changeName()) : NO_COUNTS;
+    if (w === null || this.shownDoc() !== 'build') return null;
+    const tasks = this.buildTasks();
+    const runs = stageRuns(this.links(), this.records(), w.id, this.system(), this.changeName(), 'build').length;
+    const parts = [
+      tasks.length > 0 ? `${tasks.filter(isBuilt).length}/${tasks.length} tasks` : '',
+      runs > 0 ? plural(runs, 'build run', 'build runs') : '',
+    ].filter((p) => p !== '');
+    return parts.length > 0 ? parts.join(' · ') : null;
+  });
+  /** The page strip belongs to the document tabs; the Build tab has none, its facts and actions sit in the Changes view strip. */
+  readonly stripShown = computed(() => this.shownDoc() !== 'build');
+  /** The document built from the open one; none on the plan and the Build tab. */
+  readonly usedBy = computed<UsedBy | null>(() => {
+    const c = this.change();
+    const stem = this.shownDoc();
+    return c === null || stem === 'build' ? null : usedBy(stem, c);
+  });
+  /** The latest runs of the open document's stage for the rail, and how many the stage has had. */
+  readonly railRuns = computed<{ rows: RunRow[]; total: number }>(() => {
+    const w = this.current();
+    const stem = this.shownDoc();
+    if (w === null || stem === 'build') return { rows: [], total: 0 };
+    const runs = stageRuns(this.links(), this.records(), w.id, this.system(), this.changeName(), stem);
+    return recentRuns(runs, stem.charAt(0).toUpperCase() + stem.slice(1));
   });
 
   // --- the acceptance confirm
@@ -262,8 +324,87 @@ export class ChangePageViewModel {
     const planned = (this.status()?.repos ?? []).map((r) => r.repo);
     return [...new Set([...(master === null ? [] : [master]), ...planned])];
   });
-  /** The plan's tasks with their build rows, shown under the plan document; empty when there is no plan. */
+  /** The plan's tasks with their build rows, for the plan tab's Tasks view; empty when there is no plan. */
   readonly buildTasks = computed<TaskStatus[]>(() => this.status()?.tasks ?? []);
+  // --- the spec and plan views: which one is shown and what is picked in it; all of it starts over with the tab or the change
+  private readonly view = linkedSignal<DocView | null>(() => {
+    this.shownDoc();
+    this.changeName();
+    return null;
+  });
+  private readonly requirementPick = linkedSignal<string | null>(() => {
+    this.shownDoc();
+    this.changeName();
+    return null;
+  });
+  private readonly taskPick = linkedSignal<string | null>(() => {
+    this.shownDoc();
+    this.changeName();
+    return null;
+  });
+  /** The spec's requirements while the spec tab is open. */
+  readonly requirementList = computed<Requirement[]>(() => (this.shownDoc() === 'spec' ? requirements(this.docParts().body) : []));
+  /** The requirement shown on the right: the picked one, else the first. */
+  readonly pickedRequirement = computed<Requirement | null>(() => {
+    const all = this.requirementList();
+    return all.find((r) => r.id === this.requirementPick()) ?? all[0] ?? null;
+  });
+  /** The task shown in the middle: the picked one, else the first that is not built, else the first. */
+  readonly pickedTask = computed<TaskStatus | null>(() => {
+    const all = this.buildTasks();
+    return all.find((t) => t.id === this.taskPick()) ?? all.find((t) => !isBuilt(t)) ?? all[0] ?? null;
+  });
+  /** The open tab has a list view: a spec with requirements, a plan with tasks. */
+  private readonly hasList = computed(() => {
+    const stem = this.shownDoc();
+    return stem === 'spec' ? this.requirementList().length > 0 : stem === 'plan' && this.buildTasks().length > 0;
+  });
+  /** The strip's toggle for the open tab; none on the intent and the Build tab, nor when there is no list to show. */
+  readonly viewOptions = computed<{ value: DocView; label: string }[]>(() => {
+    if (!this.hasList()) return [];
+    if (this.shownDoc() === 'spec') {
+      return [{ value: 'list', label: `Requirements · ${this.requirementList().length}` }, { value: 'section', label: 'Design' }, { value: 'whole', label: 'Whole document' }];
+    }
+    const built = this.buildTasks().filter(isBuilt).length;
+    return [{ value: 'list', label: `Tasks · ${built}/${this.buildTasks().length} built` }, { value: 'section', label: 'Approach' }, { value: 'whole', label: 'Whole document' }];
+  });
+  readonly viewLabel = computed(() => (this.shownDoc() === 'spec' ? 'Spec view' : 'Plan view'));
+  readonly shownView = computed<DocView>(() => (this.hasList() ? (this.view() ?? 'list') : 'whole'));
+  /** The `##` section the section view shows, or null when the document has none by that name. */
+  readonly sectionText = computed(() => section(this.docParts().body, this.sectionName()));
+  /** The name of that section: Design in a spec, Approach in a plan. */
+  readonly sectionName = computed(() => (this.shownDoc() === 'spec' ? 'Design' : 'Approach'));
+  /** What the document layout shows: the section in the section view, else the whole text; null for a missing section. */
+  readonly layoutBody = computed(() => (this.shownView() === 'section' ? this.sectionText() : this.docParts().body));
+
+  setView(view: DocView): void {
+    this.view.set(view);
+  }
+
+  pickRequirement(id: string): void {
+    this.requirementPick.set(id);
+  }
+
+  pickTask(id: string): void {
+    this.taskPick.set(id);
+  }
+
+  /**
+   * Open a requirement from a task's text on the Spec tab, in its Requirements view. `R7.7` opens R7. An id the spec
+   * does not have opens the whole document instead of quietly showing some other requirement.
+   */
+  async openRequirement(ref: string): Promise<void> {
+    await this.showDoc('spec');
+    if (this.shownDoc() !== 'spec') return;
+    const id = ref.split('.')[0];
+    if (this.requirementList().some((r) => r.id === id)) {
+      this.requirementPick.set(id);
+      this.view.set('list');
+    } else {
+      this.view.set('whole');
+    }
+  }
+
   /** Why the build did not start, or null. */
   readonly refusal = signal<string | null>(null);
   private readonly pendingLeftovers = signal<RepoFiles[] | null>(null);
@@ -477,25 +618,36 @@ export class ChangePageViewModel {
   /** Show another of the change's documents. A newer pick, or a load that finishes, supersedes one still reading. */
   async showDoc(stem: string): Promise<void> {
     if (stem === 'build') {
-      if (this.shownDoc() !== 'build' && this.change() !== null && this.hasBranch()) {
-        this.pickSeq++;
-        this.picked.set('build');
-      }
+      // The last click wins here too: a click on Build, even when it is already shown, ends a read still pending for another tab.
+      this.pickSeq++;
+      this.pendingDoc.set(null);
+      if (this.shownDoc() !== 'build' && this.change() !== null && this.hasBranch()) this.picked.set('build');
       return;
     }
-    if (!isDocStem(stem) || stem === this.shownDoc() || !this.docs()[stem]) return;
-    const master = this.masterDir();
-    if (!master) return;
+    if (!isDocStem(stem) || !this.docs()[stem]) return;
+    // The last click wins: a click back on the tab already shown also ends a read still pending for another tab.
     const seq = ++this.pickSeq;
-    const before = this.picked();
-    this.picked.set(stem);
+    if (stem === this.shownDoc()) {
+      this.pendingDoc.set(null);
+      return;
+    }
+    const master = this.masterDir();
+    if (!master) {
+      this.pendingDoc.set(null);
+      return;
+    }
+    // The spartan tabs move their own selection on a click, so the pill the operator clicked is held here until the text is read or the read fails; the tabs follow it.
+    this.pendingDoc.set(stem);
     try {
       const text = await this.transport.sdlcReadDoc(master, this.system(), this.changeName(), stem);
-      if (seq === this.pickSeq) this.doc.set(text);
+      // The tab and its text change together, once the text is here, so no tab ever shows another document's text.
+      if (seq !== this.pickSeq) return;
+      this.doc.set(text);
+      this.picked.set(stem);
+      this.pendingDoc.set(null);
     } catch (e) {
       if (seq !== this.pickSeq) return;
-      // The doc text is still the one shown before; put the selection back with it, never a name over another's text.
-      this.picked.set(before);
+      this.pendingDoc.set(null);
       this.toasts.error(`Could not read ${stem}.md: ${message(e)}`);
     }
   }
@@ -831,6 +983,7 @@ export class ChangePageViewModel {
     const finish = (state: ChangeState, change: ChangeInfo | null, doc: string | null) => {
       if (seq !== this.loadSeq) return;
       this.pickSeq++;
+      this.pendingDoc.set(null);
       this.picked.set(null);
       this.change.set(change);
       this.doc.set(doc);

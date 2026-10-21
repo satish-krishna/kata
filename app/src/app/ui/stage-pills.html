@@ -1,0 +1,18 @@
+@let p = pills();
+<div hlmTabsList variant="bare" class="k-pills" aria-label="Stage documents">
+  <button hlmTabsTrigger="intent" variant="bare" class="k-pill" [disabled]="p[0].disabled" [attr.aria-current]="p[0].current ? 'step' : null" [attr.aria-label]="p[0].ariaLabel">
+    <ng-container *ngTemplateOutlet="tile; context: { $implicit: p[0] }" />
+  </button>
+  <button hlmTabsTrigger="spec" variant="bare" class="k-pill" [disabled]="p[1].disabled" [attr.aria-current]="p[1].current ? 'step' : null" [attr.aria-label]="p[1].ariaLabel">
+    <ng-container *ngTemplateOutlet="tile; context: { $implicit: p[1] }" />
+  </button>
+  <button hlmTabsTrigger="plan" variant="bare" class="k-pill" [disabled]="p[2].disabled" [attr.aria-current]="p[2].current ? 'step' : null" [attr.aria-label]="p[2].ariaLabel">
+    <ng-container *ngTemplateOutlet="tile; context: { $implicit: p[2] }" />
+  </button>
+  <button hlmTabsTrigger="build" variant="bare" class="k-pill" [disabled]="p[3].disabled" [attr.aria-current]="p[3].current ? 'step' : null" [attr.aria-label]="p[3].ariaLabel">
+    <ng-container *ngTemplateOutlet="tile; context: { $implicit: p[3] }" />
+  </button>
+</div>
+<ng-template #tile let-s>
+  <span [class]="'k-status k-status--' + s.tone"><span class="k-status__dot"></span>{{ s.text }}</span>
+</ng-template>

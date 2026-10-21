@@ -59,6 +59,8 @@ pub struct TaskStatus {
     pub name: String,
     pub repo: String,
     pub depends_on: Vec<String>,
+    /// The task's own section of the plan, from its heading to the next task heading.
+    pub text: String,
     pub row: Option<BuildRow>,
 }
 
@@ -344,6 +346,7 @@ pub fn status(master: &Path, system: &str, change: &str) -> Result<BuildStatus, 
             name: s.task.name.clone(),
             repo: s.task.repo.clone(),
             depends_on: s.task.depends_on.clone(),
+            text: s.text.clone(),
             row: row_of(&s.task.id).cloned(),
         })
         .collect();
@@ -533,6 +536,21 @@ mod tests {
             ("T2", "app", Some("T1")),
             ("T3", "app", Some("T2")),
         ])
+    }
+
+    #[test]
+    fn status_carries_each_tasks_own_plan_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = master_with(tmp.path(), &app_tasks());
+        let st = status(&master, SYS, CHG).unwrap();
+        assert_eq!(
+            st.tasks[0].text,
+            "### T1: Do T1 (`app`)\n\n- **Depends on:** none\n- **Change:** something"
+        );
+        assert_eq!(
+            st.tasks[2].text,
+            "### T3: Do T3 (`app`)\n\n- **Depends on:** T2\n- **Change:** something"
+        );
     }
 
     #[test]

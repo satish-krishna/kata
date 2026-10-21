@@ -373,46 +373,114 @@ export function primaryAction(actions: readonly StageAction[]): StageAction | nu
   return null;
 }
 
-/** Split a leading `---` front-matter block off a document. The block becomes one `key: value · key: value` line. */
-export function splitFrontMatter(text: string): { frontMatter: string | null; body: string } {
+/** A leading `---` front-matter block: its lines and the text after it, or null when the document has none. */
+function frontMatterBlock(text: string): { lines: string[]; body: string } | null {
   const m = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
-  if (!m) return { frontMatter: null, body: text };
-  const line = m[1].split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== "").join(" · ");
-  return { frontMatter: line === "" ? null : line, body: text.slice(m[0].length) };
+  return m ? { lines: m[1].split(/\r?\n/), body: text.slice(m[0].length) } : null;
 }
 
-export type StepCounts = Record<"intent" | "spec" | "plan" | "build" | "review", number>;
+/**
+ * A document's front matter as `[key, value]` fields in the order written, and the text after the block. A value is
+ * the raw scalar text: a list stays as written (`[kata@7226252]`). Lines that are not `key: value` are skipped.
+ */
+export function parseFrontMatter(text: string): { fields: [string, string][]; body: string } {
+  const block = frontMatterBlock(text);
+  if (!block) return { fields: [], body: text };
+  const fields: [string, string][] = [];
+  for (const line of block.lines) {
+    const m = /^([A-Za-z0-9_-]+):[ \t]*(.*?)\s*$/.exec(line);
+    if (m) fields.push([m[1], m[2]]);
+  }
+  return { fields, body: block.body };
+}
+
 /** Which of a change's three documents exist on disk. */
 export type DocsPresent = Record<"intent" | "spec" | "plan", boolean>;
 
+export type RunStage = "intent" | "spec" | "plan" | "build" | "review";
+
+/** The stage a transcript link belongs to: `build:<repo>` is the build; an unknown stage belongs to none. */
+function linkStage(stage: string): RunStage | null {
+  if (stage.startsWith("build:")) return "build";
+  return stage === "intent" || stage === "spec" || stage === "plan" || stage === "review" ? stage : null;
+}
+
 /**
- * Runs so far per stage: the transcript links recorded for this change, plus history records that carry the
- * stage's deterministic run name and are not linked yet (the fallback for a run whose link was never written).
+ * The runs of one stage of a change, newest first: the transcript links recorded for it, plus history records that
+ * carry the stage's deterministic run name and are not linked yet (the fallback for a run whose link was never
+ * written). A link whose record is gone is listed under that deterministic name, so it still counts.
  */
-export function runCounts(
+export function stageRuns(
   links: readonly RunLink[],
   records: readonly RunRecord[],
   workspaceId: string,
   system: string,
   change: string,
-): StepCounts {
-  const out: StepCounts = { intent: 0, spec: 0, plan: 0, build: 0, review: 0 };
-  const linked = new Set<string>();
-  for (const l of links) {
-    if (l.workspace_id !== workspaceId || l.system !== system || l.change !== change) continue;
-    linked.add(l.run_id);
-    if (l.stage === "intent" || l.stage === "spec" || l.stage === "plan" || l.stage === "review") out[l.stage] += 1;
-    else if (l.stage.startsWith("build:")) out.build += 1;
+  stage: RunStage,
+): RunRecord[] {
+  const prefix = `sdlc-${system}-${change}-`;
+  const byId = new Map(records.map((r) => [r.id, r]));
+  const mine = links.filter((l) => l.workspace_id === workspaceId && l.system === system && l.change === change);
+  const linked = new Set(mine.map((l) => l.run_id));
+  const out = new Map<string, RunRecord>();
+  for (const l of mine) {
+    if (linkStage(l.stage) !== stage || out.has(l.run_id)) continue;
+    const kata = `${prefix}${l.stage.replace(":", "-")}`;
+    out.set(l.run_id, byId.get(l.run_id) ?? { id: l.run_id, kata, started_at: l.started_at, isolation: "none" });
   }
   for (const r of records) {
-    if (linked.has(r.id)) continue;
-    for (const stage of ["intent", "spec", "plan"] as const) {
-      if (r.kata === `sdlc-${system}-${change}-${stage}`) out[stage] += 1;
-    }
-    if (r.kata.startsWith(`sdlc-${system}-${change}-build-`)) out.build += 1;
-    else if (r.kata === `sdlc-${system}-${change}-review`) out.review += 1;
+    if (linked.has(r.id) || out.has(r.id)) continue;
+    const own = stage === "build" ? r.kata.startsWith(`${prefix}build-`) : r.kata === `${prefix}${stage}`;
+    if (own) out.set(r.id, r);
   }
-  return out;
+  return [...out.values()].sort((a, b) => b.started_at - a.started_at);
+}
+
+export type PillStep = "intent" | "spec" | "plan" | "build";
+export type PillTone = "success" | "warning" | "error" | "idle";
+/** One stage pill of the change toolbar. `ariaLabel` is set only where the visible text alone does not say enough. */
+export type StagePill = {
+  step: PillStep;
+  title: string;
+  text: string;
+  tone: PillTone;
+  disabled: boolean;
+  /** The pill the change is at now (`aria-current="step"`). */
+  current: boolean;
+  ariaLabel: string | null;
+};
+
+const PILL_STEPS: readonly { step: PillStep; title: string }[] = [
+  { step: "intent", title: "Intent" },
+  { step: "spec", title: "Spec" },
+  { step: "plan", title: "Plan" },
+  { step: "build", title: "Build" },
+];
+
+/**
+ * The four stage pills of a change. The current step shows the stage's label and tone; steps before it read as
+ * accepted and steps after it as not started. A rejected change is closed on the intent step and a done change sits
+ * on the build step. A document pill is disabled until its document exists. The Build pill is locked until the plan
+ * is accepted, then disabled until a repository has the change's branch.
+ */
+export function stagePills(stage: Stage, done: boolean, docs: DocsPresent, build: { hasBranch: boolean }): StagePill[] {
+  const label = done ? DONE_LABEL : stageLabel(stage);
+  const accepted = label.step === "build" || label.step === "done";
+  const sitsOn = label.step === "closed" ? "intent" : label.step === "done" ? "build" : label.step;
+  const at = PILL_STEPS.findIndex((p) => p.step === sitsOn);
+  const tone: PillTone = label.tone === "muted" ? "idle" : label.tone;
+  return PILL_STEPS.map(({ step, title }, i) => {
+    const current = i === at;
+    if (step === "build") {
+      const disabled = !accepted || !build.hasBranch;
+      if (!accepted) return { step, title, text: "Build · locked", tone: "idle", disabled: true, current, ariaLabel: null };
+      return { step, title, text: done ? "Build · done" : label.text, tone: done ? "success" : tone, disabled, current, ariaLabel: null };
+    }
+    const disabled = !docs[step];
+    if (current) return { step, title, text: label.text, tone, disabled, current, ariaLabel: null };
+    if (i < at) return { step, title, text: title, tone: "success", disabled, current, ariaLabel: `${title}, accepted` };
+    return { step, title, text: `${title} · not started`, tone: "idle", disabled, current, ariaLabel: null };
+  });
 }
 
 export type Severity = "critical" | "high" | "medium" | "low";

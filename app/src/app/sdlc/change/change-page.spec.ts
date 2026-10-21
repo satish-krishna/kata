@@ -39,28 +39,28 @@ describe('ChangePage', () => {
   });
   afterEach(() => draw.mockRestore());
 
-  it('shows the breadcrumb, the branch, the stepper and the stage document', async () => {
+  it('shows the breadcrumb, the branch, the stage pills and the stage document', async () => {
     const { container } = await mount();
     expect(container.querySelector('nav')!.textContent).toContain(FNOL);
     expect(container.textContent).toContain('acme-claims');
     expect(container.querySelector('[data-testid="branch"]')!.textContent!.trim()).toBe('main');
-    expect(container.querySelectorAll('app-stage-stepper [aria-current="step"]').length).toBe(1);
+    expect(container.querySelectorAll('header [aria-current="step"]').length).toBe(1);
     expect(container.textContent).toContain('Spec · awaiting acceptance');
-    expect(container.querySelector('app-doc-view h1')!.textContent).toBe('Spec: photo upload');
-    expect(container.querySelector('.k-doc__front')!.textContent!.trim()).toBe('status: draft');
+    expect(container.querySelector('app-doc-layout h1')!.textContent).toBe('Spec: photo upload');
+    expect(container.querySelector('[data-testid="strip"]')!.textContent).toContain('Draft');
   });
 
-  it('crosses the seam: clicking the Intent tile shows the accepted intent in its tab panel', async () => {
+  it('crosses the seam: clicking the Intent pill shows the accepted intent in its tab panel', async () => {
     const { container } = await mount();
     const tab = (name: string) =>
-      Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.querySelector('.k-step__name')!.textContent!.trim() === name)!;
+      Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.textContent!.trim().startsWith(name))!;
     expect(tab('Plan').disabled).toBe(true);
     tab('Intent').click();
-    await vi.waitFor(() => expect(container.querySelector('app-doc-view h1')?.textContent).toBe('Photo upload at first notice of loss'));
+    await vi.waitFor(() => expect(container.querySelector('app-doc-layout h1')?.textContent).toBe('Photo upload at first notice of loss'));
     expect(tab('Intent').getAttribute('aria-selected')).toBe('true');
     const panel = container.querySelector('[role="tabpanel"]:not([hidden])')!;
     expect(panel.getAttribute('aria-labelledby')).toBe(tab('Intent').id);
-    expect(panel.querySelector('.k-doc__name')!.textContent).toBe('intent.md');
+    expect(container.querySelector('[data-testid="strip"] .k-strip__file')!.textContent).toBe('intent.md');
     expect(tab('Spec').getAttribute('aria-current')).toBe('step');
   });
 
@@ -120,19 +120,19 @@ describe('ChangePage', () => {
     const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
     const click = (label: string) => Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((b) => b.textContent!.trim() === label)!.click();
 
-    it('the plan tab renders the build log from sdlcBuildStatus', async () => {
+    it('the plan tab lists the tasks from sdlcBuildStatus in the Tasks view', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
       const status = await transport.sdlcBuildStatus('', 'claims', MOCK_BUILD_CHANGE);
-      const table = container.querySelector('app-build-log-table')!;
-      expect(table).not.toBeNull();
-      expect(text(table.querySelector('h2')!)).toBe('Build log');
-      expect(table.querySelectorAll('tbody tr').length).toBe(status.tasks.length);
+      const nav = container.querySelector('nav[aria-label="Tasks"]')!;
+      expect(nav).not.toBeNull();
+      expect(nav.querySelectorAll('button').length).toBe(status.tasks.length);
+      expect(container.querySelector('app-build-log-table')).toBeNull();
     });
 
-    it('crosses the seam: clicking the Build tile shows what changed in the build panel', async () => {
+    it('crosses the seam: clicking the Build pill shows what changed in the build panel', async () => {
       vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
       const { container } = await mount(MOCK_BUILD_CHANGE);
-      const tile = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.querySelector('.k-step__name')!.textContent!.trim() === 'Build')!;
+      const tile = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.textContent!.trim().startsWith('Build'))!;
       expect(tile.disabled).toBe(false);
       expect(container.querySelector('app-changes-view')).toBeNull();
       tile.click();
@@ -154,9 +154,9 @@ describe('ChangePage', () => {
       expect(container.querySelector('main.k-change')).toBeNull();
     });
 
-    it('shows no build log on a change without tasks', async () => {
+    it('shows no task list on a change without tasks', async () => {
       const { container } = await mount();
-      expect(container.querySelector('app-build-log-table')).toBeNull();
+      expect(container.querySelector('nav[aria-label="Tasks"]')).toBeNull();
     });
 
     it('crosses the seam: clicking the rendered Start build opens the dialog, and Start build prepares the build', async () => {
@@ -311,20 +311,19 @@ describe('ChangePage after the pull requests', () => {
     const transport = finishedTransport();
     await openAll(transport);
     const { container } = await mount(MOCK_BUILD_CHANGE, transport);
-    expect(container.querySelector('app-stage-stepper')!.textContent).toContain('Done · pull requests open');
+    expect(container.querySelector('header')!.textContent).toContain('Build · done');
     expect(container.textContent).not.toContain('Build · finished, not yet done');
     expect(labels(container)).not.toContain('Declare done');
     expect(labels(container)).not.toContain('Another round');
-    const card = container.querySelector('app-pr-card')!;
-    expect(card.querySelector('h2')!.textContent).toBe('Pull requests');
-    expect(card.querySelectorAll('a').length).toBe(3);
+    expect(container.querySelector('nav[aria-label="Pull requests"]')).not.toBeNull();
+    expect(container.querySelector('header [data-testid="pr-menu"]')!.textContent).toContain('3 PRs');
   });
 
   it('an unfinished set of pull requests keeps the finished label and its action', async () => {
     const { container } = await mount(MOCK_BUILD_CHANGE, finishedTransport());
     expect(container.textContent).toContain('Build · finished, not yet done');
     expect(labels(container)).toContain('Declare done');
-    expect(container.querySelector('app-pr-card')).toBeNull();
+    expect(container.querySelector('header a')).toBeNull();
   });
 
   it('unreachable GitHub keeps the finished label with a note', async () => {
@@ -334,6 +333,6 @@ describe('ChangePage after the pull requests', () => {
     const { container } = await mount(MOCK_BUILD_CHANGE, transport);
     expect(container.textContent).toContain('Build · finished, not yet done');
     expect(container.querySelector('[data-testid="pr-note"]')!.textContent).toContain('Could not check pull requests');
-    expect(container.querySelector('app-pr-card')).toBeNull();
+    expect(container.querySelector('header a')).toBeNull();
   });
 });

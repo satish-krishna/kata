@@ -14,7 +14,7 @@ const settle = async () => {
 };
 const radios = () => Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]'));
 const items = () => Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitem"]'));
-const trigger = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('button[aria-label="Switch workspace"]')!;
+const trigger = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('button[aria-label^="Switch workspace"]')!;
 const open = async (c: HTMLElement) => {
   trigger(c).click();
   await settle();
@@ -38,6 +38,18 @@ describe('WorkspaceSwitcher', () => {
     const { container } = await render(WorkspaceSwitcher, base);
     expect(trigger(container).textContent).toContain('acme-claims');
     expect(radios().length).toBe(0);
+  });
+
+  it('carries the workspace name in its title and its accessible name, since the name can be cut', async () => {
+    const { container } = await render(WorkspaceSwitcher, base);
+    expect(trigger(container).getAttribute('aria-label')).toBe('Switch workspace, acme-claims');
+    expect(trigger(container).getAttribute('title')).toBe('acme-claims');
+  });
+
+  it('names the missing workspace the same way', async () => {
+    const { container } = await render(WorkspaceSwitcher, { ...base, workspaces: [], current: null });
+    expect(trigger(container).getAttribute('aria-label')).toBe('Switch workspace, No workspace');
+    expect(trigger(container).getAttribute('title')).toBe('No workspace');
   });
 
   it('lists every workspace with its folder and change count, and flags a missing folder', async () => {

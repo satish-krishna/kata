@@ -1,6 +1,7 @@
 import { Component, computed, input, model, output } from '@angular/core';
 import type { ChangedFile } from '@bindings/ChangedFile';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { splitPath } from '../lib/file-path';
 import { FILE_STATUS } from './file-status';
 import { Segmented } from './segmented';
 
@@ -11,7 +12,7 @@ const LAYOUTS: { value: DiffLayout; label: string }[] = [
   { value: 'inline', label: 'Inline' },
 ];
 
-/* The bar above the diff editor: what the open file is (status, path, rename, an uncommitted tag), the two steppers
+/* The bar above the diff editor: what the open file is (status, the path with its folder muted before the file name, rename, an uncommitted tag), the two steppers
  * between its changes, and the choice of side by side or inline. The parent owns the editor; the bar only says what to do. */
 @Component({
   selector: 'app-diff-bar',
@@ -27,6 +28,7 @@ export class DiffBar {
   readonly next = output<void>();
 
   protected readonly layouts = LAYOUTS;
+  protected readonly splitPath = splitPath;
   protected readonly status = computed(() => {
     const f = this.file();
     return f === null ? null : FILE_STATUS[f.status];

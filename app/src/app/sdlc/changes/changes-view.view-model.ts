@@ -4,9 +4,8 @@ import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { ChangedFile } from '@bindings/ChangedFile';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
+import type { FileTypeStats } from '@bindings/FileTypeStats';
 import type { Part } from '@bindings/Part';
-import type { PrState } from '@bindings/PrState';
-import { prNumber } from '../../lib/pull-request';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import type { DiffLayout } from '../../ui/diff-bar';
@@ -73,24 +72,44 @@ export class ChangesViewModel {
   readonly sideBySide = computed(() => this.layout() === 'side' && !this.narrow());
 
   readonly partOptions = PART_OPTIONS;
-  private readonly prStates = signal<PrState[]>([]);
-  /** What the pull request is titled. */
-  readonly prTitle = signal('');
-  /** The open repository's pull request, or null while it has none. */
-  readonly pr = computed(() => {
-    const a = this.active();
-    const url = a === null ? null : (this.prStates().find((p) => p.repo === a.repo)?.url ?? null);
-    return url === null ? null : { url, number: prNumber(url) };
-  });
   readonly active = computed(() => this.repos().find((r) => r.repo === this.activeName()) ?? null);
   readonly base = computed(() => {
     const a = this.active();
     return a === null ? null : (this.bases()[a.repo] ?? a.base);
   });
-  readonly files = computed<ChangedFile[]>(() => this.listings()[this.activeName() ?? '']?.files ?? NO_FILES);
-  readonly loc = computed(() => this.listings()[this.activeName() ?? '']?.loc ?? []);
+  /** The files of the open part in every listed repository, in the order the list shows them. */
+  private readonly listed = computed<ChangedFile[]>(() => this.repos().flatMap((r) => this.listings()[r.repo]?.files ?? NO_FILES));
+  readonly fileCount = computed(() => this.listed().length);
+  readonly fileCountLabel = computed(() => `${this.fileCount()} ${this.fileCount() === 1 ? 'file' : 'files'}`);
+  /** Lines added and removed by the open part across every listed repository; a binary file counts none. */
+  readonly totals = computed(() => {
+    const text = this.listed().filter((f) => !f.binary);
+    return { added: text.reduce((n, f) => n + f.added, 0), removed: text.reduce((n, f) => n + f.removed, 0) };
+  });
+  /** The lines by file type across every listed repository, the type with the most changed lines first. */
+  readonly loc = computed<FileTypeStats[]>(() => {
+    const byType = new Map<string, FileTypeStats>();
+    for (const r of this.repos()) {
+      for (const t of this.listings()[r.repo]?.loc ?? []) {
+        const sum = byType.get(t.extension);
+        byType.set(t.extension, sum ? { ...sum, files: sum.files + t.files, added: sum.added + t.added, removed: sum.removed + t.removed } : { ...t });
+      }
+    }
+    return [...byType.values()].sort((x, y) => y.added + y.removed - (x.added + x.removed) || x.extension.localeCompare(y.extension));
+  });
+  /** What the strip says about the open repository: that it is read only and, once known, what it is compared with. */
+  readonly readOnlyNote = computed(() => {
+    const base = this.base();
+    return base === null ? 'read-only' : `read-only · compared at the merge base with ${base.reference}`;
+  });
   readonly groups = computed<RepoFileGroup[]>(() =>
-    this.repos().map((r) => ({ repo: r.repo, expanded: this.expanded().includes(r.repo), files: this.listings()[r.repo]?.files ?? NO_FILES })),
+    this.repos().map((r) => ({
+      repo: r.repo,
+      branch: r.branch,
+      base: (this.bases()[r.repo] ?? r.base).base,
+      expanded: this.expanded().includes(r.repo),
+      files: this.listings()[r.repo]?.files ?? NO_FILES,
+    })),
   );
 
   constructor() {
@@ -116,12 +135,6 @@ export class ChangesViewModel {
     this.activeName.set(null);
     this.expanded.set([]);
     await this.reload('open');
-  }
-
-  /** The pull requests the page knows of, and what they are titled. */
-  setPullRequests(states: PrState[], title: string): void {
-    this.prStates.set(states);
-    this.prTitle.set(title);
   }
 
   /** Read the lists, the base and the open file again, without moving the engineer. */

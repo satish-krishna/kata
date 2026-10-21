@@ -74,7 +74,7 @@ describe('SdlcHome', () => {
     expect(all).not.toContain('New change');
     expect(all).not.toContain('Add system');
     expect(all).not.toContain('Add workspace');
-    expect(container.querySelector('button[aria-label="Switch workspace"]')).toBeNull();
+    expect(container.querySelector('button[aria-label^="Switch workspace"]')).toBeNull();
     expect(container.querySelector('app-changes-table')).toBeNull();
     expect(container.querySelector('app-repos-table')).toBeNull();
   });

@@ -178,7 +178,14 @@ export class MockTransport extends KataTransport {
   sdlcGhSignedIn(_repos: PublishRepo[]): Promise<string> { return Promise.resolve('demo-user'); }
   sdlcGhOrigins(_repos: PublishRepo[]): Promise<void> { return Promise.resolve(); }
   sdlcPublish(_folder: string, _masterRepo: string, _system: string, _change: string, repos: PublishRepo[]): Promise<PrResult[]> { return Promise.resolve(this.sdlc.publish(repos)); }
-  sdlcPullRequests(repos: PublishRepo[], _change: string): Promise<PrState[]> { return Promise.resolve(this.sdlc.pullRequests(repos)); }
+  /** `?demo=pr-fail` makes the read fail, so the browser checks can see the "Could not check pull requests" note; `?demo=one-pr` keeps only the
+   *  first pull request, so they can see the single inline link. Browser only; this class never runs under Tauri. */
+  sdlcPullRequests(repos: PublishRepo[], change: string): Promise<PrState[]> {
+    const demo = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('demo');
+    if (demo === 'pr-fail') return Promise.reject(new Error('gh is not signed in'));
+    const prs = this.sdlc.pullRequests(repos, change);
+    return Promise.resolve(demo === 'one-pr' ? prs.slice(0, 1) : prs);
+  }
   /** A plain browser has no window to zoom. */
   zoom(_step: ZoomStep): Promise<number> { return Promise.resolve(1); }
   pickDirectory(): Promise<string | null> { return Promise.resolve(null); }

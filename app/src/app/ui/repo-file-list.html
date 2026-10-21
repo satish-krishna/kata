@@ -14,6 +14,8 @@
         <ng-icon [name]="g.expanded ? 'lucideChevronDown' : 'lucideChevronRight'" size="14" aria-hidden="true" />
         <span class="k-mono k-files__name">{{ g.repo }}</span>
         &ngsp;<span class="k-mono k-files__count">{{ g.files.length }}</span>
+        @let b = branchLabel(g.branch, g.base);
+        &ngsp;<span class="k-mono k-files__branch" data-branch [attr.title]="b.title">{{ b.text }}</span>
       </button>
       @if (g.expanded) {
         <ul class="k-files__list" [attr.aria-label]="'Files changed in ' + g.repo">
@@ -26,12 +28,20 @@
                 type="button"
                 class="k-files__file"
                 [attr.data-file]="f.path"
+                [attr.title]="f.path"
                 [attr.aria-current]="isSelected(g.repo, f.path) ? 'true' : null"
                 (click)="select.emit({ repo: g.repo, path: f.path })"
               >
                 <span [class]="'k-mono k-files__letter k-files__letter--' + status[f.status].tone" data-status aria-hidden="true">{{ status[f.status].letter }}</span>
                 <span class="sr-only">{{ status[f.status].name }}</span>
-                <span class="k-mono k-files__path">{{ f.path }}</span>
+                <span class="sr-only" data-fullpath>{{ f.path }}</span>
+                @let parts = splitPath(f.path);
+                <span class="k-files__path">
+                  <span class="k-mono k-files__file-name" data-name aria-hidden="true">{{ parts.name }}</span>
+                  @if (parts.folder !== "") {
+                    <span class="k-mono k-files__folder" data-folder aria-hidden="true"><bdi>{{ parts.folder }}</bdi></span>
+                  }
+                </span>
                 @if (f.uncommitted) {
                   <span class="k-files__dot" data-uncommitted aria-hidden="true"></span>
                   <span class="sr-only">Uncommitted</span>

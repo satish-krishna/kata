@@ -48,6 +48,8 @@ export const MOCK_NEW_CHANGE = '2026-10-18-new-change';
 
 /** The change the browser demo builds: three tasks across two repositories. */
 export const MOCK_BUILD_CHANGE = '2026-10-19-build-demo';
+/** A change whose build finished and whose three pull requests are open: the toolbar's links and its "Build · done" pill. */
+export const MOCK_DONE_CHANGE = '2026-10-18-photo-limits-shipped';
 /** The version the demo's `ai-sdlc` plugin reports. */
 export const MOCK_PLUGIN_VERSION = '0.6.0';
 
@@ -133,6 +135,32 @@ const BUILD_PLAN: PlanTask[] = [
   { id: 'T2', name: 'Add the photo picker to the report form', repo: 'customer-portal', dependsOn: [] },
   { id: 'T3', name: 'Show the upload limit message', repo: 'customer-portal', dependsOn: ['T1'] },
 ];
+/** The field bullets under each demo task's heading, the way a written plan lays them out. */
+const TASK_FIELDS: Record<string, string[]> = {
+  T1: [
+    '**Files:** `attachment-store/limits.rs`, `attachment-store/tests/limits.rs`.',
+    '**Change:**\n  - Count the photos already attached to the claim.\n  - Refuse the eleventh with a `PhotoLimit` error.',
+    '**Tests:** a claim with ten photos refuses the eleventh (covers R1.1, supports R2.1).',
+    '**Done when:** the store refuses the eleventh photo and keeps the first ten.',
+  ],
+  T2: [
+    '**Files:** `src/report/photo-picker.ts`.',
+    '**Change:** Add a picker to the report form that lists the chosen photos.',
+    '**Tests:** the picker lists what was chosen (covers R1.2).',
+    '**Done when:** a policyholder can choose and remove photos on the form.',
+  ],
+  T3: [
+    '**Files:** `src/report/limit-message.ts`, `src/report/report-form.html`.',
+    '**Change:**\n  - Read the refusal reason from the store.\n  - Show it next to the picker.',
+    '**Tests:** each refusal reason shows its message (covers R2.1, R2.2).',
+    '**Done when:** the portal says why a photo was refused.',
+  ],
+};
+/** One demo task's section of the plan: its heading, then Depends on and the field bullets. */
+function taskText(t: PlanTask): string {
+  const depends = `**Depends on:** ${t.dependsOn.length ? t.dependsOn.join(', ') : 'none'}`;
+  return [`### ${t.id}: ${t.name} (\`${t.repo}\`)`, '', ...[depends, ...(TASK_FIELDS[t.id] ?? [])].map((f) => `- ${f}`)].join('\n');
+}
 const BUILD_REPOS = ['claims-core', 'customer-portal'];
 /** The one task whose row records a departure from the plan. */
 const DEPARTED_TASK = 'T2';
@@ -152,11 +180,59 @@ const DOCS: Record<string, string> = {
     '## Flow\n\n```mermaid\nflowchart LR\n  A[Policyholder] -->|uploads| B(Virus scan)\n  B -->|clean| C[Claim]\n  B -->|infected| D[Rejected]\n```\n',
   ].join('\n'),
   [`${MOCK_BUILD_CHANGE}/intent`]: '---\nstatus: accepted\n---\n# Upload limits at first notice of loss\n\nPolicyholders see why a photo is refused.\n',
-  [`${MOCK_BUILD_CHANGE}/spec`]: '---\nstatus: accepted\n---\n# Spec: upload limits\n\n1. The store refuses an eleventh photo.\n2. The portal says why.\n',
+  [`${MOCK_BUILD_CHANGE}/spec`]: [
+    '---\nstatus: accepted\n---\n# Spec: upload limits\n',
+    '## Requirements\n',
+    [
+      '```gherkin',
+      'Feature: Upload limits',
+      '',
+      '  Rule: R1 — The store refuses an eleventh photo (from: Proposed outcome 1)',
+      '',
+      '    Scenario: R1.1 — An eleventh photo is refused',
+      '      Given a claim with 10 photos attached',
+      '      When the policyholder adds another',
+      '      Then the upload is refused',
+      '',
+      '    Scenario: R1.2 — Photos can be removed again',
+      '      Given a claim with 3 photos attached',
+      '      When the policyholder removes one',
+      '      Then 2 photos are attached',
+      '',
+      '  Rule: R2 — The portal says why (from: Proposed outcome 2, D3)',
+      '',
+      '    Scenario Outline: R2.1 — Each refusal has a reason',
+      '      Given a photo that is <problem>',
+      '      Then the portal says "<message>"',
+      '',
+      '      Examples:',
+      '        | problem | message |',
+      '        | larger than 10 MB | The photo is over 10 MB |',
+      '        | not a JPEG or PNG | Only JPEG and PNG photos are accepted |',
+      '',
+      '    Scenario: R2.2 — The reason stays until the next attempt',
+      '      Given a refused photo',
+      '      Then the message stays visible',
+      '',
+      '  Rule: R3 — The limit shows before the first attempt (from: D5)',
+      '',
+      '    Scenario: R3.1 — The form states the limit',
+      '      Given the report form',
+      '      Then it says "Up to 10 photos, 10 MB each"',
+      '```',
+      '',
+    ].join('\n'),
+    '## Design\n\nThe attachment store owns the count; the portal renders the reason it returns.\n',
+  ].join('\n'),
   [`${MOCK_BUILD_CHANGE}/plan`]: [
     '---\nstatus: accepted\n---\n# Plan: upload limits\n',
-    ...BUILD_PLAN.map((t) => `### ${t.id}: ${t.name} (\`${t.repo}\`)\n\n${t.dependsOn.length ? `Depends on: ${t.dependsOn.join(', ')}\n` : ''}`),
+    '## Approach\n\nThe store counts and refuses; the portal explains. The two repositories meet at the refusal reason.\n',
+    '## Tasks\n',
+    ...BUILD_PLAN.map((t) => `${taskText(t)}\n`),
   ].join('\n'),
+  [`${MOCK_DONE_CHANGE}/intent`]: '---\nstatus: accepted\n---\n# Photo limits shipped\n\nPolicyholders see why a photo is refused.\n',
+  [`${MOCK_DONE_CHANGE}/spec`]: '---\nstatus: accepted\n---\n# Spec: photo limits\n\n## Design\n\nThe attachment store owns the count.\n',
+  [`${MOCK_DONE_CHANGE}/plan`]: '---\nstatus: accepted\n---\n# Plan: photo limits\n\n## Approach\n\nThe store counts and refuses; the portal explains.\n',
   '2026-10-09-adjuster-reassign/intent': '---\nstatus: accepted\n---\n# Reassign a claim to another adjuster\n\nSupervisors move a claim between adjusters without losing its history.\n',
   '2026-10-09-adjuster-reassign/spec': '---\nstatus: accepted\n---\n# Spec: reassign\n\n1. Only supervisors can reassign.\n2. Reassignment is recorded in the claim history.\n',
   '2026-10-09-adjuster-reassign/plan': '---\nstatus: draft\n---\n# Plan: reassign\n\n- [ ] Add the reassign endpoint to claims-core.\n- [ ] Add the reassign action to customer-portal.\n',
@@ -190,6 +266,7 @@ export class SdlcMock {
     change('2026-10-12-fnol-photo-upload', doc('accepted'), doc('draft'), doc(null), 'spec-awaiting'),
     change('2026-10-09-adjuster-reassign', doc('accepted'), doc('accepted'), doc('draft'), 'plan-awaiting'),
     change(MOCK_BUILD_CHANGE, doc('accepted'), doc('accepted'), doc('accepted'), 'build-ready'),
+    change(MOCK_DONE_CHANGE, doc('accepted'), doc('accepted'), doc('accepted'), 'build-finished'),
   ];
   /** Rows the scripted build has committed, by task id. */
   private rows = new Map<string, BuildRow>();
@@ -233,9 +310,11 @@ export class SdlcMock {
   }
 
   listChanges(): ChangeInfo[] {
-    return this.changes.map((c) => (c.change === MOCK_BUILD_CHANGE
-      ? { ...c, build: { tasks: BUILD_PLAN.length, finished: this.rows.size, repos: BUILD_REPOS.length } }
-      : { ...c }));
+    return this.changes.map((c) => {
+      if (c.change === MOCK_BUILD_CHANGE) return { ...c, build: { tasks: BUILD_PLAN.length, finished: this.rows.size, repos: BUILD_REPOS.length } };
+      if (c.change === MOCK_DONE_CHANGE) return { ...c, build: { tasks: BUILD_PLAN.length, finished: BUILD_PLAN.length, repos: BUILD_REPOS.length } };
+      return { ...c };
+    });
   }
   branches(): BranchInfo { return { current: this.current, others: [...this.others], default_base: 'main' }; }
   /** Like the backend's `read_doc`: the document is named by its stem; anything else is a caller bug. */
@@ -296,8 +375,11 @@ export class SdlcMock {
   // ---- the build ----
 
   buildStatus(changeName: string): BuildStatus {
-    if (changeName !== MOCK_BUILD_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false };
-    const tasks: TaskStatus[] = BUILD_PLAN.map((t) => ({ ...t, dependsOn: [...t.dependsOn], row: this.rows.get(t.id) ?? null }));
+    if (changeName !== MOCK_BUILD_CHANGE && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false };
+    // The finished change has every task built; the demo build commits its rows one run at a time.
+    const rowOf = (t: PlanTask): BuildRow | null =>
+      changeName === MOCK_DONE_CHANGE ? { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } : (this.rows.get(t.id) ?? null);
+    const tasks: TaskStatus[] = BUILD_PLAN.map((t) => ({ ...t, dependsOn: [...t.dependsOn], text: taskText(t), row: rowOf(t) }));
     const departures = tasks.flatMap((t) => (t.row?.departure ? [{ task: t.id, repo: t.repo, planText: t.name, departure: t.row.departure }] : []));
     return { tasks, repos: BUILD_REPOS.map((r) => this.repoStatus(r)), departures, hasTasks: true };
   }
@@ -392,8 +474,9 @@ export class SdlcMock {
     return repos.map((r) => ({ repo: r.repo, outcome: { kind: 'opened', url: prUrl(r.repo) } }));
   }
 
-  pullRequests(repos: PublishRepo[]): PrState[] {
-    return repos.map((r) => ({ repo: r.repo, url: this.published.has(r.repo) ? prUrl(r.repo) : null }));
+  pullRequests(repos: PublishRepo[], changeName: string): PrState[] {
+    const open = (repo: string) => changeName === MOCK_DONE_CHANGE || this.published.has(repo);
+    return repos.map((r) => ({ repo: r.repo, url: open(r.repo) ? prUrl(r.repo) : null }));
   }
 }
 

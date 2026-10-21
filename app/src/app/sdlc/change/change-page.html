@@ -1,9 +1,9 @@
-<div class="k-home">
+<div class="k-home" hlmTabs variant="bare" [tab]="vm.pendingDoc() ?? vm.shownDoc()" (tabActivated)="vm.showDoc($event)">
   <app-sdlc-toolbar
     [workspaces]="vm.workspaces()"
     [current]="vm.current()"
     [counts]="vm.counts()"
-    [branch]="vm.masterBranch()"
+    [branch]="vm.branchChip()"
     [crumbs]="vm.crumbs()"
     [locked]="vm.locked()"
     (switchMode)="vm.switchMode()"
@@ -12,14 +12,40 @@
     (remove)="vm.toHome()"
     (openSettings)="vm.toHome()"
   >
-    @for (a of vm.actions(); track a) {
-      <button
-        hlmBtn
-        [variant]="vm.primary() === a ? 'primary' : 'secondary'"
-        type="button"
-        [disabled]="vm.locked()"
-        (click)="vm.act(a)"
-      >{{ vm.labelOf(a) }}</button>
+    @if (vm.pills().length > 0) {
+      <app-stage-pills toolbarStages [pills]="vm.pills()" />
+    }
+    @let prs = vm.pullLinks();
+    @if (prs.length === 1) {
+      <nav toolbarLinks class="k-prlinks" aria-label="Pull requests">
+        <span class="k-prlinks__label">PR</span>
+        <a class="k-mono" [href]="prs[0].url" [attr.title]="prs[0].label" target="_blank" rel="noopener noreferrer"
+          ><span class="k-prlinks__repo">{{ prs[0].repo }}</span>@if (prs[0].number !== null) {&ngsp;<span class="k-prlinks__num">#{{ prs[0].number }}</span>}</a
+        >
+      </nav>
+    } @else if (prs.length > 1) {
+      <nav toolbarLinks class="k-prlinks" aria-label="Pull requests">
+        <hlm-popover sideOffset="4" align="end">
+          <button hlmPopoverTrigger hlmBtn variant="secondary" size="sm" type="button" data-testid="pr-menu">
+            {{ prs.length }} PRs
+            <ng-icon name="lucideChevronDown" size="14" aria-hidden="true" />
+          </button>
+          <hlm-popover-content *hlmPopoverPortal="let ctx" data-testid="pr-list">
+            <hlm-popover-header>
+              <div hlmPopoverTitle>Pull requests</div>
+            </hlm-popover-header>
+            <ul class="k-prlist" aria-label="Pull requests">
+              @for (link of prs; track link.repo) {
+                <li>
+                  <a class="k-mono k-prlist__link" [href]="link.url" target="_blank" rel="noopener noreferrer"
+                    ><span>{{ link.repo }}</span>@if (link.number !== null) {&ngsp;<span>#{{ link.number }}</span>}</a
+                  >
+                </li>
+              }
+            </ul>
+          </hlm-popover-content>
+        </hlm-popover>
+      </nav>
     }
   </app-sdlc-toolbar>
 
@@ -62,18 +88,26 @@
         </main>
       }
       @case ('ready') {
-        @if (vm.done()) {
-          <app-pr-card [pullRequests]="vm.pullRequests()" />
-        } @else if (vm.prCheckFailed()) {
-          <p class="k-left__note px-5 pt-5" data-testid="pr-note">Could not check pull requests</p>
+        @if (vm.stripShown()) {
+          <div class="k-strip" data-testid="strip">
+            @if (vm.stripStatus(); as s) {
+              <span [class]="'k-status k-status--' + s.tone"><span class="k-status__dot"></span>{{ s.text }}</span>
+            }
+            <span class="k-strip__file">{{ vm.docName() }}</span>
+            @if (vm.viewOptions().length > 0) {
+              <app-segmented [options]="vm.viewOptions()" [value]="vm.shownView()" (valueChange)="vm.setView($event)" [ariaLabel]="vm.viewLabel()" />
+            }
+            @if (vm.prCheckFailed()) {
+              <span class="k-left__note" data-testid="pr-note">Could not check pull requests</span>
+            }
+            <div class="wb-toolbar__spacer"></div>
+            <ng-container *ngTemplateOutlet="stageActions" />
+          </div>
         }
-        <main class="k-change" hlmTabs variant="bare" [tab]="vm.shownDoc()" (tabActivated)="vm.showDoc($event)">
+        <main class="k-change">
           <h1 class="sr-only">{{ vm.changeName() }}</h1>
-          @if (vm.change(); as c) {
-            <app-stage-stepper [stage]="c.stage" [counts]="vm.runCounts()" [docs]="vm.docs()" [build]="vm.buildTile()" [done]="vm.done()" />
-          }
           @for (stem of vm.stems; track stem) {
-            <div class="k-change__doc" [hlmTabsContent]="stem" variant="bare">
+            <div class="k-change__doc k-change__doc--layout" [hlmTabsContent]="stem" variant="bare">
               @if (stem === vm.shownDoc()) {
                 @if (vm.planBanner(); as banner) {
                   <hlm-alert class="wb-banner wb-banner--warn" data-testid="plan-banner">
@@ -81,18 +115,35 @@
                     <div hlmAlertDescription>{{ banner }}</div>
                   </hlm-alert>
                 }
+                @let body = vm.layoutBody();
                 @if (vm.doc() === null) {
-                  <p class="k-state__body">{{ vm.docName() }} is not in this change folder.</p>
+                  <p class="k-state__body k-change__missing">{{ vm.docName() }} is not in this change folder.</p>
+                } @else if (vm.shownView() === 'list' && stem === 'spec') {
+                  <app-requirements-view [requirements]="vm.requirementList()" [picked]="vm.pickedRequirement()" (pick)="vm.pickRequirement($event)" />
+                } @else if (vm.shownView() === 'list') {
+                  <app-tasks-view
+                    [tasks]="vm.buildTasks()"
+                    [picked]="vm.pickedTask()"
+                    (pick)="vm.pickTask($event)"
+                    (openRequirement)="vm.openRequirement($event)"
+                  />
+                } @else if (body === null) {
+                  <p class="k-state__body k-change__missing" data-testid="no-section">This {{ stem }} has no {{ vm.sectionName() }} section.</p>
                 } @else {
-                  <app-doc-view [name]="vm.docName()" [frontMatter]="vm.docParts().frontMatter" [body]="vm.docParts().body" />
+                  <app-doc-layout
+                    [body]="body"
+                    [fields]="vm.railFields()"
+                    [usedBy]="vm.usedBy()"
+                    [runs]="vm.railRuns().rows"
+                    [runTotal]="vm.railRuns().total"
+                  />
                 }
-                @if (stem === 'plan' && vm.buildTasks().length > 0) {
-                  <app-build-log-table [tasks]="vm.buildTasks()" />
-                }
+              } @else if (stem === vm.pendingDoc()) {
+                <p class="k-state__body k-change__missing" role="status">Reading {{ stem }}.md…</p>
               }
             </div>
           }
-          <div class="k-change__doc" hlmTabsContent="build" variant="bare">
+          <div class="k-change__doc k-change__doc--flush" hlmTabsContent="build" variant="bare">
             @if (vm.shownDoc() === 'build') {
               @if (vm.changesContext(); as ctx) {
                 <app-changes-view
@@ -102,9 +153,16 @@
                   [change]="ctx.change"
                   [turns]="0"
                   [banner]="null"
-                  [pullRequests]="vm.pullRequests()"
-                  [prTitle]="vm.changeName()"
-                />
+                  [hasSlot]="true"
+                >
+                  @if (vm.buildFacts(); as facts) {
+                    <span class="k-strip__file" data-testid="build-facts">{{ facts }}</span>
+                  }
+                  @if (vm.prCheckFailed()) {
+                    <span class="k-left__note" data-testid="pr-note">Could not check pull requests</span>
+                  }
+                  <ng-container *ngTemplateOutlet="stageActions" />
+                </app-changes-view>
               }
             }
           </div>
@@ -112,6 +170,18 @@
       }
     }
   }
+
+  <ng-template #stageActions>
+    @for (a of vm.actions(); track a) {
+      <button
+        hlmBtn
+        [variant]="vm.primary() === a ? 'primary' : 'secondary'"
+        type="button"
+        [disabled]="vm.locked()"
+        (click)="vm.act(a)"
+      >{{ vm.labelOf(a) }}</button>
+    }
+  </ng-template>
 
   <app-lock-overlay
     [view]="vm.lockView()"

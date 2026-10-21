@@ -29,13 +29,18 @@
   <nav class="k-crumbs" aria-label="Breadcrumb">
     @for (crumb of crumbs(); track $index) {
       <ng-icon name="lucideChevronRight" size="14" />
-      <span class="k-crumbs__item">{{ crumb }}</span>
+      <span class="k-crumbs__item" [attr.title]="crumb">{{ crumb }}</span>
     }
   </nav>
   @if (!blocked() && branch(); as b) {
-    <span class="k-branch" data-testid="branch" title="Branch checked out in the master repo">{{ b }}</span>
+    <span class="k-branch" data-testid="branch" role="note" [attr.title]="branchLabel()" [attr.aria-label]="branchLabel()">
+      <span class="k-branch__icon" aria-hidden="true"><ng-icon name="lucideGitBranch" size="14" /></span>
+      <span class="k-branch__text">{{ b }}</span>
+    </span>
   }
+  <ng-content select="[toolbarStages]" />
   <div class="wb-toolbar__spacer"></div>
+  <ng-content select="[toolbarLinks]" />
   <button
     hlmBtn
     variant="bare"

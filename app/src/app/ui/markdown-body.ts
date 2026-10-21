@@ -1,4 +1,5 @@
 import { Component, ElementRef, afterRenderEffect, computed, input, viewChild } from '@angular/core';
+import { outline } from '../lib/doc';
 import { diagrams, diagramTheme } from '../lib/mermaid';
 import { renderMarkdownForDom } from './render-markdown';
 
@@ -15,6 +16,18 @@ export class MarkdownBody {
   private readonly root = viewChild.required<ElementRef<HTMLElement>>('root');
 
   constructor() {
+    // Angular's own [innerHTML] sanitizer drops every `id`, including the ones the render pipeline put on headings, so
+    // give them back here from the same outline the document layout lists. A click on an outline entry finds them.
+    afterRenderEffect(() => {
+      const md = this.md();
+      this.html();
+      const headings = Array.from(this.root().nativeElement.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'));
+      const wanted = outline(md);
+      if (headings.length !== wanted.length) return;
+      headings.forEach((el, i) => {
+        if ((el.textContent ?? '').trim() === wanted[i].text) el.id = wanted[i].id;
+      });
+    });
     // A Mermaid block arrives as plain code; once it is in the DOM, swap in the drawn diagram.
     afterRenderEffect(() => {
       this.html();

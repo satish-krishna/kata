@@ -10,6 +10,7 @@ const inputs = (over: Record<string, unknown> = {}) => ({
   workspaces: [WS], current: WS, missing: [], counts: {}, branch: 'main', locked: false, ...over,
 });
 const byLabel = (c: HTMLElement, label: string) => c.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+const switcher = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('button[aria-label^="Switch workspace"]')!;
 
 describe('SdlcToolbar', () => {
   it('shows the ai-sdlc badge, the workspace, and the master branch in mono', async () => {
@@ -22,6 +23,23 @@ describe('SdlcToolbar', () => {
   it('hides the branch while the master repo has none to show', async () => {
     const { container } = await render(SdlcToolbar, inputs({ branch: null }));
     expect(container.querySelector('[data-testid="branch"]')).toBeNull();
+  });
+
+  it('names the branch chip for a reader who cannot see its text: title and accessible name say which branch is out of place', async () => {
+    const { container } = await render(SdlcToolbar, inputs({ branch: 'main', crumbs: ['2026-10-16-fraud-flag'] }));
+    const chip = container.querySelector('[data-testid="branch"]')!;
+    const said = 'Master repository is on main, not change/2026-10-16-fraud-flag';
+    expect(chip.getAttribute('title')).toBe(said);
+    expect(chip.getAttribute('aria-label')).toBe(said);
+    expect(chip.querySelector('ng-icon[name="lucideGitBranch"]')).not.toBeNull();
+    expect(chip.textContent!.trim()).toBe('main');
+  });
+
+  it('names the branch chip without a change when the toolbar has no change crumb', async () => {
+    const { container } = await render(SdlcToolbar, inputs({ branch: 'main' }));
+    const chip = container.querySelector('[data-testid="branch"]')!;
+    expect(chip.getAttribute('title')).toBe('Master repository is on main');
+    expect(chip.getAttribute('aria-label')).toBe('Master repository is on main');
   });
 
   it('shows the breadcrumb after the workspace', async () => {
@@ -47,12 +65,12 @@ describe('SdlcToolbar', () => {
 
   it('disables the workspace switcher while locked', async () => {
     const { container } = await render(SdlcToolbar, inputs({ locked: true }));
-    expect(byLabel(container, 'Switch workspace').disabled).toBe(true);
+    expect(switcher(container).disabled).toBe(true);
   });
 
   it('withholds the workspace switcher and branch while blocked', async () => {
     const { container } = await render(SdlcToolbar, inputs({ blocked: true }));
-    expect(container.querySelector('button[aria-label="Switch workspace"]')).toBeNull();
+    expect(switcher(container)).toBeNull();
     expect(container.querySelector('[data-testid="branch"]')).toBeNull();
     expect(byLabel(container, 'Switch mode (ai-sdlc)')).not.toBeNull();
   });
@@ -69,5 +87,23 @@ describe('SdlcToolbar', () => {
     const fixture = TestBed.createComponent(Host);
     await fixture.whenStable();
     expect(fixture.nativeElement.querySelector('#primary')).not.toBeNull();
+  });
+
+  it('projects the stage pills after the branch and the links before settings', async () => {
+    @Component({
+      imports: [SdlcToolbar],
+      template: `<app-sdlc-toolbar [workspaces]="[]" [current]="null" [missing]="[]" [counts]="{}" branch="main" [crumbs]="['c1']">
+        <span id="links" toolbarLinks>PRs</span>
+        <span id="pills" toolbarStages>Pills</span>
+        <span id="primary">New change</span>
+      </app-sdlc-toolbar>`,
+    })
+    class Host {}
+    TestBed.configureTestingModule({ imports: [Host], providers: [provideRouter([])] });
+    const fixture = TestBed.createComponent(Host);
+    await fixture.whenStable();
+    const root = fixture.nativeElement as HTMLElement;
+    const order = Array.from(root.querySelectorAll('[data-testid="branch"], #pills, #links, button[aria-label="AI-SDLC settings"], #primary'));
+    expect(order.map((e) => e.id || e.getAttribute('data-testid') || e.getAttribute('aria-label'))).toEqual(['branch', 'pills', 'links', 'AI-SDLC settings', 'primary']);
   });
 });
