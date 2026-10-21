@@ -82,12 +82,20 @@ pub(crate) fn dirty_files(dir: &Path) -> Result<Vec<String>, GitError> {
     Ok(status_entries(dir)?.into_iter().map(|e| e.path).collect())
 }
 
-/// Whether a path is a build log row (`intent/<system>/<change>/build/<repo>.md`). Rows are R6.6
-/// data: nothing here may delete them, and no working tree's leftovers include one. The repository
-/// a row records owns it, and `participants` reports it there.
-fn is_build_log(path: &str) -> bool {
+/// The repository that owns a build log row (`intent/<system>/<change>/build/<repo>.md`), or `None`
+/// for any other path. Rows are R6.6 data of whichever change they belong to: nothing here may
+/// delete them, and no working tree's leftovers include one. `participants` reports a row under the
+/// repository it names.
+pub(crate) fn build_log_owner(path: &str) -> Option<&str> {
     let parts: Vec<&str> = path.split(['/', '\\']).collect();
-    matches!(parts.as_slice(), ["intent", _, _, "build", file] if file.ends_with(".md"))
+    match parts.as_slice() {
+        ["intent", _, _, "build", file] => file.strip_suffix(".md").filter(|repo| !repo.is_empty()),
+        _ => None,
+    }
+}
+
+fn is_build_log(path: &str) -> bool {
+    build_log_owner(path).is_some()
 }
 
 fn current_head(master: &Path) -> Option<String> {

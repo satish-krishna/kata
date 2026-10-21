@@ -3,7 +3,7 @@
 //! listing what a run left behind all read it; none of them keeps its own list.
 use crate::build::{self, BuildStatus, RepoState};
 use crate::changes::{is_change_name, is_safe_system};
-use crate::snapshot::dirty_files;
+use crate::snapshot::{build_log_owner, dirty_files};
 use crate::start::{refuse, BuildError};
 use crate::workspace::{self, system_repos};
 use serde::Serialize;
@@ -24,14 +24,6 @@ pub struct Participant {
     pub files: Vec<String>,
     /// Uncommitted build log rows this repository owns, as paths in the master repository.
     pub rows: Vec<String>,
-}
-
-/// The repository a build log row belongs to, or `None` for any other path.
-fn row_owner<'a>(path: &'a str, system: &str, change: &str) -> Option<&'a str> {
-    let prefix = format!("intent/{system}/{change}/build/");
-    path.strip_prefix(prefix.as_str())?
-        .strip_suffix(".md")
-        .filter(|repo| !repo.is_empty() && !repo.contains('/'))
 }
 
 /// Every repository that takes part in the change's build: the master first, then each repository
@@ -108,7 +100,7 @@ pub(crate) fn model(
     let mut master_files = Vec::new();
     let mut rows: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for path in dirty_files(&master)? {
-        match row_owner(&path, system, change) {
+        match build_log_owner(&path) {
             Some(owner) => rows.entry(owner.to_string()).or_default().push(path),
             None => master_files.push(path),
         }
