@@ -234,35 +234,41 @@ pub fn runs_started() -> usize {
     RUNS.load(Ordering::SeqCst)
 }
 
-type CacheKey = (PathBuf, PathBuf, u64);
+/// What a read depends on: the program, the document's name below its change folder (`plan.md`,
+/// `build/app.md`; the program takes the kind, a build log's repository and the file name in each
+/// problem from it), the document's bytes, and, for a plan, the bytes of the marker above it.
+type CacheKey = (PathBuf, String, u64, u64);
 
 fn cache() -> &'static Mutex<HashMap<CacheKey, ReadResult>> {
     static CACHE: OnceLock<Mutex<HashMap<CacheKey, ReadResult>>> = OnceLock::new();
     CACHE.get_or_init(Default::default)
 }
 
-/// Reads one document with `program` (the path of `check.mjs`). An unchanged document, by canonical
-/// path and content hash, is read once: the next call returns the earlier answer without starting
-/// the program.
+/// Reads one document with `program` (the path of `check.mjs`). A document with the same name below
+/// its change folder and the same bytes is read once, wherever it sits: the next call returns the
+/// earlier answer without starting the program.
 pub fn read(program: &Path, file: &Path) -> Result<ReadResult, FormatError> {
     let canonical = file
         .canonicalize()
         .map_err(|e| FormatError::CouldNotRun(format!("{}: {e}", file.display())))?;
     let bytes = std::fs::read(&canonical)
         .map_err(|e| FormatError::CouldNotRun(format!("{}: {e}", file.display())))?;
-    let mut hasher = DefaultHasher::new();
-    bytes.hash(&mut hasher);
+    let (folder, relative) = change_folder(file);
     // The program is part of the key: a different plugin version may read the same bytes differently.
     let key = (
         program.canonicalize().unwrap_or_else(|_| program.into()),
-        canonical,
-        hasher.finish(),
+        relative.clone(),
+        hash_of(&bytes),
+        if relative == "plan.md" {
+            marker_hash(&canonical)
+        } else {
+            0
+        },
     );
     if let Some(hit) = cache().lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
         return Ok(hit.clone());
     }
 
-    let (folder, relative) = change_folder(file);
     let output = run(program, &folder, &["read", "--json", &relative])?;
     let result: ReadResult = serde_json::from_slice(&output.stdout)
         .map_err(|e| FormatError::BadOutput(format!("{e}{}", stderr_note(&output.stderr))))?;
@@ -297,6 +303,22 @@ pub fn check_change(
             })
         })
         .collect()
+}
+
+fn hash_of(bytes: &[u8]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// The hash of the `.ai-sdlc.json` the program would find above `file` (it walks up from the
+/// document's folder), or 0 when there is none.
+fn marker_hash(file: &Path) -> u64 {
+    file.ancestors()
+        .skip(1)
+        .map(|dir| dir.join(crate::workspace::MARKER))
+        .find_map(|marker| std::fs::read(marker).ok())
+        .map_or(0, |bytes| hash_of(&bytes))
 }
 
 /// Runs `node <program> <args>` in `cwd`. Exit 0 and 1 are answers (the document passes, or has

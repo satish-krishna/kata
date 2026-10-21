@@ -3,7 +3,7 @@
 //! The final review writes its findings to that document, one `## Review <n>` section per review,
 //! and the Workbench shows what the document holds. Nothing in Kata parses the document itself:
 //! the ai-sdlc plugin's format program reads it, in whatever layout it is written.
-use crate::build::{change_dir, program, put, staging_dir, unreadable, READING};
+use crate::build::{change_dir, program, put, reading, staging_dir, unreadable};
 use crate::format::{self, FormatError, ParsedReviewSection, Problem, ReadResult};
 use crate::git::{self, GitError};
 use serde::Serialize;
@@ -38,12 +38,11 @@ pub fn record(
     }
     let text = git::run(master, &["show", &format!("HEAD:{rel}")])?;
     let read = {
-        let _one_reader = READING.lock().unwrap_or_else(|e| e.into_inner());
+        let stage = staging_dir(master, system, change);
+        let lock = reading(&stage);
+        let _one_reader = lock.lock().unwrap_or_else(|e| e.into_inner());
         // Its own folder: the build reader clears the stray files in the folder it stages.
-        let file = staging_dir(master, system, change)
-            .join("review")
-            .join("build")
-            .join("review.md");
+        let file = stage.join("review").join("build").join("review.md");
         put(&file, &text)?;
         format::read(&program(plugin), &file).map_err(unreadable)?
     };

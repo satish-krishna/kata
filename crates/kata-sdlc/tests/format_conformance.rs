@@ -181,6 +181,14 @@ fn the_cache_reads_an_unchanged_document_once() {
     let dir = tempfile::tempdir().unwrap();
     let source = vendored().join("examples/spec/2/valid.md");
     let spec = stage("spec", &source, dir.path());
+    // The cache is keyed by content, so this test's bytes must not be any other test's bytes.
+    let mut own = fs::read_to_string(&spec).unwrap();
+    own.push_str(
+        "
+Only the cache test writes this line.
+",
+    );
+    fs::write(&spec, own).unwrap();
 
     let before = format::runs_started();
     let first = format::read(&program(), &spec).unwrap();
@@ -204,6 +212,14 @@ fn a_missing_node_is_node_missing() {
         &vendored().join("examples/spec/2/valid.md"),
         dir.path(),
     );
+    // A document some other test already read would come from the cache and never start node.
+    let mut own = fs::read_to_string(&spec).unwrap();
+    own.push_str(
+        "
+Only the missing node test writes this line.
+",
+    );
+    fs::write(&spec, own).unwrap();
     let saved = std::env::var_os("PATH");
     std::env::set_var("PATH", "");
     let result = format::read(&program(), &spec);

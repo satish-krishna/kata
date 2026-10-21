@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// One task of the plan.
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -146,8 +146,7 @@ pub(crate) fn program(plugin: &Path) -> PathBuf {
 }
 
 /// Where the committed documents are put for the program to read: the program takes a document's
-/// kind from its path, and the cache in `format::read` keys on the path, so each change keeps one
-/// stable folder.
+/// kind from its path, so each change keeps one stable folder (which `reading` locks).
 pub(crate) fn staging_dir(master: &Path, system: &str, change: &str) -> PathBuf {
     let mut hasher = DefaultHasher::new();
     master
@@ -222,8 +221,18 @@ fn stage_or_remove(file: &Path, text: Option<&str>) {
     }
 }
 
-/// One reader at a time: the staged files are shared by every read of the same change.
-pub(crate) static READING: Mutex<()> = Mutex::new(());
+/// The lock for one staging folder: the staged files are shared by every read of the same change, so
+/// those take turns, while the reads of other changes go on beside them.
+pub(crate) fn reading(stage: &Path) -> Arc<Mutex<()>> {
+    static LOCKS: Mutex<Vec<(PathBuf, Arc<Mutex<()>>)>> = Mutex::new(Vec::new());
+    let mut locks = LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, lock)) = locks.iter().find(|(path, _)| path == stage) {
+        return lock.clone();
+    }
+    let lock = Arc::new(Mutex::new(()));
+    locks.push((stage.to_path_buf(), lock.clone()));
+    lock
+}
 
 /// Reads the plan and every build log as committed at `HEAD` (never the working tree) through the
 /// format program, whatever layout each is written in. A review log is not a build log.
@@ -258,8 +267,9 @@ fn read_committed(
     let spec = committed_file(master, &format!("{}/spec.md", change_dir(system, change)))?;
     let marker = committed_file(master, crate::workspace::MARKER)?;
 
-    let _one_reader = READING.lock().unwrap_or_else(|e| e.into_inner());
     let stage = staging_dir(master, system, change);
+    let lock = reading(&stage);
+    let _one_reader = lock.lock().unwrap_or_else(|e| e.into_inner());
     put(&stage.join("plan.md"), &plan)?;
     // The spec lets the check find a task covering something the spec does not hold; the marker, which the
     // program finds by walking up from the plan, lets it find a repository the system does not list.
@@ -580,8 +590,10 @@ pub fn unsaved_rows(
         } else {
             let text = git::run(master, &["show", &format!("HEAD:{rel}")])?;
             let committed = {
-                let _one_reader = READING.lock().unwrap_or_else(|e| e.into_inner());
-                let file = staging_dir(master, system, change)
+                let stage = staging_dir(master, system, change);
+                let lock = reading(&stage);
+                let _one_reader = lock.lock().unwrap_or_else(|e| e.into_inner());
+                let file = stage
                     .join("unsaved")
                     .join("build")
                     .join(format!("{repo}.md"));
