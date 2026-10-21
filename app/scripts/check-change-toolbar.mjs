@@ -7,7 +7,7 @@
 
 export const CHANGE_ROUTES = [
   { route: 'sdlc/claims/2026-10-16-fraud-flag', name: 'a change in an early stage', pills: 4, links: 0 },
-  { route: 'sdlc/claims/2026-10-18-photo-limits-shipped', name: 'a finished change with three pull request links', pills: 4, links: 3 },
+  { route: 'sdlc/claims/2026-10-18-photo-limits-shipped', name: 'a finished change with three pull requests', pills: 4, links: 0, menu: '3 PRs' },
 ];
 
 /** Runs in the page: reads the toolbar's geometry. Returns plain data so the node side can judge it. */
@@ -25,7 +25,7 @@ function measure() {
     return new Set(Array.from(range.getClientRects(), (r) => Math.round(r.top))).size;
   };
   const items = [
-    ...header.querySelectorAll('.wb-seal, .k-modebadge, app-workspace-switcher, .k-crumbs, .k-branch, .k-pill, .k-prlinks__label, .k-prlinks a, :scope > button'),
+    ...header.querySelectorAll('.wb-seal, .k-modebadge, app-workspace-switcher, .k-crumbs, .k-branch, .k-pill, .k-prlinks__label, .k-prlinks a, [data-testid="pr-menu"], :scope > button'),
   ]
     .filter((el) => el.getBoundingClientRect().width > 0)
     .map((el) => ({ el, name: label(el), ...box(el) }));
@@ -46,8 +46,12 @@ function measure() {
   const badge = header.querySelector('.k-modebadge');
   const crumb = header.querySelector('.k-crumbs__item');
   const links = Array.from(header.querySelectorAll('.k-prlinks a'));
+  const menu = header.querySelector('[data-testid="pr-menu"]');
   const root = document.documentElement;
   return {
+    menuText: menu ? menu.textContent.trim().replace(/s+/g, ' ') : null,
+    menuClipped: menu ? menu.scrollWidth - menu.clientWidth : 0,
+    menuInside: menu ? menu.getBoundingClientRect().right <= head.right + 0.5 && menu.getBoundingClientRect().left >= head.left - 0.5 : false,
     pageScroll: root.scrollWidth - root.clientWidth,
     headerScroll: header.scrollWidth - header.clientWidth,
     overlaps,
@@ -71,7 +75,7 @@ function measure() {
 }
 
 /** Opens one change route at one width and returns the failures as readable lines; empty means the toolbar is sound. */
-export async function checkChangeToolbar(browser, origin, { route, name, pills, links }, width) {
+export async function checkChangeToolbar(browser, origin, { route, name, pills, links, menu = null }, width) {
   const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
   const fails = [];
@@ -80,8 +84,8 @@ export async function checkChangeToolbar(browser, origin, { route, name, pills, 
     await page.evaluate(() => document.fonts && document.fonts.ready);
     try {
       await page.waitForFunction(
-        ([p, l]) => document.querySelectorAll('app-sdlc-toolbar header .k-pill').length === p && document.querySelectorAll('app-sdlc-toolbar header .k-prlinks a').length === l,
-        [pills, links],
+        ([p, l, m]) => document.querySelectorAll('app-sdlc-toolbar header .k-pill').length === p && document.querySelectorAll('app-sdlc-toolbar header .k-prlinks a').length === l && (m === null) === !document.querySelector('app-sdlc-toolbar header [data-testid="pr-menu"]'),
+        [pills, links, menu],
         { timeout: 5000 },
       );
     } catch {
@@ -100,7 +104,9 @@ export async function checkChangeToolbar(browser, origin, { route, name, pills, 
     if (m.crumbLines !== 1) fails.push(`${at}: the change name is on ${m.crumbLines} lines, not one`);
     if (m.crumbTitle !== m.crumbText) fails.push(`${at}: the change name's title is ${JSON.stringify(m.crumbTitle)}, not its full text ${JSON.stringify(m.crumbText)}`);
     for (const l of m.linkNumbers) if (!l.visible) fails.push(`${at}: the pull request number "${l.text}" is clipped or missing`);
-    if (links === 0 && m.crumbClipped > 0) fails.push(`${at}: the change name is truncated (${m.crumbClipped}px of it is cut off)`);
+    if (menu === null ? m.menuText !== null : m.menuText !== menu) fails.push(`${at}: expected ${menu === null ? 'no pull request button' : `the button "${menu}"`}, found ${JSON.stringify(m.menuText)}`);
+    if (menu !== null && (m.menuClipped > 0 || !m.menuInside)) fails.push(`${at}: the "${menu}" button is clipped or runs past the toolbar (${m.menuClipped}px cut off)`);
+    if (m.crumbClipped > 0) fails.push(`${at}: the change name is truncated (${m.crumbClipped}px of it is cut off)`);
     for (const l of m.linkTitles) if (l.title !== l.text) fails.push(`${at}: the pull request link "${l.text}" has title ${JSON.stringify(l.title)}, not its full text`);
   } finally {
     await context.close();
@@ -116,11 +122,12 @@ export async function checkStripHeight(browser, origin, route, width) {
   try {
     await page.goto(`${origin}/${route}`, { waitUntil: 'networkidle' });
     const heights = {};
-    for (const tab of ['Intent', 'Spec', 'Plan']) {
+    for (const tab of ['Intent', 'Spec', 'Plan', 'Build']) {
       await page.locator('app-sdlc-toolbar header [role="tab"]', { hasText: tab }).first().click();
       await page.waitForFunction((t) => document.querySelector('app-sdlc-toolbar header [role="tab"][aria-selected="true"]')?.textContent.trim().startsWith(t), tab, { timeout: 5000 });
       await page.waitForTimeout(150);
-      heights[tab] = await page.evaluate(() => document.querySelector('[data-testid="strip"]')?.getBoundingClientRect().height ?? null);
+      if (tab === 'Build') await page.locator('[data-testid="changes-strip"]').waitFor({ timeout: 5000 }).catch(() => undefined);
+      heights[tab] = await page.evaluate((t) => document.querySelector(t === 'Build' ? '[data-testid="changes-strip"]' : '[data-testid="strip"]')?.getBoundingClientRect().height ?? null, tab);
     }
     const values = Object.values(heights);
     if (values.some((h) => h === null)) fails.push(`strip heights at ${width}: a tab has no strip (${JSON.stringify(heights)})`);

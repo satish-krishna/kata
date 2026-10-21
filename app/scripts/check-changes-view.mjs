@@ -147,6 +147,16 @@ try {
           strips: document.querySelectorAll('[data-testid="strip"], [data-testid="changes-strip"]').length,
           listScroll: document.querySelector('aside.k-changes__left').scrollWidth - document.querySelector('aside.k-changes__left').clientWidth,
           fileH: file.height,
+          stripRow: (() => {
+            const strip = document.querySelector('[data-testid="changes-strip"]');
+            const kids = [...strip.children, ...strip.querySelectorAll('.k-changes__end > *')].filter((el) => el.getBoundingClientRect().width > 0);
+            const mids = kids.map((el) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; });
+            return { spread: Math.max(...mids) - Math.min(...mids), count: kids.length };
+          })(),
+          repoName: (() => {
+            const el = [...document.querySelectorAll('[data-repo] .k-files__name')].find((n) => n.textContent.trim() === 'claims-intent');
+            return el ? el.scrollWidth - el.clientWidth : null;
+          })(),
           repos: [...document.querySelectorAll('[data-repo]')].map((r) => ({ h: r.getBoundingClientRect().height, wraps: wraps(r) })),
         };
       });
@@ -156,6 +166,8 @@ try {
       check(m.padding.every((p) => p === 0) && m.border.every((b) => b === 0), `${width}x900: the Changes view has no padding or border (${m.frameDepth} boxes; padding ${m.padding}, border ${m.border})`);
       check(Math.abs(m.rootLeft - m.stripLeft) <= 1, `${width}x900: the Changes view lines up with the tab strip (${m.rootLeft} / ${m.stripLeft})`);
       check(m.listScroll <= 0, `${width}x900: the file list does not scroll sideways (scrollWidth - clientWidth = ${m.listScroll})`);
+      check(m.stripRow.count > 0 && m.stripRow.spread <= 4, `${width}x900: the Changes strip is a single row (${m.stripRow.count} items, vertical centers ${m.stripRow.spread}px apart)`);
+      if (width === 1280) check(m.repoName !== null && m.repoName <= 0, `${width}x900: the claims-intent group name is not truncated (scrollWidth - clientWidth = ${m.repoName})`);
       check(m.strips === 1, `${width}x900: the Build tab has exactly one strip (${m.strips})`);
       check(m.repos.length > 0 && m.repos.every((r) => r.h <= m.fileH * 1.5), `${width}x900: every repository header is at most 1.5 file rows tall (file row ${m.fileH}; headers ${m.repos.map((r) => r.h)})`);
       check(m.repos.every((r) => !r.wraps), `${width}x900: no repository header wraps its branch (${m.repos.map((r) => r.wraps)})`);

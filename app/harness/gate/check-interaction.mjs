@@ -88,6 +88,8 @@ const ROUTE_STEPS = {
     await page.locator('[data-testid="changes-strip"]').waitFor();
   },
 };
+// A trigger a route must carry: one that stops rendering would otherwise leave the route green with that overlay never clicked.
+const EXPECTED_TRIGGERS = { 'sdlc/claims/2026-10-18-photo-limits-shipped': ['[data-testid="pr-menu"]'] };
 const visits = targetRoutes.flatMap((route) => [{ route, step: null }, ...(ROUTE_STEPS[route] ? [{ route, step: ROUTE_STEPS[route] }] : [])]);
 
 async function serve() {
@@ -192,6 +194,17 @@ for (const { route: path, step } of visits) {
         });
       }
     }
+  }
+}
+
+for (const [path, selectors] of Object.entries(EXPECTED_TRIGGERS)) {
+  if (!targetRoutes.includes(path)) continue;
+  await page.goto(`http://localhost:${port}/${path}`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(250);
+  for (const sel of selectors) {
+    const trigger = page.locator(sel);
+    const popover = (await trigger.count()) === 1 && (await trigger.getAttribute('data-slot')) === 'popover-trigger';
+    if (!popover) findings.push({ route: path, kind: 'expected', detail: `${sel} is not on the page as exactly one popover trigger` });
   }
 }
 

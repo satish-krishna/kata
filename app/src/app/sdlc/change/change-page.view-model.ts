@@ -179,6 +179,8 @@ export class ChangePageViewModel {
   readonly doc = signal<string | null>(null);
   /** The document the operator picked from the tiles; null shows the current stage's. Every load clears it. */
   private readonly picked = signal<Tab | null>(null);
+  /** The document whose pill the operator just clicked while its text is still being read; null otherwise. */
+  readonly pendingDoc = signal<Tab | null>(null);
   private loadSeq = 0;
   /** Picks have their own sequence, so a pick never cancels a load; a finished load cancels any pick still reading. */
   private pickSeq = 0;

@@ -140,6 +140,43 @@ describe('ChangePageViewModel', () => {
     expect(vm.doc()).toBe('# the intent text');
   });
 
+  it('holds the picked tab in pendingDoc while it reads, and clears it on success and on failure', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(FNOL, transport);
+    await ready(vm);
+    expect(vm.pendingDoc()).toBeNull();
+    let release!: (text: string) => void;
+    vi.spyOn(transport, 'sdlcReadDoc').mockReturnValueOnce(new Promise<string>((r) => (release = r)));
+    const picking = vm.showDoc('intent');
+    expect(vm.pendingDoc()).toBe('intent');
+    release('# the intent text');
+    await picking;
+    expect(vm.pendingDoc()).toBeNull();
+    vi.spyOn(transport, 'sdlcReadDoc').mockRejectedValueOnce('permission denied');
+    const failing = vm.showDoc('spec');
+    expect(vm.pendingDoc()).toBe('spec');
+    await failing;
+    expect(vm.pendingDoc()).toBeNull();
+    expect(vm.shownDoc()).toBe('intent');
+  });
+
+  it('lets a click back on the shown tab cancel a pick still reading', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(FNOL, transport);
+    await ready(vm);
+    const old = vm.doc();
+    let release!: (text: string) => void;
+    vi.spyOn(transport, 'sdlcReadDoc').mockReturnValue(new Promise<string>((r) => (release = r)));
+    const picking = vm.showDoc('intent');
+    expect(vm.pendingDoc()).toBe('intent');
+    await vm.showDoc('spec');
+    expect(vm.pendingDoc()).toBeNull();
+    release('# the intent text');
+    await picking;
+    expect(vm.shownDoc()).toBe('spec');
+    expect(vm.doc()).toBe(old);
+  });
+
   it('ignores a pick for a document that does not exist yet', async () => {
     const transport = new MockTransport();
     const { vm } = setup(FNOL, transport);

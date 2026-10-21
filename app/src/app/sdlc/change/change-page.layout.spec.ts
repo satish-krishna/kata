@@ -210,43 +210,74 @@ describe('ChangePage layout', () => {
   });
 
   describe('after the pull requests', () => {
-    const finished = async () => {
+    const finished = async (only?: number) => {
       const transport = new MockTransport();
       const real = transport.sdlcChanges.bind(transport);
       vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
         (await real(m, s)).map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage: 'build-finished' as const } : c)),
       );
-      await transport.sdlcPublish('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE));
+      const repos = await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE);
+      await transport.sdlcPublish('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, only === undefined ? repos : repos.slice(0, only));
       return transport;
     };
 
-    it('links each pull request at the right of the toolbar, to GitHub', async () => {
+    it('collapses three pull requests into one "3 PRs" button at the right of the toolbar, with no inline links', async () => {
       const { container } = await mount(MOCK_BUILD_CHANGE, await finished());
-      const links = Array.from(container.querySelectorAll<HTMLAnchorElement>('header a'));
-      expect(links.length).toBe(3);
-      expect(links.map(text).every((t) => /^[a-z-]+ #\d+$/.test(t))).toBe(true);
-      expect(links.every((a) => a.target === '_blank' && a.rel.includes('noopener') && a.href.startsWith('https://'))).toBe(true);
+      const menu = container.querySelectorAll<HTMLButtonElement>('header [data-testid="pr-menu"]');
+      expect(menu.length).toBe(1);
+      expect(text(menu[0])).toBe('3 PRs');
+      expect(menu[0].getAttribute('aria-haspopup')).not.toBeNull();
+      expect(container.querySelectorAll('header a').length).toBe(0);
     });
 
-    it('splits each pull request link into a repository name that can truncate and a number that never does', async () => {
-      const { container } = await mount(MOCK_BUILD_CHANGE, await finished());
+    it('shows a single pull request as the inline link, repository name and number, opening GitHub', async () => {
+      const { container } = await mount(MOCK_BUILD_CHANGE, await finished(1));
       const links = Array.from(container.querySelectorAll<HTMLAnchorElement>('header a'));
-      expect(links.length).toBe(3);
-      for (const a of links) {
-        expect(text(a.querySelector('.k-prlinks__repo')!)).toMatch(/^[a-z-]+$/);
-        expect(text(a.querySelector('.k-prlinks__num')!)).toMatch(/^#\d+$/);
-      }
+      expect(links.length).toBe(1);
+      expect(text(links[0].querySelector('.k-prlinks__repo')!)).toMatch(/^[a-z-]+$/);
+      expect(text(links[0].querySelector('.k-prlinks__num')!)).toMatch(/^#[0-9]+$/);
+      expect(links[0].target === '_blank' && links[0].rel.includes('noopener') && links[0].href.startsWith('https://')).toBe(true);
+      expect(container.querySelector('[data-testid="pr-menu"]')).toBeNull();
     });
 
-    it('drops the pills and the pull request links while a build is live', async () => {
+    it('drops the pills and the pull request button while a build is live', async () => {
       const { container, fixture } = await mount(MOCK_BUILD_CHANGE, await finished());
       expect(container.querySelectorAll('header [role="tab"]').length).toBe(4);
+      expect(container.querySelector('[data-testid="pr-menu"]')).not.toBeNull();
       const vm = fixture.debugElement.injector.get(ChangePageViewModel);
       await vm.submitBuild({ timeoutSecs: 5400, instructions: null, repo: null });
       await settle();
       expect(container.querySelector('app-build-view')).not.toBeNull();
       expect(container.querySelectorAll('header [role="tab"]').length).toBe(0);
       expect(container.querySelectorAll('header a').length).toBe(0);
+      expect(container.querySelector('[data-testid="pr-menu"]')).toBeNull();
+    });
+  });
+
+  describe('picking a document tab', () => {
+    const selected = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLButtonElement>('header [role="tab"]')).filter((t) => t.getAttribute('aria-selected') === 'true').map((t) => text(t).split(' ')[0]);
+
+    it('pulls the pills back to the old tab when the read fails', async () => {
+      const transport = new MockTransport();
+      const { container } = await mount(FNOL, transport);
+      expect(selected(container)).toEqual(['Spec']);
+      let fail!: (e: unknown) => void;
+      vi.spyOn(transport, 'sdlcReadDoc').mockReturnValue(new Promise<string>((_, no) => (fail = no)));
+      pill(container, 'Intent').click();
+      await settle();
+      expect(selected(container)).toEqual(['Intent']);
+      expect(container.querySelector('[role="tabpanel"]:not([hidden])')!.textContent).toContain('Reading intent.md');
+      fail('permission denied');
+      await settle();
+      expect(selected(container)).toEqual(['Spec']);
+      expect(container.querySelector('[role="tabpanel"]:not([hidden]) app-doc-layout')).not.toBeNull();
+    });
+
+    it('leaves the pills on the new tab once the read succeeds', async () => {
+      const { container } = await mount();
+      pill(container, 'Intent').click();
+      await vi.waitFor(() => expect(container.querySelector('app-doc-layout h1')?.textContent).toBe('Photo upload at first notice of loss'));
+      expect(selected(container)).toEqual(['Intent']);
     });
   });
 });
