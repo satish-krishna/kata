@@ -45,32 +45,34 @@
       }
     </aside>
     <section class="k-changes__main" aria-label="What changed">
-      @if (banner(); as text) {
-        <hlm-alert class="wb-banner wb-banner--warn" data-testid="changes-banner">
-          <ng-icon name="lucideTriangleAlert" size="15" />
-          <div hlmAlertDescription>{{ text }}</div>
-        </hlm-alert>
-      }
-      @if (vm.active() === null) {
-        @if (vm.loaded()) {
-          <p class="k-state__body">No repository has changes for this change yet.</p>
-        } @else {
-          <p class="k-state__body" role="status">Reading what changed…</p>
+      <div class="k-changes__head">
+        @if (banner(); as text) {
+          <hlm-alert class="wb-banner wb-banner--warn" data-testid="changes-banner">
+            <ng-icon name="lucideTriangleAlert" size="15" />
+            <div hlmAlertDescription>{{ text }}</div>
+          </hlm-alert>
         }
-      }
-      <app-diff-bar
-        [file]="vm.selectedFile()"
-        [layout]="vm.layout()"
-        (layoutChange)="vm.setLayout($event)"
-        [showLayout]="!vm.narrow()"
-        (previous)="vm.step('previous')"
-        (next)="vm.step('next')"
-      />
-      @if (vm.gone()) {
-        <p class="k-changes__gone" role="status">This file is no longer part of the change.</p>
-      } @else if (vm.pair() === null) {
-        <p class="k-state__body">Pick a file to read its changes.</p>
-      }
+        @if (vm.active() === null) {
+          @if (vm.loaded()) {
+            <p class="k-state__body">No repository has changes for this change yet.</p>
+          } @else {
+            <p class="k-state__body" role="status">Reading what changed…</p>
+          }
+        }
+        <app-diff-bar
+          [file]="vm.selectedFile()"
+          [layout]="vm.layout()"
+          (layoutChange)="vm.setLayout($event)"
+          [showLayout]="!vm.narrow()"
+          (previous)="vm.step('previous')"
+          (next)="vm.step('next')"
+        />
+        @if (vm.gone()) {
+          <p class="k-changes__gone" role="status">This file is no longer part of the change.</p>
+        } @else if (vm.pair() === null) {
+          <p class="k-state__body">Pick a file to read its changes.</p>
+        }
+      </div>
       <div class="k-changes__editor">
         <app-diff-editor
           [pair]="vm.pair()"

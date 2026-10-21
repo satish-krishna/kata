@@ -292,6 +292,9 @@
 .k-change__doc--layout { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
 .k-change__doc--layout[hidden] { display: none; }
 .k-change__doc--layout > .wb-banner { flex: none; margin: var(--space-4) var(--space-5) 0; }
+/* The Changes view fills its panel edge to edge: no padding and no frame, its own strip, columns and editor do the scrolling. */
+.k-change__doc--flush { display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; padding: 0; }
+.k-change__doc--flush[hidden] { display: none; }
 .k-change__missing { padding: var(--space-5); }
 
 /* The stage pills in the toolbar: each is the tab for its panel; the open one carries the accent, the current stage keeps aria-current. */
@@ -374,11 +377,11 @@
 /* ---------- AI-SDLC: the Changes view's file list and diff bar ---------- */
 .k-files, .k-files__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
 .k-files__group { display: grid; gap: var(--space-2); }
-.k-files__repo { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-card); color: var(--text-primary); text-align: start; cursor: pointer; }
+.k-files__repo { display: flex; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-primary); text-align: start; cursor: pointer; }
 .k-files__repo:hover, .k-files__file:hover { background: var(--surface-hover); }
-.k-files__name { overflow-wrap: anywhere; }
-.k-files__count { color: var(--text-muted); }
-.k-files__branch { min-width: 0; margin-inline-start: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--text-muted); }
+.k-files__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.k-files__count { flex: none; color: var(--text-muted); }
+.k-files__branch { flex: 0 4 auto; min-width: 0; margin-inline-start: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--text-muted); }
 .k-files__file { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-3); width: 100%; padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-primary); text-align: start; cursor: pointer; }
 .k-files__file[aria-current="true"] { border-color: var(--accent); background: var(--surface-card); }
 .k-files__path { display: grid; min-width: 0; }

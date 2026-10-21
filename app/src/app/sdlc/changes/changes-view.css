@@ -88,7 +88,25 @@
   color: var(--warning-text);
 }
 
+.k-changes__head {
+  display: grid;
+  gap: var(--space-4);
+}
+
+/* Stacked, the editor has no row to grow into, so it keeps a height of its own. Beside the list it takes
+   the rest of the column down to the bottom of the view; Monaco scrolls long files itself. */
 .k-changes__editor {
   height: 32rem;
   min-height: 0;
+}
+
+@media (min-width: 768px) {
+  .k-changes__main {
+    grid-template-rows: auto minmax(0, 1fr);
+    padding-bottom: 0;
+  }
+
+  .k-changes__editor {
+    height: auto;
+  }
 }
