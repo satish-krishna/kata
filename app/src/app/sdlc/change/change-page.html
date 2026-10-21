@@ -1,9 +1,9 @@
-<div class="k-home">
+<div class="k-home" hlmTabs variant="bare" [tab]="vm.shownDoc()" (tabActivated)="vm.showDoc($event)">
   <app-sdlc-toolbar
     [workspaces]="vm.workspaces()"
     [current]="vm.current()"
     [counts]="vm.counts()"
-    [branch]="vm.masterBranch()"
+    [branch]="vm.branchChip()"
     [crumbs]="vm.crumbs()"
     [locked]="vm.locked()"
     (switchMode)="vm.switchMode()"
@@ -12,14 +12,16 @@
     (remove)="vm.toHome()"
     (openSettings)="vm.toHome()"
   >
-    @for (a of vm.actions(); track a) {
-      <button
-        hlmBtn
-        [variant]="vm.primary() === a ? 'primary' : 'secondary'"
-        type="button"
-        [disabled]="vm.locked()"
-        (click)="vm.act(a)"
-      >{{ vm.labelOf(a) }}</button>
+    @if (vm.pills().length > 0) {
+      <app-stage-pills toolbarStages [pills]="vm.pills()" />
+    }
+    @if (vm.pullLinks().length > 0) {
+      <nav toolbarLinks class="k-prlinks" aria-label="Pull requests">
+        <span class="k-prlinks__label">PRs</span>
+        @for (link of vm.pullLinks(); track link.repo) {
+          <a class="k-mono" [href]="link.url" target="_blank" rel="noopener noreferrer">{{ link.repo }}@if (link.number !== null) { #{{ link.number }}}</a>
+        }
+      </nav>
     }
   </app-sdlc-toolbar>
 
@@ -62,18 +64,31 @@
         </main>
       }
       @case ('ready') {
-        @if (vm.done()) {
-          <app-pr-card [pullRequests]="vm.pullRequests()" />
-        } @else if (vm.prCheckFailed()) {
-          <p class="k-left__note px-5 pt-5" data-testid="pr-note">Could not check pull requests</p>
-        }
-        <main class="k-change" hlmTabs variant="bare" [tab]="vm.shownDoc()" (tabActivated)="vm.showDoc($event)">
-          <h1 class="sr-only">{{ vm.changeName() }}</h1>
-          @if (vm.change(); as c) {
-            <app-stage-stepper [stage]="c.stage" [counts]="vm.runCounts()" [docs]="vm.docs()" [build]="vm.buildTile()" [done]="vm.done()" />
+        <div class="k-strip" data-testid="strip">
+          @if (vm.stripStatus(); as s) {
+            <span [class]="'k-status k-status--' + s.tone"><span class="k-status__dot"></span>{{ s.text }}</span>
           }
+          @if (vm.shownDoc() !== 'build') {
+            <span class="k-strip__file">{{ vm.docName() }}</span>
+          }
+          @if (vm.prCheckFailed()) {
+            <span class="k-left__note" data-testid="pr-note">Could not check pull requests</span>
+          }
+          <div class="wb-toolbar__spacer"></div>
+          @for (a of vm.actions(); track a) {
+            <button
+              hlmBtn
+              [variant]="vm.primary() === a ? 'primary' : 'secondary'"
+              type="button"
+              [disabled]="vm.locked()"
+              (click)="vm.act(a)"
+            >{{ vm.labelOf(a) }}</button>
+          }
+        </div>
+        <main class="k-change">
+          <h1 class="sr-only">{{ vm.changeName() }}</h1>
           @for (stem of vm.stems; track stem) {
-            <div class="k-change__doc" [hlmTabsContent]="stem" variant="bare">
+            <div class="k-change__doc k-change__doc--layout" [hlmTabsContent]="stem" variant="bare">
               @if (stem === vm.shownDoc()) {
                 @if (vm.planBanner(); as banner) {
                   <hlm-alert class="wb-banner wb-banner--warn" data-testid="plan-banner">
@@ -82,12 +97,19 @@
                   </hlm-alert>
                 }
                 @if (vm.doc() === null) {
-                  <p class="k-state__body">{{ vm.docName() }} is not in this change folder.</p>
+                  <p class="k-state__body k-change__missing">{{ vm.docName() }} is not in this change folder.</p>
                 } @else {
-                  <app-doc-view [name]="vm.docName()" [frontMatter]="vm.docParts().frontMatter" [body]="vm.docParts().body" />
-                }
-                @if (stem === 'plan' && vm.buildTasks().length > 0) {
-                  <app-build-log-table [tasks]="vm.buildTasks()" />
+                  <app-doc-layout
+                    [body]="vm.docParts().body"
+                    [fields]="vm.railFields()"
+                    [usedBy]="vm.usedBy()"
+                    [runs]="vm.railRuns().rows"
+                    [runTotal]="vm.railRuns().total"
+                  >
+                    @if (stem === 'plan' && vm.buildTasks().length > 0) {
+                      <app-build-log-table [tasks]="vm.buildTasks()" />
+                    }
+                  </app-doc-layout>
                 }
               }
             </div>

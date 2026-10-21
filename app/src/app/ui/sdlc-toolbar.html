@@ -35,7 +35,9 @@
   @if (!blocked() && branch(); as b) {
     <span class="k-branch" data-testid="branch" title="Branch checked out in the master repo">{{ b }}</span>
   }
+  <ng-content select="[toolbarStages]" />
   <div class="wb-toolbar__spacer"></div>
+  <ng-content select="[toolbarLinks]" />
   <button
     hlmBtn
     variant="bare"

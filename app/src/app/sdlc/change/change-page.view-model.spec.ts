@@ -61,7 +61,7 @@ describe('ChangePageViewModel', () => {
     await ready(vm);
     expect(vm.docName()).toBe('spec.md');
     expect(vm.doc()).toContain('# Spec: photo upload');
-    expect(vm.docParts().frontMatter).toBe('status: draft');
+    expect(vm.docParts().fields).toEqual([['status', 'draft']]);
     expect(vm.docParts().body).toContain('Up to 10 photos');
   });
 
@@ -141,7 +141,7 @@ describe('ChangePageViewModel', () => {
     expect(vm.docName()).toBe('intent.md');
   });
 
-  it('counts runs per stage from the links plus unlinked history records with the stage name', async () => {
+  it('counts the open stage runs from the links plus unlinked history records with the stage name', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcRunLinks').mockResolvedValue([
       { workspace_id: 'acme-claims', system: 'claims', change: FNOL, stage: 'intent', run_id: 'r1', started_at: 1 },
@@ -153,7 +153,9 @@ describe('ChangePageViewModel', () => {
     ]);
     const { vm } = setup(FNOL, transport);
     await ready(vm);
-    expect(vm.runCounts()).toEqual({ intent: 1, spec: 2, plan: 0, build: 0, review: 0 });
+    expect(vm.railRuns().total).toBe(2);
+    await vm.showDoc('intent');
+    expect(vm.railRuns().total).toBe(1);
   });
 
   it('says so when the change is not in the workspace', async () => {

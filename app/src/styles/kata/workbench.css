@@ -285,25 +285,55 @@
 .k-check__tail { margin: 0; max-height: 14rem; overflow: auto; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-inset); color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---------- AI-SDLC: change page ---------- */
-.k-change { flex: 1; min-height: 0; display: grid; grid-template-rows: auto 1fr; }
-.k-steps { list-style: none; margin: 0; padding: var(--space-5); display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); border-bottom: 1px solid var(--border-subtle); }
-.k-step { display: grid; gap: var(--space-2); padding: var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-card); font: inherit; color: inherit; text-align: start; cursor: pointer; }
-/* Each tile is the tab for its document: the selected one carries the accent; the current stage keeps its status label. */
-.k-step[aria-selected="true"] { border-color: var(--accent); }
-.k-step:not(:disabled):hover { background: var(--surface-hover); }
-.k-step:disabled { cursor: default; }
-.k-step__name { font: var(--weight-semibold) var(--text-base)/1.2 var(--font-sans); color: var(--text-primary); }
-.k-step__runs { font: var(--font-code-sm); color: var(--text-muted); }
-.k-change__doc > .wb-banner { margin-bottom: var(--space-4); }
+.k-change { flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
 .k-change__doc { min-height: 0; overflow-y: auto; padding: var(--space-5); }
+.k-change__doc[hidden] { display: none; }
+/* A document panel hosts the three-column document layout, which scrolls inside itself. */
+.k-change__doc--layout { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.k-change__doc--layout[hidden] { display: none; }
+.k-change__doc--layout > .wb-banner { flex: none; margin: var(--space-4) var(--space-5) 0; }
+.k-change__missing { padding: var(--space-5); }
+
+/* The stage pills in the toolbar: each is the tab for its panel; the open one carries the accent, the current stage keeps aria-current. */
+.k-pills { display: flex; align-items: center; gap: var(--space-1); margin-inline-start: var(--space-4); min-width: 0; }
+.k-pill { padding: var(--space-2) var(--space-4); border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; font: inherit; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
+.k-pill:not(:disabled):hover { background: var(--surface-hover); }
+.k-pill[aria-selected="true"] { border-color: var(--accent-border); background: var(--accent-subtle); color: var(--text-primary); }
+.k-pill:disabled { cursor: default; color: var(--text-muted); }
+.k-pill .k-status { color: inherit; }
+.k-prlinks { display: flex; align-items: center; gap: var(--space-4); white-space: nowrap; }
+.k-prlinks__label { font: var(--text-xs)/1 var(--font-mono); color: var(--text-muted); }
+.k-prlinks a { color: var(--accent-text); text-decoration: none; }
+.k-prlinks a:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+/* The strip under the toolbar belongs to the open tab: its status in words, its file, and the stage actions. */
+.k-strip { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); padding: var(--space-3) var(--space-4); background: var(--surface-panel); border-bottom: 1px solid var(--border-default); }
+.k-strip__file { font: var(--text-xs)/1 var(--font-mono); color: var(--text-muted); }
+
 /* AI-SDLC session view: an agent run in the page main region under the toolbar. */
 .k-session { flex: 1; }
 .k-session__title { margin: 0; }
 .k-session__actions { margin-inline-start: auto; }
-.k-doc { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
-.k-doc__head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-4); padding-bottom: var(--space-3); border-bottom: 1px solid var(--border-subtle); }
-.k-doc__name { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-muted); }
-.k-doc__front { font: var(--font-code-sm); color: var(--text-secondary); }
+/* The document layout: outline, text, rail. The text column scrolls on its own. */
+.k-docview { flex: 1; min-height: 0; display: grid; grid-template-columns: 220px minmax(0, 1fr) 340px; }
+.k-docview__toc { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-8) var(--space-5) var(--space-8) var(--space-7); border-right: 1px solid var(--border-subtle); overflow-y: auto; min-height: 0; }
+.k-docview__label { margin: 0; font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-muted); }
+.k-docview__toc > .k-docview__label { margin-bottom: var(--space-3); }
+.k-docview__toclink { display: block; text-align: start; padding: var(--space-2) 0 var(--space-2) var(--space-4); border-left: 1px solid var(--border-subtle); font: var(--text-sm)/1.3 var(--font-sans); color: var(--text-muted); cursor: pointer; }
+.k-docview__toclink[data-level="3"] { padding-left: var(--space-7); }
+.k-docview__toclink:hover { color: var(--text-primary); }
+.k-docview__toclink[aria-current="location"] { color: var(--text-primary); border-left-color: var(--accent); }
+.k-docview__column { min-width: 0; min-height: 0; overflow-y: auto; padding: var(--space-8) var(--space-9); }
+.k-docview__text { max-width: 880px; text-align: left; }
+.k-docview__rail { display: flex; flex-direction: column; align-content: start; gap: var(--space-4); padding: var(--space-8) var(--space-6); border-left: 1px solid var(--border-subtle); background: var(--surface-panel); overflow-y: auto; min-height: 0; }
+.k-docview__card { display: grid; gap: var(--space-3); padding: var(--space-4); }
+.k-docview__fields { margin: 0; display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: var(--space-2) var(--space-4); font: var(--text-sm)/1.4 var(--font-sans); }
+.k-docview__fields dt { color: var(--text-muted); }
+.k-docview__fields dd { margin: 0; font-family: var(--font-mono); color: var(--text-secondary); overflow-wrap: anywhere; }
+.k-docview__used { margin: 0; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); }
+.k-docview__runs { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); font: var(--text-sm)/1.3 var(--font-sans); }
+.k-docview__runs li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; }
+.k-docview__when { color: var(--text-muted); white-space: nowrap; }
 
 /* ---------- AI-SDLC: the Changes view's file list and diff bar ---------- */
 .k-files, .k-files__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }

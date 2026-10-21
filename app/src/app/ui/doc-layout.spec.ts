@@ -52,7 +52,7 @@ describe('DocLayout', () => {
     const column = container.querySelector<HTMLElement>('[data-testid="doc-column"]')!;
     const rect = (top: number) => ({ top, bottom: top + 20, left: 0, right: 0, width: 0, height: 20, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
     column.getBoundingClientRect = () => rect(100);
-    const tops: Record<string, number> = { Problem: 60, 'Who hits it': 90, 'Proposed outcome': 400 };
+    const tops: Record<string, number> = { Problem: -40, 'Who hits it': -10, 'Proposed outcome': 300 };
     for (const h of Array.from(container.querySelectorAll<HTMLElement>('article h1, article h2, article h3'))) {
       h.getBoundingClientRect = () => rect(100 + (tops[h.textContent!] ?? -300));
     }

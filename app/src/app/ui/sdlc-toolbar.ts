@@ -5,8 +5,9 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { WorkspaceSwitcher } from './workspace-switcher';
 
-/* The AI-SDLC toolbar: seal, mode badge, workspace switcher, breadcrumb, the master repo's branch,
- * settings, and the screen's one primary action (projected). */
+/* The AI-SDLC toolbar: seal, mode badge, workspace switcher, breadcrumb, the master repo's branch, settings, and
+ * what the screen projects: stage pills after the branch (`toolbarStages`), links before settings
+ * (`toolbarLinks`), and the screen's one primary action last. */
 @Component({
   selector: 'app-sdlc-toolbar',
   host: { class: 'contents' },

@@ -19,7 +19,6 @@ import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
-import type { BuildTile } from '../../ui/stage-stepper';
 import type { ChangesContext } from '../changes/changes-view.view-model';
 import type { BuildContext } from '../build/build-view.view-model';
 import type { BuildDialogMode, BuildStartRequest } from '../../ui/build-dialog';
@@ -30,19 +29,23 @@ import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import {
+  DONE_LABEL,
   actionLabel,
   actionsForChange,
   primaryAction,
   reviewFindings,
+  parseFrontMatter,
   revisits,
-  runCounts,
   specFor,
-  splitFrontMatter,
   stageLabel,
+  stagePills,
+  stageRuns,
   type DocsPresent,
   type StageAction,
-  type StepCounts,
+  type StagePill,
 } from '../../lib/sdlc';
+import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy } from '../../lib/doc-rail';
+import { prNumber } from '../../lib/pull-request';
 import { REVIEW_MISSING_TEXT, canConfirm, checkLabel, reviewState, type DoneReport, type DoneReview } from '../../lib/sdlc-done';
 import { inTauri } from '../../lib/mock';
 import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
@@ -54,7 +57,6 @@ const nowSecs = (): number => Math.floor(Date.now() / 1000);
 const BUSY = 'Another task is already running.';
 /** The stage steps that mean the plan is accepted. */
 const ACCEPTED: ReadonlySet<string> = new Set(['build', 'done']);
-const NO_COUNTS: StepCounts = { intent: 0, spec: 0, plan: 0, build: 0, review: 0 };
 
 /** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result. */
 const RUNS: Partial<Record<StageAction, { kind: 'intent' | 'spec' | 'plan'; title: string; label: string }>> = {
@@ -190,15 +192,22 @@ export class ChangePageViewModel {
     const c = this.change();
     return { intent: c?.intent.exists ?? false, spec: c?.spec.exists ?? false, plan: c?.plan.exists ?? false };
   });
-  /** The Build tile's facts beyond the stage: whether a repository has the change's branch, and the tasks and repositories. */
-  readonly buildTile = computed<BuildTile>(() => {
-    const repos = this.status()?.repos ?? [];
-    return {
-      hasBranch: this.hasBranch(),
-      done: repos.reduce((n, r) => n + r.finished, 0),
-      total: repos.reduce((n, r) => n + r.tasks, 0),
-      repos: repos.length,
-    };
+  /**
+   * The four stage pills for the toolbar; none until the change is read, nor while a build is live (the build view
+   * holds the page then).
+   */
+  readonly pills = computed<StagePill[]>(() => {
+    const c = this.change();
+    return c === null || this.handoff() !== null ? [] : stagePills(c.stage, this.done(), this.docs(), { hasBranch: this.hasBranch() });
+  });
+  /** The pull requests that have an address, for the toolbar's links; none while a build is live. */
+  readonly pullLinks = computed(() =>
+    this.handoff() !== null ? [] : this.pullRequests().flatMap((p) => (p.url === null ? [] : [{ repo: p.repo, url: p.url, number: prNumber(p.url) }])),
+  );
+  /** The master repository's branch, unless it is the change's own branch, which the pills already imply. */
+  readonly branchChip = computed(() => {
+    const branch = this.masterBranch();
+    return branch === `change/${this.changeName()}` ? null : branch;
   });
   /** What the Changes view in the build panel looks at; null until the workspace and master repository are known. */
   readonly changesContext = computed<ChangesContext | null>(() => {
@@ -208,7 +217,8 @@ export class ChangePageViewModel {
   });
   readonly docName = computed(() => `${this.shownDoc()}.md`);
   readonly stems: readonly DocStem[] = ['intent', 'spec', 'plan'];
-  readonly docParts = computed(() => splitFrontMatter(this.doc() ?? ''));
+  /** The shown document split into its front matter fields and the text under them. */
+  readonly docParts = computed(() => parseFrontMatter(this.doc() ?? ''));
   readonly actions = computed(() => {
     const c = this.change();
     return c && !this.done() ? actionsForChange(c) : [];
@@ -230,9 +240,31 @@ export class ChangePageViewModel {
   });
   readonly primary = computed(() => primaryAction(this.actions()));
   readonly labelOf = actionLabel;
-  readonly runCounts = computed<StepCounts>(() => {
+  /** The front matter fields the rail shows: all but the status, which the strip says in words. */
+  readonly railFields = computed(() => this.docParts().fields.filter(([key]) => key !== 'status'));
+  /** What the strip says about the open tab: the document's status, or the stage label on the Build tab. */
+  readonly stripStatus = computed<DocStatus | null>(() => {
+    const c = this.change();
+    if (c === null) return null;
+    if (this.shownDoc() === 'build') {
+      const label = this.done() ? DONE_LABEL : stageLabel(c.stage);
+      return { text: label.text, tone: label.tone === 'muted' ? 'idle' : label.tone };
+    }
+    return docStatus(this.docParts().fields.find(([key]) => key === 'status')?.[1]);
+  });
+  /** The document built from the open one; none on the plan and the Build tab. */
+  readonly usedBy = computed<UsedBy | null>(() => {
+    const c = this.change();
+    const stem = this.shownDoc();
+    return c === null || stem === 'build' ? null : usedBy(stem, c);
+  });
+  /** The latest runs of the open document's stage for the rail, and how many the stage has had. */
+  readonly railRuns = computed<{ rows: RunRow[]; total: number }>(() => {
     const w = this.current();
-    return w ? runCounts(this.links(), this.records(), w.id, this.system(), this.changeName()) : NO_COUNTS;
+    const stem = this.shownDoc();
+    if (w === null || stem === 'build') return { rows: [], total: 0 };
+    const runs = stageRuns(this.links(), this.records(), w.id, this.system(), this.changeName(), stem);
+    return recentRuns(runs, stem.charAt(0).toUpperCase() + stem.slice(1));
   });
 
   // --- the acceptance confirm
