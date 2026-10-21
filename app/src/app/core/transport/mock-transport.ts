@@ -9,6 +9,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { BranchInfo } from '@bindings/BranchInfo';
+import type { BuildAction } from '@bindings/BuildAction';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
@@ -160,7 +161,7 @@ export class MockTransport extends KataTransport {
   sdlcBuildStatus(_master: string, _system: string, change: string): Promise<BuildStatus> { return Promise.resolve(this.sdlc.buildStatus(change)); }
   sdlcUnsavedRows(_master: string, _system: string, _change: string): Promise<UnsavedRows[]> { return Promise.resolve([]); }
   sdlcBuildParticipants(folder: string, _masterRepo: string, _system: string, _change: string, _pending?: string | null): Promise<Participant[]> { return Promise.resolve(this.sdlc.participants(folder)); }
-  sdlcBuildPrepare(folder: string, _masterRepo: string, _system: string, change: string, _continueWithLeftovers: boolean, _pending?: string | null): Promise<PrepareOutcome> {
+  sdlcBuildPrepare(folder: string, _masterRepo: string, _system: string, change: string, _continueWithLeftovers: boolean, _pending: string | null, _action: BuildAction): Promise<PrepareOutcome> {
     return Promise.resolve({ kind: 'ready', start: this.sdlc.prepare(folder, change) });
   }
   sdlcBuildSettle(_start: BuildStart): Promise<string[]> { return Promise.resolve([]); }

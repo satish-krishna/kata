@@ -13,7 +13,7 @@ import { BuildViewModel, type BuildContext } from './build-view.view-model';
 const CTX: BuildContext = { workspaceId: 'acme-claims', folder: MOCK_WORKSPACE_FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE, systemRepos: [] };
 
 async function mount(transport = new MockTransport()) {
-  const out = await transport.sdlcBuildPrepare(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'claims', MOCK_BUILD_CHANGE, false);
+  const out = await transport.sdlcBuildPrepare(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'claims', MOCK_BUILD_CHANGE, false, null, 'start');
   if (out.kind !== 'ready') throw new Error('the mock build did not prepare');
   const handoff: BuildHandoff = { start: out.start, timeoutSecs: 5400, round: null, checksDir: await transport.sdlcChecksDir() };
   // Not `render()`: under fake timers `whenStable` would wait on a change detection that only a timer can run.

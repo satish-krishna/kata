@@ -28,6 +28,23 @@ describe('BuildRefusalDialog', () => {
     expect(banner.className).toContain('wb-banner--error');
   });
 
+  it('lists the problems the check found, one line each (R8.1)', async () => {
+    await render(BuildRefusalDialog, {
+      reason: 'The plan does not pass the check',
+      problems: [
+        { file: 'plan.md', line: 18, message: 'task T1 has no Tests section' },
+        { file: 'plan.md', line: 30, message: 'task T2 has no Done when section' },
+      ],
+    });
+    const items = Array.from(alert()!.querySelectorAll('ul[aria-label="Problems"] li')).map((li) => li.textContent!.trim());
+    expect(items).toEqual(['plan.md:18 task T1 has no Tests section', 'plan.md:30 task T2 has no Done when section']);
+  });
+
+  it('shows no list when the reason says it all', async () => {
+    await render(BuildRefusalDialog, { reason: 'This plan needs a newer Workbench' });
+    expect(alert()!.querySelector('ul')).toBeNull();
+  });
+
   it('has Close only, and emits close from it', async () => {
     const { fixture } = await render(BuildRefusalDialog, { reason: 'x' });
     expect(Array.from(alert()!.querySelectorAll('button')).map((b) => b.textContent!.trim())).toEqual(['Close']);

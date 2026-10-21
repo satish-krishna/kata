@@ -1,5 +1,6 @@
 import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { Problem } from '@bindings/Problem';
 import type { Participant } from '@bindings/Participant';
 import type { RunSpec } from '@bindings/RunSpec';
 import { LockStore } from '../../core/lock/lock.store';
@@ -128,6 +129,9 @@ export class BuildViewModel {
     const lines = this.pendingLeftovers();
     return lines === null ? null : { lines };
   });
+
+  /** Why Continue did not go on, with what the check found; the refusal dialog is open exactly while this is set. */
+  readonly refusal = signal<{ reason: string; problems: Problem[] } | null>(null);
 
   readonly tab = signal<BuildTab>('activity');
   readonly announcement = signal('');
@@ -330,7 +334,11 @@ export class BuildViewModel {
     const owner = this.ownerOf(key);
     try {
       if (this.settled) {
-        const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, false, owner);
+        const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, false, owner, 'continue');
+        if (out.kind === 'refused') {
+          this.refusal.set({ reason: out.message, problems: out.problems });
+          return;
+        }
         if (out.kind === 'needsConfirm') {
           this.ask(key, out.leftovers.flatMap((r) => r.files.map((f) => `${r.repo}: ${f}`)));
           return;
@@ -362,7 +370,11 @@ export class BuildViewModel {
     if (key === null || h === null || ctx === null) return;
     if (this.settled) {
       try {
-        const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, true, this.ownerOf(key));
+        const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, true, this.ownerOf(key), 'continue');
+        if (out.kind === 'refused') {
+          this.refusal.set({ reason: out.message, problems: out.problems });
+          return;
+        }
         if (out.kind !== 'ready') {
           this.toasts.error('Could not prepare the branches to continue the build.');
           return;
@@ -376,6 +388,10 @@ export class BuildViewModel {
     }
     this.confirmed.add(key);
     await this.resume(key);
+  }
+
+  closeRefusal(): void {
+    this.refusal.set(null);
   }
 
   cancelContinue(): void {

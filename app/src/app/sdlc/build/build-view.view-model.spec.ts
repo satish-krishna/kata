@@ -29,7 +29,7 @@ function setup(transport = new MockTransport()) {
 }
 
 async function handoffFor(transport: MockTransport, over: Partial<BuildHandoff> = {}): Promise<BuildHandoff> {
-  const out = await transport.sdlcBuildPrepare(FOLDER, MOCK_MASTER, 'claims', MOCK_BUILD_CHANGE, false);
+  const out = await transport.sdlcBuildPrepare(FOLDER, MOCK_MASTER, 'claims', MOCK_BUILD_CHANGE, false, null, 'start');
   if (out.kind !== 'ready') throw new Error('the mock build did not prepare');
   return { start: out.start, timeoutSecs: 5400, round: null, checksDir: await transport.sdlcChecksDir(), ...over };
 }
@@ -222,6 +222,27 @@ describe('BuildViewModel', () => {
     expect(run).toHaveBeenCalledTimes(3);
     expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
     expect(row(vm, 'claims-core').label).toBe('Working · T1');
+  });
+
+  it('Continue after the branches were settled is refused with the problems when a build log fails the check, and starts nothing (R8.1)', async () => {
+    const { vm, transport, runner } = setup();
+    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
+      link.onRun?.(`fake-${target.repo}`);
+      return { exit: 124, error: null };
+    });
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    vm.select('claims-core');
+    const problem = { file: 'build/app.md', line: 14, message: 'entry T1 is recorded twice, first on line 7' };
+    prepare.mockResolvedValueOnce({ kind: 'refused', message: 'A build log does not pass the check', problems: [problem] });
+    await vm.continueRun();
+    await advance(500);
+    expect(prepare.mock.calls[1][6]).toBe('continue');
+    expect(vm.refusal()).toEqual({ reason: 'A build log does not pass the check', problems: [problem] });
+    expect(run).toHaveBeenCalledTimes(2);
+    vm.closeRefusal();
+    expect(vm.refusal()).toBeNull();
   });
 
   it('Continue after the branches were settled asks before going on top of leftovers, and starts nothing until confirmed (R6.4)', async () => {

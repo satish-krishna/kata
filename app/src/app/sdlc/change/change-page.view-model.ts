@@ -17,6 +17,8 @@ import type { PrResult } from '@bindings/PrResult';
 import type { PrState } from '@bindings/PrState';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RepoChecks } from '@bindings/RepoChecks';
+import type { BuildAction } from '@bindings/BuildAction';
+import type { Problem } from '@bindings/Problem';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ChangesContext } from '../changes/changes-view.view-model';
@@ -407,6 +409,8 @@ export class ChangePageViewModel {
 
   /** Why the build did not start, or null. */
   readonly refusal = signal<string | null>(null);
+  /** What the check found in the plan or a build log, when that is why the build did not start. */
+  readonly refusalProblems = signal<Problem[]>([]);
   private readonly pendingLeftovers = signal<RepoFiles[] | null>(null);
   /** The confirm for continuing on top of the build's own leftovers: one line per repository and file; null while closed. */
   readonly leftoverPrompt = computed(() => {
@@ -432,9 +436,12 @@ export class ChangePageViewModel {
   }
   /** What the dialog asked for, kept so confirming the leftovers prepares the same build again. */
   private asked: BuildStartRequest | null = null;
+  /** What the engineer asked for, kept with `asked`. */
+  private askedAction: BuildAction = 'start';
 
   /** The operator filled the dialog: prepare the build, never continuing on top of leftovers yet. */
   async submitBuild(req: BuildStartRequest): Promise<void> {
+    this.askedAction = this.buildMode() ?? 'start';
     this.buildMode.set(null);
     this.asked = req;
     await this.prepare(false);
@@ -458,6 +465,7 @@ export class ChangePageViewModel {
 
   closeRefusal(): void {
     this.refusal.set(null);
+    this.refusalProblems.set([]);
   }
 
   // --- declaring done: Kata's own checks first, then the confirmation
@@ -513,6 +521,7 @@ export class ChangePageViewModel {
   async doneRunReview(): Promise<void> {
     this.doneReport.set(null);
     this.asked = { timeoutSecs: REVIEW_TIMEOUT_SECS, instructions: null, repo: null };
+    this.askedAction = 'round';
     await this.prepare(false);
   }
 
@@ -858,6 +867,7 @@ export class ChangePageViewModel {
       masterRepo: master,
       system: this.system(),
       change: this.changeName(),
+      action: this.askedAction,
       catalog: this.catalog(),
       continueWithLeftovers,
       pending: asked.repo,
@@ -866,6 +876,7 @@ export class ChangePageViewModel {
       case 'refused':
         this.asked = null;
         this.refusal.set(out.reason);
+        this.refusalProblems.set(out.problems ?? []);
         return;
       case 'needs-confirm':
         this.pendingLeftovers.set(out.leftovers);

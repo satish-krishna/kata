@@ -36,6 +36,7 @@ const REQUEST: BuildRequest = {
   masterRepo: 'claims-intent',
   system: 'claims',
   change: '2026-10-12-fnol',
+  action: 'start',
   catalog: [AI_SDLC],
   continueWithLeftovers: false,
 };
@@ -503,7 +504,7 @@ describe('SdlcRunner build', () => {
       const ctx = setup();
       const out = await ctx.runner.prepareBuild({ ...REQUEST, continueWithLeftovers: true });
       expect(out).toEqual({ kind: 'ready', start: BUILD_START });
-      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', true, null);
+      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', true, null, 'start');
     });
 
     it('answers needs-confirm with the files each repository holds', async () => {
@@ -511,6 +512,15 @@ describe('SdlcRunner build', () => {
       ctx.fake.prepared = { kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['a.txt'] }] };
       const out = await ctx.runner.prepareBuild(REQUEST);
       expect(out).toEqual({ kind: 'needs-confirm', leftovers: [{ repo: 'claims-core', files: ['a.txt'] }] });
+    });
+
+    it.each(['start', 'continue', 'round'] as const)('refuses with the gate message and the problems it lists: %s (R8.1)', async (action) => {
+      const problem = { file: 'build/app.md', line: 14, message: 'entry T1 is recorded twice, first on line 7' };
+      const ctx = setup();
+      ctx.fake.prepared = { kind: 'refused', message: 'A build log does not pass the check', problems: [problem] };
+      const out = await ctx.runner.prepareBuild({ ...REQUEST, action });
+      expect(out).toEqual({ kind: 'refused', reason: 'A build log does not pass the check', problems: [problem] });
+      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', false, null, action);
     });
 
     it('refuses with the backend text when preparing fails (R3.1)', async () => {

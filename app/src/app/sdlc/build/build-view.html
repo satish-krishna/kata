@@ -130,4 +130,5 @@
     (confirm)="vm.confirmContinue()"
     (cancel)="vm.cancelContinue()"
   />
+  <app-build-refusal-dialog [reason]="vm.refusal()?.reason ?? null" [problems]="vm.refusal()?.problems ?? []" (close)="vm.closeRefusal()" />
 </main>

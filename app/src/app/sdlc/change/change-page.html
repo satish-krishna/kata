@@ -214,7 +214,7 @@
     (cancel)="vm.cancelDone()"
   />
   <app-pr-list-dialog [results]="vm.prList()" (retry)="vm.retryPublish()" (close)="vm.closePrList()" />
-  <app-build-refusal-dialog [reason]="vm.refusal()" (close)="vm.closeRefusal()" />
+  <app-build-refusal-dialog [reason]="vm.refusal()" [problems]="vm.refusalProblems()" (close)="vm.closeRefusal()" />
   <app-confirm-dialog
     [open]="vm.confirmPrompt() !== null"
     [message]="vm.confirmPrompt() ?? ''"

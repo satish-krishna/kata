@@ -3,7 +3,8 @@
 //! format program reads them, in either layout, and this module folds its answer into a status.
 use crate::format::{self, FormatError, ParsedBuildLog, ParsedTask, Problem, ReadResult};
 use crate::git::{self, GitError};
-use serde::Serialize;
+use crate::plugin::Readiness;
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -173,7 +174,20 @@ fn log_repo(path: &str) -> &str {
 struct Committed {
     tasks: Vec<ParsedTask>,
     logs: Vec<ParsedBuildLog>,
-    problems: Vec<Problem>,
+    plan_layout: u32,
+    plan_problems: Vec<Problem>,
+    /// The layout of each build log, in the order of `logs`.
+    log_layouts: Vec<u32>,
+    log_problems: Vec<Problem>,
+}
+
+impl Committed {
+    /// Every problem in the plan, then every problem in the build logs.
+    fn problems(&self) -> Vec<Problem> {
+        let mut all = self.plan_problems.clone();
+        all.extend(self.log_problems.iter().cloned());
+        all
+    }
 }
 
 /// One reader at a time: the staged files are shared by every read of the same change.
@@ -229,19 +243,22 @@ fn read_committed(
     }
 
     let program = program(plugin);
-    let mut problems = Vec::new();
     let read_plan = format::read(&program, &stage.join("plan.md")).map_err(unreadable)?;
-    problems.extend(read_plan.problems().iter().cloned());
+    let plan_problems = read_plan.problems().to_vec();
+    let plan_layout = read_plan.layout();
     let ReadResult::Plan { document, .. } = read_plan else {
         return Err(unreadable(FormatError::BadOutput(
             "plan.md was not read as a plan".into(),
         )));
     };
     let mut logs = Vec::new();
+    let mut log_layouts = Vec::new();
+    let mut log_problems = Vec::new();
     for (path, _) in &texts {
         let file = build.join(format!("{}.md", log_repo(path)));
         let read_log = format::read(&program, &file).map_err(unreadable)?;
-        problems.extend(read_log.problems().iter().cloned());
+        log_problems.extend(read_log.problems().iter().cloned());
+        log_layouts.push(read_log.layout());
         let ReadResult::BuildLog { document, .. } = read_log else {
             return Err(unreadable(FormatError::BadOutput(format!(
                 "{path} was not read as a build log"
@@ -252,7 +269,10 @@ fn read_committed(
     Ok(Committed {
         tasks: document.tasks,
         logs,
-        problems,
+        plan_layout,
+        plan_problems,
+        log_layouts,
+        log_problems,
     })
 }
 
@@ -361,7 +381,83 @@ pub fn status(
         tasks,
         repos,
         departures,
-        problems: committed.problems,
+        problems: committed.problems(),
+    })
+}
+
+/// What the engineer asked the build to do. Every action meets the same gate.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum BuildAction {
+    Start,
+    Continue,
+    Round,
+}
+
+/// Whether a build may start, continue or run another round.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum Gate {
+    Admit,
+    /// The build does not go on: `message` says why and `problems` lists what the format program
+    /// found, when that is the reason.
+    Refuse {
+        message: String,
+        problems: Vec<Problem>,
+    },
+}
+
+fn refuse(message: impl Into<String>, problems: Vec<Problem>) -> Gate {
+    Gate::Refuse {
+        message: message.into(),
+        problems,
+    }
+}
+
+/// Decides whether a build may start, continue or run another round, from the plugin and from the
+/// plan and build logs committed at `HEAD`. The first reason that applies is the one given: the
+/// plugin, then the plan's layout, the plan's problems, the build logs' layout, their problems. A
+/// change with no build log yet passes that part.
+pub fn gate(
+    plugin: &Readiness,
+    master: &Path,
+    system: &str,
+    change: &str,
+    _action: BuildAction,
+) -> Result<Gate, GitError> {
+    let dir = match plugin {
+        Readiness::Missing => return Ok(refuse("Install the ai-sdlc plugin", Vec::new())),
+        Readiness::TooOld { need, .. } => {
+            return Ok(refuse(
+                format!("Update the ai-sdlc plugin to {need} or later"),
+                Vec::new(),
+            ))
+        }
+        Readiness::Ready { dir, .. } => dir,
+    };
+    let committed = read_committed(dir, master, system, change)?;
+    let newer = |layout: &u32| !format::ACCEPTED_LAYOUTS.contains(layout);
+    Ok(if newer(&committed.plan_layout) {
+        refuse("This plan needs a newer Workbench", Vec::new())
+    } else if !committed.plan_problems.is_empty() {
+        refuse("The plan does not pass the check", committed.plan_problems)
+    } else if committed.log_layouts.iter().any(newer) {
+        refuse("A build log needs a newer Workbench", Vec::new())
+    } else if !committed.log_problems.is_empty() {
+        refuse(
+            "A build log does not pass the check",
+            committed.log_problems,
+        )
+    } else {
+        Gate::Admit
     })
 }
 
@@ -1073,6 +1169,9 @@ mod tests {
         }
     }
 
+    /// (name, plugin, plan, build logs as (repository, text), expected outcome)
+    type GateRow<'a> = (&'a str, Readiness, &'a str, Vec<(&'a str, &'a str)>, Gate);
+
     #[test]
     fn build_gate_refuses_each_action_with_the_problems_listed() {
         let real = testutil::plugin_dir();
@@ -1086,7 +1185,7 @@ mod tests {
             "entry T1 is recorded twice, first on line 7",
         );
         // (name, plugin, plan, logs, expected): the outline's rows, then the precedence between them.
-        let rows: Vec<(&str, Readiness, &str, Vec<(&str, &str)>, Gate)> = vec![
+        let rows: Vec<GateRow> = vec![
             (
                 "plugin missing",
                 Readiness::Missing,

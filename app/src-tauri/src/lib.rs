@@ -327,6 +327,7 @@ fn sdlc_build_prepare(
     master_repo: String,
     system: String,
     change: String,
+    action: sdlc::build::BuildAction,
     continue_with_leftovers: bool,
     pending: Option<String>,
 ) -> Result<sdlc::start::PrepareOutcome, String> {
@@ -337,6 +338,7 @@ fn sdlc_build_prepare(
         &master_repo,
         &system,
         &change,
+        action,
         continue_with_leftovers,
         pending.as_deref(),
     )

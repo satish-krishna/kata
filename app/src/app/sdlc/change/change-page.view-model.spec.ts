@@ -488,7 +488,7 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.act('start-build');
       await vm.submitBuild(REQUEST);
-      expect(prepare).toHaveBeenCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false, null);
+      expect(prepare).toHaveBeenCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false, null, 'start');
       expect(vm.buildMode()).toBeNull();
       const h = vm.handoff()!;
       expect(h.timeoutSecs).toBe(5400);
@@ -519,7 +519,7 @@ describe('ChangePageViewModel', () => {
       for (const repo of ['claims-core', 'claims-intent']) {
         await vm.act('another-round');
         await vm.submitBuild({ timeoutSecs: 14400, instructions: 'tidy up', repo });
-        expect(prepare).toHaveBeenLastCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false, repo);
+        expect(prepare).toHaveBeenLastCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false, repo, 'round');
         await vm.closeBuild();
       }
     });
@@ -593,6 +593,22 @@ describe('ChangePageViewModel', () => {
       expect(vm.leftoverPrompt()).toBeNull();
       expect(prepare).toHaveBeenCalledTimes(1);
       expect(vm.handoff()).toBeNull();
+    });
+
+    it.each([['start-build', 'start'], ['continue-build', 'continue'], ['another-round', 'round']] as const)('a refusal by the gate lists its problems and starts nothing: %s asks for %s (R8.1)', async (act, action) => {
+      const problem = { file: 'build/app.md', line: 14, message: 'entry T1 is recorded twice, first on line 7' };
+      const { vm, transport } = setup(BUILD);
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValue({ kind: 'refused', message: 'A build log does not pass the check', problems: [problem] });
+      await ready(vm);
+      await vm.act(act);
+      await vm.submitBuild(REQUEST);
+      expect(prepare.mock.calls[0][6]).toBe(action);
+      expect(vm.refusal()).toBe('A build log does not pass the check');
+      expect(vm.refusalProblems()).toEqual([problem]);
+      expect(vm.handoff()).toBeNull();
+      vm.closeRefusal();
+      expect(vm.refusal()).toBeNull();
+      expect(vm.refusalProblems()).toEqual([]);
     });
 
     it('a refusal is shown and starts nothing', async () => {

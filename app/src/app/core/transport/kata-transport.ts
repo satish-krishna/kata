@@ -9,6 +9,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { BranchInfo } from '@bindings/BranchInfo';
+import type { BuildAction } from '@bindings/BuildAction';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
@@ -85,7 +86,7 @@ export abstract class KataTransport {
   abstract sdlcBuildStatus(master: string, system: string, change: string): Promise<BuildStatus>;
   abstract sdlcUnsavedRows(master: string, system: string, change: string): Promise<UnsavedRows[]>;
   /** `pending` names the repository a run is about to start in on the engineer's ask (a round, or Continue): its leftovers are its own to confirm. */
-  abstract sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending?: string | null): Promise<PrepareOutcome>;
+  abstract sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending: string | null, action: BuildAction): Promise<PrepareOutcome>;
   /** Who takes part in the build, where each is checked out and which uncommitted files each one owns. */
   abstract sdlcBuildParticipants(folder: string, masterRepo: string, system: string, change: string, pending?: string | null): Promise<Participant[]>;
   abstract sdlcBuildSettle(start: BuildStart): Promise<string[]>;

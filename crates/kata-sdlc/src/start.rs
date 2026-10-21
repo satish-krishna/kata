@@ -2,12 +2,14 @@
 //! checked before anything is created or switched, and the cleanup of branches that stayed empty.
 use crate::base::{base_branch, build_work_revs, commits_ahead_of_local_base, BaseError};
 use crate::branch::{branch_exists, current_branch};
-use crate::build::{self, RepoState};
+use crate::build::{self, BuildAction, Gate, RepoState};
 use crate::changes::{is_change_name, is_safe_system};
 use crate::commits::offenders_to;
 use crate::decide::change_scope;
+use crate::format::Problem;
 use crate::git::{self, GitError};
 use crate::participants;
+use crate::plugin;
 use crate::snapshot::dirty_files;
 use crate::workspace::ScanError;
 use serde::{Deserialize, Serialize};
@@ -56,8 +58,17 @@ pub struct RepoFiles {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum PrepareOutcome {
-    Ready { start: BuildStart },
-    NeedsConfirm { leftovers: Vec<RepoFiles> },
+    Ready {
+        start: BuildStart,
+    },
+    NeedsConfirm {
+        leftovers: Vec<RepoFiles>,
+    },
+    /// The plugin, the plan or a build log stops the build (the build gate): nothing was created.
+    Refused {
+        message: String,
+        problems: Vec<Problem>,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -155,19 +166,21 @@ fn classify(
     }
 }
 
-/// Check every precondition of a build, then create or check out `change/<change>` in the master
+/// Check the build gate and every other precondition of a build, then create or check out `change/<change>` in the master
 /// and in every product repository an unfinished task names, or that `pending` names. Nothing is
 /// touched until all pass.
 ///
 /// `pending` is the repository a run is about to start in on the engineer's ask: a round, or
 /// Continue. Its uncommitted files are leftovers to confirm, whether it is a finished product
 /// repository (skipped otherwise) or the master (whose uncommitted files refuse a fresh start, R3.2).
+#[allow(clippy::too_many_arguments)]
 pub fn prepare(
     plugin: &Path,
     folder: &Path,
     master_repo: &str,
     system: &str,
     change: &str,
+    action: BuildAction,
     continue_with_leftovers: bool,
     pending: Option<&str>,
 ) -> Result<PrepareOutcome, BuildError> {
@@ -180,6 +193,15 @@ pub fn prepare(
     let branch = format!("change/{change}");
     if !branch_exists(&master, &branch) {
         return refuse(format!("the master repo has no branch {branch}"));
+    }
+    if let Gate::Refuse { message, problems } = build::gate(
+        &plugin::readiness(Some(plugin)),
+        &master,
+        system,
+        change,
+        action,
+    )? {
+        return Ok(PrepareOutcome::Refused { message, problems });
     }
 
     let (parts, status) =
@@ -431,11 +453,29 @@ mod tests {
         go: bool,
         pending: Option<&str>,
     ) -> Result<PrepareOutcome, BuildError> {
-        prepare(testutil::plugin_dir(), &fx.folder, "m", S, C, go, pending)
+        prepare(
+            testutil::plugin_dir(),
+            &fx.folder,
+            "m",
+            S,
+            C,
+            BuildAction::Start,
+            go,
+            pending,
+        )
     }
 
     fn prep(fx: &Fx, go: bool) -> Result<PrepareOutcome, BuildError> {
-        prepare(testutil::plugin_dir(), &fx.folder, "m", S, C, go, None)
+        prepare(
+            testutil::plugin_dir(),
+            &fx.folder,
+            "m",
+            S,
+            C,
+            BuildAction::Start,
+            go,
+            None,
+        )
     }
 
     fn ready(out: Result<PrepareOutcome, BuildError>) -> BuildStart {
@@ -876,6 +916,51 @@ mod tests {
     }
 
     #[test]
+    fn prepare_refuses_a_failing_build_log_and_creates_nothing_r8_1() {
+        let fx = fixture();
+        testutil::commit_file(
+            &fx.master,
+            &format!("intent/{S}/{C}/build/app.md"),
+            "# Build log: app
+
+| Task | Commits | Departure |
+|---|---|---|
+| T1 | `abc1234` | none |
+| T1 | `def5678` | none |
+",
+            "log",
+        );
+        let before = state(&fx);
+        for action in [
+            BuildAction::Start,
+            BuildAction::Continue,
+            BuildAction::Round,
+        ] {
+            let out = prepare(
+                testutil::plugin_dir(),
+                &fx.folder,
+                "m",
+                S,
+                C,
+                action,
+                false,
+                None,
+            )
+            .unwrap();
+            match out {
+                PrepareOutcome::Refused { message, problems } => {
+                    assert_eq!(message, "A build log does not pass the check");
+                    assert_eq!(problems.len(), 1, "{problems:?}");
+                    assert_eq!(problems[0].file, "build/app.md");
+                }
+                other => panic!("expected Refused, got {other:?}"),
+            }
+        }
+        assert_eq!(state(&fx), before);
+        assert!(!has_branch(&fx.repo("app")));
+    }
+
+    #[test]
     fn prepare_refuses_unsafe_repo_names() {
         let fx = fixture_with(&[("T1", "app"), ("T2", "..")], &["app", ".."], &["app"]);
         let msg = refusal(prep(&fx, false));
@@ -888,6 +973,7 @@ mod tests {
                 "../m",
                 S,
                 C,
+                BuildAction::Start,
                 false,
                 None
             ),
@@ -900,6 +986,7 @@ mod tests {
                 "m",
                 "../s",
                 C,
+                BuildAction::Start,
                 false,
                 None
             ),
