@@ -32,11 +32,5 @@
     ],
     "shared_decisions": []
   },
-  "problems": [
-    {
-      "file": "plan.md",
-      "line": 21,
-      "message": "yaml block is not part of any record"
-    }
-  ]
+  "problems": []
 }

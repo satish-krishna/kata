@@ -2,7 +2,7 @@
   "kind": "build-log",
   "layout": 2,
   "document": {
-    "repo": "stray-yaml-block",
+    "repo": "yaml-example-in-content",
     "entries": [
       {
         "task": "T1",
@@ -14,11 +14,5 @@
       }
     ]
   },
-  "problems": [
-    {
-      "file": "build/stray-yaml-block.md",
-      "line": 16,
-      "message": "yaml block is not part of any record"
-    }
-  ]
+  "problems": []
 }

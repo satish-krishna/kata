@@ -27633,6 +27633,11 @@ function yamlBlock(doc, from, limit) {
   }
   return { text: doc.lines.slice(open + 1, close).join("\n"), open, first: open + 1, last: close - 1 };
 }
+function underRecordHeading(doc, index, headings) {
+  let i = index - 1;
+  while (i >= 0 && doc.lines[i].trim() === "") i--;
+  return i >= 0 && !doc.fenced[i] && headings.some((h) => h.prefix.test(doc.lines[i]));
+}
 function reportUnread(doc, file, problems, headings, claimed) {
   const found = [];
   doc.lines.forEach((line, index) => {
@@ -27640,7 +27645,7 @@ function reportUnread(doc, file, problems, headings, claimed) {
     const heading = headings.find((h) => h.prefix.test(line));
     if (heading && !heading.strict.test(line)) {
       found.push({ file, line: index + 1, message: `heading "${line.trimEnd()}" is not ${heading.what}` });
-    } else if (/^\s*```yaml\s*$/.test(line) && !claimed.has(index)) {
+    } else if (/^\s*```yaml\s*$/.test(line) && !claimed.has(index) && underRecordHeading(doc, index, headings)) {
       found.push({ file, line: index + 1, message: "yaml block is not part of any record" });
     }
   });
@@ -27845,7 +27850,7 @@ function readBuildLog(text, file) {
   }
   const claimed = /* @__PURE__ */ new Set();
   const entries = withEntries ? readEntries(doc, file, problems, claimed) : [];
-  if (withEntries) reportUnread(doc, file, problems, [{ prefix: /^### T/, strict: ENTRY_HEADING, what: "an entry heading" }], claimed);
+  if (withEntries) reportUnread(doc, file, problems, [{ prefix: /^### T\d\b/, strict: ENTRY_HEADING, what: "an entry heading" }], claimed);
   const rows = [...tableRows(doc), ...entries].sort((a, b) => a.line - b.line);
   const seen = /* @__PURE__ */ new Map();
   for (const r of rows) {
@@ -28171,7 +28176,7 @@ function readPlan(text, file, marker) {
   const claimed = /* @__PURE__ */ new Set();
   const tasks = readTasks2(doc, heads, file, problems, repos, system, claimed);
   const shared_decisions = decisions2(doc, file, problems, claimed);
-  reportUnread(doc, file, problems, [{ prefix: /^### T/, strict: HEADING2, what: "a task heading" }], claimed);
+  reportUnread(doc, file, problems, [{ prefix: /^### T\d\b/, strict: HEADING2, what: "a task heading" }], claimed);
   return { kind: "plan", layout, document: { tasks, shared_decisions }, problems };
 }
 
@@ -28309,8 +28314,8 @@ function readReview(text, file) {
     file,
     problems,
     [
-      { prefix: /^## Review/, strict: REVIEW_HEADING, what: "a review heading" },
-      { prefix: /^### F/, strict: FINDING_HEADING, what: "a finding heading" }
+      { prefix: /^## Review\b/, strict: REVIEW_HEADING, what: "a review heading" },
+      { prefix: /^### F\d\b/, strict: FINDING_HEADING, what: "a finding heading" }
     ],
     claimed
   );
