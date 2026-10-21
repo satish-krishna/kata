@@ -1,5 +1,5 @@
 import { PART2_SPEC } from '../../testing/fixtures/part2-spec';
-import { requirements } from './spec-doc';
+import { requirements, splitStep } from './spec-doc';
 
 // The start of the real Part 2 spec's gherkin block: R1.1 is a plain scenario, R1.4 and R1.5 are outlines.
 const EXCERPT = [
@@ -131,5 +131,12 @@ describe('requirements', () => {
     expect(last.outline).toBe(true);
     expect(last.examples).toHaveLength(4);
     expect(last.examples![0]).toEqual(['situation', 'what']);
+  });
+});
+
+describe('splitStep', () => {
+  it('splits a step into its keyword and the rest', () => {
+    expect(splitStep('Given a claim with 10 photos')).toEqual(['Given', 'a claim with 10 photos']);
+    expect(splitStep('And it stays')).toEqual(['And', 'it stays']);
   });
 });

@@ -1,5 +1,5 @@
 import type { TaskStatus } from '@bindings/TaskStatus';
-import { neededBy, taskFields, taskRecord } from './plan-doc';
+import { linkRequirements, neededBy, taskBody, taskFields, taskRecord } from './plan-doc';
 
 // T33 of the real Part 2 plan, shortened: a nested Change bullet, backticks and requirement ids.
 const T33 = [
@@ -85,5 +85,22 @@ describe('taskRecord', () => {
   it('reads a row with a departure as differing from the plan, carrying the departure text', () => {
     const row = { task: 'T1', repo: 'kata', commits: ['abc1234'], departure: 'Used a Map, not an array.' };
     expect(taskRecord(task('T1', [], row))).toEqual({ kind: 'differs', label: 'Differs from plan', text: 'Used a Map, not an array.' });
+  });
+});
+
+describe('taskBody', () => {
+  it('is the task text without its heading line, trimmed', () => {
+    expect(taskBody('### T4: Notes (`app`)\n\nJust do it.\n\nTwice.\n')).toBe('Just do it.\n\nTwice.');
+    expect(taskBody('### T4: Notes (`app`)')).toBe('');
+  });
+});
+
+describe('linkRequirements', () => {
+  it('turns requirement and scenario ids into links to #req-<id>', () => {
+    expect(linkRequirements('covers R7.7 and supports R10')).toBe('covers [R7.7](#req-R7.7) and supports [R10](#req-R10)');
+  });
+
+  it('leaves code spans, fenced code and longer words alone', () => {
+    expect(linkRequirements('`R7` is code, so is\n```\nR8\n```\nand AR9 or R9x are words')).toBe('`R7` is code, so is\n```\nR8\n```\nand AR9 or R9x are words');
   });
 });
