@@ -1,6 +1,6 @@
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { RunRecord } from '@bindings/RunRecord';
-import { docStatus, recentRuns, runTime, usedBy } from './doc-rail';
+import { docStatus, recentRuns, runResultLabel, runTime, usedBy } from './doc-rail';
 
 const secs = (y: number, mo: number, d: number, h: number, mi: number) => Math.floor(new Date(y, mo, d, h, mi).getTime() / 1000);
 const record = (id: string, started_at: number, exit?: number | null): RunRecord => ({ id, kata: 'sdlc-claims-c1-intent', started_at, isolation: 'none', exit });
@@ -45,7 +45,7 @@ describe('recentRuns', () => {
     const got = recentRuns(runs, 'Intent');
     expect(got.total).toBe(5);
     expect(got.rows.map((r) => r.id)).toEqual(['r5', 'r4', 'r3']);
-    expect(got.rows[0]).toEqual({ id: 'r5', kind: 'Intent', time: 'Oct 20 10:05', tone: 'success' });
+    expect(got.rows[0]).toEqual({ id: 'r5', kind: 'Intent', time: 'Oct 20 10:05', tone: 'success', exit: 0 });
   });
 
   it('marks a run that exited nonzero as an error and one with no exit recorded as idle', () => {
@@ -56,6 +56,24 @@ describe('recentRuns', () => {
 
   it('is empty when there are no runs', () => {
     expect(recentRuns([], 'Plan')).toEqual({ rows: [], total: 0 });
+  });
+});
+
+describe('runResultLabel', () => {
+  it.each([
+    [0, 'Succeeded'],
+    [1, 'Failed'],
+    [101, 'Failed'],
+    [130, 'Cancelled'],
+    [null, 'No result'],
+    [undefined, 'No result'],
+  ] as const)('words exit %s as %s', (exit, label) => {
+    expect(runResultLabel(exit)).toBe(label);
+  });
+
+  it('carries the exit code on each rail row, so the row can be worded from it', () => {
+    const got = recentRuns([record('a', 1, 130), record('b', 2), record('c', 3, 0)], 'Plan');
+    expect(got.rows.map((r) => [r.id, r.exit])).toEqual([['a', 130], ['b', null], ['c', 0]]);
   });
 });
 

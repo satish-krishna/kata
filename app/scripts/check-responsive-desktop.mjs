@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertResponsive } from '../harness/gate/check-responsive.mjs';
 import { launchChromium, serveStatic } from '../harness/playwright/serve-and-visit.mjs';
-import { CHANGE_ROUTES, checkChangeToolbar } from './check-change-toolbar.mjs';
+import { CHANGE_ROUTES, checkChangeToolbar, checkStripHeight } from './check-change-toolbar.mjs';
 import { formatCorrectiveMessage } from '../harness/gate/responsive-guidance.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -37,6 +37,16 @@ try {
         const fails = await checkChangeToolbar(browser, srv.origin, spec, width);
         if (fails.length) {
           process.stderr.write(`${fails.map((f) => `route "/${spec.route}": ${f}`).join('\n')}\n`);
+          failed = true;
+        }
+      }
+    }
+    // A finished change has no stage actions and its plan has a view toggle: the two ends of what the strip can hold.
+    for (const route of ['sdlc/claims/2026-10-18-photo-limits-shipped', 'sdlc/claims/2026-10-19-build-demo']) {
+      for (const width of BREAKPOINTS) {
+        const fails = await checkStripHeight(browser, srv.origin, route, width);
+        if (fails.length) {
+          process.stderr.write(`route "/${route}": ${fails.join('\n')}\n`);
           failed = true;
         }
       }

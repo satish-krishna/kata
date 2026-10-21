@@ -8,6 +8,7 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { diagrams } from '../../lib/mermaid';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
+import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
@@ -158,6 +159,56 @@ describe('ChangePage layout', () => {
     expect(banner.nextElementSibling!.tagName).toBe('APP-DOC-LAYOUT');
   });
 
+  describe('the Build tab strip', () => {
+    beforeEach(() => {
+      vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
+    });
+    afterEach(() => vi.restoreAllMocks());
+    const openBuild = async () => {
+      const out = await mount(MOCK_BUILD_CHANGE);
+      pill(out.container, 'Build').click();
+      await settle();
+      return out;
+    };
+
+    it('has exactly one strip: the Changes view strip, with the facts and the stage actions at its right end', async () => {
+      const { container } = await openBuild();
+      expect(container.querySelector('[data-testid="strip"]')).toBeNull();
+      const strips = container.querySelectorAll('[data-testid="strip"], [data-testid="changes-strip"]');
+      expect(strips.length).toBe(1);
+      const strip = strips[0];
+      expect(strip.getAttribute('data-testid')).toBe('changes-strip');
+      expect(text(strip.querySelector('[data-testid="build-facts"]')!)).toMatch(/^\d+\/\d+ tasks( · \d+ build runs?)?$/);
+      expect(text(strip.querySelector('[data-testid="build-facts"]')!)).not.toMatch(/repositor/);
+      expect(Array.from(strip.querySelectorAll('button')).map(text)).toContain('Start build');
+      expect(strip.querySelector('[data-testid="changes-readonly"]')).not.toBeNull();
+    });
+
+    it('puts the facts and the actions after the read-only line, and keeps the actions disabled while a task holds the page', async () => {
+      const { container, fixture } = await openBuild();
+      const strip = container.querySelector('[data-testid="changes-strip"]')!;
+      const note = strip.querySelector('[data-testid="changes-readonly"]')!;
+      const facts = strip.querySelector('[data-testid="build-facts"]')!;
+      expect(note.compareDocumentPosition(facts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      const start = () => Array.from(strip.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === 'Start build')!;
+      expect(start().disabled).toBe(false);
+      void fixture.debugElement.injector.get(LockStore).runSteps('Working', [{ label: 'wait', run: () => new Promise<string | null>(() => undefined) }]);
+      await settle();
+      expect(start().disabled).toBe(true);
+    });
+
+    it('leaves the live build view Changes tab with no facts and no actions', async () => {
+      const { container, fixture } = await mount(MOCK_BUILD_CHANGE);
+      const vm = fixture.debugElement.injector.get(ChangePageViewModel);
+      await vm.submitBuild({ timeoutSecs: 5400, instructions: null, repo: null });
+      await settle();
+      const strip = container.querySelector('app-build-view [data-testid="changes-strip"]')!;
+      expect(strip).not.toBeNull();
+      expect(strip.querySelector('[data-testid="build-facts"]')).toBeNull();
+      expect(Array.from(strip.querySelectorAll('button')).map(text)).toEqual([...Array.from(strip.querySelectorAll('[role="radio"]')).map(text), 'By type']);
+    });
+  });
+
   describe('after the pull requests', () => {
     const finished = async () => {
       const transport = new MockTransport();
@@ -175,6 +226,16 @@ describe('ChangePage layout', () => {
       expect(links.length).toBe(3);
       expect(links.map(text).every((t) => /^[a-z-]+ #\d+$/.test(t))).toBe(true);
       expect(links.every((a) => a.target === '_blank' && a.rel.includes('noopener') && a.href.startsWith('https://'))).toBe(true);
+    });
+
+    it('splits each pull request link into a repository name that can truncate and a number that never does', async () => {
+      const { container } = await mount(MOCK_BUILD_CHANGE, await finished());
+      const links = Array.from(container.querySelectorAll<HTMLAnchorElement>('header a'));
+      expect(links.length).toBe(3);
+      for (const a of links) {
+        expect(text(a.querySelector('.k-prlinks__repo')!)).toMatch(/^[a-z-]+$/);
+        expect(text(a.querySelector('.k-prlinks__num')!)).toMatch(/^#\d+$/);
+      }
     });
 
     it('drops the pills and the pull request links while a build is live', async () => {

@@ -88,7 +88,8 @@ try {
           const left = rect('.k-changes__left');
           const main = rect('.k-changes__main');
           const diff = document.querySelector('.monaco-diff-editor');
-          return { listAbove: left && main ? left.bottom <= main.top + 1 : null, listBeside: left && main ? left.right <= main.left + 1 : null, sideBySide: !!diff?.classList.contains('side-by-side') };
+          const aside = document.querySelector('aside.k-changes__left');
+          return { listScroll: aside ? aside.scrollWidth - aside.clientWidth : null, listAbove: left && main ? left.bottom <= main.top + 1 : null, listBeside: left && main ? left.right <= main.left + 1 : null, sideBySide: !!diff?.classList.contains('side-by-side') };
         }),
       (s) => (width < MD ? s.listAbove === true && !s.sideBySide : s.listBeside === true),
       `layout at ${width}`,
@@ -96,8 +97,9 @@ try {
     const scroll = await noHorizontalScroll(page);
     check(scroll.scrollWidth <= scroll.clientWidth && scroll.body <= scroll.clientWidth, `${width}px: no horizontal page scroll (${scroll.scrollWidth} of ${scroll.clientWidth})`);
     if (state.error) check(false, state.error);
-    else if (width < MD) check(true, `${width}px: the list is above the diff and the editor is inline`);
-    else check(true, `${width}px: the list sits beside the diff`);
+    else check(state.listScroll !== null && state.listScroll <= 0, `${width}px: the file list does not scroll sideways (scrollWidth - clientWidth = ${state.listScroll})`);
+    if (!state.error && width < MD) check(true, `${width}px: the list is above the diff and the editor is inline`);
+    else if (!state.error) check(true, `${width}px: the list sits beside the diff`);
   }
 
   check(errors.length === 0, `no page error, console error or failed request${errors.length ? `: ${errors.join(' | ')}` : ''}`);
@@ -141,7 +143,9 @@ try {
           border: frame.flatMap((el) => sides.map((s) => parseFloat(getComputedStyle(el)['border' + s + 'Width']))),
           frameDepth: frame.length,
           rootLeft: root.getBoundingClientRect().left,
-          stripLeft: box('[data-testid="strip"]')?.left,
+          stripLeft: box('app-sdlc-toolbar header')?.left,
+          strips: document.querySelectorAll('[data-testid="strip"], [data-testid="changes-strip"]').length,
+          listScroll: document.querySelector('aside.k-changes__left').scrollWidth - document.querySelector('aside.k-changes__left').clientWidth,
           fileH: file.height,
           repos: [...document.querySelectorAll('[data-repo]')].map((r) => ({ h: r.getBoundingClientRect().height, wraps: wraps(r) })),
         };
@@ -151,6 +155,8 @@ try {
       check(Math.abs(m.viewportH - m.editorBottom) <= 4, `${width}x900: the diff editor reaches the bottom of the window (editor bottom ${m.editorBottom} of ${m.viewportH})`);
       check(m.padding.every((p) => p === 0) && m.border.every((b) => b === 0), `${width}x900: the Changes view has no padding or border (${m.frameDepth} boxes; padding ${m.padding}, border ${m.border})`);
       check(Math.abs(m.rootLeft - m.stripLeft) <= 1, `${width}x900: the Changes view lines up with the tab strip (${m.rootLeft} / ${m.stripLeft})`);
+      check(m.listScroll <= 0, `${width}x900: the file list does not scroll sideways (scrollWidth - clientWidth = ${m.listScroll})`);
+      check(m.strips === 1, `${width}x900: the Build tab has exactly one strip (${m.strips})`);
       check(m.repos.length > 0 && m.repos.every((r) => r.h <= m.fileH * 1.5), `${width}x900: every repository header is at most 1.5 file rows tall (file row ${m.fileH}; headers ${m.repos.map((r) => r.h)})`);
       check(m.repos.every((r) => !r.wraps), `${width}x900: no repository header wraps its branch (${m.repos.map((r) => r.wraps)})`);
     }

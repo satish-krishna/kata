@@ -123,6 +123,23 @@ describe('ChangePageViewModel', () => {
     expect(toastText()).toContain('Could not read intent.md: permission denied');
   });
 
+  it('keeps the old tab and its document until the picked one has been read, then switches both together', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(FNOL, transport);
+    await ready(vm);
+    const old = vm.doc();
+    let release!: (text: string) => void;
+    vi.spyOn(transport, 'sdlcReadDoc').mockReturnValue(new Promise<string>((r) => (release = r)));
+    const picking = vm.showDoc('intent');
+    expect(vm.shownDoc()).toBe('spec');
+    expect(vm.docName()).toBe('spec.md');
+    expect(vm.doc()).toBe(old);
+    release('# the intent text');
+    await picking;
+    expect(vm.shownDoc()).toBe('intent');
+    expect(vm.doc()).toBe('# the intent text');
+  });
+
   it('ignores a pick for a document that does not exist yet', async () => {
     const transport = new MockTransport();
     const { vm } = setup(FNOL, transport);
@@ -654,11 +671,11 @@ describe('ChangePageViewModel', () => {
       const { vm } = setup(BUILD, transport);
       await ready(vm);
       await vm.showDoc('build');
-      expect(vm.buildFacts()).toBe('2/3 tasks · 2 repositories · 2 build runs');
+      expect(vm.buildFacts()).toBe('2/3 tasks · 2 build runs');
       expect(vm.stripStatus()).toBeNull();
     });
 
-    it('says the singular for one repository and one build run', async () => {
+    it('says the singular for one build run, and leaves the repository count out', async () => {
       const transport = new MockTransport();
       vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, sys, name) => {
         const real = await MockTransport.prototype.sdlcBuildStatus.call(transport, m, sys, name);
@@ -669,7 +686,7 @@ describe('ChangePageViewModel', () => {
       const { vm } = setup(BUILD, transport);
       await ready(vm);
       await vm.showDoc('build');
-      expect(vm.buildFacts()).toBe('0/3 tasks · 1 repository · 1 build run');
+      expect(vm.buildFacts()).toBe('0/3 tasks · 1 build run');
     });
 
     it('says only what it has: no tasks yet, no runs yet', async () => {
@@ -699,6 +716,15 @@ describe('ChangePageViewModel', () => {
       await vm.showDoc('build');
       expect(vm.actions()).toEqual([]);
       expect(vm.buildFacts()).toBeNull();
+      expect(vm.stripShown()).toBe(false);
+    });
+
+    it('draws no page strip on the Build tab at all: its facts and actions sit in the Changes view strip', async () => {
+      const { vm } = setup(BUILD);
+      await ready(vm);
+      await vm.showDoc('build');
+      expect(vm.buildFacts()).not.toBeNull();
+      expect(vm.actions().length).toBeGreaterThan(0);
       expect(vm.stripShown()).toBe(false);
     });
 

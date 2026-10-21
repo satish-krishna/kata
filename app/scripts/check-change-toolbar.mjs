@@ -58,6 +58,14 @@ function measure() {
     crumbLines: crumb ? lines(crumb) : 0,
     crumbTitle: crumb ? crumb.getAttribute('title') : null,
     crumbText: crumb ? crumb.textContent.trim() : null,
+    linkNumbers: links.map((a) => {
+      const num = a.querySelector('.k-prlinks__num');
+      if (!num) return { text: a.textContent.trim(), visible: false };
+      const n = num.getBoundingClientRect();
+      const box = a.getBoundingClientRect();
+      return { text: num.textContent.trim(), visible: n.width > 0 && n.left >= box.left - 0.5 && n.right <= box.right + 0.5 && n.right <= head.right + 0.5 };
+    }),
+    crumbClipped: crumb ? crumb.scrollWidth - crumb.clientWidth : 0,
     linkTitles: links.map((a) => ({ title: a.getAttribute('title'), text: a.textContent.trim() })),
   };
 }
@@ -91,7 +99,32 @@ export async function checkChangeToolbar(browser, origin, { route, name, pills, 
     if (m.badgeLines !== 1) fails.push(`${at}: the mode badge is on ${m.badgeLines} lines, not one`);
     if (m.crumbLines !== 1) fails.push(`${at}: the change name is on ${m.crumbLines} lines, not one`);
     if (m.crumbTitle !== m.crumbText) fails.push(`${at}: the change name's title is ${JSON.stringify(m.crumbTitle)}, not its full text ${JSON.stringify(m.crumbText)}`);
+    for (const l of m.linkNumbers) if (!l.visible) fails.push(`${at}: the pull request number "${l.text}" is clipped or missing`);
+    if (links === 0 && m.crumbClipped > 0) fails.push(`${at}: the change name is truncated (${m.crumbClipped}px of it is cut off)`);
     for (const l of m.linkTitles) if (l.title !== l.text) fails.push(`${at}: the pull request link "${l.text}" has title ${JSON.stringify(l.title)}, not its full text`);
+  } finally {
+    await context.close();
+  }
+  return fails;
+}
+
+/** The strip under the toolbar keeps one height from tab to tab, so the page below it does not jump. */
+export async function checkStripHeight(browser, origin, route, width) {
+  const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1 });
+  const page = await context.newPage();
+  const fails = [];
+  try {
+    await page.goto(`${origin}/${route}`, { waitUntil: 'networkidle' });
+    const heights = {};
+    for (const tab of ['Intent', 'Spec', 'Plan']) {
+      await page.locator('app-sdlc-toolbar header [role="tab"]', { hasText: tab }).first().click();
+      await page.waitForFunction((t) => document.querySelector('app-sdlc-toolbar header [role="tab"][aria-selected="true"]')?.textContent.trim().startsWith(t), tab, { timeout: 5000 });
+      await page.waitForTimeout(150);
+      heights[tab] = await page.evaluate(() => document.querySelector('[data-testid="strip"]')?.getBoundingClientRect().height ?? null);
+    }
+    const values = Object.values(heights);
+    if (values.some((h) => h === null)) fails.push(`strip heights at ${width}: a tab has no strip (${JSON.stringify(heights)})`);
+    else if (new Set(values.map((h) => Math.round(h))).size !== 1) fails.push(`the strip changes height between tabs at ${width}: ${JSON.stringify(heights)}`);
   } finally {
     await context.close();
   }
