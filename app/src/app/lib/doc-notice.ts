@@ -14,7 +14,7 @@ export type ReadError = { kind: 'error'; message: string };
 export type DocNotice = {
   tone: 'warning' | 'idle';
   text: string;
-  /** One `line <n>: <message>` for each problem; empty for every other notice. */
+  /** One `line <n>: <message>` for each problem, led by its file when the problems span several documents; empty for every other notice. */
   lines: string[];
 };
 
@@ -37,7 +37,11 @@ function unusable(readiness: Readiness): Shown | null {
 function judge(accepted: readonly number[], parts: readonly Part[]): DocNotice | null {
   if (parts.some((p) => p.layout !== null && !accepted.includes(p.layout))) return warning('This document needs a newer Workbench');
   // Problems come before the older-layout label: a label must never hide them.
-  const lines = parts.flatMap((p) => p.problems.map((problem) => `line ${problem.line}: ${problem.message}`));
+  // Two problems on line 5 of different documents must not read as the same place, so the file is named
+  // whenever the problems come from more than one document.
+  const found = parts.flatMap((p) => p.problems);
+  const several = new Set(found.map((problem) => problem.file)).size > 1;
+  const lines = found.map((problem) => `${several ? `${problem.file} ` : ''}line ${problem.line}: ${problem.message}`);
   if (lines.length > 0) return warning('This document does not follow the layout', lines);
   if (parts.some((p) => p.layout === 1)) return { tone: 'idle', text: 'Older layout', lines: [] };
   return null;
@@ -53,7 +57,7 @@ function judge(accepted: readonly number[], parts: readonly Part[]): DocNotice |
  * | too old | any | any | any | plain text; update notice |
  * | ready | could not read | n/a | n/a | plain text; the program's message |
  * | ready | read | not accepted | any | what was read; needs a newer Workbench |
- * | ready | read | accepted | some | what was read; each problem as `line <n>: <message>` |
+ * | ready | read | accepted | some | what was read; each problem as `line <n>: <message>`, led by its file when they span several documents |
  * | ready | read | 1 | none | what was read; "Older layout" |
  * | ready | read | 2 or later, accepted | none | what was read; no notice |
  */
