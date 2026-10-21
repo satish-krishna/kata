@@ -137,3 +137,82 @@ export async function checkStripHeight(browser, origin, route, width) {
   }
   return fails;
 }
+
+/** The Build tab strip of a build-ready change and of a finished one with the pull request note: the widest sets of actions the strip carries. */
+export const STRIP_STATES = [
+  { route: 'sdlc/claims/2026-10-19-build-demo', name: 'a build-ready change' },
+  { route: 'sdlc/claims/2026-10-18-photo-limits-shipped?demo=pr-fail', name: 'a finished build with three actions and the pull request note', note: true },
+];
+
+/** Nothing in the Build tab strip is ever cut off: every control sits inside the strip, the strip inside the window, and from 1280 up the strip is one row. */
+export async function checkBuildStrip(browser, origin, { route, name, note = false }, width) {
+  const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1 });
+  const page = await context.newPage();
+  const fails = [];
+  const at = `${name} at ${width}`;
+  try {
+    await page.goto(`${origin}/${route}`, { waitUntil: 'networkidle' });
+    await page.locator('app-sdlc-toolbar header [role="tab"]', { hasText: 'Build' }).first().click();
+    await page.locator('[data-testid="changes-strip"]').waitFor({ timeout: 5000 });
+    if (note) await page.locator('[data-testid="changes-strip"] [data-testid="pr-note"]').waitFor({ timeout: 5000 });
+    await page.waitForTimeout(300);
+    const m = await page.evaluate(() => {
+      const strip = document.querySelector('[data-testid="changes-strip"]');
+      const s = strip.getBoundingClientRect();
+      const items = [...strip.querySelectorAll('button, [role="radio"], .k-changes__stat, .k-strip__file, [data-testid="pr-note"]')].filter((e) => e.getBoundingClientRect().width > 0);
+      const outside = items
+        .filter((e) => {
+          const r = e.getBoundingClientRect();
+          return r.left < s.left - 1 || r.right > s.right + 1 || r.top < s.top - 1 || r.bottom > s.bottom + 1;
+        })
+        .map((e) => (e.textContent.trim() || e.getAttribute('aria-label') || e.className).slice(0, 30));
+      const mids = items.map((e) => {
+        const r = e.getBoundingClientRect();
+        return r.top + r.height / 2;
+      });
+      return {
+        outside,
+        count: items.length,
+        buttons: [...strip.querySelectorAll('button')].map((b) => b.textContent.trim()).filter(Boolean),
+        stripInside: s.left >= -1 && s.right <= window.innerWidth + 1,
+        spread: Math.max(...mids) - Math.min(...mids),
+        scroll: strip.scrollWidth - strip.clientWidth,
+      };
+    });
+    if (m.count === 0) fails.push(`${at}: the strip has no controls`);
+    if (note && m.buttons.length < 3) fails.push(`${at}: expected the three stage actions, found ${JSON.stringify(m.buttons)}`);
+    if (m.outside.length) fails.push(`${at}: controls cut off by the strip: ${JSON.stringify(m.outside)}`);
+    if (!m.stripInside) fails.push(`${at}: the strip runs past the window`);
+    if (m.scroll > 0) fails.push(`${at}: the strip is ${m.scroll}px wider than its box`);
+    if (width >= 1280 && m.spread > 4) fails.push(`${at}: the strip is not one row (centers ${Math.round(m.spread)}px apart)`);
+  } finally {
+    await context.close();
+  }
+  return fails;
+}
+
+/** A long repository name in the pull request popover wraps inside it and the number stays whole. The name is set on the rendered link, so no fixture is needed. */
+export async function checkPrPopover(browser, origin, width) {
+  const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1 });
+  const page = await context.newPage();
+  const fails = [];
+  try {
+    await page.goto(`${origin}/sdlc/claims/2026-10-18-photo-limits-shipped`, { waitUntil: 'networkidle' });
+    await page.locator('[data-testid="pr-menu"]').click();
+    await page.locator('[data-testid="pr-list"] a').first().waitFor();
+    const m = await page.evaluate(() => {
+      const a = document.querySelector('[data-testid="pr-list"] a');
+      const [name, num] = a.children;
+      name.textContent = 'claims-adjuster-reassignment-service';
+      num.textContent = '#1234';
+      const box = document.querySelector('[data-testid="pr-list"]').getBoundingClientRect();
+      const out = [...a.children].filter((s) => s.getBoundingClientRect().right > box.right + 0.5).map((s) => s.textContent);
+      return { out, numWhole: num.getClientRects().length === 1 };
+    });
+    if (m.out.length) fails.push(`pull request popover at ${width}: ${JSON.stringify(m.out)} runs out of the popover`);
+    if (!m.numWhole) fails.push(`pull request popover at ${width}: the number is split across lines`);
+  } finally {
+    await context.close();
+  }
+  return fails;
+}

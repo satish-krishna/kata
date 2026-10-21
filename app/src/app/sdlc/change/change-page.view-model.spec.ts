@@ -177,6 +177,23 @@ describe('ChangePageViewModel', () => {
     expect(vm.doc()).toBe(old);
   });
 
+  it('lets a click back on the Build tab cancel a pick still reading', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    await ready(vm);
+    await vm.showDoc('build');
+    expect(vm.shownDoc()).toBe('build');
+    let release!: (text: string) => void;
+    vi.spyOn(transport, 'sdlcReadDoc').mockReturnValue(new Promise<string>((r) => (release = r)));
+    const picking = vm.showDoc('intent');
+    expect(vm.pendingDoc()).toBe('intent');
+    await vm.showDoc('build');
+    expect(vm.pendingDoc()).toBeNull();
+    release('# the intent text');
+    await picking;
+    expect(vm.shownDoc()).toBe('build');
+  });
+
   it('ignores a pick for a document that does not exist yet', async () => {
     const transport = new MockTransport();
     const { vm } = setup(FNOL, transport);

@@ -273,6 +273,29 @@ describe('ChangePage layout', () => {
       expect(container.querySelector('[role="tabpanel"]:not([hidden]) app-doc-layout')).not.toBeNull();
     });
 
+    it('keeps the Build pill and the Build panel together when a click back on Build outruns a read for another tab', async () => {
+      vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
+      const transport = new MockTransport();
+      const { container } = await mount(MOCK_BUILD_CHANGE, transport);
+      pill(container, 'Build').click();
+      await settle();
+      expect(selected(container)).toEqual(['Build']);
+      let release!: (text: string) => void;
+      vi.spyOn(transport, 'sdlcReadDoc').mockReturnValue(new Promise<string>((r) => (release = r)));
+      pill(container, 'Intent').click();
+      await settle();
+      expect(selected(container)).toEqual(['Intent']);
+      pill(container, 'Build').click();
+      await settle();
+      release('# the intent text');
+      await settle();
+      expect(selected(container)).toEqual(['Build']);
+      const panel = container.querySelector('[role="tabpanel"]:not([hidden])')!;
+      expect(panel.querySelector('[data-testid="changes-strip"]')).not.toBeNull();
+      expect(panel.querySelector('app-doc-layout')).toBeNull();
+      expect(panel.getAttribute('aria-labelledby')).toBe(pill(container, 'Build').id);
+    });
+
     it('leaves the pills on the new tab once the read succeeds', async () => {
       const { container } = await mount();
       pill(container, 'Intent').click();

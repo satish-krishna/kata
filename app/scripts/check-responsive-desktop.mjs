@@ -3,24 +3,41 @@
 // Builds, serves dist/angular-jig/browser statically, and asserts that neither
 // route scrolls the page horizontally or clips content at either width.
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertResponsive } from '../harness/gate/check-responsive.mjs';
 import { launchChromium, serveStatic } from '../harness/playwright/serve-and-visit.mjs';
-import { CHANGE_ROUTES, checkChangeToolbar, checkStripHeight } from './check-change-toolbar.mjs';
+import { CHANGE_ROUTES, STRIP_STATES, checkBuildStrip, checkChangeToolbar, checkPrPopover, checkStripHeight } from './check-change-toolbar.mjs';
 import { formatCorrectiveMessage } from '../harness/gate/responsive-guidance.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = join(ROOT, 'dist', 'angular-jig', 'browser');
 const BREAKPOINTS = [1280, 1600];
+// The window has a minimum width of 1024, so the change page is measured there too.
+const CHANGE_WIDTHS = [1024, 1280, 1600];
+const STRIP_WIDTHS = [768, 1024, 1280, 1440];
 const ROUTES = [
   { route: '', anchorSelector: 'app-workbench' },
   { route: 'library', anchorSelector: 'app-library' },
 ];
 
+let failed = false;
+// The desktop window opens wide enough for the toolbar and cannot be dragged narrower than the width the toolbar was measured at.
+{
+  const win = JSON.parse(readFileSync(join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8')).app.windows[0];
+  const problems = [];
+  if (!(win.width >= 1280)) problems.push(`width is ${win.width}, not at least 1280`);
+  if (!(win.height >= 800)) problems.push(`height is ${win.height}, not at least 800`);
+  if (win.minWidth !== 1024) problems.push(`minWidth is ${win.minWidth}, not 1024`);
+  if (!(win.minHeight >= 640)) problems.push(`minHeight is ${win.minHeight}, not at least 640`);
+  if (problems.length) {
+    process.stderr.write(`tauri.conf.json window: ${problems.join('; ')}\n`);
+    failed = true;
+  }
+}
 execFileSync('npm run build', { cwd: ROOT, stdio: 'inherit', shell: true });
 const srv = await serveStatic(DIST, { spaFallback: true });
-let failed = false;
 try {
   for (const { route, anchorSelector } of ROUTES) {
     const { failures } = await assertResponsive({ origin: srv.origin, route, breakpoints: BREAKPOINTS, anchorSelector });
@@ -33,7 +50,7 @@ try {
   const browser = await launchChromium();
   try {
     for (const spec of CHANGE_ROUTES) {
-      for (const width of BREAKPOINTS) {
+      for (const width of CHANGE_WIDTHS) {
         const fails = await checkChangeToolbar(browser, srv.origin, spec, width);
         if (fails.length) {
           process.stderr.write(`${fails.map((f) => `route "/${spec.route}": ${f}`).join('\n')}\n`);
@@ -43,12 +60,29 @@ try {
     }
     // A finished change has no stage actions and its plan has a view toggle: the two ends of what the strip can hold.
     for (const route of ['sdlc/claims/2026-10-18-photo-limits-shipped', 'sdlc/claims/2026-10-19-build-demo']) {
-      for (const width of BREAKPOINTS) {
+      for (const width of CHANGE_WIDTHS) {
         const fails = await checkStripHeight(browser, srv.origin, route, width);
         if (fails.length) {
           process.stderr.write(`route "/${route}": ${fails.join('\n')}\n`);
           failed = true;
         }
+      }
+    }
+    // The Build tab strip never cuts a control off, whatever the width.
+    for (const state of STRIP_STATES) {
+      for (const width of STRIP_WIDTHS) {
+        const fails = await checkBuildStrip(browser, srv.origin, state, width);
+        if (fails.length) {
+          process.stderr.write(`route "/${state.route}": ${fails.join('\n')}\n`);
+          failed = true;
+        }
+      }
+    }
+    for (const width of CHANGE_WIDTHS) {
+      const fails = await checkPrPopover(browser, srv.origin, width);
+      if (fails.length) {
+        process.stderr.write(`${fails.join('\n')}\n`);
+        failed = true;
       }
     }
   } finally {
@@ -58,4 +92,4 @@ try {
   await srv.close();
 }
 if (failed) process.exit(1);
-process.stdout.write(`responsive check passed at ${BREAKPOINTS.join(', ')}\n`);
+process.stdout.write(`responsive check passed at ${BREAKPOINTS.join(', ')} (the change page at ${CHANGE_WIDTHS.join(', ')})\n`);
