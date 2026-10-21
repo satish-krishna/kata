@@ -44,6 +44,8 @@ export async function open({ width = 1280, height = 900 } = {}) {
   await page.goto(srv.origin + ROUTE, { waitUntil: 'networkidle' });
   return {
     page,
+    browser,
+    origin: srv.origin,
     errors,
     close: async () => {
       await browser.close();

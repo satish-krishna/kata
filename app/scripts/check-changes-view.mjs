@@ -12,6 +12,9 @@
 //      sits above the diff and the editor is inline.
 //   5. Fit on the change page's Build tab (before a build starts), at 1280 and 1440 wide: the diff editor reaches the bottom of
 //      the window, the view sits flush under the tab strip with no frame of its own, and each repository header is one line.
+//   6. The strip never cuts a control off: for a build-ready change and for a finished build with three actions and the pull request note,
+//      at 768, 1024, 1280 and 1440 every control sits inside the strip and the strip inside the window, and at 1280 and up it is one row.
+import { STRIP_STATES, checkBuildStrip } from './check-change-toolbar.mjs';
 import { MD, WIDTHS, eventually, noHorizontalScroll, open, reporter, startBuild } from './check-build-support.mjs';
 
 const FILE = 'src/limits.rs';
@@ -178,6 +181,20 @@ try {
     }
   } finally {
     await fit.close();
+  }
+}
+// 6. The strip, in the two states that carry the most: build-ready, and finished with three actions and the note.
+{
+  const strip = await open();
+  try {
+    for (const state of STRIP_STATES) {
+      for (const width of [768, 1024, 1280, 1440]) {
+        const fails = await checkBuildStrip(strip.browser, strip.origin, state, width);
+        check(fails.length === 0, `${state.name} at ${width}: nothing in the strip is cut off${fails.length ? `: ${fails.join(' | ')}` : ''}`);
+      }
+    }
+  } finally {
+    await strip.close();
   }
 }
 done();
