@@ -59,7 +59,7 @@ pub fn roots_for_workdir(workdir: Option<&str>) -> DiscoveryRoots {
     }
 }
 
-fn dirs_home() -> PathBuf {
+pub(crate) fn dirs_home() -> PathBuf {
     // Avoid an extra dependency: HOME on unix, USERPROFILE on windows.
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
