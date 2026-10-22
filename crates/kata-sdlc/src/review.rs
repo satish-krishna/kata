@@ -324,4 +324,48 @@ mod tests {
             Err(vec!["notes/stray.md".to_string()])
         );
     }
+
+    #[test]
+    fn a_held_file_the_run_restored_with_git_checkout_is_flagged() {
+        let (_dir, master, since) = started();
+        testutil::write(
+            &master,
+            "plugin/format/check.mjs",
+            "// held work
+",
+        );
+        testutil::write(
+            &master,
+            "notes/stray.md",
+            "left by the build
+",
+        );
+        let before = dirty_now(&master);
+        git::run(&master, &["checkout", "--", "plugin/format/check.mjs"]).unwrap();
+        assert_eq!(
+            verify_run(&master, S, C, &since, &before),
+            Err(vec!["plugin/format/check.mjs".to_string()])
+        );
+    }
+
+    #[test]
+    fn a_held_file_the_run_did_not_touch_is_not_flagged_beside_a_restored_one() {
+        let (_dir, master, since) = started();
+        testutil::write(
+            &master,
+            "plugin/format/check.mjs",
+            "// held work
+",
+        );
+        testutil::write(
+            &master,
+            "notes/stray.md",
+            "left by the build
+",
+        );
+        let before = dirty_now(&master);
+        git::run(&master, &["checkout", "--", "plugin/format/check.mjs"]).unwrap();
+        let got = verify_run(&master, S, C, &since, &before).unwrap_err();
+        assert!(!got.contains(&"notes/stray.md".to_string()));
+    }
 }
