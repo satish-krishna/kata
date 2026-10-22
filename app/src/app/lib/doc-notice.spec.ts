@@ -1,7 +1,7 @@
 import type { Problem } from '@bindings/Problem';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { Readiness } from '@bindings/Readiness';
-import { shownBuild, shownDocument, type DocNotice, type Part, type ReadError, type Shown } from './doc-notice';
+import { shownBuild, shownDocument, shownPart, type DocNotice, type Part, type ReadError, type Shown } from './doc-notice';
 
 /* The owner of "the Workbench never shows less than a document holds without saying so", tested row by row against
  * the table in the plan, written by hand. */
@@ -90,5 +90,15 @@ describe('shownBuild', () => {
 
   it('a plugin that cannot read says so, whatever the parts hold', () => {
     expect(shownBuild([older], { kind: 'missing' }).notice).toEqual(INSTALL);
+  });
+});
+
+describe('shownPart', () => {
+  it('keeps the problems of one document bare, like the Spec and Plan tabs', () => {
+    expect(shownPart({ layout: 2, problems }, ready).notice).toEqual(warn('This document does not follow the layout', lines));
+  });
+
+  it('gives the plugin rows when the plugin is unusable', () => {
+    expect(shownPart({ layout: 2, problems }, { kind: 'missing' }).notice).toEqual(INSTALL);
   });
 });

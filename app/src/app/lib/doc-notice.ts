@@ -14,7 +14,7 @@ export type ReadError = { kind: 'error'; message: string };
 export type DocNotice = {
   tone: 'warning' | 'idle';
   text: string;
-  /** One `line <n>: <message>` for each problem, led by its file when the problems span several documents; empty for every other notice. */
+  /** One `line <n>: <message>` for each problem, led by its file on a notice that spans several documents; empty for every other notice. */
   lines: string[];
 };
 
@@ -34,14 +34,13 @@ function unusable(readiness: Readiness): Shown | null {
 }
 
 /** The rows for what was read, checked top to bottom: a layout not accepted, then problems, then the older-layout label. */
-function judge(accepted: readonly number[], parts: readonly Part[]): DocNotice | null {
+function judge(accepted: readonly number[], parts: readonly Part[], nameFile: boolean): DocNotice | null {
   if (parts.some((p) => p.layout !== null && !accepted.includes(p.layout))) return warning('This document needs a newer Workbench');
   // Problems come before the older-layout label: a label must never hide them.
-  // Two problems on line 5 of different documents must not read as the same place, so the file is named
-  // whenever the problems come from more than one document.
+  // Two problems on line 5 of different documents must not read as the same place, so a notice that spans several
+  // documents (the Build tab, always) names the file of every problem, even when they all come from one.
   const found = parts.flatMap((p) => p.problems);
-  const several = new Set(found.map((problem) => problem.file)).size > 1;
-  const lines = found.map((problem) => `${several ? `${problem.file} ` : ''}line ${problem.line}: ${problem.message}`);
+  const lines = found.map((problem) => `${nameFile ? `${problem.file} ` : ''}line ${problem.line}: ${problem.message}`);
   if (lines.length > 0) return warning('This document does not follow the layout', lines);
   if (parts.some((p) => p.layout === 1)) return { tone: 'idle', text: 'Older layout', lines: [] };
   return null;
@@ -57,7 +56,7 @@ function judge(accepted: readonly number[], parts: readonly Part[]): DocNotice |
  * | too old | any | any | any | plain text; update notice |
  * | ready | could not read | n/a | n/a | plain text; the program's message |
  * | ready | read | not accepted | any | what was read; needs a newer Workbench |
- * | ready | read | accepted | some | what was read; each problem as `line <n>: <message>`, led by its file when they span several documents |
+ * | ready | read | accepted | some | what was read; each problem as `line <n>: <message>`, bare on one document |
  * | ready | read | 1 | none | what was read; "Older layout" |
  * | ready | read | 2 or later, accepted | none | what was read; no notice |
  */
@@ -66,7 +65,7 @@ export function shownDocument(read: ReadResult | ReadError | null, readiness: Re
   if (stop !== null) return stop;
   if (readiness.kind !== 'ready' || read === null) return { show: 'plain', notice: null };
   if (read.kind === 'error') return { show: 'plain', notice: warning(`Could not read this document: ${read.message}`) };
-  return { show: 'parsed', notice: judge(readiness.layouts, [read]) };
+  return { show: 'parsed', notice: judge(readiness.layouts, [read], false) };
 }
 
 /**
@@ -78,7 +77,15 @@ export function shownBuild(parts: readonly Part[], readiness: Readiness): Shown 
   const stop = unusable(readiness);
   if (stop !== null) return stop;
   if (readiness.kind !== 'ready') return { show: 'plain', notice: null };
-  return { show: 'parsed', notice: judge(readiness.layouts, parts) };
+  return { show: 'parsed', notice: judge(readiness.layouts, parts, true) };
+}
+
+/** The notice for one document that is not a spec or a plan (the review): the same rows over one part, problems bare. */
+export function shownPart(part: Part, readiness: Readiness): Shown {
+  const stop = unusable(readiness);
+  if (stop !== null) return stop;
+  if (readiness.kind !== 'ready') return { show: 'plain', notice: null };
+  return { show: 'parsed', notice: judge(readiness.layouts, [part], false) };
 }
 
 /**

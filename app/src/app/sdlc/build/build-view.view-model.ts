@@ -13,7 +13,7 @@ import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import type { AskRecord, PermissionRecord, RunState, RunSummary, StreamEvent } from '../../lib/events';
-import { shownBuild, type DocNotice } from '../../lib/doc-notice';
+import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { reviewFindings, specFor, type BuildRun, type Finding } from '../../lib/sdlc';
 import type { ReplacedFindings } from '../../ui/findings-list';
@@ -790,7 +790,7 @@ export class BuildViewModel {
     } catch {
       readiness = { kind: 'missing' };
     }
-    this.reviewDocNotice.set(shownBuild([{ layout: document.layout, problems: document.problems }], readiness).notice);
+    this.reviewDocNotice.set(shownPart({ layout: document.layout, problems: document.problems }, readiness).notice);
   }
 
   /** A round starts from a finished review: the latest one linked to this change becomes the one the new review replaces. */
