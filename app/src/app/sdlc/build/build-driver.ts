@@ -247,6 +247,10 @@ export class BuildDriver {
       if (end.exit !== 0 || end.error) {
         this.compare = null;
         this.markStopped(REVIEW, REVIEW, stopMessage(end.exit, end.error, run.cancelled));
+      } else {
+        // The review records its findings in a commit of its own in the master. That is not new work to review:
+        // compare later rounds with the heads as the review left them, or every review would start the next.
+        this.compare = await this.deps.heads();
       }
     } else {
       const outcome = await this.judge(key, task, end, run.cancelled, isRound);

@@ -245,6 +245,26 @@ describe('BuildDriver', () => {
     expect(w.driver.phase()).toBe('finished');
   });
 
+  it("the review's own commit in the master does not start another review", async () => {
+    const w = world([{ id: 'T1', repo: 'api' }], ['T1']);
+    w.heads['master'] = 'm1';
+    w.heads['api'] = 'h1';
+    await w.driver.begin(3600);
+    await flush();
+    expect(w.log).toEqual(['review']);
+    // The review records its findings: a docs commit in the master.
+    w.heads['master'] = 'm2';
+    await w.started[0].end([]);
+    expect(w.log).toEqual(['review']);
+    expect(w.driver.phase()).toBe('finished');
+    // A later round that commits nothing is still not reviewed again: the review's commit is the new baseline.
+    await w.driver.begin(3600, { repo: 'api', instructions: 'look around' });
+    await flush();
+    await w.started[1].end([]);
+    expect(w.log).toEqual(['review', 'api']);
+    expect(w.driver.phase()).toBe('finished');
+  });
+
   it('a round with new commits starts a new review', async () => {
     const w = world([{ id: 'T1', repo: 'api' }], ['T1']);
     w.heads['api'] = 'h1';
