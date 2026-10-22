@@ -140,6 +140,8 @@
                   [summary]="r.summary"
                   [asks]="r.asks"
                   [permissions]="r.permissions"
+                  [given]="r.given"
+                  mode="sdlc"
                   [unseenFrom]="r.unseenFrom"
                   (answer)="vm.answer(r.id, $event)"
                   (decide)="vm.decide(r.id, $event)"

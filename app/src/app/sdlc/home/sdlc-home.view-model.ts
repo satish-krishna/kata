@@ -169,6 +169,7 @@ export class SdlcHomeViewModel {
   readonly summary = this.runs.summary;
   readonly asks = this.runs.asks;
   readonly permissions = this.runs.permissions;
+  readonly given = this.runs.given;
 
   private readonly masterDir = computed(() => {
     const w = this.current();

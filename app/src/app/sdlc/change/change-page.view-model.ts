@@ -613,6 +613,7 @@ export class ChangePageViewModel {
   readonly summary = this.runs.summary;
   readonly asks = this.runs.asks;
   readonly permissions = this.runs.permissions;
+  readonly given = this.runs.given;
   readonly leftovers = this.runner.leftovers;
   /** The session view's Close waits for the run's after-run work and for any leftover decision. */
   readonly closeBlocked = computed(() => this.runner.settling() || this.runner.leftovers() !== null);

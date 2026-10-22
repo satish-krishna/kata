@@ -1,11 +1,12 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
+import type { BrnDialogState } from '@spartan-ng/brain/dialog';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { KataLoadFailure } from '@bindings/KataLoadFailure';
 import { KataTransport } from '../core/transport/kata-transport';
 import { LaunchStore } from '../core/launch/launch.store';
 import { ToastStore } from '../core/toast/toast.store';
-import { isStreamEvent, statusForExit, type RunGiven, type RunDetail, type RunRecord, type RunState } from '../lib/events';
+import { givenFrom, isStreamEvent, statusForExit, type RunGiven, type RunDetail, type RunRecord, type RunState } from '../lib/events';
 import { kataViews, withTask } from '../lib/katas';
 import { pairToolEvents } from '../lib/toolcards';
 
@@ -31,6 +32,8 @@ export class LibraryViewModel {
   readonly editing = signal<RunSpec | null>(null);
   private readonly detail = signal<RunDetail | null>(null);
   readonly selRun = signal<string | null>(null);
+  /** Whether the dialog showing what the selected run was given is open. */
+  readonly givenOpen = signal(false);
   readonly selKata = signal<string | null>(null);
 
   readonly kataRows = computed(() => kataViews(this.katas(), this.runs()));
@@ -41,13 +44,26 @@ export class LibraryViewModel {
   });
   /** What the selected run was given, read from its transcript; null when no run is open. */
   readonly given = computed<RunGiven | 'not-recorded' | null>(() => {
-    void this.detail();
-    return null;
+    const d = this.detail();
+    return d ? givenFrom(d.events) : null;
   });
   readonly stream = computed(() => {
     const d = this.detail();
     return d ? pairToolEvents(d.events.filter(isStreamEvent)) : null;
   });
+
+  openGiven(): void {
+    this.givenOpen.set(true);
+  }
+
+  closeGiven(): void {
+    this.givenOpen.set(false);
+  }
+
+  /** Escape and a backdrop click close the overlay from inside. */
+  onGivenState(state: BrnDialogState): void {
+    if (state === 'closed') this.givenOpen.set(false);
+  }
 
   async init(): Promise<void> {
     const [rs, listing] = await Promise.all([this.transport.listRuns(), this.transport.listKatas()]);
@@ -59,6 +75,7 @@ export class LibraryViewModel {
 
   async selectRun(id: string): Promise<void> {
     this.selRun.set(id);
+    this.givenOpen.set(false);
     const r = this.runs().find((x) => x.id === id);
     if (r) this.selKata.set(r.kata);
     const loaded = await this.transport.loadRun(id);

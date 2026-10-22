@@ -44,6 +44,7 @@ export class WorkbenchViewModel {
   readonly summary = this.runs.summary;
   readonly asks = this.runs.asks;
   readonly permissions = this.runs.permissions;
+  readonly given = this.runs.given;
   readonly running = computed(() => this.runState() === 'running' || this.runState() === 'awaiting');
 
   /** The action waiting behind the "Discard unsaved changes?" confirm, or null when it is closed. */

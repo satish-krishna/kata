@@ -92,6 +92,7 @@
             <span><ng-icon name="lucideHash" size="13" />{{ vm.fmtTurns(run.turns) }} turns</span>
             <span><ng-icon name="lucideCoins" size="13" />{{ vm.fmtCost(run.cost_usd) }}</span>
             <span><ng-icon name="lucideCpu" size="13" />{{ vm.fmtMs(run.duration_ms) }}</span>
+            <button hlmBtn variant="ghost" size="sm" type="button" data-given-button (click)="vm.openGiven()">Given</button>
           </div>
           <app-detail-actions
             [kataSaved]="vm.kataSaved()"
@@ -128,6 +129,17 @@
           </div>
         </div>
       </div>
+      <hlm-dialog [state]="vm.givenOpen() ? 'open' : 'closed'" (stateChanged)="vm.onGivenState($event)">
+        <hlm-dialog-content *hlmDialogPortal="let ctx" class="[--dialog-w:56rem]">
+          <h2 hlmDialogTitle>What the run was given</h2>
+          <div class="max-h-[65vh] overflow-y-auto">
+            <app-given-view [given]="vm.given() ?? 'not-recorded'" />
+          </div>
+          <hlm-dialog-footer>
+            <button hlmBtn variant="ghost" size="sm" type="button" (click)="vm.closeGiven()">Close</button>
+          </hlm-dialog-footer>
+        </hlm-dialog-content>
+      </hlm-dialog>
     } @else {
       <div class="wb-detail wb-detail--empty">
         <div class="wb-stream__empty">

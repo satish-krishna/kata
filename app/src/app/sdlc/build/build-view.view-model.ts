@@ -12,7 +12,7 @@ import { RunStore } from '../../core/run/run.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
-import { STATUS_LABEL, type AskRecord, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
+import { STATUS_LABEL, type AskRecord, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { reviewFindings, specFor, type BuildRun, type Finding } from '../../lib/sdlc';
@@ -42,6 +42,7 @@ export type ShownRun = {
   summary: RunSummary | null;
   asks: AskRecord[];
   permissions: PermissionRecord[];
+  given: RunGiven | null;
   /** The index of the first event the engineer has not seen since they came back to this run, or null. */
   unseenFrom: number | null;
   /** True for the newest run of its repository, which always shows in full. */
@@ -231,6 +232,7 @@ export class BuildViewModel {
         summary: snap.summary,
         asks: snap.asks,
         permissions: snap.permissions,
+        given: snap.given,
         unseenFrom: marks[e.id] ?? null,
         latest: false,
         expanded: opened.has(e.id),

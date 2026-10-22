@@ -2,6 +2,7 @@
  * and how rows are grouped and labeled. Pure; no Angular, no I/O. */
 
 import type { Given } from '@bindings/Given';
+import type { GivenItem } from '@bindings/kata-events';
 import type { ItemKind } from '@bindings/ItemKind';
 import type { LockReason } from '@bindings/LockReason';
 import type { Mode } from '@bindings/Mode';
@@ -196,4 +197,19 @@ export function markLabel(mark: PresetMark): string | null {
     case 'build': return "the build's choice";
     case null: return null;
   }
+}
+
+/** The rows a finished or live run recorded, shaped like a preview's so the same list draws both. A row Claude reported
+ *  that Kata did not know has no source, so no group to sit in; the caller shows those apart. */
+export function recordedRows(items: readonly GivenItem[]): PresetRow[] {
+  const rows: PresetRow[] = [];
+  for (const i of items) {
+    if (i.source == null) continue;
+    const item: ResolvedItem = {
+      id: i.id, kind: i.kind, source: i.source, name: i.name, detail: i.detail, path: null,
+      brought_by: i.brought_by ?? null, lock: i.lock ?? null, off: i.off,
+    };
+    rows.push({ item, key: i.id, off: i.off, locked: item.lock, mark: null });
+  }
+  return rows;
 }

@@ -7,6 +7,12 @@
   @if (spec().leash.isolation === 'worktree') {
     <span class="k-badge k-badge--warning"><ng-icon name="lucideGitBranch" size="11" /> worktree</span>
   }
+  @for (w of warnings(); track $index) {
+    <span class="k-status k-status--warning min-w-0" data-given-warning role="status" [attr.title]="w">
+      <span class="k-status__dot"></span><span class="truncate">{{ w }}</span>
+    </span>
+  }
+  <button hlmBtn variant="ghost" size="sm" type="button" class="ml-auto" data-given-button (click)="givenOpen.set(true)">Given</button>
 </div>
 
 <div hlmMessageScrollerProvider [autoScroll]="true">
@@ -65,3 +71,15 @@
     }
   </div>
 }
+
+<hlm-dialog [state]="givenOpen() ? 'open' : 'closed'" (stateChanged)="onGivenState($event)">
+  <hlm-dialog-content *hlmDialogPortal="let ctx" class="[--dialog-w:56rem]">
+    <h2 hlmDialogTitle>What the run was given</h2>
+    <div class="max-h-[65vh] overflow-y-auto">
+      <app-given-view [given]="given() ?? 'not-recorded'" [mode]="mode()" />
+    </div>
+    <hlm-dialog-footer>
+      <button hlmBtn variant="ghost" size="sm" type="button" (click)="givenOpen.set(false)">Close</button>
+    </hlm-dialog-footer>
+  </hlm-dialog-content>
+</hlm-dialog>
