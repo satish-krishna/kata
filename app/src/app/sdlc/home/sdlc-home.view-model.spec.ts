@@ -536,6 +536,18 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
     expect(noticeOf(vm)?.text).toContain("could not be read");
   });
 
+  it("shows the program's own cause on the change list instead of blaming Node.js (F26)", async () => {
+    const { vm, transport } = setup();
+    const real = transport.sdlcChanges.bind(transport);
+    vi.spyOn(transport, "sdlcChanges").mockImplementation(async (master, system) => {
+      const list = await real(master, system);
+      return list.map((c, i) => (i === 0 ? ({ ...c, stage: "plan-unreadable", plan_unreadable: true, plan_unreadable_reason: "layout 3 is newer than this program reads" } as never) : c));
+    });
+    await vm.init();
+    expect(noticeOf(vm)?.text).toContain("layout 3 is newer than this program reads");
+    expect(noticeOf(vm)?.text).not.toContain("Node.js 20");
+  });
+
   it("shows no notice when every plan was read", async () => {
     const { vm } = setup();
     await vm.init();

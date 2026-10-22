@@ -1,7 +1,7 @@
 import type { Problem } from '@bindings/Problem';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { Readiness } from '@bindings/Readiness';
-import { shownBuild, shownDocument, shownPart, type DocNotice, type Part, type ReadError, type Shown } from './doc-notice';
+import { shownBuild, shownChangeList, shownDocument, shownPart, type DocNotice, type Part, type ReadError, type Shown } from './doc-notice';
 
 /* The owner of "the Workbench never shows less than a document holds without saying so", tested row by row against
  * the table in the plan, written by hand. */
@@ -100,5 +100,40 @@ describe('shownPart', () => {
 
   it('gives the plugin rows when the plugin is unusable', () => {
     expect(shownPart({ layout: 2, problems }, { kind: 'missing' }).notice).toEqual(INSTALL);
+  });
+});
+
+describe('shownChangeList (F26)', () => {
+  // The causes of the unreadable plans, one per plan; null when none came with it. The cast goes once the signature carries them.
+  const list = shownChangeList as unknown as (readiness: Readiness, causes: readonly (string | null)[]) => DocNotice | null;
+  it('shows nothing when no plan is unreadable', () => {
+    expect(list(ready, [])).toBeNull();
+  });
+
+  it('words a newer layout as the program does, never as a missing Node.js', () => {
+    const message = 'the format program could not run: plan.md: layout 3 is newer than this program reads (it reads 1, 2); update the ai-sdlc plugin';
+    const notice = list(ready, [message]);
+    expect(notice).toEqual(shownDocument({ kind: 'error', message }, ready).notice);
+    expect(notice?.text).toContain('layout 3 is newer');
+    expect(notice?.text).not.toContain('Node.js 20');
+  });
+
+  it('words a missing Node.js as the program does', () => {
+    const message = 'Node.js was not found on this machine; ai-sdlc needs Node.js 20 or later';
+    expect(list(ready, [message])?.text).toContain('Node.js was not found');
+  });
+
+  it('names each distinct cause once when several plans fail', () => {
+    const text = list(ready, ['one cause', 'one cause', 'another cause'])?.text ?? '';
+    expect(text.match(/one cause/g)).toHaveLength(1);
+    expect(text).toContain('another cause');
+  });
+
+  it('keeps the plugin rows above any cause', () => {
+    expect(list({ kind: 'missing' }, ['layout 3 is newer'])).toEqual(INSTALL);
+  });
+
+  it('falls back to the plain notice when a plan is unreadable and no cause came with it', () => {
+    expect(list(ready, [null])?.text).toContain('could not be read');
   });
 });
