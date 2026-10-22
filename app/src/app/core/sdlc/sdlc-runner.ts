@@ -408,7 +408,7 @@ export class SdlcRunner {
    * New change: branch off `change/pending-<stamp>`, run the intent skill, then rename or delete the branch
    * once the run is over, whatever its outcome.
    */
-  async newChange(target: ChangeTarget, system: string, idea: string): Promise<void> {
+  async newChange(target: ChangeTarget, system: string, idea: string, _confirm?: (spec: RunSpec) => Promise<RunSpec | null>): Promise<void> {
     const { workspace, master, productRepos } = target;
     if (this.isBusy()) {
       this.toasts.error('Another task is already running.');

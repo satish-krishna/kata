@@ -5,6 +5,7 @@ import type { RunSpec } from '@bindings/RunSpec';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
+import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { actionsFor } from '../../lib/sdlc';
@@ -16,20 +17,27 @@ const FRAUD = '2026-10-16-fraud-flag';
 const REASSIGN = '2026-10-09-adjuster-reassign';
 const toastText = () => toastState.toasts().map((t) => String(t.title)).join(' | ');
 
-function setup(change = FNOL, transport = new MockTransport()) {
+/** `confirm` (the default) lets the preview confirm every run at once, so a test about something else never meets it; `real` leaves it to the test. */
+function setup(change = FNOL, transport = new MockTransport(), preview: 'confirm' | 'real' = 'confirm') {
   const params = new BehaviorSubject(convertToParamMap({ system: 'claims', change }));
   TestBed.configureTestingModule({
     providers: [
       provideRouter([]),
       ChangePageViewModel,
+      RunPreviewViewModel,
       { provide: KataTransport, useValue: transport },
       { provide: ActivatedRoute, useValue: { paramMap: params.asObservable() } },
     ],
   });
   const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
   const runAgent = vi.spyOn(TestBed.inject(LockStore), 'runAgent').mockResolvedValue('success');
-  return { vm: TestBed.inject(ChangePageViewModel), transport, params, navigate, runAgent };
+  const previewVm = TestBed.inject(RunPreviewViewModel);
+  if (preview === 'confirm') vi.spyOn(previewVm, 'open').mockImplementation(async (req) => req.spec);
+  return { vm: TestBed.inject(ChangePageViewModel), transport, params, navigate, runAgent, preview: previewVm };
 }
+/** Wait for the preview to be open with its rows resolved. */
+const previewReady = (preview: RunPreviewViewModel) => vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
+const previewRows = (preview: RunPreviewViewModel) => preview.groups().flatMap((k) => k.groups.flatMap((g) => g.rows.map((r) => r.row)));
 const ready = async (vm: ChangePageViewModel) => {
   await vi.waitFor(() => {
     TestBed.tick();
@@ -385,6 +393,58 @@ describe('ChangePageViewModel', () => {
       expect(specOf(runAgent).name).toBe(`sdlc-claims-${REASSIGN}-spec`);
       expect(specOf(runAgent).task).toContain('already confirmed reopening this accepted spec');
       expect(specOf(runAgent).task).toContain('Operator feedback:\nR2 is wrong: supervisors and team leads can reassign.');
+    });
+
+    it("a plan run's preview starts from the spec run's choices", async () => {
+      const transport = new MockTransport();
+      const { vm, runAgent, preview } = setup(FNOL, transport, 'real');
+      await ready(vm);
+      const writes = [vi.spyOn(transport, 'saveSpec'), vi.spyOn(transport, 'saveKata'), vi.spyOn(transport, 'savePreset'), vi.spyOn(transport, 'sdlcSaveSettings'), vi.spyOn(transport, 'sdlcSaveWorkspaces')];
+      const github = () => previewRows(preview).find((r) => r.item.id === 'personal:tool-server:github')!;
+
+      const specRun = vm.act('continue-spec');
+      await previewReady(preview);
+      expect(github().off).toBe(false);
+      preview.toggle(github().key, true);
+      preview.start();
+      await specRun;
+      expect(runAgent).toHaveBeenCalledTimes(1);
+
+      const planRun = vm.act('start-plan');
+      await previewReady(preview);
+      expect(github().off).toBe(true);
+      expect(github().mark).toBe('kept');
+      preview.cancel();
+      await planRun;
+      expect(runAgent).toHaveBeenCalledTimes(1);
+      for (const write of writes) expect(write).not.toHaveBeenCalled();
+    });
+
+    it('a revisit opens the preview after the feedback dialog', async () => {
+      const { vm, runAgent, preview } = setup(REASSIGN, new MockTransport(), 'real');
+      await ready(vm);
+      await vm.act('reopen-spec');
+      expect(vm.feedbackFor()).toBe('Reopen spec');
+      expect(preview.isOpen()).toBe(false);
+      const run = vm.runWithFeedback('R2 is wrong.');
+      await previewReady(preview);
+      expect(vm.feedbackFor()).toBeNull();
+      expect(runAgent).not.toHaveBeenCalled();
+      preview.start();
+      await run;
+      expect(runAgent).toHaveBeenCalledTimes(1);
+      expect((runAgent.mock.calls[0][1] as RunSpec).task).toContain('Operator feedback:\nR2 is wrong.');
+    });
+
+    it('a cancelled preview starts no run and leaves no lock', async () => {
+      const { vm, runAgent, preview } = setup(FNOL, new MockTransport(), 'real');
+      await ready(vm);
+      const run = vm.act('continue-spec');
+      await previewReady(preview);
+      preview.cancel();
+      await run;
+      expect(runAgent).not.toHaveBeenCalled();
+      expect(TestBed.inject(LockStore).active()).toBeNull();
     });
 
     it('starting a first draft needs no feedback', async () => {
