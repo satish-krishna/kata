@@ -159,38 +159,57 @@ pub fn hook_detail(event: &str, matcher: Option<&str>, command: &str) -> String 
 pub fn hooks(layers: &[SettingsLayer]) -> Vec<ItemFacts> {
     let mut out = Vec::new();
     for layer in layers {
-        let (source, path) = (layer.source, &layer.path);
-        let Some(events) = layer.value.get("hooks").and_then(|h| h.as_object()) else {
+        out.extend(hooks_in(
+            layer.value.get("hooks"),
+            layer.source,
+            &layer.path,
+            None,
+            matches!(layer.source, Source::Project | Source::ProjectLocal),
+        ));
+    }
+    out
+}
+
+/// The hooks of one `hooks` object (a settings file's, or a plugin's
+/// `hooks/hooks.json`), as items of `source` read from `path`.
+pub(crate) fn hooks_in(
+    hooks: Option<&serde_json::Value>,
+    source: Source,
+    path: &std::path::Path,
+    brought_by: Option<&str>,
+    repo_relative: bool,
+) -> Vec<ItemFacts> {
+    let mut out = Vec::new();
+    let Some(events) = hooks.and_then(|h| h.as_object()) else {
+        return out;
+    };
+    for (event, groups) in events {
+        let Some(groups) = groups.as_array() else {
             continue;
         };
-        for (event, groups) in events {
-            let Some(groups) = groups.as_array() else {
+        for group in groups {
+            let matcher = group.get("matcher").and_then(|m| m.as_str());
+            let Some(entries) = group.get("hooks").and_then(|h| h.as_array()) else {
                 continue;
             };
-            for group in groups {
-                let matcher = group.get("matcher").and_then(|m| m.as_str());
-                let Some(entries) = group.get("hooks").and_then(|h| h.as_array()) else {
+            for entry in entries {
+                if entry.get("type").and_then(|t| t.as_str()) != Some("command") {
+                    continue;
+                }
+                let Some(command) = entry.get("command").and_then(|c| c.as_str()) else {
                     continue;
                 };
-                for entry in entries {
-                    if entry.get("type").and_then(|t| t.as_str()) != Some("command") {
-                        continue;
-                    }
-                    let Some(command) = entry.get("command").and_then(|c| c.as_str()) else {
-                        continue;
-                    };
-                    let matcher = matcher.filter(|m| !m.is_empty());
-                    out.push(ItemFacts {
-                        id: item_id(ItemKind::Hook, source, &hook_key(event, matcher, command)),
-                        kind: ItemKind::Hook,
-                        source,
-                        name: format!("{event} {}", matcher.unwrap_or("any")),
-                        detail: hook_detail(event, matcher, command),
-                        path: Some(path.clone()),
-                        brought_by: None,
-                        repo_relative: matches!(source, Source::Project | Source::ProjectLocal),
-                    });
-                }
+                let matcher = matcher.filter(|m| !m.is_empty());
+                out.push(ItemFacts {
+                    id: item_id(ItemKind::Hook, source, &hook_key(event, matcher, command)),
+                    kind: ItemKind::Hook,
+                    source,
+                    name: format!("{event} {}", matcher.unwrap_or("any")),
+                    detail: hook_detail(event, matcher, command),
+                    path: Some(path.to_path_buf()),
+                    brought_by: brought_by.map(String::from),
+                    repo_relative,
+                });
             }
         }
     }

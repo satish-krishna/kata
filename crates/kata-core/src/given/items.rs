@@ -1,12 +1,24 @@
 //! Turns the machine and the run-spec into the items a run would start with.
 //! A tool server is described by its name and kind of connection only; its
 //! command, arguments, URL, headers and environment never leave the file.
+//!
+//! Hooks that live in the settings files are not gathered here; `settings::hooks`
+//! reads them. A plugin's own hooks are gathered here, with the plugin.
 
-use super::{ItemFacts, ResolveRoots, SettingsLayer};
-use crate::spec::RunSpec;
-use std::path::Path;
+use super::settings::{enabled_plugins, hooks_in, output_style};
+use super::{item_id, parse_item_id, ItemFacts, ItemKind, ResolveRoots, SettingsLayer, Source};
+use crate::assemble::resolve;
+use crate::catalog::{
+    discover, discover_skills, installed_records, manifest_description, plugin_manifest,
+    CatalogEntry, DiscoveryRoots, EntryKind, InstalledRecord,
+};
+use crate::spec::{IdentityMode, RunSpec};
+use serde_json::Value;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
-/// Every item except the settings-derived ones is gathered here.
+/// Everything the resolver gathers from files and the run-spec except the hooks
+/// in settings files. The second value lists what could not be read.
 pub fn collect(
     spec: &RunSpec,
     roots: &ResolveRoots,
@@ -19,12 +31,479 @@ pub fn collect(
 /// the filesystem root. Tests use it so a real file above the temp folder never
 /// leaks in.
 pub(crate) fn collect_to(
-    _spec: &RunSpec,
-    _roots: &ResolveRoots,
-    _layers: &[SettingsLayer],
-    _stop_at: Option<&Path>,
+    spec: &RunSpec,
+    roots: &ResolveRoots,
+    layers: &[SettingsLayer],
+    stop_at: Option<&Path>,
 ) -> (Vec<ItemFacts>, Vec<String>) {
-    (Vec::new(), Vec::new())
+    let mut c = Collector {
+        items: Vec::new(),
+        problems: Vec::new(),
+    };
+    let workdir = std::path::absolute(&roots.workdir).unwrap_or_else(|_| roots.workdir.clone());
+    c.skills_on_disk(roots, &workdir);
+    c.installed_plugins(roots, &workdir, layers);
+    c.kit(spec, roots, &workdir);
+    c.instructions(spec, roots, &workdir, layers, stop_at);
+    c.tool_servers(roots, &workdir);
+    c.kata();
+    (c.items, c.problems)
+}
+
+struct Collector {
+    items: Vec<ItemFacts>,
+    problems: Vec<String>,
+}
+
+fn item(kind: ItemKind, source: Source, key: &str, name: &str) -> ItemFacts {
+    ItemFacts {
+        id: item_id(kind, source, key),
+        kind,
+        source,
+        name: name.to_string(),
+        detail: String::new(),
+        path: None,
+        brought_by: None,
+        repo_relative: false,
+    }
+}
+
+/// A path as one comparable string: forward slashes, no trailing slash, no
+/// extended-length prefix, and lowercase on Windows where paths ignore case.
+fn norm(path: &str) -> String {
+    let s = path.replace('\\', "/");
+    let s = s.strip_prefix("//?/").unwrap_or(&s).trim_end_matches('/');
+    if cfg!(windows) {
+        s.to_lowercase()
+    } else {
+        s.to_string()
+    }
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    norm(&a.to_string_lossy()) == norm(&b.to_string_lossy())
+}
+
+/// A path for display and for keys: forward slashes only.
+fn shown(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// The kind of connection a tool server uses, never anything else of it.
+fn connection_kind(cfg: &Value) -> &'static str {
+    match cfg.get("type").and_then(|t| t.as_str()) {
+        Some("stdio") => "stdio",
+        Some("http") => "http",
+        Some("sse") => "sse",
+        _ if cfg.get("command").is_some() => "stdio",
+        _ if cfg.get("url").is_some() => "http",
+        _ => "unknown",
+    }
+}
+
+/// `*.md` files under `dir`, sorted, as paths relative to it.
+fn markdown_files(dir: &Path) -> Vec<PathBuf> {
+    fn walk(base: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(base, &p, out);
+            } else if p.extension().is_some_and(|x| x == "md") {
+                out.push(p.strip_prefix(base).unwrap_or(&p).to_path_buf());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out);
+    out.sort();
+    out
+}
+
+impl Collector {
+    /// A JSON file; absent is fine, unreadable or invalid is a problem.
+    fn read_json(&mut self, path: &Path) -> Option<Value> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(e) => {
+                self.problems
+                    .push(format!("cannot read {}: {e}", path.display()));
+                return None;
+            }
+        };
+        match serde_json::from_str(&text) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                self.problems
+                    .push(format!("{} is not valid JSON: {e}", path.display()));
+                None
+            }
+        }
+    }
+
+    fn skills_in(
+        &mut self,
+        claude_dir: &Path,
+        source: Source,
+        brought_by: Option<(&str, &str)>,
+        repo_relative: bool,
+    ) {
+        let mut found = Vec::new();
+        discover_skills(claude_dir, "", &mut found);
+        found.sort_by(|a, b| a.name.cmp(&b.name));
+        for e in found {
+            self.items
+                .push(skill_item(&e, source, brought_by, repo_relative));
+        }
+    }
+
+    fn servers(
+        &mut self,
+        map: Option<&Value>,
+        source: Source,
+        path: &Path,
+        brought_by: Option<(&str, &str)>,
+        repo_relative: bool,
+    ) {
+        let Some(map) = map.and_then(|m| m.as_object()) else {
+            return;
+        };
+        for (name, cfg) in map {
+            let key = match brought_by {
+                Some((_, pkey)) => format!("{pkey}:{name}"),
+                None => name.clone(),
+            };
+            let mut it = item(ItemKind::ToolServer, source, &key, name);
+            it.detail = connection_kind(cfg).to_string();
+            it.path = Some(path.to_path_buf());
+            it.brought_by = brought_by.map(|(id, _)| id.to_string());
+            it.repo_relative = repo_relative;
+            self.items.push(it);
+        }
+    }
+
+    fn skills_on_disk(&mut self, roots: &ResolveRoots, workdir: &Path) {
+        self.skills_in(&roots.home.join(".claude"), Source::Personal, None, false);
+        self.skills_in(&workdir.join(".claude"), Source::Project, None, true);
+    }
+
+    /// A plugin's skills, hooks and tool servers, each brought by the plugin.
+    fn plugin_parts(&mut self, root: &Path, plugin_id: &str, plugin_key: &str) {
+        let by = Some((plugin_id, plugin_key));
+        self.skills_in(root, Source::Plugin, by, false);
+        let hooks_file = root.join("hooks").join("hooks.json");
+        if let Some(v) = self.read_json(&hooks_file) {
+            // The file is either `{ "hooks": { ... } }` or the events themselves.
+            let events = v.get("hooks").unwrap_or(&v);
+            for mut h in hooks_in(
+                Some(events),
+                Source::Plugin,
+                &hooks_file,
+                Some(plugin_id),
+                false,
+            ) {
+                // Two plugins may run the same command; the plugin keeps them apart.
+                if let Ok(r) = parse_item_id(&h.id) {
+                    let key = format!("{plugin_key}:{}", r.key);
+                    h.id = item_id(ItemKind::Hook, Source::Plugin, &key);
+                }
+                self.items.push(h);
+            }
+        }
+        let mcp_file = root.join(".mcp.json");
+        if let Some(v) = self.read_json(&mcp_file) {
+            // Either `{ "mcpServers": { ... } }` or the servers themselves.
+            let servers = v.get("mcpServers").unwrap_or(&v);
+            self.servers(Some(servers), Source::Plugin, &mcp_file, by, false);
+        }
+    }
+
+    /// Installed and enabled plugins. A project or local install counts only for
+    /// the folder it was installed for.
+    fn installed_plugins(
+        &mut self,
+        roots: &ResolveRoots,
+        workdir: &Path,
+        layers: &[SettingsLayer],
+    ) {
+        let enabled = enabled_plugins(layers);
+        let records = installed_records(&roots.home.join(".claude"));
+        let mut done: Vec<&str> = Vec::new();
+        for rec in &records {
+            if done.contains(&rec.key.as_str())
+                || enabled.get(&rec.key).map(|(on, _)| *on) != Some(true)
+            {
+                continue;
+            }
+            let Some(source) = install_source(rec, workdir) else {
+                continue;
+            };
+            done.push(&rec.key);
+            let Some(manifest) = plugin_manifest(&rec.install_path) else {
+                self.problems.push(format!(
+                    "plugin {} is enabled but {} has no plugin manifest",
+                    rec.key,
+                    rec.install_path.display()
+                ));
+                continue;
+            };
+            let name = rec.key.split('@').next().unwrap_or(&rec.key);
+            let mut it = item(ItemKind::Plugin, source, &rec.key, name);
+            it.detail = manifest_description(&manifest);
+            it.path = Some(rec.install_path.clone());
+            let id = it.id.clone();
+            self.items.push(it);
+            self.plugin_parts(&rec.install_path, &id, &rec.key);
+        }
+    }
+
+    /// The skills and plugins the run-spec picks, resolved one by one so a name
+    /// that is missing is a problem and not the end of the others.
+    fn kit(&mut self, spec: &RunSpec, roots: &ResolveRoots, workdir: &Path) {
+        if spec.skills.is_empty() && spec.plugins.is_empty() {
+            return;
+        }
+        let catalog = discover(&DiscoveryRoots {
+            user_dir: roots.home.join(".claude"),
+            project_dir: workdir.join(".claude"),
+        });
+        let names = spec
+            .skills
+            .iter()
+            .map(|s| (EntryKind::Skill, s))
+            .chain(spec.plugins.keys().map(|p| (EntryKind::Plugin, p)));
+        for (kind, name) in names {
+            let mut one = RunSpec::default();
+            match kind {
+                EntryKind::Skill => one.skills = vec![name.clone()],
+                EntryKind::Plugin => {
+                    one.plugins = BTreeMap::from([(name.clone(), Default::default())])
+                }
+            }
+            let resolved = match resolve(&one, &catalog) {
+                Ok(r) => r,
+                Err(e) => {
+                    self.problems.push(format!("the run-spec's kit: {e}"));
+                    continue;
+                }
+            };
+            for r in resolved {
+                let entry = catalog
+                    .iter()
+                    .find(|e| e.kind == r.kind && e.name == r.name && e.path == r.path);
+                match r.kind {
+                    EntryKind::Skill => {
+                        if let Some(e) = entry {
+                            self.items.push(skill_item(e, Source::RunSpec, None, false));
+                        }
+                    }
+                    EntryKind::Plugin => {
+                        let mut it = item(ItemKind::Plugin, Source::RunSpec, &r.name, &r.name);
+                        it.detail = entry.map(|e| e.description.clone()).unwrap_or_default();
+                        it.path = Some(r.path.clone());
+                        let id = it.id.clone();
+                        self.items.push(it);
+                        self.plugin_parts(&r.path, &id, &r.name);
+                    }
+                }
+            }
+        }
+    }
+
+    fn instruction_file(&mut self, source: Source, key: &str, name: &str, path: PathBuf) {
+        let mut it = item(ItemKind::Instruction, source, key, name);
+        it.path = Some(path);
+        it.repo_relative = matches!(source, Source::Project | Source::ProjectLocal);
+        self.items.push(it);
+    }
+
+    fn instructions(
+        &mut self,
+        spec: &RunSpec,
+        roots: &ResolveRoots,
+        workdir: &Path,
+        layers: &[SettingsLayer],
+        stop_at: Option<&Path>,
+    ) {
+        let home_claude = roots.home.join(".claude");
+        if home_claude.join("CLAUDE.md").is_file() {
+            self.instruction_file(
+                Source::Personal,
+                "CLAUDE.md",
+                "CLAUDE.md",
+                home_claude.join("CLAUDE.md"),
+            );
+        }
+        for rel in markdown_files(&home_claude.join("rules")) {
+            let key = format!(".claude/rules/{}", shown(&rel));
+            self.instruction_file(
+                Source::Personal,
+                &key,
+                &key,
+                home_claude.join("rules").join(&rel),
+            );
+        }
+        // Every CLAUDE.md from the workdir up. Claude Code also reads ones in
+        // folders below the workdir, but only when it opens files there.
+        for dir in workdir.ancestors() {
+            let own = same_dir(dir, workdir);
+            for (rel, nested) in [("CLAUDE.md", false), (".claude/CLAUDE.md", true)] {
+                // `~/.claude/CLAUDE.md` is the personal file, already listed.
+                if nested && same_dir(dir, &roots.home) {
+                    continue;
+                }
+                let path = dir.join(rel);
+                if !path.is_file() {
+                    continue;
+                }
+                if own {
+                    self.instruction_file(Source::Project, rel, rel, path);
+                } else {
+                    let full = shown(&path);
+                    let mut it = item(ItemKind::Instruction, Source::Project, &full, &full);
+                    it.detail = "from a parent folder".to_string();
+                    it.path = Some(path);
+                    self.items.push(it);
+                }
+            }
+            if stop_at.is_some_and(|s| same_dir(dir, s)) {
+                break;
+            }
+        }
+        let rules = workdir.join(".claude").join("rules");
+        for rel in markdown_files(&rules) {
+            let key = format!(".claude/rules/{}", shown(&rel));
+            self.instruction_file(Source::Project, &key, &key, rules.join(&rel));
+        }
+        let local = workdir.join("CLAUDE.local.md");
+        if local.is_file() {
+            self.instruction_file(
+                Source::ProjectLocal,
+                "CLAUDE.local.md",
+                "CLAUDE.local.md",
+                local,
+            );
+        }
+        if let Some((style, source)) = output_style(layers) {
+            let mut it = item(
+                ItemKind::Instruction,
+                source,
+                "output-style",
+                "Output style",
+            );
+            it.detail = style;
+            self.items.push(it);
+        }
+        if spec
+            .identity
+            .system_prompt
+            .as_deref()
+            .is_some_and(|p| !p.trim().is_empty())
+        {
+            let mut it = item(
+                ItemKind::Instruction,
+                Source::RunSpec,
+                "system-prompt",
+                "System prompt",
+            );
+            it.detail = match spec.identity.mode {
+                IdentityMode::Append => "appended",
+                IdentityMode::Replace => "replaces Claude's",
+            }
+            .to_string();
+            self.items.push(it);
+        }
+    }
+
+    fn tool_servers(&mut self, roots: &ResolveRoots, workdir: &Path) {
+        if let Some(v) = self.read_json(&roots.claude_json) {
+            self.servers(
+                v.get("mcpServers"),
+                Source::Personal,
+                &roots.claude_json,
+                None,
+                false,
+            );
+            // Local scope: the entry for this folder. Claude Code writes the key as
+            // an absolute path, with whichever separators and drive-letter case it
+            // saw, so compare them loosely.
+            let want = norm(&workdir.to_string_lossy());
+            let local = v
+                .get("projects")
+                .and_then(|p| p.as_object())
+                .and_then(|p| p.iter().find(|(k, _)| norm(k) == want))
+                .and_then(|(_, p)| p.get("mcpServers"));
+            self.servers(local, Source::ProjectLocal, &roots.claude_json, None, false);
+        }
+        let project = workdir.join(".mcp.json");
+        if let Some(v) = self.read_json(&project) {
+            self.servers(v.get("mcpServers"), Source::Project, &project, None, true);
+        }
+        let managed = roots.managed_settings.with_file_name("managed-mcp.json");
+        if let Some(v) = self.read_json(&managed) {
+            self.servers(
+                v.get("mcpServers"),
+                Source::Organization,
+                &managed,
+                None,
+                false,
+            );
+        }
+    }
+
+    /// What Kata adds to every run.
+    fn kata(&mut self) {
+        let name = crate::ask::MCP_SERVER_NAME;
+        let mut server = item(ItemKind::ToolServer, Source::Kata, name, name);
+        server.detail = "stdio".to_string();
+        self.items.push(server);
+        let mut note = item(
+            ItemKind::Instruction,
+            Source::Kata,
+            "standing-note",
+            "Standing note",
+        );
+        note.detail = crate::run::INTERACTIVE_RETASK.to_string();
+        self.items.push(note);
+    }
+}
+
+fn skill_item(
+    e: &CatalogEntry,
+    source: Source,
+    brought_by: Option<(&str, &str)>,
+    repo_relative: bool,
+) -> ItemFacts {
+    let key = match brought_by {
+        Some((_, pkey)) => format!("{pkey}:{}", e.name),
+        None => e.name.clone(),
+    };
+    let mut it = item(ItemKind::Skill, source, &key, &e.name);
+    it.detail = e.description.clone();
+    it.path = Some(e.path.clone());
+    it.brought_by = brought_by.map(|(id, _)| id.to_string());
+    it.repo_relative = repo_relative;
+    it
+}
+
+/// The source a plugin install counts as, or `None` when it is not for this
+/// folder.
+fn install_source(rec: &InstalledRecord, workdir: &Path) -> Option<Source> {
+    let for_here = || {
+        rec.project_path
+            .as_deref()
+            .is_some_and(|p| norm(p) == norm(&workdir.to_string_lossy()))
+    };
+    match rec.scope.as_str() {
+        "user" => Some(Source::Personal),
+        "project" => for_here().then_some(Source::Project),
+        "local" => for_here().then_some(Source::ProjectLocal),
+        "managed" => Some(Source::Organization),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
