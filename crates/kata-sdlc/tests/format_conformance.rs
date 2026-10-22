@@ -162,7 +162,12 @@ fn the_vendored_copy_matches_the_sibling_checkout() {
     }
     let copy = vendored();
     let mut differences = Vec::new();
-    for entry in ["check.mjs", "schema", "examples"] {
+    for entry in [
+        "check.mjs",
+        "THIRD_PARTY_LICENSES.txt",
+        "schema",
+        "examples",
+    ] {
         compare_trees(&source.join(entry), &copy.join(entry), &mut differences);
     }
     assert!(
