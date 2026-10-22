@@ -21,8 +21,14 @@
       }
       <app-field label="Time limit" hint="Time limit for each repository's run. Time spent waiting for your answers does not count. There is no spending ceiling.">
         <div class="grid grid-cols-2 gap-2">
-          <input hlmInput type="number" aria-label="Hours" [formField]="state().form.hours" />
-          <input hlmInput type="number" aria-label="Minutes" [formField]="state().form.minutes" />
+          <label hlmLabel class="k-duration">
+            <input hlmInput type="number" aria-label="Hours" [formField]="state().form.hours" />
+            hours
+          </label>
+          <label hlmLabel class="k-duration">
+            <input hlmInput type="number" aria-label="Minutes" [formField]="state().form.minutes" />
+            minutes
+          </label>
         </div>
       </app-field>
     </div>

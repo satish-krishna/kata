@@ -248,6 +248,9 @@
 .k-crumbs__item { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--weight-medium) var(--text-base)/1 var(--font-sans); color: var(--text-secondary); }
 .k-branch { flex: none; white-space: nowrap; font: var(--font-code-sm); color: var(--text-secondary); padding: var(--space-1-5) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-inset); }
 .k-branch { display: inline-flex; align-items: center; gap: var(--space-2); }
+/* A duration part of the build dialog's time limit: the number, then its unit in words. */
+.k-duration { color: var(--text-muted); font-weight: var(--weight-regular); }
+.k-duration > input { flex: 1; min-width: 0; }
 .k-branch .k-branch__icon { display: none; }
 .k-wstrigger { display: inline-flex; align-items: center; justify-content: space-between; gap: var(--space-3); width: 16rem; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-inset); color: var(--text-primary); cursor: pointer; }
 .k-wstrigger:hover:not(:disabled) { border-color: var(--border-strong); }
