@@ -89,12 +89,15 @@ export function shownPart(part: Part, readiness: Readiness): Shown {
 }
 
 /**
- * The notice above the change list when some plan could not be read, so its stage is withheld. The plugin rows
- * keep their wording from `shownDocument`; a usable plugin means the program itself could not run or read the plan.
+ * The notice above the change list when some plan could not be read, so its stage is withheld. `causes` holds the
+ * program's own message for each unreadable plan (null when none came with it). The plugin rows keep their wording
+ * from `shownDocument`; with a usable plugin the notice says what the program said, never a guess at Node.js.
  */
-export function shownChangeList(readiness: Readiness, anyUnreadable: boolean): DocNotice | null {
-  if (!anyUnreadable) return null;
+export function shownChangeList(readiness: Readiness, causes: readonly (string | null)[]): DocNotice | null {
+  if (causes.length === 0) return null;
   const stop = unusable(readiness);
   if (stop !== null) return stop.notice;
-  return warning('A plan could not be read, so its stage is not shown. Check that Node.js 20 or later is installed');
+  const messages = [...new Set(causes.filter((c): c is string => c !== null))];
+  if (messages.length === 0) return warning('A plan could not be read, so its stage is not shown');
+  return shownDocument({ kind: 'error', message: messages.join('; ') }, readiness).notice;
 }

@@ -98,6 +98,9 @@ pub struct ChangeInfo {
     /// The plan could not be read, so its tasks and build counts are unknown; the Workbench shows why instead
     /// of a stage that claims the plan is empty.
     pub plan_unreadable: bool,
+    /// Why, in the format program's own words (or that no plugin was found), when `plan_unreadable`; null otherwise.
+    /// The change list words its notice from this, so it never blames Node.js for a layout it does not read.
+    pub plan_unreadable_reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -249,12 +252,24 @@ fn plan_facts(
     master: &Path,
     system: &str,
     change: &str,
-) -> (PlanFacts, BuildCounts) {
+) -> (PlanFacts, BuildCounts, Option<String>) {
     let plan_file = master.join(format!("intent/{system}/{change}/plan.md"));
     let read = plugin.map(|p| crate::format::read(&crate::build::program(p), &plan_file));
-    let (tasks, mut unreadable) = match read {
-        Some(Ok(crate::format::ReadResult::Plan { document, .. })) => (document.tasks, false),
-        _ => (Vec::new(), true),
+    let mut reason = None;
+    let tasks = match read {
+        Some(Ok(crate::format::ReadResult::Plan { document, .. })) => document.tasks,
+        Some(Ok(_)) => {
+            reason = Some("the plan was not read as a plan".to_string());
+            Vec::new()
+        }
+        Some(Err(e)) => {
+            reason = Some(e.to_string());
+            Vec::new()
+        }
+        None => {
+            reason = Some("the ai-sdlc plugin was not found".to_string());
+            Vec::new()
+        }
     };
     let mut repos: Vec<&str> = tasks.iter().map(|t| t.repo.as_str()).collect();
     repos.sort_unstable();
@@ -262,8 +277,14 @@ fn plan_facts(
     let finished = match plugin.map(|p| crate::build::status(p, master, system, change)) {
         Some(Ok(status)) => status.tasks.iter().filter(|t| t.row.is_some()).count() as u32,
         Some(Err(e)) if !crate::build::is_unreadable(&e) => 0,
-        _ => {
-            unreadable = true;
+        other => {
+            // The plan's own reason, when it has one, comes first; a log's comes only if nothing else did.
+            if reason.is_none() {
+                reason = Some(match other {
+                    Some(Err(e)) => e.stderr,
+                    _ => "the build logs could not be read".to_string(),
+                });
+            }
             0
         }
     };
@@ -278,9 +299,9 @@ fn plan_facts(
         has_tasks: !tasks.is_empty(),
         tasks: counts.tasks,
         finished,
-        unreadable,
+        unreadable: reason.is_some(),
     };
-    (facts, counts)
+    (facts, counts, reason)
 }
 
 /// The changes of `system` in the master repo, newest folder name first.
@@ -304,10 +325,10 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
             let intent = doc_state(master, system, &change, "intent.md");
             let spec = doc_state(master, system, &change, "spec.md");
             let plan = doc_state(master, system, &change, "plan.md");
-            let (facts, build) = if plan.exists {
+            let (facts, build, plan_unreadable_reason) = if plan.exists {
                 plan_facts(plugin, master, system, &change)
             } else {
-                (PlanFacts::default(), BuildCounts::default())
+                (PlanFacts::default(), BuildCounts::default(), None)
             };
             let stage = derive_stage(&intent, &spec, &plan, &facts);
             let out_of_date = if plan.exists && stage == Stage::PlanOutOfDate {
@@ -327,6 +348,7 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
                 scope,
                 out_of_date,
                 plan_unreadable: facts.unreadable,
+                plan_unreadable_reason,
             }
         })
         .collect()

@@ -9,4 +9,9 @@ export type ChangeInfo = { system: string, change: string, intent: DocState, spe
  * The plan could not be read, so its tasks and build counts are unknown; the Workbench shows why instead
  * of a stage that claims the plan is empty.
  */
-plan_unreadable: boolean, };
+plan_unreadable: boolean, 
+/**
+ * Why, in the format program's own words (or that no plugin was found), when `plan_unreadable`; null otherwise.
+ * The change list words its notice from this, so it never blames Node.js for a layout it does not read.
+ */
+plan_unreadable_reason: string | null, };

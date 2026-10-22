@@ -91,7 +91,10 @@ export class SdlcHomeViewModel {
   readonly lastRuns = signal<Record<string, number>>({});
   private readonly readiness = signal<Readiness>({ kind: 'missing' });
   /** Above the change list when a plan could not be read; null when every plan was. */
-  readonly listNotice = computed(() => shownChangeList(this.readiness(), this.changes().some((c) => c.plan_unreadable)));
+  readonly listNotice = computed(() => shownChangeList(
+      this.readiness(),
+      this.changes().filter((c) => c.plan_unreadable).map((c) => c.plan_unreadable_reason),
+    ));
   private readonly loaded = signal(false);
   private loadSeq = 0;
 

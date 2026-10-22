@@ -104,8 +104,7 @@ describe('shownPart', () => {
 });
 
 describe('shownChangeList (F26)', () => {
-  // The causes of the unreadable plans, one per plan; null when none came with it. The cast goes once the signature carries them.
-  const list = shownChangeList as unknown as (readiness: Readiness, causes: readonly (string | null)[]) => DocNotice | null;
+  const list = shownChangeList;
   it('shows nothing when no plan is unreadable', () => {
     expect(list(ready, [])).toBeNull();
   });
