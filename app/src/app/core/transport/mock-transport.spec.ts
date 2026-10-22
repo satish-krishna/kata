@@ -4,6 +4,7 @@ import { runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, seedSpe
 import type { KataEvent } from '../../lib/events';
 import { transcriptRunId } from '../../lib/sdlc';
 import type { RunSpec } from '@bindings/RunSpec';
+import type { Resolved } from '@bindings/Resolved';
 import { MOCK_BUILD_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
 
 const total = (steps: { delay: number }[]) => steps.reduce((a, s) => a + s.delay, 0);
@@ -281,9 +282,9 @@ describe('MockTransport previewRun', () => {
 
   it('locks ai-sdlc only when required', async () => {
     const t = new MockTransport();
-    const find = (r: { items: { id: string }[] }) => r.items.find((i) => i.id === 'personal:plugin:ai-sdlc@ai-sdlc') as { lock: { kind: string } | null };
-    expect(find(await t.previewRun(seedSpec(), ['ai-sdlc'])).lock?.kind).toBe('required');
-    expect(find(await t.previewRun(seedSpec(), [])).lock).toBeNull();
+    const find = (r: Resolved) => r.items.find((i) => i.id === 'personal:plugin:ai-sdlc@ai-sdlc');
+    expect(find(await t.previewRun(seedSpec(), ['ai-sdlc']))?.lock?.kind).toBe('required');
+    expect(find(await t.previewRun(seedSpec(), []))?.lock).toBeNull();
   });
 
   it('names project items after the last folder of the workdir', async () => {

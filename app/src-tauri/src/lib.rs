@@ -42,12 +42,10 @@ fn catalog(workdir: Option<String>) -> Vec<CatalogEntry> {
 /// names only, never an environment value.
 #[tauri::command]
 fn preview_run(spec: RunSpec, required_plugins: Vec<String>) -> Resolved {
-    let _ = required_plugins;
-    let blank = RunSpec::default();
     given::resolve(
-        &blank,
-        &ResolveRoots::for_spec(&blank),
-        &ResolveOptions::default(),
+        &spec,
+        &ResolveRoots::for_spec(&spec),
+        &ResolveOptions { required_plugins },
     )
 }
 
@@ -1035,12 +1033,7 @@ name: build
         std::fs::create_dir_all(&skill).unwrap();
         std::fs::write(
             skill.join("SKILL.md"),
-            "---
-name: preview-probe
-description: does preview-probe
----
-body
-",
+            "---\nname: preview-probe\ndescription: does preview-probe\n---\nbody\n",
         )
         .unwrap();
         let spec = RunSpec {

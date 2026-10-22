@@ -13,6 +13,9 @@ import type { Stage } from "@bindings/Stage";
 import type { KataEvent, RunDetail } from "./events";
 import { defaultSpec } from "./spec";
 
+/** The plugins an AI-SDLC run cannot work without; passed to `previewRun` so the preview locks them on. */
+export const SDLC_REQUIRED_PLUGINS: readonly string[] = ['ai-sdlc'] as const;
+
 export type StageAction =
   | "continue-intent"
   | "accept-intent"
