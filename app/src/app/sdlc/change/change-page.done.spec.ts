@@ -227,7 +227,7 @@ describe('declaring done', () => {
     expect(vm.prList()!.map((r) => r.outcome.kind)).toEqual(['opened', 'opened', 'opened']);
   });
 
-  it('a high-severity finding holds the pull requests until it is acknowledged, and a new report asks again', async () => {
+  it('a high-severity finding holds the pull requests until it is acknowledged, and a new report asks again (R20.4)', async () => {
     const { vm, transport } = await finished();
     const publish = vi.spyOn(transport, 'sdlcPublish');
     const withHigh = () => vm.doneReport.update((r) => ({ ...r!, review: { at: 1, findings: [{ severity: 'high' as const, text: 'x' }] } }));

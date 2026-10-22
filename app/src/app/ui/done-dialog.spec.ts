@@ -41,7 +41,7 @@ const open = async (r: DoneReport = report()) => {
 };
 
 describe('DoneDialog', () => {
-  it('holds Open pull requests on a high-severity finding until the engineer acknowledges it', async () => {
+  it('holds Open pull requests on a high-severity finding until the engineer acknowledges it (R20.4)', async () => {
     const findings = [
       { severity: 'high' as const, text: 'The change cannot do what it was built for.' },
       { severity: 'low' as const, text: 'A comment is out of date.' },
@@ -170,7 +170,6 @@ describe('DoneDialog', () => {
     expect(text()).toContain('Reviewed at');
   });
 
-  // R20.2 as amended: a high-severity finding holds the pull requests until acknowledged (the test above); the rest never do.
   it('open medium and low findings do not block Open pull requests (R20.2)', async () => {
     const { fixture } = await open(report({ review: { at: 1, findings: [{ severity: 'medium', text: 'a' }, { severity: 'low', text: 'b' }] } }));
     const confirm = button('Open pull requests')!;

@@ -94,7 +94,7 @@ describe('canConfirm', () => {
     expect(canConfirm(report({ review: { at: 1, findings } }))).toBe(true);
   });
 
-  it('is blocked by a high-severity finding until the engineer acknowledges it', () => {
+  it('is blocked by a high-severity finding until the engineer acknowledges it (R20.4)', () => {
     const high = report({ review: { at: 1, findings: [{ severity: 'high', text: 'x' }, { severity: 'low', text: 'y' }] } });
     expect(canConfirm(high)).toBe(false);
     expect(canConfirm(high, true)).toBe(true);
