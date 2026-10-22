@@ -41,6 +41,28 @@ const open = async (r: DoneReport = report()) => {
 };
 
 describe('DoneDialog', () => {
+  it('holds Open pull requests on a high-severity finding until the engineer acknowledges it', async () => {
+    const findings = [
+      { severity: 'high' as const, text: 'The change cannot do what it was built for.' },
+      { severity: 'low' as const, text: 'A comment is out of date.' },
+    ];
+    await open(report({ review: { at: Date.UTC(2026, 9, 19, 9, 30, 0), findings } }));
+    expect(button('Open pull requests')!.disabled).toBe(true);
+    expect(text()).toContain('1 high-severity finding is unresolved.');
+    expect(button('Another round')).toBeDefined();
+    const box = dialog().querySelector<HTMLElement>('[role="checkbox"]')!;
+    expect(box.closest('label')!.textContent!.replace(/\s+/g, ' ').trim()).toBe('Open the pull requests with it unresolved');
+    box.click();
+    await settle();
+    expect(button('Open pull requests')!.disabled).toBe(false);
+  });
+
+  it('asks for no acknowledgement when no finding is high', async () => {
+    await open(report({ review: { at: Date.UTC(2026, 9, 19, 9, 30, 0), findings: [{ severity: 'medium', text: 'x' }] } }));
+    expect(dialog().querySelector('[role="checkbox"]')).toBeNull();
+    expect(button('Open pull requests')!.disabled).toBe(false);
+  });
+
   it('renders nothing without a report', async () => {
     await render(DoneDialog, { report: null, change: CHANGE });
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
@@ -138,8 +160,9 @@ describe('DoneDialog', () => {
     expect(text()).toContain('Reviewed at');
   });
 
-  it('open findings do not block Open pull requests (R20.2)', async () => {
-    const { fixture } = await open(report({ review: { at: 1, findings: [{ severity: 'high', text: 'a' }, { severity: 'low', text: 'b' }] } }));
+  // R20.2 as amended: a high-severity finding holds the pull requests until acknowledged (the test above); the rest never do.
+  it('open medium and low findings do not block Open pull requests (R20.2)', async () => {
+    const { fixture } = await open(report({ review: { at: 1, findings: [{ severity: 'medium', text: 'a' }, { severity: 'low', text: 'b' }] } }));
     const confirm = button('Open pull requests')!;
     expect(confirm.disabled).toBe(false);
     expect(button('Another round')).toBeTruthy();

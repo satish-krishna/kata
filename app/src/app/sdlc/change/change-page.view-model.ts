@@ -534,6 +534,8 @@ export class ChangePageViewModel {
   // --- declaring done: Kata's own checks first, then the confirmation
   /** What the done dialog shows; the dialog is open exactly while this is set. */
   readonly doneReport = signal<DoneReport | null>(null);
+  /** The engineer's word, in the done dialog, that the pull requests open with the high-severity findings unresolved. */
+  readonly doneAcknowledged = signal(false);
   private doneRepos: PublishRepo[] = [];
   /** The results of opening the pull requests, shown in a dialog that is open exactly while this is set. */
   readonly prList = signal<PrResult[] | null>(null);
@@ -541,7 +543,7 @@ export class ChangePageViewModel {
   /** The operator confirmed: open the pull requests. */
   async confirmDone(): Promise<void> {
     const report = this.doneReport();
-    if (report === null || !canConfirm(report)) return;
+    if (report === null || !canConfirm(report, this.doneAcknowledged())) return;
     this.doneReport.set(null);
     await this.publish();
   }
@@ -910,6 +912,8 @@ export class ChangePageViewModel {
     if (out === 'cancelled' || (out === 'failed' && got.notReady === null)) return;
 
     this.doneRepos = touched;
+    // Each report asks afresh: an acknowledgement covers the findings it was given for, not the next review's.
+    this.doneAcknowledged.set(false);
     this.doneReport.set({
       account: got.account,
       notReady: got.notReady,

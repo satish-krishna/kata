@@ -88,9 +88,22 @@ describe('checkLabel', () => {
 });
 
 describe('canConfirm', () => {
-  it('holds when everything passed, open findings included', () => {
+  it('holds when everything passed, open medium, low and unrated findings included', () => {
     expect(canConfirm(report())).toBe(true);
-    expect(canConfirm(report({ review: { at: 1, findings: [{ severity: 'high', text: 'x' }, { severity: null, text: 'y' }] } }))).toBe(true);
+    const findings = [{ severity: 'medium' as const, text: 'x' }, { severity: 'low' as const, text: 'y' }, { severity: null, text: 'z' }];
+    expect(canConfirm(report({ review: { at: 1, findings } }))).toBe(true);
+  });
+
+  it('is blocked by a high-severity finding until the engineer acknowledges it', () => {
+    const high = report({ review: { at: 1, findings: [{ severity: 'high', text: 'x' }, { severity: 'low', text: 'y' }] } });
+    expect(canConfirm(high)).toBe(false);
+    expect(canConfirm(high, true)).toBe(true);
+  });
+
+  it('an acknowledgement never lifts any other block', () => {
+    const findings = [{ severity: 'high' as const, text: 'x' }];
+    expect(canConfirm(report({ notReady: 'Not signed in', review: { at: 1, findings } }), true)).toBe(false);
+    expect(canConfirm(report({ review: { missing: 'none' } }), true)).toBe(false);
   });
 
   it('treats no checks as passing', () => {

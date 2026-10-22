@@ -167,10 +167,17 @@ export function checkProblems(repos: readonly DoneRepo[]): CheckProblem[] {
   return out;
 }
 
-/** Whether the pull requests may open. Open findings never block; everything else listed does. */
-export function canConfirm(report: DoneReport): boolean {
+/** The review's high-severity findings: the ones that hold the pull requests until the engineer acknowledges them. */
+export function highFindings(report: DoneReport): Finding[] {
+  return hasReview(report.review) ? report.review.findings.filter((f) => f.severity === 'high') : [];
+}
+
+/** Whether the pull requests may open. A high-severity finding blocks until `acknowledged`; medium, low and unrated
+ * findings never block; everything else listed does, acknowledged or not. */
+export function canConfirm(report: DoneReport, acknowledged = false): boolean {
   if (report.notReady !== null || report.checksError !== null || report.offenders.length > 0) return false;
   if (!hasReview(report.review)) return false;
+  if (highFindings(report).length > 0 && !acknowledged) return false;
   return report.repos.every((r) => r.result !== null && r.result.results.every((c) => c.outcome.kind === 'Passed'));
 }
 
