@@ -3877,7 +3877,7 @@ var require_fast_uri = __commonJS({
         normalizeString(uri, options);
       } else if (typeof uri === "object") {
         uri = /** @type {T} */
-        parse5(serialize(uri, options), options);
+        parse6(serialize(uri, options), options);
       }
       return uri;
     }
@@ -3920,8 +3920,8 @@ var require_fast_uri = __commonJS({
     function resolveComponent(base, relative, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
-        base = parse5(serialize(base, options), options);
-        relative = parse5(serialize(relative, options), options);
+        base = parse6(serialize(base, options), options);
+        relative = parse6(serialize(relative, options), options);
       }
       options = options || {};
       if (!options.tolerant && relative.scheme) {
@@ -4239,7 +4239,7 @@ var require_fast_uri = __commonJS({
       }
       return { parsed, malformedAuthorityOrPort, malformedPercentEncoding, malformedSchemeSpecific, malformedHost, malformedScheme };
     }
-    function parse5(uri, opts) {
+    function parse6(uri, opts) {
       return parseWithStatus(uri, opts).parsed;
     }
     function normalizeString(uri, opts) {
@@ -4276,7 +4276,7 @@ var require_fast_uri = __commonJS({
       resolveComponent,
       equal,
       serialize,
-      parse: parse5
+      parse: parse6
     };
     module.exports = fastUri;
     module.exports.default = fastUri;
@@ -14174,7 +14174,7 @@ var require_public_api = __commonJS({
       }
       return doc;
     }
-    function parse5(src, reviver, options) {
+    function parse6(src, reviver, options) {
       let _reviver = void 0;
       if (typeof reviver === "function") {
         _reviver = reviver;
@@ -14215,7 +14215,7 @@ var require_public_api = __commonJS({
         return value.toString(options);
       return new Document.Document(value, _replacer, options).toString(options);
     }
-    exports.parse = parse5;
+    exports.parse = parse6;
     exports.parseAllDocuments = parseAllDocuments;
     exports.parseDocument = parseDocument;
     exports.stringify = stringify2;
@@ -22232,7 +22232,7 @@ var init_validate = __esm({
 });
 
 // node_modules/@cucumber/gherkin/node_modules/uuid/dist/esm-node/parse.js
-function parse4(uuid2) {
+function parse5(uuid2) {
   if (!validate_default(uuid2)) {
     throw TypeError("Invalid UUID");
   }
@@ -22260,7 +22260,7 @@ var parse_default;
 var init_parse = __esm({
   "node_modules/@cucumber/gherkin/node_modules/uuid/dist/esm-node/parse.js"() {
     init_validate();
-    parse_default = parse4;
+    parse_default = parse5;
   }
 });
 
@@ -27595,6 +27595,7 @@ var build_log_entry_schema_default = {
 };
 
 // src/doc.ts
+var import_yaml = __toESM(require_dist(), 1);
 function splitDoc(text) {
   const lines = text.split(/\r?\n/);
   const fenced = [];
@@ -27634,19 +27635,24 @@ function yamlBlock(doc, from, limit) {
   return { text: doc.lines.slice(open + 1, close).join("\n"), open, first: open + 1, last: close - 1 };
 }
 var recordPrefix = (word, topLevel = 1) => new RegExp(`^#{${topLevel},6}\\s*${word}\\b`);
-function underRecordHeading(doc, index, headings) {
-  let i = index - 1;
-  while (i >= 0 && doc.lines[i].trim() === "") i--;
-  return i >= 0 && !doc.fenced[i] && headings.some((h) => h.prefix.test(doc.lines[i]));
+function holdsRecordKey(doc, open, keys) {
+  let close = open + 1;
+  while (close < doc.lines.length && !/^\s*```\s*$/.test(doc.lines[close])) close++;
+  try {
+    const data = (0, import_yaml.parse)(doc.lines.slice(open + 1, close).join("\n"));
+    return typeof data === "object" && data !== null && !Array.isArray(data) && keys.some((k) => k in data);
+  } catch {
+    return false;
+  }
 }
-function reportUnread(doc, file, problems, headings, claimed) {
+function reportUnread(doc, file, problems, headings, keys, claimed) {
   const found = [];
   doc.lines.forEach((line, index) => {
     if (doc.fenced[index]) return;
     const heading = headings.find((h) => h.prefix.test(line));
     if (heading && !heading.strict.test(line)) {
       found.push({ file, line: index + 1, message: `heading "${line.trimEnd()}" is not ${heading.what}` });
-    } else if (/^\s*```yaml\s*$/.test(line) && !claimed.has(index) && underRecordHeading(doc, index, headings)) {
+    } else if (/^\s*```yaml\s*$/.test(line) && !claimed.has(index) && holdsRecordKey(doc, index, keys)) {
       found.push({ file, line: index + 1, message: "yaml block is not part of any record" });
     }
   });
@@ -27674,7 +27680,7 @@ function schemaMessages(errors, who, plural) {
 }
 
 // src/front-matter.ts
-var import_yaml = __toESM(require_dist(), 1);
+var import_yaml2 = __toESM(require_dist(), 1);
 
 // src/types.ts
 var READS_LAYOUTS = [1, 2];
@@ -27690,7 +27696,7 @@ function parseFrontMatter(text, file) {
   if (close < 0) throw new CouldNotRun(`${file}: front matter is never closed`);
   let data;
   try {
-    data = (0, import_yaml.parse)(lines.slice(1, close).join("\n"));
+    data = (0, import_yaml2.parse)(lines.slice(1, close).join("\n"));
   } catch (e) {
     throw new CouldNotRun(`${file}: front matter is not valid YAML: ${e.message}`);
   }
@@ -27717,13 +27723,13 @@ function refuseNewerLayout(layout, file) {
 }
 
 // src/records.ts
-var import_yaml2 = __toESM(require_dist(), 1);
+var import_yaml3 = __toESM(require_dist(), 1);
 function parseFields(block, who, file, problems) {
   let values;
   let text;
   try {
-    values = (0, import_yaml2.parse)(block.text);
-    text = (0, import_yaml2.parse)(block.text, { schema: "failsafe" });
+    values = (0, import_yaml3.parse)(block.text);
+    text = (0, import_yaml3.parse)(block.text, { schema: "failsafe" });
   } catch (e) {
     problems.push({ file, line: block.open + 1, message: `${who} fields are not valid YAML: ${e.message.split("\n")[0]}` });
     return null;
@@ -27851,7 +27857,7 @@ function readBuildLog(text, file) {
   }
   const claimed = /* @__PURE__ */ new Set();
   const entries = withEntries ? readEntries(doc, file, problems, claimed) : [];
-  if (withEntries) reportUnread(doc, file, problems, [{ prefix: recordPrefix("T\\d+"), strict: ENTRY_HEADING, what: "an entry heading" }], claimed);
+  if (withEntries) reportUnread(doc, file, problems, [{ prefix: recordPrefix("T\\d+"), strict: ENTRY_HEADING, what: "an entry heading" }], ["task"], claimed);
   const rows = [...tableRows(doc), ...entries].sort((a, b) => a.line - b.line);
   const seen = /* @__PURE__ */ new Map();
   for (const r of rows) {
@@ -27903,7 +27909,7 @@ function findMarker(file) {
 
 // src/plan.ts
 var import_ajv2 = __toESM(require_ajv(), 1);
-var import_yaml3 = __toESM(require_dist(), 1);
+var import_yaml4 = __toESM(require_dist(), 1);
 
 // schema/shared-decision.schema.json
 var shared_decision_schema_default = {
@@ -28017,7 +28023,7 @@ function readTasks2(doc, heads, file, problems, repos, system, claimed) {
       let fields;
       let parsed = true;
       try {
-        fields = (0, import_yaml3.parse)(block.text);
+        fields = (0, import_yaml4.parse)(block.text);
       } catch (e) {
         parsed = false;
         problem(block.open + 1, `task ${h.id} fields are not valid YAML: ${e.message.split("\n")[0]}`);
@@ -28125,7 +28131,7 @@ function decisions2(doc, file, problems, claimed) {
   claimed.add(block.open);
   let list;
   try {
-    list = (0, import_yaml3.parse)(block.text);
+    list = (0, import_yaml4.parse)(block.text);
   } catch (e) {
     problem(block.open + 1, `shared decisions are not valid YAML: ${e.message.split("\n")[0]}`);
     return [];
@@ -28177,7 +28183,7 @@ function readPlan(text, file, marker) {
   const claimed = /* @__PURE__ */ new Set();
   const tasks = readTasks2(doc, heads, file, problems, repos, system, claimed);
   const shared_decisions = decisions2(doc, file, problems, claimed);
-  reportUnread(doc, file, problems, [{ prefix: recordPrefix("T\\d+"), strict: HEADING2, what: "a task heading" }], claimed);
+  reportUnread(doc, file, problems, [{ prefix: recordPrefix("T\\d+"), strict: HEADING2, what: "a task heading" }], ["id"], claimed);
   return { kind: "plan", layout, document: { tasks, shared_decisions }, problems };
 }
 
@@ -28318,6 +28324,7 @@ function readReview(text, file) {
       { prefix: recordPrefix("Review", 2), strict: REVIEW_HEADING, what: "a review heading" },
       { prefix: recordPrefix("F\\d+"), strict: FINDING_HEADING, what: "a finding heading" }
     ],
+    ["review", "id"],
     claimed
   );
   return { kind: "review", layout, document: { reviews }, problems };
