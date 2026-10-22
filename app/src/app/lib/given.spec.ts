@@ -144,7 +144,7 @@ describe('groupRows', () => {
     const skillA = item('skill', 'personal', 'a');
     const skillB = item('skill', 'personal', 'b');
     const skillP = item('skill', 'project', 'p');
-    const rows = presetRows(resolved([kataAsk, skillP, github, follower, skillB, plugin, skillA]), from({
+    const rows = presetRows(resolved([skillA, skillB, skillP, plugin, follower, github, kataAsk]), from({
       session: new Set([skillA.id, plugin.id]),
     })).rows;
     const groups = groupRows(rows);
