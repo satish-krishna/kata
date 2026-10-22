@@ -215,13 +215,6 @@
   />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
   <app-feedback-dialog [action]="vm.feedbackFor()" (run)="vm.runWithFeedback($event)" (cancel)="vm.cancelFeedback()" />
-  <app-build-dialog
-    [open]="vm.buildMode() !== null"
-    [mode]="vm.buildMode() ?? 'start'"
-    [repos]="vm.buildRepos()"
-    (start)="vm.submitBuild($event)"
-    (cancel)="vm.cancelBuild()"
-  />
   <app-confirm-dialog
     [open]="vm.leftoverPrompt() !== null"
     message="Continue on top of leftovers?"
@@ -253,11 +246,19 @@
     [title]="vm.preview.title()"
     [settings]="vm.preview.settings()"
     [env]="vm.preview.env()"
+    [safetyRules]="vm.preview.safetyRules()"
     [groups]="vm.preview.groups()"
+    [sections]="vm.preview.sections()"
     [warnings]="vm.preview.warnings()"
-    [busy]="vm.preview.busy()"
+    [busy]="!vm.preview.canStart()"
     (toggle)="vm.preview.toggle($event.key, $event.off)"
     (start)="vm.preview.start()"
     (cancel)="vm.preview.cancel()"
-  />
+  >
+    @if (vm.preview.buildForm(); as form) {
+      @if (vm.buildMode(); as mode) {
+        <app-build-dialog [mode]="mode" [repos]="vm.buildRepos()" [state]="form" />
+      }
+    }
+  </app-run-preview-dialog>
 </div>

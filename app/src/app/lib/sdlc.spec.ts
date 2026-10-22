@@ -493,7 +493,7 @@ describe("what a build's preview asks and which runs its choices reach", () => {
       "run-spec:skill:doc-writer",
       "personal:instruction:CLAUDE.md",
     ]);
-    expect(givenFor(off, "D:\ws\claims-core\\")).toEqual({
+    expect(givenFor(off, "D:\\ws\\claims-core\\")).toEqual({
       hooks: [],
       skills: ["run-spec:skill:doc-writer"],
       plugins: ["personal:plugin:superpowers@claude-plugins-official"],

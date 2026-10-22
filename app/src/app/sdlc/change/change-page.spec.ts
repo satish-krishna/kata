@@ -166,7 +166,7 @@ describe('ChangePage', () => {
       expect(container.querySelector('nav[aria-label="Tasks"]')).toBeNull();
     });
 
-    it('crosses the seam: clicking the rendered Start build opens the dialog, and Start build prepares the build', async () => {
+    it('crosses the seam: clicking the rendered Start build opens the preview of the build, and Start run prepares the build', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
       const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
@@ -175,7 +175,7 @@ describe('ChangePage', () => {
       expect(dialog).not.toBeNull();
       expect(text(dialog.querySelector('[hlmDialogTitle]')!)).toBe('Start build');
       expect(prepare).not.toHaveBeenCalled();
-      click('Start build');
+      await confirmPreview();
       await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
       expect(prepare.mock.calls[0][4]).toBe(false);
     });
@@ -185,7 +185,7 @@ describe('ChangePage', () => {
       vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'tooOld', have: '0.7.9', need: '0.8.0' });
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
       await settle();
-      click('Start build');
+      await confirmPreview();
       await vi.waitFor(() => expect(document.body.textContent).toContain('The build did not start'));
       expect(document.body.textContent).toContain('Update the ai-sdlc plugin to 0.8.0 or later');
     });
@@ -195,7 +195,7 @@ describe('ChangePage', () => {
       vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['src/new.rs'] }] });
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
       await settle();
-      click('Start build');
+      await confirmPreview();
       await vi.waitFor(() => expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull());
       const confirm = document.body.querySelector('[role="alertdialog"]')!;
       expect(text(confirm)).toContain('Continue on top of leftovers?');

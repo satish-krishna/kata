@@ -1011,7 +1011,8 @@ describe('the build\'s preview', () => {
   ] as const)('limits are set where they are set today: %s (R17.3)', async (_name, stage, action, value, source, asks) => {
     const change = stage === 'spec-ready' ? FNOL : BUILD;
     const { vm, preview } = await staged(stage, change);
-    await vm.act(action);
+    // A document run waits for the engineer's answer to its preview, so the call is not awaited.
+    void vm.act(action);
     await previewReady(preview);
     // The shown limit is read-only text; the only field that sets it is the build's time limit, and only a build or a round asks for it.
     expect(limit(preview)).toEqual({ label: 'Time limit', value, source });

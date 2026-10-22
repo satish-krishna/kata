@@ -47,6 +47,7 @@ export interface StopReport {
 }
 
 const REVIEW = 'review';
+const NO_CHOICES: BuildChoices = { off: new Set() };
 
 /** One launched run: its id is never reused, so a cancel aimed at it cannot be mistaken for one aimed at the repository's next run. */
 interface RunInstance {
@@ -69,6 +70,7 @@ export class BuildDriver {
   readonly report = signal<StopReport | null>(null);
 
   private timeoutSecs = 0;
+  private choices: BuildChoices = NO_CHOICES;
   private roundStarted = false;
   private reviewing = false;
   private cancelledAll = false;
@@ -80,10 +82,14 @@ export class BuildDriver {
 
   constructor(private readonly deps: BuildDriverDeps) {}
 
-  setChoices(_choices: BuildChoices): void {}
+  /** The build's choices from now on: every run launched after this gets them. A run already going keeps the ones it started with. */
+  setChoices(choices: BuildChoices): void {
+    this.choices = choices;
+  }
 
-  async begin(timeoutSecs: number, round?: { repo: string; instructions: string }, _choices?: BuildChoices): Promise<void> {
+  async begin(timeoutSecs: number, round?: { repo: string; instructions: string }, choices: BuildChoices = NO_CHOICES): Promise<void> {
     this.timeoutSecs = timeoutSecs;
+    this.choices = choices;
     this.cancelledAll = false;
     this.stopped.set(new Map());
     this.report.set(null);
@@ -224,7 +230,7 @@ export class BuildDriver {
     const run: RunInstance = { id: ++this.instanceSeq, ctl: new AbortController(), cancelled: false };
     this.instances.set(key, run);
     if (key !== REVIEW) this.going.set(new Set(this.going()).add(key));
-    const opts = { timeoutSecs: this.timeoutSecs, signal: run.ctl.signal } as RunOptions;
+    const opts: RunOptions = { timeoutSecs: this.timeoutSecs, signal: run.ctl.signal, choices: this.choices };
     if (instructions !== undefined) opts.instructions = instructions;
     const target: RunTarget = key === REVIEW ? REVIEW : { repo: key };
     void (async () => this.deps.start(target, opts))()

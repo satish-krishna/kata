@@ -1,10 +1,10 @@
 import { Injector } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
-import { render } from '../../testing/render';
 import { BuildDialog, buildRequest, createBuildForm, type BuildDialogMode, type BuildFormState } from './build-dialog';
 
-const root = () => document.body.querySelector('app-build-dialog')!;
+let host: HTMLElement;
+const root = () => host;
 const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
 const settle = async () => {
   TestBed.tick();
@@ -28,10 +28,16 @@ const pickRepo = async (fixture: ComponentFixture<BuildDialog>, repo: string) =>
 
 /** The form is made by whoever owns the preview; the component only draws it. */
 async function open(mode: BuildDialogMode, repos = ['claims-intent', 'claims-core', 'customer-portal']) {
+  TestBed.configureTestingModule({ imports: [BuildDialog] });
   const state: BuildFormState = createBuildForm(TestBed.inject(Injector), mode === 'round');
-  const out = await render(BuildDialog, { mode, repos, state });
+  const fixture = TestBed.createComponent(BuildDialog);
+  host = fixture.nativeElement as HTMLElement;
+  fixture.componentRef.setInput('mode', mode);
+  fixture.componentRef.setInput('repos', repos);
+  fixture.componentRef.setInput('state', state);
+  await fixture.whenStable();
   await settle();
-  return { ...out, state, request: () => buildRequest(state, mode === 'round'), valid: () => state.form().valid() };
+  return { fixture, state, request: () => buildRequest(state, mode === 'round'), valid: () => state.form().valid() };
 }
 
 describe('BuildDialog', () => {
@@ -102,6 +108,7 @@ describe('BuildDialog', () => {
     await typeInto(instructions(), 'something');
     await typeInto(hours(), '5');
     first.fixture.destroy();
+    TestBed.resetTestingModule();
     const second = await open('round');
     expect(instructions().value).toBe('');
     expect(hours().value).toBe('2');

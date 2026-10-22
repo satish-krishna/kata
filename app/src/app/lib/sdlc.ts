@@ -12,6 +12,7 @@ import type { RunSpec } from "@bindings/RunSpec";
 import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
 import type { KataEvent, RunDetail } from "./events";
+import { givenKey } from "./given";
 import { defaultSpec } from "./spec";
 
 /** The plugins an AI-SDLC run cannot work without; passed to `previewRun` so the preview locks them on. */
@@ -565,8 +566,10 @@ export function reviewFindings(detail: RunDetail): Finding[] {
     .map(({ f }) => f);
 }
 
-// Stubs: the build's preview is specified by tests first.
+/** Which preview of a build is being opened. */
 export type BuildPreviewKind = "start" | "continue-all" | "continue-one" | "round" | "manual-review";
+
+/** What a build's preview asks, which sections it lists, which runs its choices reach, and where the shown limit comes from. */
 export type BuildPreviewPlan = {
   asksTimeLimit: boolean;
   asksRound: boolean;
@@ -574,12 +577,56 @@ export type BuildPreviewPlan = {
   appliesTo: "build" | "repo-then-build" | "repos-then-build" | "round-then-build" | "this-review";
   limitSource: "engineer" | "build" | "kata";
 };
-export function buildPreviewFor(_kind: BuildPreviewKind): BuildPreviewPlan {
-  throw new Error("not implemented");
+
+const BUILD_PREVIEWS: Record<BuildPreviewKind, BuildPreviewPlan> = {
+  start: { asksTimeLimit: true, asksRound: false, sections: "all-repos-and-review", appliesTo: "build", limitSource: "engineer" },
+  "continue-all": { asksTimeLimit: true, asksRound: false, sections: "all-repos-and-review", appliesTo: "repos-then-build", limitSource: "engineer" },
+  "continue-one": { asksTimeLimit: false, asksRound: false, sections: "one-repo", appliesTo: "repo-then-build", limitSource: "build" },
+  round: { asksTimeLimit: true, asksRound: true, sections: "one-repo", appliesTo: "round-then-build", limitSource: "engineer" },
+  "manual-review": { asksTimeLimit: false, asksRound: false, sections: "review", appliesTo: "this-review", limitSource: "kata" },
+};
+
+export function buildPreviewFor(kind: BuildPreviewKind): BuildPreviewPlan {
+  return { ...BUILD_PREVIEWS[kind] };
 }
-export function safetyRules(_target: "repo" | "review"): string[] {
-  return [];
+
+/** The deny rules of BUILD_DENY, in the words the preview lists them in. */
+const DENY_WORDS: Record<string, string> = {
+  "Bash(git push:*)": "No push",
+  "Bash(gh:*)": "No use of GitHub's command-line tool",
+  "Bash(git remote:*)": "No change of remotes",
+};
+
+/** The safety rules of a build run, read-only in the build's preview: the shared deny rules, the checks folder, and what the run may edit. */
+export function safetyRules(target: "repo" | "review"): string[] {
+  return [
+    ...BUILD_DENY.map((rule) => DENY_WORDS[rule]),
+    "No edit of the checks folder",
+    target === "repo" ? "No edit of another repository or its build log" : "No edit of any repository or build log, except the review document",
+  ];
 }
-export function givenFor(_off: ReadonlySet<string>, _workdir: string): Given {
-  throw new Error("not implemented");
+
+const PROJECT_KEY = /^[^|]+\|((?:project|project-local):.*)$/s;
+const LIST_OF_KIND: Record<string, keyof Given> = {
+  hook: "hooks",
+  skill: "skills",
+  plugin: "plugins",
+  instruction: "instructions",
+  "tool-server": "tool_servers",
+};
+
+/**
+ * The run-spec's given section for one run from the build's switched-off keys: a shared key applies to every run,
+ * a project key only to the run in the folder it was qualified with (see `givenKey`).
+ */
+export function givenFor(off: ReadonlySet<string>, workdir: string): Given {
+  const given: Given = { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] };
+  for (const key of off) {
+    const id = PROJECT_KEY.exec(key)?.[1] ?? key;
+    if (givenKey(id, workdir) !== key) continue;
+    const list = LIST_OF_KIND[id.split(":")[1]];
+    if (list) given[list].push(id);
+  }
+  for (const list of Object.values(given)) list.sort();
+  return given;
 }

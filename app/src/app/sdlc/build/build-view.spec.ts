@@ -112,6 +112,12 @@ describe('BuildView', () => {
     const calls = run.mock.calls.length;
     button(container, 'Continue claims-core')!.click();
     await advance(300);
+    // Continue opens the repository's preview first; nothing runs until Start run.
+    expect(run.mock.calls.length).toBe(calls);
+    const start = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((b) => b.textContent!.trim() === 'Start run')!;
+    expect(start.disabled).toBe(false);
+    start.click();
+    await advance(300);
     expect(run.mock.calls.length).toBe(calls + 1);
   });
 });

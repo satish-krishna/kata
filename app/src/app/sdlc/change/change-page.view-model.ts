@@ -38,6 +38,7 @@ import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import {
+  DEFAULT_BUILD_SECS,
   actionLabel,
   actionsForChange,
   primaryAction,
@@ -48,6 +49,7 @@ import {
   stageLabel,
   stagePills,
   stageRuns,
+  type BuildRun,
   type DocsPresent,
   type StageAction,
   type StagePill,
@@ -505,21 +507,106 @@ export class ChangePageViewModel {
     this.handoff.set(null);
     await this.load();
   }
-  /** What the dialog asked for, kept so confirming the leftovers prepares the same build again. */
+  /** What the preview asked for, kept so confirming the leftovers prepares the same build again. */
   private asked: BuildStartRequest | null = null;
+  /** The build's choices that go with `asked`. */
+  private askedChoices: BuildChoices = { off: new Set() };
+  /** Which build preview is the current one; a preview that is no longer current neither opens nor changes the page. */
+  private buildSeq = 0;
   /** What the engineer asked for, kept with `asked`. */
   private askedAction: BuildAction = 'start';
 
-  /** The operator filled the dialog: prepare the build, never continuing on top of leftovers yet. */
-  async submitBuild(req: BuildStartRequest): Promise<void> {
-    this.askedAction = this.buildMode() ?? 'start';
+  /** The key the build's choices are kept under. */
+  private buildKey(): string {
+    return `${this.system()}/${this.changeName()}`;
+  }
+
+  /** The build's request is in: prepare the build, never continuing on top of leftovers yet. */
+  async submitBuild(req: BuildStartRequest, choices?: BuildChoices, action?: BuildAction): Promise<void> {
+    await this.beginBuild(req, action ?? this.buildMode() ?? 'start', choices ?? { off: this.givens.build(this.buildKey())?.off ?? new Set() });
+  }
+
+  private async beginBuild(req: BuildStartRequest, action: BuildAction, choices: BuildChoices): Promise<void> {
+    this.askedAction = action;
     this.buildMode.set(null);
     this.asked = req;
+    this.askedChoices = choices;
     await this.prepare(false);
   }
 
   cancelBuild(): void {
+    this.buildSeq++;
     this.buildMode.set(null);
+    this.preview.cancel();
+  }
+
+  /**
+   * Open the build's preview, pre-set to the build's choices (the session's when it has none yet). A preview is
+   * never awaited by its caller: the engineer answers it. What they confirm is the build's from then on, except for a
+   * review started by hand, whose choices are that review's alone.
+   */
+  private openBuildPreview(which: 'start' | 'continue' | 'round' | 'review'): void {
+    this.buildMode.set(which === 'review' ? null : which);
+    void this.previewBuild(which);
+  }
+
+  private async previewBuild(which: 'start' | 'continue' | 'round' | 'review'): Promise<void> {
+    const seq = ++this.buildSeq;
+    const w = this.current();
+    const master = this.scanMaster();
+    const context = this.buildContext();
+    const checksDir = this.checksDir();
+    const stale = () => seq !== this.buildSeq;
+    const giveUp = () => {
+      if (!stale()) this.cancelBuild();
+    };
+    if (!w || master === null || context === null) return giveUp();
+    if (checksDir === null) {
+      this.toasts.error("Could not read Kata's checks folder.");
+      return giveUp();
+    }
+    const kind = { start: 'start', continue: 'continue-all', round: 'round', review: 'manual-review' } as const;
+    const titles = { start: 'Start build', continue: 'Continue build', round: 'Start round', review: 'Run review' } as const;
+    const actions: Record<typeof which, BuildAction> = { start: 'start', continue: 'continue', round: 'round', review: 'round' };
+    const limit = which === 'review' ? REVIEW_TIMEOUT_SECS : DEFAULT_BUILD_SECS;
+    let result;
+    try {
+      const settings = this.modes.settings() ?? (await this.modes.load());
+      const sectionFor = (repo: string | null) => {
+        const run: BuildRun = {
+          target: repo === null ? 'review' : { repo },
+          timeoutSecs: limit,
+          instructions: null,
+          workspaceFolder: w.folder,
+          masterRepo: master,
+          systemRepos: context.systemRepos,
+          checksDir,
+          continueOnLeftovers: false,
+        };
+        const spec = specFor('build', null, { folder: w.folder, system: context.system, change: context.change }, settings, [], run);
+        return { title: repo ?? 'Review', repo, spec, workdir: spec.workdir };
+      };
+      const status = this.status()?.repos ?? [];
+      const planned = status.map((r) => r.repo).filter((r) => r !== master);
+      const unfinished = status.filter((r) => r.repo !== master && r.state.kind !== 'done').map((r) => r.repo);
+      const repos = { start: planned, continue: unfinished.length > 0 ? unfinished : planned, round: this.buildRepos(), review: [] as string[] }[which];
+      const sections = [...repos.map((r) => sectionFor(r)), ...(which === 'round' ? [] : [sectionFor(null)])];
+      if (stale()) return;
+      result = await this.preview.openBuild({
+        title: titles[which],
+        kind: kind[which],
+        sections,
+        from: { session: this.givens.session(), job: null, build: this.givens.build(this.buildKey())?.off ?? null },
+        limitSecs: limit,
+      });
+    } catch (e) {
+      this.toasts.error(`Could not preview the build: ${message(e)}`);
+      return giveUp();
+    }
+    if (result === null || stale()) return giveUp();
+    const choices: BuildChoices = { off: result.off };
+    if (which !== 'review') this.givens.setBuild(this.buildKey(), choices);
+    await this.submitBuild(result.request ?? { timeoutSecs: limit, instructions: null, repo: null }, choices, actions[which]);
   }
 
   /** The operator accepted the leftovers: prepare the same build again, this time continuing on top of them. */
@@ -587,15 +674,13 @@ export class ChangePageViewModel {
   /** Ask for another round instead of opening the pull requests. */
   doneRound(): void {
     this.doneReport.set(null);
-    this.buildMode.set('round');
+    this.openBuildPreview('round');
   }
 
-  /** Start the build view with a review only: every task has a row, so nothing else runs. */
+  /** Open the review's preview; Start run hands the build view a review only: every task has a row, so nothing else runs. */
   async doneRunReview(): Promise<void> {
     this.doneReport.set(null);
-    this.asked = { timeoutSecs: REVIEW_TIMEOUT_SECS, instructions: null, repo: null };
-    this.askedAction = 'round';
-    await this.prepare(false);
+    this.openBuildPreview('review');
   }
 
   cancelDone(): void {
@@ -657,13 +742,16 @@ export class ChangePageViewModel {
         await this.commitDecision(ACCEPTED_UNCOMMITTED[this.change()?.stage ?? ''] ?? 'accept-spec', false);
         return;
       case 'start-build':
-        this.buildMode.set('start');
+        this.openBuildPreview('start');
         return;
       case 'continue-build':
-        this.buildMode.set('continue');
+        this.openBuildPreview('continue');
         return;
       case 'another-round':
-        this.buildMode.set('round');
+        this.openBuildPreview('round');
+        return;
+      case 'run-review':
+        await this.doneRunReview();
         return;
       case 'declare-done':
         await this.declareDone();
@@ -975,6 +1063,7 @@ export class ChangePageViewModel {
           timeoutSecs: asked.timeoutSecs,
           round: asked.instructions !== null && asked.repo !== null ? { instructions: asked.instructions, repo: asked.repo } : null,
           checksDir,
+          choices: this.askedChoices,
           continueOnLeftovers: confirmedRepos,
         });
     }

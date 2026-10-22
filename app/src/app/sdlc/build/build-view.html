@@ -178,5 +178,19 @@
     (confirm)="vm.confirmContinue()"
     (cancel)="vm.cancelContinue()"
   />
+  <app-run-preview-dialog
+    [open]="vm.preview.isOpen()"
+    [title]="vm.preview.title()"
+    [settings]="vm.preview.settings()"
+    [safetyRules]="vm.preview.safetyRules()"
+    [env]="vm.preview.env()"
+    [groups]="vm.preview.groups()"
+    [sections]="vm.preview.sections()"
+    [warnings]="vm.preview.warnings()"
+    [busy]="!vm.preview.canStart()"
+    (toggle)="vm.preview.toggle($event.key, $event.off)"
+    (start)="vm.preview.start()"
+    (cancel)="vm.preview.cancel()"
+  />
   <app-build-refusal-dialog [reason]="vm.refusal()?.reason ?? null" [problems]="vm.refusal()?.problems ?? []" (close)="vm.closeRefusal()" />
 </main>
