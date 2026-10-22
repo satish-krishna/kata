@@ -255,23 +255,18 @@ fn build_items(
 
 /// What the run will be given. Reads files under `roots`; never reads an
 /// environment value and never copies one into the result.
-pub fn resolve(_spec: &RunSpec, _roots: &ResolveRoots, _opts: &ResolveOptions) -> Resolved {
-    let unset = || setting(None, SettingSource::ClaudeDefault);
+pub fn resolve(spec: &RunSpec, roots: &ResolveRoots, opts: &ResolveOptions) -> Resolved {
+    let layers = read_layers(roots);
+    let (mut facts, mut problems) = items::collect(spec, roots, &layers);
+    facts.extend(hooks(&layers));
+    problems.extend(layers.iter().filter_map(|l| l.problem.clone()));
+    let (items, missing) = build_items(facts, spec.given.as_ref(), opts);
     Resolved {
-        items: Vec::new(),
-        settings: RunSettings {
-            model: unset(),
-            effort: unset(),
-            permission_posture: unset(),
-            empty_room: unset(),
-            answer_deadline: unset(),
-            time_limit: unset(),
-            turn_cap: unset(),
-            spending_ceiling: unset(),
-        },
-        env: Vec::new(),
-        missing: Vec::new(),
-        problems: Vec::new(),
+        items,
+        settings: run_settings(spec, &layers),
+        env: env_of(spec, &layers),
+        missing,
+        problems,
     }
 }
 

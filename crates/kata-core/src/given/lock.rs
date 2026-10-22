@@ -57,8 +57,48 @@ fn plugin_name_of_id(id: &str) -> Option<String> {
 }
 
 /// Decide the lock, first matching row of the table winning.
-pub fn lock_for(_item: &ItemFacts, _opts: &ResolveOptions) -> Option<LockReason> {
-    None
+pub fn lock_for(item: &ItemFacts, opts: &ResolveOptions) -> Option<LockReason> {
+    let text = |s: &str| s.to_string();
+    // Rows 1 and 2.
+    if item.source == Source::Kata
+        && matches!(item.kind, ItemKind::ToolServer | ItemKind::Instruction)
+    {
+        return Some(LockReason::Kata {
+            text: text(REASON_KATA),
+        });
+    }
+    // Row 3: a required plugin, or an item it brings.
+    let required = |name: &str| opts.required_plugins.iter().any(|r| r == name);
+    let own_plugin = (item.kind == ItemKind::Plugin)
+        .then(|| super::parse_item_id(&item.id).ok())
+        .flatten()
+        .map(|r| plugin_name(&r.key).to_string());
+    let bringer = item.brought_by.as_deref().and_then(plugin_name_of_id);
+    if own_plugin.is_some_and(|n| required(&n)) || bringer.is_some_and(|n| required(&n)) {
+        return Some(LockReason::Required {
+            text: text(REASON_REQUIRED),
+        });
+    }
+    // Row 4.
+    if item.source == Source::Organization {
+        return Some(LockReason::Organization {
+            text: text(REASON_ORGANIZATION),
+        });
+    }
+    // Row 5.
+    if let Some(plugin) = &item.brought_by {
+        return Some(LockReason::FollowsPlugin {
+            plugin: plugin.clone(),
+        });
+    }
+    // Rows 6 and 7.
+    if super::SWITCHABLE.contains(&(item.kind, item.source)) {
+        None
+    } else {
+        Some(LockReason::Unswitchable {
+            text: text(REASON_UNSWITCHABLE),
+        })
+    }
 }
 
 #[cfg(test)]
