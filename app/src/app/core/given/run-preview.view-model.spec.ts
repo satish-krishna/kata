@@ -89,7 +89,7 @@ describe('RunPreviewViewModel', () => {
 
   it('shows the settings, the variable names and the warnings of the preview', async () => {
     const { vm, spec, req } = setup();
-    void vm.open(req({ spec: { ...spec, model: { ...spec.model, id: null } } }));
+    void vm.open(req({ spec: { ...spec, model: { ...spec.model, id: null }, leash: { ...spec.leash, max_turns: null } } }));
     await opened(vm);
     const model = vm.settings().find((s) => s.label === 'Model')!;
     expect(model.source).toBe("Claude's default");
@@ -103,6 +103,6 @@ describe('RunPreviewViewModel', () => {
     const { vm, req } = setup();
     void vm.open(req({ mode: 'sdlc' }));
     await opened(vm);
-    expect(rowOf(vm, 'personal:plugin:ai-sdlc').locked?.kind).toBe('required');
+    expect(rowOf(vm, 'personal:plugin:ai-sdlc@ai-sdlc').locked?.kind).toBe('required');
   });
 });

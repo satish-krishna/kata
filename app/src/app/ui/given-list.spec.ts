@@ -36,7 +36,7 @@ describe('GivenList', () => {
     const row = rows.find((r) => r.item.kind === kind && r.item.source === source)!;
     expect(row).toBeDefined();
     const { container } = await render(GivenList, { groups: groupRows(rows), readonly: false });
-    const el = container.querySelector(`[data-row="${CSS.escape(row.key)}"]`)!;
+    const el = container.querySelector(`[data-row="${row.key}"]`)!;
     expect(el).not.toBeNull();
     expect(el.querySelector('[data-source-tag]')!.textContent!.trim()).toBe(SOURCE_TEXT[source]);
     if (row.item.brought_by === null) {
@@ -90,11 +90,11 @@ describe('GivenList', () => {
     const rows = fixtureRows();
     const { container } = await render(GivenList, { groups: groupRows(rows), readonly: false });
     const locked = rows.find((r) => r.locked?.kind === 'kata')!;
-    const lockedEl = container.querySelector(`[data-row="${CSS.escape(locked.key)}"]`)!;
+    const lockedEl = container.querySelector(`[data-row="${locked.key}"]`)!;
     expect(lockedEl.querySelector('hlm-switch')).toBeNull();
     expect(text(lockedEl)).toContain('the run needs it to ask you questions');
     const follower = rows.find((r) => r.locked?.kind === 'follows-plugin')!;
-    expect(container.querySelector(`[data-row="${CSS.escape(follower.key)}"] hlm-switch`)).toBeNull();
+    expect(container.querySelector(`[data-row="${follower.key}"] hlm-switch`)).toBeNull();
   });
 
   it('a switch emits the key and the new state, and the mark and status label show', async () => {

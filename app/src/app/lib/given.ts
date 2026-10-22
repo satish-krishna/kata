@@ -161,3 +161,39 @@ export function settingSourceLabel(source: SettingSource, mode: Mode): string {
     case 'claude-report': return 'reported by Claude';
   }
 }
+
+/** How an item's source reads on its row and in the environment list. */
+export function itemSourceLabel(source: Source): string {
+  switch (source) {
+    case 'personal': return 'personal setup';
+    case 'project':
+    case 'project-local': return 'project';
+    case 'plugin': return 'plugin';
+    case 'organization': return 'organization';
+    case 'kata': return 'Kata itself';
+    case 'run-spec': return 'run-spec';
+  }
+}
+
+const KIND_NAMES: Record<ItemKind, string> = {
+  hook: 'hook',
+  skill: 'skill',
+  plugin: 'plugin',
+  instruction: 'standing instruction',
+  'tool-server': 'tool server',
+};
+
+/** The kind of one item, singular, for a row that sits under a plugin. */
+export function itemKindName(kind: ItemKind): string {
+  return KIND_NAMES[kind];
+}
+
+/** What a row's mark says about where its state came from. */
+export function markLabel(mark: PresetMark): string | null {
+  switch (mark) {
+    case 'kept': return 'kept from an earlier run';
+    case 'job': return "the job's choice";
+    case 'build': return "the build's choice";
+    case null: return null;
+  }
+}

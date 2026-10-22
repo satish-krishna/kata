@@ -1,0 +1,108 @@
+:host {
+  display: block;
+}
+
+.gl {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.gl__kind {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.gl__kind-head,
+.gl__source-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.gl__kind-head {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.gl__source {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.gl__source-head {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.gl__count {
+  color: var(--text-muted);
+}
+
+.gl__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-xs);
+}
+
+.gl__row--nested {
+  margin-left: var(--space-8);
+}
+
+.gl__row--off .gl__name,
+.gl__row--off .gl__detail {
+  color: var(--text-faint);
+}
+
+.gl__control {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-8);
+  color: var(--text-muted);
+}
+
+.gl__name {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl__detail {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl__kind-tag {
+  flex: none;
+  color: var(--text-muted);
+  font: var(--weight-medium) var(--text-2xs) / 1 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.gl__note {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.gl__brings {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: var(--space-8);
+}

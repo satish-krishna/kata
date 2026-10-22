@@ -1,1 +1,71 @@
+<ng-template #rowTpl let-row let-nested="nested">
+  <div class="gl__row" [class.gl__row--off]="row.off" [class.gl__row--nested]="nested" [attr.data-row]="row.key">
+    <span class="gl__control">
+      @if (!readonly() && switchable(row)) {
+        <hlm-switch size="sm" [checked]="!row.off" [aria-label]="'Give ' + row.item.name" (checkedChange)="toggle.emit({ key: row.key, off: !$event })" />
+      } @else if (lockText(row) !== null) {
+        <ng-icon name="lucideLock" size="14" aria-hidden="true" />
+      }
+    </span>
+    <span class="k-badge k-badge--neutral" data-source-tag>{{ sourceLabel(row.item.source) }}</span>
+    @if (nested) {
+      <span class="gl__kind-tag" data-kind-tag>{{ kindName(row.item.kind) }}</span>
+    }
+    <span class="gl__name k-mono">{{ row.item.name }}</span>
+    <span class="gl__detail">{{ row.item.detail }}</span>
+    @if (markLabel(row.mark); as mark) {
+      <span class="gl__note">{{ mark }}</span>
+    }
+    @if (lockText(row); as why) {
+      <span class="gl__note">{{ why }}</span>
+    } @else if (nested && row.off) {
+      <span class="gl__note">off with its plugin</span>
+    }
+    @if (status(row); as s) {
+      <span class="gl__note k-mono">{{ s }}</span>
+    }
+  </div>
+</ng-template>
 
+<div class="gl">
+  @for (kind of groups(); track kind.kind) {
+    <section class="gl__kind" [attr.data-kind]="kind.kind">
+      <div class="gl__kind-head" data-kind-header>
+        <span class="gl__kind-name">{{ kind.label }}</span>
+        <span class="gl__count k-mono">{{ kind.count }} · {{ kind.off }} off</span>
+      </div>
+      @for (group of kind.groups; track group.source) {
+        <div class="gl__source" [attr.data-source]="group.source">
+          <div class="gl__source-head" data-source-header>
+            <span>{{ sourceLabel(group.source) }}</span>
+            <span class="gl__count k-mono">{{ group.count }} · {{ group.off }} off</span>
+          </div>
+          @for (entry of group.rows; track entry.row.key) {
+            <ng-container *ngTemplateOutlet="rowTpl; context: { $implicit: entry.row, nested: false }" />
+            @if (entry.followers.length > 0) {
+              <div class="gl__brings">
+                <button
+                  hlmBtn
+                  variant="ghost"
+                  size="icon-sm"
+                  type="button"
+                  [attr.aria-expanded]="!isCollapsed(entry.row.key)"
+                  [attr.aria-label]="(isCollapsed(entry.row.key) ? 'Show' : 'Hide') + ' what ' + entry.row.item.name + ' brings'"
+                  (click)="toggleCollapsed(entry.row.key)"
+                >
+                  <ng-icon [name]="isCollapsed(entry.row.key) ? 'lucideChevronRight' : 'lucideChevronDown'" size="14" aria-hidden="true" />
+                </button>
+                <span class="gl__note">brings {{ entry.followers.length }}</span>
+              </div>
+              @if (!isCollapsed(entry.row.key)) {
+                @for (f of entry.followers; track f.key) {
+                  <ng-container *ngTemplateOutlet="rowTpl; context: { $implicit: f, nested: true }" />
+                }
+              }
+            }
+          }
+        </div>
+      }
+    </section>
+  }
+</div>
