@@ -4,4 +4,4 @@
  * Why an item is locked on. Every variant but `FollowsPlugin` carries the
  * one-line reason text the row shows.
  */
-export type LockReason = { "kata": { text: string, } } | { "required": { text: string, } } | { "organization": { text: string, } } | { "unswitchable": { text: string, } } | { "follows-plugin": { plugin: string, } };
+export type LockReason = { "kind": "kata", text: string, } | { "kind": "required", text: string, } | { "kind": "organization", text: string, } | { "kind": "unswitchable", text: string, } | { "kind": "follows-plugin", plugin: string, };
