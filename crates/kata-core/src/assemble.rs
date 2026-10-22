@@ -1,6 +1,7 @@
 use crate::catalog::{CatalogEntry, EntryKind};
 use crate::fsutil::copy_dir;
 use crate::spec::{IdentityMode, RunSpec};
+use std::collections::BTreeSet;
 use tempfile::TempDir;
 
 #[derive(Debug, thiserror::Error)]
@@ -56,7 +57,14 @@ pub fn resolve(
     Ok(out)
 }
 
-pub fn assemble(spec: &RunSpec, catalog: &[CatalogEntry]) -> Result<Assembled, AssembleError> {
+/// `skip` names kit skills and plugins to leave out of the plugin folder (a
+/// switched-off item; see `given::apply`).
+pub fn assemble(
+    spec: &RunSpec,
+    catalog: &[CatalogEntry],
+    skip: &BTreeSet<String>,
+) -> Result<Assembled, AssembleError> {
+    let _ = skip;
     let temp = tempfile::tempdir()?;
     let root = temp.path();
 
@@ -169,7 +177,7 @@ mod tests {
         };
         spec.skills = vec!["triage".into()];
 
-        let a = assemble(&spec, std::slice::from_ref(&entry)).unwrap();
+        let a = assemble(&spec, std::slice::from_ref(&entry), &BTreeSet::new()).unwrap();
         let dir = PathBuf::from(a.plugin_dir.as_ref().unwrap());
         assert!(dir.join("skills").join("triage").join("SKILL.md").is_file());
         assert!(a.system_prompt_file.is_none());
@@ -187,7 +195,7 @@ mod tests {
         spec.identity.system_prompt = Some("you triage".into());
         spec.identity.mode = IdentityMode::Append;
 
-        let a = assemble(&spec, &[]).unwrap();
+        let a = assemble(&spec, &[], &BTreeSet::new()).unwrap();
         let f = a.system_prompt_file.as_ref().unwrap();
         assert_eq!(fs::read_to_string(f).unwrap(), "you triage");
         assert!(a.plugin_dir.is_none());
@@ -204,7 +212,7 @@ mod tests {
         };
         spec.identity.system_prompt = Some("x".into());
         spec.identity.mode = IdentityMode::Replace;
-        let a = assemble(&spec, &[]).unwrap();
+        let a = assemble(&spec, &[], &BTreeSet::new()).unwrap();
         assert!(a.system_prompt_file.is_none());
     }
 
@@ -218,7 +226,7 @@ mod tests {
             ..Default::default()
         };
         spec.skills = vec!["nope".into()];
-        let err = assemble(&spec, &[]).unwrap_err();
+        let err = assemble(&spec, &[], &BTreeSet::new()).unwrap_err();
         assert!(matches!(err, AssembleError::NotFound(_)));
     }
 
@@ -234,7 +242,7 @@ mod tests {
         };
         spec.skills = vec!["triage".into()];
         let dir = {
-            let a = assemble(&spec, std::slice::from_ref(&entry)).unwrap();
+            let a = assemble(&spec, std::slice::from_ref(&entry), &BTreeSet::new()).unwrap();
             PathBuf::from(a.plugin_dir.as_ref().unwrap())
         }; // a dropped here
         assert!(
@@ -283,13 +291,37 @@ mod tests {
         };
         spec.plugins.insert("kata".into(), PluginConfig::default());
 
-        let a = assemble(&spec, &catalog).unwrap();
+        let a = assemble(&spec, &catalog, &BTreeSet::new()).unwrap();
         let dir = PathBuf::from(a.plugin_dir.as_ref().unwrap());
         let kit = dir.join("plugins").join("kata");
         assert!(kit.join(".claude-plugin").join("plugin.json").is_file());
         assert!(kit.join("skills").join("prd").join("SKILL.md").is_file());
         assert!(kit.join("agents").join("kata-scout.md").is_file());
         assert!(kit.join("commands").join("triage.md").is_file());
+    }
+
+    #[test]
+    fn a_skipped_kit_skill_is_not_copied() {
+        let (keep, _k1) = skill_entry("keep");
+        let (drop, _k2) = skill_entry("drop");
+        let mut spec = RunSpec {
+            schema: 1,
+            name: "n".into(),
+            task: "t".into(),
+            workdir: "/w".into(),
+            ..Default::default()
+        };
+        spec.skills = vec!["keep".into(), "drop".into()];
+        let skip: BTreeSet<String> = ["drop".to_string()].into();
+        let a = assemble(&spec, &[keep.clone(), drop.clone()], &skip).unwrap();
+        let dir = PathBuf::from(a.plugin_dir.as_ref().unwrap());
+        assert!(dir.join("skills").join("keep").join("SKILL.md").is_file());
+        assert!(!dir.join("skills").join("drop").exists());
+
+        // Skipping every entry leaves no plugin folder at all.
+        let all: BTreeSet<String> = ["keep".to_string(), "drop".to_string()].into();
+        let a = assemble(&spec, &[keep, drop], &all).unwrap();
+        assert!(a.plugin_dir.is_none());
     }
 
     #[test]

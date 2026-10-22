@@ -260,7 +260,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
     mut emit: F,
 ) -> Result<RunOutcome, RunError> {
     validate(spec).map_err(RunError::Invalid)?;
-    let assembled = assemble(spec, catalog)?;
+    let assembled = assemble(spec, catalog, &std::collections::BTreeSet::new())?;
     let mut inv = build_invocation(spec, &assembled);
 
     // Tee the event stream to a per-run transcript. Best-effort: a missing
