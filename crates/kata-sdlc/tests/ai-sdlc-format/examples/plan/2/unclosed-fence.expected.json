@@ -81,8 +81,8 @@
   "problems": [
     {
       "file": "plan.md",
-      "line": 54,
-      "message": "fenced block opened on line 54 is never closed"
+      "line": 68,
+      "message": "id: T3 is not part of any record the reader found"
     }
   ]
 }

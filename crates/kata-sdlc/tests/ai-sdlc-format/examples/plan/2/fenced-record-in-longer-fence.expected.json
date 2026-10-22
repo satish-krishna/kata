@@ -19,7 +19,7 @@
         "sections": [
           {
             "title": "Change",
-            "body": "Write it.\n\nQuote a record the way a document about this format does:\n\n````md\n### T9: Example\n\n```yaml\nid: T9\nrepo: app\n```\n````"
+            "body": "Write it.\n\nQuote a record the way a document about this format does:\n\n````md\n### T9: Example\n\n```yaml\nid: <task id>\nrepo: app\n```\n````"
           },
           {
             "title": "Tests",
@@ -30,7 +30,7 @@
             "body": "It passes."
           }
         ],
-        "text": "### T1: First task\n\n```yaml\nid: T1\nrepo: app\ndepends_on: []\nfiles: [src/a.ts]\ncovers: [R1.1]\n```\n\n#### Change\n\nWrite it.\n\nQuote a record the way a document about this format does:\n\n````md\n### T9: Example\n\n```yaml\nid: T9\nrepo: app\n```\n````\n\n#### Tests\n\nTest it first.\n\n#### Done when\n\nIt passes.",
+        "text": "### T1: First task\n\n```yaml\nid: T1\nrepo: app\ndepends_on: []\nfiles: [src/a.ts]\ncovers: [R1.1]\n```\n\n#### Change\n\nWrite it.\n\nQuote a record the way a document about this format does:\n\n````md\n### T9: Example\n\n```yaml\nid: <task id>\nrepo: app\n```\n````\n\n#### Tests\n\nTest it first.\n\n#### Done when\n\nIt passes.",
         "line": 18
       },
       {

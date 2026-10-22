@@ -34711,8 +34711,9 @@ function defaultOnError(left, right) {
 // src/doc.ts
 var import_yaml = __toESM(require_dist(), 1);
 var OPENER = /^[\s>\-*+\d.]*(`{3,}|~{3,})/;
-function splitDoc(text3) {
-  const lines = text3.split(/\r?\n/);
+function splitDoc(source) {
+  const text3 = source.replace(/\r\n|\r/g, "\n");
+  const lines = text3.split("\n");
   const fenced = lines.map(() => false);
   const heading = lines.map(() => false);
   const fences = [];
@@ -34764,20 +34765,15 @@ function holdsRecordKey(doc, f, keys) {
   }
 }
 function unclosedFences(doc, file) {
-  const out = [];
-  for (const f of doc.fences) {
-    const end = f.close < 0 ? doc.lines.length : f.close;
-    const c = f.char;
-    const reopens = new RegExp("^[\\s>]*" + c + "{" + f.length + "}(?!" + c + ")\\s*[^\\s" + c + "]");
-    const opensAgain = doc.lines.slice(f.open + 1, end).some((line) => reopens.test(line));
-    if (f.close < 0 || opensAgain) {
-      out.push({ file, line: f.open + 1, message: `fenced block opened on line ${f.open + 1} is never closed` });
-    }
-  }
-  return out;
+  return doc.fences.filter((f) => f.close < 0).map((f) => ({ file, line: f.open + 1, message: `fenced block opened on line ${f.open + 1} is never closed` }));
 }
-function reportUnread(doc, file, problems, headings, keys, claimed) {
+function reportUnread(doc, file, problems, headings, keys, rawKey, claimed) {
   const found = unclosedFences(doc, file);
+  const covered = /* @__PURE__ */ new Set();
+  const cover = (f) => {
+    const last = f.close < 0 ? doc.lines.length - 1 : f.close;
+    for (let i = f.open; i <= last; i++) covered.add(i);
+  };
   doc.lines.forEach((line, index2) => {
     if (doc.fenced[index2]) return;
     const heading = headings.find((h) => h.prefix.test(line));
@@ -34785,11 +34781,27 @@ function reportUnread(doc, file, problems, headings, keys, claimed) {
       found.push({ file, line: index2 + 1, message: `heading "${line.trimEnd()}" is not ${heading.what}` });
     }
   });
+  const keyLines = /* @__PURE__ */ new Set();
   for (const f of doc.fences) {
-    if (isFieldsBlock(f) && !claimed.has(f.open) && holdsRecordKey(doc, f, keys)) {
+    if (f.close < 0) cover(f);
+    if (claimed.has(f.open)) {
+      const block = blockOf(doc, f);
+      for (let i = block.first; i <= block.last; i++) {
+        if (rawKey.test(doc.lines[i])) {
+          keyLines.add(i);
+          break;
+        }
+      }
+    } else if (isFieldsBlock(f) && holdsRecordKey(doc, f, keys)) {
       found.push({ file, line: f.open + 1, message: "yaml block is not part of any record" });
+      cover(f);
     }
   }
+  doc.lines.forEach((line, index2) => {
+    if (rawKey.test(line) && !keyLines.has(index2) && !covered.has(index2)) {
+      found.push({ file, line: index2 + 1, message: `${line.trim()} is not part of any record the reader found` });
+    }
+  });
   problems.push(...found.sort((a, b) => a.line - b.line));
 }
 function keyLine(doc, block, key) {
@@ -34824,7 +34836,7 @@ var CouldNotRun = class extends Error {
 
 // src/front-matter.ts
 function parseFrontMatter(text3, file) {
-  const lines = text3.split(/\r?\n/);
+  const lines = text3.split(/\r\n|\r|\n/);
   if (lines[0]?.trim() !== "---") return { data: {}, bodyLine: 1 };
   const close = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
   if (close < 0) throw new CouldNotRun(`${file}: front matter is never closed`);
@@ -34991,7 +35003,7 @@ function readBuildLog(text3, file) {
   }
   const claimed = /* @__PURE__ */ new Set();
   const entries = withEntries ? readEntries(doc, file, problems, claimed) : [];
-  if (withEntries) reportUnread(doc, file, problems, [{ prefix: recordPrefix("T\\d+"), strict: ENTRY_HEADING, what: "an entry heading" }], ["task"], claimed);
+  if (withEntries) reportUnread(doc, file, problems, [{ prefix: recordPrefix("T\\d+"), strict: ENTRY_HEADING, what: "an entry heading" }], ["task"], /^\s*task\s*:\s*["']?T\d+/, claimed);
   const rows = [...tableRows(doc), ...entries].sort((a, b) => a.line - b.line);
   const seen = /* @__PURE__ */ new Map();
   for (const r of rows) {
@@ -35317,7 +35329,7 @@ function readPlan(text3, file, marker) {
   const claimed = /* @__PURE__ */ new Set();
   const tasks = readTasks2(doc, heads, file, problems, repos, system, claimed);
   const shared_decisions = decisions2(doc, file, problems, claimed);
-  reportUnread(doc, file, problems, [{ prefix: recordPrefix("T\\d+"), strict: HEADING2, what: "a task heading" }], ["id"], claimed);
+  reportUnread(doc, file, problems, [{ prefix: recordPrefix("T\\d+"), strict: HEADING2, what: "a task heading" }], ["id"], /^\s*id\s*:\s*["']?T\d+/, claimed);
   return { kind: "plan", layout, document: { tasks, shared_decisions }, problems };
 }
 
@@ -35459,6 +35471,7 @@ function readReview(text3, file) {
       { prefix: recordPrefix("F\\d+"), strict: FINDING_HEADING, what: "a finding heading" }
     ],
     ["review", "id"],
+    /^\s*(id\s*:\s*["']?F\d+|review\s*:\s*["']?\d+)/,
     claimed
   );
   return { kind: "review", layout, document: { reviews }, problems };

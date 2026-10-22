@@ -35,7 +35,7 @@ Quote a record the way a document about this format does:
 ### T9: Example
 
 ```yaml
-id: T9
+id: <task id>
 repo: app
 ```
 ````
