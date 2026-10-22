@@ -810,6 +810,59 @@ source_spec_commit: {spec_pin}
         assert_eq!(got[0].stage, Stage::BuildReady);
     }
 
+    /// The change list for an accepted plan with the extra front matter `front`, read by the real format program.
+    fn reason_for_plan(front: &str) -> serde_json::Value {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let dir = "intent/claims/2026-10-12-fnol";
+        let spec_pin = accepted_spec(&repo, dir);
+        let plan = format!(
+            "---\nstatus: accepted\nsource_spec_commit: {spec_pin}\n{front}---\n\n## Tasks\n\n### T1: One (`app`)\n\n- **Depends on:** none\n"
+        );
+        testutil::commit_file(&repo, &format!("{dir}/plan.md"), &plan, "plan");
+        let got = list(Some(testutil::plugin_dir()), &repo, "claims");
+        serde_json::to_value(&got[0]).unwrap()
+    }
+
+    #[test]
+    fn an_unreadable_plan_carries_the_programs_message_for_a_layout_too_new_f26() {
+        let json = reason_for_plan("layout: 3\n");
+        assert_eq!(json["plan_unreadable"], serde_json::json!(true));
+        let why = json["plan_unreadable_reason"].as_str().unwrap_or_default();
+        assert!(why.contains("layout 3 is newer"), "got {why:?}");
+    }
+
+    #[test]
+    fn an_unreadable_plan_carries_the_programs_message_for_a_broken_front_matter_f26() {
+        let json = reason_for_plan("layout: soon\n");
+        assert_eq!(json["plan_unreadable"], serde_json::json!(true));
+        let why = json["plan_unreadable_reason"].as_str().unwrap_or_default();
+        assert!(why.contains("layout must be a whole number"), "got {why:?}");
+    }
+
+    #[test]
+    fn a_plan_without_a_usable_plugin_says_the_plugin_is_missing_f26() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let dir = "intent/claims/2026-10-12-fnol";
+        let spec_pin = accepted_spec(&repo, dir);
+        let plan = format!(
+            "---\nstatus: accepted\nsource_spec_commit: {spec_pin}\n---\n\n## Tasks\n\n### T1: One (`app`)\n\n- **Depends on:** none\n"
+        );
+        testutil::commit_file(&repo, &format!("{dir}/plan.md"), &plan, "plan");
+        let got = list(None, &repo, "claims");
+        let json = serde_json::to_value(&got[0]).unwrap();
+        let why = json["plan_unreadable_reason"].as_str().unwrap_or_default();
+        assert!(why.contains("plugin"), "got {why:?}");
+    }
+
+    #[test]
+    fn a_readable_plan_carries_no_reason_f26() {
+        let json = reason_for_plan("layout: 2\n");
+        assert_eq!(json["plan_unreadable"], serde_json::json!(false));
+        assert_eq!(json["plan_unreadable_reason"], serde_json::Value::Null);
+    }
+
     #[test]
     fn list_skips_non_change_folders() {
         let tmp = tempfile::tempdir().unwrap();
