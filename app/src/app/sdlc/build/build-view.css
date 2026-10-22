@@ -51,7 +51,9 @@
 .k-build__pane {
   display: flex;
   flex-direction: column;
-  height: 32rem;
+  /* One panel tall, less the panel's padding: scrolled to, a run fills the view. */
+  height: max(32rem, 100cqb - 2 * var(--space-5));
+  min-width: 0;
   min-height: 0;
   border: 1px solid var(--border-subtle);
   background: var(--surface-panel);
@@ -87,9 +89,11 @@
 }
 
 .k-build__panel {
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-4);
+  min-width: 0;
+  container-type: size;
   min-height: 0;
   padding: var(--space-5);
   overflow-y: auto;
@@ -101,6 +105,7 @@
 }
 
 .k-build__panel--changes {
+  display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   padding: 0;
   overflow: hidden;

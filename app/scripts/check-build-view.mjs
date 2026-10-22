@@ -69,6 +69,19 @@ try {
       (l) => (width < MD ? l.stacked : l.beside),
       `build layout at ${width}`,
     ).catch((e) => ({ error: e.message }));
+    const sideways = await page.evaluate(() =>
+      [...document.querySelectorAll('.k-build *')]
+        .filter((el) => el.checkVisibility() && el.scrollWidth > el.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(el).overflowX))
+        .map((el) => `${el.tagName.toLowerCase()}.${[...el.classList].join('.')} ${el.scrollWidth} of ${el.clientWidth}`),
+    );
+    check(sideways.length === 0, `${width}px: nothing in the build view scrolls sideways${sideways.length ? ` (${sideways.join(' | ')})` : ''}`);
+    const fill = await page.evaluate(() => {
+      const panel = document.querySelector('.k-build__panel:not([hidden])');
+      const last = [...document.querySelectorAll('.k-build__runs:not([hidden]) .k-build__pane')].at(-1);
+      return { pane: Math.round(last.getBoundingClientRect().height), panel: panel.clientHeight };
+    });
+    // The pane may give up the run's heading and the panel's padding, never a fixed share of the height.
+    check(fill.pane >= fill.panel - 120, `${width}px: the last run's observe pane takes the panel's height (${fill.pane} of ${fill.panel})`);
     const scroll = await noHorizontalScroll(page);
     check(scroll.scrollWidth <= scroll.clientWidth && scroll.body <= scroll.clientWidth, `${width}px: no horizontal page scroll (${scroll.scrollWidth} of ${scroll.clientWidth})`);
     if (layout.error) check(false, layout.error);
