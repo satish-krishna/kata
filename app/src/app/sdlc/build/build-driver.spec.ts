@@ -688,3 +688,52 @@ describe('BuildDriver outcomes', () => {
     expect(w.of('app')[1].opts.instructions).toBe('another round');
   });
 });
+
+describe('the build\'s choices', () => {
+  it('runs the build starts by itself get the build\'s choices and no preview, the review included (R11.1)', async () => {
+    const w = world([
+      { id: 'T1', repo: 'app' },
+      { id: 'T2', repo: 'api', dependsOn: ['T1'] },
+    ]);
+    const choices = { off: new Set(['personal:tool-server:github']) };
+    await w.driver.begin(3600, undefined, choices);
+    await flush();
+    // The ready repository starts at once; the one that waited starts as it becomes ready; the review follows by itself.
+    await w.of('app')[0].end(['T1']);
+    await w.of('api')[0].end(['T2']);
+    await flush();
+    expect(w.log).toEqual(['app', 'api', 'review']);
+    expect(w.started).toHaveLength(3);
+    for (const s of w.started) expect(s.opts.choices).toBe(choices);
+    // The driver's only way out to a run is `start`; no other dependency was needed to launch any of them.
+    expect(Object.keys(w.started[0].opts).sort()).toEqual(['choices', 'signal', 'timeoutSecs']);
+  });
+
+  it('new choices given for a continued repository reach its next run and the review after it (R12.1)', async () => {
+    const w = world([{ id: 'T1', repo: 'app' }, { id: 'T2', repo: 'api' }]);
+    const first = { off: new Set(['personal:tool-server:github']) };
+    await w.driver.begin(3600, undefined, first);
+    await flush();
+    await w.of('app')[0].end([], { exit: 1 });
+    expect(w.driver.stopped().has('app')).toBe(true);
+    const second = { off: new Set<string>() };
+    w.driver.setChoices(second);
+    await w.driver.continueRepo('app');
+    await flush();
+    expect(w.of('app')[1].opts.choices).toBe(second);
+    await w.of('app')[1].end(['T1']);
+    await w.of('api')[0].end(['T2']);
+    await flush();
+    expect(w.started.at(-1)!.target).toBe('review');
+    expect(w.started.at(-1)!.opts.choices).toBe(second);
+    // A run that was already going keeps the choices it started with.
+    expect(w.of('api')[0].opts.choices).toBe(first);
+  });
+
+  it('without choices a run is given the empty set', async () => {
+    const w = world([{ id: 'T1', repo: 'app' }]);
+    await w.driver.begin(3600);
+    await flush();
+    expect([...w.of('app')[0].opts.choices.off]).toEqual([]);
+  });
+});

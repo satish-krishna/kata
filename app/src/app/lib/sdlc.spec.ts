@@ -5,7 +5,7 @@ import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
 import type { KataEvent, RunDetail } from "./events";
 import { validateLocal } from "./mock";
-import { DONE_LABEL, actionLabel, actionsFor, actionsForChange, hasAiSdlcPlugin, primaryAction, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildRun, type RunContext, type StageAction } from "./sdlc";
+import { DONE_LABEL, actionLabel, buildPreviewFor, givenFor, safetyRules, actionsFor, actionsForChange, hasAiSdlcPlugin, primaryAction, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type BuildRun, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -462,5 +462,44 @@ describe("the unreadable plan stage (F20)", () => {
   });
   it("is labeled as a plan that could not be read, in the warning tone", () => {
     expect(stageLabel("plan-unreadable" as Stage)).toEqual({ step: "plan", text: "Plan · could not be read", tone: "warning" });
+  });
+});
+
+describe("what a build's preview asks and which runs its choices reach", () => {
+  const TABLE: [BuildPreviewKind, BuildPreviewPlan][] = [
+    ["start", { asksTimeLimit: true, asksRound: false, sections: "all-repos-and-review", appliesTo: "build", limitSource: "engineer" }],
+    ["continue-all", { asksTimeLimit: true, asksRound: false, sections: "all-repos-and-review", appliesTo: "repos-then-build", limitSource: "engineer" }],
+    ["continue-one", { asksTimeLimit: false, asksRound: false, sections: "one-repo", appliesTo: "repo-then-build", limitSource: "build" }],
+    ["round", { asksTimeLimit: true, asksRound: true, sections: "one-repo", appliesTo: "round-then-build", limitSource: "engineer" }],
+    ["manual-review", { asksTimeLimit: false, asksRound: false, sections: "review", appliesTo: "this-review", limitSource: "kata" }],
+  ];
+
+  it.each(TABLE)("buildPreviewFor decides every row of the build preview table: %s", (kind, plan) => {
+    expect(buildPreviewFor(kind)).toEqual(plan);
+  });
+
+  it("the build's preview lists the safety rules read-only", () => {
+    const common = ["No push", "No use of GitHub's command-line tool", "No change of remotes", "No edit of the checks folder"];
+    expect(safetyRules("repo")).toEqual([...common, "No edit of another repository or its build log"]);
+    expect(safetyRules("review")).toEqual([...common, "No edit of any repository or build log, except the review document"]);
+  });
+
+  it("the build's choices reach a run as its given section: shared items for every run, a project item only in its own folder", () => {
+    const off = new Set([
+      "personal:tool-server:github",
+      "d:/ws/claims-core|project:tool-server:claims-core-db",
+      "d:/ws/customer-portal|project:tool-server:customer-portal-db",
+      "personal:plugin:superpowers@claude-plugins-official",
+      "run-spec:skill:doc-writer",
+      "personal:instruction:CLAUDE.md",
+    ]);
+    expect(givenFor(off, "D:\ws\claims-core\\")).toEqual({
+      hooks: [],
+      skills: ["run-spec:skill:doc-writer"],
+      plugins: ["personal:plugin:superpowers@claude-plugins-official"],
+      instructions: ["personal:instruction:CLAUDE.md"],
+      tool_servers: ["personal:tool-server:github", "project:tool-server:claims-core-db"],
+    });
+    expect(givenFor(new Set(), "D:/ws/claims-core")).toEqual({ hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] });
   });
 });

@@ -5,10 +5,12 @@ import type { RunSpec } from '@bindings/RunSpec';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
+import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
-import { actionsFor } from '../../lib/sdlc';
+import { givenKey, type KindGroup, type PresetRow } from '../../lib/given';
+import { actionsFor, safetyRules } from '../../lib/sdlc';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { ChangePageViewModel } from './change-page.view-model';
 
@@ -911,5 +913,197 @@ describe('ChangePageViewModel', () => {
       await vm.showDoc('intent');
       expect(vm.railRuns().total).toBe(1);
     });
+  });
+});
+
+describe('the build\'s preview', () => {
+  const BUILD = MOCK_BUILD_CHANGE;
+  const KEY = `claims/${BUILD}`;
+  const GITHUB = 'personal:tool-server:github';
+  const ENGINEER = 'set in this preview';
+  const flat = (groups: KindGroup[]): PresetRow[] => groups.flatMap((k) => k.groups.flatMap((g) => g.rows.flatMap((e) => [e.row, ...e.followers])));
+  const limit = (preview: RunPreviewViewModel) => preview.settings().find((s) => s.label === 'Time limit');
+  const section = (preview: RunPreviewViewModel, title: string) => flat(preview.sections()!.find((s) => s.title === title)!.groups);
+  const dbKey = (vm: ChangePageViewModel, repo: string) => givenKey(`project:tool-server:${repo}-db`, `${vm.current()!.folder}/${repo}`);
+  const staged = async (stage: ChangeInfo['stage'], change = BUILD) => {
+    const transport = new MockTransport();
+    withStage(transport, change, stage);
+    const s = setup(change, transport, 'real');
+    await ready(s.vm);
+    return { ...s, givens: TestBed.inject(GivenStore), prepare: vi.spyOn(transport, 'sdlcBuildPrepare') };
+  };
+  /** Wait for the preview, press Start run, and wait for the build to be handed over. */
+  const startPreview = async (preview: RunPreviewViewModel, vm: ChangePageViewModel) => {
+    await previewReady(preview);
+    preview.start();
+    await vi.waitFor(() => expect(vm.handoff()).not.toBeNull());
+  };
+
+  it('Start build opens one preview for the whole build: shared items once, a section per repository, one for the review (R11.2, R11.3)', async () => {
+    const { vm, preview, prepare } = await staged('build-ready');
+    await vm.act('start-build');
+    await previewReady(preview);
+    expect(prepare).not.toHaveBeenCalled();
+    expect(preview.title()).toBe('Start build');
+    // Shared items appear once and are never repeated under a section.
+    const shared = flat(preview.groups());
+    expect(shared.filter((r) => r.item.id === GITHUB)).toHaveLength(1);
+    expect(shared.every((r) => r.key === r.item.id)).toBe(true);
+    expect(preview.sections()!.map((s) => s.title)).toEqual(['claims-core', 'customer-portal', 'Review']);
+    for (const title of ['claims-core', 'customer-portal', 'Review']) expect(section(preview, title).every((r) => r.key !== r.item.id)).toBe(true);
+    // Each repository's project items sit under that repository; the master's sit under the review.
+    const ids = (title: string) => section(preview, title).map((r) => r.item.id);
+    expect(ids('claims-core')).toContain('project:tool-server:claims-core-db');
+    expect(ids('claims-core')).not.toContain('project:tool-server:customer-portal-db');
+    expect(ids('customer-portal')).toContain('project:tool-server:customer-portal-db');
+    expect(ids('Review')).toContain('project:tool-server:claims-intent-db');
+    expect(ids('Review')).toContain('project:skill:claims-intent-conventions');
+  });
+
+  it('a switch on a shared row applies to every run; a switch on a project row only to its folder (R11.1, R11.2)', async () => {
+    const { vm, preview, givens } = await staged('build-ready');
+    await vm.act('start-build');
+    await previewReady(preview);
+    preview.toggle(GITHUB, true);
+    preview.toggle(dbKey(vm, 'claims-core'), true);
+    await startPreview(preview, vm);
+    expect(vm.handoff()!.choices!.off).toEqual(new Set([GITHUB, dbKey(vm, 'claims-core')]));
+    // The build keeps them for the runs it starts by itself, and the next build starts from them.
+    expect(givens.build(KEY)!.off).toEqual(new Set([GITHUB, dbKey(vm, 'claims-core')]));
+    expect(vm.handoff()!.timeoutSecs).toBe(7200);
+  });
+
+  it('cancelling the build\'s preview prepares nothing and leaves the build\'s choices alone', async () => {
+    const { vm, preview, prepare, givens } = await staged('build-ready');
+    await vm.act('start-build');
+    await previewReady(preview);
+    preview.toggle(GITHUB, true);
+    preview.cancel();
+    await vi.waitFor(() => expect(vm.buildMode()).toBeNull());
+    expect(prepare).not.toHaveBeenCalled();
+    expect(givens.build(KEY)).toBeNull();
+    expect(vm.handoff()).toBeNull();
+  });
+
+  it('a first build starts from the session\'s choices, marked as kept from an earlier run (R9.1)', async () => {
+    const { vm, preview, givens } = await staged('build-ready');
+    givens.remember([{ item: { id: GITHUB, brought_by: null } as never, key: GITHUB, off: true, locked: null, mark: null }], '');
+    await vm.act('start-build');
+    await previewReady(preview);
+    expect(flat(preview.groups()).find((r) => r.item.id === GITHUB)).toMatchObject({ off: true, mark: 'kept' });
+  });
+
+  it('the build\'s preview lists the safety rules read-only (R7.1)', async () => {
+    const { vm, preview } = await staged('build-ready');
+    await vm.act('start-build');
+    await previewReady(preview);
+    expect(preview.safetyRules()).toEqual(safetyRules('repo'));
+    expect(preview.safetyRules()).toContain('No push');
+    // Nothing in the preview switches a rule off: the rules are text, and no row carries one.
+    expect(flat(preview.groups()).some((r) => preview.safetyRules()!.includes(r.item.name))).toBe(false);
+  });
+
+  it.each([
+    ['a build', 'build-ready', 'start-build', '2 h', ENGINEER, true],
+    ['another round', 'build-finished', 'another-round', '2 h', ENGINEER, true],
+    ['a spec run', 'spec-ready', 'start-spec', '6 h', 'Kata itself', false],
+    ['a review started by hand', 'build-finished', 'run-review', '2 h', 'Kata itself', false],
+  ] as const)('limits are set where they are set today: %s (R17.3)', async (_name, stage, action, value, source, asks) => {
+    const change = stage === 'spec-ready' ? FNOL : BUILD;
+    const { vm, preview } = await staged(stage, change);
+    await vm.act(action);
+    await previewReady(preview);
+    // The shown limit is read-only text; the only field that sets it is the build's time limit, and only a build or a round asks for it.
+    expect(limit(preview)).toEqual({ label: 'Time limit', value, source });
+    expect(preview.buildForm() !== null).toBe(asks);
+    expect(preview.settings().find((s) => s.label === 'Turn cap')!.value).toBe('none');
+    expect(preview.settings().find((s) => s.label === 'Spending ceiling')!.value).toBe('none');
+  });
+
+  it('the time limit the engineer sets in the preview is the limit shown and the one the build gets', async () => {
+    const { vm, preview } = await staged('build-ready');
+    await vm.act('start-build');
+    await previewReady(preview);
+    preview.buildForm()!.model.update((m) => ({ ...m, hours: 1, minutes: 30 }));
+    expect(limit(preview)).toMatchObject({ value: '1 h 30 min' });
+    await startPreview(preview, vm);
+    expect(vm.handoff()!.timeoutSecs).toBe(5400);
+  });
+
+  it('Start run waits while the time limit is zero', async () => {
+    const { vm, preview } = await staged('build-ready');
+    await vm.act('start-build');
+    await previewReady(preview);
+    preview.buildForm()!.model.update((m) => ({ ...m, hours: 0, minutes: 0 }));
+    expect(preview.canStart()).toBe(false);
+    preview.start();
+    expect(preview.isOpen()).toBe(true);
+    expect(vm.handoff()).toBeNull();
+  });
+
+  describe('runs started during a build open pre-set to the build\'s choices (R12.1)', () => {
+    const buildOff = () => new Set([GITHUB]);
+
+    it('continuing every stopped repository: those repositories\' next runs and every run the build then starts by itself', async () => {
+      const { vm, preview, givens } = await staged('build-stopped');
+      givens.setBuild(KEY, { off: buildOff() });
+      await vm.act('continue-build');
+      await previewReady(preview);
+      expect(preview.title()).toBe('Continue build');
+      expect(flat(preview.groups()).find((r) => r.item.id === GITHUB)).toMatchObject({ off: true, mark: 'build' });
+      preview.toggle(GITHUB, false);
+      await startPreview(preview, vm);
+      expect(givens.build(KEY)!.off.has(GITHUB)).toBe(false);
+      expect(vm.handoff()!.choices!.off.has(GITHUB)).toBe(false);
+    });
+
+    it('another round in one repository: that round and every run the build then starts by itself', async () => {
+      const { vm, preview, givens } = await staged('build-finished');
+      givens.setBuild(KEY, { off: buildOff() });
+      await vm.act('another-round');
+      await previewReady(preview);
+      expect(preview.title()).toBe('Start round');
+      expect(flat(preview.groups()).find((r) => r.item.id === GITHUB)).toMatchObject({ off: true, mark: 'build' });
+      // Only the repository the round is picked for shows its section.
+      expect(preview.sections()!.map((s) => s.title)).toEqual([]);
+      preview.buildForm()!.model.update((m) => ({ ...m, instructions: 'tidy up', repo: 'claims-core' }));
+      expect(preview.sections()!.map((s) => s.title)).toEqual(['claims-core']);
+      preview.toggle(GITHUB, false);
+      await startPreview(preview, vm);
+      expect(vm.handoff()!.round).toEqual({ instructions: 'tidy up', repo: 'claims-core' });
+      expect(givens.build(KEY)!.off.has(GITHUB)).toBe(false);
+      expect(vm.handoff()!.choices!.off.has(GITHUB)).toBe(false);
+    });
+
+    it('a review started by hand: that review only, the build\'s choices are not changed', async () => {
+      const { vm, preview, givens } = await staged('build-finished');
+      givens.setBuild(KEY, { off: buildOff() });
+      await vm.act('run-review');
+      await previewReady(preview);
+      expect(preview.title()).toBe('Run review');
+      expect(flat(preview.groups()).find((r) => r.item.id === GITHUB)).toMatchObject({ off: true, mark: 'build' });
+      preview.toggle(GITHUB, false);
+      await startPreview(preview, vm);
+      expect(vm.handoff()!.choices!.off.has(GITHUB)).toBe(false);
+      expect(givens.build(KEY)!.off).toEqual(buildOff());
+      expect(vm.handoff()!.round).toBeNull();
+    });
+  });
+
+  it('the stage Run review button opens the review preview and prepares nothing until Start run', async () => {
+    const { vm, preview, prepare } = await staged('build-finished');
+    expect(vm.actions()).toContain('run-review');
+    await vm.act('run-review');
+    await previewReady(preview);
+    expect(preview.title()).toBe('Run review');
+    expect(preview.sections()!.map((s) => s.title)).toEqual(['Review']);
+    expect(preview.safetyRules()).toEqual(safetyRules('review'));
+    expect(preview.buildForm()).toBeNull();
+    expect(prepare).not.toHaveBeenCalled();
+    await startPreview(preview, vm);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(vm.handoff()!.round).toBeNull();
+    // The review is the stage button's and the done dialog's one path: it runs with Kata's review limit.
+    expect(vm.handoff()!.timeoutSecs).toBe(7200);
   });
 });

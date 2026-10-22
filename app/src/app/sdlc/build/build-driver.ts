@@ -1,5 +1,6 @@
 import { signal } from '@angular/core';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { BuildChoices } from '../../core/given/given.store';
 import { stopMessage } from '../../lib/sdlc';
 
 export interface RunEnd {
@@ -20,6 +21,7 @@ export interface RunOptions {
   timeoutSecs: number;
   instructions?: string;
   signal: AbortSignal;
+  choices: BuildChoices;
 }
 
 export type RunTarget = { repo: string } | 'review';
@@ -78,7 +80,9 @@ export class BuildDriver {
 
   constructor(private readonly deps: BuildDriverDeps) {}
 
-  async begin(timeoutSecs: number, round?: { repo: string; instructions: string }): Promise<void> {
+  setChoices(_choices: BuildChoices): void {}
+
+  async begin(timeoutSecs: number, round?: { repo: string; instructions: string }, _choices?: BuildChoices): Promise<void> {
     this.timeoutSecs = timeoutSecs;
     this.cancelledAll = false;
     this.stopped.set(new Map());
@@ -220,7 +224,7 @@ export class BuildDriver {
     const run: RunInstance = { id: ++this.instanceSeq, ctl: new AbortController(), cancelled: false };
     this.instances.set(key, run);
     if (key !== REVIEW) this.going.set(new Set(this.going()).add(key));
-    const opts: RunOptions = { timeoutSecs: this.timeoutSecs, signal: run.ctl.signal };
+    const opts = { timeoutSecs: this.timeoutSecs, signal: run.ctl.signal } as RunOptions;
     if (instructions !== undefined) opts.instructions = instructions;
     const target: RunTarget = key === REVIEW ? REVIEW : { repo: key };
     void (async () => this.deps.start(target, opts))()

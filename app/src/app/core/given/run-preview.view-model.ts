@@ -1,11 +1,11 @@
-import { Injectable, computed, inject, signal } from '@angular/core';
+import { Injectable, computed, inject, signal, type WritableSignal } from '@angular/core';
 import type { Mode } from '@bindings/Mode';
 import type { RunSetting } from '@bindings/RunSetting';
 import type { RunSettings } from '@bindings/RunSettings';
 import type { RunSpec } from '@bindings/RunSpec';
 import { groupRows, itemSourceLabel, presetRows, settingSourceLabel, toGiven, toggle, type PresetFrom, type PresetRow } from '../../lib/given';
 import { SDLC_REQUIRED_PLUGINS } from '../../lib/sdlc';
-import type { PreviewEnvRow, PreviewSettingRow } from '../../ui/run-preview-dialog';
+import type { PreviewEnvRow, PreviewSection, PreviewSettingRow } from '../../ui/run-preview-dialog';
 import { KataTransport } from '../transport/kata-transport';
 import { GivenStore } from './given.store';
 
@@ -46,6 +46,8 @@ export function settingRows(settings: RunSettings, mode: Mode): PreviewSettingRo
     row('Spending ceiling', settings.spending_ceiling, (v) => `$${v}`, 'none'),
   ];
 }
+
+export type BuildPreviewResult = { off: ReadonlySet<string>; request: unknown };
 
 type Pending = { spec: RunSpec; workdir: string; resolve: (spec: RunSpec | null) => void; reject: (e: unknown) => void };
 
@@ -95,6 +97,14 @@ export class RunPreviewViewModel {
       },
     );
     return result;
+  }
+
+  readonly buildForm = signal<{ model: WritableSignal<any>; form: any } | null>(null);
+  readonly sections = signal<PreviewSection[] | null>(null);
+  readonly safetyRules = signal<string[] | null>(null);
+  readonly canStart = computed(() => true);
+  openBuild(_req: { from: Omit<PresetFrom, 'workdir'> }): Promise<BuildPreviewResult | null> {
+    return Promise.resolve(null);
   }
 
   toggle(key: string, off: boolean): void {

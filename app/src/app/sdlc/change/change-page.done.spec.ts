@@ -295,6 +295,12 @@ describe('declaring done', () => {
     const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
     await vm.act('declare-done');
     await vm.doneRunReview();
+    // The review goes through its preview first (R1.1); Start run hands the build over.
+    const preview = TestBed.inject(RunPreviewViewModel);
+    await vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
+    expect(prepare).not.toHaveBeenCalled();
+    preview.start();
+    await vi.waitFor(() => expect(vm.handoff()).not.toBeNull());
     expect(vm.doneReport()).toBeNull();
     expect(prepare).toHaveBeenCalled();
     expect(vm.handoff()).not.toBeNull();

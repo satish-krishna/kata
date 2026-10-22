@@ -29,7 +29,7 @@ import type { ChangesContext } from '../changes/changes-view.view-model';
 import type { BuildContext } from '../build/build-view.view-model';
 import type { BuildDialogMode, BuildStartRequest } from '../../ui/build-dialog';
 import type { RunSpec } from '@bindings/RunSpec';
-import { GivenStore } from '../../core/given/given.store';
+import { GivenStore, type BuildChoices } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
 import { RunStore } from '../../core/run/run.store';
@@ -140,6 +140,8 @@ export type BuildHandoff = {
   timeoutSecs: number;
   round: { instructions: string; repo: string } | null;
   checksDir: string;
+  /** The build's choices: the keys switched off, for every run the build starts. */
+  choices?: BuildChoices;
   /** The repositories whose leftovers the engineer confirmed continuing on top of: only their first run is told not to ask again. */
   continueOnLeftovers?: string[];
 };

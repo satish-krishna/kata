@@ -1,5 +1,5 @@
-import { Component, Injector, computed, inject, input, output, signal, untracked } from '@angular/core';
-import { FormField, REQUIRED, form, metadata, submit, validate } from '@angular/forms/signals';
+import { Component, Injector, computed, inject, input, output, signal, untracked, type WritableSignal } from '@angular/core';
+import { FormField, REQUIRED, form, type FieldTree, metadata, submit, validate } from '@angular/forms/signals';
 import type { BrnDialogState } from '@spartan-ng/brain/dialog';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmDialogImports } from '@spartan-ng/helm/dialog';
@@ -87,4 +87,13 @@ export class BuildDialog {
   protected onState(state: BrnDialogState): void {
     if (state === 'closed' && this.open()) this.cancel.emit();
   }
+}
+
+// Stubs: the fields-only form is specified by tests first.
+export type BuildFormState = { model: WritableSignal<BuildModel>; form: FieldTree<BuildModel> };
+export function createBuildForm(_injector: Injector, _round: boolean): BuildFormState {
+  throw new Error('not implemented');
+}
+export function buildRequest(_state: BuildFormState, _round: boolean): BuildStartRequest {
+  throw new Error('not implemented');
 }

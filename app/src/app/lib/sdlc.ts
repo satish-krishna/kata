@@ -4,6 +4,7 @@
 
 import type { CatalogEntry } from "@bindings/CatalogEntry";
 import type { ChangeInfo } from "@bindings/ChangeInfo";
+import type { Given } from "@bindings/Given";
 import type { PluginConfig } from "@bindings/PluginConfig";
 import type { RunLink } from "@bindings/RunLink";
 import type { RunRecord } from "@bindings/RunRecord";
@@ -562,4 +563,23 @@ export function reviewFindings(detail: RunDetail): Finding[] {
     .map((f, index) => ({ f, index }))
     .sort((a, b) => rank(a.f) - rank(b.f) || a.index - b.index)
     .map(({ f }) => f);
+}
+
+// Stubs: the build's preview is specified by tests first.
+export type BuildPreviewKind = "start" | "continue-all" | "continue-one" | "round" | "manual-review";
+export type BuildPreviewPlan = {
+  asksTimeLimit: boolean;
+  asksRound: boolean;
+  sections: "all-repos-and-review" | "one-repo" | "review";
+  appliesTo: "build" | "repo-then-build" | "repos-then-build" | "round-then-build" | "this-review";
+  limitSource: "engineer" | "build" | "kata";
+};
+export function buildPreviewFor(_kind: BuildPreviewKind): BuildPreviewPlan {
+  throw new Error("not implemented");
+}
+export function safetyRules(_target: "repo" | "review"): string[] {
+  return [];
+}
+export function givenFor(_off: ReadonlySet<string>, _workdir: string): Given {
+  throw new Error("not implemented");
 }
