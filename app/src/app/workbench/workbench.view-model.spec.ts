@@ -1,11 +1,16 @@
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { WorkbenchViewModel } from './workbench.view-model';
+import { RunPreviewViewModel } from '../core/given/run-preview.view-model';
+import { GivenStore } from '../core/given/given.store';
+import { MockTransport } from '../core/transport/mock-transport';
 import { KataTransport } from '../core/transport/kata-transport';
 import { RunStore } from '../core/run/run.store';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { LaunchStore } from '../core/launch/launch.store';
-import { seedSpec, seedCatalog } from '../lib/mock';
+import { seedSpec, seedCatalog, previewFixture } from '../lib/mock';
+import type { RunSpec } from '@bindings/RunSpec';
+import type { PresetRow } from '../lib/given';
 import { defaultSpec, draftFrom, normalize } from '../lib/spec';
 import type { KataEvent } from '../lib/events';
 
@@ -24,7 +29,8 @@ class FakeTransport {
   validateSpec = vi.fn(() => Promise.resolve([] as string[]));
   loadSpec = vi.fn();
   saveSpec = vi.fn(() => Promise.resolve());
-  saveKata = vi.fn(() => Promise.resolve());
+  saveKata = vi.fn((_spec: RunSpec) => Promise.resolve());
+  previewRun = vi.fn((spec: RunSpec, required: readonly string[]) => Promise.resolve(previewFixture(spec, required)));
   savePreset = vi.fn(() => Promise.resolve());
   exportBundle = vi.fn(() => Promise.resolve());
   pickOpenSpec = vi.fn(() => Promise.resolve(null as string | null));
@@ -35,7 +41,7 @@ class FakeTransport {
 function setup() {
   const fake = new FakeTransport();
   TestBed.configureTestingModule({
-    providers: [WorkbenchViewModel, { provide: KataTransport, useValue: fake }, provideRouter([])],
+    providers: [WorkbenchViewModel, RunPreviewViewModel, { provide: KataTransport, useValue: fake }, provideRouter([])],
   });
   return { vm: TestBed.inject(WorkbenchViewModel), fake, store: TestBed.inject(RunStore) };
 }
@@ -43,6 +49,12 @@ function setup() {
 const TAURI = '__TAURI_INTERNALS__';
 const ctrlEnter = () => new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true });
 const settle = () => new Promise<void>((r) => setTimeout(r, 0));
+const confirmReady = (vm: WorkbenchViewModel) => vi.waitFor(() => expect(vm.preview.isOpen() && !vm.preview.busy()).toBe(true));
+/** Wait for the preview to finish loading, then press Start run. */
+const confirm = async (vm: WorkbenchViewModel) => {
+  await confirmReady(vm);
+  vm.preview.start();
+};
 const toastText = () =>
   toastState
     .toasts()
@@ -70,7 +82,9 @@ it('starts from seedSpec in the browser and from defaultSpec under Tauri, where 
 
 it('runs the demo once on init when demo=true in the browser', async () => {
   const { vm, fake } = setup();
-  await vm.init(true);
+  const init = vm.init(true);
+  await confirm(vm);
+  await init;
   expect(fake.runSpec).toHaveBeenCalledTimes(1);
 });
 
@@ -79,6 +93,7 @@ it('does not start a second run on Ctrl+Enter while one is active (Review Focus 
   await vm.init(false);
   vm.onKey(ctrlEnter());
   vm.onKey(ctrlEnter());
+  await confirm(vm);
   await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalledTimes(1));
   vm.onKey(ctrlEnter());
   await settle();
@@ -140,7 +155,9 @@ it('takes a Library launch once and auto-runs it', async () => {
   const { vm, fake } = setup();
   const spec = { ...seedSpec(), name: 'from-library' };
   TestBed.inject(LaunchStore).set({ spec, autorun: true });
-  await vm.init(false);
+  const init = vm.init(false);
+  await confirm(vm);
+  await init;
   expect(vm.spec().name).toBe('from-library');
   expect(vm.dirty()).toBe(false);
   expect(fake.runSpec).toHaveBeenCalledTimes(1);
@@ -271,6 +288,7 @@ it('ignores Ctrl+Enter while the save-preset prompt is open (R22)', async () => 
   expect(fake.runSpec).not.toHaveBeenCalled();
   vm.setNaming(false);
   vm.onKey(ctrlEnter());
+  await confirm(vm);
   await vi.waitFor(() => expect(fake.runSpec).toHaveBeenCalledTimes(1));
 });
 
@@ -290,4 +308,95 @@ it('does not autorun a Library spec that fails fresh validation', async () => {
   await vm.init(false);
   expect(vm.errors()).toEqual(['task is required']);
   expect(fake.runSpec).not.toHaveBeenCalled();
+});
+
+describe('the preview before a run', () => {
+  const HOOK_GONE = 'personal:hook:RemovedHook:0123456789abcdef';
+  const DOC_WRITER = 'run-spec:skill:doc-writer';
+
+  function mockSetup() {
+    TestBed.configureTestingModule({
+      providers: [WorkbenchViewModel, RunPreviewViewModel, { provide: KataTransport, useClass: MockTransport }, provideRouter([])],
+    });
+    const transport = TestBed.inject(KataTransport);
+    return {
+      vm: TestBed.inject(WorkbenchViewModel),
+      runSpec: vi.spyOn(transport, 'runSpec'),
+      saveKata: vi.spyOn(transport, 'saveKata'),
+    };
+  }
+  const rows = (vm: WorkbenchViewModel): PresetRow[] =>
+    vm.preview.groups().flatMap((k) => k.groups.flatMap((g) => g.rows.flatMap((e) => [e.row, ...e.followers])));
+  const rowOf = (vm: WorkbenchViewModel, id: string) => rows(vm).find((r) => r.item.id === id)!;
+
+  it('closing the preview starts nothing and changes nothing', async () => {
+    const { vm, runSpec } = mockSetup();
+    await vm.init(false);
+    const spec = structuredClone(vm.spec());
+    const dirty = vm.dirty();
+    const session = TestBed.inject(GivenStore).session();
+    const run = vm.run();
+    await confirmReady(vm);
+    vm.preview.toggle(DOC_WRITER, true);
+    vm.preview.cancel();
+    await run;
+    expect(vm.preview.isOpen()).toBe(false);
+    expect(runSpec).not.toHaveBeenCalled();
+    expect(vm.spec()).toEqual(spec);
+    expect(vm.dirty()).toBe(dirty);
+    expect(TestBed.inject(GivenStore).session()).toBe(session);
+    expect(session.size).toBe(0);
+  });
+
+  it('a saved job keeps its choices and its rerun shows them', async () => {
+    const first = mockSetup();
+    await first.vm.init(false);
+    const run = first.vm.run();
+    await confirmReady(first.vm);
+    first.vm.preview.toggle(DOC_WRITER, true);
+    first.vm.preview.start();
+    await run;
+    await first.vm.save();
+    const saved = first.saveKata.mock.calls[0][0];
+    expect(saved.given?.skills).toEqual([DOC_WRITER]);
+
+    // The Library hands the saved job over; a fresh Workbench with a fresh session picks it up.
+    TestBed.resetTestingModule();
+    const second = mockSetup();
+    TestBed.inject(LaunchStore).set({ spec: saved, autorun: true });
+    const init = second.vm.init(false);
+    await confirmReady(second.vm);
+    expect(rowOf(second.vm, DOC_WRITER)).toMatchObject({ off: true, mark: 'job' });
+    second.vm.preview.cancel();
+    await init;
+    expect(second.runSpec).not.toHaveBeenCalled();
+  });
+
+  it('a rerun warns about a switched-off item that is gone and still starts', async () => {
+    const { vm, runSpec } = mockSetup();
+    const given = { hooks: [HOOK_GONE], skills: [], plugins: [], instructions: [], tool_servers: [] };
+    TestBed.inject(LaunchStore).set({ spec: { ...seedSpec(), given }, autorun: false });
+    await vm.init(false);
+    const run = vm.run();
+    await confirmReady(vm);
+    expect(vm.preview.warnings().join(' ')).toContain('RemovedHook');
+    vm.preview.start();
+    await run;
+    expect(runSpec).toHaveBeenCalledTimes(1);
+    expect(runSpec.mock.calls[0][0].given?.hooks).toEqual([]);
+  });
+
+  it("the run's limits are the job's", async () => {
+    const { vm, runSpec } = mockSetup();
+    await vm.init(false);
+    vm.form.leash().value.set({ ...vm.spec().leash, max_turns: 7, timeout_secs: 600 });
+    const run = vm.run();
+    await confirmReady(vm);
+    const shown = Object.fromEntries(vm.preview.settings().map((s) => [s.label, s.value]));
+    expect(shown['Turn cap']).toBe('7');
+    expect(shown['Time limit']).toBe('10 min');
+    vm.preview.start();
+    await run;
+    expect(runSpec.mock.calls[0][0].leash).toMatchObject({ max_turns: 7, timeout_secs: 600 });
+  });
 });

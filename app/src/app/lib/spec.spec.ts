@@ -129,4 +129,14 @@ describe("model selection", () => {
       expect(modelChoiceFor(modelIdForChoice(a))).toBe(a);
     }
   });
+
+  it("normalize and draftFrom keep given, and never invent one", () => {
+    const given = { hooks: [], skills: ["run-spec:skill:doc-writer"], plugins: [], instructions: [], tool_servers: [] };
+    const job = { ...defaultSpec(), given };
+    expect(draftFrom(job).given).toEqual(given);
+    expect(normalize(draftFrom(job)).given).toEqual(given);
+    expect(specEquals(draftFrom(job), defaultSpec())).toBe(false);
+    expect(draftFrom(defaultSpec()).given).toBeUndefined();
+    expect(normalize(defaultSpec()).given).toBeUndefined();
+  });
 });
