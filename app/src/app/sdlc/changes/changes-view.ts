@@ -1,4 +1,5 @@
-import { Component, effect, inject, input, untracked } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
+import { Component, TemplateRef, effect, inject, input, untracked, viewChild } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideChevronDown, lucideTriangleAlert } from '@ng-icons/lucide';
 import { HlmAlertImports } from '@spartan-ng/helm/alert';
@@ -17,7 +18,7 @@ import { ChangesViewModel } from './changes-view.view-model';
   selector: 'app-changes-view',
   host: { class: 'block h-full min-h-0' },
   providers: [ChangesViewModel, provideIcons({ lucideChevronDown, lucideTriangleAlert })],
-  imports: [NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, RepoFileList, Segmented, DiffBar, DiffEditor],
+  imports: [NgIcon, NgTemplateOutlet, HlmAlertImports, HlmButtonImports, HlmPopoverImports, RepoFileList, Segmented, DiffBar, DiffEditor],
   templateUrl: './changes-view.html',
   styleUrl: './changes-view.css',
 })
@@ -32,6 +33,10 @@ export class ChangesView {
   readonly banner = input<string | null>(null);
   /** True when the host projects content into the strip's right end (the change page's facts and actions); the strip then draws even before any repository has changes. */
   readonly hasSlot = input(false);
+  /** True when the host shows the file list in a place of its own (the build's drawer), so the view draws only the diff. */
+  readonly listOutside = input(false);
+  /** The repositories with changes and their files, for a host that shows the list itself; it still reads this view's state. */
+  readonly fileList = viewChild.required<TemplateRef<unknown>>('fileList');
 
   constructor() {
     effect(() => {

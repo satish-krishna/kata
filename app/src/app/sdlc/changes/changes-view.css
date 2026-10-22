@@ -22,9 +22,23 @@
   }
 }
 
+/* The repositories with changes, then the diff: stacked below 768, side by side from 768 up. Solo, the host shows the list elsewhere. */
 .k-changes__body {
+  display: grid;
   grid-row: 2;
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
+}
+
+@media (min-width: 768px) {
+  .k-changes__body {
+    grid-template-columns: 18rem minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .k-changes__body--solo {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .k-changes__stat {

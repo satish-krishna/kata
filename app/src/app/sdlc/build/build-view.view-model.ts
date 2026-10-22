@@ -162,6 +162,8 @@ export class BuildViewModel {
   /** The list's share before it was collapsed, so showing it again restores it. */
   private reposSize = REPOS_SIZE;
   readonly reposOpen = computed(() => (this.layout()[0] ?? 0) > 0);
+  /** What the drawer holds: the repositories' runs on Activity, the changed files on Changes. */
+  readonly drawerName = computed(() => (this.tab() === 'changes' ? 'Changed files' : 'Repositories'));
   readonly reposIcon = computed(() => (this.narrow() ? 'lucidePanelTop' : 'lucidePanelLeft') + (this.reposOpen() ? 'Close' : 'Open'));
 
   readonly tab = signal<BuildTab>('activity');

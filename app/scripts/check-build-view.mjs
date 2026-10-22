@@ -2,8 +2,8 @@
 //
 // Drives the mock's scripted build of two repositories (`claims-core` and `customer-portal`
 // run together, `customer-portal` asks one question) and checks, on the production build:
-//   - while the engineer is on Changes, the waiting notice names `customer-portal`, the Changes
-//     tab stays selected, and `claims-core`'s events keep arriving;
+//   - while the engineer is on Changes, the drawer holds the changed files, the waiting notice names
+//     `customer-portal`, the Changes tab stays selected, and `claims-core`'s events keep arriving;
 //   - Go to customer-portal moves to its run, answering clears the notice, and the run carries on;
 //   - at 375, 768 and 1280 pixels the build view has no horizontal page scroll and the
 //     repository list stacks above the main column below 768.
@@ -13,8 +13,10 @@ const { check, done } = reporter('check:build');
 const { page, errors, close } = await open();
 
 const selected = (name) => page.getByRole('tab', { name }).getAttribute('aria-selected');
-// The repository row's "N new" count: events that arrived since the engineer last looked at that run.
-const events = async (repo) => Number(/(\d+) new/.exec(await rowText(repo))?.[1] ?? 0);
+// On Changes the drawer holds the file list, not the repository rows: what is on show is the Activity tab's
+// "N new" count (events that arrived in Activity since the engineer last looked) and the task count in the bar.
+const activityNew = async () => Number(/(\d+) new/.exec(await page.getByRole('tab', { name: /^Activity/ }).innerText())?.[1] ?? 0);
+const tasksDone = async () => Number(/^(\d+)\//.exec(await page.locator('.k-build__top .k-lock__count').innerText())?.[1] ?? 0);
 const rowText = (repo) => page.locator('.k-repos__row', { hasText: repo }).innerText();
 const notices = page.locator('[data-waiting]:visible');
 
@@ -30,11 +32,13 @@ try {
   check((await selected('Changes')) === 'true', 'the Changes tab is still selected while the notice shows');
 
   // R17.2: claims-core's events kept arriving while the engineer looked at Changes.
-  const before = await events('claims-core');
-  const after = await eventually(page, () => events('claims-core'), (n) => n > before, 'claims-core events arriving').catch(() => events('claims-core'));
-  check(after > before, `claims-core's events kept arriving while on Changes (${before} -> ${after})`);
-  const done1 = await eventually(page, () => rowText('claims-core'), (t) => /Finished/.test(t), 'claims-core finishing').catch((e) => e.message);
-  check(/Finished/.test(done1), 'claims-core ran on to finished while the engineer stayed on Changes');
+  check((await page.locator('#build-repos [data-file]').count()) > 0 && (await page.locator('#build-repos .k-repos__row').count()) === 0, 'on Changes the drawer holds the changed files, not the repository rows');
+  const before = await activityNew();
+  const after = await eventually(page, activityNew, (n) => n > before, 'claims-core events arriving').catch(() => activityNew());
+  check(after > before, `claims-core's events kept arriving while on Changes (Activity tab ${before} -> ${after} new)`);
+  // claims-core has the one task customer-portal does not wait on; it is logged when claims-core finishes.
+  const done1 = await eventually(page, tasksDone, (n) => n >= 1, 'claims-core finishing').catch(() => tasksDone());
+  check(done1 >= 1, `claims-core ran on to finished while the engineer stayed on Changes (${done1} task(s) in the build log)`);
   check((await selected('Changes')) === 'true' && (await notices.count()) > 0, 'still on Changes with the notice showing after the other repository finished');
 
   // Go to the waiting repository, answer, and the notice is gone while the run carries on.
@@ -49,6 +53,8 @@ try {
   check(true, 'answering clears the notice');
   await page.getByRole('tab', { name: 'Changes' }).click();
   check((await notices.count()) === 0, 'no notice on Changes either');
+  // The rows are in the drawer on Activity.
+  await page.getByRole('tab', { name: /^Activity/ }).click();
   const finished = await eventually(page, () => rowText('customer-portal'), (t) => /Finished/.test(t), 'customer-portal finishing', 15000).catch((e) => e.message);
   check(/Finished/.test(String(finished)), `customer-portal carried on to its row (${JSON.stringify(String(finished).replace(/\s+/g, ' '))})`);
   check((await page.locator('.k-build__top .k-lock__count').innerText()).startsWith('3/3'), 'all three tasks are in the build log');

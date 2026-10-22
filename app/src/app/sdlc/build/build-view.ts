@@ -1,4 +1,5 @@
-import { Component, ElementRef, Injector, afterNextRender, effect, inject, input, output, untracked } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
+import { Component, ElementRef, Injector, afterNextRender, effect, inject, input, output, untracked, viewChild } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucidePanelLeftClose, lucidePanelLeftOpen, lucidePanelTopClose, lucidePanelTopOpen } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
@@ -22,12 +23,14 @@ import { BuildViewModel, type BuildContext } from './build-view.view-model';
   selector: 'app-build-view',
   host: { class: 'contents' },
   providers: [BuildViewModel, provideIcons({ lucidePanelLeftClose, lucidePanelLeftOpen, lucidePanelTopClose, lucidePanelTopOpen })],
-  imports: [HlmButtonImports, HlmResizableImports, NgIcon, BuildRefusalDialog, ConfirmDialog,HlmTabsImports, ObservePane, RepoStatusList, FindingsList, WaitingNotice, ChangesView],
+  imports: [HlmButtonImports, HlmResizableImports, NgIcon, NgTemplateOutlet, BuildRefusalDialog, ConfirmDialog,HlmTabsImports, ObservePane, RepoStatusList, FindingsList, WaitingNotice, ChangesView],
   templateUrl: './build-view.html',
   styleUrl: './build-view.css',
 })
 export class BuildView {
   protected readonly vm = inject(BuildViewModel);
+  /** The Changes view, whose file list the drawer shows while Changes is on show. */
+  protected readonly changesView = viewChild(ChangesView);
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
 

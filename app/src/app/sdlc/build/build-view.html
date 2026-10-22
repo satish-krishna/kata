@@ -8,12 +8,16 @@
     </span>
   </div>
   <div hlmResizableGroup class="k-build__body" [direction]="vm.narrow() ? 'vertical' : 'horizontal'" [(layout)]="vm.layout">
-    <aside hlmResizablePanel id="build-repos" [minSize]="12" [maxSize]="50" aria-label="Repositories" [attr.inert]="vm.reposOpen() ? null : ''">
+    <aside hlmResizablePanel id="build-repos" [minSize]="12" [maxSize]="50" [attr.aria-label]="vm.drawerName()" [attr.inert]="vm.reposOpen() ? null : ''">
       <div class="k-build__left">
-        <app-repo-status-list [rows]="vm.rows()" [selected]="vm.selected()" (select)="vm.select($event)" />
+        @if (vm.tab() === 'changes' && changesView(); as changes) {
+          <ng-container [ngTemplateOutlet]="changes.fileList()" />
+        } @else {
+          <app-repo-status-list [rows]="vm.rows()" [selected]="vm.selected()" (select)="vm.select($event)" />
+        }
       </div>
     </aside>
-    <hlm-resizable-handle withHandle aria-label="Resize the repository list" />
+    <hlm-resizable-handle withHandle [attr.aria-label]="vm.tab() === 'changes' ? 'Resize the file list' : 'Resize the repository list'" />
     <div hlmResizablePanel [collapsible]="false">
     <section class="k-build__main" aria-label="Runs" hlmTabs variant="bare" [tab]="vm.tab()" (tabActivated)="vm.showTab($event)">
       <div class="sr-only" aria-live="assertive" aria-atomic="true">{{ vm.announcement() }}</div>
@@ -25,7 +29,7 @@
         type="button"
         aria-controls="build-repos"
         [attr.aria-expanded]="vm.reposOpen()"
-        [attr.aria-label]="vm.reposOpen() ? 'Hide repositories' : 'Show repositories'"
+        [attr.aria-label]="(vm.reposOpen() ? 'Hide ' : 'Show ') + vm.drawerName().toLowerCase()"
         (click)="vm.toggleRepos()"
       >
         <ng-icon [name]="vm.reposIcon()" size="16" />
@@ -147,6 +151,7 @@
             [change]="ctx.change"
             [turns]="vm.turns()"
             [banner]="vm.changesBanner"
+            [listOutside]="true"
           />
         }
       </div>
