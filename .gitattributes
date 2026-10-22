@@ -17,3 +17,8 @@
 *.webp binary
 *.ico binary
 *.icns binary
+
+# Generated files: collapsed in GitHub diffs and left out of language stats.
+# The vendored ai-sdlc format program is refreshed by scripts/vendor-ai-sdlc-format.mjs.
+crates/kata-sdlc/tests/ai-sdlc-format/check.mjs linguist-generated=true
+crates/kata-sdlc/tests/ai-sdlc-format/THIRD_PARTY_LICENSES.txt linguist-generated=true
