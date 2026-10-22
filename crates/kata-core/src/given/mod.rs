@@ -7,3 +7,10 @@ pub use id::{fnv1a64, hook_key, item_id, parse_item_id, ItemKind, ItemRef, Sourc
 pub use roots::ResolveRoots;
 pub mod items;
 pub use settings::{hook_detail, ItemFacts, SettingsLayer};
+pub mod lock;
+pub mod resolve;
+pub use lock::{lock_for, LockReason};
+pub use resolve::{
+    resolve, EnvName, ResolveOptions, Resolved, ResolvedItem, RunSetting, RunSettings,
+    SettingSource,
+};
