@@ -6,6 +6,7 @@ import { BehaviorSubject } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
+import type { StageAction } from '../../lib/sdlc';
 import { canConfirm } from '../../lib/sdlc-done';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { ChangePageViewModel } from './change-page.view-model';
@@ -280,6 +281,13 @@ describe('declaring done', () => {
     expect(prepare).toHaveBeenCalled();
     expect(vm.handoff()).not.toBeNull();
     expect(vm.handoff()!.round).toBeNull();
+  });
+
+  it('an action with nothing behind it says so instead of doing nothing', async () => {
+    const { vm } = await finished();
+    toastState.reset();
+    await vm.act('no-such-action' as StageAction);
+    expect(toastText()).toBe('Nothing runs for no-such-action.');
   });
 
   it('Another round closes the dialog and opens the round form', async () => {

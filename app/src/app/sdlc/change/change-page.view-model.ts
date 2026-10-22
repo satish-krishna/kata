@@ -70,8 +70,23 @@ const BUSY = 'Another task is already running.';
 /** The stage steps that mean the plan is accepted. */
 const ACCEPTED: ReadonlySet<string> = new Set(['build', 'done']);
 
-/** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result. */
-const RUNS: Partial<Record<StageAction, { kind: 'intent' | 'spec' | 'plan'; title: string; label: string }>> = {
+/** The actions `act` handles itself; every other action starts a stage run. */
+type HandledAction =
+  | 'accept-intent'
+  | 'reject-intent'
+  | 'accept-spec'
+  | 'accept-plan'
+  | 'commit-acceptance'
+  | 'start-build'
+  | 'continue-build'
+  | 'another-round'
+  | 'declare-done'
+  | 'run-review';
+type StageRun = { kind: 'intent' | 'spec' | 'plan'; title: string; label: string };
+
+/** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result.
+ * Typed over every action `act` does not handle, so a new action with neither a case nor a run does not compile. */
+const RUNS: Record<Exclude<StageAction, HandledAction>, StageRun> = {
   'continue-intent': { kind: 'intent', title: 'Continuing intent', label: 'Intent' },
   'reopen-intent': { kind: 'intent', title: 'Reopening intent', label: 'Intent' },
   'start-spec': { kind: 'spec', title: 'Starting spec', label: 'Spec' },
@@ -984,11 +999,16 @@ export class ChangePageViewModel {
   }
 
   private async runStage(action: StageAction, feedback = ''): Promise<void> {
-    const run = RUNS[action];
+    const run = (RUNS as Partial<Record<StageAction, StageRun>>)[action];
+    // An action that reaches here with no run behind it is a button nobody wired up: say so instead of doing nothing.
+    if (!run) {
+      this.toasts.error(`Nothing runs for ${action}.`);
+      return;
+    }
     const workspace = this.current();
     const scan = this.scan();
     const master = this.masterDir();
-    if (!run || !workspace || !scan || !master) return;
+    if (!workspace || !scan || !master) return;
     let spec;
     try {
       const settings = this.modes.settings() ?? (await this.modes.load());
