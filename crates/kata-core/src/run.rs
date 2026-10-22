@@ -1,7 +1,8 @@
 use crate::assemble::{assemble, AssembleError};
 use crate::catalog::CatalogEntry;
-use crate::command::{build_invocation, ClaudeInvocation};
+use crate::command::{build_invocation_with, ClaudeInvocation};
 use crate::event::KataEvent;
+use crate::given::{apply, merge_settings, resolve, ResolveOptions, ResolveRoots};
 use crate::spec::{validate, Isolation, PermissionMode, RunSpec, UnmatchedPolicy};
 use std::io::{BufReader, Write};
 use std::path::Path;
@@ -260,8 +261,13 @@ pub fn run_with<F: FnMut(KataEvent)>(
     mut emit: F,
 ) -> Result<RunOutcome, RunError> {
     validate(spec).map_err(RunError::Invalid)?;
-    let assembled = assemble(spec, catalog, &std::collections::BTreeSet::new())?;
-    let mut inv = build_invocation(spec, &assembled);
+    // What the run is given is resolved once, here, and applied once; nothing
+    // re-reads the setup after this point.
+    let roots = ResolveRoots::for_spec(spec);
+    let resolved = resolve(spec, &roots, &ResolveOptions::default());
+    let applied = apply(spec, &resolved, &roots);
+    let assembled = assemble(spec, catalog, &applied.kit_skip)?;
+    let mut inv = build_invocation_with(spec, &assembled, &applied);
 
     // Tee the event stream to a per-run transcript. Best-effort: a missing
     // transcript must never fail a real run. Set up before the auth fail-fast so a
@@ -331,22 +337,29 @@ pub fn run_with<F: FnMut(KataEvent)>(
         ask_user: true,
         approve_tool: permissions_bridge,
     };
-    let (bridge_rx, bridge_tmp) = {
+    // One private folder per run holds every per-run file (tool servers, settings,
+    // the retask note); see `fsutil::run_temp_dir`. It is removed when this guard
+    // drops, on every return below.
+    let run_tmp = crate::fsutil::run_temp_dir().map_err(|e| RunError::Spawn(e.to_string()))?;
+    let bridge_rx = {
         let bridge = crate::ask::Bridge::bind().map_err(|e| RunError::Spawn(e.to_string()))?;
         let port = bridge.port();
         let (atx, arx) = mpsc::channel();
         bridge.serve(atx, cancel.clone());
 
-        let dir = tempfile::tempdir().map_err(|e| RunError::Spawn(e.to_string()))?;
         let exe = std::env::current_exe().map_err(|e| RunError::Spawn(e.to_string()))?;
-        let cfg = dir.path().join("mcp-config.json");
+        let cfg = run_tmp.path().join("mcp-config.json");
         // Pass the port and tool set via the per-server env block too: relying on
         // claude to propagate them from the child env to this grandchild is not
         // guaranteed. Belt and suspenders.
         let mut server_env = serde_json::Map::new();
         server_env.insert("KATA_ASK_PORT".into(), port.to_string().into());
         server_env.insert(crate::ask::TOOLS_ENV.into(), tools.to_env().into());
-        let mut servers = serde_json::Map::new();
+        // The servers the run keeps come first, so Kata's own entry wins a name clash.
+        let mut servers = match &applied.mcp {
+            Some(m) => m["mcpServers"].as_object().cloned().unwrap_or_default(),
+            None => serde_json::Map::new(),
+        };
         servers.insert(
             crate::ask::MCP_SERVER_NAME.into(),
             serde_json::json!({
@@ -360,17 +373,21 @@ pub fn run_with<F: FnMut(KataEvent)>(
 
         inv.args.push("--mcp-config".into());
         inv.args.push(cfg.to_string_lossy().into_owned());
-        append_interactive_retask(
-            &mut inv,
-            assembled.system_prompt_file.as_deref(),
-            INTERACTIVE_RETASK,
-            dir.path(),
-        )
-        .map_err(|e| RunError::Spawn(e.to_string()))?;
+        if applied.mcp.is_some() {
+            // A tool server is off: claude reads only the file, not its own scopes.
+            inv.args.push("--strict-mcp-config".into());
+        }
+        // A system prompt that is off was never passed, so there is no file to fold into.
+        let prompt_file = assembled
+            .system_prompt_file
+            .as_deref()
+            .filter(|_| !applied.drop_system_prompt);
+        append_interactive_retask(&mut inv, prompt_file, INTERACTIVE_RETASK, run_tmp.path())
+            .map_err(|e| RunError::Spawn(e.to_string()))?;
         inv.env.push(("KATA_ASK_PORT".into(), port.to_string()));
         inv.env
             .push((crate::ask::TOOLS_ENV.to_string(), tools.to_env()));
-        (arx, dir)
+        arx
     };
 
     // Under prompt and auto modes the spec's rules are authored into a settings file and
@@ -384,22 +401,29 @@ pub fn run_with<F: FnMut(KataEvent)>(
     // What is left over — matching no rule and not auto-approved — is what
     // reaches `approve_tool`, where the `unmatched` policy decides or the
     // operator does.
-    let mut settings_tmp: Option<tempfile::TempDir> = None;
+    //
+    // The same file carries what switched-off items change (`applied.settings`),
+    // with the permissions block merged on top. Under bypass with nothing off
+    // there is nothing to say, so no file is written.
+    let mut file_settings = applied.settings.clone();
     if permissions_bridge {
-        let dir = tempfile::tempdir().map_err(|e| RunError::Spawn(e.to_string()))?;
-        let path = dir.path().join("settings.json");
-        let body = serde_json::json!({
+        let permissions = serde_json::json!({
             "permissions": {
                 "allow": spec.permissions.allow,
                 "deny": spec.permissions.deny,
                 "ask": spec.permissions.ask,
             }
-        })
-        .to_string();
+        });
+        if let Some(p) = permissions.as_object() {
+            merge_settings(&mut file_settings, p);
+        }
+    }
+    if !file_settings.is_empty() {
+        let path = run_tmp.path().join("settings.json");
+        let body = serde_json::Value::Object(file_settings).to_string();
         std::fs::write(&path, body).map_err(|e| RunError::Spawn(e.to_string()))?;
         inv.args.push("--settings".into());
         inv.args.push(path.to_string_lossy().into_owned());
-        settings_tmp = Some(dir);
     }
 
     let isolation = match spec.leash.isolation {
@@ -923,10 +947,9 @@ pub fn run_with<F: FnMut(KataEvent)>(
 
     let _ = reader_handle.join();
     let _ = stderr_handle.join();
-    // Keep the temp dirs (the generated mcp-config and settings file) alive
-    // until the child has fully exited above; drop them only now.
-    drop(bridge_tmp);
-    drop(settings_tmp);
+    // Keep the run folder (the generated mcp-config and settings file) alive
+    // until the child has fully exited above; drop it only now.
+    drop(run_tmp);
     Ok(RunOutcome {
         exit_code,
         transcript_path: transcript_path.map(|p| p.display().to_string()),

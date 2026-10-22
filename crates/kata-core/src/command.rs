@@ -1,4 +1,5 @@
 use crate::assemble::Assembled;
+use crate::given::Applied;
 use crate::spec::{IdentityMode, PermissionMode, RunSpec};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -15,7 +16,19 @@ pub struct ClaudeInvocation {
     pub env_remove: Vec<String>,
 }
 
+#[cfg(test)]
 pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocation {
+    build_invocation_with(spec, assembled, &Applied::default())
+}
+
+/// `build_invocation` plus what switched-off items change about the command line:
+/// the system prompt left out, and the settings sources to read. The per-run
+/// settings and tool server files are added by `run`, which writes them.
+pub fn build_invocation_with(
+    spec: &RunSpec,
+    assembled: &Assembled,
+    applied: &Applied,
+) -> ClaudeInvocation {
     let program = std::env::var("KATA_CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string());
 
     let mut args: Vec<String> = Vec::new();
@@ -30,6 +43,7 @@ pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocati
         .system_prompt
         .as_ref()
         .filter(|s| !s.trim().is_empty())
+        .filter(|_| !applied.drop_system_prompt)
     {
         match spec.identity.mode {
             IdentityMode::Append => {
@@ -96,6 +110,13 @@ pub fn build_invocation(spec: &RunSpec, assembled: &Assembled) -> ClaudeInvocati
     // not. Do not gate this on `interactive` again.
     args.push("--disallowedTools".into());
     args.push("AskUserQuestion".into());
+    // Claude's hook start and response lines are always asked for: the run's
+    // account of what fired reads them.
+    args.push("--include-hook-events".into());
+    if let Some(sources) = &applied.setting_sources {
+        args.push("--setting-sources".into());
+        args.push(sources.join(","));
+    }
     // NOTE: claude 2.1.x has NO --max-turns flag; the turn cap is enforced
     // engine-side in run.rs (kill the child when turns exceed leash.max_turns).
 

@@ -135,6 +135,124 @@ pub fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// A run's private folder, `<kata home>/tmp/run-<pid>-<nanos>/`. It holds the
+/// per-run settings and tool server files, which can carry tokens, so it is
+/// removed when the guard drops on every ending the process survives. A run the
+/// process did not survive is swept by the next run (see [`run_temp_dir`]).
+#[derive(Debug)]
+pub struct RunTempDir {
+    path: PathBuf,
+}
+
+impl RunTempDir {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for RunTempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+/// `<kata home>/tmp`, created. When there is no home, or it cannot be written (a
+/// run must not fail for that, as with the transcript), `<OS temp>/kata-tmp`.
+fn run_tmp_base() -> std::io::Result<PathBuf> {
+    if let Some(base) = kata_home().map(|h| h.join("tmp")) {
+        if std::fs::create_dir_all(&base).is_ok() {
+            return Ok(base);
+        }
+    }
+    let base = std::env::temp_dir().join("kata-tmp");
+    std::fs::create_dir_all(&base)?;
+    Ok(base)
+}
+
+/// Create this run's private folder, first sweeping the ones crashed runs left.
+pub fn run_temp_dir() -> std::io::Result<RunTempDir> {
+    let base = run_tmp_base()?;
+    sweep_run_dirs(&base, std::process::id(), pid_alive);
+    let pid = std::process::id();
+    let mut nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    loop {
+        let path = base.join(format!("run-{pid}-{nanos}"));
+        #[allow(unused_mut)] // `mode` needs it on Unix
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        match builder.create(&path) {
+            Ok(()) => return Ok(RunTempDir { path }),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => nanos += 1,
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// The pid of a folder named `run-<pid>-<nanos>`, else `None`.
+fn parse_run_dir(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix("run-")?;
+    let (pid, nanos) = rest.split_once('-')?;
+    nanos.parse::<u128>().ok()?;
+    pid.parse().ok()
+}
+
+/// Delete every `run-<pid>-<nanos>` folder under `base` whose pid is not the
+/// current process and not alive. Anything else in `base` is left alone.
+fn sweep_run_dirs(base: &Path, current: u32, alive: impl Fn(u32) -> bool) {
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(pid) = parse_run_dir(&name) else {
+            continue;
+        };
+        if pid != current && entry.path().is_dir() && !alive(pid) {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// Whether a process with this pid exists. When the check cannot be made, the
+/// process is assumed alive: a leftover folder is better than a live run's
+/// files deleted.
+fn pid_alive(pid: u32) -> bool {
+    use std::process::{Command, Stdio};
+    if cfg!(windows) {
+        let out = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output();
+        match out {
+            // A match is a CSV row whose second field is the pid; no match prints
+            // an INFO line instead.
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .any(|l| l.split("\",\"").nth(1) == Some(&pid.to_string())),
+            _ => true,
+        }
+    } else {
+        match Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+        {
+            Ok(s) => s.success(),
+            Err(_) => true,
+        }
+    }
+}
+
 /// Test-only helper: pin `KATA_HOME` to a fresh temp dir for the guard's
 /// lifetime, restoring the previous value (or absence) on drop — even on a
 /// panicking assertion — so env-mutating tests can't leak into each other or
@@ -174,6 +292,53 @@ pub(crate) mod testenv {
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    #[test]
+    fn only_run_pid_nanos_names_parse_as_run_folders() {
+        assert_eq!(parse_run_dir("run-42-1700000000000000000"), Some(42));
+        for bad in [
+            "run-x-1",
+            "run-42",
+            "run-42-x",
+            "runs-42-1",
+            "tmp",
+            "run--1",
+        ] {
+            assert_eq!(parse_run_dir(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_sweep_removes_dead_folders_and_keeps_live_current_and_foreign_ones() {
+        let td = tempfile::tempdir().unwrap();
+        for name in ["run-1-5", "run-2-5", "run-3-5", "other", "run-x-5"] {
+            std::fs::create_dir_all(td.path().join(name)).unwrap();
+        }
+        // pid 3 is this process; pid 2 is alive; pid 1 is dead.
+        sweep_run_dirs(td.path(), 3, |pid| pid == 2);
+        let mut left: Vec<String> = std::fs::read_dir(td.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["other", "run-2-5", "run-3-5", "run-x-5"]);
+    }
+
+    #[test]
+    fn this_process_is_alive_and_a_finished_one_is_not() {
+        assert!(pid_alive(std::process::id()));
+        let mut child = if cfg!(windows) {
+            std::process::Command::new("cmd")
+                .args(["/C", "exit"])
+                .spawn()
+        } else {
+            std::process::Command::new("true").spawn()
+        }
+        .unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        assert!(!pid_alive(pid));
+    }
 
     #[test]
     #[serial]
