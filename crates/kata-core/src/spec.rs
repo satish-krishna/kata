@@ -64,6 +64,31 @@ pub struct RunSpec {
     #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env_remove: Vec<String>,
+    /// What the run starts with: items switched on or off for this run. `None`
+    /// means the spec makes no choices; `Some` with empty lists means it chose
+    /// "everything on".
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub given: Option<Given>,
+}
+
+/// The items a run keeps, by identity (`<source>:<kind>:<key>`, see
+/// `kata_core::given`). Unknown entries are ignored at run time.
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct Given {
+    #[serde(default)]
+    pub hooks: Vec<String>,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
+    pub plugins: Vec<String>,
+    #[serde(default)]
+    pub instructions: Vec<String>,
+    #[serde(default)]
+    pub tool_servers: Vec<String>,
 }
 
 impl Default for RunSpec {
@@ -85,6 +110,7 @@ impl Default for RunSpec {
             permissions: Permissions::default(),
             env: BTreeMap::new(),
             env_remove: Vec::new(),
+            given: None,
         }
     }
 }
@@ -863,7 +889,73 @@ isolation = "worktree"
             permissions: Permissions::default(),
             env: BTreeMap::new(),
             env_remove: Vec::new(),
+            given: None,
         }
+    }
+
+    #[test]
+    fn a_spec_without_given_loads_with_given_none_and_saves_without_the_section() {
+        let spec: RunSpec =
+            toml::from_str("name = \"x\"\ntask = \"t\"\nworkdir = \"/w\"\n").unwrap();
+        assert_eq!(spec.given, None);
+        let text = to_toml(&spec).unwrap();
+        assert!(!text.contains("given"), "{text}");
+    }
+
+    #[test]
+    fn a_spec_with_an_empty_given_section_round_trips_as_some_empty() {
+        let spec: RunSpec =
+            toml::from_str("name = \"x\"\ntask = \"t\"\nworkdir = \"/w\"\n[given]\n").unwrap();
+        assert_eq!(spec.given, Some(Given::default()));
+        let back: RunSpec = toml::from_str(&to_toml(&spec).unwrap()).unwrap();
+        assert_eq!(back.given, Some(Given::default()));
+        let json: RunSpec = serde_json::from_str(&serde_json::to_string(&spec).unwrap()).unwrap();
+        assert_eq!(json.given, Some(Given::default()));
+    }
+
+    fn given_spec(f: impl FnOnce(&mut Given)) -> RunSpec {
+        let mut g = Given::default();
+        f(&mut g);
+        let mut spec = full_spec();
+        spec.given = Some(g);
+        spec
+    }
+
+    #[test]
+    fn validate_refuses_a_kata_entry() {
+        let spec = given_spec(|g| g.skills.push("kata:skill:brainstorming".into()));
+        let errs = validate(&spec).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e
+                    .contains("kata:skill:brainstorming: Kata's own items cannot be switched off")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_refuses_an_entry_in_the_wrong_list() {
+        let spec = given_spec(|g| g.hooks.push("run-spec:skill:x".into()));
+        let errs = validate(&spec).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.contains("run-spec:skill:x")),
+            "{errs:?}"
+        );
+        let ok = given_spec(|g| {
+            g.hooks.push("project:hook:Stop:*:0123456789abcdef".into());
+            g.skills.push("run-spec:skill:x".into());
+            g.plugins.push("personal:plugin:a@b".into());
+            g.instructions.push("project:instruction:CLAUDE.md".into());
+            g.tool_servers.push("project-local:tool-server:srv".into());
+        });
+        assert_eq!(validate(&ok), Ok(()));
+    }
+
+    #[test]
+    fn validate_refuses_an_unparsable_entry() {
+        let spec = given_spec(|g| g.plugins.push("not an id".into()));
+        let errs = validate(&spec).unwrap_err();
+        assert!(errs.iter().any(|e| e.contains("not an id")), "{errs:?}");
     }
 
     #[test]
