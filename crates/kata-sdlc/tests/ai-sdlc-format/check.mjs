@@ -36251,13 +36251,30 @@ var TestStepResultStatus;
 })(TestStepResultStatus || (TestStepResultStatus = {}));
 
 // src/spec.ts
-function gherkinBlock(text3) {
+var LINE_END = /\r\n|\r|\n/;
+function strictGherkinBlock(text3) {
   const lines = text3.split(/\r?\n/);
   const open = lines.findIndex((l) => /^\s*```gherkin\s*$/.test(l));
   if (open < 0) return null;
   let close = lines.findIndex((l, i) => i > open && /^\s*```\s*$/.test(l));
   if (close < 0) close = lines.length;
   return { text: lines.slice(open + 1, close).join("\n"), offset: open + 1 };
+}
+function looseGherkinBlock(text3) {
+  const lines = text3.split(LINE_END);
+  for (let open = 0; open < lines.length; open++) {
+    const m = /^\s*(`{3,}|~{3,})(.*)$/.exec(lines[open]);
+    if (!m) continue;
+    const fence = m[1];
+    const info = m[2].trim();
+    if (fence.startsWith("`") && info.includes("`")) continue;
+    if (info.toLowerCase() !== "gherkin") continue;
+    const closer = new RegExp(`^\\s*${fence.startsWith("`") ? "`" : "~"}{${fence.length},}\\s*$`);
+    let close = lines.findIndex((l, i) => i > open && closer.test(l));
+    if (close < 0) close = lines.length;
+    return { text: lines.slice(open + 1, close).join("\n"), offset: open + 1 };
+  }
+  return null;
 }
 var SEP = "[-\\u2013\\u2014]";
 var RULE = new RegExp(`^Rule:\\s*(R\\d+)\\s*${SEP}\\s*(.*?)\\s*\\(from:\\s*(.*)\\)\\s*$`);
@@ -36341,14 +36358,24 @@ function readLayout2(block, file, problems) {
       const m = /^\((\d+):\d+\):\s*([\s\S]*)$/.exec(err.message);
       problem(m ? at(Number(m[1])) : at(1), `gherkin: ${m ? m[2] : err.message}`);
     }
-    return [];
+    return { requirements: [], reported: /* @__PURE__ */ new Set(), parsed: false };
   }
   const out = [];
+  const reported = /* @__PURE__ */ new Set();
   const seenRequirements = /* @__PURE__ */ new Set();
   const seenScenarios = /* @__PURE__ */ new Set();
   for (const child of feature?.children ?? []) {
     const rule = child.rule;
-    if (!rule) continue;
+    if (!rule) {
+      const sc = child.scenario;
+      const tags = sc?.tags.map((t) => t.name).filter((n) => RULE_TAG.test(n) || SCENARIO_TAG.test(n)) ?? [];
+      if (sc && tags.length > 0) {
+        for (const n of tags) reported.add(n.slice(1));
+        const named = tags.find((n) => SCENARIO_TAG.test(n)) ?? tags[0];
+        problem(at(sc.location.line), `scenario ${named.slice(1)} sits under no requirement`);
+      }
+      continue;
+    }
     const names = rule.tags.map((t) => t.name);
     const ids = names.filter((n) => RULE_TAG.test(n)).map((n) => n.slice(1));
     const id = ids[0] ?? "";
@@ -36404,19 +36431,44 @@ function readLayout2(block, file, problems) {
     }
     if (req.scenarios.length === 0 && ids.length > 0) problem(req.line, `requirement ${id} has no scenario`);
   }
-  return out;
+  return { requirements: out, reported, parsed: true };
+}
+var TAG_IN_LINE = /(?<![\w@])@R(\d+(?:\.\d+)?)(?!\w)/g;
+function reportUnreadTags(text3, file, read, problems) {
+  const known = new Set(read.reported);
+  for (const r of read.requirements) {
+    known.add(r.id);
+    for (const s of r.scenarios) known.add(s.id);
+  }
+  text3.split(LINE_END).forEach((line, i) => {
+    const seen = /* @__PURE__ */ new Set();
+    for (const m of line.matchAll(TAG_IN_LINE)) {
+      const id = `R${m[1]}`;
+      if (known.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      const what = id.includes(".") ? "scenario" : "requirement";
+      problems.push({ file, line: i + 1, message: `${what} ${id} is not part of the requirements the reader found` });
+    }
+  });
 }
 function readSpec(text3, file) {
   const { data } = parseFrontMatter(text3, file);
   const layout = layoutOf(data);
   refuseNewerLayout(layout, file);
   const problems = [];
-  const block = gherkinBlock(text3);
+  const block = layout >= 2 ? looseGherkinBlock(text3) : strictGherkinBlock(text3);
   let requirements = [];
+  if (!block && layout >= 2) problems.push({ file, line: 1, message: "no gherkin requirements block found" });
   if (block) {
     const missingVersion = data["layout"] === void 0 && /^\s*@R\d/m.test(block.text);
     if (missingVersion) problems.push({ file, line: 1, message: "no layout version" });
-    requirements = layout >= 2 || missingVersion ? readLayout2(block, file, problems) : readLayout1(block);
+    if (layout >= 2 || missingVersion) {
+      const read = readLayout2(block, file, problems);
+      requirements = read.requirements;
+      if (read.parsed) reportUnreadTags(text3, file, read, problems);
+    } else {
+      requirements = readLayout1(block);
+    }
   }
   return { kind: "spec", layout, document: { requirements }, problems };
 }
