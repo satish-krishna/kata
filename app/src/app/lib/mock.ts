@@ -264,8 +264,8 @@ export function previewFixture(spec: RunSpec, requiredPlugins: readonly string[]
     empty_room: setting(spec.auth.bare ? "on" : "off", "run-spec"),
     answer_deadline: spec.interactive.answer_timeout_secs ? setting(String(spec.interactive.answer_timeout_secs), "run-spec") : setting(null, "kata-default"),
     time_limit: timeout ? setting(String(timeout), "run-spec") : setting("1800", "kata-default"),
-    turn_cap: spec.leash.max_turns ? setting(String(spec.leash.max_turns), "run-spec") : setting(null, "kata-default"),
-    spending_ceiling: spec.leash.max_budget_usd ? setting(String(spec.leash.max_budget_usd), "run-spec") : setting(null, "kata-default"),
+    turn_cap: setting(spec.leash.max_turns ? String(spec.leash.max_turns) : null, "run-spec"),
+    spending_ceiling: setting(spec.leash.max_budget_usd ? String(spec.leash.max_budget_usd) : null, "run-spec"),
   };
   const env: EnvName[] = [
     { source: "personal", name: "GITHUB_TOKEN", api_key: false },
