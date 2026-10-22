@@ -3,10 +3,12 @@
 //! the resolved items, because their definitions are never carried in `Resolved`
 //! (they hold secrets).
 
-use super::{ResolveRoots, Resolved};
+use super::{
+    items, parse_item_id, ItemKind, ResolveRoots, Resolved, ResolvedItem, Source, SWITCHABLE,
+};
 use crate::spec::RunSpec;
-use serde_json::{Map, Value};
-use std::collections::BTreeSet;
+use serde_json::{json, Map, Value};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// What to change about a run so each switched-off item stays out of it.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -27,13 +29,149 @@ pub struct Applied {
     pub drop_system_prompt: bool,
 }
 
-pub fn apply(_spec: &RunSpec, _resolved: &Resolved, _roots: &ResolveRoots) -> Applied {
-    Applied::default()
+/// A source's own tool server table, read from the file the item names.
+fn server_definition(
+    file: &Value,
+    source: Source,
+    name: &str,
+    roots: &ResolveRoots,
+) -> Option<Value> {
+    let servers = match source {
+        Source::ProjectLocal => {
+            let want = items::norm(&roots.workdir.to_string_lossy());
+            file.get("projects")?
+                .as_object()?
+                .iter()
+                .find(|(k, _)| items::norm(k) == want)?
+                .1
+                .get("mcpServers")?
+        }
+        _ => file.get("mcpServers")?,
+    };
+    servers.get(name).cloned()
+}
+
+/// The kept tool servers of every source that Claude reads from a file Kata can
+/// copy from, verbatim. Plugin tool servers are not copied: Claude names them
+/// `plugin:<plugin>:<server>` and expands `${CLAUDE_PLUGIN_ROOT}` for them, which
+/// a copy under a plain name would lose.
+fn kept_servers(resolved: &Resolved, roots: &ResolveRoots) -> Value {
+    let rank = |s: Source| match s {
+        Source::Personal => 0,
+        Source::Project => 1,
+        Source::ProjectLocal => 2,
+        _ => 3,
+    };
+    let mut kept: Vec<&ResolvedItem> = resolved
+        .items
+        .iter()
+        .filter(|i| i.kind == ItemKind::ToolServer && !i.off && i.brought_by.is_none())
+        .filter(|i| {
+            matches!(
+                i.source,
+                Source::Personal | Source::Project | Source::ProjectLocal | Source::Organization
+            )
+        })
+        .collect();
+    // Later wins, in Claude's order: personal, project, project-local.
+    kept.sort_by_key(|i| rank(i.source));
+    let mut files: BTreeMap<String, Option<Value>> = BTreeMap::new();
+    let mut servers = Map::new();
+    for i in kept {
+        let Some(path) = i.path.as_ref() else {
+            continue;
+        };
+        let file = files.entry(path.clone()).or_insert_with(|| {
+            std::fs::read_to_string(path)
+                .ok()
+                .and_then(|t| serde_json::from_str(&t).ok())
+        });
+        if let Some(def) = file
+            .as_ref()
+            .and_then(|f| server_definition(f, i.source, &i.name, roots))
+        {
+            servers.insert(i.name.clone(), def);
+        }
+    }
+    json!({ "mcpServers": servers })
+}
+
+pub fn apply(_spec: &RunSpec, resolved: &Resolved, roots: &ResolveRoots) -> Applied {
+    let mut out = Applied::default();
+    let missing: BTreeSet<&str> = resolved.missing.iter().map(String::as_str).collect();
+    let mut any_server_off = false;
+    let mut enabled = Map::new();
+    let mut excludes: Vec<Value> = Vec::new();
+    for i in &resolved.items {
+        // Only what a switch can reach: a hook, an on-disk skill, and anything
+        // brought by a plugin or owned by the organization or Kata never counts.
+        if !i.off
+            || i.brought_by.is_some()
+            || missing.contains(i.id.as_str())
+            || !SWITCHABLE.contains(&(i.kind, i.source))
+        {
+            continue;
+        }
+        let Ok(r) = parse_item_id(&i.id) else {
+            continue;
+        };
+        match (i.kind, i.source) {
+            (ItemKind::Skill | ItemKind::Plugin, Source::RunSpec) => {
+                out.kit_skip.insert(r.key);
+            }
+            (ItemKind::Plugin, _) => {
+                enabled.insert(r.key, Value::Bool(false));
+            }
+            (ItemKind::Instruction, Source::RunSpec) if r.key == "system-prompt" => {
+                out.drop_system_prompt = true;
+            }
+            (ItemKind::Instruction, Source::RunSpec) => {}
+            (ItemKind::Instruction, _) => {
+                if r.key == "output-style" {
+                    out.settings
+                        .insert("outputStyle".into(), Value::String("default".into()));
+                } else if let Some(p) = &i.path {
+                    excludes.push(Value::String(p.replace('\\', "/")));
+                }
+            }
+            (ItemKind::ToolServer, _) => any_server_off = true,
+            _ => {}
+        }
+    }
+    if !enabled.is_empty() {
+        out.settings
+            .insert("enabledPlugins".into(), Value::Object(enabled));
+    }
+    if !excludes.is_empty() {
+        out.settings
+            .insert("claudeMdExcludes".into(), Value::Array(excludes));
+    }
+    if any_server_off {
+        // A server that is off is left out by not being copied.
+        out.mcp = Some(kept_servers(resolved, roots));
+    }
+    out
 }
 
 /// Combine settings layers the way Claude does: objects merge key by key, arrays
 /// concatenate with duplicates removed, scalars take `over`.
-pub fn merge_settings(_base: &mut Map<String, Value>, _over: &Map<String, Value>) {}
+pub fn merge_settings(base: &mut Map<String, Value>, over: &Map<String, Value>) {
+    for (k, v) in over {
+        match (base.get_mut(k), v) {
+            (Some(Value::Object(b)), Value::Object(o)) => merge_settings(b, o),
+            (Some(Value::Array(b)), Value::Array(o)) => {
+                for item in o {
+                    if !b.contains(item) {
+                        b.push(item.clone());
+                    }
+                }
+            }
+            _ => {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

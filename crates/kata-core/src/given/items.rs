@@ -70,7 +70,7 @@ fn item(kind: ItemKind, source: Source, key: &str, name: &str) -> ItemFacts {
 
 /// A path as one comparable string: forward slashes, no trailing slash, no
 /// extended-length prefix, and lowercase on Windows where paths ignore case.
-fn norm(path: &str) -> String {
+pub(super) fn norm(path: &str) -> String {
     let s = path.replace('\\', "/");
     let s = s.strip_prefix("//?/").unwrap_or(&s).trim_end_matches('/');
     if cfg!(windows) {

@@ -64,7 +64,6 @@ pub fn assemble(
     catalog: &[CatalogEntry],
     skip: &BTreeSet<String>,
 ) -> Result<Assembled, AssembleError> {
-    let _ = skip;
     let temp = tempfile::tempdir()?;
     let root = temp.path();
 
@@ -85,7 +84,8 @@ pub fn assemble(
 
     // Disposable plugin-dir: skills/<name>/ and plugins/<name>/.
     let plugin_root = root.join("plugindir");
-    let resolved = resolve(spec, catalog)?;
+    let mut resolved = resolve(spec, catalog)?;
+    resolved.retain(|r| !skip.contains(&r.name));
     let any = !resolved.is_empty();
     for r in &resolved {
         let sub = match r.kind {
