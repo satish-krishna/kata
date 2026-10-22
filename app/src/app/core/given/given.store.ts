@@ -7,14 +7,31 @@ export type BuildChoices = { off: ReadonlySet<string> };
 @Injectable({ providedIn: 'root' })
 export class GivenStore {
   private readonly keys = signal<ReadonlySet<string>>(new Set());
+  private readonly builds = new Map<string, BuildChoices>();
 
+  /** Keys switched off this session. Each change replaces the set, so a snapshot a caller holds never changes. */
   readonly session = this.keys.asReadonly();
 
-  remember(_rows: readonly PresetRow[], _workdir: string): void {}
-
-  build(_key: string): BuildChoices | null {
-    return null;
+  /**
+   * Record the choices shown in a preview: a switchable row's key is added when off and removed when on.
+   * Keys of items the preview does not list are left alone. The rows already carry their keys
+   * (`givenKey` of the workdir they were resolved in), so `workdir` is not used to recompute them.
+   */
+  remember(rows: readonly PresetRow[], _workdir: string): void {
+    const next = new Set(this.keys());
+    for (const row of rows) {
+      if (row.locked !== null || row.item.brought_by !== null) continue;
+      if (row.off) next.add(row.key);
+      else next.delete(row.key);
+    }
+    this.keys.set(next);
   }
 
-  setBuild(_key: string, _choices: BuildChoices): void {}
+  build(key: string): BuildChoices | null {
+    return this.builds.get(key) ?? null;
+  }
+
+  setBuild(key: string, choices: BuildChoices): void {
+    this.builds.set(key, { off: new Set(choices.off) });
+  }
 }
