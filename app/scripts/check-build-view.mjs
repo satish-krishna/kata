@@ -52,6 +52,7 @@ try {
   const finished = await eventually(page, () => rowText('customer-portal'), (t) => /Finished/.test(t), 'customer-portal finishing', 15000).catch((e) => e.message);
   check(/Finished/.test(String(finished)), `customer-portal carried on to its row (${JSON.stringify(String(finished).replace(/\s+/g, ' '))})`);
   check((await page.locator('.k-build__top .k-lock__count').innerText()).startsWith('3/3'), 'all three tasks are in the build log');
+  check((await page.locator('.k-build__bar .k-build__top').count()) === 1, 'the task count sits in the bar, outside the repository list');
 
   // The repository list collapses to nothing and comes back, and its edge drags.
   await page.getByRole('tab', { name: 'Activity' }).click();

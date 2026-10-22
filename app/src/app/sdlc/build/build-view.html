@@ -10,12 +10,6 @@
   <div hlmResizableGroup class="k-build__body" [direction]="vm.narrow() ? 'vertical' : 'horizontal'" [(layout)]="vm.layout">
     <aside hlmResizablePanel id="build-repos" [minSize]="12" [maxSize]="50" aria-label="Repositories" [attr.inert]="vm.reposOpen() ? null : ''">
       <div class="k-build__left">
-        <div class="k-build__top">
-          <span class="k-lock__count">{{ vm.tasksLabel() }}</span>
-          @if (vm.active()) {
-            <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.cancelBuild()">Cancel build</button>
-          }
-        </div>
         <app-repo-status-list [rows]="vm.rows()" [selected]="vm.selected()" (select)="vm.select($event)" />
       </div>
     </aside>
@@ -47,6 +41,12 @@
           }
         </button>
         <button hlmTabsTrigger="changes" variant="bare" class="k-build__tab">Changes</button>
+      </div>
+      <div class="k-build__top">
+        <span class="k-lock__count">{{ vm.tasksLabel() }}</span>
+        @if (vm.active()) {
+          <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.cancelBuild()">Cancel build</button>
+        }
       </div>
       </div>
       <div hlmTabsContent="activity" variant="bare" class="k-build__panel">

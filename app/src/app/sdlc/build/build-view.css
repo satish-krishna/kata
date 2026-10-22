@@ -12,11 +12,14 @@
   overflow-y: auto;
 }
 
+/* The task count and Cancel build, at the far end of the bar, so they stay on show while the list is collapsed. */
 .k-build__top {
   display: flex;
+  flex: none;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-3);
+  margin-left: auto;
+  padding-right: var(--space-5);
 }
 
 .k-build__main {
@@ -27,7 +30,7 @@
   overflow: hidden;
 }
 
-/* The toggle for the repository list, then the view tabs. */
+/* The toggle for the repository list, the view tabs, then the build's task count and Cancel build. */
 .k-build__bar {
   display: flex;
   align-items: center;
