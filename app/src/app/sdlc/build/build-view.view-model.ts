@@ -219,6 +219,10 @@ export class BuildViewModel {
   readonly changesContext = this.changes.asReadonly();
   /** Turns taken by every run of the build, so the Changes view reads again as the agents work. */
   readonly turns = computed(() => this.log().reduce((n, e) => n + this.runs.snapshot(e.id)().events.filter((ev) => ev.type === 'turn').length, 0));
+  /** Bash calls finished by every run of the build; each one may have committed a build log row. */
+  private readonly bashDone = computed(() =>
+    this.log().reduce((n, e) => n + this.runs.snapshot(e.id)().events.filter((ev) => ev.type === 'tool.result' && ev.name === 'Bash').length, 0),
+  );
   /** Events that arrived in the views not on show: for the Activity tab, only while Changes is open. */
   readonly activityNew = computed(() => (this.tab() === 'changes' ? this.log().reduce((n, e) => n + this.unseenOfRun(e), 0) : 0));
   /** The runs waiting on the engineer, whichever view is on show. */
@@ -264,10 +268,12 @@ export class BuildViewModel {
   readonly emptyText = computed(() => (this.unrecorded() ? 'The review did not record its findings' : this.older() ? 'The review found nothing.' : 'Reviewed, nothing found.'));
 
   constructor() {
-    // The rows follow the build log: read it again whenever a run starts or ends.
+    // The rows follow the build log: read it again whenever a run starts or ends, and whenever a run finishes a Bash call,
+    // since an agent logs each task by committing it.
     effect(() => {
       this.driver.going();
       this.phase();
+      this.bashDone();
       untracked(() => void this.refresh());
     });
     // A run's work clock stops while it waits on the engineer; the wait has its own clock.

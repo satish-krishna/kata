@@ -111,6 +111,17 @@ describe('BuildViewModel', () => {
     expect(vm.shown().map((r) => r.spec.workdir)).toEqual([`${FOLDER}/customer-portal`]);
   });
 
+  it('reads the build log again when a run finishes a Bash call, since logging a task is a commit', async () => {
+    const { vm, transport } = setup();
+    const status = vi.spyOn(transport, 'sdlcBuildStatus');
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(1000);
+    const before = status.mock.calls.length;
+    await advance(1500);
+    expect(vm.action()).toBe('cancel');
+    expect(status.mock.calls.length).toBeGreaterThan(before);
+  });
+
   it('a repository row shows the waiting clock while its run waits (R4.1)', async () => {
     const { vm, transport, lock } = setup();
     await vm.start(await handoffFor(transport), CTX);
