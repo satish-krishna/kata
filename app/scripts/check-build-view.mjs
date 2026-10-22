@@ -53,8 +53,25 @@ try {
   check(/Finished/.test(String(finished)), `customer-portal carried on to its row (${JSON.stringify(String(finished).replace(/\s+/g, ' '))})`);
   check((await page.locator('.k-build__top .k-lock__count').innerText()).startsWith('3/3'), 'all three tasks are in the build log');
 
-  // Widths.
+  // The repository list collapses to nothing and comes back, and its edge drags.
   await page.getByRole('tab', { name: 'Activity' }).click();
+  const listWidth = () => page.evaluate(() => Math.round(document.querySelector('#build-repos').getBoundingClientRect().width));
+  const open = await listWidth();
+  await page.getByRole('button', { name: 'Hide repositories' }).click();
+  const shut = await eventually(page, listWidth, (w) => w === 0, 'the list collapsing').catch(() => listWidth());
+  check(shut === 0, `Hide repositories collapses the list (${open}px -> ${shut}px)`);
+  await page.getByRole('button', { name: 'Show repositories' }).click();
+  const back = await eventually(page, listWidth, (w) => w === open, 'the list coming back').catch(() => listWidth());
+  check(back === open, `Show repositories brings it back at its width (${back}px of ${open}px)`);
+  const handle = await page.getByRole('separator', { name: 'Resize the repository list' }).boundingBox();
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + 120, handle.y + handle.height / 2, { steps: 5 });
+  await page.mouse.up();
+  const dragged = await eventually(page, listWidth, (w) => w > open + 60, 'the list widening').catch(() => listWidth());
+  check(dragged > open + 60, `dragging the edge widens the list (${open}px -> ${dragged}px)`);
+
+  // Widths.
   for (const width of WIDTHS) {
     await page.setViewportSize({ width, height: 900 });
     const layout = await eventually(

@@ -45,7 +45,8 @@
       "@spartan-ng/helm/message-scroller": ["./libs/ui/message-scroller/src/index.ts"],
       "@spartan-ng/helm/marker": ["./libs/ui/marker/src/index.ts"],
       "@spartan-ng/helm/dropdown-menu": ["./libs/ui/dropdown-menu/src/index.ts"],
-      "@spartan-ng/helm/popover": ["./libs/ui/popover/src/index.ts"]
+      "@spartan-ng/helm/popover": ["./libs/ui/popover/src/index.ts"],
+      "@spartan-ng/helm/resizable": ["./libs/ui/resizable/src/index.ts"]
     }
   },
   "angularCompilerOptions": {

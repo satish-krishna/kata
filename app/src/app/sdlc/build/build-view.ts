@@ -1,5 +1,8 @@
 import { Component, ElementRef, Injector, afterNextRender, effect, inject, input, output, untracked } from '@angular/core';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucidePanelLeftClose, lucidePanelLeftOpen, lucidePanelTopClose, lucidePanelTopOpen } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { HlmResizableImports } from '@spartan-ng/helm/resizable';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
 import { BuildRefusalDialog } from '../../ui/build-refusal-dialog';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
@@ -18,8 +21,8 @@ import { BuildViewModel, type BuildContext } from './build-view.view-model';
 @Component({
   selector: 'app-build-view',
   host: { class: 'contents' },
-  providers: [BuildViewModel],
-  imports: [HlmButtonImports, BuildRefusalDialog, ConfirmDialog,HlmTabsImports, ObservePane, RepoStatusList, FindingsList, WaitingNotice, ChangesView],
+  providers: [BuildViewModel, provideIcons({ lucidePanelLeftClose, lucidePanelLeftOpen, lucidePanelTopClose, lucidePanelTopOpen })],
+  imports: [HlmButtonImports, HlmResizableImports, NgIcon, BuildRefusalDialog, ConfirmDialog,HlmTabsImports, ObservePane, RepoStatusList, FindingsList, WaitingNotice, ChangesView],
   templateUrl: './build-view.html',
   styleUrl: './build-view.css',
 })

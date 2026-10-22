@@ -111,6 +111,19 @@ describe('BuildViewModel', () => {
     expect(vm.shown().map((r) => r.spec.workdir)).toEqual([`${FOLDER}/customer-portal`]);
   });
 
+  it('collapses the repository list and brings it back at the size the engineer dragged it to', () => {
+    const { vm } = setup();
+    expect(vm.reposOpen()).toBe(true);
+    vm.layout.set([30, 70]);
+    vm.toggleRepos();
+    expect(vm.layout()).toEqual([0, 100]);
+    expect(vm.reposOpen()).toBe(false);
+    expect(vm.reposIcon()).toBe('lucidePanelLeftOpen');
+    vm.toggleRepos();
+    expect(vm.layout()).toEqual([30, 70]);
+    expect(vm.reposIcon()).toBe('lucidePanelLeftClose');
+  });
+
   it('reads the build log again when a run finishes a Bash call, since logging a task is a commit', async () => {
     const { vm, transport } = setup();
     const status = vi.spyOn(transport, 'sdlcBuildStatus');

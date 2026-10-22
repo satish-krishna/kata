@@ -7,18 +7,35 @@
       }
     </span>
   </div>
-  <div class="grid grid-cols-1 md:grid-cols-[16rem_1fr] k-build__body">
-    <aside class="k-build__left" aria-label="Repositories">
-      <div class="k-build__top">
-        <span class="k-lock__count">{{ vm.tasksLabel() }}</span>
-        @if (vm.active()) {
-          <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.cancelBuild()">Cancel build</button>
-        }
+  <div hlmResizableGroup class="k-build__body" [direction]="vm.narrow() ? 'vertical' : 'horizontal'" [(layout)]="vm.layout">
+    <aside hlmResizablePanel id="build-repos" [minSize]="12" [maxSize]="50" aria-label="Repositories" [attr.inert]="vm.reposOpen() ? null : ''">
+      <div class="k-build__left">
+        <div class="k-build__top">
+          <span class="k-lock__count">{{ vm.tasksLabel() }}</span>
+          @if (vm.active()) {
+            <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.cancelBuild()">Cancel build</button>
+          }
+        </div>
+        <app-repo-status-list [rows]="vm.rows()" [selected]="vm.selected()" (select)="vm.select($event)" />
       </div>
-      <app-repo-status-list [rows]="vm.rows()" [selected]="vm.selected()" (select)="vm.select($event)" />
     </aside>
+    <hlm-resizable-handle withHandle aria-label="Resize the repository list" />
+    <div hlmResizablePanel [collapsible]="false">
     <section class="k-build__main" aria-label="Runs" hlmTabs variant="bare" [tab]="vm.tab()" (tabActivated)="vm.showTab($event)">
       <div class="sr-only" aria-live="assertive" aria-atomic="true">{{ vm.announcement() }}</div>
+      <div class="k-build__bar">
+      <button
+        hlmBtn
+        variant="ghost"
+        size="icon-sm"
+        type="button"
+        aria-controls="build-repos"
+        [attr.aria-expanded]="vm.reposOpen()"
+        [attr.aria-label]="vm.reposOpen() ? 'Hide repositories' : 'Show repositories'"
+        (click)="vm.toggleRepos()"
+      >
+        <ng-icon [name]="vm.reposIcon()" size="16" />
+      </button>
       <div hlmTabsList variant="bare" class="k-build__tabs" aria-label="Build views">
         <button hlmTabsTrigger="activity" variant="bare" class="k-build__tab">
           Activity
@@ -30,6 +47,7 @@
           }
         </button>
         <button hlmTabsTrigger="changes" variant="bare" class="k-build__tab">Changes</button>
+      </div>
       </div>
       <div hlmTabsContent="activity" variant="bare" class="k-build__panel">
         @if (vm.otherWaiting().length > 0) {
@@ -133,6 +151,7 @@
         }
       </div>
     </section>
+    </div>
   </div>
   <app-confirm-dialog
     [open]="vm.leftoverPrompt() !== null"

@@ -1,4 +1,4 @@
-import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
+import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { Problem } from '@bindings/Problem';
 import type { Readiness } from '@bindings/Readiness';
@@ -63,6 +63,9 @@ type Review = { at: number | null; label: string | null; findings: Finding[] };
 
 const REVIEW = 'review';
 const RUNNING: readonly RunState[] = ['running', 'awaiting'];
+/** The repository list's share of the build when it opens, in percent. */
+const REPOS_SIZE = 22;
+const NARROW = '(max-width: 767.98px)';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 /** The wall-clock time of a start, as the divider names it. */
@@ -151,6 +154,15 @@ export class BuildViewModel {
 
   /** Why Continue did not go on, with what the check found; the refusal dialog is open exactly while this is set. */
   readonly refusal = signal<{ reason: string; problems: Problem[] } | null>(null);
+
+  /** True below the width where the repository list stacks above the main column instead of sitting beside it. */
+  readonly narrow = signal(false);
+  /** The repository list's share of the build, in percent, then the main column's; the list is collapsed at 0. */
+  readonly layout = signal<number[]>([REPOS_SIZE, 100 - REPOS_SIZE]);
+  /** The list's share before it was collapsed, so showing it again restores it. */
+  private reposSize = REPOS_SIZE;
+  readonly reposOpen = computed(() => (this.layout()[0] ?? 0) > 0);
+  readonly reposIcon = computed(() => (this.narrow() ? 'lucidePanelTop' : 'lucidePanelLeft') + (this.reposOpen() ? 'Close' : 'Open'));
 
   readonly tab = signal<BuildTab>('activity');
   readonly announcement = signal('');
@@ -268,6 +280,14 @@ export class BuildViewModel {
   readonly emptyText = computed(() => (this.unrecorded() ? 'The review did not record its findings' : this.older() ? 'The review found nothing.' : 'Reviewed, nothing found.'));
 
   constructor() {
+    // Below the narrow width the repository list stacks above the main column, so the split turns vertical.
+    const query = typeof globalThis.matchMedia === 'function' ? globalThis.matchMedia(NARROW) : null;
+    if (query !== null) {
+      this.narrow.set(query.matches);
+      const onChange = (e: MediaQueryListEvent) => this.narrow.set(e.matches);
+      query.addEventListener('change', onChange);
+      inject(DestroyRef).onDestroy(() => query.removeEventListener('change', onChange));
+    }
     // The rows follow the build log: read it again whenever a run starts or ends, and whenever a run finishes a Bash call,
     // since an agent logs each task by committing it.
     effect(() => {
@@ -323,6 +343,17 @@ export class BuildViewModel {
       this.broken.set(true);
     }
     return true;
+  }
+
+  /** Collapse the repository list to nothing, or bring it back at the size it had. */
+  toggleRepos(): void {
+    const [repos = 0] = this.layout();
+    if (repos > 0) {
+      this.reposSize = repos;
+      this.layout.set([0, 100]);
+    } else {
+      this.layout.set([this.reposSize, 100 - this.reposSize]);
+    }
   }
 
   select(name: string): void {
