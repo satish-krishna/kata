@@ -642,6 +642,9 @@ export class ChangePageViewModel {
       case 'declare-done':
         await this.declareDone();
         return;
+      case 'run-review':
+        await this.doneRunReview();
+        return;
       default:
         // Regenerating an existing document first asks what should change; a first draft just runs.
         if (revisits(action)) this.pendingRevisit.set(action);

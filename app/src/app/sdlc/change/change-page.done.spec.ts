@@ -273,6 +273,15 @@ describe('declaring done', () => {
     expect(vm.handoff()!.round).toBeNull();
   });
 
+  it("the toolbar's Run review starts the review-only build, the same as the done dialog's", async () => {
+    const { vm, transport } = await finished();
+    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    await vm.act('run-review');
+    expect(prepare).toHaveBeenCalled();
+    expect(vm.handoff()).not.toBeNull();
+    expect(vm.handoff()!.round).toBeNull();
+  });
+
   it('Another round closes the dialog and opens the round form', async () => {
     const { vm } = await finished();
     await vm.act('declare-done');
