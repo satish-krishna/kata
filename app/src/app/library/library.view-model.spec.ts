@@ -6,6 +6,7 @@ import { KataTransport } from '../core/transport/kata-transport';
 import { LaunchStore } from '../core/launch/launch.store';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { history, katasFixture, runDetailFixture } from '../lib/library';
+import { IDLE, reduce } from '../core/run/reduce';
 
 class FakeTransport {
   listRuns = vi.fn(() => Promise.resolve(history));
@@ -132,4 +133,26 @@ it('cancelling the editor closes it without launching', async () => {
   vm.cancelReRun();
   expect(vm.editing()).toBeNull();
   expect(navigate).not.toHaveBeenCalled();
+});
+
+it('a finished run in history shows what it was given', async () => {
+  const { vm } = setup();
+  await vm.init();
+  const detail = runDetailFixture(history[0].id);
+  const live = detail.events.reduce(reduce, IDLE).given;
+  expect(live).not.toBeNull();
+  expect(vm.given()).toEqual(live);
+  expect(vm.given()).not.toBe('not-recorded');
+});
+
+it('a run made before the view existed reads not recorded', async () => {
+  const { vm } = setup();
+  await vm.init();
+  await vm.selectRun(history[1].id);
+  expect(vm.given()).toBe('not-recorded');
+});
+
+it('no run open has no given view', () => {
+  const { vm } = setup();
+  expect(vm.given()).toBeNull();
 });

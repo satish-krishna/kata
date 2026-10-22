@@ -5,7 +5,7 @@ import type { KataLoadFailure } from '@bindings/KataLoadFailure';
 import { KataTransport } from '../core/transport/kata-transport';
 import { LaunchStore } from '../core/launch/launch.store';
 import { ToastStore } from '../core/toast/toast.store';
-import { isStreamEvent, statusForExit, type RunDetail, type RunRecord, type RunState } from '../lib/events';
+import { isStreamEvent, statusForExit, type RunGiven, type RunDetail, type RunRecord, type RunState } from '../lib/events';
 import { kataViews, withTask } from '../lib/katas';
 import { pairToolEvents } from '../lib/toolcards';
 
@@ -38,6 +38,11 @@ export class LibraryViewModel {
   readonly kataSaved = computed(() => {
     const r = this.run();
     return r !== null && this.katas().some((k) => k.name === r.kata);
+  });
+  /** What the selected run was given, read from its transcript; null when no run is open. */
+  readonly given = computed<RunGiven | 'not-recorded' | null>(() => {
+    void this.detail();
+    return null;
   });
   readonly stream = computed(() => {
     const d = this.detail();

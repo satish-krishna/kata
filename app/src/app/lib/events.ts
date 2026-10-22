@@ -11,13 +11,26 @@ export type { RunRecord };
 export type RunDetail = { record: RunRecord; events: KataEvent[] };
 
 import type {
+  GivenStatus,
   KataEvent,
   Question,
   QuestionKind,
   QuestionOption,
   DiffFile,
 } from "@bindings/kata-events";
-export type { KataEvent, Question, QuestionKind, QuestionOption, DiffFile };
+export type { GivenStatus, KataEvent, Question, QuestionKind, QuestionOption, DiffFile };
+
+/** What a run was given, as its last `run.given` event recorded it. */
+export type RunGiven = Omit<Extract<KataEvent, { type: "run.given" }>, "type">;
+
+/** The words for each status the engine reports. The frontend labels a status and never computes one. */
+export const GIVEN_STATUS_LABEL: Record<GivenStatus, string> = {} as Record<GivenStatus, string>;
+
+/** The last `run.given` of a transcript, or `not-recorded` when the run made none (a run from before the view existed). */
+export function givenFrom(events: readonly KataEvent[]): RunGiven | "not-recorded" {
+  void events;
+  return "not-recorded";
+}
 
 /** The terminal event carrying the run summary. */
 export type RunSummary = Extract<KataEvent, { type: "run.completed" }>;
