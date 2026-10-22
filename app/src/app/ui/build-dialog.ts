@@ -4,6 +4,7 @@ import type { BrnDialogState } from '@spartan-ng/brain/dialog';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmDialogImports } from '@spartan-ng/helm/dialog';
 import { HlmInput } from '@spartan-ng/helm/input';
+import { HlmLabel } from '@spartan-ng/helm/label';
 import { HlmSelectImports } from '@spartan-ng/helm/select';
 import { HlmTextareaImports } from '@spartan-ng/helm/textarea';
 import { Field } from './field';
@@ -22,7 +23,7 @@ const DEFAULT_HOURS = 2;
 @Component({
   selector: 'app-build-dialog',
   host: { class: 'contents' },
-  imports: [HlmDialogImports, HlmButtonImports, HlmInput, HlmSelectImports, HlmTextareaImports, FormField, Field],
+  imports: [HlmDialogImports, HlmButtonImports, HlmInput, HlmLabel, HlmSelectImports, HlmTextareaImports, FormField, Field],
   templateUrl: './build-dialog.html',
 })
 export class BuildDialog {

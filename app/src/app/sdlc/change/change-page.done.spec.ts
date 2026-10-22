@@ -6,6 +6,7 @@ import { BehaviorSubject } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
+import type { StageAction } from '../../lib/sdlc';
 import { canConfirm } from '../../lib/sdlc-done';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { ChangePageViewModel } from './change-page.view-model';
@@ -192,7 +193,9 @@ describe('declaring done', () => {
     await vm.act('declare-done');
     const review = vm.doneReport()!.review;
     expect(review).toEqual({ at: '2026-10-22', findings: [finding] });
-    expect(canConfirm(vm.doneReport()!)).toBe(true);
+    // The review is current, so the one thing that still holds the pull requests is its high-severity finding.
+    expect(canConfirm(vm.doneReport()!)).toBe(false);
+    expect(canConfirm(vm.doneReport()!, true)).toBe(true);
   });
 
   it('a review run that committed under plugin/ is not current when the change page is opened again (F17)', async () => {
@@ -222,6 +225,29 @@ describe('declaring done', () => {
     expect(publish.mock.calls[0][4].map((r) => r.repo)).toEqual(['claims-intent', ...REPOS]);
     expect(vm.doneReport()).toBeNull();
     expect(vm.prList()!.map((r) => r.outcome.kind)).toEqual(['opened', 'opened', 'opened']);
+  });
+
+  it('a high-severity finding holds the pull requests until it is acknowledged, and a new report asks again (R20.4)', async () => {
+    const { vm, transport } = await finished();
+    const publish = vi.spyOn(transport, 'sdlcPublish');
+    const withHigh = () => vm.doneReport.update((r) => ({ ...r!, review: { at: 1, findings: [{ severity: 'high' as const, text: 'x' }] } }));
+    await vm.act('declare-done');
+    withHigh();
+    await vm.confirmDone();
+    expect(publish).not.toHaveBeenCalled();
+    expect(vm.doneReport()).not.toBeNull();
+
+    vm.doneAcknowledged.set(true);
+    vm.cancelDone();
+    await vm.act('declare-done');
+    withHigh();
+    expect(vm.doneAcknowledged()).toBe(false);
+    await vm.confirmDone();
+    expect(publish).not.toHaveBeenCalled();
+
+    vm.doneAcknowledged.set(true);
+    await vm.confirmDone();
+    expect(publish).toHaveBeenCalledTimes(1);
   });
 
   it('a failed pull request lists why, and Retry publishes again (R13.2)', async () => {
@@ -271,6 +297,22 @@ describe('declaring done', () => {
     expect(prepare).toHaveBeenCalled();
     expect(vm.handoff()).not.toBeNull();
     expect(vm.handoff()!.round).toBeNull();
+  });
+
+  it("the toolbar's Run review starts the review-only build, the same as the done dialog's", async () => {
+    const { vm, transport } = await finished();
+    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    await vm.act('run-review');
+    expect(prepare).toHaveBeenCalled();
+    expect(vm.handoff()).not.toBeNull();
+    expect(vm.handoff()!.round).toBeNull();
+  });
+
+  it('an action with nothing behind it says so instead of doing nothing', async () => {
+    const { vm } = await finished();
+    toastState.reset();
+    await vm.act('no-such-action' as StageAction);
+    expect(toastText()).toBe('Nothing runs for no-such-action.');
   });
 
   it('Another round closes the dialog and opens the round form', async () => {

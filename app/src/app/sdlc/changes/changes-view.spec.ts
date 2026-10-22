@@ -61,6 +61,23 @@ describe('ChangesView', () => {
     expect(container.querySelector('app-diff-bar')!.textContent).toContain('src/limits.rs');
   });
 
+  it('draws its own file list beside the diff by default', async () => {
+    const { container } = await mount();
+    expect(container.querySelector('aside [data-file="src/limits.rs"]')).not.toBeNull();
+  });
+
+  it('draws only the diff when the host shows the list, and hands the host the list to show', async () => {
+    const solo = await mount(new MockTransport(), { listOutside: true });
+    expect(solo.container.querySelector('aside')).toBeNull();
+    expect(solo.container.querySelector('[data-file]')).toBeNull();
+    expect(solo.container.querySelector('app-diff-bar')).not.toBeNull();
+    const list = (solo.fixture.componentInstance as ChangesView).fileList();
+    const view = list.createEmbeddedView(null);
+    view.detectChanges();
+    expect(view.rootNodes.some((n: Node) => n instanceof HTMLElement && n.querySelector('[data-file="src/limits.rs"]') !== null)).toBe(true);
+    view.destroy();
+  });
+
   it('says which repository has no change branch instead of leaving it out silently', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcMissingChangeBranches').mockResolvedValue(['billing']);

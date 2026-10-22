@@ -1,7 +1,9 @@
-import { Component, computed, input, output } from '@angular/core';
+import { Component, computed, input, model, output } from '@angular/core';
 import type { CheckSpec } from '@bindings/CheckSpec';
 import type { BrnDialogState } from '@spartan-ng/brain/dialog';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { HlmCheckbox } from '@spartan-ng/helm/checkbox';
+import { HlmLabel } from '@spartan-ng/helm/label';
 import { HlmDialogImports } from '@spartan-ng/helm/dialog';
 import { HlmTableImports } from '@spartan-ng/helm/table';
 import {
@@ -10,6 +12,7 @@ import {
   checkLabel,
   checkTone,
   hasReview,
+  highFindings,
   reviewedAt,
   specLabel,
   type CheckLabel,
@@ -18,14 +21,16 @@ import {
 } from '../lib/sdlc-done';
 import { CheckResults } from './check-results';
 import { FindingsList } from './findings-list';
+import { MarkdownBody } from './markdown-body';
 
 /* The confirmation before pull requests open: whether GitHub is ready, the branch and checks of each repository as they
  * will run (and where they are set), what failed, which commits break the rules, what departed from the plan and what the
- * review found. Open pull requests is the one primary action and waits for everything but the findings. */
+ * review found. Open pull requests is the one primary action. It waits for everything but the medium, low and unrated
+ * findings; a high-severity finding holds it until the engineer acknowledges opening the pull requests with it unresolved. */
 @Component({
   selector: 'app-done-dialog',
   host: { class: 'contents' },
-  imports: [HlmDialogImports, HlmButtonImports, HlmTableImports, CheckResults, FindingsList],
+  imports: [HlmDialogImports, HlmButtonImports, HlmCheckbox, HlmLabel, HlmTableImports, CheckResults, FindingsList, MarkdownBody],
   templateUrl: './done-dialog.html',
 })
 export class DoneDialog {
@@ -39,16 +44,25 @@ export class DoneDialog {
   readonly runReview = output<void>();
   readonly cancel = output<void>();
 
+  /** The engineer's word that the pull requests open with the high-severity findings unresolved. */
+  readonly acknowledged = model(false);
+
   protected readonly confirmable = computed(() => {
     const r = this.report();
-    return r !== null && canConfirm(r);
+    return r !== null && canConfirm(r, this.acknowledged());
+  });
+
+  /** How many high-severity findings hold Open pull requests; 0 when none does. */
+  protected readonly highCount = computed(() => {
+    const r = this.report();
+    return r === null ? 0 : highFindings(r).length;
   });
 
   /** A round is offered whenever something blocks, and whenever the review left findings. */
   protected readonly roundOffered = computed(() => {
     const r = this.report();
     if (r === null) return false;
-    return !canConfirm(r) || (hasReview(r.review) && r.review.findings.length > 0);
+    return !canConfirm(r, this.acknowledged()) || (hasReview(r.review) && r.review.findings.length > 0);
   });
 
   protected readonly missingText = REVIEW_MISSING_TEXT;

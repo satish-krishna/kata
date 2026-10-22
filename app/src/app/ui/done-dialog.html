@@ -79,8 +79,8 @@
                 <li class="k-left__row">
                   <span class="k-mono">{{ d.task }}</span>
                   <span class="k-mono">{{ d.repo }}</span>
-                  <span class="k-left__note">The plan said: {{ d.planText }}</span>
-                  <span>Done instead: {{ d.departure }}</span>
+                  <div class="k-left__note">The plan said: <app-markdown-body [md]="d.planText" /></div>
+                  <div>Done instead: <app-markdown-body [md]="d.departure" /></div>
                 </li>
               }
             </ul>
@@ -90,6 +90,22 @@
         @if (review(); as rv) {
           <app-findings-list [findings]="rv.findings" [older]="rv.older ?? false" emptyText="Reviewed, nothing found." />
           <p class="k-left__note">Reviewed at <span class="k-mono">{{ reviewed(rv.at) }}</span></p>
+          @if (highCount() > 0) {
+            <section class="k-left__group" aria-labelledby="done-high">
+              <p id="done-high" class="k-status k-status--error">
+                <span class="k-status__dot"></span>
+                @if (highCount() === 1) {
+                  1 high-severity finding is unresolved.
+                } @else {
+                  {{ highCount() }} high-severity findings are unresolved.
+                }
+              </p>
+              <label hlmLabel>
+                <hlm-checkbox [checked]="acknowledged()" (checkedChange)="acknowledged.set($event)" />
+                Open the pull requests with {{ highCount() === 1 ? 'it' : 'them' }} unresolved
+              </label>
+            </section>
+          }
         } @else if (missing(); as why) {
           <section class="k-left__group" aria-labelledby="done-review">
             <h3 id="done-review" class="k-left__head">Review</h3>

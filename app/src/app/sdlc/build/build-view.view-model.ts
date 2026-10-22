@@ -1,4 +1,4 @@
-import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
+import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { Problem } from '@bindings/Problem';
 import type { Readiness } from '@bindings/Readiness';
@@ -12,7 +12,7 @@ import { RunStore } from '../../core/run/run.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
-import type { AskRecord, PermissionRecord, RunState, RunSummary, StreamEvent } from '../../lib/events';
+import { STATUS_LABEL, type AskRecord, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { reviewFindings, specFor, type BuildRun, type Finding } from '../../lib/sdlc';
@@ -44,6 +44,12 @@ export type ShownRun = {
   permissions: PermissionRecord[];
   /** The index of the first event the engineer has not seen since they came back to this run, or null. */
   unseenFrom: number | null;
+  /** True for the newest run of its repository, which always shows in full. */
+  latest: boolean;
+  /** True when the engineer opened this earlier run; an earlier run shows as one line otherwise. */
+  expanded: boolean;
+  /** How the run went, for its one line: the status, then exit, turns and cost once it completed. */
+  outcome: string;
 };
 
 /** The two views of a running build: what the agents say and do, and what they changed. */
@@ -63,6 +69,9 @@ type Review = { at: number | null; label: string | null; findings: Finding[] };
 
 const REVIEW = 'review';
 const RUNNING: readonly RunState[] = ['running', 'awaiting'];
+/** The repository list's share of the build when it opens, in percent. */
+const REPOS_SIZE = 22;
+const NARROW = '(max-width: 767.98px)';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 /** The wall-clock time of a start, as the divider names it. */
@@ -76,6 +85,12 @@ const hms = (secs: number): string => {
 };
 const ms = (secs: number): string => `${Math.floor(Math.max(0, secs) / 60)}:${pad(Math.floor(Math.max(0, secs)) % 60)}`;
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+/** An earlier run's one line: its status, and exit, turns and cost once it completed. */
+const outcomeOf = (state: RunState, summary: RunSummary | null): string => {
+  if (summary === null) return STATUS_LABEL[state];
+  const cost = summary.cost_usd == null ? '' : ` · $${summary.cost_usd.toFixed(2)}`;
+  return `${STATUS_LABEL[state]} · exit ${summary.exit_code} · ${summary.num_turns} turns${cost}`;
+};
 
 /**
  * The build view's state: the driver that starts a run per ready repository and one review, the build's hold on the lock,
@@ -128,6 +143,8 @@ export class BuildViewModel {
   /** The warning naming the other files a review run changed in the master; null when it kept to the review document. */
   private readonly runNotice = signal<DocNotice | null>(null);
   private readonly picked = signal<string | null>(null);
+  /** The earlier runs the engineer opened in full, by run id. */
+  private readonly openedRuns = signal<ReadonlySet<string>>(new Set());
   private readonly broken = signal(false);
   private readonly finishing = signal(false);
   private readonly reading = signal(false);
@@ -151,6 +168,17 @@ export class BuildViewModel {
 
   /** Why Continue did not go on, with what the check found; the refusal dialog is open exactly while this is set. */
   readonly refusal = signal<{ reason: string; problems: Problem[] } | null>(null);
+
+  /** True below the width where the repository list stacks above the main column instead of sitting beside it. */
+  readonly narrow = signal(false);
+  /** The repository list's share of the build, in percent, then the main column's; the list is collapsed at 0. */
+  readonly layout = signal<number[]>([REPOS_SIZE, 100 - REPOS_SIZE]);
+  /** The list's share before it was collapsed, so showing it again restores it. */
+  private reposSize = REPOS_SIZE;
+  readonly reposOpen = computed(() => (this.layout()[0] ?? 0) > 0);
+  /** What the drawer holds: the repositories' runs on Activity, the changed files on Changes. */
+  readonly drawerName = computed(() => (this.tab() === 'changes' ? 'Changed files' : 'Repositories'));
+  readonly reposIcon = computed(() => (this.narrow() ? 'lucidePanelTop' : 'lucidePanelLeft') + (this.reposOpen() ? 'Close' : 'Open'));
 
   readonly tab = signal<BuildTab>('activity');
   readonly announcement = signal('');
@@ -190,6 +218,7 @@ export class BuildViewModel {
   /** Every run of the build, grouped by the repository (or the review) it belongs to. All stay mounted; only the selected group shows. */
   readonly groups = computed<{ key: string; runs: ShownRun[] }[]>(() => {
     const marks = this.marks();
+    const opened = this.openedRuns();
     const out = new Map<string, ShownRun[]>();
     for (const e of this.log()) {
       const snap = this.runs.snapshot(e.id)();
@@ -203,10 +232,13 @@ export class BuildViewModel {
         asks: snap.asks,
         permissions: snap.permissions,
         unseenFrom: marks[e.id] ?? null,
+        latest: false,
+        expanded: opened.has(e.id),
+        outcome: outcomeOf(snap.state, snap.summary),
       };
       out.set(e.key, [...(out.get(e.key) ?? []), run]);
     }
-    return [...out].map(([key, runs]) => ({ key, runs }));
+    return [...out].map(([key, runs]) => ({ key, runs: runs.map((r, i) => (i === runs.length - 1 ? { ...r, latest: true } : r)) }));
   });
 
   /** The runs of the selected repository. */
@@ -219,6 +251,10 @@ export class BuildViewModel {
   readonly changesContext = this.changes.asReadonly();
   /** Turns taken by every run of the build, so the Changes view reads again as the agents work. */
   readonly turns = computed(() => this.log().reduce((n, e) => n + this.runs.snapshot(e.id)().events.filter((ev) => ev.type === 'turn').length, 0));
+  /** Bash calls finished by every run of the build; each one may have committed a build log row. */
+  private readonly bashDone = computed(() =>
+    this.log().reduce((n, e) => n + this.runs.snapshot(e.id)().events.filter((ev) => ev.type === 'tool.result' && ev.name === 'Bash').length, 0),
+  );
   /** Events that arrived in the views not on show: for the Activity tab, only while Changes is open. */
   readonly activityNew = computed(() => (this.tab() === 'changes' ? this.log().reduce((n, e) => n + this.unseenOfRun(e), 0) : 0));
   /** The runs waiting on the engineer, whichever view is on show. */
@@ -264,10 +300,20 @@ export class BuildViewModel {
   readonly emptyText = computed(() => (this.unrecorded() ? 'The review did not record its findings' : this.older() ? 'The review found nothing.' : 'Reviewed, nothing found.'));
 
   constructor() {
-    // The rows follow the build log: read it again whenever a run starts or ends.
+    // Below the narrow width the repository list stacks above the main column, so the split turns vertical.
+    const query = typeof globalThis.matchMedia === 'function' ? globalThis.matchMedia(NARROW) : null;
+    if (query !== null) {
+      this.narrow.set(query.matches);
+      const onChange = (e: MediaQueryListEvent) => this.narrow.set(e.matches);
+      query.addEventListener('change', onChange);
+      inject(DestroyRef).onDestroy(() => query.removeEventListener('change', onChange));
+    }
+    // The rows follow the build log: read it again whenever a run starts or ends, and whenever a run finishes a Bash call,
+    // since an agent logs each task by committing it.
     effect(() => {
       this.driver.going();
       this.phase();
+      this.bashDone();
       untracked(() => void this.refresh());
     });
     // A run's work clock stops while it waits on the engineer; the wait has its own clock.
@@ -317,6 +363,25 @@ export class BuildViewModel {
       this.broken.set(true);
     }
     return true;
+  }
+
+  /** Open an earlier run in full, or fold it back to its one line. */
+  toggleRun(id: string): void {
+    const next = new Set(this.openedRuns());
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    this.openedRuns.set(next);
+  }
+
+  /** Collapse the repository list to nothing, or bring it back at the size it had. */
+  toggleRepos(): void {
+    const [repos = 0] = this.layout();
+    if (repos > 0) {
+      this.reposSize = repos;
+      this.layout.set([0, 100]);
+    } else {
+      this.layout.set([this.reposSize, 100 - this.reposSize]);
+    }
   }
 
   select(name: string): void {

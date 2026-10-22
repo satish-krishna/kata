@@ -1,6 +1,7 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { Component, input } from '@angular/core';
 import type { Finding } from '../lib/sdlc';
+import { MarkdownBody } from './markdown-body';
 
 /** A review that a newer one replaced, with the time of the newer one. */
 export type ReplacedFindings = { at: string; findings: Finding[]; label?: string };
@@ -9,7 +10,7 @@ export type ReplacedFindings = { at: string; findings: Finding[]; label?: string
  * Reviews a newer review replaced stay below, collapsed. */
 @Component({
   selector: 'app-findings-list',
-  imports: [NgTemplateOutlet],
+  imports: [NgTemplateOutlet, MarkdownBody],
   templateUrl: './findings-list.html',
 })
 export class FindingsList {

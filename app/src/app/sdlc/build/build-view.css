@@ -7,23 +7,36 @@
   display: grid;
   align-content: start;
   gap: var(--space-4);
+  height: 100%;
   padding: var(--space-5);
   overflow-y: auto;
-  border-right: 1px solid var(--border-subtle);
 }
 
+/* The task count and Cancel build, at the far end of the bar, so they stay on show while the list is collapsed. */
 .k-build__top {
   display: flex;
+  flex: none;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-3);
+  margin-left: auto;
+  padding-right: var(--space-5);
 }
 
 .k-build__main {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+
+/* The toggle for the repository list, the view tabs, then the build's task count and Cancel build. */
+.k-build__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .k-build__end,
@@ -51,7 +64,9 @@
 .k-build__pane {
   display: flex;
   flex-direction: column;
+  /* An earlier run keeps a fixed height; the latest one (below) takes what the panel has left. */
   height: 32rem;
+  min-width: 0;
   min-height: 0;
   border: 1px solid var(--border-subtle);
   background: var(--surface-panel);
@@ -60,8 +75,7 @@
 .k-build__tabs {
   display: flex;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-5) 0;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-3) var(--space-2) 0;
 }
 
 .k-build__tab {
@@ -87,20 +101,23 @@
 }
 
 .k-build__panel {
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: var(--space-4);
+  min-width: 0;
   min-height: 0;
   padding: var(--space-5);
   overflow-y: auto;
 }
 
 .k-build__panel[hidden],
-.k-build__runs[hidden] {
+.k-build__runs[hidden],
+.k-build__pane[hidden] {
   display: none;
 }
 
 .k-build__panel--changes {
+  display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   padding: 0;
   overflow: hidden;
@@ -113,7 +130,16 @@
   background: var(--surface-app);
 }
 
+/* The runs take the rest of the panel, so the latest pane can reach its bottom: the pane scrolls its events and the panel
+   scrolls only when there is more above it than fits (earlier runs, the end of the build). */
 .k-build__runs {
-  display: grid;
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
   gap: var(--space-4);
+}
+
+.k-build__runs > .k-build__pane:last-child {
+  flex: 1 0 20rem;
+  height: auto;
 }

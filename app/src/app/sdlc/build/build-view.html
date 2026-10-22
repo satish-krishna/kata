@@ -7,18 +7,33 @@
       }
     </span>
   </div>
-  <div class="grid grid-cols-1 md:grid-cols-[16rem_1fr] k-build__body">
-    <aside class="k-build__left" aria-label="Repositories">
-      <div class="k-build__top">
-        <span class="k-lock__count">{{ vm.tasksLabel() }}</span>
-        @if (vm.active()) {
-          <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.cancelBuild()">Cancel build</button>
+  <div hlmResizableGroup class="k-build__body" [direction]="vm.narrow() ? 'vertical' : 'horizontal'" [(layout)]="vm.layout">
+    <aside hlmResizablePanel id="build-repos" [minSize]="12" [maxSize]="50" [attr.aria-label]="vm.drawerName()" [attr.inert]="vm.reposOpen() ? null : ''">
+      <div class="k-build__left">
+        @if (vm.tab() === 'changes' && changesView(); as changes) {
+          <ng-container [ngTemplateOutlet]="changes.fileList()" />
+        } @else {
+          <app-repo-status-list [rows]="vm.rows()" [selected]="vm.selected()" (select)="vm.select($event)" />
         }
       </div>
-      <app-repo-status-list [rows]="vm.rows()" [selected]="vm.selected()" (select)="vm.select($event)" />
     </aside>
+    <hlm-resizable-handle withHandle [attr.aria-label]="vm.tab() === 'changes' ? 'Resize the file list' : 'Resize the repository list'" />
+    <div hlmResizablePanel [collapsible]="false">
     <section class="k-build__main" aria-label="Runs" hlmTabs variant="bare" [tab]="vm.tab()" (tabActivated)="vm.showTab($event)">
       <div class="sr-only" aria-live="assertive" aria-atomic="true">{{ vm.announcement() }}</div>
+      <div class="k-build__bar">
+      <button
+        hlmBtn
+        variant="ghost"
+        size="icon-sm"
+        type="button"
+        aria-controls="build-repos"
+        [attr.aria-expanded]="vm.reposOpen()"
+        [attr.aria-label]="(vm.reposOpen() ? 'Hide ' : 'Show ') + vm.drawerName().toLowerCase()"
+        (click)="vm.toggleRepos()"
+      >
+        <ng-icon [name]="vm.reposIcon()" size="16" />
+      </button>
       <div hlmTabsList variant="bare" class="k-build__tabs" aria-label="Build views">
         <button hlmTabsTrigger="activity" variant="bare" class="k-build__tab">
           Activity
@@ -30,6 +45,13 @@
           }
         </button>
         <button hlmTabsTrigger="changes" variant="bare" class="k-build__tab">Changes</button>
+      </div>
+      <div class="k-build__top">
+        <span class="k-lock__count">{{ vm.tasksLabel() }}</span>
+        @if (vm.active()) {
+          <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.cancelBuild()">Cancel build</button>
+        }
+      </div>
       </div>
       <div hlmTabsContent="activity" variant="bare" class="k-build__panel">
         @if (vm.otherWaiting().length > 0) {
@@ -99,8 +121,18 @@
         @for (g of vm.groups(); track g.key) {
           <div class="k-build__runs" [attr.data-repo-runs]="g.key" [hidden]="g.key !== vm.selected()">
             @for (r of g.runs; track r.id) {
-              <div class="k-build__run-start">Started <span class="k-mono">{{ r.startedAt }}</span></div>
-              <div class="k-build__pane">
+              @if (r.latest) {
+                <div class="k-build__run-start">Started <span class="k-mono">{{ r.startedAt }}</span></div>
+              } @else {
+                <div class="k-build__run-start">
+                  <button hlmBtn variant="ghost" size="sm" type="button" data-run-line [attr.aria-expanded]="r.expanded" (click)="vm.toggleRun(r.id)">
+                    <ng-icon [name]="r.expanded ? 'lucideChevronDown' : 'lucideChevronRight'" size="14" />
+                    Started <span class="k-mono">{{ r.startedAt }}</span> · {{ r.outcome }}
+                  </button>
+                </div>
+              }
+              <!-- An earlier run folds to its line, but its pane stays mounted: RunStore keeps folding its events. -->
+              <div class="k-build__pane" [hidden]="!r.latest && !r.expanded">
                 <app-observe-pane
                   [state]="r.state"
                   [events]="r.events"
@@ -129,10 +161,12 @@
             [change]="ctx.change"
             [turns]="vm.turns()"
             [banner]="vm.changesBanner"
+            [listOutside]="true"
           />
         }
       </div>
     </section>
+    </div>
   </div>
   <app-confirm-dialog
     [open]="vm.leftoverPrompt() !== null"

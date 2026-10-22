@@ -567,6 +567,8 @@ const DIFF_PAIRS: Record<string, FilePair> = {
 const buildTranscript = (repo: string) =>
   ({ delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-claims-${MOCK_BUILD_CHANGE}-build-${repo}-20261019T090000Z.jsonl` } }) as ScriptStep;
 
+const LONG_COMMAND = `cd ../${MOCK_SYSTEM}-intent; C=${MOCK_SYSTEM}/${MOCK_BUILD_CHANGE}; git diff --quiet 150916f8bf1693f32c589f656a3b91c11a716eb0 HEAD -- $C/intent.md; echo intent-pin=$?; git diff --quiet 150916f8bf1693f32c589f656a3b91c11a716eb0 HEAD -- $C/spec.md; echo spec-pin=$?`;
+
 /** The steps for one task: read what it needs, then commit it. */
 const taskSteps = (t: PlanTask): ScriptStep[] => [
   { delay: 300, ev: { type: 'tool.use', name: 'Edit', input_summary: `${t.repo}: ${t.name}`, id: `toolu_${t.id}e`, input: { file_path: `${t.repo}/src/lib` } } },
@@ -586,7 +588,12 @@ export function buildRunScript(repo: string, tasks: PlanTask[], ask: boolean): {
     { delay: 300, ev: { type: 'tool.use', name: 'Read', input_summary: `${MOCK_SYSTEM}/${MOCK_BUILD_CHANGE}/plan.md`, id: 'toolu_plan', input: { file_path: `${MOCK_SYSTEM}/${MOCK_BUILD_CHANGE}/plan.md` } } },
     { delay: 300, ev: { type: 'tool.result', name: 'Read', ok: true, summary: 'plan.md', id: 'toolu_plan', output: '### T1' } },
   ];
-  const work = [...tasks.flatMap(taskSteps), completed(`${tasks.length} task(s) done in ${repo}.`)];
+  // A real build's commands run far wider than any pane; the browser check needs one to prove nothing scrolls sideways.
+  const pins: ScriptStep[] = [
+    { delay: 300, ev: { type: 'tool.use', name: 'Bash', input_summary: LONG_COMMAND, id: 'toolu_pins', input: { command: LONG_COMMAND } } },
+    { delay: 300, ev: { type: 'tool.result', name: 'Bash', ok: true, summary: 'pins hold', id: 'toolu_pins', output: 'intent-pin=0\nspec-pin=0' } },
+  ];
+  const work = [...pins, ...tasks.flatMap(taskSteps), completed(`${tasks.length} task(s) done in ${repo}.`)];
   if (!ask) return { head: [...read, ...work], mid: [] };
   const question: ScriptStep = { delay: 300, ev: { type: 'ask.requested', id: 'q1', questions: [
     { kind: 'select', header: 'picker', question: 'The report form already has a file picker. Reuse it for photos?',

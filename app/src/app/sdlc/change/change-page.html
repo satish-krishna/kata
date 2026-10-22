@@ -232,6 +232,7 @@
   <app-done-dialog
     [report]="vm.doneReport()"
     [change]="vm.changeName()"
+    [(acknowledged)]="vm.doneAcknowledged"
     (confirm)="vm.confirmDone()"
     (anotherRound)="vm.doneRound()"
     (runReview)="vm.doneRunReview()"

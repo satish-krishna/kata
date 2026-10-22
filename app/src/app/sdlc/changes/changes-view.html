@@ -39,18 +39,23 @@
       </div>
     </div>
   }
-  <div class="k-changes__body grid grid-cols-1 md:grid-cols-[18rem_1fr] md:grid-rows-[minmax(0,1fr)]">
-    <aside class="k-changes__left" aria-label="Repositories with changes">
-      <app-repo-file-list
-        [groups]="vm.groups()"
-        [selected]="vm.selected()"
-        (toggle)="vm.toggle($event)"
-        (select)="vm.select($event.repo, $event.path)"
-      />
-      @for (repo of vm.missingBranches(); track repo) {
-        <p class="k-changes__readonly" data-testid="changes-missing">{{ repo }} has no change/{{ change() }} branch, so its changes are not listed.</p>
-      }
-    </aside>
+  <ng-template #fileList>
+    <app-repo-file-list
+      [groups]="vm.groups()"
+      [selected]="vm.selected()"
+      (toggle)="vm.toggle($event)"
+      (select)="vm.select($event.repo, $event.path)"
+    />
+    @for (repo of vm.missingBranches(); track repo) {
+      <p class="k-changes__readonly" data-testid="changes-missing">{{ repo }} has no change/{{ change() }} branch, so its changes are not listed.</p>
+    }
+  </ng-template>
+  <div class="k-changes__body" [class.k-changes__body--solo]="listOutside()">
+    @if (!listOutside()) {
+      <aside class="k-changes__left" aria-label="Repositories with changes">
+        <ng-container [ngTemplateOutlet]="fileList" />
+      </aside>
+    }
     <section class="k-changes__main" aria-label="What changed">
       <div class="k-changes__head">
         @if (banner(); as text) {

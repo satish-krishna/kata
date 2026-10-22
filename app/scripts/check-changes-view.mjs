@@ -8,8 +8,9 @@
 //      fills its container.
 //   3. Zoom keys: Ctrl +, - and 0 pressed inside the editor still reach the document, unhandled
 //      by Monaco, with their default prevented by the app.
-//   4. Widths: 375, 768 and 1280 pixels have no horizontal page scroll; below 768 the file list
-//      sits above the diff and the editor is inline.
+//   4. Widths: 375, 768 and 1280 pixels have no horizontal page scroll; the file list is in the build's
+//      drawer (the Changes view draws no list of its own there), and below 768 it sits above the diff
+//      and the editor is inline.
 //   5. Fit on the change page's Build tab (before a build starts), at 1280 and 1440 wide: the diff editor reaches the bottom of
 //      the window, the view sits flush under the tab strip with no frame of its own, and each repository header is one line.
 //   6. The strip never cuts a control off: for a build-ready change and for a finished build with three actions and the pull request note,
@@ -89,11 +90,18 @@ try {
       () =>
         page.evaluate(() => {
           const rect = (sel) => document.querySelector(sel)?.getBoundingClientRect();
-          const left = rect('.k-changes__left');
+          // Inside the build the file list is in the build's drawer, not in the Changes view.
+          const left = rect('#build-repos');
           const main = rect('.k-changes__main');
           const diff = document.querySelector('.monaco-diff-editor');
-          const aside = document.querySelector('aside.k-changes__left');
-          return { listScroll: aside ? aside.scrollWidth - aside.clientWidth : null, listAbove: left && main ? left.bottom <= main.top + 1 : null, listBeside: left && main ? left.right <= main.left + 1 : null, sideBySide: !!diff?.classList.contains('side-by-side') };
+          const list = document.querySelector('#build-repos .k-build__left');
+          return {
+            listScroll: list ? list.scrollWidth - list.clientWidth : null,
+            listAbove: left && main ? left.bottom <= main.top + 1 : null,
+            listBeside: left && main ? left.right <= main.left + 1 : null,
+            sideBySide: !!diff?.classList.contains('side-by-side'),
+            ownList: document.querySelectorAll('.k-build aside.k-changes__left').length,
+          };
         }),
       (s) => (width < MD ? s.listAbove === true && !s.sideBySide : s.listBeside === true),
       `layout at ${width}`,
@@ -101,7 +109,10 @@ try {
     const scroll = await noHorizontalScroll(page);
     check(scroll.scrollWidth <= scroll.clientWidth && scroll.body <= scroll.clientWidth, `${width}px: no horizontal page scroll (${scroll.scrollWidth} of ${scroll.clientWidth})`);
     if (state.error) check(false, state.error);
-    else check(state.listScroll !== null && state.listScroll <= 0, `${width}px: the file list does not scroll sideways (scrollWidth - clientWidth = ${state.listScroll})`);
+    else {
+      check(state.listScroll !== null && state.listScroll <= 0, `${width}px: the file list does not scroll sideways (scrollWidth - clientWidth = ${state.listScroll})`);
+      check(state.ownList === 0, `${width}px: inside the build the file list is in the drawer, not a second list in the Changes view (${state.ownList})`);
+    }
     if (!state.error && width < MD) check(true, `${width}px: the list is above the diff and the editor is inline`);
     else if (!state.error) check(true, `${width}px: the list sits beside the diff`);
   }

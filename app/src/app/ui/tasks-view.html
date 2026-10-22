@@ -12,7 +12,7 @@
       >
         <span [class]="'k-status k-status--' + (built(t) ? 'success' : 'idle')"><span class="k-status__dot" role="img" [attr.aria-label]="built(t) ? 'built' : 'not built'"></span></span>&ngsp;
         <b class="k-mono k-list__id">{{ t.id }}</b>&ngsp;
-        <span class="k-list__name">{{ t.name }}</span>
+        <app-markdown-inline class="k-list__name" [md]="t.name" />
       </button>
     }
   </nav>
@@ -20,7 +20,7 @@
     <article class="k-detail" data-testid="task" [attr.aria-label]="task.id" (click)="onDetailClick($event)">
       <header class="k-detail__head">
         <p class="k-task__meta k-mono">{{ task.id }} · {{ task.repo }} · depends on {{ dependsOn(task) }}</p>
-        <h2 class="k-detail__title">{{ task.name }}</h2>
+        <h2 class="k-detail__title"><app-markdown-inline [md]="task.name" /></h2>
       </header>
       @for (f of sections(); track $index) {
         @if (f.title === '') {
@@ -45,7 +45,7 @@
             </p>
           }
           @if (rec.text; as departure) {
-            <p class="k-record__text">{{ departure }}</p>
+            <app-markdown-body class="k-record__text" [md]="departure" />
           }
         </section>
       }

@@ -111,6 +111,30 @@ describe('BuildViewModel', () => {
     expect(vm.shown().map((r) => r.spec.workdir)).toEqual([`${FOLDER}/customer-portal`]);
   });
 
+  it('collapses the repository list and brings it back at the size the engineer dragged it to', () => {
+    const { vm } = setup();
+    expect(vm.reposOpen()).toBe(true);
+    vm.layout.set([30, 70]);
+    vm.toggleRepos();
+    expect(vm.layout()).toEqual([0, 100]);
+    expect(vm.reposOpen()).toBe(false);
+    expect(vm.reposIcon()).toBe('lucidePanelLeftOpen');
+    vm.toggleRepos();
+    expect(vm.layout()).toEqual([30, 70]);
+    expect(vm.reposIcon()).toBe('lucidePanelLeftClose');
+  });
+
+  it('reads the build log again when a run finishes a Bash call, since logging a task is a commit', async () => {
+    const { vm, transport } = setup();
+    const status = vi.spyOn(transport, 'sdlcBuildStatus');
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(1000);
+    const before = status.mock.calls.length;
+    await advance(1500);
+    expect(vm.action()).toBe('cancel');
+    expect(status.mock.calls.length).toBeGreaterThan(before);
+  });
+
   it('a repository row shows the waiting clock while its run waits (R4.1)', async () => {
     const { vm, transport, lock } = setup();
     await vm.start(await handoffFor(transport), CTX);
@@ -222,6 +246,32 @@ describe('BuildViewModel', () => {
     expect(run).toHaveBeenCalledTimes(3);
     expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
     expect(row(vm, 'claims-core').label).toBe('Working · T1');
+  });
+
+  it('a repository with several runs shows the latest in full and each earlier one as a line that can be opened', async () => {
+    const { vm, transport, runner } = setup();
+    const real = runner.runInRepo.bind(runner);
+    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
+      if (run.mock.calls.length <= 2) {
+        link.onRun?.(`fake-${target.repo}`);
+        return { exit: 124, error: null };
+      }
+      return real(target, spec, link);
+    });
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    vm.select('claims-core');
+    await vm.continueRun();
+    await advance(500);
+    const [earlier, latest] = vm.shown();
+    expect(vm.shown()).toHaveLength(2);
+    expect(earlier).toMatchObject({ latest: false, expanded: false });
+    expect(earlier.outcome).toMatch(/^[A-Z]/);
+    expect(latest).toMatchObject({ latest: true });
+    vm.toggleRun(earlier.id);
+    expect(vm.shown()[0].expanded).toBe(true);
+    vm.toggleRun(earlier.id);
+    expect(vm.shown()[0].expanded).toBe(false);
   });
 
   it('Continue after the branches were settled is refused with the problems when a build log fails the check, and starts nothing (R8.1)', async () => {

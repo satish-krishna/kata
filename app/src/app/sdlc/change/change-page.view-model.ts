@@ -70,8 +70,23 @@ const BUSY = 'Another task is already running.';
 /** The stage steps that mean the plan is accepted. */
 const ACCEPTED: ReadonlySet<string> = new Set(['build', 'done']);
 
-/** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result. */
-const RUNS: Partial<Record<StageAction, { kind: 'intent' | 'spec' | 'plan'; title: string; label: string }>> = {
+/** The actions `act` handles itself; every other action starts a stage run. */
+type HandledAction =
+  | 'accept-intent'
+  | 'reject-intent'
+  | 'accept-spec'
+  | 'accept-plan'
+  | 'commit-acceptance'
+  | 'start-build'
+  | 'continue-build'
+  | 'another-round'
+  | 'declare-done'
+  | 'run-review';
+type StageRun = { kind: 'intent' | 'spec' | 'plan'; title: string; label: string };
+
+/** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result.
+ * Typed over every action `act` does not handle, so a new action with neither a case nor a run does not compile. */
+const RUNS: Record<Exclude<StageAction, HandledAction>, StageRun> = {
   'continue-intent': { kind: 'intent', title: 'Continuing intent', label: 'Intent' },
   'reopen-intent': { kind: 'intent', title: 'Reopening intent', label: 'Intent' },
   'start-spec': { kind: 'spec', title: 'Starting spec', label: 'Spec' },
@@ -519,6 +534,8 @@ export class ChangePageViewModel {
   // --- declaring done: Kata's own checks first, then the confirmation
   /** What the done dialog shows; the dialog is open exactly while this is set. */
   readonly doneReport = signal<DoneReport | null>(null);
+  /** The engineer's word, in the done dialog, that the pull requests open with the high-severity findings unresolved. */
+  readonly doneAcknowledged = signal(false);
   private doneRepos: PublishRepo[] = [];
   /** The results of opening the pull requests, shown in a dialog that is open exactly while this is set. */
   readonly prList = signal<PrResult[] | null>(null);
@@ -526,7 +543,7 @@ export class ChangePageViewModel {
   /** The operator confirmed: open the pull requests. */
   async confirmDone(): Promise<void> {
     const report = this.doneReport();
-    if (report === null || !canConfirm(report)) return;
+    if (report === null || !canConfirm(report, this.doneAcknowledged())) return;
     this.doneReport.set(null);
     await this.publish();
   }
@@ -641,6 +658,9 @@ export class ChangePageViewModel {
         return;
       case 'declare-done':
         await this.declareDone();
+        return;
+      case 'run-review':
+        await this.doneRunReview();
         return;
       default:
         // Regenerating an existing document first asks what should change; a first draft just runs.
@@ -892,6 +912,8 @@ export class ChangePageViewModel {
     if (out === 'cancelled' || (out === 'failed' && got.notReady === null)) return;
 
     this.doneRepos = touched;
+    // Each report asks afresh: an acknowledgement covers the findings it was given for, not the next review's.
+    this.doneAcknowledged.set(false);
     this.doneReport.set({
       account: got.account,
       notReady: got.notReady,
@@ -981,11 +1003,16 @@ export class ChangePageViewModel {
   }
 
   private async runStage(action: StageAction, feedback = ''): Promise<void> {
-    const run = RUNS[action];
+    const run = (RUNS as Partial<Record<StageAction, StageRun>>)[action];
+    // An action that reaches here with no run behind it is a button nobody wired up: say so instead of doing nothing.
+    if (!run) {
+      this.toasts.error(`Nothing runs for ${action}.`);
+      return;
+    }
     const workspace = this.current();
     const scan = this.scan();
     const master = this.masterDir();
-    if (!run || !workspace || !scan || !master) return;
+    if (!workspace || !scan || !master) return;
     let spec;
     try {
       const settings = this.modes.settings() ?? (await this.modes.load());

@@ -116,6 +116,34 @@ describe('BuildView', () => {
   });
 });
 
+describe('BuildView earlier runs', () => {
+  it('shows an earlier run as one line, keeps its pane mounted, and opens it on request', async () => {
+    const { container, advance, vm } = await mount();
+    await advance(600);
+    vm.select('claims-core');
+    vm.cancelRun();
+    await advance(600);
+    await vm.continueRun();
+    if (vm.leftoverPrompt() !== null) await vm.confirmContinue();
+    await advance(300);
+    expect(vm.shown().length).toBe(2);
+
+    const group = container.querySelector<HTMLElement>('[data-repo-runs="claims-core"]')!;
+    const panes = () => Array.from(group.querySelectorAll<HTMLElement>('.k-build__pane'));
+    expect(panes()).toHaveLength(2);
+    expect(panes().map((p) => p.hidden)).toEqual([true, false]);
+    const line = Array.from(group.querySelectorAll<HTMLButtonElement>('button[data-run-line]'));
+    expect(line).toHaveLength(1);
+    expect(line[0].getAttribute('aria-expanded')).toBe('false');
+    expect(line[0].textContent).toContain(vm.shown()[0].outcome);
+
+    line[0].click();
+    await advance(50);
+    expect(panes().map((p) => p.hidden)).toEqual([false, false]);
+    expect(line[0].getAttribute('aria-expanded')).toBe('true');
+  });
+});
+
 describe('BuildView watching and reviewing', () => {
   const norm = (s: string | null) => (s ?? '').replace(/\s+/g, ' ').trim();
   type Mounted = Awaited<ReturnType<typeof mount>>;
@@ -162,8 +190,10 @@ describe('BuildView watching and reviewing', () => {
     const called = watchTransport(m.transport);
     const elapsed = m.lock.elapsedSecs();
     const paused = m.vm.rows().find((r) => r.name === 'customer-portal')!.paused;
+    // The repository rows are in the drawer on Activity only; on Changes it holds the file list.
     for (let i = 0; i < 10; i++) {
-      await choose(m, i % 2 === 0 ? 'Changes' : 'Activity');
+      await choose(m, 'Changes');
+      await choose(m, 'Activity');
       rowBtn(m.container, i % 2 === 0 ? 'customer-portal' : 'claims-core').click();
       await settle(m, 500);
     }
@@ -187,6 +217,32 @@ describe('BuildView watching and reviewing', () => {
     expect(m.container.querySelector('app-changes-view')).not.toBeNull();
   });
 
+  it('the drawer holds the repositories on Activity and the changed files on Changes, never both lists at once', async () => {
+    const m = await mount();
+    await settle(m, 1500);
+    const drawer = () => m.container.querySelector<HTMLElement>('#build-repos')!;
+    expect(drawer().getAttribute('aria-label')).toBe('Repositories');
+    expect(drawer().querySelector('app-repo-status-list')).not.toBeNull();
+    expect(drawer().querySelector('[data-file]')).toBeNull();
+    const toggle = () => m.container.querySelector<HTMLButtonElement>('button[aria-controls="build-repos"]')!;
+    expect(toggle().getAttribute('aria-label')).toBe('Hide repositories');
+    const handle = () => m.container.querySelector('hlm-resizable-handle')!;
+    expect(handle().getAttribute('aria-label')).toBe('Resize the repository list');
+
+    await choose(m, 'Changes');
+    await settle(m, 300);
+    expect(drawer().getAttribute('aria-label')).toBe('Changed files');
+    expect(drawer().querySelector('app-repo-status-list')).toBeNull();
+    expect(drawer().querySelector('[data-file="src/limits.rs"]')).not.toBeNull();
+    expect(m.container.querySelector('app-changes-view aside')).toBeNull();
+    expect(toggle().getAttribute('aria-label')).toBe('Hide changed files');
+    expect(handle().getAttribute('aria-label')).toBe('Resize the file list');
+
+    await choose(m, 'Activity');
+    expect(drawer().querySelector('app-repo-status-list')).not.toBeNull();
+    expect(drawer().querySelector('[data-file]')).toBeNull();
+  });
+
   it('events that arrive while on Changes are all shown on return, in order (R17.2)', async () => {
     const m = await mount();
     await settle(m, 450);
@@ -196,7 +252,8 @@ describe('BuildView watching and reviewing', () => {
     await choose(m, 'Changes');
     await settle(m, 1500);
     expect(norm(tab(m.container, 'Activity').textContent)).toMatch(/\d+ new/);
-    expect(norm(rowBtn(m.container, 'customer-portal').textContent)).toMatch(/\d+ new/);
+    // The rows are not on show while Changes is; the count they will show on return is kept all the same.
+    expect(m.vm.rows().find((r) => r.name === 'customer-portal')!.unseen).toBeGreaterThan(0);
     await choose(m, 'Activity');
     const after = { core: paneItems(m.container, 'claims-core'), portal: paneItems(m.container, 'customer-portal') };
     expect(after.core.length).toBeGreaterThan(before.core.length);
@@ -224,7 +281,7 @@ describe('BuildView watching and reviewing', () => {
     answer.dispatchEvent(new Event('input', { bubbles: true }));
     await choose(m, 'Changes');
     await settle(m, 300);
-    const file = m.container.querySelector<HTMLButtonElement>('app-changes-view [data-file="src/limits.rs"]')!;
+    const file = m.container.querySelector<HTMLButtonElement>('#build-repos [data-file="src/limits.rs"]')!;
     file.click();
     await settle(m, 300);
     for (let i = 0; i < 4; i++) {
@@ -232,7 +289,7 @@ describe('BuildView watching and reviewing', () => {
       await choose(m, 'Changes');
     }
     expect(m.container.querySelector<HTMLInputElement>('[data-repo-runs="customer-portal"] input[aria-label="Other answer"]')!.value).toBe('Reuse it, but');
-    expect(m.container.querySelector('app-changes-view [data-file="src/limits.rs"]')!.getAttribute('aria-current')).toBe('true');
+    expect(m.container.querySelector('#build-repos [data-file="src/limits.rs"]')!.getAttribute('aria-current')).toBe('true');
   });
 
   it("the build view's Changes tab marks uncommitted files and keeps everything else locked (R7.2)", async () => {
@@ -241,7 +298,7 @@ describe('BuildView watching and reviewing', () => {
     await choose(m, 'Changes');
     await settle(m, 300);
     expect(text(m.container)).toContain("The build is running. Uncommitted edits are the agents' work in progress and are marked with a dot.");
-    expect(m.container.querySelectorAll('app-changes-view [data-uncommitted]').length).toBeGreaterThan(0);
+    expect(m.container.querySelectorAll('#build-repos [data-uncommitted]').length).toBeGreaterThan(0);
     expect(m.lock.active()?.kind).toBe('build');
     expect(button(m.container, 'Close')).toBeUndefined();
   });
@@ -304,7 +361,9 @@ describe('BuildView watching and reviewing', () => {
     await settle(m, 600);
     expect(m.container.querySelector('app-waiting-notice [data-waiting]')).toBeNull();
     expect(norm(m.container.querySelector('[aria-live="assertive"]')!.textContent)).not.toContain('customer-portal');
-    expect(text(m.container)).toContain('Stopped: nobody answered');
+    // The stop is on the repository's row, which the drawer shows on Activity.
+    await choose(m, 'Activity');
+    expect(norm(rowBtn(m.container, 'customer-portal').textContent)).toContain('Stopped: nobody answered');
   });
 
   it('the waiting repository is flagged in every view while the others keep folding (R19.4)', async () => {
@@ -325,9 +384,10 @@ describe('BuildView watching and reviewing', () => {
     expect(flagged('customer-portal')).toBe(true);
     expect(lines()).toEqual(['The agent in customer-portal is waiting for you. Go to customer-portal']);
 
-    // Changes: the full notice. The other run's events keep arriving.
+    // Changes: the drawer holds the files, so the flag is the Activity tab's and the full notice. The other run's events keep arriving.
+    const tabFlagged = () => norm(tab(m.container, 'Activity').textContent).includes('Waiting for you');
     await choose(m, 'Changes');
-    expect(flagged('customer-portal')).toBe(true);
+    expect(tabFlagged()).toBe(true);
     expect(lines()).toHaveLength(1);
     const core = runIdOf(m, 'claims-core');
     const events = () => m.vm.shown()[0].events.length;
@@ -340,8 +400,9 @@ describe('BuildView watching and reviewing', () => {
     emit(m.transport, core, { type: 'permission.requested', id: 'p1', tool: 'Bash', input_summary: 'git push' });
     await settle(m, 100);
     expect(lines()).toHaveLength(2);
-    expect(flagged('claims-core')).toBe(true);
+    expect(tabFlagged()).toBe(true);
     await choose(m, 'Activity');
+    expect(flagged('claims-core')).toBe(true);
     rowBtn(m.container, 'customer-portal').click();
     await settle(m);
     expect(lines()).toEqual(['The agent in claims-core is waiting for you. Go to claims-core']);
