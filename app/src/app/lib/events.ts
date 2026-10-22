@@ -27,11 +27,11 @@ export type RunSummary = Extract<KataEvent, { type: "run.completed" }>;
  *  card *is* open, the run store resolves it instead of pushing a row. */
 export type StreamEvent = Exclude<
   KataEvent,
-  { type: "run.started" | "run.completed" | "run.error" | "run.cancelled" | "run.diff" | "ask.requested" | "ask.answered" | "permission.requested" }
+  { type: "run.started" | "run.completed" | "run.error" | "run.cancelled" | "run.diff" | "run.given" | "ask.requested" | "ask.answered" | "permission.requested" }
 >;
 
 const NON_ROW_TYPES = new Set([
-  "run.started", "run.completed", "run.error", "run.cancelled", "run.diff", "ask.requested", "ask.answered",
+  "run.started", "run.completed", "run.error", "run.cancelled", "run.diff", "run.given", "ask.requested", "ask.answered",
   "permission.requested",
 ]);
 /** Narrow a KataEvent to the row-renderable subset (for the event log). */

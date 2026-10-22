@@ -1,17 +1,64 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "argsfiles" | "subagent"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "argsfiles" | "subagent" | "hooks" | "noinit"
 use std::io::Write;
 use std::{thread, time::Duration};
 
 fn main() {
     let mode = std::env::var("KATA_FAKE_MODE").unwrap_or_else(|_| "ok".into());
     let mut out = std::io::stdout();
-    let _ = writeln!(out, r#"{{"type":"system","subtype":"init"}}"#);
-    let _ = out.flush();
+    // The start report, in the shape of tests/fixtures/claude-init.json (fields
+    // the engine does not read are left out). Its model differs from any spec's.
+    if mode != "noinit" {
+        let init = serde_json::json!({
+            "type": "system",
+            "subtype": "init",
+            "model": "claude-fake-1",
+            "permissionMode": "bypassPermissions",
+            "output_style": "default",
+            "skills": ["fake-skill"],
+            "plugins": [
+                {"name": "fake-plugin", "path": "<plugin-path>", "source": "fake-plugin@fake"},
+                {"name": "cc-plugin-fake", "path": "builtin", "source": "cc-plugin-fake@builtin"}
+            ],
+            "mcp_servers": [
+                {"name": "kata-ask", "status": "connected"},
+                {"name": "claude.ai Fake", "source": "claudeai", "status": "needs-auth"}
+            ]
+        });
+        let _ = writeln!(out, "{init}");
+        let _ = out.flush();
+    }
 
     match mode.as_str() {
+        "noinit" => {
+            // A run that ends without ever sending the start report.
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
+            );
+            let _ = out.flush();
+        }
+        "hooks" => {
+            // The hook lifecycle `--include-hook-events` adds: a hook starts and
+            // responds (shapes from tests/fixtures/claude-hook-events.jsonl,
+            // with a matcher in `hook_name`), then the run lingers briefly so a
+            // test can change the setup on disk while it is live.
+            for subtype in ["hook_started", "hook_response"] {
+                let _ = writeln!(
+                    out,
+                    r#"{{"type":"system","subtype":"{subtype}","hook_id":"h1","hook_name":"PreToolUse:Bash","hook_event":"PreToolUse","session_id":"s"}}"#
+                );
+            }
+            let _ = out.flush();
+            thread::sleep(Duration::from_millis(400));
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
+            );
+            let _ = out.flush();
+        }
         "sleep" => {
             let _ = writeln!(
                 out,

@@ -462,6 +462,11 @@ impl StreamParser {
                     }
                 }
             }
+            Some("system") => match v.get("subtype").and_then(|s| s.as_str()) {
+                Some("init") => out.init = Some(parse_init(&v)),
+                Some("hook_started") | Some("hook_response") => out.hook = parse_hook(&v),
+                _ => {}
+            },
             Some("result") => {
                 out.result = Some(ResultPayload {
                     num_turns: v.get("num_turns").and_then(|n| n.as_u64()).unwrap_or(0) as u32,
@@ -475,6 +480,67 @@ impl StreamParser {
         }
         out
     }
+}
+
+fn str_field(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key).and_then(|s| s.as_str()).map(String::from)
+}
+
+fn parse_init(v: &serde_json::Value) -> InitReport {
+    let strings = |key: &str| -> Vec<String> {
+        v.get(key)
+            .and_then(|a| a.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let plugins = v
+        .get("plugins")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|p| str_field(p, "source").or_else(|| str_field(p, "name")))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mcp_servers = v
+        .get("mcp_servers")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| {
+                    let name = str_field(s, "name")?;
+                    let state = match s.get("status").and_then(|t| t.as_str()) {
+                        Some("connected") => McpState::Connected,
+                        Some("pending") => McpState::Pending,
+                        _ => McpState::Failed,
+                    };
+                    Some((name, state))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    InitReport {
+        model: str_field(v, "model"),
+        permission_mode: str_field(v, "permissionMode"),
+        output_style: str_field(v, "output_style"),
+        skills: strings("skills"),
+        plugins,
+        mcp_servers,
+    }
+}
+
+fn parse_hook(v: &serde_json::Value) -> Option<HookFired> {
+    let event = str_field(v, "hook_event")?;
+    let name = str_field(v, "hook_name").unwrap_or_else(|| event.clone());
+    Some(HookFired {
+        event,
+        name,
+        command: str_field(v, "command"),
+    })
 }
 
 /// Translate one line of Claude `stream-json` into normalized events.

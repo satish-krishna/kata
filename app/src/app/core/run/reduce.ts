@@ -21,6 +21,7 @@ export function reduce(s: RunSnapshot, ev: KataEvent): RunSnapshot {
   switch (ev.type) {
     case 'run.started':
     case 'run.diff':
+    case 'run.given':
       return s;
     case 'ask.requested':
       return { ...s, state: 'awaiting', asks: [...s.asks, { id: ev.id, questions: ev.questions, answers: null, at: s.events.length }] };

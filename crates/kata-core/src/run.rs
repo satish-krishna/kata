@@ -2,7 +2,7 @@ use crate::assemble::{assemble, AssembleError};
 use crate::catalog::CatalogEntry;
 use crate::command::{build_invocation_with, ClaudeInvocation};
 use crate::event::KataEvent;
-use crate::given::{apply, merge_settings, resolve, ResolveOptions, ResolveRoots};
+use crate::given::{apply, given_event, merge_settings, resolve, ResolveOptions, ResolveRoots};
 use crate::spec::{validate, Isolation, PermissionMode, RunSpec, UnmatchedPolicy};
 use std::io::{BufReader, Write};
 use std::path::Path;
@@ -559,6 +559,11 @@ pub fn run_with<F: FnMut(KataEvent)>(
     // that labels each tool.result. A fresh parser per line loses it.
     let mut parser = crate::event::StreamParser::new(opts.full_payloads);
     let mut result = None;
+    // Claude's start report and the hooks seen firing, checked against
+    // `resolved`, the list the run was given at the start (R16.1). The first
+    // `run.given` is the report; each hook's first firing adds another.
+    let mut start_report: Option<crate::event::InitReport> = None;
+    let mut fired: Vec<crate::event::HookFired> = Vec::new();
     let mut termination: Option<Termination> = None;
 
     // Await state, shared by both things that can pause a run: an unanswered
@@ -763,6 +768,21 @@ pub fn run_with<F: FnMut(KataEvent)>(
                     continue;
                 }
                 let parsed = parser.push(&line);
+                if let Some(report) = parsed.init {
+                    start_report = Some(report);
+                    emit(given_event(&resolved, start_report.as_ref(), &fired));
+                }
+                if let Some(hook) = parsed.hook {
+                    if !fired
+                        .iter()
+                        .any(|f| f.event == hook.event && f.name == hook.name)
+                    {
+                        fired.push(hook);
+                        if start_report.is_some() {
+                            emit(given_event(&resolved, start_report.as_ref(), &fired));
+                        }
+                    }
+                }
                 if parsed.starts_turn {
                     // Engine-side leash: claude 2.1.x has no --max-turns flag, so the
                     // turn cap is enforced here. `None` means unlimited (bounded only
@@ -917,6 +937,11 @@ pub fn run_with<F: FnMut(KataEvent)>(
             }
         }
     };
+
+    // A run that ended before Claude's start report still says what it was given.
+    if start_report.is_none() {
+        emit(given_event(&resolved, None, &fired));
+    }
 
     // The child has exited; surface the changeset before the terminal event.
     // Runs against `cwd` — the worktree path when isolated, the workdir

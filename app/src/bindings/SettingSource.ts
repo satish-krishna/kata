@@ -3,4 +3,4 @@
 /**
  * Where a setting's value comes from.
  */
-export type SettingSource = "run-spec" | "personal" | "project" | "project-local" | "organization" | "claude-default" | "kata-default";
+export type SettingSource = "run-spec" | "personal" | "project" | "project-local" | "organization" | "claude-default" | "kata-default" | "claude-report";
