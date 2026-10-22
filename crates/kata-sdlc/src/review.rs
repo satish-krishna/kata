@@ -129,7 +129,8 @@ fn committed_outside(
 ///
 /// `before` is the master's dirty files (path to content hash, as `snapshot::take` reads them) when
 /// the run started: a file dirty then with the same content is not the run's. A file the run changed
-/// again, or left dirty itself, is flagged.
+/// again, left dirty itself, or restored to its committed content (it is then clean, so only `before`
+/// lists it) is flagged.
 ///
 /// `Err` lists the other files, sorted, or says why the check could not run.
 pub fn verify_run(
@@ -161,6 +162,8 @@ pub fn verify_run(
             }
         }
     }
+    // A file dirty before the run and clean now is in `before` only: the run reverted it, which is its doing.
+    dirty.extend(before.keys().cloned());
     for path in dirty {
         let hash = snapshot::hash_of(master, &path).map_err(could_not)?;
         if before.get(&path) != Some(&hash) {
