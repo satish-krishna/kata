@@ -1,7 +1,7 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "subagent"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "argsfiles" | "subagent"
 use std::io::Write;
 use std::{thread, time::Duration};
 
@@ -271,6 +271,56 @@ fn main() {
                 ]}
             });
             let _ = writeln!(out, "{line}");
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
+            );
+            let _ = out.flush();
+        }
+        "argsfiles" => {
+            // Report what Kata passed, as stderr lines the engine surfaces as log
+            // events: `ARGV <json array>`, `SETTINGS <file body>` and `MCP <file
+            // body>` for the files named by `--settings` and `--mcp-config`, and
+            // `PLUGINDIR <json array>` listing every file (relative, forward
+            // slashes) under `--plugin-dir`, because that folder is gone after
+            // the run.
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            let mut err = std::io::stderr();
+            let _ = writeln!(err, "ARGV {}", serde_json::json!(args));
+            let value_of = |flag: &str| {
+                args.iter()
+                    .position(|a| a == flag)
+                    .and_then(|i| args.get(i + 1))
+            };
+            for (flag, tag) in [("--settings", "SETTINGS"), ("--mcp-config", "MCP")] {
+                if let Some(p) = value_of(flag) {
+                    let body = std::fs::read_to_string(p)
+                        .unwrap_or_else(|e| format!("<read error: {e}>"))
+                        .replace(['\r', '\n'], " ");
+                    let _ = writeln!(err, "{tag} {body}");
+                }
+            }
+            if let Some(dir) = value_of("--plugin-dir") {
+                fn walk(base: &std::path::Path, dir: &std::path::Path, out: &mut Vec<String>) {
+                    let Ok(rd) = std::fs::read_dir(dir) else {
+                        return;
+                    };
+                    for e in rd.flatten() {
+                        let p = e.path();
+                        if p.is_dir() {
+                            walk(base, &p, out);
+                        } else if let Ok(rel) = p.strip_prefix(base) {
+                            out.push(rel.to_string_lossy().replace('\\', "/"));
+                        }
+                    }
+                }
+                let base = std::path::PathBuf::from(dir);
+                let mut files = Vec::new();
+                walk(&base, &base, &mut files);
+                files.sort();
+                let _ = writeln!(err, "PLUGINDIR {}", serde_json::json!(files));
+            }
+            let _ = err.flush();
             let _ = writeln!(
                 out,
                 r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#

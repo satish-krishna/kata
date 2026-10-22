@@ -2055,3 +2055,491 @@ fn build_proof_nested_skills_load_when_working_there() {
         "proof-skill was not reported loaded: {said}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Switched-off items and the per-run files (plan T7). Every test runs over a
+// temporary home and workdir, so the machine's real setup is never read or
+// written, and through `fake-claude` in `argsfiles` mode, which reports what
+// Kata passed.
+// ---------------------------------------------------------------------------
+
+use kata_core::given::{
+    resolve as resolve_given, ItemKind, LockReason, ResolveOptions, ResolveRoots, Resolved, Source,
+    SWITCHABLE,
+};
+use kata_core::spec::Given;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+/// Points HOME and USERPROFILE at a folder for the test and restores them on drop.
+struct HomeGuard {
+    saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+}
+
+impl HomeGuard {
+    fn set(home: &Path) -> HomeGuard {
+        let saved = ["HOME", "USERPROFILE"]
+            .into_iter()
+            .map(|k| (k, std::env::var_os(k)))
+            .collect();
+        std::env::set_var("HOME", home);
+        std::env::set_var("USERPROFILE", home);
+        HomeGuard { saved }
+    }
+}
+
+impl Drop for HomeGuard {
+    fn drop(&mut self) {
+        for (k, v) in &self.saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+    }
+}
+
+/// What `fake-claude` in `argsfiles` mode reported.
+#[derive(Debug, Default)]
+struct Seen {
+    argv: Vec<String>,
+    settings: Option<serde_json::Value>,
+    mcp: Option<serde_json::Value>,
+    plugin_files: Option<Vec<String>>,
+    exit_code: i32,
+}
+
+impl Seen {
+    fn has(&self, flag: &str) -> bool {
+        self.argv.iter().any(|a| a == flag)
+    }
+    fn value(&self, flag: &str) -> Option<&str> {
+        self.argv
+            .windows(2)
+            .find(|w| w[0] == flag)
+            .map(|w| w[1].as_str())
+    }
+    fn mcp_servers(&self) -> Vec<String> {
+        self.mcp.as_ref().map_or_else(Vec::new, |m| {
+            m["mcpServers"]
+                .as_object()
+                .map(|o| o.keys().cloned().collect())
+                .unwrap_or_default()
+        })
+    }
+}
+
+struct Rig {
+    _td: tempfile::TempDir,
+    _home_guard: HomeGuard,
+    home: PathBuf,
+    work: PathBuf,
+    kata_home: PathBuf,
+}
+
+fn write_file(path: &Path, body: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, body).unwrap();
+}
+
+impl Rig {
+    /// A home with a personal hook, a personal installed plugin, two skills; a
+    /// workdir with a `CLAUDE.md` and a `.mcp.json` of two servers.
+    fn new() -> Rig {
+        let td = tempfile::tempdir().unwrap();
+        let home = td.path().join("home");
+        let work = td.path().join("work");
+        let kata_home = td.path().join("kata-home");
+        std::fs::create_dir_all(&work).unwrap();
+        let guard = HomeGuard::set(&home);
+        std::env::set_var("KATA_CLAUDE_BIN", env!("CARGO_BIN_EXE_fake-claude"));
+        std::env::set_var("KATA_FAKE_MODE", "argsfiles");
+        std::env::set_var("KATA_HOME", &kata_home);
+
+        write_file(
+            &home.join(".claude/settings.json"),
+            &serde_json::json!({
+                "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+                    {"type": "command", "command": "node repair-me.js"}]}]},
+                "enabledPlugins": {"pers@mkt": true}
+            })
+            .to_string(),
+        );
+        for name in ["kit-skill", "kit-keep"] {
+            write_file(
+                &home.join(format!(".claude/skills/{name}/SKILL.md")),
+                &format!("---\nname: {name}\ndescription: does {name}\n---\nbody\n"),
+            );
+        }
+        let cache = td.path().join("cache/pers");
+        write_file(
+            &cache.join(".claude-plugin/plugin.json"),
+            r#"{"name":"pers","description":"the pers plugin"}"#,
+        );
+        write_file(
+            &home.join(".claude/plugins/installed_plugins.json"),
+            &serde_json::json!({"version": 2, "plugins": {"pers@mkt": [
+                {"scope": "user", "installPath": cache.to_string_lossy(), "version": "1"}
+            ]}})
+            .to_string(),
+        );
+        write_file(&work.join("CLAUDE.md"), "project rules");
+        write_file(
+            &work.join(".mcp.json"),
+            &serde_json::json!({"mcpServers": {
+                "srv-a": {"command": "node", "args": ["a.js"], "env": {"API_KEY": "tok-a"}},
+                "srv-b": {"command": "node", "args": ["b.js"]}
+            }})
+            .to_string(),
+        );
+        Rig {
+            _td: td,
+            _home_guard: guard,
+            home,
+            work,
+            kata_home,
+        }
+    }
+
+    fn spec(&self) -> RunSpec {
+        let mut s = base_spec(&self.work.to_string_lossy());
+        s.skills = vec!["kit-skill".into(), "kit-keep".into()];
+        s
+    }
+
+    fn catalog(&self) -> Vec<CatalogEntry> {
+        kata_core::catalog::discover(&kata_core::catalog::DiscoveryRoots {
+            user_dir: self.home.join(".claude"),
+            project_dir: self.work.join(".claude"),
+        })
+    }
+
+    fn resolved(&self, spec: &RunSpec) -> Resolved {
+        resolve_given(
+            spec,
+            &ResolveRoots::for_spec(spec),
+            &ResolveOptions::default(),
+        )
+    }
+
+    /// The identity of the one item matching, by kind, source and name.
+    fn id(&self, spec: &RunSpec, kind: ItemKind, source: Source, name: &str) -> String {
+        self.resolved(spec)
+            .items
+            .into_iter()
+            .find(|i| i.kind == kind && i.source == source && i.name == name)
+            .unwrap_or_else(|| panic!("no {kind:?} {source:?} item named {name}"))
+            .id
+    }
+
+    /// The identity of the personal hook of the fixture.
+    fn hook_id(&self, spec: &RunSpec) -> String {
+        self.resolved(spec)
+            .items
+            .into_iter()
+            .find(|i| i.kind == ItemKind::Hook && i.source == Source::Personal)
+            .expect("the personal hook is an item")
+            .id
+    }
+
+    /// Every file under the temporary home and workdir, with its bytes.
+    fn snapshot(&self) -> BTreeMap<PathBuf, Vec<u8>> {
+        fn walk(dir: &Path, out: &mut BTreeMap<PathBuf, Vec<u8>>) {
+            for e in std::fs::read_dir(dir).unwrap() {
+                let p = e.unwrap().path();
+                if p.is_dir() {
+                    walk(&p, out);
+                } else {
+                    out.insert(p.clone(), std::fs::read(&p).unwrap());
+                }
+            }
+        }
+        let mut out = BTreeMap::new();
+        walk(&self.home, &mut out);
+        walk(&self.work, &mut out);
+        out
+    }
+
+    fn run(&self, spec: &RunSpec) -> Seen {
+        let cancel = CancelToken::new();
+        let mut events: Vec<KataEvent> = Vec::new();
+        let outcome = run(
+            spec,
+            &self.catalog(),
+            &cancel,
+            &kata_core::run::AnswerRx::default(),
+            &kata_core::run::DecisionRx::default(),
+            |e| events.push(e),
+        )
+        .unwrap();
+        let mut seen = Seen {
+            exit_code: outcome.exit_code,
+            ..Seen::default()
+        };
+        for e in &events {
+            let KataEvent::Log { message, .. } = e else {
+                continue;
+            };
+            let json = |rest: &str| serde_json::from_str::<serde_json::Value>(rest).unwrap();
+            if let Some(r) = message.strip_prefix("ARGV ") {
+                seen.argv = serde_json::from_value(json(r)).unwrap();
+            } else if let Some(r) = message.strip_prefix("SETTINGS ") {
+                seen.settings = Some(json(r));
+            } else if let Some(r) = message.strip_prefix("MCP ") {
+                seen.mcp = Some(json(r));
+            } else if let Some(r) = message.strip_prefix("PLUGINDIR ") {
+                seen.plugin_files = Some(serde_json::from_value(json(r)).unwrap());
+            }
+        }
+        assert_eq!(seen.exit_code, 0, "events: {events:?}");
+        assert!(!seen.argv.is_empty(), "fake-claude reported no argv");
+        seen
+    }
+}
+
+fn given_with(f: impl FnOnce(&mut Given)) -> Option<Given> {
+    let mut g = Given::default();
+    f(&mut g);
+    Some(g)
+}
+
+// R4.2: one row per kind. Hooks are not switchable (docs/switch-proofs.md), so
+// that row asserts the item stays given. There is no run.given event yet (T8),
+// so the rows assert through `resolve` and what Kata passed to claude.
+#[test]
+#[serial]
+fn each_kind_switched_off_is_kept_from_the_run_and_no_setup_file_changes() {
+    let rig = Rig::new();
+    let before = rig.snapshot();
+
+    // skill: a run-spec kit skill is left out of the assembled plugin folder.
+    let mut spec = rig.spec();
+    let id = rig.id(&spec, ItemKind::Skill, Source::RunSpec, "kit-skill");
+    spec.given = given_with(|g| g.skills.push(id));
+    let seen = rig.run(&spec);
+    let files = seen
+        .plugin_files
+        .clone()
+        .expect("a kept skill leaves a plugin dir");
+    assert!(
+        files.iter().any(|f| f.starts_with("skills/kit-keep/")),
+        "{files:?}"
+    );
+    assert!(
+        !files.iter().any(|f| f.contains("kit-skill")),
+        "the switched-off skill reached the plugin dir: {files:?}"
+    );
+    assert!(!seen.has("--setting-sources"));
+    assert_eq!(rig.snapshot(), before, "skill row changed a setup file");
+
+    // plugin: an installed personal plugin is disabled in the per-run settings.
+    let mut spec = rig.spec();
+    let id = rig.id(&spec, ItemKind::Plugin, Source::Personal, "pers");
+    spec.given = given_with(|g| g.plugins.push(id));
+    let seen = rig.run(&spec);
+    assert_eq!(
+        seen.settings,
+        Some(serde_json::json!({"enabledPlugins": {"pers@mkt": false}}))
+    );
+    assert!(seen.has("--settings"));
+    assert_eq!(rig.snapshot(), before, "plugin row changed a setup file");
+
+    // standing instruction: the project CLAUDE.md goes into claudeMdExcludes.
+    let mut spec = rig.spec();
+    let id = rig.id(&spec, ItemKind::Instruction, Source::Project, "CLAUDE.md");
+    let path = rig
+        .resolved(&spec)
+        .items
+        .into_iter()
+        .find(|i| i.id == id)
+        .and_then(|i| i.path)
+        .expect("the instruction names its file");
+    spec.given = given_with(|g| g.instructions.push(id));
+    let seen = rig.run(&spec);
+    let want = path.replace('\\', "/");
+    assert!(want.starts_with(&rig.work.to_string_lossy().replace('\\', "/")));
+    assert_eq!(
+        seen.settings,
+        Some(serde_json::json!({"claudeMdExcludes": [want]}))
+    );
+    assert_eq!(
+        rig.snapshot(),
+        before,
+        "instruction row changed a setup file"
+    );
+
+    // tool server: the per-run tool server file holds kata-ask and the kept one.
+    let mut spec = rig.spec();
+    let id = rig.id(&spec, ItemKind::ToolServer, Source::Project, "srv-a");
+    spec.given = given_with(|g| g.tool_servers.push(id));
+    let seen = rig.run(&spec);
+    assert!(seen.has("--strict-mcp-config"), "{:?}", seen.argv);
+    assert!(seen.has("--mcp-config"));
+    let mut servers = seen.mcp_servers();
+    servers.sort();
+    assert_eq!(servers, vec!["kata-ask".to_string(), "srv-b".to_string()]);
+    assert!(
+        !seen.mcp.unwrap().to_string().contains("tok-a"),
+        "the switched-off server's definition reached the file"
+    );
+    assert_eq!(
+        rig.snapshot(),
+        before,
+        "tool server row changed a setup file"
+    );
+
+    // hook: not in SWITCHABLE, so it stays given and no mechanism is passed.
+    assert!(!SWITCHABLE.contains(&(ItemKind::Hook, Source::Personal)));
+    let mut spec = rig.spec();
+    let hook_id = rig.hook_id(&spec);
+    spec.given = given_with(|g| g.hooks.push(hook_id.clone()));
+    let resolved = rig.resolved(&spec);
+    let hook = resolved.items.iter().find(|i| i.id == hook_id).unwrap();
+    assert!(!hook.off, "a locked hook must stay given");
+    let seen = rig.run(&spec);
+    assert!(!seen.has("--setting-sources") && !seen.has("--settings"));
+    assert!(!seen.has("--strict-mcp-config"));
+    assert_eq!(rig.snapshot(), before, "hook row changed a setup file");
+}
+
+// R4.1, as it stands: hooks ship locked because no mechanism was proven, so a
+// hook listed in `[given].hooks` stays given and the settings source is not
+// re-routed. The real-claude marker variant is skipped: there is no mechanism
+// to prove (docs/switch-proofs.md).
+#[test]
+#[serial]
+fn a_switched_off_personal_hook_never_fires_and_the_setup_is_untouched() {
+    let rig = Rig::new();
+    let settings_path = rig.home.join(".claude/settings.json");
+    let before_bytes = std::fs::read(&settings_path).unwrap();
+    let mut spec = rig.spec();
+    let hook_id = rig.hook_id(&spec);
+    spec.given = given_with(|g| g.hooks.push(hook_id.clone()));
+    let resolved = rig.resolved(&spec);
+    let hook = resolved.items.iter().find(|i| i.id == hook_id).unwrap();
+    assert!(!hook.off);
+    assert!(
+        matches!(&hook.lock, Some(LockReason::Unswitchable { text })
+            if text.starts_with("Kata cannot switch this off")),
+        "{:?}",
+        hook.lock
+    );
+    let seen = rig.run(&spec);
+    assert!(
+        !seen.has("--setting-sources"),
+        "no re-routing is passed: {:?}",
+        seen.argv
+    );
+    assert_eq!(std::fs::read(&settings_path).unwrap(), before_bytes);
+}
+
+// R7.3: the posture is the same with and without items switched off.
+#[test]
+#[serial]
+fn switching_items_off_leaves_the_posture_flags_unchanged() {
+    let rig = Rig::new();
+    let mut plain = rig.spec();
+    plain.permissions.mode = kata_core::spec::PermissionMode::Auto;
+    plain.permissions.deny.push("Bash(rm *)".into());
+    plain.permissions.allow.push("Read(*)".into());
+    let mut off = plain.clone();
+    let hook = rig.hook_id(&off);
+    let skill = rig.id(&off, ItemKind::Skill, Source::RunSpec, "kit-skill");
+    let server = rig.id(&off, ItemKind::ToolServer, Source::Project, "srv-a");
+    off.given = given_with(|g| {
+        g.hooks.push(hook);
+        g.skills.push(skill);
+        g.tool_servers.push(server);
+    });
+
+    let a = rig.run(&plain);
+    let b = rig.run(&off);
+    // The switches did something...
+    assert!(b.has("--strict-mcp-config") && !a.has("--strict-mcp-config"));
+    assert!(!b
+        .plugin_files
+        .as_ref()
+        .unwrap()
+        .iter()
+        .any(|f| f.contains("kit-skill")));
+    // ...and the posture did not move.
+    assert_eq!(a.value("--permission-mode"), Some("auto"));
+    assert_eq!(b.value("--permission-mode"), Some("auto"));
+    assert_eq!(
+        a.value("--permission-prompt-tool"),
+        b.value("--permission-prompt-tool")
+    );
+    assert!(a.value("--permission-prompt-tool").is_some());
+    assert!(!b.has("--dangerously-skip-permissions"));
+    let perms = |s: &Seen| s.settings.as_ref().unwrap()["permissions"].clone();
+    assert_eq!(perms(&a), perms(&b));
+    assert_eq!(perms(&b)["deny"], serde_json::json!(["Bash(rm *)"]));
+}
+
+#[test]
+#[serial]
+fn bypass_with_nothing_off_writes_no_settings_file() {
+    let rig = Rig::new();
+    let seen = rig.run(&rig.spec());
+    assert!(!seen.has("--settings"), "{:?}", seen.argv);
+    assert!(seen.settings.is_none());
+    assert!(!seen.has("--strict-mcp-config"));
+    assert!(seen.has("--dangerously-skip-permissions"));
+    assert_eq!(seen.mcp_servers(), vec!["kata-ask".to_string()]);
+    // Claude's hook events are always on; the build reads them.
+    assert!(seen.has("--include-hook-events"));
+    // The per-run files live under <kata home>/tmp/run-<pid>-<nanos>/.
+    let cfg = PathBuf::from(seen.value("--mcp-config").unwrap());
+    let run_dir = cfg.parent().unwrap();
+    assert_eq!(run_dir.parent().unwrap(), rig.kata_home.join("tmp"));
+    let name = run_dir.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(
+        name.starts_with(&format!("run-{}-", std::process::id())),
+        "{name}"
+    );
+    // And they are gone once the run ends.
+    assert!(!run_dir.exists(), "the run's temp folder was left behind");
+}
+
+#[test]
+#[serial]
+fn a_crashed_runs_temp_folder_is_swept_by_the_next_run() {
+    let rig = Rig::new();
+    // A process that has certainly ended: its pid is not alive.
+    let mut dead = std::process::Command::new(env!("CARGO_BIN_EXE_fake-claude"))
+        .env("KATA_FAKE_MODE", "ok")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let dead_pid = dead.id();
+    dead.wait().unwrap();
+
+    let tmp = rig.kata_home.join("tmp");
+    let crashed = tmp.join(format!("run-{dead_pid}-1700000000000000000"));
+    write_file(&crashed.join("mcp-config.json"), r#"{"token":"x"}"#);
+    // Not swept: a live process's folder (this one), a folder that is not a
+    // run's, and a name that does not parse.
+    let live = tmp.join(format!("run-{}-1700000000000000001", std::process::id()));
+    write_file(&live.join("keep.txt"), "live");
+    let other = tmp.join("something-else");
+    write_file(&other.join("keep.txt"), "other");
+    let odd = tmp.join("run-notapid-1");
+    write_file(&odd.join("keep.txt"), "odd");
+
+    rig.run(&rig.spec());
+
+    assert!(!crashed.exists(), "the crashed run's folder survived");
+    assert!(live.join("keep.txt").exists());
+    assert!(other.join("keep.txt").exists());
+    assert!(odd.join("keep.txt").exists());
+    let left: Vec<String> = std::fs::read_dir(&tmp)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        left.len(),
+        3,
+        "this run left its own folder behind: {left:?}"
+    );
+}
