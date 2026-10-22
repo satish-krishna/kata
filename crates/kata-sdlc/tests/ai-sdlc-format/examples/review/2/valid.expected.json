@@ -1,0 +1,42 @@
+{
+  "kind": "review",
+  "layout": 2,
+  "document": {
+    "reviews": [
+      {
+        "number": 1,
+        "reviewed_at": "2026-10-22",
+        "commits": {
+          "kata": "840fa0c",
+          "ai-sdlc": "1234567"
+        },
+        "findings": [
+          {
+            "id": "F1",
+            "severity": "high",
+            "file": "app/src/styles/workbench.css",
+            "line": 304,
+            "text": "The toolbar overflows at 1280.\n\nSecond paragraph of the finding."
+          },
+          {
+            "id": "F2",
+            "severity": "low",
+            "file": "README.md",
+            "line": 12,
+            "text": "A typo."
+          }
+        ]
+      },
+      {
+        "number": 2,
+        "reviewed_at": "2026-10-23",
+        "commits": {
+          "kata": "aaa1111",
+          "ai-sdlc": "bbb2222"
+        },
+        "findings": []
+      }
+    ]
+  },
+  "problems": []
+}

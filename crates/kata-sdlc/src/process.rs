@@ -48,6 +48,102 @@ pub(crate) fn run(
     cwd: &Path,
     timeout: Duration,
 ) -> Result<ProcessExit, ProcessError> {
+    let (program, mut child) = spawn(argv, cwd)?;
+    let tail = Arc::new(Mutex::new(Tail::default()));
+    let mut readers = Vec::new();
+    if let Some(stdout) = child.stdout().take() {
+        readers.push(spawn_reader(stdout, Arc::clone(&tail)));
+    }
+    if let Some(stderr) = child.stderr().take() {
+        readers.push(spawn_reader(stderr, Arc::clone(&tail)));
+    }
+    let status = wait(&program, &mut child, timeout)?;
+    drain(readers);
+    let tail = tail.lock().unwrap_or_else(|e| e.into_inner()).render();
+    match status {
+        Some(status) => Ok(ProcessExit {
+            code: status.code(),
+            tail,
+        }),
+        None => Err(ProcessError::TimedOut {
+            secs: timeout.as_secs(),
+            tail,
+        }),
+    }
+}
+
+/// How a finished process ended, with its whole stdout and its stderr kept apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CapturedExit {
+    /// The exit code, or `None` when the process was ended by a signal.
+    pub code: Option<i32>,
+    /// Everything the process wrote to stdout, undecoded.
+    pub stdout: Vec<u8>,
+    /// The last lines of stderr, lossy UTF-8, ANSI stripped.
+    pub stderr: String,
+}
+
+/// Like `run`, but keeps all of stdout (a parsed document can be far larger than the 64 KiB tail)
+/// and keeps stderr apart from it. A timeout kills the process tree and returns `TimedOut` with
+/// the stderr captured so far.
+pub(crate) fn run_capture(
+    argv: &[String],
+    cwd: &Path,
+    timeout: Duration,
+) -> Result<CapturedExit, ProcessError> {
+    let (program, mut child) = spawn(argv, cwd)?;
+    let stderr_tail = Arc::new(Mutex::new(Tail::default()));
+    let mut readers = Vec::new();
+    let stdout_bytes = Arc::new(Mutex::new(Vec::new()));
+    if let Some(mut stdout) = child.stdout().take() {
+        let sink = Arc::clone(&stdout_bytes);
+        let (finished, done) = mpsc::channel();
+        thread::spawn(move || {
+            let mut chunk = [0u8; 8192];
+            while let Ok(n) = stdout.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                sink.lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .extend_from_slice(&chunk[..n]);
+            }
+            let _ = finished.send(());
+        });
+        readers.push(done);
+    }
+    if let Some(stderr) = child.stderr().take() {
+        readers.push(spawn_reader(stderr, Arc::clone(&stderr_tail)));
+    }
+    let status = wait(&program, &mut child, timeout)?;
+    drain(readers);
+    let stderr = stderr_tail
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .render();
+    match status {
+        Some(status) => {
+            let stdout =
+                std::mem::take(&mut *stdout_bytes.lock().unwrap_or_else(|e| e.into_inner()));
+            Ok(CapturedExit {
+                code: status.code(),
+                stdout,
+                stderr,
+            })
+        }
+        None => Err(ProcessError::TimedOut {
+            secs: timeout.as_secs(),
+            tail: stderr,
+        }),
+    }
+}
+
+/// Starts `argv` in `cwd` inside a job object (Unix: its own process group), with a null stdin and
+/// piped stdout and stderr. Returns the program name for messages and the running child.
+fn spawn(
+    argv: &[String],
+    cwd: &Path,
+) -> Result<(String, Box<dyn process_wrap::std::ChildWrapper>), ProcessError> {
     let (program, args) = argv
         .split_first()
         .ok_or_else(|| ProcessError::SpawnFailed("the command is empty".into()))?;
@@ -76,17 +172,16 @@ pub(crate) fn run(
     wrapped.wrap(JobObject);
     #[cfg(unix)]
     wrapped.wrap(ProcessGroup::leader());
-    let mut child = wrapped.spawn().map_err(|_| not_found())?;
+    let child = wrapped.spawn().map_err(|_| not_found())?;
+    Ok((program.clone(), child))
+}
 
-    let tail = Arc::new(Mutex::new(Tail::default()));
-    let mut readers = Vec::new();
-    if let Some(stdout) = child.stdout().take() {
-        readers.push(spawn_reader(stdout, Arc::clone(&tail)));
-    }
-    if let Some(stderr) = child.stderr().take() {
-        readers.push(spawn_reader(stderr, Arc::clone(&tail)));
-    }
-
+/// Waits for `child` to exit. `Ok(None)` means it ran past `timeout` and its whole tree was killed.
+fn wait(
+    program: &str,
+    child: &mut Box<dyn process_wrap::std::ChildWrapper>,
+    timeout: Duration,
+) -> Result<Option<std::process::ExitStatus>, ProcessError> {
     let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
@@ -102,24 +197,12 @@ pub(crate) fn run(
             }
         }
     };
-
     if status.is_none() {
         // Killing the job object / process group closes the pipes, so the readers finish.
         let _ = child.kill();
         let _ = child.wait();
     }
-    drain(readers);
-    let tail = tail.lock().unwrap_or_else(|e| e.into_inner()).render();
-    match status {
-        Some(status) => Ok(ProcessExit {
-            code: status.code(),
-            tail,
-        }),
-        None => Err(ProcessError::TimedOut {
-            secs: timeout.as_secs(),
-            tail,
-        }),
-    }
+    Ok(status)
 }
 
 /// Windows only: the full path to spawn for `argv0`. Rust's `Command` appends only `.exe` and

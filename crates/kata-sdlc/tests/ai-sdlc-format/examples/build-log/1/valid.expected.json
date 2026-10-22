@@ -1,0 +1,27 @@
+{
+  "kind": "build-log",
+  "layout": 1,
+  "document": {
+    "repo": "valid",
+    "entries": [
+      {
+        "task": "T1",
+        "commits": [
+          "abc1234",
+          "def5678"
+        ],
+        "departure": null,
+        "line": 5
+      },
+      {
+        "task": "T2",
+        "commits": [
+          "1234567"
+        ],
+        "departure": "Used a|in the header; see note",
+        "line": 6
+      }
+    ]
+  },
+  "problems": []
+}

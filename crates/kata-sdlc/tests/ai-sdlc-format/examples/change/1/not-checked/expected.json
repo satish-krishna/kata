@@ -1,0 +1,5 @@
+{
+  "problems": [
+    { "file": "build/app.md", "line": 6, "message": "build log entry T7 is not a task in the plan" }
+  ]
+}

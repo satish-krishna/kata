@@ -1,0 +1,166 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-sdlc.local/format/read-result.schema.json",
+  "title": "ReadResult: what node check.mjs read --json <file> prints",
+  "type": "object",
+  "required": ["kind", "layout", "document", "problems"],
+  "properties": {
+    "kind": { "enum": ["spec", "plan", "build-log", "review"] },
+    "layout": { "type": "integer", "minimum": 1 },
+    "document": { "type": "object" },
+    "problems": { "type": "array", "items": { "$ref": "#/definitions/problem" } }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    { "if": { "properties": { "kind": { "const": "spec" } } }, "then": { "properties": { "document": { "$ref": "#/definitions/spec" } } } },
+    { "if": { "properties": { "kind": { "const": "plan" } } }, "then": { "properties": { "document": { "$ref": "#/definitions/plan" } } } },
+    { "if": { "properties": { "kind": { "const": "build-log" } } }, "then": { "properties": { "document": { "$ref": "#/definitions/buildLog" } } } },
+    { "if": { "properties": { "kind": { "const": "review" } } }, "then": { "properties": { "document": { "$ref": "#/definitions/review" } } } }
+  ],
+  "definitions": {
+    "strings": { "type": "array", "items": { "type": "string" } },
+    "problem": {
+      "type": "object",
+      "required": ["file", "line", "message"],
+      "properties": {
+        "file": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1 },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "scenario": {
+      "type": "object",
+      "required": ["id", "title", "outline", "steps", "examples", "line"],
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "outline": { "type": "boolean" },
+        "steps": { "$ref": "#/definitions/strings" },
+        "examples": {
+          "oneOf": [{ "type": "null" }, { "type": "array", "items": { "$ref": "#/definitions/strings" } }]
+        },
+        "line": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "requirement": {
+      "type": "object",
+      "required": ["id", "title", "from", "scenarios", "line"],
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "from": { "$ref": "#/definitions/strings" },
+        "scenarios": { "type": "array", "items": { "$ref": "#/definitions/scenario" } },
+        "line": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "spec": {
+      "type": "object",
+      "required": ["requirements"],
+      "properties": { "requirements": { "type": "array", "items": { "$ref": "#/definitions/requirement" } } },
+      "additionalProperties": false
+    },
+    "task": {
+      "type": "object",
+      "required": ["id", "name", "repo", "depends_on", "uses", "files", "covers", "supports", "sections", "text", "line"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "repo": { "type": "string" },
+        "depends_on": { "$ref": "#/definitions/strings" },
+        "uses": { "$ref": "#/definitions/strings" },
+        "files": { "$ref": "#/definitions/strings" },
+        "covers": { "$ref": "#/definitions/strings" },
+        "supports": { "$ref": "#/definitions/strings" },
+        "sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["title", "body"],
+            "properties": { "title": { "type": "string" }, "body": { "type": "string" } },
+            "additionalProperties": false
+          }
+        },
+        "text": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "sharedDecision": {
+      "type": "object",
+      "required": ["question", "owner", "function"],
+      "properties": {
+        "question": { "type": "string" },
+        "owner": { "type": "string" },
+        "function": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "plan": {
+      "type": "object",
+      "required": ["tasks", "shared_decisions"],
+      "properties": {
+        "tasks": { "type": "array", "items": { "$ref": "#/definitions/task" } },
+        "shared_decisions": { "type": "array", "items": { "$ref": "#/definitions/sharedDecision" } }
+      },
+      "additionalProperties": false
+    },
+    "buildLog": {
+      "type": "object",
+      "required": ["repo", "entries"],
+      "properties": {
+        "repo": { "type": "string" },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["task", "commits", "departure", "line"],
+            "properties": {
+              "task": { "type": "string" },
+              "commits": { "$ref": "#/definitions/strings" },
+              "departure": { "type": ["string", "null"] },
+              "line": { "type": "integer", "minimum": 1 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "finding": {
+      "type": "object",
+      "required": ["id", "severity", "file", "line", "text"],
+      "properties": {
+        "id": { "type": "string" },
+        "severity": { "enum": ["high", "medium", "low"] },
+        "file": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1 },
+        "text": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "review": {
+      "type": "object",
+      "required": ["reviews"],
+      "properties": {
+        "reviews": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["number", "reviewed_at", "commits", "findings"],
+            "properties": {
+              "number": { "type": "integer", "minimum": 1 },
+              "reviewed_at": { "type": "string" },
+              "commits": { "type": "object", "additionalProperties": { "type": "string" } },
+              "findings": { "type": "array", "items": { "$ref": "#/definitions/finding" } }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

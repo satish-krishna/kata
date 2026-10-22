@@ -1,5 +1,6 @@
 import type { RunSpec } from '@bindings/RunSpec';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
+import type { Readiness } from '@bindings/Readiness';
 import type { Preset } from '@bindings/Preset';
 import type { KataListing } from '@bindings/KataListing';
 import type { Settings } from '@bindings/Settings';
@@ -8,6 +9,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { BranchInfo } from '@bindings/BranchInfo';
+import type { BuildAction } from '@bindings/BuildAction';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
@@ -16,6 +18,9 @@ import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { ReadResult } from '@bindings/ReadResult';
+import type { ReadError } from '../../lib/doc-notice';
+import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { UnsavedRows } from '@bindings/UnsavedRows';
 import type { Participant } from '@bindings/Participant';
 import type { PrepareOutcome } from '@bindings/PrepareOutcome';
@@ -82,14 +87,21 @@ export abstract class KataTransport {
   /** Wait until the engine process of run `runId` has exited. False when it is still alive after `timeoutMs`. */
   abstract sdlcWaitRunExit(runId: string, timeoutMs: number): Promise<boolean>;
   abstract sdlcBuildStatus(master: string, system: string, change: string): Promise<BuildStatus>;
+  /** A change's spec or plan as the format program reads it; null when the file is not there, and an error result with the program's own message when it cannot read it. */
+  abstract sdlcReadParsed(master: string, system: string, change: string, doc: string): Promise<ReadResult | ReadError | null>;
+  /** The change's review document as committed, or null when it has none. */
+  abstract sdlcReviewRecord(master: string, system: string, change: string): Promise<ReviewRecord | null>;
+  /** The files a review run changed in the master besides the change's review document, since the head `since`; empty when it kept to the document. */
+  abstract sdlcReviewVerify(master: string, system: string, change: string, since: string, before: Snapshot['dirty']): Promise<string[]>;
   abstract sdlcUnsavedRows(master: string, system: string, change: string): Promise<UnsavedRows[]>;
   /** `pending` names the repository a run is about to start in on the engineer's ask (a round, or Continue): its leftovers are its own to confirm. */
-  abstract sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending?: string | null): Promise<PrepareOutcome>;
+  abstract sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending: string | null, action: BuildAction): Promise<PrepareOutcome>;
   /** Who takes part in the build, where each is checked out and which uncommitted files each one owns. */
   abstract sdlcBuildParticipants(folder: string, masterRepo: string, system: string, change: string, pending?: string | null): Promise<Participant[]>;
   abstract sdlcBuildSettle(start: BuildStart): Promise<string[]>;
   abstract sdlcBuildHeads(folder: string, repos: string[], change: string): Promise<Record<string, string>>;
-  abstract sdlcPluginVersion(path: string): Promise<string | null>;
+  /** Whether the ai-sdlc plugin is installed and new enough, as the backend decides it for the workspace folder. */
+  abstract sdlcPluginReadiness(workdir: string | null): Promise<Readiness>;
   abstract sdlcChangeRepos(folder: string, masterRepo: string, system: string, change: string): Promise<ChangeRepo[]>;
   /** The product repositories in the build that have no `change/<change>` branch, which the Changes view cannot list. */
   abstract sdlcMissingChangeBranches(folder: string, masterRepo: string, system: string, change: string): Promise<string[]>;

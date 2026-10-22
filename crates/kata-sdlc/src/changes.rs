@@ -1,3 +1,5 @@
+use crate::build::program;
+use crate::format::{self, FormatError, ReadResult};
 use crate::{branch, frontmatter, git, workspace::is_committed};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -19,6 +21,9 @@ pub enum Stage {
     PlanAwaiting,
     PlanAcceptedUncommitted,
     PlanOutOfDate,
+    /// The plan is accepted, but the format program could not read it, so its tasks are unknown. It is
+    /// kept out of the build stages until it can be read.
+    PlanUnreadable,
     PlanSuperseded,
     BuildReady,
     BuildStopped,
@@ -56,6 +61,9 @@ pub struct PlanFacts {
     pub has_tasks: bool,
     pub tasks: u32,
     pub finished: u32,
+    /// The plan or the build logs could not be read (no usable plugin, no Node.js, a document the program
+    /// exits on). Unknown is not empty: this never counts as "the plan has no tasks".
+    pub unreadable: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -87,6 +95,12 @@ pub struct ChangeInfo {
     pub build: BuildCounts,
     pub scope: String,
     pub out_of_date: Option<OutOfDate>,
+    /// The plan could not be read, so its tasks and build counts are unknown; the Workbench shows why instead
+    /// of a stage that claims the plan is empty.
+    pub plan_unreadable: bool,
+    /// Why, in the format program's own words (or that no plugin was found), when `plan_unreadable`; null otherwise.
+    /// The change list words its notice from this, so it never blames Node.js for a layout it does not read.
+    pub plan_unreadable_reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -114,7 +128,7 @@ pub fn out_of_date(
         Some(OutOfDate::SpecPin)
     } else if !facts.plan_pin {
         Some(OutOfDate::PlanPin)
-    } else if !facts.has_tasks {
+    } else if !facts.has_tasks && !facts.unreadable {
         Some(OutOfDate::NoTasks)
     } else {
         None
@@ -176,6 +190,9 @@ fn plan_stage(intent: &DocState, spec: &DocState, plan: &DocState, facts: &PlanF
     if !plan.is("accepted") {
         return Stage::PlanAwaiting;
     }
+    if facts.unreadable {
+        return Stage::PlanUnreadable;
+    }
     if facts.finished == 0 {
         Stage::BuildReady
     } else if facts.finished >= facts.tasks {
@@ -227,16 +244,50 @@ fn doc_state(master: &Path, system: &str, change: &str, file: &str) -> DocState 
 }
 
 /// The plan's tasks from the working tree, the finished ones from the committed build logs, and
-/// whether both source pins hold. A plan or log git cannot read counts no finished task.
-fn plan_facts(master: &Path, system: &str, change: &str) -> (PlanFacts, BuildCounts) {
-    let text = read_doc(master, system, change, "plan").unwrap_or_default();
-    let tasks = crate::build::plan_tasks(&text);
+/// whether both source pins hold. Both are read by the format program in `plugin`. Without a usable
+/// plugin, or when the program cannot run or read a document, the facts are marked unreadable: the counts
+/// are unknown, not zero. A plan that is not committed yet is not unreadable; it has no finished tasks.
+fn plan_facts(
+    plugin: Option<&Path>,
+    master: &Path,
+    system: &str,
+    change: &str,
+) -> (PlanFacts, BuildCounts, Option<String>) {
+    let plan_file = master.join(format!("intent/{system}/{change}/plan.md"));
+    let read = plugin.map(|p| crate::format::read(&crate::build::program(p), &plan_file));
+    let mut reason = None;
+    let tasks = match read {
+        Some(Ok(crate::format::ReadResult::Plan { document, .. })) => document.tasks,
+        Some(Ok(_)) => {
+            reason = Some("the plan was not read as a plan".to_string());
+            Vec::new()
+        }
+        Some(Err(e)) => {
+            reason = Some(e.to_string());
+            Vec::new()
+        }
+        None => {
+            reason = Some("the ai-sdlc plugin was not found".to_string());
+            Vec::new()
+        }
+    };
     let mut repos: Vec<&str> = tasks.iter().map(|t| t.repo.as_str()).collect();
     repos.sort_unstable();
     repos.dedup();
-    let finished = crate::build::status(master, system, change)
-        .map(|s| s.tasks.iter().filter(|t| t.row.is_some()).count() as u32)
-        .unwrap_or(0);
+    let finished = match plugin.map(|p| crate::build::status(p, master, system, change)) {
+        Some(Ok(status)) => status.tasks.iter().filter(|t| t.row.is_some()).count() as u32,
+        Some(Err(e)) if !crate::build::is_unreadable(&e) => 0,
+        other => {
+            // The plan's own reason, when it has one, comes first; a log's comes only if nothing else did.
+            if reason.is_none() {
+                reason = Some(match other {
+                    Some(Err(e)) => e.stderr,
+                    _ => "the build logs could not be read".to_string(),
+                });
+            }
+            0
+        }
+    };
     let counts = BuildCounts {
         tasks: tasks.len() as u32,
         finished,
@@ -248,12 +299,13 @@ fn plan_facts(master: &Path, system: &str, change: &str) -> (PlanFacts, BuildCou
         has_tasks: !tasks.is_empty(),
         tasks: counts.tasks,
         finished,
+        unreadable: reason.is_some(),
     };
-    (facts, counts)
+    (facts, counts, reason)
 }
 
 /// The changes of `system` in the master repo, newest folder name first.
-pub fn list(master: &Path, system: &str) -> Vec<ChangeInfo> {
+pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInfo> {
     if !is_safe_system(system) {
         return Vec::new();
     }
@@ -273,10 +325,10 @@ pub fn list(master: &Path, system: &str) -> Vec<ChangeInfo> {
             let intent = doc_state(master, system, &change, "intent.md");
             let spec = doc_state(master, system, &change, "spec.md");
             let plan = doc_state(master, system, &change, "plan.md");
-            let (facts, build) = if plan.exists {
-                plan_facts(master, system, &change)
+            let (facts, build, plan_unreadable_reason) = if plan.exists {
+                plan_facts(plugin, master, system, &change)
             } else {
-                (PlanFacts::default(), BuildCounts::default())
+                (PlanFacts::default(), BuildCounts::default(), None)
             };
             let stage = derive_stage(&intent, &spec, &plan, &facts);
             let out_of_date = if plan.exists && stage == Stage::PlanOutOfDate {
@@ -295,6 +347,8 @@ pub fn list(master: &Path, system: &str) -> Vec<ChangeInfo> {
                 build,
                 scope,
                 out_of_date,
+                plan_unreadable: facts.unreadable,
+                plan_unreadable_reason,
             }
         })
         .collect()
@@ -337,6 +391,30 @@ pub fn read_doc(master: &Path, system: &str, change: &str, doc: &str) -> Option<
     .ok()
 }
 
+/// The change's spec or plan as the file holds it now, read by the format program in `plugin` (the
+/// ai-sdlc plugin folder): the same read the checks make, so what the Workbench shows is what they
+/// check. `None` for any other document, a bad name, or a file that is not there.
+pub fn read_parsed(
+    plugin: &Path,
+    master: &Path,
+    system: &str,
+    change: &str,
+    doc: &str,
+) -> Result<Option<ReadResult>, FormatError> {
+    if !matches!(doc, "spec" | "plan") || !is_change_name(change) || !is_safe_system(system) {
+        return Ok(None);
+    }
+    let file = master
+        .join("intent")
+        .join(system)
+        .join(change)
+        .join(format!("{doc}.md"));
+    if !file.is_file() {
+        return Ok(None);
+    }
+    format::read(&program(plugin), &file).map(Some)
+}
+
 pub fn branch_info(master: &Path) -> BranchInfo {
     BranchInfo {
         current: current_branch(master),
@@ -369,6 +447,7 @@ mod tests {
             has_tasks: tasks > 0,
             tasks,
             finished,
+            unreadable: false,
         }
     }
 
@@ -572,7 +651,7 @@ mod tests {
             "# Build log: app\n\n| Task | Commits | Departure |\n|---|---|---|\n| T1 | `a111111` | none |\n",
             "log",
         );
-        let got = list(&repo, "claims");
+        let got = list(Some(testutil::plugin_dir()), &repo, "claims");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].stage, Stage::BuildStopped);
         assert_eq!(
@@ -593,9 +672,217 @@ mod tests {
             "---\nstatus: accepted\n---\nspec v2\n",
             "spec v2",
         );
-        let got = list(&repo, "claims");
+        let got = list(Some(testutil::plugin_dir()), &repo, "claims");
         assert_eq!(got[0].stage, Stage::PlanOutOfDate);
         assert_eq!(got[0].out_of_date, Some(OutOfDate::SpecPin));
+    }
+
+    /// F5: a plan the program could not read (no usable plugin here) is not a plan with no tasks.
+    #[test]
+    fn an_unreadable_plan_is_not_a_plan_with_no_tasks_f5() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let dir = "intent/claims/2026-10-12-fnol";
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/intent.md"),
+            "---
+status: accepted
+---
+intent
+",
+            "intent",
+        );
+        let intent_pin = git::run(&repo, &["rev-parse", "HEAD"]).unwrap();
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/spec.md"),
+            &format!(
+                "---
+status: accepted
+source_intent_commit: {intent_pin}
+---
+spec
+"
+            ),
+            "spec",
+        );
+        let spec_pin = git::run(&repo, &["rev-parse", "HEAD"]).unwrap();
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/plan.md"),
+            &format!(
+                "---
+status: accepted
+source_spec_commit: {spec_pin}
+---
+
+## Tasks
+
+### T1: One (`app`)
+
+- **Depends on:** none
+"
+            ),
+            "plan",
+        );
+        // No plugin: nothing could read the plan.
+        let got = list(None, &repo, "claims");
+        let json = serde_json::to_value(&got[0]).unwrap();
+        assert_ne!(
+            json["out_of_date"],
+            serde_json::json!("no-tasks"),
+            "an unreadable plan was reported as having no tasks"
+        );
+        assert_eq!(json["plan_unreadable"], serde_json::json!(true));
+        // With the plugin, the same plan reads and is not flagged.
+        let got = list(Some(testutil::plugin_dir()), &repo, "claims");
+        let json = serde_json::to_value(&got[0]).unwrap();
+        assert_eq!(json["plan_unreadable"], serde_json::json!(false));
+    }
+
+    /// An accepted intent and spec in `repo`; returns the spec commit a plan pins.
+    fn accepted_spec(repo: &Path, dir: &str) -> String {
+        testutil::commit_file(
+            repo,
+            &format!("{dir}/intent.md"),
+            "---
+status: accepted
+---
+intent
+",
+            "intent",
+        );
+        let intent_pin = git::run(repo, &["rev-parse", "HEAD"]).unwrap();
+        testutil::commit_file(
+            repo,
+            &format!("{dir}/spec.md"),
+            &format!(
+                "---
+status: accepted
+source_intent_commit: {intent_pin}
+---
+spec
+"
+            ),
+            "spec",
+        );
+        git::run(repo, &["rev-parse", "HEAD"]).unwrap()
+    }
+
+    /// F20: a written plan that is not committed yet has no tasks, which is a fact and not a failure to read.
+    #[test]
+    fn an_uncommitted_empty_plan_has_no_tasks_f20() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let dir = "intent/claims/2026-10-12-fnol";
+        let spec_pin = accepted_spec(&repo, dir);
+        testutil::write(
+            &repo,
+            &format!("{dir}/plan.md"),
+            &format!(
+                "---
+status: draft
+source_spec_commit: {spec_pin}
+---
+
+## Tasks
+"
+            ),
+        );
+        let got = list(Some(testutil::plugin_dir()), &repo, "claims");
+        let json = serde_json::to_value(&got[0]).unwrap();
+        assert_eq!(json["plan_unreadable"], serde_json::json!(false));
+        assert_eq!(json["stage"], serde_json::json!("plan-out-of-date"));
+        assert_eq!(json["out_of_date"], serde_json::json!("no-tasks"));
+    }
+
+    /// F20: an accepted plan the program could not read is neither a plan with no tasks nor a build to start.
+    #[test]
+    fn an_unreadable_accepted_plan_is_kept_out_of_the_build_stages_f20() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let dir = "intent/claims/2026-10-12-fnol";
+        let spec_pin = accepted_spec(&repo, dir);
+        testutil::commit_file(
+            &repo,
+            &format!("{dir}/plan.md"),
+            &format!(
+                "---
+status: accepted
+source_spec_commit: {spec_pin}
+---
+
+## Tasks
+
+### T1: One (`app`)
+
+- **Depends on:** none
+"
+            ),
+            "plan",
+        );
+        // No plugin: nothing could read the plan.
+        let got = list(None, &repo, "claims");
+        let json = serde_json::to_value(&got[0]).unwrap();
+        assert_eq!(json["plan_unreadable"], serde_json::json!(true));
+        assert_eq!(json["stage"], serde_json::json!("plan-unreadable"));
+        // With the plugin the same plan is a build to start.
+        let got = list(Some(testutil::plugin_dir()), &repo, "claims");
+        assert_eq!(got[0].stage, Stage::BuildReady);
+    }
+
+    /// The change list for an accepted plan with the extra front matter `front`, read by the real format program.
+    fn reason_for_plan(front: &str) -> serde_json::Value {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let dir = "intent/claims/2026-10-12-fnol";
+        let spec_pin = accepted_spec(&repo, dir);
+        let plan = format!(
+            "---\nstatus: accepted\nsource_spec_commit: {spec_pin}\n{front}---\n\n## Tasks\n\n### T1: One (`app`)\n\n- **Depends on:** none\n"
+        );
+        testutil::commit_file(&repo, &format!("{dir}/plan.md"), &plan, "plan");
+        let got = list(Some(testutil::plugin_dir()), &repo, "claims");
+        serde_json::to_value(&got[0]).unwrap()
+    }
+
+    #[test]
+    fn an_unreadable_plan_carries_the_programs_message_for_a_layout_too_new_f26() {
+        let json = reason_for_plan("layout: 3\n");
+        assert_eq!(json["plan_unreadable"], serde_json::json!(true));
+        let why = json["plan_unreadable_reason"].as_str().unwrap_or_default();
+        assert!(why.contains("layout 3 is newer"), "got {why:?}");
+    }
+
+    #[test]
+    fn an_unreadable_plan_carries_the_programs_message_for_a_broken_front_matter_f26() {
+        let json = reason_for_plan("layout: soon\n");
+        assert_eq!(json["plan_unreadable"], serde_json::json!(true));
+        let why = json["plan_unreadable_reason"].as_str().unwrap_or_default();
+        assert!(why.contains("layout must be a whole number"), "got {why:?}");
+    }
+
+    #[test]
+    fn a_plan_without_a_usable_plugin_says_the_plugin_is_missing_f26() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let dir = "intent/claims/2026-10-12-fnol";
+        let spec_pin = accepted_spec(&repo, dir);
+        let plan = format!(
+            "---\nstatus: accepted\nsource_spec_commit: {spec_pin}\n---\n\n## Tasks\n\n### T1: One (`app`)\n\n- **Depends on:** none\n"
+        );
+        testutil::commit_file(&repo, &format!("{dir}/plan.md"), &plan, "plan");
+        let got = list(None, &repo, "claims");
+        let json = serde_json::to_value(&got[0]).unwrap();
+        let why = json["plan_unreadable_reason"].as_str().unwrap_or_default();
+        assert!(why.contains("plugin"), "got {why:?}");
+    }
+
+    #[test]
+    fn a_readable_plan_carries_no_reason_f26() {
+        let json = reason_for_plan("layout: 2\n");
+        assert_eq!(json["plan_unreadable"], serde_json::json!(false));
+        assert_eq!(json["plan_unreadable_reason"], serde_json::Value::Null);
     }
 
     #[test]
@@ -611,7 +898,7 @@ mod tests {
             "---\nstatus: draft\n---\n",
             "intent",
         );
-        let got = list(&repo, "claims");
+        let got = list(Some(testutil::plugin_dir()), &repo, "claims");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].change, "2026-10-12-fnol-photo-upload");
         assert_eq!(got[0].stage, Stage::IntentAwaiting);
@@ -629,7 +916,10 @@ mod tests {
                 c,
             );
         }
-        let names: Vec<_> = list(&repo, "s").into_iter().map(|c| c.change).collect();
+        let names: Vec<_> = list(Some(testutil::plugin_dir()), &repo, "s")
+            .into_iter()
+            .map(|c| c.change)
+            .collect();
         assert_eq!(names, ["2026-10-09-b", "2026-10-01-a"]);
     }
 
@@ -643,7 +933,7 @@ mod tests {
             "no front matter\n",
             "i",
         );
-        let got = list(&repo, "s");
+        let got = list(Some(testutil::plugin_dir()), &repo, "s");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].intent.status.as_deref(), Some("unknown"));
         assert_eq!(got[0].stage, Stage::IntentAwaiting);
@@ -683,6 +973,32 @@ mod tests {
     }
 
     #[test]
+    fn read_parsed_reads_a_spec_and_a_plan_and_refuses_the_rest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let spec = include_str!("../tests/ai-sdlc-format/examples/spec/2/valid.md");
+        let plan = include_str!("../tests/ai-sdlc-format/examples/plan/2/valid.md");
+        testutil::write(&repo, "intent/s/2026-10-12-x/spec.md", spec);
+        testutil::write(&repo, "intent/s/2026-10-12-x/plan.md", plan);
+        let plugin = testutil::plugin_dir();
+        let read = |system: &str, change: &str, doc: &str| {
+            read_parsed(plugin, &repo, system, change, doc).unwrap()
+        };
+        match read("s", "2026-10-12-x", "spec") {
+            Some(ReadResult::Spec { document, .. }) => assert!(!document.requirements.is_empty()),
+            other => panic!("not a spec: {other:?}"),
+        }
+        match read("s", "2026-10-12-x", "plan") {
+            Some(ReadResult::Plan { document, .. }) => assert!(!document.tasks.is_empty()),
+            other => panic!("not a plan: {other:?}"),
+        }
+        assert_eq!(read("s", "2026-10-12-x", "intent"), None);
+        assert_eq!(read("s", "2026-10-12-y", "spec"), None);
+        assert_eq!(read("s", "../..", "spec"), None);
+        assert_eq!(read("..", "2026-10-12-x", "spec"), None);
+    }
+
+    #[test]
     fn read_doc_reads_and_rejects_bad_names() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
@@ -695,7 +1011,10 @@ mod tests {
         assert_eq!(read_doc(&repo, "s", "../..", "spec"), None);
         for bad in ["../..", "..", ".", "", "a/b", "a\\b", "C:", "C:foo"] {
             assert_eq!(read_doc(&repo, bad, "2026-10-12-x", "spec"), None, "{bad}");
-            assert!(list(&repo, bad).is_empty(), "{bad}");
+            assert!(
+                list(Some(testutil::plugin_dir()), &repo, bad).is_empty(),
+                "{bad}"
+            );
         }
     }
 }

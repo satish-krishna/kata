@@ -4,4 +4,14 @@ import type { DocState } from "./DocState";
 import type { OutOfDate } from "./OutOfDate";
 import type { Stage } from "./Stage";
 
-export type ChangeInfo = { system: string, change: string, intent: DocState, spec: DocState, plan: DocState, stage: Stage, build: BuildCounts, scope: string, out_of_date: OutOfDate | null, };
+export type ChangeInfo = { system: string, change: string, intent: DocState, spec: DocState, plan: DocState, stage: Stage, build: BuildCounts, scope: string, out_of_date: OutOfDate | null, 
+/**
+ * The plan could not be read, so its tasks and build counts are unknown; the Workbench shows why instead
+ * of a stage that claims the plan is empty.
+ */
+plan_unreadable: boolean, 
+/**
+ * Why, in the format program's own words (or that no plugin was found), when `plan_unreadable`; null otherwise.
+ * The change list words its notice from this, so it never blames Node.js for a layout it does not read.
+ */
+plan_unreadable_reason: string | null, };

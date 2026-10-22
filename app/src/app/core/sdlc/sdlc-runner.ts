@@ -1,17 +1,19 @@
 import { Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Router } from '@angular/router';
+import type { BuildAction } from '@bindings/BuildAction';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { BuildStart } from '@bindings/BuildStart';
-import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Leftovers } from '@bindings/Leftovers';
+import type { Problem } from '@bindings/Problem';
+import type { Readiness } from '@bindings/Readiness';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { RepoFiles } from '@bindings/RepoFiles';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunState } from '../../lib/events';
 import type { RunSnapshot } from '../run/reduce';
-import { canBuild, specFor, transcriptRunId } from '../../lib/sdlc';
+import { specFor, transcriptRunId } from '../../lib/sdlc';
 import { masterPath, masterRepo, productRepos as productReposOf } from '../../lib/sdlc-workspace';
 import { LockStore } from '../lock/lock.store';
 import { RunStore } from '../run/run.store';
@@ -57,7 +59,8 @@ export type BuildRequest = {
   masterRepo: string;
   system: string;
   change: string;
-  catalog: CatalogEntry[];
+  /** What the engineer asked for; every action meets the same gate. */
+  action: BuildAction;
   continueWithLeftovers: boolean;
   /** The repository a round is aimed at: its uncommitted files are its own to confirm, even when its tasks are all done or it is the master. */
   pending?: string | null;
@@ -65,7 +68,8 @@ export type BuildRequest = {
 export type PrepareResult =
   | { kind: 'ready'; start: BuildStart }
   | { kind: 'needs-confirm'; leftovers: RepoFiles[] }
-  | { kind: 'refused'; reason: string };
+  /** `problems` lists what the check found in the plan or a build log, when that is why the build did not go on. */
+  | { kind: 'refused'; reason: string; problems?: Problem[] };
 /** A repository run of the build, or the review of the whole change (which runs in the master repository). */
 export type BuildRunTarget = { repo: string; path: string; kind: 'repo' | 'review' };
 export type BuildLink = {
@@ -85,7 +89,8 @@ const RESULT_MAX = 120;
 /** How long to wait for the engine process to exit before touching the repo. */
 const EXIT_WAIT_MS = 15000;
 const TERMINAL: readonly RunState[] = ['success', 'warning', 'error'];
-const UPDATE_PLUGIN = 'Update the ai-sdlc plugin to 0.6.0 or later, then start the build again.';
+const INSTALL_PLUGIN = 'Install the ai-sdlc plugin, then start the build again.';
+const updatePlugin = (need: string): string => `Update the ai-sdlc plugin to ${need} or later, then start the build again.`;
 const DIRTY = 'uncommitted changes';
 const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
 
@@ -210,20 +215,19 @@ export class SdlcRunner {
     }
   }
 
-  /** Check the build can start and ask the backend to prepare it. Nothing else is touched before the plugin check passes (R2.5). */
+  /** Check the build can start and ask the backend to prepare it. Nothing else is touched before the plugin check passes (R2.5); the backend then refuses a plan or build log that fails the check (R8.1). */
   async prepareBuild(req: BuildRequest): Promise<PrepareResult> {
-    const entry = req.catalog.find((e) => e.kind === 'plugin' && e.name === 'ai-sdlc');
-    let version: string | null = null;
-    if (entry) {
-      try {
-        version = await this.transport.sdlcPluginVersion(entry.path);
-      } catch {
-        version = null;
-      }
-    }
-    if (!entry || !canBuild(req.catalog, version)) return { kind: 'refused', reason: UPDATE_PLUGIN };
+    let readiness: Readiness;
     try {
-      const out = await this.transport.sdlcBuildPrepare(req.folder, req.masterRepo, req.system, req.change, req.continueWithLeftovers, req.pending ?? null);
+      readiness = await this.transport.sdlcPluginReadiness(req.folder);
+    } catch {
+      readiness = { kind: 'missing' };
+    }
+    if (readiness.kind === 'tooOld') return { kind: 'refused', reason: updatePlugin(readiness.need) };
+    if (readiness.kind === 'missing') return { kind: 'refused', reason: INSTALL_PLUGIN };
+    try {
+      const out = await this.transport.sdlcBuildPrepare(req.folder, req.masterRepo, req.system, req.change, req.continueWithLeftovers, req.pending ?? null, req.action);
+      if (out.kind === 'refused') return { kind: 'refused', reason: out.message, problems: out.problems };
       if (out.kind === 'ready') {
         this.held = [];
         return { kind: 'ready', start: out.start };

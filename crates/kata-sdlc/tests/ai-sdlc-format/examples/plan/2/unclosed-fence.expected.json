@@ -1,0 +1,88 @@
+{
+  "kind": "plan",
+  "layout": 2,
+  "document": {
+    "tasks": [
+      {
+        "id": "T1",
+        "name": "First task",
+        "repo": "app",
+        "depends_on": [],
+        "uses": [],
+        "files": [
+          "src/a.ts"
+        ],
+        "covers": [
+          "R1.1"
+        ],
+        "supports": [],
+        "sections": [
+          {
+            "title": "Change",
+            "body": "Write it."
+          },
+          {
+            "title": "Tests",
+            "body": "Test it first."
+          },
+          {
+            "title": "Done when",
+            "body": "It passes."
+          }
+        ],
+        "text": "### T1: First task\n\n```yaml\nid: T1\nrepo: app\ndepends_on: []\nfiles: [src/a.ts]\ncovers: [R1.1]\n```\n\n#### Change\n\nWrite it.\n\n#### Tests\n\nTest it first.\n\n#### Done when\n\nIt passes.",
+        "line": 18
+      },
+      {
+        "id": "T2",
+        "name": "Second task",
+        "repo": "app",
+        "depends_on": [
+          "T1"
+        ],
+        "uses": [
+          "How a problem is reported"
+        ],
+        "files": [],
+        "covers": [],
+        "supports": [
+          "R1.1"
+        ],
+        "sections": [
+          {
+            "title": "Change",
+            "body": "Use it:\n\n```ts\nconst a = 1;\n\n#### Tests\n\nTest it too.\n\n#### Done when\n\nIt passes.\n\n### T3: Third task\n\n```yaml\nid: T3\nrepo: app\ndepends_on: [T2]\n```"
+          },
+          {
+            "title": "Change",
+            "body": "Finish it."
+          },
+          {
+            "title": "Tests",
+            "body": "Test it last."
+          },
+          {
+            "title": "Done when",
+            "body": "It passes."
+          }
+        ],
+        "text": "### T2: Second task\n\n```yaml\nid: T2\nrepo: app\ndepends_on: [T1]\nuses: [How a problem is reported]\nsupports: [R1.1]\n```\n\n#### Change\n\nUse it:\n\n```ts\nconst a = 1;\n\n#### Tests\n\nTest it too.\n\n#### Done when\n\nIt passes.\n\n### T3: Third task\n\n```yaml\nid: T3\nrepo: app\ndepends_on: [T2]\n```\n\n#### Change\n\nFinish it.\n\n#### Tests\n\nTest it last.\n\n#### Done when\n\nIt passes.",
+        "line": 40
+      }
+    ],
+    "shared_decisions": [
+      {
+        "question": "How a problem is reported",
+        "owner": "T1",
+        "function": "formatProblem(p)"
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "plan.md",
+      "line": 68,
+      "message": "id: T3 is not part of any record the reader found"
+    }
+  ]
+}

@@ -69,13 +69,15 @@ const rows: Row[] = [
   ['sdlcRunLinks', (t) => t.sdlcRunLinks(), 'sdlc_run_links', undefined],
   ['sdlcLinkRun', (t) => t.sdlcLinkRun(link), 'sdlc_link_run', { link }],
   ['sdlcBuildStatus', (t) => t.sdlcBuildStatus('/m', 's', 'c'), 'sdlc_build_status', { master: '/m', system: 's', change: 'c' }],
+  ['sdlcReadParsed', (t) => t.sdlcReadParsed('/m', 's', 'c', 'plan'), 'sdlc_read_parsed', { master: '/m', system: 's', change: 'c', doc: 'plan' }],
+  ['sdlcReviewRecord', (t) => t.sdlcReviewRecord('/m', 's', 'c'), 'sdlc_review_record', { master: '/m', system: 's', change: 'c' }],
   ['sdlcUnsavedRows', (t) => t.sdlcUnsavedRows('/m', 's', 'c'), 'sdlc_unsaved_rows', { master: '/m', system: 's', change: 'c' }],
-  ['sdlcBuildPrepare', (t) => t.sdlcBuildPrepare('/w', 'm', 's', 'c', true, 'r'), 'sdlc_build_prepare', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', continueWithLeftovers: true, pending: 'r' }],
-  ['sdlcBuildPrepare without a pending repository', (t) => t.sdlcBuildPrepare('/w', 'm', 's', 'c', false), 'sdlc_build_prepare', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', continueWithLeftovers: false, pending: null }],
+  ['sdlcBuildPrepare', (t) => t.sdlcBuildPrepare('/w', 'm', 's', 'c', true, 'r', 'round'), 'sdlc_build_prepare', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', action: 'round', continueWithLeftovers: true, pending: 'r' }],
+  ['sdlcBuildPrepare without a pending repository', (t) => t.sdlcBuildPrepare('/w', 'm', 's', 'c', false, null, 'start'), 'sdlc_build_prepare', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', action: 'start', continueWithLeftovers: false, pending: null }],
   ['sdlcBuildParticipants', (t) => t.sdlcBuildParticipants('/w', 'm', 's', 'c', 'r'), 'sdlc_build_participants', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', pending: 'r' }],
   ['sdlcBuildSettle', (t) => t.sdlcBuildSettle(start), 'sdlc_build_settle', { start }],
   ['sdlcBuildHeads', (t) => t.sdlcBuildHeads('/w', ['r'], 'c'), 'sdlc_build_heads', { folder: '/w', repos: ['r'], change: 'c' }],
-  ['sdlcPluginVersion', (t) => t.sdlcPluginVersion('/p'), 'sdlc_plugin_version', { path: '/p' }],
+  ['sdlcPluginReadiness', (t) => t.sdlcPluginReadiness('/p'), 'sdlc_plugin_readiness', { workdir: '/p' }],
   ['sdlcChangeRepos', (t) => t.sdlcChangeRepos('/w', 'm', 's', 'c'), 'sdlc_change_repos', { folder: '/w', masterRepo: 'm', system: 's', change: 'c' }],
   ['sdlcMissingChangeBranches', (t) => t.sdlcMissingChangeBranches('/w', 'm', 's', 'c'), 'sdlc_missing_change_branches', { folder: '/w', masterRepo: 'm', system: 's', change: 'c' }],
   ['sdlcDiffFiles', (t) => t.sdlcDiffFiles('/r', 'whole'), 'sdlc_diff_files', { repoPath: '/r', part: 'whole' }],
@@ -100,6 +102,15 @@ describe('TauriTransport', () => {
     const args = ipc.invoke.mock.calls[0] as unknown[];
     expect(args[0]).toBe(cmd);
     expect(args[1]).toEqual(payload);
+  });
+
+  it("returns the program's message when it cannot read a document, never null (F4)", async () => {
+    const ipc = fakeIpc();
+    ipc.invoke.mockRejectedValueOnce('front matter is not closed');
+    const t = new TauriTransport(asIpc(ipc));
+    expect(await t.sdlcReadParsed('/m', 's', 'c', 'spec')).toEqual({ kind: 'error', message: 'front matter is not closed' });
+    ipc.invoke.mockRejectedValueOnce(new Error('node is missing'));
+    expect(await t.sdlcReadParsed('/m', 's', 'c', 'spec')).toEqual({ kind: 'error', message: 'node is missing' });
   });
 
   it('opens the native dialogs with the run-spec filters', async () => {

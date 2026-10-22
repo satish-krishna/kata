@@ -265,7 +265,7 @@ mod tests {
                 .trim_end(),
             format!("docs(sdlc): accept plan {CHANGE}\n\nGenerated-By: ai-sdlc")
         );
-        let got = changes::list(&repo, "claims");
+        let got = changes::list(Some(testutil::plugin_dir()), &repo, "claims");
         assert_eq!(got[0].stage, changes::Stage::BuildReady);
     }
 

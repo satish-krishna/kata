@@ -109,6 +109,18 @@
           @for (stem of vm.stems; track stem) {
             <div class="k-change__doc k-change__doc--layout" [hlmTabsContent]="stem" variant="bare">
               @if (stem === vm.shownDoc()) {
+                @if (vm.docNotice(); as notice) {
+                  <div [class]="notice.tone === 'warning' ? 'wb-banner wb-banner--warn' : 'wb-banner wb-banner--quiet'" data-testid="doc-notice" role="status">
+                    <span [class]="'k-status k-status--' + (notice.tone === 'warning' ? 'warning' : 'idle')"><span class="k-status__dot"></span>{{ notice.text }}</span>
+                    @if (notice.lines.length > 0) {
+                      <ul class="wb-banner__list wb-banner__list--lines k-mono">
+                        @for (line of notice.lines; track $index) {
+                          <li>{{ line }}</li>
+                        }
+                      </ul>
+                    }
+                  </div>
+                }
                 @if (vm.planBanner(); as banner) {
                   <hlm-alert class="wb-banner wb-banner--warn" data-testid="plan-banner">
                     <ng-icon name="lucideTriangleAlert" size="15" />
@@ -122,7 +134,7 @@
                   <app-requirements-view [requirements]="vm.requirementList()" [picked]="vm.pickedRequirement()" (pick)="vm.pickRequirement($event)" />
                 } @else if (vm.shownView() === 'list') {
                   <app-tasks-view
-                    [tasks]="vm.buildTasks()"
+                    [tasks]="vm.taskList()"
                     [picked]="vm.pickedTask()"
                     (pick)="vm.pickTask($event)"
                     (openRequirement)="vm.openRequirement($event)"
@@ -145,6 +157,18 @@
           }
           <div class="k-change__doc k-change__doc--flush" hlmTabsContent="build" variant="bare">
             @if (vm.shownDoc() === 'build') {
+              @if (vm.buildNotice(); as notice) {
+                <div [class]="notice.tone === 'warning' ? 'wb-banner wb-banner--warn' : 'wb-banner wb-banner--quiet'" data-testid="doc-notice" role="status">
+                  <span [class]="'k-status k-status--' + (notice.tone === 'warning' ? 'warning' : 'idle')"><span class="k-status__dot"></span>{{ notice.text }}</span>
+                  @if (notice.lines.length > 0) {
+                    <ul class="wb-banner__list wb-banner__list--lines k-mono">
+                      @for (line of notice.lines; track $index) {
+                        <li>{{ line }}</li>
+                      }
+                    </ul>
+                  }
+                </div>
+              }
               @if (vm.changesContext(); as ctx) {
                 <app-changes-view
                   [folder]="ctx.folder"
@@ -214,7 +238,7 @@
     (cancel)="vm.cancelDone()"
   />
   <app-pr-list-dialog [results]="vm.prList()" (retry)="vm.retryPublish()" (close)="vm.closePrList()" />
-  <app-build-refusal-dialog [reason]="vm.refusal()" (close)="vm.closeRefusal()" />
+  <app-build-refusal-dialog [reason]="vm.refusal()" [problems]="vm.refusalProblems()" (close)="vm.closeRefusal()" />
   <app-confirm-dialog
     [open]="vm.confirmPrompt() !== null"
     [message]="vm.confirmPrompt() ?? ''"

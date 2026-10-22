@@ -54,6 +54,22 @@ describe('reviewState', () => {
   });
 });
 
+describe('reviewState with a review document', () => {
+  const section = { number: 1, reviewed_at: '2026-10-19', commits: { a: '1111111' }, findings: [] };
+  const problem = { file: 'build/review.md', line: 14, message: 'finding F1 has no file' };
+
+  it('is current for a document that passes', () => {
+    const document = { layout: 2, reviews: [section], problems: [], master_moved: [] };
+    expect(reviewState([], [], HEADS, SCOPE, document, 'm')).toMatchObject({ kind: 'current-document' });
+  });
+
+  it('a review document with problems is not a current review, so done stays blocked (F6)', () => {
+    const document = { layout: 2, reviews: [section], problems: [problem], master_moved: [] };
+    expect(reviewState([], [], HEADS, SCOPE, document, 'm')).toEqual({ kind: 'invalid' });
+    expect(reviewState([link()], [record('r1', 0)], HEADS, SCOPE, document, 'm')).toEqual({ kind: 'invalid' });
+  });
+});
+
 describe('checkLabel', () => {
   it('names each outcome', () => {
     expect(checkLabel(checks(result('Passed')))).toBe('passed');
@@ -93,5 +109,52 @@ describe('canConfirm', () => {
     ['a check that could not run', { repos: [{ repo: 'a', base: 'main', checks: [], result: checks(result('CouldNotRun')) }] }],
   ] as [string, Partial<DoneReport>][])('is blocked by %s', (_name, over) => {
     expect(canConfirm(report(over))).toBe(false);
+  });
+});
+
+describe('reviewState with a review document', () => {
+  const doc = (...commits: Record<string, string>[]) => ({
+    layout: 2,
+    problems: [],
+    master_moved: [] as string[],
+    reviews: commits.map((c, i) => ({ number: i + 1, reviewed_at: '2026-10-22', commits: c, findings: [] })),
+  });
+  const FULL = { a: '1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', master: '9999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' };
+
+  it('reads the latest review commits against the heads and not the run exit code', () => {
+    const got = reviewState([link()], [record('r1', 1)], FULL, SCOPE, doc({ a: '0000000' }, { a: '1111111' }), 'master');
+    expect(got).toMatchObject({ kind: 'current-document', review: { number: 2 } });
+  });
+
+  it('is stale when a reviewed repository moved since the review', () => {
+    const got = reviewState([], [], { a: '2222222cccccccccccccccccccccccccccccccc' }, SCOPE, doc({ a: '1111111' }), 'master');
+    expect(got).toEqual({ kind: 'stale' });
+  });
+
+  it('does not judge the master by its head, since recording the review commits there', () => {
+    const got = reviewState([], [], FULL, SCOPE, doc({ a: '1111111', master: '0123456' }), 'master');
+    expect(got).toMatchObject({ kind: 'current-document' });
+  });
+
+  it('is none when the document holds no review', () => {
+    expect(reviewState([link()], [record('r1', 0)], FULL, SCOPE, doc(), 'master')).toEqual({ kind: 'none' });
+  });
+});
+
+describe('reviewState judges the master repository by what it committed since the review (F17)', () => {
+  const FULL = { a: '1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', master: '9999999bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' };
+  const document = (movedInMaster: string[]) => ({
+    layout: 2,
+    problems: [],
+    reviews: [{ number: 1, reviewed_at: '2026-10-22', commits: { a: '1111111', master: '0123456' }, findings: [] }],
+    master_moved: movedInMaster,
+  });
+
+  it('a master that gained a product commit after the review makes the review stale', () => {
+    expect(reviewState([], [], FULL, SCOPE, document(['plugin/format/check.mjs']), 'master')).toEqual({ kind: 'stale' });
+  });
+
+  it('a master that gained only the review document commit leaves the review current', () => {
+    expect(reviewState([], [], FULL, SCOPE, document([]), 'master')).toMatchObject({ kind: 'current-document' });
   });
 });

@@ -7,6 +7,13 @@
         <div hlmAlertDescription>{{ why }}</div>
       </hlm-alert>
     }
+    @if (problems().length > 0) {
+      <ul class="grid gap-1" aria-label="Problems">
+        @for (p of problems(); track $index) {
+          <li class="k-mono">{{ p.file }}:{{ p.line }} {{ p.message }}</li>
+        }
+      </ul>
+    }
     <p hlmAlertDialogDescription>Nothing was created or switched in any repository.</p>
     <hlm-alert-dialog-footer>
       <button hlmAlertDialogCancel size="sm">Close</button>

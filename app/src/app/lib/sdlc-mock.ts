@@ -11,12 +11,16 @@ import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
+import type { ParsedRequirement } from '@bindings/ParsedRequirement';
+import type { ParsedSection } from '@bindings/ParsedSection';
+import type { ParsedTask } from '@bindings/ParsedTask';
 import type { Part } from '@bindings/Part';
 import type { Participant } from '@bindings/Participant';
 import type { PlanTask } from '@bindings/PlanTask';
 import type { PrResult } from '@bindings/PrResult';
 import type { PrState } from '@bindings/PrState';
 import type { PublishRepo } from '@bindings/PublishRepo';
+import type { ReadResult } from '@bindings/ReadResult';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { RepoState } from '@bindings/RepoState';
 import type { RepoStatus } from '@bindings/RepoStatus';
@@ -24,6 +28,7 @@ import type { TaskStatus } from '@bindings/TaskStatus';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ContextState } from '@bindings/ContextState';
+import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { Decision } from '@bindings/Decision';
 import type { DocState } from '@bindings/DocState';
@@ -51,7 +56,9 @@ export const MOCK_BUILD_CHANGE = '2026-10-19-build-demo';
 /** A change whose build finished and whose three pull requests are open: the toolbar's links and its "Build · done" pill. */
 export const MOCK_DONE_CHANGE = '2026-10-18-photo-limits-shipped';
 /** The version the demo's `ai-sdlc` plugin reports. */
-export const MOCK_PLUGIN_VERSION = '0.6.0';
+export const MOCK_PLUGIN_VERSION = '0.8.0';
+/** The layouts the mock plugin reads, as the backend's `Readiness::Ready` sends them. */
+export const MOCK_LAYOUTS = [1, 2];
 
 const plugin = (name: string, description: string, provides: string[] = []): CatalogEntry =>
   ({ kind: 'plugin', name, description, source: 'user', path: `~/.claude/plugins/${name}`, provides, mcp_servers: [] });
@@ -126,7 +133,7 @@ const doc = (status: string | null, committed = true): DocState =>
 const change = (name: string, intent: DocState, spec: DocState, plan: DocState, stage: Stage): ChangeInfo =>
   ({
     system: MOCK_SYSTEM, change: name, intent, spec, plan, stage,
-    build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null,
+    build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null,
   });
 
 /** The demo build's plan: T3 waits for T1, which lives in the other repository. */
@@ -135,31 +142,88 @@ const BUILD_PLAN: PlanTask[] = [
   { id: 'T2', name: 'Add the photo picker to the report form', repo: 'customer-portal', dependsOn: [] },
   { id: 'T3', name: 'Show the upload limit message', repo: 'customer-portal', dependsOn: ['T1'] },
 ];
-/** The field bullets under each demo task's heading, the way a written plan lays them out. */
-const TASK_FIELDS: Record<string, string[]> = {
+/** The sections of each demo task, the way the format program reads a written plan. */
+const TASK_SECTIONS: Record<string, ParsedSection[]> = {
   T1: [
-    '**Files:** `attachment-store/limits.rs`, `attachment-store/tests/limits.rs`.',
-    '**Change:**\n  - Count the photos already attached to the claim.\n  - Refuse the eleventh with a `PhotoLimit` error.',
-    '**Tests:** a claim with ten photos refuses the eleventh (covers R1.1, supports R2.1).',
-    '**Done when:** the store refuses the eleventh photo and keeps the first ten.',
+    { title: 'Files', body: '`attachment-store/limits.rs`, `attachment-store/tests/limits.rs`.' },
+    { title: 'Change', body: '- Count the photos already attached to the claim.\n- Refuse the eleventh with a `PhotoLimit` error.' },
+    { title: 'Tests', body: 'a claim with ten photos refuses the eleventh (covers R1.1, supports R2.1).' },
+    { title: 'Done when', body: 'the store refuses the eleventh photo and keeps the first ten.' },
   ],
   T2: [
-    '**Files:** `src/report/photo-picker.ts`.',
-    '**Change:** Add a picker to the report form that lists the chosen photos.',
-    '**Tests:** the picker lists what was chosen (covers R1.2).',
-    '**Done when:** a policyholder can choose and remove photos on the form.',
+    { title: 'Files', body: '`src/report/photo-picker.ts`.' },
+    { title: 'Change', body: 'Add a picker to the report form that lists the chosen photos.' },
+    { title: 'Tests', body: 'the picker lists what was chosen (covers R1.2).' },
+    { title: 'Done when', body: 'a policyholder can choose and remove photos on the form.' },
   ],
   T3: [
-    '**Files:** `src/report/limit-message.ts`, `src/report/report-form.html`.',
-    '**Change:**\n  - Read the refusal reason from the store.\n  - Show it next to the picker.',
-    '**Tests:** each refusal reason shows its message (covers R2.1, R2.2).',
-    '**Done when:** the portal says why a photo was refused.',
+    { title: 'Files', body: '`src/report/limit-message.ts`, `src/report/report-form.html`.' },
+    { title: 'Change', body: '- Read the refusal reason from the store.\n- Show it next to the picker.' },
+    { title: 'Tests', body: 'each refusal reason shows its message (covers R2.1, R2.2).' },
+    { title: 'Done when', body: 'the portal says why a photo was refused.' },
   ],
 };
+const dependsBody = (t: PlanTask): string => (t.dependsOn.length ? t.dependsOn.join(', ') : 'none');
 /** One demo task's section of the plan: its heading, then Depends on and the field bullets. */
 function taskText(t: PlanTask): string {
-  const depends = `**Depends on:** ${t.dependsOn.length ? t.dependsOn.join(', ') : 'none'}`;
-  return [`### ${t.id}: ${t.name} (\`${t.repo}\`)`, '', ...[depends, ...(TASK_FIELDS[t.id] ?? [])].map((f) => `- ${f}`)].join('\n');
+  const field = (title: string, body: string) =>
+    body.includes('\n') ? `- **${title}:**\n${body.split('\n').map((l) => `  ${l}`).join('\n')}` : `- **${title}:** ${body}`;
+  const sections = TASK_SECTIONS[t.id] ?? [];
+  return [`### ${t.id}: ${t.name} (\`${t.repo}\`)`, '', field('Depends on', dependsBody(t)), ...sections.map((x) => field(x.title, x.body))].join('\n');
+}
+/** The demo plan as the format program reads it (layout 1: the field bullets are the sections). */
+const BUILD_TASKS: ParsedTask[] = BUILD_PLAN.map((t, i) => ({
+  id: t.id,
+  name: t.name,
+  repo: t.repo,
+  depends_on: [...t.dependsOn],
+  uses: [],
+  files: [],
+  covers: [],
+  supports: [],
+  sections: [{ title: 'Depends on', body: dependsBody(t) }, ...(TASK_SECTIONS[t.id] ?? [])],
+  text: taskText(t),
+  line: 10 + i * 10,
+}));
+/** The demo spec's requirements as the format program reads them. */
+const BUILD_SPEC: ParsedRequirement[] = [
+  {
+    id: 'R1', title: 'The store refuses an eleventh photo', from: ['Proposed outcome 1'], line: 5,
+    scenarios: [
+      { id: 'R1.1', title: 'An eleventh photo is refused', outline: false, examples: null, line: 7, steps: ['Given a claim with 10 photos attached', 'When the policyholder adds another', 'Then the upload is refused'] },
+      { id: 'R1.2', title: 'Photos can be removed again', outline: false, examples: null, line: 12, steps: ['Given a claim with 3 photos attached', 'When the policyholder removes one', 'Then 2 photos are attached'] },
+    ],
+  },
+  {
+    id: 'R2', title: 'The portal says why', from: ['Proposed outcome 2', 'D3'], line: 17,
+    scenarios: [
+      {
+        id: 'R2.1', title: 'Each refusal has a reason', outline: true, line: 19,
+        steps: ['Given a photo that is <problem>', 'Then the portal says "<message>"'],
+        examples: [['problem', 'message'], ['larger than 10 MB', 'The photo is over 10 MB'], ['not a JPEG or PNG', 'Only JPEG and PNG photos are accepted']],
+      },
+      { id: 'R2.2', title: 'The reason stays until the next attempt', outline: false, examples: null, line: 28, steps: ['Given a refused photo', 'Then the message stays visible'] },
+    ],
+  },
+  {
+    id: 'R3', title: 'The limit shows before the first attempt', from: ['D5'], line: 33,
+    scenarios: [
+      { id: 'R3.1', title: 'The form states the limit', outline: false, examples: null, line: 35, steps: ['Given the report form', 'Then it says "Up to 10 photos, 10 MB each"'] },
+    ],
+  },
+];
+/** The spec's gherkin block, written from the parsed requirements so the demo text and the demo requirements cannot differ. */
+function gherkinOf(reqs: ParsedRequirement[]): string {
+  const row = (cells: string[]) => `        | ${cells.join(' | ')} |`;
+  const lines = ['```gherkin', 'Feature: Upload limits', ''];
+  for (const r of reqs) {
+    lines.push(`  Rule: ${r.id} — ${r.title} (from: ${r.from.join(', ')})`, '');
+    for (const sc of r.scenarios) {
+      lines.push(`    ${sc.outline ? 'Scenario Outline' : 'Scenario'}: ${sc.id} — ${sc.title}`, ...sc.steps.map((x) => `      ${x}`), '');
+      if (sc.examples) lines.push('      Examples:', ...sc.examples.map(row), '');
+    }
+  }
+  return [...lines, '```', ''].join('\n');
 }
 const BUILD_REPOS = ['claims-core', 'customer-portal'];
 /** The one task whose row records a departure from the plan. */
@@ -183,45 +247,7 @@ const DOCS: Record<string, string> = {
   [`${MOCK_BUILD_CHANGE}/spec`]: [
     '---\nstatus: accepted\n---\n# Spec: upload limits\n',
     '## Requirements\n',
-    [
-      '```gherkin',
-      'Feature: Upload limits',
-      '',
-      '  Rule: R1 — The store refuses an eleventh photo (from: Proposed outcome 1)',
-      '',
-      '    Scenario: R1.1 — An eleventh photo is refused',
-      '      Given a claim with 10 photos attached',
-      '      When the policyholder adds another',
-      '      Then the upload is refused',
-      '',
-      '    Scenario: R1.2 — Photos can be removed again',
-      '      Given a claim with 3 photos attached',
-      '      When the policyholder removes one',
-      '      Then 2 photos are attached',
-      '',
-      '  Rule: R2 — The portal says why (from: Proposed outcome 2, D3)',
-      '',
-      '    Scenario Outline: R2.1 — Each refusal has a reason',
-      '      Given a photo that is <problem>',
-      '      Then the portal says "<message>"',
-      '',
-      '      Examples:',
-      '        | problem | message |',
-      '        | larger than 10 MB | The photo is over 10 MB |',
-      '        | not a JPEG or PNG | Only JPEG and PNG photos are accepted |',
-      '',
-      '    Scenario: R2.2 — The reason stays until the next attempt',
-      '      Given a refused photo',
-      '      Then the message stays visible',
-      '',
-      '  Rule: R3 — The limit shows before the first attempt (from: D5)',
-      '',
-      '    Scenario: R3.1 — The form states the limit',
-      '      Given the report form',
-      '      Then it says "Up to 10 photos, 10 MB each"',
-      '```',
-      '',
-    ].join('\n'),
+    gherkinOf(BUILD_SPEC),
     '## Design\n\nThe attachment store owns the count; the portal renders the reason it returns.\n',
   ].join('\n'),
   [`${MOCK_BUILD_CHANGE}/plan`]: [
@@ -276,6 +302,8 @@ export class SdlcMock {
   private setupDone = false;
   private cancelledRun = false;
   private discarded = new Set<string>();
+  /** Review runs that finished: the scripted plugin records one review in the review document at the end of each. */
+  private reviewRuns = 0;
 
   getSettings(): Settings { return { ...this.settings }; }
   saveSettings(s: Settings): void { this.settings = { ...s }; }
@@ -321,6 +349,15 @@ export class SdlcMock {
   readDoc(changeName: string, docName: string): string | null {
     if (!DOC_STEMS.has(docName)) throw new Error(`read_doc takes a document stem (intent, spec or plan), not "${docName}"`);
     return this.docs[`${changeName}/${docName}`] ?? null;
+  }
+
+  /** Like the backend's `read_parsed`: the spec or plan as the format program reads it; null when the change has no such document. */
+  readParsed(changeName: string, docName: string): ReadResult | null {
+    if (docName !== 'spec' && docName !== 'plan') throw new Error(`read_parsed takes spec or plan, not "${docName}"`);
+    if (this.docs[`${changeName}/${docName}`] === undefined) return null;
+    const demo = changeName === MOCK_BUILD_CHANGE || changeName === MOCK_DONE_CHANGE;
+    if (docName === 'spec') return { kind: 'spec', layout: 2, document: { requirements: changeName === MOCK_BUILD_CHANGE ? BUILD_SPEC : [] }, problems: [] };
+    return { kind: 'plan', layout: 2, document: { tasks: demo ? BUILD_TASKS : [], shared_decisions: [] }, problems: [] };
   }
 
   snapshot(): Snapshot { return { head: '0000000000000000000000000000000000000000', dirty: {} }; }
@@ -375,13 +412,13 @@ export class SdlcMock {
   // ---- the build ----
 
   buildStatus(changeName: string): BuildStatus {
-    if (changeName !== MOCK_BUILD_CHANGE && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false };
+    if (changeName !== MOCK_BUILD_CHANGE && changeName !== MOCK_DONE_CHANGE) return { tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] };
     // The finished change has every task built; the demo build commits its rows one run at a time.
     const rowOf = (t: PlanTask): BuildRow | null =>
       changeName === MOCK_DONE_CHANGE ? { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } : (this.rows.get(t.id) ?? null);
     const tasks: TaskStatus[] = BUILD_PLAN.map((t) => ({ ...t, dependsOn: [...t.dependsOn], text: taskText(t), row: rowOf(t) }));
     const departures = tasks.flatMap((t) => (t.row?.departure ? [{ task: t.id, repo: t.repo, planText: t.name, departure: t.row.departure }] : []));
-    return { tasks, repos: BUILD_REPOS.map((r) => this.repoStatus(r)), departures, hasTasks: true };
+    return { tasks, repos: BUILD_REPOS.map((r) => this.repoStatus(r)), departures, hasTasks: true, problems: [], logLayouts: [] };
   }
 
   private repoStatus(repo: string): RepoStatus {
@@ -408,6 +445,22 @@ export class SdlcMock {
   }
 
   /** A finished build run commits one row per task it did. */
+  /** The scripted review run recorded its review in the review document. */
+  recordReview(): void { this.reviewRuns++; }
+
+  /** Like the backend's `review::record`: null until a review run has finished, then one review for each run. */
+  reviewRecord(): ReviewRecord | null {
+    if (this.reviewRuns === 0) return null;
+    const commits = this.heads([MOCK_MASTER, ...BUILD_REPOS]);
+    const findings = REVIEW_FINDINGS.map((text, i) => ({ id: `F${i + 1}`, severity: 'medium' as const, file: 'src/upload.ts', line: 10 + i, text }));
+    return {
+      layout: 2,
+      problems: [],
+      master_moved: [],
+      reviews: Array.from({ length: this.reviewRuns }, (_, i) => ({ number: i + 1, reviewed_at: '2026-10-19', commits, findings })),
+    };
+  }
+
   commitRows(tasks: PlanTask[]): void {
     for (const t of tasks) {
       this.rows.set(t.id, {
@@ -543,6 +596,9 @@ export function buildRunScript(repo: string, tasks: PlanTask[], ask: boolean): {
   return { head: [...read, question], mid: work };
 }
 
+/** The two findings the scripted review closes with, in the order it lists them. */
+const REVIEW_FINDINGS = ['The upload limit is duplicated in claims-core and customer-portal.', 'The refusal message has no test.'];
+
 /** The review run: reads the change and closes with two findings. */
 export const reviewRunScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
   head: [
@@ -550,7 +606,7 @@ export const reviewRunScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
     { delay: 300, ev: { type: 'turn', n: 1 } },
     { delay: 300, ev: { type: 'tool.use', name: 'Bash', input_summary: 'git diff origin/main...HEAD', id: 'toolu_rv1', input: { command: 'git diff origin/main...HEAD' } } },
     { delay: 300, ev: { type: 'tool.result', name: 'Bash', ok: true, summary: '5 files changed', id: 'toolu_rv1', output: '' } },
-    completed('2 findings. 1. The upload limit is duplicated in claims-core and customer-portal. 2. The refusal message has no test.'),
+    completed(`2 findings. ${REVIEW_FINDINGS.map((text, i) => `${i + 1}. ${text}`).join(' ')}`),
   ],
   mid: [],
 };

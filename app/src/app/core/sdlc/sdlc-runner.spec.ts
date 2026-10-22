@@ -6,8 +6,8 @@ import type { Leftovers } from '@bindings/Leftovers';
 import type { Participant } from '@bindings/Participant';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { BuildStart } from '@bindings/BuildStart';
-import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { PrepareOutcome } from '@bindings/PrepareOutcome';
+import type { Readiness } from '@bindings/Readiness';
 import type { RepoStart } from '@bindings/RepoStart';
 import type { KataEvent, RunState } from '../../lib/events';
 import { seedCatalog, seedSpec } from '../../lib/mock';
@@ -29,16 +29,16 @@ const TARGET: RunTarget = {
 const transcript = (path: string): KataEvent => ({ type: 'log', level: 'info', message: `transcript: ${path}` }) as KataEvent;
 const repoStart = (repo: string): RepoStart => ({ repo, path: `/ws/${repo}`, base: 'main', branch: 'change/2026-10-12-fnol', created: true });
 const BUILD_START: BuildStart = { master: repoStart('claims-intent'), repos: [repoStart('claims-core')] };
-const AI_SDLC: CatalogEntry = { kind: 'plugin', name: 'ai-sdlc', description: '', source: 'user', path: '/plugins/ai-sdlc', provides: ['skill:build'], mcp_servers: [] };
 const REQUEST: BuildRequest = {
   folder: '/ws',
   masterRepo: 'claims-intent',
   system: 'claims',
   change: '2026-10-12-fnol',
-  catalog: [AI_SDLC],
+  action: 'start',
   continueWithLeftovers: false,
 };
-const UPDATE_PLUGIN = 'Update the ai-sdlc plugin to 0.6.0 or later, then start the build again.';
+const UPDATE_PLUGIN = 'Update the ai-sdlc plugin to 0.8.0 or later, then start the build again.';
+const INSTALL_PLUGIN = 'Install the ai-sdlc plugin, then start the build again.';
 
 type FakeSnapshot = { state: RunState; events: KataEvent[]; summary: null; asks: []; permissions: []; exit?: number | null };
 
@@ -58,9 +58,9 @@ class FakeTransport {
   sdlcFinishChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('finish'); return this.finishResults.shift()!(); });
   sdlcSettings = vi.fn(async () => ({ mode: null, remember: false, permission_mode: 'bypass' as const }));
   catalog = vi.fn(async (..._a: unknown[]) => seedCatalog);
-  pluginVersion: string | null = '0.6.0';
+  readiness: Readiness = { kind: 'ready', dir: '/plugins/ai-sdlc', version: '0.8.0', layouts: [1, 2] };
   prepared: PrepareOutcome | (() => Promise<PrepareOutcome>) = { kind: 'ready', start: BUILD_START };
-  sdlcPluginVersion = vi.fn(async (..._a: unknown[]) => { this.calls.push('version'); return this.pluginVersion; });
+  sdlcPluginReadiness = vi.fn(async (..._a: unknown[]) => { this.calls.push('readiness'); return this.readiness; });
   sdlcBuildPrepare = vi.fn(async (..._a: unknown[]) => {
     this.calls.push('prepare');
     return typeof this.prepared === 'function' ? this.prepared() : this.prepared;
@@ -471,21 +471,22 @@ describe('SdlcRunner build', () => {
     });
 
   describe('prepareBuild', () => {
-    it('start refuses a plugin older than 0.6.0 before preparing (R2.5)', async () => {
+    it('start refuses a plugin the backend finds too old before preparing (R2.5, R10.1)', async () => {
       const ctx = setup();
-      ctx.fake.pluginVersion = '0.5.0';
+      ctx.fake.readiness = { kind: 'tooOld', have: '0.7.9', need: '0.8.0' };
       const out = await ctx.runner.prepareBuild(REQUEST);
       expect(out).toEqual({ kind: 'refused', reason: UPDATE_PLUGIN });
-      expect(ctx.fake.sdlcPluginVersion).toHaveBeenCalledWith('/plugins/ai-sdlc');
+      expect(ctx.fake.sdlcPluginReadiness).toHaveBeenCalledWith(REQUEST.folder);
       expect(ctx.fake.sdlcBuildPrepare).not.toHaveBeenCalled();
       expect(ctx.startRun).not.toHaveBeenCalled();
-      expect(ctx.fake.calls).toEqual(['version']);
+      expect(ctx.fake.calls).toEqual(['readiness']);
     });
 
-    it('refuses when the plugin is not in the catalog at all', async () => {
+    it('refuses when the backend finds the plugin missing', async () => {
       const ctx = setup();
-      const out = await ctx.runner.prepareBuild({ ...REQUEST, catalog: [] });
-      expect(out).toEqual({ kind: 'refused', reason: UPDATE_PLUGIN });
+      ctx.fake.readiness = { kind: 'missing' };
+      const out = await ctx.runner.prepareBuild(REQUEST);
+      expect(out).toEqual({ kind: 'refused', reason: INSTALL_PLUGIN });
       expect(ctx.fake.sdlcBuildPrepare).not.toHaveBeenCalled();
     });
 
@@ -493,7 +494,7 @@ describe('SdlcRunner build', () => {
       const ctx = setup();
       const out = await ctx.runner.prepareBuild({ ...REQUEST, continueWithLeftovers: true });
       expect(out).toEqual({ kind: 'ready', start: BUILD_START });
-      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', true, null);
+      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', true, null, 'start');
     });
 
     it('answers needs-confirm with the files each repository holds', async () => {
@@ -501,6 +502,15 @@ describe('SdlcRunner build', () => {
       ctx.fake.prepared = { kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['a.txt'] }] };
       const out = await ctx.runner.prepareBuild(REQUEST);
       expect(out).toEqual({ kind: 'needs-confirm', leftovers: [{ repo: 'claims-core', files: ['a.txt'] }] });
+    });
+
+    it.each(['start', 'continue', 'round'] as const)('refuses with the gate message and the problems it lists: %s (R8.1)', async (action) => {
+      const problem = { file: 'build/app.md', line: 14, message: 'entry T1 is recorded twice, first on line 7' };
+      const ctx = setup();
+      ctx.fake.prepared = { kind: 'refused', message: 'A build log does not pass the check', problems: [problem] };
+      const out = await ctx.runner.prepareBuild({ ...REQUEST, action });
+      expect(out).toEqual({ kind: 'refused', reason: 'A build log does not pass the check', problems: [problem] });
+      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', false, null, action);
     });
 
     it('refuses with the backend text when preparing fails (R3.1)', async () => {

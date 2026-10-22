@@ -1,0 +1,35 @@
+{
+  "kind": "spec",
+  "layout": 2,
+  "document": {
+    "requirements": [
+      {
+        "id": "R2",
+        "title": "Two",
+        "from": [
+          "D1"
+        ],
+        "scenarios": [
+          {
+            "id": "R2.1",
+            "title": "Second",
+            "outline": false,
+            "steps": [
+              "Given a thing"
+            ],
+            "examples": null,
+            "line": 17
+          }
+        ],
+        "line": 15
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "spec.md",
+      "line": 11,
+      "message": "scenario R1.1 sits under no requirement"
+    }
+  ]
+}

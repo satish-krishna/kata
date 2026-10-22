@@ -111,3 +111,37 @@ pub fn advance_origin_only(repo: &Path, branch: &str, rel: &str, msg: &str) {
     git::run(repo, &["reset", "-q", "--hard", "HEAD~1"]).unwrap();
     checkout(repo, &back, false);
 }
+
+/// A stand-in for the ai-sdlc plugin folder: its `format/` is the vendored copy of the plugin's
+/// format program, and its version is the oldest Kata accepts. Made once per test process.
+pub fn plugin_dir() -> &'static Path {
+    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        fn copy(from: &Path, to: &Path) {
+            std::fs::create_dir_all(to).unwrap();
+            for entry in std::fs::read_dir(from).unwrap().flatten() {
+                let target = to.join(entry.file_name());
+                if entry.path().is_dir() {
+                    copy(&entry.path(), &target);
+                } else {
+                    std::fs::copy(entry.path(), target).unwrap();
+                }
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let vendored = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format");
+        copy(&vendored, &dir.path().join("format"));
+        let meta = dir.path().join(".claude-plugin");
+        std::fs::create_dir_all(&meta).unwrap();
+        std::fs::write(
+            meta.join("plugin.json"),
+            format!(
+                r#"{{"name":"ai-sdlc","version":"{}"}}"#,
+                crate::plugin::MIN_VERSION
+            ),
+        )
+        .unwrap();
+        dir
+    })
+    .path()
+}

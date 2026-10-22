@@ -29,7 +29,7 @@ function setup(transport = new MockTransport()) {
 }
 
 async function handoffFor(transport: MockTransport, over: Partial<BuildHandoff> = {}): Promise<BuildHandoff> {
-  const out = await transport.sdlcBuildPrepare(FOLDER, MOCK_MASTER, 'claims', MOCK_BUILD_CHANGE, false);
+  const out = await transport.sdlcBuildPrepare(FOLDER, MOCK_MASTER, 'claims', MOCK_BUILD_CHANGE, false, null, 'start');
   if (out.kind !== 'ready') throw new Error('the mock build did not prepare');
   return { start: out.start, timeoutSecs: 5400, round: null, checksDir: await transport.sdlcChecksDir(), ...over };
 }
@@ -224,6 +224,27 @@ describe('BuildViewModel', () => {
     expect(row(vm, 'claims-core').label).toBe('Working · T1');
   });
 
+  it('Continue after the branches were settled is refused with the problems when a build log fails the check, and starts nothing (R8.1)', async () => {
+    const { vm, transport, runner } = setup();
+    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
+      link.onRun?.(`fake-${target.repo}`);
+      return { exit: 124, error: null };
+    });
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    vm.select('claims-core');
+    const problem = { file: 'build/app.md', line: 14, message: 'entry T1 is recorded twice, first on line 7' };
+    prepare.mockResolvedValueOnce({ kind: 'refused', message: 'A build log does not pass the check', problems: [problem] });
+    await vm.continueRun();
+    await advance(500);
+    expect(prepare.mock.calls[1][6]).toBe('continue');
+    expect(vm.refusal()).toEqual({ reason: 'A build log does not pass the check', problems: [problem] });
+    expect(run).toHaveBeenCalledTimes(2);
+    vm.closeRefusal();
+    expect(vm.refusal()).toBeNull();
+  });
+
   it('Continue after the branches were settled asks before going on top of leftovers, and starts nothing until confirmed (R6.4)', async () => {
     const { vm, transport, runner } = setup();
     const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
@@ -359,6 +380,158 @@ describe('BuildViewModel', () => {
     expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
   });
 
+  describe('findings from the review document', () => {
+    const section = (number: number, reviewed_at: string, findings: { id: string; severity: 'high' | 'medium' | 'low'; text: string }[]) => ({
+      number,
+      reviewed_at,
+      commits: { 'claims-core': 'aaaaaaa' },
+      findings: findings.map((f) => ({ ...f, file: 'src/a.ts', line: 4 })),
+    });
+    /** What the format program reports about the review document; none unless a test sets it. */
+    let documentProblems: { file: string; line: number; message: string }[] = [];
+    beforeEach(() => {
+      documentProblems = [];
+    });
+    /** The review document as the plugin leaves it: no review until the review run starts, then `reviews`. */
+    const withDocument = (transport: MockTransport, ...reviews: ReturnType<typeof section>[]) => {
+      let reviewed = false;
+      const runSpec = transport.runSpec.bind(transport);
+      vi.spyOn(transport, 'runSpec').mockImplementation((...args: Parameters<MockTransport['runSpec']>) => {
+        if (args[0].name === REVIEW_NAME) reviewed = true;
+        return runSpec(...args);
+      });
+      return vi.spyOn(transport, 'sdlcReviewRecord').mockImplementation(async () => ({ layout: 2, reviews: reviewed ? reviews : [], problems: reviewed ? documentProblems : [], master_moved: [] }));
+    };
+    const shown = (vm: BuildViewModel) => () => vm.phase() === 'finished' && vm.reviewShown();
+
+    it('findings come from review.md, not the run words (R14.2)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'The limit is not enforced on retry.' }]));
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.findings().map((f) => [f.severity, f.text])).toEqual([['high', 'The limit is not enforced on retry.']]);
+      expect(vm.older()).toBe(false);
+    });
+
+    it('a review with no findings shows reviewed, nothing found (R14.3)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', []));
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.findings()).toEqual([]);
+      expect(vm.emptyText()).toBe('Reviewed, nothing found.');
+    });
+
+    it('a second review is shown with the first one available (R15.1)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(
+        transport,
+        section(1, '2026-10-18', [{ id: 'F1', severity: 'high', text: 'one' }]),
+        section(2, '2026-10-19', [{ id: 'F1', severity: 'low', text: 'two' }]),
+      );
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.findings().map((f) => f.text)).toEqual(['two']);
+      expect(vm.replaced().map((r) => [r.label, r.findings.map((f) => f.text)])).toEqual([['Review 1 of 2026-10-18', ['one']]]);
+    });
+
+    it('a review run that leaves no review document says the review did not record its findings (F14)', async () => {
+      const { vm, transport, lock } = setup();
+      vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(null);
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.findings()).toEqual([]);
+      expect(vm.emptyText()).toBe('The review did not record its findings');
+      expect(vm.older()).toBe(false);
+    });
+
+    it('a review run that adds no section does not show the previous review as current (F14)', async () => {
+      const { vm, transport, lock } = setup();
+      vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({
+        layout: 2,
+        reviews: [section(1, '2026-10-18', [{ id: 'F1', severity: 'high', text: 'one' }])],
+        problems: [],
+        master_moved: [],
+      });
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.findings()).toEqual([]);
+      expect(vm.emptyText()).toBe('The review did not record its findings');
+    });
+
+    it('a review whose findings failed their schema shows its problems above the findings (F6)', async () => {
+      const { vm, transport, lock } = setup();
+      documentProblems = [{ file: 'build/review.md', line: 12, message: 'finding F1 has no file' }];
+      withDocument(transport, section(1, '2026-10-19', []));
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.reviewNotice()).toEqual({
+        tone: 'warning',
+        text: 'This document does not follow the layout',
+        lines: ['line 12: finding F1 has no file'],
+      });
+    });
+
+    /** Stands in for the check of what the review run left in the master repository. */
+    const verifying = (transport: MockTransport, flagged: string[]) => {
+      return vi.spyOn(transport, 'sdlcReviewVerify').mockResolvedValue(flagged);
+    };
+
+    it('a review run that also changed plugin/ names the file and is not the current review (F7)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
+      const verify = verifying(transport, ['plugin/format/check.mjs']);
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(verify).toHaveBeenCalledWith(expect.any(String), 'claims', MOCK_BUILD_CHANGE, '0'.repeat(40), expect.anything());
+      expect(vm.reviewNotice()?.tone).toBe('warning');
+      expect(vm.reviewNotice()?.lines).toEqual(['plugin/format/check.mjs']);
+      expect(vm.findings()).toEqual([]);
+      expect(vm.emptyText()).toBe('The review did not record its findings');
+    });
+
+    /** A master whose tree holds `now` when the review run ends and `before` when it starts; the check gets the starting tree to compare with. */
+    const treeCheck = (transport: MockTransport, before: Record<string, string>, now: Record<string, string>) => {
+      const snapshot = transport.sdlcSnapshot.bind(transport);
+      vi.spyOn(transport, 'sdlcSnapshot').mockImplementation(async (path) => ({ ...(await snapshot(path)), dirty: before }));
+      return vi.spyOn(transport, 'sdlcReviewVerify').mockImplementation((...args: unknown[]) => {
+        const start = (args[4] ?? {}) as Record<string, string>;
+        return Promise.resolve(Object.keys(now).filter((file) => start[file] !== now[file]));
+      });
+    };
+
+    it('a stray file left dirty before the review run does not hide a correctly recorded review (F18)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
+      treeCheck(transport, { 'notes/stray.md': 'aaaa' }, { 'notes/stray.md': 'aaaa' });
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.reviewNotice()).toBeNull();
+      expect(vm.findings().map((f) => f.text)).toEqual(['one']);
+    });
+
+    it('a file the review run left dirty is still flagged beside one that was dirty before (F18)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
+      treeCheck(transport, { 'notes/stray.md': 'aaaa' }, { 'notes/stray.md': 'aaaa', 'plugin/format/check.mjs': 'bbbb' });
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.reviewNotice()?.lines).toEqual(['plugin/format/check.mjs']);
+      expect(vm.findings()).toEqual([]);
+    });
+
+    it('a review run that touched only the review document is the current review (F7)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
+      const verify = verifying(transport, []);
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(verify).toHaveBeenCalled();
+      expect(vm.reviewNotice()).toBeNull();
+      expect(vm.findings().map((f) => f.text)).toEqual(['one']);
+    });
+  });
+
   it('Close releases the lock', async () => {
     const { vm, transport, lock } = setup();
     await vm.start(await handoffFor(transport), CTX);
@@ -387,7 +560,7 @@ describe('BuildViewModel', () => {
     expect(next.findings()).toHaveLength(2);
     expect(next.replaced()).toHaveLength(1);
     expect(next.replaced()[0].findings).toHaveLength(2);
-    expect(next.replaced()[0].at).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+    expect(next.replaced()[0].label).toBe('Review 1 of 2026-10-19');
   });
 
   it('a round that adds no commits is not reviewed again', async () => {
@@ -412,6 +585,7 @@ describe('BuildViewModel', () => {
     });
     const status: BuildStatus = {
       hasTasks: true,
+      problems: [], logLayouts: [],
       departures: [],
       tasks: [task('T1', 'one', 'claims-core', [], false), task('T2', 'two', 'customer-portal', [], true), task('T3', 'three', 'customer-portal', ['T1'], false)],
       repos: [
@@ -448,6 +622,7 @@ describe('BuildViewModel', () => {
     });
     const allDone: BuildStatus = {
       hasTasks: true,
+      problems: [], logLayouts: [],
       departures: [],
       tasks: [doneTask('T1', 'claims-core'), doneTask('T2', 'customer-portal')],
       repos: [
@@ -550,6 +725,7 @@ describe('BuildViewModel', () => {
     });
     vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({
       hasTasks: true,
+      problems: [], logLayouts: [],
       departures: [],
       tasks: [doneTask('T1', 'claims-core'), doneTask('T2', 'customer-portal')],
       repos: [
@@ -592,6 +768,7 @@ describe('BuildViewModel', () => {
     });
     const allDone: BuildStatus = {
       hasTasks: true,
+      problems: [], logLayouts: [],
       departures: [],
       tasks: [doneTask('T1', 'claims-core'), doneTask('T2', 'customer-portal')],
       repos: [
@@ -601,6 +778,7 @@ describe('BuildViewModel', () => {
     };
     const coreDonePortalReady: BuildStatus = {
       hasTasks: true,
+      problems: [], logLayouts: [],
       departures: [],
       tasks: [doneTask('T1', 'claims-core'), { id: 'T2', name: 'two', repo: 'customer-portal', dependsOn: [], text: '### T2', row: null }],
       repos: [

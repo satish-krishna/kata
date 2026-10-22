@@ -45,6 +45,8 @@ const ACTIONS: Record<Stage, StageAction[]> = {
   "plan-accepted-uncommitted": ["commit-acceptance", "rerun-plan"],
   // The actions depend on the cause; see `actionsForChange`.
   "plan-out-of-date": [],
+  // The plan could not be read, so nothing may be built or rewritten from what is shown; the list says why.
+  "plan-unreadable": [],
   "plan-superseded": ["rerun-plan"],
   "build-ready": ["start-build", "reopen-intent"],
   "build-stopped": ["continue-build", "another-round"],
@@ -99,6 +101,7 @@ const LABELS: Record<Stage, StageLabel> = {
   "plan-awaiting": { step: "plan", text: "Plan · awaiting acceptance", tone: "warning" },
   "plan-accepted-uncommitted": { step: "plan", text: "Plan · accepted, not committed", tone: "warning" },
   "plan-out-of-date": { step: "plan", text: "Plan · out of date", tone: "warning" },
+  "plan-unreadable": { step: "plan", text: "Plan · could not be read", tone: "warning" },
   "plan-superseded": { step: "plan", text: "Plan · superseded", tone: "warning" },
   "build-ready": { step: "build", text: "Build · ready to start", tone: "muted" },
   "build-stopped": { step: "build", text: "Build · in progress (stopped)", tone: "warning" },
@@ -142,21 +145,6 @@ export type BuildRun = {
 export const DEFAULT_BUILD_SECS = 7200;
 
 const AI_SDLC = "ai-sdlc";
-const MIN_BUILD_VERSION = [0, 6, 0];
-
-const versionParts = (v: string): number[] => v.split(/[.+-]/).slice(0, 3).map((p) => Number.parseInt(p, 10) || 0);
-
-/** True when the ai-sdlc plugin provides the build skill and is at least 0.6.0. */
-export function canBuild(catalog: CatalogEntry[], version: string | null): boolean {
-  const entry = catalog.find((e) => e.kind === "plugin" && e.name === AI_SDLC);
-  if (!entry || !entry.provides.includes("skill:build") || version === null) return false;
-  const have = versionParts(version);
-  for (let i = 0; i < MIN_BUILD_VERSION.length; i++) {
-    const h = have[i] ?? 0;
-    if (h !== MIN_BUILD_VERSION[i]) return h > MIN_BUILD_VERSION[i];
-  }
-  return true;
-}
 
 /** The text of a repository's stop (R6.1). The cancelled fact decides first, and a cancelled stop carries no error text; the exit code only tells the other stops apart. */
 export function stopMessage(exit: number | null, error: string | null, cancelled = false): string {
@@ -190,11 +178,21 @@ function buildPermissions(run: BuildRun, ctx: RunContext) {
   const ws = slashes(run.workspaceFolder);
   const deny = [...BUILD_DENY, `Edit(${rulePath(run.checksDir)}/**)`];
   const allow = [`Read(${rulePath(ws)}/**)`];
+  const changeDir = `${ws}/${run.masterRepo}/intent/${ctx.system}/${ctx.change}`;
+  const buildDir = `${changeDir}/build`;
   if (run.target === "review") {
-    deny.push(`Edit(${rulePath(ws)}/**)`);
+    // The review records its findings in the change's review document and edits nothing else. Deny beats allow in
+    // claude, so the workspace cannot be denied as a whole: every product repository and every other document of
+    // the change is denied by name instead.
+    const repos = new Set([...run.systemRepos, run.masterRepo]);
+    for (const other of repos) {
+      if (other !== run.masterRepo) deny.push(`Edit(${rulePath(`${ws}/${other}`)}/**)`);
+      deny.push(`Edit(${rulePath(`${buildDir}/${other}.md`)})`);
+    }
+    for (const doc of ["intent.md", "spec.md", "plan.md"]) deny.push(`Edit(${rulePath(`${changeDir}/${doc}`)})`);
+    allow.push(`Edit(${rulePath(`${buildDir}/review.md`)})`);
   } else {
     const repo = run.target.repo;
-    const buildDir = `${ws}/${run.masterRepo}/intent/${ctx.system}/${ctx.change}/build`;
     // Deny beats allow in claude, so a `build/**` deny would block this run's own log; deny the others by name.
     const repos = new Set([...run.systemRepos, run.masterRepo]);
     for (const other of repos) {
@@ -202,6 +200,8 @@ function buildPermissions(run: BuildRun, ctx: RunContext) {
       deny.push(`Edit(${rulePath(`${buildDir}/${other}.md`)})`);
       if (other !== run.masterRepo) deny.push(`Edit(${rulePath(`${ws}/${other}`)}/**)`);
     }
+    // Earlier reviews are the review run's record; a build run does not rewrite them.
+    deny.push(`Edit(${rulePath(`${buildDir}/review.md`)})`);
     allow.push(`Edit(${rulePath(`${buildDir}/${repo}.md`)})`);
   }
   return { deny, allow };
@@ -485,7 +485,8 @@ export function stagePills(stage: Stage, done: boolean, docs: DocsPresent, build
 
 export type Severity = "critical" | "high" | "medium" | "low";
 /** One finding of the review, with the severity its text opens with, if it names one. */
-export type Finding = { severity: Severity | null; text: string };
+export type Finding = { severity: Severity | null; text: string; id?: string; file?: string; line?: number };
+
 
 
 const SEVERITY_RANK: Record<Severity, number> = { critical: 0, high: 1, medium: 2, low: 3 };

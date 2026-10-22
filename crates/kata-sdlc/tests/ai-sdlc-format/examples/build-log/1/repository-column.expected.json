@@ -1,0 +1,38 @@
+{
+  "kind": "build-log",
+  "layout": 1,
+  "document": {
+    "repo": "repository-column",
+    "entries": [
+      {
+        "task": "T1",
+        "commits": [
+          "abc1234"
+        ],
+        "departure": null,
+        "line": 5
+      },
+      {
+        "task": "T1",
+        "commits": [
+          "def5678"
+        ],
+        "departure": null,
+        "line": 6
+      },
+      {
+        "task": "T2",
+        "commits": [],
+        "departure": null,
+        "line": 7
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "build/repository-column.md",
+      "line": 7,
+      "message": "entry T2 has no commits"
+    }
+  ]
+}

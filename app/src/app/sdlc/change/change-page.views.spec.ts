@@ -1,4 +1,7 @@
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { ParsedRequirement } from '@bindings/ParsedRequirement';
+import type { ParsedTask } from '@bindings/ParsedTask';
+import type { ReadResult } from '@bindings/ReadResult';
 import type { TaskStatus } from '@bindings/TaskStatus';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
@@ -66,8 +69,30 @@ const SPEC = [
   '',
 ].join('\n');
 const SPEC_NO_DESIGN = SPEC.replace(/## Design[\s\S]*$/, '');
-const SPEC_RULES_ONLY = ['---', 'status: accepted', '---', '# Spec: demo', '', '```gherkin', 'Feature: Demo', '', '  Rule: R1 — A rule (from: D1)', '', '  Rule: R2 — Another rule (from: D2)', '```', '', 'Whole text of the rules-only spec.', ''].join('\n');
 const SPEC_NO_REQUIREMENTS = '---\nstatus: accepted\n---\n# Spec: demo\n\n## Rules\n\n1. Plain numbered rules.\n';
+
+/** What the format program reads from SPEC: three requirements, one of them with a Scenario Outline and its examples. */
+const REQUIREMENTS: ParsedRequirement[] = [
+  {
+    id: 'R1', title: 'A policyholder attaches photos', from: ['Proposed outcome 1', 'D2'], line: 9,
+    scenarios: [{ id: 'R1.1', title: 'An eleventh photo is refused', outline: false, examples: null, line: 11, steps: ['Given a claim with 10 photos', 'When the policyholder adds one', 'Then the upload is refused'] }],
+  },
+  {
+    id: 'R2', title: 'The portal says why', from: ['D3'], line: 16,
+    scenarios: [
+      {
+        id: 'R2.1', title: 'Each refusal has a reason', outline: true, line: 18, steps: ['Given a photo that is <problem>', 'Then the portal says "<message>"'],
+        examples: [['problem', 'message'], ['too big', 'Over 10 MB'], ['wrong type', 'JPEG or PNG only']],
+      },
+      { id: 'R2.2', title: 'The reason stays', outline: false, examples: null, line: 27, steps: ['Given a refusal', 'Then it stays visible'] },
+    ],
+  },
+  {
+    id: 'R3', title: 'Nothing is lost', from: ['D4'], line: 32,
+    scenarios: [{ id: 'R3.1', title: 'A draft survives', outline: false, examples: null, line: 34, steps: ['Given a draft claim', 'Then it is kept'] }],
+  },
+];
+const specOf = (requirements: ParsedRequirement[]): ReadResult => ({ kind: 'spec', layout: 1, document: { requirements }, problems: [] });
 
 const PLAN = [
   '---',
@@ -85,36 +110,52 @@ const PLAN = [
   '',
 ].join('\n');
 
-const text1 = [
-  '### T1: Refuse an eleventh photo (`claims-core`)',
-  '',
-  '- **Depends on:** none',
-  '- **Files:** `store.rs`',
-  '- **Change:**',
-  '  - Refuse the eleventh.',
-  '  - Keep the first ten.',
-  '- **Tests:** covers R2.1 and `R9` stays code.',
-  '- **Done when:** the store refuses.',
-].join('\n');
-const text3 = '### T3: Show the message (`customer-portal`)\n\n- **Depends on:** T1\n- **Change:** Show it. Needs R1.1.\n- **Done when:** it shows.';
-const text4 = '### T4: Notes only (`customer-portal`)\n\nJust do the thing described here.\n';
-const task = (id: string, name: string, repo: string, dependsOn: string[], body: string, row: TaskStatus['row']): TaskStatus => ({
-  id, name, repo, dependsOn, text: body, row,
+const planned = (id: string, name: string, repo: string, dependsOn: string[], sections: ParsedTask['sections']): ParsedTask => ({
+  id, name, repo, depends_on: dependsOn, uses: [], files: [], covers: [], supports: [], sections, text: `### ${id}: ${name}`, line: 1,
 });
+const task = (id: string, name: string, repo: string, dependsOn: string[], row: TaskStatus['row']): TaskStatus => ({
+  id, name, repo, dependsOn, text: `### ${id}: ${name}`, row,
+});
+/** What the format program reads from the plan, task by task. */
+const PLANNED: Record<string, ParsedTask> = {
+  T1: planned('T1', 'Refuse an eleventh photo', 'claims-core', [], [
+    { title: 'Depends on', body: 'none' },
+    { title: 'Files', body: '`store.rs`' },
+    { title: 'Change', body: '- Refuse the eleventh.\n- Keep the first ten.' },
+    { title: 'Tests', body: 'covers R2.1 and `R9` stays code.' },
+    { title: 'Done when', body: 'the store refuses.' },
+  ]),
+  T2: planned('T2', 'Add the picker', 'customer-portal', [], [{ title: 'Depends on', body: 'none' }, { title: 'Done when', body: 'it picks.' }]),
+  T3: planned('T3', 'Show the message', 'customer-portal', ['T1'], [
+    { title: 'Depends on', body: 'T1' },
+    { title: 'Change', body: 'Show it. Needs R1.1.' },
+    { title: 'Done when', body: 'it shows.' },
+  ]),
+  T4: planned('T4', 'Notes only', 'customer-portal', [], [{ title: '', body: 'Just do the thing described here.' }]),
+};
 const TASKS: TaskStatus[] = [
-  task('T1', 'Refuse an eleventh photo', 'claims-core', [], text1, { task: 'T1', repo: 'claims-core', commits: ['aaa1111', 'bbb2222'], departure: null }),
-  task('T2', 'Add the picker', 'customer-portal', [], '### T2: Add the picker (`customer-portal`)\n\n- **Depends on:** none\n- **Done when:** it picks.', {
-    task: 'T2', repo: 'customer-portal', commits: ['ccc3333'], departure: 'Reused the existing picker.',
-  }),
-  task('T3', 'Show the message', 'customer-portal', ['T1'], text3, null),
-  task('T4', 'Notes only', 'customer-portal', [], text4, null),
+  task('T1', 'Refuse an eleventh photo', 'claims-core', [], { task: 'T1', repo: 'claims-core', commits: ['aaa1111', 'bbb2222'], departure: null }),
+  task('T2', 'Add the picker', 'customer-portal', [], { task: 'T2', repo: 'customer-portal', commits: ['ccc3333'], departure: 'Reused the existing picker.' }),
+  task('T3', 'Show the message', 'customer-portal', ['T1'], null),
+  task('T4', 'Notes only', 'customer-portal', [], null),
 ];
-const status = (tasks: TaskStatus[]): BuildStatus => ({ tasks, repos: [], departures: [], hasTasks: tasks.length > 0 });
+const status = (tasks: TaskStatus[]): BuildStatus => ({ tasks, repos: [], departures: [], hasTasks: tasks.length > 0, problems: [], logLayouts: [] });
 
-async function mount(change: string, docs: Record<string, string | null>, tasks: TaskStatus[] = []) {
+/**
+ * `tasks` are the build status's tasks (their rows); `parsed` overrides what the format program reads: by default the
+ * requirements above for a spec with a gherkin block, and the planned tasks the status lists.
+ */
+async function mount(change: string, docs: Record<string, string | null>, tasks: TaskStatus[] = [], parsed: { spec?: ReadResult; plan?: ParsedTask[] } = {}) {
   const transport = new MockTransport();
   vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_m, _s, _c, stem) => docs[stem] ?? null);
   vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(status(tasks));
+  const spec = parsed.spec ?? specOf(docs['spec']?.includes('```gherkin') ? REQUIREMENTS : []);
+  const plan = parsed.plan ?? tasks.map((t) => PLANNED[t.id] ?? planned(t.id, t.name, t.repo, t.dependsOn, []));
+  vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_m, _s, _c, stem) => {
+    if (docs[stem] == null) return null;
+    if (stem === 'spec') return spec;
+    return { kind: 'plan', layout: 1, document: { tasks: plan, shared_decisions: [] }, problems: [] };
+  });
   const out = await render(ChangePage, {}, [
     provideRouter([]),
     { provide: KataTransport, useValue: transport },
@@ -207,11 +248,11 @@ describe('ChangePage spec views', () => {
     expect(container.querySelector('app-doc-layout article')!.textContent).toContain('Plain numbered rules.');
   });
 
-  it('shows only the whole document when the rules parse but no scenario does, never a list of 0 scenarios', async () => {
-    const { container } = await mount(FNOL, { spec: SPEC_RULES_ONLY });
-    expect(toggle(container)).toEqual([]);
-    expect(container.querySelector('nav[aria-label="Requirements"]')).toBeNull();
-    expect(container.querySelector('app-doc-layout article')!.textContent).toContain('Whole text of the rules-only spec.');
+  it('lists a requirement that has no scenario with a count of 0, because the list shows what the program read', async () => {
+    const bare: ParsedRequirement = { id: 'R1', title: 'A rule', from: ['D1'], line: 5, scenarios: [] };
+    const { container } = await mount(FNOL, { spec: SPEC }, [], { spec: specOf([bare]) });
+    expect(reqs(container).map(text)).toEqual(['R1 A rule 0']);
+    expect(text(container.querySelector('[data-testid="requirement"] .k-req__meta')!)).toBe('R1 · from D1 · 0 scenarios');
   });
 
   it('puts the view back to the default on another tab, and has no toggle on the intent', async () => {
@@ -337,8 +378,8 @@ describe('ChangePage plan views', () => {
   });
 
   it('opens the Spec tab on its whole document, not on R1, for a requirement id the spec does not have', async () => {
-    const tasks = TASKS.map((t) => (t.id === 'T3' ? { ...t, text: t.text.replace('R1.1', 'R99.1') } : t));
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, tasks);
+    const plan = TASKS.map((t) => PLANNED[t.id]).map((t) => (t.id === 'T3' ? { ...t, sections: t.sections.map((x) => ({ ...x, body: x.body.replace('R1.1', 'R99.1') })) } : t));
+    const { container } = await mount(MOCK_BUILD_CHANGE, docs, TASKS, { plan });
     tasksNav(container)[2].click();
     await settle();
     const ref = container.querySelector<HTMLAnchorElement>('[data-testid="task"] a[href="#req-R99.1"]')!;
@@ -355,8 +396,13 @@ describe('ChangePage plan views', () => {
   });
 
   it('shows the lines between a task heading and its first field above the labeled sections', async () => {
-    const lead = task('T5', 'Lead first', 'claims-core', [], '### T5: Lead first (`claims-core`)\n\nRead this before you start.\n\n- **Depends on:** none\n- **Change:** Do it.\n', null);
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, [...TASKS, lead]);
+    const lead = task('T5', 'Lead first', 'claims-core', [], null);
+    const leadPlan = planned('T5', 'Lead first', 'claims-core', [], [
+      { title: '', body: 'Read this before you start.' },
+      { title: 'Depends on', body: 'none' },
+      { title: 'Change', body: 'Do it.' },
+    ]);
+    const { container } = await mount(MOCK_BUILD_CHANGE, docs, [...TASKS, lead], { plan: [...TASKS.map((t) => PLANNED[t.id]), leadPlan] });
     tasksNav(container)[4].click();
     await settle();
     const detail = container.querySelector('[data-testid="task"]')!;

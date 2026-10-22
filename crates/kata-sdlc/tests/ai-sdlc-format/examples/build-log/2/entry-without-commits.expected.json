@@ -1,0 +1,22 @@
+{
+  "kind": "build-log",
+  "layout": 2,
+  "document": {
+    "repo": "entry-without-commits",
+    "entries": [
+      {
+        "task": "T7",
+        "commits": [],
+        "departure": null,
+        "line": 7
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "build/entry-without-commits.md",
+      "line": 7,
+      "message": "entry T7 has no commits"
+    }
+  ]
+}

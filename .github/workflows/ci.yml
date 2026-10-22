@@ -54,6 +54,13 @@ jobs:
         # The real-claude smoke test is opt-in (KATA_SMOKE_REAL unset → skipped).
         run: cargo test --workspace
 
+      - name: Document format conformance (vendored copy)
+        # Runs Kata's document readers against the vendored copy of the ai-sdlc format program in
+        # crates/kata-sdlc/tests/ai-sdlc-format/ (needs Node 20, installed above). No network, no secret and no
+        # second checkout: the comparison with the sibling plugin skips itself where ../ai-sdlc is absent.
+        # Refresh the copy locally with: node scripts/vendor-ai-sdlc-format.mjs
+        run: cargo test -p kata-sdlc --test format_conformance
+
       - name: Schema freshness (regenerate & diff)
         # Fails if schema/kata-events.schema.json has drifted from the enum.
         # Regenerate locally with:

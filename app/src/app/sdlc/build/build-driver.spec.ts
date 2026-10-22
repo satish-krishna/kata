@@ -54,7 +54,7 @@ function world(plan: PlanTask[], initialRows: string[] = []) {
       }
       return { repo, firstUnfinished: first?.id ?? null, state, tasks: mine.length, finished: mine.filter((t) => t.row).length };
     });
-    return { tasks, repos: states, departures: [], hasTasks: tasks.length > 0 };
+    return { tasks, repos: states, departures: [], hasTasks: tasks.length > 0, problems: [], logLayouts: [] };
   };
 
   const start = (target: RunTarget, opts: RunOptions): Promise<RunEnd> => {

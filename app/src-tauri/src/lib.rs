@@ -211,7 +211,8 @@ fn sdlc_context_health(
 
 #[tauri::command(async)]
 fn sdlc_changes(master: String, system: String) -> Vec<sdlc::changes::ChangeInfo> {
-    sdlc::changes::list(Path::new(&master), &system)
+    let plugin = ai_sdlc_dir(&master).ok();
+    sdlc::changes::list(plugin.as_deref(), Path::new(&master), &system)
 }
 
 #[tauri::command(async)]
@@ -222,6 +223,20 @@ fn sdlc_branches(master: String) -> sdlc::changes::BranchInfo {
 #[tauri::command(async)]
 fn sdlc_read_doc(master: String, system: String, change: String, doc: String) -> Option<String> {
     sdlc::changes::read_doc(Path::new(&master), &system, &change, &doc)
+}
+
+/// The spec or plan of a change read by the format program, for the Workbench's list views. An error
+/// (no plugin, no Node.js) is the caller's cue to show the document as plain text.
+#[tauri::command(async)]
+fn sdlc_read_parsed(
+    master: String,
+    system: String,
+    change: String,
+    doc: String,
+) -> Result<Option<sdlc::format::ReadResult>, String> {
+    let plugin = ai_sdlc_dir(&master)?;
+    sdlc::changes::read_parsed(&plugin, Path::new(&master), &system, &change, &doc)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -305,7 +320,8 @@ fn sdlc_build_status(
     system: String,
     change: String,
 ) -> Result<sdlc::build::BuildStatus, String> {
-    sdlc::build::status(Path::new(&master), &system, &change).map_err(|e| e.to_string())
+    let plugin = ai_sdlc_dir(&master)?;
+    sdlc::build::status(&plugin, Path::new(&master), &system, &change).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -314,7 +330,33 @@ fn sdlc_unsaved_rows(
     system: String,
     change: String,
 ) -> Result<Vec<sdlc::build::UnsavedRows>, String> {
-    sdlc::build::unsaved_rows(Path::new(&master), &system, &change).map_err(|e| e.to_string())
+    let plugin = ai_sdlc_dir(&master)?;
+    sdlc::build::unsaved_rows(&plugin, Path::new(&master), &system, &change)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+fn sdlc_review_record(
+    master: String,
+    system: String,
+    change: String,
+) -> Result<Option<sdlc::review::ReviewRecord>, String> {
+    let plugin = ai_sdlc_dir(&master)?;
+    sdlc::review::record(&plugin, Path::new(&master), &system, &change).map_err(|e| e.to_string())
+}
+
+/// The files a review run changed besides the change's review document (none when it kept to it); `before` is the master's dirty files when the run started.
+#[tauri::command(async)]
+fn sdlc_review_verify(
+    master: String,
+    system: String,
+    change: String,
+    since: String,
+    before: std::collections::BTreeMap<String, String>,
+) -> Vec<String> {
+    sdlc::review::verify_run(Path::new(&master), &system, &change, &since, &before)
+        .err()
+        .unwrap_or_default()
 }
 
 #[tauri::command(async)]
@@ -323,14 +365,18 @@ fn sdlc_build_prepare(
     master_repo: String,
     system: String,
     change: String,
+    action: sdlc::build::BuildAction,
     continue_with_leftovers: bool,
     pending: Option<String>,
 ) -> Result<sdlc::start::PrepareOutcome, String> {
+    let plugin = ai_sdlc_dir_in(&folder)?;
     sdlc::start::prepare(
+        &plugin,
         Path::new(&folder),
         &master_repo,
         &system,
         &change,
+        action,
         continue_with_leftovers,
         pending.as_deref(),
     )
@@ -345,7 +391,9 @@ fn sdlc_build_participants(
     change: String,
     pending: Option<String>,
 ) -> Result<Vec<sdlc::participants::Participant>, String> {
+    let plugin = ai_sdlc_dir_in(&folder)?;
     sdlc::participants::participants(
+        &plugin,
         Path::new(&folder),
         &master_repo,
         &system,
@@ -370,8 +418,42 @@ fn sdlc_build_heads(
 }
 
 #[tauri::command(async)]
-fn sdlc_plugin_version(path: String) -> Option<String> {
-    sdlc::plugin::version(Path::new(&path))
+fn sdlc_plugin_readiness(workdir: Option<String>) -> sdlc::plugin::Readiness {
+    ai_sdlc_readiness(workdir.as_deref())
+}
+
+/// Whether the ai-sdlc plugin that `workdir`'s catalog finds can be used, and where it is.
+fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
+    let roots = catalog::roots_for_workdir(workdir);
+    let found = catalog::discover(&roots);
+    let plugin = found.iter().find(|e| {
+        e.kind == catalog::EntryKind::Plugin
+            && e.name == "ai-sdlc"
+            && e.provides.iter().any(|p| p == "skill:build")
+    });
+    sdlc::plugin::readiness(plugin.map(|e| e.path.as_path()))
+}
+
+/// The ai-sdlc plugin folder the format program is read from, or why the build cannot be read. It is
+/// found from the workspace folder (the master repository's parent), the same place `sdlc_plugin_readiness`
+/// is asked about, so a project-scoped plugin there is the one every command uses.
+fn ai_sdlc_dir(master: &str) -> Result<std::path::PathBuf, String> {
+    let folder = Path::new(master)
+        .parent()
+        .and_then(Path::to_str)
+        .unwrap_or(master);
+    ai_sdlc_dir_in(folder)
+}
+
+/// [`ai_sdlc_dir`] for a command that is given the workspace folder itself.
+fn ai_sdlc_dir_in(folder: &str) -> Result<std::path::PathBuf, String> {
+    match ai_sdlc_readiness(Some(folder)) {
+        sdlc::plugin::Readiness::Ready { dir, .. } => Ok(dir),
+        sdlc::plugin::Readiness::Missing => Err("the ai-sdlc plugin is not installed".into()),
+        sdlc::plugin::Readiness::TooOld { have, need } => Err(format!(
+            "the ai-sdlc plugin is version {have}; version {need} or later is needed"
+        )),
+    }
 }
 
 #[tauri::command(async)]
@@ -391,8 +473,15 @@ fn sdlc_missing_change_branches(
     system: String,
     change: String,
 ) -> Result<Vec<String>, String> {
-    sdlc::participants::missing_change_branches(Path::new(&folder), &master_repo, &system, &change)
-        .map_err(|e| e.to_string())
+    let plugin = ai_sdlc_dir_in(&folder)?;
+    sdlc::participants::missing_change_branches(
+        &plugin,
+        Path::new(&folder),
+        &master_repo,
+        &system,
+        &change,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -762,6 +851,7 @@ pub fn run() {
             sdlc_changes,
             sdlc_branches,
             sdlc_read_doc,
+            sdlc_read_parsed,
             sdlc_snapshot,
             sdlc_leftovers,
             sdlc_discard,
@@ -778,7 +868,9 @@ pub fn run() {
             sdlc_build_participants,
             sdlc_build_settle,
             sdlc_build_heads,
-            sdlc_plugin_version,
+            sdlc_review_record,
+            sdlc_review_verify,
+            sdlc_plugin_readiness,
             sdlc_change_repos,
             sdlc_missing_change_branches,
             sdlc_diff_files,
@@ -864,5 +956,60 @@ mod tests {
             Duration::ZERO,
             Duration::from_millis(10)
         ));
+    }
+
+    /// F8: every command resolves the plugin the way readiness does, from the workspace folder (the master
+    /// path's parent), so a project-scoped plugin there is the one that reads, builds and shows the notice.
+    #[test]
+    fn commands_resolve_the_same_plugin_as_readiness_f8() {
+        // The catalog reads the user scope from HOME; point it at an empty folder so the machine's own
+        // plugins cannot answer. Nothing else in this test binary reads HOME.
+        static HOME: Mutex<()> = Mutex::new(());
+        let _guard = HOME.lock().unwrap();
+        let root = std::env::temp_dir().join(format!("kata-f8-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let workspace = root.join("ws");
+        let master = workspace.join("master");
+        let plugin = workspace.join(".claude").join("plugins").join("ai-sdlc");
+        std::fs::create_dir_all(master.join("intent")).unwrap();
+        std::fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
+        std::fs::create_dir_all(plugin.join("skills").join("build")).unwrap();
+        std::fs::write(
+            plugin.join("skills").join("build").join("SKILL.md"),
+            "---
+name: build
+---
+",
+        )
+        .unwrap();
+        std::fs::write(
+            plugin.join(".claude-plugin").join("plugin.json"),
+            r#"{"name":"ai-sdlc","version":"0.8.0"}"#,
+        )
+        .unwrap();
+        let empty_home = root.join("home");
+        std::fs::create_dir_all(&empty_home).unwrap();
+        let saved: Vec<_> = ["HOME", "USERPROFILE"]
+            .iter()
+            .map(|k| (*k, std::env::var_os(k)))
+            .collect();
+        for (k, _) in &saved {
+            std::env::set_var(k, &empty_home);
+        }
+
+        let readiness = ai_sdlc_readiness(Some(workspace.to_str().unwrap()));
+        let resolved = ai_sdlc_dir(master.to_str().unwrap());
+
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        let sdlc::plugin::Readiness::Ready { dir, .. } = readiness else {
+            panic!("the workspace's own plugin should be ready, got {readiness:?}");
+        };
+        assert_eq!(resolved, Ok(dir));
     }
 }

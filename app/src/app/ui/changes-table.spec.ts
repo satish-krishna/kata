@@ -6,7 +6,7 @@ import { ChangesTable } from './changes-table';
 const doc = (status: string | null): DocState =>
   status === null ? { exists: false, committed: false, status: null } : { exists: true, committed: true, status };
 const change = (name: string, stage: ChangeInfo['stage']): ChangeInfo =>
-  ({ system: 'claims', change: name, intent: doc('accepted'), spec: doc(null), plan: doc(null), stage, build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null });
+  ({ system: 'claims', change: name, intent: doc('accepted'), spec: doc(null), plan: doc(null), stage, build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null });
 
 const text = (c: HTMLElement) => c.textContent!.replace(/\s+/g, ' ');
 const buttons = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLButtonElement>('button'));

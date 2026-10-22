@@ -1,13 +1,16 @@
 <section class="k-findings" aria-labelledby="findings-title">
   <h2 id="findings-title" class="k-left__head">Review findings</h2>
+  @if (older()) {
+    <p class="k-left__note">Older layout: read from the closing words of the review run.</p>
+  }
   @if (findings().length === 0) {
-    <p class="k-state__body">The review found nothing.</p>
+    <p class="k-state__body">{{ emptyText() }}</p>
   } @else {
     <ng-container *ngTemplateOutlet="list; context: { $implicit: findings() }" />
   }
   @for (r of replaced(); track $index) {
     <details class="k-findings__replaced">
-      <summary>Replaced by the review at {{ r.at }}</summary>
+      <summary>{{ r.label ?? 'Replaced by the review at ' + r.at }}</summary>
       <ng-container *ngTemplateOutlet="list; context: { $implicit: r.findings }" />
     </details>
   }
@@ -17,7 +20,7 @@
     @for (f of items; track $index) {
       <li class="k-findings__item">
         <span [class]="'k-status k-status--' + tone(f)"><span class="k-status__dot"></span>{{ label(f) }}</span>
-        <span class="k-findings__text">{{ f.text }}</span>
+        <span class="k-findings__text">{{ f.text }}@if (where(f); as at) { <span class="k-mono k-left__note">{{ at }}</span>}</span>
       </li>
     }
   </ol>

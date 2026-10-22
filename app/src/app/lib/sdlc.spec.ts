@@ -5,7 +5,7 @@ import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
 import type { KataEvent, RunDetail } from "./events";
 import { validateLocal } from "./mock";
-import { DONE_LABEL, actionLabel, actionsFor, actionsForChange, canBuild, hasAiSdlcPlugin, primaryAction, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildRun, type RunContext, type StageAction } from "./sdlc";
+import { DONE_LABEL, actionLabel, actionsFor, actionsForChange, hasAiSdlcPlugin, primaryAction, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildRun, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -28,6 +28,7 @@ const ACTIONS: Record<Stage, string[]> = {
   "plan-awaiting": ["accept-plan", "rerun-plan", "reopen-intent"],
   "plan-accepted-uncommitted": ["commit-acceptance", "rerun-plan"],
   "plan-out-of-date": [],
+  "plan-unreadable": [],
   "plan-superseded": ["rerun-plan"],
   "build-ready": ["start-build", "reopen-intent"],
   "build-stopped": ["continue-build", "another-round"],
@@ -35,7 +36,7 @@ const ACTIONS: Record<Stage, string[]> = {
 };
 
 const changeAt = (stage: Stage, outOfDate: OutOfDate | null = null): ChangeInfo => ({
-  system: "claims", change: "2026-10-12-fnol", stage, scope: "claims", out_of_date: outOfDate,
+  system: "claims", change: "2026-10-12-fnol", stage, scope: "claims", out_of_date: outOfDate, plan_unreadable: false, plan_unreadable_reason: null,
   intent: { exists: true, committed: true, status: "accepted" },
   spec: { exists: true, committed: true, status: "accepted" },
   plan: { exists: true, committed: true, status: "accepted" },
@@ -335,10 +336,30 @@ describe("build run-specs", () => {
     expect(s.permissions.allow).toEqual(["Read(//home/u/ws/**)", `Edit(${log})`]);
   });
 
-  it("the review run changes nothing", () => {
+  it("a repository run cannot rewrite the change's review document (F7)", () => {
+    const review = "Edit(//home/u/ws/master/intent/claims/2026-10-12-fnol/build/review.md)";
+    expect(build(run({ target: { repo: "app" } })).permissions.deny).toContain(review);
+    expect(build(run({ target: { repo: "master" } })).permissions.deny).toContain(review);
+    expect(build(run({ target: "review" })).permissions.deny).not.toContain(review);
+  });
+
+  const MASTER_LOG_DIR = "//home/u/ws/master/intent/claims/2026-10-12-fnol";
+
+  it("the review run may edit only build/review.md", () => {
     const s = build(run({ target: "review" }));
-    expect(s.permissions.deny).toEqual(expect.arrayContaining(["Edit(//home/u/ws/**)"]));
-    expect(s.permissions.allow).toEqual(["Read(//home/u/ws/**)"]);
+    const deny = s.permissions.deny ?? [];
+    expect(s.permissions.allow).toEqual(["Read(//home/u/ws/**)", `Edit(${MASTER_LOG_DIR}/build/review.md)`]);
+    // Deny beats allow in claude, so no deny may cover the document, and the rest of the change stays closed.
+    expect(deny).not.toContain("Edit(//home/u/ws/**)");
+    expect(deny.some((d) => d.includes("build/**") || d.startsWith("Write("))).toBe(false);
+    expect(deny).toEqual(expect.arrayContaining(["Edit(//home/u/ws/app/**)", "Edit(//home/u/ws/api/**)"]));
+    expect(deny).toEqual(expect.arrayContaining([`Edit(${MASTER_LOG_DIR}/build/app.md)`, `Edit(${MASTER_LOG_DIR}/build/api.md)`, `Edit(${MASTER_LOG_DIR}/build/master.md)`]));
+    expect(deny).toEqual(expect.arrayContaining([`Edit(${MASTER_LOG_DIR}/spec.md)`, `Edit(${MASTER_LOG_DIR}/plan.md)`, `Edit(${MASTER_LOG_DIR}/intent.md)`]));
+    expect(deny).toEqual(expect.arrayContaining(["Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)"]));
+  });
+
+  it("the review run is named for its change", () => {
+    const s = build(run({ target: "review" }));
     expect(s.name).toBe("sdlc-claims-2026-10-12-fnol-review");
   });
 
@@ -382,19 +403,6 @@ describe("stopMessage", () => {
     expect(stopMessage(124, null, true)).toBe("Stopped: cancelled");
     expect(stopMessage(null, null, true)).toBe("Stopped: cancelled");
     expect(stopMessage(1, "boom", true)).toBe("Stopped: cancelled");
-  });
-});
-
-describe("canBuild", () => {
-  const withSkill: CatalogEntry[] = [{ ...plugin("ai-sdlc"), provides: ["skill:build"] }];
-  it("needs the build skill and 0.6.0 or later", () => {
-    expect(canBuild(withSkill, "0.6.0")).toBe(true);
-    expect(canBuild(withSkill, "0.10.1")).toBe(true);
-    expect(canBuild(withSkill, "1.0.0")).toBe(true);
-    expect(canBuild(withSkill, "0.5.9")).toBe(false);
-    expect(canBuild(withSkill, null)).toBe(false);
-    expect(canBuild([{ ...plugin("ai-sdlc"), provides: ["skill:plan"] }], "0.6.0")).toBe(false);
-    expect(canBuild([], "0.6.0")).toBe(false);
   });
 });
 
@@ -445,5 +453,14 @@ describe("reviewFindings", () => {
     expect(reviewFindings({ record: {} as RunDetail["record"], events: [] })).toEqual([]);
     const twice = detail("1. new one", [{ type: "run.completed", exit_code: 0, result: "1. old one" } as unknown as KataEvent]);
     expect(reviewFindings(twice).map((f) => f.text)).toEqual(["new one"]);
+  });
+});
+
+describe("the unreadable plan stage (F20)", () => {
+  it("offers no action, so no build can start from it", () => {
+    expect(actionsFor("plan-unreadable" as Stage)).toEqual([]);
+  });
+  it("is labeled as a plan that could not be read, in the warning tone", () => {
+    expect(stageLabel("plan-unreadable" as Stage)).toEqual({ step: "plan", text: "Plan · could not be read", tone: "warning" });
   });
 });

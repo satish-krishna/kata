@@ -1,9 +1,52 @@
 //! The ai-sdlc plugin on this machine: its version, and whether it can build one repository at a time.
 
-use std::path::Path;
+use serde::Serialize;
+use std::path::{Path, PathBuf};
 
-/// The oldest plugin version that builds one repository per run.
-pub const MIN_VERSION: &str = "0.6.0";
+/// The oldest plugin version that ships the format program and builds one repository per run.
+pub const MIN_VERSION: &str = "0.8.0";
+
+/// Whether the ai-sdlc plugin can be used: where it is and which version, decided once for the whole app.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum Readiness {
+    /// Installed and at least [`MIN_VERSION`]. `layouts` are the document layouts the Workbench reads
+    /// ([`crate::format::ACCEPTED_LAYOUTS`]), so the frontend tests membership instead of keeping its own list.
+    Ready {
+        dir: PathBuf,
+        version: String,
+        layouts: Vec<u32>,
+    },
+    /// Not installed, or its version cannot be read.
+    Missing,
+    /// Installed but older than [`MIN_VERSION`].
+    TooOld { have: String, need: String },
+}
+
+/// Whether the plugin installed at `plugin_dir` (`None` when the catalog has no such plugin) is new enough.
+pub fn readiness(plugin_dir: Option<&Path>) -> Readiness {
+    let Some(dir) = plugin_dir else {
+        return Readiness::Missing;
+    };
+    match version(dir) {
+        None => Readiness::Missing,
+        Some(have) if at_least(&have, MIN_VERSION) => Readiness::Ready {
+            dir: dir.to_path_buf(),
+            version: have,
+            layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
+        },
+        Some(have) => Readiness::TooOld {
+            have,
+            need: MIN_VERSION.to_string(),
+        },
+    }
+}
 
 /// The `version` field of `<plugin_dir>/.claude-plugin/plugin.json`.
 pub fn version(plugin_dir: &Path) -> Option<String> {
@@ -49,7 +92,7 @@ mod tests {
 
     #[test]
     fn plugin_version_reads_plugin_json_r2_5() {
-        for ok in ["0.6.0", "0.10.1", "1.0.0"] {
+        for ok in ["0.8.0", "0.10.1", "1.0.0"] {
             let dir = plugin_with(Some(&format!(r#"{{"name":"ai-sdlc","version":"{ok}"}}"#)));
             let v = version(dir.path()).unwrap();
             assert_eq!(v, ok);
@@ -57,7 +100,7 @@ mod tests {
         }
         for (json, expect) in [
             (Some(r#"{"version":"0.5.0"}"#), Some("0.5.0")),
-            (Some(r#"{"version":"0.6.0-rc1"}"#), Some("0.6.0-rc1")),
+            (Some(r#"{"version":"0.8.0-rc1"}"#), Some("0.8.0-rc1")),
             (Some(r#"{"name":"ai-sdlc"}"#), None),
             (None, None),
         ] {
@@ -66,5 +109,41 @@ mod tests {
             assert_eq!(v.as_deref(), expect);
             assert!(!v.is_some_and(|v| at_least(&v, MIN_VERSION)));
         }
+    }
+
+    /// F15: the layouts the Workbench accepts travel with a ready plugin, so the frontend tests membership.
+    #[test]
+    fn a_ready_plugin_carries_the_accepted_layouts_f15() {
+        let current = plugin_with(Some(r#"{"name":"ai-sdlc","version":"0.8.0"}"#));
+        let json = serde_json::to_value(readiness(Some(current.path()))).unwrap();
+        assert_eq!(
+            json["layouts"],
+            serde_json::json!(crate::format::ACCEPTED_LAYOUTS)
+        );
+    }
+
+    #[test]
+    fn readiness_reports_ready_missing_and_too_old() {
+        let current = plugin_with(Some(r#"{"name":"ai-sdlc","version":"0.8.0"}"#));
+        assert_eq!(
+            readiness(Some(current.path())),
+            Readiness::Ready {
+                dir: current.path().to_path_buf(),
+                version: "0.8.0".to_string(),
+                layouts: crate::format::ACCEPTED_LAYOUTS.to_vec()
+            }
+        );
+        let old = plugin_with(Some(r#"{"name":"ai-sdlc","version":"0.7.9"}"#));
+        assert_eq!(
+            readiness(Some(old.path())),
+            Readiness::TooOld {
+                have: "0.7.9".to_string(),
+                need: MIN_VERSION.to_string()
+            }
+        );
+        let unreadable = plugin_with(None);
+        assert_eq!(readiness(Some(unreadable.path())), Readiness::Missing);
+        assert_eq!(readiness(None), Readiness::Missing);
+        assert_eq!(MIN_VERSION, "0.8.0");
     }
 }

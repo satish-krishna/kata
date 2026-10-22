@@ -176,6 +176,42 @@ describe('declaring done', () => {
     expect('findings' in review && review.findings[0].text).toContain('upload limit is duplicated');
   });
 
+  it('with a review document the done dialog reads its latest review against the heads, not the run exit code (R14.2)', async () => {
+    const { vm, transport } = await finished((t) => {
+      vi.spyOn(t, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', exit: 1 }]);
+    });
+    const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], BUILD);
+    const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
+    const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
+    vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({
+      layout: 2,
+      problems: [],
+      master_moved: [],
+      reviews: [{ number: 1, reviewed_at: '2026-10-22', commits, findings: [finding] }],
+    });
+    await vm.act('declare-done');
+    const review = vm.doneReport()!.review;
+    expect(review).toEqual({ at: '2026-10-22', findings: [finding] });
+    expect(canConfirm(vm.doneReport()!)).toBe(true);
+  });
+
+  it('a review run that committed under plugin/ is not current when the change page is opened again (F17)', async () => {
+    const { vm, transport } = await finished();
+    const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], BUILD);
+    const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
+    const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
+    // The backend reports what the master committed since the head the review recorded; a fresh view model asks again and gets the same answer.
+    vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({
+      layout: 2,
+      problems: [],
+      reviews: [{ number: 1, reviewed_at: '2026-10-22', commits, findings: [finding] }],
+      master_moved: ['plugin/format/check.mjs'],
+    });
+    await vm.act('declare-done');
+    expect(vm.doneReport()!.review).toEqual({ missing: 'stale' });
+    expect(canConfirm(vm.doneReport()!)).toBe(false);
+  });
+
   it('open findings do not block Open pull requests, and confirming publishes (R20.2)', async () => {
     const { vm, transport } = await finished();
     const publish = vi.spyOn(transport, 'sdlcPublish');

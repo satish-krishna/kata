@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-sdlc.local/format/front-matter.schema.json",
+  "title": "Front matter of a spec, plan, build log or review",
+  "description": "The layout version is the only field the format owns; other fields (source_spec, system, date, status) are free. A document without layout is version 1.",
+  "type": "object",
+  "properties": {
+    "layout": { "type": "integer", "minimum": 1 }
+  },
+  "additionalProperties": true
+}

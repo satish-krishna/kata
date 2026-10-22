@@ -1,0 +1,34 @@
+{
+  "kind": "build-log",
+  "layout": 2,
+  "document": {
+    "repo": "continued-after-upgrade",
+    "entries": [
+      {
+        "task": "T1",
+        "commits": [
+          "abc1234"
+        ],
+        "departure": null,
+        "line": 9
+      },
+      {
+        "task": "T2",
+        "commits": [
+          "def5678"
+        ],
+        "departure": "a note",
+        "line": 10
+      },
+      {
+        "task": "T3",
+        "commits": [
+          "aaa1111"
+        ],
+        "departure": "written in the new layout",
+        "line": 12
+      }
+    ]
+  },
+  "problems": []
+}

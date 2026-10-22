@@ -1,0 +1,34 @@
+{
+  "kind": "plan",
+  "layout": 1,
+  "document": {
+    "tasks": [
+      {
+        "id": "T1",
+        "name": "Written with fields blocks",
+        "repo": "app",
+        "depends_on": [],
+        "uses": [],
+        "files": [],
+        "covers": [],
+        "supports": [],
+        "sections": [
+          {
+            "title": "Tests",
+            "body": "Test it first."
+          }
+        ],
+        "text": "### T1: Written with fields blocks\n\n```yaml\nid: T1\nrepo: app\n```\n\n#### Tests\n\nTest it first.",
+        "line": 7
+      }
+    ],
+    "shared_decisions": []
+  },
+  "problems": [
+    {
+      "file": "plan.md",
+      "line": 1,
+      "message": "no layout version"
+    }
+  ]
+}

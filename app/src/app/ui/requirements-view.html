@@ -19,7 +19,7 @@
   @if (picked(); as req) {
     <section class="k-detail" data-testid="requirement" [attr.aria-label]="req.id">
       <header class="k-detail__head">
-        <p class="k-req__meta k-mono">{{ req.id }}@if (req.from !== '') { · from {{ req.from }}} · {{ countOf(req) }}</p>
+        <p class="k-req__meta k-mono">{{ req.id }}@if (req.from.length > 0) { · from {{ fromOf(req) }}} · {{ countOf(req) }}</p>
         <h2 class="k-detail__title">{{ req.title }}</h2>
       </header>
       <div class="k-scenarios">

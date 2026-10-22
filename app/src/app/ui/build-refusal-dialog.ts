@@ -1,4 +1,5 @@
 import { Component, input, output } from '@angular/core';
+import type { Problem } from '@bindings/Problem';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideTriangleAlert } from '@ng-icons/lucide';
 import type { BrnDialogState } from '@spartan-ng/brain/dialog';
@@ -16,6 +17,8 @@ import { HlmAlertDialogImports } from '@spartan-ng/helm/alert-dialog';
 export class BuildRefusalDialog {
   /** The refusal text; the dialog is open exactly while this is set. */
   readonly reason = input.required<string | null>();
+  /** What the check found in the plan or a build log, one line each; empty when the reason says it all. */
+  readonly problems = input<Problem[]>([]);
   readonly close = output<void>();
 
   /** Close and Escape both close the overlay from inside; surface that as close. */

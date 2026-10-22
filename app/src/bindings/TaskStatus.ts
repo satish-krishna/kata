@@ -3,6 +3,6 @@ import type { BuildRow } from "./BuildRow";
 
 export type TaskStatus = { id: string, name: string, repo: string, dependsOn: Array<string>, 
 /**
- * The task's own section of the plan, from its heading to the next task heading.
+ * The task's own section of the plan, as the format program parsed it.
  */
 text: string, row: BuildRow | null, };

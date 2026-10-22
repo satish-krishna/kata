@@ -415,7 +415,7 @@ describe('SdlcHomeViewModel navigation', () => {
     await vm.init();
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     vi.spyOn(transport, 'sdlcChanges').mockResolvedValue([
-      { system: 'claims', change: '2026-10-17-claim-notes', intent: { exists: true, committed: true, status: 'draft' }, spec: { exists: false, committed: false, status: null }, plan: { exists: false, committed: false, status: null }, stage: 'intent-awaiting', build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null },
+      { system: 'claims', change: '2026-10-17-claim-notes', intent: { exists: true, committed: true, status: 'draft' }, spec: { exists: false, committed: false, status: null }, plan: { exists: false, committed: false, status: null }, stage: 'intent-awaiting', build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null },
     ]);
     await vm.openOtherBranch('2026-10-17-claim-notes');
     expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'change/2026-10-17-claim-notes');
@@ -499,5 +499,58 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     await vm.init();
     await vm.saveSettings({ settings: vm.settings()!, baseBranch: 'main' });
     expect(saveWorkspaces).not.toHaveBeenCalled();
+  });
+});
+
+describe("SdlcHomeViewModel plan notice (F20)", () => {
+  const noticeOf = (vm: SdlcHomeViewModel) => vm.listNotice();
+  const withUnreadablePlan = (transport: MockTransport) => {
+    const real = transport.sdlcChanges.bind(transport);
+    vi.spyOn(transport, "sdlcChanges").mockImplementation(async (master, system) => {
+      const list = await real(master, system);
+      return list.map((c, i) => (i === 0 ? { ...c, stage: "plan-unreadable" as never, plan_unreadable: true } : c));
+    });
+  };
+
+  it("says to install the plugin on the change list when a plan could not be read and the plugin is missing", async () => {
+    const { vm, transport } = setup();
+    withUnreadablePlan(transport);
+    vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "missing" });
+    await vm.init();
+    expect(noticeOf(vm)?.text).toBe("Install the ai-sdlc plugin to read this document");
+    expect(noticeOf(vm)?.tone).toBe("warning");
+  });
+
+  it("says to update the plugin when it is too old", async () => {
+    const { vm, transport } = setup();
+    withUnreadablePlan(transport);
+    vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "tooOld", have: "0.6.0", need: "0.8.0" });
+    await vm.init();
+    expect(noticeOf(vm)?.text).toBe("Update the ai-sdlc plugin to 0.8.0 or later");
+  });
+
+  it("says a plan could not be read when the plugin is usable but the program did not run", async () => {
+    const { vm, transport } = setup();
+    withUnreadablePlan(transport);
+    await vm.init();
+    expect(noticeOf(vm)?.text).toContain("could not be read");
+  });
+
+  it("shows the program's own cause on the change list instead of blaming Node.js (F26)", async () => {
+    const { vm, transport } = setup();
+    const real = transport.sdlcChanges.bind(transport);
+    vi.spyOn(transport, "sdlcChanges").mockImplementation(async (master, system) => {
+      const list = await real(master, system);
+      return list.map((c, i) => (i === 0 ? ({ ...c, stage: "plan-unreadable", plan_unreadable: true, plan_unreadable_reason: "layout 3 is newer than this program reads" } as never) : c));
+    });
+    await vm.init();
+    expect(noticeOf(vm)?.text).toContain("layout 3 is newer than this program reads");
+    expect(noticeOf(vm)?.text).not.toContain("Node.js 20");
+  });
+
+  it("shows no notice when every plan was read", async () => {
+    const { vm } = setup();
+    await vm.init();
+    expect(noticeOf(vm)).toBeNull();
   });
 });
