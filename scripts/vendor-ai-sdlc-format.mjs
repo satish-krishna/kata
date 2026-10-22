@@ -2,10 +2,11 @@
 // read a pinned copy, never the plugin repository. The running Workbench never uses this copy; it always
 // runs the installed plugin's program.
 //
-// Source: ../ai-sdlc/plugin, or the folder named by KATA_AI_SDLC_PLUGIN. Copies check.mjs, schema/ and
-// examples/, and writes the plugin's version into VERSION. Line endings are normalized to LF, because
-// this repository is checked out with LF everywhere (.gitattributes) while the sibling checkout may
-// have CRLF.
+// Source: ../ai-sdlc/plugin, or the folder named by KATA_AI_SDLC_PLUGIN. Copies check.mjs,
+// THIRD_PARTY_LICENSES.txt (the licenses of the packages the bundle contains, which ship with every copy),
+// schema/ and examples/, and writes the plugin's version into VERSION. Line endings are normalized to LF,
+// because this repository is checked out with LF everywhere (.gitattributes) while the sibling checkout
+// may have CRLF.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,6 +39,6 @@ function copyNormalized(from, to) {
   writeFileSync(to, readFileSync(from, 'utf8').replace(/\r\n/g, '\n'));
 }
 
-for (const entry of ['check.mjs', 'schema', 'examples']) copyNormalized(join(source, entry), join(target, entry));
+for (const entry of ['check.mjs', 'THIRD_PARTY_LICENSES.txt', 'schema', 'examples']) copyNormalized(join(source, entry), join(target, entry));
 writeFileSync(join(target, 'VERSION'), manifest.version + '\n');
 console.log(`vendored ai-sdlc format ${manifest.version} from ${source}`);
