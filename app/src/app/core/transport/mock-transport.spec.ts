@@ -262,3 +262,35 @@ describe('MockTransport', () => {
     });
   });
 });
+
+describe('MockTransport previewRun', () => {
+  const PAIRS = [
+    'hook:personal', 'hook:project', 'hook:plugin', 'hook:organization',
+    'skill:personal', 'skill:project', 'skill:plugin', 'skill:run-spec',
+    'plugin:personal', 'plugin:project', 'plugin:run-spec',
+    'instruction:personal', 'instruction:project', 'instruction:kata', 'instruction:run-spec',
+    'tool-server:personal', 'tool-server:project', 'tool-server:plugin', 'tool-server:kata',
+  ];
+
+  it('returns every R2.1 pair', async () => {
+    const r = await new MockTransport().previewRun(seedSpec(), []);
+    const seen = new Set(r.items.map((i) => `${i.kind}:${i.source}`));
+    for (const pair of PAIRS) expect(seen, pair).toContain(pair);
+    expect(Object.keys(r.settings)).toHaveLength(8);
+  });
+
+  it('locks ai-sdlc only when required', async () => {
+    const t = new MockTransport();
+    const find = (r: { items: { id: string }[] }) => r.items.find((i) => i.id === 'personal:plugin:ai-sdlc@ai-sdlc') as { lock: { kind: string } | null };
+    expect(find(await t.previewRun(seedSpec(), ['ai-sdlc'])).lock?.kind).toBe('required');
+    expect(find(await t.previewRun(seedSpec(), [])).lock).toBeNull();
+  });
+
+  it('names project items after the last folder of the workdir', async () => {
+    const t = new MockTransport();
+    const a = await t.previewRun({ ...seedSpec(), workdir: 'D:\ws\alpha' }, []);
+    const b = await t.previewRun({ ...seedSpec(), workdir: 'D:\ws\beta' }, []);
+    expect(a.items.some((i) => i.source === 'project' && i.name.includes('alpha'))).toBe(true);
+    expect(b.items.some((i) => i.name.includes('alpha'))).toBe(false);
+  });
+});

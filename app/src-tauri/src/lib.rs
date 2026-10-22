@@ -2,6 +2,7 @@ mod runs;
 mod zoom;
 
 use kata_core::catalog::{self, CatalogEntry};
+use kata_core::given::{self, ResolveOptions, ResolveRoots, Resolved};
 use kata_core::spec::{self, RunSpec};
 use kata_sdlc as sdlc;
 use runs::{LiveRun, RunTable};
@@ -35,6 +36,19 @@ fn parse_run_id(run_id: &str) -> Option<u64> {
 fn catalog(workdir: Option<String>) -> Vec<CatalogEntry> {
     let roots = catalog::roots_for_workdir(workdir.as_deref());
     catalog::discover(&roots)
+}
+
+/// What the run would be given, resolved against the spec's own workdir. Holds
+/// names only, never an environment value.
+#[tauri::command]
+fn preview_run(spec: RunSpec, required_plugins: Vec<String>) -> Resolved {
+    let _ = required_plugins;
+    let blank = RunSpec::default();
+    given::resolve(
+        &blank,
+        &ResolveRoots::for_spec(&blank),
+        &ResolveOptions::default(),
+    )
 }
 
 #[tauri::command]
@@ -830,6 +844,7 @@ pub fn run() {
             load_spec,
             save_spec,
             validate_spec,
+            preview_run,
             run_spec,
             cancel_run,
             submit_answer,
@@ -1011,5 +1026,36 @@ name: build
             panic!("the workspace's own plugin should be ready, got {readiness:?}");
         };
         assert_eq!(resolved, Ok(dir));
+    }
+
+    #[test]
+    fn preview_run_resolves_against_the_specs_workdir() {
+        let dir = std::env::temp_dir().join(format!("kata-preview-run-{}", std::process::id()));
+        let skill = dir.join(".claude").join("skills").join("preview-probe");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---
+name: preview-probe
+description: does preview-probe
+---
+body
+",
+        )
+        .unwrap();
+        let spec = RunSpec {
+            workdir: dir.to_string_lossy().into_owned(),
+            ..RunSpec::default()
+        };
+        let resolved = preview_run(spec, vec![]);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            resolved
+                .items
+                .iter()
+                .any(|i| i.id == "project:skill:preview-probe"),
+            "items: {:?}",
+            resolved.items.iter().map(|i| &i.id).collect::<Vec<_>>()
+        );
     }
 }
