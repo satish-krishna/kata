@@ -11,8 +11,13 @@ pub mod apply;
 pub use apply::{apply, merge_settings, Applied};
 pub mod lock;
 pub mod resolve;
+pub mod status;
 pub use lock::{lock_for, LockReason};
 pub use resolve::{
     resolve, EnvName, ResolveOptions, Resolved, ResolvedItem, RunSetting, RunSettings,
     SettingSource,
+};
+pub use status::{
+    given_event, status, ClaudeSide, GivenItem, GivenStatus, ImpossibleStatus, KataSide,
+    StatusInput,
 };

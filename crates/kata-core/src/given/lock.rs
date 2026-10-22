@@ -16,7 +16,8 @@ pub const REASON_UNSWITCHABLE: &str =
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[cfg_attr(feature = "ts", ts(rename_all = "kebab-case", tag = "kind"))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum LockReason {
     /// Kata's own tool server or standing note.

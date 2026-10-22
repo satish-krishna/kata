@@ -2543,3 +2543,237 @@ fn a_crashed_runs_temp_folder_is_swept_by_the_next_run() {
         "this run left its own folder behind: {left:?}"
     );
 }
+
+// T8: run.given.
+
+impl Rig {
+    /// Run in the given fake mode, calling `on_event` for each event as it
+    /// arrives, and return them all.
+    fn run_events(
+        &self,
+        spec: &RunSpec,
+        mode: &str,
+        mut on_event: impl FnMut(&KataEvent),
+    ) -> Vec<KataEvent> {
+        std::env::set_var("KATA_FAKE_MODE", mode);
+        let mut events: Vec<KataEvent> = Vec::new();
+        run(
+            spec,
+            &self.catalog(),
+            &CancelToken::new(),
+            &kata_core::run::AnswerRx::default(),
+            &kata_core::run::DecisionRx::default(),
+            |e| {
+                on_event(&e);
+                events.push(e);
+            },
+        )
+        .unwrap();
+        events
+    }
+}
+
+type GivenParts = (
+    Vec<kata_core::given::GivenItem>,
+    kata_core::given::RunSettings,
+    Vec<kata_core::given::EnvName>,
+    Vec<String>,
+);
+
+fn given_events(events: &[KataEvent]) -> Vec<GivenParts> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            KataEvent::RunGiven {
+                items,
+                settings,
+                env,
+                warnings,
+            } => Some((
+                items.clone(),
+                settings.clone(),
+                env.clone(),
+                warnings.clone(),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+// R15.3: the fake's start report says a model other than the spec's, and a
+// posture spelled the way Claude spells it.
+#[test]
+#[serial]
+fn model_and_posture_come_from_claudes_start_report() {
+    use kata_core::given::{RunSetting, SettingSource};
+    let rig = Rig::new();
+    let mut spec = rig.spec();
+    spec.model.id = Some("the-specs-model".into());
+    let events = rig.run_events(&spec, "ok", |_| {});
+    let given = given_events(&events);
+    assert_eq!(
+        given.len(),
+        1,
+        "no hook fired, so one run.given: {events:?}"
+    );
+    let settings = &given[0].1;
+    assert_eq!(
+        settings.model,
+        RunSetting {
+            value: Some("claude-fake-1".into()),
+            source: SettingSource::ClaudeReport
+        }
+    );
+    assert_eq!(
+        settings.permission_posture,
+        RunSetting {
+            value: Some("bypassPermissions".into()),
+            source: SettingSource::ClaudeReport
+        }
+    );
+    // What Claude does not report keeps its own source.
+    assert_eq!(settings.turn_cap.source, SettingSource::RunSpec);
+    assert_eq!(settings.time_limit.source, SettingSource::KataDefault);
+}
+
+// R16.1: a hook added on disk after run.started is in no run.given of this
+// run, and is in the next resolve.
+#[test]
+#[serial]
+fn a_hook_added_on_disk_during_a_run_is_not_in_its_run_given() {
+    use kata_core::given::{GivenStatus, ItemKind, ResolveOptions, ResolveRoots, Source};
+    let rig = Rig::new();
+    let spec = rig.spec();
+    let settings_path = rig.home.join(".claude/settings.json");
+    let mut written = false;
+    let events = rig.run_events(&spec, "hooks", |e| {
+        if matches!(e, KataEvent::RunStarted { .. }) && !written {
+            written = true;
+            let mut v: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
+            v["hooks"]["Stop"] = serde_json::json!([
+                {"hooks": [{"type": "command", "command": "node added-during-run.js"}]}
+            ]);
+            std::fs::write(&settings_path, v.to_string()).unwrap();
+        }
+    });
+    assert!(written);
+    let given = given_events(&events);
+    assert!(
+        given.len() >= 2,
+        "the start report and the first hook each emit one: {events:?}"
+    );
+    for (items, ..) in &given {
+        assert!(
+            !items
+                .iter()
+                .any(|i| i.kind == ItemKind::Hook && i.name == "Stop any"),
+            "the hook added during the run is listed: {items:?}"
+        );
+    }
+    let hook_status = |items: &[kata_core::given::GivenItem]| {
+        items
+            .iter()
+            .find(|i| i.kind == ItemKind::Hook && i.name == "PreToolUse Bash")
+            .map(|i| i.status)
+    };
+    assert_eq!(hook_status(&given[0].0), Some(GivenStatus::GivenNotFired));
+    assert_eq!(
+        hook_status(&given.last().unwrap().0),
+        Some(GivenStatus::GivenFired)
+    );
+
+    let next = kata_core::given::resolve(
+        &spec,
+        &ResolveRoots::for_spec(&spec),
+        &ResolveOptions::default(),
+    );
+    assert!(next
+        .items
+        .iter()
+        .any(|i| i.kind == ItemKind::Hook && i.source == Source::Personal && i.name == "Stop any"));
+}
+
+// R8.1: names reach the event, values never do.
+#[test]
+#[serial]
+fn run_given_carries_no_secret_value() {
+    let rig = Rig::new();
+    let settings_path = rig.home.join(".claude/settings.json");
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
+    v["env"] = serde_json::json!({"PERSONAL_SECRET": "pers-s3cret-111"});
+    v["hooks"]["PreToolUse"][0]["hooks"][0]["command"] =
+        "node repair-me.js --token hook-s3cret-222".into();
+    std::fs::write(&settings_path, v.to_string()).unwrap();
+    let mut spec = rig.spec();
+    spec.env
+        .insert("SPEC_SECRET".into(), "spec-s3cret-333".into());
+    let events = rig.run_events(&spec, "hooks", |_| {});
+    let given = given_events(&events);
+    assert!(!given.is_empty());
+    let json = serde_json::to_string(
+        &given_events(&events)
+            .iter()
+            .map(|g| (&g.0, &g.1, &g.2, &g.3))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    for name in ["PERSONAL_SECRET", "SPEC_SECRET"] {
+        assert!(json.contains(name), "{name} is named: {json}");
+    }
+    for value in [
+        "pers-s3cret-111",
+        "hook-s3cret-222",
+        "spec-s3cret-333",
+        "tok-a",
+    ] {
+        assert!(!json.contains(value), "{value} leaked: {json}");
+    }
+}
+
+// Rows 26 and 27: the run ended before Claude's start report.
+#[test]
+#[serial]
+fn a_run_that_ends_before_the_start_report_emits_rows_26_and_27() {
+    use kata_core::given::{GivenStatus, ItemKind, Source};
+    let rig = Rig::new();
+    let mut spec = rig.spec();
+    // `.mcp.json` holds srv-a and srv-b; switch srv-b off.
+    let off = rig.id(&spec, ItemKind::ToolServer, Source::Project, "srv-b");
+    spec.given = given_with(|g| g.tool_servers.push(off));
+    let events = rig.run_events(&spec, "noinit", |_| {});
+    let given = given_events(&events);
+    assert_eq!(given.len(), 1, "{events:?}");
+    let status_of = |kind: ItemKind, name: &str| {
+        given[0]
+            .0
+            .iter()
+            .find(|i| i.kind == kind && i.name == name)
+            .unwrap_or_else(|| panic!("no {kind:?} {name}"))
+            .status
+    };
+    assert_eq!(
+        status_of(ItemKind::ToolServer, "srv-a"),
+        GivenStatus::PassedNoStartReport
+    );
+    assert_eq!(
+        status_of(ItemKind::ToolServer, "srv-b"),
+        GivenStatus::SwitchedOffNoStartReport
+    );
+    assert_eq!(
+        status_of(ItemKind::Plugin, "pers"),
+        GivenStatus::PassedNoStartReport
+    );
+    assert_eq!(
+        status_of(ItemKind::Hook, "PreToolUse Bash"),
+        GivenStatus::GivenNotFired
+    );
+    assert!(given[0].3.is_empty(), "no warning without a report");
+    // It comes before the terminal event.
+    let at = |f: &dyn Fn(&KataEvent) -> bool| events.iter().position(f).unwrap();
+    assert!(
+        at(&|e| matches!(e, KataEvent::RunGiven { .. }))
+            < at(&|e| matches!(e, KataEvent::RunCompleted { .. }))
+    );
+}

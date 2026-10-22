@@ -41,7 +41,8 @@ pub struct ResolvedItem {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[cfg_attr(feature = "ts", ts(rename_all = "kebab-case"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SettingSource {
     RunSpec,
@@ -51,13 +52,16 @@ pub enum SettingSource {
     Organization,
     ClaudeDefault,
     KataDefault,
+    /// What Claude's own start report said the run started with.
+    ClaudeReport,
 }
 
 /// One setting. `value` is `None` when nothing is set: "none" for a cap or a
 /// deadline, Claude's own default for the model and the effort level.
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct RunSetting {
     pub value: Option<String>,
     pub source: SettingSource,
@@ -67,7 +71,8 @@ pub struct RunSetting {
 /// from the Workbench.
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct RunSettings {
     pub model: RunSetting,
     pub effort: RunSetting,
@@ -82,7 +87,8 @@ pub struct RunSettings {
 /// The name of an environment variable the run sees. Never its value.
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct EnvName {
     pub source: Source,
     pub name: String,
