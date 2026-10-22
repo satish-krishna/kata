@@ -4,6 +4,7 @@ import type { ChangeInfo } from '@bindings/ChangeInfo';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
+import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import type { StageAction } from '../../lib/sdlc';
@@ -23,6 +24,7 @@ function setup(transport: MockTransport) {
     providers: [
       provideRouter([]),
       ChangePageViewModel,
+      RunPreviewViewModel,
       { provide: KataTransport, useValue: transport },
       { provide: ActivatedRoute, useValue: { paramMap: params.asObservable() } },
     ],

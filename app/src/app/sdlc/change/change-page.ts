@@ -24,12 +24,14 @@ import { SdlcSession } from '../../ui/sdlc-session';
 import { SdlcToolbar } from '../../ui/sdlc-toolbar';
 import { StagePills } from '../../ui/stage-pills';
 import { TasksView } from '../../ui/tasks-view';
+import { RunPreviewDialog } from '../../ui/run-preview-dialog';
+import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
 
 @Component({
   selector: 'app-change-page',
-  providers: [ChangePageViewModel, provideIcons({ lucideChevronDown, lucideTriangleAlert })],
-  imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildView, ChangesView],
+  providers: [ChangePageViewModel, RunPreviewViewModel, provideIcons({ lucideChevronDown, lucideTriangleAlert })],
+  imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildView, ChangesView, RunPreviewDialog],
   templateUrl: './change-page.html',
 })
 export class ChangePage {

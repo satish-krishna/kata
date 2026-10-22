@@ -8,6 +8,9 @@ import type { Readiness } from '@bindings/Readiness';
 import type { Settings } from '@bindings/Settings';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
+import type { RunSpec } from '@bindings/RunSpec';
+import { GivenStore } from '../../core/given/given.store';
+import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
@@ -62,6 +65,9 @@ const sameFolder = (a: string, b: string): boolean => {
 export class SdlcHomeViewModel {
   private readonly transport = inject(KataTransport);
   private readonly lock = inject(LockStore);
+  /** The preview every document run goes through; the template mounts its dialog. */
+  readonly preview = inject(RunPreviewViewModel);
+  private readonly givens = inject(GivenStore);
   private readonly runs = inject(RunStore);
   private readonly runner = inject(SdlcRunner);
   private readonly modes = inject(ModeStore);
@@ -378,7 +384,7 @@ export class SdlcHomeViewModel {
     const master = this.masterDir();
     if (!workspace || !scan || !master) return;
     try {
-      await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea);
+      await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, (spec) => this.confirm(spec));
     } catch (e) {
       this.toasts.error(`Could not start the change: ${message(e)}`);
     }
@@ -497,6 +503,16 @@ export class SdlcHomeViewModel {
     return true;
   }
 
+  /** The preview every document run goes through; null when it was cancelled or could not be opened. */
+  private async confirm(spec: RunSpec): Promise<RunSpec | null> {
+    try {
+      return await this.preview.open({ spec: spec, mode: 'sdlc', workdir: spec.workdir, from: { session: this.givens.session(), job: null, build: null } });
+    } catch (e) {
+      this.toasts.error(`Could not preview the run: ${message(e)}`);
+      return null;
+    }
+  }
+
   /** Setup and context describe the system, not a change, so their commits belong on the base branch. */
   private async runOnBase(
     title: string,
@@ -509,7 +525,9 @@ export class SdlcHomeViewModel {
     const master = this.masterDir();
     if (!workspace || !scan || !master) return;
     if (!(await this.onBase(master, masterRepo(scan) ?? 'the master repo', workspace.base_branch))) return;
-    const spec = specFor(kind, null, { folder: workspace.folder, change: null, ...ctx }, await this.currentSettings(), this.catalog() ?? []);
+    const built = specFor(kind, null, { folder: workspace.folder, change: null, ...ctx }, await this.currentSettings(), this.catalog() ?? []);
+    const spec = await this.confirm(built);
+    if (!spec) return;
     await this.runner.run(title, spec, {
       workspaceId: workspace.id,
       master,
@@ -525,7 +543,9 @@ export class SdlcHomeViewModel {
     const repo = masterRepo(scan);
     const master = repo ? masterPath(folder, repo) : null;
     if (master && repo && !(await this.onBase(master, repo, null))) return null;
-    const spec = specFor('setup', null, { folder, system: '', change: null }, await this.currentSettings(), this.catalog() ?? []);
+    const built = specFor('setup', null, { folder, system: '', change: null }, await this.currentSettings(), this.catalog() ?? []);
+    const spec = await this.confirm(built);
+    if (!spec) return null;
     const out = await this.runner.run('Running setup', spec, {
       workspaceId: folderName(folder),
       master,

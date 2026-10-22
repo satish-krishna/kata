@@ -440,6 +440,7 @@ describe('SdlcHomeViewModel runs', () => {
       expect.objectContaining({ workspace: expect.objectContaining({ id: 'acme-claims' }), master: `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}` }),
       'claims',
       'flag fraud',
+      expect.any(Function),
     );
     expect(vm.newChangeOpen()).toBe(false);
   });

@@ -402,7 +402,7 @@ describe('ChangePageViewModel', () => {
       const writes = [vi.spyOn(transport, 'saveSpec'), vi.spyOn(transport, 'saveKata'), vi.spyOn(transport, 'savePreset'), vi.spyOn(transport, 'sdlcSaveSettings'), vi.spyOn(transport, 'sdlcSaveWorkspaces')];
       const github = () => previewRows(preview).find((r) => r.item.id === 'personal:tool-server:github')!;
 
-      const specRun = vm.act('continue-spec');
+      const specRun = vm.act('start-spec');
       await previewReady(preview);
       expect(github().off).toBe(false);
       preview.toggle(github().key, true);
@@ -439,7 +439,7 @@ describe('ChangePageViewModel', () => {
     it('a cancelled preview starts no run and leaves no lock', async () => {
       const { vm, runAgent, preview } = setup(FNOL, new MockTransport(), 'real');
       await ready(vm);
-      const run = vm.act('continue-spec');
+      const run = vm.act('start-spec');
       await previewReady(preview);
       preview.cancel();
       await run;

@@ -6,6 +6,12 @@ import { MockTransport } from '../../core/transport/mock-transport';
 import { seedCatalog } from '../../lib/mock';
 import { SdlcHome } from './sdlc-home';
 
+/** Every document run opens the preview first; confirm it once its rows have resolved. */
+const confirmPreview = async () => {
+  const start = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === 'Start run');
+  await vi.waitFor(() => expect(start() && !start()!.disabled).toBe(true));
+  start()!.click();
+};
 const settle = async () => {
   for (let i = 0; i < 4; i++) {
     TestBed.tick();
@@ -43,6 +49,7 @@ describe('SdlcHome', () => {
     );
     expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual(['Refresh context for claims-core', 'Refresh context for customer-portal']);
     buttons[1].click();
+    await confirmPreview();
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     expect(run.mock.calls[0][0].name).toBe('sdlc-claims-context');
   });
@@ -51,6 +58,7 @@ describe('SdlcHome', () => {
     const { container } = await mount();
     vi.spyOn(TestBed.inject(KataTransport), 'runSpec').mockResolvedValue('1');
     container.querySelector<HTMLButtonElement>('[aria-label="Refresh context for customer-portal"]')!.click();
+    await confirmPreview();
     await vi.waitFor(() => expect(container.querySelector('app-sdlc-session')).not.toBeNull());
     await settle();
     expect(container.querySelector('app-observe-pane')).not.toBeNull();

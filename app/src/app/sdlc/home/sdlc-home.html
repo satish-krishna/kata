@@ -205,4 +205,16 @@
     (confirm)="vm.confirmRemove()"
     (cancel)="vm.cancelRemove()"
   />
+  <app-run-preview-dialog
+    [open]="vm.preview.isOpen()"
+    [title]="vm.preview.title()"
+    [settings]="vm.preview.settings()"
+    [env]="vm.preview.env()"
+    [groups]="vm.preview.groups()"
+    [warnings]="vm.preview.warnings()"
+    [busy]="vm.preview.busy()"
+    (toggle)="vm.preview.toggle($event.key, $event.off)"
+    (start)="vm.preview.start()"
+    (cancel)="vm.preview.cancel()"
+  />
 </div>

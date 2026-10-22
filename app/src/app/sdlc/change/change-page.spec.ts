@@ -11,6 +11,12 @@ import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
+/** Every document run opens the preview first; confirm it once its rows have resolved. */
+const confirmPreview = async () => {
+  const start = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === 'Start run');
+  await vi.waitFor(() => expect(start() && !start()!.disabled).toBe(true));
+  start()!.click();
+};
 const settle = async () => {
   for (let i = 0; i < 4; i++) {
     TestBed.tick();
@@ -83,6 +89,7 @@ describe('ChangePage', () => {
     box.dispatchEvent(new Event('input'));
     await settle();
     Array.from(dialog.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Run')!.click();
+    await confirmPreview();
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     expect(run.mock.calls[0][0].task).toContain('Operator feedback:\nR2: team leads can reassign too.');
   });

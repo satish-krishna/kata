@@ -28,6 +28,9 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ChangesContext } from '../changes/changes-view.view-model';
 import type { BuildContext } from '../build/build-view.view-model';
 import type { BuildDialogMode, BuildStartRequest } from '../../ui/build-dialog';
+import type { RunSpec } from '@bindings/RunSpec';
+import { GivenStore } from '../../core/given/given.store';
+import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
@@ -166,6 +169,9 @@ function docFor(c: ChangeInfo): DocStem {
 export class ChangePageViewModel {
   private readonly transport = inject(KataTransport);
   private readonly lock = inject(LockStore);
+  /** The preview every document run goes through; the template mounts its dialog. */
+  readonly preview = inject(RunPreviewViewModel);
+  private readonly givens = inject(GivenStore);
   private readonly runs = inject(RunStore);
   private readonly runner = inject(SdlcRunner);
   private readonly modes = inject(ModeStore);
@@ -1014,14 +1020,22 @@ export class ChangePageViewModel {
     const scan = this.scan();
     const master = this.masterDir();
     if (!workspace || !scan || !master) return;
-    let spec;
+    let built;
     try {
       const settings = this.modes.settings() ?? (await this.modes.load());
-      spec = specFor(run.kind, action, { folder: workspace.folder, system: this.system(), change: this.changeName(), feedback }, settings, this.catalog());
+      built = specFor(run.kind, action, { folder: workspace.folder, system: this.system(), change: this.changeName(), feedback }, settings, this.catalog());
     } catch (e) {
       this.toasts.error(`Could not prepare the run: ${message(e)}`);
       return;
     }
+    let spec: RunSpec | null;
+    try {
+      spec = await this.preview.open({ spec: built, mode: 'sdlc', workdir: built.workdir, from: { session: this.givens.session(), job: null, build: null } });
+    } catch (e) {
+      this.toasts.error(`Could not preview the run: ${message(e)}`);
+      return;
+    }
+    if (!spec) return;
     await this.runner.run(run.title, spec, {
       workspaceId: workspace.id,
       master,
