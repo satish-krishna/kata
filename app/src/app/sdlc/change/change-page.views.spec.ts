@@ -350,6 +350,20 @@ describe('ChangePage plan views', () => {
     expect(rail.querySelectorAll('.k-chip').length).toBe(0);
   });
 
+  it('renders markdown in a task name and in its departure', async () => {
+    const row = { task: 'T2', repo: 'customer-portal', commits: ['ccc3333'], departure: 'Reused **the existing** picker.\n\n- kept `onPick`' };
+    const tasks = [task('T2', 'Add the `picker`', 'customer-portal', [], row)];
+    const { container } = await mount(MOCK_BUILD_CHANGE, docs, tasks, { plan: [planned('T2', 'Add the `picker` from [docs](https://example.com)', 'customer-portal', [], [])] });
+    const nav = tasksNav(container)[0];
+    expect(nav.querySelector('code')!.textContent).toBe('picker');
+    expect(nav.querySelector('a')).toBeNull();
+    const detail = container.querySelector('[data-testid="task"]')!;
+    expect(detail.querySelector('h2 code')!.textContent).toBe('picker');
+    const rail = container.querySelector('aside[aria-label="Build record"]')!;
+    expect(rail.querySelector('strong')!.textContent).toBe('the existing');
+    expect(rail.querySelector('li code')!.textContent).toBe('onPick');
+  });
+
   it('crosses the seam: Needed by lists the tasks that depend on this one, and a click picks that task', async () => {
     const { container } = await mount(MOCK_BUILD_CHANGE, docs, TASKS);
     tasksNav(container)[0].click();

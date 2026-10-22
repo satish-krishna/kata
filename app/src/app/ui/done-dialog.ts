@@ -21,6 +21,7 @@ import {
 } from '../lib/sdlc-done';
 import { CheckResults } from './check-results';
 import { FindingsList } from './findings-list';
+import { MarkdownBody } from './markdown-body';
 
 /* The confirmation before pull requests open: whether GitHub is ready, the branch and checks of each repository as they
  * will run (and where they are set), what failed, which commits break the rules, what departed from the plan and what the
@@ -29,7 +30,7 @@ import { FindingsList } from './findings-list';
 @Component({
   selector: 'app-done-dialog',
   host: { class: 'contents' },
-  imports: [HlmDialogImports, HlmButtonImports, HlmCheckbox, HlmLabel, HlmTableImports, CheckResults, FindingsList],
+  imports: [HlmDialogImports, HlmButtonImports, HlmCheckbox, HlmLabel, HlmTableImports, CheckResults, FindingsList, MarkdownBody],
   templateUrl: './done-dialog.html',
 })
 export class DoneDialog {

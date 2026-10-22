@@ -20,7 +20,12 @@
     @for (f of items; track $index) {
       <li class="k-findings__item">
         <span [class]="'k-status k-status--' + tone(f)"><span class="k-status__dot"></span>{{ label(f) }}</span>
-        <span class="k-findings__text">{{ f.text }}@if (where(f); as at) { <span class="k-mono k-left__note">{{ at }}</span>}</span>
+        <div class="k-findings__text">
+          <app-markdown-body [md]="f.text" />
+          @if (where(f); as at) {
+            <span class="k-mono k-left__note">{{ at }}</span>
+          }
+        </div>
       </li>
     }
   </ol>

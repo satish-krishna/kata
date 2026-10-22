@@ -1,4 +1,18 @@
-import { renderMarkdown, renderMarkdownForDom } from './render-markdown';
+import { renderInlineMarkdownForDom, renderMarkdown, renderMarkdownForDom } from './render-markdown';
+
+describe('renderInlineMarkdownForDom', () => {
+  it('renders one line without the paragraph around it', () => {
+    expect(renderInlineMarkdownForDom('Add the `picker` **now**')).toBe('Add the <code>picker</code> <strong>now</strong>');
+  });
+
+  it('keeps a link as its text, so a name inside a button holds nothing clickable', () => {
+    expect(renderInlineMarkdownForDom('See [the docs](https://example.com)')).toBe('See the docs');
+  });
+
+  it('never renders raw HTML', () => {
+    expect(renderInlineMarkdownForDom('a <img src=x onerror=alert(1)>')).not.toContain('<img');
+  });
+});
 
 describe('renderMarkdown', () => {
   it('renders GFM: strong, tables, task lists, strikethrough', () => {

@@ -431,7 +431,7 @@
 .k-detail a[href^="#req-"]:hover { background: var(--accent-subtle); }
 .k-task__rail { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; min-height: 0; overflow-y: auto; padding: var(--space-7) var(--space-6); border-left: 1px solid var(--border-subtle); background: var(--surface-panel); }
 .k-record__label--differs { color: var(--warning); }
-.k-record__text { margin: 0; font: var(--text-sm)/1.6 var(--font-sans); color: var(--text-secondary); overflow-wrap: anywhere; }
+.k-record__text { display: block; margin: 0;font: var(--text-sm)/1.6 var(--font-sans); color: var(--text-secondary); overflow-wrap: anywhere; }
 .k-chips { margin: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .k-chip { padding: var(--space-1) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-xs); background: var(--surface-inset); font-size: var(--text-sm); color: var(--text-secondary); white-space: nowrap; }
 .k-ref { padding: 0 var(--space-2); border: 1px solid var(--accent-border); border-radius: var(--radius-xs); font-size: var(--text-xs); color: var(--accent-text); cursor: pointer; }

@@ -21,6 +21,14 @@ describe('FindingsList', () => {
     expect(items[1].textContent).toContain('Finding');
   });
 
+  it('renders a finding as markdown', async () => {
+    const { container } = await mount({ findings: [{ severity: 'medium', text: 'Retry skips `limit()`, **twice**.\n\n- in `store.rs`\n- in `api.rs`' }] });
+    const body = container.querySelector('.k-findings__text')!;
+    expect(Array.from(body.querySelectorAll('code')).map((c) => c.textContent)).toEqual(['limit()', 'store.rs', 'api.rs']);
+    expect(body.querySelector('strong')!.textContent).toBe('twice');
+    expect(body.textContent).not.toContain('`');
+  });
+
   it('says so when the review found nothing', async () => {
     const { container } = await mount({ findings: [] });
     expect(container.querySelectorAll('li').length).toBe(0);

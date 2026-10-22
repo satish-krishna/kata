@@ -144,6 +144,16 @@ describe('DoneDialog', () => {
     expect(text()).toContain('Reused the existing file picker.');
   });
 
+  it('renders the departures and the findings as markdown', async () => {
+    await open(report({
+      departures: [{ task: 'T2', repo: 'customer-portal', planText: 'Add `PhotoPicker`', departure: 'Reused **the existing** picker.' }],
+      review: { at: 1, findings: [{ severity: 'low', text: 'Rename `x` to `count`.' }] },
+    }));
+    expect(Array.from(dialog().querySelectorAll('code')).map((c) => c.textContent)).toEqual(['PhotoPicker', 'x', 'count']);
+    expect(dialog().querySelector('strong')!.textContent).toBe('the existing');
+    expect(text()).not.toContain('`');
+  });
+
   it('a bad checks file blocks done and says where (R16.2)', async () => {
     await open(report({
       checksError: '/home/demo/.kata/checks/claims.toml:4:1: a check has no time limit',

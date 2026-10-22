@@ -79,8 +79,8 @@
                 <li class="k-left__row">
                   <span class="k-mono">{{ d.task }}</span>
                   <span class="k-mono">{{ d.repo }}</span>
-                  <span class="k-left__note">The plan said: {{ d.planText }}</span>
-                  <span>Done instead: {{ d.departure }}</span>
+                  <div class="k-left__note">The plan said: <app-markdown-body [md]="d.planText" /></div>
+                  <div>Done instead: <app-markdown-body [md]="d.departure" /></div>
                 </li>
               }
             </ul>

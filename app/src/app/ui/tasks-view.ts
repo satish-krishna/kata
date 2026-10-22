@@ -2,6 +2,7 @@ import { Component, computed, input, output } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { linkRequirements, neededBy, shownSections, taskRecord, type TaskView } from '../lib/task-view';
 import { MarkdownBody } from './markdown-body';
+import { MarkdownInline } from './markdown-inline';
 
 /* The plan tab's Tasks view: the tasks in plan order on the left, the picked task in the middle (each section of
  * its plan entry as a labeled block), and on the right what the build recorded for it and which tasks need it. A
@@ -9,7 +10,7 @@ import { MarkdownBody } from './markdown-body';
 @Component({
   selector: 'app-tasks-view',
   host: { class: 'contents' },
-  imports: [HlmButtonImports, MarkdownBody],
+  imports: [HlmButtonImports, MarkdownBody, MarkdownInline],
   templateUrl: './tasks-view.html',
 })
 export class TasksView {

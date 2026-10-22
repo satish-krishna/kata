@@ -71,3 +71,26 @@ const domProcessor = unified()
 export function renderMarkdownForDom(md: string): string {
   return String(domProcessor.processSync(md));
 }
+
+/** Unwraps a lone top-level paragraph and turns each link into its text, so a one-line name can sit inside a
+ *  heading or a button: a block there is invalid, and a link inside a button is a control inside a control. */
+function inlineOnly() {
+  const flatten = (nodes: Nodes[]): Nodes[] =>
+    nodes.flatMap((node) => {
+      if (node.type === 'element' && node.tagName === 'a') return flatten(node.children);
+      if ('children' in node) node.children = flatten(node.children) as typeof node.children;
+      return [node];
+    });
+  return (tree: Root): void => {
+    const blocks = tree.children.filter((c) => c.type !== 'text' || c.value.trim() !== '');
+    const only = blocks.length === 1 && blocks[0].type === 'element' && blocks[0].tagName === 'p' ? blocks[0] : null;
+    tree.children = flatten(only ? only.children : tree.children) as Root['children'];
+  };
+}
+
+const inlineProcessor = unified().use(remarkParse).use(remarkGfm).use(remarkRehype).use(rehypeSanitize).use(inlineOnly).use(rehypeStringify);
+
+/** One line of markdown for a name: code, emphasis and the like, with no paragraph around it and no links. */
+export function renderInlineMarkdownForDom(md: string): string {
+  return String(inlineProcessor.processSync(md));
+}
