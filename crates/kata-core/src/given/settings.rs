@@ -1,7 +1,7 @@
 //! The settings layers Claude Code reads, and what the resolver takes from them.
 //! Nothing here returns an environment value or a full hook command.
 
-use super::{ItemKind, ResolveRoots, Source};
+use super::{hook_key, item_id, ItemKind, ResolveRoots, Source};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -28,36 +28,226 @@ pub struct SettingsLayer {
     pub problem: Option<String>,
 }
 
-pub fn read_layers(_roots: &ResolveRoots) -> Vec<SettingsLayer> {
-    Vec::new()
+/// Read the four settings layers, lowest precedence first: personal, project,
+/// project-local, organization. A missing file is no layer; an unreadable or
+/// invalid one is a layer with a `problem`.
+pub fn read_layers(roots: &ResolveRoots) -> Vec<SettingsLayer> {
+    let files = [
+        (Source::Personal, roots.home.join(".claude/settings.json")),
+        (Source::Project, roots.workdir.join(".claude/settings.json")),
+        (
+            Source::ProjectLocal,
+            roots.workdir.join(".claude/settings.local.json"),
+        ),
+        (Source::Organization, roots.managed_settings.clone()),
+    ];
+    let mut layers = Vec::new();
+    for (source, path) in files {
+        if !path.exists() {
+            continue;
+        }
+        let parsed = std::fs::read_to_string(&path)
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))
+            .and_then(|text| {
+                serde_json::from_str::<serde_json::Value>(&text)
+                    .map_err(|e| format!("{} is not valid JSON: {e}", path.display()))
+            });
+        let (value, problem) = match parsed {
+            Ok(v) if v.is_object() => (v, None),
+            Ok(_) => (
+                serde_json::Value::Null,
+                Some(format!("{} is not a JSON object", path.display())),
+            ),
+            Err(p) => (serde_json::Value::Null, Some(p)),
+        };
+        layers.push(SettingsLayer {
+            source,
+            path,
+            value,
+            problem,
+        });
+    }
+    layers
 }
 
-pub fn hook_detail(_event: &str, _matcher: Option<&str>, _command: &str) -> String {
-    String::new()
+const SCRIPT_EXTENSIONS: &[&str] = &[
+    ".mjs", ".js", ".cjs", ".ts", ".py", ".sh", ".ps1", ".cmd", ".bat",
+];
+
+/// Split a command on unquoted whitespace, dropping the quotes. Not a shell
+/// parser: it only has to be safe, so an odd command yields odd tokens, never
+/// more text than the command held.
+fn tokens(command: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut open = false;
+    let mut quote: Option<char> = None;
+    for c in command.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => cur.push(c),
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                open = true;
+            }
+            None if c.is_whitespace() => {
+                if open || !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                    open = false;
+                }
+            }
+            None => cur.push(c),
+        }
+    }
+    if open || !cur.is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
-pub fn hooks(_layers: &[SettingsLayer]) -> Vec<ItemFacts> {
-    Vec::new()
+/// `NAME=value`, as a shell reads a leading environment assignment.
+fn is_assignment(token: &str) -> bool {
+    match token.split_once('=') {
+        Some((name, _)) => {
+            !name.is_empty()
+                && !name.starts_with(|c: char| c.is_ascii_digit())
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+        None => false,
+    }
 }
 
-pub fn env_names(_layers: &[SettingsLayer]) -> Vec<(Source, String)> {
-    Vec::new()
+fn is_script_path(token: &str) -> bool {
+    if token.starts_with('-') || is_assignment(token) || token.contains("://") {
+        return false;
+    }
+    let ends_in_script = SCRIPT_EXTENSIONS.iter().any(|e| token.ends_with(e));
+    // Code passed inline ("-c 'open(\"/etc/x\")'") has these; a path does not.
+    let looks_like_code = token.contains(['(', ')', '\'', '"', ';', '|', '&', '<', '>', '`']);
+    if looks_like_code {
+        return false;
+    }
+    let has_space = token.contains(char::is_whitespace);
+    ends_in_script || (!has_space && token.contains(['/', '\\']))
 }
 
-pub fn model_setting(_layers: &[SettingsLayer]) -> Option<(String, Source)> {
-    None
+/// How a hook is shown: `<event> · <matcher or any> · <program> <first script
+/// path>`. The program is the first token that is not a leading `NAME=value`
+/// assignment; the script path is the first later token that is a script file or
+/// a path (never a flag, an assignment or a URL). Nothing else of the command is
+/// shown, so a token in an argument never reaches the screen.
+pub fn hook_detail(event: &str, matcher: Option<&str>, command: &str) -> String {
+    let matcher = matcher.filter(|m| !m.is_empty()).unwrap_or("any");
+    let toks = tokens(command);
+    let mut rest = toks.iter().skip_while(|t| is_assignment(t));
+    let program = rest.next().map(String::as_str).unwrap_or("");
+    let script = rest.find(|t| is_script_path(t));
+    let mut out = format!("{event} · {matcher}");
+    if !program.is_empty() {
+        out.push_str(" · ");
+        out.push_str(program);
+        if let Some(s) = script {
+            out.push(' ');
+            out.push_str(s);
+        }
+    }
+    out
 }
 
-pub fn effort_setting(_layers: &[SettingsLayer]) -> Option<(String, Source)> {
-    None
+/// One item per hook command. Entries that are not `type: "command"` (prompt,
+/// agent, http hooks) have no command to run or identify and are left out.
+pub fn hooks(layers: &[SettingsLayer]) -> Vec<ItemFacts> {
+    let mut out = Vec::new();
+    for layer in layers {
+        let (source, path) = (layer.source, &layer.path);
+        let Some(events) = layer.value.get("hooks").and_then(|h| h.as_object()) else {
+            continue;
+        };
+        for (event, groups) in events {
+            let Some(groups) = groups.as_array() else {
+                continue;
+            };
+            for group in groups {
+                let matcher = group.get("matcher").and_then(|m| m.as_str());
+                let Some(entries) = group.get("hooks").and_then(|h| h.as_array()) else {
+                    continue;
+                };
+                for entry in entries {
+                    if entry.get("type").and_then(|t| t.as_str()) != Some("command") {
+                        continue;
+                    }
+                    let Some(command) = entry.get("command").and_then(|c| c.as_str()) else {
+                        continue;
+                    };
+                    let matcher = matcher.filter(|m| !m.is_empty());
+                    out.push(ItemFacts {
+                        id: item_id(ItemKind::Hook, source, &hook_key(event, matcher, command)),
+                        kind: ItemKind::Hook,
+                        source,
+                        name: format!("{event} {}", matcher.unwrap_or("any")),
+                        detail: hook_detail(event, matcher, command),
+                        path: Some(path.clone()),
+                        brought_by: None,
+                        repo_relative: matches!(source, Source::Project | Source::ProjectLocal),
+                    });
+                }
+            }
+        }
+    }
+    out
 }
 
-pub fn output_style(_layers: &[SettingsLayer]) -> Option<(String, Source)> {
-    None
+/// The names of each layer's `env`; the values are dropped here.
+pub fn env_names(layers: &[SettingsLayer]) -> Vec<(Source, String)> {
+    layers
+        .iter()
+        .filter_map(|l| {
+            l.value
+                .get("env")
+                .and_then(|e| e.as_object())
+                .map(|e| (l, e))
+        })
+        .flat_map(|(l, e)| e.keys().map(move |k| (l.source, k.clone())))
+        .collect()
 }
 
-pub fn enabled_plugins(_layers: &[SettingsLayer]) -> BTreeMap<String, (bool, Source)> {
-    BTreeMap::new()
+/// The highest-precedence layer's string value for `key`: organization,
+/// project-local, project, personal.
+fn string_setting(layers: &[SettingsLayer], key: &str) -> Option<(String, Source)> {
+    layers.iter().rev().find_map(|l| {
+        l.value
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(|v| (v.to_string(), l.source))
+    })
+}
+
+pub fn model_setting(layers: &[SettingsLayer]) -> Option<(String, Source)> {
+    string_setting(layers, "model")
+}
+
+pub fn effort_setting(layers: &[SettingsLayer]) -> Option<(String, Source)> {
+    string_setting(layers, "effortLevel")
+}
+
+pub fn output_style(layers: &[SettingsLayer]) -> Option<(String, Source)> {
+    string_setting(layers, "outputStyle")
+}
+
+/// `enabledPlugins` merged per key, a higher layer overriding a lower one.
+pub fn enabled_plugins(layers: &[SettingsLayer]) -> BTreeMap<String, (bool, Source)> {
+    let mut out = BTreeMap::new();
+    for l in layers {
+        let Some(map) = l.value.get("enabledPlugins").and_then(|p| p.as_object()) else {
+            continue;
+        };
+        for (name, on) in map {
+            if let Some(on) = on.as_bool() {
+                out.insert(name.clone(), (on, l.source));
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
