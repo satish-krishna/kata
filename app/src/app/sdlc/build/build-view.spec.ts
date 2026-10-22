@@ -116,6 +116,34 @@ describe('BuildView', () => {
   });
 });
 
+describe('BuildView earlier runs', () => {
+  it('shows an earlier run as one line, keeps its pane mounted, and opens it on request', async () => {
+    const { container, advance, vm } = await mount();
+    await advance(600);
+    vm.select('claims-core');
+    vm.cancelRun();
+    await advance(600);
+    await vm.continueRun();
+    if (vm.leftoverPrompt() !== null) await vm.confirmContinue();
+    await advance(300);
+    expect(vm.shown().length).toBe(2);
+
+    const group = container.querySelector<HTMLElement>('[data-repo-runs="claims-core"]')!;
+    const panes = () => Array.from(group.querySelectorAll<HTMLElement>('.k-build__pane'));
+    expect(panes()).toHaveLength(2);
+    expect(panes().map((p) => p.hidden)).toEqual([true, false]);
+    const line = Array.from(group.querySelectorAll<HTMLButtonElement>('button[data-run-line]'));
+    expect(line).toHaveLength(1);
+    expect(line[0].getAttribute('aria-expanded')).toBe('false');
+    expect(line[0].textContent).toContain(vm.shown()[0].outcome);
+
+    line[0].click();
+    await advance(50);
+    expect(panes().map((p) => p.hidden)).toEqual([false, false]);
+    expect(line[0].getAttribute('aria-expanded')).toBe('true');
+  });
+});
+
 describe('BuildView watching and reviewing', () => {
   const norm = (s: string | null) => (s ?? '').replace(/\s+/g, ' ').trim();
   type Mounted = Awaited<ReturnType<typeof mount>>;

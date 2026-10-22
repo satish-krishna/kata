@@ -1,7 +1,7 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { Component, ElementRef, Injector, afterNextRender, effect, inject, input, output, untracked, viewChild } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucidePanelLeftClose, lucidePanelLeftOpen, lucidePanelTopClose, lucidePanelTopOpen } from '@ng-icons/lucide';
+import { lucideChevronDown, lucideChevronRight, lucidePanelLeftClose, lucidePanelLeftOpen, lucidePanelTopClose, lucidePanelTopOpen } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmResizableImports } from '@spartan-ng/helm/resizable';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
@@ -22,7 +22,7 @@ import { BuildViewModel, type BuildContext } from './build-view.view-model';
 @Component({
   selector: 'app-build-view',
   host: { class: 'contents' },
-  providers: [BuildViewModel, provideIcons({ lucidePanelLeftClose, lucidePanelLeftOpen, lucidePanelTopClose, lucidePanelTopOpen })],
+  providers: [BuildViewModel, provideIcons({ lucideChevronDown, lucideChevronRight, lucidePanelLeftClose, lucidePanelLeftOpen, lucidePanelTopClose, lucidePanelTopOpen })],
   imports: [HlmButtonImports, HlmResizableImports, NgIcon, NgTemplateOutlet, BuildRefusalDialog, ConfirmDialog,HlmTabsImports, ObservePane, RepoStatusList, FindingsList, WaitingNotice, ChangesView],
   templateUrl: './build-view.html',
   styleUrl: './build-view.css',

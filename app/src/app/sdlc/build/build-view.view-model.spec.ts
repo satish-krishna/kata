@@ -248,6 +248,32 @@ describe('BuildViewModel', () => {
     expect(row(vm, 'claims-core').label).toBe('Working · T1');
   });
 
+  it('a repository with several runs shows the latest in full and each earlier one as a line that can be opened', async () => {
+    const { vm, transport, runner } = setup();
+    const real = runner.runInRepo.bind(runner);
+    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
+      if (run.mock.calls.length <= 2) {
+        link.onRun?.(`fake-${target.repo}`);
+        return { exit: 124, error: null };
+      }
+      return real(target, spec, link);
+    });
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    vm.select('claims-core');
+    await vm.continueRun();
+    await advance(500);
+    const [earlier, latest] = vm.shown();
+    expect(vm.shown()).toHaveLength(2);
+    expect(earlier).toMatchObject({ latest: false, expanded: false });
+    expect(earlier.outcome).toMatch(/^[A-Z]/);
+    expect(latest).toMatchObject({ latest: true });
+    vm.toggleRun(earlier.id);
+    expect(vm.shown()[0].expanded).toBe(true);
+    vm.toggleRun(earlier.id);
+    expect(vm.shown()[0].expanded).toBe(false);
+  });
+
   it('Continue after the branches were settled is refused with the problems when a build log fails the check, and starts nothing (R8.1)', async () => {
     const { vm, transport, runner } = setup();
     const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');

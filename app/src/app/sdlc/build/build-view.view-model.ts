@@ -12,7 +12,7 @@ import { RunStore } from '../../core/run/run.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
-import type { AskRecord, PermissionRecord, RunState, RunSummary, StreamEvent } from '../../lib/events';
+import { STATUS_LABEL, type AskRecord, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { reviewFindings, specFor, type BuildRun, type Finding } from '../../lib/sdlc';
@@ -44,6 +44,12 @@ export type ShownRun = {
   permissions: PermissionRecord[];
   /** The index of the first event the engineer has not seen since they came back to this run, or null. */
   unseenFrom: number | null;
+  /** True for the newest run of its repository, which always shows in full. */
+  latest: boolean;
+  /** True when the engineer opened this earlier run; an earlier run shows as one line otherwise. */
+  expanded: boolean;
+  /** How the run went, for its one line: the status, then exit, turns and cost once it completed. */
+  outcome: string;
 };
 
 /** The two views of a running build: what the agents say and do, and what they changed. */
@@ -79,6 +85,12 @@ const hms = (secs: number): string => {
 };
 const ms = (secs: number): string => `${Math.floor(Math.max(0, secs) / 60)}:${pad(Math.floor(Math.max(0, secs)) % 60)}`;
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+/** An earlier run's one line: its status, and exit, turns and cost once it completed. */
+const outcomeOf = (state: RunState, summary: RunSummary | null): string => {
+  if (summary === null) return STATUS_LABEL[state];
+  const cost = summary.cost_usd == null ? '' : ` · $${summary.cost_usd.toFixed(2)}`;
+  return `${STATUS_LABEL[state]} · exit ${summary.exit_code} · ${summary.num_turns} turns${cost}`;
+};
 
 /**
  * The build view's state: the driver that starts a run per ready repository and one review, the build's hold on the lock,
@@ -131,6 +143,8 @@ export class BuildViewModel {
   /** The warning naming the other files a review run changed in the master; null when it kept to the review document. */
   private readonly runNotice = signal<DocNotice | null>(null);
   private readonly picked = signal<string | null>(null);
+  /** The earlier runs the engineer opened in full, by run id. */
+  private readonly openedRuns = signal<ReadonlySet<string>>(new Set());
   private readonly broken = signal(false);
   private readonly finishing = signal(false);
   private readonly reading = signal(false);
@@ -204,6 +218,7 @@ export class BuildViewModel {
   /** Every run of the build, grouped by the repository (or the review) it belongs to. All stay mounted; only the selected group shows. */
   readonly groups = computed<{ key: string; runs: ShownRun[] }[]>(() => {
     const marks = this.marks();
+    const opened = this.openedRuns();
     const out = new Map<string, ShownRun[]>();
     for (const e of this.log()) {
       const snap = this.runs.snapshot(e.id)();
@@ -217,10 +232,13 @@ export class BuildViewModel {
         asks: snap.asks,
         permissions: snap.permissions,
         unseenFrom: marks[e.id] ?? null,
+        latest: false,
+        expanded: opened.has(e.id),
+        outcome: outcomeOf(snap.state, snap.summary),
       };
       out.set(e.key, [...(out.get(e.key) ?? []), run]);
     }
-    return [...out].map(([key, runs]) => ({ key, runs }));
+    return [...out].map(([key, runs]) => ({ key, runs: runs.map((r, i) => (i === runs.length - 1 ? { ...r, latest: true } : r)) }));
   });
 
   /** The runs of the selected repository. */
@@ -345,6 +363,14 @@ export class BuildViewModel {
       this.broken.set(true);
     }
     return true;
+  }
+
+  /** Open an earlier run in full, or fold it back to its one line. */
+  toggleRun(id: string): void {
+    const next = new Set(this.openedRuns());
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    this.openedRuns.set(next);
   }
 
   /** Collapse the repository list to nothing, or bring it back at the size it had. */

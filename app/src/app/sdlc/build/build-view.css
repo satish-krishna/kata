@@ -111,7 +111,8 @@
 }
 
 .k-build__panel[hidden],
-.k-build__runs[hidden] {
+.k-build__runs[hidden],
+.k-build__pane[hidden] {
   display: none;
 }
 

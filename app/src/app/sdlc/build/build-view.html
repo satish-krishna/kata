@@ -121,8 +121,18 @@
         @for (g of vm.groups(); track g.key) {
           <div class="k-build__runs" [attr.data-repo-runs]="g.key" [hidden]="g.key !== vm.selected()">
             @for (r of g.runs; track r.id) {
-              <div class="k-build__run-start">Started <span class="k-mono">{{ r.startedAt }}</span></div>
-              <div class="k-build__pane">
+              @if (r.latest) {
+                <div class="k-build__run-start">Started <span class="k-mono">{{ r.startedAt }}</span></div>
+              } @else {
+                <div class="k-build__run-start">
+                  <button hlmBtn variant="ghost" size="sm" type="button" data-run-line [attr.aria-expanded]="r.expanded" (click)="vm.toggleRun(r.id)">
+                    <ng-icon [name]="r.expanded ? 'lucideChevronDown' : 'lucideChevronRight'" size="14" />
+                    Started <span class="k-mono">{{ r.startedAt }}</span> · {{ r.outcome }}
+                  </button>
+                </div>
+              }
+              <!-- An earlier run folds to its line, but its pane stays mounted: RunStore keeps folding its events. -->
+              <div class="k-build__pane" [hidden]="!r.latest && !r.expanded">
                 <app-observe-pane
                   [state]="r.state"
                   [events]="r.events"
