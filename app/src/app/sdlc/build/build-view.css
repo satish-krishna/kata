@@ -64,8 +64,8 @@
 .k-build__pane {
   display: flex;
   flex-direction: column;
-  /* One panel tall, less the panel's padding: scrolled to, a run fills the view. */
-  height: max(32rem, 100cqb - 2 * var(--space-5));
+  /* An earlier run keeps a fixed height; the latest one (below) takes what the panel has left. */
+  height: 32rem;
   min-width: 0;
   min-height: 0;
   border: 1px solid var(--border-subtle);
@@ -105,7 +105,6 @@
   flex-direction: column;
   gap: var(--space-4);
   min-width: 0;
-  container-type: size;
   min-height: 0;
   padding: var(--space-5);
   overflow-y: auto;
@@ -130,7 +129,16 @@
   background: var(--surface-app);
 }
 
+/* The runs take the rest of the panel, so the latest pane can reach its bottom: the pane scrolls its events and the panel
+   scrolls only when there is more above it than fits (earlier runs, the end of the build). */
 .k-build__runs {
-  display: grid;
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
   gap: var(--space-4);
+}
+
+.k-build__runs > .k-build__pane:last-child {
+  flex: 1 0 20rem;
+  height: auto;
 }

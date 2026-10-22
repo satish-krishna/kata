@@ -22,6 +22,19 @@ const notices = page.locator('[data-waiting]:visible');
 
 try {
   await startBuild(page);
+
+  // While a run goes, its observe pane scrolls its own events; the panel around it must not scroll as well.
+  await page.getByRole('tab', { name: /^Activity/ }).click();
+  for (const height of [900, 700]) {
+    await page.setViewportSize({ width: 1280, height });
+    await page.waitForTimeout(300);
+    const panel = await page.evaluate(() => {
+      const el = document.querySelector('.k-build__panel:not([hidden])');
+      return { scroll: el.scrollHeight, client: el.clientHeight };
+    });
+    check(panel.scroll <= panel.client + 1, `1280x${height}: one running build, the Activity panel has no scrollbar of its own (${panel.scroll} of ${panel.client})`);
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole('tab', { name: 'Changes' }).click();
 
   // R17.5: told at once, on Changes, and the engineer stays there.
@@ -99,13 +112,16 @@ try {
         .map((el) => `${el.tagName.toLowerCase()}.${[...el.classList].join('.')} ${el.scrollWidth} of ${el.clientWidth}`),
     );
     check(sideways.length === 0, `${width}px: nothing in the build view scrolls sideways${sideways.length ? ` (${sideways.join(' | ')})` : ''}`);
+    // The finished build's findings sit above the runs here, so the panel may scroll; the latest pane still runs to the
+    // bottom of the panel's content, with no empty space left under it.
     const fill = await page.evaluate(() => {
       const panel = document.querySelector('.k-build__panel:not([hidden])');
+      panel.scrollTop = panel.scrollHeight;
       const last = [...document.querySelectorAll('.k-build__runs:not([hidden]) .k-build__pane')].at(-1);
-      return { pane: Math.round(last.getBoundingClientRect().height), panel: panel.clientHeight };
+      const pad = parseFloat(getComputedStyle(panel).paddingBottom);
+      return { gap: Math.round(panel.getBoundingClientRect().bottom - pad - last.getBoundingClientRect().bottom), pane: Math.round(last.getBoundingClientRect().height) };
     });
-    // The pane may give up the run's heading and the panel's padding, never a fixed share of the height.
-    check(fill.pane >= fill.panel - 120, `${width}px: the last run's observe pane takes the panel's height (${fill.pane} of ${fill.panel})`);
+    check(Math.abs(fill.gap) <= 2, `${width}px: the last run's observe pane reaches the bottom of the panel (${fill.gap}px short, ${fill.pane}px tall)`);
     const scroll = await noHorizontalScroll(page);
     check(scroll.scrollWidth <= scroll.clientWidth && scroll.body <= scroll.clientWidth, `${width}px: no horizontal page scroll (${scroll.scrollWidth} of ${scroll.clientWidth})`);
     if (layout.error) check(false, layout.error);
