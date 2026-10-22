@@ -10,7 +10,7 @@ import { toastState } from '@spartan-ng/brain/sonner';
 import { LaunchStore } from '../core/launch/launch.store';
 import { seedSpec, seedCatalog, previewFixture } from '../lib/mock';
 import type { RunSpec } from '@bindings/RunSpec';
-import type { PresetRow } from '../lib/given';
+import { toGiven, type PresetRow } from '../lib/given';
 import { defaultSpec, draftFrom, normalize } from '../lib/spec';
 import type { KataEvent } from '../lib/events';
 
@@ -134,7 +134,8 @@ it('round-trips hidden fields and clears dirty after save (Review Focus #3)', as
   expect(vm.dirty()).toBe(true);
   await vm.save();
   // Save writes through saveKata (as the original page did), carrying the fields the form never shows.
-  expect(fake.saveKata).toHaveBeenCalledWith(normalize({ ...draftFrom(onDisk), task: 'edited' }));
+  // Saving always writes a given section, empty when no preview chose anything.
+  expect(fake.saveKata).toHaveBeenCalledWith({ ...normalize({ ...draftFrom(onDisk), task: 'edited' }), given: toGiven([]) });
   const saved = fake.saveKata.mock.calls[0] as unknown as [typeof onDisk];
   expect(saved[0].plugins).toEqual(onDisk.plugins);
   expect(saved[0].auth.token_env).toBe('TOK');

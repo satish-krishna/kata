@@ -1,5 +1,6 @@
 import { Injectable, computed, effect, inject, signal } from '@angular/core';
 import { form } from '@angular/forms/signals';
+import type { Given } from '@bindings/Given';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { Preset } from '@bindings/Preset';
@@ -8,7 +9,10 @@ import { RunStore } from '../core/run/run.store';
 import { ToastStore } from '../core/toast/toast.store';
 import { LaunchStore } from '../core/launch/launch.store';
 import { ModeStore } from '../core/mode/mode.store';
+import { RunPreviewViewModel } from '../core/given/run-preview.view-model';
 import { defaultSpec, draftFrom, normalize, specEquals } from '../lib/spec';
+import { toGiven } from '../lib/given';
+import { GivenStore } from '../core/given/given.store';
 import { inTauri, seedSpec } from '../lib/mock';
 
 const CATALOG_DEBOUNCE_MS = 300;
@@ -24,6 +28,9 @@ export class WorkbenchViewModel {
   private readonly toasts = inject(ToastStore);
   private readonly launches = inject(LaunchStore);
   private readonly modes = inject(ModeStore);
+  private readonly givens = inject(GivenStore);
+  /** The preview every run goes through; the template mounts its dialog. */
+  readonly preview = inject(RunPreviewViewModel);
 
   // Real Tauri app opens a blank New spec; browser dev/review seeds the example.
   private readonly initial = inTauri() ? defaultSpec() : seedSpec();
@@ -49,6 +56,8 @@ export class WorkbenchViewModel {
 
   /** The action waiting behind the "Discard unsaved changes?" confirm, or null when it is closed. */
   private readonly pendingDiscard = signal<(() => void | Promise<void>) | null>(null);
+  /** The run-spec of the last confirmed preview, with the `given` it was confirmed with. Not part of the draft, so confirming never makes it dirty. */
+  private confirmed: { spec: RunSpec; given: Given } | null = null;
   readonly confirmOpen = computed(() => this.pendingDiscard() !== null);
   /** Whether ComposePane's save-as-preset name prompt is open. */
   readonly naming = signal(false);
@@ -98,7 +107,7 @@ export class WorkbenchViewModel {
       console.error('listPresets failed', e);
       this.presets.set([]);
     }
-    // Browser dev/review only: ?demo=run auto-starts the scripted run. Never fires under Tauri.
+    // Browser dev/review only: ?demo=run auto-starts the scripted run, through the preview like any other run. Never fires under Tauri.
     if (!inTauri() && demo) await this.run();
     const handoff = this.launches.take();
     if (handoff) {
@@ -142,9 +151,17 @@ export class WorkbenchViewModel {
     });
   }
 
+  /** The draft as it is saved: with the `given` of the last confirmed preview of this same job, else its own, else an empty one. */
+  private forSave(): RunSpec {
+    const draft = normalize(this.spec());
+    const last = this.confirmed;
+    const given = last && specEquals({ ...draft, given: undefined }, { ...last.spec, given: undefined }) ? last.given : (draft.given ?? toGiven([]));
+    return { ...draft, given };
+  }
+
   async save(): Promise<void> {
     try {
-      await this.transport.saveKata(normalize(this.spec()));
+      await this.transport.saveKata(this.forSave());
       this.saved.set(normalize(this.spec()));
     } catch (e) {
       this.toasts.error(`Failed to save kata: ${e}`);
@@ -170,10 +187,23 @@ export class WorkbenchViewModel {
     this.naming.set(open);
   }
 
-  /** Same gate as the original page: the debounced validity, no active run, no dialog open. */
+  private runnable(): boolean {
+    return this.valid() && !this.running() && !this.confirmOpen() && !this.naming() && !this.preview.isOpen();
+  }
+
+  /** Same gate as the original page: the debounced validity, no active run, no dialog open. Opens the preview; the run starts only when it is confirmed. */
   async run(): Promise<void> {
-    if (!this.valid() || this.running() || this.confirmOpen() || this.naming()) return;
-    await this.runs.startRun(normalize(this.spec()));
+    if (!this.runnable()) return;
+    const draft = normalize(this.spec());
+    const spec = await this.preview.open({
+      spec: draft,
+      mode: 'run',
+      workdir: draft.workdir,
+      from: { session: this.givens.session(), job: draft.given ?? null, build: null },
+    });
+    if (!spec) return;
+    this.confirmed = { spec: draft, given: spec.given ?? toGiven([]) };
+    await this.runs.startRun(normalize(spec));
   }
 
   /** The Library handoff re-validates fresh: the debounced errors cannot have caught up with a just-loaded spec. */
