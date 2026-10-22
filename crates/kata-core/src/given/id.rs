@@ -49,22 +49,117 @@ pub struct ItemRef {
 /// document's findings (dropping a settings source also drops its instructions,
 /// skills, tool servers and plugins; a deny rule refuses a skill without removing
 /// it). `Organization` and `Kata` never appear.
-pub const SWITCHABLE: &[(ItemKind, Source)] = &[];
+pub const SWITCHABLE: &[(ItemKind, Source)] = &[
+    // Always: Kata builds these itself, so leaving one out needs no proof.
+    (ItemKind::Skill, Source::RunSpec),
+    (ItemKind::Plugin, Source::RunSpec),
+    (ItemKind::Instruction, Source::RunSpec),
+    // Held in docs/switch-proofs.md.
+    (ItemKind::Plugin, Source::Personal),
+    (ItemKind::Plugin, Source::Project),
+    (ItemKind::Plugin, Source::ProjectLocal),
+    (ItemKind::Instruction, Source::Personal),
+    (ItemKind::Instruction, Source::Project),
+    (ItemKind::Instruction, Source::ProjectLocal),
+    (ItemKind::ToolServer, Source::Personal),
+    (ItemKind::ToolServer, Source::Project),
+    (ItemKind::ToolServer, Source::ProjectLocal),
+];
 
-pub fn fnv1a64(_bytes: &[u8]) -> u64 {
-    0
+impl ItemKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ItemKind::Hook => "hook",
+            ItemKind::Skill => "skill",
+            ItemKind::Plugin => "plugin",
+            ItemKind::Instruction => "instruction",
+            ItemKind::ToolServer => "tool-server",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Self> {
+        [
+            ItemKind::Hook,
+            ItemKind::Skill,
+            ItemKind::Plugin,
+            ItemKind::Instruction,
+            ItemKind::ToolServer,
+        ]
+        .into_iter()
+        .find(|k| k.as_str() == s)
+    }
 }
 
-pub fn hook_key(_event: &str, _matcher: Option<&str>, _command: &str) -> String {
-    String::new()
+impl Source {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Source::Personal => "personal",
+            Source::Project => "project",
+            Source::ProjectLocal => "project-local",
+            Source::Plugin => "plugin",
+            Source::Organization => "organization",
+            Source::Kata => "kata",
+            Source::RunSpec => "run-spec",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Self> {
+        [
+            Source::Personal,
+            Source::Project,
+            Source::ProjectLocal,
+            Source::Plugin,
+            Source::Organization,
+            Source::Kata,
+            Source::RunSpec,
+        ]
+        .into_iter()
+        .find(|k| k.as_str() == s)
+    }
 }
 
-pub fn item_id(_kind: ItemKind, _source: Source, _key: &str) -> String {
-    String::new()
+/// FNV-1a, 64 bit. Written by hand because `DefaultHasher` is not stable across
+/// Rust releases and a saved job must keep matching.
+pub fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for b in bytes {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
-pub fn parse_item_id(_id: &str) -> Result<ItemRef, String> {
-    Err("todo".into())
+/// The key of a hook: `<event>:<matcher or *>:<fnv1a64 of the command, 16 hex
+/// digits>`. The command itself is never stored, so a secret in it never reaches
+/// a saved job.
+pub fn hook_key(event: &str, matcher: Option<&str>, command: &str) -> String {
+    let matcher = matcher.filter(|m| !m.is_empty()).unwrap_or("*");
+    format!("{event}:{matcher}:{:016x}", fnv1a64(command.as_bytes()))
+}
+
+/// `<source>:<kind>:<key>`.
+pub fn item_id(kind: ItemKind, source: Source, key: &str) -> String {
+    format!("{}:{}:{key}", source.as_str(), kind.as_str())
+}
+
+/// Split an identity back into its parts. The key may itself contain colons.
+pub fn parse_item_id(id: &str) -> Result<ItemRef, String> {
+    let mut parts = id.splitn(3, ':');
+    let (source, kind, key) = match (parts.next(), parts.next(), parts.next()) {
+        (Some(s), Some(k), Some(key)) => (s, k, key),
+        _ => return Err(format!("'{id}' is not '<source>:<kind>:<key>'")),
+    };
+    let source =
+        Source::parse(source).ok_or_else(|| format!("'{id}': unknown source '{source}'"))?;
+    let kind = ItemKind::parse(kind).ok_or_else(|| format!("'{id}': unknown kind '{kind}'"))?;
+    if key.is_empty() {
+        return Err(format!("'{id}': the key is empty"));
+    }
+    Ok(ItemRef {
+        kind,
+        source,
+        key: key.to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -132,7 +227,7 @@ mod tests {
         assert_eq!(fnv1a64(b""), 0xcbf29ce484222325);
         assert_eq!(fnv1a64(b"a"), 0xaf63dc4c8601ec8c);
         let k = hook_key("PreToolUse", Some("Bash"), "node check.js");
-        assert_eq!(k, "PreToolUse:Bash:PINNED");
+        assert_eq!(k, "PreToolUse:Bash:5b5b6626bd2df6ba");
         assert_ne!(k, hook_key("PreToolUse", Some("Bash"), "node other.js"));
         assert!(hook_key("Stop", None, "x").starts_with("Stop:*:"));
     }

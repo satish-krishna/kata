@@ -627,6 +627,33 @@ pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
             ));
         }
     }
+    // The given section: every entry is a well-formed identity in the list of its
+    // own kind, and none names one of Kata's own items.
+    if let Some(given) = &spec.given {
+        use crate::given::{parse_item_id, ItemKind, Source};
+        for (kind, list) in [
+            (ItemKind::Hook, &given.hooks),
+            (ItemKind::Skill, &given.skills),
+            (ItemKind::Plugin, &given.plugins),
+            (ItemKind::Instruction, &given.instructions),
+            (ItemKind::ToolServer, &given.tool_servers),
+        ] {
+            for entry in list {
+                match parse_item_id(entry) {
+                    Err(e) => errs.push(format!("given: {e}")),
+                    Ok(r) if r.source == Source::Kata => {
+                        errs.push(format!("{entry}: Kata's own items cannot be switched off"))
+                    }
+                    Ok(r) if r.kind != kind => errs.push(format!(
+                        "given: '{entry}' is a {} and does not belong in the {} list",
+                        r.kind.as_str(),
+                        kind.as_str()
+                    )),
+                    Ok(_) => {}
+                }
+            }
+        }
+    }
     if errs.is_empty() {
         Ok(())
     } else {

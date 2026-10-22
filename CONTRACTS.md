@@ -26,6 +26,8 @@ The TOML/JSON run-spec (`crates/kata-core/src/spec.rs`). Machine mirror: `schema
 
 **Additive (minor):** a new **optional** field with a default that preserves current behavior when absent; loosening validation to accept more specs.
 
+**The `[given]` section (optional).** `given` lists what a run starts with, in five lists of item identities: `hooks`, `skills`, `plugins`, `instructions` and `tool_servers`. An identity is `<source>:<kind>:<key>` in lowercase kebab case for source and kind, for example `project-local:instruction:CLAUDE.local.md` or `run-spec:skill:triage`; a hook's key is `<event>:<matcher or *>:<fnv1a64 of the command as 16 hex digits>`, so the command itself is never saved. A spec without `given` makes no choices; `[given]` with empty lists chooses "everything on". Entries that match nothing at run time are ignored. `validate` refuses an entry that does not parse, one in the list of the wrong kind, and any `kata:` entry (Kata's own items cannot be switched off).
+
 ### 2. The event protocol — `KataEvent`, `protocolVersion = 1`
 
 One JSON object per line on the engine's stdout (`crates/kata-core/src/event.rs`). Machine mirror: `schema/kata-events.schema.json` (drift-gated in CI).
