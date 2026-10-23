@@ -290,8 +290,8 @@ describe('MockTransport previewRun', () => {
 
   it('names project items after the last folder of the workdir', async () => {
     const t = new MockTransport();
-    const a = await t.previewRun({ ...seedSpec(), workdir: 'D:\ws\alpha' });
-    const b = await t.previewRun({ ...seedSpec(), workdir: 'D:\ws\beta' });
+    const a = await t.previewRun({ ...seedSpec(), workdir: 'D:\\ws\\alpha' });
+    const b = await t.previewRun({ ...seedSpec(), workdir: 'D:\\ws\\beta' });
     expect(a.items.some((i) => i.source === 'project' && i.name.includes('alpha'))).toBe(true);
     expect(b.items.some((i) => i.name.includes('alpha'))).toBe(false);
   });

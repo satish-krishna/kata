@@ -4,8 +4,8 @@ import type { ResolvedItem } from '@bindings/ResolvedItem';
 import { givenKey, presetRows, toggle, type PresetRow } from '../../lib/given';
 import { GivenStore } from './given.store';
 
-const WS_A = 'D:\ws\a';
-const WS_B = 'D:\ws\b';
+const WS_A = 'D:\\ws\\a';
+const WS_B = 'D:\\ws\\b';
 
 const item = (id: string, extra: Partial<ResolvedItem> = {}): ResolvedItem => {
   const [source, kind, ...name] = id.split(':');

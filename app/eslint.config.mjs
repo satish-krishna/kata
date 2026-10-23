@@ -1,3 +1,4 @@
+import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import angular from 'angular-eslint';
 import seal from './harness/gate/index.mjs';
@@ -27,9 +28,13 @@ export default [
       parserOptions: { project: false },
     },
     processor: angular.processInlineTemplates,
-    plugins: { shape },
+    plugins: { shape, '@typescript-eslint': tseslint.plugin },
     linterOptions: { noInlineConfig: true },
     rules: {
+      ...js.configs.recommended.rules,
+      ...tseslint.configs.eslintRecommended.rules,
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }],
       'shape/no-hand-set-change-detection': 'error',
       'shape/no-component-subscribe': 'error',
       'shape/no-forms-module': 'error',

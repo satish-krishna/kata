@@ -5,7 +5,7 @@ import type { RunSettings } from '@bindings/RunSettings';
 import type { RunSpec } from '@bindings/RunSpec';
 import { groupRows, isSwitchable, itemSourceLabel, presetRows, settingSourceLabel, toGiven, toggle, type PresetFrom, type PresetRow } from '../../lib/given';
 import { buildPreviewFor, safetyRules, type BuildPreviewKind, type BuildPreviewPlan } from '../../lib/sdlc';
-import { buildRequest, createBuildForm, limitSecs, type BuildDialogMode, type BuildFormState, type BuildStartRequest } from '../../ui/build-dialog';
+import { buildRequest, createBuildForm, limitSecs, type BuildFormState, type BuildStartRequest } from '../../ui/build-dialog';
 import type { PreviewEnvRow, PreviewSection, PreviewSettingRow } from '../../ui/run-preview-dialog';
 import { KataTransport } from '../transport/kata-transport';
 import { GivenStore } from './given.store';

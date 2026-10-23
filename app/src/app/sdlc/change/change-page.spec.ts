@@ -125,7 +125,6 @@ describe('ChangePage', () => {
 
   describe('the build', () => {
     const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
-    const click = (label: string) => Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((b) => b.textContent!.trim() === label)!.click();
 
     it('the plan tab lists the tasks from sdlcBuildStatus in the Tasks view', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);

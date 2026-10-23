@@ -277,7 +277,7 @@ export class BuildDriver {
 
   /** Reads the status, looks the outcome up and acts on it. A status that cannot be read is 'unknown'; it never loses the result. */
   private async judge(repo: string, task: string, end: RunEnd, cancelled: boolean, isRound: boolean): Promise<Outcome> {
-    let status: BuildStatus | null = null;
+    let status: BuildStatus | null;
     try {
       status = await this.deps.status();
     } catch {
