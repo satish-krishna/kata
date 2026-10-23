@@ -179,7 +179,7 @@
                 [task]="build.pickedTask()"
                 [stopped]="build.stoppedRepos()"
                 (pick)="build.choose($event)"
-                (repoAction)="vm.repoAction($event)"
+                (repoAction)="build.repoAction($event)"
                 (act)="vm.act($event)"
                 (answer)="build.answer($event.runId, $event)"
                 (decide)="build.decide($event.runId, $event)"

@@ -29,10 +29,13 @@ import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { reviewState } from '../../lib/sdlc-done';
 import { givenFor, reviewFindings, specFor, type BuildRun, type Finding, type StageAction } from '../../lib/sdlc';
 import type { ReplacedFindings } from '../../ui/findings-list';
-import type { RepoRow } from '../../ui/repo-status-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
 import type { BuildHandoff } from '../change/change-page.view-model';
 import { BuildDriver, NotCheckedOut, type BuildPhase, type RunEnd, type RunOptions, type RunTarget } from './build-driver';
+
+export type RepoRowTone = 'success' | 'warning' | 'error' | 'idle';
+/** One repository's row (or the review's): its name, andon status as a dot plus label, and its clocks. */
+export type RepoRow = { name: string; tone: RepoRowTone; label: string; clock: string | null; paused: string | null; unseen?: number };
 
 /** What the build runs against: the workspace, the system and the change. */
 export type BuildContext = {
@@ -144,8 +147,6 @@ export type BuildTab = 'activity' | 'changes';
 /** What the Changes view looks at. */
 export type BuildChanges = { folder: string; masterRepo: string; system: string; change: string };
 
-export const CHANGES_BANNER = "The build is running. Uncommitted edits are the agents' work in progress and are marked with a dot.";
-
 /** A run the build started: which row it belongs to, its spec, and when it started. */
 type Entry = { id: string; key: string; spec: RunSpec; at: number };
 /** Seconds of a run's work (waiting for the engineer excluded), of all its waiting, and of the wait it is in now. */
@@ -155,9 +156,6 @@ type Review = { at: number | null; label: string | null; findings: Finding[] };
 
 const REVIEW = 'review';
 const RUNNING: readonly RunState[] = ['running', 'awaiting'];
-/** The repository list's share of the build when it opens, in percent. */
-const REPOS_SIZE = 22;
-const NARROW = '(max-width: 767.98px)';
 /** Below this width the build page's three areas share one column. */
 const PAGE_NARROW = '(max-width: 1023.98px)';
 
@@ -326,24 +324,13 @@ export class BuildPageViewModel {
   /** Why Continue did not go on, with what the check found; the refusal dialog is open exactly while this is set. */
   readonly refusal = signal<{ reason: string; problems: Problem[] } | null>(null);
 
-  /** True below the width where the repository list stacks above the main column instead of sitting beside it. */
-  readonly narrow = signal(false);
-  /** True below the width where the build page's three areas share one column. */
+  /** True below the width where the build page's three areas become one column behind a switch. */
   private readonly pageNarrow = signal(false);
-  /** The repository list's share of the build, in percent, then the main column's; the list is collapsed at 0. */
-  readonly layout = signal<number[]>([REPOS_SIZE, 100 - REPOS_SIZE]);
-  /** The list's share before it was collapsed, so showing it again restores it. */
-  private reposSize = REPOS_SIZE;
-  readonly reposOpen = computed(() => (this.layout()[0] ?? 0) > 0);
-  /** What the drawer holds: the repositories' runs on Activity, the changed files on Changes. */
-  readonly drawerName = computed(() => (this.tab() === 'changes' ? 'Changed files' : 'Repositories'));
-  readonly reposIcon = computed(() => (this.narrow() ? 'lucidePanelTop' : 'lucidePanelLeft') + (this.reposOpen() ? 'Close' : 'Open'));
 
   readonly tab = signal<BuildTab>('activity');
   readonly announcement = signal('');
   /** A request to bring a repository's open question into view and focus it; the view carries it out. */
   readonly focusRequest = signal<{ repo: string; n: number } | null>(null);
-  readonly changesBanner = CHANGES_BANNER;
 
   readonly phase = computed<BuildPhase>(() => (this.broken() ? 'stopped' : this.driver.phase()));
   readonly active = computed(() => this.phase() === 'building' || this.phase() === 'reviewing');
@@ -414,12 +401,6 @@ export class BuildPageViewModel {
     return [...out].map(([key, runs]) => ({ key, runs: runs.map((r, i) => (i === runs.length - 1 ? { ...r, latest: true } : r)) }));
   });
 
-  /** The runs of the selected repository. */
-  readonly shown = computed<ShownRun[]>(() => {
-    const key = this.selected();
-    return this.groups().find((g) => g.key === key)?.runs ?? [];
-  });
-
   /** What the Changes view reads, once the build has started. */
   readonly changesContext = this.changes.asReadonly();
   /** Turns taken by every run of the build, so the Changes view reads again as the agents work. */
@@ -428,8 +409,6 @@ export class BuildPageViewModel {
   private readonly bashDone = computed(() =>
     this.log().reduce((n, e) => n + this.snapOf(e.id).events.filter((ev) => ev.type === 'tool.result' && ev.name === 'Bash').length, 0),
   );
-  /** Events that arrived in the views not on show: for the Activity tab, only while Changes is open. */
-  readonly activityNew = computed(() => (this.tab() === 'changes' ? this.log().reduce((n, e) => n + this.unseenOfRun(e), 0) : 0));
   /** The runs waiting on the engineer, whichever view is on show. */
   readonly waitingNotices = computed<WaitingItem[]>(() => {
     const out: WaitingItem[] = [];
@@ -441,8 +420,6 @@ export class BuildPageViewModel {
     }
     return out;
   });
-  /** On Activity, the runs waiting in a repository other than the one on show. */
-  readonly otherWaiting = computed(() => (this.tab() === 'activity' ? this.waitingNotices().filter((w) => w.repo !== this.selected()) : []));
 
   /** What the selected row offers: Cancel while its run goes, Continue once it stopped. */
   readonly action = computed<'cancel' | 'continue' | null>(() => {
@@ -465,8 +442,6 @@ export class BuildPageViewModel {
   /** The repositories whose run stopped, whose uncommitted files were left by it. */
   readonly stoppedRepos = computed<string[]>(() => this.taskAreas().flatMap((g) => (g.situation.kind === 'stopped' ? [g.repo] : [])));
 
-  /** The findings are on show once the build has finished and its review has been read. */
-  readonly reviewShown = computed(() => this.phase() === 'finished' && !this.reading() && (this.reviews().length > 0 || this.unrecorded()));
   /** The notice above the findings: the review document's problems or its older layout; null when it needs none. */
   readonly reviewNotice = computed(() => this.runNotice() ?? this.reviewDocNotice());
   /** The latest review's findings, most serious first. */
@@ -485,20 +460,12 @@ export class BuildPageViewModel {
   readonly emptyText = computed(() => (this.unrecorded() ? 'The review did not record its findings' : this.older() ? 'The review found nothing.' : 'Reviewed, nothing found.'));
 
   constructor() {
-    // Below the narrow width the repository list stacks above the main column, so the split turns vertical.
-    const query = typeof globalThis.matchMedia === 'function' ? globalThis.matchMedia(NARROW) : null;
     const pageQuery = typeof globalThis.matchMedia === 'function' ? globalThis.matchMedia(PAGE_NARROW) : null;
     if (pageQuery !== null) {
       this.pageNarrow.set(pageQuery.matches);
       const onPage = (e: MediaQueryListEvent) => this.pageNarrow.set(e.matches);
       pageQuery.addEventListener('change', onPage);
       inject(DestroyRef).onDestroy(() => pageQuery.removeEventListener('change', onPage));
-    }
-    if (query !== null) {
-      this.narrow.set(query.matches);
-      const onChange = (e: MediaQueryListEvent) => this.narrow.set(e.matches);
-      query.addEventListener('change', onChange);
-      inject(DestroyRef).onDestroy(() => query.removeEventListener('change', onChange));
     }
     // The rows follow the build log: read it again whenever a run starts or ends, and whenever a run finishes a Bash call,
     // since an agent logs each task by committing it.
@@ -891,24 +858,15 @@ export class BuildPageViewModel {
     this.openedRuns.set(next);
   }
 
-  /** Collapse the repository list to nothing, or bring it back at the size it had. */
-  toggleRepos(): void {
-    const [repos = 0] = this.layout();
-    if (repos > 0) {
-      this.reposSize = repos;
-      this.layout.set([0, 100]);
-    } else {
-      this.layout.set([this.reposSize, 100 - this.reposSize]);
-    }
-  }
-
   select(name: string): void {
     this.choose(name === REVIEW ? { kind: 'review' } : { kind: 'repo', repo: name });
   }
 
-  /** Show one of the views. This changes what is on show and nothing else: no run, read or lock is touched. */
-  showTab(tab: string): void {
-    if (tab === 'activity' || tab === 'changes') this.tab.set(tab);
+  /** A heading of the build page asked to cancel or continue its repository (or the review). */
+  repoAction(e: { repo: string; action: 'cancel' | 'continue' }): void {
+    this.select(e.repo);
+    if (e.action === 'cancel') this.cancelRun();
+    else void this.continueRun();
   }
 
   /** Go to a waiting repository: its Activity, with its open question brought into view and focused. */

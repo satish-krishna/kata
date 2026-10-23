@@ -307,14 +307,6 @@
 .k-left__warn { margin: 0; font: var(--text-sm)/1.4 var(--font-sans); color: var(--warning-text); }
 
 /* ---------- AI-SDLC: build ---------- */
-.k-repos { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
-.k-repos__row { display: grid; justify-items: start; gap: var(--space-2); width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-card); color: var(--text-primary); text-align: start; cursor: pointer; }
-.k-repos__row:hover { background: var(--surface-hover); }
-.k-repos__row[aria-current="true"] { border-color: var(--accent); }
-.k-repos__name { color: var(--text-primary); }
-.k-repos__clock { color: var(--text-muted); }
-.k-repos__paused { color: var(--warning-text); }
-.k-repos__new { color: var(--text-muted); }
 /* A notice that an agent waits on the engineer: amber dot and words, with the way to it. */
 .k-waiting { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5); padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border-subtle); background: var(--warning-subtle); color: var(--warning-text); font: var(--font-code-sm); }
 .k-waiting--line { padding-block: var(--space-2); }

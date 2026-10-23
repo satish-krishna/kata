@@ -768,13 +768,6 @@ export class ChangePageViewModel {
     }
   }
 
-  /** A heading of the build page asked to cancel or continue its repository (or the review). */
-  repoAction(e: { repo: string; action: 'cancel' | 'continue' }): void {
-    this.build.select(e.repo);
-    if (e.action === 'cancel') this.build.cancelRun();
-    else void this.build.continueRun();
-  }
-
   /** The operator confirmed the revisit, with their corrections (blank for none). */
   async runWithFeedback(feedback: string): Promise<void> {
     const action = this.pendingRevisit();

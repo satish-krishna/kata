@@ -153,26 +153,13 @@ describe('the build page starts, stops and continues the same runs as the build 
     expect(vm.tasksLabel()).toBe('0/3 tasks');
 
     expect(vm.selected()).toBe('claims-core');
-    expect(vm.shown().map((r) => r.spec.workdir)).toEqual([`${FOLDER}/claims-core`]);
-    expect(vm.shown()[0].events.length).toBeGreaterThan(0);
-    expect(vm.shown()[0].startedAt).toBe('09:00:00');
+    expect(vm.shownSessions().map((r) => r.spec?.workdir)).toEqual([`${FOLDER}/claims-core`]);
+    expect(vm.shownSessions()[0].events.length).toBeGreaterThan(0);
+    expect(vm.shownSessions()[0].startedAt).toBe('09:00:00');
     expect(vm.action()).toBe('cancel');
 
     vm.select('customer-portal');
-    expect(vm.shown().map((r) => r.spec.workdir)).toEqual([`${FOLDER}/customer-portal`]);
-  });
-
-  it('collapses the repository list and brings it back at the size the engineer dragged it to', () => {
-    const { vm } = setup();
-    expect(vm.reposOpen()).toBe(true);
-    vm.layout.set([30, 70]);
-    vm.toggleRepos();
-    expect(vm.layout()).toEqual([0, 100]);
-    expect(vm.reposOpen()).toBe(false);
-    expect(vm.reposIcon()).toBe('lucidePanelLeftOpen');
-    vm.toggleRepos();
-    expect(vm.layout()).toEqual([30, 70]);
-    expect(vm.reposIcon()).toBe('lucidePanelLeftClose');
+    expect(vm.shownSessions().map((r) => r.spec?.workdir)).toEqual([`${FOLDER}/customer-portal`]);
   });
 
   it('reads the build log again when a run finishes a Bash call, since logging a task is a commit', async () => {
@@ -314,15 +301,15 @@ describe('the build page starts, stops and continues the same runs as the build 
     vm.select('claims-core');
     await vm.continueRun();
     await advance(500);
-    const [earlier, latest] = vm.shown();
-    expect(vm.shown()).toHaveLength(2);
+    const [earlier, latest] = vm.shownSessions();
+    expect(vm.shownSessions()).toHaveLength(2);
     expect(earlier).toMatchObject({ latest: false, expanded: false });
     expect(earlier.outcome).toMatch(/^[A-Z]/);
     expect(latest).toMatchObject({ latest: true });
     vm.toggleRun(earlier.id);
-    expect(vm.shown()[0].expanded).toBe(true);
+    expect(vm.shownSessions()[0].expanded).toBe(true);
     vm.toggleRun(earlier.id);
-    expect(vm.shown()[0].expanded).toBe(false);
+    expect(vm.shownSessions()[0].expanded).toBe(false);
   });
 
   it('Continue after the branches were settled is refused with the problems when a build log fails the check, and starts nothing (R8.1)', async () => {
@@ -503,7 +490,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       });
       return vi.spyOn(transport, 'sdlcReviewRecord').mockImplementation(async () => ({ layout: 2, reviews: reviewed ? reviews : [], problems: reviewed ? documentProblems : [], master_moved: [] }));
     };
-    const shown = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.reviewShown();
+    const shown = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.view().findings !== null;
 
     it('findings come from review.md, not the run words (R14.2)', async () => {
       const { vm, transport, lock } = setup();
@@ -739,7 +726,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       expect(row(vm, MOCK_MASTER)).toMatchObject({ tone: 'error', label: 'Stopped: reached the time limit' });
       vm.select(MOCK_MASTER);
       expect(vm.action()).toBe('continue');
-      expect(vm.shown()).toHaveLength(1);
+      expect(vm.shownSessions()).toHaveLength(1);
 
       await vm.continueRun();
       await advance(500);
