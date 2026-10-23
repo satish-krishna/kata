@@ -234,7 +234,7 @@ export function previewFixture(spec: RunSpec): Resolved {
   const items: ResolvedItem[] = [
     make("hook", "personal", "PreToolUse:Bash:5b5b1d0c9a2e4f10", "PreToolUse Bash", "node ~/.claude/hooks/guard.mjs", { lock: UNSWITCHABLE }),
     make("hook", "project", "PostToolUse:Write|Edit:8c1f77e2d3a40b95", "PostToolUse Write|Edit", "npm run lint --silent", { lock: buildLock }),
-    make("hook", "project-local", "SessionStart:*:3d9e41b7a05c6f28", "SessionStart *", "load my local scratch notes"),
+    make("hook", "project-local", "SessionStart:*:3d9e41b7a05c6f28", "SessionStart *", "load my local scratch notes", { lock: buildLock }),
     child("hook", "SessionStart:*:15b9f33b1f620354", "SessionStart *", "inject the using-superpowers skill", SUPERPOWERS, false),
     make("hook", "organization", "PreToolUse:*:2f6d0a91c7e85b34", "PreToolUse *", "audit every tool call", { lock: orgLock }),
     make("skill", "personal", "triage-flaky-test", "triage-flaky-test", "reproduce & isolate a flaky test", { path: "~/.claude/skills/triage-flaky-test", lock: UNSWITCHABLE }),

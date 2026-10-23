@@ -762,7 +762,7 @@ export class BuildViewModel {
     const settings = this.modes.settings() ?? (await this.modes.load());
     const spec = specFor('build', null, { folder: ctx.folder, system: ctx.system, change: ctx.change }, settings, [], run);
     // The build's choices, as they stand when this run starts; a run the driver starts by itself never opens a preview.
-    spec.given = givenFor(opts.choices.off, spec.workdir);
+    spec.given = { ...spec.given, ...givenFor(opts.choices.off, spec.workdir) };
     const key = review ? REVIEW : repo;
     const end = await this.runner.runInRepo(
       { repo, path, kind: review ? 'review' : 'repo' },

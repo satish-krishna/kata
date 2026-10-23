@@ -271,6 +271,11 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): s
   }
 }
 
+/** The given section of an AI-SDLC run: nothing switched off, and what kind of run it is. */
+function sdlcGiven(kind: SdlcKind): Given {
+  return { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [], required_plugins: [...SDLC_REQUIRED_PLUGINS], build: isBuildRun(kind) };
+}
+
 const SDLC_TIMEOUT_SECS = 6 * 60 * 60;
 
 /**
@@ -285,6 +290,7 @@ function buildSpec(ctx: RunContext, run: BuildRun): RunSpec {
   spec.task = buildTask(run, ctx);
   spec.workdir = `${ws}/${repo}`;
   spec.plugins = { [AI_SDLC]: {} };
+  spec.given = sdlcGiven("build");
   spec.auth = { bare: false, token_env: null };
   spec.interactive = { enabled: true, answer_timeout_secs: 3600 };
   spec.leash.timeout_secs = run.timeoutSecs;
@@ -316,6 +322,7 @@ export function specFor(
   spec.task = taskFor(kind, action, ctx) + (feedback ? `\n\nOperator feedback:\n${feedback}` : "");
   spec.workdir = ctx.folder;
   spec.plugins = plugins;
+  spec.given = sdlcGiven(kind);
   // Outside the empty room: `--bare` ignores the operator's claude login and accepts only an API key.
   spec.auth = { bare: false, token_env: null };
   spec.interactive = { enabled: false, answer_timeout_secs: 3600 };
@@ -588,8 +595,7 @@ const BUILD_PREVIEWS: Record<BuildPreviewKind, BuildPreviewPlan> = {
 
 /** Whether a run of this kind is a build run (a repository's run, a round, or a review): it keeps the project's hooks on. */
 export function isBuildRun(kind: SdlcKind | BuildPreviewKind): boolean {
-  void kind;
-  return false;
+  return kind !== "setup" && kind !== "context" && kind !== "intent" && kind !== "spec" && kind !== "plan";
 }
 
 export function buildPreviewFor(kind: BuildPreviewKind): BuildPreviewPlan {

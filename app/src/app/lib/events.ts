@@ -46,7 +46,7 @@ export const GIVEN_STATUS_LABEL: Record<GivenStatus, string> = {
 export function givenFrom(events: readonly KataEvent[]): RunGiven | "not-recorded" {
   for (let i = events.length - 1; i >= 0; i--) {
     const ev = events[i];
-    if (ev.type === "run.given") return { items: ev.items, settings: ev.settings, env: ev.env, warnings: ev.warnings };
+    if (ev.type === "run.given") return { items: ev.items, settings: ev.settings, env: ev.env, warnings: ev.warnings, ...(ev.options ? { options: ev.options } : {}) };
   }
   return "not-recorded";
 }

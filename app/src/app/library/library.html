@@ -133,7 +133,7 @@
         <hlm-dialog-content *hlmDialogPortal="let ctx" class="[--dialog-w:56rem]">
           <h2 hlmDialogTitle>What the run was given</h2>
           <div class="max-h-[65vh] overflow-y-auto">
-            <app-given-view [given]="vm.given() ?? 'not-recorded'" />
+            <app-given-view [given]="vm.given() ?? 'not-recorded'" [mode]="vm.givenMode()" />
           </div>
           <hlm-dialog-footer>
             <button hlmBtn variant="ghost" size="sm" type="button" (click)="vm.closeGiven()">Close</button>

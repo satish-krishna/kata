@@ -11,7 +11,7 @@ import { LaunchStore } from '../core/launch/launch.store';
 import { ModeStore } from '../core/mode/mode.store';
 import { RunPreviewViewModel } from '../core/given/run-preview.view-model';
 import { defaultSpec, draftFrom, normalize, specEquals } from '../lib/spec';
-import { toGiven } from '../lib/given';
+import { isLockedOn, toGiven } from '../lib/given';
 import { GivenStore } from '../core/given/given.store';
 import { inTauri, seedSpec } from '../lib/mock';
 
@@ -87,10 +87,32 @@ export class WorkbenchViewModel {
 
   private async revalidate(snapshot: RunSpec): Promise<void> {
     try {
-      this.errors.set(await this.transport.validateSpec(snapshot));
+      this.errors.set(await this.transport.validateSpec(await this.withoutLocked(snapshot)));
     } catch (e) {
       console.error('validate failed', e);
       this.errors.set([]);
+    }
+  }
+
+  /** The draft as validation sees it: the entries of its `given` that name a locked item removed. The run ignores them too
+   *  (the preview says so), so they must not stop it; the draft itself, and the job's file, keep them until the engineer saves. */
+  private async withoutLocked(spec: RunSpec): Promise<RunSpec> {
+    const given = spec.given;
+    if (!given) return spec;
+    const listed = [...given.hooks, ...given.skills, ...given.plugins, ...given.instructions, ...given.tool_servers];
+    if (listed.length === 0) return spec;
+    try {
+      const resolved = await this.transport.previewRun(spec);
+      const locked = new Set(resolved.items.filter(isLockedOn).map((i) => i.id));
+      if (!listed.some((id) => locked.has(id))) return spec;
+      const keep = (ids: string[]) => ids.filter((id) => !locked.has(id));
+      return {
+        ...spec,
+        given: { ...given, hooks: keep(given.hooks), skills: keep(given.skills), plugins: keep(given.plugins), instructions: keep(given.instructions), tool_servers: keep(given.tool_servers) },
+      };
+    } catch (e) {
+      console.error('resolve for validation failed', e);
+      return spec;
     }
   }
 
@@ -210,7 +232,7 @@ export class WorkbenchViewModel {
   private async autorun(): Promise<void> {
     try {
       const spec = normalize(this.spec());
-      this.errors.set(await this.transport.validateSpec(spec));
+      this.errors.set(await this.transport.validateSpec(await this.withoutLocked(spec)));
       if (this.valid()) await this.run();
     } catch (e) {
       this.toasts.error(`Failed to validate spec: ${e}`);

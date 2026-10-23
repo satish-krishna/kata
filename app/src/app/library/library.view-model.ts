@@ -1,12 +1,14 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import type { BrnDialogState } from '@spartan-ng/brain/dialog';
+import type { Mode } from '@bindings/Mode';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { KataLoadFailure } from '@bindings/KataLoadFailure';
 import { KataTransport } from '../core/transport/kata-transport';
 import { LaunchStore } from '../core/launch/launch.store';
 import { ToastStore } from '../core/toast/toast.store';
 import { givenFrom, isStreamEvent, statusForExit, type RunGiven, type RunDetail, type RunRecord, type RunState } from '../lib/events';
+import { modeOf } from '../lib/given';
 import { kataViews, withTask } from '../lib/katas';
 import { pairToolEvents } from '../lib/toolcards';
 
@@ -32,6 +34,11 @@ export class LibraryViewModel {
   readonly editing = signal<RunSpec | null>(null);
   private readonly detail = signal<RunDetail | null>(null);
   readonly selRun = signal<string | null>(null);
+  /** The mode the selected run was made in, which decides how its settings' sources read. */
+  readonly givenMode = computed<Mode>(() => {
+    const g = this.given();
+    return g && g !== 'not-recorded' ? modeOf(g) : 'workbench';
+  });
   /** Whether the dialog showing what the selected run was given is open. */
   readonly givenOpen = signal(false);
   readonly selKata = signal<string | null>(null);

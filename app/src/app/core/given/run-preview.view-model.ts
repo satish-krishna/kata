@@ -3,7 +3,7 @@ import type { Mode } from '@bindings/Mode';
 import type { RunSetting } from '@bindings/RunSetting';
 import type { RunSettings } from '@bindings/RunSettings';
 import type { RunSpec } from '@bindings/RunSpec';
-import { groupRows, itemSourceLabel, presetRows, settingSourceLabel, toGiven, toggle, type PresetFrom, type PresetRow } from '../../lib/given';
+import { groupRows, isSwitchable, itemSourceLabel, presetRows, settingSourceLabel, toGiven, toggle, type PresetFrom, type PresetRow } from '../../lib/given';
 import { buildPreviewFor, safetyRules, type BuildPreviewKind, type BuildPreviewPlan } from '../../lib/sdlc';
 import { buildRequest, createBuildForm, limitSecs, type BuildDialogMode, type BuildFormState, type BuildStartRequest } from '../../ui/build-dialog';
 import type { PreviewEnvRow, PreviewSection, PreviewSettingRow } from '../../ui/run-preview-dialog';
@@ -75,8 +75,6 @@ type BuildPending = { resolve: (result: BuildPreviewResult | null) => void; reje
 /** One folder of a build with the rows resolved in it. */
 export type BuildPart = { section: BuildSectionRequest; rows: PresetRow[] };
 type Part = BuildPart;
-
-const isSwitchable = (row: PresetRow): boolean => row.locked === null && row.item.brought_by === null;
 
 /** The ids of the rows that belong to the folder they were resolved in: a project item, and what a project plugin brings. */
 function projectBound(rows: readonly PresetRow[]): Set<string> {
@@ -253,7 +251,7 @@ export class RunPreviewViewModel {
     const pending = this.pending;
     if (!pending) return;
     this.givens.remember(this.rows(), pending.workdir);
-    const spec = { ...pending.spec, given: toGiven(this.rows()) };
+    const spec = { ...pending.spec, given: toGiven(this.rows(), pending.spec.given ?? undefined) };
     this.close(spec);
   }
 

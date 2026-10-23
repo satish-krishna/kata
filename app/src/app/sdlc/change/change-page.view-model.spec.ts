@@ -436,10 +436,11 @@ describe('ChangePageViewModel', () => {
       expect(hook().locked).toBeNull();
       expect(sdlcPlugin().locked).toMatchObject({ kind: 'required' });
       expect(hook().off).toBe(false);
+      const hookId = hook().item.id;
       preview.toggle(hook().key, true);
       preview.start();
       await specRun;
-      expect((runAgent.mock.calls[0][1] as RunSpec).given).toMatchObject({ hooks: [hook().item.id], required_plugins: ['ai-sdlc'], build: false });
+      expect((runAgent.mock.calls[0][1] as RunSpec).given).toMatchObject({ hooks: [hookId], required_plugins: ['ai-sdlc'], build: false });
 
       const planRun = vm.act('start-plan');
       await previewReady(preview);

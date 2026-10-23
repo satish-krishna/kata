@@ -40,6 +40,10 @@ const SOURCE_ORDER: readonly Source[] = ['personal', 'project', 'project-local',
 
 const isFollower = (item: ResolvedItem): boolean => item.lock?.kind === 'follows-plugin';
 
+/** Whether a job or a build can never switch this item off: it is locked on its own, not because it follows its plugin. */
+export const isLockedOn = (item: ResolvedItem): item is ResolvedItem & { lock: Exclude<LockReason, { kind: 'follows-plugin' }> } =>
+  item.lock !== null && item.lock.kind !== 'follows-plugin';
+
 /** How a choice is keyed across runs: a project item is qualified by the folder it came from. */
 export function givenKey(id: string, workdir: string): string {
   if (!PROJECT_SOURCES.includes(id.split(':')[0])) return id;
@@ -68,7 +72,7 @@ export function presetRows(resolved: Resolved, from: PresetFrom): PresetResult {
     const row: PresetRow = { item, key, off: false, locked: item.lock, mark: null };
     if (item.lock) {
       const listed = (jobIds?.has(item.id) ?? false) || (from.build?.has(key) ?? false);
-      if (listed && item.lock.kind !== 'follows-plugin') {
+      if (listed && isLockedOn(item)) {
         warnings.push(`The job switches off \`${item.name}\`; its choice was ignored: ${item.lock.text}`);
       }
       return row;
@@ -103,11 +107,13 @@ function applyHooks(rows: readonly PresetRow[]): PresetRow[] {
   });
 }
 
-const isSwitchable = (row: PresetRow): boolean => row.locked === null && row.item.brought_by === null && !row.offWith;
+export const isSwitchable = (row: PresetRow): boolean => row.locked === null && row.item.brought_by === null && !row.offWith;
 
 /** The run-spec's `given` section for these rows: the switched-off, switchable items. Always a section. */
-export function toGiven(rows: readonly PresetRow[]): Given {
+export function toGiven(rows: readonly PresetRow[], kind?: Pick<Given, 'required_plugins' | 'build'>): Given {
   const given: Given = { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] };
+  if (kind?.required_plugins !== undefined) given.required_plugins = kind.required_plugins;
+  if (kind?.build !== undefined) given.build = kind.build;
   const lists: Record<ItemKind, string[]> = {
     hook: given.hooks,
     skill: given.skills,
@@ -229,6 +235,5 @@ export function recordedRows(items: readonly GivenItem[]): PresetRow[] {
 
 /** The mode a recorded run was made in: AI-SDLC when its options name a required plugin. */
 export function modeOf(given: RunGiven): Mode {
-  void given;
-  return 'workbench';
+  return (given.options?.required_plugins.length ?? 0) > 0 ? 'sdlc' : 'workbench';
 }
