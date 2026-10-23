@@ -472,18 +472,23 @@ describe('ChangePage build page', () => {
   it('the Build tab ties changed files to their tasks and narrows them to a picked task', async () => {
     const { container, fixture } = await mount(MOCK_BUILD_CHANGE, finished());
     const files = () => area(container, 'files')!;
-    const tasksOf = (path: string) => files().querySelector(`[data-file="${path}"] [data-tasks]`)?.textContent?.trim();
-    await vi.waitFor(() => expect(files().querySelector('[data-file="src/attachments.rs"]')).not.toBeNull(), { timeout: TOKEN });
-    expect(tasksOf('src/attachments.rs')).toBe('T1');
+    const inRepo = (repo: string, path: string) => files().querySelector(`[aria-label="Files changed in ${repo}"] [data-file="${path}"]`);
+    const heads = () => Array.from(files().querySelectorAll<HTMLElement>('app-repo-file-list [data-repo]'));
+    await vi.waitFor(() => expect(heads().length).toBeGreaterThan(1), { timeout: TOKEN });
+    const core = heads().find((h) => text(h).startsWith('claims-core'))!;
+    if (core.getAttribute('aria-expanded') !== 'true') core.click();
+    await vi.waitFor(() => expect(inRepo('claims-core', 'src/attachments.rs')).not.toBeNull(), { timeout: TOKEN });
+    // Unpicked, a file shows the task whose commit changed it.
+    await vi.waitFor(() => expect(inRepo('claims-core', 'src/attachments.rs')!.querySelector('[data-tasks]')?.textContent?.trim()).toBe('T1'), { timeout: TOKEN });
     fixture.debugElement.injector.get(BuildPageViewModel).choose({ kind: 'task', task: 'T1' });
     await vi.waitFor(
       () => {
         TestBed.tick();
-        expect(files().querySelectorAll('app-repo-file-list [data-repo]')).toHaveLength(1);
+        expect(heads()).toHaveLength(1);
       },
       { timeout: TOKEN },
     );
-    expect(files().querySelector('[data-file="src/attachments.rs"]')).not.toBeNull();
+    expect(text(heads()[0])).toContain('claims-core');
     expect(files().querySelector('[data-file="src/limits.rs"]')).toBeNull();
   });
 
