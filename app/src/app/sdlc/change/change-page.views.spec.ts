@@ -1,4 +1,5 @@
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ParsedRequirement } from '@bindings/ParsedRequirement';
 import type { ParsedTask } from '@bindings/ParsedTask';
 import type { ReadResult } from '@bindings/ReadResult';
@@ -10,7 +11,8 @@ import { render } from '../../../testing/render';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { diagrams } from '../../lib/mermaid';
-import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE } from '../../lib/sdlc-mock';
+import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
@@ -459,5 +461,96 @@ describe('ChangePage plan views', () => {
     await settle();
     expect(vm.shownView()).toBe('list');
     expect(vm.pickedTask()?.id).toBe('T3');
+  });
+});
+
+describe('ChangePage opens an existing change on the build page', () => {
+  let draw: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    draw = vi.spyOn(diagrams, 'render').mockResolvedValue('<svg></svg>');
+    vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
+  });
+  afterEach(() => {
+    draw.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  const EARLIER = 'earlier-run-1';
+  const FINDING = 'The refusal message has no test.';
+  const REVIEW = {
+    layout: 2,
+    problems: [],
+    master_moved: [],
+    reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: {}, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: FINDING }] }],
+  } as unknown as Awaited<ReturnType<MockTransport['sdlcReviewRecord']>>;
+  const actions = (c: HTMLElement) => Array.from(c.querySelectorAll('app-build-page [data-bar] button')).map(text);
+  const taskLine = (c: HTMLElement, id: string) => text(Array.from(c.querySelectorAll('app-build-page [data-task]')).find((t) => text(t).startsWith(id))!);
+
+  /** A change as an earlier version of Kata left it: build log rows for `built` tasks, a run recorded on this machine, a review document. */
+  async function existing(stage: ChangeInfo['stage'], built: string[], review: boolean) {
+    const transport = new MockTransport();
+    const real = transport.sdlcChanges.bind(transport);
+    vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) => (await real(m, s)).map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage } : c)));
+    const status = transport.sdlcBuildStatus.bind(transport);
+    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => {
+      const got = await status(m, s, c);
+      return { ...got, tasks: got.tasks.map((t) => (built.includes(t.id) ? { ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } } : t)) };
+    });
+    if (review) vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
+    if (built.length > 0) {
+      await transport.sdlcLinkRun({ workspace_id: 'acme-claims', system: 'claims', change: MOCK_BUILD_CHANGE, stage: 'build:claims-core', run_id: EARLIER, started_at: 1790000000, heads: {} });
+      vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: EARLIER, kata: 'k', started_at: 1790000000, isolation: 'none', exit: 0 }]);
+    }
+    return open(MOCK_BUILD_CHANGE, transport);
+  }
+  const open = async (change: string, transport: MockTransport) => {
+    const out = await render(ChangePage, {}, [
+      provideRouter([]),
+      { provide: KataTransport, useValue: transport },
+      { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
+    ]);
+    await settle();
+    return out;
+  };
+
+  it('an existing change accepted but not built opens on the build page at its stage', async () => {
+    const { container } = await existing('build-ready', [], false);
+    expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
+    expect(actions(container)).toEqual(['Start build', 'Reopen intent']);
+    expect(taskLine(container, 'T1')).toContain('Not started');
+  });
+
+  it('an existing change stopped partway opens on the build page with its log and earlier run', async () => {
+    const { container } = await existing('build-stopped', ['T1'], false);
+    expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
+    expect(actions(container)).toEqual(['Continue build', 'Another round']);
+    expect(taskLine(container, 'T1')).toContain('Done');
+    expect(taskLine(container, 'T3')).not.toContain('Done');
+    expect(container.querySelector(`app-build-page [data-session="${EARLIER}"]`)).not.toBeNull();
+    expect(text(container.querySelector('app-build-page [data-stage]')!)).toContain('The build stopped.');
+  });
+
+  it('an existing finished change opens on the build page with its log, earlier run and review', async () => {
+    const { container } = await existing('build-finished', ['T1', 'T2', 'T3'], true);
+    expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
+    expect(actions(container)).toEqual(['Declare done', 'Another round', 'Run review']);
+    expect(Array.from(container.querySelectorAll('app-build-page [data-task]')).every((t) => text(t).includes('Done'))).toBe(true);
+    expect(container.querySelector(`app-build-page [data-session="${EARLIER}"]`)).not.toBeNull();
+    expect(text(container.querySelector('app-build-page app-findings-list')!)).toContain(FINDING);
+  });
+
+  it('an existing change done with pull requests open opens on the build page with nothing to do', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
+    await transport.sdlcLinkRun({ workspace_id: 'acme-claims', system: 'claims', change: MOCK_DONE_CHANGE, stage: 'build:claims-core', run_id: EARLIER, started_at: 1790000000, heads: {} });
+    vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: EARLIER, kata: 'k', started_at: 1790000000, isolation: 'none', exit: 0 }]);
+    const { container } = await open(MOCK_DONE_CHANGE, transport);
+    expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
+    expect(text(pill(container, 'Build'))).toBe('Build · done');
+    expect(actions(container)).toEqual([]);
+    expect(Array.from(container.querySelectorAll('app-build-page [data-task]')).every((t) => text(t).includes('Done'))).toBe(true);
+    expect(container.querySelector(`app-build-page [data-session="${EARLIER}"]`)).not.toBeNull();
+    expect(text(container.querySelector('app-build-page app-findings-list')!)).toContain(FINDING);
+    expect(container.querySelector('header [data-testid="pr-menu"]')).not.toBeNull();
   });
 });
