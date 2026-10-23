@@ -3,8 +3,8 @@
 //! never derives it.
 
 use super::{
-    parse_item_id, ItemKind, LockReason, ResolveOptions, Resolved, ResolvedItem, RunSetting,
-    SettingSource, Source,
+    carried_name, parse_item_id, ItemKind, LockReason, ResolveOptions, Resolved, ResolvedItem,
+    RunSetting, SettingSource, Source,
 };
 use crate::event::{HookFired, InitReport, KataEvent, McpState};
 use serde::{Deserialize, Serialize};
@@ -197,8 +197,69 @@ pub struct HookFirings {
 }
 
 /// Decides which hook items the `hook_started` lines belong to.
-pub fn hooks_fired(_items: &[ResolvedItem], _lines: &[HookFired]) -> HookFirings {
-    HookFirings::default()
+///
+/// A line's `hook_name` is `<event>` or `<event>:<trigger>`, the trigger being
+/// the tool name or the session-start reason. Claude starts every loaded hook
+/// whose matcher matches the trigger, one line each, together, so consecutive
+/// lines with one name are one occurrence. A line with an empty event is a
+/// boundary between occurrences (the run engine inserts one when a hook
+/// response arrives).
+pub fn hooks_fired(items: &[ResolvedItem], lines: &[HookFired]) -> HookFirings {
+    let hooks: Vec<(&ResolvedItem, &str, &str)> = items
+        .iter()
+        .filter(|i| i.kind == ItemKind::Hook)
+        .filter_map(|i| {
+            let (event, matcher) = i.name.split_once(' ')?;
+            Some((i, event, if matcher == "any" { "" } else { matcher }))
+        })
+        .collect();
+
+    let mut occurrences: Vec<(&HookFired, usize)> = Vec::new();
+    let mut open = false;
+    for line in lines {
+        if line.event.is_empty() {
+            open = false;
+            continue;
+        }
+        match occurrences.last_mut() {
+            Some((first, count)) if open && first.name == line.name => *count += 1,
+            _ => occurrences.push((line, 1)),
+        }
+        open = true;
+    }
+
+    let mut out = HookFirings::default();
+    for (line, started) in occurrences {
+        let trigger = line.name.strip_prefix(&format!("{}:", line.event));
+        let matching: Vec<&(&ResolvedItem, &str, &str)> = hooks
+            .iter()
+            .filter(|(_, event, matcher)| {
+                *event == line.event && trigger.is_none_or(|t| matcher_matches(matcher, t))
+            })
+            .collect();
+        let kept = matching.iter().filter(|(i, _, _)| !i.off).count();
+        for (item, _, _) in &matching {
+            if !item.off || started > kept {
+                out.fired.insert(item.id.clone());
+            }
+        }
+        for _ in matching.len()..started {
+            out.unknown.push(line.clone());
+        }
+    }
+    out
+}
+
+/// A hook matcher is empty, `*`, or a regular expression that must match the
+/// whole trigger (`Bash|Read` matches `Read`, `Rea` does not).
+fn matcher_matches(matcher: &str, trigger: &str) -> bool {
+    if matcher.is_empty() || matcher == "*" {
+        return true;
+    }
+    match regex::Regex::new(&format!("^(?:{matcher})$")) {
+        Ok(re) => re.is_match(trigger),
+        Err(_) => matcher == trigger,
+    }
 }
 
 /// The `run.given` event for what `resolved` listed at the start, checked
@@ -225,21 +286,14 @@ pub fn given_event(
     let mut claimed_skills: HashSet<&str> = HashSet::new();
     let mut claimed_plugins: HashSet<&str> = HashSet::new();
     let mut claimed_servers: HashSet<&str> = HashSet::new();
-    let mut claimed_hooks: HashSet<usize> = HashSet::new();
+    let firings = hooks_fired(&resolved.items, fired);
 
     let mut items: Vec<GivenItem> = Vec::new();
     for item in &resolved.items {
         let claude = match item.kind {
             ItemKind::Instruction => ClaudeSide::NoReportOfKind,
             ItemKind::Hook => {
-                let mut any = false;
-                for (n, f) in fired.iter().enumerate() {
-                    if hook_matches(item, f) {
-                        claimed_hooks.insert(n);
-                        any = true;
-                    }
-                }
-                if any {
+                if firings.fired.contains(&item.id) {
                     ClaudeSide::Fired
                 } else {
                     ClaudeSide::NotFired
@@ -333,11 +387,11 @@ pub fn given_event(
             unknown(ItemKind::Skill, s, ClaudeSide::Loaded);
         }
         // Claude's own bundled plugins are not part of anyone's setup.
-        for p in report
-            .plugins
-            .iter()
-            .filter(|p| !p.ends_with("@builtin") && !claimed_plugins.contains(p.as_str()))
-        {
+        for p in report.plugins.iter().filter(|p| {
+            !p.ends_with("@builtin")
+                && !p.starts_with(CARRY_SOURCE)
+                && !claimed_plugins.contains(p.as_str())
+        }) {
             unknown(ItemKind::Plugin, p, ClaudeSide::Loaded);
         }
         for (n, state) in report
@@ -353,8 +407,8 @@ pub fn given_event(
         }
     }
     let mut seen_hooks: HashSet<&str> = HashSet::new();
-    for (n, f) in fired.iter().enumerate() {
-        if !claimed_hooks.contains(&n) && seen_hooks.insert(f.name.as_str()) {
+    for f in &firings.unknown {
+        if seen_hooks.insert(f.name.as_str()) {
             unknown(ItemKind::Hook, &f.name, ClaudeSide::Fired);
         }
     }
@@ -414,9 +468,15 @@ fn skill_matches(item: &ResolvedItem, reported: &str, plugin: Option<&str>) -> b
         None if item.source == Source::RunSpec => {
             reported.rsplit(':').next() == Some(item.name.as_str())
         }
+        None if matches!(item.source, Source::Project | Source::ProjectLocal) => {
+            reported == item.name || reported == carried_name(&item.name)
+        }
         None => reported == item.name,
     }
 }
+
+/// The source Claude gives Kata's own carry-over plugin; it is not an item.
+const CARRY_SOURCE: &str = "kata-proj@inline";
 
 /// An installed plugin is reported by its `<name>@<marketplace>`, which is its
 /// key; a kit plugin has only a name.
@@ -439,24 +499,6 @@ fn server_name(item: &ResolvedItem, plugin: Option<&str>) -> String {
     match plugin {
         Some(p) => format!("plugin:{p}:{}", item.name),
         None => item.name.clone(),
-    }
-}
-
-/// A hook item is named `<event> <matcher or any>`. Claude names a fired hook
-/// by its event, or `<event>:<matcher>` when it has a matcher, and the line has
-/// no command. A bare event name therefore fires every hook of that event, and
-/// a matcher fires the hooks of that event and matcher: two hooks that differ
-/// only by command cannot be told apart, so both show as fired.
-fn hook_matches(item: &ResolvedItem, fired: &HookFired) -> bool {
-    let Some((event, matcher)) = item.name.split_once(' ') else {
-        return false;
-    };
-    if event != fired.event {
-        return false;
-    }
-    match fired.name.strip_prefix(&format!("{}:", fired.event)) {
-        Some(m) => matcher == m,
-        None => true,
     }
 }
 

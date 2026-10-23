@@ -2,7 +2,9 @@ use crate::assemble::{assemble, AssembleError};
 use crate::catalog::CatalogEntry;
 use crate::command::{build_invocation_with, ClaudeInvocation};
 use crate::event::KataEvent;
-use crate::given::{apply, given_event, merge_settings, resolve, ResolveOptions, ResolveRoots};
+use crate::given::{
+    apply, given_event, hooks_fired, merge_settings, resolve, ResolveOptions, ResolveRoots,
+};
 use crate::spec::{validate, Isolation, PermissionMode, RunSpec, UnmatchedPolicy};
 use std::io::{BufReader, Write};
 use std::path::Path;
@@ -322,6 +324,20 @@ pub fn run_with<F: FnMut(KataEvent)>(
         forward(event);
     };
 
+    // A run that ends before it is under way still says what it was given: the
+    // refusals below and every setup failure on the way to the spawn.
+    macro_rules! record_given_none {
+        () => {
+            emit(given_event(&resolved, &given_opts, None, &[]))
+        };
+    }
+    macro_rules! spawn_fail {
+        ($e:expr) => {{
+            record_given_none!();
+            RunError::Spawn($e.to_string())
+        }};
+    }
+
     // Fail fast: a bare run that references a token var it cannot resolve would
     // reach the API unauthenticated. Refuse before creating a worktree or spawning.
     if spec.auth.bare {
@@ -333,6 +349,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
         {
             let resolved = std::env::var(name).ok().filter(|v| !v.trim().is_empty());
             if resolved.is_none() {
+                record_given_none!();
                 let message = format!(
                     "auth.token_env names '{name}', but it is unset or empty in the environment"
                 );
@@ -363,6 +380,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
                 worktree = Some(wt);
             }
             Err(e) => {
+                record_given_none!();
                 let message = format!("worktree isolation failed for {}: {e}", spec.workdir);
                 emit(KataEvent::RunError {
                     message: message.clone(),
@@ -410,14 +428,14 @@ pub fn run_with<F: FnMut(KataEvent)>(
     // One private folder per run holds every per-run file (tool servers, settings,
     // the retask note); see `fsutil::run_temp_dir`. It is removed when this guard
     // drops, on every return below.
-    let run_tmp = crate::fsutil::run_temp_dir().map_err(|e| RunError::Spawn(e.to_string()))?;
+    let run_tmp = crate::fsutil::run_temp_dir().map_err(|e| spawn_fail!(e))?;
     let bridge_rx = {
-        let bridge = crate::ask::Bridge::bind().map_err(|e| RunError::Spawn(e.to_string()))?;
+        let bridge = crate::ask::Bridge::bind().map_err(|e| spawn_fail!(e))?;
         let port = bridge.port();
         let (atx, arx) = mpsc::channel();
         bridge.serve(atx, cancel.clone());
 
-        let exe = std::env::current_exe().map_err(|e| RunError::Spawn(e.to_string()))?;
+        let exe = std::env::current_exe().map_err(|e| spawn_fail!(e))?;
         let cfg = run_tmp.path().join("mcp-config.json");
         // Pass the port and tool set via the per-server env block too: relying on
         // claude to propagate them from the child env to this grandchild is not
@@ -448,7 +466,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
             }
         }
         let cfg_body = serde_json::json!({ "mcpServers": servers }).to_string();
-        std::fs::write(&cfg, cfg_body).map_err(|e| RunError::Spawn(e.to_string()))?;
+        std::fs::write(&cfg, cfg_body).map_err(|e| spawn_fail!(e))?;
 
         inv.args.push("--mcp-config".into());
         inv.args.push(cfg.to_string_lossy().into_owned());
@@ -458,7 +476,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
             .as_deref()
             .filter(|_| !applied.drop_system_prompt);
         append_interactive_retask(&mut inv, prompt_file, INTERACTIVE_RETASK, run_tmp.path())
-            .map_err(|e| RunError::Spawn(e.to_string()))?;
+            .map_err(|e| spawn_fail!(e))?;
         inv.env.push(("KATA_ASK_PORT".into(), port.to_string()));
         inv.env
             .push((crate::ask::TOOLS_ENV.to_string(), tools.to_env()));
@@ -496,7 +514,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
     if !file_settings.is_empty() {
         let path = run_tmp.path().join("settings.json");
         let body = serde_json::Value::Object(file_settings).to_string();
-        std::fs::write(&path, body).map_err(|e| RunError::Spawn(e.to_string()))?;
+        std::fs::write(&path, body).map_err(|e| spawn_fail!(e))?;
         inv.args.push("--settings".into());
         inv.args.push(path.to_string_lossy().into_owned());
     }
@@ -508,7 +526,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
     if let Some(carry) = &applied.carry {
         if !carry.plugin.is_empty() {
             let dir = run_tmp.path().join("carry-plugin");
-            write_carry_plugin(&dir, &carry.plugin).map_err(|e| RunError::Spawn(e.to_string()))?;
+            write_carry_plugin(&dir, &carry.plugin).map_err(|e| spawn_fail!(e))?;
             inv.args.push("--plugin-dir".into());
             inv.args.push(dir.to_string_lossy().into_owned());
         }
@@ -567,7 +585,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
     for k in &inv.env_remove {
         cmd.env_remove(k);
     }
-    let mut child = cmd.spawn().map_err(|e| RunError::Spawn(e.to_string()))?;
+    let mut child = cmd.spawn().map_err(|e| spawn_fail!(e))?;
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
 
@@ -627,6 +645,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
     // `run.given` is the report; each hook's first firing adds another.
     let mut start_report: Option<crate::event::InitReport> = None;
     let mut fired: Vec<crate::event::HookFired> = Vec::new();
+    let mut last_firings = crate::given::HookFirings::default();
     let mut termination: Option<Termination> = None;
 
     // Await state, shared by both things that can pause a run: an unanswered
@@ -841,20 +860,26 @@ pub fn run_with<F: FnMut(KataEvent)>(
                     ));
                 }
                 if let Some(hook) = parsed.hook {
-                    if !fired
-                        .iter()
-                        .any(|f| f.event == hook.event && f.name == hook.name)
-                    {
+                    if parsed.hook_started {
                         fired.push(hook);
-                        if start_report.is_some() {
-                            emit(given_event(
-                                &resolved,
-                                &given_opts,
-                                start_report.as_ref(),
-                                &fired,
-                            ));
-                        }
+                    } else if fired.last().is_some_and(|l| !l.event.is_empty()) {
+                        // A response ends the occurrence its started lines made.
+                        fired.push(crate::event::HookFired {
+                            event: String::new(),
+                            name: String::new(),
+                            command: None,
+                        });
                     }
+                    let now = hooks_fired(&resolved.items, &fired);
+                    if start_report.is_some() && now != last_firings {
+                        emit(given_event(
+                            &resolved,
+                            &given_opts,
+                            start_report.as_ref(),
+                            &fired,
+                        ));
+                    }
+                    last_firings = now;
                 }
                 if parsed.starts_turn {
                     // Engine-side leash: claude 2.1.x has no --max-turns flag, so the
@@ -900,7 +925,12 @@ pub fn run_with<F: FnMut(KataEvent)>(
                 match child.try_wait() {
                     Ok(Some(_)) => break,
                     Ok(None) => thread::sleep(POLL),
-                    Err(e) => return Err(RunError::Spawn(e.to_string())),
+                    Err(e) => {
+                        if start_report.is_none() {
+                            emit(given_event(&resolved, &given_opts, None, &fired));
+                        }
+                        return Err(RunError::Spawn(e.to_string()));
+                    }
                 }
             }
         }
@@ -970,7 +1000,12 @@ pub fn run_with<F: FnMut(KataEvent)>(
             }
         }
         None => {
-            let status = child.wait().map_err(|e| RunError::Spawn(e.to_string()))?;
+            let status = child.wait().map_err(|e| {
+                if start_report.is_none() {
+                    emit(given_event(&resolved, &given_opts, None, &fired));
+                }
+                RunError::Spawn(e.to_string())
+            })?;
             let code = status.code().unwrap_or(1);
             let payload = result.unwrap_or(crate::event::ResultPayload {
                 num_turns: turns,

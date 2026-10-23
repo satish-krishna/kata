@@ -1789,6 +1789,7 @@ dependencies = [
 name = "kata-core"
 version = "3.2.0"
 dependencies = [
+ "regex",
  "schemars 1.2.1",
  "serde",
  "serde_json",

@@ -19,6 +19,8 @@ fn is_false(b: &bool) -> bool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type")]
+// `run.given` carries the whole record of a run; events are built and sent one at a time.
+#[allow(clippy::large_enum_variant)]
 pub enum KataEvent {
     #[serde(rename = "run.started")]
     RunStarted {
@@ -335,6 +337,8 @@ pub struct Parsed {
     pub init: Option<InitReport>,
     /// A hook lifecycle line. Produces no event.
     pub hook: Option<HookFired>,
+    /// True when the hook line is a `hook_started` line (not a `hook_response`).
+    pub hook_started: bool,
 }
 
 /// Stateful translator for a `stream-json` line sequence. Holds the
@@ -467,7 +471,10 @@ impl StreamParser {
             }
             Some("system") => match v.get("subtype").and_then(|s| s.as_str()) {
                 Some("init") => out.init = Some(parse_init(&v)),
-                Some("hook_started") | Some("hook_response") => out.hook = parse_hook(&v),
+                Some(kind @ ("hook_started" | "hook_response")) => {
+                    out.hook = parse_hook(&v);
+                    out.hook_started = kind == "hook_started";
+                }
                 _ => {}
             },
             Some("result") => {

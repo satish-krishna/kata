@@ -129,6 +129,25 @@
       ],
       "type": "object"
     },
+    "GivenOptions": {
+      "description": "The options a run was resolved with, as `run.given` records them.",
+      "properties": {
+        "build": {
+          "type": "boolean"
+        },
+        "required_plugins": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "required_plugins",
+        "build"
+      ],
+      "type": "object"
+    },
     "GivenStatus": {
       "description": "One variant per distinct text the view shows. The frontend maps each to its\nwords.",
       "oneOf": [
@@ -262,6 +281,23 @@
           "properties": {
             "kind": {
               "const": "organization",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A build keeps the project's hooks.",
+          "properties": {
+            "kind": {
+              "const": "build",
               "type": "string"
             },
             "text": {
@@ -739,6 +775,14 @@
             "$ref": "#/$defs/GivenItem"
           },
           "type": "array"
+        },
+        "options": {
+          "$ref": "#/$defs/GivenOptions",
+          "default": {
+            "build": false,
+            "required_plugins": []
+          },
+          "description": "The options the run was resolved with."
         },
         "settings": {
           "$ref": "#/$defs/RunSettings"

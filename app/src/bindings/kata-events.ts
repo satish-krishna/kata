@@ -87,6 +87,7 @@ export type KataEvent =
   | {
       env: EnvName[];
       items: GivenItem[];
+      options?: GivenOptions;
       settings: RunSettings;
       type: "run.given";
       warnings: string[];
@@ -221,6 +222,10 @@ export type LockReason =
       text: string;
     }
   | {
+      kind: "build";
+      text: string;
+    }
+  | {
       kind: "unswitchable";
       text: string;
     }
@@ -281,6 +286,13 @@ export interface GivenItem {
   off: boolean;
   source?: Source | null;
   status: GivenStatus;
+}
+/**
+ * The options the run was resolved with.
+ */
+export interface GivenOptions {
+  build: boolean;
+  required_plugins: string[];
 }
 /**
  * The settings of R17.1 the engine can resolve. The build's safety rules come
