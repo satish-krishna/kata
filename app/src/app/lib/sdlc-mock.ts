@@ -36,6 +36,7 @@ import type { DocState } from '@bindings/DocState';
 import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { RunLink } from '@bindings/RunLink';
+import type { TaskLink } from '@bindings/TaskLink';
 import type { Settings } from '@bindings/Settings';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Stage } from '@bindings/Stage';
@@ -285,6 +286,10 @@ export class SdlcMock {
     id: 'acme-claims', name: 'acme-claims', folder: MOCK_WORKSPACE_FOLDER, base_branch: 'main', last_opened: 1792281600,
   }];
   private links: RunLink[] = [];
+  /** The first demo task is linked to its run; the others are not, so both the known and the unknown session show in the browser. */
+  private taskLinksList: TaskLink[] = [{
+    workspace_id: 'acme-claims', system: MOCK_SYSTEM, change: MOCK_BUILD_CHANGE, repo: 'claims-core', task: 'T1', run_id: 'mock-build-claims-core',
+  }];
   private current = 'main';
   /** Other change branches, without the `change/` prefix, like the real `other_change_branches`. */
   private others = ['2026-10-17-claim-notes'];
@@ -409,6 +414,8 @@ export class SdlcMock {
 
   runLinks(): RunLink[] { return this.links.map((l) => ({ ...l })); }
   linkRun(link: RunLink): void { this.links = [...this.links, { ...link }]; }
+  taskLinks(): TaskLink[] { return this.taskLinksList.map((l) => ({ ...l })); }
+  linkTasks(links: TaskLink[]): void { this.taskLinksList = [...this.taskLinksList, ...links.map((l) => ({ ...l }))]; }
 
   // ---- the build ----
 

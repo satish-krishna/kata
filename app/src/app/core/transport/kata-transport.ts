@@ -17,6 +17,7 @@ import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
+import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { ReadError } from '../../lib/doc-notice';
@@ -88,6 +89,10 @@ export abstract class KataTransport {
   abstract sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean): Promise<DecideOutcome>;
   abstract sdlcRunLinks(): Promise<RunLink[]>;
   abstract sdlcLinkRun(link: RunLink): Promise<void>;
+  /** Which run recorded each task, in the order they were linked. */
+  abstract sdlcTaskLinks(): Promise<TaskLink[]>;
+  /** Append the links for the tasks a run recorded, in one write. */
+  abstract sdlcLinkTasks(links: TaskLink[]): Promise<void>;
   /** Wait until the engine process of run `runId` has exited. False when it is still alive after `timeoutMs`. */
   abstract sdlcWaitRunExit(runId: string, timeoutMs: number): Promise<boolean>;
   abstract sdlcBuildStatus(master: string, system: string, change: string): Promise<BuildStatus>;

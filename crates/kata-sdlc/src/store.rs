@@ -136,11 +136,14 @@ pub fn append_run_link(l: RunLink) -> Result<(), StoreError> {
 }
 
 pub fn load_task_links() -> Vec<TaskLink> {
-    Vec::new()
+    read_or_default("task-runs.json")
 }
 
-pub fn append_task_links(_links: &[TaskLink]) -> Result<(), StoreError> {
-    Ok(())
+/// Append all of `links` in one write.
+pub fn append_task_links(links: &[TaskLink]) -> Result<(), StoreError> {
+    let mut all = load_task_links();
+    all.extend_from_slice(links);
+    write("task-runs.json", &all)
 }
 
 #[cfg(test)]

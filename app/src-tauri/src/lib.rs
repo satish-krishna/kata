@@ -324,6 +324,16 @@ fn sdlc_link_run(link: sdlc::store::RunLink) -> Result<(), String> {
     sdlc::store::append_run_link(link).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn sdlc_task_links() -> Vec<sdlc::store::TaskLink> {
+    sdlc::store::load_task_links()
+}
+
+#[tauri::command]
+fn sdlc_link_tasks(links: Vec<sdlc::store::TaskLink>) -> Result<(), String> {
+    sdlc::store::append_task_links(&links).map_err(|e| e.to_string())
+}
+
 // ---- AI-SDLC mode: the build, the diff, checks and publishing ----
 
 #[tauri::command(async)]
@@ -878,6 +888,8 @@ pub fn run() {
             sdlc_checkout,
             sdlc_decide,
             sdlc_run_links,
+            sdlc_task_links,
+            sdlc_link_tasks,
             sdlc_link_run,
             sdlc_wait_run_exit,
             sdlc_build_status,
