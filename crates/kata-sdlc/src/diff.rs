@@ -76,8 +76,65 @@ pub struct CommitFiles {
 }
 
 /// The commits since the merge base, oldest first, each with the files it touched.
-pub fn commit_files(_repo: &Path) -> Result<Vec<CommitFiles>, DiffError> {
-    Ok(Vec::new())
+///
+/// It takes the left side as `left_side(repo, Part::Committed)` does, so the commits agree with the
+/// Committed and Whole parts of the diff. A rename lists as a delete and an add; a merge commit
+/// lists no files. It never fetches and never writes.
+pub fn commit_files(repo: &Path) -> Result<Vec<CommitFiles>, DiffError> {
+    let left = left_side(repo, Part::Committed)?;
+    let range = format!("{left}..HEAD");
+    let out = git::run_bytes(
+        repo,
+        &[
+            "--no-optional-locks",
+            "log",
+            "--reverse",
+            "--no-renames",
+            "--format=%x00%H",
+            "--name-only",
+            "-z",
+            &range,
+        ],
+    )?;
+    Ok(parse_commit_files(&out))
+}
+
+/// Parse `log --format=%x00%H --name-only -z`: each commit is an empty token, its hash, then its
+/// paths. A path is never empty, so an empty token marks the start of a commit. Git puts a newline
+/// between the hash and the first path.
+fn parse_commit_files(out: &[u8]) -> Vec<CommitFiles> {
+    let mut commits: Vec<CommitFiles> = Vec::new();
+    let mut next_is_sha = false;
+    let mut after_sha = false;
+    for token in out.split(|b| *b == 0) {
+        let token = String::from_utf8_lossy(token);
+        if token.is_empty() {
+            next_is_sha = true;
+            after_sha = false;
+        } else if next_is_sha {
+            commits.push(CommitFiles {
+                sha: token.trim().to_string(),
+                files: Vec::new(),
+            });
+            next_is_sha = false;
+            after_sha = true;
+        } else if let Some(commit) = commits.last_mut() {
+            let path = if after_sha {
+                token.strip_prefix('\n').unwrap_or(&token)
+            } else {
+                &token
+            };
+            after_sha = false;
+            if !path.is_empty() {
+                commit.files.push(path.to_string());
+            }
+        }
+    }
+    for commit in &mut commits {
+        commit.files.sort();
+        commit.files.dedup();
+    }
+    commits
 }
 
 /// Both sides of one file, for the diff editor. A missing side is an empty string; a binary file

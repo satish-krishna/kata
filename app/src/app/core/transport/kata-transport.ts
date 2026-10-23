@@ -27,6 +27,7 @@ import type { PrepareOutcome } from '@bindings/PrepareOutcome';
 import type { BuildStart } from '@bindings/BuildStart';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { Part } from '@bindings/Part';
+import type { CommitFiles } from '@bindings/CommitFiles';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
@@ -109,6 +110,8 @@ export abstract class KataTransport {
   /** The product repositories in the build that have no `change/<change>` branch, which the Changes view cannot list. */
   abstract sdlcMissingChangeBranches(folder: string, masterRepo: string, system: string, change: string): Promise<string[]>;
   abstract sdlcDiffFiles(repoPath: string, part: Part): Promise<DiffListing>;
+  /** The commits on the change branch since the merge base, oldest first, each with the files it touched. */
+  abstract sdlcCommitFiles(repoPath: string): Promise<CommitFiles[]>;
   abstract sdlcDiffPair(repoPath: string, part: Part, path: string): Promise<FilePair>;
   abstract sdlcDiffBase(repoPath: string): Promise<BaseInfo>;
   abstract sdlcTouchedRepos(folder: string, masterRepo: string, system: string, change: string): Promise<PublishRepo[]>;

@@ -508,6 +508,11 @@ fn sdlc_diff_files(
 }
 
 #[tauri::command(async)]
+fn sdlc_commit_files(repo_path: String) -> Result<Vec<sdlc::diff::CommitFiles>, String> {
+    sdlc::diff::commit_files(Path::new(&repo_path)).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
 fn sdlc_diff_pair(
     repo_path: String,
     part: sdlc::diff::Part,
@@ -887,6 +892,7 @@ pub fn run() {
             sdlc_change_repos,
             sdlc_missing_change_branches,
             sdlc_diff_files,
+            sdlc_commit_files,
             sdlc_diff_pair,
             sdlc_diff_base,
             sdlc_touched_repos,

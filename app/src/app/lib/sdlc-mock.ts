@@ -3,6 +3,7 @@
  * reflects what the operator did. Deterministic: no clocks, no randomness. */
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { BuildRow } from '@bindings/BuildRow';
+import type { CommitFiles } from '@bindings/CommitFiles';
 import type { BuildStart } from '@bindings/BuildStart';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
@@ -500,6 +501,15 @@ export class SdlcMock {
     return { files: files.map((f) => ({ ...f })), loc: [...byType.values()] };
   }
 
+  /** One commit per demo task in the repository, with the sha the finished build's row lists (padded to a full hash). */
+  commitFiles(repoPath: string): CommitFiles[] {
+    const repo = repoPath.slice(repoPath.lastIndexOf('/') + 1);
+    return BUILD_PLAN.filter((t) => t.repo === repo).map((t) => ({
+      sha: `${t.id.toLowerCase()}c0ffee`.padEnd(40, '0'),
+      files: COMMIT_FILES[t.id] ?? [],
+    }));
+  }
+
   diffPair(path: string): FilePair {
     return DIFF_PAIRS[path] ?? { original: '', modified: '', languageHint: 'plaintext', binary: false };
   }
@@ -535,6 +545,13 @@ export class SdlcMock {
 
 const MOCK_CHECKS_DIR = 'C:/Users/demo/.kata/checks';
 const prUrl = (repo: string) => `https://github.com/acme/${repo}/pull/7`;
+
+/** The files each demo task's commit touched. */
+const COMMIT_FILES: Record<string, string[]> = {
+  T1: ['src/attachments.rs'],
+  T2: ['assets/sample.png'],
+  T3: ['src/store.rs'],
+};
 
 /** The canned diff: one file of each kind the Changes view tells apart. */
 const DIFF_FILES: ChangedFile[] = [
