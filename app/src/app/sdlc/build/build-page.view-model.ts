@@ -71,6 +71,8 @@ export type ShownSession = Omit<ShownRun, 'spec'> & {
   live: boolean;
   /** Why an earlier run shows nothing, or null. */
   note: string | null;
+  /** False for a live run kept mounted while another pick is on show; absent or true means on show. */
+  shown?: boolean;
 };
 
 /** What the tasks area says about the review. */

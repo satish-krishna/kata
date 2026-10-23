@@ -431,6 +431,20 @@ describe('the build page, picking and folding', () => {
     expect(el.querySelector('[data-session="r1"] [data-pane]')).not.toBeNull();
   });
 
+  it('a live pane stays mounted, hidden, when another repository is picked', async () => {
+    const v = base({
+      pick: { kind: 'repo', repo: 'customer-portal' },
+      sessions: [session('a', { shown: false }), session('b')],
+    });
+    const { el } = await mount(v);
+    const a = el.querySelector<HTMLElement>('[data-session="a"]');
+    const b = el.querySelector<HTMLElement>('[data-session="b"]');
+    expect(a?.querySelector('app-observe-pane')).not.toBeNull();
+    expect(a?.hidden).toBe(true);
+    expect(b?.querySelector('app-observe-pane')).not.toBeNull();
+    expect(b?.hidden).toBe(false);
+  });
+
   it('keeps every area reachable below 1024 pixels: a three-way switch, the panels not on show hidden and not removed', async () => {
     const v = base({
       narrow: true,

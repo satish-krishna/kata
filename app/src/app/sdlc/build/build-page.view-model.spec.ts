@@ -1355,4 +1355,18 @@ describe('the build page shows tasks and sessions from the build log, the run li
     const id = vm.groups().find((g) => g.key === 'claims-core')!.runs[0].id;
     expect(linkTasks).toHaveBeenCalledWith([taskLink('T1', id)]);
   });
+
+  it('a not-started change with uncommitted edits shows the files area', async () => {
+    const { vm, transport, load } = await opened({ built: false });
+    const empty = { files: [], loc: [] };
+    const listing = { files: [{ path: 'src/a.ts', oldPath: null, status: 'modified', added: 1, removed: 0, binary: false, uncommitted: true }], loc: [] };
+    const read = vi.spyOn(transport, 'sdlcDiffFiles').mockImplementation((path) => Promise.resolve((path.endsWith('claims-core') ? listing : empty) as never));
+    await load();
+    await advance(100);
+    expect(vm.view().areas.files).toBe(true);
+    read.mockResolvedValue(empty as never);
+    await load();
+    await advance(100);
+    expect(vm.view().areas.files).toBe(false);
+  });
 });
