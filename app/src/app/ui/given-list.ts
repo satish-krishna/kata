@@ -31,7 +31,7 @@ export class GivenList {
   protected readonly markLabel = markLabel;
 
   protected switchable(row: PresetRow): boolean {
-    return row.locked === null && row.item.brought_by === null;
+    return row.locked === null && row.item.brought_by === null && !row.offWith;
   }
 
   /** A lock worth showing: a follower is held by its plugin, which the row says by being off with it. */

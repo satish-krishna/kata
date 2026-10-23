@@ -9,7 +9,7 @@ const WS_B = 'D:\ws\b';
 
 const item = (id: string, extra: Partial<ResolvedItem> = {}): ResolvedItem => {
   const [source, kind, ...name] = id.split(':');
-  return { id, kind: kind as ResolvedItem['kind'], source: source as ResolvedItem['source'], name: name.join(':'), detail: '', path: null, brought_by: null, lock: null, off: false, ...extra } as ResolvedItem;
+  return { id, kind: kind as ResolvedItem['kind'], source: source as ResolvedItem['source'], name: name.join(':'), detail: '', path: null, brought_by: null, lock: null, off: false, goes_off_with: [], ...extra } as ResolvedItem;
 };
 const resolved = (items: ResolvedItem[]): Resolved => ({ items, settings: {} as Resolved['settings'], env: [], missing: [], problems: [], empty_room: false });
 const rowsOf = (items: ResolvedItem[], workdir: string, session: ReadonlySet<string> = new Set()): PresetRow[] =>

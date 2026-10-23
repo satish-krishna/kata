@@ -20,7 +20,7 @@ export class GivenStore {
   remember(rows: readonly PresetRow[], _workdir: string): void {
     const next = new Set(this.keys());
     for (const row of rows) {
-      if (row.locked !== null || row.item.brought_by !== null) continue;
+      if (row.locked !== null || row.item.brought_by !== null || row.offWith) continue;
       if (row.off) next.add(row.key);
       else next.delete(row.key);
     }

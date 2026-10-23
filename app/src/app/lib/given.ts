@@ -88,10 +88,21 @@ export function presetRows(resolved: Resolved, from: PresetFrom): PresetResult {
   for (const id of resolved.missing) {
     warnings.push(`This job switches off \`${nameOfId(id)}\`, which is no longer installed; the run starts without it.`);
   }
-  return { rows, warnings };
+  return { rows: applyHooks(rows), warnings };
 }
 
-const isSwitchable = (row: PresetRow): boolean => row.locked === null && row.item.brought_by === null;
+/** A row that goes off with a hook (the engine says which: `goes_off_with`) is off while any of those hooks is off,
+ *  and says which, the first in list order. When none is off it comes back on. */
+function applyHooks(rows: readonly PresetRow[]): PresetRow[] {
+  return rows.map((row) => {
+    if (row.item.goes_off_with.length === 0) return row;
+    const hook = rows.find((r) => r.off && row.item.goes_off_with.includes(r.item.id));
+    if (hook) return row.off && row.offWith === hook.item.name ? row : { ...row, off: true, offWith: hook.item.name };
+    return row.offWith ? { ...row, off: false, offWith: null } : row;
+  });
+}
+
+const isSwitchable = (row: PresetRow): boolean => row.locked === null && row.item.brought_by === null && !row.offWith;
 
 /** The run-spec's `given` section for these rows: the switched-off, switchable items. Always a section. */
 export function toGiven(rows: readonly PresetRow[]): Given {
@@ -108,15 +119,15 @@ export function toGiven(rows: readonly PresetRow[]): Given {
   return given;
 }
 
-/** Switch one row; a plugin takes its followers with it. A locked row or a follower is left alone. */
+/** Switch one row; a plugin takes its followers with it, and a hook takes the rows that go off with it. A locked row or a follower is left alone. */
 export function toggle(rows: readonly PresetRow[], key: string, off: boolean): PresetRow[] {
   const target = rows.find((r) => r.key === key);
   if (!target || !isSwitchable(target)) return [...rows];
-  return rows.map((r) => {
+  return applyHooks(rows.map((r) => {
     if (r === target) return { ...r, off };
     const follows = r.item.lock?.kind === 'follows-plugin' && r.item.lock.plugin === target.item.id;
     return follows ? { ...r, off } : r;
-  });
+  }));
 }
 
 /** Rows by kind, then source; followers sit under their plugin. Counts cover top-level rows only. */

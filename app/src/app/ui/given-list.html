@@ -12,7 +12,11 @@
       <span class="gl__kind-tag" data-kind-tag>{{ kindName(row.item.kind) }}</span>
     }
     <span class="gl__name k-mono">{{ row.item.name }}</span>
-    <span class="gl__detail">{{ row.item.detail }}</span>
+    @if (row.offWith; as hook) {
+      <span class="gl__detail" data-off-with>off with the hook {{ hook }}</span>
+    } @else {
+      <span class="gl__detail">{{ row.item.detail }}</span>
+    }
     @if (markLabel(row.mark); as mark) {
       <span class="gl__note">{{ mark }}</span>
     }
