@@ -1,5 +1,6 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { Component, TemplateRef, effect, inject, input, untracked, viewChild } from '@angular/core';
+import type { BuildRow } from '@bindings/BuildRow';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideChevronDown, lucideTriangleAlert } from '@ng-icons/lucide';
 import { HlmAlertImports } from '@spartan-ng/helm/alert';
@@ -31,6 +32,12 @@ export class ChangesView {
   readonly change = input.required<string>();
   readonly turns = input(0);
   readonly banner = input<string | null>(null);
+  /** The build log's rows, which say which task made which commit. */
+  readonly rows = input<BuildRow[]>([]);
+  /** The task the engineer picked, or null; the list narrows to the files tied to it. */
+  readonly task = input<{ id: string; repo: string } | null>(null);
+  /** Repositories whose run stopped; their uncommitted files were left by it. */
+  readonly stopped = input<string[]>([]);
   /** True when the host projects content into the strip's right end (the change page's facts and actions); the strip then draws even before any repository has changes. */
   readonly hasSlot = input(false);
   /** True when the host shows the file list in a place of its own (the build's drawer), so the view draws only the diff. */

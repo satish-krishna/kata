@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
+import type { BuildRow } from '@bindings/BuildRow';
 import type { FilePair } from '@bindings/FilePair';
 import { render } from '../../../testing/render';
 import { KataTransport } from '../../core/transport/kata-transport';
@@ -18,6 +19,8 @@ const settle = async () => {
 };
 const text = (c: HTMLElement) => (c.textContent ?? '').replace(/\s+/g, ' ');
 const norm = (s: string | null) => (s ?? '').replace(/\s+/g, ' ').trim();
+const buildRow = (task: string, repo: string, commit: string): BuildRow => ({ task, repo, commits: [commit], departure: null });
+const sha = (short: string) => short.padEnd(40, '0');
 
 async function mount(transport = new MockTransport(), inputs: Record<string, unknown> = {}) {
   const out = await render(ChangesView, { ...INPUTS, ...inputs }, [{ provide: KataTransport, useValue: transport }]);
@@ -33,7 +36,17 @@ async function mount(transport = new MockTransport(), inputs: Record<string, unk
     out.fixture.componentRef.setInput('turns', n);
     await settle();
   };
-  return { ...out, transport, button, buttons, paths, row, editor, turns };
+  const inRepo = (repo: string, path: string) =>
+    container.querySelector<HTMLElement>(`[aria-label="Files changed in ${repo}"] [data-file="${path}"]`)!;
+  const open = async (repo: string) => {
+    Array.from(container.querySelectorAll<HTMLElement>('app-repo-file-list [data-repo]')).find((h) => norm(h.textContent).startsWith(repo))!.click();
+    await settle();
+  };
+  const setInput = async (name: string, value: unknown) => {
+    out.fixture.componentRef.setInput(name, value);
+    await settle();
+  };
+  return { ...out, transport, button, buttons, paths, row, editor, turns, inRepo, open, setInput };
 }
 
 beforeEach(() => {
@@ -237,5 +250,70 @@ describe('ChangesView', () => {
     button('Inline')!.click();
     await settle();
     expect(editor().sideBySide()).toBe(false);
+  });
+
+  it('each file row carries its tasks or not tied to a task', async () => {
+    const { open, inRepo } = await mount(new MockTransport(), { rows: [buildRow('T1', 'claims-core', 't1c0ffee')], stopped: ['claims-core'] });
+    await open('claims-core');
+    expect(norm(inRepo('claims-core', 'src/attachments.rs').querySelector('[data-tasks]')?.textContent ?? null)).toBe('T1');
+    expect(inRepo('claims-core', 'src/attachments.rs').querySelector('[data-untied]')).toBeNull();
+    expect(norm(inRepo('claims-core', 'src/store.rs').querySelector('[data-untied]')?.textContent ?? null)).toBe('not tied to a task');
+    expect(inRepo('claims-core', 'src/store.rs').querySelector('[data-tasks]')).toBeNull();
+    // Only an uncommitted file of a stopped repository was left by the stopped run.
+    expect(norm(inRepo('claims-core', 'src/limits.rs').querySelector('[data-left]')?.textContent ?? null)).toBe('left by the stopped run');
+    expect(inRepo('claims-core', 'src/attachments.rs').querySelector('[data-left]')).toBeNull();
+    // The master repository has no task rows and did not stop.
+    expect(norm(inRepo(MOCK_MASTER, 'src/attachments.rs').querySelector('[data-untied]')?.textContent ?? null)).toBe('not tied to a task');
+    expect(inRepo(MOCK_MASTER, 'src/limits.rs').querySelector('[data-left]')).toBeNull();
+  });
+
+  it('picking a task narrows the files and counts the untied ones (R5.2)', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcCommitFiles').mockImplementation((path: string) =>
+      Promise.resolve(path.endsWith('claims-core') ? [{ sha: sha('t1c0ffee'), files: ['src/attachments.rs', 'src/store.rs'] }] : []),
+    );
+    const { container, paths, button, setInput } = await mount(transport, {
+      rows: [buildRow('T1', 'claims-core', 't1c0ffee')],
+      task: { id: 'T1', repo: 'claims-core' },
+    });
+    expect(paths()).toEqual(['src/attachments.rs', 'src/store.rs']);
+    expect(container.querySelectorAll('app-repo-file-list [data-repo]')).toHaveLength(1);
+    expect(norm(container.querySelector('[data-untied-line]')?.textContent ?? null)).toBe('3 files in claims-core are not tied to a task Show them');
+    button('Show them')!.click();
+    await settle();
+    expect(paths()).toEqual(['src/attachments.rs', 'src/store.rs', 'src/limits.rs', 'notes/todo.txt', 'assets/sample.png']);
+    // Picking the task again starts over.
+    await setInput('task', { id: 'T1', repo: 'claims-core' });
+    expect(paths()).toEqual(['src/attachments.rs', 'src/store.rs']);
+    expect(button('Show them')).toBeDefined();
+    // Putting the pick away lists every repository again.
+    await setInput('task', null);
+    expect(container.querySelectorAll('app-repo-file-list [data-repo]')).toHaveLength(3);
+    expect(container.querySelector('[data-untied-line]')).toBeNull();
+  });
+
+  it("new work appears as the build's turns grow (R5.3)", async () => {
+    const { transport, paths, turns } = await mount();
+    expect(paths()).not.toContain('src/new.rs');
+    const listing = await transport.sdlcDiffFiles('x', 'whole');
+    vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({
+      ...listing,
+      files: [...listing.files, { path: 'src/new.rs', oldPath: null, status: 'added', binary: false, added: 1, removed: 0, uncommitted: false }],
+    });
+    await turns(1);
+    expect(paths()).toContain('src/new.rs');
+  });
+
+  it.each([
+    ['Whole change', ['src/attachments.rs', 'src/limits.rs', 'src/store.rs', 'notes/todo.txt', 'assets/sample.png']],
+    ['Committed', ['src/attachments.rs', 'src/store.rs', 'assets/sample.png']],
+    ['Uncommitted', ['src/limits.rs', 'notes/todo.txt']],
+  ])('the three parts show whole, committed and uncommitted work: %s (R5.4)', async (view, expected) => {
+    const { button, paths } = await mount();
+    button('Committed')!.click();
+    await settle();
+    button(view)!.click();
+    await settle();
+    expect([...paths()].sort()).toEqual([...expected].sort());
   });
 });
