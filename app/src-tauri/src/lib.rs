@@ -997,7 +997,7 @@ name: build
         .unwrap();
         std::fs::write(
             plugin.join(".claude-plugin").join("plugin.json"),
-            r#"{"name":"ai-sdlc","version":"0.8.0"}"#,
+            r#"{"name":"ai-sdlc","version":"0.9.0"}"#,
         )
         .unwrap();
         let empty_home = root.join("home");

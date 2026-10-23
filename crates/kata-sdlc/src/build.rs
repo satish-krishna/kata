@@ -1248,7 +1248,7 @@ mod tests {
     fn ready(dir: &Path) -> Readiness {
         Readiness::Ready {
             dir: dir.to_path_buf(),
-            version: "0.8.0".into(),
+            version: "0.9.0".into(),
             layouts: format::ACCEPTED_LAYOUTS.to_vec(),
         }
     }
@@ -1296,11 +1296,11 @@ mod tests {
                 "plugin too old",
                 Readiness::TooOld {
                     have: "0.7.9".into(),
-                    need: "0.8.0".into(),
+                    need: "0.9.0".into(),
                 },
                 VALID_PLAN,
                 vec![],
-                refuse("Update the ai-sdlc plugin to 0.8.0 or later", vec![]),
+                refuse("Update the ai-sdlc plugin to 0.9.0 or later", vec![]),
             ),
             (
                 "plugin missing wins over a failing plan and log",

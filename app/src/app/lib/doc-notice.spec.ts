@@ -6,7 +6,7 @@ import { shownBuild, shownChangeList, shownDocument, shownPart, type DocNotice, 
 /* The owner of "the Workbench never shows less than a document holds without saying so", tested row by row against
  * the table in the plan, written by hand. */
 
-const ready: Extract<Readiness, { kind: 'ready' }> = { kind: 'ready', dir: 'plugins/ai-sdlc', version: '0.8.0', layouts: [1, 2] };
+const ready: Extract<Readiness, { kind: 'ready' }> = { kind: 'ready', dir: 'plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] };
 const problems: Problem[] = [
   { file: 'spec.md', line: 14, message: 'requirement has no ID' },
   { file: 'spec.md', line: 31, message: 'scenario is outside a requirement' },
@@ -27,7 +27,7 @@ const ROWS: Row[] = [
   { name: 'plugin missing, nothing read', read: null, readiness: { kind: 'missing' }, shown: { show: 'plain', notice: INSTALL } },
   { name: 'plugin missing beats an error', read: error, readiness: { kind: 'missing' }, shown: { show: 'plain', notice: INSTALL } },
   { name: 'plugin missing beats problems and a newer layout', read: read(3, problems), readiness: { kind: 'missing' }, shown: { show: 'plain', notice: INSTALL } },
-  { name: 'plugin too old', read: read(2), readiness: { kind: 'tooOld', have: '0.6.0', need: '0.8.0' }, shown: { show: 'plain', notice: warn('Update the ai-sdlc plugin to 0.8.0 or later') } },
+  { name: 'plugin too old', read: read(2), readiness: { kind: 'tooOld', have: '0.6.0', need: '0.9.0' }, shown: { show: 'plain', notice: warn('Update the ai-sdlc plugin to 0.9.0 or later') } },
   { name: 'plugin too old names the version it needs', read: error, readiness: { kind: 'tooOld', have: '0.7.0', need: '0.9.1' }, shown: { show: 'plain', notice: warn('Update the ai-sdlc plugin to 0.9.1 or later') } },
   { name: 'ready, the program could not read the document (F4)', read: error, readiness: ready, shown: { show: 'plain', notice: warn('Could not read this document: front matter is not closed') } },
   { name: 'ready, layout not accepted', read: read(3), readiness: ready, shown: { show: 'parsed', notice: NEWER } },

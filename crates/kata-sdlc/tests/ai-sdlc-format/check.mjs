@@ -27589,6 +27589,10 @@ var build_log_entry_schema_default = {
     departure: {
       description: "Free text, any characters, any number of lines. Omitted when there is none.",
       type: "string"
+    },
+    notes: {
+      description: "Choices the task's text left open. Free text, any characters, any number of lines. Omitted when there are none. The reader does not return it.",
+      type: "string"
     }
   },
   additionalProperties: false

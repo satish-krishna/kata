@@ -113,7 +113,10 @@ const LABELS: Record<Stage, StageLabel> = {
   "build-finished": { step: "build", text: "Build · finished, not yet done", tone: "success" },
 };
 
-/** The label of a change that is done: its pull requests are open. Not a stage; the Workbench records it. */
+/**
+ * The label of a change that is done: its pull requests are open. Not a stage and not stored: the change page asks
+ * GitHub each time it opens, and the workspace home list never asks, so it shows "Build · finished, not yet done".
+ */
 export const DONE_LABEL: StageLabel = { step: "done", text: "Done · pull requests open", tone: "success" };
 
 export function stageLabel(stage: Stage): StageLabel {

@@ -582,9 +582,9 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
   it("says to update the plugin when it is too old", async () => {
     const { vm, transport } = setup();
     withUnreadablePlan(transport);
-    vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "tooOld", have: "0.6.0", need: "0.8.0" });
+    vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "tooOld", have: "0.6.0", need: "0.9.0" });
     await vm.init();
-    expect(noticeOf(vm)?.text).toBe("Update the ai-sdlc plugin to 0.8.0 or later");
+    expect(noticeOf(vm)?.text).toBe("Update the ai-sdlc plugin to 0.9.0 or later");
   });
 
   it("says a plan could not be read when the plugin is usable but the program did not run", async () => {

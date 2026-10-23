@@ -21,7 +21,7 @@ const settle = async () => {
 };
 const text = (e: Element | null) => e?.textContent?.replace(/\s+/g, ' ').trim() ?? null;
 const PROSE = (title: string) => `---\nstatus: accepted\n---\n# ${title}\n\nWords only.\n`;
-const READY: Readiness = { kind: 'ready', dir: '~/.claude/plugins/ai-sdlc', version: '0.8.0', layouts: [1, 2] };
+const READY: Readiness = { kind: 'ready', dir: '~/.claude/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] };
 
 type Setup = {
   readiness?: Readiness;
@@ -110,9 +110,9 @@ describe('ChangePage document notices', () => {
     expect(newer.tasks()).toBe(NUMBERS.tasks);
     TestBed.resetTestingModule();
 
-    const old = await open({ readiness: { kind: 'tooOld', have: '0.6.0', need: '0.8.0' } });
+    const old = await open({ readiness: { kind: 'tooOld', have: '0.6.0', need: '0.9.0' } });
     await old.tab('Spec');
-    expect(text(old.notice())).toContain('Update the ai-sdlc plugin to 0.8.0 or later');
+    expect(text(old.notice())).toContain('Update the ai-sdlc plugin to 0.9.0 or later');
     expect(old.requirements()).toBe(0);
   });
 

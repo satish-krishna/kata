@@ -181,12 +181,12 @@ describe('ChangePage', () => {
 
     it('a refused build opens the refusal dialog', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
-      vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'tooOld', have: '0.7.9', need: '0.8.0' });
+      vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'tooOld', have: '0.7.9', need: '0.9.0' });
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
       await settle();
       await confirmPreview();
       await vi.waitFor(() => expect(document.body.textContent).toContain('The build did not start'));
-      expect(document.body.textContent).toContain('Update the ai-sdlc plugin to 0.8.0 or later');
+      expect(document.body.textContent).toContain('Update the ai-sdlc plugin to 0.9.0 or later');
     });
 
     it('leftovers open the confirm dialog titled and listing each repository and file', async () => {

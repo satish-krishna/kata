@@ -705,10 +705,10 @@ describe('ChangePageViewModel', () => {
 
     it('a refusal is shown and starts nothing', async () => {
       const { vm, transport } = setup(BUILD);
-      vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'tooOld', have: '0.7.9', need: '0.8.0' });
+      vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'tooOld', have: '0.7.9', need: '0.9.0' });
       await ready(vm);
       await vm.submitBuild(REQUEST);
-      expect(vm.refusal()).toBe('Update the ai-sdlc plugin to 0.8.0 or later, then start the build again.');
+      expect(vm.refusal()).toBe('Update the ai-sdlc plugin to 0.9.0 or later, then start the build again.');
       expect(vm.handoff()).toBeNull();
       vm.closeRefusal();
       expect(vm.refusal()).toBeNull();
