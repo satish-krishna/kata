@@ -1,45 +1,65 @@
-// The build view in a real browser (`npm run check:build`; run `npm run build` first).
+// The build page in a real browser (`npm run check:build`; run `npm run build` first).
 //
-// Drives the mock's scripted build of two repositories (`claims-core` and `customer-portal`
-// run together, `customer-portal` asks one question) and checks, on the production build:
-//   - while the engineer is on Changes, the drawer holds the changed files, the waiting notice names
-//     `customer-portal`, the Changes tab stays selected, and `claims-core`'s events keep arriving;
-//   - Go to customer-portal moves to its run, answering clears the notice, and the run carries on;
-//   - at 375, 768 and 1280 pixels the build view has no horizontal page scroll and the
-//     repository list stacks above the main column below 768.
-import { MD, WIDTHS, eventually, noHorizontalScroll, open, reporter, startBuild } from './check-build-support.mjs';
+// Drives the mock's scripted build of two repositories (`claims-core` and `customer-portal` run together,
+// `customer-portal` asks one question) on the production build, all on the change page's Build tab:
+//   1. From the plan accepted to the pull requests opened on one page: start the build, answer `customer-portal`'s
+//      question while the changed files are in view, let the review finish, read the findings, declare done and open
+//      the pull requests. At every step the URL stays on the change, the Build tab stays selected and no `app-build-view` exists.
+//   2. At 375, 768, 1024 and 1280 pixels there is no horizontal page scroll, every area (tasks, activity, files) can be
+//      reached (side by side from 1024, through the page's area switch below), and the bar's actions and the waiting notice stay in view.
+//   3. With the run preview open the way back to the changes list cannot be reached, and once it closes it can.
+import { BUILD_WIDTHS, ROUTE, eventually, noHorizontalScroll, open, reporter, startBuild } from './check-build-support.mjs';
 
 const { check, done } = reporter('check:build');
 const { page, errors, close } = await open();
 
-const selected = (name) => page.getByRole('tab', { name }).getAttribute('aria-selected');
-// On Changes the drawer holds the file list, not the repository rows: what is on show is the Activity tab's
-// "N new" count (events that arrived in Activity since the engineer last looked) and the task count in the bar.
-const activityNew = async () => Number(/(\d+) new/.exec(await page.getByRole('tab', { name: /^Activity/ }).innerText())?.[1] ?? 0);
-const tasksDone = async () => Number(/^(\d+)\//.exec(await page.locator('.k-build__top .k-lock__count').innerText())?.[1] ?? 0);
-const rowText = (repo) => page.locator('.k-repos__row', { hasText: repo }).innerText();
+const AREAS = ['tasks', 'activity', 'files'];
+const SWITCH = { tasks: 'Tasks', activity: 'Activity', files: 'Files' };
+const area = (name) => page.locator(`[data-area="${name}"]`);
 const notices = page.locator('[data-waiting]:visible');
+// By CSS, not by role: an open dialog hides the page from the accessibility tree, and the page must be checked behind it too.
+const buildTab = page.locator('[role="tab"]', { hasText: /^Build/ });
+const countOf = (sel) => page.locator(sel).count();
+
+/** R10.2: the engineer never leaves the build page and never sees another build screen. */
+async function stays(step) {
+  const url = new URL(page.url()).pathname;
+  const tab = await buildTab.getAttribute('aria-selected');
+  const old = await countOf('app-build-view');
+  const pages = await countOf('app-build-page');
+  check(url === ROUTE && tab === 'true' && old === 0 && pages === 1, `${step}: still on ${ROUTE} with the Build tab selected, one build page and no app-build-view (${url}, selected ${tab}, build views ${old}, build pages ${pages})`);
+}
+
+/** Whether the element is visible and wholly inside the window. */
+const inWindow = (locator) =>
+  locator.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return el.checkVisibility() && r.width > 0 && r.height > 0 && r.left >= 0 && r.top >= 0 && r.right <= window.innerWidth + 0.5 && r.bottom <= window.innerHeight + 0.5;
+  });
 
 try {
+  await stays('plan accepted');
   await startBuild(page);
+  await stays('the build started');
 
-  // While a run goes, its observe pane scrolls its own events; the panel around it must not scroll as well.
-  await page.getByRole('tab', { name: /^Activity/ }).click();
+  // While a run goes, its observe pane scrolls its own events; the area around it must not scroll as well.
+  await area('activity').waitFor();
   for (const height of [900, 700]) {
     await page.setViewportSize({ width: 1280, height });
     await page.waitForTimeout(300);
-    const panel = await page.evaluate(() => {
-      const el = document.querySelector('.k-build__panel:not([hidden])');
-      return { scroll: el.scrollHeight, client: el.clientHeight };
-    });
-    check(panel.scroll <= panel.client + 1, `1280x${height}: one running build, the Activity panel has no scrollbar of its own (${panel.scroll} of ${panel.client})`);
+    const panel = await area('activity').evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight }));
+    check(panel.scroll <= panel.client + 1, `1280x${height}: one running build, the Activity area has no scrollbar of its own (${panel.scroll} of ${panel.client})`);
   }
   await page.setViewportSize({ width: 1280, height: 900 });
 
+  // R16.2: stopping a repository and continuing it discards nothing. The uncommitted file is listed before and after.
+  const uncommitted = () => countOf('[data-area="files"] [data-file="src/limits.rs"]');
+  const listed = await uncommitted();
   // R12.1: Continue on one stopped repository opens its preview first; it must fit at 375 without a horizontal scroll.
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.locator('[data-group]', { hasText: 'claims-core' }).getByRole('button', { name: 'Cancel', exact: true }).click();
   await page.getByRole('button', { name: 'Continue claims-core' }).waitFor();
   await page.setViewportSize({ width: 375, height: 900 });
+  await page.getByRole('radiogroup', { name: 'Build areas' }).getByRole('radio', { name: 'Tasks' }).click();
   await page.getByRole('button', { name: 'Continue claims-core' }).click();
   const preview = page.getByRole('dialog');
   await preview.getByRole('button', { name: /^Start run$/ }).waitFor();
@@ -51,102 +71,147 @@ try {
   check((await preview.innerText()).includes('No push'), 'the continue preview lists the safety rules');
   await page.setViewportSize({ width: 1280, height: 900 });
   await preview.getByRole('button', { name: /^Start run$/ }).click();
+  await stays('claims-core stopped and continued');
 
-  await page.getByRole('tab', { name: 'Changes' }).click();
-
-  // R17.5: told at once, on Changes, and the engineer stays there.
+  // R4.2: the question is told at once, pinned above the areas, while the changed files are in view.
   await notices.first().waitFor();
   const text = await notices.first().innerText();
   check(text.includes('customer-portal') && text.includes('answer'), `the notice names customer-portal and what it waits for (${JSON.stringify(text.replace(/\s+/g, ' '))})`);
   check(/stops if nobody answers within \d+:\d+/.test(text), 'the notice says how long the run will wait');
-  check((await selected('Changes')) === 'true', 'the Changes tab is still selected while the notice shows');
+  check((await area('files').isVisible()) && (await countOf('[data-area="files"] [data-file]')) > 0, 'the changed files are in view while the question waits');
+  check(await inWindow(notices.first()), 'the waiting notice is inside the window beside the changed files');
+  const after = await uncommitted();
+  check(after === listed && listed > 0, `stopping and continuing a repository discarded no file (src/limits.rs listed ${listed} -> ${after})`);
+  await stays('the question waits');
 
-  // R17.2: claims-core's events kept arriving while the engineer looked at Changes.
-  check((await page.locator('#build-repos [data-file]').count()) > 0 && (await page.locator('#build-repos .k-repos__row').count()) === 0, 'on Changes the drawer holds the changed files, not the repository rows');
-  const before = await activityNew();
-  const after = await eventually(page, activityNew, (n) => n > before, 'claims-core events arriving').catch(() => activityNew());
-  check(after > before, `claims-core's events kept arriving while on Changes (Activity tab ${before} -> ${after} new)`);
-  // claims-core has the one task customer-portal does not wait on; it is logged when claims-core finishes.
-  const done1 = await eventually(page, tasksDone, (n) => n >= 1, 'claims-core finishing').catch(() => tasksDone());
-  check(done1 >= 1, `claims-core ran on to finished while the engineer stayed on Changes (${done1} task(s) in the build log)`);
-  check((await selected('Changes')) === 'true' && (await notices.count()) > 0, 'still on Changes with the notice showing after the other repository finished');
+  // R12.1: the width pass, with the question waiting. Reaching an area means it is on show with room, not that it is in the DOM.
+  for (const width of BUILD_WIDTHS) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.waitForTimeout(300);
+    const scroll = await noHorizontalScroll(page);
+    check(scroll.scrollWidth <= scroll.clientWidth && scroll.body <= scroll.clientWidth, `${width}px: no horizontal page scroll (${scroll.scrollWidth} of ${scroll.clientWidth})`);
+    const barActions = page.locator('[data-bar] .k-bp__actions button');
+    check((await barActions.count()) > 0, `${width}px: the bar has its actions`);
+    const reach = async (where) => {
+      for (const b of await barActions.all()) check(await inWindow(b), `${width}px (${where}): the bar action "${(await b.innerText()).trim()}" is inside the window`);
+      check(await inWindow(notices.first()), `${width}px (${where}): the waiting notice is inside the window`);
+      check(await inWindow(notices.first().getByRole('button', { name: 'Go to customer-portal' })), `${width}px (${where}): the notice's Go to customer-portal is inside the window`);
+    };
+    const areaSwitch = page.getByRole('radiogroup', { name: 'Build areas' });
+    if (width >= 1024) {
+      check((await areaSwitch.count()) === 0, `${width}px: no area switch, the areas sit side by side`);
+      const boxes = [];
+      for (const name of AREAS) boxes.push({ name, box: await area(name).boundingBox() });
+      const shown = boxes.every(({ box }) => box !== null && box.width > 100 && box.height > 100);
+      const ordered = shown && boxes.every(({ box }, i) => i === 0 || box.x >= boxes[i - 1].box.x + boxes[i - 1].box.width - 1) && boxes.every(({ box }) => box.y === boxes[0].box.y);
+      check(ordered, `${width}px: tasks, activity and files sit side by side (${JSON.stringify(boxes.map(({ name, box }) => [name, Math.round(box?.x ?? -1), Math.round(box?.width ?? 0)]))})`);
+      await reach('side by side');
+    } else {
+      check(await areaSwitch.isVisible(), `${width}px: the area switch shows`);
+      for (const name of AREAS) {
+        await areaSwitch.getByRole('radio', { name: SWITCH[name] }).click();
+        const only = (v) => v.every(([other, visible]) => visible === (other === name));
+        const states = await eventually(page, () => Promise.all(AREAS.map(async (other) => [other, await area(other).isVisible()])), only, `${name} alone on show at ${width}`).catch(() => Promise.all(AREAS.map(async (other) => [other, await area(other).isVisible()])));
+        const box = await area(name).boundingBox();
+        check(only(states) && box !== null && box.width > 200 && box.x >= 0 && box.x + box.width <= width + 0.5, `${width}px: the switch reaches ${name} alone and it fits (${JSON.stringify(states)}, width ${Math.round(box?.width ?? 0)})`);
+        if (name === 'files') check((await countOf('[data-area="files"] [data-file]')) > 0, `${width}px: the changed files can be read on Files`);
+        if (name === 'tasks') check((await countOf('[data-area="tasks"] [data-task]')) > 0, `${width}px: the tasks can be read on Tasks`);
+        await reach(`on ${name}`);
+        const again = await noHorizontalScroll(page);
+        check(again.scrollWidth <= again.clientWidth && again.body <= again.clientWidth, `${width}px: no horizontal page scroll on ${name} (${again.scrollWidth} of ${again.clientWidth})`);
+      }
+      // Every run keeps folding events while its area is hidden, so a hidden run's question is never missed.
+      const runs = await countOf('[data-session]');
+      check(runs >= 2 && (await countOf('[data-pane]')) >= 2, `${width}px: every run's pane stays mounted while its area is hidden (${runs} runs)`);
+    }
+    await stays(`${width}px`);
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(300);
 
-  // Go to the waiting repository, answer, and the notice is gone while the run carries on.
+  // Answer from the pinned notice with the changed files still in view.
   await notices.first().getByRole('button', { name: 'Go to customer-portal' }).click();
-  const onActivity = await eventually(page, () => selected('Activity'), (v) => v === 'true', 'switching to Activity').catch(() => 'false');
-  check(onActivity === 'true', 'Go to customer-portal switches to Activity');
-  const head = await eventually(page, () => page.locator('.k-build__repo-head h2').innerText(), (v) => v === 'customer-portal', 'selecting customer-portal').catch((e) => e.message);
-  check(head === 'customer-portal', `customer-portal is the selected repository (${head})`);
+  await page.locator('label', { hasText: 'Reuse it' }).waitFor();
+  check(await area('files').isVisible(), 'the changed files stay in view while the question is answered');
   await page.locator('label', { hasText: 'Reuse it' }).click();
   await page.getByRole('button', { name: /Send answer/ }).click();
   await eventually(page, () => notices.count(), (n) => n === 0, 'the notice going away');
   check(true, 'answering clears the notice');
-  await page.getByRole('tab', { name: 'Changes' }).click();
-  check((await notices.count()) === 0, 'no notice on Changes either');
-  // The rows are in the drawer on Activity.
-  await page.getByRole('tab', { name: /^Activity/ }).click();
-  const finished = await eventually(page, () => rowText('customer-portal'), (t) => /Finished/.test(t), 'customer-portal finishing', 15000).catch((e) => e.message);
-  check(/Finished/.test(String(finished)), `customer-portal carried on to its row (${JSON.stringify(String(finished).replace(/\s+/g, ' '))})`);
-  check((await page.locator('.k-build__top .k-lock__count').innerText()).startsWith('3/3'), 'all three tasks are in the build log');
-  check((await page.locator('.k-build__bar .k-build__top').count()) === 1, 'the task count sits in the bar, outside the repository list');
+  await stays('the question answered');
 
-  // The repository list collapses to nothing and comes back, and its edge drags.
-  await page.getByRole('tab', { name: 'Activity' }).click();
-  const listWidth = () => page.evaluate(() => Math.round(document.querySelector('#build-repos').getBoundingClientRect().width));
-  const open = await listWidth();
-  await page.getByRole('button', { name: 'Hide repositories' }).click();
-  const shut = await eventually(page, listWidth, (w) => w === 0, 'the list collapsing').catch(() => listWidth());
-  check(shut === 0, `Hide repositories collapses the list (${open}px -> ${shut}px)`);
-  await page.getByRole('button', { name: 'Show repositories' }).click();
-  const back = await eventually(page, listWidth, (w) => w === open, 'the list coming back').catch(() => listWidth());
-  check(back === open, `Show repositories brings it back at its width (${back}px of ${open}px)`);
-  const handle = await page.getByRole('separator', { name: 'Resize the repository list' }).boundingBox();
-  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(handle.x + 120, handle.y + handle.height / 2, { steps: 5 });
-  await page.mouse.up();
-  const dragged = await eventually(page, listWidth, (w) => w > open + 60, 'the list widening').catch(() => listWidth());
-  check(dragged > open + 60, `dragging the edge widens the list (${open}px -> ${dragged}px)`);
+  // The build finishes by itself: three tasks in the build log, the review run, and the bar offers Declare done.
+  const tasks = () => page.locator('[data-bar] .k-lock__count').innerText();
+  const finished = await eventually(page, tasks, (t) => t.startsWith('3/3'), 'every task reaching the build log', 20000).catch((e) => e.message);
+  check(String(finished).startsWith('3/3'), `all three tasks are in the build log (${JSON.stringify(finished)})`);
+  const declare = page.locator('[data-bar]').getByRole('button', { name: 'Declare done' });
+  await declare.waitFor({ timeout: 30000 });
+  check(await inWindow(declare), 'Declare done is in the bar once the build and its review are finished');
+  await stays('the review finished');
 
-  // Widths.
-  for (const width of WIDTHS) {
-    await page.setViewportSize({ width, height: 900 });
-    const layout = await eventually(
-      page,
-      () =>
-        page.evaluate(() => {
-          const rect = (sel) => document.querySelector(sel)?.getBoundingClientRect();
-          const left = rect('.k-build__left');
-          const main = rect('.k-build__main');
-          return { stacked: left.bottom <= main.top + 1, beside: left.right <= main.left + 1 };
-        }),
-      (l) => (width < MD ? l.stacked : l.beside),
-      `build layout at ${width}`,
-    ).catch((e) => ({ error: e.message }));
-    const sideways = await page.evaluate(() =>
-      [...document.querySelectorAll('.k-build *')]
-        .filter((el) => el.checkVisibility() && el.scrollWidth > el.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(el).overflowX))
-        .map((el) => `${el.tagName.toLowerCase()}.${[...el.classList].join('.')} ${el.scrollWidth} of ${el.clientWidth}`),
-    );
-    check(sideways.length === 0, `${width}px: nothing in the build view scrolls sideways${sideways.length ? ` (${sideways.join(' | ')})` : ''}`);
-    // The finished build's findings sit above the runs here, so the panel may scroll; the latest pane still runs to the
-    // bottom of the panel's content, with no empty space left under it.
-    const fill = await page.evaluate(() => {
-      const panel = document.querySelector('.k-build__panel:not([hidden])');
-      panel.scrollTop = panel.scrollHeight;
-      const last = [...document.querySelectorAll('.k-build__runs:not([hidden]) .k-build__pane')].at(-1);
-      const pad = parseFloat(getComputedStyle(panel).paddingBottom);
-      return { gap: Math.round(panel.getBoundingClientRect().bottom - pad - last.getBoundingClientRect().bottom), pane: Math.round(last.getBoundingClientRect().height) };
-    });
-    check(Math.abs(fill.gap) <= 2, `${width}px: the last run's observe pane reaches the bottom of the panel (${fill.gap}px short, ${fill.pane}px tall)`);
-    const scroll = await noHorizontalScroll(page);
-    check(scroll.scrollWidth <= scroll.clientWidth && scroll.body <= scroll.clientWidth, `${width}px: no horizontal page scroll (${scroll.scrollWidth} of ${scroll.clientWidth})`);
-    if (layout.error) check(false, layout.error);
-    else check(true, width < MD ? `${width}px: the repository list stacks above the main column` : `${width}px: the repository list sits beside the main column`);
-  }
+  // Read the findings: pick Review and the findings list replaces the run.
+  const review = page.locator('[data-review]');
+  const status = await eventually(page, () => review.locator('xpath=..').innerText(), (t) => /Finished/.test(t), 'the review finishing').catch((e) => e.message);
+  check(/Finished/.test(status), `the review entry reads Finished (${JSON.stringify(String(status).replace(/\s+/g, ' '))})`);
+  await review.click();
+  const findings = area('activity').locator('app-findings-list');
+  await findings.waitFor();
+  const read = await findings.innerText();
+  check(/upload limit is duplicated/.test(read) && /Medium/.test(read), `the review's findings are read on the build page (${JSON.stringify(read.replace(/\s+/g, ' ').slice(0, 120))})`);
+  await stays('the findings read');
+
+  // Declare done opens its dialog on the same page; opening the pull requests lists them there too.
+  await declare.click();
+  const doneDialog = page.getByRole('dialog');
+  await doneDialog.getByRole('button', { name: 'Open pull requests' }).waitFor();
+  await stays('done declared');
+  await doneDialog.getByRole('button', { name: 'Open pull requests' }).click();
+  const prs = page.getByRole('dialog').filter({ hasText: 'github.com/acme/customer-portal/pull/' });
+  await prs.waitFor();
+  const listedPrs = await prs.innerText();
+  const pulls = (listedPrs.match(/github\.com\/acme\/[\w-]+\/pull\/\d+/g) ?? []).length;
+  check(pulls === 3 && !/failed/i.test(listedPrs), `pull requests opened for all three repositories (${pulls} listed)`);
+  await prs.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('dialog').waitFor({ state: 'detached' });
+  const tab = await eventually(page, () => buildTab.innerText(), (t) => /done/.test(t), 'the Build tab saying done').catch((e) => e.message);
+  check(/done/.test(tab), `the Build tab says the change is done (${JSON.stringify(tab)})`);
+  await stays('pull requests opened');
+  check((await countOf('[data-bar] .k-bp__actions button')) === 0, 'a done change offers no action in the bar');
 
   check(errors.length === 0, `no page error, console error or failed request${errors.length ? `: ${errors.join(' | ')}` : ''}`);
 } finally {
   await close();
+}
+
+// R15.1: with a dialog open the way back cannot be reached until the dialog is closed. A second page, since the first one is inside a finished build.
+{
+  const second = await open();
+  const p = second.page;
+  const back = p.locator('button[aria-label="Back to the changes list"]');
+  try {
+    await back.waitFor();
+    check(await back.isEnabled(), 'the way back is reachable with no dialog open');
+    await p.getByRole('button', { name: 'Start build' }).click();
+    const preview = p.getByRole('dialog');
+    await preview.getByRole('button', { name: /^Start run$/ }).waitFor();
+    const blocked = await back.click({ trial: true, timeout: 1500 }).then(() => false, () => true);
+    check(blocked, 'with the run preview open a click on the way back cannot land');
+    let reached = false;
+    for (let i = 0; i < 25 && !reached; i++) {
+      await p.keyboard.press('Tab');
+      reached = await back.evaluate((el) => el === document.activeElement);
+    }
+    check(!reached, 'with the run preview open Tab never reaches the way back (the dialog traps focus)');
+    check(new URL(p.url()).pathname === ROUTE, 'the page is still on the change with the dialog open');
+    await p.keyboard.press('Escape');
+    await p.getByRole('dialog').waitFor({ state: 'detached' });
+    const clickable = await back.click({ trial: true, timeout: 3000 }).then(() => true, () => false);
+    check(clickable, 'once the run preview is closed the way back can be clicked again');
+    await back.click();
+    await eventually(p, () => new URL(p.url()).pathname, (path) => path === '/sdlc', 'the way back leaving the change');
+    check(true, 'the way back leads to the changes list');
+    check(second.errors.length === 0, `no page error, console error or failed request${second.errors.length ? `: ${second.errors.join(' | ')}` : ''}`);
+  } finally {
+    await second.close();
+  }
 }
 done();
