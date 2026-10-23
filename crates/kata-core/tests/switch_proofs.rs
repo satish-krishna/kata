@@ -113,10 +113,18 @@ fn claude_env(
         .args(extra)
         .current_dir(dir)
         .stdin(Stdio::null());
+    // Only the runs that ask for it get a key; every other run uses the login.
+    cmd.env_remove("ANTHROPIC_API_KEY");
     for (k, v) in env {
         cmd.env(k, v);
     }
     let out = cmd.output().expect("spawning claude failed");
+    // Never let a key reach a panic message or a log.
+    let scrub_key = |s: String| -> String {
+        env.iter()
+            .filter(|(k, v)| *k == "ANTHROPIC_API_KEY" && !v.is_empty())
+            .fold(s, |s, (_, v)| s.replace(v, "<redacted>"))
+    };
     let events: Vec<Value> = String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -128,7 +136,7 @@ fn claude_env(
         .unwrap_or_else(|| {
             panic!(
                 "no system/init line; stderr: {}",
-                String::from_utf8_lossy(&out.stderr)
+                scrub_key(String::from_utf8_lossy(&out.stderr).to_string())
             )
         })
         .clone();
@@ -2470,4 +2478,571 @@ fn proof_deny_mcp_server_in_settings() {
     let out = run(json!({"allowedMcpServers": [{"serverName": "srv-a"}, {"serverName": "dyn"}]}));
     eprintln!("allowedMcpServers [srv-a, dyn]: {:?}", out.mcp_full());
     assert_eq!(out.mcp(), vec!["srv-a".to_string(), "dyn".to_string()]);
+}
+
+// ---------------------------------------------------------------------------
+// Everything together: one hook off, the rest of its source carried over
+// ---------------------------------------------------------------------------
+
+/// A project with shared hooks A and B, a local hook C, two `.mcp.json` servers, a project
+/// skill, agent and command, `CLAUDE.md` with an `@import`, a rules file, a nested
+/// `sub/CLAUDE.md` and `CLAUDE.local.md`.
+fn make_full_project(kata: &Path) -> tempfile::TempDir {
+    let proj = make_project(kata);
+    let dir = proj.path();
+    add_extras(dir);
+    std::fs::write(
+        dir.join(".claude/settings.local.json"),
+        json!({"hooks": {"UserPromptSubmit": [hook_cmd("hookC")]}}).to_string(),
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join(".claude/agents")).unwrap();
+    std::fs::create_dir_all(dir.join(".claude/commands")).unwrap();
+    std::fs::write(
+        dir.join(".claude/agents/projagent.md"),
+        "---\nname: projagent\ndescription: A probe agent that does nothing.\n---\nDo nothing.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join(".claude/commands/projcmd.md"),
+        "---\ndescription: A probe command that does nothing.\n---\nSay PROJCMD.\n",
+    )
+    .unwrap();
+    proj
+}
+
+/// Hook A off (project dropped) and hook C off (local dropped), each with everything else the
+/// dropped source carried handed back by the mechanisms proven one by one above.
+#[test]
+fn proof_combined_carry_over() {
+    if !build_proof_enabled() {
+        return;
+    }
+    eprintln!("claude version: {}", claude_version());
+    let kata = kata_bin();
+    let proj = make_full_project(&kata);
+    let dir = proj.path();
+    let tmp = tempfile::tempdir().unwrap();
+    let tokens = [
+        NONCE_CLAUDE_MD,
+        NONCE_RULE,
+        NONCE_IMPORT,
+        NONCE_NESTED,
+        NONCE_LOCAL,
+    ];
+
+    let base = claude(dir, Some("haiku"), NESTED_PROMPT, 4, &[]);
+    eprintln!(
+        "normal run: markers (A,B,C,D) = {:?}, nonces: {}",
+        markers(dir),
+        seen(&base, &tokens)
+    );
+    assert_eq!(markers(dir), (true, true, true, false));
+    for t in tokens {
+        assert!(base.result.contains(t), "baseline lacks {t}");
+    }
+    assert!(base.skills().contains(&"projskill".to_string()));
+    assert!(base.list("agents").contains(&"projagent".to_string()));
+    assert!(base.list("slash_commands").contains(&"projcmd".to_string()));
+
+    // Pieces shared by both runs.
+    let srv = json!({"command": fwd(&kata), "args": ["mcp-ask"]});
+    let mcp = write_json(
+        tmp.path(),
+        "mcp.json",
+        &json!({"mcpServers": {"srv-a": srv, "srv-b": srv}}),
+    );
+    let pl = make_skill_plugin(
+        tmp.path(),
+        "kata-proj",
+        &[dir.join(".claude/skills/projskill")],
+    );
+    std::fs::create_dir_all(pl.join("agents")).unwrap();
+    std::fs::create_dir_all(pl.join("commands")).unwrap();
+    std::fs::copy(
+        dir.join(".claude/agents/projagent.md"),
+        pl.join("agents/projagent.md"),
+    )
+    .unwrap();
+    std::fs::copy(
+        dir.join(".claude/commands/projcmd.md"),
+        pl.join("commands/projcmd.md"),
+    )
+    .unwrap();
+    let (plf, dirf) = (fwd(&pl), fwd(dir));
+
+    // ---- Hook A off: project source dropped, everything else of it handed back.
+    let merged = write_json(
+        tmp.path(),
+        "project.json",
+        &json!({
+            "model": "haiku",
+            "outputStyle": "Explanatory",
+            "hooks": {"UserPromptSubmit": [hook_cmd("hookB")]}
+        }),
+    );
+    let a_args = [
+        "--setting-sources",
+        "user,local",
+        "--settings",
+        &merged,
+        "--mcp-config",
+        &mcp,
+        "--plugin-dir",
+        &plf,
+        "--add-dir",
+        &dirf,
+    ];
+    let a = claude_env(dir, Some("haiku"), NESTED_PROMPT, 4, &a_args, &[ADD_DIR_MD]);
+    let m = markers(dir);
+    eprintln!(
+        "hook A off: markers (A,B,C,D) = {m:?}, nonces: {}",
+        seen(&a, &tokens)
+    );
+    report("hook A off, everything carried over", &base, &a);
+    assert_eq!(m, (false, true, true, false), "A off, B and C on");
+    for (name, list) in [
+        ("kata-proj:projskill", a.skills()),
+        ("kata-proj:projagent", a.list("agents")),
+        ("kata-proj:projcmd", a.list("slash_commands")),
+    ] {
+        assert!(list.contains(&name.to_string()), "{name} missing");
+    }
+    for s in ["srv-a", "srv-b"] {
+        assert!(
+            a.mcp_full().contains(&format!("{s}|connected|dynamic")),
+            "{s} not connected: {:?}",
+            a.mcp_full()
+        );
+    }
+    for t in [NONCE_CLAUDE_MD, NONCE_RULE, NONCE_IMPORT, NONCE_LOCAL] {
+        assert!(a.result.contains(t), "{t} lost");
+    }
+    // Documented loss: a nested CLAUDE.md does not travel with --add-dir.
+    assert!(
+        !a.result.contains(NONCE_NESTED),
+        "nested CLAUDE.md now loads"
+    );
+    assert_eq!(a.output_style(), base.output_style());
+    assert_eq!(a.model(), base.model());
+    let by_name = "Call the Skill tool with the skill argument set to exactly the string \"projskill\" (no prefix), then reply with the single word done.";
+    let called = claude_env(dir, Some("haiku"), by_name, 4, &a_args, &[ADD_DIR_MD]);
+    eprintln!(
+        "Skill(\"projskill\") on the hook-A-off run: calls = {:?}",
+        called.skill_calls()
+    );
+    assert!(called
+        .skill_calls()
+        .iter()
+        .any(|(s, err)| s == "projskill" && !err));
+
+    // ---- Hook C off: local source dropped. Its only other content is CLAUDE.local.md.
+    let c = claude(
+        dir,
+        Some("haiku"),
+        NESTED_PROMPT,
+        4,
+        &["--setting-sources", "user,project"],
+    );
+    let m = markers(dir);
+    eprintln!(
+        "hook C off: markers (A,B,C,D) = {m:?}, nonces: {}",
+        seen(&c, &tokens)
+    );
+    report("hook C off", &base, &c);
+    assert_eq!(m, (true, true, false, false), "C off, A and B on");
+    for t in [NONCE_CLAUDE_MD, NONCE_RULE, NONCE_IMPORT, NONCE_NESTED] {
+        assert!(c.result.contains(t), "{t} lost");
+    }
+    assert!(!c.result.contains(NONCE_LOCAL), "CLAUDE.local.md survived");
+    assert_eq!(c.mcp_full(), base.mcp_full());
+    assert_eq!(c.skills(), base.skills());
+}
+
+// ---------------------------------------------------------------------------
+// What `--bare` loads, and what Kata's explicit inputs still do under it
+// ---------------------------------------------------------------------------
+
+const NONCE_ASP: &str = "NONCE-ASP-1";
+const PERSONAL_PHRASE: &str = "Never soften a critique";
+
+/// The API key `--bare` needs, from the User then the Machine environment scope. It goes to the
+/// `--bare` child processes only and is never printed, logged or stored.
+fn bare_api_key() -> Option<String> {
+    for scope in ["User", "Machine"] {
+        let script =
+            format!("[Environment]::GetEnvironmentVariable('ANTHROPIC_API_KEY','{scope}')");
+        for shell in ["powershell", "pwsh"] {
+            let Ok(out) = Command::new(shell)
+                .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+                .output()
+            else {
+                continue;
+            };
+            let key = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if out.status.success() && !key.is_empty() {
+                return Some(key);
+            }
+        }
+    }
+    None
+}
+
+/// The known first bullet of the personal `CLAUDE.md`, read only to confirm the probe phrase exists.
+fn personal_md_has_phrase(home: &Path) -> bool {
+    std::fs::read_to_string(home.join(".claude/CLAUDE.md"))
+        .map(|t| t.contains(PERSONAL_PHRASE))
+        .unwrap_or(false)
+}
+
+/// Each item against a normal and a `--bare` run.
+#[test]
+fn proof_bare_loads() {
+    if !build_proof_enabled() {
+        return;
+    }
+    let Some(key) = bare_api_key() else {
+        eprintln!("SKIP: ANTHROPIC_API_KEY could not be read from the User or Machine environment");
+        return;
+    };
+    let home = home_dir();
+    let kata = kata_bin();
+    let proj = make_full_project(&kata);
+    let dir = proj.path();
+    let tmp = tempfile::tempdir().unwrap();
+    // Local settings also set an output style, so project and local values are told apart.
+    std::fs::write(
+        dir.join(".claude/settings.local.json"),
+        json!({"outputStyle": "Learning", "hooks": {"UserPromptSubmit": [hook_cmd("hookC")]}})
+            .to_string(),
+    )
+    .unwrap();
+    let tokens = [
+        NONCE_CLAUDE_MD,
+        NONCE_RULE,
+        NONCE_IMPORT,
+        NONCE_NESTED,
+        NONCE_LOCAL,
+    ];
+    let key_env: Vec<(&str, &str)> = vec![("ANTHROPIC_API_KEY", key.as_str())];
+    let bare = |prompt: &str, turns: u32, extra: &[&str], env: &[(&str, &str)]| -> Out {
+        let mut args = vec!["--bare"];
+        args.extend_from_slice(extra);
+        let mut e = key_env.clone();
+        e.extend_from_slice(env);
+        claude_env(dir, Some("haiku"), prompt, turns, &args, &e)
+    };
+
+    // ---- Items against the normal run.
+    let base = claude(dir, Some("haiku"), NESTED_PROMPT, 4, &[]);
+    let base_markers = markers(dir);
+    let b = bare(NESTED_PROMPT, 4, &[], &[]);
+    let b_markers = markers(dir);
+    eprintln!("normal: markers (A,B,C,D) = {base_markers:?}, hook_started = {}, output_style = {}, nonces: {}", base.hook_started().len(), base.output_style(), seen(&base, &tokens));
+    eprintln!("--bare: markers (A,B,C,D) = {b_markers:?}, hook_started = {}, output_style = {}, nonces: {}", b.hook_started().len(), b.output_style(), seen(&b, &tokens));
+    report("--bare against normal", &base, &b);
+    eprintln!(
+        "--bare lists: plugins {:?}, non-builtin skills {:?}, mcp {:?}",
+        b.plugin_sources(),
+        b.skills()
+            .iter()
+            .filter(|s| !s.contains(':'))
+            .collect::<Vec<_>>(),
+        b.mcp_full()
+    );
+    assert_eq!(base_markers, (true, true, true, false));
+    eprintln!("--bare tools: {:?}", b.list("tools"));
+    // Hooks and CLAUDE.md auto-discovery are off; settings are still read; servers are gone.
+    assert_eq!(b_markers, (false, false, false, false));
+    assert!(b.hook_started().is_empty());
+    assert!(tokens.iter().all(|t| !b.result.contains(t)));
+    assert_eq!(b.output_style(), base.output_style());
+    assert!(b.mcp().is_empty());
+    assert!(!b.skills().contains(&"projskill".to_string()));
+    assert!(!b.list("agents").contains(&"projagent".to_string()));
+    assert!(!b.list("slash_commands").contains(&"projcmd".to_string()));
+    assert!(b.skills().iter().all(|s| !s.contains(':')));
+
+    // Personal CLAUDE.md, by a phrase read from the real file (read only).
+    let q = "Without using any tools: quote verbatim the first bullet under the heading 'Ground rules' from the user's global CLAUDE.md in your context. If you do not have that file in context, answer exactly NONE.";
+    if personal_md_has_phrase(&home) {
+        let n = claude(dir, Some("haiku"), q, 2, &[]);
+        let bq = bare(q, 2, &[], &[]);
+        eprintln!(
+            "personal CLAUDE.md phrase: normal = {}, --bare = {}",
+            n.result.contains(PERSONAL_PHRASE),
+            bq.result.contains(PERSONAL_PHRASE)
+        );
+        assert!(n.result.contains(PERSONAL_PHRASE));
+        assert!(!bq.result.contains(PERSONAL_PHRASE));
+    } else {
+        eprintln!("personal CLAUDE.md: untestable (no phrase on this machine)");
+    }
+
+    // A project skill by slash command under --bare ("Skills still resolve via /skill-name").
+    let slash = bare("/projskill", 3, &[], &[]);
+    eprintln!("--bare `/projskill`: reply {:?}", slash.result);
+    // Not asserted: one run answered PROJSKILL, later runs hit the turn cap, and the Skill tool is not
+    // among the four tools --bare keeps.
+
+    // ---- Explicit inputs under --bare.
+    let st = write_json(
+        tmp.path(),
+        "settings.json",
+        &json!({
+            "model": "haiku",
+            "outputStyle": "Learning",
+            "hooks": {"UserPromptSubmit": [hook_cmd("hookB")]}
+        }),
+    );
+    // Without --model: does a model in --settings reach the run?
+    let s = claude_env(
+        dir,
+        None,
+        PROMPT,
+        2,
+        &["--bare", "--settings", &st],
+        &key_env,
+    );
+    eprintln!(
+        "--bare + --settings (model, outputStyle, hook B): markers {:?}, model {}, output_style {}, hook_started {}",
+        markers(dir),
+        s.model(),
+        s.output_style(),
+        s.hook_started().len()
+    );
+    assert_eq!(s.model(), "claude-haiku-5-5");
+    assert_eq!(s.output_style(), "Learning");
+    assert!(s.hook_started().is_empty() && markers(dir) == (false, false, false, false));
+
+    let srv = json!({"command": fwd(&kata), "args": ["mcp-ask"]});
+    let mcp = write_json(
+        tmp.path(),
+        "mcp.json",
+        &json!({"mcpServers": {"srv-a": srv}}),
+    );
+    let pl = make_skill_plugin(
+        tmp.path(),
+        "kata-proj",
+        &[dir.join(".claude/skills/projskill")],
+    );
+    std::fs::create_dir_all(pl.join("hooks")).unwrap();
+    std::fs::write(
+        pl.join("hooks/hooks.json"),
+        json!({"hooks": {"UserPromptSubmit": [hook_cmd("hookP")]}}).to_string(),
+    )
+    .unwrap();
+    let plf = fwd(&pl);
+    let o = bare(PROMPT, 2, &["--plugin-dir", &plf], &[]);
+    eprintln!(
+        "--bare + --plugin-dir (skill, hook): plugins {:?}, skills {:?}, plugin hook marker {}, hook_started {}",
+        o.plugin_sources(),
+        o.skills().iter().filter(|s| s.starts_with("kata-proj")).collect::<Vec<_>>(),
+        dir.join("hookP.marker").exists(),
+        o.hook_started().len()
+    );
+    assert!(o.skills().contains(&"kata-proj:projskill".to_string()));
+    assert!(!dir.join("hookP.marker").exists() && o.hook_started().is_empty());
+    let o = bare(PROMPT, 2, &["--mcp-config", &mcp], &[]);
+    eprintln!("--bare + --mcp-config: {:?}", o.mcp_full());
+    assert_eq!(o.mcp_full(), vec!["srv-a|connected|dynamic".to_string()]);
+    let dirf = fwd(dir);
+    let o = bare(NESTED_PROMPT, 4, &["--add-dir", &dirf], &[ADD_DIR_MD]);
+    eprintln!("--bare + --add-dir + env: nonces {}", seen(&o, &tokens));
+    let o = bare(NESTED_PROMPT, 4, &["--add-dir", &dirf], &[]);
+    eprintln!("--bare + --add-dir, no env: nonces {}", seen(&o, &tokens));
+    assert!(tokens.iter().all(|t| !o.result.contains(t)));
+    // A directory other than the workdir, holding copies.
+    let copy = tmp.path().join("copy");
+    std::fs::create_dir_all(copy.join(".claude")).unwrap();
+    std::fs::copy(dir.join("CLAUDE.md"), copy.join("CLAUDE.md")).unwrap();
+    copy_dir(&dir.join(".claude/rules"), &copy.join(".claude/rules"));
+    let copyf = fwd(&copy);
+    let o = bare(NESTED_PROMPT, 4, &["--add-dir", &copyf], &[ADD_DIR_MD]);
+    eprintln!(
+        "--bare + --add-dir <temp copies> + env: nonces {}",
+        seen(&o, &tokens)
+    );
+    // Observed: even the documented route does not load CLAUDE.md under --bare.
+    assert!(tokens.iter().all(|t| !o.result.contains(t)));
+    let asp = tmp.path().join("asp.md");
+    std::fs::write(
+        &asp,
+        format!("Always include the exact token {NONCE_ASP} on its own line in every reply.\n"),
+    )
+    .unwrap();
+    let aspf = fwd(&asp);
+    let o = bare(PROMPT, 2, &["--append-system-prompt-file", &aspf], &[]);
+    eprintln!(
+        "--bare + --append-system-prompt-file: nonce {}",
+        o.result.contains(NONCE_ASP)
+    );
+    assert!(o.result.contains(NONCE_ASP));
+    for sources in ["user,project,local", "project", "local", "user"] {
+        let o = bare(NESTED_PROMPT, 4, &["--setting-sources", sources], &[]);
+        eprintln!(
+            "--bare + --setting-sources {sources}: markers {:?}, output_style {}, plugins {}, nonces {}",
+            markers(dir),
+            o.output_style(),
+            o.plugin_sources().len(),
+            seen(&o, &tokens)
+        );
+    }
+}
+
+/// Removes the probe's two entries from `~/.claude.json` when dropped, so a
+/// panic or a failed assert never leaves them behind. Only those entries are
+/// touched: Claude and other sessions rewrite their own keys during the runs.
+struct ProbeServers {
+    file: PathBuf,
+    project_key: String,
+    had_top_servers: bool,
+    before_project: Option<Value>,
+}
+
+impl Drop for ProbeServers {
+    fn drop(&mut self) {
+        let Ok(text) = std::fs::read_to_string(&self.file) else {
+            return;
+        };
+        let Ok(mut now) = serde_json::from_str::<Value>(&text) else {
+            return;
+        };
+        if let Some(servers) = now.get_mut("mcpServers").and_then(Value::as_object_mut) {
+            servers.remove("kata-probe-personal");
+            if !self.had_top_servers && servers.is_empty() {
+                now.as_object_mut().unwrap().remove("mcpServers");
+            }
+        }
+        if let Some(projects) = now.get_mut("projects").and_then(Value::as_object_mut) {
+            match &self.before_project {
+                Some(p) => {
+                    projects.insert(self.project_key.clone(), p.clone());
+                }
+                None => {
+                    projects.remove(&self.project_key);
+                }
+            }
+        }
+        let _ = std::fs::write(&self.file, serde_json::to_string_pretty(&now).unwrap());
+    }
+}
+
+/// `deniedMcpServers` in `--settings` removes a personal and a project-local
+/// tool server and leaves every other server and tool as a normal run has them.
+/// Writes the real `~/.claude.json`, so it needs a second gate on top of
+/// `KATA_SMOKE_REAL`: `KATA_PROOF_WRITE_HOME=1`. A byte-for-byte backup is
+/// written to the OS temp folder first and its path printed.
+#[test]
+fn proof_deny_personal_and_local_servers() {
+    if !build_proof_enabled() {
+        return;
+    }
+    if std::env::var("KATA_PROOF_WRITE_HOME").as_deref() != Ok("1") {
+        eprintln!(
+            "skipping: this proof writes ~/.claude.json; set KATA_PROOF_WRITE_HOME=1 as well"
+        );
+        return;
+    }
+    let kata = kata_bin();
+    let file = home_dir().join(".claude.json");
+    let backup =
+        std::env::temp_dir().join(format!("claude.json.kata-proof-{}.bak", std::process::id()));
+    std::fs::copy(&file, &backup).unwrap();
+    eprintln!("backup of ~/.claude.json: {}", backup.display());
+    let before: Value = serde_json::from_str(&std::fs::read_to_string(&backup).unwrap()).unwrap();
+
+    let project = tempfile::tempdir().unwrap();
+    let mut key = fwd(project.path());
+    if key.as_bytes().get(1) == Some(&b':') {
+        key = key[..1].to_uppercase() + &key[1..];
+    }
+    let guard = ProbeServers {
+        file: file.clone(),
+        project_key: key.clone(),
+        had_top_servers: before.get("mcpServers").is_some(),
+        before_project: before["projects"].get(&key).cloned(),
+    };
+    let srv = json!({"type": "stdio", "command": fwd(&kata), "args": ["mcp-ask"]});
+    let mut j = before.clone();
+    let obj = j.as_object_mut().unwrap();
+    obj.entry("mcpServers").or_insert_with(|| json!({}))["kata-probe-personal"] = srv.clone();
+    obj.entry("projects").or_insert_with(|| json!({}))[&key] =
+        json!({"mcpServers": {"kata-probe-local": srv}});
+    std::fs::write(&file, serde_json::to_string_pretty(&j).unwrap()).unwrap();
+
+    let servers = |o: &Out| -> Vec<String> {
+        o.init["mcp_servers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                format!(
+                    "{}|{}|{}",
+                    s["name"].as_str().unwrap_or(""),
+                    s["status"].as_str().unwrap_or(""),
+                    s["source"].as_str().unwrap_or("")
+                )
+            })
+            .collect()
+    };
+    let tools = |o: &Out| o.names("tools", "");
+    let deny = |name: &str| {
+        let f = write_json(
+            project.path(),
+            &format!("deny-{name}.json"),
+            &json!({"deniedMcpServers": [{"serverName": name}]}),
+        );
+        claude(
+            project.path(),
+            Some("haiku"),
+            PROMPT,
+            1,
+            &["--settings", &f],
+        )
+    };
+    let normal = claude(project.path(), Some("haiku"), PROMPT, 1, &[]);
+    let personal_off = deny("kata-probe-personal");
+    let local_off = deny("kata-probe-local");
+    drop(guard);
+
+    let after: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let rewritten: std::collections::BTreeSet<&String> = after
+        .as_object()
+        .unwrap()
+        .keys()
+        .chain(before.as_object().unwrap().keys())
+        .filter(|k| after.get(*k) != before.get(*k))
+        .collect();
+    eprintln!(
+        "keys differing from the backup after cleanup (Claude's own rewrites): {rewritten:?}"
+    );
+    assert!(after["mcpServers"].get("kata-probe-personal").is_none());
+    assert!(after["projects"][&key]["mcpServers"]
+        .get("kata-probe-local")
+        .is_none());
+
+    eprintln!("normal: {:?}", servers(&normal));
+    for (label, out, gone) in [
+        ("personal", &personal_off, "kata-probe-personal"),
+        ("local", &local_off, "kata-probe-local"),
+    ] {
+        assert!(
+            servers(&normal)
+                .iter()
+                .any(|s| s.starts_with(&format!("{gone}|connected|"))),
+            "{gone} not connected in the normal run"
+        );
+        let expect: Vec<String> = servers(&normal)
+            .into_iter()
+            .filter(|s| !s.starts_with(&format!("{gone}|")))
+            .collect();
+        assert_eq!(servers(out), expect, "{label} denied: other servers differ");
+        let expect_tools: Vec<String> = tools(&normal)
+            .into_iter()
+            .filter(|t| !t.starts_with(&format!("mcp__{gone}__")))
+            .collect();
+        assert_eq!(tools(out), expect_tools, "{label} denied: tools differ");
+        eprintln!("{label} denied: removed, every other server and tool identical");
+    }
 }
