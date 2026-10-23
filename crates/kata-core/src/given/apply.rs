@@ -1,14 +1,13 @@
 //! How a switched-off item is kept from Claude. Pure in the sense that matters:
-//! it builds values and writes nothing. It reads the tool server files named by
-//! the resolved items, because their definitions are never carried in `Resolved`
-//! (they hold secrets).
+//! it builds values, reads the setup files the resolved items name (their
+//! definitions are never carried in `Resolved`, they hold secrets) and writes
+//! nothing.
 
-use super::{
-    items, parse_item_id, ItemKind, ResolveRoots, Resolved, ResolvedItem, Source, SWITCHABLE,
-};
+use super::settings::read_layers;
+use super::{hook_key, item_id, parse_item_id, ItemKind, ResolveRoots, Resolved, Source};
 use crate::spec::RunSpec;
 use serde_json::{json, Map, Value};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// The name of the plugin Kata generates to hand a dropped project's skills,
@@ -16,14 +15,20 @@ use std::path::{Path, PathBuf};
 pub const CARRY_PLUGIN: &str = "kata-proj";
 
 /// How Claude names a carried-over project skill, agent or command.
-pub fn carried_name(_name: &str) -> String {
-    String::new()
+pub fn carried_name(name: &str) -> String {
+    format!("{CARRY_PLUGIN}:{name}")
 }
+
+/// Makes Claude load `CLAUDE.md`, its imports and `.claude/rules` from an
+/// `--add-dir` folder.
+const ADD_DIR_MD_ENV: (&str, &str) = ("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD", "1");
 
 /// What a dropped settings source hands back by other routes.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Carry {
-    /// `{ "mcpServers": { ... } }`, passed without `--strict-mcp-config`.
+    /// `{ "mcpServers": { ... } }` holding the project's `.mcp.json` servers that
+    /// are not switched off, verbatim. Passed as an addition to the scopes Claude reads itself, so it
+    /// only adds.
     pub mcp: Option<Value>,
     /// Files to copy into the generated plugin folder: (source, path inside it).
     pub plugin: Vec<(PathBuf, PathBuf)>,
@@ -39,106 +44,156 @@ pub struct Applied {
     /// Kit skills and plugins `assemble` leaves out of the plugin folder.
     pub kit_skip: BTreeSet<String>,
     /// Keys for the per-run `--settings` file (`enabledPlugins`,
-    /// `claudeMdExcludes`, `outputStyle`).
+    /// `claudeMdExcludes`, `outputStyle`, `deniedMcpServers`, and the settings of
+    /// a dropped source).
     pub settings: Map<String, Value>,
-    /// Always `None` for now: hooks and on-disk skills ship locked, so no
-    /// settings source is ever dropped (docs/switch-proofs.md).
+    /// The `--setting-sources` list, present only when a project hook is off.
     pub setting_sources: Option<Vec<&'static str>>,
-    /// `{ "mcpServers": { ... } }` holding every kept server, present only when
-    /// a tool server is off. The caller adds Kata's own entry and passes
-    /// `--strict-mcp-config`.
-    pub mcp: Option<Value>,
     /// What a dropped settings source hands back by other routes.
     pub carry: Option<Carry>,
     /// The run-spec's system prompt is switched off.
     pub drop_system_prompt: bool,
 }
 
-/// A source's own tool server table, read from the file the item names.
-fn server_definition(
-    file: &Value,
-    source: Source,
-    name: &str,
-    roots: &ResolveRoots,
-) -> Option<Value> {
-    let servers = match source {
-        Source::ProjectLocal => {
-            let want = items::norm(&roots.workdir.to_string_lossy());
-            file.get("projects")?
-                .as_object()?
-                .iter()
-                .find(|(k, _)| items::norm(k) == want)?
-                .1
-                .get("mcpServers")?
-        }
-        _ => file.get("mcpServers")?,
-    };
-    servers.get(name).cloned()
-}
-
-/// The kept tool servers of every source that Claude reads from a file Kata can
-/// copy from, verbatim. Plugin tool servers are not copied: Claude names them
-/// `plugin:<plugin>:<server>` and expands `${CLAUDE_PLUGIN_ROOT}` for them, which
-/// a copy under a plain name would lose.
-fn kept_servers(resolved: &Resolved, roots: &ResolveRoots) -> Value {
-    let rank = |s: Source| match s {
-        Source::Personal => 0,
-        Source::Project => 1,
-        Source::ProjectLocal => 2,
-        _ => 3,
-    };
-    let mut kept: Vec<&ResolvedItem> = resolved
-        .items
-        .iter()
-        .filter(|i| i.kind == ItemKind::ToolServer && !i.off && i.brought_by.is_none())
-        .filter(|i| {
-            matches!(
-                i.source,
-                Source::Personal | Source::Project | Source::ProjectLocal | Source::Organization
-            )
-        })
-        .collect();
-    // Later wins, in Claude's order: personal, project, project-local.
-    kept.sort_by_key(|i| rank(i.source));
-    let mut files: BTreeMap<String, Option<Value>> = BTreeMap::new();
-    let mut servers = Map::new();
-    for i in kept {
-        let Some(path) = i.path.as_ref() else {
-            continue;
+/// `path` made relative to `base`, when it lies under it.
+fn relative_to<'a>(path: &'a Path, base: &Path) -> Option<&'a Path> {
+    let mut rest = path.components();
+    for want in base.components() {
+        let got = rest.next()?;
+        let (g, w) = (got.as_os_str(), want.as_os_str());
+        let same = if cfg!(windows) {
+            g.to_string_lossy()
+                .eq_ignore_ascii_case(&w.to_string_lossy())
+        } else {
+            g == w
         };
-        let file = files.entry(path.clone()).or_insert_with(|| {
-            std::fs::read_to_string(path)
-                .ok()
-                .and_then(|t| serde_json::from_str(&t).ok())
-        });
-        if let Some(def) = file
-            .as_ref()
-            .and_then(|f| server_definition(f, i.source, &i.name, roots))
-        {
-            servers.insert(i.name.clone(), def);
+        if !same {
+            return None;
         }
     }
-    json!({ "mcpServers": servers })
+    Some(rest.as_path())
+}
+
+/// A path under the workdir moved to the same place under the folder Claude runs
+/// in; any other path unchanged.
+fn rebase(path: &Path, workdir: &Path, run_dir: &Path) -> PathBuf {
+    match relative_to(path, workdir) {
+        Some(rel) => run_dir.join(rel),
+        None => path.to_path_buf(),
+    }
+}
+
+/// What a hook entry runs or calls, as `hook_key` hashes it.
+fn hook_text(entry: &Value) -> Option<&str> {
+    let text = |field: &str| entry.get(field).and_then(Value::as_str);
+    match entry.get("type").and_then(Value::as_str)? {
+        "command" => text("command"),
+        "prompt" | "agent" => text("prompt"),
+        "http" => text("url"),
+        _ => None,
+    }
+}
+
+/// Remove the switched-off hooks of one layer, and the groups and events that
+/// are left empty.
+fn strip_off_hooks(layer: &mut Map<String, Value>, source: Source, off: &BTreeSet<String>) {
+    let Some(Value::Object(events)) = layer.get_mut("hooks") else {
+        return;
+    };
+    events.retain(|event, groups| {
+        let Some(groups) = groups.as_array_mut() else {
+            return true;
+        };
+        groups.retain_mut(|group| {
+            let matcher = group
+                .get("matcher")
+                .and_then(Value::as_str)
+                .filter(|m| !m.is_empty())
+                .map(String::from);
+            let Some(entries) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
+                return true;
+            };
+            entries.retain(|e| match hook_text(e) {
+                Some(t) => {
+                    let key = hook_key(event, matcher.as_deref(), t);
+                    !off.contains(&item_id(ItemKind::Hook, source, &key))
+                }
+                None => true,
+            });
+            !entries.is_empty()
+        });
+        !groups.is_empty()
+    });
+    if events.is_empty() {
+        layer.remove("hooks");
+    }
+}
+
+/// Replace every scalar of `carried` by the value it has once all layers are
+/// merged in Claude's order, so a re-routed value never beats a kept layer that
+/// should win.
+fn pin_scalars(carried: &mut Map<String, Value>, effective: &Map<String, Value>) {
+    for (key, value) in carried.iter_mut() {
+        match (value, effective.get(key)) {
+            (Value::Object(c), Some(Value::Object(e))) => pin_scalars(c, e),
+            (Value::Object(_) | Value::Array(_), _) => {}
+            (v, Some(e)) if !e.is_object() && !e.is_array() => *v = e.clone(),
+            _ => {}
+        }
+    }
+}
+
+/// Every file under `dir`, relative to it, in a stable order.
+fn files_under(dir: &Path) -> Vec<PathBuf> {
+    fn walk(dir: &Path, rel: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let rel = rel.join(entry.file_name());
+            match entry.file_type() {
+                Ok(t) if t.is_dir() => walk(&entry.path(), &rel, out),
+                Ok(t) if t.is_file() => out.push(rel),
+                _ => {}
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, Path::new(""), &mut out);
+    out.sort();
+    out
+}
+
+/// The project's `.mcp.json` servers that are not switched off, verbatim.
+fn project_servers(workdir: &Path, off: &BTreeSet<String>) -> Option<Value> {
+    let text = std::fs::read_to_string(workdir.join(".mcp.json")).ok()?;
+    let file: Value = serde_json::from_str(&text).ok()?;
+    let mut servers = file.get("mcpServers")?.as_object()?.clone();
+    servers.retain(|name, _| !off.contains(name));
+    (!servers.is_empty()).then(|| json!({ "mcpServers": servers }))
 }
 
 pub fn apply(
     _spec: &RunSpec,
     resolved: &Resolved,
     roots: &ResolveRoots,
-    _run_dir: &Path,
+    run_dir: &Path,
 ) -> Applied {
     let mut out = Applied::default();
     let missing: BTreeSet<&str> = resolved.missing.iter().map(String::as_str).collect();
-    let mut any_server_off = false;
     let mut enabled = Map::new();
     let mut excludes: Vec<Value> = Vec::new();
+    let mut denied: Vec<Value> = Vec::new();
+    let mut off_hooks: BTreeSet<String> = BTreeSet::new();
+    let mut off_project_servers: BTreeSet<String> = BTreeSet::new();
+    let (mut drop_project, mut drop_local) = (false, false);
     for i in &resolved.items {
-        // Only what a switch can reach: a hook, an on-disk skill, and anything
-        // brought by a plugin or owned by the organization or Kata never counts.
+        // The lock is the one authority on what a switch can reach. An item that
+        // goes off with a hook follows that hook's source, not a switch of its own.
         if !i.off
-            || i.brought_by.is_some()
+            || i.lock.is_some()
             || missing.contains(i.id.as_str())
-            || !SWITCHABLE.contains(&(i.kind, i.source))
+            || !i.goes_off_with.is_empty()
         {
             continue;
         }
@@ -149,7 +204,7 @@ pub fn apply(
             (ItemKind::Skill | ItemKind::Plugin, Source::RunSpec) => {
                 out.kit_skip.insert(r.key);
             }
-            (ItemKind::Plugin, _) => {
+            (ItemKind::Plugin, Source::Personal | Source::Project | Source::ProjectLocal) => {
                 enabled.insert(r.key, Value::Bool(false));
             }
             (ItemKind::Instruction, Source::RunSpec) if r.key == "system-prompt" => {
@@ -161,10 +216,24 @@ pub fn apply(
                     out.settings
                         .insert("outputStyle".into(), Value::String("default".into()));
                 } else if let Some(p) = &i.path {
-                    excludes.push(Value::String(p.replace('\\', "/")));
+                    let moved = rebase(Path::new(p), &roots.workdir, run_dir);
+                    excludes.push(Value::String(moved.to_string_lossy().replace('\\', "/")));
                 }
             }
-            (ItemKind::ToolServer, _) => any_server_off = true,
+            (ItemKind::ToolServer, Source::Personal | Source::Project | Source::ProjectLocal) => {
+                denied.push(json!({ "serverName": r.key }));
+                if i.source == Source::Project {
+                    off_project_servers.insert(r.key);
+                }
+            }
+            (ItemKind::Hook, Source::Project) => {
+                drop_project = true;
+                off_hooks.insert(i.id.clone());
+            }
+            (ItemKind::Hook, Source::ProjectLocal) => {
+                drop_local = true;
+                off_hooks.insert(i.id.clone());
+            }
             _ => {}
         }
     }
@@ -176,9 +245,61 @@ pub fn apply(
         out.settings
             .insert("claudeMdExcludes".into(), Value::Array(excludes));
     }
-    if any_server_off {
-        // A server that is off is left out by not being copied.
-        out.mcp = Some(kept_servers(resolved, roots));
+    if !denied.is_empty() {
+        out.settings
+            .insert("deniedMcpServers".into(), Value::Array(denied));
+    }
+    out.setting_sources = match (drop_project, drop_local) {
+        (false, false) => None,
+        (true, false) => Some(vec!["user", "local"]),
+        (false, true) => Some(vec!["user", "project"]),
+        (true, true) => Some(vec!["user"]),
+    };
+    if drop_project || drop_local {
+        let layers = read_layers(roots);
+        let layer = |s: Source| {
+            layers
+                .iter()
+                .find(|l| l.source == s)
+                .and_then(|l| l.value.as_object())
+        };
+        let mut effective = Map::new();
+        for s in [Source::Personal, Source::Project, Source::ProjectLocal] {
+            if let Some(o) = layer(s) {
+                merge_settings(&mut effective, o);
+            }
+        }
+        let mut carried = Map::new();
+        for (s, dropped) in [
+            (Source::Project, drop_project),
+            (Source::ProjectLocal, drop_local),
+        ] {
+            if let (true, Some(o)) = (dropped, layer(s)) {
+                let mut o = o.clone();
+                strip_off_hooks(&mut o, s, &off_hooks);
+                merge_settings(&mut carried, &o);
+            }
+        }
+        pin_scalars(&mut carried, &effective);
+        // What the switches change wins over what the dropped layers said.
+        merge_settings(&mut carried, &out.settings);
+        out.settings = carried;
+    }
+    if drop_project {
+        let claude = roots.workdir.join(".claude");
+        let mut plugin = Vec::new();
+        for folder in ["skills", "agents", "commands"] {
+            for rel in files_under(&claude.join(folder)) {
+                let source = rebase(&claude.join(folder).join(&rel), &roots.workdir, run_dir);
+                plugin.push((source, Path::new(folder).join(rel)));
+            }
+        }
+        out.carry = Some(Carry {
+            mcp: project_servers(&roots.workdir, &off_project_servers),
+            plugin,
+            add_dir: Some(run_dir.to_path_buf()),
+            env: vec![ADD_DIR_MD_ENV],
+        });
     }
     out
 }

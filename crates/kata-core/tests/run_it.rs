@@ -2395,18 +2395,21 @@ fn each_kind_switched_off_is_kept_from_the_run_and_no_setup_file_changes() {
         "instruction row changed a setup file"
     );
 
-    // tool server: the per-run tool server file holds kata-ask and the kept one.
+    // tool server: denied by name in the settings file; claude's own scopes are
+    // not replaced (no strict file), and the definition never reaches the run.
     let mut spec = rig.spec();
     let id = rig.id(&spec, ItemKind::ToolServer, Source::Project, "srv-a");
     spec.given = given_with(|g| g.tool_servers.push(id));
     let seen = rig.run(&spec);
-    assert!(seen.has("--strict-mcp-config"), "{:?}", seen.argv);
-    assert!(seen.has("--mcp-config"));
-    let mut servers = seen.mcp_servers();
-    servers.sort();
-    assert_eq!(servers, vec!["kata-ask".to_string(), "srv-b".to_string()]);
+    assert!(!seen.has("--strict-mcp-config"), "{:?}", seen.argv);
+    assert_eq!(seen.mcp_servers(), vec!["kata-ask".to_string()]);
+    let settings = seen.settings.clone().expect("a settings file is written");
+    assert_eq!(
+        settings["deniedMcpServers"],
+        serde_json::json!([{"serverName": "srv-a"}])
+    );
     assert!(
-        !seen.mcp.unwrap().to_string().contains("tok-a"),
+        !settings.to_string().contains("tok-a"),
         "the switched-off server's definition reached the file"
     );
     assert_eq!(
@@ -2482,7 +2485,18 @@ fn switching_items_off_leaves_the_posture_flags_unchanged() {
     let a = rig.run(&plain);
     let b = rig.run(&off);
     // The switches did something...
-    assert!(b.has("--strict-mcp-config") && !a.has("--strict-mcp-config"));
+    assert!(b
+        .settings
+        .as_ref()
+        .unwrap()
+        .get("deniedMcpServers")
+        .is_some());
+    assert!(a
+        .settings
+        .as_ref()
+        .unwrap()
+        .get("deniedMcpServers")
+        .is_none());
     assert!(a
         .plugin_files
         .as_ref()

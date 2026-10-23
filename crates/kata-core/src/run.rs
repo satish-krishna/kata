@@ -355,11 +355,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
         let mut server_env = serde_json::Map::new();
         server_env.insert("KATA_ASK_PORT".into(), port.to_string().into());
         server_env.insert(crate::ask::TOOLS_ENV.into(), tools.to_env().into());
-        // The servers the run keeps come first, so Kata's own entry wins a name clash.
-        let mut servers = match &applied.mcp {
-            Some(m) => m["mcpServers"].as_object().cloned().unwrap_or_default(),
-            None => serde_json::Map::new(),
-        };
+        let mut servers = serde_json::Map::new();
         servers.insert(
             crate::ask::MCP_SERVER_NAME.into(),
             serde_json::json!({
@@ -373,10 +369,6 @@ pub fn run_with<F: FnMut(KataEvent)>(
 
         inv.args.push("--mcp-config".into());
         inv.args.push(cfg.to_string_lossy().into_owned());
-        if applied.mcp.is_some() {
-            // A tool server is off: claude reads only the file, not its own scopes.
-            inv.args.push("--strict-mcp-config".into());
-        }
         // A system prompt that is off was never passed, so there is no file to fold into.
         let prompt_file = assembled
             .system_prompt_file
