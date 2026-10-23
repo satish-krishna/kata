@@ -2106,6 +2106,10 @@ struct Seen {
     settings: Option<serde_json::Value>,
     mcp: Option<serde_json::Value>,
     plugin_files: Option<Vec<String>>,
+    /// Every `--plugin-dir`'s files, in the order passed (the kit's first).
+    plugin_dirs: Vec<Vec<String>>,
+    cwd: Option<String>,
+    add_dir_md: String,
     exit_code: i32,
 }
 
@@ -2307,7 +2311,13 @@ body
             } else if let Some(r) = message.strip_prefix("MCP ") {
                 seen.mcp = Some(json(r));
             } else if let Some(r) = message.strip_prefix("PLUGINDIR ") {
-                seen.plugin_files = Some(serde_json::from_value(json(r)).unwrap());
+                let files: Vec<String> = serde_json::from_value(json(r)).unwrap();
+                seen.plugin_files.get_or_insert_with(|| files.clone());
+                seen.plugin_dirs.push(files);
+            } else if let Some(r) = message.strip_prefix("CWD ") {
+                seen.cwd = Some(r.to_string());
+            } else if let Some(r) = message.strip_prefix("ADDDIRMD ") {
+                seen.add_dir_md = r.to_string();
             }
         }
         assert_eq!(seen.exit_code, 0, "events: {events:?}");
@@ -2322,13 +2332,14 @@ fn given_with(f: impl FnOnce(&mut Given)) -> Option<Given> {
     Some(g)
 }
 
-// R4.2: one row per kind. Hooks are not switchable (docs/switch-proofs.md), so
-// that row asserts the item stays given. There is no run.given event yet (T8),
-// so the rows assert through `resolve` and what Kata passed to claude.
+// R4.2: one row per kind. A project hook goes off by dropping its settings
+// source (docs/switch-proofs.md) and a personal hook cannot be switched off. The
+// rows assert through `resolve` and what Kata passed to claude.
 #[test]
 #[serial]
 fn each_kind_switched_off_is_kept_from_the_run_and_no_setup_file_changes() {
     let rig = Rig::new();
+    rig.add_project_setup();
     let before = rig.snapshot();
 
     // skill: a kit skill that is also a personal skill on disk is shadowed, so it
@@ -2418,7 +2429,22 @@ fn each_kind_switched_off_is_kept_from_the_run_and_no_setup_file_changes() {
         "tool server row changed a setup file"
     );
 
-    // hook: not in SWITCHABLE, so it stays given and no mechanism is passed.
+    // hook: a project hook goes off by dropping its settings source and handing
+    // the rest of that source back, so claude is told to read the other sources.
+    let mut spec = rig.spec();
+    spec.given = given_with(|g| g.hooks.push(rig.project_hook_id(HOOK_A)));
+    let seen = rig.run(&spec);
+    assert_eq!(seen.value("--setting-sources"), Some("user,local"));
+    assert!(!seen.has("--strict-mcp-config"));
+    let hooks = seen.settings.as_ref().expect("the rest is handed back")["hooks"].to_string();
+    assert!(hooks.contains(HOOK_B) && !hooks.contains(HOOK_A), "{hooks}");
+    assert!(
+        seen.has("--add-dir"),
+        "the project's other files are carried"
+    );
+    assert_eq!(rig.snapshot(), before, "hook row changed a setup file");
+
+    // A personal hook is not switchable (its source cannot be dropped on its own).
     assert!(!SWITCHABLE.contains(&(ItemKind::Hook, Source::Personal)));
     let mut spec = rig.spec();
     let hook_id = rig.hook_id(&spec);
@@ -2428,8 +2454,11 @@ fn each_kind_switched_off_is_kept_from_the_run_and_no_setup_file_changes() {
     assert!(!hook.off, "a locked hook must stay given");
     let seen = rig.run(&spec);
     assert!(!seen.has("--setting-sources") && !seen.has("--settings"));
-    assert!(!seen.has("--strict-mcp-config"));
-    assert_eq!(rig.snapshot(), before, "hook row changed a setup file");
+    assert_eq!(
+        rig.snapshot(),
+        before,
+        "personal hook row changed a setup file"
+    );
 }
 
 // R4.1, as it stands: hooks ship locked because no mechanism was proven, so a
@@ -2863,4 +2892,215 @@ fn a_run_that_ends_before_the_start_report_emits_rows_26_and_27() {
         at(&|e| matches!(e, KataEvent::RunGiven { .. }))
             < at(&|e| matches!(e, KataEvent::RunCompleted { .. }))
     );
+}
+
+// ---------------------------------------------------------------------------
+// T21: the switch-offs and the carry-over reach Claude.
+// ---------------------------------------------------------------------------
+
+const HOOK_A: &str = "echo x > hookA.marker";
+const HOOK_B: &str = "echo x > hookB.marker";
+
+fn project_settings_body() -> String {
+    let hook = |c: &str| serde_json::json!({"type": "command", "command": c});
+    serde_json::json!({"hooks": {"UserPromptSubmit": [
+        {"hooks": [hook(HOOK_A)]}, {"hooks": [hook(HOOK_B)]}
+    ]}})
+    .to_string()
+}
+
+fn project_hook_id(command: &str) -> String {
+    kata_core::given::item_id(
+        ItemKind::Hook,
+        Source::Project,
+        &kata_core::given::hook_key("UserPromptSubmit", None, command),
+    )
+}
+
+impl Rig {
+    /// Two project hooks on one event and a project skill.
+    fn add_project_setup(&self) {
+        write_file(
+            &self.work.join(".claude/settings.json"),
+            &project_settings_body(),
+        );
+        write_file(
+            &self.work.join(".claude/skills/projskill/SKILL.md"),
+            "---
+name: projskill
+description: the project skill
+---
+body
+",
+        );
+    }
+
+    fn project_hook_id(&self, command: &str) -> String {
+        project_hook_id(command)
+    }
+}
+
+fn norm(p: &str) -> String {
+    p.replace('\\', "/").to_lowercase()
+}
+
+// R4.5: the switched-off hook is dropped with its source and everything else of
+// the project is handed back.
+#[test]
+#[serial]
+fn a_switched_off_project_hook_never_fires_the_rest_is_carried_over_and_the_setup_is_untouched() {
+    let rig = Rig::new();
+    rig.add_project_setup();
+    let before = rig.snapshot();
+    let mut spec = rig.spec();
+    spec.given = given_with(|g| g.hooks.push(rig.project_hook_id(HOOK_A)));
+    let seen = rig.run(&spec);
+
+    assert_eq!(seen.value("--setting-sources"), Some("user,local"));
+    let hooks = seen.settings.as_ref().expect("the rest is handed back")["hooks"].to_string();
+    assert!(hooks.contains(HOOK_B) && !hooks.contains(HOOK_A), "{hooks}");
+
+    // The `.mcp.json` servers ride in the tool-server file, never strict.
+    assert!(!seen.has("--strict-mcp-config"));
+    assert_eq!(
+        seen.mcp_servers(),
+        vec![
+            "kata-ask".to_string(),
+            "srv-a".to_string(),
+            "srv-b".to_string()
+        ]
+    );
+
+    // The project skill is in a generated plugin next to the kit's.
+    assert_eq!(seen.plugin_dirs.len(), 2, "{:?}", seen.plugin_dirs);
+    let carried = &seen.plugin_dirs[1];
+    assert!(
+        carried.contains(&"skills/projskill/SKILL.md".to_string()),
+        "{carried:?}"
+    );
+    assert!(
+        carried.contains(&".claude-plugin/plugin.json".to_string()),
+        "{carried:?}"
+    );
+    let dirs: Vec<&String> = seen
+        .argv
+        .windows(2)
+        .filter(|w| w[0] == "--plugin-dir")
+        .map(|w| &w[1])
+        .collect();
+    assert!(
+        !std::path::Path::new(dirs[1]).exists(),
+        "the carried plugin outlived the run"
+    );
+
+    // The project's standing instructions come back through `--add-dir`.
+    assert_eq!(
+        seen.value("--add-dir").map(norm),
+        Some(norm(&rig.work.to_string_lossy()))
+    );
+    assert_eq!(seen.add_dir_md, "1");
+    assert_eq!(rig.snapshot(), before, "a setup file changed");
+}
+
+// The same run through a real claude: the dropped hook never fires, the other does.
+#[test]
+#[serial]
+fn a_switched_off_project_hook_never_fires_in_a_real_run() {
+    if !build_proof_enabled() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join("proj");
+    write_file(
+        &work.join(".claude/settings.json"),
+        &project_settings_body(),
+    );
+    let before = std::fs::read(work.join(".claude/settings.json")).unwrap();
+    let mut spec = base_spec(&work.to_string_lossy());
+    spec.name = "t21-hook-off".into();
+    spec.task = "Reply with the single word ok.".into();
+    spec.auth.bare = false;
+    spec.model.id = Some("haiku".into());
+    spec.leash.max_turns = Some(4);
+    spec.leash.timeout_secs = Some(240);
+    spec.given = given_with(|g| g.hooks.push(project_hook_id(HOOK_A)));
+    let events = run_real(&spec);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, KataEvent::RunCompleted { .. })),
+        "the run did not complete"
+    );
+    assert!(
+        !work.join("hookA.marker").exists(),
+        "the switched-off hook fired"
+    );
+    assert!(
+        work.join("hookB.marker").exists(),
+        "the other hook did not fire"
+    );
+    assert_eq!(
+        std::fs::read(work.join(".claude/settings.json")).unwrap(),
+        before
+    );
+}
+
+// Review 1 F2: the exclusion names the copy the run reads.
+#[test]
+#[serial]
+fn an_isolated_run_excludes_paths_in_its_worktree() {
+    let rig = Rig::new();
+    let git = |args: &[&str]| {
+        let ok = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&rig.work)
+            .args(args)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?} failed");
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "t@example.com"]);
+    git(&["config", "user.name", "t"]);
+    git(&["add", "."]);
+    git(&["commit", "-q", "-m", "init"]);
+
+    let mut spec = rig.spec();
+    spec.leash.isolation = kata_core::spec::Isolation::Worktree;
+    let id = rig.id(&spec, ItemKind::Instruction, Source::Project, "CLAUDE.md");
+    spec.given = given_with(|g| g.instructions.push(id));
+    let seen = rig.run(&spec);
+
+    let cwd = norm(seen.cwd.as_deref().expect("fake-claude reports its folder"));
+    assert_ne!(cwd, norm(&rig.work.to_string_lossy()), "not isolated");
+    let excludes = seen.settings.as_ref().expect("a settings file")["claudeMdExcludes"].clone();
+    let want = format!("{cwd}/claude.md");
+    let got: Vec<String> = excludes
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| norm(v.as_str().unwrap()))
+        .collect();
+    assert_eq!(got, vec![want], "the live workdir's copy was named instead");
+}
+
+// A run with nothing switched off keeps its command line.
+#[test]
+#[serial]
+fn nothing_switched_off_passes_none_of_the_new_flags() {
+    let rig = Rig::new();
+    rig.add_project_setup();
+    let seen = rig.run(&rig.spec());
+    for flag in [
+        "--setting-sources",
+        "--settings",
+        "--add-dir",
+        "--strict-mcp-config",
+    ] {
+        assert!(!seen.has(flag), "{flag} in {:?}", seen.argv);
+    }
+    assert_eq!(seen.plugin_dirs.len(), 1, "only the kit's plugin folder");
+    assert_eq!(seen.mcp_servers(), vec!["kata-ask".to_string()]);
+    assert_eq!(seen.add_dir_md, "");
 }

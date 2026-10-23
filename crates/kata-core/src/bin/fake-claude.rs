@@ -328,9 +328,11 @@ fn main() {
             // Report what Kata passed, as stderr lines the engine surfaces as log
             // events: `ARGV <json array>`, `SETTINGS <file body>` and `MCP <file
             // body>` for the files named by `--settings` and `--mcp-config`, and
-            // `PLUGINDIR <json array>` listing every file (relative, forward
-            // slashes) under `--plugin-dir`, because that folder is gone after
-            // the run.
+            // one `PLUGINDIR <json array>` per `--plugin-dir` listing every file
+            // (relative, forward slashes) under it, because that folder is gone
+            // after the run, then `CWD <path>` and `ADDDIRMD <value>`: the
+            // child's working folder and its value of
+            // `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD` (empty when unset).
             let args: Vec<String> = std::env::args().skip(1).collect();
             let mut err = std::io::stderr();
             let _ = writeln!(err, "ARGV {}", serde_json::json!(args));
@@ -347,26 +349,41 @@ fn main() {
                     let _ = writeln!(err, "{tag} {body}");
                 }
             }
-            if let Some(dir) = value_of("--plugin-dir") {
-                fn walk(base: &std::path::Path, dir: &std::path::Path, out: &mut Vec<String>) {
-                    let Ok(rd) = std::fs::read_dir(dir) else {
-                        return;
-                    };
-                    for e in rd.flatten() {
-                        let p = e.path();
-                        if p.is_dir() {
-                            walk(base, &p, out);
-                        } else if let Ok(rel) = p.strip_prefix(base) {
-                            out.push(rel.to_string_lossy().replace('\\', "/"));
-                        }
+            fn walk(base: &std::path::Path, dir: &std::path::Path, out: &mut Vec<String>) {
+                let Ok(rd) = std::fs::read_dir(dir) else {
+                    return;
+                };
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        walk(base, &p, out);
+                    } else if let Ok(rel) = p.strip_prefix(base) {
+                        out.push(rel.to_string_lossy().replace('\\', "/"));
                     }
                 }
+            }
+            // One `PLUGINDIR` line per `--plugin-dir`, in the order passed.
+            for dir in args
+                .windows(2)
+                .filter(|w| w[0] == "--plugin-dir")
+                .map(|w| &w[1])
+            {
                 let base = std::path::PathBuf::from(dir);
                 let mut files = Vec::new();
                 walk(&base, &base, &mut files);
                 files.sort();
                 let _ = writeln!(err, "PLUGINDIR {}", serde_json::json!(files));
             }
+            let _ = writeln!(
+                err,
+                "CWD {}",
+                std::env::current_dir().unwrap_or_default().display()
+            );
+            let _ = writeln!(
+                err,
+                "ADDDIRMD {}",
+                std::env::var("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD").unwrap_or_default()
+            );
             let _ = err.flush();
             let _ = writeln!(
                 out,
