@@ -224,6 +224,32 @@ fn open_transcript(spec_name: &str) -> Result<(Transcript, std::path::PathBuf), 
     ))
 }
 
+/// Materialize the carried-over project items as a plugin: a manifest naming
+/// `CARRY_PLUGIN` and each source copied to its path under the plugin folder.
+fn write_carry_plugin(
+    dir: &std::path::Path,
+    files: &[(std::path::PathBuf, std::path::PathBuf)],
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir.join(".claude-plugin"))?;
+    std::fs::write(
+        dir.join(".claude-plugin/plugin.json"),
+        serde_json::json!({
+            "name": crate::given::CARRY_PLUGIN,
+            "version": "0.0.1",
+            "description": "the project's own skills, agents and commands",
+        })
+        .to_string(),
+    )?;
+    for (source, rel) in files {
+        let to = dir.join(rel);
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(source, &to)?;
+    }
+    Ok(())
+}
+
 /// What a run reports, as opposed to what it does. Kept out of `RunSpec` on
 /// purpose: a spec stays a reproducible description of the work.
 #[derive(Debug, Clone, Copy, Default)]
@@ -320,6 +346,49 @@ pub fn run_with<F: FnMut(KataEvent)>(
         }
     }
 
+    let isolation = match spec.leash.isolation {
+        Isolation::None => "none",
+        Isolation::Worktree => "worktree",
+    };
+
+    // Worktree isolation: branch off HEAD into ~/.kata/worktrees and run there.
+    // Refuse (before spawning claude) if workdir is not a git repo.
+    let mut cwd = inv.cwd.clone();
+    let mut worktree: Option<crate::worktree::Worktree> = None;
+    if spec.leash.isolation == Isolation::Worktree {
+        match crate::worktree::create(&spec.workdir, &spec.name) {
+            Ok(wt) => {
+                cwd = wt.path.clone();
+                worktree = Some(wt);
+            }
+            Err(e) => {
+                let message = format!("worktree isolation failed for {}: {e}", spec.workdir);
+                emit(KataEvent::RunError {
+                    message: message.clone(),
+                    exit_code: 2,
+                    cost_usd: None,
+                    duration_ms: 0, // fires before the run clock (Instant::now()) starts
+                });
+                return Err(RunError::Worktree(message));
+            }
+        }
+    }
+
+    let (wt_path, wt_branch) = match &worktree {
+        Some(wt) => (Some(wt.path.clone()), Some(wt.branch.clone())),
+        None => (None, None),
+    };
+    // What the run is given is applied against the folder claude will run in: an
+    // isolated run reads its own copy of the project, so a path switched off in
+    // the live workdir is rewritten under the worktree. Kit assembly and the
+    // flags above do not depend on that folder, so they were built from the
+    // first application.
+    let applied = if worktree.is_some() {
+        apply(spec, &resolved, &roots, std::path::Path::new(&cwd))
+    } else {
+        applied
+    };
+
     // Every run gets Kata's own MCP server in the child, because every run gets
     // the `ask_user` tool: no permission mode stops claude from wanting to ask,
     // and its built-in AskUserQuestion (disallowed in command.rs) kills a
@@ -364,6 +433,19 @@ pub fn run_with<F: FnMut(KataEvent)>(
                 "env": server_env,
             }),
         );
+        // The project's own servers it could not keep (their source was dropped)
+        // ride in the same file. Never strict: claude's own scopes still apply.
+        if let Some(carried) = applied
+            .carry
+            .as_ref()
+            .and_then(|c| c.mcp.as_ref())
+            .and_then(|m| m.get("mcpServers"))
+            .and_then(|m| m.as_object())
+        {
+            for (name, def) in carried {
+                servers.entry(name.clone()).or_insert_with(|| def.clone());
+            }
+        }
         let cfg_body = serde_json::json!({ "mcpServers": servers }).to_string();
         std::fs::write(&cfg, cfg_body).map_err(|e| RunError::Spawn(e.to_string()))?;
 
@@ -418,38 +500,26 @@ pub fn run_with<F: FnMut(KataEvent)>(
         inv.args.push(path.to_string_lossy().into_owned());
     }
 
-    let isolation = match spec.leash.isolation {
-        Isolation::None => "none",
-        Isolation::Worktree => "worktree",
-    };
-
-    // Worktree isolation: branch off HEAD into ~/.kata/worktrees and run there.
-    // Refuse (before spawning claude) if workdir is not a git repo.
-    let mut cwd = inv.cwd.clone();
-    let mut worktree: Option<crate::worktree::Worktree> = None;
-    if spec.leash.isolation == Isolation::Worktree {
-        match crate::worktree::create(&spec.workdir, &spec.name) {
-            Ok(wt) => {
-                cwd = wt.path.clone();
-                worktree = Some(wt);
-            }
-            Err(e) => {
-                let message = format!("worktree isolation failed for {}: {e}", spec.workdir);
-                emit(KataEvent::RunError {
-                    message: message.clone(),
-                    exit_code: 2,
-                    cost_usd: None,
-                    duration_ms: 0, // fires before the run clock (Instant::now()) starts
-                });
-                return Err(RunError::Worktree(message));
-            }
+    // The rest of a dropped project source: its skills, agents and commands as a
+    // generated plugin next to the kit's, its standing instructions through
+    // `--add-dir` with the switch that makes claude read them, set on the child
+    // only. The folder lives in the run's temporary folder and goes with it.
+    if let Some(carry) = &applied.carry {
+        if !carry.plugin.is_empty() {
+            let dir = run_tmp.path().join("carry-plugin");
+            write_carry_plugin(&dir, &carry.plugin).map_err(|e| RunError::Spawn(e.to_string()))?;
+            inv.args.push("--plugin-dir".into());
+            inv.args.push(dir.to_string_lossy().into_owned());
+        }
+        if let Some(add) = &carry.add_dir {
+            inv.args.push("--add-dir".into());
+            inv.args.push(add.to_string_lossy().into_owned());
+        }
+        for (k, v) in &carry.env {
+            inv.env.push(((*k).to_string(), (*v).to_string()));
         }
     }
 
-    let (wt_path, wt_branch) = match &worktree {
-        Some(wt) => (Some(wt.path.clone()), Some(wt.branch.clone())),
-        None => (None, None),
-    };
     emit(KataEvent::RunStarted {
         spec: spec.name.clone(),
         model: spec.model.id.clone(),
