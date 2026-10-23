@@ -106,7 +106,7 @@ describe('BuildDriver', () => {
     await w.driver.begin(3600);
     await flush();
     await w.of('api')[0].end([], { exit: 0 });
-    expect(w.driver.stopped().get('api')).toEqual({ task: 'T1', reason: stopMessage(0, null) });
+    expect(w.driver.stopped().get('api')).toEqual({ task: 'T1', reason: stopMessage(0, null, false, false) });
     expect(w.log).toEqual(['api']);
     expect(w.driver.waiting().map((x) => x.repo)).toEqual(['app']);
     expect(w.driver.stopped().has('app')).toBe(false);
@@ -519,7 +519,7 @@ describe('BuildDriver', () => {
     await flush();
     expect(w.of('app')).toHaveLength(1);
     expect(w.driver.going().has('app')).toBe(false);
-    expect(w.driver.stopped().get('app')).toEqual({ task: 'T1', reason: stopMessage(0, null) });
+    expect(w.driver.stopped().get('app')).toEqual({ task: 'T1', reason: stopMessage(0, null, false, false) });
     expect(w.driver.phase()).toBe('stopped');
     expect(w.driver.round()).not.toBeNull();
     await w.driver.continueRepo('app');

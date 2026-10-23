@@ -154,14 +154,14 @@ export const DEFAULT_BUILD_SECS = 7200;
 
 const AI_SDLC = "ai-sdlc";
 
-/** The text of a repository's stop (R6.1). The cancelled fact decides first, and a cancelled stop carries no error text; the exit code only tells the other stops apart. */
+/** The text of a repository's stop (R6.1). The cancelled fact decides first, and a cancelled stop carries no error text; the exit code, and for exit 0 whether the task was recorded, tell the other stops apart. */
 export function stopMessage(exit: number | null, error: string | null, cancelled = false, recorded = true): string {
-  void recorded;
   if (cancelled) return "Stopped: cancelled";
   const base =
     exit === 124 ? "Stopped: reached the time limit"
     : exit === 130 ? "Stopped: cancelled"
     : exit === 123 ? "Stopped: nobody answered"
+    : exit === 0 && !recorded ? "Stopped: ended without its task being recorded"
     : "Stopped: the agent failed";
   return error ? `${base} · ${error}` : base;
 }
