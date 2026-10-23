@@ -454,6 +454,14 @@ describe('BuildDriver', () => {
     expect(w.driver.stopped().get('app')?.reason).toBe('Stopped: the agent failed');
   });
 
+  it('a task run that exits 0 without recording its ready task stops with "ended without its task being recorded"', async () => {
+    const w = world([{ id: 'T1', repo: 'app' }]);
+    await w.driver.begin(3600);
+    await flush();
+    await w.of('app')[0].end([], { exit: 0 });
+    expect(w.driver.stopped().get('app')?.reason).toBe('Stopped: ended without its task being recorded');
+  });
+
   it('a cancelled repository that is now waiting is not relaunched when its dependency gets a row (R6.1)', async () => {
     const w = world([
       { id: 'T1', repo: 'app' },

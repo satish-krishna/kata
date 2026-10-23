@@ -155,7 +155,8 @@ export const DEFAULT_BUILD_SECS = 7200;
 const AI_SDLC = "ai-sdlc";
 
 /** The text of a repository's stop (R6.1). The cancelled fact decides first, and a cancelled stop carries no error text; the exit code only tells the other stops apart. */
-export function stopMessage(exit: number | null, error: string | null, cancelled = false): string {
+export function stopMessage(exit: number | null, error: string | null, cancelled = false, recorded = true): string {
+  void recorded;
   if (cancelled) return "Stopped: cancelled";
   const base =
     exit === 124 ? "Stopped: reached the time limit"
