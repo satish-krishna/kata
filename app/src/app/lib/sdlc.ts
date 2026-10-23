@@ -35,7 +35,8 @@ export type StageAction =
   | "continue-build"
   | "another-round"
   | "run-review"
-  | "declare-done";
+  | "declare-done"
+  | "cancel-build";
 
 const ACTIONS: Record<Stage, StageAction[]> = {
   "intent-in-progress": ["continue-intent"],
@@ -372,6 +373,7 @@ const LABEL: Record<StageAction, string> = {
   "another-round": "Another round",
   "run-review": "Run review",
   "declare-done": "Declare done",
+  "cancel-build": "Cancel build",
 };
 
 export function actionLabel(action: StageAction): string {

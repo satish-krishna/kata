@@ -86,7 +86,8 @@ type HandledAction =
   | 'continue-build'
   | 'another-round'
   | 'declare-done'
-  | 'run-review';
+  | 'run-review'
+  | 'cancel-build';
 type StageRun = { kind: 'intent' | 'spec' | 'plan'; title: string; label: string };
 
 /** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result.
@@ -755,6 +756,9 @@ export class ChangePageViewModel {
         return;
       case 'declare-done':
         await this.declareDone();
+        return;
+      case 'cancel-build':
+        // Wired with the build page's action bar; no screen offers it yet.
         return;
       default:
         // Regenerating an existing document first asks what should change; a first draft just runs.
