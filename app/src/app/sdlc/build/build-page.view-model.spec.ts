@@ -1,6 +1,8 @@
-import { TestBed } from '@angular/core/testing';
+import { Component } from '@angular/core';
+import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { Leftovers } from '@bindings/Leftovers';
 import type { Participant } from '@bindings/Participant';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { GivenStore } from '../../core/given/given.store';
@@ -20,17 +22,33 @@ const FOLDER = MOCK_WORKSPACE_FOLDER;
 const CTX: BuildContext = { workspaceId: 'acme-claims', folder: FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE, systemRepos: [] };
 const REVIEW_NAME = `sdlc-claims-${MOCK_BUILD_CHANGE}-review`;
 
+/** Stands in for the change page, which provides the build page's view model and the preview beside its own. */
+@Component({ template: '', providers: [BuildPageViewModel, RunPreviewViewModel] })
+class Host {}
+
+/** The hosts made in this test, so a time step can run the change detection that carries their view effects. */
+let hosts: ComponentFixture<Host>[] = [];
+
+/** Another host, as the change page would be if it were opened a second time. */
+function openHost() {
+  const fixture = TestBed.createComponent(Host);
+  hosts.push(fixture);
+  return fixture;
+}
+
 /** `confirm` (the default) lets the build preview confirm at once with the build's own choices, so a test about something else never meets it; `real` leaves it to the test. */
 function setup(transport = new MockTransport(), preview: 'confirm' | 'real' = 'confirm') {
   TestBed.configureTestingModule({
-    providers: [provideRouter([]), BuildPageViewModel, RunPreviewViewModel, { provide: KataTransport, useValue: transport }],
+    providers: [provideRouter([]), { provide: KataTransport, useValue: transport }],
   });
-  const previewVm = TestBed.inject(RunPreviewViewModel);
+  const host = openHost();
+  const previewVm = host.debugElement.injector.get(RunPreviewViewModel);
   if (preview === 'confirm') vi.spyOn(previewVm, 'openBuild').mockImplementation(async (req) => ({ off: new Set(req.from.build ?? []), request: null }));
   return {
+    host,
     preview: previewVm,
     givens: TestBed.inject(GivenStore),
-    vm: TestBed.inject(BuildPageViewModel),
+    vm: host.debugElement.injector.get(BuildPageViewModel),
     transport,
     lock: TestBed.inject(LockStore),
     runner: TestBed.inject(SdlcRunner),
@@ -48,6 +66,7 @@ const advance = async (ms: number) => {
   for (let t = 0; t < ms; t += 50) {
     await vi.advanceTimersByTimeAsync(50);
     TestBed.tick();
+    for (const h of hosts) h.detectChanges();
   }
 };
 
@@ -70,6 +89,7 @@ const row = (vm: BuildPageViewModel, name: string) => vm.rows().find((r) => r.na
 const finished = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.findings().length > 0;
 
 beforeEach(() => {
+  hosts = [];
   vi.useFakeTimers();
   vi.setSystemTime(new Date(2026, 9, 19, 9, 0, 0));
 });
@@ -78,7 +98,7 @@ afterEach(() => {
   toastState.reset();
 });
 
-describe('BuildPageViewModel', () => {
+describe('the build page starts, stops and continues the same runs as the build view did', () => {
   it('starting a build prepares branches and starts every repository that does not wait (R2.1)', async () => {
     const { vm, transport, lock } = setup();
     const runSpec = vi.spyOn(transport, 'runSpec');
@@ -246,7 +266,7 @@ describe('BuildPageViewModel', () => {
     });
     await vm.start(await handoffFor(transport), CTX);
     await advance(500);
-    expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
+    expect(lock.active()).toBeNull();
     vm.select('claims-core');
     await vm.continueRun();
     await advance(500);
@@ -436,7 +456,7 @@ describe('BuildPageViewModel', () => {
     expect(row(vm, 'review')).toMatchObject({ tone: 'success', label: 'Finished' });
     expect(row(vm, 'claims-core')).toMatchObject({ tone: 'success', label: 'Finished · 1/1' });
     expect(vm.tasksLabel()).toBe('3/3 tasks');
-    expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
+    expect(lock.active()).toBeNull();
   });
 
   describe('findings from the review document', () => {
@@ -591,25 +611,16 @@ describe('BuildPageViewModel', () => {
     });
   });
 
-  it('Close releases the lock', async () => {
-    const { vm, transport, lock } = setup();
-    await vm.start(await handoffFor(transport), CTX);
-    await drive(vm, lock, finished(vm));
-    await vm.close();
-    expect(lock.active()).toBeNull();
-  });
-
   it('a round that adds commits is reviewed again and the old findings are marked replaced (R8.4)', async () => {
     const { vm, transport, lock } = setup();
     await vm.start(await handoffFor(transport), CTX);
     await drive(vm, lock, finished(vm));
-    await vm.close();
 
     const heads = vi.spyOn(transport, 'sdlcBuildHeads');
     heads.mockResolvedValueOnce({ 'claims-core': 'aaaaaaa' });
     heads.mockResolvedValue({ 'claims-core': 'bbbbbbb' });
     const runSpec = vi.spyOn(transport, 'runSpec');
-    const next = TestBed.runInInjectionContext(() => new BuildPageViewModel());
+    const next = openHost().debugElement.injector.get(BuildPageViewModel);
     const round = { instructions: 'rename the status field to state', repo: 'claims-core' };
     await next.start(await handoffFor(transport, { round }), CTX);
     await drive(next, lock, finished(next));
@@ -626,10 +637,9 @@ describe('BuildPageViewModel', () => {
     const { vm, transport, lock } = setup();
     await vm.start(await handoffFor(transport), CTX);
     await drive(vm, lock, finished(vm));
-    await vm.close();
 
     const runSpec = vi.spyOn(transport, 'runSpec');
-    const next = TestBed.runInInjectionContext(() => new BuildPageViewModel());
+    const next = openHost().debugElement.injector.get(BuildPageViewModel);
     const round = { instructions: 'look at the logging', repo: 'claims-core' };
     await next.start(await handoffFor(transport, { round }), CTX);
     await drive(next, lock, () => next.phase() === 'finished');
@@ -672,7 +682,7 @@ describe('BuildPageViewModel', () => {
     });
     expect(vm.rows().find((r) => r.name === 'customer-portal')).toMatchObject({ tone: 'idle', label: 'Waiting for T1 in claims-core' });
     expect(finish).toHaveBeenCalledWith(h.start);
-    expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
+    expect(lock.active()).toBeNull();
   });
 
   describe('a round for the master repository', () => {
@@ -1148,5 +1158,92 @@ describe('the build\'s choices in the build view', () => {
     await advance(500);
     expect(run).toHaveBeenCalledTimes(2);
     expect(givens.build(KEY)!.off).toEqual(new Set([GITHUB]));
+  });
+});
+
+const LEFT: Leftovers = { new_commits: [], discardable: ['src/x.rs'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
+
+/** claims-core has an unfinished task and customer-portal waits for it, however many runs end. */
+const UNFINISHED: BuildStatus = {
+  hasTasks: true,
+  problems: [],
+  logLayouts: [],
+  departures: [],
+  tasks: [
+    { id: 'T1', name: 'one', repo: 'claims-core', dependsOn: [], text: '### T1', row: null },
+    { id: 'T2', name: 'two', repo: 'customer-portal', dependsOn: ['T1'], text: '### T2', row: null },
+  ],
+  repos: [
+    { repo: 'claims-core', firstUnfinished: 'T1', state: { kind: 'ready', task: 'T1' }, tasks: 1, finished: 0 },
+    { repo: 'customer-portal', firstUnfinished: 'T2', state: { kind: 'waiting', task: 'T2', onTask: 'T1', onRepo: 'claims-core' }, tasks: 1, finished: 0 },
+  ],
+};
+
+/** A build whose runs really run, so each leaves `LEFT` behind, and are then reported as out of time: the build stops with its leftovers on show. */
+async function stoppedWithLeftovers() {
+  const ctx = setup();
+  const { vm, transport, runner, lock } = ctx;
+  vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue(LEFT);
+  vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(UNFINISHED);
+  const discard = vi.spyOn(transport, 'sdlcDiscard');
+  const real = runner.runInRepo.bind(runner);
+  const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
+    await real(target, spec, link);
+    return { exit: 124, error: null };
+  });
+  await vm.start(await handoffFor(transport), CTX);
+  await drive(vm, lock, () => vm.phase() === 'stopped' && runner.leftovers() !== null);
+  return { ...ctx, run, discard };
+}
+
+it('the lock is released once the build is settled and taken again by Continue', async () => {
+  const { vm, runner, lock } = await stoppedWithLeftovers();
+  // The build is over, but the leftovers are still on show: the page keeps the lock until the engineer has chosen.
+  expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
+  runner.closeLeftovers();
+  await advance(300);
+  expect(runner.leftovers()).toBeNull();
+  expect(lock.active()).toBeNull();
+
+  vm.select('claims-core');
+  await vm.continueRun();
+  await advance(100);
+  expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
+});
+
+describe('no leftover is discarded without the engineer\'s choice', () => {
+  it('continuing the stopped repository on top of its leftovers discards nothing', async () => {
+    const { vm, transport, runner, run, discard } = await stoppedWithLeftovers();
+    runner.closeLeftovers();
+    await advance(300);
+    vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['src/x.rs'] }] });
+    vm.select('claims-core');
+    await vm.continueRun();
+    expect(vm.leftoverPrompt()).toEqual({ lines: ['claims-core: src/x.rs'] });
+    await vm.confirmContinue();
+    await advance(300);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(discard).not.toHaveBeenCalled();
+  });
+
+  it('asking for a round discards nothing', async () => {
+    const { vm, transport, runner, run, discard } = await stoppedWithLeftovers();
+    runner.closeLeftovers();
+    await advance(300);
+    const round = { instructions: 'tidy up the logging', repo: 'claims-core' };
+    expect(await vm.start(await handoffFor(transport, { round }), CTX)).toBe(true);
+    await advance(300);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[1][1].task).toContain('tidy up the logging');
+    expect(discard).not.toHaveBeenCalled();
+  });
+
+  it('leaving the page with leftovers on show discards nothing', async () => {
+    const { host, runner, discard } = await stoppedWithLeftovers();
+    expect(runner.leftovers()).not.toBeNull();
+    hosts = hosts.filter((h) => h !== host);
+    host.destroy();
+    await advance(300);
+    expect(discard).not.toHaveBeenCalled();
   });
 });
