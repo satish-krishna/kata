@@ -14,7 +14,8 @@ import { RunStore } from '../../core/run/run.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
-import { STATUS_LABEL, type AskRecord, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
+import { type AskRecord, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
+import { outcomeOf } from '../../lib/build-sessions';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { givenFor, reviewFindings, specFor, type BuildRun, type Finding } from '../../lib/sdlc';
@@ -88,12 +89,6 @@ const hms = (secs: number): string => {
 };
 const ms = (secs: number): string => `${Math.floor(Math.max(0, secs) / 60)}:${pad(Math.floor(Math.max(0, secs)) % 60)}`;
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-/** An earlier run's one line: its status, and exit, turns and cost once it completed. */
-const outcomeOf = (state: RunState, summary: RunSummary | null): string => {
-  if (summary === null) return STATUS_LABEL[state];
-  const cost = summary.cost_usd == null ? '' : ` · $${summary.cost_usd.toFixed(2)}`;
-  return `${STATUS_LABEL[state]} · exit ${summary.exit_code} · ${summary.num_turns} turns${cost}`;
-};
 
 /**
  * The build view's state: the driver that starts a run per ready repository and one review, the build's hold on the lock,
