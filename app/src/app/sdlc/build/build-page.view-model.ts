@@ -96,6 +96,45 @@ export type TaskArea = {
   tasks: { id: string; name: string; state: TaskState }[];
 };
 
+/** A status as the page shows it: an andon tone, drawn as a dot, and its label. */
+export type StatusText = { tone: 'success' | 'warning' | 'error' | 'idle'; label: string };
+
+/** One task of the tasks area. */
+export type TaskRowView = { id: string; name: string; status: StatusText; departure: string | null; picked: boolean };
+
+/** One repository of the tasks area: its heading (name, situation, the button it offers) and its tasks. */
+export type TaskGroupView = { repo: string; status: StatusText; action: 'cancel' | 'continue' | null; picked: boolean; tasks: TaskRowView[] };
+
+/** The review's entry under the tasks. */
+export type ReviewEntryView = { status: StatusText; action: 'cancel' | 'continue' | null; picked: boolean };
+
+/** The review's findings, with the notice above them. */
+export type FindingsView = { notice: DocNotice | null; findings: Finding[]; replaced: ReplacedFindings[]; older: boolean; emptyText: string };
+
+/** Everything the build page shows, computed once so the page itself only draws it. */
+export type BuildPageView = {
+  stage: BuildStage;
+  stageMessage: StageMessage | null;
+  /** The build's facts for the bar: `<done>/<total> tasks`, and the elapsed time while the build runs. */
+  facts: { tasks: string; elapsed: string | null };
+  actions: StageAction[];
+  groups: TaskGroupView[];
+  review: ReviewEntryView;
+  pick: Pick | null;
+  sessions: ShownSession[];
+  sessionNote: string | null;
+  /** Each repository that stopped and why, for the activity area. */
+  stops: { repo: string; reason: string }[];
+  /** The findings once the review finished; null while it has none to show. */
+  findings: FindingsView | null;
+  waiting: WaitingItem[];
+  announcement: string;
+  /** Which of the optional areas have something to show; the tasks area always does. */
+  areas: { activity: boolean; files: boolean };
+  /** True below 1024 CSS pixels, where the three areas become one column behind a switch. */
+  narrow: boolean;
+};
+
 /** The two views of a running build: what the agents say and do, and what they changed. */
 export type BuildTab = 'activity' | 'changes';
 
