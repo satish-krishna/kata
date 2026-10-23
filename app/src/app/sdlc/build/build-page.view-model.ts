@@ -1,4 +1,5 @@
 import { DestroyRef, Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
+import type { BuildRow } from '@bindings/BuildRow';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { RunLink } from '@bindings/RunLink';
@@ -451,6 +452,18 @@ export class BuildPageViewModel {
     const live = key === REVIEW ? this.phase() === 'reviewing' : this.driver.going().has(key);
     return live ? 'cancel' : null;
   });
+
+  /** The build log's rows, which say which task made which commit. */
+  readonly buildRows = computed<BuildRow[]>(() => (this.status()?.tasks ?? []).flatMap((t) => (t.row === null ? [] : [t.row])));
+  /** The task the engineer picked, with its repository; null when the pick is a repository or the review. */
+  readonly pickedTask = computed<{ id: string; repo: string } | null>(() => {
+    const pick = this.pick();
+    if (pick === null || pick.kind !== 'task') return null;
+    const repo = this.status()?.tasks.find((t) => t.id === pick.task)?.repo;
+    return repo === undefined ? null : { id: pick.task, repo };
+  });
+  /** The repositories whose run stopped, whose uncommitted files were left by it. */
+  readonly stoppedRepos = computed<string[]>(() => this.taskAreas().flatMap((g) => (g.situation.kind === 'stopped' ? [g.repo] : [])));
 
   /** The findings are on show once the build has finished and its review has been read. */
   readonly reviewShown = computed(() => this.phase() === 'finished' && !this.reading() && (this.reviews().length > 0 || this.unrecorded()));
