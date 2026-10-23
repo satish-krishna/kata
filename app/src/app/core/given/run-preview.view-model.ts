@@ -87,7 +87,17 @@ function projectBound(rows: readonly PresetRow[]): Set<string> {
 
 /** The rows of a build that are not bound to a project, once each, by key: the first folder's in its order, then those first seen in later folders. */
 export function sharedRows(parts: readonly BuildPart[]): PresetRow[] {
-  return parts.length === 0 ? [] : [...parts[0].rows];
+  const seen = new Set<string>();
+  const shared: PresetRow[] = [];
+  for (const part of parts) {
+    const bound = projectBound(part.rows);
+    for (const row of part.rows) {
+      if (bound.has(row.item.id) || seen.has(row.key)) continue;
+      seen.add(row.key);
+      shared.push(row);
+    }
+  }
+  return shared;
 }
 
 /** The preview before a run: what the run will be given and run with, and the engineer's choices on it. */
@@ -132,10 +142,7 @@ export class RunPreviewViewModel {
   /** The rows every run is given: the whole list for a run, and for a build the items that are not tied to one folder, once. */
   readonly groups = computed(() => {
     if (!this.buildReq()) return groupRows(this.rows());
-    const parts = this.parts();
-    if (parts.length === 0) return [];
-    const bound = projectBound(parts[0].rows);
-    return groupRows(parts[0].rows.filter((r) => !bound.has(r.item.id)));
+    return groupRows(sharedRows(this.parts()));
   });
 
   /** A build's folders, each with the project items of that folder; null outside a build preview. For a round only the picked repository shows. */
@@ -175,6 +182,7 @@ export class RunPreviewViewModel {
         if (token !== this.token) return;
         const preset = presetRows(resolved, { ...req.from, workdir: req.workdir });
         this.rows.set(preset.rows);
+        this.emptyRoom.set(resolved.empty_room);
         this.warnings.set(preset.warnings);
         this.baseSettings.set(settingRows(resolved.settings, req.mode === 'sdlc' ? 'sdlc' : 'workbench'));
         this.env.set(resolved.env.map((e) => ({ name: e.name, source: itemSourceLabel(e.source), apiKey: e.api_key })));
@@ -212,6 +220,7 @@ export class RunPreviewViewModel {
       (all) => {
         if (token !== this.token) return;
         const preset = all.map((resolved, i) => presetRows(resolved, { ...req.from, workdir: req.sections[i].workdir }));
+        this.emptyRoom.set(all.some((r) => r.empty_room));
         this.parts.set(preset.map((p, i): Part => ({ section: req.sections[i], rows: p.rows })));
         this.warnings.set([...new Set(preset.flatMap((p) => p.warnings))]);
         this.baseSettings.set(settingRows(all[0].settings, 'sdlc'));
@@ -297,5 +306,6 @@ export class RunPreviewViewModel {
     this.safetyRules.set(null);
     this.env.set([]);
     this.warnings.set([]);
+    this.emptyRoom.set(false);
   }
 }

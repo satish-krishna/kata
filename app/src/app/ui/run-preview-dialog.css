@@ -69,3 +69,15 @@
 .rp__dot {
   background: var(--warning);
 }
+
+.rp__room {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-inset);
+  color: var(--text-secondary);
+}

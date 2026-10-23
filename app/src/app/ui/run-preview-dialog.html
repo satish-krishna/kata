@@ -50,6 +50,12 @@
       </section>
 
       <section class="rp__region" aria-label="Given to the run" data-region="given">
+        @if (emptyRoom()) {
+          <p class="rp__room k-status--idle" data-region="empty-room" role="status">
+            <span class="k-status__dot" aria-hidden="true"></span>
+            <span>The empty room is on: the run is given only what Kata passes. Your setup's hooks, skills, plugins, standing instructions and tool servers are left out.</span>
+          </p>
+        }
         @if (sections(); as parts) {
           @for (part of parts; track part.title) {
             <div class="rp__head">{{ part.title }}</div>
