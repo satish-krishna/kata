@@ -264,7 +264,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
     // What the run is given is resolved once, here, and applied once; nothing
     // re-reads the setup after this point.
     let roots = ResolveRoots::for_spec(spec);
-    let resolved = resolve(spec, &roots, &ResolveOptions::default());
+    let resolved = resolve(spec, &roots, &ResolveOptions::from_spec(spec));
     let applied = apply(spec, &resolved, &roots);
     let assembled = assemble(spec, catalog, &applied.kit_skip)?;
     let mut inv = build_invocation_with(spec, &assembled, &applied);

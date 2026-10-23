@@ -663,6 +663,31 @@ pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
                 }
             }
         }
+        // Entries the run cannot honor, with the reason the preview gives for
+        // locking the same item.
+        for entry in &given.plugins {
+            if let Ok(r) = parse_item_id(entry) {
+                let name = r.key.split('@').next().unwrap_or(&r.key);
+                if given.required_plugins.iter().any(|p| p == name) {
+                    errs.push(format!(
+                        "given: '{entry}' cannot be switched off: {}",
+                        crate::given::lock::REASON_REQUIRED
+                    ));
+                }
+            }
+        }
+        if given.build {
+            for entry in &given.hooks {
+                if let Ok(r) = parse_item_id(entry) {
+                    if matches!(r.source, Source::Project | Source::ProjectLocal) {
+                        errs.push(format!(
+                            "given: '{entry}' cannot be switched off: {}",
+                            crate::given::lock::REASON_BUILD_HOOK
+                        ));
+                    }
+                }
+            }
+        }
     }
     if errs.is_empty() {
         Ok(())
@@ -1021,8 +1046,9 @@ isolation = "worktree"
         });
         let errs = validate(&spec).unwrap_err();
         assert!(
-            errs.iter().any(|e| e.contains("personal:plugin:ai-sdlc@mkt")
-                && e.contains("AI-SDLC runs work through this plugin")),
+            errs.iter()
+                .any(|e| e.contains("personal:plugin:ai-sdlc@mkt")
+                    && e.contains("AI-SDLC runs work through this plugin")),
             "{errs:?}"
         );
         let other = given_spec(|g| {

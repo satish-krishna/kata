@@ -25,8 +25,14 @@ pub struct ResolveOptions {
 impl ResolveOptions {
     /// The options a spec asks for: its `given.required_plugins` and `given.build`
     /// (none and false when `given` is absent).
-    pub fn from_spec(_spec: &RunSpec) -> ResolveOptions {
-        ResolveOptions::default()
+    pub fn from_spec(spec: &RunSpec) -> ResolveOptions {
+        spec.given
+            .as_ref()
+            .map(|g| ResolveOptions {
+                required_plugins: g.required_plugins.clone(),
+                build: g.build,
+            })
+            .unwrap_or_default()
     }
 }
 

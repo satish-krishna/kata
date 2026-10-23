@@ -30,7 +30,7 @@ class FakeTransport {
   loadSpec = vi.fn();
   saveSpec = vi.fn(() => Promise.resolve());
   saveKata = vi.fn((_spec: RunSpec) => Promise.resolve());
-  previewRun = vi.fn((spec: RunSpec, required: readonly string[]) => Promise.resolve(previewFixture(spec, required)));
+  previewRun = vi.fn((spec: RunSpec) => Promise.resolve(previewFixture(spec)));
   savePreset = vi.fn(() => Promise.resolve());
   exportBundle = vi.fn(() => Promise.resolve());
   pickOpenSpec = vi.fn(() => Promise.resolve(null as string | null));

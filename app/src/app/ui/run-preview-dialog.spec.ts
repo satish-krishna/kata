@@ -9,7 +9,7 @@ const region = () => dialog().querySelector('[data-region="settings"]')!;
 const button = (label: string) => Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent!.trim() === label) as HTMLButtonElement;
 // A run-spec that names no model and sets no turn cap, so those two settings fall back.
 const bare = { ...seedSpec(), model: { ...seedSpec().model, id: null }, leash: { ...seedSpec().leash, max_turns: null } };
-const rows = (): PreviewSettingRow[] => settingRows(previewFixture(bare, []).settings, 'workbench');
+const rows = (): PreviewSettingRow[] => settingRows(previewFixture(bare).settings, 'workbench');
 const base = { open: true, title: 'Run preview', settings: rows() };
 
 describe('RunPreviewDialog', () => {

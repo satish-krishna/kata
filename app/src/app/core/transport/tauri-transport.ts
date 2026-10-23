@@ -62,7 +62,7 @@ export class TauriTransport extends KataTransport {
   loadSpec(path: string) { return this.ipc.invoke<RunSpec>('load_spec', { path }); }
   saveSpec(path: string, spec: RunSpec) { return this.ipc.invoke<void>('save_spec', { path, spec }); }
   validateSpec(spec: RunSpec) { return this.ipc.invoke<string[]>('validate_spec', { spec }); }
-  previewRun(spec: RunSpec, requiredPlugins: readonly string[]) { return this.ipc.invoke<Resolved>('preview_run', { spec, requiredPlugins }); }
+  previewRun(spec: RunSpec) { return this.ipc.invoke<Resolved>('preview_run', { spec }); }
   runSpec(spec: RunSpec, group?: string) { return this.ipc.invoke<string>('run_spec', { spec, group }); }
   cancelRun(runId: string) { return this.ipc.invoke<void>('cancel_run', { runId }); }
   submitAnswer(runId: string, id: string, answers: string[][]) { return this.ipc.invoke<void>('submit_answer', { runId, id, answers }); }

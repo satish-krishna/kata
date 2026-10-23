@@ -52,8 +52,8 @@ export abstract class KataTransport {
   abstract loadSpec(path: string): Promise<RunSpec>;
   abstract saveSpec(path: string, spec: RunSpec): Promise<void>;
   abstract validateSpec(spec: RunSpec): Promise<string[]>;
-  /** What the run would be given: every item, the settings, the names of its environment. `requiredPlugins` are plugin names the run cannot work without. */
-  abstract previewRun(spec: RunSpec, requiredPlugins: readonly string[]): Promise<Resolved>;
+  /** What the run would be given: every item, the settings, the names of its environment. The spec's `given.required_plugins` and `given.build` say what the run cannot switch off. */
+  abstract previewRun(spec: RunSpec): Promise<Resolved>;
   /** Start a run. Resolves to its run id. `group` (`build:<system>/<change>`) tells the backend which runs belong to one build. */
   abstract runSpec(spec: RunSpec, group?: string): Promise<string>;
   abstract cancelRun(runId: string): Promise<void>;

@@ -20,6 +20,10 @@
     "Given": {
       "description": "The items a run keeps, by identity (`<source>:<kind>:<key>`, see\n`kata_core::given`). Unknown entries are ignored at run time.",
       "properties": {
+        "build": {
+          "description": "True for a build run, which keeps the project's hooks on.",
+          "type": "boolean"
+        },
         "hooks": {
           "default": [],
           "items": {
@@ -36,6 +40,13 @@
         },
         "plugins": {
           "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "required_plugins": {
+          "description": "Plugin names (without a marketplace) the run cannot work without. The\nWorkbench writes `[\"ai-sdlc\"]` for an AI-SDLC run; such a plugin is shown\nlocked on and cannot be listed as switched off.",
           "items": {
             "type": "string"
           },

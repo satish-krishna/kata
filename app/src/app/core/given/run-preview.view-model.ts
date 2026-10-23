@@ -4,7 +4,7 @@ import type { RunSetting } from '@bindings/RunSetting';
 import type { RunSettings } from '@bindings/RunSettings';
 import type { RunSpec } from '@bindings/RunSpec';
 import { groupRows, itemSourceLabel, presetRows, settingSourceLabel, toGiven, toggle, type PresetFrom, type PresetRow } from '../../lib/given';
-import { SDLC_REQUIRED_PLUGINS, buildPreviewFor, safetyRules, type BuildPreviewKind, type BuildPreviewPlan } from '../../lib/sdlc';
+import { buildPreviewFor, safetyRules, type BuildPreviewKind, type BuildPreviewPlan } from '../../lib/sdlc';
 import { buildRequest, createBuildForm, limitSecs, type BuildDialogMode, type BuildFormState, type BuildStartRequest } from '../../ui/build-dialog';
 import type { PreviewEnvRow, PreviewSection, PreviewSettingRow } from '../../ui/run-preview-dialog';
 import { KataTransport } from '../transport/kata-transport';
@@ -161,7 +161,7 @@ export class RunPreviewViewModel {
     });
     this.isOpen.set(true);
     this.busy.set(true);
-    this.transport.previewRun(req.spec, req.mode === 'sdlc' ? SDLC_REQUIRED_PLUGINS : []).then(
+    this.transport.previewRun(req.spec).then(
       (resolved) => {
         if (token !== this.token) return;
         const preset = presetRows(resolved, { ...req.from, workdir: req.workdir });
@@ -199,7 +199,7 @@ export class RunPreviewViewModel {
     this.title.set(req.title);
     this.isOpen.set(true);
     this.busy.set(true);
-    Promise.all(req.sections.map((s) => this.transport.previewRun(s.spec, SDLC_REQUIRED_PLUGINS))).then(
+    Promise.all(req.sections.map((s) => this.transport.previewRun(s.spec))).then(
       (all) => {
         if (token !== this.token) return;
         const preset = all.map((resolved, i) => presetRows(resolved, { ...req.from, workdir: req.sections[i].workdir }));

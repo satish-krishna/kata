@@ -205,9 +205,9 @@ function lastFolder(path: string): string {
 /** What `preview_run` returns, for the browser. One item of every R2.1 row, in the engine's order
  *  (kind, then source, then name), with the engine's ids and locks. Project items carry the last
  *  folder of `spec.workdir`, so two repositories preview differently. */
-export function previewFixture(spec: RunSpec, requiredPlugins: readonly string[]): Resolved {
+export function previewFixture(spec: RunSpec): Resolved {
   const folder = lastFolder(spec.workdir);
-  const sdlcRequired = requiredPlugins.includes("ai-sdlc");
+  const sdlcRequired = (spec.given?.required_plugins ?? []).includes("ai-sdlc");
   const requiredLock: LockReason = { kind: "required", text: "AI-SDLC runs work through this plugin" };
   const kataLock: LockReason = { kind: "kata", text: "the run needs it to ask you questions" };
   const orgLock: LockReason = { kind: "organization", text: "set by your organization" };

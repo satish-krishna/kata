@@ -45,7 +45,7 @@ fn preview_run(spec: RunSpec) -> Resolved {
     given::resolve(
         &spec,
         &ResolveRoots::for_spec(&spec),
-        &ResolveOptions::default(),
+        &ResolveOptions::from_spec(&spec),
     )
 }
 

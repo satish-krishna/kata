@@ -8,6 +8,8 @@ use serde::Serialize;
 pub const REASON_KATA: &str = "the run needs it to ask you questions";
 pub const REASON_REQUIRED: &str = "AI-SDLC runs work through this plugin";
 pub const REASON_ORGANIZATION: &str = "set by your organization";
+pub const REASON_BUILD_HOOK: &str =
+    "a build keeps the project's hooks, which may guard what it edits";
 pub const REASON_UNSWITCHABLE: &str =
     "Kata cannot switch this off for one run without editing your setup";
 

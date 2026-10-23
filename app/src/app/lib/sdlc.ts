@@ -607,7 +607,9 @@ export function safetyRules(target: "repo" | "review"): string[] {
 }
 
 const PROJECT_KEY = /^[^|]+\|((?:project|project-local):.*)$/s;
-const LIST_OF_KIND: Record<string, keyof Given> = {
+/** The five lists of item identities in `Given`; the other fields say what kind of run it is. */
+type GivenList = Exclude<keyof Given, "required_plugins" | "build">;
+const LIST_OF_KIND: Record<string, GivenList> = {
   hook: "hooks",
   skill: "skills",
   plugin: "plugins",
@@ -627,6 +629,6 @@ export function givenFor(off: ReadonlySet<string>, workdir: string): Given {
     const list = LIST_OF_KIND[id.split(":")[1]];
     if (list) given[list].push(id);
   }
-  for (const list of Object.values(given)) list.sort();
+  for (const list of Object.values(LIST_OF_KIND)) given[list].sort();
   return given;
 }

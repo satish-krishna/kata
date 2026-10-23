@@ -10,7 +10,7 @@ import { GivenList } from './given-list';
 
 const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
 const FROM: PresetFrom = { workdir: seedSpec().workdir, session: new Set(), job: null, build: null };
-const fixtureRows = () => presetRows(previewFixture(seedSpec(), []), FROM).rows;
+const fixtureRows = () => presetRows(previewFixture(seedSpec()), FROM).rows;
 
 const SOURCE_TEXT: Record<string, string> = {
   personal: 'personal setup',
@@ -60,7 +60,7 @@ describe('GivenList', () => {
         for (let i = 0; i < (kind === 'hook' ? 4 : 3); i++)
           items.push({ id: `${source}:${kind}:n${i}`, kind, source, name: `${kind}-${source}-${i}`, detail: 'd', path: null, brought_by: null, lock: null, off: false });
     expect(items).toHaveLength(40);
-    const resolved: Resolved = { items, settings: previewFixture(seedSpec(), []).settings, env: [], missing: [], problems: [] };
+    const resolved: Resolved = { items, settings: previewFixture(seedSpec()).settings, env: [], missing: [], problems: [] };
     const off = new Set(['personal:hook:n0', 'personal:hook:n1']);
     const rows = presetRows(resolved, { ...FROM, session: off }).rows;
     const { container } = await render(GivenList, { groups: groupRows(rows), readonly: false });
@@ -98,7 +98,7 @@ describe('GivenList', () => {
   });
 
   it('a switch emits the key and the new state, and the mark and status label show', async () => {
-    const rows = presetRows(previewFixture(seedSpec(), []), { ...FROM, session: new Set(['personal:tool-server:github']) }).rows;
+    const rows = presetRows(previewFixture(seedSpec()), { ...FROM, session: new Set(['personal:tool-server:github']) }).rows;
     const status = (r: PresetRow) => (r.item.name === 'github' ? 'seen' : null);
     const { fixture, container } = await render(GivenList, { groups: groupRows(rows), readonly: false, statusLabel: status });
     const got: unknown[] = [];

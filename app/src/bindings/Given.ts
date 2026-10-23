@@ -4,4 +4,14 @@
  * The items a run keeps, by identity (`<source>:<kind>:<key>`, see
  * `kata_core::given`). Unknown entries are ignored at run time.
  */
-export type Given = { hooks: Array<string>, skills: Array<string>, plugins: Array<string>, instructions: Array<string>, tool_servers: Array<string>, };
+export type Given = { hooks: Array<string>, skills: Array<string>, plugins: Array<string>, instructions: Array<string>, tool_servers: Array<string>, 
+/**
+ * Plugin names (without a marketplace) the run cannot work without. The
+ * Workbench writes `["ai-sdlc"]` for an AI-SDLC run; such a plugin is shown
+ * locked on and cannot be listed as switched off.
+ */
+required_plugins?: Array<string>, 
+/**
+ * True for a build run, which keeps the project's hooks on.
+ */
+build?: boolean, };

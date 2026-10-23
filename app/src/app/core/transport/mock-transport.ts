@@ -123,7 +123,7 @@ export class MockTransport extends KataTransport {
   loadSpec(_path: string): Promise<RunSpec> { return Promise.reject(new Error(NO_BACKEND)); }
   saveSpec(_path: string, _spec: RunSpec): Promise<void> { return Promise.reject(new Error(NO_BACKEND)); }
   validateSpec(spec: RunSpec): Promise<string[]> { return Promise.resolve(validateLocal(spec)); }
-  previewRun(spec: RunSpec, requiredPlugins: readonly string[]): Promise<Resolved> { return Promise.resolve(previewFixture(spec, requiredPlugins)); }
+  previewRun(spec: RunSpec): Promise<Resolved> { return Promise.resolve(previewFixture(spec)); }
   listKatas(): Promise<KataListing> { return Promise.resolve({ katas: katasFixture, failures: [] }); }
   loadKata(name: string): Promise<RunSpec> { return Promise.resolve(katasFixture.find((k) => k.name === name) ?? katasFixture[0]); }
   saveKata(_spec: RunSpec): Promise<void> { return Promise.resolve(); }

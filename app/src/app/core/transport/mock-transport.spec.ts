@@ -274,7 +274,7 @@ describe('MockTransport previewRun', () => {
   ];
 
   it('returns every R2.1 pair', async () => {
-    const r = await new MockTransport().previewRun(seedSpec(), []);
+    const r = await new MockTransport().previewRun(seedSpec());
     const seen = new Set(r.items.map((i) => `${i.kind}:${i.source}`));
     for (const pair of PAIRS) expect(seen, pair).toContain(pair);
     expect(Object.keys(r.settings)).toHaveLength(8);
@@ -283,14 +283,15 @@ describe('MockTransport previewRun', () => {
   it('locks ai-sdlc only when required', async () => {
     const t = new MockTransport();
     const find = (r: Resolved) => r.items.find((i) => i.id === 'personal:plugin:ai-sdlc@ai-sdlc');
-    expect(find(await t.previewRun(seedSpec(), ['ai-sdlc']))?.lock?.kind).toBe('required');
-    expect(find(await t.previewRun(seedSpec(), []))?.lock).toBeNull();
+    const required = { ...seedSpec(), given: { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [], required_plugins: ['ai-sdlc'] } };
+    expect(find(await t.previewRun(required))?.lock?.kind).toBe('required');
+    expect(find(await t.previewRun(seedSpec()))?.lock).toBeNull();
   });
 
   it('names project items after the last folder of the workdir', async () => {
     const t = new MockTransport();
-    const a = await t.previewRun({ ...seedSpec(), workdir: 'D:\ws\alpha' }, []);
-    const b = await t.previewRun({ ...seedSpec(), workdir: 'D:\ws\beta' }, []);
+    const a = await t.previewRun({ ...seedSpec(), workdir: 'D:\ws\alpha' });
+    const b = await t.previewRun({ ...seedSpec(), workdir: 'D:\ws\beta' });
     expect(a.items.some((i) => i.source === 'project' && i.name.includes('alpha'))).toBe(true);
     expect(b.items.some((i) => i.name.includes('alpha'))).toBe(false);
   });

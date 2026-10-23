@@ -8,4 +8,8 @@ export type ResolveOptions = {
  * Plugin names (without a marketplace) the run cannot work without. The
  * Workbench passes `["ai-sdlc"]` for an AI-SDLC run; the CLI passes none.
  */
-required_plugins: Array<string>, };
+required_plugins: Array<string>, 
+/**
+ * True for a build run.
+ */
+build: boolean, };
