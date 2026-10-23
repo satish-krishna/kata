@@ -18,7 +18,8 @@ export type PresetFrom = {
   build: ReadonlySet<string> | null;
 };
 export type PresetMark = 'kept' | 'job' | 'build' | null;
-export type PresetRow = { item: ResolvedItem; key: string; off: boolean; locked: LockReason | null; mark: PresetMark };
+/** `offWith` is the name of the hook this row is off with (R4.6); absent or null when it is not. */
+export type PresetRow = { item: ResolvedItem; key: string; off: boolean; locked: LockReason | null; mark: PresetMark; offWith?: string | null };
 export type PresetResult = { rows: PresetRow[]; warnings: string[] };
 
 export type RowEntry = { row: PresetRow; followers: PresetRow[] };

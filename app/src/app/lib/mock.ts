@@ -197,6 +197,9 @@ const SUPERPOWERS = "superpowers@claude-plugins-official";
 const SDLC_PLUGIN = "ai-sdlc@ai-sdlc";
 const UNSWITCHABLE: LockReason = { kind: "unswitchable", text: "Kata cannot switch this off for one run without editing your setup" };
 
+const PROJECT_HOOK = "project:hook:PostToolUse:Write|Edit:8c1f77e2d3a40b95";
+const LOCAL_HOOK = "project-local:hook:SessionStart:*:3d9e41b7a05c6f28";
+
 /** The last folder of a path, either slash style. */
 function lastFolder(path: string): string {
   return path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "workspace";
@@ -227,6 +230,7 @@ export function previewFixture(spec: RunSpec): Resolved {
   const items: ResolvedItem[] = [
     make("hook", "personal", "PreToolUse:Bash:5b5b1d0c9a2e4f10", "PreToolUse Bash", "node ~/.claude/hooks/guard.mjs", { lock: UNSWITCHABLE }),
     make("hook", "project", "PostToolUse:Write|Edit:8c1f77e2d3a40b95", "PostToolUse Write|Edit", "npm run lint --silent", { lock: buildLock }),
+    make("hook", "project-local", "SessionStart:*:3d9e41b7a05c6f28", "SessionStart *", "load my local scratch notes"),
     child("hook", "SessionStart:*:15b9f33b1f620354", "SessionStart *", "inject the using-superpowers skill", SUPERPOWERS, false),
     make("hook", "organization", "PreToolUse:*:2f6d0a91c7e85b34", "PreToolUse *", "audit every tool call", { lock: orgLock }),
     make("skill", "personal", "triage-flaky-test", "triage-flaky-test", "reproduce & isolate a flaky test", { path: "~/.claude/skills/triage-flaky-test", lock: UNSWITCHABLE }),
@@ -240,6 +244,12 @@ export function previewFixture(spec: RunSpec): Resolved {
     make("plugin", "run-spec", "github-tools", "github-tools", "PRs, issues, releases", { path: "~/.kata/plugins/github-tools" }),
     make("instruction", "personal", "CLAUDE.md", "CLAUDE.md", "your standing instructions", { path: "~/.claude/CLAUDE.md" }),
     make("instruction", "project", "CLAUDE.md", "CLAUDE.md", `${folder}'s standing instructions`, { path: `${spec.workdir}/CLAUDE.md` }),
+    make("instruction", "project", "services/CLAUDE.md", "services/CLAUDE.md", "standing instructions for the services folder", {
+      path: `${spec.workdir}/services/CLAUDE.md`, goes_off_with: [PROJECT_HOOK],
+    }),
+    make("instruction", "project-local", "CLAUDE.local.md", "CLAUDE.local.md", "your local standing instructions", {
+      path: `${spec.workdir}/CLAUDE.local.md`, goes_off_with: [LOCAL_HOOK],
+    }),
     make("instruction", "kata", "standing-note", "Kata's standing note", "tells the run to ask through ask_user", { lock: kataLock }),
     make("instruction", "run-spec", "identity", "Run-spec instruction", "the identity prompt this run-spec carries"),
     make("tool-server", "personal", "github", "github", "npx @modelcontextprotocol/server-github"),

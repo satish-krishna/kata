@@ -137,6 +137,43 @@ describe('toggle', () => {
   });
 });
 
+describe('rows that go off with a hook', () => {
+  const lint = item('hook', 'project', 'lint', { name: 'lint' });
+  const fmt = item('hook', 'project', 'fmt', { name: 'fmt' });
+  const sub = item('instruction', 'project', 'sub/CLAUDE.md', { name: 'sub/CLAUDE.md', goes_off_with: [lint.id, fmt.id] });
+  const lintKey = givenKey(lint.id, WORKDIR);
+  const fmtKey = givenKey(fmt.id, WORKDIR);
+  const rows = presetRows(resolved([lint, fmt, sub]), from()).rows;
+
+  it('toggle recomputes rows that go off with a hook', () => {
+    const off = toggle(rows, lintKey, true);
+    expect(byId(off, sub.id)).toMatchObject({ off: true, offWith: 'lint' });
+    // The first hook in list order names the reason, and the row stays off until every hook is back on.
+    const both = toggle(off, fmtKey, true);
+    expect(byId(both, sub.id)).toMatchObject({ off: true, offWith: 'lint' });
+    const lintBack = toggle(both, lintKey, false);
+    expect(byId(lintBack, sub.id)).toMatchObject({ off: true, offWith: 'fmt' });
+    const back = toggle(lintBack, fmtKey, false);
+    expect(byId(back, sub.id)).toMatchObject({ off: false });
+    expect(byId(back, sub.id).offWith ?? null).toBeNull();
+    // While a hook is off the row cannot be switched on by itself.
+    expect(byId(toggle(off, givenKey(sub.id, WORKDIR), false), sub.id).off).toBe(true);
+  });
+
+  it('presetRows starts a row off when its hook starts off', () => {
+    const preset = presetRows(resolved([lint, fmt, sub]), from({ session: new Set([lintKey]) })).rows;
+    expect(byId(preset, sub.id)).toMatchObject({ off: true, offWith: 'lint' });
+  });
+
+  it('toGiven leaves out rows that go off with a hook', () => {
+    const off = toggle(rows, lintKey, true);
+    expect(toGiven(off)).toEqual({ ...noGiven, hooks: [lint.id] });
+    // An instruction the engineer switched off themselves, with its hooks on, is still listed.
+    const own = toggle(rows, givenKey(sub.id, WORKDIR), true);
+    expect(toGiven(own)).toEqual({ ...noGiven, instructions: [sub.id] });
+  });
+});
+
 describe('groupRows', () => {
   it('groupRows counts items and switched-off items per group', () => {
     const plugin = item('plugin', 'personal', 'sp@m');

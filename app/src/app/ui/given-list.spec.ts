@@ -3,7 +3,7 @@ import type { Resolved } from '@bindings/Resolved';
 import type { ResolvedItem } from '@bindings/ResolvedItem';
 import type { ItemKind } from '@bindings/ItemKind';
 import type { Source } from '@bindings/Source';
-import { groupRows, presetRows, type PresetFrom, type PresetRow } from '../lib/given';
+import { groupRows, presetRows, toggle, type PresetFrom, type PresetRow } from '../lib/given';
 import { previewFixture, seedSpec } from '../lib/mock';
 import { render } from '../../testing/render';
 import { GivenList } from './given-list';
@@ -95,6 +95,38 @@ describe('GivenList', () => {
     expect(text(lockedEl)).toContain('the run needs it to ask you questions');
     const follower = rows.find((r) => r.locked?.kind === 'follows-plugin')!;
     expect(container.querySelector(`[data-row="${follower.key}"] hlm-switch`)).toBeNull();
+  });
+
+  it.each([
+    ['a shared-settings hook with a nested CLAUDE.md', 'project:hook:PostToolUse:Write|Edit:8c1f77e2d3a40b95', 'PostToolUse Write|Edit', 'project:instruction:services/CLAUDE.md'],
+    ['a local-settings hook with CLAUDE.local.md', 'project-local:hook:SessionStart:*:3d9e41b7a05c6f28', 'SessionStart *', 'project-local:instruction:CLAUDE.local.md'],
+  ])('an instruction that cannot be carried over goes off with its project hook: %s', async (_name, hookId, hookName, instructionId) => {
+    let rows = fixtureRows();
+    const hook = rows.find((r) => r.item.id === hookId)!;
+    const instruction = rows.find((r) => r.item.id === instructionId)!;
+    expect(hook).toBeDefined();
+    expect(instruction).toBeDefined();
+    const { fixture, container } = await render(GivenList, { groups: groupRows(rows), readonly: false });
+    fixture.componentInstance.toggle.subscribe(async ({ key, off }) => {
+      rows = toggle(rows, key, off);
+      fixture.componentRef.setInput('groups', groupRows(rows));
+      await fixture.whenStable();
+    });
+    const rowEl = () => container.querySelector(`[data-row="${instruction.key}"]`)!;
+    expect(rowEl().querySelector('[role="switch"]')).not.toBeNull();
+
+    container.querySelector<HTMLElement>(`[data-row="${hook.key}"] [role="switch"]`)!.click();
+    await fixture.whenStable();
+    expect(rowEl().classList.contains('gl__row--off')).toBe(true);
+    expect(rowEl().querySelector('[role="switch"]')).toBeNull();
+    expect(text(rowEl())).toContain(`off with the hook ${hookName}`);
+    expect(text(rowEl())).not.toContain(instruction.item.detail);
+
+    container.querySelector<HTMLElement>(`[data-row="${hook.key}"] [role="switch"]`)!.click();
+    await fixture.whenStable();
+    expect(rowEl().classList.contains('gl__row--off')).toBe(false);
+    expect(rowEl().querySelector('[role="switch"]')).not.toBeNull();
+    expect(text(rowEl())).not.toContain('off with the hook');
   });
 
   it('a switch emits the key and the new state, and the mark and status label show', async () => {
