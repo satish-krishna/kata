@@ -1,5 +1,6 @@
 import { DestroyRef, Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { Problem } from '@bindings/Problem';
 import type { Readiness } from '@bindings/Readiness';
 import type { Snapshot } from '@bindings/Snapshot';
@@ -16,7 +17,8 @@ import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { type AskRecord, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
-import { outcomeOf } from '../../lib/build-sessions';
+import { outcomeOf, type Pick } from '../../lib/build-sessions';
+import type { Situation, TaskState } from '../../lib/build-state';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { givenFor, reviewFindings, specFor, type BuildRun, type Finding } from '../../lib/sdlc';
@@ -55,6 +57,27 @@ export type ShownRun = {
   expanded: boolean;
   /** How the run went, for its one line: the status, then exit, turns and cost once it completed. */
   outcome: string;
+};
+
+/** One session of a repository (or the review): a run live on this page, or an earlier one read from the records. */
+export type ShownSession = Omit<ShownRun, 'spec'> & { spec: RunSpec | null; note: string | null };
+
+/** What the page is given on every load of the change. */
+export type BuildPageInput = {
+  ctx: BuildContext;
+  master: { repo: string; path: string };
+  change: ChangeInfo;
+  status: BuildStatus | null;
+  done: boolean;
+  review: ReviewRecord | null;
+};
+
+/** One repository of the tasks area: where it stands, what it offers, and its tasks. */
+export type TaskArea = {
+  repo: string;
+  situation: Situation;
+  action: 'cancel' | 'continue' | null;
+  tasks: { id: string; name: string; state: TaskState }[];
 };
 
 /** The two views of a running build: what the agents say and do, and what they changed. */
@@ -394,6 +417,14 @@ export class BuildPageViewModel {
     }
     return true;
   }
+
+  /** Everything the page shows about a change, read on every load of the change. */
+  async load(_input: BuildPageInput): Promise<void> {}
+  readonly pick = computed<Pick | null>(() => null);
+  choose(_pick: Pick): void {}
+  readonly shownSessions = computed<ShownSession[]>(() => []);
+  readonly sessionNote = computed<string | null>(() => null);
+  readonly taskAreas = computed<TaskArea[]>(() => []);
 
   /** Leave the build and show the change again. This changes what is on show and nothing else: the lock and the driver are not touched. */
   backToChange(): void {

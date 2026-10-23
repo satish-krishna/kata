@@ -4,6 +4,9 @@ import { provideRouter } from '@angular/router';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { Participant } from '@bindings/Participant';
+import type { RunLink } from '@bindings/RunLink';
+import type { RunRecord } from '@bindings/RunRecord';
+import type { TaskLink } from '@bindings/TaskLink';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
@@ -1245,5 +1248,92 @@ describe('no leftover is discarded without the engineer\'s choice', () => {
     host.destroy();
     await advance(300);
     expect(discard).not.toHaveBeenCalled();
+  });
+});
+
+describe('the build page shows tasks and sessions from the build log, the run links and the records', () => {
+  const secs = (h: number, m = 0) => Math.floor(new Date(2026, 9, 19, h, m, 0).getTime() / 1000);
+  const link = (stage: string, run_id: string, started_at: number): RunLink => ({ workspace_id: 'acme-claims', system: 'claims', change: MOCK_BUILD_CHANGE, stage, run_id, started_at });
+  const taskLink = (task: string, run_id: string, repo = 'claims-core'): TaskLink => ({ workspace_id: 'acme-claims', system: 'claims', change: MOCK_BUILD_CHANGE, repo, task, run_id });
+  const record = (id: string, exit: number): RunRecord => ({ id, kata: 'build', started_at: 0, isolation: 'none', exit, turns: 7, cost_usd: 0.5 });
+  const T1_ROW = { task: 'T1', repo: 'claims-core', commits: ['aaaaaaa'], departure: null };
+
+  /** A page opened on a change with nothing running; T1 is in the build log when `built`. */
+  async function opened(over: { links?: RunLink[]; taskLinks?: TaskLink[]; records?: RunRecord[]; built?: boolean } = {}) {
+    const s = setup();
+    vi.spyOn(s.transport, 'sdlcRunLinks').mockResolvedValue(over.links ?? []);
+    vi.spyOn(s.transport, 'sdlcTaskLinks').mockResolvedValue(over.taskLinks ?? []);
+    vi.spyOn(s.transport, 'listRuns').mockResolvedValue(over.records ?? []);
+    const status = await s.transport.sdlcBuildStatus(FOLDER, 'claims', MOCK_BUILD_CHANGE);
+    if (over.built ?? true) status.tasks = status.tasks.map((t) => (t.id === 'T1' ? { ...t, row: T1_ROW } : t));
+    const [change] = (await s.transport.sdlcChanges(`${FOLDER}/${MOCK_MASTER}`, 'claims')).filter((c) => c.change === MOCK_BUILD_CHANGE);
+    const load = () => s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change, status, done: false, review: null });
+    return { ...s, load, status };
+  }
+  const states = (vm: BuildPageViewModel, repo: string) => Object.fromEntries(vm.taskAreas().find((g) => g.repo === repo)!.tasks.map((t) => [t.id, t.state.kind]));
+
+  it('a committed row shows its task done and the next one running without a click', async () => {
+    const { vm, transport } = setup();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    expect(states(vm, 'customer-portal')).toEqual({ T2: 'running', T3: 'not-started' });
+    const sdlc = (transport as unknown as { sdlc: { commitRows(t: { id: string; name: string; repo: string; dependsOn: string[] }[]): void } }).sdlc;
+    sdlc.commitRows([
+      { id: 'T1', name: '', repo: 'claims-core', dependsOn: [] },
+      { id: 'T2', name: '', repo: 'customer-portal', dependsOn: [] },
+    ]);
+    await advance(2500);
+    expect(states(vm, 'customer-portal')).toEqual({ T2: 'done', T3: 'running' });
+  });
+
+  it('picking a task shows the session that recorded it', async () => {
+    const { vm, load } = await opened({
+      links: [link('build:claims-core', 'run-a', secs(8)), link('build:claims-core', 'run-b', secs(9))],
+      taskLinks: [taskLink('T1', 'run-b')],
+    });
+    await load();
+    vm.choose({ kind: 'task', task: 'T1' });
+    expect(vm.shownSessions().map((s) => s.id)).toEqual(['run-b']);
+    expect(vm.shownSessions()[0]).toMatchObject({ latest: true, spec: null });
+    expect(vm.sessionNote()).toBeNull();
+  });
+
+  it('a task with no known session shows its repository\'s sessions and says so', async () => {
+    const { vm, load } = await opened({ links: [link('build:claims-core', 'run-a', secs(8)), link('build:claims-core', 'run-b', secs(9))] });
+    await load();
+    vm.choose({ kind: 'task', task: 'T1' });
+    expect(vm.shownSessions().map((s) => s.id)).toEqual(['run-a', 'run-b']);
+    expect(vm.sessionNote()).toBe('This task was recorded before Kata linked tasks to runs, or on another machine. Showing every session of claims-core.');
+  });
+
+  it('earlier runs fold under the latest with their start time and how they ended', async () => {
+    const { vm, transport, load } = await opened({
+      built: false,
+      links: [link('build:claims-core', 'run-a', secs(8)), link('build:claims-core', 'run-b', secs(8, 30))],
+      records: [record('run-a', 124), record('run-b', 1)],
+    });
+    await load();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    vm.choose({ kind: 'repo', repo: 'claims-core' });
+    const [a, b, live] = vm.shownSessions();
+    expect([a.id, b.id]).toEqual(['run-a', 'run-b']);
+    expect([a.startedAt, b.startedAt]).toEqual(['08:00:00', '08:30:00']);
+    expect(a.outcome).toContain('exit 124');
+    expect(b.outcome).toContain('exit 1 ');
+    expect([a.latest, b.latest, live.latest]).toEqual([false, false, true]);
+    expect([a.expanded, b.expanded, live.expanded]).toEqual([false, false, false]);
+    expect(live.spec).not.toBeNull();
+    vm.toggleRun('run-a');
+    expect(vm.shownSessions()[0].expanded).toBe(true);
+  });
+
+  it('a run\'s end links the tasks it recorded', async () => {
+    const { vm, transport, lock } = setup();
+    const linkTasks = vi.spyOn(transport, 'sdlcLinkTasks');
+    await vm.start(await handoffFor(transport), CTX);
+    await drive(vm, lock, () => linkTasks.mock.calls.some(([l]) => l.some((x) => x.repo === 'claims-core')));
+    const id = vm.groups().find((g) => g.key === 'claims-core')!.runs[0].id;
+    expect(linkTasks).toHaveBeenCalledWith([taskLink('T1', id)]);
   });
 });
