@@ -8,7 +8,7 @@ import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import type { BuildHandoff } from '../change/change-page.view-model';
 import { BuildView } from './build-view';
-import { BuildViewModel, type BuildContext } from './build-view.view-model';
+import { BuildPageViewModel, type BuildContext } from './build-page.view-model';
 
 const CTX: BuildContext = { workspaceId: 'acme-claims', folder: MOCK_WORKSPACE_FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE, systemRepos: [] };
 
@@ -23,7 +23,7 @@ async function mount(transport = new MockTransport()) {
   fixture.componentRef.setInput('context', CTX);
   fixture.detectChanges();
   const view = { fixture, container: fixture.nativeElement as HTMLElement };
-  const vm = view.fixture.debugElement.injector.get(BuildViewModel);
+  const vm = view.fixture.debugElement.injector.get(BuildPageViewModel);
   const advance = async (ms: number) => {
     for (let t = 0; t < ms; t += 50) {
       await vi.advanceTimersByTimeAsync(50);

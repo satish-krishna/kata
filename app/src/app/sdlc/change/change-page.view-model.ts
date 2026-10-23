@@ -26,7 +26,7 @@ import type { Problem } from '@bindings/Problem';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ChangesContext } from '../changes/changes-view.view-model';
-import type { BuildContext } from '../build/build-view.view-model';
+import type { BuildContext } from '../build/build-page.view-model';
 import type { BuildDialogMode, BuildStartRequest } from '../../ui/build-dialog';
 import type { RunSpec } from '@bindings/RunSpec';
 import { GivenStore, type BuildChoices } from '../../core/given/given.store';

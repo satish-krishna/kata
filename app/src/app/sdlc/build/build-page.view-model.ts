@@ -96,7 +96,7 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : String
  * Rows are read through the transport's `sdlcBuildStatus`; nothing here reads a plan or a build log.
  */
 @Injectable()
-export class BuildViewModel {
+export class BuildPageViewModel {
   private readonly transport = inject(KataTransport);
   private readonly runner = inject(SdlcRunner);
   private readonly lock = inject(LockStore);

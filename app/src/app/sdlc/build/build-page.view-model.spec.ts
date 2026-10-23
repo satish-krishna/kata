@@ -14,7 +14,7 @@ import { givenKey, type KindGroup, type PresetRow } from '../../lib/given';
 import { safetyRules, specFor, type BuildRun } from '../../lib/sdlc';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import type { BuildHandoff } from '../change/change-page.view-model';
-import { BuildViewModel, type BuildContext } from './build-view.view-model';
+import { BuildPageViewModel, type BuildContext } from './build-page.view-model';
 
 const FOLDER = MOCK_WORKSPACE_FOLDER;
 const CTX: BuildContext = { workspaceId: 'acme-claims', folder: FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE, systemRepos: [] };
@@ -23,14 +23,14 @@ const REVIEW_NAME = `sdlc-claims-${MOCK_BUILD_CHANGE}-review`;
 /** `confirm` (the default) lets the build preview confirm at once with the build's own choices, so a test about something else never meets it; `real` leaves it to the test. */
 function setup(transport = new MockTransport(), preview: 'confirm' | 'real' = 'confirm') {
   TestBed.configureTestingModule({
-    providers: [provideRouter([]), BuildViewModel, RunPreviewViewModel, { provide: KataTransport, useValue: transport }],
+    providers: [provideRouter([]), BuildPageViewModel, RunPreviewViewModel, { provide: KataTransport, useValue: transport }],
   });
   const previewVm = TestBed.inject(RunPreviewViewModel);
   if (preview === 'confirm') vi.spyOn(previewVm, 'openBuild').mockImplementation(async (req) => ({ off: new Set(req.from.build ?? []), request: null }));
   return {
     preview: previewVm,
     givens: TestBed.inject(GivenStore),
-    vm: TestBed.inject(BuildViewModel),
+    vm: TestBed.inject(BuildPageViewModel),
     transport,
     lock: TestBed.inject(LockStore),
     runner: TestBed.inject(SdlcRunner),
@@ -52,7 +52,7 @@ const advance = async (ms: number) => {
 };
 
 /** Runs the build to its end, answering every question the agents ask, until `done` holds. */
-async function drive(vm: BuildViewModel, lock: LockStore, done: () => boolean, limitMs = 60000) {
+async function drive(vm: BuildPageViewModel, lock: LockStore, done: () => boolean, limitMs = 60000) {
   for (let t = 0; t < limitMs && !done(); t += 100) {
     await advance(100);
     for (const w of lock.waiting()) if (w.kind === 'answer') vm.answer(w.runId, { id: 'q1', answers: [['Reuse it']] });
@@ -66,8 +66,8 @@ const part = (repo: string, over: Partial<Participant> = {}): Participant => ({ 
 const everyone = (over: Record<string, Partial<Participant>> = {}): Participant[] => [MOCK_MASTER, 'claims-core', 'customer-portal'].map((r) => part(r, over[r]));
 const ROW = (repo: string) => `intent/claims/${MOCK_BUILD_CHANGE}/build/${repo}.md`;
 
-const row = (vm: BuildViewModel, name: string) => vm.rows().find((r) => r.name === name)!;
-const finished = (vm: BuildViewModel) => () => vm.phase() === 'finished' && vm.findings().length > 0;
+const row = (vm: BuildPageViewModel, name: string) => vm.rows().find((r) => r.name === name)!;
+const finished = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.findings().length > 0;
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -78,7 +78,7 @@ afterEach(() => {
   toastState.reset();
 });
 
-describe('BuildViewModel', () => {
+describe('BuildPageViewModel', () => {
   it('starting a build prepares branches and starts every repository that does not wait (R2.1)', async () => {
     const { vm, transport, lock } = setup();
     const runSpec = vi.spyOn(transport, 'runSpec');
@@ -461,7 +461,7 @@ describe('BuildViewModel', () => {
       });
       return vi.spyOn(transport, 'sdlcReviewRecord').mockImplementation(async () => ({ layout: 2, reviews: reviewed ? reviews : [], problems: reviewed ? documentProblems : [], master_moved: [] }));
     };
-    const shown = (vm: BuildViewModel) => () => vm.phase() === 'finished' && vm.reviewShown();
+    const shown = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.reviewShown();
 
     it('findings come from review.md, not the run words (R14.2)', async () => {
       const { vm, transport, lock } = setup();
@@ -609,7 +609,7 @@ describe('BuildViewModel', () => {
     heads.mockResolvedValueOnce({ 'claims-core': 'aaaaaaa' });
     heads.mockResolvedValue({ 'claims-core': 'bbbbbbb' });
     const runSpec = vi.spyOn(transport, 'runSpec');
-    const next = TestBed.runInInjectionContext(() => new BuildViewModel());
+    const next = TestBed.runInInjectionContext(() => new BuildPageViewModel());
     const round = { instructions: 'rename the status field to state', repo: 'claims-core' };
     await next.start(await handoffFor(transport, { round }), CTX);
     await drive(next, lock, finished(next));
@@ -629,7 +629,7 @@ describe('BuildViewModel', () => {
     await vm.close();
 
     const runSpec = vi.spyOn(transport, 'runSpec');
-    const next = TestBed.runInInjectionContext(() => new BuildViewModel());
+    const next = TestBed.runInInjectionContext(() => new BuildPageViewModel());
     const round = { instructions: 'look at the logging', repo: 'claims-core' };
     await next.start(await handoffFor(transport, { round }), CTX);
     await drive(next, lock, () => next.phase() === 'finished');
