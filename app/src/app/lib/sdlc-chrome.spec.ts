@@ -94,7 +94,6 @@ describe('stageRuns', () => {
 
 describe('stagePills', () => {
   const ALL_DOCS = { intent: true, spec: true, plan: true };
-  const BRANCH = { hasBranch: true };
 
   /** One pill, every field written out. */
   const pill = (step: StagePill['step'], title: string, text: string, tone: StagePill['tone'], disabled: boolean, current: boolean, ariaLabel: string | null): StagePill =>
@@ -205,32 +204,30 @@ describe('stagePills', () => {
   ];
 
   it.each(ROWS)('%s (done: %s) gives the four pills the table lists', (stage, done, expected) => {
-    expect(stagePills(stage, done, ALL_DOCS, BRANCH)).toEqual(expected);
+    expect(stagePills(stage, done, ALL_DOCS)).toEqual(expected);
   });
 
   it('marks exactly one pill current in every row', () => {
     for (const [stage, done] of ROWS) {
-      expect(stagePills(stage, done, ALL_DOCS, BRANCH).filter((p) => p.current)).toHaveLength(1);
+      expect(stagePills(stage, done, ALL_DOCS).filter((p) => p.current)).toHaveLength(1);
     }
   });
 
   it('disables a document pill whose document does not exist, whatever its position', () => {
     // spec-awaiting: intent before, spec at, plan after. Only the intent document exists.
-    const got = stagePills('spec-awaiting', false, { intent: true, spec: false, plan: false }, BRANCH);
+    const got = stagePills('spec-awaiting', false, { intent: true, spec: false, plan: false });
     expect(got.map((p) => [p.step, p.disabled])).toEqual([['intent', false], ['spec', true], ['plan', true], ['build', true]]);
     // plan-awaiting: the earlier documents are missing but the plan pill itself is there.
-    const earlier = stagePills('plan-awaiting', false, { intent: false, spec: false, plan: true }, BRANCH);
+    const earlier = stagePills('plan-awaiting', false, { intent: false, spec: false, plan: true });
     expect(earlier.map((p) => [p.step, p.disabled])).toEqual([['intent', true], ['spec', true], ['plan', false], ['build', true]]);
   });
 
-  it('disables the build pill of an accepted plan until a repository has the change’s branch', () => {
-    const without = stagePills('build-ready', false, ALL_DOCS, { hasBranch: false });
-    expect(without[3]).toEqual(pill('build', 'Build', 'Build · ready to start', 'idle', true, true, null));
-    const done = stagePills('build-finished', true, ALL_DOCS, { hasBranch: false });
-    expect(done[3]).toEqual(pill('build', 'Build', 'Build · done', 'success', true, true, null));
+  it('enables the build pill of an accepted plan, whether or not any repository has the change’s branch', () => {
+    expect(stagePills('build-ready', false, ALL_DOCS)[3]).toEqual(pill('build', 'Build', 'Build · ready to start', 'idle', false, true, null));
+    expect(stagePills('build-finished', true, ALL_DOCS)[3]).toEqual(pill('build', 'Build', 'Build · done', 'success', false, true, null));
   });
 
-  it('keeps the build pill locked and disabled before the plan is accepted, even with a branch', () => {
-    expect(stagePills('plan-accepted-uncommitted', false, ALL_DOCS, BRANCH)[3]).toEqual(LOCKED);
+  it('keeps the build pill locked and disabled before the plan is accepted', () => {
+    expect(stagePills('plan-accepted-uncommitted', false, ALL_DOCS)[3]).toEqual(LOCKED);
   });
 });

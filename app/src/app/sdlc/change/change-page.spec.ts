@@ -1,3 +1,4 @@
+import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
@@ -132,8 +133,12 @@ describe('ChangePage', () => {
   describe('the build', () => {
     const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
 
+    const tab = (c: HTMLElement, start: string) => Array.from(c.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.textContent!.trim().startsWith(start))!;
+
     it('the plan tab lists the tasks from sdlcBuildStatus in the Tasks view', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
+      tab(container, 'Plan').click();
+      await settle();
       const status = await transport.sdlcBuildStatus('', 'claims', MOCK_BUILD_CHANGE);
       const nav = container.querySelector('nav[aria-label="Tasks"]')!;
       expect(nav).not.toBeNull();
@@ -144,8 +149,10 @@ describe('ChangePage', () => {
     it('crosses the seam: clicking the Build pill shows what changed in the build panel', async () => {
       vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
       const { container } = await mount(MOCK_BUILD_CHANGE);
-      const tile = Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.textContent!.trim().startsWith('Build'))!;
+      const tile = tab(container, 'Build');
       expect(tile.disabled).toBe(false);
+      tab(container, 'Plan').click();
+      await settle();
       expect(container.querySelector('app-changes-view')).toBeNull();
       tile.click();
       await settle();
@@ -155,15 +162,15 @@ describe('ChangePage', () => {
       vi.restoreAllMocks();
     });
 
-    it('shows the build view in place of the session view once a build is prepared, and the session view otherwise', async () => {
+    it('keeps the build page on show once a build is prepared, never the session view or the build view', async () => {
       const { container, fixture } = await mount(MOCK_BUILD_CHANGE);
       expect(container.querySelector('app-build-view')).toBeNull();
       const vm = fixture.debugElement.injector.get(ChangePageViewModel);
       await vm.submitBuild({ timeoutSecs: 5400, instructions: null, repo: null });
       await settle();
-      expect(container.querySelector('app-build-view')).not.toBeNull();
+      expect(container.querySelector('app-build-page')).not.toBeNull();
+      expect(container.querySelector('app-build-view')).toBeNull();
       expect(container.querySelector('app-sdlc-session')).toBeNull();
-      expect(container.querySelector('main.k-change')).toBeNull();
     });
 
     it('shows no task list on a change without tasks', async () => {
@@ -313,7 +320,7 @@ describe('ChangePage after the pull requests', () => {
     vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
       (await real(m, s)).map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage: 'build-finished' as const } : c)),
     );
-    return transport;
+    return allBuilt(transport);
   };
   const openAll = async (transport: MockTransport) => {
     await transport.sdlcPublish('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE));
@@ -349,6 +356,20 @@ describe('ChangePage after the pull requests', () => {
   });
 });
 
+/** The build log of a finished change: every task has its row and every repository is done, as the page requires of a stage past the build. */
+function allBuilt(transport: MockTransport, edit: (status: BuildStatus) => BuildStatus = (status) => status) {
+  const status = transport.sdlcBuildStatus.bind(transport);
+  vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => {
+    const got = await status(m, s, c);
+    return edit({
+      ...got,
+      repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })),
+      tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } })),
+    });
+  });
+  return transport;
+}
+
 describe('ChangePage build page', () => {
   const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
   const button = (root: ParentNode, label: string) => Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === label);
@@ -360,7 +381,7 @@ describe('ChangePage build page', () => {
     layout: 2,
     problems: [],
     master_moved: [],
-    reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: {}, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: 'The refusal message has no test.' }] }],
+    reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: { 'claims-intent': '1111111', 'claims-core': '2222222', 'customer-portal': '3333333' }, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: 'The refusal message has no test.' }] }],
   } as unknown as Awaited<ReturnType<MockTransport['sdlcReviewRecord']>>;
 
   let draw: ReturnType<typeof vi.spyOn>;
@@ -378,8 +399,9 @@ describe('ChangePage build page', () => {
     vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) => (await real(m, s)).map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage } : c)));
     return transport;
   };
-  const finished = () => {
-    const transport = staged('build-finished');
+  /** A finished build: every task has its build log row, as the page requires of a stage past the build. */
+  const finished = (edit?: (status: BuildStatus) => BuildStatus) => {
+    const transport = allBuilt(staged('build-finished'), edit);
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
     return transport;
   };
@@ -422,7 +444,8 @@ describe('ChangePage build page', () => {
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
     expect(Array.from(page(container).querySelectorAll('[data-heading] .k-bp__name')).map(text)).toEqual(expect.arrayContaining(['claims-core', 'customer-portal']));
     expect(area(container, 'tasks')!.querySelectorAll('[data-task]').length).toBe(3);
-    expect(area(container, 'activity')).not.toBeNull();
+    // Nothing has run yet, so the activity area has nothing to show and is not drawn; the changed files are.
+    expect(area(container, 'activity')).toBeNull();
     expect(area(container, 'files')!.querySelector('app-changes-view')).not.toBeNull();
   });
 
@@ -439,7 +462,7 @@ describe('ChangePage build page', () => {
   });
 
   it.each(['build-ready', 'build-stopped', 'build-finished'] as const)('a change in the build stage opens on its Build tab (%s)', async (stage) => {
-    const { container } = await mount(MOCK_BUILD_CHANGE, staged(stage));
+    const { container } = await mount(MOCK_BUILD_CHANGE, stage === 'build-finished' ? finished() : staged(stage));
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
     expect(page(container)).not.toBeNull();
     expect(container.querySelector('app-doc-layout')).toBeNull();
@@ -475,7 +498,29 @@ describe('ChangePage build page', () => {
     expect(page(container)).not.toBeNull();
     expect(container.querySelector('app-build-view')).toBeNull();
     await stopBuild(fixture);
-  });
+  }, 30000);
+
+  it('reads the change again once the build ends, so its stage, its pill and Declare done follow the build', async () => {
+    const { container, fixture, transport } = await mount(MOCK_BUILD_CHANGE);
+    await startBuild(container);
+    await vi.waitFor(
+      () => {
+        TestBed.tick();
+        expect(TestBed.inject(LockStore).active()?.kind).toBe('build');
+      },
+      { timeout: TOKEN },
+    );
+    const changes = vi.spyOn(transport, 'sdlcChanges');
+    await stopBuild(fixture);
+    await vi.waitFor(
+      () => {
+        TestBed.tick();
+        expect(changes).toHaveBeenCalled();
+      },
+      { timeout: TOKEN },
+    );
+    expect(page(container)).not.toBeNull();
+  }, 30000);
 
   it('a round runs and is watched on the same page', async () => {
     const { container, fixture, transport } = await mount(MOCK_BUILD_CHANGE, finished());
@@ -605,12 +650,10 @@ describe('ChangePage build page', () => {
     });
 
     it('see departures from the plan', async () => {
-      const transport = finished();
-      const status = transport.sdlcBuildStatus.bind(transport);
-      vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => {
-        const got = await status(m, s, c);
-        return { ...got, tasks: got.tasks.map((t) => (t.id === 'T2' ? { ...t, row: { task: 'T2', repo: t.repo, commits: ['abc1234'], departure: 'Reused the existing file picker.' } } : t)) };
-      });
+      const transport = finished((got) => ({
+        ...got,
+        tasks: got.tasks.map((t) => (t.id === 'T2' ? { ...t, row: { task: 'T2', repo: t.repo, commits: ['abc1234'], departure: 'Reused the existing file picker.' } } : t)),
+      }));
       const { container } = await mount(MOCK_BUILD_CHANGE, transport);
       alone(container);
       expect(text(page(container).querySelector('[data-departure]')!)).toContain('Reused the existing file picker.');

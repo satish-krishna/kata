@@ -3,12 +3,15 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import { of } from 'rxjs';
 import { render } from '../../../testing/render';
+import { toastState } from '@spartan-ng/brain/sonner';
+import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { diagrams } from '../../lib/mermaid';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { monaco } from '../../ui/diff-editor/monaco.loader';
+import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
@@ -171,38 +174,28 @@ describe('ChangePage layout', () => {
       return out;
     };
 
-    it('has exactly one strip: the Changes view strip, with the facts and the stage actions at its right end', async () => {
+    it('draws no page strip: the build page bar holds the facts and the stage actions', async () => {
       const { container } = await openBuild();
       expect(container.querySelector('[data-testid="strip"]')).toBeNull();
-      const strips = container.querySelectorAll('[data-testid="strip"], [data-testid="changes-strip"]');
-      expect(strips.length).toBe(1);
-      const strip = strips[0];
-      expect(strip.getAttribute('data-testid')).toBe('changes-strip');
-      expect(text(strip.querySelector('[data-testid="build-facts"]')!)).toMatch(/^\d+\/\d+ tasks( · \d+ build runs?)?$/);
-      expect(text(strip.querySelector('[data-testid="build-facts"]')!)).not.toMatch(/repositor/);
-      expect(Array.from(strip.querySelectorAll('button')).map(text)).toContain('Start build');
-      expect(strip.querySelector('[data-testid="changes-readonly"]')).not.toBeNull();
+      const bar = container.querySelector('app-build-page [data-bar]')!;
+      expect(text(bar.querySelector('.k-lock__count')!)).toMatch(/^\d+\/\d+ tasks$/);
+      expect(Array.from(bar.querySelectorAll('button')).map(text)).toContain('Start build');
     });
 
-    it('puts the facts and the actions after the read-only line, and keeps the actions disabled while a task holds the page', async () => {
+    it('refuses a stage action while a task holds the page, and opens no preview', async () => {
       const { container, fixture } = await openBuild();
-      const strip = container.querySelector('[data-testid="changes-strip"]')!;
-      const note = strip.querySelector('[data-testid="changes-readonly"]')!;
-      const facts = strip.querySelector('[data-testid="build-facts"]')!;
-      expect(note.compareDocumentPosition(facts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-      const start = () => Array.from(strip.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === 'Start build')!;
-      expect(start().disabled).toBe(false);
       void fixture.debugElement.injector.get(LockStore).runSteps('Working', [{ label: 'wait', run: () => new Promise<string | null>(() => undefined) }]);
       await settle();
-      expect(start().disabled).toBe(true);
+      Array.from(container.querySelectorAll<HTMLButtonElement>('app-build-page [data-bar] button')).find((b) => text(b) === 'Start build')!.click();
+      await settle();
+      expect(toastState.toasts().map((t) => String(t.title)).join(' | ')).toContain('Another task is already running.');
+      expect(fixture.debugElement.injector.get(RunPreviewViewModel).isOpen()).toBe(false);
+      toastState.reset();
     });
 
-    it('leaves the live build view Changes tab with no facts and no actions', async () => {
-      const { container, fixture } = await mount(MOCK_BUILD_CHANGE);
-      const vm = fixture.debugElement.injector.get(ChangePageViewModel);
-      await vm.submitBuild({ timeoutSecs: 5400, instructions: null, repo: null });
-      await settle();
-      const strip = container.querySelector('app-build-view [data-testid="changes-strip"]')!;
+    it('keeps the changed files strip of the build page free of facts and actions', async () => {
+      const { container } = await openBuild();
+      const strip = container.querySelector('app-build-page app-changes-view [data-testid="changes-strip"]')!;
       expect(strip).not.toBeNull();
       expect(strip.querySelector('[data-testid="build-facts"]')).toBeNull();
       expect(Array.from(strip.querySelectorAll('button')).map(text)).toEqual([...Array.from(strip.querySelectorAll('[role="radio"]')).map(text), 'By type']);
@@ -216,6 +209,15 @@ describe('ChangePage layout', () => {
       vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
         (await real(m, s)).map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage: 'build-finished' as const } : c)),
       );
+      const status = transport.sdlcBuildStatus.bind(transport);
+      vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, sys, c) => {
+        const got = await status(m, sys, c);
+        return {
+          ...got,
+          repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })),
+          tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: ['c0ffee1'], departure: null } })),
+        };
+      });
       const repos = await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE);
       await transport.sdlcPublish('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, only === undefined ? repos : repos.slice(0, only));
       return transport;
@@ -240,17 +242,18 @@ describe('ChangePage layout', () => {
       expect(container.querySelector('[data-testid="pr-menu"]')).toBeNull();
     });
 
-    it('drops the pills and the pull request button while a build is live', async () => {
+    it('keeps the pills and the pull request button while a build is live, with the build page on show', async () => {
       const { container, fixture } = await mount(MOCK_BUILD_CHANGE, await finished());
       expect(container.querySelectorAll('header [role="tab"]').length).toBe(4);
       expect(container.querySelector('[data-testid="pr-menu"]')).not.toBeNull();
       const vm = fixture.debugElement.injector.get(ChangePageViewModel);
       await vm.submitBuild({ timeoutSecs: 5400, instructions: null, repo: null });
       await settle();
-      expect(container.querySelector('app-build-view')).not.toBeNull();
-      expect(container.querySelectorAll('header [role="tab"]').length).toBe(0);
-      expect(container.querySelectorAll('header a').length).toBe(0);
-      expect(container.querySelector('[data-testid="pr-menu"]')).toBeNull();
+      expect(container.querySelector('app-build-page')).not.toBeNull();
+      expect(container.querySelector('app-build-view')).toBeNull();
+      expect(container.querySelectorAll('header [role="tab"]').length).toBe(4);
+      expect(container.querySelector('[data-testid="pr-menu"]')).not.toBeNull();
+      fixture.debugElement.injector.get(BuildPageViewModel).cancelBuild();
     });
   });
 
@@ -291,7 +294,7 @@ describe('ChangePage layout', () => {
       await settle();
       expect(selected(container)).toEqual(['Build']);
       const panel = container.querySelector('[role="tabpanel"]:not([hidden])')!;
-      expect(panel.querySelector('[data-testid="changes-strip"]')).not.toBeNull();
+      expect(panel.querySelector('app-build-page')).not.toBeNull();
       expect(panel.querySelector('app-doc-layout')).toBeNull();
       expect(panel.getAttribute('aria-labelledby')).toBe(pill(container, 'Build').id);
     });

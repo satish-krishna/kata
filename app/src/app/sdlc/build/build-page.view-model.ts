@@ -240,8 +240,6 @@ export class BuildPageViewModel {
   readonly current = this.handed.asReadonly();
   /** True once a build was started on this page; it stays true after the build ended. */
   readonly started = computed(() => this.handed() !== null);
-  /** True while the build is on show in place of the change; `backToChange` clears it and nothing else. */
-  readonly viewing = signal(false);
   /** True while this page holds the lock for its build, from `start` (or a Continue) until `release` gives it back. */
   private holding = false;
   /** The runs the engineer's leftovers confirmation still covers; a run's launch spends its entry. */
@@ -553,7 +551,6 @@ export class BuildPageViewModel {
     this.settled = false;
     this.broken.set(false);
     this.drv.set(this.newDriver());
-    this.viewing.set(true);
     try {
       const status = await this.readStatus();
       const master = handoff.start.master.repo;
@@ -799,7 +796,7 @@ export class BuildPageViewModel {
     return {
       stage,
       stageMessage: this.stageMessage(),
-      facts: { tasks: this.tasksLabel(), elapsed: this.active() ? hms(this.lock.elapsedSecs()) : null },
+      facts: { tasks: this.tasksLabel(), elapsed: this.started() && this.active() ? hms(this.lock.elapsedSecs()) : null },
       actions: this.actions(),
       groups: areas.map((g) => ({
         repo: g.repo,
@@ -871,11 +868,6 @@ export class BuildPageViewModel {
       snap = 'unreadable';
     }
     this.details.update((d) => ({ ...d, [id]: snap }));
-  }
-
-  /** Leave the build and show the change again. This changes what is on show and nothing else: the lock and the driver are not touched. */
-  backToChange(): void {
-    this.viewing.set(false);
   }
 
   /** Open an earlier run in full, or fold it back to its one line. */

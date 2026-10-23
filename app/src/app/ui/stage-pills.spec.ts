@@ -22,15 +22,15 @@ const ALL: Stage[] = [
 })
 class Host {
   readonly tab = signal('spec');
-  readonly pills = signal(stagePills('spec-awaiting', false, ALL_DOCS, { hasBranch: false }));
+  readonly pills = signal(stagePills('spec-awaiting', false, ALL_DOCS));
   readonly activated: string[] = [];
 }
 
-async function mount(over: { stage?: Stage; docs?: DocsPresent; hasBranch?: boolean; done?: boolean; tab?: string } = {}) {
+async function mount(over: { stage?: Stage; docs?: DocsPresent; done?: boolean; tab?: string } = {}) {
   TestBed.configureTestingModule({ imports: [Host] });
   const fixture = TestBed.createComponent(Host);
   const host = fixture.componentInstance;
-  host.pills.set(stagePills(over.stage ?? 'spec-awaiting', over.done ?? false, over.docs ?? ALL_DOCS, { hasBranch: over.hasBranch ?? false }));
+  host.pills.set(stagePills(over.stage ?? 'spec-awaiting', over.done ?? false, over.docs ?? ALL_DOCS));
   if (over.tab) host.tab.set(over.tab);
   await fixture.whenStable();
   const container = fixture.nativeElement as HTMLElement;
@@ -65,17 +65,18 @@ describe('StagePills', () => {
     expect(tabs().map((t) => t.disabled)).toEqual([false, true, true, true]);
   });
 
-  it('opens Build once the plan is accepted and a repository has the branch', async () => {
-    const locked = await mount({ stage: 'build-ready', hasBranch: false });
+  it('opens Build once the plan is accepted', async () => {
+    const locked = await mount({ stage: 'plan-awaiting' });
     expect(locked.tabs()[3].disabled).toBe(true);
-    expect(text(locked.tabs()[3])).toBe('Build · ready to start');
+    expect(text(locked.tabs()[3])).toBe('Build · locked');
     TestBed.resetTestingModule();
-    const open = await mount({ stage: 'build-ready', hasBranch: true });
+    const open = await mount({ stage: 'build-ready' });
     expect(open.tabs()[3].disabled).toBe(false);
+    expect(text(open.tabs()[3])).toBe('Build · ready to start');
   });
 
   it('reads Build · done on a finished change', async () => {
-    const { tabs } = await mount({ stage: 'build-finished', done: true, hasBranch: true });
+    const { tabs } = await mount({ stage: 'build-finished', done: true });
     expect(text(tabs()[3])).toBe('Build · done');
     expect(tabs()[3].getAttribute('aria-current')).toBe('step');
   });

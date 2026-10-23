@@ -125,7 +125,6 @@ describe('BuildView', () => {
     expect(lock.active()).toBeNull();
     button(container, 'Back to the change')!.click();
     await advance(100);
-    expect(vm.viewing()).toBe(false);
     expect(closed).toHaveBeenCalledTimes(1);
   });
 

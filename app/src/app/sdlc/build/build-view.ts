@@ -61,7 +61,6 @@ export class BuildView {
   }
 
   protected back(): void {
-    this.vm.backToChange();
     this.closed.emit();
   }
 }

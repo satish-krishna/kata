@@ -81,7 +81,7 @@ async function changePage(change: string, stage: ChangeInfo['stage'] | null, sta
     transport,
     preview: TestBed.inject(RunPreviewViewModel),
     go: () => start(vm),
-    started: () => (kind === 'run' ? runAgent.mock.calls.length > 0 : prepare.mock.calls.length > 0 && vm.handoff() !== null),
+    started: () => (kind === 'run' ? runAgent.mock.calls.length > 0 : prepare.mock.calls.length > 0 && TestBed.inject(BuildPageViewModel).current() !== null),
   };
   if (fill) scenario.fill = () => fill(scenario);
   return scenario;

@@ -592,7 +592,7 @@ describe('ChangePageViewModel', () => {
       await vm.submitBuild(REQUEST);
       expect(prepare).toHaveBeenCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false, null, 'start');
       expect(vm.buildMode()).toBeNull();
-      const h = vm.handoff()!;
+      const h = TestBed.inject(BuildPageViewModel).current()!;
       expect(h.timeoutSecs).toBe(5400);
       expect(h.round).toBeNull();
       expect(h.start.repos.map((r) => r.repo)).toEqual(['claims-core', 'customer-portal']);
@@ -606,11 +606,10 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.submitBuild(REQUEST);
       await vm.confirmLeftovers();
-      expect(vm.handoff()!.continueOnLeftovers).toEqual(['claims-core']);
-      await vm.closeBuild();
+      expect(TestBed.inject(BuildPageViewModel).current()!.continueOnLeftovers).toEqual(['claims-core']);
       await settleBuild();
       await vm.submitBuild(REQUEST);
-      expect(vm.handoff()!.continueOnLeftovers).toEqual([]);
+      expect(TestBed.inject(BuildPageViewModel).current()!.continueOnLeftovers).toEqual([]);
     });
 
     it('Another round names its repository, so the backend counts it as taking part even when its tasks are all done or it is the master (R6.4)', async () => {
@@ -623,7 +622,6 @@ describe('ChangePageViewModel', () => {
         await vm.act('another-round');
         await vm.submitBuild({ timeoutSecs: 14400, instructions: 'tidy up', repo });
         expect(prepare).toHaveBeenLastCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false, repo, 'round');
-        await vm.closeBuild();
         await settleBuild();
       }
     });
@@ -633,17 +631,6 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       const w = (await transport.sdlcWorkspaces())[0];
       expect(vm.buildContext()).toEqual({ workspaceId: w.id, folder: w.folder, system: 'claims', change: BUILD, systemRepos: ['claims-core', 'customer-portal', 'billing-api'] });
-    });
-
-    it('closing the build forgets the handoff and reads the change again', async () => {
-      const { vm, transport } = setup(BUILD);
-      await ready(vm);
-      await vm.submitBuild(REQUEST);
-      expect(vm.handoff()).not.toBeNull();
-      const changes = vi.spyOn(transport, 'sdlcChanges');
-      await vm.closeBuild();
-      expect(vm.handoff()).toBeNull();
-      expect(changes).toHaveBeenCalled();
     });
 
     it('reads the checks folder once, however often the page loads', async () => {
@@ -662,8 +649,8 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.act('another-round');
       await vm.submitBuild({ timeoutSecs: 14400, instructions: 'rename the status field to state', repo: 'claims-core' });
-      expect(vm.handoff()!.round).toEqual({ instructions: 'rename the status field to state', repo: 'claims-core' });
-      expect(vm.handoff()!.timeoutSecs).toBe(14400);
+      expect(TestBed.inject(BuildPageViewModel).current()!.round).toEqual({ instructions: 'rename the status field to state', repo: 'claims-core' });
+      expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(14400);
     });
 
     it('the change page confirms and retries with leftovers (R6.4)', async () => {
@@ -678,14 +665,14 @@ describe('ChangePageViewModel', () => {
       await vm.act('start-build');
       await vm.submitBuild(REQUEST);
       expect(vm.leftoverPrompt()!.lines).toEqual(['claims-core: src/new.rs']);
-      expect(vm.handoff()).toBeNull();
+      expect(TestBed.inject(BuildPageViewModel).current()).toBeNull();
       expect(prepare).toHaveBeenCalledTimes(1);
       await vm.confirmLeftovers();
       expect(prepare).toHaveBeenCalledTimes(2);
       expect(prepare.mock.calls[0][4]).toBe(false);
       expect(prepare.mock.calls[1][4]).toBe(true);
       expect(vm.leftoverPrompt()).toBeNull();
-      expect(vm.handoff()!.timeoutSecs).toBe(5400);
+      expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(5400);
     });
 
     it('declining the leftovers prepares nothing more', async () => {
@@ -696,7 +683,7 @@ describe('ChangePageViewModel', () => {
       vm.cancelLeftovers();
       expect(vm.leftoverPrompt()).toBeNull();
       expect(prepare).toHaveBeenCalledTimes(1);
-      expect(vm.handoff()).toBeNull();
+      expect(TestBed.inject(BuildPageViewModel).current()).toBeNull();
     });
 
     it.each([['start-build', 'start'], ['continue-build', 'continue'], ['another-round', 'round']] as const)('a refusal by the gate lists its problems and starts nothing: %s asks for %s (R8.1)', async (act, action) => {
@@ -709,7 +696,7 @@ describe('ChangePageViewModel', () => {
       expect(prepare.mock.calls[0][6]).toBe(action);
       expect(vm.refusal()).toBe('A build log does not pass the check');
       expect(vm.refusalProblems()).toEqual([problem]);
-      expect(vm.handoff()).toBeNull();
+      expect(TestBed.inject(BuildPageViewModel).current()).toBeNull();
       vm.closeRefusal();
       expect(vm.refusal()).toBeNull();
       expect(vm.refusalProblems()).toEqual([]);
@@ -721,7 +708,7 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.submitBuild(REQUEST);
       expect(vm.refusal()).toBe('Update the ai-sdlc plugin to 0.9.0 or later, then start the build again.');
-      expect(vm.handoff()).toBeNull();
+      expect(TestBed.inject(BuildPageViewModel).current()).toBeNull();
       vm.closeRefusal();
       expect(vm.refusal()).toBeNull();
     });
@@ -759,21 +746,22 @@ describe('ChangePageViewModel', () => {
       expect(vm.pills().map((p) => p.text)).toEqual(['Intent', 'Spec · awaiting acceptance', 'Plan · not started', 'Build · locked']);
     });
 
-    it('opens the Build pill once the plan is accepted and a repository has the branch', async () => {
+    it('opens the Build pill once the plan is accepted', async () => {
       const { vm } = setup(BUILD);
       await ready(vm);
       expect(vm.pills()[3].disabled).toBe(false);
     });
 
-    it('has no pills and no pull request links while a build is live', async () => {
+    it('keeps the pills and the pull request links while a build is live: the build page stands beside the change, not in place of it', async () => {
       const { vm } = setup(BUILD, await finished());
       await ready(vm);
       expect(vm.pills().length).toBe(4);
       expect(vm.pullLinks().length).toBe(3);
       await vm.submitBuild({ timeoutSecs: 5400, instructions: null, repo: null });
-      expect(vm.handoff()).not.toBeNull();
-      expect(vm.pills()).toEqual([]);
-      expect(vm.pullLinks()).toEqual([]);
+      expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull();
+      expect(vm.pills().length).toBe(4);
+      expect(vm.pullLinks().length).toBe(3);
+      await settleBuild();
     });
 
     it('lists each pull request that has an address, with its number', async () => {
@@ -833,45 +821,6 @@ describe('ChangePageViewModel', () => {
       expect(vm.stripStatus()).toBeNull();
     });
 
-    it('says the build facts on the Build tab, with no stage label beside them', async () => {
-      const transport = new MockTransport();
-      vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, sys, name) => {
-        const real = await MockTransport.prototype.sdlcBuildStatus.call(transport, m, sys, name);
-        return { ...real, tasks: real.tasks.map((t, i) => (i < 2 ? { ...t, row: { task: t.id, repo: t.repo, commits: ['abc1234'], departure: null } } : { ...t, row: null })) };
-      });
-      const link = (stage: string, run_id: string) => ({ workspace_id: 'acme-claims', system: 'claims', change: BUILD, stage, run_id, started_at: 100 });
-      vi.spyOn(transport, 'sdlcRunLinks').mockResolvedValue([link('build:claims-core', 'a'), link('build:customer-portal', 'b'), link('review', 'c'), link('spec', 'd')]);
-      vi.spyOn(transport, 'listRuns').mockResolvedValue([]);
-      const { vm } = setup(BUILD, transport);
-      await ready(vm);
-      await vm.showDoc('build');
-      expect(vm.buildFacts()).toBe('2/3 tasks · 2 build runs');
-      expect(vm.stripStatus()).toBeNull();
-    });
-
-    it('says the singular for one build run, and leaves the repository count out', async () => {
-      const transport = new MockTransport();
-      vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, sys, name) => {
-        const real = await MockTransport.prototype.sdlcBuildStatus.call(transport, m, sys, name);
-        return { ...real, repos: real.repos.slice(0, 1) };
-      });
-      vi.spyOn(transport, 'sdlcRunLinks').mockResolvedValue([{ workspace_id: 'acme-claims', system: 'claims', change: BUILD, stage: 'build:claims-core', run_id: 'a', started_at: 100 }]);
-      vi.spyOn(transport, 'listRuns').mockResolvedValue([]);
-      const { vm } = setup(BUILD, transport);
-      await ready(vm);
-      await vm.showDoc('build');
-      expect(vm.buildFacts()).toBe('0/3 tasks · 1 build run');
-    });
-
-    it('says only what it has: no tasks yet, no runs yet', async () => {
-      const transport = new MockTransport();
-      vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue({ tasks: [], repos: [], departures: [], hasTasks: false, problems: [], logLayouts: [] });
-      const { vm } = setup(BUILD, transport);
-      await ready(vm);
-      await vm.showDoc('build');
-      expect(vm.buildFacts()).toBeNull();
-    });
-
     it('never puts the stage label on the Build tab strip: the pills own it, so "Build · done" has no "Done · pull requests open" beside it', async () => {
       const { vm } = setup(BUILD, await finished());
       await ready(vm);
@@ -879,7 +828,6 @@ describe('ChangePageViewModel', () => {
       expect(vm.done()).toBe(true);
       expect(vm.pills()[3].text).toBe('Build · done');
       expect(vm.stripStatus()).toBeNull();
-      expect(vm.buildFacts() ?? '').not.toMatch(/done/i);
     });
 
     it('draws no strip on the Build tab when there is no status, no facts and no action', async () => {
@@ -889,7 +837,6 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.showDoc('build');
       expect(vm.actions()).toEqual([]);
-      expect(vm.buildFacts()).toBeNull();
       expect(vm.stripShown()).toBe(false);
     });
 
@@ -897,7 +844,6 @@ describe('ChangePageViewModel', () => {
       const { vm } = setup(BUILD);
       await ready(vm);
       await vm.showDoc('build');
-      expect(vm.buildFacts()).not.toBeNull();
       expect(vm.actions().length).toBeGreaterThan(0);
       expect(vm.stripShown()).toBe(false);
     });
@@ -975,10 +921,10 @@ describe('the build\'s preview', () => {
     return { ...s, givens: TestBed.inject(GivenStore), prepare: vi.spyOn(transport, 'sdlcBuildPrepare') };
   };
   /** Wait for the preview, press Start run, and wait for the build to be handed over. */
-  const startPreview = async (preview: RunPreviewViewModel, vm: ChangePageViewModel) => {
+  const startPreview = async (preview: RunPreviewViewModel, _vm: ChangePageViewModel) => {
     await previewReady(preview);
     preview.start();
-    await vi.waitFor(() => expect(vm.handoff()).not.toBeNull());
+    await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull());
   };
 
   it('Start build opens one preview for the whole build: shared items once, a section per repository, one for the review (R11.2, R11.3)', async () => {
@@ -1009,10 +955,10 @@ describe('the build\'s preview', () => {
     preview.toggle(GITHUB, true);
     preview.toggle(dbKey(vm, 'claims-core'), true);
     await startPreview(preview, vm);
-    expect(vm.handoff()!.choices!.off).toEqual(new Set([GITHUB, dbKey(vm, 'claims-core')]));
+    expect(TestBed.inject(BuildPageViewModel).current()!.choices!.off).toEqual(new Set([GITHUB, dbKey(vm, 'claims-core')]));
     // The build keeps them for the runs it starts by itself, and the next build starts from them.
     expect(givens.build(KEY)!.off).toEqual(new Set([GITHUB, dbKey(vm, 'claims-core')]));
-    expect(vm.handoff()!.timeoutSecs).toBe(7200);
+    expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(7200);
   });
 
   it('cancelling the build\'s preview prepares nothing and leaves the build\'s choices alone', async () => {
@@ -1024,7 +970,7 @@ describe('the build\'s preview', () => {
     await vi.waitFor(() => expect(vm.buildMode()).toBeNull());
     expect(prepare).not.toHaveBeenCalled();
     expect(givens.build(KEY)).toBeNull();
-    expect(vm.handoff()).toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).current()).toBeNull();
   });
 
   it('a first build starts from the session\'s choices, marked as kept from an earlier run (R9.1)', async () => {
@@ -1070,7 +1016,7 @@ describe('the build\'s preview', () => {
     preview.buildForm()!.model.update((m) => ({ ...m, hours: 1, minutes: 30 }));
     expect(limit(preview)).toMatchObject({ value: '1 h 30 min' });
     await startPreview(preview, vm);
-    expect(vm.handoff()!.timeoutSecs).toBe(5400);
+    expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(5400);
   });
 
   it('Start run waits while the time limit is zero', async () => {
@@ -1081,7 +1027,7 @@ describe('the build\'s preview', () => {
     expect(preview.canStart()).toBe(false);
     preview.start();
     expect(preview.isOpen()).toBe(true);
-    expect(vm.handoff()).toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).current()).toBeNull();
   });
 
   describe('runs started during a build open pre-set to the build\'s choices (R12.1)', () => {
@@ -1097,7 +1043,7 @@ describe('the build\'s preview', () => {
       preview.toggle(GITHUB, false);
       await startPreview(preview, vm);
       expect(givens.build(KEY)!.off.has(GITHUB)).toBe(false);
-      expect(vm.handoff()!.choices!.off.has(GITHUB)).toBe(false);
+      expect(TestBed.inject(BuildPageViewModel).current()!.choices!.off.has(GITHUB)).toBe(false);
     });
 
     it('another round in one repository: that round and every run the build then starts by itself', async () => {
@@ -1113,9 +1059,9 @@ describe('the build\'s preview', () => {
       expect(preview.sections()!.map((s) => s.title)).toEqual(['claims-core']);
       preview.toggle(GITHUB, false);
       await startPreview(preview, vm);
-      expect(vm.handoff()!.round).toEqual({ instructions: 'tidy up', repo: 'claims-core' });
+      expect(TestBed.inject(BuildPageViewModel).current()!.round).toEqual({ instructions: 'tidy up', repo: 'claims-core' });
       expect(givens.build(KEY)!.off.has(GITHUB)).toBe(false);
-      expect(vm.handoff()!.choices!.off.has(GITHUB)).toBe(false);
+      expect(TestBed.inject(BuildPageViewModel).current()!.choices!.off.has(GITHUB)).toBe(false);
     });
 
     it('a review started by hand: that review only, the build\'s choices are not changed', async () => {
@@ -1127,9 +1073,9 @@ describe('the build\'s preview', () => {
       expect(flat(preview.groups()).find((r) => r.item.id === GITHUB)).toMatchObject({ off: true, mark: 'build' });
       preview.toggle(GITHUB, false);
       await startPreview(preview, vm);
-      expect(vm.handoff()!.choices!.off.has(GITHUB)).toBe(false);
+      expect(TestBed.inject(BuildPageViewModel).current()!.choices!.off.has(GITHUB)).toBe(false);
       expect(givens.build(KEY)!.off).toEqual(buildOff());
-      expect(vm.handoff()!.round).toBeNull();
+      expect(TestBed.inject(BuildPageViewModel).current()!.round).toBeNull();
     });
   });
 
@@ -1145,8 +1091,8 @@ describe('the build\'s preview', () => {
     expect(prepare).not.toHaveBeenCalled();
     await startPreview(preview, vm);
     expect(prepare).toHaveBeenCalledTimes(1);
-    expect(vm.handoff()!.round).toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).current()!.round).toBeNull();
     // The review is the stage button's and the done dialog's one path: it runs with Kata's review limit.
-    expect(vm.handoff()!.timeoutSecs).toBe(7200);
+    expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(7200);
   });
 });

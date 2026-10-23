@@ -8,8 +8,7 @@ import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmPopoverImports } from '@spartan-ng/helm/popover';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
 import { BuildPageViewModel } from '../build/build-page.view-model';
-import { BuildView } from '../build/build-view';
-import { ChangesView } from '../changes/changes-view';
+import { BuildPage } from '../build/build-page';
 import { BuildDialog } from '../../ui/build-dialog';
 import { BuildRefusalDialog } from '../../ui/build-refusal-dialog';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
@@ -32,11 +31,12 @@ import { ChangePageViewModel } from './change-page.view-model';
 @Component({
   selector: 'app-change-page',
   providers: [ChangePageViewModel, BuildPageViewModel, RunPreviewViewModel, provideIcons({ lucideChevronDown, lucideTriangleAlert })],
-  imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildView, ChangesView, RunPreviewDialog],
+  imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildPage, RunPreviewDialog],
   templateUrl: './change-page.html',
 })
 export class ChangePage {
   protected readonly vm = inject(ChangePageViewModel);
+  protected readonly build = inject(BuildPageViewModel);
   private readonly route = inject(ActivatedRoute);
 
   constructor() {

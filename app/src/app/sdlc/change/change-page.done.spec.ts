@@ -305,11 +305,11 @@ describe('declaring done', () => {
     await vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
     expect(prepare).not.toHaveBeenCalled();
     preview.start();
-    await vi.waitFor(() => expect(vm.handoff()).not.toBeNull());
+    await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull());
     expect(vm.doneReport()).toBeNull();
     expect(prepare).toHaveBeenCalled();
-    expect(vm.handoff()).not.toBeNull();
-    expect(vm.handoff()!.round).toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).current()!.round).toBeNull();
   });
 
   it("the toolbar's Run review starts the review-only build, the same as the done dialog's", async () => {
@@ -321,9 +321,9 @@ describe('declaring done', () => {
     await vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
     expect(prepare).not.toHaveBeenCalled();
     preview.start();
-    await vi.waitFor(() => expect(vm.handoff()).not.toBeNull());
+    await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull());
     expect(prepare).toHaveBeenCalled();
-    expect(vm.handoff()!.round).toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).current()!.round).toBeNull();
   });
 
   it('an action with nothing behind it says so instead of doing nothing', async () => {
@@ -366,7 +366,7 @@ describe('declaring done from the build page', () => {
     layout: 2,
     problems: [],
     master_moved: [],
-    reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: {}, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: FINDING }] }],
+    reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: { 'claims-intent': '1111111', 'claims-core': '2222222', 'customer-portal': '3333333' }, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: FINDING }] }],
   } as unknown as Awaited<ReturnType<MockTransport['sdlcReviewRecord']>>;
 
   beforeEach(() => {
@@ -390,7 +390,10 @@ describe('declaring done from the build page', () => {
     vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({ files: [], loc: [] });
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
     const status = transport.sdlcBuildStatus.bind(transport);
-    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => ({ ...(await status(m, s, c)), departures: [DEPARTURE] }));
+    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => {
+      const got = await status(m, s, c);
+      return { ...got, repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })), tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } })), departures: [DEPARTURE] };
+    });
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', exit: 0 }]);
     const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], BUILD);
     await transport.sdlcLinkRun({ workspace_id: 'acme-claims', system: 'claims', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });

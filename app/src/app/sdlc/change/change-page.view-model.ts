@@ -73,7 +73,6 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : String
 const nowSecs = (): number => Math.floor(Date.now() / 1000);
 const BUSY = 'Another task is already running.';
 /** The stage steps that mean the plan is accepted. */
-const ACCEPTED: ReadonlySet<string> = new Set(['build', 'done']);
 
 /** The actions `act` handles itself; every other action starts a stage run. */
 type HandledAction =
@@ -159,11 +158,17 @@ type Tab = DocStem | 'build';
  */
 const isDocStem = (s: string): s is DocStem => s === 'intent' || s === 'spec' || s === 'plan';
 
-function docFor(c: ChangeInfo): DocStem {
+function stemFor(c: ChangeInfo): DocStem {
   const step = stageLabel(c.stage).step;
   if (step === 'plan' || step === 'build' || step === 'done') return c.plan.exists ? 'plan' : c.spec.exists ? 'spec' : 'intent';
   if (step === 'spec') return c.spec.exists ? 'spec' : 'intent';
   return 'intent';
+}
+
+/** What the change opens on: its Build tab once the plan is accepted, else the current stage's document. */
+function docFor(c: ChangeInfo): Tab {
+  const step = stageLabel(c.stage).step;
+  return step === 'build' || step === 'done' ? 'build' : stemFor(c);
 }
 
 /**
@@ -198,8 +203,6 @@ export class ChangePageViewModel {
   private readonly links = signal<RunLink[]>([]);
   private readonly records = signal<RunRecord[]>([]);
   private readonly changeTotal = signal<number | null>(null);
-  /** Some repository has the change's branch with something changed, so there is something to look at. */
-  private readonly hasBranch = signal(false);
   readonly change = signal<ChangeInfo | null>(null);
   /** The pull request of each touched repository, read at build-finished; empty at any other stage or when GitHub could not be asked. */
   readonly pullRequests = signal<PrState[]>([]);
@@ -272,14 +275,14 @@ export class ChangePageViewModel {
     return { intent: c?.intent.exists ?? false, spec: c?.spec.exists ?? false, plan: c?.plan.exists ?? false };
   });
   /** A build or a skill run holds the page: its view stands in for the change's tabs, so nothing here may be clicked. */
-  private readonly held = computed(() => this.handoff() !== null || this.session() !== null);
+  private readonly held = computed(() => this.session() !== null);
   /**
    * The four stage pills for the toolbar; none until the change is read, nor while a build or a skill run holds the
    * page (the build view or the session view stands in for the tabs then).
    */
   readonly pills = computed<StagePill[]>(() => {
     const c = this.change();
-    return c === null || this.held() ? [] : stagePills(c.stage, this.done(), this.docs(), { hasBranch: this.hasBranch() });
+    return c === null || this.held() ? [] : stagePills(c.stage, this.done(), this.docs());
   });
   /** The pull requests that have an address, for the toolbar's links; none while a build or a skill run holds the page. */
   readonly pullLinks = computed(() =>
@@ -306,9 +309,11 @@ export class ChangePageViewModel {
   readonly stems: readonly DocStem[] = ['intent', 'spec', 'plan'];
   /** The shown document split into its front matter fields and the text under them. */
   readonly docParts = computed(() => parseFrontMatter(this.doc() ?? ''));
+  /** The actions on show: the build page's at its stage on the Build tab, else the change's own. A done change has none. */
   readonly actions = computed(() => {
     const c = this.change();
-    return c && !this.done() ? actionsForChange(c) : [];
+    if (c === null || this.done()) return [];
+    return this.shownDoc() === 'build' ? this.build.actions() : actionsForChange(c);
   });
   /** What blocks the build, shown above the plan; null when nothing does or another document is shown. */
   readonly planBanner = computed(() => {
@@ -337,18 +342,6 @@ export class ChangePageViewModel {
   readonly stripStatus = computed<DocStatus | null>(() => {
     if (this.change() === null || this.shownDoc() === 'build') return null;
     return docStatus(this.docParts().fields.find(([key]) => key === 'status')?.[1]);
-  });
-  /** The Build tab's facts: tasks built and build runs, leaving out what the change does not have yet. */
-  readonly buildFacts = computed<string | null>(() => {
-    const w = this.current();
-    if (w === null || this.shownDoc() !== 'build') return null;
-    const tasks = this.buildTasks();
-    const runs = stageRuns(this.links(), this.records(), w.id, this.system(), this.changeName(), 'build').length;
-    const parts = [
-      tasks.length > 0 ? `${tasks.filter(isBuilt).length}/${tasks.length} tasks` : '',
-      runs > 0 ? plural(runs, 'build run', 'build runs') : '',
-    ].filter((p) => p !== '');
-    return parts.length > 0 ? parts.join(' · ') : null;
   });
   /** The page strip belongs to the document tabs; the Build tab has none, its facts and actions sit in the Changes view strip. */
   readonly stripShown = computed(() => this.shownDoc() !== 'build');
@@ -493,8 +486,6 @@ export class ChangePageViewModel {
     const left = this.pendingLeftovers();
     return left === null ? null : { lines: left.flatMap((r) => r.files.map((f) => `${r.repo}: ${f}`)) };
   });
-  /** What the build on show started from; null while the change is on show, even though the build goes on. */
-  readonly handoff = computed(() => (this.build.started() && this.build.viewing() ? this.build.current() : null));
   /** What the build view runs against: the workspace, the system and the change; null until the workspace is known. */
   readonly buildContext = computed<BuildContext | null>(() => {
     const w = this.current();
@@ -505,11 +496,6 @@ export class ChangePageViewModel {
     const systemRepos = (scan?.marker?.systems[system]?.repos ?? []).filter((r) => r !== master);
     return { workspaceId: w.id, folder: w.folder, system, change: this.changeName(), systemRepos };
   });
-  /** The engineer went back from the build to the change: read the change again. */
-  async closeBuild(): Promise<void> {
-    this.build.backToChange();
-    await this.load();
-  }
   /** What the preview asked for, kept so confirming the leftovers prepares the same build again. */
   private asked: BuildStartRequest | null = null;
   /** The build's choices that go with `asked`. */
@@ -721,7 +707,19 @@ export class ChangePageViewModel {
       this.changeName();
       untracked(() => void this.load());
     });
+    // The build page gives the lock back when the build ends or stops; the change is read again then, so its stage, pill and actions follow it.
+    effect(() => {
+      const building = this.lock.active()?.kind === 'build';
+      untracked(() => {
+        const ended = this.wasBuilding && !building;
+        this.wasBuilding = building;
+        if (ended) void this.load();
+      });
+    });
   }
+
+  /** Whether the lock was held for a build the last time it changed. */
+  private wasBuilding = false;
 
   /** `?demo=sdlc` starts the scripted spec run once the change has loaded. Browser only, never under Tauri. */
   async startDemo(demo: string | null): Promise<void> {
@@ -733,7 +731,8 @@ export class ChangePageViewModel {
   // --- actions
 
   async act(action: StageAction): Promise<void> {
-    if (this.refuseWhileLocked()) return;
+    // The build holds the lock it runs under; cancelling it is the one action that is always allowed.
+    if (action !== 'cancel-build' && this.refuseWhileLocked()) return;
     switch (action) {
       case 'accept-intent':
       case 'reject-intent':
@@ -760,13 +759,20 @@ export class ChangePageViewModel {
         await this.declareDone();
         return;
       case 'cancel-build':
-        // Wired with the build page's action bar; no screen offers it yet.
+        this.build.cancelBuild();
         return;
       default:
         // Regenerating an existing document first asks what should change; a first draft just runs.
         if (revisits(action)) this.pendingRevisit.set(action);
         else await this.runStage(action);
     }
+  }
+
+  /** A heading of the build page asked to cancel or continue its repository (or the review). */
+  repoAction(e: { repo: string; action: 'cancel' | 'continue' }): void {
+    this.build.select(e.repo);
+    if (e.action === 'cancel') this.build.cancelRun();
+    else void this.build.continueRun();
   }
 
   /** The operator confirmed the revisit, with their corrections (blank for none). */
@@ -798,7 +804,7 @@ export class ChangePageViewModel {
       // The last click wins here too: a click on Build, even when it is already shown, ends a read still pending for another tab.
       this.pickSeq++;
       this.pendingDoc.set(null);
-      if (this.shownDoc() !== 'build' && this.change() !== null && this.hasBranch()) this.picked.set('build');
+      if (this.shownDoc() !== 'build' && this.change() !== null) this.picked.set('build');
       return;
     }
     if (!isDocStem(stem) || !this.docs()[stem]) return;
@@ -1189,15 +1195,6 @@ export class ChangePageViewModel {
     }
   }
 
-  /** Whether the Changes view has any repository to list. A failed read counts as none, without a toast: the tile just stays closed. */
-  private async readHasBranch(folder: string, master: string, system: string, name: string): Promise<boolean> {
-    try {
-      return (await this.transport.sdlcChangeRepos(folder, master, system, name)).length > 0;
-    } catch {
-      return false;
-    }
-  }
-
   /** The pull request of each touched repository; a failed read is not an error, it just leaves the change unfinished. */
   private async readPullRequests(folder: string, master: string, system: string, name: string): Promise<{ states: PrState[]; failed: boolean }> {
     try {
@@ -1263,16 +1260,14 @@ export class ChangePageViewModel {
         this.transport.catalog(w.folder),
       ]);
       const found = changes.find((c) => c.change === name) ?? null;
-      const doc = found ? await this.transport.sdlcReadDoc(master, system, name, docFor(found)) : null;
-      const read = found ? await this.readParsed(master, system, name, docFor(found)) : null;
+      const doc = found ? await this.transport.sdlcReadDoc(master, system, name, stemFor(found)) : null;
+      const read = found ? await this.readParsed(master, system, name, stemFor(found)) : null;
       const status = found?.plan.exists ? await this.readStatus(master, system, name) : null;
       const readiness = await this.readReadiness(w.folder);
       const review = found?.plan.exists ? await this.readReviewRecord(master, system, name) : null;
       const checksDir = this.checksDir() ?? (await this.readChecksDir());
       const prs = found?.stage === 'build-finished' ? await this.readPullRequests(w.folder, repo, system, name) : { states: [], failed: false };
-      const branch = found !== null && ACCEPTED.has(stageLabel(found.stage).step) && (await this.readHasBranch(w.folder, repo, system, name));
       if (seq !== this.loadSeq) return;
-      this.hasBranch.set(branch);
       this.pullRequests.set(prs.states);
       this.prCheckFailed.set(prs.failed);
       this.status.set(status);

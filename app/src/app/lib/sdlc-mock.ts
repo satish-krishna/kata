@@ -345,7 +345,8 @@ export class SdlcMock {
 
   listChanges(): ChangeInfo[] {
     return this.changes.map((c) => {
-      if (c.change === MOCK_BUILD_CHANGE) return { ...c, build: { tasks: BUILD_PLAN.length, finished: this.rows.size, repos: BUILD_REPOS.length } };
+      // Like the backend, a change whose every task is in the build log has finished its build.
+      if (c.change === MOCK_BUILD_CHANGE) return { ...c, stage: this.rows.size >= BUILD_PLAN.length ? 'build-finished' : c.stage, build: { tasks: BUILD_PLAN.length, finished: this.rows.size, repos: BUILD_REPOS.length } };
       if (c.change === MOCK_DONE_CHANGE) return { ...c, build: { tasks: BUILD_PLAN.length, finished: BUILD_PLAN.length, repos: BUILD_REPOS.length } };
       return { ...c };
     });
@@ -426,7 +427,13 @@ export class SdlcMock {
       changeName === MOCK_DONE_CHANGE ? { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } : (this.rows.get(t.id) ?? null);
     const tasks: TaskStatus[] = BUILD_PLAN.map((t) => ({ ...t, dependsOn: [...t.dependsOn], text: taskText(t), row: rowOf(t) }));
     const departures = tasks.flatMap((t) => (t.row?.departure ? [{ task: t.id, repo: t.repo, planText: t.name, departure: t.row.departure }] : []));
-    return { tasks, repos: BUILD_REPOS.map((r) => this.repoStatus(r)), departures, hasTasks: true, problems: [], logLayouts: [] };
+    return { tasks, repos: BUILD_REPOS.map((r) => (changeName === MOCK_DONE_CHANGE ? this.doneRepoStatus(r) : this.repoStatus(r))), departures, hasTasks: true, problems: [], logLayouts: [] };
+  }
+
+  /** A repository of the finished change: every task of it is built. */
+  private doneRepoStatus(repo: string): RepoStatus {
+    const tasks = BUILD_PLAN.filter((t) => t.repo === repo).length;
+    return { repo, firstUnfinished: null, state: { kind: 'done' }, tasks, finished: tasks };
   }
 
   private repoStatus(repo: string): RepoStatus {
@@ -498,7 +505,9 @@ export class SdlcMock {
   }
 
   diffFiles(part: Part): DiffListing {
-    const files = DIFF_FILES.filter((f) => part === 'whole' || (part === 'uncommitted') === f.uncommitted);
+    // Once the scripted build has logged every task, its agents have committed what they left.
+    const built = this.rows.size >= BUILD_PLAN.length;
+    const files = DIFF_FILES.map((f) => (built ? { ...f, uncommitted: false } : f)).filter((f) => part === 'whole' || (part === 'uncommitted') === f.uncommitted);
     const byType = new Map<string, { extension: string; files: number; added: number; removed: number }>();
     for (const f of files.filter((x) => !x.binary)) {
       const extension = f.path.includes('.') ? f.path.slice(f.path.lastIndexOf('.') + 1) : '(none)';

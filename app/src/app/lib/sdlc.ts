@@ -479,9 +479,9 @@ const PILL_STEPS: readonly { step: PillStep; title: string }[] = [
  * The four stage pills of a change. The current step shows the stage's label and tone; steps before it read as
  * accepted and steps after it as not started. A rejected change is closed on the intent step and a done change sits
  * on the build step. A document pill is disabled until its document exists. The Build pill is locked until the plan
- * is accepted, then disabled until a repository has the change's branch.
+ * is accepted, then open.
  */
-export function stagePills(stage: Stage, done: boolean, docs: DocsPresent, build: { hasBranch: boolean }): StagePill[] {
+export function stagePills(stage: Stage, done: boolean, docs: DocsPresent): StagePill[] {
   const label = done ? DONE_LABEL : stageLabel(stage);
   const accepted = label.step === "build" || label.step === "done";
   const sitsOn = label.step === "closed" ? "intent" : label.step === "done" ? "build" : label.step;
@@ -490,9 +490,8 @@ export function stagePills(stage: Stage, done: boolean, docs: DocsPresent, build
   return PILL_STEPS.map(({ step, title }, i) => {
     const current = i === at;
     if (step === "build") {
-      const disabled = !accepted || !build.hasBranch;
       if (!accepted) return { step, title, text: "Build · locked", tone: "idle", disabled: true, current, ariaLabel: null };
-      return { step, title, text: done ? "Build · done" : label.text, tone: done ? "success" : tone, disabled, current, ariaLabel: null };
+      return { step, title, text: done ? "Build · done" : label.text, tone: done ? "success" : tone, disabled: false, current, ariaLabel: null };
     }
     const disabled = !docs[step];
     if (current) return { step, title, text: label.text, tone, disabled, current, ariaLabel: null };
