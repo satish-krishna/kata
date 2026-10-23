@@ -9,6 +9,29 @@ use super::{
 use crate::spec::RunSpec;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+
+/// The name of the plugin Kata generates to hand a dropped project's skills,
+/// agents and commands back to Claude.
+pub const CARRY_PLUGIN: &str = "kata-proj";
+
+/// How Claude names a carried-over project skill, agent or command.
+pub fn carried_name(_name: &str) -> String {
+    String::new()
+}
+
+/// What a dropped settings source hands back by other routes.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Carry {
+    /// `{ "mcpServers": { ... } }`, passed without `--strict-mcp-config`.
+    pub mcp: Option<Value>,
+    /// Files to copy into the generated plugin folder: (source, path inside it).
+    pub plugin: Vec<(PathBuf, PathBuf)>,
+    /// The folder passed as `--add-dir`.
+    pub add_dir: Option<PathBuf>,
+    /// Environment variables for the child.
+    pub env: Vec<(&'static str, &'static str)>,
+}
 
 /// What to change about a run so each switched-off item stays out of it.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -25,6 +48,8 @@ pub struct Applied {
     /// a tool server is off. The caller adds Kata's own entry and passes
     /// `--strict-mcp-config`.
     pub mcp: Option<Value>,
+    /// What a dropped settings source hands back by other routes.
+    pub carry: Option<Carry>,
     /// The run-spec's system prompt is switched off.
     pub drop_system_prompt: bool,
 }
@@ -96,7 +121,12 @@ fn kept_servers(resolved: &Resolved, roots: &ResolveRoots) -> Value {
     json!({ "mcpServers": servers })
 }
 
-pub fn apply(_spec: &RunSpec, resolved: &Resolved, roots: &ResolveRoots) -> Applied {
+pub fn apply(
+    _spec: &RunSpec,
+    resolved: &Resolved,
+    roots: &ResolveRoots,
+    _run_dir: &Path,
+) -> Applied {
     let mut out = Applied::default();
     let missing: BTreeSet<&str> = resolved.missing.iter().map(String::as_str).collect();
     let mut any_server_off = false;
@@ -232,6 +262,10 @@ mod tests {
         (spec, resolved, r)
     }
 
+    fn run(spec: &RunSpec, resolved: &Resolved, r: &ResolveRoots) -> Applied {
+        apply(spec, resolved, r, &r.workdir)
+    }
+
     fn obj(v: Value) -> Map<String, Value> {
         v.as_object().unwrap().clone()
     }
@@ -246,7 +280,7 @@ mod tests {
                 row(ItemKind::ToolServer, Source::Personal, "a", None, false),
             ],
         );
-        assert_eq!(apply(&spec, &resolved, &r), Applied::default());
+        assert_eq!(run(&spec, &resolved, &r), Applied::default());
     }
 
     #[test]
@@ -264,7 +298,7 @@ mod tests {
             kit_skip: ["triage".to_string(), "kata".to_string()].into(),
             ..Applied::default()
         };
-        assert_eq!(apply(&spec, &resolved, &r), want);
+        assert_eq!(run(&spec, &resolved, &r), want);
     }
 
     #[test]
@@ -291,7 +325,7 @@ mod tests {
             }})),
             ..Applied::default()
         };
-        assert_eq!(apply(&spec, &resolved, &r), want);
+        assert_eq!(run(&spec, &resolved, &r), want);
     }
 
     #[test]
@@ -329,7 +363,7 @@ mod tests {
             ),
             ..Applied::default()
         };
-        assert_eq!(apply(&spec, &resolved, &r), want);
+        assert_eq!(run(&spec, &resolved, &r), want);
     }
 
     #[test]
@@ -349,7 +383,7 @@ mod tests {
             settings: obj(json!({"outputStyle": "default"})),
             ..Applied::default()
         };
-        assert_eq!(apply(&spec, &resolved, &r), want);
+        assert_eq!(run(&spec, &resolved, &r), want);
     }
 
     #[test]
@@ -369,88 +403,362 @@ mod tests {
             drop_system_prompt: true,
             ..Applied::default()
         };
-        assert_eq!(apply(&spec, &resolved, &r), want);
+        assert_eq!(run(&spec, &resolved, &r), want);
+    }
+
+    use crate::given::{hook_key, LockReason};
+
+    const ADD_DIR_ENV: (&str, &str) = ("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD", "1");
+
+    fn entry(cmd: &str) -> Value {
+        json!({"matcher": "Bash", "hooks": [{"type": "command", "command": cmd}]})
+    }
+
+    fn hook_row(source: Source, cmd: &str, off: bool) -> ResolvedItem {
+        row(
+            ItemKind::Hook,
+            source,
+            &hook_key("PreToolUse", Some("Bash"), cmd),
+            None,
+            off,
+        )
+    }
+
+    fn locked(mut item: ResolvedItem) -> ResolvedItem {
+        item.lock = Some(LockReason::Unswitchable {
+            text: "fixed".into(),
+        });
+        item
+    }
+
+    /// Project hooks `a` and `b`, local hook `c`, written under the workdir.
+    fn project_with_hooks(r: &ResolveRoots) {
+        write(
+            &r.workdir.join(".claude/settings.json"),
+            &json!({"model": "haiku", "hooks": {"PreToolUse": [entry("a"), entry("b")]}})
+                .to_string(),
+        );
+        write(
+            &r.workdir.join(".claude/settings.local.json"),
+            &json!({"env": {"X": "1"}, "hooks": {"PreToolUse": [entry("c")]}}).to_string(),
+        );
+    }
+
+    fn project_carry(run_dir: &Path) -> Option<Carry> {
+        Some(Carry {
+            add_dir: Some(run_dir.to_path_buf()),
+            env: vec![ADD_DIR_ENV],
+            ..Carry::default()
+        })
     }
 
     #[test]
-    fn a_switched_off_tool_server_leaves_the_kept_ones_verbatim() {
+    fn a_tool_server_off_is_denied_by_name_and_no_strict_file_is_written() {
         let td = tempfile::tempdir().unwrap();
-        let r = roots(td.path());
-        let work_key = r.workdir.to_string_lossy().replace('\\', "/");
+        let (spec, resolved, r) = with_items(
+            td.path(),
+            vec![
+                row(ItemKind::ToolServer, Source::Personal, "a", None, true),
+                row(ItemKind::ToolServer, Source::Project, "b", None, true),
+                row(ItemKind::ToolServer, Source::ProjectLocal, "c", None, true),
+                row(ItemKind::ToolServer, Source::Personal, "kept", None, false),
+            ],
+        );
+        let want = Applied {
+            settings: obj(json!({"deniedMcpServers": [
+                {"serverName": "a"}, {"serverName": "b"}, {"serverName": "c"}
+            ]})),
+            ..Applied::default()
+        };
+        assert_eq!(run(&spec, &resolved, &r), want);
+    }
+
+    #[test]
+    fn no_hook_off_drops_no_source() {
+        let td = tempfile::tempdir().unwrap();
+        let (spec, resolved, r) = with_items(
+            td.path(),
+            vec![
+                hook_row(Source::Project, "a", false),
+                hook_row(Source::ProjectLocal, "c", false),
+            ],
+        );
+        project_with_hooks(&r);
+        assert_eq!(run(&spec, &resolved, &r), Applied::default());
+    }
+
+    #[test]
+    fn a_project_hook_off_drops_the_project_source_and_carries_it_over() {
+        let td = tempfile::tempdir().unwrap();
+        let (spec, resolved, r) = with_items(
+            td.path(),
+            vec![
+                hook_row(Source::Project, "a", true),
+                hook_row(Source::Project, "b", false),
+                hook_row(Source::ProjectLocal, "c", false),
+            ],
+        );
+        project_with_hooks(&r);
+        let run_dir = td.path().join("run");
+        let want = Applied {
+            setting_sources: Some(vec!["user", "local"]),
+            settings: obj(json!({"model": "haiku", "hooks": {"PreToolUse": [entry("b")]}})),
+            carry: project_carry(&run_dir),
+            ..Applied::default()
+        };
+        assert_eq!(apply(&spec, &resolved, &r, &run_dir), want);
+    }
+
+    #[test]
+    fn a_local_hook_off_drops_the_local_source_and_carries_only_its_settings() {
+        let td = tempfile::tempdir().unwrap();
+        let (spec, resolved, r) = with_items(
+            td.path(),
+            vec![
+                hook_row(Source::Project, "a", false),
+                hook_row(Source::ProjectLocal, "c", true),
+            ],
+        );
+        project_with_hooks(&r);
+        let want = Applied {
+            setting_sources: Some(vec!["user", "project"]),
+            settings: obj(json!({"env": {"X": "1"}})),
+            ..Applied::default()
+        };
+        assert_eq!(run(&spec, &resolved, &r), want);
+    }
+
+    #[test]
+    fn both_hooks_off_drop_both_sources_and_carry_both_over() {
+        let td = tempfile::tempdir().unwrap();
+        let (spec, resolved, r) = with_items(
+            td.path(),
+            vec![
+                hook_row(Source::Project, "a", true),
+                hook_row(Source::Project, "b", false),
+                hook_row(Source::ProjectLocal, "c", true),
+            ],
+        );
+        project_with_hooks(&r);
+        let run_dir = td.path().join("run");
+        let want = Applied {
+            setting_sources: Some(vec!["user"]),
+            settings: obj(json!({
+                "model": "haiku",
+                "env": {"X": "1"},
+                "hooks": {"PreToolUse": [entry("b")]}
+            })),
+            carry: project_carry(&run_dir),
+            ..Applied::default()
+        };
+        assert_eq!(apply(&spec, &resolved, &r, &run_dir), want);
+    }
+
+    #[test]
+    fn a_re_routed_scalar_keeps_the_effective_value() {
+        let td = tempfile::tempdir().unwrap();
+        let (spec, resolved, r) = with_items(
+            td.path(),
+            vec![
+                hook_row(Source::Project, "a", true),
+                hook_row(Source::Project, "b", false),
+            ],
+        );
         write(
-            &r.claude_json,
+            &r.home.join(".claude/settings.json"),
+            &json!({"model": "opus"}).to_string(),
+        );
+        write(
+            &r.workdir.join(".claude/settings.json"),
             &json!({
-                "mcpServers": {
-                    "off-personal": {"command": "a"},
-                    "keep-personal": {"command": "b", "env": {"K": "secret"}}
-                },
-                "projects": {work_key: {"mcpServers": {
-                    "keep-local": {"type": "http", "url": "https://x"},
-                    "off-local": {"command": "c"}
-                }}}
+                "model": "haiku",
+                "env": {"K": "project"},
+                "hooks": {"PreToolUse": [entry("a"), entry("b")]}
             })
             .to_string(),
         );
         write(
-            &r.workdir.join(".mcp.json"),
+            &r.workdir.join(".claude/settings.local.json"),
+            &json!({"model": "sonnet", "env": {"K": "local"}}).to_string(),
+        );
+        let applied = run(&spec, &resolved, &r);
+        assert_eq!(
+            Value::Object(applied.settings),
+            json!({
+                "model": "sonnet",
+                "env": {"K": "local"},
+                "hooks": {"PreToolUse": [entry("b")]}
+            })
+        );
+    }
+
+    fn project_with_files(r: &ResolveRoots) {
+        project_with_hooks(r);
+        let w = &r.workdir;
+        write(&w.join(".claude/skills/projskill/SKILL.md"), "skill");
+        write(&w.join(".claude/skills/projskill/ref/notes.md"), "notes");
+        write(&w.join(".claude/agents/projagent.md"), "agent");
+        write(&w.join(".claude/commands/projcmd.md"), "command");
+        write(
+            &w.join(".mcp.json"),
             &json!({"mcpServers": {
-                "keep-project": {"command": "d", "args": ["--x"]},
-                "off-project": {"command": "e"}
+                "srv-a": {"command": "a", "env": {"K": "secret"}},
+                "srv-b": {"command": "b"}
             }})
             .to_string(),
         );
-        let mut spec = spec_for(&r);
-        spec.auth.bare = false;
-        spec.given = Some(crate::spec::Given {
-            tool_servers: vec![
-                item_id(ItemKind::ToolServer, Source::Personal, "off-personal"),
-                item_id(ItemKind::ToolServer, Source::ProjectLocal, "off-local"),
-                item_id(ItemKind::ToolServer, Source::Project, "off-project"),
-            ],
-            ..Default::default()
-        });
-        let resolved = resolve(&spec, &r, &ResolveOptions::default());
-        let want = Applied {
-            mcp: Some(json!({"mcpServers": {
-                "keep-personal": {"command": "b", "env": {"K": "secret"}},
-                "keep-project": {"command": "d", "args": ["--x"]},
-                "keep-local": {"type": "http", "url": "https://x"}
-            }})),
-            ..Applied::default()
-        };
-        assert_eq!(apply(&spec, &resolved, &r), want);
-        // The secret is in the result for the run, never in what the UI reads.
-        assert!(!serde_json::to_string(&resolved).unwrap().contains("secret"));
     }
 
     #[test]
-    fn a_hook_or_on_disk_skill_marked_off_is_ignored() {
+    fn carrying_the_project_over_lists_its_skills_agents_and_commands_and_its_mcp_json_servers() {
         let td = tempfile::tempdir().unwrap();
-        let mut follower = row(ItemKind::Skill, Source::Plugin, "p@m:s", None, true);
-        follower.brought_by = Some("personal:plugin:p@m".into());
+        let (spec, resolved, r) = with_items(td.path(), vec![hook_row(Source::Project, "a", true)]);
+        project_with_files(&r);
+        let run_dir = td.path().join("run");
+        let carry = apply(&spec, &resolved, &r, &run_dir).carry.unwrap();
+        let pair = |src: &str, dest: &[&str]| {
+            (
+                run_dir.join(".claude").join(src),
+                dest.iter().collect::<PathBuf>(),
+            )
+        };
+        assert_eq!(
+            carry.plugin,
+            vec![
+                pair(
+                    "skills/projskill/SKILL.md",
+                    &["skills", "projskill", "SKILL.md"]
+                ),
+                pair(
+                    "skills/projskill/ref/notes.md",
+                    &["skills", "projskill", "ref", "notes.md"]
+                ),
+                pair("agents/projagent.md", &["agents", "projagent.md"]),
+                pair("commands/projcmd.md", &["commands", "projcmd.md"]),
+            ]
+        );
+        assert_eq!(
+            carry.mcp,
+            Some(json!({"mcpServers": {
+                "srv-a": {"command": "a", "env": {"K": "secret"}},
+                "srv-b": {"command": "b"}
+            }}))
+        );
+        assert_eq!(carry.add_dir, Some(run_dir));
+        assert_eq!(carry.env, vec![ADD_DIR_ENV]);
+    }
+
+    #[test]
+    fn a_carried_over_server_that_is_switched_off_is_not_carried() {
+        let td = tempfile::tempdir().unwrap();
         let (spec, resolved, r) = with_items(
             td.path(),
             vec![
+                hook_row(Source::Project, "a", true),
+                row(ItemKind::ToolServer, Source::Project, "srv-b", None, true),
+            ],
+        );
+        project_with_files(&r);
+        let applied = run(&spec, &resolved, &r);
+        assert_eq!(
+            applied.carry.unwrap().mcp,
+            Some(json!({"mcpServers": {"srv-a": {"command": "a", "env": {"K": "secret"}}}}))
+        );
+        assert_eq!(
+            applied.settings["deniedMcpServers"],
+            json!([{"serverName": "srv-b"}])
+        );
+    }
+
+    #[test]
+    fn paths_are_rewritten_under_the_folder_claude_runs_in() {
+        let td = tempfile::tempdir().unwrap();
+        let r = roots(td.path());
+        let inside = r.workdir.join("CLAUDE.md");
+        let (spec, resolved, r) = with_items(
+            td.path(),
+            vec![
+                hook_row(Source::Project, "a", true),
                 row(
-                    ItemKind::Hook,
+                    ItemKind::Instruction,
                     Source::Project,
-                    "PreToolUse:Bash:00ff",
-                    None,
+                    "CLAUDE.md",
+                    Some(&inside.to_string_lossy()),
                     true,
                 ),
-                row(ItemKind::Skill, Source::Personal, "s", None, true),
-                row(ItemKind::Skill, Source::Project, "t", None, true),
-                follower,
                 row(
-                    ItemKind::ToolServer,
-                    Source::Organization,
-                    "org",
-                    None,
+                    ItemKind::Instruction,
+                    Source::Personal,
+                    "CLAUDE.md",
+                    Some("/home/u/.claude/CLAUDE.md"),
                     true,
                 ),
             ],
         );
-        assert_eq!(apply(&spec, &resolved, &r), Applied::default());
+        project_with_files(&r);
+        let run_dir = td.path().join("wt");
+        let applied = apply(&spec, &resolved, &r, &run_dir);
+        let moved = run_dir
+            .join("CLAUDE.md")
+            .to_string_lossy()
+            .replace('\\', "/");
+        assert_eq!(
+            applied.settings["claudeMdExcludes"],
+            json!([moved, "/home/u/.claude/CLAUDE.md"])
+        );
+        let carry = applied.carry.unwrap();
+        assert_eq!(carry.add_dir, Some(run_dir.clone()));
+        assert!(!carry.plugin.is_empty());
+        assert!(carry
+            .plugin
+            .iter()
+            .all(|(src, _)| src.starts_with(&run_dir)));
+    }
+
+    #[test]
+    fn an_item_locked_by_the_lock_table_is_never_applied_even_if_listed_off() {
+        let td = tempfile::tempdir().unwrap();
+        let (spec, resolved, r) = with_items(
+            td.path(),
+            vec![
+                locked(row(ItemKind::Plugin, Source::Personal, "p@m", None, true)),
+                locked(hook_row(Source::Project, "a", true)),
+                locked(row(ItemKind::ToolServer, Source::Personal, "s", None, true)),
+                locked(row(ItemKind::Plugin, Source::RunSpec, "kata", None, true)),
+                locked(row(
+                    ItemKind::Instruction,
+                    Source::RunSpec,
+                    "system-prompt",
+                    None,
+                    true,
+                )),
+            ],
+        );
+        project_with_hooks(&r);
+        assert_eq!(run(&spec, &resolved, &r), Applied::default());
+    }
+
+    #[test]
+    fn an_item_that_goes_off_with_a_hook_is_not_applied_on_its_own() {
+        let td = tempfile::tempdir().unwrap();
+        let hook = hook_row(Source::Project, "a", false);
+        let mut nested = row(
+            ItemKind::Instruction,
+            Source::Project,
+            "sub/CLAUDE.md",
+            Some("/ws/sub/CLAUDE.md"),
+            true,
+        );
+        nested.goes_off_with = vec![hook.id.clone()];
+        let (spec, resolved, r) = with_items(td.path(), vec![hook, nested]);
+        project_with_hooks(&r);
+        assert_eq!(run(&spec, &resolved, &r), Applied::default());
+    }
+
+    #[test]
+    fn carried_name_prefixes_the_carry_plugin() {
+        assert_eq!(CARRY_PLUGIN, "kata-proj");
+        assert_eq!(carried_name("projskill"), "kata-proj:projskill");
     }
 
     #[test]
@@ -461,7 +769,7 @@ mod tests {
             vec![row(ItemKind::Plugin, Source::RunSpec, "gone", None, true)],
         );
         resolved.missing = vec![item_id(ItemKind::Plugin, Source::RunSpec, "gone")];
-        assert_eq!(apply(&spec, &resolved, &r), Applied::default());
+        assert_eq!(run(&spec, &resolved, &r), Applied::default());
     }
 
     #[test]

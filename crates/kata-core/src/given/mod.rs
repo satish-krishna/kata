@@ -9,7 +9,7 @@ pub mod items;
 pub use items::goes_off_with;
 pub use settings::{hook_detail, HookAction, ItemFacts, SettingsLayer};
 pub mod apply;
-pub use apply::{apply, merge_settings, Applied};
+pub use apply::{apply, carried_name, merge_settings, Applied, Carry, CARRY_PLUGIN};
 pub mod lock;
 pub mod resolve;
 pub mod status;
