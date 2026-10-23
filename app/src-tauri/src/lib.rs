@@ -41,11 +41,11 @@ fn catalog(workdir: Option<String>) -> Vec<CatalogEntry> {
 /// What the run would be given, resolved against the spec's own workdir. Holds
 /// names only, never an environment value.
 #[tauri::command]
-fn preview_run(spec: RunSpec, required_plugins: Vec<String>) -> Resolved {
+fn preview_run(spec: RunSpec) -> Resolved {
     given::resolve(
         &spec,
         &ResolveRoots::for_spec(&spec),
-        &ResolveOptions { required_plugins },
+        &ResolveOptions::default(),
     )
 }
 
@@ -1040,7 +1040,7 @@ name: build
             workdir: dir.to_string_lossy().into_owned(),
             ..RunSpec::default()
         };
-        let resolved = preview_run(spec, vec![]);
+        let resolved = preview_run(spec);
         let _ = std::fs::remove_dir_all(&dir);
         assert!(
             resolved
@@ -1049,6 +1049,36 @@ name: build
                 .any(|i| i.id == "project:skill:preview-probe"),
             "items: {:?}",
             resolved.items.iter().map(|i| &i.id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn preview_run_reads_the_options_from_the_spec() {
+        use kata_core::given::LockReason;
+        let dir = std::env::temp_dir().join(format!("kata-preview-opts-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut plugins = std::collections::BTreeMap::new();
+        plugins.insert("ai-sdlc".to_string(), spec::PluginConfig::default());
+        let spec = RunSpec {
+            workdir: dir.to_string_lossy().into_owned(),
+            plugins,
+            given: Some(spec::Given {
+                required_plugins: vec!["ai-sdlc".into()],
+                ..spec::Given::default()
+            }),
+            ..RunSpec::default()
+        };
+        let resolved = preview_run(spec);
+        let _ = std::fs::remove_dir_all(&dir);
+        let item = resolved
+            .items
+            .iter()
+            .find(|i| i.kind == given::ItemKind::Plugin && i.name == "ai-sdlc")
+            .expect("the ai-sdlc plugin is listed");
+        assert!(
+            matches!(item.lock, Some(LockReason::Required { .. })),
+            "{:?}",
+            item.lock
         );
     }
 }

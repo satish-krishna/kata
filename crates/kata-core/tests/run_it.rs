@@ -2636,6 +2636,46 @@ fn model_and_posture_come_from_claudes_start_report() {
     assert_eq!(settings.time_limit.source, SettingSource::KataDefault);
 }
 
+// T17: the engine resolves with the options the spec carries, so its record
+// locks a required plugin exactly as the preview does.
+#[test]
+#[serial]
+fn the_engines_record_locks_the_required_plugin_like_the_preview() {
+    let rig = Rig::new();
+    let cache = rig.home.parent().unwrap().join("cache/ai-sdlc");
+    write_file(
+        &cache.join(".claude-plugin/plugin.json"),
+        r#"{"name":"ai-sdlc","description":"the ai-sdlc plugin"}"#,
+    );
+    write_file(
+        &rig.home.join(".claude/plugins/installed_plugins.json"),
+        &serde_json::json!({"version": 2, "plugins": {"ai-sdlc@mkt": [
+            {"scope": "user", "installPath": cache.to_string_lossy(), "version": "1"}
+        ]}})
+        .to_string(),
+    );
+    write_file(
+        &rig.home.join(".claude/settings.json"),
+        &serde_json::json!({"enabledPlugins": {"ai-sdlc@mkt": true}}).to_string(),
+    );
+    let mut spec = rig.spec();
+    spec.given = given_with(|g| g.required_plugins.push("ai-sdlc".into()));
+    let events = rig.run_events(&spec, "ok", |_| {});
+    let given = given_events(&events);
+    let item = given
+        .last()
+        .expect("a run.given")
+        .0
+        .iter()
+        .find(|i| i.kind == ItemKind::Plugin && i.name == "ai-sdlc")
+        .expect("the ai-sdlc plugin is listed");
+    assert!(
+        matches!(item.lock, Some(LockReason::Required { .. })),
+        "{:?}",
+        item.lock
+    );
+}
+
 // R16.1: a hook added on disk after run.started is in no run.given of this
 // run, and is in the next resolve.
 #[test]

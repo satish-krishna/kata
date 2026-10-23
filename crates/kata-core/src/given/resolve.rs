@@ -17,6 +17,17 @@ pub struct ResolveOptions {
     /// Workbench passes `["ai-sdlc"]` for an AI-SDLC run; the CLI passes none.
     #[serde(default)]
     pub required_plugins: Vec<String>,
+    /// True for a build run.
+    #[serde(default)]
+    pub build: bool,
+}
+
+impl ResolveOptions {
+    /// The options a spec asks for: its `given.required_plugins` and `given.build`
+    /// (none and false when `given` is absent).
+    pub fn from_spec(_spec: &RunSpec) -> ResolveOptions {
+        ResolveOptions::default()
+    }
 }
 
 /// One item the run will be given. `lock` is the only authority on whether the
@@ -296,6 +307,29 @@ mod tests {
             managed_settings: dir.join("managed").join("managed-settings.json"),
             claude_json: dir.join("home").join(".claude.json"),
         }
+    }
+
+    #[test]
+    fn from_spec_reads_required_plugins_and_build() {
+        assert_eq!(
+            ResolveOptions::from_spec(&RunSpec::default()),
+            ResolveOptions::default()
+        );
+        let spec = RunSpec {
+            given: Some(Given {
+                required_plugins: vec!["ai-sdlc".into()],
+                build: true,
+                ..Given::default()
+            }),
+            ..RunSpec::default()
+        };
+        assert_eq!(
+            ResolveOptions::from_spec(&spec),
+            ResolveOptions {
+                required_plugins: vec!["ai-sdlc".into()],
+                build: true
+            }
+        );
     }
 
     fn spec_for(r: &ResolveRoots) -> RunSpec {

@@ -89,6 +89,16 @@ pub struct Given {
     pub instructions: Vec<String>,
     #[serde(default)]
     pub tool_servers: Vec<String>,
+    /// Plugin names (without a marketplace) the run cannot work without. The
+    /// Workbench writes `["ai-sdlc"]` for an AI-SDLC run; such a plugin is shown
+    /// locked on and cannot be listed as switched off.
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_plugins: Vec<String>,
+    /// True for a build run, which keeps the project's hooks on.
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<bool>"))]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub build: bool,
 }
 
 impl Default for RunSpec {
@@ -976,6 +986,82 @@ isolation = "worktree"
             g.tool_servers.push("project-local:tool-server:srv".into());
         });
         assert_eq!(validate(&ok), Ok(()));
+    }
+
+    #[test]
+    fn given_round_trips_without_the_new_fields() {
+        let spec = given_spec(|g| g.skills.push("run-spec:skill:x".into()));
+        let text = to_toml(&spec).unwrap();
+        assert!(!text.contains("required_plugins"), "{text}");
+        assert!(!text.contains("build"), "{text}");
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(
+            !json.contains("required_plugins") && !json.contains("\"build\""),
+            "{json}"
+        );
+        let back: RunSpec = toml::from_str(&text).unwrap();
+        assert_eq!(back, spec);
+        let with = given_spec(|g| {
+            g.required_plugins.push("ai-sdlc".into());
+            g.build = true;
+        });
+        let text = to_toml(&with).unwrap();
+        assert!(
+            text.contains("required_plugins") && text.contains("build = true"),
+            "{text}"
+        );
+        assert_eq!(toml::from_str::<RunSpec>(&text).unwrap(), with);
+    }
+
+    #[test]
+    fn validate_refuses_a_required_plugin_listed_as_switched_off() {
+        let spec = given_spec(|g| {
+            g.required_plugins.push("ai-sdlc".into());
+            g.plugins.push("personal:plugin:ai-sdlc@mkt".into());
+        });
+        let errs = validate(&spec).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.contains("personal:plugin:ai-sdlc@mkt")
+                && e.contains("AI-SDLC runs work through this plugin")),
+            "{errs:?}"
+        );
+        let other = given_spec(|g| {
+            g.required_plugins.push("ai-sdlc".into());
+            g.plugins.push("personal:plugin:other@mkt".into());
+        });
+        assert_eq!(validate(&other), Ok(()));
+    }
+
+    #[test]
+    fn validate_refuses_a_project_hook_switched_off_in_a_build_run() {
+        for id in [
+            "project:hook:Stop:*:0123456789abcdef",
+            "project-local:hook:Stop:*:0123456789abcdef",
+        ] {
+            let spec = given_spec(|g| {
+                g.build = true;
+                g.hooks.push(id.into());
+            });
+            let errs = validate(&spec).unwrap_err();
+            assert!(
+                errs.iter().any(|e| e.contains(id)
+                    && e.contains(
+                        "a build keeps the project's hooks, which may guard what it edits"
+                    )),
+                "{errs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_accepts_a_project_hook_switched_off_outside_a_build_run() {
+        let spec = given_spec(|g| g.hooks.push("project:hook:Stop:*:0123456789abcdef".into()));
+        assert_eq!(validate(&spec), Ok(()));
+        let personal = given_spec(|g| {
+            g.build = true;
+            g.hooks.push("personal:hook:Stop:*:0123456789abcdef".into());
+        });
+        assert_eq!(validate(&personal), Ok(()));
     }
 
     #[test]

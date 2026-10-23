@@ -123,6 +123,7 @@ mod tests {
     fn sdlc() -> ResolveOptions {
         ResolveOptions {
             required_plugins: vec!["ai-sdlc".to_string()],
+            ..ResolveOptions::default()
         }
     }
 
