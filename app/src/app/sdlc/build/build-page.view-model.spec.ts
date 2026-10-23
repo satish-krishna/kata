@@ -1369,4 +1369,19 @@ describe('the build page shows tasks and sessions from the build log, the run li
     await advance(100);
     expect(vm.view().areas.files).toBe(false);
   });
+
+  it('every live session stays in the view, hidden, whatever is picked', async () => {
+    const { vm, transport } = setup();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    const idOf = (key: string) => vm.groups().find((g) => g.key === key)!.runs[0].id;
+    const [core, portal] = [idOf('claims-core'), idOf('customer-portal')];
+    const find = (id: string) => vm.view().sessions.find((x) => x.id === id);
+    vm.choose({ kind: 'repo', repo: 'claims-core' });
+    expect(find(core)?.shown).not.toBe(false);
+    expect(find(portal)?.shown).toBe(false);
+    vm.choose({ kind: 'repo', repo: 'customer-portal' });
+    expect(find(portal)?.shown).not.toBe(false);
+    expect(find(core)?.shown).toBe(false);
+  });
 });
