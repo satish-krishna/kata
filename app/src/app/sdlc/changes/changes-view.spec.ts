@@ -119,7 +119,7 @@ describe('ChangesView', () => {
     await settle();
     await turns(1);
     const called = spies.filter(([, s]) => s.mock.calls.length > 0).map(([n]) => n);
-    expect(called.sort()).toEqual(['sdlcChangeRepos', 'sdlcDiffBase', 'sdlcDiffFiles', 'sdlcDiffPair', 'sdlcMissingChangeBranches']);
+    expect(called.sort()).toEqual(['sdlcChangeRepos', 'sdlcCommitFiles', 'sdlcDiffBase', 'sdlcDiffFiles', 'sdlcDiffPair', 'sdlcMissingChangeBranches']);
   });
 
   it('parts toggle switches the listed files (R7.6)', async () => {
@@ -278,7 +278,7 @@ describe('ChangesView', () => {
     });
     expect(paths()).toEqual(['src/attachments.rs', 'src/store.rs']);
     expect(container.querySelectorAll('app-repo-file-list [data-repo]')).toHaveLength(1);
-    expect(norm(container.querySelector('[data-untied-line]')?.textContent ?? null)).toBe('3 files in claims-core are not tied to a task Show them');
+    expect(norm(container.querySelector('[data-untied-line] > span')?.textContent ?? null)).toBe('3 files in claims-core are not tied to a task');
     button('Show them')!.click();
     await settle();
     expect(paths()).toEqual(['src/attachments.rs', 'src/store.rs', 'src/limits.rs', 'notes/todo.txt', 'assets/sample.png']);

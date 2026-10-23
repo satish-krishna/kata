@@ -20,42 +20,67 @@
       @if (g.expanded) {
         <ul class="k-files__list" [attr.aria-label]="'Files changed in ' + g.repo">
           @for (f of g.files; track f.path) {
-            <li>
-              <button
-                hlmBtn
-                variant="bare"
-                size="bare"
-                type="button"
-                class="k-files__file"
-                [attr.data-file]="f.path"
-                [attr.title]="f.path"
-                [attr.aria-current]="isSelected(g.repo, f.path) ? 'true' : null"
-                (click)="select.emit({ repo: g.repo, path: f.path })"
-              >
-                <span [class]="'k-mono k-files__letter k-files__letter--' + status[f.status].tone" data-status aria-hidden="true">{{ status[f.status].letter }}</span>
-                <span class="sr-only">{{ status[f.status].name }}</span>
-                <span class="sr-only" data-fullpath>{{ f.path }}</span>
-                @let parts = splitPath(f.path);
-                <span class="k-files__path">
-                  <span class="k-mono k-files__file-name" data-name aria-hidden="true">{{ parts.name }}</span>
-                  @if (parts.folder !== "") {
-                    <span class="k-mono k-files__folder" data-folder aria-hidden="true"><bdi>{{ parts.folder }}</bdi></span>
-                  }
-                </span>
-                @if (f.uncommitted) {
-                  <span class="k-files__dot" data-uncommitted aria-hidden="true"></span>
-                  <span class="sr-only">Uncommitted</span>
-                }
-                @if (f.binary) {
-                  <span class="k-mono k-files__lines" data-lines>bin</span>
-                } @else {
-                  <span class="k-mono k-files__lines" data-lines>+{{ f.added }} −{{ f.removed }}</span>
-                }
-              </button>
+            <li><ng-container [ngTemplateOutlet]="fileRow" [ngTemplateOutletContext]="{ $implicit: f, repo: g.repo }" /></li>
+          }
+          @if (g.untied !== null) {
+            <li class="k-files__untied-line" data-untied-line>
+              <span class="k-mono">{{ g.untied.length }} {{ g.untied.length === 1 ? 'file' : 'files' }} in {{ g.repo }} {{ g.untied.length === 1 ? 'is' : 'are' }} not tied to a task</span>
+              @if (!g.untiedShown && g.untied.length > 0) {
+                <button hlmBtn variant="secondary" size="sm" type="button" (click)="showUntied.emit(g.repo)">Show them</button>
+              }
             </li>
+            @if (g.untiedShown) {
+              @for (f of g.untied; track f.path) {
+                <li><ng-container [ngTemplateOutlet]="fileRow" [ngTemplateOutletContext]="{ $implicit: f, repo: g.repo }" /></li>
+              }
+            }
           }
         </ul>
       }
     </li>
   }
 </ul>
+
+<ng-template #fileRow let-f let-repo="repo">
+  <button
+    hlmBtn
+    variant="bare"
+    size="bare"
+    type="button"
+    class="k-files__file"
+    [attr.data-file]="f.path"
+    [attr.title]="f.path"
+    [attr.aria-current]="isSelected(repo, f.path) ? 'true' : null"
+    (click)="select.emit({ repo, path: f.path })"
+  >
+    <span [class]="'k-mono k-files__letter k-files__letter--' + statusOf(f.status).tone" data-status aria-hidden="true">{{ statusOf(f.status).letter }}</span>
+    <span class="sr-only">{{ statusOf(f.status).name }}</span>
+    <span class="sr-only" data-fullpath>{{ f.path }}</span>
+    @let parts = splitPath(f.path);
+    <span class="k-files__path">
+      <span class="k-mono k-files__file-name" data-name aria-hidden="true">{{ parts.name }}</span>
+      @if (parts.folder !== "") {
+        <span class="k-mono k-files__folder" data-folder aria-hidden="true"><bdi>{{ parts.folder }}</bdi></span>
+      }
+      <span class="k-files__ties">
+        @if (f.tasks.length > 0) {
+          <span class="k-mono" data-tasks>{{ f.tasks.join(', ') }}</span>
+        } @else {
+          <span data-untied>not tied to a task</span>
+        }
+        @if (f.left) {
+          <span class="k-files__left" data-left>left by the stopped run</span>
+        }
+      </span>
+    </span>
+    @if (f.uncommitted) {
+      <span class="k-files__dot" data-uncommitted aria-hidden="true"></span>
+      <span class="sr-only">Uncommitted</span>
+    }
+    @if (f.binary) {
+      <span class="k-mono k-files__lines" data-lines>bin</span>
+    } @else {
+      <span class="k-mono k-files__lines" data-lines>+{{ f.added }} −{{ f.removed }}</span>
+    }
+  </button>
+</ng-template>

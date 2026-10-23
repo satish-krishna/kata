@@ -460,6 +460,9 @@
 .k-files__letter--idle { color: var(--text-secondary); }
 .k-files__dot { width: var(--space-3); height: var(--space-3); border-radius: var(--radius-full); background: var(--warning); }
 .k-files__lines { color: var(--text-muted); white-space: nowrap; }
+.k-files__ties { display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: var(--text-xs); color: var(--text-muted); }
+.k-files__left { color: var(--warning-text); }
+.k-files__untied-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-4); font-size: var(--text-xs); color: var(--text-muted); }
 .k-diffbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .k-diffbar__file, .k-diffbar__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
 .k-diffbar__rename, .k-diffbar__folder { color: var(--text-muted); }

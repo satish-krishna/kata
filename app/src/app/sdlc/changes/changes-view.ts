@@ -51,6 +51,18 @@ export class ChangesView {
       untracked(() => void this.vm.open(ctx));
     });
     effect(() => {
+      const rows = this.rows();
+      untracked(() => this.vm.setRows(rows));
+    });
+    effect(() => {
+      const stopped = this.stopped();
+      untracked(() => this.vm.setStopped(stopped));
+    });
+    effect(() => {
+      const task = this.task();
+      untracked(() => this.vm.setTask(task));
+    });
+    effect(() => {
       const turns = this.turns();
       untracked(() => void this.vm.noteTurns(turns));
     });

@@ -1,16 +1,19 @@
 import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
 import type { BaseInfo } from '@bindings/BaseInfo';
+import type { BuildRow } from '@bindings/BuildRow';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { ChangedFile } from '@bindings/ChangedFile';
+import type { CommitFiles } from '@bindings/CommitFiles';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { FileTypeStats } from '@bindings/FileTypeStats';
 import type { Part } from '@bindings/Part';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
+import { tieFiles } from '../../lib/file-ties';
 import type { DiffLayout } from '../../ui/diff-bar';
 import type { StepRequest } from '../../ui/diff-editor/diff-editor';
-import type { FileRef, RepoFileGroup } from '../../ui/repo-file-list';
+import type { FileRef, RepoFile, RepoFileGroup } from '../../ui/repo-file-list';
 
 /** What the Changes view looks at: the workspace folder, its master repository, and the system's change. */
 export type ChangesContext = { folder: string; masterRepo: string; system: string; change: string };
@@ -24,6 +27,7 @@ export const PART_OPTIONS: { value: Part; label: string }[] = [
 /** Below this width the list stacks above the diff and the editor is always inline (Tailwind's `md` breakpoint). */
 const NARROW = '(max-width: 767.98px)';
 const NO_FILES: ChangedFile[] = [];
+const NO_COMMITS: CommitFiles[] = [];
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /** How a reload treats the open file: leave it alone, show it for the new part, or keep up with it. */
@@ -53,6 +57,14 @@ export class ChangesViewModel {
   readonly part = signal<Part>('whole');
   private readonly listings = signal<Record<string, DiffListing>>({});
   private readonly bases = signal<Record<string, BaseInfo>>({});
+  /** The commits of each repository and the files each touched; a repository whose commits could not be read has none, so its files stay untied. */
+  private readonly commits = signal<Record<string, CommitFiles[]>>({});
+  /** The part the current listings were read for, which the ties are computed for. */
+  private readonly listedPart = signal<Part>('whole');
+  private readonly rows = signal<BuildRow[]>([]);
+  private readonly stopped = signal<readonly string[]>([]);
+  private readonly picked = signal<{ id: string; repo: string } | null>(null);
+  private readonly untiedShown = signal(false);
   private readonly expanded = signal<readonly string[]>([]);
   private readonly activeName = signal<string | null>(null);
 
@@ -102,15 +114,28 @@ export class ChangesViewModel {
     const base = this.base();
     return base === null ? 'read-only' : `read-only · compared at the merge base with ${base.reference}`;
   });
-  readonly groups = computed<RepoFileGroup[]>(() =>
-    this.repos().map((r) => ({
-      repo: r.repo,
-      branch: r.branch,
-      base: (this.bases()[r.repo] ?? r.base).base,
-      expanded: this.expanded().includes(r.repo),
-      files: this.listings()[r.repo]?.files ?? NO_FILES,
-    })),
-  );
+  /** Each repository's files with the tasks they are tied to; with a task picked, only its repository, opened, with its tied files and the ones not tied counted. */
+  readonly groups = computed<RepoFileGroup[]>(() => {
+    const picked = this.picked();
+    const shown = this.untiedShown();
+    const stopped = this.stopped();
+    const rows = this.rows();
+    const repos = picked === null ? this.repos() : this.repos().filter((r) => r.repo === picked.repo);
+    return repos.map((r) => {
+      const files = this.listings()[r.repo]?.files ?? NO_FILES;
+      const ties = tieFiles(rows, r.repo, this.commits()[r.repo] ?? NO_COMMITS, files, this.listedPart());
+      const all: RepoFile[] = files.map((f) => ({ ...f, tasks: ties.get(f.path) ?? [], left: f.uncommitted && stopped.includes(r.repo) }));
+      return {
+        repo: r.repo,
+        branch: r.branch,
+        base: (this.bases()[r.repo] ?? r.base).base,
+        expanded: picked !== null || this.expanded().includes(r.repo),
+        files: picked === null ? all : all.filter((f) => f.tasks.includes(picked.id)),
+        untied: picked === null ? null : all.filter((f) => f.tasks.length === 0),
+        untiedShown: shown,
+      };
+    });
+  });
 
   constructor() {
     const query = typeof globalThis.matchMedia === 'function' ? globalThis.matchMedia(NARROW) : null;
@@ -153,6 +178,27 @@ export class ChangesViewModel {
     if (part === this.part()) return;
     this.part.set(part);
     if (this.context !== null) await this.reload('part');
+  }
+
+  /** The build log's rows, which say which task made which commit. */
+  setRows(rows: BuildRow[]): void {
+    this.rows.set(rows);
+  }
+
+  /** The repositories whose run stopped. */
+  setStopped(stopped: string[]): void {
+    this.stopped.set(stopped);
+  }
+
+  /** The task the engineer picked, or null. Any pick starts the untied files hidden again. */
+  setTask(task: { id: string; repo: string } | null): void {
+    this.picked.set(task);
+    this.untiedShown.set(false);
+  }
+
+  /** List the files not tied to the picked task under its repository. */
+  showUntied(): void {
+    this.untiedShown.set(true);
   }
 
   step(direction: StepRequest['direction']): void {
@@ -218,7 +264,11 @@ export class ChangesViewModel {
       const missing = this.transport.sdlcMissingChangeBranches(ctx.folder, ctx.masterRepo, ctx.system, ctx.change).catch(() => []);
       const found = await this.transport.sdlcChangeRepos(ctx.folder, ctx.masterRepo, ctx.system, ctx.change);
       const repos = [...found.filter((r) => r.repo === ctx.masterRepo), ...found.filter((r) => r.repo !== ctx.masterRepo)];
-      const lists = await Promise.all(repos.map((r) => this.transport.sdlcDiffFiles(r.path, part)));
+      // A commit read that fails leaves that repository's files untied; it never fails the list.
+      const [lists, commitLists] = await Promise.all([
+        Promise.all(repos.map((r) => this.transport.sdlcDiffFiles(r.path, part))),
+        Promise.all(repos.map((r) => this.transport.sdlcCommitFiles(r.path).catch((): CommitFiles[] => NO_COMMITS))),
+      ]);
       const name = repos.find((r) => r.repo === this.activeName())?.repo ?? repos[0]?.repo ?? null;
       const active = repos.find((r) => r.repo === name);
       const base = active ? await this.transport.sdlcDiffBase(active.path) : null;
@@ -230,6 +280,8 @@ export class ChangesViewModel {
       this.repos.set(repos);
       this.missingBranches.set(noBranch);
       this.listings.set(Object.fromEntries(repos.map((r, i) => [r.repo, lists[i]])));
+      this.commits.set(Object.fromEntries(repos.map((r, i) => [r.repo, commitLists[i]])));
+      this.listedPart.set(part);
       this.activeName.set(name);
       if (active && base) this.bases.update((b) => ({ ...b, [active.repo]: base }));
       if (kind === 'open' && name !== null) this.expanded.set([name]);
