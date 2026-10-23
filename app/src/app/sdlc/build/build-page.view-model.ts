@@ -21,7 +21,7 @@ import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { type AskRecord, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
 import { newlyRecorded, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Pick, type SessionRef } from '../../lib/build-sessions';
-import { buildActions, buildStage, repoAction, taskGroups, type BuildStage } from '../../lib/build-stage';
+import { buildActions, buildStage, repoAction, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { repoSituation, taskState, type Situation, type TaskState } from '../../lib/build-state';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
@@ -155,6 +155,45 @@ const RUNNING: readonly RunState[] = ['running', 'awaiting'];
 /** The repository list's share of the build when it opens, in percent. */
 const REPOS_SIZE = 22;
 const NARROW = '(max-width: 767.98px)';
+/** Below this width the build page's three areas share one column. */
+const PAGE_NARROW = '(max-width: 1023.98px)';
+
+/** A repository's situation as its heading says it. */
+const situationStatus = (s: Situation): StatusText => {
+  switch (s.kind) {
+    case 'working':
+      return { tone: 'success', label: s.task === null ? 'Working' : `Working · ${s.task}` };
+    case 'waiting':
+      return { tone: 'idle', label: `Waiting for ${s.onTask} in ${s.onRepo}` };
+    case 'stopped':
+      return { tone: 'error', label: `Stopped at ${s.task}` };
+    case 'not-started':
+      return { tone: 'idle', label: 'Not started' };
+    case 'finished':
+      return { tone: 'success', label: 'Finished' };
+    case 'idle':
+      return { tone: 'idle', label: 'Idle' };
+  }
+};
+
+/** A task's state as its row says it. */
+const taskStatus = (t: TaskState): StatusText => {
+  switch (t.kind) {
+    case 'done':
+      return { tone: 'success', label: 'Done' };
+    case 'running':
+      return { tone: 'success', label: 'Running' };
+    case 'waiting':
+      return { tone: 'idle', label: `Waiting for ${t.onTask} in ${t.onRepo}` };
+    case 'stopped':
+      return { tone: 'error', label: 'Stopped here' };
+    case 'not-started':
+      return { tone: 'idle', label: 'Not started' };
+  }
+};
+
+const reviewStatus = (e: ReviewEntry): StatusText =>
+  e === 'running' ? { tone: 'success', label: 'Running' } : e === 'finished' ? { tone: 'success', label: 'Finished' } : e === 'stale' ? { tone: 'warning', label: 'Out of date' } : { tone: 'idle', label: 'Not run' };
 
 const pad = (n: number) => String(n).padStart(2, '0');
 /** The wall-clock time of a start, as the divider names it. */
@@ -286,6 +325,8 @@ export class BuildPageViewModel {
 
   /** True below the width where the repository list stacks above the main column instead of sitting beside it. */
   readonly narrow = signal(false);
+  /** True below the width where the build page's three areas share one column. */
+  private readonly pageNarrow = signal(false);
   /** The repository list's share of the build, in percent, then the main column's; the list is collapsed at 0. */
   readonly layout = signal<number[]>([REPOS_SIZE, 100 - REPOS_SIZE]);
   /** The list's share before it was collapsed, so showing it again restores it. */
@@ -431,6 +472,13 @@ export class BuildPageViewModel {
   constructor() {
     // Below the narrow width the repository list stacks above the main column, so the split turns vertical.
     const query = typeof globalThis.matchMedia === 'function' ? globalThis.matchMedia(NARROW) : null;
+    const pageQuery = typeof globalThis.matchMedia === 'function' ? globalThis.matchMedia(PAGE_NARROW) : null;
+    if (pageQuery !== null) {
+      this.pageNarrow.set(pageQuery.matches);
+      const onPage = (e: MediaQueryListEvent) => this.pageNarrow.set(e.matches);
+      pageQuery.addEventListener('change', onPage);
+      inject(DestroyRef).onDestroy(() => pageQuery.removeEventListener('change', onPage));
+    }
     if (query !== null) {
       this.narrow.set(query.matches);
       const onChange = (e: MediaQueryListEvent) => this.narrow.set(e.matches);
@@ -679,11 +727,14 @@ export class BuildPageViewModel {
     return record === undefined ? 'no-run' : (record.exit ?? null);
   }
 
+  /** Whether the review is running or stopped, for the action its entry offers. */
+  private readonly reviewSituation = computed(() => ({ live: this.started() && this.phase() === 'reviewing', stopped: this.driver.stopped().has(REVIEW) }));
+
   /** The tasks area: a heading per repository from where it stands, and its tasks with what each shows. */
   readonly taskAreas = computed<TaskArea[]>(() => {
     const status = this.status();
     if (status === null) return [];
-    const review = { live: this.started() && this.phase() === 'reviewing', stopped: this.driver.stopped().has(REVIEW) };
+    const review = this.reviewSituation();
     return this.groupKeys().map((repo) => {
       const repoStatus = status.repos.find((r) => r.repo === repo);
       const stop = this.driver.stopped().get(repo);
@@ -714,6 +765,55 @@ export class BuildPageViewModel {
     const state = reviewState(this.runLinks(), this.records(), this.heads(), scope, this.reviewDoc(), this.masterRef()?.repo ?? null);
     return state.kind === 'current' || state.kind === 'current-document' ? 'finished' : state.kind === 'stale' ? 'stale' : 'not run';
   });
+
+  /** Everything the build page shows, from the members above; the page itself decides nothing. */
+  readonly view = computed<BuildPageView>(() => {
+    const pick = this.pick();
+    const stage = this.stage();
+    const areas = this.taskAreas();
+    const review = this.reviewSituation();
+    const entry = this.reviewEntry();
+    const pickedRepo = pick?.kind === 'repo' ? pick.repo : pick?.kind === 'task' ? this.status()?.tasks.find((t) => t.id === pick.task)?.repo : undefined;
+    const hasSessions = [...this.sessionRefs().values()].some((refs) => refs.length > 0);
+    const hasChanges = hasSessions || (this.status()?.tasks.some((t) => t.row !== null) ?? false);
+    const findings = this.reviewFindingsView(stage);
+    return {
+      stage,
+      stageMessage: this.stageMessage(),
+      facts: { tasks: this.tasksLabel(), elapsed: this.active() ? hms(this.lock.elapsedSecs()) : null },
+      actions: this.actions(),
+      groups: areas.map((g) => ({
+        repo: g.repo,
+        status: situationStatus(g.situation),
+        action: g.action,
+        picked: pickedRepo === g.repo,
+        tasks: g.tasks.map((t) => ({
+          id: t.id,
+          name: t.name,
+          status: taskStatus(t.state),
+          departure: t.state.kind === 'done' ? t.state.departure : null,
+          picked: pick?.kind === 'task' && pick.task === t.id,
+        })),
+      })),
+      review: { status: reviewStatus(entry), action: repoAction({ kind: 'idle' }, REVIEW, review), picked: pick?.kind === 'review' },
+      pick,
+      sessions: this.shownSessions(),
+      sessionNote: this.sessionNote(),
+      stops: areas.flatMap((g) => (g.situation.kind === 'stopped' ? [{ repo: g.repo, reason: g.situation.reason ?? 'Stopped' }] : [])),
+      findings,
+      waiting: this.waitingNotices(),
+      announcement: this.announcement(),
+      areas: shownAreas({ stage, hasSessions, hasChanges }),
+      narrow: this.pageNarrow(),
+    };
+  });
+
+  /** The review's findings for the page: shown once the build's review finished and has been read. */
+  private reviewFindingsView(stage: BuildStage): FindingsView | null {
+    if ((stage !== 'review-finished' && stage !== 'done') || this.reading()) return null;
+    if (this.reviews().length === 0 && !this.unrecorded()) return null;
+    return { notice: this.reviewNotice(), findings: this.findings(), replaced: this.replaced(), older: this.older(), emptyText: this.emptyText() };
+  }
 
   /** Where the master repository is: what the build was started from, else what the change page loaded. */
   private masterRef(): { repo: string; path: string } | null {

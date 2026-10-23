@@ -357,7 +357,7 @@ describe('the build page, questions and stops', () => {
     expect(stops).toContain('claims-core');
     expect(stops).toContain(reason);
     expect(norm(area('tasks')!.querySelectorAll('[data-task]')[1].textContent)).toContain('Stopped here');
-    expect(norm(el.querySelectorAll('[data-group]')[1].textContent)).toContain('Working');
+    expect(norm(el.querySelectorAll('[data-group]')[1].textContent)).toContain('Running');
     // The uncommitted file the stopped run left shows in the changed files.
     const open = Array.from(el.querySelectorAll<HTMLElement>('app-repo-file-list [data-repo]')).find((h) => norm(h.textContent).startsWith('claims-core'));
     open?.click();
@@ -439,7 +439,7 @@ describe('the build page, picking and folding', () => {
       sessions: [session('r1')],
     });
     const { el, area, button, fixture } = await mount(v);
-    const names = Array.from(el.querySelectorAll('app-segmented button')).map((b) => norm(b.textContent));
+    const names = Array.from(el.querySelectorAll('.k-bp__switch button')).map((b) => norm(b.textContent));
     expect(names).toEqual(['Tasks', 'Activity', 'Files']);
     expect(area('activity')!.hidden).toBe(false);
     expect(area('tasks')!.hidden).toBe(true);

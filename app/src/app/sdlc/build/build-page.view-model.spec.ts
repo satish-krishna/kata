@@ -114,6 +114,25 @@ describe('the build page starts, stops and continues the same runs as the build 
     expect(lock.active()).toMatchObject({ kind: 'build', title: 'Build', finished: false });
   });
 
+  it('gives the build page its view: a group per repository with its heading, the review entry, the shown areas and the pick', async () => {
+    const { vm, transport } = setup();
+    expect(await vm.start(await handoffFor(transport), CTX)).toBe(true);
+    await advance(2500);
+    const view = vm.view();
+    expect(view.stage).toBe('running');
+    expect(view.facts.tasks).toBe('0/3 tasks');
+    expect(view.actions).toEqual(['cancel-build']);
+    expect(view.groups.map((g) => g.repo)).toEqual(['claims-core', 'customer-portal']);
+    expect(view.groups[0]).toMatchObject({ status: { tone: 'success' }, action: 'cancel', picked: true });
+    expect(view.groups[0].tasks[0].status).toEqual({ tone: 'success', label: 'Running' });
+    expect(view.review.picked).toBe(false);
+    expect(view.pick).toEqual({ kind: 'repo', repo: 'claims-core' });
+    expect(view.areas).toEqual({ activity: true, files: true });
+    expect(view.sessions.length).toBeGreaterThan(0);
+    expect(view.findings).toBeNull();
+    expect(view.narrow).toBe(false);
+  });
+
   it('refuses to start while another task holds the lock, and starts nothing', async () => {
     const { vm, transport, lock } = setup();
     const runSpec = vi.spyOn(transport, 'runSpec');
