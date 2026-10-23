@@ -342,7 +342,7 @@
 .k-change__doc--layout > .wb-banner { flex: none; margin: var(--space-4) var(--space-5) 0; }
 .k-change__doc--layout > .wb-banner + .wb-banner { margin-top: var(--space-3); }
 /* The Changes view fills its panel edge to edge: no padding and no frame, its own strip, columns and editor do the scrolling. */
-.k-change__doc--flush { display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; padding: 0; }
+.k-change__doc--flush { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); overflow: hidden; padding: 0; }
 .k-change__doc--flush:has(> .wb-banner) { grid-template-rows: auto minmax(0, 1fr); }
 .k-change__doc--flush[hidden] { display: none; }
 .k-change__missing { padding: var(--space-5); }
