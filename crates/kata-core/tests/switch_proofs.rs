@@ -1903,3 +1903,571 @@ fn proof_synced_mcp_left_out() {
     assert!(added.is_empty());
     assert!(missing.is_empty(), "unexpected missing: {missing:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Switching off one tool server without `--strict-mcp-config`
+//
+// Strict mode drops every plugin server and every claude.ai connector. These proofs try to
+// keep them (copying them into the strict file, or a claudeai-proxy entry), and the
+// alternatives that avoid strict mode (settings keys read from `--settings`).
+// ---------------------------------------------------------------------------
+
+/// A `kata` binary copy under another file name, so that a server using it is not seen as a
+/// duplicate of the project's `kata mcp-ask` servers (Claude suppresses a plugin server whose
+/// command equals a manually configured one).
+fn kata_copy(kata: &Path, root: &Path, name: &str) -> PathBuf {
+    let dst = root.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    std::fs::copy(kata, &dst).unwrap();
+    dst
+}
+
+/// A `kata mcp-ask` server entry that advertises `ask_user` (so it has a tool to name).
+fn ask_server(bin: &Path) -> Value {
+    json!({"command": fwd(bin), "args": ["mcp-ask"], "env": {"KATA_MCP_TOOLS": "ask_user"}})
+}
+
+/// Replaces the plugin variables Claude Code expands in a plugin's server definitions.
+/// Returns the placeholders that were left alone.
+fn expand_plugin_vars(
+    v: &mut Value,
+    root: &Path,
+    data: &Path,
+    project: &Path,
+    left: &mut Vec<String>,
+) {
+    match v {
+        Value::String(s) => {
+            *s = s
+                .replace("${CLAUDE_PLUGIN_ROOT}", &fwd(root))
+                .replace("${CLAUDE_PLUGIN_DATA}", &fwd(data))
+                .replace("${CLAUDE_PROJECT_DIR}", &fwd(project));
+            let mut rest = s.as_str();
+            while let Some(i) = rest.find("${") {
+                if let Some(j) = rest[i..].find('}') {
+                    left.push(rest[i..i + j + 1].to_string());
+                    rest = &rest[i + j + 1..];
+                } else {
+                    break;
+                }
+            }
+        }
+        Value::Array(a) => a
+            .iter_mut()
+            .for_each(|x| expand_plugin_vars(x, root, data, project, left)),
+        Value::Object(m) => m
+            .values_mut()
+            .for_each(|x| expand_plugin_vars(x, root, data, project, left)),
+        _ => {}
+    }
+}
+
+/// The tool servers a plugin folder declares: `.mcp.json` and `mcpServers` in `plugin.json`
+/// (an inline object or a path), with variables expanded.
+fn plugin_servers(
+    path: &Path,
+    data: &Path,
+    project: &Path,
+    left: &mut Vec<String>,
+) -> Vec<(String, Value)> {
+    let read = |p: &Path| -> Option<Value> {
+        serde_json::from_str(&std::fs::read_to_string(p).ok()?).ok()
+    };
+    let mut found: Vec<(String, Value)> = Vec::new();
+    let mut take = |v: Value| {
+        let servers = v.get("mcpServers").cloned().unwrap_or(v);
+        for (k, s) in servers.as_object().into_iter().flatten() {
+            if !found.iter().any(|(n, _)| n == k) {
+                found.push((k.clone(), s.clone()));
+            }
+        }
+    };
+    if let Some(v) = read(&path.join(".mcp.json")) {
+        take(v);
+    }
+    if let Some(m) = read(&path.join(".claude-plugin/plugin.json")) {
+        match &m["mcpServers"] {
+            Value::String(rel) => {
+                if let Some(v) = read(&path.join(rel)) {
+                    take(v);
+                }
+            }
+            Value::Object(_) => take(m["mcpServers"].clone()),
+            _ => {}
+        }
+    }
+    for (_, s) in found.iter_mut() {
+        expand_plugin_vars(s, path, data, project, left);
+    }
+    found
+}
+
+fn mcp_tools(o: &Out) -> Vec<String> {
+    o.list("tools")
+        .into_iter()
+        .filter(|t| t.starts_with("mcp__"))
+        .collect()
+}
+
+/// Strict mode with the plugin servers copied into the file, keyed plainly and as
+/// `plugin:<plugin>:<server>`.
+#[test]
+fn proof_strict_with_plugin_servers() {
+    if !build_proof_enabled() {
+        return;
+    }
+    let home = home_dir();
+    let kata = kata_bin();
+    let proj = make_project(&kata);
+    let dir = proj.path();
+    let tmp = tempfile::tempdir().unwrap();
+    let log = tmp.path().join("debug.log");
+    let logf = fwd(&log);
+
+    let base = claude(dir, Some("haiku"), PROMPT, 2, &["--debug-file", &logf]);
+    let base_mcp = base.mcp_full();
+    let left_out: Vec<String> = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| {
+            let rest = l.split("Left out MCP server \"").nth(1)?;
+            let (server, rest) = rest.split_once("\" of synced plugin ")?;
+            let (plugin, _) = rest.split_once(':')?;
+            Some(format!("plugin:{plugin}:{server}"))
+        })
+        .collect();
+    eprintln!(
+        "normal run: {base_mcp:?}\nleft out of synced plugins by the normal run: {left_out:?}"
+    );
+
+    // Every enabled plugin's servers, keyed both ways. The project's own two servers stay.
+    let srv = json!({"command": fwd(&kata), "args": ["mcp-ask"]});
+    let mut plain = serde_json::Map::new();
+    let mut keyed = serde_json::Map::new();
+    plain.insert("srv-a".into(), srv.clone());
+    plain.insert("srv-b".into(), srv.clone());
+    keyed.insert("srv-a".into(), srv.clone());
+    keyed.insert("srv-b".into(), srv);
+    let mut unexpanded = Vec::new();
+    let mut first_plain_name = None;
+    for p in base.init["plugins"].as_array().into_iter().flatten() {
+        if p["path"] == "builtin" {
+            continue;
+        }
+        let name = p["name"].as_str().unwrap_or("");
+        let (_, market) = p["source"]
+            .as_str()
+            .unwrap_or("")
+            .split_once('@')
+            .unwrap_or(("", ""));
+        let path = PathBuf::from(p["path"].as_str().unwrap_or(""));
+        let data = home.join(format!(".claude/plugins/data/{name}-{market}"));
+        for (server, def) in plugin_servers(&path, &data, dir, &mut unexpanded) {
+            first_plain_name.get_or_insert(server.clone());
+            plain.insert(server.clone(), def.clone());
+            keyed.insert(format!("plugin:{name}:{server}"), def);
+        }
+    }
+    eprintln!("placeholders left unexpanded: {unexpanded:?}");
+    let plain_file = write_json(tmp.path(), "plain.json", &json!({"mcpServers": plain}));
+    let keyed_file = write_json(tmp.path(), "keyed.json", &json!({"mcpServers": keyed}));
+
+    for (label, file) in [
+        ("(a) plain names", &plain_file),
+        ("(b) plugin:<plugin>:<server>", &keyed_file),
+    ] {
+        let out = claude(
+            dir,
+            Some("haiku"),
+            PROMPT,
+            2,
+            &["--strict-mcp-config", "--mcp-config", file],
+        );
+        eprintln!(
+            "strict, plugin servers copied, {label}: {:?}",
+            out.mcp_full()
+        );
+        let (missing, added, order_same) = delta(&base.mcp(), &out.mcp());
+        eprintln!(
+            "{label}: names missing {missing:?}, added {added:?}, shared order unchanged {order_same}; status/source of copied entries: {:?}",
+            out.mcp_full()
+                .into_iter()
+                .filter(|s| !s.starts_with("srv-"))
+                .take(3)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !out.mcp().iter().any(|s| s.starts_with("claude.ai")),
+            "connectors came back under strict mode"
+        );
+        if file == &keyed_file {
+            // Same names as the normal run's plugin servers, apart from what the normal run
+            // left out of synced plugins (the known rule, see the synced-plugin row).
+            let plugin_names = |o: &Out| -> Vec<String> {
+                o.mcp()
+                    .into_iter()
+                    .filter(|s| s.starts_with("plugin:"))
+                    .collect()
+            };
+            let (m, a, _) = delta(&plugin_names(&base), &plugin_names(&out));
+            assert!(m.is_empty(), "plugin servers lost: {m:?}");
+            assert_eq!(a, left_out, "extra servers are not the left-out ones");
+            assert!(out
+                .mcp_full()
+                .iter()
+                .filter(|s| s.starts_with("plugin:"))
+                .all(|s| s.ends_with("|dynamic")));
+        } else {
+            assert!(!out.mcp().iter().any(|s| s.starts_with("plugin:")));
+        }
+    }
+
+    // Tool names: a plugin server that connects (a copy of `kata mcp-ask` under another file
+    // name), loaded as a plugin, then copied into a strict file under both keys.
+    let bin = kata_copy(&kata, tmp.path(), "kata-kp");
+    let pl = tmp.path().join("kp");
+    std::fs::create_dir_all(pl.join(".claude-plugin")).unwrap();
+    std::fs::write(
+        pl.join(".claude-plugin/plugin.json"),
+        json!({"name": "kp", "version": "0.0.1"}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        pl.join(".mcp.json"),
+        json!({"mcpServers": {"srv": ask_server(&bin)}}).to_string(),
+    )
+    .unwrap();
+    let as_plugin = claude(dir, Some("haiku"), PROMPT, 2, &["--plugin-dir", &fwd(&pl)]);
+    let kp_tools = |o: &Out| -> Vec<String> {
+        mcp_tools(o)
+            .into_iter()
+            .filter(|t| !t.contains("claude_ai") && !t.starts_with("mcp__srv-"))
+            .collect()
+    };
+    let want = kp_tools(&as_plugin);
+    eprintln!(
+        "as a plugin: {:?}, tools {want:?}",
+        as_plugin
+            .mcp_full()
+            .into_iter()
+            .filter(|s| s.contains("kp") || s.starts_with("srv|"))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(want, vec!["mcp__plugin_kp_srv__ask_user".to_string()]);
+    for (label, key) in [
+        ("keyed plugin:kp:srv", "plugin:kp:srv"),
+        ("plain srv", "srv"),
+    ] {
+        let f = write_json(
+            tmp.path(),
+            "kp.json",
+            &json!({"mcpServers": {key: ask_server(&bin)}}),
+        );
+        let out = claude(
+            dir,
+            Some("haiku"),
+            PROMPT,
+            2,
+            &["--strict-mcp-config", "--mcp-config", &f],
+        );
+        eprintln!(
+            "strict, {label}: {:?}, tools {:?}",
+            out.mcp_full(),
+            kp_tools(&out)
+        );
+        if key == "srv" {
+            assert_eq!(kp_tools(&out), vec!["mcp__srv__ask_user".to_string()]);
+        } else {
+            assert_eq!(kp_tools(&out), want, "tool names changed");
+        }
+    }
+
+    // Collision: a personal-style server and a copied plugin server with the same plain name.
+    if let Some(name) = first_plain_name {
+        let mine = write_json(
+            tmp.path(),
+            "mine.json",
+            &json!({"mcpServers": {name.as_str(): ask_server(&bin)}}),
+        );
+        let theirs = write_json(
+            tmp.path(),
+            "theirs.json",
+            &json!({"mcpServers": {name.as_str(): plain[&name].clone()}}),
+        );
+        for order in [[&mine, &theirs], [&theirs, &mine]] {
+            let out = claude(
+                dir,
+                Some("haiku"),
+                PROMPT,
+                2,
+                &[
+                    "--strict-mcp-config",
+                    "--mcp-config",
+                    order[0],
+                    "--mcp-config",
+                    order[1],
+                ],
+            );
+            let mine_first = order[0] == &mine;
+            eprintln!(
+                "collision on `{name}` (personal-style file {}): {:?}",
+                if mine_first { "first" } else { "second" },
+                out.mcp_full()
+            );
+            assert_eq!(out.mcp().iter().filter(|s| **s == name).count(), 1);
+        }
+    }
+}
+
+/// Keeping claude.ai connectors under strict mode.
+#[test]
+fn proof_strict_keeps_connectors() {
+    if !build_proof_enabled() {
+        return;
+    }
+    let kata = kata_bin();
+    let proj = make_project(&kata);
+    let dir = proj.path();
+    let tmp = tempfile::tempdir().unwrap();
+    let log = tmp.path().join("debug.log");
+    let logf = fwd(&log);
+    let srv = json!({"command": fwd(&kata), "args": ["mcp-ask"]});
+    let strict_cfg = write_json(
+        tmp.path(),
+        "strict.json",
+        &json!({"mcpServers": {"srv-a": srv}}),
+    );
+    let connectors = |o: &Out| -> Vec<String> {
+        o.mcp()
+            .into_iter()
+            .filter(|s| s.starts_with("claude.ai"))
+            .collect()
+    };
+
+    let base = claude(dir, Some("haiku"), PROMPT, 2, &["--debug-file", &logf]);
+    let want = connectors(&base);
+    if want.is_empty() {
+        eprintln!("SKIP: no claude.ai connector on this account");
+        return;
+    }
+    eprintln!(
+        "normal run connectors: {:?}",
+        base.mcp_full()
+            .into_iter()
+            .filter(|s| s.starts_with("claude.ai"))
+            .collect::<Vec<_>>()
+    );
+
+    // Candidates that do not work with strict mode.
+    let off = write_json(
+        tmp.path(),
+        "off.json",
+        &json!({"disableClaudeAiConnectors": false}),
+    );
+    let strict = ["--strict-mcp-config", "--mcp-config", strict_cfg.as_str()];
+    let mut with_settings = strict.to_vec();
+    with_settings.extend(["--settings", off.as_str()]);
+    for (label, args, env) in [
+        (
+            "env ENABLE_CLAUDEAI_MCP_SERVERS=1",
+            strict.to_vec(),
+            vec![("ENABLE_CLAUDEAI_MCP_SERVERS", "1")],
+        ),
+        (
+            "env ENABLE_CLAUDEAI_MCP_SERVERS=true",
+            strict.to_vec(),
+            vec![("ENABLE_CLAUDEAI_MCP_SERVERS", "true")],
+        ),
+        (
+            "settings disableClaudeAiConnectors=false",
+            with_settings,
+            vec![],
+        ),
+    ] {
+        let out = claude_env(dir, Some("haiku"), PROMPT, 2, &args, &env);
+        eprintln!("strict + {label}: connectors {:?}", connectors(&out));
+        assert!(connectors(&out).is_empty(), "{label} kept connectors");
+    }
+    // The same switches, without strict mode, turn connectors off (so they are real, just no way back).
+    let on = write_json(
+        tmp.path(),
+        "on.json",
+        &json!({"disableClaudeAiConnectors": true}),
+    );
+    let out = claude(dir, Some("haiku"), PROMPT, 2, &["--settings", &on]);
+    eprintln!(
+        "no strict, settings disableClaudeAiConnectors=true: connectors {:?}",
+        connectors(&out)
+    );
+    assert!(connectors(&out).is_empty());
+    let out = claude_env(
+        dir,
+        Some("haiku"),
+        PROMPT,
+        2,
+        &[],
+        &[("ENABLE_CLAUDEAI_MCP_SERVERS", "0")],
+    );
+    eprintln!(
+        "no strict, env ENABLE_CLAUDEAI_MCP_SERVERS=0: connectors {:?}",
+        connectors(&out)
+    );
+    assert!(connectors(&out).is_empty());
+
+    // A claudeai-proxy entry in the strict file, with the connector id read from the normal
+    // run's debug log (only a connector that connected logs its id; the `url` is not used).
+    let text = std::fs::read_to_string(&log).unwrap_or_default();
+    let mut entries = serde_json::Map::new();
+    for l in text.lines() {
+        if let Some(rest) = l.split("MCP server \"").nth(1) {
+            if let Some((name, tail)) =
+                rest.split_once("\": Initializing claude.ai proxy transport for server ")
+            {
+                entries.insert(
+                    name.to_string(),
+                    json!({"type": "claudeai-proxy", "url": "https://example.invalid/", "id": tail.trim()}),
+                );
+            }
+        }
+    }
+    eprintln!(
+        "connector ids recoverable from the debug log: {:?} of {:?}",
+        entries.keys().collect::<Vec<_>>(),
+        want
+    );
+    if entries.is_empty() {
+        eprintln!("no connector id in the log: claudeai-proxy entries not exercised");
+        return;
+    }
+    let f = write_json(tmp.path(), "proxy.json", &json!({"mcpServers": entries}));
+    let out = claude(
+        dir,
+        Some("haiku"),
+        PROMPT,
+        2,
+        &["--strict-mcp-config", "--mcp-config", &f],
+    );
+    eprintln!(
+        "strict + claudeai-proxy entries: {:?}, mcp tools {:?}",
+        out.mcp_full(),
+        mcp_tools(&out)
+    );
+    for name in entries.keys() {
+        assert!(
+            out.mcp_full()
+                .contains(&format!("{name}|connected|dynamic")),
+            "{name} did not connect"
+        );
+    }
+    let got: Vec<String> = mcp_tools(&out);
+    let want_tools: Vec<String> = mcp_tools(&base)
+        .into_iter()
+        .filter(|t| {
+            entries
+                .keys()
+                .any(|k| t.starts_with(&format!("mcp__{}__", k.replace([' ', '.'], "_"))))
+        })
+        .collect();
+    assert_eq!(got, want_tools, "connector tool names changed");
+}
+
+/// Per-server switch-off without strict mode: settings keys read from `--settings`.
+#[test]
+fn proof_deny_mcp_server_in_settings() {
+    if !build_proof_enabled() {
+        return;
+    }
+    let kata = kata_bin();
+    let proj = make_project(&kata);
+    let dir = proj.path();
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = kata_copy(&kata, tmp.path(), "kata-dyn");
+    let dynf = write_json(
+        tmp.path(),
+        "dyn.json",
+        &json!({"mcpServers": {"dyn": ask_server(&bin)}}),
+    );
+    let extra = ["--mcp-config", dynf.as_str()];
+
+    let base = claude(dir, Some("haiku"), PROMPT, 2, &extra);
+    eprintln!(
+        "normal run (+ a --mcp-config server `dyn`): {:?}",
+        base.mcp_full()
+    );
+    assert!(base.mcp().contains(&"srv-b".to_string()) && base.mcp().contains(&"dyn".to_string()));
+    assert!(mcp_tools(&base).contains(&"mcp__dyn__ask_user".to_string()));
+    let run = |settings: Value| -> Out {
+        let f = write_json(tmp.path(), "s.json", &settings);
+        claude(
+            dir,
+            Some("haiku"),
+            PROMPT,
+            2,
+            &["--mcp-config", dynf.as_str(), "--settings", &f],
+        )
+    };
+    // The run must equal the normal run minus the named servers: same entries, order, status, source.
+    let same_but = |label: &str, out: &Out, removed: &[&str]| {
+        let keep = |l: Vec<String>, key: fn(&String) -> String| -> Vec<String> {
+            l.into_iter()
+                .filter(|x| !removed.iter().any(|r| key(x) == *r))
+                .collect()
+        };
+        let name = |s: &String| s.split('|').next().unwrap().to_string();
+        let want = keep(base.mcp_full(), name);
+        eprintln!("{label}: {:?}", out.mcp_full());
+        assert_eq!(
+            out.mcp_full(),
+            want,
+            "{label}: start report differs beyond the removed servers"
+        );
+        assert_eq!(out.plugins_full(), base.plugins_full(), "{label}");
+        assert_eq!(out.skills(), base.skills(), "{label}");
+    };
+
+    // deniedMcpServers (a managed-settings policy key) honored from --settings.
+    let out = run(json!({"deniedMcpServers": [{"serverName": "srv-b"}, {"serverName": "dyn"}]}));
+    same_but(
+        "deniedMcpServers srv-b (project) + dyn (--mcp-config)",
+        &out,
+        &["srv-b", "dyn"],
+    );
+    assert!(!mcp_tools(&out).iter().any(|t| t.starts_with("mcp__dyn__")));
+    // It matches by name whatever the server's origin: a plugin server and a connector too.
+    let mut names: Vec<String> = Vec::new();
+    for n in ["plugin:supabase:supabase", "claude.ai Gmail"] {
+        if base.mcp().contains(&n.to_string()) {
+            names.push(n.to_string());
+        }
+    }
+    if !names.is_empty() {
+        let deny: Vec<Value> = names.iter().map(|n| json!({"serverName": n})).collect();
+        let out = run(json!({"deniedMcpServers": deny}));
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        same_but(
+            "deniedMcpServers on a plugin server and a connector",
+            &out,
+            &refs,
+        );
+    }
+
+    // disabledMcpjsonServers removes a project .mcp.json server only.
+    let out = run(json!({"disabledMcpjsonServers": ["srv-b", "dyn"]}));
+    same_but("disabledMcpjsonServers srv-b + dyn", &out, &["srv-b"]);
+
+    // enabledMcpjsonServers with enableAllProjectMcpServers=false: recorded.
+    let out = run(json!({"enableAllProjectMcpServers": false, "enabledMcpjsonServers": ["srv-a"]}));
+    eprintln!(
+        "enabledMcpjsonServers [srv-a] + enableAllProjectMcpServers=false: {:?}",
+        out.mcp_full()
+    );
+    assert_eq!(
+        out.mcp_full(),
+        base.mcp_full(),
+        "an enable list now removes servers"
+    );
+
+    // allowedMcpServers is an allowlist for everything, plugin servers and connectors included.
+    let out = run(json!({"allowedMcpServers": [{"serverName": "srv-a"}, {"serverName": "dyn"}]}));
+    eprintln!("allowedMcpServers [srv-a, dyn]: {:?}", out.mcp_full());
+    assert_eq!(out.mcp(), vec!["srv-a".to_string(), "dyn".to_string()]);
+}
