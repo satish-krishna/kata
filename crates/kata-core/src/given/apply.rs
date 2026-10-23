@@ -219,6 +219,7 @@ mod tests {
             brought_by: None,
             lock: None,
             off,
+            goes_off_with: Vec::new(),
         }
     }
 

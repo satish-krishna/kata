@@ -133,13 +133,27 @@ fn is_script_path(token: &str) -> bool {
     ends_in_script || (!has_space && token.contains(['/', '\\']))
 }
 
+/// What a hook does when its event fires.
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub enum HookAction {
+    Command(String),
+    Prompt(String),
+    Agent(String),
+    Http(String),
+}
+
 /// How a hook is shown: `<event> · <matcher or any> · <program> <first script
 /// path>`. The program is the first token that is not a leading `NAME=value`
 /// assignment; the script path is the first later token that is a script file or
 /// a path (never a flag, an assignment or a URL). Nothing else of the command is
 /// shown, so a token in an argument never reaches the screen.
-pub fn hook_detail(event: &str, matcher: Option<&str>, command: &str) -> String {
+pub fn hook_detail(event: &str, matcher: Option<&str>, action: &HookAction) -> String {
     let matcher = matcher.filter(|m| !m.is_empty()).unwrap_or("any");
+    let HookAction::Command(command) = action else {
+        return String::new();
+    };
     let toks = tokens(command);
     let mut rest = toks.iter().skip_while(|t| is_assignment(t));
     let program = rest.next().map(String::as_str).unwrap_or("");
@@ -207,7 +221,7 @@ pub(crate) fn hooks_in(
                     kind: ItemKind::Hook,
                     source,
                     name: format!("{event} {}", matcher.unwrap_or("any")),
-                    detail: hook_detail(event, matcher, command),
+                    detail: hook_detail(event, matcher, &HookAction::Command(command.to_string())),
                     path: Some(path.to_path_buf()),
                     brought_by: brought_by.map(String::from),
                     repo_relative,
@@ -322,7 +336,7 @@ mod tests {
         let layers = read_layers(&r);
         assert_eq!(layers.len(), 4);
         let found = hooks(&layers);
-        assert_eq!(found.len(), 4);
+        assert_eq!(found.len(), 5);
         let by_source = |s: Source| found.iter().find(|h| h.source == s).unwrap();
         for (s, script) in [
             (Source::Personal, "a.js"),
@@ -395,19 +409,89 @@ mod tests {
             (r#"python3 -c "print(1)""#, "PreToolUse · Bash · python3"),
         ];
         for (command, expected) in cases {
-            let got = hook_detail("PreToolUse", Some("Bash"), command);
+            let got = hook_detail(
+                "PreToolUse",
+                Some("Bash"),
+                &HookAction::Command(command.into()),
+            );
             assert_eq!(got, expected, "{command}");
             for secret in ["sk-x", "abc", "Bearer", "print"] {
                 assert!(!got.contains(secret), "{got} leaks {secret}");
             }
         }
         assert_eq!(
-            hook_detail("Stop", None, "node x.js"),
+            hook_detail("Stop", None, &HookAction::Command("node x.js".into())),
             "Stop · any · node x.js"
         );
         assert_eq!(
-            hook_detail("Stop", Some(""), "node x.js"),
+            hook_detail("Stop", Some(""), &HookAction::Command("node x.js".into())),
             "Stop · any · node x.js"
+        );
+    }
+
+    #[test]
+    fn a_prompt_hook_an_agent_hook_and_an_http_hook_are_listed() {
+        let d = tempfile::tempdir().unwrap();
+        let r = roots(d.path());
+        write(
+            &r.workdir.join(".claude/settings.json"),
+            &serde_json::json!({"hooks": {"Stop": [{"hooks": [
+                {"type": "prompt", "prompt": "Check the tests ran.\nSecond line"},
+                {"type": "agent", "prompt": "Verify the build\nmore"},
+                {"type": "http", "url": "https://hooks.test/stop?token=abc"},
+                {"type": "command", "command": "node c.js"}
+            ]}]}})
+            .to_string(),
+        );
+        let found = hooks(&read_layers(&r));
+        assert_eq!(found.len(), 4, "{found:?}");
+        let details: Vec<&str> = found.iter().map(|h| h.detail.as_str()).collect();
+        assert!(details.contains(&"Stop · any · prompt: Check the tests ran."));
+        assert!(details.contains(&"Stop · any · agent: Verify the build"));
+        assert!(details.contains(&"Stop · any · http: https://hooks.test/stop"));
+        assert!(details.contains(&"Stop · any · node c.js"));
+        let ids: std::collections::HashSet<_> = found.iter().map(|h| &h.id).collect();
+        assert_eq!(ids.len(), 4, "each hook has its own id");
+        for h in &found {
+            assert_eq!(h.kind, ItemKind::Hook);
+            assert!(h.id.starts_with("project:hook:Stop:*:"), "{}", h.id);
+            assert!(!h.detail.contains("token=abc") && !h.detail.contains("Second line"));
+        }
+        // The key hashes the action text, as it does a command.
+        let prompt = found.iter().find(|h| h.detail.contains("prompt:")).unwrap();
+        assert!(prompt.id.ends_with(&format!(
+            ":{:016x}",
+            crate::given::fnv1a64(b"Check the tests ran.\nSecond line")
+        )));
+    }
+
+    #[test]
+    fn hook_detail_shows_each_hook_action() {
+        let detail = |a: HookAction| hook_detail("PreToolUse", Some("Bash"), &a);
+        assert_eq!(
+            detail(HookAction::Command("node a.js --k v".into())),
+            "PreToolUse · Bash · node a.js"
+        );
+        assert_eq!(
+            detail(HookAction::Prompt("Is this safe?\nLong body".into())),
+            "PreToolUse · Bash · prompt: Is this safe?"
+        );
+        assert_eq!(
+            detail(HookAction::Agent("Review the diff\nLong body".into())),
+            "PreToolUse · Bash · agent: Review the diff"
+        );
+        assert_eq!(
+            detail(HookAction::Http("https://h.test/x".into())),
+            "PreToolUse · Bash · http: https://h.test/x"
+        );
+        assert_eq!(
+            hook_detail("Stop", None, &HookAction::Prompt("p".into())),
+            "Stop · any · prompt: p"
+        );
+        // Nothing past the host and path of a URL is shown.
+        assert_eq!(
+            detail(HookAction::Http("https://u:pw@h.test/x?k=secret#f".into())),
+            "PreToolUse · Bash · http: https://h.test/x"
         );
     }
 

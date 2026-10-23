@@ -52,6 +52,8 @@ pub struct ResolvedItem {
     pub brought_by: Option<String>,
     pub lock: Option<LockReason>,
     pub off: bool,
+    /// The ids of the hooks whose switch-off also drops this item (R4.6).
+    pub goes_off_with: Vec<String>,
 }
 
 /// Where a setting's value comes from.
@@ -124,6 +126,8 @@ pub struct Resolved {
     pub missing: Vec<String>,
     /// Settings files that could not be read, by path.
     pub problems: Vec<String>,
+    /// True when the run is in the empty room: only what Kata passes is listed.
+    pub empty_room: bool,
 }
 
 fn setting(value: impl Into<Option<String>>, source: SettingSource) -> RunSetting {
@@ -257,6 +261,7 @@ fn build_items(
                 brought_by: f.brought_by.clone(),
                 lock,
                 off,
+                goes_off_with: super::goes_off_with(f, &facts),
             }
         })
         .collect();
@@ -290,6 +295,7 @@ pub fn resolve(spec: &RunSpec, roots: &ResolveRoots, opts: &ResolveOptions) -> R
         env: env_of(spec, &layers),
         missing,
         problems,
+        empty_room: false,
     }
 }
 
@@ -580,5 +586,327 @@ mod tests {
             "{:?}",
             resolved.problems
         );
+    }
+
+    // ---- the empty room (R18), hook actions, and what goes off with a hook ----
+
+    fn skill_at(dir: &Path, name: &str) {
+        write(
+            &dir.join("skills").join(name).join("SKILL.md"),
+            &format!("---\nname: {name}\ndescription: does {name}\n---\nbody\n"),
+        );
+    }
+
+    fn hook_file(command: &str) -> String {
+        serde_json::json!({"hooks": {"PreToolUse": [
+            {"matcher": "Bash", "hooks": [{"type": "command", "command": command}]}
+        ]}})
+        .to_string()
+    }
+
+    fn plugin_manifest(dir: &Path, name: &str) {
+        write(
+            &dir.join(".claude-plugin").join("plugin.json"),
+            &format!("{{\"name\":\"{name}\",\"description\":\"the {name} plugin\"}}"),
+        );
+    }
+
+    fn listed(resolved: &Resolved, kind: ItemKind, source: Source) -> bool {
+        resolved
+            .items
+            .iter()
+            .any(|i| i.kind == kind && i.source == source)
+    }
+
+    #[test]
+    fn in_the_empty_room_a_kit_plugins_skill_is_listed_and_its_hook_is_not() {
+        let d = tempfile::tempdir().unwrap();
+        let r = roots(d.path());
+        let plug = r.home.join(".claude/plugins/kit-plug");
+        plugin_manifest(&plug, "kit-plug");
+        skill_at(&plug, "plug-skill");
+        write(&plug.join("hooks/hooks.json"), &hook_file("node plug.js"));
+        write(
+            &plug.join(".mcp.json"),
+            r#"{"mcpServers": {"plug-srv": {"command": "node"}}}"#,
+        );
+        let mut spec = spec_for(&r);
+        spec.plugins.insert("kit-plug".into(), Default::default());
+        assert!(spec.auth.bare);
+        let resolved = resolve(&spec, &r, &ResolveOptions::default());
+        assert!(resolved.empty_room);
+        let skill = resolved
+            .items
+            .iter()
+            .find(|i| i.kind == ItemKind::Skill && i.name == "plug-skill")
+            .expect("the plugin's skill is listed");
+        assert_eq!(skill.source, Source::Plugin);
+        assert_eq!(
+            skill.brought_by.as_deref(),
+            Some("run-spec:plugin:kit-plug")
+        );
+        assert!(
+            !listed(&resolved, ItemKind::Hook, Source::Plugin),
+            "the plugin's hook is not listed"
+        );
+        assert!(
+            resolved
+                .items
+                .iter()
+                .any(|i| i.kind == ItemKind::ToolServer && i.name == "plug-srv"),
+            "what a kit plugin brings, except its hooks, is listed"
+        );
+        // Outside the empty room the same plugin brings its hook.
+        spec.auth.bare = false;
+        let open = resolve(&spec, &r, &ResolveOptions::default());
+        assert!(!open.empty_room);
+        assert!(listed(&open, ItemKind::Hook, Source::Plugin));
+    }
+
+    /// Put one item of `kind` from `source` on disk.
+    fn put(r: &ResolveRoots, source: &str, kind: &str) {
+        let claude = if source == "personal setup" {
+            r.home.join(".claude")
+        } else {
+            r.workdir.join(".claude")
+        };
+        match kind {
+            "hook" => write(&claude.join("settings.json"), &hook_file("node h.js")),
+            "skill" => skill_at(&claude, "setup-skill"),
+            "plugin" => {
+                let cache = r.home.parent().unwrap().join("cache/pers");
+                plugin_manifest(&cache, "pers");
+                write(
+                    &claude.join("settings.json"),
+                    r#"{"enabledPlugins": {"pers@mkt": true}}"#,
+                );
+                write(
+                    &r.home.join(".claude/plugins/installed_plugins.json"),
+                    &serde_json::json!({"version": 2, "plugins": {"pers@mkt": [
+                        {"scope": "user", "installPath": cache.to_string_lossy(), "version": "1"}
+                    ]}})
+                    .to_string(),
+                );
+            }
+            "standing instruction" => {
+                let file = if source == "personal setup" {
+                    claude.join("CLAUDE.md")
+                } else {
+                    r.workdir.join("CLAUDE.md")
+                };
+                write(&file, "rules");
+            }
+            "tool server" => {
+                let body = r#"{"mcpServers": {"setup-srv": {"command": "node"}}}"#;
+                if source == "personal setup" {
+                    write(&r.claude_json, body);
+                } else {
+                    write(&r.workdir.join(".mcp.json"), body);
+                }
+            }
+            other => panic!("{other}"),
+        }
+    }
+
+    #[test]
+    fn the_empty_room_lists_none_of_the_setups_items() {
+        // One case per R18.1 Examples row.
+        use ItemKind as K;
+        use Source as S;
+        let rows = [
+            ("personal setup", "hook", K::Hook, S::Personal),
+            ("project", "hook", K::Hook, S::Project),
+            ("personal setup", "skill", K::Skill, S::Personal),
+            ("project", "skill", K::Skill, S::Project),
+            ("personal setup", "plugin", K::Plugin, S::Personal),
+            (
+                "personal setup",
+                "standing instruction",
+                K::Instruction,
+                S::Personal,
+            ),
+            (
+                "project",
+                "standing instruction",
+                K::Instruction,
+                S::Project,
+            ),
+            ("personal setup", "tool server", K::ToolServer, S::Personal),
+            ("project", "tool server", K::ToolServer, S::Project),
+        ];
+        for (from, what, kind, source) in rows {
+            let d = tempfile::tempdir().unwrap();
+            let r = roots(d.path());
+            put(&r, from, what);
+            let mut spec = spec_for(&r);
+            spec.auth.bare = false;
+            let open = resolve(&spec, &r, &ResolveOptions::default());
+            assert!(
+                listed(&open, kind, source),
+                "{from} {what}: listed outside the empty room"
+            );
+            spec.auth.bare = true;
+            let room = resolve(&spec, &r, &ResolveOptions::default());
+            assert!(room.empty_room, "{from} {what}");
+            assert!(
+                !listed(&room, kind, source),
+                "{from} {what}: listed in the empty room"
+            );
+        }
+    }
+
+    #[test]
+    fn the_empty_room_lists_what_kata_passes() {
+        let d = tempfile::tempdir().unwrap();
+        let r = roots(d.path());
+        // A skill on disk of the same name as the one picked, and a setup output
+        // style and model.
+        skill_at(&r.home.join(".claude"), "kit-skill");
+        plugin_manifest(&r.home.join(".claude/plugins/kit-plug"), "kit-plug");
+        write(
+            &r.home.join(".claude/settings.json"),
+            r#"{"outputStyle": "Explanatory", "model": "sonnet"}"#,
+        );
+        let mut spec = spec_for(&r);
+        spec.skills = vec!["kit-skill".into()];
+        spec.plugins.insert("kit-plug".into(), Default::default());
+        spec.identity.system_prompt = Some("be brief".into());
+        let resolved = resolve(&spec, &r, &ResolveOptions::default());
+        assert!(resolved.empty_room);
+        let rows = [
+            ("the question tool", "kata:tool-server:kata-ask", true),
+            ("the standing note", "kata:instruction:standing-note", true),
+            ("a skill picked", "run-spec:skill:kit-skill", false),
+            ("a plugin picked", "run-spec:plugin:kit-plug", false),
+            (
+                "the job's own instruction",
+                "run-spec:instruction:system-prompt",
+                false,
+            ),
+            (
+                "an output style set in the setup",
+                "personal:instruction:output-style",
+                false,
+            ),
+        ];
+        for (label, id, locked) in rows {
+            let it = resolved
+                .items
+                .iter()
+                .find(|i| i.id == id)
+                .unwrap_or_else(|| panic!("{label}: {id} is not listed"));
+            assert_eq!(it.lock.is_some(), locked, "{label}: {:?}", it.lock);
+        }
+        // Nothing from the setup besides the output style.
+        assert!(!listed(&resolved, ItemKind::Skill, Source::Personal));
+        // Setting values still apply.
+        assert_eq!(
+            resolved.settings.model,
+            setting("sonnet".to_string(), SettingSource::Personal)
+        );
+    }
+
+    #[test]
+    fn a_prompt_hook_an_agent_hook_and_an_http_hook_are_listed() {
+        let d = tempfile::tempdir().unwrap();
+        let r = roots(d.path());
+        write(
+            &r.workdir.join(".claude/settings.json"),
+            &serde_json::json!({"hooks": {"Stop": [{"hooks": [
+                {"type": "prompt", "prompt": "Check it"},
+                {"type": "agent", "prompt": "Verify it"},
+                {"type": "http", "url": "https://h.test/x"}
+            ]}]}})
+            .to_string(),
+        );
+        let mut spec = spec_for(&r);
+        spec.auth.bare = false;
+        let resolved = resolve(&spec, &r, &ResolveOptions::default());
+        let hooks: Vec<&str> = resolved
+            .items
+            .iter()
+            .filter(|i| i.kind == ItemKind::Hook)
+            .map(|i| i.detail.as_str())
+            .collect();
+        assert_eq!(hooks.len(), 3, "{hooks:?}");
+        assert!(hooks.iter().any(|d| d.ends_with("prompt: Check it")));
+        assert!(hooks.iter().any(|d| d.ends_with("agent: Verify it")));
+        assert!(hooks.iter().any(|d| d.ends_with("http: https://h.test/x")));
+    }
+
+    fn off_ids(resolved: &Resolved) -> Vec<&str> {
+        resolved
+            .items
+            .iter()
+            .filter(|i| i.off)
+            .map(|i| i.id.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn an_instruction_is_off_when_a_hook_it_goes_off_with_is_off() {
+        let d = tempfile::tempdir().unwrap();
+        let r = roots(d.path());
+        write(
+            &r.workdir.join(".claude/settings.json"),
+            &hook_file("node shared.js"),
+        );
+        write(
+            &r.workdir.join(".claude/settings.local.json"),
+            &hook_file("node mine.js"),
+        );
+        write(&r.workdir.join("sub/CLAUDE.md"), "sub rules");
+        write(&r.workdir.join("CLAUDE.local.md"), "mine");
+        let mut spec = spec_for(&r);
+        spec.auth.bare = false;
+        let before = resolve(&spec, &r, &ResolveOptions::default());
+        let find = |res: &Resolved, id: &str| res.items.iter().find(|i| i.id == id).cloned();
+        let sub_id = "project:instruction:sub/CLAUDE.md";
+        let local_id = "project-local:instruction:CLAUDE.local.md";
+        let hook_of = |source: Source| {
+            before
+                .items
+                .iter()
+                .find(|i| i.kind == ItemKind::Hook && i.source == source)
+                .unwrap()
+                .id
+                .clone()
+        };
+        let shared = hook_of(Source::Project);
+        let mine = hook_of(Source::ProjectLocal);
+        let sub = find(&before, sub_id).expect("nested instruction listed");
+        assert_eq!(sub.goes_off_with, vec![shared.clone()]);
+        assert!(!sub.off && sub.lock.is_none());
+        assert_eq!(
+            find(&before, local_id).unwrap().goes_off_with,
+            vec![mine.clone()]
+        );
+        assert!(off_ids(&before).is_empty());
+
+        // The shared hook off: the nested instruction goes with it, unlocked, and
+        // the local pair stays.
+        spec.given = Some(Given {
+            hooks: vec![shared.clone()],
+            ..Given::default()
+        });
+        let after = resolve(&spec, &r, &ResolveOptions::default());
+        let mut off = off_ids(&after);
+        off.sort();
+        let mut want = vec![shared.as_str(), sub_id];
+        want.sort();
+        assert_eq!(off, want);
+        assert!(find(&after, sub_id).unwrap().lock.is_none());
+
+        // The local hook off takes CLAUDE.local.md.
+        spec.given = Some(Given {
+            hooks: vec![mine.clone()],
+            ..Given::default()
+        });
+        let after = resolve(&spec, &r, &ResolveOptions::default());
+        let mut off = off_ids(&after);
+        off.sort();
+        let mut want = vec![mine.as_str(), local_id];
+        want.sort();
+        assert_eq!(off, want);
     }
 }

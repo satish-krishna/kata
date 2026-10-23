@@ -50,6 +50,17 @@ pub(crate) fn collect_to(
     (c.items, c.problems)
 }
 
+/// The detail that marks an instruction found below the workdir.
+pub(crate) const NESTED_DETAIL: &str = "in a subfolder of the project";
+
+/// The ids of the hooks whose switch-off also drops `item`: a standing
+/// instruction Kata cannot carry over on its own goes with the project hook of
+/// its settings file (R4.6).
+pub fn goes_off_with(item: &ItemFacts, facts: &[ItemFacts]) -> Vec<String> {
+    let _ = (item, facts);
+    Vec::new()
+}
+
 struct Collector {
     items: Vec<ItemFacts>,
     problems: Vec<String>,
@@ -898,5 +909,126 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert!(!has(&items, ItemKind::Plugin, Source::Personal, "org"));
+    }
+
+    fn nested(items: &[ItemFacts]) -> Vec<&ItemFacts> {
+        items
+            .iter()
+            .filter(|i| i.kind == ItemKind::Instruction && i.detail == NESTED_DETAIL)
+            .collect()
+    }
+
+    #[test]
+    fn a_nested_claude_md_is_listed_as_a_project_instruction() {
+        let d = tempfile::tempdir().unwrap();
+        let (r, spec) = fixture(d.path());
+        let work = &r.workdir;
+        write(&work.join("sub/CLAUDE.md"), "sub rules");
+        write(&work.join("a/b/.claude/CLAUDE.md"), "deep rules");
+        write(&work.join("node_modules/x/CLAUDE.md"), "dependency");
+        write(&work.join("target/CLAUDE.md"), "build output");
+        write(&work.join(".hidden/CLAUDE.md"), "hidden");
+        write(&work.join(".claude/CLAUDE.md"), "own, not nested");
+        let (items, _) = run(&r, &spec, d.path());
+        let found = nested(&items);
+        let mut keys: Vec<String> = found
+            .iter()
+            .map(|i| parse_item_id(&i.id).unwrap().key)
+            .collect();
+        keys.sort();
+        assert_eq!(keys, ["a/b/.claude/CLAUDE.md", "sub/CLAUDE.md"]);
+        for i in found {
+            assert_eq!(i.source, Source::Project);
+            assert!(i.repo_relative);
+            assert!(i.id.starts_with("project:instruction:"));
+            assert!(i.path.is_some());
+        }
+        assert!(
+            has(&items, ItemKind::Instruction, Source::Project, "CLAUDE.md"),
+            "the workdir's own file stays"
+        );
+    }
+
+    #[test]
+    fn inside_a_git_repository_nested_files_come_from_git_and_ignored_ones_are_left_out() {
+        let d = tempfile::tempdir().unwrap();
+        let (r, spec) = fixture(d.path());
+        let work = &r.workdir;
+        if !std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(work)
+            .status()
+            .is_ok_and(|s| s.success())
+        {
+            return;
+        }
+        write(&work.join(".gitignore"), "ignored/\n");
+        write(&work.join("sub/CLAUDE.md"), "sub rules");
+        write(&work.join("ignored/CLAUDE.md"), "ignored");
+        write(&work.join(".hidden/CLAUDE.md"), "hidden but tracked-able");
+        let (items, _) = run(&r, &spec, d.path());
+        let mut keys: Vec<String> = nested(&items)
+            .iter()
+            .map(|i| parse_item_id(&i.id).unwrap().key)
+            .collect();
+        keys.sort();
+        assert_eq!(keys, [".hidden/CLAUDE.md", "sub/CLAUDE.md"]);
+    }
+
+    fn hook_ids(items: &[ItemFacts], source: Source) -> Vec<String> {
+        let mut ids: Vec<String> = items
+            .iter()
+            .filter(|i| i.kind == ItemKind::Hook && i.source == source)
+            .map(|i| i.id.clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn a_nested_claude_md_goes_off_with_a_project_hook() {
+        let d = tempfile::tempdir().unwrap();
+        let (r, spec) = fixture(d.path());
+        write(&r.workdir.join("sub/CLAUDE.md"), "sub rules");
+        write(
+            &r.workdir.join(".claude/settings.local.json"),
+            &hook_json("node local.js"),
+        );
+        let (items, _) = run(&r, &spec, d.path());
+        let project_hooks = hook_ids(&items, Source::Project);
+        assert!(!project_hooks.is_empty());
+        let sub = nested(&items)[0];
+        assert_eq!(goes_off_with(sub, &items), project_hooks);
+        // Not the local hook, not the personal or organization hooks, and nothing
+        // for the workdir's own file or the personal one.
+        for other in items.iter().filter(|i| i.id != sub.id) {
+            assert!(goes_off_with(other, &items).is_empty(), "{}", other.id);
+        }
+    }
+
+    #[test]
+    fn claude_local_md_goes_off_with_a_local_hook() {
+        let d = tempfile::tempdir().unwrap();
+        let (r, spec) = fixture(d.path());
+        write(&r.workdir.join("CLAUDE.local.md"), "mine");
+        write(
+            &r.workdir.join(".claude/settings.local.json"),
+            &hook_json("node local.js"),
+        );
+        let (items, _) = run(&r, &spec, d.path());
+        let local_hooks = hook_ids(&items, Source::ProjectLocal);
+        assert_eq!(local_hooks.len(), 1);
+        let local = items
+            .iter()
+            .find(|i| i.source == Source::ProjectLocal && i.kind == ItemKind::Instruction)
+            .unwrap();
+        assert_eq!(goes_off_with(local, &items), local_hooks);
+        // With no local hook there is nothing to go off with.
+        let without: Vec<ItemFacts> = items
+            .iter()
+            .filter(|i| i.source != Source::ProjectLocal || i.kind != ItemKind::Hook)
+            .cloned()
+            .collect();
+        assert!(goes_off_with(local, &without).is_empty());
     }
 }

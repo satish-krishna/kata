@@ -713,6 +713,7 @@ mod tests {
             brought_by: by.map(String::from),
             lock: None,
             off,
+            goes_off_with: Vec::new(),
         }
     }
 
