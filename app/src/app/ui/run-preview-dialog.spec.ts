@@ -1,3 +1,6 @@
+import type { ItemKind } from '@bindings/ItemKind';
+import type { Source } from '@bindings/Source';
+import { groupRows, presetRows, type PresetFrom } from '../lib/given';
 import { previewFixture, seedSpec } from '../lib/mock';
 import { settingRows } from '../core/given/run-preview.view-model';
 import { render } from '../../testing/render';
@@ -87,5 +90,55 @@ describe('RunPreviewDialog', () => {
   it('renders nothing while closed', async () => {
     await render(RunPreviewDialog, { ...base, open: false });
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  describe('the empty room', () => {
+    const FROM: PresetFrom = { workdir: seedSpec().workdir, session: new Set(), job: null, build: null };
+    const withRoom = (on: boolean) => ({ ...seedSpec(), auth: { bare: on, token_env: null } });
+    const listing = (on: boolean) => presetRows(previewFixture(withRoom(on)), FROM).rows;
+    const NOTICE = "The empty room is on: the run is given only what Kata passes. Your setup's hooks, skills, plugins, standing instructions and tool servers are left out.";
+    const notice = () => dialog().querySelector('[data-region="empty-room"]');
+    const open = async (rows = listing(true), on = true) => render(RunPreviewDialog, { ...base, groups: groupRows(rows), emptyRoom: on });
+
+    it.each<[Source, ItemKind]>([
+      ['personal', 'hook'],
+      ['project', 'hook'],
+      ['personal', 'skill'],
+      ['project', 'skill'],
+      ['personal', 'plugin'],
+      ['personal', 'instruction'],
+      ['project', 'instruction'],
+      ['personal', 'tool-server'],
+      ['project', 'tool-server'],
+    ])('in the empty room the setup items are not listed and the notice shows: %s %s', async (source, kind) => {
+      // Given the setup has that item: outside the empty room it is listed.
+      const setup = listing(false).filter((r) => r.item.source === source && r.item.kind === kind && r.item.id !== 'personal:instruction:output-style');
+      expect(setup.length).toBeGreaterThan(0);
+      await open();
+      for (const r of setup) expect(dialog().querySelector(`[data-row="${r.key}"]`)).toBeNull();
+      expect(notice()).not.toBeNull();
+      expect(text(notice()!)).toContain(NOTICE);
+    });
+
+    it('outside the empty room there is no notice', async () => {
+      await open(listing(false), false);
+      expect(notice()).toBeNull();
+    });
+
+    it.each([
+      ["Kata's question tool", 'kata:tool-server:kata-ask', 'Kata itself', true],
+      ["Kata's standing note on how to ask", 'kata:instruction:standing-note', 'Kata itself', true],
+      ['a skill picked for the job', 'run-spec:skill:doc-writer', 'run-spec', false],
+      ['a plugin picked for the job', 'run-spec:plugin:github-tools', 'run-spec', false],
+      ["the job's own standing instruction", 'run-spec:instruction:identity', 'run-spec', false],
+      ['an output style set in the setup', 'personal:instruction:output-style', 'personal setup', false],
+    ])('in the empty room what Kata passes is listed and switchable: %s', async (_label, id, source, locked) => {
+      await open();
+      expect(notice()).not.toBeNull();
+      const row = dialog().querySelector(`[data-row="${id}"]`)!;
+      expect(row).not.toBeNull();
+      expect(row.querySelector('[data-source-tag]')!.textContent!.trim()).toBe(source);
+      expect(row.querySelector('hlm-switch') === null).toBe(locked);
+    });
   });
 });

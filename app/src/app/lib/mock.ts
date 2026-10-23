@@ -49,7 +49,7 @@ export function seedSpec(): RunSpec {
     plugins: { "github-tools": { mcp: true, env: ["GITHUB_TOKEN", "GH_HOST"] } },
     model: { id: "claude-sonnet-4-6" },
     leash: { max_turns: 12, timeout_secs: 900, max_budget_usd: null, isolation: "worktree" },
-    auth: { bare: true, token_env: null },
+    auth: { bare: false, token_env: null },
     interactive: { enabled: true, answer_timeout_secs: null },
     permissions: { mode: "prompt", allow: ["Read", "Grep", "Bash(dotnet *)"], deny: ["Bash(rm *)"], unmatched: "ask" },
   };
@@ -197,6 +197,10 @@ const SUPERPOWERS = "superpowers@claude-plugins-official";
 const SDLC_PLUGIN = "ai-sdlc@ai-sdlc";
 const UNSWITCHABLE: LockReason = { kind: "unswitchable", text: "Kata cannot switch this off for one run without editing your setup" };
 
+/** The repository folder whose settings enable a personal plugin the other repositories do not, so a two-repository build lists it once, from the second. */
+export const SECOND_REPO = "acme-web";
+export const SECOND_REPO_PLUGIN = "design-kit@personal-tools";
+
 const PROJECT_HOOK = "project:hook:PostToolUse:Write|Edit:8c1f77e2d3a40b95";
 const LOCAL_HOOK = "project-local:hook:SessionStart:*:3d9e41b7a05c6f28";
 
@@ -241,6 +245,7 @@ export function previewFixture(spec: RunSpec): Resolved {
     plugin(SDLC_PLUGIN, "personal", "AI-SDLC stages", sdlcRequired ? requiredLock : null),
     plugin(SUPERPOWERS, "personal", "skills and hooks for disciplined work"),
     plugin(`${folder}-tools@${folder}`, "project", `tools installed for ${folder}`),
+    ...(folder === SECOND_REPO ? [plugin(SECOND_REPO_PLUGIN, "personal", "a personal plugin this repository enables")] : []),
     make("plugin", "run-spec", "github-tools", "github-tools", "PRs, issues, releases", { path: "~/.kata/plugins/github-tools" }),
     make("instruction", "personal", "CLAUDE.md", "CLAUDE.md", "your standing instructions", { path: "~/.claude/CLAUDE.md" }),
     make("instruction", "project", "CLAUDE.md", "CLAUDE.md", `${folder}'s standing instructions`, { path: `${spec.workdir}/CLAUDE.md` }),
@@ -251,6 +256,7 @@ export function previewFixture(spec: RunSpec): Resolved {
       path: `${spec.workdir}/CLAUDE.local.md`, goes_off_with: [LOCAL_HOOK],
     }),
     make("instruction", "kata", "standing-note", "Kata's standing note", "tells the run to ask through ask_user", { lock: kataLock }),
+    make("instruction", "personal", "output-style", "Output style: Explanatory", "the output style your setup sets"),
     make("instruction", "run-spec", "identity", "Run-spec instruction", "the identity prompt this run-spec carries"),
     make("tool-server", "personal", "github", "github", "npx @modelcontextprotocol/server-github"),
     make("tool-server", "project", `${folder}-db`, `${folder}-db`, "read-only database access"),
@@ -258,9 +264,21 @@ export function previewFixture(spec: RunSpec): Resolved {
     make("tool-server", "kata", "kata-ask", "kata-ask", "the ask_user and approve_tool tools", { lock: kataLock }),
   ];
 
+  // The empty room, as the engine resolves it: Kata's own items, the run-spec's kit and what a kit plugin brings
+  // except its hooks, and the output style the setup sets. Nothing else from the setup is listed, though it still exists.
+  const known = new Set(items.map((i) => i.id));
+  const emptyRoom = spec.auth.bare;
+  if (emptyRoom) {
+    const kept = items.filter(
+      (i) => i.source === "kata" || i.source === "run-spec" || i.id === "personal:instruction:output-style" ||
+        (i.brought_by?.startsWith("run-spec:plugin:") === true && i.kind !== "hook"),
+    );
+    items.length = 0;
+    items.push(...kept);
+  }
+
   const given = spec.given;
   const listed = new Set([...(given?.hooks ?? []), ...(given?.skills ?? []), ...(given?.plugins ?? []), ...(given?.instructions ?? []), ...(given?.tool_servers ?? [])]);
-  const known = new Set(items.map((i) => i.id));
   for (const i of items) if (!i.lock && listed.has(i.id)) i.off = true;
   for (const i of items) {
     if (i.lock?.kind === "follows-plugin") i.off = items.find((p) => p.id === (i.lock as { plugin: string }).plugin)?.off ?? false;
@@ -282,5 +300,5 @@ export function previewFixture(spec: RunSpec): Resolved {
     { source: "personal", name: "GITHUB_TOKEN", api_key: false },
     { source: "personal", name: "ANTHROPIC_API_KEY", api_key: true },
   ];
-  return { items, settings, env, missing: [...listed].filter((id) => !known.has(id)), problems: [], empty_room: false };
+  return { items, settings, env, missing: [...listed].filter((id) => !known.has(id)), problems: [], empty_room: emptyRoom };
 }

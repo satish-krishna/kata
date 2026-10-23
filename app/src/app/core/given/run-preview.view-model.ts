@@ -72,7 +72,9 @@ const LIMIT_SOURCE_LABELS: Record<BuildPreviewPlan['limitSource'], string> = {
 
 type Pending = { spec: RunSpec; workdir: string; resolve: (spec: RunSpec | null) => void; reject: (e: unknown) => void };
 type BuildPending = { resolve: (result: BuildPreviewResult | null) => void; reject: (e: unknown) => void };
-type Part = { section: BuildSectionRequest; rows: PresetRow[] };
+/** One folder of a build with the rows resolved in it. */
+export type BuildPart = { section: BuildSectionRequest; rows: PresetRow[] };
+type Part = BuildPart;
 
 const isSwitchable = (row: PresetRow): boolean => row.locked === null && row.item.brought_by === null;
 
@@ -81,6 +83,11 @@ function projectBound(rows: readonly PresetRow[]): Set<string> {
   const bound = new Set(rows.filter((r) => r.key !== r.item.id).map((r) => r.item.id));
   for (const r of rows) if (r.item.brought_by !== null && bound.has(r.item.brought_by)) bound.add(r.item.id);
   return bound;
+}
+
+/** The rows of a build that are not bound to a project, once each, by key: the first folder's in its order, then those first seen in later folders. */
+export function sharedRows(parts: readonly BuildPart[]): PresetRow[] {
+  return parts.length === 0 ? [] : [...parts[0].rows];
 }
 
 /** The preview before a run: what the run will be given and run with, and the engineer's choices on it. */
@@ -103,6 +110,8 @@ export class RunPreviewViewModel {
   readonly title = signal('Run preview');
   readonly env = signal<PreviewEnvRow[]>([]);
   readonly warnings = signal<string[]>([]);
+  /** True when the resolver left the setup out: the run is in the empty room. */
+  readonly emptyRoom = signal(false);
 
   /** A build's time-limit and round fields; null when the preview asks for neither. */
   readonly buildForm = signal<BuildFormState | null>(null);

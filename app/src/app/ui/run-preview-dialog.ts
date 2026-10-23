@@ -30,6 +30,8 @@ export class RunPreviewDialog {
   /** A build's items, one section per repository; when set, `groups` is not shown. */
   readonly sections = input<PreviewSection[] | null>(null);
   readonly warnings = input<string[]>([]);
+  /** True when the run is in the empty room, which the dialog says at the top of the list. */
+  readonly emptyRoom = input<boolean>(false);
   readonly busy = input<boolean>(false);
 
   readonly toggle = output<GivenToggle>();
