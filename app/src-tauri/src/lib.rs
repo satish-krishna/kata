@@ -1058,7 +1058,14 @@ name: build
     fn preview_run_reads_the_options_from_the_spec() {
         use kata_core::given::LockReason;
         let dir = std::env::temp_dir().join(format!("kata-preview-opts-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        // A project-scoped ai-sdlc, so the test never depends on the machine having the plugin installed.
+        let plugin = dir.join(".claude").join("plugins").join("ai-sdlc");
+        std::fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            plugin.join(".claude-plugin").join("plugin.json"),
+            r#"{"name":"ai-sdlc","version":"0.9.0"}"#,
+        )
+        .unwrap();
         let mut plugins = std::collections::BTreeMap::new();
         plugins.insert("ai-sdlc".to_string(), spec::PluginConfig::default());
         let spec = RunSpec {
