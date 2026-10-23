@@ -1,7 +1,10 @@
 use crate::assemble::{assemble, AssembleError};
 use crate::catalog::CatalogEntry;
-use crate::command::{build_invocation, ClaudeInvocation};
+use crate::command::{build_invocation_with, ClaudeInvocation};
 use crate::event::KataEvent;
+use crate::given::{
+    apply, given_event, hooks_fired, merge_settings, resolve, ResolveOptions, ResolveRoots,
+};
 use crate::spec::{validate, Isolation, PermissionMode, RunSpec, UnmatchedPolicy};
 use std::io::{BufReader, Write};
 use std::path::Path;
@@ -148,7 +151,7 @@ const DENY_BY_OPERATOR: &str = "The operator denied this tool call.";
 /// additive (applied even under identity Replace mode) because it describes a
 /// Kata-provided capability the operator did not author. See the interactive
 /// sessions design spec.
-const INTERACTIVE_RETASK: &str = "You have an `ask_user` tool. When you hit a consequential fork you cannot resolve from the task and context — ambiguous requirements, a decision with real trade-offs, a destructive action you are unsure about — call `ask_user` with a crisp question (choose the `kind` that fits: confirm / select / text) instead of guessing. Do not use it for trivia you can decide yourself. Do NOT use any built-in question or prompt tool such as `AskUserQuestion`; only `ask_user` reaches the operator.\n\nCRITICAL: there is no human reading your messages turn by turn. A question you write as plain text does NOT reach the operator — it simply ends the run with the question unanswered. `ask_user` is the ONLY channel that reaches them. So whenever a skill or instruction tells you to \"ask the user\", \"ask one question at a time\", \"present options\", \"get approval\", or \"wait for approval\" before continuing, you MUST carry that out by calling `ask_user` — never by emitting the question as prose and stopping. If a skill expects a back-and-forth dialogue, conduct every turn of that dialogue through `ask_user`.";
+pub(crate) const INTERACTIVE_RETASK: &str = "You have an `ask_user` tool. When you hit a consequential fork you cannot resolve from the task and context — ambiguous requirements, a decision with real trade-offs, a destructive action you are unsure about — call `ask_user` with a crisp question (choose the `kind` that fits: confirm / select / text) instead of guessing. Do not use it for trivia you can decide yourself. Do NOT use any built-in question or prompt tool such as `AskUserQuestion`; only `ask_user` reaches the operator.\n\nCRITICAL: there is no human reading your messages turn by turn. A question you write as plain text does NOT reach the operator — it simply ends the run with the question unanswered. `ask_user` is the ONLY channel that reaches them. So whenever a skill or instruction tells you to \"ask the user\", \"ask one question at a time\", \"present options\", \"get approval\", or \"wait for approval\" before continuing, you MUST carry that out by calling `ask_user` — never by emitting the question as prose and stopping. If a skill expects a back-and-forth dialogue, conduct every turn of that dialogue through `ask_user`.";
 
 /// Append the interactive retask note to the invocation's system prompt without
 /// colliding with an identity-mode append.
@@ -223,6 +226,32 @@ fn open_transcript(spec_name: &str) -> Result<(Transcript, std::path::PathBuf), 
     ))
 }
 
+/// Materialize the carried-over project items as a plugin: a manifest naming
+/// `CARRY_PLUGIN` and each source copied to its path under the plugin folder.
+fn write_carry_plugin(
+    dir: &std::path::Path,
+    files: &[(std::path::PathBuf, std::path::PathBuf)],
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir.join(".claude-plugin"))?;
+    std::fs::write(
+        dir.join(".claude-plugin/plugin.json"),
+        serde_json::json!({
+            "name": crate::given::CARRY_PLUGIN,
+            "version": "0.0.1",
+            "description": "the project's own skills, agents and commands",
+        })
+        .to_string(),
+    )?;
+    for (source, rel) in files {
+        let to = dir.join(rel);
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(source, &to)?;
+    }
+    Ok(())
+}
+
 /// What a run reports, as opposed to what it does. Kept out of `RunSpec` on
 /// purpose: a spec stays a reproducible description of the work.
 #[derive(Debug, Clone, Copy, Default)]
@@ -260,8 +289,14 @@ pub fn run_with<F: FnMut(KataEvent)>(
     mut emit: F,
 ) -> Result<RunOutcome, RunError> {
     validate(spec).map_err(RunError::Invalid)?;
-    let assembled = assemble(spec, catalog)?;
-    let mut inv = build_invocation(spec, &assembled);
+    // What the run is given is resolved once, here, and applied once; nothing
+    // re-reads the setup after this point.
+    let roots = ResolveRoots::for_spec(spec);
+    let given_opts = ResolveOptions::from_spec(spec);
+    let resolved = resolve(spec, &roots, &given_opts);
+    let applied = apply(spec, &resolved, &roots, &roots.workdir);
+    let assembled = assemble(spec, catalog, &applied.kit_skip)?;
+    let mut inv = build_invocation_with(spec, &assembled, &applied);
 
     // Tee the event stream to a per-run transcript. Best-effort: a missing
     // transcript must never fail a real run. Set up before the auth fail-fast so a
@@ -289,6 +324,20 @@ pub fn run_with<F: FnMut(KataEvent)>(
         forward(event);
     };
 
+    // A run that ends before it is under way still says what it was given: the
+    // refusals below and every setup failure on the way to the spawn.
+    macro_rules! record_given_none {
+        () => {
+            emit(given_event(&resolved, &given_opts, None, &[]))
+        };
+    }
+    macro_rules! spawn_fail {
+        ($e:expr) => {{
+            record_given_none!();
+            RunError::Spawn($e.to_string())
+        }};
+    }
+
     // Fail fast: a bare run that references a token var it cannot resolve would
     // reach the API unauthenticated. Refuse before creating a worktree or spawning.
     if spec.auth.bare {
@@ -300,6 +349,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
         {
             let resolved = std::env::var(name).ok().filter(|v| !v.trim().is_empty());
             if resolved.is_none() {
+                record_given_none!();
                 let message = format!(
                     "auth.token_env names '{name}', but it is unset or empty in the environment"
                 );
@@ -312,94 +362,6 @@ pub fn run_with<F: FnMut(KataEvent)>(
                 return Err(RunError::Auth(message));
             }
         }
-    }
-
-    // Every run gets Kata's own MCP server in the child, because every run gets
-    // the `ask_user` tool: no permission mode stops claude from wanting to ask,
-    // and its built-in AskUserQuestion (disallowed in command.rs) kills a
-    // headless session. Whether or not the spec is `[interactive]`, a question
-    // pauses on the operator — there is no automatic answer. `[permissions] mode
-    // = "prompt"` or "auto" additionally advertises the `approve_tool` handler
-    // behind `--permission-prompt-tool`. The temp dir holds the mcp-config and,
-    // when there is no identity append file to fold into, the retask note file
-    // (see `append_interactive_retask`); it lives until after the child exits.
-    let permissions_bridge = matches!(
-        spec.permissions.mode,
-        PermissionMode::Prompt | PermissionMode::Auto
-    );
-    let tools = crate::ask::Tools {
-        ask_user: true,
-        approve_tool: permissions_bridge,
-    };
-    let (bridge_rx, bridge_tmp) = {
-        let bridge = crate::ask::Bridge::bind().map_err(|e| RunError::Spawn(e.to_string()))?;
-        let port = bridge.port();
-        let (atx, arx) = mpsc::channel();
-        bridge.serve(atx, cancel.clone());
-
-        let dir = tempfile::tempdir().map_err(|e| RunError::Spawn(e.to_string()))?;
-        let exe = std::env::current_exe().map_err(|e| RunError::Spawn(e.to_string()))?;
-        let cfg = dir.path().join("mcp-config.json");
-        // Pass the port and tool set via the per-server env block too: relying on
-        // claude to propagate them from the child env to this grandchild is not
-        // guaranteed. Belt and suspenders.
-        let mut server_env = serde_json::Map::new();
-        server_env.insert("KATA_ASK_PORT".into(), port.to_string().into());
-        server_env.insert(crate::ask::TOOLS_ENV.into(), tools.to_env().into());
-        let mut servers = serde_json::Map::new();
-        servers.insert(
-            crate::ask::MCP_SERVER_NAME.into(),
-            serde_json::json!({
-                "command": exe.to_string_lossy(),
-                "args": ["mcp-ask"],
-                "env": server_env,
-            }),
-        );
-        let cfg_body = serde_json::json!({ "mcpServers": servers }).to_string();
-        std::fs::write(&cfg, cfg_body).map_err(|e| RunError::Spawn(e.to_string()))?;
-
-        inv.args.push("--mcp-config".into());
-        inv.args.push(cfg.to_string_lossy().into_owned());
-        append_interactive_retask(
-            &mut inv,
-            assembled.system_prompt_file.as_deref(),
-            INTERACTIVE_RETASK,
-            dir.path(),
-        )
-        .map_err(|e| RunError::Spawn(e.to_string()))?;
-        inv.env.push(("KATA_ASK_PORT".into(), port.to_string()));
-        inv.env
-            .push((crate::ask::TOOLS_ENV.to_string(), tools.to_env()));
-        (arx, dir)
-    };
-
-    // Under prompt and auto modes the spec's rules are authored into a settings file and
-    // enforced by claude itself. They are deliberately NOT matched engine-side:
-    // claude resolves a call against these *before* it would consult the prompt
-    // tool, so a rule written here reaches every call — including the read-only
-    // commands (`git status`, `cat`, `ls`) that claude auto-approves without
-    // asking anyone, and which therefore never reach `approve_tool` at all. A
-    // deny that lived only in Kata's matcher would be silently inert for them.
-    //
-    // What is left over — matching no rule and not auto-approved — is what
-    // reaches `approve_tool`, where the `unmatched` policy decides or the
-    // operator does.
-    let mut settings_tmp: Option<tempfile::TempDir> = None;
-    if permissions_bridge {
-        let dir = tempfile::tempdir().map_err(|e| RunError::Spawn(e.to_string()))?;
-        let path = dir.path().join("settings.json");
-        let body = serde_json::json!({
-            "permissions": {
-                "allow": spec.permissions.allow,
-                "deny": spec.permissions.deny,
-                "ask": spec.permissions.ask,
-            }
-        })
-        .to_string();
-        std::fs::write(&path, body).map_err(|e| RunError::Spawn(e.to_string()))?;
-        inv.args.push("--settings".into());
-        inv.args.push(path.to_string_lossy().into_owned());
-        settings_tmp = Some(dir);
     }
 
     let isolation = match spec.leash.isolation {
@@ -418,6 +380,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
                 worktree = Some(wt);
             }
             Err(e) => {
+                record_given_none!();
                 let message = format!("worktree isolation failed for {}: {e}", spec.workdir);
                 emit(KataEvent::RunError {
                     message: message.clone(),
@@ -434,6 +397,148 @@ pub fn run_with<F: FnMut(KataEvent)>(
         Some(wt) => (Some(wt.path.clone()), Some(wt.branch.clone())),
         None => (None, None),
     };
+    // What the run is given is applied against the folder claude will run in: an
+    // isolated run reads its own copy of the project, so a path switched off in
+    // the live workdir is rewritten under the worktree. Kit assembly and the
+    // flags above do not depend on that folder, so they were built from the
+    // first application.
+    let applied = if worktree.is_some() {
+        apply(spec, &resolved, &roots, std::path::Path::new(&cwd))
+    } else {
+        applied
+    };
+
+    // Every run gets Kata's own MCP server in the child, because every run gets
+    // the `ask_user` tool: no permission mode stops claude from wanting to ask,
+    // and its built-in AskUserQuestion (disallowed in command.rs) kills a
+    // headless session. Whether or not the spec is `[interactive]`, a question
+    // pauses on the operator — there is no automatic answer. `[permissions] mode
+    // = "prompt"` or "auto" additionally advertises the `approve_tool` handler
+    // behind `--permission-prompt-tool`. The temp dir holds the mcp-config and,
+    // when there is no identity append file to fold into, the retask note file
+    // (see `append_interactive_retask`); it lives until after the child exits.
+    let permissions_bridge = matches!(
+        spec.permissions.mode,
+        PermissionMode::Prompt | PermissionMode::Auto
+    );
+    let tools = crate::ask::Tools {
+        ask_user: true,
+        approve_tool: permissions_bridge,
+    };
+    // One private folder per run holds every per-run file (tool servers, settings,
+    // the retask note); see `fsutil::run_temp_dir`. It is removed when this guard
+    // drops, on every return below.
+    let run_tmp = crate::fsutil::run_temp_dir().map_err(|e| spawn_fail!(e))?;
+    let bridge_rx = {
+        let bridge = crate::ask::Bridge::bind().map_err(|e| spawn_fail!(e))?;
+        let port = bridge.port();
+        let (atx, arx) = mpsc::channel();
+        bridge.serve(atx, cancel.clone());
+
+        let exe = std::env::current_exe().map_err(|e| spawn_fail!(e))?;
+        let cfg = run_tmp.path().join("mcp-config.json");
+        // Pass the port and tool set via the per-server env block too: relying on
+        // claude to propagate them from the child env to this grandchild is not
+        // guaranteed. Belt and suspenders.
+        let mut server_env = serde_json::Map::new();
+        server_env.insert("KATA_ASK_PORT".into(), port.to_string().into());
+        server_env.insert(crate::ask::TOOLS_ENV.into(), tools.to_env().into());
+        let mut servers = serde_json::Map::new();
+        servers.insert(
+            crate::ask::MCP_SERVER_NAME.into(),
+            serde_json::json!({
+                "command": exe.to_string_lossy(),
+                "args": ["mcp-ask"],
+                "env": server_env,
+            }),
+        );
+        // The project's own servers it could not keep (their source was dropped)
+        // ride in the same file. Never strict: claude's own scopes still apply.
+        if let Some(carried) = applied
+            .carry
+            .as_ref()
+            .and_then(|c| c.mcp.as_ref())
+            .and_then(|m| m.get("mcpServers"))
+            .and_then(|m| m.as_object())
+        {
+            for (name, def) in carried {
+                servers.entry(name.clone()).or_insert_with(|| def.clone());
+            }
+        }
+        let cfg_body = serde_json::json!({ "mcpServers": servers }).to_string();
+        std::fs::write(&cfg, cfg_body).map_err(|e| spawn_fail!(e))?;
+
+        inv.args.push("--mcp-config".into());
+        inv.args.push(cfg.to_string_lossy().into_owned());
+        // A system prompt that is off was never passed, so there is no file to fold into.
+        let prompt_file = assembled
+            .system_prompt_file
+            .as_deref()
+            .filter(|_| !applied.drop_system_prompt);
+        append_interactive_retask(&mut inv, prompt_file, INTERACTIVE_RETASK, run_tmp.path())
+            .map_err(|e| spawn_fail!(e))?;
+        inv.env.push(("KATA_ASK_PORT".into(), port.to_string()));
+        inv.env
+            .push((crate::ask::TOOLS_ENV.to_string(), tools.to_env()));
+        arx
+    };
+
+    // Under prompt and auto modes the spec's rules are authored into a settings file and
+    // enforced by claude itself. They are deliberately NOT matched engine-side:
+    // claude resolves a call against these *before* it would consult the prompt
+    // tool, so a rule written here reaches every call — including the read-only
+    // commands (`git status`, `cat`, `ls`) that claude auto-approves without
+    // asking anyone, and which therefore never reach `approve_tool` at all. A
+    // deny that lived only in Kata's matcher would be silently inert for them.
+    //
+    // What is left over — matching no rule and not auto-approved — is what
+    // reaches `approve_tool`, where the `unmatched` policy decides or the
+    // operator does.
+    //
+    // The same file carries what switched-off items change (`applied.settings`),
+    // with the permissions block merged on top. Under bypass with nothing off
+    // there is nothing to say, so no file is written.
+    let mut file_settings = applied.settings.clone();
+    if permissions_bridge {
+        let permissions = serde_json::json!({
+            "permissions": {
+                "allow": spec.permissions.allow,
+                "deny": spec.permissions.deny,
+                "ask": spec.permissions.ask,
+            }
+        });
+        if let Some(p) = permissions.as_object() {
+            merge_settings(&mut file_settings, p);
+        }
+    }
+    if !file_settings.is_empty() {
+        let path = run_tmp.path().join("settings.json");
+        let body = serde_json::Value::Object(file_settings).to_string();
+        std::fs::write(&path, body).map_err(|e| spawn_fail!(e))?;
+        inv.args.push("--settings".into());
+        inv.args.push(path.to_string_lossy().into_owned());
+    }
+
+    // The rest of a dropped project source: its skills, agents and commands as a
+    // generated plugin next to the kit's, its standing instructions through
+    // `--add-dir` with the switch that makes claude read them, set on the child
+    // only. The folder lives in the run's temporary folder and goes with it.
+    if let Some(carry) = &applied.carry {
+        if !carry.plugin.is_empty() {
+            let dir = run_tmp.path().join("carry-plugin");
+            write_carry_plugin(&dir, &carry.plugin).map_err(|e| spawn_fail!(e))?;
+            inv.args.push("--plugin-dir".into());
+            inv.args.push(dir.to_string_lossy().into_owned());
+        }
+        if let Some(add) = &carry.add_dir {
+            inv.args.push("--add-dir".into());
+            inv.args.push(add.to_string_lossy().into_owned());
+        }
+        for (k, v) in &carry.env {
+            inv.env.push(((*k).to_string(), (*v).to_string()));
+        }
+    }
+
     emit(KataEvent::RunStarted {
         spec: spec.name.clone(),
         model: spec.model.id.clone(),
@@ -480,7 +585,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
     for k in &inv.env_remove {
         cmd.env_remove(k);
     }
-    let mut child = cmd.spawn().map_err(|e| RunError::Spawn(e.to_string()))?;
+    let mut child = cmd.spawn().map_err(|e| spawn_fail!(e))?;
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
 
@@ -535,6 +640,12 @@ pub fn run_with<F: FnMut(KataEvent)>(
     // that labels each tool.result. A fresh parser per line loses it.
     let mut parser = crate::event::StreamParser::new(opts.full_payloads);
     let mut result = None;
+    // Claude's start report and the hooks seen firing, checked against
+    // `resolved`, the list the run was given at the start (R16.1). The first
+    // `run.given` is the report; each hook's first firing adds another.
+    let mut start_report: Option<crate::event::InitReport> = None;
+    let mut fired: Vec<crate::event::HookFired> = Vec::new();
+    let mut last_firings = crate::given::HookFirings::default();
     let mut termination: Option<Termination> = None;
 
     // Await state, shared by both things that can pause a run: an unanswered
@@ -739,6 +850,37 @@ pub fn run_with<F: FnMut(KataEvent)>(
                     continue;
                 }
                 let parsed = parser.push(&line);
+                if let Some(report) = parsed.init {
+                    start_report = Some(report);
+                    emit(given_event(
+                        &resolved,
+                        &given_opts,
+                        start_report.as_ref(),
+                        &fired,
+                    ));
+                }
+                if let Some(hook) = parsed.hook {
+                    if parsed.hook_started {
+                        fired.push(hook);
+                    } else if fired.last().is_some_and(|l| !l.event.is_empty()) {
+                        // A response ends the occurrence its started lines made.
+                        fired.push(crate::event::HookFired {
+                            event: String::new(),
+                            name: String::new(),
+                            command: None,
+                        });
+                    }
+                    let now = hooks_fired(&resolved.items, &fired);
+                    if start_report.is_some() && now != last_firings {
+                        emit(given_event(
+                            &resolved,
+                            &given_opts,
+                            start_report.as_ref(),
+                            &fired,
+                        ));
+                    }
+                    last_firings = now;
+                }
                 if parsed.starts_turn {
                     // Engine-side leash: claude 2.1.x has no --max-turns flag, so the
                     // turn cap is enforced here. `None` means unlimited (bounded only
@@ -783,7 +925,12 @@ pub fn run_with<F: FnMut(KataEvent)>(
                 match child.try_wait() {
                     Ok(Some(_)) => break,
                     Ok(None) => thread::sleep(POLL),
-                    Err(e) => return Err(RunError::Spawn(e.to_string())),
+                    Err(e) => {
+                        if start_report.is_none() {
+                            emit(given_event(&resolved, &given_opts, None, &fired));
+                        }
+                        return Err(RunError::Spawn(e.to_string()));
+                    }
                 }
             }
         }
@@ -853,7 +1000,12 @@ pub fn run_with<F: FnMut(KataEvent)>(
             }
         }
         None => {
-            let status = child.wait().map_err(|e| RunError::Spawn(e.to_string()))?;
+            let status = child.wait().map_err(|e| {
+                if start_report.is_none() {
+                    emit(given_event(&resolved, &given_opts, None, &fired));
+                }
+                RunError::Spawn(e.to_string())
+            })?;
             let code = status.code().unwrap_or(1);
             let payload = result.unwrap_or(crate::event::ResultPayload {
                 num_turns: turns,
@@ -894,6 +1046,11 @@ pub fn run_with<F: FnMut(KataEvent)>(
         }
     };
 
+    // A run that ended before Claude's start report still says what it was given.
+    if start_report.is_none() {
+        emit(given_event(&resolved, &given_opts, None, &fired));
+    }
+
     // The child has exited; surface the changeset before the terminal event.
     // Runs against `cwd` — the worktree path when isolated, the workdir
     // otherwise. A non-git workdir is benign and common (a bare run outside
@@ -923,10 +1080,9 @@ pub fn run_with<F: FnMut(KataEvent)>(
 
     let _ = reader_handle.join();
     let _ = stderr_handle.join();
-    // Keep the temp dirs (the generated mcp-config and settings file) alive
-    // until the child has fully exited above; drop them only now.
-    drop(bridge_tmp);
-    drop(settings_tmp);
+    // Keep the run folder (the generated mcp-config and settings file) alive
+    // until the child has fully exited above; drop it only now.
+    drop(run_tmp);
     Ok(RunOutcome {
         exit_code,
         transcript_path: transcript_path.map(|p| p.display().to_string()),

@@ -1,40 +1,31 @@
-<hlm-dialog [state]="open() ? 'open' : 'closed'" (stateChanged)="onState($event)">
-  <hlm-dialog-content *hlmDialogPortal="let ctx">
-    <div hlmDialogTitle>{{ title() }}</div>
-    <div class="k-form">
-      @if (round()) {
-        <app-field label="Instructions">
-          <textarea hlmTextarea rows="4" aria-label="Instructions" [formField]="state().form.instructions"></textarea>
-        </app-field>
-        <app-field label="Repository" hint="The agent works on the instructions inside this repository, after any of its unfinished tasks.">
-          <hlm-select [value]="state().form.repo().value() || null" (valueChange)="setRepo($event)">
-            <hlm-select-trigger aria-label="Repository">
-              <hlm-select-value placeholder="Choose a repository" />
-            </hlm-select-trigger>
-            <hlm-select-content *hlmSelectPortal>
-              @for (r of repos(); track r) {
-                <hlm-select-item [value]="r">{{ r }}</hlm-select-item>
-              }
-            </hlm-select-content>
-          </hlm-select>
-        </app-field>
-      }
-      <app-field label="Time limit" hint="Time limit for each repository's run. Time spent waiting for your answers does not count. There is no spending ceiling.">
-        <div class="grid grid-cols-2 gap-2">
-          <label hlmLabel class="k-duration">
-            <input hlmInput type="number" aria-label="Hours" [formField]="state().form.hours" />
-            hours
-          </label>
-          <label hlmLabel class="k-duration">
-            <input hlmInput type="number" aria-label="Minutes" [formField]="state().form.minutes" />
-            minutes
-          </label>
-        </div>
-      </app-field>
+<div class="k-form">
+  @if (round()) {
+    <app-field label="Instructions">
+      <textarea hlmTextarea rows="4" aria-label="Instructions" [formField]="state().form.instructions"></textarea>
+    </app-field>
+    <app-field label="Repository" hint="The agent works on the instructions inside this repository, after any of its unfinished tasks.">
+      <hlm-select [value]="state().form.repo().value() || null" (valueChange)="setRepo($event)">
+        <hlm-select-trigger aria-label="Repository">
+          <hlm-select-value placeholder="Choose a repository" />
+        </hlm-select-trigger>
+        <hlm-select-content *hlmSelectPortal>
+          @for (r of repos(); track r) {
+            <hlm-select-item [value]="r">{{ r }}</hlm-select-item>
+          }
+        </hlm-select-content>
+      </hlm-select>
+    </app-field>
+  }
+  <app-field label="Time limit" hint="Time limit for each repository's run. Time spent waiting for your answers does not count. There is no spending ceiling.">
+    <div class="grid grid-cols-2 gap-2">
+      <label hlmLabel class="k-duration">
+        <input hlmInput type="number" aria-label="Hours" [formField]="state().form.hours" />
+        hours
+      </label>
+      <label hlmLabel class="k-duration">
+        <input hlmInput type="number" aria-label="Minutes" [formField]="state().form.minutes" />
+        minutes
+      </label>
     </div>
-    <hlm-dialog-footer>
-      <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
-      <button hlmBtn variant="primary" size="sm" type="button" [disabled]="!state().form().valid()" (click)="submit()">{{ title() }}</button>
-    </hlm-dialog-footer>
-  </hlm-dialog-content>
-</hlm-dialog>
+  </app-field>
+</div>

@@ -44,6 +44,9 @@ export type RunTarget = {
 export type RunOutcome = { state: RunState; runId: string | null; snapshot: Snapshot | null; exited: boolean };
 
 /** What the screen needs to place a new change: the workspace, its master repo path and the product repos. */
+/** The preview before a run: takes the built spec, answers with the spec to run or null when the engineer cancelled. */
+export type Confirm = (spec: RunSpec) => Promise<RunSpec | null>;
+
 export type ChangeTarget = { workspace: WorkspaceEntry; master: string; productRepos: string[] };
 
 /** The master repo a stopped run is compared against, with its pre-run snapshot. */
@@ -406,9 +409,10 @@ export class SdlcRunner {
 
   /**
    * New change: branch off `change/pending-<stamp>`, run the intent skill, then rename or delete the branch
-   * once the run is over, whatever its outcome.
+   * once the run is over, whatever its outcome. `confirm` is the preview: it gets the built spec and answers with the spec to
+   * run, or null when the engineer cancelled, in which case no branch is made.
    */
-  async newChange(target: ChangeTarget, system: string, idea: string): Promise<void> {
+  async newChange(target: ChangeTarget, system: string, idea: string, confirm?: Confirm): Promise<void> {
     const { workspace, master, productRepos } = target;
     if (this.isBusy()) {
       this.toasts.error('Another task is already running.');
@@ -422,6 +426,12 @@ export class SdlcRunner {
     } catch (e) {
       this.toasts.error(`Could not prepare the intent run: ${message(e)}`);
       return;
+    }
+    // The preview comes before the branch: cancelling it leaves nothing behind.
+    if (confirm) {
+      const confirmed = await confirm(spec);
+      if (!confirmed) return;
+      spec = confirmed;
     }
     let branch: string;
     try {

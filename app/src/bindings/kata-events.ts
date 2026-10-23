@@ -85,6 +85,14 @@ export type KataEvent =
       type: "run.completed";
     }
   | {
+      env: EnvName[];
+      items: GivenItem[];
+      options?: GivenOptions;
+      settings: RunSettings;
+      type: "run.given";
+      warnings: string[];
+    }
+  | {
       /**
        * Isolation branch (`kata/<slug>-<id>`) — present only when isolated.
        */
@@ -186,8 +194,128 @@ export type KataEvent =
       exit_code: number;
       type: "run.cancelled";
     };
+/**
+ * Where an item comes from. `ProjectLocal` is `.claude/settings.local.json`,
+ * `CLAUDE.local.md` and the local MCP scope in `~/.claude.json`; it displays as
+ * "project" but keeps its own identity.
+ */
+export type Source = "personal" | "project" | "project-local" | "plugin" | "organization" | "kata" | "run-spec";
+/**
+ * The kind of thing a run starts with that can be switched off.
+ */
+export type ItemKind = "hook" | "skill" | "plugin" | "instruction" | "tool-server";
+/**
+ * Why an item is locked on. Every variant but `FollowsPlugin` carries the
+ * one-line reason text the row shows.
+ */
+export type LockReason =
+  | {
+      kind: "kata";
+      text: string;
+    }
+  | {
+      kind: "required";
+      text: string;
+    }
+  | {
+      kind: "organization";
+      text: string;
+    }
+  | {
+      kind: "build";
+      text: string;
+    }
+  | {
+      kind: "unswitchable";
+      text: string;
+    }
+  | {
+      kind: "follows-plugin";
+      plugin: string;
+    };
+/**
+ * One variant per distinct text the view shows. The frontend maps each to its
+ * words.
+ */
+export type GivenStatus =
+  | "given"
+  | "passed-not-loaded"
+  | "given-failed-to-connect"
+  | "given-fired"
+  | "given-not-fired"
+  | "given-unconfirmed"
+  | "switched-off-but-loaded"
+  | "switched-off-but-fired"
+  | "switched-off"
+  | "switched-off-unconfirmed"
+  | "loaded-source-unknown"
+  | "loaded-source-unknown-failed-to-connect"
+  | "fired-source-unknown"
+  | "passed-no-start-report"
+  | "switched-off-no-start-report";
+/**
+ * Where a setting's value comes from.
+ */
+export type SettingSource =
+  | ("run-spec" | "personal" | "project" | "project-local" | "organization" | "claude-default" | "kata-default")
+  | "claude-report";
 export type QuestionKind = "confirm" | "select" | "text";
 
+/**
+ * The name of an environment variable the run sees. Never its value.
+ */
+export interface EnvName {
+  /**
+   * True for the variable that holds the API key (`auth.token_env`).
+   */
+  api_key: boolean;
+  name: string;
+  source: Source;
+}
+/**
+ * One row of the view: the resolved item (without its path) and its status.
+ * `source` is `None` for a row Claude reported that Kata did not know.
+ */
+export interface GivenItem {
+  brought_by?: string | null;
+  detail: string;
+  id: string;
+  kind: ItemKind;
+  lock?: LockReason | null;
+  name: string;
+  off: boolean;
+  source?: Source | null;
+  status: GivenStatus;
+}
+/**
+ * The options the run was resolved with.
+ */
+export interface GivenOptions {
+  build: boolean;
+  required_plugins: string[];
+}
+/**
+ * The settings of R17.1 the engine can resolve. The build's safety rules come
+ * from the Workbench.
+ */
+export interface RunSettings {
+  answer_deadline: RunSetting;
+  effort: RunSetting;
+  empty_room: RunSetting;
+  model: RunSetting;
+  permission_posture: RunSetting;
+  spending_ceiling: RunSetting;
+  time_limit: RunSetting;
+  turn_cap: RunSetting;
+}
+/**
+ * One setting. `value` is `None` when nothing is set: "none" for a cap or a
+ * deadline, Claude's own default for the model and the effort level.
+ */
+export interface RunSetting {
+  source: SettingSource;
+  value?: string | null;
+}
 /**
  * Per-file-type slice of a run's changeset. Part of the `run.diff` payload.
  * `file_type` is a lowercased file extension; `""` means no extension.

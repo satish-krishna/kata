@@ -1,4 +1,5 @@
-import { terminalStateFor, statusForExit, isStreamEvent, gutterFor, variantFor, bodyFor, type KataEvent } from "./events";
+import { terminalStateFor, statusForExit, isStreamEvent, gutterFor, variantFor, bodyFor, givenFrom, GIVEN_STATUS_LABEL, type GivenStatus, type KataEvent } from "./events";
+import { runGivenFixture } from "./library";
 
 describe("statusForExit", () => {
   it("maps exit codes to andon states", () => {
@@ -123,5 +124,42 @@ describe("permission.decided rows", () => {
     expect(body).toContain("Bash");
     expect(body).toContain("rm -rf build/");
     expect(body).toContain("unmatched-policy");
+  });
+});
+
+describe("givenFrom", () => {
+  const log: KataEvent = { type: "log", level: "info", message: "x" };
+  const later = { ...runGivenFixture, warnings: ["later"] };
+
+  it("takes the last run.given", () => {
+    const got = givenFrom([log, runGivenFixture, log, later]);
+    expect(got).not.toBe("not-recorded");
+    expect(got === "not-recorded" ? [] : got.warnings).toEqual(["later"]);
+  });
+
+  it("a run without run.given reads not recorded", () => {
+    expect(givenFrom([log, { type: "turn", n: 1 }])).toBe("not-recorded");
+    expect(givenFrom([])).toBe("not-recorded");
+  });
+
+  it("every GivenStatus has its label", () => {
+    const expected: Record<GivenStatus, string> = {
+      "given": "given",
+      "passed-not-loaded": "passed by Kata, not loaded by Claude",
+      "given-failed-to-connect": "given, failed to connect",
+      "given-fired": "given, fired",
+      "given-not-fired": "given, has not fired",
+      "given-unconfirmed": "given, Claude does not confirm this kind",
+      "switched-off-but-loaded": "switched off, but Claude loaded it",
+      "switched-off-but-fired": "switched off, but it fired",
+      "switched-off": "switched off",
+      "switched-off-unconfirmed": "switched off, Claude does not confirm this kind",
+      "loaded-source-unknown": "loaded by Claude, source unknown",
+      "loaded-source-unknown-failed-to-connect": "loaded by Claude, source unknown, failed to connect",
+      "fired-source-unknown": "fired, source unknown",
+      "passed-no-start-report": "passed by Kata, Claude made no start report",
+      "switched-off-no-start-report": "switched off, Claude made no start report",
+    };
+    expect(GIVEN_STATUS_LABEL).toEqual(expected);
   });
 });

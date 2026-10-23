@@ -64,6 +64,41 @@ pub struct RunSpec {
     #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env_remove: Vec<String>,
+    /// What the run starts with: items switched on or off for this run. `None`
+    /// means the spec makes no choices; `Some` with empty lists means it chose
+    /// "everything on".
+    #[cfg_attr(feature = "ts", ts(optional = nullable))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub given: Option<Given>,
+}
+
+/// The items a run keeps, by identity (`<source>:<kind>:<key>`, see
+/// `kata_core::given`). Unknown entries are ignored at run time.
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct Given {
+    #[serde(default)]
+    pub hooks: Vec<String>,
+    #[serde(default)]
+    pub skills: Vec<String>,
+    #[serde(default)]
+    pub plugins: Vec<String>,
+    #[serde(default)]
+    pub instructions: Vec<String>,
+    #[serde(default)]
+    pub tool_servers: Vec<String>,
+    /// Plugin names (without a marketplace) the run cannot work without. The
+    /// Workbench writes `["ai-sdlc"]` for an AI-SDLC run; such a plugin is shown
+    /// locked on and cannot be listed as switched off.
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_plugins: Vec<String>,
+    /// True for a build run, which keeps the project's hooks on.
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<bool>"))]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub build: bool,
 }
 
 impl Default for RunSpec {
@@ -85,6 +120,7 @@ impl Default for RunSpec {
             permissions: Permissions::default(),
             env: BTreeMap::new(),
             env_remove: Vec::new(),
+            given: None,
         }
     }
 }
@@ -601,6 +637,58 @@ pub fn validate(spec: &RunSpec) -> Result<(), Vec<String>> {
             ));
         }
     }
+    // The given section: every entry is a well-formed identity in the list of its
+    // own kind, and none names one of Kata's own items.
+    if let Some(given) = &spec.given {
+        use crate::given::{parse_item_id, ItemKind, Source};
+        for (kind, list) in [
+            (ItemKind::Hook, &given.hooks),
+            (ItemKind::Skill, &given.skills),
+            (ItemKind::Plugin, &given.plugins),
+            (ItemKind::Instruction, &given.instructions),
+            (ItemKind::ToolServer, &given.tool_servers),
+        ] {
+            for entry in list {
+                match parse_item_id(entry) {
+                    Err(e) => errs.push(format!("given: {e}")),
+                    Ok(r) if r.source == Source::Kata => {
+                        errs.push(format!("{entry}: Kata's own items cannot be switched off"))
+                    }
+                    Ok(r) if r.kind != kind => errs.push(format!(
+                        "given: '{entry}' is a {} and does not belong in the {} list",
+                        r.kind.as_str(),
+                        kind.as_str()
+                    )),
+                    Ok(_) => {}
+                }
+            }
+        }
+        // Entries the run cannot honor, with the reason the preview gives for
+        // locking the same item.
+        for entry in &given.plugins {
+            if let Ok(r) = parse_item_id(entry) {
+                let name = r.key.split('@').next().unwrap_or(&r.key);
+                if given.required_plugins.iter().any(|p| p == name) {
+                    errs.push(format!(
+                        "given: '{entry}' cannot be switched off: {}",
+                        crate::given::lock::REASON_REQUIRED
+                    ));
+                }
+            }
+        }
+        if given.build {
+            for entry in &given.hooks {
+                if let Ok(r) = parse_item_id(entry) {
+                    if matches!(r.source, Source::Project | Source::ProjectLocal) {
+                        errs.push(format!(
+                            "given: '{entry}' cannot be switched off: {}",
+                            crate::given::lock::REASON_BUILD_HOOK
+                        ));
+                    }
+                }
+            }
+        }
+    }
     if errs.is_empty() {
         Ok(())
     } else {
@@ -863,7 +951,150 @@ isolation = "worktree"
             permissions: Permissions::default(),
             env: BTreeMap::new(),
             env_remove: Vec::new(),
+            given: None,
         }
+    }
+
+    #[test]
+    fn a_spec_without_given_loads_with_given_none_and_saves_without_the_section() {
+        let spec: RunSpec =
+            toml::from_str("name = \"x\"\ntask = \"t\"\nworkdir = \"/w\"\n").unwrap();
+        assert_eq!(spec.given, None);
+        let text = to_toml(&spec).unwrap();
+        assert!(!text.contains("given"), "{text}");
+    }
+
+    #[test]
+    fn a_spec_with_an_empty_given_section_round_trips_as_some_empty() {
+        let spec: RunSpec =
+            toml::from_str("name = \"x\"\ntask = \"t\"\nworkdir = \"/w\"\n[given]\n").unwrap();
+        assert_eq!(spec.given, Some(Given::default()));
+        let back: RunSpec = toml::from_str(&to_toml(&spec).unwrap()).unwrap();
+        assert_eq!(back.given, Some(Given::default()));
+        let json: RunSpec = serde_json::from_str(&serde_json::to_string(&spec).unwrap()).unwrap();
+        assert_eq!(json.given, Some(Given::default()));
+    }
+
+    fn given_spec(f: impl FnOnce(&mut Given)) -> RunSpec {
+        let mut g = Given::default();
+        f(&mut g);
+        let mut spec = full_spec();
+        spec.given = Some(g);
+        spec
+    }
+
+    #[test]
+    fn validate_refuses_a_kata_entry() {
+        let spec = given_spec(|g| g.skills.push("kata:skill:brainstorming".into()));
+        let errs = validate(&spec).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e
+                    .contains("kata:skill:brainstorming: Kata's own items cannot be switched off")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn validate_refuses_an_entry_in_the_wrong_list() {
+        let spec = given_spec(|g| g.hooks.push("run-spec:skill:x".into()));
+        let errs = validate(&spec).unwrap_err();
+        assert!(
+            errs.iter().any(|e| e.contains("run-spec:skill:x")),
+            "{errs:?}"
+        );
+        let ok = given_spec(|g| {
+            g.hooks.push("project:hook:Stop:*:0123456789abcdef".into());
+            g.skills.push("run-spec:skill:x".into());
+            g.plugins.push("personal:plugin:a@b".into());
+            g.instructions.push("project:instruction:CLAUDE.md".into());
+            g.tool_servers.push("project-local:tool-server:srv".into());
+        });
+        assert_eq!(validate(&ok), Ok(()));
+    }
+
+    #[test]
+    fn given_round_trips_without_the_new_fields() {
+        let spec = given_spec(|g| g.skills.push("run-spec:skill:x".into()));
+        let text = to_toml(&spec).unwrap();
+        assert!(!text.contains("required_plugins"), "{text}");
+        assert!(!text.contains("build"), "{text}");
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(
+            !json.contains("required_plugins") && !json.contains("\"build\""),
+            "{json}"
+        );
+        let back: RunSpec = toml::from_str(&text).unwrap();
+        assert_eq!(back, spec);
+        let with = given_spec(|g| {
+            g.required_plugins.push("ai-sdlc".into());
+            g.build = true;
+        });
+        let text = to_toml(&with).unwrap();
+        assert!(
+            text.contains("required_plugins") && text.contains("build = true"),
+            "{text}"
+        );
+        assert_eq!(toml::from_str::<RunSpec>(&text).unwrap(), with);
+    }
+
+    #[test]
+    fn validate_refuses_a_required_plugin_listed_as_switched_off() {
+        let spec = given_spec(|g| {
+            g.required_plugins.push("ai-sdlc".into());
+            g.plugins.push("personal:plugin:ai-sdlc@mkt".into());
+        });
+        let errs = validate(&spec).unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("personal:plugin:ai-sdlc@mkt")
+                    && e.contains("AI-SDLC runs work through this plugin")),
+            "{errs:?}"
+        );
+        let other = given_spec(|g| {
+            g.required_plugins.push("ai-sdlc".into());
+            g.plugins.push("personal:plugin:other@mkt".into());
+        });
+        assert_eq!(validate(&other), Ok(()));
+    }
+
+    #[test]
+    fn validate_refuses_a_project_hook_switched_off_in_a_build_run() {
+        for id in [
+            "project:hook:Stop:*:0123456789abcdef",
+            "project-local:hook:Stop:*:0123456789abcdef",
+        ] {
+            let spec = given_spec(|g| {
+                g.build = true;
+                g.hooks.push(id.into());
+            });
+            let errs = validate(&spec).unwrap_err();
+            assert!(
+                errs.iter().any(|e| e.contains(id)
+                    && e.contains(
+                        "a build keeps the project's hooks, which may guard what it edits"
+                    )),
+                "{errs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_accepts_a_project_hook_switched_off_outside_a_build_run() {
+        let spec = given_spec(|g| g.hooks.push("project:hook:Stop:*:0123456789abcdef".into()));
+        assert_eq!(validate(&spec), Ok(()));
+        let personal = given_spec(|g| {
+            g.build = true;
+            g.hooks.push("personal:hook:Stop:*:0123456789abcdef".into());
+        });
+        assert_eq!(validate(&personal), Ok(()));
+    }
+
+    #[test]
+    fn validate_refuses_an_unparsable_entry() {
+        let spec = given_spec(|g| g.plugins.push("not an id".into()));
+        let errs = validate(&spec).unwrap_err();
+        assert!(errs.iter().any(|e| e.contains("not an id")), "{errs:?}");
     }
 
     #[test]

@@ -4,6 +4,7 @@ import type { ChangeInfo } from '@bindings/ChangeInfo';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
+import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import type { StageAction } from '../../lib/sdlc';
@@ -23,6 +24,7 @@ function setup(transport: MockTransport) {
     providers: [
       provideRouter([]),
       ChangePageViewModel,
+      RunPreviewViewModel,
       { provide: KataTransport, useValue: transport },
       { provide: ActivatedRoute, useValue: { paramMap: params.asObservable() } },
     ],
@@ -293,6 +295,12 @@ describe('declaring done', () => {
     const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
     await vm.act('declare-done');
     await vm.doneRunReview();
+    // The review goes through its preview first (R1.1); Start run hands the build over.
+    const preview = TestBed.inject(RunPreviewViewModel);
+    await vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
+    expect(prepare).not.toHaveBeenCalled();
+    preview.start();
+    await vi.waitFor(() => expect(vm.handoff()).not.toBeNull());
     expect(vm.doneReport()).toBeNull();
     expect(prepare).toHaveBeenCalled();
     expect(vm.handoff()).not.toBeNull();
@@ -303,8 +311,13 @@ describe('declaring done', () => {
     const { vm, transport } = await finished();
     const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
     await vm.act('run-review');
+    // The review goes through its preview first (R1.1); Start run hands the build over.
+    const preview = TestBed.inject(RunPreviewViewModel);
+    await vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
+    expect(prepare).not.toHaveBeenCalled();
+    preview.start();
+    await vi.waitFor(() => expect(vm.handoff()).not.toBeNull());
     expect(prepare).toHaveBeenCalled();
-    expect(vm.handoff()).not.toBeNull();
     expect(vm.handoff()!.round).toBeNull();
   });
 

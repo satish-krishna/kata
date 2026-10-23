@@ -3,11 +3,15 @@ import { provideRouter } from '@angular/router';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { Participant } from '@bindings/Participant';
 import { toastState } from '@spartan-ng/brain/sonner';
+import { GivenStore } from '../../core/given/given.store';
+import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
 import { RunStore } from '../../core/run/run.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
+import { givenKey, type KindGroup, type PresetRow } from '../../lib/given';
+import { safetyRules, specFor, type BuildRun } from '../../lib/sdlc';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import type { BuildHandoff } from '../change/change-page.view-model';
 import { BuildViewModel, type BuildContext } from './build-view.view-model';
@@ -16,11 +20,16 @@ const FOLDER = MOCK_WORKSPACE_FOLDER;
 const CTX: BuildContext = { workspaceId: 'acme-claims', folder: FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE, systemRepos: [] };
 const REVIEW_NAME = `sdlc-claims-${MOCK_BUILD_CHANGE}-review`;
 
-function setup(transport = new MockTransport()) {
+/** `confirm` (the default) lets the build preview confirm at once with the build's own choices, so a test about something else never meets it; `real` leaves it to the test. */
+function setup(transport = new MockTransport(), preview: 'confirm' | 'real' = 'confirm') {
   TestBed.configureTestingModule({
-    providers: [provideRouter([]), BuildViewModel, { provide: KataTransport, useValue: transport }],
+    providers: [provideRouter([]), BuildViewModel, RunPreviewViewModel, { provide: KataTransport, useValue: transport }],
   });
+  const previewVm = TestBed.inject(RunPreviewViewModel);
+  if (preview === 'confirm') vi.spyOn(previewVm, 'openBuild').mockImplementation(async (req) => ({ off: new Set(req.from.build ?? []), request: null }));
   return {
+    preview: previewVm,
+    givens: TestBed.inject(GivenStore),
     vm: TestBed.inject(BuildViewModel),
     transport,
     lock: TestBed.inject(LockStore),
@@ -963,5 +972,181 @@ describe('BuildViewModel', () => {
       expect(run).toHaveBeenCalledTimes(2);
       expect(told(run, 'claims-core')).toContain('already confirmed');
     });
+  });
+});
+
+describe('the build\'s choices in the build view', () => {
+  const GITHUB = 'personal:tool-server:github';
+  const KEY = `claims/${MOCK_BUILD_CHANGE}`;
+  const dbKey = (repo: string) => givenKey(`project:tool-server:${repo}-db`, `${FOLDER}/${repo}`);
+  const previewReady = (preview: RunPreviewViewModel) => vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
+  const flat = (groups: KindGroup[]): PresetRow[] => groups.flatMap((k) => k.groups.flatMap((g) => g.rows.flatMap((e) => [e.row, ...e.followers])));
+  const limit = (preview: RunPreviewViewModel) => preview.settings().find((s) => s.label === 'Time limit');
+
+  /** Both repositories' first runs stop at the time limit, so Continue is offered; the third run goes the real way. */
+  const stopFirstTwo = (runner: SdlcRunner) => {
+    const real = runner.runInRepo.bind(runner);
+    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
+      if (run.mock.calls.length <= 2) {
+        link.onRun?.(`fake-${target.repo}`);
+        return { exit: 124, error: null };
+      }
+      return real(target, spec, link);
+    });
+    return run;
+  };
+
+  it('project items are listed and applied per repository (R11.2)', async () => {
+    const { vm, transport, runner } = setup();
+    const run = stopFirstTwo(runner);
+    const choices = { off: new Set([GITHUB, dbKey('claims-core')]) };
+    await vm.start(await handoffFor(transport, { choices }), CTX);
+    await advance(500);
+    const given = (repo: string) => run.mock.calls.map(([, spec]) => spec).find((s) => s.workdir === `${FOLDER}/${repo}`)!.given!;
+    // Switching claims-core's project tool server off reaches claims-core's run and not customer-portal's.
+    expect(given('claims-core').tool_servers).toEqual([GITHUB, 'project:tool-server:claims-core-db']);
+    expect(given('customer-portal').tool_servers).toEqual([GITHUB]);
+  });
+
+  it('a build preview lists each repository\'s project hooks locked and applies its tool servers per repository (R11.5)', async () => {
+    const { vm, transport, runner, preview } = setup(new MockTransport(), 'real');
+    const settings = await transport.sdlcSettings();
+    const sectionOf = (repo: string) => {
+      const run: BuildRun = {
+        target: { repo },
+        timeoutSecs: 5400,
+        instructions: null,
+        workspaceFolder: FOLDER,
+        masterRepo: MOCK_MASTER,
+        systemRepos: ['claims-core', 'customer-portal'],
+        checksDir: '/checks',
+        continueOnLeftovers: false,
+      };
+      const spec = specFor('build', null, { folder: FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE }, settings, [], run);
+      return { title: repo, repo, spec, workdir: spec.workdir };
+    };
+    const opened = preview.openBuild({
+      title: 'Start build',
+      kind: 'start',
+      sections: [sectionOf('claims-core'), sectionOf('customer-portal')],
+      from: { session: new Set(), job: null, build: null },
+      limitSecs: 5400,
+    });
+    await previewReady(preview);
+    for (const title of ['claims-core', 'customer-portal']) {
+      const rows = flat(preview.sections()!.find((s) => s.title === title)!.groups);
+      const hooks = rows.filter((r) => r.item.kind === 'hook');
+      expect(hooks.length).toBeGreaterThan(0);
+      for (const hook of hooks) expect(hook.locked).toMatchObject({ kind: 'build' });
+      expect(rows.some((r) => r.item.id === `project:tool-server:${title}-db`)).toBe(true);
+      expect(rows.some((r) => r.item.id === `project:tool-server:${title === 'claims-core' ? 'customer-portal' : 'claims-core'}-db`)).toBe(false);
+    }
+
+    preview.toggle(dbKey('claims-core'), true);
+    preview.start();
+    const result = (await opened)!;
+    expect(result.off).toEqual(new Set([dbKey('claims-core')]));
+
+    const run = stopFirstTwo(runner);
+    await vm.start(await handoffFor(transport, { choices: { off: result.off } }), CTX);
+    await advance(500);
+    const given = (repo: string) => run.mock.calls.map(([, spec]) => spec).find((s) => s.workdir === `${FOLDER}/${repo}`)!.given!;
+    expect(given('claims-core').tool_servers).toEqual(['project:tool-server:claims-core-db']);
+    expect(given('customer-portal').tool_servers).toEqual([]);
+    // The kind of run is kept beside the build's choices.
+    expect(given('claims-core')).toMatchObject({ build: true, required_plugins: ['ai-sdlc'], hooks: [] });
+  });
+
+  it('the review section lists the master repository\'s project items (R11.3)', async () => {
+    const { vm, transport, lock } = setup();
+    const runSpec = vi.spyOn(transport, 'runSpec');
+    const choices = { off: new Set([dbKey(MOCK_MASTER)]) };
+    await vm.start(await handoffFor(transport, { choices }), CTX);
+    await drive(vm, lock, finished(vm));
+    const specs = runSpec.mock.calls.map(([spec]) => spec);
+    // The master's project item is given to the review, which runs in the master, and to no product repository's run.
+    expect(specs.find((s) => s.name === REVIEW_NAME)!.given!.tool_servers).toEqual([`project:tool-server:${MOCK_MASTER}-db`]);
+    for (const s of specs.filter((x) => x.name !== REVIEW_NAME)) expect(s.given!.tool_servers).toEqual([]);
+  });
+
+  it('each repository\'s run shows its own given view (R13.2)', async () => {
+    const { vm, transport } = setup();
+    // The scripted engine records nothing of what a run was given, so every run reports its own project item the way the real one does.
+    const folders = new Map<string, string>();
+    const runSpec = transport.runSpec.bind(transport);
+    vi.spyOn(transport, 'runSpec').mockImplementation(async (spec, group) => {
+      const id = await runSpec(spec, group);
+      folders.set(id, spec.workdir.split('/').pop()!);
+      return id;
+    });
+    const listen = transport.onRunEvent.bind(transport);
+    vi.spyOn(transport, 'onRunEvent').mockImplementation((cb) =>
+      listen((runId, ev) => {
+        cb(runId, ev);
+        const repo = folders.get(runId);
+        if (repo === undefined || ev.type === 'run.given') return;
+        cb(runId, {
+          type: 'run.given',
+          items: [{ id: `project:tool-server:${repo}-db`, kind: 'tool-server', source: 'project', name: `${repo}-db`, detail: '', off: false, status: 'given' }],
+          settings: {},
+          env: [],
+          warnings: [],
+        } as never);
+      }),
+    );
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(1500);
+    const idsOf = (repo: string) => vm.groups().find((g) => g.key === repo)!.runs.flatMap((r) => r.given?.items.map((i) => i.id) ?? []);
+    expect(idsOf('claims-core')).toContain('project:tool-server:claims-core-db');
+    expect(idsOf('claims-core')).not.toContain('project:tool-server:customer-portal-db');
+    expect(idsOf('customer-portal')).toContain('project:tool-server:customer-portal-db');
+    expect(idsOf('customer-portal')).not.toContain('project:tool-server:claims-core-db');
+  });
+
+  it('continuing one stopped repository opens its preview pre-set to the build\'s choices, and what is changed there is the build\'s from then on (R12.1, R17.3, R7.1)', async () => {
+    const { vm, transport, runner, preview, givens } = setup(new MockTransport(), 'real');
+    const off = new Set([GITHUB, dbKey('claims-core')]);
+    givens.setBuild(KEY, { off });
+    const run = stopFirstTwo(runner);
+    await vm.start(await handoffFor(transport, { choices: { off } }), CTX);
+    await advance(500);
+    vm.select('claims-core');
+    const going = vm.continueRun();
+    await previewReady(preview);
+
+    // Pre-set and marked as the build's, in the shared rows and in the repository's own section.
+    expect(flat(preview.groups()).find((r) => r.item.id === GITHUB)).toMatchObject({ off: true, mark: 'build' });
+    expect(preview.sections()!.map((s) => s.title)).toEqual(['claims-core']);
+    expect(flat(preview.sections()![0].groups).find((r) => r.item.id === 'project:tool-server:claims-core-db')).toMatchObject({ off: true, mark: 'build' });
+    // The limits are the build's, read-only; the safety rules are listed.
+    expect(preview.buildForm()).toBeNull();
+    expect(limit(preview)).toEqual({ label: 'Time limit', value: '1 h 30 min', source: "the build's" });
+    expect(preview.safetyRules()).toEqual(safetyRules('repo'));
+    expect(run).toHaveBeenCalledTimes(2);
+
+    preview.toggle(GITHUB, false);
+    preview.start();
+    await going;
+    await advance(500);
+    // The change is the build's now, and the repository's next run is given it.
+    expect(givens.build(KEY)!.off).toEqual(new Set([dbKey('claims-core')]));
+    expect(run.mock.calls[2][1].given!.tool_servers).toEqual(['project:tool-server:claims-core-db']);
+  });
+
+  it('cancelling the continue preview starts nothing and keeps the build\'s choices', async () => {
+    const { vm, transport, runner, preview, givens } = setup(new MockTransport(), 'real');
+    givens.setBuild(KEY, { off: new Set([GITHUB]) });
+    const run = stopFirstTwo(runner);
+    await vm.start(await handoffFor(transport, { choices: { off: new Set([GITHUB]) } }), CTX);
+    await advance(500);
+    vm.select('claims-core');
+    const going = vm.continueRun();
+    await previewReady(preview);
+    preview.toggle(GITHUB, false);
+    preview.cancel();
+    await going;
+    await advance(500);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(givens.build(KEY)!.off).toEqual(new Set([GITHUB]));
   });
 });

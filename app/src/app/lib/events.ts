@@ -11,13 +11,45 @@ export type { RunRecord };
 export type RunDetail = { record: RunRecord; events: KataEvent[] };
 
 import type {
+  GivenStatus,
   KataEvent,
   Question,
   QuestionKind,
   QuestionOption,
   DiffFile,
 } from "@bindings/kata-events";
-export type { KataEvent, Question, QuestionKind, QuestionOption, DiffFile };
+export type { GivenStatus, KataEvent, Question, QuestionKind, QuestionOption, DiffFile };
+
+/** What a run was given, as its last `run.given` event recorded it. */
+export type RunGiven = Omit<Extract<KataEvent, { type: "run.given" }>, "type">;
+
+/** The words for each status the engine reports. The frontend labels a status and never computes one. */
+export const GIVEN_STATUS_LABEL: Record<GivenStatus, string> = {
+  "given": "given",
+  "passed-not-loaded": "passed by Kata, not loaded by Claude",
+  "given-failed-to-connect": "given, failed to connect",
+  "given-fired": "given, fired",
+  "given-not-fired": "given, has not fired",
+  "given-unconfirmed": "given, Claude does not confirm this kind",
+  "switched-off-but-loaded": "switched off, but Claude loaded it",
+  "switched-off-but-fired": "switched off, but it fired",
+  "switched-off": "switched off",
+  "switched-off-unconfirmed": "switched off, Claude does not confirm this kind",
+  "loaded-source-unknown": "loaded by Claude, source unknown",
+  "loaded-source-unknown-failed-to-connect": "loaded by Claude, source unknown, failed to connect",
+  "fired-source-unknown": "fired, source unknown",
+  "passed-no-start-report": "passed by Kata, Claude made no start report",
+  "switched-off-no-start-report": "switched off, Claude made no start report",
+};
+
+/** The last `run.given` of a transcript, or `not-recorded` when the run made none (a run from before the view existed). */
+export function givenFrom(events: readonly KataEvent[]): RunGiven | "not-recorded" {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.type === "run.given") return { items: ev.items, settings: ev.settings, env: ev.env, warnings: ev.warnings, ...(ev.options ? { options: ev.options } : {}) };
+  }
+  return "not-recorded";
+}
 
 /** The terminal event carrying the run summary. */
 export type RunSummary = Extract<KataEvent, { type: "run.completed" }>;
@@ -27,11 +59,11 @@ export type RunSummary = Extract<KataEvent, { type: "run.completed" }>;
  *  card *is* open, the run store resolves it instead of pushing a row. */
 export type StreamEvent = Exclude<
   KataEvent,
-  { type: "run.started" | "run.completed" | "run.error" | "run.cancelled" | "run.diff" | "ask.requested" | "ask.answered" | "permission.requested" }
+  { type: "run.started" | "run.completed" | "run.error" | "run.cancelled" | "run.diff" | "run.given" | "ask.requested" | "ask.answered" | "permission.requested" }
 >;
 
 const NON_ROW_TYPES = new Set([
-  "run.started", "run.completed", "run.error", "run.cancelled", "run.diff", "ask.requested", "ask.answered",
+  "run.started", "run.completed", "run.error", "run.cancelled", "run.diff", "run.given", "ask.requested", "ask.answered",
   "permission.requested",
 ]);
 /** Narrow a KataEvent to the row-renderable subset (for the event log). */

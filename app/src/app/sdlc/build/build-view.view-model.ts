@@ -6,16 +6,18 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { Participant } from '@bindings/Participant';
 import type { RunSpec } from '@bindings/RunSpec';
+import { GivenStore, type BuildChoices } from '../../core/given/given.store';
+import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
 import { ModeStore } from '../../core/mode/mode.store';
 import { RunStore } from '../../core/run/run.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
-import { STATUS_LABEL, type AskRecord, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
+import { STATUS_LABEL, type AskRecord, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
-import { reviewFindings, specFor, type BuildRun, type Finding } from '../../lib/sdlc';
+import { givenFor, reviewFindings, specFor, type BuildRun, type Finding } from '../../lib/sdlc';
 import type { ReplacedFindings } from '../../ui/findings-list';
 import type { RepoRow } from '../../ui/repo-status-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
@@ -42,6 +44,7 @@ export type ShownRun = {
   summary: RunSummary | null;
   asks: AskRecord[];
   permissions: PermissionRecord[];
+  given: RunGiven | null;
   /** The index of the first event the engineer has not seen since they came back to this run, or null. */
   unseenFrom: number | null;
   /** True for the newest run of its repository, which always shows in full. */
@@ -105,6 +108,9 @@ export class BuildViewModel {
   private readonly runs = inject(RunStore);
   private readonly modes = inject(ModeStore);
   private readonly toasts = inject(ToastStore);
+  /** The preview Continue opens; the template mounts its dialog. */
+  readonly preview = inject(RunPreviewViewModel);
+  private readonly givens = inject(GivenStore);
 
   private handoff: BuildHandoff | null = null;
   /** The runs the engineer's leftovers confirmation still covers; a run's launch spends its entry. */
@@ -231,6 +237,7 @@ export class BuildViewModel {
         summary: snap.summary,
         asks: snap.asks,
         permissions: snap.permissions,
+        given: snap.given,
         unseenFrom: marks[e.id] ?? null,
         latest: false,
         expanded: opened.has(e.id),
@@ -357,7 +364,7 @@ export class BuildViewModel {
       this.status.set(status);
       this.changes.set({ folder: ctx.folder, masterRepo: master, system: ctx.system, change: ctx.change });
       if (handoff.round !== null) await this.loadEarlierReview(ctx);
-      await this.driver.begin(handoff.timeoutSecs, handoff.round ?? undefined);
+      await this.driver.begin(handoff.timeoutSecs, handoff.round ?? undefined, handoff.choices);
     } catch (e) {
       this.toasts.error(`Could not start the build: ${message(e)}`);
       this.broken.set(true);
@@ -421,6 +428,7 @@ export class BuildViewModel {
     const ctx = this.ctx;
     if (key === null || h === null || ctx === null) return;
     await this.pendingFinish;
+    if (!(await this.previewContinue(key))) return;
     const owner = this.ownerOf(key);
     try {
       if (this.settled) {
@@ -487,6 +495,45 @@ export class BuildViewModel {
   cancelContinue(): void {
     this.asking = null;
     this.pendingLeftovers.set(null);
+  }
+
+  /** The key the build's choices are kept under. */
+  private buildKey(): string {
+    const ctx = this.ctx!;
+    return `${ctx.system}/${ctx.change}`;
+  }
+
+  /**
+   * Show the preview of continuing one repository (or the review), pre-set to the build's choices. What the engineer
+   * confirms becomes the build's: it is kept, and the driver gives it to this repository's next run and every run after.
+   * False when the engineer cancelled.
+   */
+  private async previewContinue(key: string): Promise<boolean> {
+    const h = this.handoff!;
+    const ctx = this.ctx!;
+    const review = key === REVIEW;
+    const repo = review ? h.start.master.repo : key;
+    try {
+      const run = this.runFor(review ? REVIEW : { repo }, h.timeoutSecs, null, false);
+      const settings = this.modes.settings() ?? (await this.modes.load());
+      const spec = specFor('build', null, { folder: ctx.folder, system: ctx.system, change: ctx.change }, settings, [], run);
+      const result = await this.preview.openBuild({
+        title: review ? 'Continue review' : `Continue ${repo}`,
+        kind: 'continue-one',
+        sections: [{ title: review ? 'Review' : repo, repo: review ? null : repo, spec, workdir: spec.workdir }],
+        from: { session: this.givens.session(), job: null, build: this.givens.build(this.buildKey())?.off ?? h.choices?.off ?? null },
+        limitSecs: h.timeoutSecs,
+      });
+      if (result === null) return false;
+      const choices: BuildChoices = { off: result.off };
+      this.givens.setBuild(this.buildKey(), choices);
+      this.handoff = { ...h, choices };
+      this.driver.setChoices(choices);
+      return true;
+    } catch (e) {
+      this.toasts.error(`Could not preview the run: ${message(e)}`);
+      return false;
+    }
   }
 
   /** The repository a row of the build is about: the review runs in the master. */
@@ -687,6 +734,21 @@ export class BuildViewModel {
     }
   }
 
+  private runFor(target: RunTarget, timeoutSecs: number, instructions: string | null, continueOnLeftovers: boolean): BuildRun {
+    const h = this.handoff!;
+    const ctx = this.ctx!;
+    return {
+      target,
+      timeoutSecs,
+      instructions,
+      workspaceFolder: ctx.folder,
+      masterRepo: h.start.master.repo,
+      systemRepos: [...new Set([...ctx.systemRepos, ...this.productRepos])],
+      checksDir: h.checksDir,
+      continueOnLeftovers,
+    };
+  }
+
   private async startRun(target: RunTarget, opts: RunOptions): Promise<RunEnd> {
     const h = this.handoff!;
     const ctx = this.ctx!;
@@ -696,18 +758,11 @@ export class BuildViewModel {
     const path = review ? h.start.master.path : this.pathOf(repo);
     // The backend names where each participant is checked out; a repository it does not name has no folder to run in.
     if (path === undefined) throw new NotCheckedOut(repo);
-    const run: BuildRun = {
-      target,
-      timeoutSecs: opts.timeoutSecs,
-      instructions: opts.instructions ?? null,
-      workspaceFolder: ctx.folder,
-      masterRepo: h.start.master.repo,
-      systemRepos: [...new Set([...ctx.systemRepos, ...this.productRepos])],
-      checksDir: h.checksDir,
-      continueOnLeftovers: this.confirmed.delete(review ? REVIEW : repo),
-    };
+    const run = this.runFor(target, opts.timeoutSecs, opts.instructions ?? null, this.confirmed.delete(review ? REVIEW : repo));
     const settings = this.modes.settings() ?? (await this.modes.load());
     const spec = specFor('build', null, { folder: ctx.folder, system: ctx.system, change: ctx.change }, settings, [], run);
+    // The build's choices, as they stand when this run starts; a run the driver starts by itself never opens a preview.
+    spec.given = { ...spec.given, ...givenFor(opts.choices.off, spec.workdir) };
     const key = review ? REVIEW : repo;
     const end = await this.runner.runInRepo(
       { repo, path, kind: review ? 'review' : 'repo' },

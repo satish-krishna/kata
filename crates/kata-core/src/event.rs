@@ -19,6 +19,8 @@ fn is_false(b: &bool) -> bool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type")]
+// `run.given` carries the whole record of a run; events are built and sent one at a time.
+#[allow(clippy::large_enum_variant)]
 pub enum KataEvent {
     #[serde(rename = "run.started")]
     RunStarted {
@@ -95,6 +97,22 @@ pub enum KataEvent {
         cost_usd: Option<f64>,
         duration_ms: u64,
         result: Option<String>,
+    },
+    /// What the run was given: every item with how Claude's own report squares
+    /// with what Kata passed, the run's settings, and the environment names.
+    /// Emitted when Claude's start report arrives and again, complete, the first
+    /// time a hook fires; a consumer keeps only the last one. A run that ends
+    /// before any start report still gets one. Never carries a value of an
+    /// environment variable or a hook's command.
+    #[serde(rename = "run.given")]
+    RunGiven {
+        items: Vec<crate::given::GivenItem>,
+        settings: crate::given::RunSettings,
+        env: Vec<crate::given::EnvName>,
+        warnings: Vec<String>,
+        /// The options the run was resolved with.
+        #[serde(default)]
+        options: crate::given::GivenOptions,
     },
     #[serde(rename = "run.diff")]
     RunDiff {
@@ -269,6 +287,42 @@ impl ResultPayload {
     }
 }
 
+/// How Claude's start report described one tool server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpState {
+    Connected,
+    /// Anything Claude reported that is not a connection or a connection still
+    /// being made: `failed`, `needs-auth`, `disabled`.
+    Failed,
+    /// Claude listed the server and was still connecting.
+    Pending,
+}
+
+/// Claude's start report: the `system`/`init` line, reduced to what the given
+/// view compares with what Kata passed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct InitReport {
+    pub model: Option<String>,
+    pub permission_mode: Option<String>,
+    pub output_style: Option<String>,
+    pub skills: Vec<String>,
+    /// Each plugin's `source` (`<name>@<marketplace>`, or `<name>@builtin`), or
+    /// its `name` when it has none.
+    pub plugins: Vec<String>,
+    pub mcp_servers: Vec<(String, McpState)>,
+}
+
+/// A hook lifecycle line (`hook_started`, `hook_response`). Claude names the
+/// hook by `hook_event` and `hook_name` (`UserPromptSubmit`, or
+/// `PreToolUse:Bash` with its matcher); the command is not in the line, so
+/// `command` is only set if a future Claude adds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookFired {
+    pub event: String,
+    pub name: String,
+    pub command: Option<String>,
+}
+
 #[derive(Debug, Default)]
 pub struct Parsed {
     pub events: Vec<KataEvent>,
@@ -279,6 +333,12 @@ pub struct Parsed {
     /// The message's `parent_tool_use_id`, when it came from inside a subagent.
     pub parent_id: Option<String>,
     pub result: Option<ResultPayload>,
+    /// Claude's start report, on the `system`/`init` line. Produces no event.
+    pub init: Option<InitReport>,
+    /// A hook lifecycle line. Produces no event.
+    pub hook: Option<HookFired>,
+    /// True when the hook line is a `hook_started` line (not a `hook_response`).
+    pub hook_started: bool,
 }
 
 /// Stateful translator for a `stream-json` line sequence. Holds the
@@ -409,6 +469,14 @@ impl StreamParser {
                     }
                 }
             }
+            Some("system") => match v.get("subtype").and_then(|s| s.as_str()) {
+                Some("init") => out.init = Some(parse_init(&v)),
+                Some(kind @ ("hook_started" | "hook_response")) => {
+                    out.hook = parse_hook(&v);
+                    out.hook_started = kind == "hook_started";
+                }
+                _ => {}
+            },
             Some("result") => {
                 out.result = Some(ResultPayload {
                     num_turns: v.get("num_turns").and_then(|n| n.as_u64()).unwrap_or(0) as u32,
@@ -422,6 +490,67 @@ impl StreamParser {
         }
         out
     }
+}
+
+fn str_field(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key).and_then(|s| s.as_str()).map(String::from)
+}
+
+fn parse_init(v: &serde_json::Value) -> InitReport {
+    let strings = |key: &str| -> Vec<String> {
+        v.get(key)
+            .and_then(|a| a.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let plugins = v
+        .get("plugins")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|p| str_field(p, "source").or_else(|| str_field(p, "name")))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mcp_servers = v
+        .get("mcp_servers")
+        .and_then(|a| a.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| {
+                    let name = str_field(s, "name")?;
+                    let state = match s.get("status").and_then(|t| t.as_str()) {
+                        Some("connected") => McpState::Connected,
+                        Some("pending") => McpState::Pending,
+                        _ => McpState::Failed,
+                    };
+                    Some((name, state))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    InitReport {
+        model: str_field(v, "model"),
+        permission_mode: str_field(v, "permissionMode"),
+        output_style: str_field(v, "output_style"),
+        skills: strings("skills"),
+        plugins,
+        mcp_servers,
+    }
+}
+
+fn parse_hook(v: &serde_json::Value) -> Option<HookFired> {
+    let event = str_field(v, "hook_event")?;
+    let name = str_field(v, "hook_name").unwrap_or_else(|| event.clone());
+    Some(HookFired {
+        event,
+        name,
+        command: str_field(v, "command"),
+    })
 }
 
 /// Translate one line of Claude `stream-json` into normalized events.
@@ -647,7 +776,7 @@ mod tests {
 
     #[test]
     fn unrecognized_line_yields_no_events() {
-        let p = parse_stream_line(r#"{"type":"system","subtype":"init"}"#);
+        let p = parse_stream_line(r#"{"type":"system","subtype":"mystery"}"#);
         assert!(p.events.is_empty());
         assert!(p.result.is_none());
     }
@@ -1478,5 +1607,58 @@ mod tests {
             v,
             serde_json::json!({"type":"tool.use","name":"Bash","input_summary":"ls"})
         );
+    }
+
+    fn fixture_line(name: &str) -> String {
+        let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(path).unwrap()
+    }
+
+    #[test]
+    fn the_start_report_is_read_from_the_captured_init_line() {
+        let one_line: serde_json::Value =
+            serde_json::from_str(&fixture_line("claude-init.json")).unwrap();
+        let p = parse_stream_line(&one_line.to_string());
+        assert!(p.events.is_empty(), "the init line makes no stream event");
+        assert!(p.hook.is_none() && p.result.is_none());
+        let init = p.init.expect("init report");
+        assert_eq!(init.model.as_deref(), Some("claude-haiku-5-5"));
+        assert_eq!(init.permission_mode.as_deref(), Some("bypassPermissions"));
+        assert_eq!(init.output_style.as_deref(), Some("Explanatory"));
+        assert!(init
+            .skills
+            .contains(&"superpowers:brainstorming".to_string()));
+        assert!(init.skills.contains(&"projskill".to_string()));
+        assert!(init
+            .plugins
+            .contains(&"superpowers@claude-plugins-official".to_string()));
+        assert!(init
+            .plugins
+            .contains(&"cc-plugin-telemetry@builtin".to_string()));
+        let state = |n: &str| {
+            init.mcp_servers
+                .iter()
+                .find(|(s, _)| s == n)
+                .map(|(_, st)| *st)
+        };
+        assert_eq!(state("srv-a"), Some(McpState::Connected));
+        assert_eq!(state("plugin:design:gmail"), Some(McpState::Failed));
+        assert_eq!(state("plugin:design:slack"), Some(McpState::Failed));
+    }
+
+    #[test]
+    fn a_hook_lifecycle_line_is_read_and_makes_no_stream_event() {
+        for line in fixture_line("claude-hook-events.jsonl").lines() {
+            let p = parse_stream_line(line);
+            assert!(p.events.is_empty() && p.init.is_none());
+            let h = p.hook.expect("hook line");
+            assert_eq!(h.event, "UserPromptSubmit");
+            assert_eq!(h.name, "UserPromptSubmit");
+            assert_eq!(h.command, None);
+        }
+        let p = parse_stream_line(
+            r#"{"type":"system","subtype":"hook_response","hook_event":"PreToolUse","hook_name":"PreToolUse:Bash","hook_id":"h"}"#,
+        );
+        assert_eq!(p.hook.unwrap().name, "PreToolUse:Bash");
     }
 }

@@ -4,6 +4,7 @@
 
 import type { CatalogEntry } from "@bindings/CatalogEntry";
 import type { ChangeInfo } from "@bindings/ChangeInfo";
+import type { Given } from "@bindings/Given";
 import type { PluginConfig } from "@bindings/PluginConfig";
 import type { RunLink } from "@bindings/RunLink";
 import type { RunRecord } from "@bindings/RunRecord";
@@ -11,7 +12,11 @@ import type { RunSpec } from "@bindings/RunSpec";
 import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
 import type { KataEvent, RunDetail } from "./events";
+import { givenKey } from "./given";
 import { defaultSpec } from "./spec";
+
+/** The plugins an AI-SDLC run cannot work without; passed to `previewRun` so the preview locks them on. */
+export const SDLC_REQUIRED_PLUGINS: readonly string[] = ['ai-sdlc'] as const;
 
 export type StageAction =
   | "continue-intent"
@@ -108,7 +113,10 @@ const LABELS: Record<Stage, StageLabel> = {
   "build-finished": { step: "build", text: "Build · finished, not yet done", tone: "success" },
 };
 
-/** The label of a change that is done: its pull requests are open. Not a stage; the Workbench records it. */
+/**
+ * The label of a change that is done: its pull requests are open. Not a stage and not stored: the change page asks
+ * GitHub each time it opens, and the workspace home list never asks, so it shows "Build · finished, not yet done".
+ */
 export const DONE_LABEL: StageLabel = { step: "done", text: "Done · pull requests open", tone: "success" };
 
 export function stageLabel(stage: Stage): StageLabel {
@@ -266,6 +274,11 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): s
   }
 }
 
+/** The given section of an AI-SDLC run: nothing switched off, and what kind of run it is. */
+function sdlcGiven(kind: SdlcKind): Given {
+  return { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [], required_plugins: [...SDLC_REQUIRED_PLUGINS], build: isBuildRun(kind) };
+}
+
 const SDLC_TIMEOUT_SECS = 6 * 60 * 60;
 
 /**
@@ -280,6 +293,7 @@ function buildSpec(ctx: RunContext, run: BuildRun): RunSpec {
   spec.task = buildTask(run, ctx);
   spec.workdir = `${ws}/${repo}`;
   spec.plugins = { [AI_SDLC]: {} };
+  spec.given = sdlcGiven("build");
   spec.auth = { bare: false, token_env: null };
   spec.interactive = { enabled: true, answer_timeout_secs: 3600 };
   spec.leash.timeout_secs = run.timeoutSecs;
@@ -311,6 +325,7 @@ export function specFor(
   spec.task = taskFor(kind, action, ctx) + (feedback ? `\n\nOperator feedback:\n${feedback}` : "");
   spec.workdir = ctx.folder;
   spec.plugins = plugins;
+  spec.given = sdlcGiven(kind);
   // Outside the empty room: `--bare` ignores the operator's claude login and accepts only an API key.
   spec.auth = { bare: false, token_env: null };
   spec.interactive = { enabled: false, answer_timeout_secs: 3600 };
@@ -559,4 +574,76 @@ export function reviewFindings(detail: RunDetail): Finding[] {
     .map((f, index) => ({ f, index }))
     .sort((a, b) => rank(a.f) - rank(b.f) || a.index - b.index)
     .map(({ f }) => f);
+}
+
+/** Which preview of a build is being opened. */
+export type BuildPreviewKind = "start" | "continue-all" | "continue-one" | "round" | "manual-review";
+
+/** What a build's preview asks, which sections it lists, which runs its choices reach, and where the shown limit comes from. */
+export type BuildPreviewPlan = {
+  asksTimeLimit: boolean;
+  asksRound: boolean;
+  sections: "all-repos-and-review" | "one-repo" | "review";
+  appliesTo: "build" | "repo-then-build" | "repos-then-build" | "round-then-build" | "this-review";
+  limitSource: "engineer" | "build" | "kata";
+};
+
+const BUILD_PREVIEWS: Record<BuildPreviewKind, BuildPreviewPlan> = {
+  start: { asksTimeLimit: true, asksRound: false, sections: "all-repos-and-review", appliesTo: "build", limitSource: "engineer" },
+  "continue-all": { asksTimeLimit: true, asksRound: false, sections: "all-repos-and-review", appliesTo: "repos-then-build", limitSource: "engineer" },
+  "continue-one": { asksTimeLimit: false, asksRound: false, sections: "one-repo", appliesTo: "repo-then-build", limitSource: "build" },
+  round: { asksTimeLimit: true, asksRound: true, sections: "one-repo", appliesTo: "round-then-build", limitSource: "engineer" },
+  "manual-review": { asksTimeLimit: false, asksRound: false, sections: "review", appliesTo: "this-review", limitSource: "kata" },
+};
+
+/** Whether a run of this kind is a build run (a repository's run, a round, or a review): it keeps the project's hooks on. */
+export function isBuildRun(kind: SdlcKind | BuildPreviewKind): boolean {
+  return kind !== "setup" && kind !== "context" && kind !== "intent" && kind !== "spec" && kind !== "plan";
+}
+
+export function buildPreviewFor(kind: BuildPreviewKind): BuildPreviewPlan {
+  return { ...BUILD_PREVIEWS[kind] };
+}
+
+/** The deny rules of BUILD_DENY, in the words the preview lists them in. */
+const DENY_WORDS: Record<string, string> = {
+  "Bash(git push:*)": "No push",
+  "Bash(gh:*)": "No use of GitHub's command-line tool",
+  "Bash(git remote:*)": "No change of remotes",
+};
+
+/** The safety rules of a build run, read-only in the build's preview: the shared deny rules, the checks folder, and what the run may edit. */
+export function safetyRules(target: "repo" | "review"): string[] {
+  return [
+    ...BUILD_DENY.map((rule) => DENY_WORDS[rule]),
+    "No edit of the checks folder",
+    target === "repo" ? "No edit of another repository or its build log" : "No edit of any repository or build log, except the review document",
+  ];
+}
+
+const PROJECT_KEY = /^[^|]+\|((?:project|project-local):.*)$/s;
+/** The five lists of item identities in `Given`; the other fields say what kind of run it is. */
+type GivenList = Exclude<keyof Given, "required_plugins" | "build">;
+const LIST_OF_KIND: Record<string, GivenList> = {
+  hook: "hooks",
+  skill: "skills",
+  plugin: "plugins",
+  instruction: "instructions",
+  "tool-server": "tool_servers",
+};
+
+/**
+ * The run-spec's given section for one run from the build's switched-off keys: a shared key applies to every run,
+ * a project key only to the run in the folder it was qualified with (see `givenKey`).
+ */
+export function givenFor(off: ReadonlySet<string>, workdir: string): Given {
+  const given: Given = { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] };
+  for (const key of off) {
+    const id = PROJECT_KEY.exec(key)?.[1] ?? key;
+    if (givenKey(id, workdir) !== key) continue;
+    const list = LIST_OF_KIND[id.split(":")[1]];
+    if (list) given[list].push(id);
+  }
+  for (const list of Object.values(LIST_OF_KIND)) given[list].sort();
+  return given;
 }

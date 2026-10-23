@@ -50,6 +50,302 @@
       ],
       "type": "object"
     },
+    "EnvName": {
+      "description": "The name of an environment variable the run sees. Never its value.",
+      "properties": {
+        "api_key": {
+          "description": "True for the variable that holds the API key (`auth.token_env`).",
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        }
+      },
+      "required": [
+        "source",
+        "name",
+        "api_key"
+      ],
+      "type": "object"
+    },
+    "GivenItem": {
+      "description": "One row of the view: the resolved item (without its path) and its status.\n`source` is `None` for a row Claude reported that Kata did not know.",
+      "properties": {
+        "brought_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ItemKind"
+        },
+        "lock": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LockReason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "off": {
+          "type": "boolean"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Source"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/GivenStatus"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "name",
+        "detail",
+        "off",
+        "status"
+      ],
+      "type": "object"
+    },
+    "GivenOptions": {
+      "description": "The options a run was resolved with, as `run.given` records them.",
+      "properties": {
+        "build": {
+          "type": "boolean"
+        },
+        "required_plugins": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "required_plugins",
+        "build"
+      ],
+      "type": "object"
+    },
+    "GivenStatus": {
+      "description": "One variant per distinct text the view shows. The frontend maps each to its\nwords.",
+      "oneOf": [
+        {
+          "const": "given",
+          "description": "\"given\"",
+          "type": "string"
+        },
+        {
+          "const": "passed-not-loaded",
+          "description": "\"passed by Kata, not loaded by Claude\"",
+          "type": "string"
+        },
+        {
+          "const": "given-failed-to-connect",
+          "description": "\"given, failed to connect\"",
+          "type": "string"
+        },
+        {
+          "const": "given-fired",
+          "description": "\"given, fired\"",
+          "type": "string"
+        },
+        {
+          "const": "given-not-fired",
+          "description": "\"given, has not fired\"",
+          "type": "string"
+        },
+        {
+          "const": "given-unconfirmed",
+          "description": "\"given, Claude does not confirm this kind\"",
+          "type": "string"
+        },
+        {
+          "const": "switched-off-but-loaded",
+          "description": "\"switched off, but Claude loaded it\"",
+          "type": "string"
+        },
+        {
+          "const": "switched-off-but-fired",
+          "description": "\"switched off, but it fired\"",
+          "type": "string"
+        },
+        {
+          "const": "switched-off",
+          "description": "\"switched off\"",
+          "type": "string"
+        },
+        {
+          "const": "switched-off-unconfirmed",
+          "description": "\"switched off, Claude does not confirm this kind\"",
+          "type": "string"
+        },
+        {
+          "const": "loaded-source-unknown",
+          "description": "\"loaded by Claude, source unknown\"",
+          "type": "string"
+        },
+        {
+          "const": "loaded-source-unknown-failed-to-connect",
+          "description": "\"loaded by Claude, source unknown, failed to connect\"",
+          "type": "string"
+        },
+        {
+          "const": "fired-source-unknown",
+          "description": "\"fired, source unknown\"",
+          "type": "string"
+        },
+        {
+          "const": "passed-no-start-report",
+          "description": "\"passed by Kata, Claude made no start report\"",
+          "type": "string"
+        },
+        {
+          "const": "switched-off-no-start-report",
+          "description": "\"switched off, Claude made no start report\"",
+          "type": "string"
+        }
+      ]
+    },
+    "ItemKind": {
+      "description": "The kind of thing a run starts with that can be switched off.",
+      "enum": [
+        "hook",
+        "skill",
+        "plugin",
+        "instruction",
+        "tool-server"
+      ],
+      "type": "string"
+    },
+    "LockReason": {
+      "description": "Why an item is locked on. Every variant but `FollowsPlugin` carries the\none-line reason text the row shows.",
+      "oneOf": [
+        {
+          "description": "Kata's own tool server or standing note.",
+          "properties": {
+            "kind": {
+              "const": "kata",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A plugin the mode requires, or an item it brings.",
+          "properties": {
+            "kind": {
+              "const": "required",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Set by the organization's managed settings.",
+          "properties": {
+            "kind": {
+              "const": "organization",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A build keeps the project's hooks.",
+          "properties": {
+            "kind": {
+              "const": "build",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "No mechanism switches this kind and source off for one run.",
+          "properties": {
+            "kind": {
+              "const": "unswitchable",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Brought by a plugin that is not required: no switch of its own, the row\nshows its plugin's state. `plugin` is the plugin's item identity.",
+          "properties": {
+            "kind": {
+              "const": "follows-plugin",
+              "type": "string"
+            },
+            "plugin": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "plugin"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Question": {
       "description": "One question in an `ask.requested` batch. Part of the published event\nschema (`schema/kata-events.schema.json`); the app's TS type is generated\nfrom that schema, not hand-mirrored.",
       "properties": {
@@ -125,6 +421,99 @@
         "label"
       ],
       "type": "object"
+    },
+    "RunSetting": {
+      "description": "One setting. `value` is `None` when nothing is set: \"none\" for a cap or a\ndeadline, Claude's own default for the model and the effort level.",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/SettingSource"
+        },
+        "value": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
+    "RunSettings": {
+      "description": "The settings of R17.1 the engine can resolve. The build's safety rules come\nfrom the Workbench.",
+      "properties": {
+        "answer_deadline": {
+          "$ref": "#/$defs/RunSetting"
+        },
+        "effort": {
+          "$ref": "#/$defs/RunSetting"
+        },
+        "empty_room": {
+          "$ref": "#/$defs/RunSetting"
+        },
+        "model": {
+          "$ref": "#/$defs/RunSetting"
+        },
+        "permission_posture": {
+          "$ref": "#/$defs/RunSetting"
+        },
+        "spending_ceiling": {
+          "$ref": "#/$defs/RunSetting"
+        },
+        "time_limit": {
+          "$ref": "#/$defs/RunSetting"
+        },
+        "turn_cap": {
+          "$ref": "#/$defs/RunSetting"
+        }
+      },
+      "required": [
+        "model",
+        "effort",
+        "permission_posture",
+        "empty_room",
+        "answer_deadline",
+        "time_limit",
+        "turn_cap",
+        "spending_ceiling"
+      ],
+      "type": "object"
+    },
+    "SettingSource": {
+      "description": "Where a setting's value comes from.",
+      "oneOf": [
+        {
+          "enum": [
+            "run-spec",
+            "personal",
+            "project",
+            "project-local",
+            "organization",
+            "claude-default",
+            "kata-default"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "claude-report",
+          "description": "What Claude's own start report said the run started with.",
+          "type": "string"
+        }
+      ]
+    },
+    "Source": {
+      "description": "Where an item comes from. `ProjectLocal` is `.claude/settings.local.json`,\n`CLAUDE.local.md` and the local MCP scope in `~/.claude.json`; it displays as\n\"project\" but keeps its own identity.",
+      "enum": [
+        "personal",
+        "project",
+        "project-local",
+        "plugin",
+        "organization",
+        "kata",
+        "run-spec"
+      ],
+      "type": "string"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -369,6 +758,52 @@
         "is_error",
         "num_turns",
         "duration_ms"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "What the run was given: every item with how Claude's own report squares\nwith what Kata passed, the run's settings, and the environment names.\nEmitted when Claude's start report arrives and again, complete, the first\ntime a hook fires; a consumer keeps only the last one. A run that ends\nbefore any start report still gets one. Never carries a value of an\nenvironment variable or a hook's command.",
+      "properties": {
+        "env": {
+          "items": {
+            "$ref": "#/$defs/EnvName"
+          },
+          "type": "array"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/GivenItem"
+          },
+          "type": "array"
+        },
+        "options": {
+          "$ref": "#/$defs/GivenOptions",
+          "default": {
+            "build": false,
+            "required_plugins": []
+          },
+          "description": "The options the run was resolved with."
+        },
+        "settings": {
+          "$ref": "#/$defs/RunSettings"
+        },
+        "type": {
+          "const": "run.given",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "type",
+        "items",
+        "settings",
+        "env",
+        "warnings"
       ],
       "type": "object"
     },

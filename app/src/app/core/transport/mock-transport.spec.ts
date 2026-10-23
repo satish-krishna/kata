@@ -4,6 +4,7 @@ import { runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, seedSpe
 import type { KataEvent } from '../../lib/events';
 import { transcriptRunId } from '../../lib/sdlc';
 import type { RunSpec } from '@bindings/RunSpec';
+import type { Resolved } from '@bindings/Resolved';
 import { MOCK_BUILD_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
 
 const total = (steps: { delay: number }[]) => steps.reduce((a, s) => a + s.delay, 0);
@@ -260,5 +261,38 @@ describe('MockTransport', () => {
       vi.advanceTimersByTime(total(sdlcSetupScript.mid));
       expect((await scan()).marker).not.toBeNull();
     });
+  });
+});
+
+describe('MockTransport previewRun', () => {
+  const PAIRS = [
+    'hook:personal', 'hook:project', 'hook:plugin', 'hook:organization',
+    'skill:personal', 'skill:project', 'skill:plugin', 'skill:run-spec',
+    'plugin:personal', 'plugin:project', 'plugin:run-spec',
+    'instruction:personal', 'instruction:project', 'instruction:kata', 'instruction:run-spec',
+    'tool-server:personal', 'tool-server:project', 'tool-server:plugin', 'tool-server:kata',
+  ];
+
+  it('returns every R2.1 pair', async () => {
+    const r = await new MockTransport().previewRun(seedSpec());
+    const seen = new Set(r.items.map((i) => `${i.kind}:${i.source}`));
+    for (const pair of PAIRS) expect(seen, pair).toContain(pair);
+    expect(Object.keys(r.settings)).toHaveLength(8);
+  });
+
+  it('locks ai-sdlc only when required', async () => {
+    const t = new MockTransport();
+    const find = (r: Resolved) => r.items.find((i) => i.id === 'personal:plugin:ai-sdlc@ai-sdlc');
+    const required = { ...seedSpec(), given: { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [], required_plugins: ['ai-sdlc'] } };
+    expect(find(await t.previewRun(required))?.lock?.kind).toBe('required');
+    expect(find(await t.previewRun(seedSpec()))?.lock).toBeNull();
+  });
+
+  it('names project items after the last folder of the workdir', async () => {
+    const t = new MockTransport();
+    const a = await t.previewRun({ ...seedSpec(), workdir: 'D:\\ws\\alpha' });
+    const b = await t.previewRun({ ...seedSpec(), workdir: 'D:\\ws\\beta' });
+    expect(a.items.some((i) => i.source === 'project' && i.name.includes('alpha'))).toBe(true);
+    expect(b.items.some((i) => i.name.includes('alpha'))).toBe(false);
   });
 });

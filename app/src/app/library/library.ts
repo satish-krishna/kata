@@ -18,8 +18,10 @@ import {
   lucideTriangleAlert,
 } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { HlmDialogImports } from '@spartan-ng/helm/dialog';
 import { DetailActions } from '../ui/detail-actions';
 import { EventRow } from '../ui/event-row';
+import { GivenView } from '../ui/given-view';
 import { MarkdownBody } from '../ui/markdown-body';
 import { SummaryStat } from '../ui/summary-stat';
 import { TaskEditor } from '../ui/task-editor';
@@ -47,7 +49,7 @@ import { LibraryViewModel } from './library.view-model';
       lucideTriangleAlert,
     }),
   ],
-  imports: [NgIcon, RouterLink, HlmButtonImports, DetailActions, EventRow, MarkdownBody, SummaryStat, TaskEditor, ToolCard],
+  imports: [NgIcon, RouterLink, HlmButtonImports, HlmDialogImports, DetailActions, GivenView, EventRow, MarkdownBody, SummaryStat, TaskEditor, ToolCard],
   templateUrl: './library.html',
 })
 export class Library {

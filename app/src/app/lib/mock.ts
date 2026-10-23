@@ -7,6 +7,15 @@
  * is never consulted: `provideKataTransport` picks the Tauri transport. */
 import type { RunSpec } from "@bindings/RunSpec";
 import type { CatalogEntry } from "@bindings/CatalogEntry";
+import type { EnvName } from "@bindings/EnvName";
+import type { ItemKind } from "@bindings/ItemKind";
+import type { LockReason } from "@bindings/LockReason";
+import type { Resolved } from "@bindings/Resolved";
+import type { ResolvedItem } from "@bindings/ResolvedItem";
+import type { RunSetting } from "@bindings/RunSetting";
+import type { RunSettings } from "@bindings/RunSettings";
+import type { SettingSource } from "@bindings/SettingSource";
+import type { Source } from "@bindings/Source";
 import type { KataEvent } from "./events";
 
 /** True when running inside the Tauri webview (real backend available). */
@@ -40,7 +49,7 @@ export function seedSpec(): RunSpec {
     plugins: { "github-tools": { mcp: true, env: ["GITHUB_TOKEN", "GH_HOST"] } },
     model: { id: "claude-sonnet-4-6" },
     leash: { max_turns: 12, timeout_secs: 900, max_budget_usd: null, isolation: "worktree" },
-    auth: { bare: true, token_env: null },
+    auth: { bare: false, token_env: null },
     interactive: { enabled: true, answer_timeout_secs: null },
     permissions: { mode: "prompt", allow: ["Read", "Grep", "Bash(dotnet *)"], deny: ["Bash(rm *)"], unmatched: "ask" },
   };
@@ -182,4 +191,114 @@ export function validateLocal(spec: RunSpec): string[] {
     }
   }
   return errs;
+}
+
+const SUPERPOWERS = "superpowers@claude-plugins-official";
+const SDLC_PLUGIN = "ai-sdlc@ai-sdlc";
+const UNSWITCHABLE: LockReason = { kind: "unswitchable", text: "Kata cannot switch this off for one run without editing your setup" };
+
+/** The repository folder whose settings enable a personal plugin the other repositories do not, so a two-repository build lists it once, from the second. */
+export const SECOND_REPO = "acme-web";
+export const SECOND_REPO_PLUGIN = "design-kit@personal-tools";
+
+const PROJECT_HOOK = "project:hook:PostToolUse:Write|Edit:8c1f77e2d3a40b95";
+const LOCAL_HOOK = "project-local:hook:SessionStart:*:3d9e41b7a05c6f28";
+
+/** The last folder of a path, either slash style. */
+function lastFolder(path: string): string {
+  return path.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "workspace";
+}
+
+/** What `preview_run` returns, for the browser. One item of every R2.1 row, in the engine's order
+ *  (kind, then source, then name), with the engine's ids and locks. Project items carry the last
+ *  folder of `spec.workdir`, so two repositories preview differently. */
+export function previewFixture(spec: RunSpec): Resolved {
+  const folder = lastFolder(spec.workdir);
+  const sdlcRequired = (spec.given?.required_plugins ?? []).includes("ai-sdlc");
+  const requiredLock: LockReason = { kind: "required", text: "AI-SDLC runs work through this plugin" };
+  const kataLock: LockReason = { kind: "kata", text: "the run needs it to ask you questions" };
+  const orgLock: LockReason = { kind: "organization", text: "set by your organization" };
+  const buildLock: LockReason | null = spec.given?.build ? { kind: "build", text: "a build keeps the project's hooks, which may guard what it edits" } : null;
+  const make = (kind: ItemKind, source: Source, key: string, name: string, detail: string, extra: Partial<ResolvedItem> = {}): ResolvedItem => ({
+    id: `${source}:${kind}:${key}`, kind, source, name, detail, path: null, brought_by: null, lock: null, off: false, goes_off_with: [], ...extra,
+  });
+  const plugin = (key: string, source: Source, detail: string, lock: LockReason | null = null): ResolvedItem =>
+    make("plugin", source, key, key.split("@")[0], detail, { lock });
+  const child = (kind: ItemKind, key: string, name: string, detail: string, parentKey: string, parentRequired: boolean): ResolvedItem => {
+    const parent = `personal:plugin:${parentKey}`;
+    return make(kind, "plugin", `${parentKey}:${key}`, name, detail, {
+      brought_by: parent,
+      lock: parentRequired ? requiredLock : { kind: "follows-plugin", plugin: parent },
+    });
+  };
+  const items: ResolvedItem[] = [
+    make("hook", "personal", "PreToolUse:Bash:5b5b1d0c9a2e4f10", "PreToolUse Bash", "node ~/.claude/hooks/guard.mjs", { lock: UNSWITCHABLE }),
+    make("hook", "project", "PostToolUse:Write|Edit:8c1f77e2d3a40b95", "PostToolUse Write|Edit", "npm run lint --silent", { lock: buildLock }),
+    make("hook", "project-local", "SessionStart:*:3d9e41b7a05c6f28", "SessionStart *", "load my local scratch notes", { lock: buildLock }),
+    child("hook", "SessionStart:*:15b9f33b1f620354", "SessionStart *", "inject the using-superpowers skill", SUPERPOWERS, false),
+    make("hook", "organization", "PreToolUse:*:2f6d0a91c7e85b34", "PreToolUse *", "audit every tool call", { lock: orgLock }),
+    make("skill", "personal", "triage-flaky-test", "triage-flaky-test", "reproduce & isolate a flaky test", { path: "~/.claude/skills/triage-flaky-test", lock: UNSWITCHABLE }),
+    make("skill", "project", `${folder}-conventions`, `${folder}-conventions`, `how ${folder} is built and tested`, { path: `${spec.workdir}/.claude/skills/${folder}-conventions`, lock: UNSWITCHABLE }),
+    child("skill", "brainstorming", "brainstorming", "explore intent before building", SUPERPOWERS, false),
+    child("skill", "spec", "spec", "turn an accepted intent into a spec", SDLC_PLUGIN, sdlcRequired),
+    make("skill", "run-spec", "doc-writer", "doc-writer", "write & update project docs", { path: "~/.kata/skills/doc-writer" }),
+    plugin(SDLC_PLUGIN, "personal", "AI-SDLC stages", sdlcRequired ? requiredLock : null),
+    plugin(SUPERPOWERS, "personal", "skills and hooks for disciplined work"),
+    plugin(`${folder}-tools@${folder}`, "project", `tools installed for ${folder}`),
+    ...(folder === SECOND_REPO ? [plugin(SECOND_REPO_PLUGIN, "personal", "a personal plugin this repository enables")] : []),
+    make("plugin", "run-spec", "github-tools", "github-tools", "PRs, issues, releases", { path: "~/.kata/plugins/github-tools" }),
+    make("instruction", "personal", "CLAUDE.md", "CLAUDE.md", "your standing instructions", { path: "~/.claude/CLAUDE.md" }),
+    make("instruction", "project", "CLAUDE.md", "CLAUDE.md", `${folder}'s standing instructions`, { path: `${spec.workdir}/CLAUDE.md` }),
+    make("instruction", "project", "services/CLAUDE.md", "services/CLAUDE.md", "standing instructions for the services folder", {
+      path: `${spec.workdir}/services/CLAUDE.md`, goes_off_with: [PROJECT_HOOK],
+    }),
+    make("instruction", "project-local", "CLAUDE.local.md", "CLAUDE.local.md", "your local standing instructions", {
+      path: `${spec.workdir}/CLAUDE.local.md`, goes_off_with: [LOCAL_HOOK],
+    }),
+    make("instruction", "kata", "standing-note", "Kata's standing note", "tells the run to ask through ask_user", { lock: kataLock }),
+    make("instruction", "personal", "output-style", "Output style: Explanatory", "the output style your setup sets"),
+    make("instruction", "run-spec", "identity", "Run-spec instruction", "the identity prompt this run-spec carries"),
+    make("tool-server", "personal", "github", "github", "npx @modelcontextprotocol/server-github"),
+    make("tool-server", "project", `${folder}-db`, `${folder}-db`, "read-only database access"),
+    child("tool-server", "memory", "memory", "remembers across sessions", SUPERPOWERS, false),
+    make("tool-server", "kata", "kata-ask", "kata-ask", "the ask_user and approve_tool tools", { lock: kataLock }),
+  ];
+
+  // The empty room, as the engine resolves it: Kata's own items, the run-spec's kit and what a kit plugin brings
+  // except its hooks, and the output style the setup sets. Nothing else from the setup is listed, though it still exists.
+  const known = new Set(items.map((i) => i.id));
+  const emptyRoom = spec.auth.bare;
+  if (emptyRoom) {
+    const kept = items.filter(
+      (i) => i.source === "kata" || i.source === "run-spec" || i.id === "personal:instruction:output-style" ||
+        (i.brought_by?.startsWith("run-spec:plugin:") === true && i.kind !== "hook"),
+    );
+    items.length = 0;
+    items.push(...kept);
+  }
+
+  const given = spec.given;
+  const listed = new Set([...(given?.hooks ?? []), ...(given?.skills ?? []), ...(given?.plugins ?? []), ...(given?.instructions ?? []), ...(given?.tool_servers ?? [])]);
+  for (const i of items) if (!i.lock && listed.has(i.id)) i.off = true;
+  for (const i of items) {
+    if (i.lock?.kind === "follows-plugin") i.off = items.find((p) => p.id === (i.lock as { plugin: string }).plugin)?.off ?? false;
+  }
+
+  const setting = (value: string | null, source: SettingSource): RunSetting => ({ value, source });
+  const timeout = spec.leash.timeout_secs;
+  const settings: RunSettings = {
+    model: spec.model.id ? setting(spec.model.id, "run-spec") : setting(null, "claude-default"),
+    effort: setting(null, "claude-default"),
+    permission_posture: setting(spec.permissions.mode, "run-spec"),
+    empty_room: setting(spec.auth.bare ? "on" : "off", "run-spec"),
+    answer_deadline: spec.interactive.answer_timeout_secs ? setting(String(spec.interactive.answer_timeout_secs), "run-spec") : setting(null, "kata-default"),
+    time_limit: timeout ? setting(String(timeout), "run-spec") : setting("1800", "kata-default"),
+    turn_cap: setting(spec.leash.max_turns ? String(spec.leash.max_turns) : null, "run-spec"),
+    spending_ceiling: setting(spec.leash.max_budget_usd ? String(spec.leash.max_budget_usd) : null, "run-spec"),
+  };
+  const env: EnvName[] = [
+    { source: "personal", name: "GITHUB_TOKEN", api_key: false },
+    { source: "personal", name: "ANTHROPIC_API_KEY", api_key: true },
+  ];
+  return { items, settings, env, missing: [...listed].filter((id) => !known.has(id)), problems: [], empty_room: emptyRoom };
 }

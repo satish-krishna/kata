@@ -11,6 +11,12 @@ import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
+/** Every document run opens the preview first; confirm it once its rows have resolved. */
+const confirmPreview = async () => {
+  const start = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === 'Start run');
+  await vi.waitFor(() => expect(start() && !start()!.disabled).toBe(true));
+  start()!.click();
+};
 const settle = async () => {
   for (let i = 0; i < 4; i++) {
     TestBed.tick();
@@ -83,6 +89,7 @@ describe('ChangePage', () => {
     box.dispatchEvent(new Event('input'));
     await settle();
     Array.from(dialog.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Run')!.click();
+    await confirmPreview();
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     expect(run.mock.calls[0][0].task).toContain('Operator feedback:\nR2: team leads can reassign too.');
   });
@@ -118,7 +125,6 @@ describe('ChangePage', () => {
 
   describe('the build', () => {
     const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
-    const click = (label: string) => Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((b) => b.textContent!.trim() === label)!.click();
 
     it('the plan tab lists the tasks from sdlcBuildStatus in the Tasks view', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
@@ -159,7 +165,7 @@ describe('ChangePage', () => {
       expect(container.querySelector('nav[aria-label="Tasks"]')).toBeNull();
     });
 
-    it('crosses the seam: clicking the rendered Start build opens the dialog, and Start build prepares the build', async () => {
+    it('crosses the seam: clicking the rendered Start build opens the preview of the build, and Start run prepares the build', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
       const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
@@ -168,19 +174,19 @@ describe('ChangePage', () => {
       expect(dialog).not.toBeNull();
       expect(text(dialog.querySelector('[hlmDialogTitle]')!)).toBe('Start build');
       expect(prepare).not.toHaveBeenCalled();
-      click('Start build');
+      await confirmPreview();
       await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
       expect(prepare.mock.calls[0][4]).toBe(false);
     });
 
     it('a refused build opens the refusal dialog', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
-      vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'tooOld', have: '0.7.9', need: '0.8.0' });
+      vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'tooOld', have: '0.7.9', need: '0.9.0' });
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
       await settle();
-      click('Start build');
+      await confirmPreview();
       await vi.waitFor(() => expect(document.body.textContent).toContain('The build did not start'));
-      expect(document.body.textContent).toContain('Update the ai-sdlc plugin to 0.8.0 or later');
+      expect(document.body.textContent).toContain('Update the ai-sdlc plugin to 0.9.0 or later');
     });
 
     it('leftovers open the confirm dialog titled and listing each repository and file', async () => {
@@ -188,7 +194,7 @@ describe('ChangePage', () => {
       vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['src/new.rs'] }] });
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
       await settle();
-      click('Start build');
+      await confirmPreview();
       await vi.waitFor(() => expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull());
       const confirm = document.body.querySelector('[role="alertdialog"]')!;
       expect(text(confirm)).toContain('Continue on top of leftovers?');

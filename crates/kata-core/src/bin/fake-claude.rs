@@ -1,17 +1,64 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "subagent"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "argsfiles" | "subagent" | "hooks" | "noinit"
 use std::io::Write;
 use std::{thread, time::Duration};
 
 fn main() {
     let mode = std::env::var("KATA_FAKE_MODE").unwrap_or_else(|_| "ok".into());
     let mut out = std::io::stdout();
-    let _ = writeln!(out, r#"{{"type":"system","subtype":"init"}}"#);
-    let _ = out.flush();
+    // The start report, in the shape of tests/fixtures/claude-init.json (fields
+    // the engine does not read are left out). Its model differs from any spec's.
+    if mode != "noinit" {
+        let init = serde_json::json!({
+            "type": "system",
+            "subtype": "init",
+            "model": "claude-fake-1",
+            "permissionMode": "bypassPermissions",
+            "output_style": "default",
+            "skills": ["fake-skill"],
+            "plugins": [
+                {"name": "fake-plugin", "path": "<plugin-path>", "source": "fake-plugin@fake"},
+                {"name": "cc-plugin-fake", "path": "builtin", "source": "cc-plugin-fake@builtin"}
+            ],
+            "mcp_servers": [
+                {"name": "kata-ask", "status": "connected"},
+                {"name": "claude.ai Fake", "source": "claudeai", "status": "needs-auth"}
+            ]
+        });
+        let _ = writeln!(out, "{init}");
+        let _ = out.flush();
+    }
 
     match mode.as_str() {
+        "noinit" => {
+            // A run that ends without ever sending the start report.
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
+            );
+            let _ = out.flush();
+        }
+        "hooks" => {
+            // The hook lifecycle `--include-hook-events` adds: a hook starts and
+            // responds (shapes from tests/fixtures/claude-hook-events.jsonl,
+            // with a matcher in `hook_name`), then the run lingers briefly so a
+            // test can change the setup on disk while it is live.
+            for subtype in ["hook_started", "hook_response"] {
+                let _ = writeln!(
+                    out,
+                    r#"{{"type":"system","subtype":"{subtype}","hook_id":"h1","hook_name":"PreToolUse:Bash","hook_event":"PreToolUse","session_id":"s"}}"#
+                );
+            }
+            let _ = out.flush();
+            thread::sleep(Duration::from_millis(400));
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
+            );
+            let _ = out.flush();
+        }
         "sleep" => {
             let _ = writeln!(
                 out,
@@ -271,6 +318,73 @@ fn main() {
                 ]}
             });
             let _ = writeln!(out, "{line}");
+            let _ = writeln!(
+                out,
+                r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
+            );
+            let _ = out.flush();
+        }
+        "argsfiles" => {
+            // Report what Kata passed, as stderr lines the engine surfaces as log
+            // events: `ARGV <json array>`, `SETTINGS <file body>` and `MCP <file
+            // body>` for the files named by `--settings` and `--mcp-config`, and
+            // one `PLUGINDIR <json array>` per `--plugin-dir` listing every file
+            // (relative, forward slashes) under it, because that folder is gone
+            // after the run, then `CWD <path>` and `ADDDIRMD <value>`: the
+            // child's working folder and its value of
+            // `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD` (empty when unset).
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            let mut err = std::io::stderr();
+            let _ = writeln!(err, "ARGV {}", serde_json::json!(args));
+            let value_of = |flag: &str| {
+                args.iter()
+                    .position(|a| a == flag)
+                    .and_then(|i| args.get(i + 1))
+            };
+            for (flag, tag) in [("--settings", "SETTINGS"), ("--mcp-config", "MCP")] {
+                if let Some(p) = value_of(flag) {
+                    let body = std::fs::read_to_string(p)
+                        .unwrap_or_else(|e| format!("<read error: {e}>"))
+                        .replace(['\r', '\n'], " ");
+                    let _ = writeln!(err, "{tag} {body}");
+                }
+            }
+            fn walk(base: &std::path::Path, dir: &std::path::Path, out: &mut Vec<String>) {
+                let Ok(rd) = std::fs::read_dir(dir) else {
+                    return;
+                };
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        walk(base, &p, out);
+                    } else if let Ok(rel) = p.strip_prefix(base) {
+                        out.push(rel.to_string_lossy().replace('\\', "/"));
+                    }
+                }
+            }
+            // One `PLUGINDIR` line per `--plugin-dir`, in the order passed.
+            for dir in args
+                .windows(2)
+                .filter(|w| w[0] == "--plugin-dir")
+                .map(|w| &w[1])
+            {
+                let base = std::path::PathBuf::from(dir);
+                let mut files = Vec::new();
+                walk(&base, &base, &mut files);
+                files.sort();
+                let _ = writeln!(err, "PLUGINDIR {}", serde_json::json!(files));
+            }
+            let _ = writeln!(
+                err,
+                "CWD {}",
+                std::env::current_dir().unwrap_or_default().display()
+            );
+            let _ = writeln!(
+                err,
+                "ADDDIRMD {}",
+                std::env::var("CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD").unwrap_or_default()
+            );
+            let _ = err.flush();
             let _ = writeln!(
                 out,
                 r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#

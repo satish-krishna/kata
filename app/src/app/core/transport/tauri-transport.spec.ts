@@ -35,6 +35,7 @@ const rows: Row[] = [
   ['loadSpec', (t) => t.loadSpec('a.toml'), 'load_spec', { path: 'a.toml' }],
   ['saveSpec', (t) => t.saveSpec('a.toml', spec), 'save_spec', { path: 'a.toml', spec }],
   ['validateSpec', (t) => t.validateSpec(spec), 'validate_spec', { spec }],
+  ['previewRun', (t) => t.previewRun(spec), 'preview_run', { spec }],
   ['runSpec', (t) => t.runSpec(spec), 'run_spec', { spec }],
   ['runSpec with a group', (t) => t.runSpec(spec, 'build:claims/c'), 'run_spec', { spec, group: 'build:claims/c' }],
   ['cancelRun', (t) => t.cancelRun('7'), 'cancel_run', { runId: '7' }],

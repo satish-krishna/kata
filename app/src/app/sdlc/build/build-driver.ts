@@ -1,5 +1,6 @@
 import { signal } from '@angular/core';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { BuildChoices } from '../../core/given/given.store';
 import { stopMessage } from '../../lib/sdlc';
 
 export interface RunEnd {
@@ -20,6 +21,7 @@ export interface RunOptions {
   timeoutSecs: number;
   instructions?: string;
   signal: AbortSignal;
+  choices: BuildChoices;
 }
 
 export type RunTarget = { repo: string } | 'review';
@@ -45,6 +47,7 @@ export interface StopReport {
 }
 
 const REVIEW = 'review';
+const NO_CHOICES: BuildChoices = { off: new Set() };
 
 /** One launched run: its id is never reused, so a cancel aimed at it cannot be mistaken for one aimed at the repository's next run. */
 interface RunInstance {
@@ -67,6 +70,7 @@ export class BuildDriver {
   readonly report = signal<StopReport | null>(null);
 
   private timeoutSecs = 0;
+  private choices: BuildChoices = NO_CHOICES;
   private roundStarted = false;
   private reviewing = false;
   private cancelledAll = false;
@@ -78,8 +82,14 @@ export class BuildDriver {
 
   constructor(private readonly deps: BuildDriverDeps) {}
 
-  async begin(timeoutSecs: number, round?: { repo: string; instructions: string }): Promise<void> {
+  /** The build's choices from now on: every run launched after this gets them. A run already going keeps the ones it started with. */
+  setChoices(choices: BuildChoices): void {
+    this.choices = choices;
+  }
+
+  async begin(timeoutSecs: number, round?: { repo: string; instructions: string }, choices: BuildChoices = NO_CHOICES): Promise<void> {
     this.timeoutSecs = timeoutSecs;
+    this.choices = choices;
     this.cancelledAll = false;
     this.stopped.set(new Map());
     this.report.set(null);
@@ -220,7 +230,7 @@ export class BuildDriver {
     const run: RunInstance = { id: ++this.instanceSeq, ctl: new AbortController(), cancelled: false };
     this.instances.set(key, run);
     if (key !== REVIEW) this.going.set(new Set(this.going()).add(key));
-    const opts: RunOptions = { timeoutSecs: this.timeoutSecs, signal: run.ctl.signal };
+    const opts: RunOptions = { timeoutSecs: this.timeoutSecs, signal: run.ctl.signal, choices: this.choices };
     if (instructions !== undefined) opts.instructions = instructions;
     const target: RunTarget = key === REVIEW ? REVIEW : { repo: key };
     void (async () => this.deps.start(target, opts))()
@@ -267,7 +277,7 @@ export class BuildDriver {
 
   /** Reads the status, looks the outcome up and acts on it. A status that cannot be read is 'unknown'; it never loses the result. */
   private async judge(repo: string, task: string, end: RunEnd, cancelled: boolean, isRound: boolean): Promise<Outcome> {
-    let status: BuildStatus | null = null;
+    let status: BuildStatus | null;
     try {
       status = await this.deps.status();
     } catch {

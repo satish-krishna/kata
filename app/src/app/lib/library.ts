@@ -2,7 +2,7 @@
  * history. The history array now matches the generated RunRecord shape so that
  * it can be returned directly by the browser-fallback path in api.ts. When
  * running under Tauri, listRuns() calls the live list_runs command instead. */
-import type { StreamEvent } from "./events";
+import type { KataEvent, StreamEvent } from "./events";
 import type { RunRecord, RunDetail } from "./events";
 import type { RunSpec } from "@bindings/RunSpec";
 import type { Preset } from "@bindings/Preset";
@@ -54,7 +54,9 @@ export const runStreams: Record<string, StreamEvent[]> = {
 /** Browser-fallback detail: the fixture record + its scripted stream as KataEvents. */
 export function runDetailFixture(id: string): RunDetail {
   const record = history.find((r) => r.id === id) ?? history[0];
-  return { record, events: (runStreams[record.id] ?? []) as RunDetail["events"] };
+  const stream = (runStreams[record.id] ?? []) as RunDetail["events"];
+  // The newest run recorded what it was given; the others are from before the view existed.
+  return { record, events: record.id === history[0].id ? [runGivenFixture, ...stream] : stream };
 }
 
 const fixtureSpec = (name: string, description: string, isolation: "none" | "worktree", skills: string[], plugins: string[]): RunSpec => ({
@@ -73,3 +75,30 @@ export const presetsFixture: Preset[] = [
   { name: "dotnet repro", body: "Use `dotnet test --filter` to run a single test in a tight loop." },
   { name: "staging slot", body: "Target the staging deployment slot, never production." },
 ];
+
+/** The `run.given` a finished fixture run recorded: a skill that held, a skill switched off that Claude loaded anyway, a tool server, and one item Claude reported that Kata did not know. */
+export const runGivenFixture: Extract<KataEvent, { type: "run.given" }> = {
+  type: "run.given",
+  items: [
+    { id: "personal:skill:triage-flaky-test", kind: "skill", source: "personal", name: "triage-flaky-test", detail: "reproduce & isolate a flaky test", off: false, status: "given" },
+    { id: "project:skill:repo-conventions", kind: "skill", source: "project", name: "repo-conventions", detail: "how the repo is built and tested", off: true, status: "switched-off-but-loaded" },
+    { id: "personal:tool-server:github", kind: "tool-server", source: "personal", name: "github", detail: "PRs, issues, releases", off: false, status: "given" },
+    { id: "personal:hook:PreToolUse:Bash:5b5b1d0c9a2e4f10", kind: "hook", source: "personal", name: "PreToolUse Bash", detail: "guard", off: true, status: "switched-off" },
+    { id: "unknown:skill:stray", kind: "skill", source: null, name: "stray", detail: "", off: false, status: "loaded-source-unknown" },
+  ],
+  settings: {
+    model: { value: "claude-sonnet-4", source: "run-spec" },
+    effort: { value: null, source: "claude-default" },
+    permission_posture: { value: "bypass", source: "run-spec" },
+    empty_room: { value: "on", source: "run-spec" },
+    answer_deadline: { value: "600", source: "kata-default" },
+    time_limit: { value: "1800", source: "run-spec" },
+    turn_cap: { value: "12", source: "run-spec" },
+    spending_ceiling: { value: null, source: "kata-default" },
+  },
+  env: [
+    { name: "ANTHROPIC_API_KEY", source: "personal", api_key: true },
+    { name: "PATH", source: "personal", api_key: false },
+  ],
+  warnings: ["repo-conventions was switched off, but Claude loaded it"],
+};

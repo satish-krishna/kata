@@ -66,6 +66,7 @@
     "@angular/build": "^22.1.7",
     "@angular/cli": "^22.1.7",
     "@angular/compiler-cli": "^22.1.0",
+    "@eslint/js": "^10.0.1",
     "@spartan-ng/cli": "^1.8.0",
     "@tailwindcss/postcss": "^4.1.12",
     "@tauri-apps/cli": "^2",

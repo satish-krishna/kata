@@ -2,6 +2,7 @@ mod runs;
 mod zoom;
 
 use kata_core::catalog::{self, CatalogEntry};
+use kata_core::given::{self, ResolveOptions, ResolveRoots, Resolved};
 use kata_core::spec::{self, RunSpec};
 use kata_sdlc as sdlc;
 use runs::{LiveRun, RunTable};
@@ -35,6 +36,17 @@ fn parse_run_id(run_id: &str) -> Option<u64> {
 fn catalog(workdir: Option<String>) -> Vec<CatalogEntry> {
     let roots = catalog::roots_for_workdir(workdir.as_deref());
     catalog::discover(&roots)
+}
+
+/// What the run would be given, resolved against the spec's own workdir. Holds
+/// names only, never an environment value.
+#[tauri::command]
+fn preview_run(spec: RunSpec) -> Resolved {
+    given::resolve(
+        &spec,
+        &ResolveRoots::for_spec(&spec),
+        &ResolveOptions::from_spec(&spec),
+    )
 }
 
 #[tauri::command]
@@ -830,6 +842,7 @@ pub fn run() {
             load_spec,
             save_spec,
             validate_spec,
+            preview_run,
             run_spec,
             cancel_run,
             submit_answer,
@@ -984,7 +997,7 @@ name: build
         .unwrap();
         std::fs::write(
             plugin.join(".claude-plugin").join("plugin.json"),
-            r#"{"name":"ai-sdlc","version":"0.8.0"}"#,
+            r#"{"name":"ai-sdlc","version":"0.9.0"}"#,
         )
         .unwrap();
         let empty_home = root.join("home");
@@ -1011,5 +1024,70 @@ name: build
             panic!("the workspace's own plugin should be ready, got {readiness:?}");
         };
         assert_eq!(resolved, Ok(dir));
+    }
+
+    #[test]
+    fn preview_run_resolves_against_the_specs_workdir() {
+        let dir = std::env::temp_dir().join(format!("kata-preview-run-{}", std::process::id()));
+        let skill = dir.join(".claude").join("skills").join("preview-probe");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: preview-probe\ndescription: does preview-probe\n---\nbody\n",
+        )
+        .unwrap();
+        // The setup's skills are listed outside the empty room only.
+        let mut spec = RunSpec {
+            workdir: dir.to_string_lossy().into_owned(),
+            ..RunSpec::default()
+        };
+        spec.auth.bare = false;
+        let resolved = preview_run(spec);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            resolved
+                .items
+                .iter()
+                .any(|i| i.id == "project:skill:preview-probe"),
+            "items: {:?}",
+            resolved.items.iter().map(|i| &i.id).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn preview_run_reads_the_options_from_the_spec() {
+        use kata_core::given::LockReason;
+        let dir = std::env::temp_dir().join(format!("kata-preview-opts-{}", std::process::id()));
+        // A project-scoped ai-sdlc, so the test never depends on the machine having the plugin installed.
+        let plugin = dir.join(".claude").join("plugins").join("ai-sdlc");
+        std::fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            plugin.join(".claude-plugin").join("plugin.json"),
+            r#"{"name":"ai-sdlc","version":"0.9.0"}"#,
+        )
+        .unwrap();
+        let mut plugins = std::collections::BTreeMap::new();
+        plugins.insert("ai-sdlc".to_string(), spec::PluginConfig::default());
+        let spec = RunSpec {
+            workdir: dir.to_string_lossy().into_owned(),
+            plugins,
+            given: Some(spec::Given {
+                required_plugins: vec!["ai-sdlc".into()],
+                ..spec::Given::default()
+            }),
+            ..RunSpec::default()
+        };
+        let resolved = preview_run(spec);
+        let _ = std::fs::remove_dir_all(&dir);
+        let item = resolved
+            .items
+            .iter()
+            .find(|i| i.kind == given::ItemKind::Plugin && i.name == "ai-sdlc")
+            .expect("the ai-sdlc plugin is listed");
+        assert!(
+            matches!(item.lock, Some(LockReason::Required { .. })),
+            "{:?}",
+            item.lock
+        );
     }
 }

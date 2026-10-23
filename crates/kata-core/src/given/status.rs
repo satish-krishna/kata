@@ -1,0 +1,1101 @@
+//! What the view says about an item: what Kata passed, what Claude reported, and
+//! the one label that follows. The frontend labels the status it receives and
+//! never derives it.
+
+use super::{
+    carried_name, parse_item_id, ItemKind, LockReason, ResolveOptions, Resolved, ResolvedItem,
+    RunSetting, SettingSource, Source,
+};
+use crate::event::{HookFired, InitReport, KataEvent, McpState};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeSet, HashMap, HashSet};
+
+/// What Kata did with an item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KataSide {
+    Passed,
+    SwitchedOff,
+    /// Claude reported it and Kata's list never held it.
+    DidNotKnow,
+}
+
+/// What Claude's own report says about an item. Which values a kind can have:
+/// skill and plugin take `Loaded` or `NotReported`; a tool server takes
+/// `Connected`, `FailedToConnect` or `NotReported`; a hook takes `Fired` or
+/// `NotFired`; an instruction always takes `NoReportOfKind`. `NoStartReport`
+/// replaces `Loaded`, `Connected`, `FailedToConnect` and `NotReported` when the
+/// run ended before Claude's start report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaudeSide {
+    Loaded,
+    Connected,
+    FailedToConnect,
+    NotReported,
+    Fired,
+    NotFired,
+    NoReportOfKind,
+    NoStartReport,
+}
+
+/// Why a (Kata, kind, Claude) triple cannot occur.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{kata:?} {kind:?} with Claude side {claude:?} cannot occur")]
+pub struct ImpossibleStatus {
+    pub kata: KataSide,
+    pub kind: ItemKind,
+    pub claude: ClaudeSide,
+}
+
+/// A triple that can occur. The only way to make one is [`StatusInput::new`],
+/// which rejects every pair the table calls impossible (row 28) and every
+/// Claude-side value that is not one of the kind's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StatusInput {
+    kata: KataSide,
+    kind: ItemKind,
+    claude: ClaudeSide,
+}
+
+impl StatusInput {
+    pub fn new(
+        kata: KataSide,
+        kind: ItemKind,
+        claude: ClaudeSide,
+    ) -> Result<StatusInput, ImpossibleStatus> {
+        use ClaudeSide::*;
+        // Claude's report for a kind uses only that kind's values.
+        let of_the_kind = match kind {
+            ItemKind::Skill | ItemKind::Plugin => {
+                matches!(claude, Loaded | NotReported | NoStartReport)
+            }
+            ItemKind::ToolServer => {
+                matches!(
+                    claude,
+                    Connected | FailedToConnect | NotReported | NoStartReport
+                )
+            }
+            ItemKind::Hook => matches!(claude, Fired | NotFired),
+            ItemKind::Instruction => claude == NoReportOfKind,
+        };
+        // Row 28: an item neither Kata passed nor Claude reported is unknown to
+        // both, so a did-not-know item always has something Claude reported.
+        let known_to_someone = kata != KataSide::DidNotKnow
+            || matches!(claude, Loaded | Connected | FailedToConnect | Fired);
+        if of_the_kind && known_to_someone {
+            Ok(StatusInput { kata, kind, claude })
+        } else {
+            Err(ImpossibleStatus { kata, kind, claude })
+        }
+    }
+}
+
+/// One variant per distinct text the view shows. The frontend maps each to its
+/// words.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GivenStatus {
+    /// "given"
+    Given,
+    /// "passed by Kata, not loaded by Claude"
+    PassedNotLoaded,
+    /// "given, failed to connect"
+    GivenFailedToConnect,
+    /// "given, fired"
+    GivenFired,
+    /// "given, has not fired"
+    GivenNotFired,
+    /// "given, Claude does not confirm this kind"
+    GivenUnconfirmed,
+    /// "switched off, but Claude loaded it"
+    SwitchedOffButLoaded,
+    /// "switched off, but it fired"
+    SwitchedOffButFired,
+    /// "switched off"
+    SwitchedOff,
+    /// "switched off, Claude does not confirm this kind"
+    SwitchedOffUnconfirmed,
+    /// "loaded by Claude, source unknown"
+    LoadedSourceUnknown,
+    /// "loaded by Claude, source unknown, failed to connect"
+    LoadedSourceUnknownFailedToConnect,
+    /// "fired, source unknown"
+    FiredSourceUnknown,
+    /// "passed by Kata, Claude made no start report"
+    PassedNoStartReport,
+    /// "switched off, Claude made no start report"
+    SwitchedOffNoStartReport,
+}
+
+impl GivenStatus {
+    /// R15.2: the row asks for a warning, because a switch did not hold.
+    pub fn warns(self) -> bool {
+        matches!(
+            self,
+            GivenStatus::SwitchedOffButLoaded | GivenStatus::SwitchedOffButFired
+        )
+    }
+}
+
+/// What the view says about an item (the status table, rows 1 to 27).
+pub fn status(input: StatusInput) -> GivenStatus {
+    use ClaudeSide as C;
+    use GivenStatus as G;
+    use KataSide as K;
+    match (input.kata, input.claude) {
+        (K::Passed, C::Loaded | C::Connected) => G::Given,
+        (K::Passed, C::NotReported) => G::PassedNotLoaded,
+        (K::Passed, C::FailedToConnect) => G::GivenFailedToConnect,
+        (K::Passed, C::Fired) => G::GivenFired,
+        (K::Passed, C::NotFired) => G::GivenNotFired,
+        (K::Passed, C::NoReportOfKind) => G::GivenUnconfirmed,
+        (K::Passed, C::NoStartReport) => G::PassedNoStartReport,
+        // A switch that did not hold, whatever the connection's outcome.
+        (K::SwitchedOff, C::Loaded | C::Connected | C::FailedToConnect) => G::SwitchedOffButLoaded,
+        (K::SwitchedOff, C::Fired) => G::SwitchedOffButFired,
+        (K::SwitchedOff, C::NotReported | C::NotFired) => G::SwitchedOff,
+        (K::SwitchedOff, C::NoReportOfKind) => G::SwitchedOffUnconfirmed,
+        (K::SwitchedOff, C::NoStartReport) => G::SwitchedOffNoStartReport,
+        (K::DidNotKnow, C::FailedToConnect) => G::LoadedSourceUnknownFailedToConnect,
+        (K::DidNotKnow, C::Fired) => G::FiredSourceUnknown,
+        // `StatusInput::new` refuses every other did-not-know pair (row 28).
+        (K::DidNotKnow, _) => G::LoadedSourceUnknown,
+    }
+}
+
+/// One row of the view: the resolved item (without its path) and its status.
+/// `source` is `None` for a row Claude reported that Kata did not know.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GivenItem {
+    pub id: String,
+    pub kind: ItemKind,
+    pub source: Option<Source>,
+    pub name: String,
+    pub detail: String,
+    pub brought_by: Option<String>,
+    pub lock: Option<LockReason>,
+    pub off: bool,
+    pub status: GivenStatus,
+}
+
+/// The options a run was resolved with, as `run.given` records them.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GivenOptions {
+    pub required_plugins: Vec<String>,
+    pub build: bool,
+}
+
+/// Which hook items the hook lines of a run belong to.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HookFirings {
+    /// Ids of the hook items that fired.
+    pub fired: BTreeSet<String>,
+    /// Lines no listed item accounts for, one per excess line.
+    pub unknown: Vec<HookFired>,
+}
+
+/// Decides which hook items the `hook_started` lines belong to.
+///
+/// A line's `hook_name` is `<event>` or `<event>:<trigger>`, the trigger being
+/// the tool name or the session-start reason. Claude starts every loaded hook
+/// whose matcher matches the trigger, one line each, together, so consecutive
+/// lines with one name are one occurrence. A line with an empty event is a
+/// boundary between occurrences (the run engine inserts one when a hook
+/// response arrives).
+pub fn hooks_fired(items: &[ResolvedItem], lines: &[HookFired]) -> HookFirings {
+    let hooks: Vec<(&ResolvedItem, &str, &str)> = items
+        .iter()
+        .filter(|i| i.kind == ItemKind::Hook)
+        .filter_map(|i| {
+            let (event, matcher) = i.name.split_once(' ')?;
+            Some((i, event, if matcher == "any" { "" } else { matcher }))
+        })
+        .collect();
+
+    let mut occurrences: Vec<(&HookFired, usize)> = Vec::new();
+    let mut open = false;
+    for line in lines {
+        if line.event.is_empty() {
+            open = false;
+            continue;
+        }
+        match occurrences.last_mut() {
+            Some((first, count)) if open && first.name == line.name => *count += 1,
+            _ => occurrences.push((line, 1)),
+        }
+        open = true;
+    }
+
+    let mut out = HookFirings::default();
+    for (line, started) in occurrences {
+        let trigger = line.name.strip_prefix(&format!("{}:", line.event));
+        let matching: Vec<&(&ResolvedItem, &str, &str)> = hooks
+            .iter()
+            .filter(|(_, event, matcher)| {
+                *event == line.event && trigger.is_none_or(|t| matcher_matches(matcher, t))
+            })
+            .collect();
+        let kept = matching.iter().filter(|(i, _, _)| !i.off).count();
+        for (item, _, _) in &matching {
+            if !item.off || started > kept {
+                out.fired.insert(item.id.clone());
+            }
+        }
+        for _ in matching.len()..started {
+            out.unknown.push(line.clone());
+        }
+    }
+    out
+}
+
+/// A hook matcher is empty, `*`, or a regular expression that must match the
+/// whole trigger (`Bash|Read` matches `Read`, `Rea` does not).
+fn matcher_matches(matcher: &str, trigger: &str) -> bool {
+    if matcher.is_empty() || matcher == "*" {
+        return true;
+    }
+    match regex::Regex::new(&format!("^(?:{matcher})$")) {
+        Ok(re) => re.is_match(trigger),
+        Err(_) => matcher == trigger,
+    }
+}
+
+/// The `run.given` event for what `resolved` listed at the start, checked
+/// against Claude's start report (`None` when it has not arrived) and the hooks
+/// seen firing so far.
+pub fn given_event(
+    resolved: &Resolved,
+    opts: &ResolveOptions,
+    init: Option<&InitReport>,
+    fired: &[HookFired],
+) -> KataEvent {
+    let plugin_names: HashMap<&str, &str> = resolved
+        .items
+        .iter()
+        .filter(|i| i.kind == ItemKind::Plugin)
+        .map(|i| (i.id.as_str(), i.name.as_str()))
+        .collect();
+    let brought_by = |item: &ResolvedItem| {
+        item.brought_by
+            .as_deref()
+            .and_then(|id| plugin_names.get(id).copied())
+    };
+
+    let mut claimed_skills: HashSet<&str> = HashSet::new();
+    let mut claimed_plugins: HashSet<&str> = HashSet::new();
+    let mut claimed_servers: HashSet<&str> = HashSet::new();
+    let firings = hooks_fired(&resolved.items, fired);
+
+    let mut items: Vec<GivenItem> = Vec::new();
+    for item in &resolved.items {
+        let claude = match item.kind {
+            ItemKind::Instruction => ClaudeSide::NoReportOfKind,
+            ItemKind::Hook => {
+                if firings.fired.contains(&item.id) {
+                    ClaudeSide::Fired
+                } else {
+                    ClaudeSide::NotFired
+                }
+            }
+            _ => match init {
+                None => ClaudeSide::NoStartReport,
+                Some(report) => match item.kind {
+                    ItemKind::Skill => {
+                        let found = report
+                            .skills
+                            .iter()
+                            .filter(|s| skill_matches(item, s, brought_by(item)))
+                            .map(|s| claimed_skills.insert(s.as_str()))
+                            .count();
+                        if found > 0 {
+                            ClaudeSide::Loaded
+                        } else {
+                            ClaudeSide::NotReported
+                        }
+                    }
+                    ItemKind::Plugin => {
+                        let found = report
+                            .plugins
+                            .iter()
+                            .filter(|p| plugin_matches(item, p))
+                            .map(|p| claimed_plugins.insert(p.as_str()))
+                            .count();
+                        if found > 0 {
+                            ClaudeSide::Loaded
+                        } else {
+                            ClaudeSide::NotReported
+                        }
+                    }
+                    _ => {
+                        let want = server_name(item, brought_by(item));
+                        match report.mcp_servers.iter().find(|(n, _)| *n == want) {
+                            Some((n, state)) => {
+                                claimed_servers.insert(n.as_str());
+                                match state {
+                                    McpState::Connected | McpState::Pending => {
+                                        ClaudeSide::Connected
+                                    }
+                                    McpState::Failed => ClaudeSide::FailedToConnect,
+                                }
+                            }
+                            None => ClaudeSide::NotReported,
+                        }
+                    }
+                },
+            },
+        };
+        let kata = if item.off {
+            KataSide::SwitchedOff
+        } else {
+            KataSide::Passed
+        };
+        items.push(GivenItem {
+            id: item.id.clone(),
+            kind: item.kind,
+            source: Some(item.source),
+            name: item.name.clone(),
+            detail: item.detail.clone(),
+            brought_by: item.brought_by.clone(),
+            lock: item.lock.clone(),
+            off: item.off,
+            status: status_of(kata, item.kind, claude),
+        });
+    }
+
+    // What Claude reported that Kata's list never held (rows 21 to 25).
+    let mut unknown = |kind: ItemKind, name: &str, claude: ClaudeSide| {
+        items.push(GivenItem {
+            id: format!("claude:{}:{name}", kind.as_str()),
+            kind,
+            source: None,
+            name: name.to_string(),
+            detail: String::new(),
+            brought_by: None,
+            lock: None,
+            off: false,
+            status: status_of(KataSide::DidNotKnow, kind, claude),
+        });
+    };
+    if let Some(report) = init {
+        for s in report
+            .skills
+            .iter()
+            .filter(|s| !claimed_skills.contains(s.as_str()))
+        {
+            unknown(ItemKind::Skill, s, ClaudeSide::Loaded);
+        }
+        // Claude's own bundled plugins are not part of anyone's setup.
+        for p in report.plugins.iter().filter(|p| {
+            !p.ends_with("@builtin")
+                && !p.starts_with(CARRY_SOURCE)
+                && !claimed_plugins.contains(p.as_str())
+        }) {
+            unknown(ItemKind::Plugin, p, ClaudeSide::Loaded);
+        }
+        for (n, state) in report
+            .mcp_servers
+            .iter()
+            .filter(|(n, _)| !claimed_servers.contains(n.as_str()))
+        {
+            let claude = match state {
+                McpState::Failed => ClaudeSide::FailedToConnect,
+                McpState::Connected | McpState::Pending => ClaudeSide::Connected,
+            };
+            unknown(ItemKind::ToolServer, n, claude);
+        }
+    }
+    let mut seen_hooks: HashSet<&str> = HashSet::new();
+    for f in &firings.unknown {
+        if seen_hooks.insert(f.name.as_str()) {
+            unknown(ItemKind::Hook, &f.name, ClaudeSide::Fired);
+        }
+    }
+
+    let warnings = items
+        .iter()
+        .filter(|i| i.status.warns())
+        .map(|i| match i.status {
+            GivenStatus::SwitchedOffButFired => {
+                format!("{} was switched off, but it fired", i.name)
+            }
+            _ => format!("{} was switched off, but Claude loaded it", i.name),
+        })
+        .collect();
+
+    let mut settings = resolved.settings.clone();
+    if let Some(report) = init {
+        let reported = |v: &Option<String>, was: &RunSetting| match v {
+            Some(v) => RunSetting {
+                value: Some(v.clone()),
+                source: SettingSource::ClaudeReport,
+            },
+            None => was.clone(),
+        };
+        settings.model = reported(&report.model, &settings.model);
+        settings.permission_posture =
+            reported(&report.permission_mode, &settings.permission_posture);
+    }
+
+    KataEvent::RunGiven {
+        items,
+        settings,
+        env: resolved.env.clone(),
+        warnings,
+        options: GivenOptions {
+            required_plugins: opts.required_plugins.clone(),
+            build: opts.build,
+        },
+    }
+}
+
+fn status_of(kata: KataSide, kind: ItemKind, claude: ClaudeSide) -> GivenStatus {
+    match StatusInput::new(kata, kind, claude) {
+        Ok(input) => status(input),
+        // Every triple built above is one the table allows; falling here means
+        // the matching code drifted from the table, which a test will catch.
+        Err(_) => GivenStatus::SwitchedOff,
+    }
+}
+
+/// A skill Claude loads is named `<skill>`, or `<plugin>:<skill>` when a plugin
+/// brings it. The kit's plugin is Kata's own and its name is not fixed here, so
+/// a run-spec skill matches under any prefix.
+fn skill_matches(item: &ResolvedItem, reported: &str, plugin: Option<&str>) -> bool {
+    match plugin {
+        Some(p) => reported == format!("{p}:{}", item.name),
+        None if item.source == Source::RunSpec => {
+            reported.rsplit(':').next() == Some(item.name.as_str())
+        }
+        None if matches!(item.source, Source::Project | Source::ProjectLocal) => {
+            reported == item.name || reported == carried_name(&item.name)
+        }
+        None => reported == item.name,
+    }
+}
+
+/// The source Claude gives Kata's own carry-over plugin; it is not an item.
+const CARRY_SOURCE: &str = "kata-proj@inline";
+
+/// An installed plugin is reported by its `<name>@<marketplace>`, which is its
+/// key; a kit plugin has only a name.
+fn plugin_matches(item: &ResolvedItem, reported: &str) -> bool {
+    if reported.ends_with("@builtin") {
+        return false;
+    }
+    let Ok(r) = parse_item_id(&item.id) else {
+        return false;
+    };
+    if r.key.contains('@') {
+        reported == r.key
+    } else {
+        reported.split('@').next() == Some(r.key.as_str())
+    }
+}
+
+/// A plugin's tool servers are reported as `plugin:<plugin>:<server>`.
+fn server_name(item: &ResolvedItem, plugin: Option<&str>) -> String {
+    match plugin {
+        Some(p) => format!("plugin:{p}:{}", item.name),
+        None => item.name.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ClaudeSide as C;
+    use super::GivenStatus as G;
+    use super::KataSide as K;
+    use super::*;
+    use crate::given::ResolvedItem;
+    use ItemKind as I;
+
+    type Row = (u8, K, I, C, G, bool);
+
+    /// Rows 1 to 27 of the status table: row, Kata side, kind, Claude side, shown,
+    /// warning (R15.2). Rows 26 and 27 cover each of skill, plugin and tool server.
+    fn rows() -> Vec<Row> {
+        let mut r: Vec<Row> = vec![
+            (1, K::Passed, I::Skill, C::Loaded, G::Given, false),
+            (
+                2,
+                K::Passed,
+                I::Skill,
+                C::NotReported,
+                G::PassedNotLoaded,
+                false,
+            ),
+            (3, K::Passed, I::Plugin, C::Loaded, G::Given, false),
+            (
+                4,
+                K::Passed,
+                I::Plugin,
+                C::NotReported,
+                G::PassedNotLoaded,
+                false,
+            ),
+            (5, K::Passed, I::ToolServer, C::Connected, G::Given, false),
+            (
+                6,
+                K::Passed,
+                I::ToolServer,
+                C::FailedToConnect,
+                G::GivenFailedToConnect,
+                false,
+            ),
+            (
+                7,
+                K::Passed,
+                I::ToolServer,
+                C::NotReported,
+                G::PassedNotLoaded,
+                false,
+            ),
+            (8, K::Passed, I::Hook, C::Fired, G::GivenFired, false),
+            (9, K::Passed, I::Hook, C::NotFired, G::GivenNotFired, false),
+            (
+                10,
+                K::Passed,
+                I::Instruction,
+                C::NoReportOfKind,
+                G::GivenUnconfirmed,
+                false,
+            ),
+            (
+                11,
+                K::SwitchedOff,
+                I::Skill,
+                C::Loaded,
+                G::SwitchedOffButLoaded,
+                true,
+            ),
+            (
+                12,
+                K::SwitchedOff,
+                I::Plugin,
+                C::Loaded,
+                G::SwitchedOffButLoaded,
+                true,
+            ),
+            (
+                13,
+                K::SwitchedOff,
+                I::ToolServer,
+                C::Connected,
+                G::SwitchedOffButLoaded,
+                true,
+            ),
+            (
+                14,
+                K::SwitchedOff,
+                I::ToolServer,
+                C::FailedToConnect,
+                G::SwitchedOffButLoaded,
+                true,
+            ),
+            (
+                15,
+                K::SwitchedOff,
+                I::Hook,
+                C::Fired,
+                G::SwitchedOffButFired,
+                true,
+            ),
+            (
+                16,
+                K::SwitchedOff,
+                I::Skill,
+                C::NotReported,
+                G::SwitchedOff,
+                false,
+            ),
+            (
+                17,
+                K::SwitchedOff,
+                I::Plugin,
+                C::NotReported,
+                G::SwitchedOff,
+                false,
+            ),
+            (
+                18,
+                K::SwitchedOff,
+                I::ToolServer,
+                C::NotReported,
+                G::SwitchedOff,
+                false,
+            ),
+            (
+                19,
+                K::SwitchedOff,
+                I::Hook,
+                C::NotFired,
+                G::SwitchedOff,
+                false,
+            ),
+            (
+                20,
+                K::SwitchedOff,
+                I::Instruction,
+                C::NoReportOfKind,
+                G::SwitchedOffUnconfirmed,
+                false,
+            ),
+            (
+                21,
+                K::DidNotKnow,
+                I::Skill,
+                C::Loaded,
+                G::LoadedSourceUnknown,
+                false,
+            ),
+            (
+                22,
+                K::DidNotKnow,
+                I::Plugin,
+                C::Loaded,
+                G::LoadedSourceUnknown,
+                false,
+            ),
+            (
+                23,
+                K::DidNotKnow,
+                I::ToolServer,
+                C::Connected,
+                G::LoadedSourceUnknown,
+                false,
+            ),
+            (
+                24,
+                K::DidNotKnow,
+                I::ToolServer,
+                C::FailedToConnect,
+                G::LoadedSourceUnknownFailedToConnect,
+                false,
+            ),
+            (
+                25,
+                K::DidNotKnow,
+                I::Hook,
+                C::Fired,
+                G::FiredSourceUnknown,
+                false,
+            ),
+        ];
+        for kind in [I::Skill, I::Plugin, I::ToolServer] {
+            r.push((
+                26,
+                K::Passed,
+                kind,
+                C::NoStartReport,
+                G::PassedNoStartReport,
+                false,
+            ));
+            r.push((
+                27,
+                K::SwitchedOff,
+                kind,
+                C::NoStartReport,
+                G::SwitchedOffNoStartReport,
+                false,
+            ));
+        }
+        r
+    }
+
+    // R15.1
+    #[test]
+    fn status_decides_every_row_of_the_status_table() {
+        let rows = rows();
+        for n in 1..=27u8 {
+            assert!(rows.iter().any(|r| r.0 == n), "row {n} is not covered");
+        }
+        for (n, kata, kind, claude, shown, warns) in rows {
+            let input = StatusInput::new(kata, kind, claude)
+                .unwrap_or_else(|e| panic!("row {n} must be possible: {e}"));
+            let got = status(input);
+            assert_eq!(got, shown, "row {n}: {kata:?} {kind:?} {claude:?}");
+            assert_eq!(got.warns(), warns, "row {n} warning");
+        }
+    }
+
+    // Row 28.
+    #[test]
+    fn the_input_pair_rejects_what_cannot_occur() {
+        let kinds = [I::Hook, I::Skill, I::Plugin, I::Instruction, I::ToolServer];
+        let kata_sides = [K::Passed, K::SwitchedOff, K::DidNotKnow];
+        let claude_sides = [
+            C::Loaded,
+            C::Connected,
+            C::FailedToConnect,
+            C::NotReported,
+            C::Fired,
+            C::NotFired,
+            C::NoReportOfKind,
+            C::NoStartReport,
+        ];
+        let allowed: Vec<(K, I, C)> = rows().into_iter().map(|r| (r.1, r.2, r.3)).collect();
+        for kata in kata_sides {
+            for kind in kinds {
+                for claude in claude_sides {
+                    let ok = StatusInput::new(kata, kind, claude).is_ok();
+                    assert_eq!(
+                        ok,
+                        allowed.contains(&(kata, kind, claude)),
+                        "{kata:?} {kind:?} {claude:?}"
+                    );
+                }
+            }
+        }
+        // Row 28 by name: an item neither Kata passed nor Claude reported.
+        for claude in [
+            C::NotReported,
+            C::NotFired,
+            C::NoReportOfKind,
+            C::NoStartReport,
+        ] {
+            for kind in kinds {
+                assert!(StatusInput::new(K::DidNotKnow, kind, claude).is_err());
+            }
+        }
+        // A kind's report uses only that kind's values.
+        assert!(StatusInput::new(K::Passed, I::Hook, C::Loaded).is_err());
+        assert!(StatusInput::new(K::Passed, I::Skill, C::Connected).is_err());
+        assert!(StatusInput::new(K::Passed, I::Instruction, C::Loaded).is_err());
+    }
+
+    fn item(
+        kind: ItemKind,
+        source: Source,
+        key: &str,
+        name: &str,
+        by: Option<&str>,
+        off: bool,
+    ) -> ResolvedItem {
+        ResolvedItem {
+            id: super::super::item_id(kind, source, key),
+            kind,
+            source,
+            name: name.into(),
+            detail: String::new(),
+            path: None,
+            brought_by: by.map(String::from),
+            lock: None,
+            off,
+            goes_off_with: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn claudes_report_is_matched_to_items_and_the_rest_is_listed_as_unknown() {
+        use crate::event::McpState;
+        let td = tempfile::tempdir().unwrap();
+        let roots = crate::given::ResolveRoots {
+            home: td.path().join("home"),
+            workdir: td.path().join("work"),
+            managed_settings: td.path().join("managed.json"),
+            claude_json: td.path().join("home/.claude.json"),
+        };
+        let mut resolved = crate::given::resolve(
+            &crate::spec::RunSpec::default(),
+            &roots,
+            &crate::given::ResolveOptions::default(),
+        );
+        let plugin_id = "personal:plugin:pers@mkt";
+        resolved.items = vec![
+            item(I::Plugin, Source::Personal, "pers@mkt", "pers", None, false),
+            item(
+                I::Skill,
+                Source::Plugin,
+                "pers@mkt:deep",
+                "deep",
+                Some(plugin_id),
+                false,
+            ),
+            item(I::Skill, Source::Personal, "mine", "mine", None, true),
+            item(I::Skill, Source::RunSpec, "kit", "kit", None, false),
+            item(
+                I::ToolServer,
+                Source::Plugin,
+                "pers@mkt:db",
+                "db",
+                Some(plugin_id),
+                false,
+            ),
+            item(I::ToolServer, Source::Project, "srv", "srv", None, false),
+            item(
+                I::Hook,
+                Source::Personal,
+                "PreToolUse:Bash:aa",
+                "PreToolUse Bash",
+                None,
+                false,
+            ),
+            item(
+                I::Hook,
+                Source::Personal,
+                "PreToolUse:Edit:bb",
+                "PreToolUse Edit",
+                None,
+                false,
+            ),
+            item(
+                I::Hook,
+                Source::Personal,
+                "Stop:*:cc",
+                "Stop any",
+                None,
+                true,
+            ),
+        ];
+        let init = InitReport {
+            skills: vec![
+                "pers:deep".into(),
+                "mine".into(),
+                "kata-kit:kit".into(),
+                "bundled".into(),
+            ],
+            plugins: vec![
+                "pers@mkt".into(),
+                "other@mkt".into(),
+                "cc-plugin-x@builtin".into(),
+            ],
+            mcp_servers: vec![
+                ("plugin:pers:db".into(), McpState::Failed),
+                ("srv".into(), McpState::Connected),
+                ("claude.ai Docs".into(), McpState::Connected),
+            ],
+            ..InitReport::default()
+        };
+        let fired = vec![
+            HookFired {
+                event: "PreToolUse".into(),
+                name: "PreToolUse:Bash".into(),
+                command: None,
+            },
+            HookFired {
+                event: "Stop".into(),
+                name: "Stop".into(),
+                command: None,
+            },
+            HookFired {
+                event: "SessionStart".into(),
+                name: "SessionStart".into(),
+                command: None,
+            },
+        ];
+        let KataEvent::RunGiven {
+            items, warnings, ..
+        } = given_event(&resolved, &ResolveOptions::default(), Some(&init), &fired)
+        else {
+            panic!("not a run.given");
+        };
+        let by_name = |name: &str| items.iter().find(|i| i.name == name).unwrap().status;
+        assert_eq!(by_name("pers"), G::Given);
+        assert_eq!(by_name("deep"), G::Given);
+        assert_eq!(by_name("mine"), G::SwitchedOffButLoaded);
+        assert_eq!(by_name("kit"), G::Given);
+        assert_eq!(by_name("db"), G::GivenFailedToConnect);
+        assert_eq!(by_name("srv"), G::Given);
+        assert_eq!(by_name("PreToolUse Bash"), G::GivenFired);
+        assert_eq!(by_name("PreToolUse Edit"), G::GivenNotFired);
+        assert_eq!(by_name("Stop any"), G::SwitchedOffButFired);
+        // What Claude reported that no item matches; its own plugins are left out.
+        assert_eq!(by_name("bundled"), G::LoadedSourceUnknown);
+        assert_eq!(by_name("other@mkt"), G::LoadedSourceUnknown);
+        assert_eq!(by_name("claude.ai Docs"), G::LoadedSourceUnknown);
+        assert_eq!(by_name("SessionStart"), G::FiredSourceUnknown);
+        assert!(!items.iter().any(|i| i.name.contains("builtin")));
+        assert_eq!(items.len(), 9 + 4);
+        assert_eq!(
+            warnings,
+            vec![
+                "mine was switched off, but Claude loaded it".to_string(),
+                "Stop any was switched off, but it fired".to_string(),
+            ]
+        );
+    }
+
+    fn hook_item(event: &str, matcher: &str, off: bool) -> ResolvedItem {
+        let shown = if matcher.is_empty() { "any" } else { matcher };
+        item(
+            I::Hook,
+            Source::Personal,
+            &format!(
+                "{event}:{}:{off}{matcher}",
+                if matcher.is_empty() { "*" } else { matcher }
+            ),
+            &format!("{event} {shown}"),
+            None,
+            off,
+        )
+    }
+
+    fn line(name: &str) -> HookFired {
+        HookFired {
+            event: name.split(':').next().unwrap().into(),
+            name: name.into(),
+            command: None,
+        }
+    }
+
+    fn fired_ids(items: &[ResolvedItem], lines: &[HookFired]) -> (Vec<bool>, usize) {
+        let f = hooks_fired(items, lines);
+        (
+            items.iter().map(|i| f.fired.contains(&i.id)).collect(),
+            f.unknown.len(),
+        )
+    }
+
+    #[test]
+    fn hooks_fired_decides_every_row_of_the_firing_table() {
+        // Passed, matches: fired.
+        let items = [hook_item("PreToolUse", "Read", false)];
+        assert_eq!(
+            fired_ids(&items, &[line("PreToolUse:Read")]),
+            (vec![true], 0)
+        );
+        // Passed, does not match: no change.
+        let items = [hook_item("PreToolUse", "Write", false)];
+        assert_eq!(
+            fired_ids(&items, &[line("PreToolUse:Read")]),
+            (vec![false], 1)
+        );
+        // Switched off, does not match: no change.
+        let items = [hook_item("PreToolUse", "Write", true)];
+        assert_eq!(
+            fired_ids(&items, &[line("PreToolUse:Read")]),
+            (vec![false], 1)
+        );
+        // Switched off, matches, started <= kept: the line is the kept hook's.
+        let items = [
+            hook_item("UserPromptSubmit", "", false),
+            hook_item("UserPromptSubmit", "", true),
+        ];
+        assert_eq!(
+            fired_ids(&items, &[line("UserPromptSubmit")]),
+            (vec![true, false], 0)
+        );
+        // Switched off, matches, started > kept: it fired.
+        let items = [
+            hook_item("UserPromptSubmit", "", false),
+            hook_item("UserPromptSubmit", "", true),
+        ];
+        assert_eq!(
+            fired_ids(
+                &items,
+                &[line("UserPromptSubmit"), line("UserPromptSubmit")]
+            ),
+            (vec![true, true], 0)
+        );
+        // Switched off alone, one line: nothing kept, so it fired.
+        let items = [hook_item("UserPromptSubmit", "", true)];
+        assert_eq!(
+            fired_ids(&items, &[line("UserPromptSubmit")]),
+            (vec![true], 0)
+        );
+    }
+
+    #[test]
+    fn a_matcher_is_matched_against_the_trigger_not_compared_with_it() {
+        let items = [
+            hook_item("PreToolUse", "Bash|Read", false),
+            hook_item("PreToolUse", "Write", false),
+        ];
+        let f = hooks_fired(&items, &[line("PreToolUse:Read")]);
+        assert!(f.fired.contains(&items[0].id));
+        assert!(!f.fired.contains(&items[1].id));
+        // `*` and a full match only.
+        let items = [
+            hook_item("PreToolUse", "*", false),
+            hook_item("PreToolUse", "Rea", false),
+        ];
+        let f = hooks_fired(&items, &[line("PreToolUse:Read")]);
+        assert!(f.fired.contains(&items[0].id));
+        assert!(!f.fired.contains(&items[1].id));
+    }
+
+    #[test]
+    fn excess_lines_are_unknown() {
+        let items = [hook_item("UserPromptSubmit", "", false)];
+        let lines = [
+            line("UserPromptSubmit"),
+            line("UserPromptSubmit"),
+            line("UserPromptSubmit"),
+        ];
+        assert_eq!(fired_ids(&items, &lines), (vec![true], 2));
+        // A separate occurrence of the same trigger is not excess.
+        let boundary = HookFired {
+            event: String::new(),
+            name: String::new(),
+            command: None,
+        };
+        let lines = [line("PreToolUse:Read"), boundary, line("PreToolUse:Read")];
+        let items = [hook_item("PreToolUse", "Read", false)];
+        assert_eq!(fired_ids(&items, &lines), (vec![true], 0));
+    }
+
+    #[test]
+    fn carried_over_project_items_read_as_the_projects_items() {
+        use crate::event::McpState;
+        let td = tempfile::tempdir().unwrap();
+        let roots = crate::given::ResolveRoots {
+            home: td.path().join("home"),
+            workdir: td.path().join("work"),
+            managed_settings: td.path().join("managed.json"),
+            claude_json: td.path().join("home/.claude.json"),
+        };
+        let mut resolved = crate::given::resolve(
+            &crate::spec::RunSpec::default(),
+            &roots,
+            &crate::given::ResolveOptions::default(),
+        );
+        resolved.items = vec![
+            item(
+                I::Skill,
+                Source::Project,
+                "projskill",
+                "projskill",
+                None,
+                false,
+            ),
+            item(
+                I::ToolServer,
+                Source::Project,
+                "srv-a",
+                "srv-a",
+                None,
+                false,
+            ),
+            item(
+                I::Hook,
+                Source::Project,
+                "Stop:*:aa",
+                "Stop any",
+                None,
+                true,
+            ),
+        ];
+        let init = InitReport {
+            skills: vec!["kata-proj:projskill".into()],
+            plugins: vec!["kata-proj@inline".into()],
+            mcp_servers: vec![("srv-a".into(), McpState::Connected)],
+            ..InitReport::default()
+        };
+        let KataEvent::RunGiven { items, .. } =
+            given_event(&resolved, &ResolveOptions::default(), Some(&init), &[])
+        else {
+            panic!("not a run.given");
+        };
+        let by_name = |name: &str| items.iter().find(|i| i.name == name).unwrap().status;
+        assert_eq!(by_name("projskill"), G::Given);
+        assert_eq!(by_name("srv-a"), G::Given);
+        assert_eq!(by_name("Stop any"), G::SwitchedOff);
+        assert!(
+            !items.iter().any(|i| i.status == G::LoadedSourceUnknown),
+            "{items:?}"
+        );
+        assert_eq!(items.len(), 3);
+    }
+}

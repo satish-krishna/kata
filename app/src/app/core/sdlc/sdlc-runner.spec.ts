@@ -37,7 +37,7 @@ const REQUEST: BuildRequest = {
   action: 'start',
   continueWithLeftovers: false,
 };
-const UPDATE_PLUGIN = 'Update the ai-sdlc plugin to 0.8.0 or later, then start the build again.';
+const UPDATE_PLUGIN = 'Update the ai-sdlc plugin to 0.9.0 or later, then start the build again.';
 const INSTALL_PLUGIN = 'Install the ai-sdlc plugin, then start the build again.';
 
 type FakeSnapshot = { state: RunState; events: KataEvent[]; summary: null; asks: []; permissions: []; exit?: number | null };
@@ -58,7 +58,7 @@ class FakeTransport {
   sdlcFinishChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('finish'); return this.finishResults.shift()!(); });
   sdlcSettings = vi.fn(async () => ({ mode: null, remember: false, permission_mode: 'bypass' as const }));
   catalog = vi.fn(async (..._a: unknown[]) => seedCatalog);
-  readiness: Readiness = { kind: 'ready', dir: '/plugins/ai-sdlc', version: '0.8.0', layouts: [1, 2] };
+  readiness: Readiness = { kind: 'ready', dir: '/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] };
   prepared: PrepareOutcome | (() => Promise<PrepareOutcome>) = { kind: 'ready', start: BUILD_START };
   sdlcPluginReadiness = vi.fn(async (..._a: unknown[]) => { this.calls.push('readiness'); return this.readiness; });
   sdlcBuildPrepare = vi.fn(async (..._a: unknown[]) => {
@@ -431,6 +431,29 @@ describe('SdlcRunner.newChange', () => {
     expect(toasts.error).toHaveBeenCalledWith('Another task is already running.');
   });
 
+  it('creates no branch when the preview is cancelled', async () => {
+    const { runner, fake, lock, navigate } = setup();
+    const confirm = vi.fn(async (_spec: RunSpec) => null);
+    await runner.newChange(target, 'claims', 'idea', confirm);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(confirm.mock.calls[0][0].task).toContain('idea');
+    expect(fake.sdlcStartChange).not.toHaveBeenCalled();
+    expect(lock.runAgent).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('runs the confirmed spec, after the preview and before the branch', async () => {
+    const { runner, fake, lock } = setup();
+    fake.finishResults.push(async () => 'deleted');
+    const confirm = vi.fn(async (spec: RunSpec) => {
+      fake.calls.push('preview');
+      return { ...spec, name: 'confirmed' };
+    });
+    await runner.newChange(target, 'claims', 'idea', confirm);
+    expect(fake.calls.slice(0, 2)).toEqual(['preview', 'start']);
+    expect((lock.runAgent.mock.calls[0][1] as RunSpec).name).toBe('confirmed');
+  });
+
   it('stops before the run when the pending branch cannot be created', async () => {
     const { runner, fake, toasts, lock } = setup();
     fake.sdlcStartChange.mockRejectedValueOnce('the master repo has uncommitted changes: a.txt');
@@ -473,7 +496,7 @@ describe('SdlcRunner build', () => {
   describe('prepareBuild', () => {
     it('start refuses a plugin the backend finds too old before preparing (R2.5, R10.1)', async () => {
       const ctx = setup();
-      ctx.fake.readiness = { kind: 'tooOld', have: '0.7.9', need: '0.8.0' };
+      ctx.fake.readiness = { kind: 'tooOld', have: '0.7.9', need: '0.9.0' };
       const out = await ctx.runner.prepareBuild(REQUEST);
       expect(out).toEqual({ kind: 'refused', reason: UPDATE_PLUGIN });
       expect(ctx.fake.sdlcPluginReadiness).toHaveBeenCalledWith(REQUEST.folder);

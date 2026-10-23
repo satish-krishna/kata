@@ -1,0 +1,26 @@
+{
+  "kind": "build-log",
+  "layout": 2,
+  "document": {
+    "repo": "with-notes",
+    "entries": [
+      {
+        "task": "T1",
+        "commits": [
+          "abc1234"
+        ],
+        "departure": null,
+        "line": 7
+      },
+      {
+        "task": "T2",
+        "commits": [
+          "def5678"
+        ],
+        "departure": "R2: hooks with no command are left out of the list; the spec says an item is never left out.",
+        "line": 16
+      }
+    ]
+  },
+  "problems": []
+}

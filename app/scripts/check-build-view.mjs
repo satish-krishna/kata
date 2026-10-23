@@ -35,6 +35,23 @@ try {
     check(panel.scroll <= panel.client + 1, `1280x${height}: one running build, the Activity panel has no scrollbar of its own (${panel.scroll} of ${panel.client})`);
   }
   await page.setViewportSize({ width: 1280, height: 900 });
+
+  // R12.1: Continue on one stopped repository opens its preview first; it must fit at 375 without a horizontal scroll.
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Continue claims-core' }).waitFor();
+  await page.setViewportSize({ width: 375, height: 900 });
+  await page.getByRole('button', { name: 'Continue claims-core' }).click();
+  const preview = page.getByRole('dialog');
+  await preview.getByRole('button', { name: /^Start run$/ }).waitFor();
+  await eventually(page, () => preview.getByRole('button', { name: /^Start run$/ }).isEnabled(), (on) => on, 'the continue preview resolving');
+  const box = await preview.boundingBox();
+  const narrow = await noHorizontalScroll(page);
+  check(box !== null && box.x >= 0 && box.x + box.width <= 375, `the continue preview fits inside 375 pixels (${JSON.stringify(box)})`);
+  check(narrow.scrollWidth <= narrow.clientWidth && narrow.body <= narrow.clientWidth, `375px: the continue preview leaves no horizontal page scroll (${narrow.scrollWidth} of ${narrow.clientWidth})`);
+  check((await preview.innerText()).includes('No push'), 'the continue preview lists the safety rules');
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await preview.getByRole('button', { name: /^Start run$/ }).click();
+
   await page.getByRole('tab', { name: 'Changes' }).click();
 
   // R17.5: told at once, on Changes, and the engineer stays there.

@@ -59,7 +59,8 @@ export async function open({ width = 1280, height = 900 } = {}) {
 /** Starts the scripted build from the change page and lands on the build view. */
 export async function startBuild(page) {
   await page.getByRole('button', { name: 'Start build' }).click();
-  await page.getByRole('dialog').getByRole('button', { name: /^Start build$/ }).click();
+  // The build's preview opens first; the build starts on Start run.
+  await page.getByRole('dialog').getByRole('button', { name: /^Start run$/ }).click();
   await page.getByRole('tab', { name: 'Changes' }).waitFor();
 }
 

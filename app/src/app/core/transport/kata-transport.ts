@@ -36,6 +36,7 @@ import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { PrResult } from '@bindings/PrResult';
 import type { PrState } from '@bindings/PrState';
+import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
 
@@ -51,6 +52,8 @@ export abstract class KataTransport {
   abstract loadSpec(path: string): Promise<RunSpec>;
   abstract saveSpec(path: string, spec: RunSpec): Promise<void>;
   abstract validateSpec(spec: RunSpec): Promise<string[]>;
+  /** What the run would be given: every item, the settings, the names of its environment. The spec's `given.required_plugins` and `given.build` say what the run cannot switch off. */
+  abstract previewRun(spec: RunSpec): Promise<Resolved>;
   /** Start a run. Resolves to its run id. `group` (`build:<system>/<change>`) tells the backend which runs belong to one build. */
   abstract runSpec(spec: RunSpec, group?: string): Promise<string>;
   abstract cancelRun(runId: string): Promise<void>;

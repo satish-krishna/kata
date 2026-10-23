@@ -36,8 +36,9 @@ import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { PrResult } from '@bindings/PrResult';
 import type { PrState } from '@bindings/PrState';
+import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
-import { seedCatalog, validateLocal, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
+import { seedCatalog, validateLocal, previewFixture, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
 import { history, runDetailFixture, katasFixture, presetsFixture } from '../../lib/library';
 import { MOCK_LAYOUTS, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, SdlcMock, buildRunScript, reviewRunScript, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
@@ -122,6 +123,7 @@ export class MockTransport extends KataTransport {
   loadSpec(_path: string): Promise<RunSpec> { return Promise.reject(new Error(NO_BACKEND)); }
   saveSpec(_path: string, _spec: RunSpec): Promise<void> { return Promise.reject(new Error(NO_BACKEND)); }
   validateSpec(spec: RunSpec): Promise<string[]> { return Promise.resolve(validateLocal(spec)); }
+  previewRun(spec: RunSpec): Promise<Resolved> { return Promise.resolve(previewFixture(spec)); }
   listKatas(): Promise<KataListing> { return Promise.resolve({ katas: katasFixture, failures: [] }); }
   loadKata(name: string): Promise<RunSpec> { return Promise.resolve(katasFixture.find((k) => k.name === name) ?? katasFixture[0]); }
   saveKata(_spec: RunSpec): Promise<void> { return Promise.resolve(); }

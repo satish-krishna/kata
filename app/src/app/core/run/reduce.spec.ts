@@ -1,5 +1,6 @@
 import { reduce, IDLE, type RunSnapshot } from './reduce';
 import type { KataEvent } from '../../lib/events';
+import { runGivenFixture } from '../../lib/library';
 
 const running: RunSnapshot = { ...IDLE, state: 'running' };
 const log = (message: string): KataEvent => ({ type: 'log', level: 'info', message });
@@ -74,5 +75,16 @@ describe('reduce', () => {
 
   it('ignores run.started', () => {
     expect(reduce(running, { type: 'run.started' } as never)).toBe(running);
+  });
+});
+
+describe('reduce - run.given', () => {
+  it("run.given replaces the snapshot's given and is not a stream event", () => {
+    const first = reduce(running, runGivenFixture);
+    expect(first.given).toEqual({ items: runGivenFixture.items, settings: runGivenFixture.settings, env: runGivenFixture.env, warnings: runGivenFixture.warnings });
+    expect(first.events).toEqual([]);
+    const second = reduce(first, { ...runGivenFixture, warnings: [] });
+    expect(second.given?.warnings).toEqual([]);
+    expect(second.events).toEqual([]);
   });
 });

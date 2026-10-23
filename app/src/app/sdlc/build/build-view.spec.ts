@@ -112,6 +112,12 @@ describe('BuildView', () => {
     const calls = run.mock.calls.length;
     button(container, 'Continue claims-core')!.click();
     await advance(300);
+    // Continue opens the repository's preview first; nothing runs until Start run.
+    expect(run.mock.calls.length).toBe(calls);
+    const start = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((b) => b.textContent!.trim() === 'Start run')!;
+    expect(start.disabled).toBe(false);
+    start.click();
+    await advance(300);
     expect(run.mock.calls.length).toBe(calls + 1);
   });
 });
@@ -123,7 +129,11 @@ describe('BuildView earlier runs', () => {
     vm.select('claims-core');
     vm.cancelRun();
     await advance(600);
-    await vm.continueRun();
+    // Continue opens the repository's preview first; the run starts on Start run.
+    const continued = vm.continueRun();
+    await advance(300);
+    Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((b) => b.textContent!.trim() === 'Start run')!.click();
+    await continued;
     if (vm.leftoverPrompt() !== null) await vm.confirmContinue();
     await advance(300);
     expect(vm.shown().length).toBe(2);

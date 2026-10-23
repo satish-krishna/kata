@@ -1,6 +1,7 @@
 import { render } from '../../testing/render';
 import type { PermissionRecord, StreamEvent } from '../lib/events';
 import { defaultSpec } from '../lib/spec';
+import { runGivenFixture } from '../lib/library';
 import { ObservePane } from './observe-pane';
 
 /* The pane is the wiring between the run store's data and the components that
@@ -423,5 +424,29 @@ describe('ObservePane unseen marker', () => {
   it('has no marker when nothing is unseen', async () => {
     const { container } = await renderPane({ events, unseenFrom: null });
     expect(container.querySelector('[data-unseen]')).toBeNull();
+  });
+});
+
+describe('ObservePane - what the run was given', () => {
+  const { type: _type, ...given } = runGivenFixture;
+
+  it('a switched-off item that loaded raises a warning on the live run', async () => {
+    const { container } = await renderPane({ given });
+    const status = container.querySelector('.wb-status')!;
+    const warning = status.querySelector('[data-given-warning]')!;
+    expect(warning).not.toBeNull();
+    expect(warning.textContent).toContain('repo-conventions was switched off, but Claude loaded it');
+    expect(warning.querySelector('.k-status__dot')).not.toBeNull();
+  });
+
+  it('offers the Given button on every run, and no warning when nothing went wrong', async () => {
+    const { container } = await renderPane({ given: { ...given, warnings: [] } });
+    expect(container.querySelector('.wb-status [data-given-button]')).not.toBeNull();
+    expect(container.querySelector('[data-given-warning]')).toBeNull();
+  });
+
+  it('offers the Given button before the run has reported anything', async () => {
+    const { container } = await renderPane();
+    expect(container.querySelector('.wb-status [data-given-button]')).not.toBeNull();
   });
 });

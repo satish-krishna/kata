@@ -24,6 +24,7 @@ thiserror.workspace = true
 tempfile.workspace = true
 ts-rs = { version = "10", optional = true, default-features = false }
 schemars = { version = "1", optional = true }
+regex = "1"
 
 [features]
 ts = ["dep:ts-rs"]

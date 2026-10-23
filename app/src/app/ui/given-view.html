@@ -1,0 +1,56 @@
+@if (recorded(); as g) {
+  <div class="gv">
+    @if (g.warnings.length > 0) {
+      <div class="gv__notice" data-region="warnings" role="status">
+        @for (w of g.warnings; track $index) {
+          <p class="gv__warning"><span class="k-status__dot gv__dot" aria-hidden="true"></span><span>{{ w }}</span></p>
+        }
+      </div>
+    }
+
+    <section class="gv__region" aria-label="Run settings" data-region="settings">
+      <div class="gv__head">Run settings</div>
+      @for (s of settings(); track s.label) {
+        <div class="gv__setting" [attr.data-setting]="s.label">
+          <span class="gv__label">{{ s.label }}</span>
+          <span class="gv__value k-mono">{{ s.value }}</span>
+          <span class="gv__source">{{ s.source }}</span>
+        </div>
+      }
+    </section>
+
+    <section class="gv__region" aria-label="Environment" data-region="env">
+      <div class="gv__head">Environment variables the run saw</div>
+      @for (e of g.env; track e.name) {
+        <div class="gv__setting" [attr.data-env]="e.name">
+          <span class="gv__value k-mono">{{ e.name }}</span>
+          @if (e.api_key) {
+            <span class="k-badge k-badge--neutral gv__badge">API key</span>
+          } @else {
+            <span></span>
+          }
+          <span class="gv__source">{{ sourceLabel(e.source) }}</span>
+        </div>
+      } @empty {
+        <div class="gv__source">none</div>
+      }
+    </section>
+
+    <section class="gv__region" aria-label="Given to the run" data-region="given">
+      <div class="gv__head">Given to the run</div>
+      <app-given-list [groups]="groups()" [readonly]="true" [statusLabel]="statusLabel" />
+      @if (unknown().length > 0) {
+        <div class="gv__head">Loaded by Claude, source unknown</div>
+        @for (i of unknown(); track i.id) {
+          <div class="gv__setting" [attr.data-row]="i.id">
+            <span class="gv__label">{{ kindName(i.kind) }}</span>
+            <span class="gv__value k-mono">{{ i.name }}</span>
+            <span class="gv__source k-mono">{{ label[i.status] }}</span>
+          </div>
+        }
+      }
+    </section>
+  </div>
+} @else {
+  <p class="gv__none">not recorded</p>
+}

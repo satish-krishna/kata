@@ -59,12 +59,61 @@ pub fn roots_for_workdir(workdir: Option<&str>) -> DiscoveryRoots {
     }
 }
 
-fn dirs_home() -> PathBuf {
+pub(crate) fn dirs_home() -> PathBuf {
     // Avoid an extra dependency: HOME on unix, USERPROFILE on windows.
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// One install record of `installed_plugins.json`.
+pub(crate) struct InstalledRecord {
+    /// `<name>@<marketplace>`.
+    pub key: String,
+    /// `user`, `project`, `local` or `managed`; `user` when absent.
+    pub scope: String,
+    pub install_path: PathBuf,
+    pub project_path: Option<String>,
+}
+
+/// Every record of `<user_claude_dir>/plugins/installed_plugins.json`, in file
+/// order. A missing or unreadable file yields none.
+pub(crate) fn installed_records(user_claude_dir: &Path) -> Vec<InstalledRecord> {
+    let path = user_claude_dir
+        .join("plugins")
+        .join("installed_plugins.json");
+    let Some(v) = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+    else {
+        return vec![];
+    };
+    let Some(plugins) = v.get("plugins").and_then(|p| p.as_object()) else {
+        return vec![];
+    };
+    let mut out = Vec::new();
+    for (key, records) in plugins {
+        for rec in records.as_array().into_iter().flatten() {
+            let Some(install) = rec.get("installPath").and_then(|s| s.as_str()) else {
+                continue;
+            };
+            out.push(InstalledRecord {
+                key: key.clone(),
+                scope: rec
+                    .get("scope")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("user")
+                    .to_string(),
+                install_path: PathBuf::from(install),
+                project_path: rec
+                    .get("projectPath")
+                    .and_then(|s| s.as_str())
+                    .map(String::from),
+            });
+        }
+    }
+    out
 }
 
 pub fn discover(roots: &DiscoveryRoots) -> Vec<CatalogEntry> {
@@ -111,7 +160,7 @@ fn discover_builtin(out: &mut Vec<CatalogEntry>) {
     });
 }
 
-fn discover_skills(claude_dir: &Path, source: &str, out: &mut Vec<CatalogEntry>) {
+pub(crate) fn discover_skills(claude_dir: &Path, source: &str, out: &mut Vec<CatalogEntry>) {
     let skills = claude_dir.join("skills");
     let Ok(rd) = std::fs::read_dir(&skills) else {
         return;
@@ -219,7 +268,7 @@ fn discover_installed_plugins(user_claude_dir: &Path, out: &mut Vec<CatalogEntry
 
 /// A plugin's manifest is at `<dir>/plugin.json` (legacy) or
 /// `<dir>/.claude-plugin/plugin.json` (current Claude Code layout).
-fn plugin_manifest(dir: &Path) -> Option<PathBuf> {
+pub(crate) fn plugin_manifest(dir: &Path) -> Option<PathBuf> {
     let root = dir.join("plugin.json");
     if root.is_file() {
         return Some(root);
@@ -228,7 +277,7 @@ fn plugin_manifest(dir: &Path) -> Option<PathBuf> {
     nested.is_file().then_some(nested)
 }
 
-fn manifest_description(manifest: &Path) -> String {
+pub(crate) fn manifest_description(manifest: &Path) -> String {
     std::fs::read_to_string(manifest)
         .ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
@@ -253,7 +302,7 @@ fn plugin_provides(dir: &Path) -> Vec<String> {
     provides
 }
 
-fn plugin_mcp_servers(dir: &Path) -> Vec<String> {
+pub(crate) fn plugin_mcp_servers(dir: &Path) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(dir.join(".mcp.json")) else {
         return vec![];
     };

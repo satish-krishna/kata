@@ -49,6 +49,7 @@ export class RunStore {
   readonly summary = computed(() => this.solo().summary);
   readonly asks = computed(() => this.solo().asks);
   readonly permissions = computed(() => this.solo().permissions);
+  readonly given = computed(() => this.solo().given);
 
   /** The folded view of one run by its backend id; idle for an id the store does not know. */
   snapshot(id: string): Signal<RunSnapshot> {

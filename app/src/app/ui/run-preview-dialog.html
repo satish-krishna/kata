@@ -1,0 +1,75 @@
+<hlm-dialog [state]="open() ? 'open' : 'closed'" (stateChanged)="onState($event)">
+  <hlm-dialog-content *hlmDialogPortal="let ctx" class="[--dialog-w:56rem]">
+    <h2 hlmDialogTitle>{{ title() }}</h2>
+    <div class="rp">
+      <ng-content />
+
+      @if (warnings().length > 0) {
+        <div class="rp__notice" data-region="warnings" role="status">
+          @for (w of warnings(); track $index) {
+            <p class="rp__warning"><span class="k-status__dot rp__dot" aria-hidden="true"></span><span>{{ w }}</span></p>
+          }
+        </div>
+      }
+
+      <section class="rp__region" aria-label="Run settings" data-region="settings">
+        <div class="rp__head">Run settings</div>
+        @for (s of settings(); track s.label) {
+          <div class="rp__setting" [attr.data-setting]="s.label">
+            <span class="rp__label">{{ s.label }}</span>
+            <span class="rp__value k-mono">{{ s.value }}</span>
+            <span class="rp__source">{{ s.source }}</span>
+          </div>
+        }
+      </section>
+
+      @if (safetyRules(); as rules) {
+        <section class="rp__region" aria-label="Safety rules" data-region="safety">
+          <div class="rp__head">Safety rules</div>
+          @for (r of rules; track r) {
+            <div class="rp__rule k-mono">{{ r }}</div>
+          }
+        </section>
+      }
+
+      <section class="rp__region" aria-label="Environment" data-region="env">
+        <div class="rp__head">Environment variables the run sees</div>
+        @for (e of env(); track e.name) {
+          <div class="rp__setting" [attr.data-env]="e.name">
+            <span class="rp__value k-mono">{{ e.name }}</span>
+            @if (e.apiKey) {
+              <span class="k-badge k-badge--neutral rp__badge">API key</span>
+            } @else {
+              <span></span>
+            }
+            <span class="rp__source">{{ e.source }}</span>
+          </div>
+        } @empty {
+          <div class="rp__source">none</div>
+        }
+      </section>
+
+      <section class="rp__region" aria-label="Given to the run" data-region="given">
+        @if (emptyRoom()) {
+          <p class="rp__room k-status--idle" data-region="empty-room" role="status">
+            <span class="k-status__dot" aria-hidden="true"></span>
+            <span>The empty room is on: the run is given only what Kata passes. Your setup's hooks, skills, plugins, standing instructions and tool servers are left out.</span>
+          </p>
+        }
+        @if (sections(); as parts) {
+          @for (part of parts; track part.title) {
+            <div class="rp__head">{{ part.title }}</div>
+            <app-given-list [groups]="part.groups" [readonly]="false" (toggle)="toggle.emit($event)" />
+          }
+        } @else {
+          <div class="rp__head">Given to the run</div>
+          <app-given-list [groups]="groups()" [readonly]="false" (toggle)="toggle.emit($event)" />
+        }
+      </section>
+    </div>
+    <hlm-dialog-footer>
+      <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
+      <button hlmBtn variant="primary" size="sm" type="button" [disabled]="busy()" (click)="start.emit()">Start run</button>
+    </hlm-dialog-footer>
+  </hlm-dialog-content>
+</hlm-dialog>

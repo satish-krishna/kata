@@ -5,10 +5,12 @@ import { lucideChevronDown, lucideChevronRight, lucidePanelLeftClose, lucidePane
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmResizableImports } from '@spartan-ng/helm/resizable';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
+import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { BuildRefusalDialog } from '../../ui/build-refusal-dialog';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
 import { FindingsList } from '../../ui/findings-list';
 import { ObservePane } from '../../ui/observe-pane';
+import { RunPreviewDialog } from '../../ui/run-preview-dialog';
 import { RepoStatusList } from '../../ui/repo-status-list';
 import { WaitingNotice } from '../../ui/waiting-notice';
 import type { BuildHandoff } from '../change/change-page.view-model';
@@ -22,8 +24,8 @@ import { BuildViewModel, type BuildContext } from './build-view.view-model';
 @Component({
   selector: 'app-build-view',
   host: { class: 'contents' },
-  providers: [BuildViewModel, provideIcons({ lucideChevronDown, lucideChevronRight, lucidePanelLeftClose, lucidePanelLeftOpen, lucidePanelTopClose, lucidePanelTopOpen })],
-  imports: [HlmButtonImports, HlmResizableImports, NgIcon, NgTemplateOutlet, BuildRefusalDialog, ConfirmDialog,HlmTabsImports, ObservePane, RepoStatusList, FindingsList, WaitingNotice, ChangesView],
+  providers: [BuildViewModel, RunPreviewViewModel, provideIcons({ lucideChevronDown, lucideChevronRight, lucidePanelLeftClose, lucidePanelLeftOpen, lucidePanelTopClose, lucidePanelTopOpen })],
+  imports: [HlmButtonImports, HlmResizableImports, NgIcon, NgTemplateOutlet, BuildRefusalDialog, ConfirmDialog, HlmTabsImports, ObservePane, RunPreviewDialog, RepoStatusList, FindingsList, WaitingNotice, ChangesView],
   templateUrl: './build-view.html',
   styleUrl: './build-view.css',
 })

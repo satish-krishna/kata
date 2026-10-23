@@ -41,6 +41,7 @@
         [summary]="vm.summary()"
         [asks]="vm.asks()"
         [permissions]="vm.permissions()"
+        [given]="vm.given()"
         (answer)="vm.answer($event)"
         (decide)="vm.decide($event)"
       />
@@ -67,5 +68,19 @@
     confirmLabel="Discard"
     (confirm)="vm.confirmDiscard()"
     (cancel)="vm.cancelDiscard()"
+  />
+
+  <app-run-preview-dialog
+    [open]="vm.preview.isOpen()"
+    [title]="vm.preview.title()"
+    [settings]="vm.preview.settings()"
+    [env]="vm.preview.env()"
+    [groups]="vm.preview.groups()"
+    [warnings]="vm.preview.warnings()"
+    [emptyRoom]="vm.preview.emptyRoom()"
+    [busy]="vm.preview.busy()"
+    (toggle)="vm.preview.toggle($event.key, $event.off)"
+    (start)="vm.preview.start()"
+    (cancel)="vm.preview.cancel()"
   />
 </div>

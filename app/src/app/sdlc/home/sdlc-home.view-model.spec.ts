@@ -5,6 +5,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { LockStore } from '../../core/lock/lock.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
+import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { MOCK_WORKSPACE_FOLDER, MOCK_MASTER } from '../../lib/sdlc-mock';
@@ -18,11 +19,12 @@ const flush = async () => {
   TestBed.tick();
 };
 
-function setup(over: { catalogHasPlugin?: boolean } = {}) {
+/** `preview: 'confirm'` (the default) lets the preview confirm every run at once, so a test about something else never meets it; `'real'` leaves it to the test. */
+function setup(over: { catalogHasPlugin?: boolean; preview?: 'confirm' | 'real' } = {}) {
   const transport = new MockTransport();
   if (over.catalogHasPlugin === false) vi.spyOn(transport, 'catalog').mockResolvedValue(seedCatalog);
   TestBed.configureTestingModule({
-    providers: [SdlcHomeViewModel, { provide: KataTransport, useValue: transport }, provideRouter([])],
+    providers: [SdlcHomeViewModel, RunPreviewViewModel, { provide: KataTransport, useValue: transport }, provideRouter([])],
   });
   const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
   const lock = TestBed.inject(LockStore);
@@ -30,8 +32,12 @@ function setup(over: { catalogHasPlugin?: boolean } = {}) {
   const runSteps = vi.spyOn(lock, 'runSteps');
   const saveWorkspaces = vi.spyOn(transport, 'sdlcSaveWorkspaces');
   const saveSettings = vi.spyOn(transport, 'sdlcSaveSettings');
-  return { vm: TestBed.inject(SdlcHomeViewModel), transport, lock, runAgent, runSteps, navigate, saveWorkspaces, saveSettings, runner: TestBed.inject(SdlcRunner) };
+  const preview = TestBed.inject(RunPreviewViewModel);
+  if (over.preview !== 'real') vi.spyOn(preview, 'open').mockImplementation(async (req) => req.spec);
+  return { vm: TestBed.inject(SdlcHomeViewModel), preview, transport, lock, runAgent, runSteps, navigate, saveWorkspaces, saveSettings, runner: TestBed.inject(SdlcRunner) };
 }
+
+const previewReady = (preview: RunPreviewViewModel) => vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
 
 const scanOf = (over: Partial<WorkspaceScan>): WorkspaceScan => ({
   folder: NEW_FOLDER,
@@ -286,6 +292,57 @@ describe('SdlcHomeViewModel runs', () => {
     expect(health).toHaveBeenCalled();
   });
 
+  it('setup and a context run open the preview first; cancel starts nothing', async () => {
+    const { vm, runAgent, preview, transport } = setup({ preview: 'real' });
+    await vm.init();
+    const link = vi.spyOn(transport, 'sdlcLinkRun');
+    for (const start of [() => vm.addSystem(), () => vm.runContext('customer-portal')]) {
+      const run = start();
+      await previewReady(preview);
+      expect(runAgent).not.toHaveBeenCalled();
+      preview.cancel();
+      await run;
+      expect(runAgent).not.toHaveBeenCalled();
+    }
+    expect(link).not.toHaveBeenCalled();
+    expect(TestBed.inject(LockStore).active()).toBeNull();
+
+    const confirmed = vm.runContext('customer-portal');
+    await previewReady(preview);
+    preview.start();
+    await confirmed;
+    expect(runAgent).toHaveBeenCalledTimes(1);
+    expect(specOf(runAgent).name).toBe('sdlc-claims-context');
+  });
+
+  it('first-time setup of a new folder opens the preview first; cancel starts nothing', async () => {
+    const { vm, transport, runAgent, preview } = setup({ preview: 'real' });
+    vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
+    await vm.init();
+    vi.spyOn(transport, 'sdlcScan').mockResolvedValueOnce(scanOf({ master: { kind: 'none' }, marker: null }));
+    const added = vm.addWorkspace();
+    await previewReady(preview);
+    expect(runAgent).not.toHaveBeenCalled();
+    preview.cancel();
+    await added;
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(vm.candidate()).toBeNull();
+  });
+
+  it('a new change previews in the AI-SDLC mode before any branch is made', async () => {
+    const { vm, preview, transport } = setup({ preview: 'real' });
+    const open = vi.spyOn(preview, 'open');
+    const start = vi.spyOn(transport, 'sdlcStartChange');
+    await vm.init();
+    const run = vm.newChange('claims', 'flag fraud');
+    await previewReady(preview);
+    expect(open.mock.calls[0][0]).toMatchObject({ mode: 'sdlc' });
+    expect(start).not.toHaveBeenCalled();
+    preview.cancel();
+    await run;
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it('addSystem reruns setup in the workspace', async () => {
     const { vm, runAgent } = setup();
     await vm.init();
@@ -383,6 +440,7 @@ describe('SdlcHomeViewModel runs', () => {
       expect.objectContaining({ workspace: expect.objectContaining({ id: 'acme-claims' }), master: `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}` }),
       'claims',
       'flag fraud',
+      expect.any(Function),
     );
     expect(vm.newChangeOpen()).toBe(false);
   });
@@ -524,9 +582,9 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
   it("says to update the plugin when it is too old", async () => {
     const { vm, transport } = setup();
     withUnreadablePlan(transport);
-    vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "tooOld", have: "0.6.0", need: "0.8.0" });
+    vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "tooOld", have: "0.6.0", need: "0.9.0" });
     await vm.init();
-    expect(noticeOf(vm)?.text).toBe("Update the ai-sdlc plugin to 0.8.0 or later");
+    expect(noticeOf(vm)?.text).toBe("Update the ai-sdlc plugin to 0.9.0 or later");
   });
 
   it("says a plan could not be read when the plugin is usable but the program did not run", async () => {

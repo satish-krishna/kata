@@ -7,15 +7,18 @@ import { ValidationBanner } from '../ui/validation-banner';
 import { ComposePane } from '../ui/compose-pane';
 import { ObservePane } from '../ui/observe-pane';
 import { ConfirmDialog } from '../ui/confirm-dialog';
+import { RunPreviewDialog } from '../ui/run-preview-dialog';
+import { RunPreviewViewModel } from '../core/given/run-preview.view-model';
 import { WorkbenchViewModel } from './workbench.view-model';
 
 @Component({
   selector: 'app-workbench',
   providers: [
     WorkbenchViewModel,
+    RunPreviewViewModel,
     provideIcons({ lucideCircleCheck, lucideFolder, lucideHash, lucideTerminal, lucideTriangleAlert }),
   ],
-  imports: [NgIcon, Toolbar, ValidationBanner, ComposePane, ObservePane, ConfirmDialog],
+  imports: [NgIcon, Toolbar, ValidationBanner, ComposePane, ObservePane, ConfirmDialog, RunPreviewDialog],
   templateUrl: './workbench.html',
   host: { '(document:keydown)': 'vm.onKey($event)' },
 })

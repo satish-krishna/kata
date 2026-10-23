@@ -184,6 +184,19 @@ fn normalize_line(line: &str) -> serde_json::Value {
             v["message"] = "transcript: <TRANSCRIPT>".into()
         }
         Some("run.completed") => v["duration_ms"] = serde_json::json!(0),
+        // Instruction files found in the folders above the temp workdir belong to
+        // whichever machine runs the test, and the standing note's text is pinned
+        // by the engine's own tests; neither belongs in the golden.
+        Some("run.given") => {
+            if let Some(items) = v["items"].as_array_mut() {
+                items.retain(|i| i["detail"] != "from a parent folder");
+                for i in items.iter_mut() {
+                    if i["id"] == "kata:instruction:standing-note" {
+                        i["detail"] = "<STANDING NOTE>".into();
+                    }
+                }
+            }
+        }
         _ => {}
     }
     v
@@ -247,6 +260,9 @@ fn run_ok_event_stream_matches_golden() {
         .env("KATA_CLAUDE_BIN", fake_claude())
         .env("KATA_FAKE_MODE", "ok")
         .env("KATA_HOME", kata_home.path())
+        // The given view reads the home's setup; an empty one keeps the golden the same on every machine.
+        .env("HOME", kata_home.path().join("home"))
+        .env("USERPROFILE", kata_home.path().join("home"))
         .output()
         .unwrap();
     assert!(
@@ -308,6 +324,9 @@ fn run_ask_interactive_event_stream_matches_golden() {
         .env("KATA_CLAUDE_BIN", fake_claude())
         .env("KATA_FAKE_MODE", "ask")
         .env("KATA_HOME", kata_home.path())
+        // The given view reads the home's setup; an empty one keeps the golden the same on every machine.
+        .env("HOME", kata_home.path().join("home"))
+        .env("USERPROFILE", kata_home.path().join("home"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -396,6 +415,9 @@ fn run_permission_prompt_event_stream_matches_golden() {
         .env("KATA_FAKE_TOOL", "Bash")
         .env("KATA_FAKE_TOOL_INPUT", r#"{"command":"rm -rf build/"}"#)
         .env("KATA_HOME", kata_home.path())
+        // The given view reads the home's setup; an empty one keeps the golden the same on every machine.
+        .env("HOME", kata_home.path().join("home"))
+        .env("USERPROFILE", kata_home.path().join("home"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()

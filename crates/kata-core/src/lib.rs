@@ -76,6 +76,10 @@ pub use spec::{validate, RunSpec};
 pub mod event;
 pub use event::{KataEvent, Question, QuestionKind, QuestionOption};
 
+// ---- item identity and the `[given]` section ----
+pub mod given;
+pub use given::{ItemKind, Source};
+
 // ---- discovery & orchestration ----
 pub mod catalog;
 pub mod run;

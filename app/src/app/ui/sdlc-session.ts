@@ -1,7 +1,7 @@
 import { Component, computed, input, output } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import type { RunSpec } from '@bindings/RunSpec';
-import type { AskRecord, PermissionRecord, RunState, RunSummary, StreamEvent } from '../lib/events';
+import type { AskRecord, RunGiven, PermissionRecord, RunState, RunSummary, StreamEvent } from '../lib/events';
 import { ObservePane } from './observe-pane';
 
 /* The AI-SDLC session view: an agent run takes the page's main region (the toolbar above stays, locked)
@@ -27,6 +27,7 @@ export class SdlcSession {
   readonly summary = input.required<RunSummary | null>();
   readonly asks = input<AskRecord[]>([]);
   readonly permissions = input<PermissionRecord[]>([]);
+  readonly given = input<RunGiven | null>(null);
 
   readonly cancel = output<void>();
   readonly close = output<void>();

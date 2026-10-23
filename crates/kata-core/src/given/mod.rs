@@ -1,0 +1,24 @@
+//! The items a run can start with ("the given") and how one is identified.
+
+pub mod id;
+pub mod roots;
+pub mod settings;
+pub use id::{fnv1a64, hook_key, item_id, parse_item_id, ItemKind, ItemRef, Source, SWITCHABLE};
+pub use roots::ResolveRoots;
+pub mod items;
+pub use items::goes_off_with;
+pub use settings::{hook_detail, HookAction, ItemFacts, SettingsLayer};
+pub mod apply;
+pub use apply::{apply, carried_name, merge_settings, Applied, Carry, CARRY_PLUGIN};
+pub mod lock;
+pub mod resolve;
+pub mod status;
+pub use lock::{lock_for, LockReason};
+pub use resolve::{
+    resolve, EnvName, ResolveOptions, Resolved, ResolvedItem, RunSetting, RunSettings,
+    SettingSource,
+};
+pub use status::{
+    given_event, hooks_fired, status, ClaudeSide, GivenItem, GivenOptions, GivenStatus,
+    HookFirings, ImpossibleStatus, KataSide, StatusInput,
+};
