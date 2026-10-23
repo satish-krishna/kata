@@ -290,7 +290,8 @@ pub fn run_with<F: FnMut(KataEvent)>(
     // What the run is given is resolved once, here, and applied once; nothing
     // re-reads the setup after this point.
     let roots = ResolveRoots::for_spec(spec);
-    let resolved = resolve(spec, &roots, &ResolveOptions::from_spec(spec));
+    let given_opts = ResolveOptions::from_spec(spec);
+    let resolved = resolve(spec, &roots, &given_opts);
     let applied = apply(spec, &resolved, &roots, &roots.workdir);
     let assembled = assemble(spec, catalog, &applied.kit_skip)?;
     let mut inv = build_invocation_with(spec, &assembled, &applied);
@@ -832,7 +833,12 @@ pub fn run_with<F: FnMut(KataEvent)>(
                 let parsed = parser.push(&line);
                 if let Some(report) = parsed.init {
                     start_report = Some(report);
-                    emit(given_event(&resolved, start_report.as_ref(), &fired));
+                    emit(given_event(
+                        &resolved,
+                        &given_opts,
+                        start_report.as_ref(),
+                        &fired,
+                    ));
                 }
                 if let Some(hook) = parsed.hook {
                     if !fired
@@ -841,7 +847,12 @@ pub fn run_with<F: FnMut(KataEvent)>(
                     {
                         fired.push(hook);
                         if start_report.is_some() {
-                            emit(given_event(&resolved, start_report.as_ref(), &fired));
+                            emit(given_event(
+                                &resolved,
+                                &given_opts,
+                                start_report.as_ref(),
+                                &fired,
+                            ));
                         }
                     }
                 }
@@ -1002,7 +1013,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
 
     // A run that ended before Claude's start report still says what it was given.
     if start_report.is_none() {
-        emit(given_event(&resolved, None, &fired));
+        emit(given_event(&resolved, &given_opts, None, &fired));
     }
 
     // The child has exited; surface the changeset before the terminal event.

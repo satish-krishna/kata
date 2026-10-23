@@ -3,11 +3,12 @@
 //! never derives it.
 
 use super::{
-    parse_item_id, ItemKind, LockReason, Resolved, ResolvedItem, RunSetting, SettingSource, Source,
+    parse_item_id, ItemKind, LockReason, ResolveOptions, Resolved, ResolvedItem, RunSetting,
+    SettingSource, Source,
 };
 use crate::event::{HookFired, InitReport, KataEvent, McpState};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// What Kata did with an item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,11 +179,34 @@ pub struct GivenItem {
     pub status: GivenStatus,
 }
 
+/// The options a run was resolved with, as `run.given` records them.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GivenOptions {
+    pub required_plugins: Vec<String>,
+    pub build: bool,
+}
+
+/// Which hook items the hook lines of a run belong to.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HookFirings {
+    /// Ids of the hook items that fired.
+    pub fired: BTreeSet<String>,
+    /// Lines no listed item accounts for, one per excess line.
+    pub unknown: Vec<HookFired>,
+}
+
+/// Decides which hook items the `hook_started` lines belong to.
+pub fn hooks_fired(_items: &[ResolvedItem], _lines: &[HookFired]) -> HookFirings {
+    HookFirings::default()
+}
+
 /// The `run.given` event for what `resolved` listed at the start, checked
 /// against Claude's start report (`None` when it has not arrived) and the hooks
 /// seen firing so far.
 pub fn given_event(
     resolved: &Resolved,
+    opts: &ResolveOptions,
     init: Option<&InitReport>,
     fired: &[HookFired],
 ) -> KataEvent {
@@ -365,6 +389,10 @@ pub fn given_event(
         settings,
         env: resolved.env.clone(),
         warnings,
+        options: GivenOptions {
+            required_plugins: opts.required_plugins.clone(),
+            build: opts.build,
+        },
     }
 }
 
@@ -817,7 +845,7 @@ mod tests {
         ];
         let KataEvent::RunGiven {
             items, warnings, ..
-        } = given_event(&resolved, Some(&init), &fired)
+        } = given_event(&resolved, &ResolveOptions::default(), Some(&init), &fired)
         else {
             panic!("not a run.given");
         };
@@ -845,5 +873,187 @@ mod tests {
                 "Stop any was switched off, but it fired".to_string(),
             ]
         );
+    }
+
+    fn hook_item(event: &str, matcher: &str, off: bool) -> ResolvedItem {
+        let shown = if matcher.is_empty() { "any" } else { matcher };
+        item(
+            I::Hook,
+            Source::Personal,
+            &format!(
+                "{event}:{}:{off}{matcher}",
+                if matcher.is_empty() { "*" } else { matcher }
+            ),
+            &format!("{event} {shown}"),
+            None,
+            off,
+        )
+    }
+
+    fn line(name: &str) -> HookFired {
+        HookFired {
+            event: name.split(':').next().unwrap().into(),
+            name: name.into(),
+            command: None,
+        }
+    }
+
+    fn fired_ids(items: &[ResolvedItem], lines: &[HookFired]) -> (Vec<bool>, usize) {
+        let f = hooks_fired(items, lines);
+        (
+            items.iter().map(|i| f.fired.contains(&i.id)).collect(),
+            f.unknown.len(),
+        )
+    }
+
+    #[test]
+    fn hooks_fired_decides_every_row_of_the_firing_table() {
+        // Passed, matches: fired.
+        let items = [hook_item("PreToolUse", "Read", false)];
+        assert_eq!(
+            fired_ids(&items, &[line("PreToolUse:Read")]),
+            (vec![true], 0)
+        );
+        // Passed, does not match: no change.
+        let items = [hook_item("PreToolUse", "Write", false)];
+        assert_eq!(
+            fired_ids(&items, &[line("PreToolUse:Read")]),
+            (vec![false], 1)
+        );
+        // Switched off, does not match: no change.
+        let items = [hook_item("PreToolUse", "Write", true)];
+        assert_eq!(
+            fired_ids(&items, &[line("PreToolUse:Read")]),
+            (vec![false], 1)
+        );
+        // Switched off, matches, started <= kept: the line is the kept hook's.
+        let items = [
+            hook_item("UserPromptSubmit", "", false),
+            hook_item("UserPromptSubmit", "", true),
+        ];
+        assert_eq!(
+            fired_ids(&items, &[line("UserPromptSubmit")]),
+            (vec![true, false], 0)
+        );
+        // Switched off, matches, started > kept: it fired.
+        let items = [
+            hook_item("UserPromptSubmit", "", false),
+            hook_item("UserPromptSubmit", "", true),
+        ];
+        assert_eq!(
+            fired_ids(
+                &items,
+                &[line("UserPromptSubmit"), line("UserPromptSubmit")]
+            ),
+            (vec![true, true], 0)
+        );
+        // Switched off alone, one line: nothing kept, so it fired.
+        let items = [hook_item("UserPromptSubmit", "", true)];
+        assert_eq!(
+            fired_ids(&items, &[line("UserPromptSubmit")]),
+            (vec![true], 0)
+        );
+    }
+
+    #[test]
+    fn a_matcher_is_matched_against_the_trigger_not_compared_with_it() {
+        let items = [
+            hook_item("PreToolUse", "Bash|Read", false),
+            hook_item("PreToolUse", "Write", false),
+        ];
+        let f = hooks_fired(&items, &[line("PreToolUse:Read")]);
+        assert!(f.fired.contains(&items[0].id));
+        assert!(!f.fired.contains(&items[1].id));
+        // `*` and a full match only.
+        let items = [
+            hook_item("PreToolUse", "*", false),
+            hook_item("PreToolUse", "Rea", false),
+        ];
+        let f = hooks_fired(&items, &[line("PreToolUse:Read")]);
+        assert!(f.fired.contains(&items[0].id));
+        assert!(!f.fired.contains(&items[1].id));
+    }
+
+    #[test]
+    fn excess_lines_are_unknown() {
+        let items = [hook_item("UserPromptSubmit", "", false)];
+        let lines = [
+            line("UserPromptSubmit"),
+            line("UserPromptSubmit"),
+            line("UserPromptSubmit"),
+        ];
+        assert_eq!(fired_ids(&items, &lines), (vec![true], 2));
+        // A separate occurrence of the same trigger is not excess.
+        let boundary = HookFired {
+            event: String::new(),
+            name: String::new(),
+            command: None,
+        };
+        let lines = [line("PreToolUse:Read"), boundary, line("PreToolUse:Read")];
+        let items = [hook_item("PreToolUse", "Read", false)];
+        assert_eq!(fired_ids(&items, &lines), (vec![true], 0));
+    }
+
+    #[test]
+    fn carried_over_project_items_read_as_the_projects_items() {
+        use crate::event::McpState;
+        let td = tempfile::tempdir().unwrap();
+        let roots = crate::given::ResolveRoots {
+            home: td.path().join("home"),
+            workdir: td.path().join("work"),
+            managed_settings: td.path().join("managed.json"),
+            claude_json: td.path().join("home/.claude.json"),
+        };
+        let mut resolved = crate::given::resolve(
+            &crate::spec::RunSpec::default(),
+            &roots,
+            &crate::given::ResolveOptions::default(),
+        );
+        resolved.items = vec![
+            item(
+                I::Skill,
+                Source::Project,
+                "projskill",
+                "projskill",
+                None,
+                false,
+            ),
+            item(
+                I::ToolServer,
+                Source::Project,
+                "srv-a",
+                "srv-a",
+                None,
+                false,
+            ),
+            item(
+                I::Hook,
+                Source::Project,
+                "Stop:*:aa",
+                "Stop any",
+                None,
+                true,
+            ),
+        ];
+        let init = InitReport {
+            skills: vec!["kata-proj:projskill".into()],
+            plugins: vec!["kata-proj@inline".into()],
+            mcp_servers: vec![("srv-a".into(), McpState::Connected)],
+            ..InitReport::default()
+        };
+        let KataEvent::RunGiven { items, .. } =
+            given_event(&resolved, &ResolveOptions::default(), Some(&init), &[])
+        else {
+            panic!("not a run.given");
+        };
+        let by_name = |name: &str| items.iter().find(|i| i.name == name).unwrap().status;
+        assert_eq!(by_name("projskill"), G::Given);
+        assert_eq!(by_name("srv-a"), G::Given);
+        assert_eq!(by_name("Stop any"), G::SwitchedOff);
+        assert!(
+            !items.iter().any(|i| i.status == G::LoadedSourceUnknown),
+            "{items:?}"
+        );
+        assert_eq!(items.len(), 3);
     }
 }

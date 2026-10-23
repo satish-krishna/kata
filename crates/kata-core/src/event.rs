@@ -108,6 +108,9 @@ pub enum KataEvent {
         settings: crate::given::RunSettings,
         env: Vec<crate::given::EnvName>,
         warnings: Vec<String>,
+        /// The options the run was resolved with.
+        #[serde(default)]
+        options: crate::given::GivenOptions,
     },
     #[serde(rename = "run.diff")]
     RunDiff {

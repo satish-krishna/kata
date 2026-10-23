@@ -19,6 +19,6 @@ pub use resolve::{
     SettingSource,
 };
 pub use status::{
-    given_event, status, ClaudeSide, GivenItem, GivenStatus, ImpossibleStatus, KataSide,
-    StatusInput,
+    given_event, hooks_fired, status, ClaudeSide, GivenItem, GivenOptions, GivenStatus,
+    HookFirings, ImpossibleStatus, KataSide, StatusInput,
 };

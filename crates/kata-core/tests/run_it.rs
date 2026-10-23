@@ -2665,6 +2665,7 @@ fn given_events(events: &[KataEvent]) -> Vec<GivenParts> {
                 settings,
                 env,
                 warnings,
+                ..
             } => Some((
                 items.clone(),
                 settings.clone(),
@@ -3103,4 +3104,70 @@ fn nothing_switched_off_passes_none_of_the_new_flags() {
     assert_eq!(seen.plugin_dirs.len(), 1, "only the kit's plugin folder");
     assert_eq!(seen.mcp_servers(), vec!["kata-ask".to_string()]);
     assert_eq!(seen.add_dir_md, "");
+}
+
+// T22: the record of a run covers every ending, and carries the run's options.
+#[test]
+#[serial]
+fn a_run_refused_before_spawning_still_records_what_it_was_given() {
+    with_fake("ok");
+    // The authentication refusal.
+    std::env::remove_var("KATA_MISSING_TOKEN");
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.auth.bare = true;
+    spec.auth.token_env = Some("KATA_MISSING_TOKEN".into());
+    let mut events: Vec<KataEvent> = Vec::new();
+    let err = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &CancelToken::new(),
+        &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap_err();
+    assert!(matches!(err, RunError::Auth(_)));
+    assert_eq!(given_events(&events).len(), 1, "auth refusal: {events:?}");
+
+    // A worktree failure (the workdir is not a repository).
+    let khome = tempfile::tempdir().unwrap();
+    std::env::set_var("KATA_HOME", khome.path());
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.leash.isolation = kata_core::spec::Isolation::Worktree;
+    let mut events: Vec<KataEvent> = Vec::new();
+    let err = run(
+        &spec,
+        &[] as &[CatalogEntry],
+        &CancelToken::new(),
+        &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
+        |e| events.push(e),
+    )
+    .unwrap_err();
+    std::env::remove_var("KATA_HOME");
+    assert!(matches!(err, RunError::Worktree(_)));
+    assert_eq!(given_events(&events).len(), 1, "worktree: {events:?}");
+}
+
+#[test]
+#[serial]
+fn run_given_carries_the_runs_options() {
+    let rig = Rig::new();
+    let mut spec = rig.spec();
+    spec.given = Some(kata_core::spec::Given {
+        required_plugins: vec!["ai-sdlc".into()],
+        build: true,
+        ..Default::default()
+    });
+    let events = rig.run_events(&spec, "ok", |_| {});
+    let options = events
+        .iter()
+        .find_map(|e| match e {
+            KataEvent::RunGiven { options, .. } => Some(options.clone()),
+            _ => None,
+        })
+        .expect("a run.given");
+    assert_eq!(options.required_plugins, vec!["ai-sdlc".to_string()]);
+    assert!(options.build);
 }
