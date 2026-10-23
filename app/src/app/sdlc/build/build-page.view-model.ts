@@ -1,6 +1,9 @@
 import { DestroyRef, Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { RunLink } from '@bindings/RunLink';
+import type { RunRecord } from '@bindings/RunRecord';
+import type { TaskLink } from '@bindings/TaskLink';
 import type { Problem } from '@bindings/Problem';
 import type { Readiness } from '@bindings/Readiness';
 import type { Snapshot } from '@bindings/Snapshot';
@@ -11,17 +14,19 @@ import { GivenStore, type BuildChoices } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
 import { ModeStore } from '../../core/mode/mode.store';
-import type { RunSnapshot } from '../../core/run/reduce';
+import { IDLE, reduce, type RunSnapshot } from '../../core/run/reduce';
 import { RunStore } from '../../core/run/run.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { type AskRecord, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
-import { outcomeOf, type Pick } from '../../lib/build-sessions';
-import type { Situation, TaskState } from '../../lib/build-state';
+import { newlyRecorded, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Pick, type SessionRef } from '../../lib/build-sessions';
+import { buildActions, buildStage, repoAction, taskGroups, type BuildStage } from '../../lib/build-stage';
+import { repoSituation, taskState, type Situation, type TaskState } from '../../lib/build-state';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
-import { givenFor, reviewFindings, specFor, type BuildRun, type Finding } from '../../lib/sdlc';
+import { reviewState } from '../../lib/sdlc-done';
+import { givenFor, reviewFindings, specFor, type BuildRun, type Finding, type StageAction } from '../../lib/sdlc';
 import type { ReplacedFindings } from '../../ui/findings-list';
 import type { RepoRow } from '../../ui/repo-status-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
@@ -60,7 +65,18 @@ export type ShownRun = {
 };
 
 /** One session of a repository (or the review): a run live on this page, or an earlier one read from the records. */
-export type ShownSession = Omit<ShownRun, 'spec'> & { spec: RunSpec | null; note: string | null };
+export type ShownSession = Omit<ShownRun, 'spec'> & {
+  spec: RunSpec | null;
+  /** True for a run of this page's driver; false for an earlier run read from the records. */
+  live: boolean;
+  /** Why an earlier run shows nothing, or null. */
+  note: string | null;
+};
+
+/** What the tasks area says about the review. */
+export type ReviewEntry = 'not run' | 'running' | 'finished' | 'stale';
+
+export type StageMessage = { title: string; lines: string[] };
 
 /** What the page is given on every load of the change. */
 export type BuildPageInput = {
@@ -150,7 +166,25 @@ export class BuildPageViewModel {
   private holding = false;
   /** The runs the engineer's leftovers confirmation still covers; a run's launch spends its entry. */
   private confirmed = new Set<string>();
-  private ctx: BuildContext | null = null;
+  private readonly ctxSig = signal<BuildContext | null>(null);
+  private get ctx(): BuildContext | null {
+    return this.ctxSig();
+  }
+  private set ctx(value: BuildContext | null) {
+    this.ctxSig.set(value);
+  }
+  /** What the change page last gave `load`; null until it did. */
+  private readonly loaded = signal<BuildPageInput | null>(null);
+  /** The review document as last read, null when the change has none. */
+  private readonly reviewDoc = signal<ReviewRecord | null>(null);
+  private readonly runLinks = signal<RunLink[]>([]);
+  private readonly taskLinks = signal<TaskLink[]>([]);
+  private readonly records = signal<RunRecord[]>([]);
+  /** Where each repository of the change stands now, for judging whether the review is stale. */
+  private readonly heads = signal<Record<string, string>>({});
+  /** The final state of each earlier run whose transcript was read, by run id; 'unreadable' when it could not be. */
+  private readonly details = signal<Readonly<Record<string, RunSnapshot | 'unreadable'>>>({});
+  private readonly readingDetail = new Set<string>();
   /** Who takes part in the build and where each is checked out, as the backend last answered. */
   private participants: Participant[] = [];
   private productRepos: string[] = [];
@@ -185,7 +219,7 @@ export class BuildPageViewModel {
   private dirtyBefore: Snapshot['dirty'] = {};
   /** The warning naming the other files a review run changed in the master; null when it kept to the review document. */
   private readonly runNotice = signal<DocNotice | null>(null);
-  private readonly picked = signal<string | null>(null);
+  private readonly chosen = signal<Pick | null>(null);
   /** The earlier runs the engineer opened in full, by run id. */
   private readonly openedRuns = signal<ReadonlySet<string>>(new Set());
   private readonly broken = signal(false);
@@ -248,11 +282,26 @@ export class BuildPageViewModel {
     return rows;
   });
 
-  /** The row on show: the one picked, else the first. */
+  /** What the engineer picked, else the first repository, or the review once the build is reviewed. Null before the status is read. */
+  readonly pick = computed<Pick | null>(() => {
+    const chosen = this.chosen();
+    if (chosen !== null) return chosen;
+    const status = this.status();
+    if (status === null) return null;
+    const stage = this.stage();
+    if (stage === 'review-finished' || stage === 'done') return { kind: 'review' };
+    const first = this.groupKeys()[0];
+    return first === undefined ? { kind: 'review' } : { kind: 'repo', repo: first };
+  });
+
+  /** The row on show: the repository (or the review) the pick belongs to. */
   readonly selected = computed(() => {
     // Read from the status, not from the rows: a row says how much is unseen in a repository, which depends on the one on show.
-    const status = this.status();
-    return this.picked() ?? (status === null ? null : (status.repos[0]?.repo ?? REVIEW));
+    const pick = this.pick();
+    if (pick === null) return null;
+    if (pick.kind === 'review') return REVIEW;
+    if (pick.kind === 'repo') return pick.repo;
+    return this.status()?.tasks.find((t) => t.id === pick.task)?.repo ?? null;
   });
 
   /** Every run of the build, grouped by the repository (or the review) it belongs to. All stay mounted; only the selected group shows. */
@@ -357,6 +406,17 @@ export class BuildPageViewModel {
       this.bashDone();
       untracked(() => void this.refresh());
     });
+    // The sessions follow the runs: read them again whenever a run starts or ends.
+    effect(() => {
+      this.log();
+      this.driver.going();
+      untracked(() => void this.readSessions());
+    });
+    // An earlier session's transcript is read when it is first shown open.
+    effect(() => {
+      const open = this.shownSessions().filter((s) => !s.live && (s.latest || s.expanded));
+      untracked(() => open.forEach((s) => void this.readDetail(s.id)));
+    });
     // A run's work clock stops while it waits on the engineer; the wait has its own clock.
     effect(() => {
       const t = this.lock.elapsedSecs();
@@ -418,13 +478,242 @@ export class BuildPageViewModel {
     return true;
   }
 
-  /** Everything the page shows about a change, read on every load of the change. */
-  async load(_input: BuildPageInput): Promise<void> {}
-  readonly pick = computed<Pick | null>(() => null);
-  choose(_pick: Pick): void {}
-  readonly shownSessions = computed<ShownSession[]>(() => []);
-  readonly sessionNote = computed<string | null>(() => null);
-  readonly taskAreas = computed<TaskArea[]>(() => []);
+  /**
+   * Everything the page shows about a change, given on every load of the change: a page opened on a change with nothing
+   * running shows the same sessions, tasks and findings as one that just ran.
+   */
+  async load(input: BuildPageInput): Promise<void> {
+    this.loaded.set(input);
+    this.ctx = input.ctx;
+    this.status.set(input.status);
+    this.reviewDoc.set(input.review);
+    await this.readSessions();
+    if (this.latest(REVIEW) !== null) return;
+    // No review run in this session: the findings come from the review document, or from the latest review run's words.
+    await this.noteReviewNotice(input.review);
+    if (input.review !== null) this.showReviews(shownReview(input.review, null), null);
+    else await this.reviewFromWords(input.ctx);
+  }
+
+  /** Show a repository, a task or the review. */
+  choose(pick: Pick): void {
+    this.chosen.set(pick);
+  }
+
+  /** The repositories of the tasks area, in order: the plan's, then the master once it has tasks or runs. */
+  private readonly groupKeys = computed<string[]>(() => {
+    const status = this.status();
+    const master = this.masterRef()?.repo ?? null;
+    if (status === null) return [];
+    return taskGroups(status, master ?? '', master !== null && this.sessionRefs().has(master));
+  });
+
+  /** The change's stage as the change page last read it; a page that was never loaded counts as ready to build. */
+  private readonly changeStage = computed<'build-ready' | 'build-stopped' | 'build-finished'>(() => {
+    const stage = this.loaded()?.change.stage;
+    return stage === 'build-stopped' || stage === 'build-finished' ? stage : 'build-ready';
+  });
+
+  /** Which stage the build page is at. */
+  readonly stage = computed<BuildStage>(() => {
+    const done = (this.loaded()?.done ?? false) && this.changeStage() === 'build-finished';
+    const phase = done || !this.started() ? 'none' : this.phase();
+    return buildStage({ done, phase, anyStopped: this.driver.stopped().size > 0, stage: this.changeStage() });
+  });
+
+  /** The actions the page offers at its stage. */
+  readonly actions = computed<StageAction[]>(() => buildActions(this.stage()));
+
+  /** What the page says about its stage; null at a stage that says nothing. */
+  readonly stageMessage = computed<StageMessage | null>(() => {
+    switch (this.stage()) {
+      case 'stopped': {
+        const lines: string[] = [];
+        const report = this.report();
+        if (report !== null) {
+          for (const u of report.unfinished) lines.push(`${u.repo} has unfinished tasks: ${u.tasks.join(', ')}`);
+          for (const w of report.waiting) lines.push(`${w.repo} is waiting for ${w.onTask} in ${w.onRepo}`);
+        } else {
+          for (const g of this.taskAreas()) {
+            if (g.situation.kind === 'stopped' && g.situation.from === 'records') {
+              lines.push(g.situation.reason === null ? `${g.repo} stopped` : `${g.repo} stopped: ${g.situation.reason}`);
+            }
+          }
+        }
+        return { title: 'The build stopped. Nothing more can run.', lines };
+      }
+      case 'cancelled':
+        return { title: 'The build was cancelled.', lines: [] };
+      case 'review-finished':
+      case 'done':
+        return { title: 'Every task is in the build log.', lines: [] };
+      default:
+        return null;
+    }
+  });
+
+  /** The sessions of every repository (and the review), oldest first: the runs of this page and the change's run links. */
+  private readonly sessionRefs = computed<Map<string, SessionRef[]>>(() => {
+    const ctx = this.ctx;
+    const out = new Map<string, SessionRef[]>();
+    if (ctx === null) return out;
+    for (const [key, links] of repoSessions(this.runLinks(), { workspaceId: ctx.workspaceId, system: ctx.system, change: ctx.change })) {
+      out.set(key, links.map((l) => ({ runId: l.run_id, startedAt: l.started_at })));
+    }
+    for (const e of this.log()) {
+      const list = out.get(e.key) ?? [];
+      if (!list.some((r) => r.runId === e.id)) out.set(e.key, [...list, { runId: e.id, startedAt: Math.floor(e.at / 1000) }].sort((a, b) => a.startedAt - b.startedAt));
+    }
+    return out;
+  });
+
+  /** Every session by run id: the live ones from the run store (or what was frozen), the earlier ones from their transcripts. */
+  private readonly sessionById = computed<Map<string, ShownSession>>(() => {
+    const live = new Map(this.groups().flatMap((g) => g.runs.map((r) => [r.id, r] as const)));
+    const opened = this.openedRuns();
+    const details = this.details();
+    const records = this.records();
+    const out = new Map<string, ShownSession>();
+    for (const refs of this.sessionRefs().values()) {
+      for (const ref of refs) {
+        const run = live.get(ref.runId);
+        if (run !== undefined) {
+          out.set(ref.runId, { ...run, live: true, note: null });
+          continue;
+        }
+        const detail = details[ref.runId];
+        const snap = detail === undefined || detail === 'unreadable' ? IDLE : detail;
+        out.set(ref.runId, {
+          id: ref.runId,
+          startedAt: timeOf(ref.startedAt * 1000),
+          spec: null,
+          state: snap.state,
+          events: snap.events,
+          summary: snap.summary,
+          asks: snap.asks,
+          permissions: snap.permissions,
+          given: snap.given,
+          unseenFrom: null,
+          latest: false,
+          expanded: opened.has(ref.runId),
+          outcome: recordOutcome(records.find((r) => r.id === ref.runId) ?? null),
+          live: false,
+          note: detail === 'unreadable' ? 'Transcript not available' : null,
+        });
+      }
+    }
+    return out;
+  });
+
+  private readonly sessionPick = computed(() => {
+    const pick = this.pick();
+    return pick === null ? { sessions: [] as SessionRef[], unknown: false } : sessionsFor(pick, this.status()?.tasks ?? [], this.sessionRefs(), this.taskLinks());
+  });
+
+  /** The sessions of the pick: the latest shows open, every earlier one folds to its start time and outcome until picked. */
+  readonly shownSessions = computed<ShownSession[]>(() => {
+    const refs = this.sessionPick().sessions;
+    const byId = this.sessionById();
+    return refs.flatMap((ref, i) => {
+      const session = byId.get(ref.runId);
+      return session === undefined ? [] : [{ ...session, latest: i === refs.length - 1 }];
+    });
+  });
+
+  /** Said above the sessions of a task the build cannot tell the session of. */
+  readonly sessionNote = computed<string | null>(() => {
+    const pick = this.pick();
+    if (pick === null || pick.kind !== 'task' || !this.sessionPick().unknown) return null;
+    const repo = this.status()?.tasks.find((t) => t.id === pick.task)?.repo;
+    return repo === undefined ? null : `This task was recorded before Kata linked tasks to runs, or on another machine. Showing every session of ${repo}.`;
+  });
+
+  /** The latest ended session of a repository, as the records say it ended. */
+  private latestExit(key: string): number | null | 'no-run' {
+    const byId = this.sessionById();
+    const ended = (this.sessionRefs().get(key) ?? []).filter((r) => {
+      const session = byId.get(r.runId);
+      return session === undefined || !RUNNING.includes(session.state);
+    });
+    const last = ended.at(-1);
+    const record = last === undefined ? undefined : this.records().find((r) => r.id === last.runId);
+    return record === undefined ? 'no-run' : (record.exit ?? null);
+  }
+
+  /** The tasks area: a heading per repository from where it stands, and its tasks with what each shows. */
+  readonly taskAreas = computed<TaskArea[]>(() => {
+    const status = this.status();
+    if (status === null) return [];
+    const review = { live: this.started() && this.phase() === 'reviewing', stopped: this.driver.stopped().has(REVIEW) };
+    return this.groupKeys().map((repo) => {
+      const repoStatus = status.repos.find((r) => r.repo === repo);
+      const stop = this.driver.stopped().get(repo);
+      const situation = repoSituation({
+        live: this.driver.going().has(repo),
+        stop: stop === undefined ? null : { task: stop.task, reason: stop.reason },
+        state: repoStatus?.state ?? null,
+        firstUnfinished: repoStatus?.firstUnfinished ?? null,
+        session: this.started() ? 'this' : 'none',
+        stage: this.changeStage(),
+        latestExit: this.latestExit(repo),
+      });
+      return {
+        repo,
+        situation,
+        action: repoAction(situation, repo, review),
+        tasks: status.tasks.filter((t) => t.repo === repo).map((t) => ({ id: t.id, name: t.name, state: taskState(t, situation) })),
+      };
+    });
+  });
+
+  /** What the tasks area says about the review. */
+  readonly reviewEntry = computed<ReviewEntry>(() => {
+    if (this.started() && this.phase() === 'reviewing') return 'running';
+    const ctx = this.ctx;
+    if (ctx === null) return 'not run';
+    const scope = { workspaceId: ctx.workspaceId, system: ctx.system, change: ctx.change };
+    const state = reviewState(this.runLinks(), this.records(), this.heads(), scope, this.reviewDoc(), this.masterRef()?.repo ?? null);
+    return state.kind === 'current' || state.kind === 'current-document' ? 'finished' : state.kind === 'stale' ? 'stale' : 'not run';
+  });
+
+  /** Where the master repository is: what the build was started from, else what the change page loaded. */
+  private masterRef(): { repo: string; path: string } | null {
+    return this.handoff?.start.master ?? this.loaded()?.master ?? null;
+  }
+
+  /** Read the change's run links, task links and run records, and where each repository stands. */
+  private async readSessions(): Promise<void> {
+    const ctx = this.ctx;
+    const master = this.masterRef();
+    if (ctx === null || master === null) return;
+    try {
+      const [links, tasks, records] = await Promise.all([this.transport.sdlcRunLinks(), this.transport.sdlcTaskLinks(), this.transport.listRuns()]);
+      this.runLinks.set(links);
+      this.taskLinks.set(tasks);
+      this.records.set(records);
+    } catch (e) {
+      this.toasts.error(`Could not read the earlier sessions: ${message(e)}`);
+    }
+    try {
+      const repos = [master.repo, ...(this.status()?.repos.map((r) => r.repo) ?? [])];
+      this.heads.set(await this.transport.sdlcBuildHeads(ctx.folder, [...new Set(repos)], ctx.change));
+    } catch {
+      this.heads.set({});
+    }
+  }
+
+  /** Read an earlier session's transcript the first time it is shown. */
+  private async readDetail(id: string): Promise<void> {
+    if (this.readingDetail.has(id) || this.details()[id] !== undefined) return;
+    this.readingDetail.add(id);
+    let snap: RunSnapshot | 'unreadable';
+    try {
+      snap = (await this.transport.loadRun(id)).events.reduce(reduce, IDLE);
+    } catch {
+      snap = 'unreadable';
+    }
+    this.details.update((d) => ({ ...d, [id]: snap }));
+  }
 
   /** Leave the build and show the change again. This changes what is on show and nothing else: the lock and the driver are not touched. */
   backToChange(): void {
@@ -451,7 +740,7 @@ export class BuildPageViewModel {
   }
 
   select(name: string): void {
-    this.picked.set(name);
+    this.choose(name === REVIEW ? { kind: 'review' } : { kind: 'repo', repo: name });
   }
 
   /** Show one of the views. This changes what is on show and nothing else: no run, read or lock is touched. */
@@ -461,7 +750,7 @@ export class BuildPageViewModel {
 
   /** Go to a waiting repository: its Activity, with its open question brought into view and focused. */
   goTo(repo: string): void {
-    this.picked.set(repo);
+    this.select(repo);
     this.tab.set('activity');
     this.focusRequest.set({ repo, n: ++this.focusCount });
   }
@@ -782,9 +1071,9 @@ export class BuildPageViewModel {
   }
 
   private async readStatus(): Promise<BuildStatus> {
-    const h = this.handoff!;
+    const master = this.masterRef()!;
     const ctx = this.ctx!;
-    return this.transport.sdlcBuildStatus(h.start.master.path, ctx.system, ctx.change);
+    return this.transport.sdlcBuildStatus(master.path, ctx.system, ctx.change);
   }
 
   private readHeads(): Promise<Record<string, string>> {
@@ -794,7 +1083,7 @@ export class BuildPageViewModel {
   }
 
   private async refresh(): Promise<void> {
-    if (this.handoff === null) return;
+    if (this.masterRef() === null || this.ctx === null) return;
     try {
       this.status.set(await this.readStatus());
     } catch (e) {
@@ -832,6 +1121,9 @@ export class BuildPageViewModel {
     // The build's choices, as they stand when this run starts; a run the driver starts by itself never opens a preview.
     spec.given = { ...spec.given, ...givenFor(opts.choices.off, spec.workdir) };
     const key = review ? REVIEW : repo;
+    // The build log as it stands before the run, to tell which tasks the run recorded.
+    const before = review ? null : await this.readStatus().catch(() => null);
+    const started: { id: string | null } = { id: null };
     const end = await this.runner.runInRepo(
       { repo, path, kind: review ? 'review' : 'repo' },
       spec,
@@ -842,11 +1134,28 @@ export class BuildPageViewModel {
         folder: ctx.folder,
         master: h.start.master.path,
         repos: this.productRepos,
-        onRun: (id) => this.noteRun(id, key, spec, opts.signal),
+        onRun: (id) => {
+          started.id = id;
+          this.noteRun(id, key, spec, opts.signal);
+        },
       },
     );
+    if (before !== null && started.id !== null) await this.linkTasks(before, repo, started.id);
     // A cancel settles the run's state before the engine reports an exit code: it is the engineer's cancel (130).
     return opts.signal.aborted && end.exit !== 0 ? { exit: 130, error: null } : end;
+  }
+
+  /** Append a link from the run to each task it recorded in the build log. A failed append is a toast and changes nothing else. */
+  private async linkTasks(before: BuildStatus, repo: string, runId: string): Promise<void> {
+    const ctx = this.ctx!;
+    try {
+      const tasks = newlyRecorded(before, await this.readStatus(), repo);
+      if (tasks.length === 0) return;
+      await this.transport.sdlcLinkTasks(tasks.map((task) => ({ workspace_id: ctx.workspaceId, system: ctx.system, change: ctx.change, repo, task, run_id: runId })));
+      this.taskLinks.set(await this.transport.sdlcTaskLinks());
+    } catch (e) {
+      this.toasts.error(`Could not link the tasks to the run: ${message(e)}`);
+    }
   }
 
   private noteRun(id: string, key: string, spec: RunSpec, signal: AbortSignal): void {
@@ -1019,6 +1328,11 @@ export class BuildPageViewModel {
       this.showReviews(shownReview(document, null), null);
       return;
     }
+    await this.reviewFromWords(ctx);
+  }
+
+  /** The findings of the latest review run linked to this change, from the closing words of its transcript. */
+  private async reviewFromWords(ctx: BuildContext): Promise<void> {
     try {
       const links = (await this.transport.sdlcRunLinks()).filter(
         (l) => l.workspace_id === ctx.workspaceId && l.system === ctx.system && l.change === ctx.change && l.stage === REVIEW,

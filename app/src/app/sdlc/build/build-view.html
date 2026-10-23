@@ -48,7 +48,7 @@
       </div>
       <div class="k-build__top">
         <span class="k-lock__count">{{ vm.tasksLabel() }}</span>
-        @if (vm.active()) {
+        @if (vm.actions().includes('cancel-build')) {
           <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.cancelBuild()">Cancel build</button>
         }
       </div>
@@ -62,7 +62,7 @@
         @switch (vm.phase()) {
           @case ('finished') {
             <section class="k-build__end" aria-labelledby="build-end">
-              <h2 id="build-end" class="k-state__title">Every task is in the build log.</h2>
+              <h2 id="build-end" class="k-state__title">{{ vm.stageMessage()?.title }}</h2>
               @if (vm.reviewShown()) {
                 @if (vm.reviewNotice(); as notice) {
                   <div [class]="notice.tone === 'warning' ? 'wb-banner wb-banner--warn' : 'wb-banner wb-banner--quiet'" data-testid="review-notice" role="status">
@@ -82,7 +82,7 @@
           }
           @case ('stopped') {
             <section class="k-build__stop" aria-labelledby="build-stop">
-              <h2 id="build-stop" class="k-state__title">The build stopped. Nothing more can run.</h2>
+              <h2 id="build-stop" class="k-state__title">{{ vm.stageMessage()?.title }}</h2>
               @if (vm.report(); as report) {
                 <ul class="k-state__list">
                   @for (u of report.unfinished; track u.repo) {
@@ -97,7 +97,7 @@
           }
           @case ('cancelled') {
             <section class="k-build__stop" aria-labelledby="build-stop">
-              <h2 id="build-stop" class="k-state__title">The build was cancelled.</h2>
+              <h2 id="build-stop" class="k-state__title">{{ vm.stageMessage()?.title }}</h2>
               <p class="k-state__body">Continue a repository to go on, or go back to the change. Commits already made are kept.</p>
             </section>
           }
@@ -105,6 +105,9 @@
         @if (vm.selected(); as name) {
           <div class="k-build__repo-head">
             <h2 class="k-left__repo-name">{{ name }}</h2>
+            @if (name === 'review') {
+              <span class="k-mono">{{ vm.reviewEntry() }}</span>
+            }
             @switch (vm.action()) {
               @case ('cancel') {
                 <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.cancelRun()">Cancel</button>
@@ -114,6 +117,9 @@
               }
             }
           </div>
+          @if (vm.sessionNote(); as note) {
+            <p class="k-state__body">{{ note }}</p>
+          }
           @if (vm.shown().length === 0) {
             <p class="k-state__body">Nothing has run in <span class="k-mono">{{ name }}</span> yet.</p>
           }

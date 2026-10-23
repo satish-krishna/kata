@@ -1286,6 +1286,9 @@ export class ChangePageViewModel {
       this.catalog.set(catalog);
       this.changeTotal.set(changes.length);
       finish(found ? 'ready' : 'not-found', found, doc, read);
+      // The build page shows the change's tasks, sessions and findings whether or not a build ran on this page.
+      const context = this.buildContext();
+      if (found && context !== null) await this.build.load({ ctx: context, master: { repo, path: master }, change: found, status, done: this.done(), review });
     } catch (e) {
       this.toasts.error(`Could not read the change: ${message(e)}`);
       finish('not-found', null, null);

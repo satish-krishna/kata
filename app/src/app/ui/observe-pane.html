@@ -3,9 +3,11 @@
     <span class="k-status__dot"></span>{{ statusLabel() }}
   </span>
   <div class="wb-sep"></div>
-  <div class="wb-status__meta"><ng-icon name="lucideCpu" size="14" /> {{ spec().model.id || 'default' }}</div>
-  @if (spec().leash.isolation === 'worktree') {
-    <span class="k-badge k-badge--warning"><ng-icon name="lucideGitBranch" size="11" /> worktree</span>
+  @if (spec(); as spec) {
+    <div class="wb-status__meta"><ng-icon name="lucideCpu" size="14" /> {{ spec.model.id || 'default' }}</div>
+    @if (spec.leash.isolation === 'worktree') {
+      <span class="k-badge k-badge--warning"><ng-icon name="lucideGitBranch" size="11" /> worktree</span>
+    }
   }
   @for (w of warnings(); track $index) {
     <span class="k-status k-status--warning min-w-0" data-given-warning role="status" [attr.title]="w">
