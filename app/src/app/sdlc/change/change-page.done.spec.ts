@@ -10,6 +10,7 @@ import { MockTransport } from '../../core/transport/mock-transport';
 import type { StageAction } from '../../lib/sdlc';
 import { canConfirm } from '../../lib/sdlc-done';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
+import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
 
 const BUILD = MOCK_BUILD_CHANGE;
@@ -24,6 +25,7 @@ function setup(transport: MockTransport) {
     providers: [
       provideRouter([]),
       ChangePageViewModel,
+      BuildPageViewModel,
       RunPreviewViewModel,
       { provide: KataTransport, useValue: transport },
       { provide: ActivatedRoute, useValue: { paramMap: params.asObservable() } },

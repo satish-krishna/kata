@@ -1,10 +1,13 @@
+import { Component, inject, output } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { toastState } from '@spartan-ng/brain/sonner';
+import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { monaco } from '../../ui/diff-editor/monaco.loader';
+import { RunPreviewDialog } from '../../ui/run-preview-dialog';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import type { BuildHandoff } from '../change/change-page.view-model';
 import { BuildView } from './build-view';
@@ -12,18 +15,45 @@ import { BuildPageViewModel, type BuildContext } from './build-page.view-model';
 
 const CTX: BuildContext = { workspaceId: 'acme-claims', folder: MOCK_WORKSPACE_FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE, systemRepos: [] };
 
+/** Stands in for the change page: it provides the build and its preview, and mounts the one preview dialog. */
+@Component({
+  imports: [BuildView, RunPreviewDialog],
+  providers: [BuildPageViewModel, RunPreviewViewModel],
+  template: `
+    <app-build-view (closed)="closed.emit()" />
+    <app-run-preview-dialog
+      [open]="preview.isOpen()"
+      [title]="preview.title()"
+      [settings]="preview.settings()"
+      [safetyRules]="preview.safetyRules()"
+      [env]="preview.env()"
+      [groups]="preview.groups()"
+      [sections]="preview.sections()"
+      [warnings]="preview.warnings()"
+      [busy]="!preview.canStart()"
+      (toggle)="preview.toggle($event.key, $event.off)"
+      (start)="preview.start()"
+      (cancel)="preview.cancel()"
+    />
+  `,
+})
+class Page {
+  protected readonly preview = inject(RunPreviewViewModel);
+  readonly closed = output<void>();
+}
+
 async function mount(transport = new MockTransport()) {
   const out = await transport.sdlcBuildPrepare(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'claims', MOCK_BUILD_CHANGE, false, null, 'start');
   if (out.kind !== 'ready') throw new Error('the mock build did not prepare');
   const handoff: BuildHandoff = { start: out.start, timeoutSecs: 5400, round: null, checksDir: await transport.sdlcChecksDir() };
   // Not `render()`: under fake timers `whenStable` would wait on a change detection that only a timer can run.
-  TestBed.configureTestingModule({ imports: [BuildView], providers: [provideRouter([]), { provide: KataTransport, useValue: transport }] });
-  const fixture = TestBed.createComponent(BuildView);
-  fixture.componentRef.setInput('handoff', handoff);
-  fixture.componentRef.setInput('context', CTX);
+  // The change page provides the build and its preview and starts the build; the view only shows it.
+  TestBed.configureTestingModule({ imports: [Page], providers: [provideRouter([]), { provide: KataTransport, useValue: transport }] });
+  const fixture = TestBed.createComponent(Page);
+  const vm = fixture.debugElement.injector.get(BuildPageViewModel);
+  void vm.start(handoff, CTX);
   fixture.detectChanges();
   const view = { fixture, container: fixture.nativeElement as HTMLElement };
-  const vm = view.fixture.debugElement.injector.get(BuildPageViewModel);
   const advance = async (ms: number) => {
     for (let t = 0; t < ms; t += 50) {
       await vi.advanceTimersByTimeAsync(50);
@@ -82,7 +112,7 @@ describe('BuildView', () => {
     expect(text(container)).toContain('The report form already has a file picker');
   });
 
-  it('says every task is in the build log and lists the findings, then Close releases the lock', async () => {
+  it('says every task is in the build log and lists the findings, then the lock is already released and Back to the change leaves', async () => {
     const { container, fixture, vm, drive, lock, advance } = await mount();
     const closed = vi.fn();
     fixture.componentInstance.closed.subscribe(closed);
@@ -91,9 +121,11 @@ describe('BuildView', () => {
     const items = Array.from(container.querySelectorAll('app-findings-list li .k-findings__text')).map((e) => e.firstChild!.textContent!.trim());
     expect(items).toEqual(['The upload limit is duplicated in claims-core and customer-portal.', 'The refusal message has no test.']);
     expect(button(container, 'Cancel build')).toBeUndefined();
-    button(container, 'Close')!.click();
     await advance(100);
     expect(lock.active()).toBeNull();
+    button(container, 'Back to the change')!.click();
+    await advance(100);
+    expect(vm.viewing()).toBe(false);
     expect(closed).toHaveBeenCalledTimes(1);
   });
 
@@ -310,7 +342,7 @@ describe('BuildView watching and reviewing', () => {
     expect(text(m.container)).toContain("The build is running. Uncommitted edits are the agents' work in progress and are marked with a dot.");
     expect(m.container.querySelectorAll('#build-repos [data-uncommitted]').length).toBeGreaterThan(0);
     expect(m.lock.active()?.kind).toBe('build');
-    expect(button(m.container, 'Close')).toBeUndefined();
+    expect(button(m.container, 'Back to the change')).toBeUndefined();
   });
 
   it('the waiting notice names the repository and the countdown and does not switch (R17.5)', async () => {

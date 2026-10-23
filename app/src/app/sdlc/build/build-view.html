@@ -3,7 +3,7 @@
     <h1 id="build-title" class="kata-eyebrow k-session__title">Build</h1>
     <span class="k-session__actions">
       @if (!vm.active()) {
-        <button hlmBtn variant="primary" size="sm" type="button" [disabled]="vm.closeBlocked()" (click)="close()">Close</button>
+        <button hlmBtn variant="primary" size="sm" type="button" (click)="back()">Back to the change</button>
       }
     </span>
   </div>
@@ -98,7 +98,7 @@
           @case ('cancelled') {
             <section class="k-build__stop" aria-labelledby="build-stop">
               <h2 id="build-stop" class="k-state__title">The build was cancelled.</h2>
-              <p class="k-state__body">Continue a repository to go on, or close the build. Commits already made are kept.</p>
+              <p class="k-state__body">Continue a repository to go on, or go back to the change. Commits already made are kept.</p>
             </section>
           }
         }
@@ -177,20 +177,6 @@
     confirmLabel="Continue"
     (confirm)="vm.confirmContinue()"
     (cancel)="vm.cancelContinue()"
-  />
-  <app-run-preview-dialog
-    [open]="vm.preview.isOpen()"
-    [title]="vm.preview.title()"
-    [settings]="vm.preview.settings()"
-    [safetyRules]="vm.preview.safetyRules()"
-    [env]="vm.preview.env()"
-    [groups]="vm.preview.groups()"
-    [sections]="vm.preview.sections()"
-    [warnings]="vm.preview.warnings()"
-    [busy]="!vm.preview.canStart()"
-    (toggle)="vm.preview.toggle($event.key, $event.off)"
-    (start)="vm.preview.start()"
-    (cancel)="vm.preview.cancel()"
   />
   <app-build-refusal-dialog [reason]="vm.refusal()?.reason ?? null" [problems]="vm.refusal()?.problems ?? []" (close)="vm.closeRefusal()" />
 </main>

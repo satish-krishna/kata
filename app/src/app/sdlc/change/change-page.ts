@@ -7,6 +7,7 @@ import { HlmAlertImports } from '@spartan-ng/helm/alert';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmPopoverImports } from '@spartan-ng/helm/popover';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
+import { BuildPageViewModel } from '../build/build-page.view-model';
 import { BuildView } from '../build/build-view';
 import { ChangesView } from '../changes/changes-view';
 import { BuildDialog } from '../../ui/build-dialog';
@@ -30,7 +31,7 @@ import { ChangePageViewModel } from './change-page.view-model';
 
 @Component({
   selector: 'app-change-page',
-  providers: [ChangePageViewModel, RunPreviewViewModel, provideIcons({ lucideChevronDown, lucideTriangleAlert })],
+  providers: [ChangePageViewModel, BuildPageViewModel, RunPreviewViewModel, provideIcons({ lucideChevronDown, lucideTriangleAlert })],
   imports: [NgTemplateOutlet, NgIcon, HlmAlertImports, HlmButtonImports, HlmPopoverImports, HlmTabsImports, SdlcToolbar, StagePills, DocLayout, RequirementsView, TasksView, Segmented, LockOverlay, LeftoverDialog, ConfirmDialog, FeedbackDialog, BuildDialog, BuildRefusalDialog, DoneDialog, PrListDialog, SdlcSession, BuildView, ChangesView, RunPreviewDialog],
   templateUrl: './change-page.html',
 })

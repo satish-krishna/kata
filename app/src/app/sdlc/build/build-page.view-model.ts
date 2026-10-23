@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
+import { DestroyRef, Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { Problem } from '@bindings/Problem';
 import type { Readiness } from '@bindings/Readiness';
@@ -10,6 +10,7 @@ import { GivenStore, type BuildChoices } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
 import { ModeStore } from '../../core/mode/mode.store';
+import type { RunSnapshot } from '../../core/run/reduce';
 import { RunStore } from '../../core/run/run.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
@@ -91,8 +92,9 @@ const ms = (secs: number): string => `${Math.floor(Math.max(0, secs) / 60)}:${pa
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /**
- * The build view's state: the driver that starts a run per ready repository and one review, the build's hold on the lock,
- * each repository's row and clocks, the runs of the repository on show, and the review's findings.
+ * The build page's state, which lives as long as the change page that provides it: the driver that starts a run per ready
+ * repository and one review, the build's hold on the lock, each repository's row and clocks, the runs of the repository on show,
+ * and the review's findings. The page holds the lock from `start` (or a per-repository Continue) until the build is settled.
  * Rows are read through the transport's `sdlcBuildStatus`; nothing here reads a plan or a build log.
  */
 @Injectable()
@@ -107,7 +109,22 @@ export class BuildPageViewModel {
   readonly preview = inject(RunPreviewViewModel);
   private readonly givens = inject(GivenStore);
 
-  private handoff: BuildHandoff | null = null;
+  private readonly injector = inject(Injector);
+  private readonly handed = signal<BuildHandoff | null>(null);
+  private get handoff(): BuildHandoff | null {
+    return this.handed();
+  }
+  private set handoff(value: BuildHandoff | null) {
+    this.handed.set(value);
+  }
+  /** What the build was started from, null until it was started once. */
+  readonly current = this.handed.asReadonly();
+  /** True once a build was started on this page; it stays true after the build ended. */
+  readonly started = computed(() => this.handed() !== null);
+  /** True while the build is on show in place of the change; `backToChange` clears it and nothing else. */
+  readonly viewing = signal(false);
+  /** True while this page holds the lock for its build, from `start` (or a Continue) until `release` gives it back. */
+  private holding = false;
   /** The runs the engineer's leftovers confirmation still covers; a run's launch spends its entry. */
   private confirmed = new Set<string>();
   private ctx: BuildContext | null = null;
@@ -120,11 +137,13 @@ export class BuildPageViewModel {
   private pendingFinish: Promise<void> | null = null;
   private readonly readRuns = new Set<string>();
 
-  private readonly driver = new BuildDriver({
-    status: () => this.readStatus(),
-    start: (target, opts) => this.startRun(target, opts),
-    heads: () => this.readHeads(),
-  });
+  /** The driver of the latest start; every start makes a fresh one, as each opening of the build did. */
+  private readonly drv = signal(this.newDriver());
+  private get driver(): BuildDriver {
+    return this.drv();
+  }
+  /** The final state of each run the lock forgot when the page was released, by run id: the runs stay on show after that. */
+  private readonly frozen = signal<Readonly<Record<string, RunSnapshot>>>({});
   private readonly status = signal<BuildStatus | null>(null);
   private readonly log = signal<Entry[]>([]);
   private readonly clocks = signal<Readonly<Record<string, Clock>>>({});
@@ -147,7 +166,6 @@ export class BuildPageViewModel {
   /** The earlier runs the engineer opened in full, by run id. */
   private readonly openedRuns = signal<ReadonlySet<string>>(new Set());
   private readonly broken = signal(false);
-  private readonly finishing = signal(false);
   private readonly reading = signal(false);
   private readonly changes = signal<BuildChanges | null>(null);
   /** How many events of each run the engineer had seen when its Activity was last on show, by run id. */
@@ -189,9 +207,7 @@ export class BuildPageViewModel {
 
   readonly phase = computed<BuildPhase>(() => (this.broken() ? 'stopped' : this.driver.phase()));
   readonly active = computed(() => this.phase() === 'building' || this.phase() === 'reviewing');
-  readonly report = this.driver.report;
-  /** Close waits while the build's branches are being settled and while the leftover dialog is open. */
-  readonly closeBlocked = computed(() => this.finishing() || this.runner.leftovers() !== null);
+  readonly report = computed(() => this.driver.report());
 
   readonly tasksLabel = computed(() => {
     const tasks = this.status()?.tasks ?? [];
@@ -222,7 +238,7 @@ export class BuildPageViewModel {
     const opened = this.openedRuns();
     const out = new Map<string, ShownRun[]>();
     for (const e of this.log()) {
-      const snap = this.runs.snapshot(e.id)();
+      const snap = this.snapOf(e.id);
       const run: ShownRun = {
         id: e.id,
         startedAt: timeOf(e.at),
@@ -252,10 +268,10 @@ export class BuildPageViewModel {
   /** What the Changes view reads, once the build has started. */
   readonly changesContext = this.changes.asReadonly();
   /** Turns taken by every run of the build, so the Changes view reads again as the agents work. */
-  readonly turns = computed(() => this.log().reduce((n, e) => n + this.runs.snapshot(e.id)().events.filter((ev) => ev.type === 'turn').length, 0));
+  readonly turns = computed(() => this.log().reduce((n, e) => n + this.snapOf(e.id).events.filter((ev) => ev.type === 'turn').length, 0));
   /** Bash calls finished by every run of the build; each one may have committed a build log row. */
   private readonly bashDone = computed(() =>
-    this.log().reduce((n, e) => n + this.runs.snapshot(e.id)().events.filter((ev) => ev.type === 'tool.result' && ev.name === 'Bash').length, 0),
+    this.log().reduce((n, e) => n + this.snapOf(e.id).events.filter((ev) => ev.type === 'tool.result' && ev.name === 'Bash').length, 0),
   );
   /** Events that arrived in the views not on show: for the Activity tab, only while Changes is open. */
   readonly activityNew = computed(() => (this.tab() === 'changes' ? this.log().reduce((n, e) => n + this.unseenOfRun(e), 0) : 0));
@@ -327,7 +343,7 @@ export class BuildPageViewModel {
     // What the engineer has seen: a pane on show is seen as it grows; coming back to one marks where the missed events begin.
     effect(() => {
       const key = this.onShow();
-      const counts = this.log().map((e) => ({ e, count: this.runs.snapshot(e.id)().events.length }));
+      const counts = this.log().map((e) => ({ e, count: this.snapOf(e.id).events.length }));
       untracked(() => this.markSeen(key, counts));
     });
     // A run that starts waiting on the engineer is announced once; an announcement never moves the focus.
@@ -335,23 +351,35 @@ export class BuildPageViewModel {
       const waiting = this.waitingNotices();
       untracked(() => this.announce(waiting));
     });
-    // The build is over, or stopped: free the lock, show what the runs left, settle the branches, read the review.
+    // The build is over, or stopped: show what the runs left, settle the branches, read the review, then give the page back.
     effect(() => {
       const phase = this.phase();
       if (phase === 'building' || phase === 'reviewing') return;
       untracked(() => {
-        this.pendingFinish = this.finish(phase);
+        this.pendingFinish = this.release(phase);
       });
     });
   }
 
-  /** Take the lock and run the build, once. False when another task holds the lock: nothing starts then. */
+  /**
+   * Take the lock and run the build with a fresh driver, keeping the log of the runs before it. May be called again once the
+   * build ended (Continue build, Another round, Run review). False when another task holds the lock or a build is still going:
+   * nothing starts then.
+   */
   async start(handoff: BuildHandoff, ctx: BuildContext): Promise<boolean> {
-    if (this.handoff !== null) return true;
+    if (this.started() && this.active()) {
+      this.toasts.error('Another task is already running.');
+      return false;
+    }
     if (!this.lock.beginBuild('Build')) return false;
+    this.holding = true;
     this.handoff = handoff;
     this.confirmed = new Set(handoff.continueOnLeftovers ?? []);
     this.ctx = ctx;
+    this.settled = false;
+    this.broken.set(false);
+    this.drv.set(this.newDriver());
+    this.viewing.set(true);
     try {
       const status = await this.readStatus();
       const master = handoff.start.master.repo;
@@ -365,6 +393,11 @@ export class BuildPageViewModel {
       this.broken.set(true);
     }
     return true;
+  }
+
+  /** Leave the build and show the change again. This changes what is on show and nothing else: the lock and the driver are not touched. */
+  backToChange(): void {
+    this.viewing.set(false);
   }
 
   /** Open an earlier run in full, or fold it back to its one line. */
@@ -556,7 +589,11 @@ export class BuildPageViewModel {
 
   private async resume(key: string): Promise<void> {
     this.broken.set(false);
-    this.lock.resumeBuild();
+    // While other repositories still run the page already holds the lock; after the build was settled it takes it again.
+    if (!this.holding) {
+      if (!this.lock.beginBuild('Build')) return;
+      this.holding = true;
+    }
     await this.driver.continueRepo(key);
   }
 
@@ -568,14 +605,6 @@ export class BuildPageViewModel {
     this.lock.decide(runId, e.id, e.allow, e.message);
   }
 
-  /** Release the lock; true when it was released, false while the end of the build is still being settled. */
-  async close(): Promise<boolean> {
-    await this.pendingFinish;
-    if (this.closeBlocked()) return false;
-    this.lock.close();
-    return true;
-  }
-
   // --- what the engineer has seen
 
   /** The repository whose Activity is on show, if Activity is. */
@@ -583,7 +612,7 @@ export class BuildPageViewModel {
 
   private unseenOfRun(e: Entry): number {
     if (e.key === this.onShow()) return 0;
-    return Math.max(0, this.runs.snapshot(e.id)().events.length - (this.seen()[e.id] ?? 0));
+    return Math.max(0, this.snapOf(e.id).events.length - (this.seen()[e.id] ?? 0));
   }
 
   private unseenOf(key: string): number {
@@ -643,7 +672,7 @@ export class BuildPageViewModel {
   }
 
   private masterName(): string | null {
-    return this.handoff?.start.master.repo ?? null;
+    return this.current()?.start.master.repo ?? null;
   }
 
   /** The master repository's row, once it has a round pending, running, stopped or done; null when it has nothing to show. */
@@ -697,7 +726,7 @@ export class BuildPageViewModel {
     if (dt <= 0) return;
     const next: Record<string, Clock> = { ...this.clocks() };
     for (const e of this.log()) {
-      if (!RUNNING.includes(this.runs.snapshot(e.id)().state)) continue;
+      if (!RUNNING.includes(this.snapOf(e.id).state)) continue;
       const c = next[e.id] ?? { work: 0, paused: 0, current: 0 };
       next[e.id] = waiting.has(e.id)
         ? { work: c.work, paused: c.paused + dt, current: c.current + dt }
@@ -707,6 +736,19 @@ export class BuildPageViewModel {
   }
 
   // --- the driver's dependencies
+
+  private newDriver(): BuildDriver {
+    return new BuildDriver({
+      status: () => this.readStatus(),
+      start: (target, opts) => this.startRun(target, opts),
+      heads: () => this.readHeads(),
+    });
+  }
+
+  /** A run's state: its final one once the lock forgot it, else the run store's. */
+  private snapOf(id: string): RunSnapshot {
+    return this.frozen()[id] ?? this.runs.snapshot(id)();
+  }
 
   private async readStatus(): Promise<BuildStatus> {
     const h = this.handoff!;
@@ -786,18 +828,48 @@ export class BuildPageViewModel {
 
   // --- the end of a build
 
-  private async finish(phase: BuildPhase): Promise<void> {
+  /**
+   * The one place the page gives the lock back: once the build is not building or reviewing, its branches are settled and no
+   * leftover is on show, the lock is closed, which frees the page, the toolbar and the way back.
+   */
+  private async release(phase: BuildPhase): Promise<void> {
     const h = this.handoff;
     if (h === null) return;
     this.lock.endBuild();
     if (phase === 'finished') void this.readReview();
-    this.finishing.set(true);
     try {
       await this.runner.finishBuild(h.start);
       this.settled = true;
     } finally {
-      this.finishing.set(false);
+      await this.leftoversGone();
+      this.freeze();
+      this.lock.close();
+      this.holding = false;
     }
+  }
+
+  /** Resolves once no leftover dialog is open; the engineer's choice in it is what closes it. */
+  private leftoversGone(): Promise<void> {
+    if (this.runner.leftovers() === null) return Promise.resolve();
+    return new Promise((resolve) => {
+      const ref = effect(
+        () => {
+          if (this.runner.leftovers() !== null) return;
+          untracked(() => {
+            ref.destroy();
+            resolve();
+          });
+        },
+        { injector: this.injector },
+      );
+    });
+  }
+
+  /** Closing the lock makes the run store forget the build's runs; keep what they showed. */
+  private freeze(): void {
+    const next: Record<string, RunSnapshot> = { ...this.frozen() };
+    for (const e of this.log()) next[e.id] ??= this.snapOf(e.id);
+    this.frozen.set(next);
   }
 
   /** The review run the build just finished: its findings come from the change's review document, or from the closing text of its transcript when it has none. */

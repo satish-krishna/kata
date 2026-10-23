@@ -63,6 +63,7 @@ async function changePage(change: string, stage: ChangeInfo['stage'] | null, sta
     providers: [
       provideRouter([]),
       ChangePageViewModel,
+      BuildPageViewModel,
       RunPreviewViewModel,
       { provide: KataTransport, useValue: transport },
       { provide: ActivatedRoute, useValue: { paramMap: new BehaviorSubject(convertToParamMap({ system: 'claims', change })).asObservable() } },

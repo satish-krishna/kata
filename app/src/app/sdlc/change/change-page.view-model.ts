@@ -26,7 +26,7 @@ import type { Problem } from '@bindings/Problem';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ChangesContext } from '../changes/changes-view.view-model';
-import type { BuildContext } from '../build/build-page.view-model';
+import { BuildPageViewModel, type BuildContext } from '../build/build-page.view-model';
 import type { BuildDialogMode, BuildStartRequest } from '../../ui/build-dialog';
 import type { RunSpec } from '@bindings/RunSpec';
 import { GivenStore, type BuildChoices } from '../../core/given/given.store';
@@ -179,6 +179,8 @@ export class ChangePageViewModel {
   private readonly givens = inject(GivenStore);
   private readonly runs = inject(RunStore);
   private readonly runner = inject(SdlcRunner);
+  /** The build, which lives as long as this page: it starts here and the page shows it. */
+  private readonly build = inject(BuildPageViewModel);
   private readonly modes = inject(ModeStore);
   private readonly toasts = inject(ToastStore);
   private readonly router = inject(Router);
@@ -491,8 +493,8 @@ export class ChangePageViewModel {
     const left = this.pendingLeftovers();
     return left === null ? null : { lines: left.flatMap((r) => r.files.map((f) => `${r.repo}: ${f}`)) };
   });
-  /** What the build view (T45) starts from; set when a build is prepared and ready. */
-  readonly handoff = signal<BuildHandoff | null>(null);
+  /** What the build on show started from; null while the change is on show, even though the build goes on. */
+  readonly handoff = computed(() => (this.build.started() && this.build.viewing() ? this.build.current() : null));
   /** What the build view runs against: the workspace, the system and the change; null until the workspace is known. */
   readonly buildContext = computed<BuildContext | null>(() => {
     const w = this.current();
@@ -503,9 +505,9 @@ export class ChangePageViewModel {
     const systemRepos = (scan?.marker?.systems[system]?.repos ?? []).filter((r) => r !== master);
     return { workspaceId: w.id, folder: w.folder, system, change: this.changeName(), systemRepos };
   });
-  /** The build view was closed: forget the handoff and read the change again. */
+  /** The engineer went back from the build to the change: read the change again. */
   async closeBuild(): Promise<void> {
-    this.handoff.set(null);
+    this.build.backToChange();
     await this.load();
   }
   /** What the preview asked for, kept so confirming the leftovers prepares the same build again. */
@@ -1057,16 +1059,24 @@ export class ChangePageViewModel {
       case 'needs-confirm':
         this.pendingLeftovers.set(out.leftovers);
         return;
-      case 'ready':
+      case 'ready': {
         this.asked = null;
-        this.handoff.set({
-          start: out.start,
-          timeoutSecs: asked.timeoutSecs,
-          round: asked.instructions !== null && asked.repo !== null ? { instructions: asked.instructions, repo: asked.repo } : null,
-          checksDir,
-          choices: this.askedChoices,
-          continueOnLeftovers: confirmedRepos,
-        });
+        const context = this.buildContext();
+        if (context === null) return;
+        const started = await this.build.start(
+          {
+            start: out.start,
+            timeoutSecs: asked.timeoutSecs,
+            round: asked.instructions !== null && asked.repo !== null ? { instructions: asked.instructions, repo: asked.repo } : null,
+            checksDir,
+            choices: this.askedChoices,
+            continueOnLeftovers: confirmedRepos,
+          },
+          context,
+        );
+        if (started) this.picked.set('build');
+        return;
+      }
     }
   }
 

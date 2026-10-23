@@ -12,6 +12,7 @@ import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
 import { actionsFor, safetyRules } from '../../lib/sdlc';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
+import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
 
 const FNOL = '2026-10-12-fnol-photo-upload';
@@ -26,6 +27,7 @@ function setup(change = FNOL, transport = new MockTransport(), preview: 'confirm
     providers: [
       provideRouter([]),
       ChangePageViewModel,
+      BuildPageViewModel,
       RunPreviewViewModel,
       { provide: KataTransport, useValue: transport },
       { provide: ActivatedRoute, useValue: { paramMap: params.asObservable() } },
@@ -44,6 +46,14 @@ const ready = async (vm: ChangePageViewModel) => {
   await vi.waitFor(() => {
     TestBed.tick();
     expect(vm.state()).not.toBe('loading');
+  });
+};
+/** The build the page started keeps running after the engineer goes back to the change; stop it and wait for the page to give the lock back. */
+const settleBuild = async () => {
+  TestBed.inject(BuildPageViewModel).cancelBuild();
+  await vi.waitFor(() => {
+    TestBed.tick();
+    expect(TestBed.inject(LockStore).active()).toBeNull();
   });
 };
 const withStage = (transport: MockTransport, name: string, stage: ChangeInfo['stage'], extra: Partial<ChangeInfo> = {}) => {
@@ -598,6 +608,7 @@ describe('ChangePageViewModel', () => {
       await vm.confirmLeftovers();
       expect(vm.handoff()!.continueOnLeftovers).toEqual(['claims-core']);
       await vm.closeBuild();
+      await settleBuild();
       await vm.submitBuild(REQUEST);
       expect(vm.handoff()!.continueOnLeftovers).toEqual([]);
     });
@@ -613,6 +624,7 @@ describe('ChangePageViewModel', () => {
         await vm.submitBuild({ timeoutSecs: 14400, instructions: 'tidy up', repo });
         expect(prepare).toHaveBeenLastCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false, repo, 'round');
         await vm.closeBuild();
+        await settleBuild();
       }
     });
 

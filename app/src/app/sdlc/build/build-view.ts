@@ -1,31 +1,34 @@
 import { NgTemplateOutlet } from '@angular/common';
-import { Component, ElementRef, Injector, afterNextRender, effect, inject, input, output, untracked, viewChild } from '@angular/core';
+import { Component, ElementRef, Injector, type Provider, type Type, afterNextRender, effect, inject, output, untracked, viewChild } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideChevronDown, lucideChevronRight, lucidePanelLeftClose, lucidePanelLeftOpen, lucidePanelTopClose, lucidePanelTopOpen } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmResizableImports } from '@spartan-ng/helm/resizable';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
-import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { BuildRefusalDialog } from '../../ui/build-refusal-dialog';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
 import { FindingsList } from '../../ui/findings-list';
 import { ObservePane } from '../../ui/observe-pane';
-import { RunPreviewDialog } from '../../ui/run-preview-dialog';
 import { RepoStatusList } from '../../ui/repo-status-list';
 import { WaitingNotice } from '../../ui/waiting-notice';
-import type { BuildHandoff } from '../change/change-page.view-model';
 import { ChangesView } from '../changes/changes-view';
-import { BuildPageViewModel, type BuildContext } from './build-page.view-model';
+import { BuildPageViewModel } from './build-page.view-model';
+
+/** The instance of a view model the change page provides, so the view shows the build the page owns instead of making its own. */
+const fromChangePage = <T>(token: Type<T>): Provider[] => [{ provide: token, useFactory: () => inject(token, { skipSelf: true }) }];
 
 /* The build, in the page's main region: a row per repository on the left, and on the right two views of the same build,
  * Activity (the runs of the repository picked, each in its own observe pane) and Changes (what the agents changed so far).
  * Both stay mounted for the whole build; the one not shown is hidden, so nothing is read again or lost by switching.
- * It takes the lock when it opens and gives it back when the engineer closes it. */
+ * The build and its driver belong to the change page: this view only shows them, and leaving it touches neither the lock nor the driver. */
 @Component({
   selector: 'app-build-view',
   host: { class: 'contents' },
-  providers: [BuildPageViewModel, RunPreviewViewModel, provideIcons({ lucideChevronDown, lucideChevronRight, lucidePanelLeftClose, lucidePanelLeftOpen, lucidePanelTopClose, lucidePanelTopOpen })],
-  imports: [HlmButtonImports, HlmResizableImports, NgIcon, NgTemplateOutlet, BuildRefusalDialog, ConfirmDialog, HlmTabsImports, ObservePane, RunPreviewDialog, RepoStatusList, FindingsList, WaitingNotice, ChangesView],
+  providers: [
+    ...fromChangePage(BuildPageViewModel),
+    provideIcons({ lucideChevronDown, lucideChevronRight, lucidePanelLeftClose, lucidePanelLeftOpen, lucidePanelTopClose, lucidePanelTopOpen }),
+  ],
+  imports: [HlmButtonImports, HlmResizableImports, NgIcon, NgTemplateOutlet, BuildRefusalDialog, ConfirmDialog, HlmTabsImports, ObservePane, RepoStatusList, FindingsList, WaitingNotice, ChangesView],
   templateUrl: './build-view.html',
   styleUrl: './build-view.css',
 })
@@ -36,22 +39,10 @@ export class BuildView {
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
 
-  readonly handoff = input.required<BuildHandoff>();
-  readonly context = input.required<BuildContext>();
-  /** The lock is released, or the build could not take it: the page goes back to the change. */
+  /** The engineer went back to the change: the page reads it again. */
   readonly closed = output<void>();
 
   constructor() {
-    // The build starts once, from the first handoff; the view model ignores a later change of the same inputs.
-    effect(() => {
-      const handoff = this.handoff();
-      const context = this.context();
-      untracked(() =>
-        void this.vm.start(handoff, context).then((started) => {
-          if (!started) this.closed.emit();
-        }),
-      );
-    });
     // "Go to <repo>" is asked of the view model; the DOM half (scroll and focus) waits until the panel is shown.
     effect(() => {
       const request = this.vm.focusRequest();
@@ -69,7 +60,8 @@ export class BuildView {
     card.querySelector<HTMLElement>('button:not([disabled]), input, textarea, select, [tabindex="0"]')?.focus();
   }
 
-  protected async close(): Promise<void> {
-    if (await this.vm.close()) this.closed.emit();
+  protected back(): void {
+    this.vm.backToChange();
+    this.closed.emit();
   }
 }
