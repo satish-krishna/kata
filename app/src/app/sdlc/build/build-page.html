@@ -111,7 +111,7 @@
           <p class="k-state__body">{{ note }}</p>
         }
         @for (s of view().sessions; track s.id) {
-          <div class="k-bp__session" [attr.data-session]="s.id" [hidden]="view().findings !== null && view().pick?.kind === 'review'">
+          <div class="k-bp__session" [attr.data-session]="s.id" [hidden]="s.shown === false || (view().findings !== null && view().pick?.kind === 'review')">
             @if (s.latest) {
               <div class="k-bp__run-start">Started <span class="k-mono">{{ s.startedAt }}</span></div>
             } @else {

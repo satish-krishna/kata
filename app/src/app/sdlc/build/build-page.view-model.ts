@@ -282,6 +282,8 @@ export class BuildPageViewModel {
   /** The final state of each run the lock forgot when the page was released, by run id: the runs stay on show after that. */
   private readonly frozen = signal<Readonly<Record<string, RunSnapshot>>>({});
   private readonly status = signal<BuildStatus | null>(null);
+  /** Whether any repository the page lists has changed files, as the Changes view lists them. */
+  private readonly changedFiles = signal(false);
   private readonly log = signal<Entry[]>([]);
   private readonly clocks = signal<Readonly<Record<string, Clock>>>({});
   private readonly reviews = signal<Review[]>([]);
@@ -576,7 +578,7 @@ export class BuildPageViewModel {
     this.ctx = input.ctx;
     this.status.set(input.status);
     this.reviewDoc.set(input.review);
-    await this.readSessions();
+    await Promise.all([this.readSessions(), this.readChanges()]);
     if (this.latest(REVIEW) !== null) return;
     // No review run in this session: the findings come from the review document, or from the latest review run's words.
     await this.noteReviewNotice(input.review);
@@ -709,6 +711,21 @@ export class BuildPageViewModel {
     });
   });
 
+  /**
+   * Every pane the page keeps mounted, in a stable order: the sessions of the pick, shown, and every other live run, hidden, so a
+   * pick never removes a live pane. An ended session mounts only while it is picked; it holds nothing a remount would lose.
+   */
+  private readonly mountedSessions = computed<ShownSession[]>(() => {
+    const shown = new Map(this.shownSessions().map((s) => [s.id, s] as const));
+    const out: ShownSession[] = [];
+    for (const [id, session] of this.sessionById()) {
+      const on = shown.get(id);
+      if (on !== undefined) out.push({ ...on, shown: true });
+      else if (session.live) out.push({ ...session, latest: true, shown: false });
+    }
+    return out;
+  });
+
   /** Said above the sessions of a task the build cannot tell the session of. */
   readonly sessionNote = computed<string | null>(() => {
     const pick = this.pick();
@@ -777,7 +794,7 @@ export class BuildPageViewModel {
     const entry = this.reviewEntry();
     const pickedRepo = pick?.kind === 'repo' ? pick.repo : pick?.kind === 'task' ? this.status()?.tasks.find((t) => t.id === pick.task)?.repo : undefined;
     const hasSessions = [...this.sessionRefs().values()].some((refs) => refs.length > 0);
-    const hasChanges = hasSessions || (this.status()?.tasks.some((t) => t.row !== null) ?? false);
+    const hasChanges = this.changedFiles();
     const findings = this.reviewFindingsView(stage);
     return {
       stage,
@@ -799,7 +816,7 @@ export class BuildPageViewModel {
       })),
       review: { status: reviewStatus(entry), action: repoAction({ kind: 'idle' }, REVIEW, review), picked: pick?.kind === 'review' },
       pick,
-      sessions: this.shownSessions(),
+      sessions: this.mountedSessions(),
       sessionNote: this.sessionNote(),
       stops: areas.flatMap((g) => (g.situation.kind === 'stopped' ? [{ repo: g.repo, reason: g.situation.reason ?? 'Stopped' }] : [])),
       findings,
@@ -1223,8 +1240,23 @@ export class BuildPageViewModel {
     return this.transport.sdlcBuildHeads(ctx.folder, [this.handoff!.start.master.repo, ...this.productRepos], ctx.change);
   }
 
+  /** Read whether any repository has changed files, the way the Changes view lists them; a failed read counts as none. */
+  private async readChanges(): Promise<void> {
+    const ctx = this.ctx;
+    const master = this.masterRef();
+    if (ctx === null || master === null) return;
+    try {
+      const repos = await this.transport.sdlcChangeRepos(ctx.folder, master.repo, ctx.system, ctx.change);
+      const lists = await Promise.all(repos.map((r) => this.transport.sdlcDiffFiles(r.path, 'whole').then((l) => l.files.length > 0, () => false)));
+      this.changedFiles.set(lists.some(Boolean));
+    } catch {
+      this.changedFiles.set(false);
+    }
+  }
+
   private async refresh(): Promise<void> {
     if (this.masterRef() === null || this.ctx === null) return;
+    void this.readChanges();
     try {
       this.status.set(await this.readStatus());
     } catch (e) {
