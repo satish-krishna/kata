@@ -586,6 +586,12 @@ const BUILD_PREVIEWS: Record<BuildPreviewKind, BuildPreviewPlan> = {
   "manual-review": { asksTimeLimit: false, asksRound: false, sections: "review", appliesTo: "this-review", limitSource: "kata" },
 };
 
+/** Whether a run of this kind is a build run (a repository's run, a round, or a review): it keeps the project's hooks on. */
+export function isBuildRun(kind: SdlcKind | BuildPreviewKind): boolean {
+  void kind;
+  return false;
+}
+
 export function buildPreviewFor(kind: BuildPreviewKind): BuildPreviewPlan {
   return { ...BUILD_PREVIEWS[kind] };
 }

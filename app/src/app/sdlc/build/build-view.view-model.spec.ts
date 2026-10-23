@@ -11,7 +11,7 @@ import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, type KindGroup, type PresetRow } from '../../lib/given';
-import { safetyRules } from '../../lib/sdlc';
+import { safetyRules, specFor, type BuildRun } from '../../lib/sdlc';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import type { BuildHandoff } from '../change/change-page.view-model';
 import { BuildViewModel, type BuildContext } from './build-view.view-model';
@@ -1006,6 +1006,55 @@ describe('the build\'s choices in the build view', () => {
     // Switching claims-core's project tool server off reaches claims-core's run and not customer-portal's.
     expect(given('claims-core').tool_servers).toEqual([GITHUB, 'project:tool-server:claims-core-db']);
     expect(given('customer-portal').tool_servers).toEqual([GITHUB]);
+  });
+
+  it('a build preview lists each repository\'s project hooks locked and applies its tool servers per repository (R11.5)', async () => {
+    const { vm, transport, runner, preview } = setup(new MockTransport(), 'real');
+    const settings = await transport.sdlcSettings();
+    const sectionOf = (repo: string) => {
+      const run: BuildRun = {
+        target: { repo },
+        timeoutSecs: 5400,
+        instructions: null,
+        workspaceFolder: FOLDER,
+        masterRepo: MOCK_MASTER,
+        systemRepos: ['claims-core', 'customer-portal'],
+        checksDir: '/checks',
+        continueOnLeftovers: false,
+      };
+      const spec = specFor('build', null, { folder: FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE }, settings, [], run);
+      return { title: repo, repo, spec, workdir: spec.workdir };
+    };
+    const opened = preview.openBuild({
+      title: 'Start build',
+      kind: 'start',
+      sections: [sectionOf('claims-core'), sectionOf('customer-portal')],
+      from: { session: new Set(), job: null, build: null },
+      limitSecs: 5400,
+    });
+    await previewReady(preview);
+    for (const title of ['claims-core', 'customer-portal']) {
+      const rows = flat(preview.sections()!.find((s) => s.title === title)!.groups);
+      const hooks = rows.filter((r) => r.item.kind === 'hook');
+      expect(hooks.length).toBeGreaterThan(0);
+      for (const hook of hooks) expect(hook.locked).toMatchObject({ kind: 'build' });
+      expect(rows.some((r) => r.item.id === `project:tool-server:${title}-db`)).toBe(true);
+      expect(rows.some((r) => r.item.id === `project:tool-server:${title === 'claims-core' ? 'customer-portal' : 'claims-core'}-db`)).toBe(false);
+    }
+
+    preview.toggle(dbKey('claims-core'), true);
+    preview.start();
+    const result = (await opened)!;
+    expect(result.off).toEqual(new Set([dbKey('claims-core')]));
+
+    const run = stopFirstTwo(runner);
+    await vm.start(await handoffFor(transport, { choices: { off: result.off } }), CTX);
+    await advance(500);
+    const given = (repo: string) => run.mock.calls.map(([, spec]) => spec).find((s) => s.workdir === `${FOLDER}/${repo}`)!.given!;
+    expect(given('claims-core').tool_servers).toEqual(['project:tool-server:claims-core-db']);
+    expect(given('customer-portal').tool_servers).toEqual([]);
+    // The kind of run is kept beside the build's choices.
+    expect(given('claims-core')).toMatchObject({ build: true, required_plugins: ['ai-sdlc'], hooks: [] });
   });
 
   it('the review section lists the master repository\'s project items (R11.3)', async () => {

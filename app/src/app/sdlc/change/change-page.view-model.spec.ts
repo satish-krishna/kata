@@ -9,7 +9,7 @@ import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
-import { givenKey, type KindGroup, type PresetRow } from '../../lib/given';
+import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
 import { actionsFor, safetyRules } from '../../lib/sdlc';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { ChangePageViewModel } from './change-page.view-model';
@@ -419,6 +419,35 @@ describe('ChangePageViewModel', () => {
       preview.cancel();
       await planRun;
       expect(runAgent).toHaveBeenCalledTimes(1);
+      for (const write of writes) expect(write).not.toHaveBeenCalled();
+    });
+
+    it("a plan run's preview starts from the spec run's switched-off project hook", async () => {
+      const transport = new MockTransport();
+      const { vm, runAgent, preview } = setup(FNOL, transport, 'real');
+      await ready(vm);
+      const writes = [vi.spyOn(transport, 'saveSpec'), vi.spyOn(transport, 'saveKata'), vi.spyOn(transport, 'savePreset'), vi.spyOn(transport, 'sdlcSaveSettings'), vi.spyOn(transport, 'sdlcSaveWorkspaces')];
+      const hook = () => previewRows(preview).find((r) => r.item.id === 'project:hook:PostToolUse:Write|Edit:8c1f77e2d3a40b95')!;
+      const sdlcPlugin = () => previewRows(preview).find((r) => r.item.id === 'personal:plugin:ai-sdlc@ai-sdlc')!;
+
+      const specRun = vm.act('start-spec');
+      await previewReady(preview);
+      // Not a build run, so a project hook can be switched off; the ai-sdlc plugin is locked on for every AI-SDLC run.
+      expect(hook().locked).toBeNull();
+      expect(sdlcPlugin().locked).toMatchObject({ kind: 'required' });
+      expect(hook().off).toBe(false);
+      preview.toggle(hook().key, true);
+      preview.start();
+      await specRun;
+      expect((runAgent.mock.calls[0][1] as RunSpec).given).toMatchObject({ hooks: [hook().item.id], required_plugins: ['ai-sdlc'], build: false });
+
+      const planRun = vm.act('start-plan');
+      await previewReady(preview);
+      expect(hook()).toMatchObject({ off: true, mark: 'kept' });
+      expect(markLabel(hook().mark)).toBe('kept from an earlier run');
+      expect(sdlcPlugin().locked).toMatchObject({ kind: 'required' });
+      preview.cancel();
+      await planRun;
       for (const write of writes) expect(write).not.toHaveBeenCalled();
     });
 

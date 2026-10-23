@@ -4,7 +4,8 @@ import type { LockReason } from '@bindings/LockReason';
 import type { Resolved } from '@bindings/Resolved';
 import type { ResolvedItem } from '@bindings/ResolvedItem';
 import type { Source } from '@bindings/Source';
-import { groupRows, givenKey, presetRows, settingSourceLabel, toGiven, toggle, type PresetFrom, type PresetRow } from './given';
+import { runGivenFixture } from './library';
+import { groupRows, givenKey, presetRows, modeOf, settingSourceLabel, toGiven, toggle, type PresetFrom, type PresetRow } from './given';
 
 const WORKDIR = 'D:\\ws\\claims\\';
 const KATA_LOCK: LockReason = { kind: 'kata', text: 'the run needs it to ask you questions' };
@@ -215,5 +216,15 @@ describe('settingSourceLabel', () => {
     expect(settingSourceLabel('organization', 'workbench')).toBe('your organization');
     expect(settingSourceLabel('claude-default', 'workbench')).toBe("Claude's default");
     expect(settingSourceLabel('claude-report', 'workbench')).toBe('reported by Claude');
+  });
+});
+
+describe('modeOf', () => {
+  const { type: _type, ...recorded } = runGivenFixture;
+  it("modeOf reads the record's options", () => {
+    expect(modeOf({ ...recorded, options: { required_plugins: ['ai-sdlc'], build: true } })).toBe('sdlc');
+    expect(modeOf({ ...recorded, options: { required_plugins: ['ai-sdlc'], build: false } })).toBe('sdlc');
+    expect(modeOf({ ...recorded, options: { required_plugins: [], build: false } })).toBe('workbench');
+    expect(modeOf(recorded)).toBe('workbench');
   });
 });

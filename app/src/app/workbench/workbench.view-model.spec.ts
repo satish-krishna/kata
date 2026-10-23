@@ -26,7 +26,7 @@ class FakeTransport {
   submitDecision = vi.fn(() => Promise.resolve());
   catalog = vi.fn(() => Promise.resolve(seedCatalog));
   listPresets = vi.fn(() => Promise.resolve([]));
-  validateSpec = vi.fn(() => Promise.resolve([] as string[]));
+  validateSpec = vi.fn((_spec: RunSpec) => Promise.resolve([] as string[]));
   loadSpec = vi.fn();
   saveSpec = vi.fn(() => Promise.resolve());
   saveKata = vi.fn((_spec: RunSpec) => Promise.resolve());
@@ -198,6 +198,33 @@ it('blocks a run and shows errors when validation fails', async () => {
   await vm.run();
   expect(vm.valid()).toBe(false);
   expect(fake.runSpec).not.toHaveBeenCalled();
+});
+
+it('a saved job listing a locked item can still be run, with the warning', async () => {
+  const { vm, fake } = setup();
+  const KATA_ASK = 'kata:tool-server:kata-ask';
+  // The engine refuses a Kata entry in a job's given section.
+  fake.validateSpec.mockImplementation((s: RunSpec) =>
+    Promise.resolve(s.given?.tool_servers.includes(KATA_ASK) ? [`${KATA_ASK}: Kata's own items cannot be switched off`] : []),
+  );
+  const given = { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [KATA_ASK] };
+  TestBed.inject(LaunchStore).set({ spec: { ...seedSpec(), given }, autorun: false });
+  await vm.init(false);
+  await vi.waitFor(() => expect(fake.validateSpec).toHaveBeenCalled());
+  await settle();
+  expect(vm.errors()).toEqual([]);
+  expect(vm.valid()).toBe(true);
+  for (const [s] of fake.validateSpec.mock.calls) expect(s.given?.tool_servers ?? []).not.toContain(KATA_ASK);
+  // The job itself is unchanged until the engineer saves.
+  expect(vm.spec().given?.tool_servers).toEqual([KATA_ASK]);
+
+  const run = vm.run();
+  await confirmReady(vm);
+  expect(vm.preview.warnings().join(' ')).toContain('kata-ask');
+  vm.preview.start();
+  await run;
+  expect(fake.runSpec).toHaveBeenCalledTimes(1);
+  expect((fake.runSpec.mock.calls[0] as unknown[])[0]).toMatchObject({ given: { tool_servers: [] } });
 });
 
 it('guards New behind a discard confirm only when dirty, and discards on confirm', async () => {

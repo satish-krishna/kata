@@ -10,6 +10,7 @@ import type { Resolved } from '@bindings/Resolved';
 import type { ResolvedItem } from '@bindings/ResolvedItem';
 import type { SettingSource } from '@bindings/SettingSource';
 import type { Source } from '@bindings/Source';
+import type { RunGiven } from './events';
 
 export type PresetFrom = {
   workdir: string;
@@ -224,4 +225,10 @@ export function recordedRows(items: readonly GivenItem[]): PresetRow[] {
     rows.push({ item, key: i.id, off: i.off, locked: item.lock, mark: null });
   }
   return rows;
+}
+
+/** The mode a recorded run was made in: AI-SDLC when its options name a required plugin. */
+export function modeOf(given: RunGiven): Mode {
+  void given;
+  return 'workbench';
 }

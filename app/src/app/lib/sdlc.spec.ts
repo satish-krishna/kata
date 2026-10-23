@@ -5,7 +5,7 @@ import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
 import type { KataEvent, RunDetail } from "./events";
 import { validateLocal } from "./mock";
-import { DONE_LABEL, actionLabel, buildPreviewFor, givenFor, safetyRules, actionsFor, actionsForChange, hasAiSdlcPlugin, primaryAction, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type BuildRun, type RunContext, type StageAction } from "./sdlc";
+import { DONE_LABEL, actionLabel, buildPreviewFor, givenFor, safetyRules, actionsFor, actionsForChange, hasAiSdlcPlugin, isBuildRun, primaryAction, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type BuildRun, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -501,5 +501,55 @@ describe("what a build's preview asks and which runs its choices reach", () => {
       tool_servers: ["personal:tool-server:github", "project:tool-server:claims-core-db"],
     });
     expect(givenFor(new Set(), "D:/ws/claims-core")).toEqual({ hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] });
+  });
+});
+
+describe("what kind of run a spec is", () => {
+  const buildRun = (target: BuildRun["target"]): BuildRun => ({
+    target,
+    timeoutSecs: 7200,
+    instructions: null,
+    workspaceFolder: "/home/u/ws",
+    masterRepo: "master",
+    systemRepos: ["master", "app"],
+    checksDir: "/home/u/.kata/checks/claims",
+    continueOnLeftovers: false,
+  });
+
+  it("every AI-SDLC spec requires the ai-sdlc plugin", () => {
+    const notBuilds = [
+      specFor("setup", null, { folder: "/ws", system: "", change: null }, bypass, both),
+      specFor("context", null, { ...ctx, change: null, repos: ["a"] }, bypass, both),
+      specFor("intent", null, { ...ctx, change: null, idea: "x" }, bypass, both),
+      specFor("spec", "start-spec", ctx, bypass, both),
+      specFor("plan", "start-plan", ctx, bypass, both),
+      specFor("plan", "start-plan", ctx, prompt, both),
+    ];
+    for (const s of notBuilds) {
+      expect(s.given?.required_plugins).toEqual(["ai-sdlc"]);
+      expect(s.given?.build).toBe(false);
+      expect(s.given).toMatchObject({ hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] });
+    }
+    // A repository's run and the review are build runs; the review a build starts by itself is built the same way.
+    for (const target of [{ repo: "app" }, "review" as const]) {
+      const s = specFor("build", null, ctx, bypass, both, buildRun(target));
+      expect(s.given?.required_plugins).toEqual(["ai-sdlc"]);
+      expect(s.given?.build).toBe(true);
+      expect(s.given?.hooks).toEqual([]);
+    }
+  });
+
+  it("isBuildRun decides every run kind", () => {
+    expect(isBuildRun("setup")).toBe(false);
+    expect(isBuildRun("context")).toBe(false);
+    expect(isBuildRun("intent")).toBe(false);
+    expect(isBuildRun("spec")).toBe(false);
+    expect(isBuildRun("plan")).toBe(false);
+    expect(isBuildRun("build")).toBe(true);
+    expect(isBuildRun("start")).toBe(true);
+    expect(isBuildRun("continue-all")).toBe(true);
+    expect(isBuildRun("continue-one")).toBe(true);
+    expect(isBuildRun("round")).toBe(true);
+    expect(isBuildRun("manual-review")).toBe(true);
   });
 });
