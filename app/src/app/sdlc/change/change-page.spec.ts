@@ -469,6 +469,24 @@ describe('ChangePage build page', () => {
     expect(container.querySelector('[data-testid="strip"]')).toBeNull();
   });
 
+  it('the Build tab ties changed files to their tasks and narrows them to a picked task', async () => {
+    const { container, fixture } = await mount(MOCK_BUILD_CHANGE, finished());
+    const files = () => area(container, 'files')!;
+    const tasksOf = (path: string) => files().querySelector(`[data-file="${path}"] [data-tasks]`)?.textContent?.trim();
+    await vi.waitFor(() => expect(files().querySelector('[data-file="src/attachments.rs"]')).not.toBeNull(), { timeout: TOKEN });
+    expect(tasksOf('src/attachments.rs')).toBe('T1');
+    fixture.debugElement.injector.get(BuildPageViewModel).choose({ kind: 'task', task: 'T1' });
+    await vi.waitFor(
+      () => {
+        TestBed.tick();
+        expect(files().querySelectorAll('app-repo-file-list [data-repo]')).toHaveLength(1);
+      },
+      { timeout: TOKEN },
+    );
+    expect(files().querySelector('[data-file="src/attachments.rs"]')).not.toBeNull();
+    expect(files().querySelector('[data-file="src/limits.rs"]')).toBeNull();
+  });
+
   it('continuing a stopped repository confirms the leftovers and runs on the same page', async () => {
     const { container, fixture, transport } = await mount(MOCK_BUILD_CHANGE);
     const runner = TestBed.inject(SdlcRunner);
