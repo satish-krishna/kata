@@ -4,6 +4,18 @@ Which ways of leaving an item out of a run actually work on a real Claude Code. 
 
 Rows marked 2.1.308 were run against Claude Code 2.1.308, rows marked 2.1.309 against 2.1.309 (haiku, bypass permissions, `--include-hook-events`, which the installed claude accepts). A row that did not hold is marked "unproven: ships locked", and the item kind it covers is locked in `SWITCHABLE` (T2).
 
+Which proof backs each `SWITCHABLE` row (`crates/kata-core/src/given/id.rs`):
+
+| `(kind, source)` | Proof |
+|---|---|
+| `(Skill, RunSpec)`, `(Plugin, RunSpec)`, `(Instruction, RunSpec)` | none needed: Kata builds these itself |
+| `(Plugin, Personal)`, `(Plugin, Project)`, `(Plugin, ProjectLocal)` | `proof_plugin_enabled_false` |
+| `(Instruction, Personal)`, `(Instruction, Project)`, `(Instruction, ProjectLocal)` | `proof_claude_md_excludes`, `proof_output_style_default` |
+| `(Hook, Project)`, `(Hook, ProjectLocal)` | `proof_combined_carry_over` (a build still locks them) |
+| `(ToolServer, Project)` | `proof_deny_mcp_server_in_settings` |
+| `(ToolServer, Personal)`, `(ToolServer, ProjectLocal)` | `proof_deny_personal_and_local_servers` |
+| `(Hook, Personal)`, `(Skill, Personal)`, `(Skill, Project)` | not switchable: ships locked |
+
 | Mechanism | Claude Code | Held | Observed |
 |---|---|---|---|
 | Hook, project source: drop `project` from `--setting-sources`, pass the rest in `--settings` | 2.1.308 | yes | Project hook A switched off, hook B of the same source kept (via `--settings`), local hooks kept: markers A absent, B, C, D present. Other project content passed in the file (`outputStyle`) took effect. Re-run on 2.1.309: held, same markers. |

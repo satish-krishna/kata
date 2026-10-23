@@ -97,13 +97,36 @@ pub fn lock_for(item: &ItemFacts, opts: &ResolveOptions) -> Option<LockReason> {
             plugin: plugin.clone(),
         });
     }
-    // Rows 6 and 7.
-    if super::SWITCHABLE.contains(&(item.kind, item.source)) {
-        None
-    } else {
+    let unswitchable = || {
         Some(LockReason::Unswitchable {
             text: text(REASON_UNSWITCHABLE),
         })
+    };
+    let project = matches!(item.source, Source::Project | Source::ProjectLocal);
+    match item.kind {
+        // Row 6.
+        ItemKind::Hook if item.source == Source::Personal => return unswitchable(),
+        // Row 7.
+        ItemKind::Hook if project && opts.build => {
+            return Some(LockReason::Build {
+                text: text(REASON_BUILD_HOOK),
+            })
+        }
+        // Row 8.
+        ItemKind::Skill if matches!(item.source, Source::Personal | Source::Project) => {
+            return unswitchable()
+        }
+        // Row 9.
+        ItemKind::Skill | ItemKind::Plugin if item.source == Source::RunSpec && item.shadowed => {
+            return unswitchable()
+        }
+        _ => {}
+    }
+    // Rows 10 and 11.
+    if super::SWITCHABLE.contains(&(item.kind, item.source)) {
+        None
+    } else {
+        unswitchable()
     }
 }
 

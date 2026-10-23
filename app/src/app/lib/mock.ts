@@ -211,6 +211,7 @@ export function previewFixture(spec: RunSpec): Resolved {
   const requiredLock: LockReason = { kind: "required", text: "AI-SDLC runs work through this plugin" };
   const kataLock: LockReason = { kind: "kata", text: "the run needs it to ask you questions" };
   const orgLock: LockReason = { kind: "organization", text: "set by your organization" };
+  const buildLock: LockReason | null = spec.given?.build ? { kind: "build", text: "a build keeps the project's hooks, which may guard what it edits" } : null;
   const make = (kind: ItemKind, source: Source, key: string, name: string, detail: string, extra: Partial<ResolvedItem> = {}): ResolvedItem => ({
     id: `${source}:${kind}:${key}`, kind, source, name, detail, path: null, brought_by: null, lock: null, off: false, ...extra,
   });
@@ -225,7 +226,7 @@ export function previewFixture(spec: RunSpec): Resolved {
   };
   const items: ResolvedItem[] = [
     make("hook", "personal", "PreToolUse:Bash:5b5b1d0c9a2e4f10", "PreToolUse Bash", "node ~/.claude/hooks/guard.mjs", { lock: UNSWITCHABLE }),
-    make("hook", "project", "PostToolUse:Write|Edit:8c1f77e2d3a40b95", "PostToolUse Write|Edit", "npm run lint --silent", { lock: UNSWITCHABLE }),
+    make("hook", "project", "PostToolUse:Write|Edit:8c1f77e2d3a40b95", "PostToolUse Write|Edit", "npm run lint --silent", { lock: buildLock }),
     child("hook", "SessionStart:*:15b9f33b1f620354", "SessionStart *", "inject the using-superpowers skill", SUPERPOWERS, false),
     make("hook", "organization", "PreToolUse:*:2f6d0a91c7e85b34", "PreToolUse *", "audit every tool call", { lock: orgLock }),
     make("skill", "personal", "triage-flaky-test", "triage-flaky-test", "reproduce & isolate a flaky test", { path: "~/.claude/skills/triage-flaky-test", lock: UNSWITCHABLE }),

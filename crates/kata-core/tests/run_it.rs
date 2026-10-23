@@ -2171,6 +2171,21 @@ impl Rig {
                 &format!("---\nname: {name}\ndescription: does {name}\n---\nbody\n"),
             );
         }
+        // A flat plugin the kit picks. Unlike the kit skills, which are also
+        // personal skills on disk, it is not shadowed and can be switched off.
+        write_file(
+            &home.join(".claude/plugins/kit-plug/.claude-plugin/plugin.json"),
+            r#"{"name":"kit-plug","description":"the kit plugin"}"#,
+        );
+        write_file(
+            &home.join(".claude/plugins/kit-plug/skills/plug-skill/SKILL.md"),
+            "---
+name: plug-skill
+description: does it
+---
+body
+",
+        );
         let cache = td.path().join("cache/pers");
         write_file(
             &cache.join(".claude-plugin/plugin.json"),
@@ -2204,6 +2219,7 @@ impl Rig {
     fn spec(&self) -> RunSpec {
         let mut s = base_spec(&self.work.to_string_lossy());
         s.skills = vec!["kit-skill".into(), "kit-keep".into()];
+        s.plugins.insert("kit-plug".into(), Default::default());
         s
     }
 
@@ -2312,10 +2328,18 @@ fn each_kind_switched_off_is_kept_from_the_run_and_no_setup_file_changes() {
     let rig = Rig::new();
     let before = rig.snapshot();
 
-    // skill: a run-spec kit skill is left out of the assembled plugin folder.
+    // skill: a kit skill that is also a personal skill on disk is shadowed, so it
+    // is locked and stays given (T19 lifts this in the empty room).
     let mut spec = rig.spec();
     let id = rig.id(&spec, ItemKind::Skill, Source::RunSpec, "kit-skill");
-    spec.given = given_with(|g| g.skills.push(id));
+    spec.given = given_with(|g| g.skills.push(id.clone()));
+    let shadowed = rig.resolved(&spec);
+    let shadowed = shadowed.items.iter().find(|i| i.id == id).unwrap();
+    assert!(shadowed.lock.is_some() && !shadowed.off, "{shadowed:?}");
+    // kit plugin: not on disk elsewhere, so it is left out of the assembled folder.
+    let mut spec = rig.spec();
+    let id = rig.id(&spec, ItemKind::Plugin, Source::RunSpec, "kit-plug");
+    spec.given = given_with(|g| g.plugins.push(id));
     let seen = rig.run(&spec);
     let files = seen
         .plugin_files
@@ -2326,8 +2350,8 @@ fn each_kind_switched_off_is_kept_from_the_run_and_no_setup_file_changes() {
         "{files:?}"
     );
     assert!(
-        !files.iter().any(|f| f.contains("kit-skill")),
-        "the switched-off skill reached the plugin dir: {files:?}"
+        !files.iter().any(|f| f.contains("plug-skill")),
+        "the switched-off kit plugin reached the plugin dir: {files:?}"
     );
     assert!(!seen.has("--setting-sources"));
     assert_eq!(rig.snapshot(), before, "skill row changed a setup file");
@@ -2444,11 +2468,11 @@ fn switching_items_off_leaves_the_posture_flags_unchanged() {
     plain.permissions.allow.push("Read(*)".into());
     let mut off = plain.clone();
     let hook = rig.hook_id(&off);
-    let skill = rig.id(&off, ItemKind::Skill, Source::RunSpec, "kit-skill");
+    let skill = rig.id(&off, ItemKind::Plugin, Source::RunSpec, "kit-plug");
     let server = rig.id(&off, ItemKind::ToolServer, Source::Project, "srv-a");
     off.given = given_with(|g| {
         g.hooks.push(hook);
-        g.skills.push(skill);
+        g.plugins.push(skill);
         g.tool_servers.push(server);
     });
 
@@ -2456,12 +2480,18 @@ fn switching_items_off_leaves_the_posture_flags_unchanged() {
     let b = rig.run(&off);
     // The switches did something...
     assert!(b.has("--strict-mcp-config") && !a.has("--strict-mcp-config"));
+    assert!(a
+        .plugin_files
+        .as_ref()
+        .unwrap()
+        .iter()
+        .any(|f| f.contains("plug-skill")));
     assert!(!b
         .plugin_files
         .as_ref()
         .unwrap()
         .iter()
-        .any(|f| f.contains("kit-skill")));
+        .any(|f| f.contains("plug-skill")));
     // ...and the posture did not move.
     assert_eq!(a.value("--permission-mode"), Some("auto"));
     assert_eq!(b.value("--permission-mode"), Some("auto"));

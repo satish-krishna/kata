@@ -45,22 +45,29 @@ pub struct ItemRef {
 }
 
 /// The `(kind, source)` pairs a run can switch off, as proven in
-/// `docs/switch-proofs.md`. Hooks and skills on disk are locked because of that
-/// document's findings (dropping a settings source also drops its instructions,
-/// skills, tool servers and plugins; a deny rule refuses a skill without removing
-/// it). `Organization` and `Kata` never appear.
+/// `docs/switch-proofs.md`. A personal hook and the skills on disk stay out
+/// (a personal hook cannot be re-supplied without editing the setup; a deny rule
+/// refuses a skill without removing it). `Organization` and `Kata` never appear.
+/// A project hook is listed here and locked only in a build run (the lock table).
 pub const SWITCHABLE: &[(ItemKind, Source)] = &[
     // Always: Kata builds these itself, so leaving one out needs no proof.
     (ItemKind::Skill, Source::RunSpec),
     (ItemKind::Plugin, Source::RunSpec),
     (ItemKind::Instruction, Source::RunSpec),
-    // Held in docs/switch-proofs.md.
+    // Proof: proof_plugin_enabled_false (and proof_resupply_user_plugins for
+    // the personal source).
     (ItemKind::Plugin, Source::Personal),
     (ItemKind::Plugin, Source::Project),
     (ItemKind::Plugin, Source::ProjectLocal),
+    // Proof: proof_claude_md_excludes and proof_output_style_default.
     (ItemKind::Instruction, Source::Personal),
     (ItemKind::Instruction, Source::Project),
     (ItemKind::Instruction, Source::ProjectLocal),
+    // Proof: proof_combined_carry_over.
+    (ItemKind::Hook, Source::Project),
+    (ItemKind::Hook, Source::ProjectLocal),
+    // Proof: proof_deny_mcp_server_in_settings (project) and
+    // proof_deny_personal_and_local_servers (personal, local).
     (ItemKind::ToolServer, Source::Personal),
     (ItemKind::ToolServer, Source::Project),
     (ItemKind::ToolServer, Source::ProjectLocal),

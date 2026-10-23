@@ -239,9 +239,14 @@ impl Collector {
             {
                 continue;
             }
-            let Some(source) = install_source(rec, workdir) else {
+            let Some(mut source) = install_source(rec, workdir) else {
                 continue;
             };
+            // A plugin the organization enables is the organization's, whatever
+            // scope it was installed in.
+            if enabled.get(&rec.key).map(|(_, layer)| *layer) == Some(Source::Organization) {
+                source = Source::Organization;
+            }
             done.push(&rec.key);
             let Some(manifest) = plugin_manifest(&rec.install_path) else {
                 self.problems.push(format!(
@@ -298,13 +303,24 @@ impl Collector {
                 match r.kind {
                     EntryKind::Skill => {
                         if let Some(e) = entry {
-                            self.items.push(skill_item(e, Source::RunSpec, None, false));
+                            let mut it = skill_item(e, Source::RunSpec, None, false);
+                            it.shadowed = self.items.iter().any(|i| {
+                                i.kind == ItemKind::Skill
+                                    && matches!(i.source, Source::Personal | Source::Project)
+                                    && i.name == e.name
+                            });
+                            self.items.push(it);
                         }
                     }
                     EntryKind::Plugin => {
                         let mut it = item(ItemKind::Plugin, Source::RunSpec, &r.name, &r.name);
                         it.detail = entry.map(|e| e.description.clone()).unwrap_or_default();
                         it.path = Some(r.path.clone());
+                        it.shadowed = self.items.iter().any(|i| {
+                            i.kind == ItemKind::Plugin
+                                && i.source != Source::RunSpec
+                                && i.name == r.name
+                        });
                         let id = it.id.clone();
                         self.items.push(it);
                         self.plugin_parts(&r.path, &id, &r.name);
