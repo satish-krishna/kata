@@ -355,6 +355,7 @@ mod tests {
             path: None,
             brought_by: by.map(str::to_string),
             repo_relative: false,
+            shadowed: false,
         }
     }
 

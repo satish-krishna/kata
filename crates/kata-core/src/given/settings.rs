@@ -16,6 +16,8 @@ pub struct ItemFacts {
     pub path: Option<PathBuf>,
     pub brought_by: Option<String>,
     pub repo_relative: bool,
+    /// A run-spec skill or plugin whose name is also an item on disk.
+    pub shadowed: bool,
 }
 
 /// One settings file. `value` is `null` and `problem` is set when the file
@@ -209,6 +211,7 @@ pub(crate) fn hooks_in(
                     path: Some(path.to_path_buf()),
                     brought_by: brought_by.map(String::from),
                     repo_relative,
+                    shadowed: false,
                 });
             }
         }

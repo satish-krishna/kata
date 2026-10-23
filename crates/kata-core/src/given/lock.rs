@@ -28,6 +28,8 @@ pub enum LockReason {
     Required { text: String },
     /// Set by the organization's managed settings.
     Organization { text: String },
+    /// A build keeps the project's hooks.
+    Build { text: String },
     /// No mechanism switches this kind and source off for one run.
     Unswitchable { text: String },
     /// Brought by a plugin that is not required: no switch of its own, the row
@@ -42,6 +44,7 @@ impl LockReason {
             LockReason::Kata { text }
             | LockReason::Required { text }
             | LockReason::Organization { text }
+            | LockReason::Build { text }
             | LockReason::Unswitchable { text } => Some(text),
             LockReason::FollowsPlugin { .. } => None,
         }
@@ -119,6 +122,7 @@ mod tests {
             path: None,
             brought_by: brought_by.map(str::to_string),
             repo_relative: false,
+            shadowed: false,
         }
     }
 
@@ -130,24 +134,42 @@ mod tests {
     }
 
     #[test]
-    fn lock_for_decides_every_row_of_the_lock_table() {
+    fn lock_for_decides_every_row_of_the_r6_3_lock_table() {
         use ItemKind as K;
         use Source as S;
         let none = ResolveOptions::default();
+        let build = ResolveOptions {
+            build: true,
+            ..ResolveOptions::default()
+        };
+        let shadowed = |mut f: ItemFacts| {
+            f.shadowed = true;
+            f
+        };
         let kata = Some(LockReason::Kata {
             text: "the run needs it to ask you questions".into(),
         });
-
-        // Row 1: Kata's own tool server.
-        let r1 = facts(K::ToolServer, S::Kata, "kata-ask", None);
-        assert_eq!(lock_for(&r1, &none), kata);
-        // Row 2: Kata's standing note.
-        let r2 = facts(K::Instruction, S::Kata, "standing-note", None);
-        assert_eq!(lock_for(&r2, &none), kata);
-        // Row 3: the required plugin, installed and in the kit, and what it brings.
         let required = Some(LockReason::Required {
             text: "AI-SDLC runs work through this plugin".into(),
         });
+        let org = Some(LockReason::Organization {
+            text: "set by your organization".into(),
+        });
+        let unswitchable = Some(LockReason::Unswitchable {
+            text: "Kata cannot switch this off for one run without editing your setup".into(),
+        });
+        let build_hook = Some(LockReason::Build {
+            text: "a build keeps the project's hooks, which may guard what it edits".into(),
+        });
+
+        // Row 1 and the example "Kata's question tool".
+        let r1 = facts(K::ToolServer, S::Kata, "kata-ask", None);
+        assert_eq!(lock_for(&r1, &none), kata);
+        assert_eq!(lock_for(&r1, &build), kata);
+        // Row 2 and the example "Kata's standing note on how to ask".
+        let r2 = facts(K::Instruction, S::Kata, "standing-note", None);
+        assert_eq!(lock_for(&r2, &none), kata);
+        // Row 3 and the example "the ai-sdlc plugin, in AI-SDLC mode".
         let r3a = facts(K::Plugin, S::Personal, "ai-sdlc@mkt", None);
         assert_eq!(lock_for(&r3a, &sdlc()), required);
         let r3b = facts(K::Plugin, S::RunSpec, "ai-sdlc", None);
@@ -159,23 +181,20 @@ mod tests {
             Some("personal:plugin:ai-sdlc@mkt"),
         );
         assert_eq!(lock_for(&r3c, &sdlc()), required);
-        // Without the option the same plugin is an ordinary switchable item.
         assert_eq!(lock_for(&r3a, &none), None);
-        // A different plugin with a similar name is not the required one.
         let r3d = facts(K::Plugin, S::Personal, "ai-sdlc-extra@mkt", None);
         assert_eq!(lock_for(&r3d, &sdlc()), None);
-        // Row 3 beats row 4: a required plugin set by the organization.
+        // Row 3 beats row 4 and row 9.
         let r3e = facts(K::Plugin, S::Organization, "ai-sdlc@mkt", None);
         assert_eq!(lock_for(&r3e, &sdlc()), required);
-        // Row 4: anything the organization sets, whatever its kind.
-        let org = Some(LockReason::Organization {
-            text: "set by your organization".into(),
-        });
+        assert_eq!(lock_for(&shadowed(r3b.clone()), &sdlc()), required);
+        // Row 4 and the example "anything the organization's managed settings set".
         for kind in [K::Hook, K::Skill, K::Plugin, K::Instruction, K::ToolServer] {
             let r4 = facts(kind, S::Organization, "x", None);
             assert_eq!(lock_for(&r4, &none), org, "{kind:?}");
+            assert_eq!(lock_for(&r4, &build), org, "{kind:?} in a build");
         }
-        // Row 5: brought by another plugin; no switch of its own.
+        // Row 5: brought by another plugin; no switch of its own, no reason text.
         let plugin_id = "personal:plugin:other@mkt";
         let follows = Some(LockReason::FollowsPlugin {
             plugin: plugin_id.into(),
@@ -183,22 +202,76 @@ mod tests {
         for kind in [K::Hook, K::Skill, K::ToolServer] {
             let r5 = facts(kind, S::Plugin, "other@mkt:x", Some(plugin_id));
             assert_eq!(lock_for(&r5, &sdlc()), follows, "{kind:?}");
+            assert_eq!(lock_for(&r5, &build), follows, "{kind:?} in a build");
             assert_eq!(lock_for(&r5, &sdlc()).unwrap().text(), None);
         }
-        // Row 6: anything else in SWITCHABLE is free.
-        let r6 = facts(K::Plugin, S::Project, "p@mkt", None);
-        assert_eq!(lock_for(&r6, &none), None);
-        let r6b = facts(K::Skill, S::RunSpec, "kit-skill", None);
-        assert_eq!(lock_for(&r6b, &none), None);
-        let r6c = facts(K::ToolServer, S::ProjectLocal, "srv", None);
-        assert_eq!(lock_for(&r6c, &none), None);
-        // Row 7: a pair absent from SWITCHABLE (a skill on disk, a hook).
-        let unswitchable = Some(LockReason::Unswitchable {
-            text: "Kata cannot switch this off for one run without editing your setup".into(),
-        });
-        let r7 = facts(K::Skill, S::Personal, "own-skill", None);
-        assert_eq!(lock_for(&r7, &none), unswitchable);
-        let r7b = facts(K::Hook, S::Project, "PreToolUse:Bash:00", None);
-        assert_eq!(lock_for(&r7b, &none), unswitchable);
+        // Row 6 and the example "a hook from the personal setup".
+        let r6 = facts(K::Hook, S::Personal, "PreToolUse:Bash:00", None);
+        assert_eq!(lock_for(&r6, &none), unswitchable);
+        assert_eq!(lock_for(&r6, &build), unswitchable);
+        // Row 7 and the example "a project hook, in a build run".
+        for source in [S::Project, S::ProjectLocal] {
+            let r7 = facts(K::Hook, source, "PreToolUse:Bash:00", None);
+            assert_eq!(lock_for(&r7, &build), build_hook, "{source:?}");
+        }
+        // Row 8 and the example "a skill from the personal setup or the project".
+        for source in [S::Personal, S::Project] {
+            let r8 = facts(K::Skill, source, "own-skill", None);
+            assert_eq!(lock_for(&r8, &none), unswitchable, "{source:?}");
+            assert_eq!(lock_for(&r8, &build), unswitchable, "{source:?} in a build");
+        }
+        // Row 9: a kit skill or plugin that is also on disk.
+        for kind in [K::Skill, K::Plugin] {
+            let r9 = shadowed(facts(kind, S::RunSpec, "kit", None));
+            assert_eq!(lock_for(&r9, &none), unswitchable, "{kind:?}");
+            // Row 10: the same item, not shadowed, is free.
+            let r9b = facts(kind, S::RunSpec, "kit", None);
+            assert_eq!(lock_for(&r9b, &none), None, "{kind:?}");
+        }
+        // Row 10: a pair in SWITCHABLE, including shadowed for a kind or source
+        // rows 6 to 9 do not name.
+        for (kind, source) in [
+            (K::Plugin, S::Personal),
+            (K::Plugin, S::Project),
+            (K::Plugin, S::ProjectLocal),
+            (K::Instruction, S::RunSpec),
+            (K::Instruction, S::Personal),
+            (K::ToolServer, S::Personal),
+            (K::ToolServer, S::Project),
+            (K::ToolServer, S::ProjectLocal),
+        ] {
+            let r10 = facts(kind, source, "x", None);
+            assert_eq!(lock_for(&r10, &none), None, "{kind:?} {source:?}");
+            assert_eq!(
+                lock_for(&r10, &build),
+                None,
+                "{kind:?} {source:?} in a build"
+            );
+            let r10s = shadowed(r10);
+            assert_eq!(lock_for(&r10s, &none), None, "{kind:?} {source:?} shadowed");
+        }
+        // Row 11 and the example "any other item Kata cannot switch off": a pair
+        // absent from SWITCHABLE that no earlier row names.
+        let r11 = facts(K::Skill, S::Plugin, "loose-skill", None);
+        assert_eq!(lock_for(&r11, &none), unswitchable);
+        let r11b = facts(K::Instruction, S::Plugin, "loose-note", None);
+        assert_eq!(lock_for(&r11b, &build), unswitchable);
+    }
+
+    #[test]
+    fn a_project_hook_outside_a_build_run_is_switchable() {
+        let none = ResolveOptions::default();
+        for source in [Source::Project, Source::ProjectLocal] {
+            let hook = facts(ItemKind::Hook, source, "PostToolUse:Write:00", None);
+            assert_eq!(lock_for(&hook, &none), None, "{source:?}");
+        }
+        // A personal hook is still locked.
+        let hook = facts(
+            ItemKind::Hook,
+            Source::Personal,
+            "PostToolUse:Write:00",
+            None,
+        );
+        assert!(lock_for(&hook, &none).is_some());
     }
 }

@@ -65,6 +65,7 @@ fn item(kind: ItemKind, source: Source, key: &str, name: &str) -> ItemFacts {
         path: None,
         brought_by: None,
         repo_relative: false,
+        shadowed: false,
     }
 }
 
@@ -810,5 +811,76 @@ mod tests {
         assert!(!all.contains("srv.js") && !all.contains("x.test"));
         let json = serde_json::to_string(&items).unwrap();
         assert!(!json.contains(TOKEN), "a secret leaked: {json}");
+    }
+
+    #[test]
+    fn a_kit_skill_that_is_also_on_disk_is_shadowed() {
+        let d = tempfile::tempdir().unwrap();
+        let (r, spec) = fixture(d.path());
+        let (items, _) = run(&r, &spec, d.path());
+        let kit = items
+            .iter()
+            .find(|i| i.kind == ItemKind::Skill && i.source == Source::RunSpec)
+            .expect("the kit skill");
+        assert_eq!(kit.name, "kit-skill");
+        assert!(kit.shadowed, "kit-skill is also a personal skill");
+        // A kit plugin that is not installed is not shadowed.
+        let plug = items
+            .iter()
+            .find(|i| i.kind == ItemKind::Plugin && i.source == Source::RunSpec)
+            .expect("the kit plugin");
+        assert!(!plug.shadowed);
+        // Nothing but a run-spec skill or plugin is ever shadowed.
+        assert!(items
+            .iter()
+            .filter(|i| i.source != Source::RunSpec)
+            .all(|i| !i.shadowed));
+    }
+
+    #[test]
+    fn a_kit_plugin_that_is_also_installed_and_enabled_is_shadowed() {
+        let d = tempfile::tempdir().unwrap();
+        let (r, mut spec) = fixture(d.path());
+        spec.skills.clear();
+        spec.plugins.clear();
+        // `pers@mkt` is installed and enabled by the fixture; the kit picks `pers`.
+        plugin(&r.home.join(".claude/plugins/pers"), "pers", false);
+        spec.plugins.insert("pers".into(), Default::default());
+        let (items, _) = run(&r, &spec, d.path());
+        let kit = items
+            .iter()
+            .find(|i| i.kind == ItemKind::Plugin && i.source == Source::RunSpec)
+            .expect("the kit plugin");
+        assert!(kit.shadowed);
+    }
+
+    #[test]
+    fn a_plugin_the_organization_enables_takes_the_organization_as_its_source() {
+        let d = tempfile::tempdir().unwrap();
+        let (r, spec) = fixture(d.path());
+        let org = d.path().join("cache/org");
+        plugin(&org, "org", false);
+        write(
+            &r.managed_settings,
+            &serde_json::json!({"enabledPlugins": {"org@mkt": true}}).to_string(),
+        );
+        let path = r.home.join(".claude/plugins/installed_plugins.json");
+        let mut v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        v["plugins"]["org@mkt"] = serde_json::json!([
+            {"scope": "user", "installPath": org.to_string_lossy(), "version": "1"}
+        ]);
+        write(&path, &v.to_string());
+        let (items, _) = run(&r, &spec, d.path());
+        assert!(
+            has(&items, ItemKind::Plugin, Source::Organization, "org"),
+            "{:?}",
+            items
+                .iter()
+                .filter(|i| i.kind == ItemKind::Plugin)
+                .map(|i| (&i.name, i.source))
+                .collect::<Vec<_>>()
+        );
+        assert!(!has(&items, ItemKind::Plugin, Source::Personal, "org"));
     }
 }
