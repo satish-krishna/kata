@@ -2,7 +2,7 @@ import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
-import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
+import { ActivatedRoute, Router, convertToParamMap, provideRouter, type Routes } from '@angular/router';
 import { of } from 'rxjs';
 import { render } from '../../../testing/render';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
@@ -33,9 +33,9 @@ const settle = async () => {
 const FNOL = '2026-10-12-fnol-photo-upload';
 const labels = (c: HTMLElement) => Array.from(c.querySelectorAll('button')).map((b) => (b.textContent ?? '').replace(/\s+/g, ' ').trim());
 
-async function mount(change = FNOL, transport = new MockTransport()) {
+async function mount(change = FNOL, transport = new MockTransport(), routes: Routes = []) {
   const out = await render(ChangePage, {}, [
-    provideRouter([]),
+    provideRouter(routes),
     { provide: KataTransport, useValue: transport },
     { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
   ]);
@@ -696,6 +696,95 @@ describe('ChangePage build page', () => {
       expect(container.querySelector('header nav[aria-label="Pull requests"]')).not.toBeNull();
       expect(container.querySelector('header [data-testid="pr-menu"]')!.textContent).toContain('3 PRs');
       expect(button(page(container), 'Declare done')).toBeUndefined();
+    });
+  });
+});
+
+describe('ChangePage way back', () => {
+  const BACK = 'button[aria-label="Back to the changes list"]';
+  const back = (c: HTMLElement) => c.querySelector<HTMLButtonElement>(BACK);
+  const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
+  const routes: Routes = [{ path: 'sdlc', children: [] }];
+  const staged = (stage: ChangeInfo['stage'], transport = new MockTransport()) => {
+    const real = transport.sdlcChanges.bind(transport);
+    vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) => (await real(m, s)).map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage } : c)));
+    return transport;
+  };
+  const doneTransport = async () => {
+    const transport = allBuilt(staged('build-finished'));
+    await transport.sdlcPublish('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE));
+    return transport;
+  };
+
+  let draw: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    draw = vi.spyOn(diagrams, 'render').mockResolvedValue('<svg></svg>');
+    vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
+  });
+  afterEach(() => {
+    draw.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  const stages: [string, () => Promise<MockTransport>][] = [
+    ['intent', async () => staged('intent-awaiting')],
+    ['spec', async () => staged('spec-awaiting')],
+    ['plan', async () => staged('plan-awaiting')],
+    ['build', async () => staged('build-ready')],
+    ['done', doneTransport],
+    ['closed', async () => staged('rejected')],
+  ];
+
+  it.each(stages)('the way back from every stage lands on the workspace\'s changes list (%s)', async (_name, make) => {
+    const { container } = await mount(MOCK_BUILD_CHANGE, await make(), routes);
+    const router = TestBed.inject(Router);
+    expect(router.url).not.toBe('/sdlc');
+    const link = back(container)!;
+    expect(text(link)).toBe('Changes');
+    expect(link.disabled).toBe(false);
+    link.click();
+    await vi.waitFor(() => expect(router.url).toBe('/sdlc'));
+  });
+
+  it('the way back from a change that could not be found', async () => {
+    const { container } = await mount('2026-01-01-nope', new MockTransport(), routes);
+    expect(container.textContent).toContain('Change not found');
+    const router = TestBed.inject(Router);
+    back(container)!.click();
+    await vi.waitFor(() => expect(router.url).toBe('/sdlc'));
+  });
+
+  it('the way back is shown while the change is being read', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcChanges').mockReturnValue(new Promise(() => undefined));
+    const { container } = await mount(FNOL, transport, routes);
+    expect(container.textContent).toContain('Reading the change');
+    expect(back(container)).not.toBeNull();
+  });
+
+  it('the way back is shown but disabled while a run is in progress', async () => {
+    const { container } = await mount(FNOL, new MockTransport(), routes);
+    expect(back(container)!.disabled).toBe(false);
+    Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === 'Continue spec')!.click();
+    await settle();
+    await confirmPreview();
+    await vi.waitFor(() => expect(container.querySelector('app-sdlc-session')).not.toBeNull());
+    expect(back(container)).not.toBeNull();
+    expect(back(container)!.disabled).toBe(true);
+    const session = container.querySelector('app-sdlc-session')!;
+    const find = (label: string) => Array.from(session.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === label);
+    find('Cancel')!.click();
+    await vi.waitFor(() => {
+      TestBed.tick();
+      expect(find('Close')).toBeDefined();
+    });
+    expect(back(container)!.disabled).toBe(true);
+    await vi.waitFor(() => expect(find('Close')!.disabled).toBe(false));
+    find('Close')!.click();
+    await vi.waitFor(() => {
+      TestBed.tick();
+      expect(container.querySelector('app-sdlc-session')).toBeNull();
+      expect(back(container)!.disabled).toBe(false);
     });
   });
 });

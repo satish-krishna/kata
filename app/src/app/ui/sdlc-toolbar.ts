@@ -24,6 +24,8 @@ export class SdlcToolbar {
   readonly branch = input.required<string | null>();
   /** Crumbs after the workspace name. */
   readonly crumbs = input<string[]>([]);
+  /** The first crumb's label: the way back to the changes list. Null where there is nowhere to go back to (the home page). */
+  readonly back = input<string | null>(null);
   /** A run or locked operation is in progress. */
   readonly locked = input(false);
   /** Nothing in a workspace can be acted on (the ai-sdlc plugin is missing), so the workspace controls are withheld. */
@@ -40,4 +42,5 @@ export class SdlcToolbar {
   readonly add = output<void>();
   readonly remove = output<void>();
   readonly openSettings = output<void>();
+  readonly goBack = output<void>();
 }
