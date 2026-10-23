@@ -129,7 +129,11 @@ describe('BuildView earlier runs', () => {
     vm.select('claims-core');
     vm.cancelRun();
     await advance(600);
-    await vm.continueRun();
+    // Continue opens the repository's preview first; the run starts on Start run.
+    const continued = vm.continueRun();
+    await advance(300);
+    Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((b) => b.textContent!.trim() === 'Start run')!.click();
+    await continued;
     if (vm.leftoverPrompt() !== null) await vm.confirmContinue();
     await advance(300);
     expect(vm.shown().length).toBe(2);
