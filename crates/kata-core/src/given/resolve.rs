@@ -3,7 +3,7 @@
 
 use super::lock::{lock_for, LockReason};
 use super::settings::{effort_setting, env_names, hooks, model_setting, read_layers};
-use super::{items, ItemFacts, ItemKind, ResolveRoots, Source};
+use super::{items, parse_item_id, ItemFacts, ItemKind, ResolveRoots, Source};
 use crate::spec::{Given, PermissionMode, RunSpec, DEFAULT_TIMEOUT_SECS};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -275,10 +275,47 @@ fn build_items(
             i.off = plugin_off.get(plugin).copied().unwrap_or(false);
         }
     }
+    // An item that goes off with a hook is off when that hook is. Its lock is
+    // its own: nothing about the item itself is locked.
+    let off_now: HashSet<String> = items
+        .iter()
+        .filter(|i| i.off)
+        .map(|i| i.id.clone())
+        .collect();
+    for i in &mut items {
+        if i.goes_off_with.iter().any(|h| off_now.contains(h)) {
+            i.off = true;
+        }
+    }
     items.sort_by(|a, b| {
         (a.kind as u8, a.source as u8, &a.name).cmp(&(b.kind as u8, b.source as u8, &b.name))
     });
     (items, missing)
+}
+
+/// What the empty room leaves of the facts: Kata's own items, the run-spec's
+/// kit and what a kit plugin brings except its hooks, and the output style a
+/// settings layer sets. Nothing in it is shadowed, because nothing from the
+/// setup is loaded for it to shadow.
+fn empty_room_facts(facts: Vec<ItemFacts>) -> Vec<ItemFacts> {
+    facts
+        .into_iter()
+        .filter(|f| {
+            let from_kit_plugin = f
+                .brought_by
+                .as_deref()
+                .is_some_and(|b| b.starts_with("run-spec:plugin:"));
+            let output_style = f.kind == ItemKind::Instruction
+                && parse_item_id(&f.id).is_ok_and(|r| r.key == "output-style");
+            matches!(f.source, Source::Kata | Source::RunSpec)
+                || (from_kit_plugin && f.kind != ItemKind::Hook)
+                || output_style
+        })
+        .map(|mut f| {
+            f.shadowed = false;
+            f
+        })
+        .collect()
 }
 
 /// What the run will be given. Reads files under `roots`; never reads an
@@ -288,14 +325,23 @@ pub fn resolve(spec: &RunSpec, roots: &ResolveRoots, opts: &ResolveOptions) -> R
     let (mut facts, mut problems) = items::collect(spec, roots, &layers);
     facts.extend(hooks(&layers));
     problems.extend(layers.iter().filter_map(|l| l.problem.clone()));
-    let (items, missing) = build_items(facts, spec.given.as_ref(), opts);
+    let empty_room = spec.auth.bare;
+    let all_ids: HashSet<String> = facts.iter().map(|f| f.id.clone()).collect();
+    if empty_room {
+        facts = empty_room_facts(facts);
+    }
+    let (items, mut missing) = build_items(facts, spec.given.as_ref(), opts);
+    if empty_room {
+        // An item the room leaves out is not gone, only not listed.
+        missing.retain(|id| !all_ids.contains(id));
+    }
     Resolved {
         items,
         settings: run_settings(spec, &layers),
         env: env_of(spec, &layers),
         missing,
         problems,
-        empty_room: false,
+        empty_room,
     }
 }
 
@@ -368,7 +414,10 @@ mod tests {
     /// Resolve, serialize the whole result, and check each name is present and
     /// each value absent.
     fn assert_named_not_carried(r: &ResolveRoots, spec: &RunSpec, names: &[&str], values: &[&str]) {
-        let resolved = resolve(spec, r, &ResolveOptions::default());
+        // Outside the empty room, where the setup's items are listed.
+        let mut spec = spec.clone();
+        spec.auth.bare = false;
+        let resolved = resolve(&spec, r, &ResolveOptions::default());
         let json = serde_json::to_string(&resolved).unwrap();
         for n in names {
             assert!(json.contains(n), "name {n} missing from {json}");
@@ -529,6 +578,7 @@ mod tests {
             r#"{"mcpServers": {"org-srv": {"command": "x"}}}"#,
         );
         let mut spec = spec_for(&r);
+        spec.auth.bare = false;
         spec.given = Some(Given {
             tool_servers: vec![
                 "kata:tool-server:kata-ask".into(),

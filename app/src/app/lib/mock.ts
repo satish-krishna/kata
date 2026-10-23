@@ -213,7 +213,7 @@ export function previewFixture(spec: RunSpec): Resolved {
   const orgLock: LockReason = { kind: "organization", text: "set by your organization" };
   const buildLock: LockReason | null = spec.given?.build ? { kind: "build", text: "a build keeps the project's hooks, which may guard what it edits" } : null;
   const make = (kind: ItemKind, source: Source, key: string, name: string, detail: string, extra: Partial<ResolvedItem> = {}): ResolvedItem => ({
-    id: `${source}:${kind}:${key}`, kind, source, name, detail, path: null, brought_by: null, lock: null, off: false, ...extra,
+    id: `${source}:${kind}:${key}`, kind, source, name, detail, path: null, brought_by: null, lock: null, off: false, goes_off_with: [], ...extra,
   });
   const plugin = (key: string, source: Source, detail: string, lock: LockReason | null = null): ResolvedItem =>
     make("plugin", source, key, key.split("@")[0], detail, { lock });
@@ -272,5 +272,5 @@ export function previewFixture(spec: RunSpec): Resolved {
     { source: "personal", name: "GITHUB_TOKEN", api_key: false },
     { source: "personal", name: "ANTHROPIC_API_KEY", api_key: true },
   ];
-  return { items, settings, env, missing: [...listed].filter((id) => !known.has(id)), problems: [] };
+  return { items, settings, env, missing: [...listed].filter((id) => !known.has(id)), problems: [], empty_room: false };
 }

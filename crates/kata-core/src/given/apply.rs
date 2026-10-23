@@ -400,6 +400,7 @@ mod tests {
             .to_string(),
         );
         let mut spec = spec_for(&r);
+        spec.auth.bare = false;
         spec.given = Some(crate::spec::Given {
             tool_servers: vec![
                 item_id(ItemKind::ToolServer, Source::Personal, "off-personal"),

@@ -10,10 +10,10 @@ const WORKDIR = 'D:\\ws\\claims\\';
 const KATA_LOCK: LockReason = { kind: 'kata', text: 'the run needs it to ask you questions' };
 
 const item = (kind: ItemKind, source: Source, key: string, extra: Partial<ResolvedItem> = {}): ResolvedItem => ({
-  id: `${source}:${kind}:${key}`, kind, source, name: key.split('@')[0], detail: '', path: null, brought_by: null, lock: null, off: false, ...extra,
+  id: `${source}:${kind}:${key}`, kind, source, name: key.split('@')[0], detail: '', path: null, brought_by: null, lock: null, off: false, goes_off_with: [], ...extra,
 });
 const resolved = (items: ResolvedItem[], missing: string[] = []): Resolved => ({
-  items, settings: {} as Resolved['settings'], env: [], missing, problems: [],
+  items, settings: {} as Resolved['settings'], env: [], missing, problems: [], empty_room: false,
 });
 const noGiven: Given = { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] };
 const from = (over: Partial<PresetFrom> = {}): PresetFrom => ({ workdir: WORKDIR, session: new Set(), job: null, build: null, ...over });

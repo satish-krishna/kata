@@ -8,4 +8,8 @@ import type { Source } from "./Source";
  * row can be switched; `off` is already resolved, including a follower taking
  * the state of its plugin.
  */
-export type ResolvedItem = { id: string, kind: ItemKind, source: Source, name: string, detail: string, path: string | null, brought_by: string | null, lock: LockReason | null, off: boolean, };
+export type ResolvedItem = { id: string, kind: ItemKind, source: Source, name: string, detail: string, path: string | null, brought_by: string | null, lock: LockReason | null, off: boolean, 
+/**
+ * The ids of the hooks whose switch-off also drops this item (R4.6).
+ */
+goes_off_with: Array<string>, };

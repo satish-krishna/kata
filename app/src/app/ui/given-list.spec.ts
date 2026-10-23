@@ -58,9 +58,9 @@ describe('GivenList', () => {
     for (const kind of kinds)
       for (const source of sources)
         for (let i = 0; i < (kind === 'hook' ? 4 : 3); i++)
-          items.push({ id: `${source}:${kind}:n${i}`, kind, source, name: `${kind}-${source}-${i}`, detail: 'd', path: null, brought_by: null, lock: null, off: false });
+          items.push({ id: `${source}:${kind}:n${i}`, kind, source, name: `${kind}-${source}-${i}`, detail: 'd', path: null, brought_by: null, lock: null, off: false, goes_off_with: [] });
     expect(items).toHaveLength(40);
-    const resolved: Resolved = { items, settings: previewFixture(seedSpec()).settings, env: [], missing: [], problems: [] };
+    const resolved: Resolved = { items, settings: previewFixture(seedSpec()).settings, env: [], missing: [], problems: [], empty_room: false };
     const off = new Set(['personal:hook:n0', 'personal:hook:n1']);
     const rows = presetRows(resolved, { ...FROM, session: off }).rows;
     const { container } = await render(GivenList, { groups: groupRows(rows), readonly: false });

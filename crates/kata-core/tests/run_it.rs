@@ -2218,6 +2218,9 @@ body
 
     fn spec(&self) -> RunSpec {
         let mut s = base_spec(&self.work.to_string_lossy());
+        // The rig is a setup with items to switch off, which the empty room does
+        // not list.
+        s.auth.bare = false;
         s.skills = vec!["kit-skill".into(), "kit-keep".into()];
         s.plugins.insert("kit-plug".into(), Default::default());
         s

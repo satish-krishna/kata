@@ -207,7 +207,7 @@ export function recordedRows(items: readonly GivenItem[]): PresetRow[] {
     if (i.source == null) continue;
     const item: ResolvedItem = {
       id: i.id, kind: i.kind, source: i.source, name: i.name, detail: i.detail, path: null,
-      brought_by: i.brought_by ?? null, lock: i.lock ?? null, off: i.off,
+      brought_by: i.brought_by ?? null, lock: i.lock ?? null, off: i.off, goes_off_with: [],
     };
     rows.push({ item, key: i.id, off: i.off, locked: item.lock, mark: null });
   }

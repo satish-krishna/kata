@@ -1036,10 +1036,12 @@ name: build
             "---\nname: preview-probe\ndescription: does preview-probe\n---\nbody\n",
         )
         .unwrap();
-        let spec = RunSpec {
+        // The setup's skills are listed outside the empty room only.
+        let mut spec = RunSpec {
             workdir: dir.to_string_lossy().into_owned(),
             ..RunSpec::default()
         };
+        spec.auth.bare = false;
         let resolved = preview_run(spec);
         let _ = std::fs::remove_dir_all(&dir);
         assert!(

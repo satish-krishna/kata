@@ -144,6 +144,40 @@ pub enum HookAction {
     Http(String),
 }
 
+impl HookAction {
+    /// The text the hook's key hashes: the command, the prompt or the URL.
+    fn text(&self) -> &str {
+        match self {
+            HookAction::Command(t)
+            | HookAction::Prompt(t)
+            | HookAction::Agent(t)
+            | HookAction::Http(t) => t,
+        }
+    }
+}
+
+fn first_line(text: &str) -> &str {
+    text.lines().next().unwrap_or("").trim()
+}
+
+/// A URL without credentials, query or fragment: only where it goes is shown.
+fn plain_url(url: &str) -> String {
+    let url = url.split(['?', '#']).next().unwrap_or("");
+    match url.split_once("://") {
+        Some((scheme, rest)) => {
+            let (authority, path) = rest
+                .split_once('/')
+                .map_or((rest, None), |(a, p)| (a, Some(p)));
+            let host = authority.rsplit('@').next().unwrap_or(authority);
+            match path {
+                Some(p) => format!("{scheme}://{host}/{p}"),
+                None => format!("{scheme}://{host}"),
+            }
+        }
+        None => url.to_string(),
+    }
+}
+
 /// How a hook is shown: `<event> · <matcher or any> · <program> <first script
 /// path>`. The program is the first token that is not a leading `NAME=value`
 /// assignment; the script path is the first later token that is a script file or
@@ -151,8 +185,17 @@ pub enum HookAction {
 /// shown, so a token in an argument never reaches the screen.
 pub fn hook_detail(event: &str, matcher: Option<&str>, action: &HookAction) -> String {
     let matcher = matcher.filter(|m| !m.is_empty()).unwrap_or("any");
-    let HookAction::Command(command) = action else {
-        return String::new();
+    let command = match action {
+        HookAction::Command(command) => command,
+        HookAction::Prompt(text) => {
+            return format!("{event} · {matcher} · prompt: {}", first_line(text));
+        }
+        HookAction::Agent(text) => {
+            return format!("{event} · {matcher} · agent: {}", first_line(text));
+        }
+        HookAction::Http(url) => {
+            return format!("{event} · {matcher} · http: {}", plain_url(url));
+        }
     };
     let toks = tokens(command);
     let mut rest = toks.iter().skip_while(|t| is_assignment(t));
@@ -170,8 +213,7 @@ pub fn hook_detail(event: &str, matcher: Option<&str>, action: &HookAction) -> S
     out
 }
 
-/// One item per hook command. Entries that are not `type: "command"` (prompt,
-/// agent, http hooks) have no command to run or identify and are left out.
+/// One item per hook, whatever its type: command, prompt, agent or http.
 pub fn hooks(layers: &[SettingsLayer]) -> Vec<ItemFacts> {
     let mut out = Vec::new();
     for layer in layers {
@@ -209,19 +251,28 @@ pub(crate) fn hooks_in(
                 continue;
             };
             for entry in entries {
-                if entry.get("type").and_then(|t| t.as_str()) != Some("command") {
-                    continue;
-                }
-                let Some(command) = entry.get("command").and_then(|c| c.as_str()) else {
+                let text = |field: &str| entry.get(field).and_then(|c| c.as_str());
+                let action = match entry.get("type").and_then(|t| t.as_str()) {
+                    Some("command") => text("command").map(|t| HookAction::Command(t.into())),
+                    Some("prompt") => text("prompt").map(|t| HookAction::Prompt(t.into())),
+                    Some("agent") => text("prompt").map(|t| HookAction::Agent(t.into())),
+                    Some("http") => text("url").map(|t| HookAction::Http(t.into())),
+                    _ => None,
+                };
+                let Some(action) = action else {
                     continue;
                 };
                 let matcher = matcher.filter(|m| !m.is_empty());
                 out.push(ItemFacts {
-                    id: item_id(ItemKind::Hook, source, &hook_key(event, matcher, command)),
+                    id: item_id(
+                        ItemKind::Hook,
+                        source,
+                        &hook_key(event, matcher, action.text()),
+                    ),
                     kind: ItemKind::Hook,
                     source,
                     name: format!("{event} {}", matcher.unwrap_or("any")),
-                    detail: hook_detail(event, matcher, &HookAction::Command(command.to_string())),
+                    detail: hook_detail(event, matcher, &action),
                     path: Some(path.to_path_buf()),
                     brought_by: brought_by.map(String::from),
                     repo_relative,

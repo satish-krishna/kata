@@ -11,4 +11,8 @@ missing: Array<string>,
 /**
  * Settings files that could not be read, by path.
  */
-problems: Array<string>, };
+problems: Array<string>, 
+/**
+ * True when the run is in the empty room: only what Kata passes is listed.
+ */
+empty_room: boolean, };
