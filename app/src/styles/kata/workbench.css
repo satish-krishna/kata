@@ -43,13 +43,13 @@
 
    | order | item                    | gives way how                                           | minimum                                       |
    |-------|-------------------------|---------------------------------------------------------|-----------------------------------------------|
-   | 1     | separators and gaps     | removed / tightened below 1280                          | 0                                             |
+   | 1     | separators, gaps, and the chevron after the back link | removed / tightened below 1280            | 0                                             |
    | 2     | branch chip text        | ellipsis in the chip; below 1280 the icon form instead  | 6rem chip from 1280; the icon below 1280      |
    | 3     | workspace switcher name | ellipsis; full name in its title and accessible name    | 4.5rem                                        |
    | 4     | pill padding            | tightened                                               | --space-2 each side                           |
    | 5     | change name             | ellipsis; full name in its title                        | 6rem                                          |
 
-   Never shrink: the seal, the mode badge, the pills' text, the pull request control, the settings button. */
+   Never shrink: the seal, the mode badge, the pills' text, the pull request control, the settings button, and the back link, which stays whole until the change name has given way to its minimum. */
 .wb-toolbar:has(.k-crumbs__item) .k-branch { flex: 0 1e12 auto; min-width: calc-size(max-content, min(size, 6rem)); }
 .wb-toolbar:has(.k-crumbs__item) .k-branch__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .wb-toolbar:has(.k-crumbs__item) .k-wstrigger { flex: 0 1e8 16rem; width: auto; min-width: 4.5rem; }
@@ -58,12 +58,14 @@
 /* The pill keeps its full padding until it is squeezed; its minimum is the text with --space-2 each side (the strip always has four pills), and the centered text then spills evenly into the padding. */
 .wb-toolbar:has(.k-crumbs__item) .k-pill > * { flex: none; }
 .wb-toolbar:has(.k-crumbs__item) .k-crumbs { flex: 0 1 auto; min-width: calc-size(max-content, min(size, calc(6rem + var(--space-2) + 0.875rem))); }
+.wb-toolbar:has(.k-crumbs__item) .k-crumbs__back { flex: none; }
 .wb-toolbar:has(.k-crumbs__item) .k-crumbs__item { min-width: 0; }
 .wb-toolbar:has(.k-crumbs__item) .k-prlinks { flex: none; }
-/* Order 1, and the icon form of order 2: between 1024 and 1280 the toolbar gives up its separators, tightens its gaps and shows the branch chip as its warning icon. */
+/* Order 1, and the icon form of order 2: between 1024 and 1280 the toolbar gives up its separators and the chevron after the back link, tightens its gaps and shows the branch chip as its warning icon. */
 @media (max-width: 1279px) {
-  .wb-toolbar:has(.k-crumbs__item) { gap: var(--space-3); }
+  .wb-toolbar:has(.k-crumbs__item) { gap: var(--space-2); }
   .wb-toolbar:has(.k-crumbs__item) > .wb-sep { display: none; }
+  .wb-toolbar:has(.k-crumbs__item) .k-crumbs__back + .k-crumbs__sep { display: none; }
   .wb-toolbar:has(.k-crumbs__item) .k-branch { flex: none; min-width: 0; padding: var(--space-1-5); color: var(--warning-text); }
   .wb-toolbar:has(.k-crumbs__item) .k-branch .k-branch__icon { display: inline-flex; }
   .wb-toolbar:has(.k-crumbs__item) .k-branch__text { display: none; }
@@ -243,7 +245,11 @@
 
 /* ---------- AI-SDLC: toolbar, workspace home, dialogs ---------- */
 .k-crumbs { display: flex; align-items: center; gap: var(--space-2); color: var(--text-faint); }
-.k-crumbs > ng-icon { flex: none; }
+.k-crumbs__sep { flex: none; display: inline-flex; }
+/* The way back to the changes list: a link in look, first in the breadcrumb. */
+.k-crumbs__back { white-space: nowrap; cursor: pointer; font: var(--weight-medium) var(--text-base)/1 var(--font-sans); color: var(--accent-text); }
+.k-crumbs__back:hover:not(:disabled) { text-decoration: underline; }
+.k-crumbs__back:disabled { opacity: 0.5; cursor: default; }
 /* A change name is long; it gives way last (the toolbar block above has the order), on one line, and the full name sits in its title. */
 .k-crumbs__item { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--weight-medium) var(--text-base)/1 var(--font-sans); color: var(--text-secondary); }
 .k-branch { flex: none; white-space: nowrap; font: var(--font-code-sm); color: var(--text-secondary); padding: var(--space-1-5) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-inset); }

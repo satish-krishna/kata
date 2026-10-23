@@ -5,12 +5,14 @@
     [counts]="vm.counts()"
     [branch]="vm.branchChip()"
     [crumbs]="vm.crumbs()"
+    back="Changes"
     [locked]="vm.locked()"
     (switchMode)="vm.switchMode()"
     (select)="vm.selectWorkspace($event)"
     (add)="vm.toHome()"
     (remove)="vm.toHome()"
     (openSettings)="vm.toHome()"
+    (goBack)="vm.toHome()"
   >
     @if (vm.pills().length > 0) {
       <app-stage-pills toolbarStages [pills]="vm.pills()" />

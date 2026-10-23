@@ -767,6 +767,7 @@ describe('ChangePage way back', () => {
     expect(back(container)!.disabled).toBe(false);
     Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === 'Continue spec')!.click();
     await settle();
+    Array.from(document.body.querySelector('[role="dialog"]')!.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === 'Run')!.click();
     await confirmPreview();
     await vi.waitFor(() => expect(container.querySelector('app-sdlc-session')).not.toBeNull());
     expect(back(container)).not.toBeNull();
@@ -779,6 +780,9 @@ describe('ChangePage way back', () => {
       expect(find('Close')).toBeDefined();
     });
     expect(back(container)!.disabled).toBe(true);
+    // Cancelling leaves the scripted run's files behind: settle the leftovers dialog so the session can close.
+    await vi.waitFor(() => expect(document.body.querySelector('[role="dialog"]')).not.toBeNull());
+    Array.from(document.body.querySelector('[role="dialog"]')!.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === 'Close')!.click();
     await vi.waitFor(() => expect(find('Close')!.disabled).toBe(false));
     find('Close')!.click();
     await vi.waitFor(() => {
