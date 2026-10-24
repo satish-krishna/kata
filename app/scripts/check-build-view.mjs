@@ -458,6 +458,33 @@ try {
     const middle = await area('files').boundingBox();
     check(middle !== null && middle.width >= 240 - 0.5, `R5.1 Review: after End on the left separator the middle is at least 240 wide (${Math.round(middle?.width ?? 0)})`);
   });
+  // The tasks strip below 240 pixels draws its tasks compact: the status dot stays, the label leaves the screen but not the accessibility tree.
+  await attempt('the tasks strip draws compact below 240 pixels', async () => {
+    await enter(MODES[1]);
+    const row = tasksBody.locator('[data-task]').first();
+    const dot = row.locator('.k-status__dot');
+    const label = row.locator('.k-bp__status-label');
+    const separator = page.locator('[role="separator"][data-side="left"]');
+    await separator.focus();
+    await page.keyboard.press('Home');
+    await settle();
+    const narrow = await area('tasks').boundingBox();
+    check(narrow !== null && narrow.width < 240, `Watch: Home on the tasks separator makes the strip narrower than 240 (${Math.round(narrow?.width ?? 0)})`);
+    check(await dot.isVisible(), 'Watch: in a strip under 240 wide a task keeps its status dot');
+    const hidden = await label.boundingBox();
+    check(!(await label.isVisible()) && (hidden === null || (hidden.width < 1 && hidden.height < 1)), `Watch: in a strip under 240 wide a task shows no status label (${JSON.stringify(hidden)})`);
+    const labelText = ((await label.textContent()) ?? '').trim();
+    check(labelText !== '' && (await row.ariaSnapshot()).includes(labelText), `Watch: the compact task still exposes its status to assistive tech (${JSON.stringify(labelText)})`);
+    await separator.focus();
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Shift+ArrowRight');
+    await page.keyboard.press('Shift+ArrowRight');
+    await settle();
+    const wide = await area('tasks').boundingBox();
+    check(wide !== null && wide.width >= 240, `Watch: widening the strip brings it to 240 or more (${Math.round(wide?.width ?? 0)})`);
+    check(await label.isVisible(), 'Watch: in a strip of 240 or more a task shows its status label again');
+    await enter(MODES[1]);
+  });
   await attempt('R5.1 the bottom separator with a rail', async () => {
     await enter(MODES[2]);
     await page.locator('[data-rail]').getByRole('button', { name: /^Bring back Tasks/ }).click();
