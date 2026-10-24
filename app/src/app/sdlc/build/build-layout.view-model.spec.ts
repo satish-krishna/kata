@@ -359,6 +359,14 @@ describe('BuildLayoutViewModel', () => {
       expect(vm.flipped().left).toBe('files');
     });
 
+    it('R15.1: a rail name shows the area it brings back, even where it joins a stack', async () => {
+      const vm = await watchVm();
+      vm.arrange({ kind: 'bring-back', area: 'files' });
+      vm.arrange({ kind: 'bring-back', area: 'findings' });
+      expect(vm.arrangement().right).toEqual(['files', 'findings']);
+      expect(vm.flipped().right).toBe('findings');
+    });
+
     it('does nothing for an area already on show', async () => {
       const vm = await watchVm();
       const before = vm.arrangement();
