@@ -184,7 +184,7 @@ describe('the build page starts, stops and continues the same runs as the build 
     expect(lock.waiting()).toHaveLength(1);
     const secs = (text: string) => Number(text.split(':')[0]) * 60 + Number(text.split(':')[1]);
     const before = vm.waitingNotices()[0].waited;
-    expect(before).toMatch(/^d+:d{2}$/);
+    expect(before).toMatch(/^[0-9]+:[0-9]{2}$/);
     await advance(83000);
     const after = vm.waitingNotices()[0].waited;
     expect(secs(after) - secs(before)).toBeGreaterThanOrEqual(82);

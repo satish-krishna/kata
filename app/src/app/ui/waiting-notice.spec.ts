@@ -24,6 +24,10 @@ describe('WaitingNotice', () => {
     expect(lines[0]).toContain('The agent in api is waiting for your answer. It has waited 1:23.');
     expect(lines[1]).toContain('The agent in app is waiting for your approval. It has waited 0:07.');
     expect(lines[1]).not.toContain('It stops if');
+  });
+
+  it('says how long the agent has waited in the compact form too', async () => {
+    const items = [ASK, { ...APPROVAL, countdown: null }];
     const compact = await mount({ compact: true, items });
     const short = Array.from(compact.container.querySelectorAll('[data-waiting]')).map((e) => norm(e.textContent));
     expect(short[0]).toContain('The agent in api is waiting for you. It has waited 1:23.');
