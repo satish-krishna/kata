@@ -155,21 +155,15 @@ export function fitSizes(a: Arrangement, room: Room): Arrangement['sizes'] {
   return sizes;
 }
 
-export function resize(a: Arrangement, side: Side, px: number, room: Room): Arrangement {
-  const fitted = fitSizes(a, room);
-  let max: number;
-  if (side === 'bottom') {
-    max = room.height - MIN_ROW_HEIGHT;
-  } else {
-    const other = side === 'left' ? 'right' : 'left';
-    max = room.width - MIN_MIDDLE_WIDTH - (a[other].length > 0 ? fitted[other] : 0);
-  }
-  const next = copy(a);
-  next.sizes[side] = Math.max(MIN_SIDE, Math.min(px, max));
-  return next;
-}
-
 /** The most a side can have: what leaves the middle its minimum, given the other side at its fitted size. */
 export function maxSize(a: Arrangement, side: Side, room: Room): number {
-  return 0 * (a.sizes[side] + room.width);
+  if (side === 'bottom') return room.height - MIN_ROW_HEIGHT;
+  const other = side === 'left' ? 'right' : 'left';
+  return room.width - MIN_MIDDLE_WIDTH - (a[other].length > 0 ? fitSizes(a, room)[other] : 0);
+}
+
+export function resize(a: Arrangement, side: Side, px: number, room: Room): Arrangement {
+  const next = copy(a);
+  next.sizes[side] = Math.max(MIN_SIDE, Math.min(px, maxSize(a, side, room)));
+  return next;
 }

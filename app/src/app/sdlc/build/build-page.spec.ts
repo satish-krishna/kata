@@ -1011,7 +1011,7 @@ describe('the arranged build page from the keyboard', () => {
       ['ArrowRight', { shift: true }, 364],
       ['ArrowLeft', { shift: true }, 300],
       ['Home', {}, 160],
-      ['End', {}, 1040],
+      ['End', {}, 1039],
     ];
     for (const [key, mods, size] of steps) {
       const before = page.host.arranges.length;
@@ -1053,7 +1053,7 @@ describe('the arranged build page from the keyboard', () => {
     await page.press('Home');
     expect(sizeOf(page, 'right')).toBe(160);
     await page.press('End');
-    expect(sizeOf(page, 'right')).toBe(1040);
+    expect(sizeOf(page, 'right')).toBe(1039);
     expect(page.host.arranges.every((a) => a.kind === 'resize' && a.side === 'right')).toBe(true);
   });
 
@@ -1074,7 +1074,7 @@ describe('the arranged build page from the keyboard', () => {
     await page.press('Home');
     expect(sizeOf(page, 'bottom')).toBe(160);
     await page.press('End');
-    expect(sizeOf(page, 'bottom')).toBe(520);
+    expect(sizeOf(page, 'bottom')).toBe(519);
   });
 
   for (const [a, from, to, mode] of [

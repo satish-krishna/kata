@@ -6,15 +6,15 @@ import { lucideCheck, lucideChevronDown, lucideChevronRight, lucideEllipsis, luc
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmDropdownMenuImports } from '@spartan-ng/helm/dropdown-menu';
 import {
-  MIN_MIDDLE_WIDTH,
-  MIN_ROW_HEIGHT,
   MIN_SIDE,
   canTuck,
+  maxSize,
   whereIs,
   type AreaId,
   type Edge,
   type LayoutMode,
   type Place,
+  type Room,
 } from '../../lib/build-layout';
 import { layoutKeyFor } from '../../lib/build-layout-keys';
 import type { Pick } from '../../lib/build-sessions';
@@ -95,8 +95,8 @@ export class BuildPage {
   readonly focusOn = output<AreaId>();
   readonly unfocus = output<void>();
   readonly flip = output<{ place: Place; area: AreaId }>();
-  /** The room the grid has, in pixels, whenever it changes. */
-  readonly room = output<{ width: number; height: number }>();
+  /** The room the places have, in pixels, whenever it changes: the grid less the rails and separators that are drawn. */
+  readonly room = output<Room>();
   /** Make an area visible, whatever has become of it. */
   readonly reveal = output<AreaId>();
   /** The engineer picked a finding that names a file. */
@@ -114,6 +114,8 @@ export class BuildPage {
   private readonly grid = viewChild.required<ElementRef<HTMLElement>>('grid');
   /** The separator being dragged: DOM bookkeeping for the gesture, not state of the page. */
   private drag: { side: Side; from: number; size: number; px: number } | null = null;
+  /** The room last told to the page, so only a change is told again. */
+  private told: Room | null = null;
 
   constructor() {
     // A Go to is asked of the view model; the DOM half (scroll and focus) waits until the picked repository's session is on show.
@@ -129,16 +131,39 @@ export class BuildPage {
         if (tab.getAttribute('tabindex') !== wanted) tab.setAttribute('tabindex', wanted);
       }
     });
-    // The layout view model needs the room the grid has to keep the sides from crowding out the middle.
+    // The layout view model needs the room the places have to keep the sides from crowding out the middle. A rail appearing or going
+    // changes it without changing the grid, so it is read after every render as well as when the grid is resized.
+    afterEveryRender(() => this.tellRoom());
     afterNextRender(() => {
       if (typeof ResizeObserver === 'undefined') return;
-      const observer = new ResizeObserver((entries) => {
-        const box = entries[entries.length - 1].contentRect;
-        this.room.emit({ width: Math.round(box.width), height: Math.round(box.height) });
-      });
+      const observer = new ResizeObserver(() => this.tellRoom());
       observer.observe(this.grid().nativeElement);
       this.destroyRef.onDestroy(() => observer.disconnect());
     });
+  }
+
+  /**
+   * The room the places have: the grid's box less the rails and the separators that are drawn (none are while one area fills the page).
+   * Null until the grid has been measured.
+   */
+  private measureRoom(): Room | null {
+    const grid = this.grid().nativeElement;
+    if (grid.clientWidth <= 0) return null;
+    let { clientWidth: width, clientHeight: height } = grid;
+    if (this.showEdges()) {
+      const { drawn } = this.layout();
+      const rail = (edge: Edge) => grid.querySelector<HTMLElement>(`[data-rail="${edge}"]`);
+      width -= (rail('left')?.offsetWidth ?? 0) + (rail('right')?.offsetWidth ?? 0) + (drawn.left.length > 0 ? 1 : 0) + (drawn.right.length > 0 ? 1 : 0);
+      height -= (rail('bottom')?.offsetHeight ?? 0) + (drawn.bottom.length > 0 ? 1 : 0);
+    }
+    return { width, height };
+  }
+
+  private tellRoom(): void {
+    const room = this.measureRoom();
+    if (room === null || (this.told?.width === room.width && this.told.height === room.height)) return;
+    this.told = room;
+    this.room.emit(room);
   }
 
   /** Bring the open question or approval of the sessions on show into view and put the focus on its first control. */
@@ -287,18 +312,11 @@ export class BuildPage {
 
   // ---- dragging a separator ----
 
-  /** The most a side can have: what leaves the middle its minimum. Unknown (null) until the grid has been measured. */
-  private maxSize(side: Side): number | null {
-    const el = this.grid().nativeElement;
-    const { drawn } = this.layout();
-    if (side === 'bottom') return el.clientHeight > 0 ? el.clientHeight - MIN_ROW_HEIGHT : null;
-    const other = side === 'left' ? 'right' : 'left';
-    return el.clientWidth > 0 ? el.clientWidth - MIN_MIDDLE_WIDTH - (drawn[other].length > 0 ? drawn.sizes[other] : 0) : null;
-  }
-
+  /** A size held to the same rule the layout applies: at least the minimum, at most what leaves the middle its own. Unclamped above until the grid is measured. */
   private clampSize(side: Side, px: number): number {
-    const max = this.maxSize(side);
-    return Math.round(Math.max(MIN_SIDE, max === null ? px : Math.min(px, max)));
+    const room = this.measureRoom();
+    const max = room === null ? Number.POSITIVE_INFINITY : maxSize(this.layout().drawn, side, room);
+    return Math.round(Math.max(MIN_SIDE, Math.min(px, max)));
   }
 
   protected dragStart(event: PointerEvent, side: Side): void {
