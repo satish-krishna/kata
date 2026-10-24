@@ -43,6 +43,8 @@ export class BuildPage {
   readonly rows = input<BuildRow[]>([]);
   readonly task = input<{ id: string; repo: string } | null>(null);
   readonly stopped = input<string[]>([]);
+  /** A request to bring the picked repository's open question into view and focus it. */
+  readonly focus = input<{ repo: string; n: number } | null>(null);
   /** The area on show while the page is narrow. */
   readonly panel = model<Panel>('activity');
 

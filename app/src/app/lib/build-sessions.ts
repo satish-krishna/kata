@@ -3,6 +3,7 @@ import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { TaskStatus } from '@bindings/TaskStatus';
+import type { BuildStage } from './build-stage';
 import { STATUS_LABEL, statusForExit, type RunState, type RunSummary } from './events';
 
 export type Pick = { kind: 'repo'; repo: string } | { kind: 'task'; task: string } | { kind: 'review' };
@@ -72,3 +73,35 @@ export const sessionsFor = (
   if (linked.length === 0) return { sessions: all, unknown: true };
   return { sessions: [linked.reduce((a, b) => (b.startedAt > a.startedAt ? b : a))], unknown: false };
 };
+
+/** What the engineer picked, and the stage the build was at when they did; a Go to also carries its focus request. */
+export type Chosen = { pick: Pick; stage: BuildStage; goTo: { repo: string; n: number } | null };
+
+/** A run of a repository that is live now, with the build log as it stood before the run started. */
+export type LiveRun = { runId: string; repo: string; before: BuildStatus };
+
+export type ActivityInput = {
+  stage: BuildStage;
+  chosen: Chosen | null;
+  /** The first repository of the tasks area, or null when there is none. */
+  firstRepo: string | null;
+  /** The build log as it stands now; null before it was read. */
+  status: BuildStatus | null;
+  live: LiveRun[];
+  taskLinks: TaskLink[];
+  scope: { workspaceId: string; system: string; change: string } | null;
+};
+
+export type Activity = {
+  /** What the activity area shows; null before the build log was read. */
+  pick: Pick | null;
+  /** A request to bring the picked repository's open question into view; set only by a Go to the pick still stands on. */
+  focus: { repo: string; n: number } | null;
+  /** The task links including those of tasks a live run just recorded, which are not persisted yet. */
+  taskLinks: TaskLink[];
+  /** The links of tasks a live run recorded that no link names yet, to persist. */
+  newLinks: TaskLink[];
+};
+
+/** Decides what the pick is and what the activity area shows for it. */
+export const activityFor = (_input: ActivityInput): Activity => ({ pick: null, focus: null, taskLinks: [], newLinks: [] });

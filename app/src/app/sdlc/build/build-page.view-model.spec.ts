@@ -1412,3 +1412,88 @@ describe('the build page shows tasks and sessions from the build log, the run li
     expect(find(core)?.shown).toBe(false);
   });
 });
+
+describe('what the pick is and what the activity area shows for it', () => {
+  const commitRows = (transport: MockTransport) =>
+    (transport as unknown as { sdlc: { commitRows(t: { id: string; name: string; repo: string; dependsOn: string[] }[]): void } }).sdlc.commitRows([
+      { id: 'T1', name: '', repo: 'claims-core', dependsOn: [] },
+      { id: 'T2', name: '', repo: 'customer-portal', dependsOn: [] },
+    ]);
+
+  it('picks the review by the stage alone: while it runs, then its findings, whatever was picked or gone to earlier (R2.1, D9)', async () => {
+    const { vm, transport, lock } = setup();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    vm.goTo('customer-portal');
+    vm.choose({ kind: 'task', task: 'T2' });
+    expect(vm.pick()).toEqual({ kind: 'task', task: 'T2' });
+    await drive(vm, lock, () => vm.stage() === 'reviewing');
+    expect(vm.pick()).toEqual({ kind: 'review' });
+    expect(vm.view().review.picked).toBe(true);
+    expect(vm.shownSessions().length).toBe(1);
+    expect(vm.shownSessions()[0].live).toBe(true);
+    expect(vm.focusRequest()).toBeNull();
+    vm.choose({ kind: 'repo', repo: 'claims-core' });
+    expect(vm.pick()).toEqual({ kind: 'repo', repo: 'claims-core' });
+    await drive(vm, lock, finished(vm));
+    expect(vm.stage()).toBe('review-finished');
+    expect(vm.pick()).toEqual({ kind: 'review' });
+    expect(vm.view().findings).not.toBeNull();
+  });
+
+  it('a Go to picks the repository and asks for its question to be brought into view, once per Go to', async () => {
+    const { vm, transport } = setup();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    vm.choose({ kind: 'repo', repo: 'claims-core' });
+    expect(vm.focusRequest()).toBeNull();
+    vm.goTo('customer-portal');
+    const first = vm.focusRequest();
+    expect(vm.pick()).toEqual({ kind: 'repo', repo: 'customer-portal' });
+    expect(first).toMatchObject({ repo: 'customer-portal' });
+    vm.goTo('customer-portal');
+    expect(vm.focusRequest()!.n).toBeGreaterThan(first!.n);
+    vm.choose({ kind: 'repo', repo: 'claims-core' });
+    expect(vm.focusRequest()).toBeNull();
+  });
+
+  it('links a task to the live run that recorded it at once, and a picked task then shows that session (R2 F2, R3.3)', async () => {
+    const { vm, transport } = setup();
+    const linkTasks = vi.spyOn(transport, 'sdlcLinkTasks');
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    const id = vm.groups().find((g) => g.key === 'claims-core')!.runs[0].id;
+    commitRows(transport);
+    await advance(2500);
+    expect(vm.groups().find((g) => g.key === 'claims-core')!.runs[0].state).toMatch(/running|awaiting/);
+    expect(linkTasks).toHaveBeenCalledWith([expect.objectContaining({ repo: 'claims-core', task: 'T1', run_id: id })]);
+    vm.choose({ kind: 'task', task: 'T1' });
+    expect(vm.shownSessions().map((s) => s.id)).toEqual([id]);
+    expect(vm.sessionNote()).toBeNull();
+  });
+
+  it('does not write a task link again when the run ends', async () => {
+    const { vm, transport, lock } = setup();
+    const linkTasks = vi.spyOn(transport, 'sdlcLinkTasks');
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    commitRows(transport);
+    await advance(2500);
+    await drive(vm, lock, finished(vm));
+    const written = linkTasks.mock.calls.flatMap(([links]) => links.map((l) => `${l.repo}/${l.task}/${l.run_id}`));
+    expect(written.length).toBeGreaterThan(0);
+    expect(new Set(written).size).toBe(written.length);
+  });
+
+  it('keeps the picked task\'s identity when the build log is read again, so the Changes view keeps its untied files shown (R5.2)', async () => {
+    const { vm, transport } = setup();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    vm.choose({ kind: 'task', task: 'T2' });
+    const before = vm.pickedTask();
+    expect(before).toEqual({ id: 'T2', repo: 'customer-portal' });
+    commitRows(transport);
+    await advance(2500);
+    expect(vm.pickedTask()).toBe(before);
+  });
+});

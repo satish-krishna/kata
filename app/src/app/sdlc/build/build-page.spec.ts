@@ -1,3 +1,4 @@
+import { onTestFinished } from 'vitest';
 import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import type { BuildRow } from '@bindings/BuildRow';
@@ -102,6 +103,7 @@ const FINDINGS = {
       [rows]="rows"
       [task]="task"
       [stopped]="stopped"
+      [focus]="focus"
       (pick)="picks.push($event)"
       (repoAction)="repoActions.push($event)"
       (act)="acts.push($event)"
@@ -115,6 +117,7 @@ class Host {
   view: BuildPageView = base();
   task: { id: string; repo: string } | null = null;
   stopped: string[] = [];
+  focus: { repo: string; n: number } | null = null;
   readonly context = CHANGES;
   readonly rows: BuildRow[] = [];
   readonly picks: Pick[] = [];
@@ -326,6 +329,50 @@ describe('the build page, questions and stops', () => {
     expect(norm(notice.textContent)).toContain('The agent in customer-portal is waiting for your answer.');
     button(notice, 'Go to customer-portal')!.click();
     expect(host.goTos).toEqual(['customer-portal']);
+  });
+
+  it('Go to brings the picked repository\'s open question into view and focuses it, not an answered one or a hidden session\'s', async () => {
+    const ask = (id: string, answers: string[][] | null) => ({
+      id,
+      questions: [{ kind: 'text' as const, header: 'scope', question: 'Fix or isolate?', optional: false }],
+      answers,
+      at: 0,
+    });
+    const scrolled: Element[] = [];
+    // jsdom has no scrollIntoView; the page calls it on the card.
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value(this: Element) {
+        scrolled.push(this);
+      },
+    });
+    onTestFinished(() => void delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView);
+    const v = base({
+      groups: [group('claims-core', RUNNING, 'cancel', [task('T1', RUNNING)]), group('customer-portal', RUNNING, 'cancel', [task('T2', RUNNING)], true)],
+      pick: { kind: 'repo', repo: 'customer-portal' },
+      sessions: [
+        session('hidden', { state: 'awaiting', asks: [ask('h1', null)], shown: false }),
+        session('answered', { state: 'running', asks: [ask('a1', [['isolate']])], latest: false, expanded: true }),
+        session('open', { state: 'awaiting', asks: [ask('q1', null)] }),
+      ],
+      waiting: [{ repo: 'customer-portal', kind: 'answer', countdown: null }],
+    });
+    const { el, fixture } = await mount(v);
+    expect(scrolled).toEqual([]);
+    fixture.componentInstance.focus = { repo: 'customer-portal', n: 1 };
+    fixture.detectChanges();
+    await settle();
+    const card = el.querySelector<HTMLElement>('[data-session="open"] .k-ask')!;
+    expect(card).not.toBeNull();
+    expect(scrolled).toEqual([card]);
+    expect(card.contains(document.activeElement)).toBe(true);
+    // A second Go to to the same repository asks again.
+    (document.activeElement as HTMLElement).blur();
+    fixture.componentInstance.focus = { repo: 'customer-portal', n: 2 };
+    fixture.detectChanges();
+    await settle();
+    expect(scrolled).toEqual([card, card]);
+    expect(card.contains(document.activeElement)).toBe(true);
   });
 
   it('the waiting notice shows while the changed files are in view', async () => {

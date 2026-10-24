@@ -3,7 +3,8 @@ import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { TaskStatus } from '@bindings/TaskStatus';
-import { newlyRecorded, recordOutcome, repoSessions, sessionsFor, type Pick, type SessionRef } from './build-sessions';
+import type { BuildStage } from './build-stage';
+import { activityFor, newlyRecorded, recordOutcome, repoSessions, sessionsFor, type ActivityInput, type Pick, type SessionRef } from './build-sessions';
 
 const scope = { workspaceId: 'w1', system: 'shop', change: 'c1' };
 const link = (stage: string, runId: string, startedAt: number, over: Partial<RunLink> = {}): RunLink => ({
@@ -110,5 +111,88 @@ describe('sessionsFor', () => {
     for (const c of cases) {
       expect(sessionsFor(c.pick, tasks, sessions, c.links), c.name).toEqual({ sessions: c.sessions, unknown: c.unknown });
     }
+  });
+});
+
+describe('activityFor', () => {
+  const scope = { workspaceId: 'w1', system: 'shop', change: 'c1' };
+  const api: Pick = { kind: 'repo', repo: 'api' };
+  const input = (over: Partial<ActivityInput> = {}): ActivityInput => ({
+    stage: 'running',
+    chosen: null,
+    firstRepo: 'api',
+    status: status([task('T1', 'api', false)]),
+    live: [],
+    taskLinks: [],
+    scope,
+    ...over,
+  });
+  const chosen = (pick: Pick, stage: BuildStage, goTo: { repo: string; n: number } | null = null) => ({ pick, stage, goTo });
+
+  it('has no pick before the build log was read', () => {
+    expect(activityFor(input({ status: null })).pick).toBeNull();
+    expect(activityFor(input({ status: null, chosen: chosen(api, 'running') })).pick).toBeNull();
+  });
+
+  it('defaults to the first repository while the build runs, and to the review when there is no repository', () => {
+    expect(activityFor(input()).pick).toEqual(api);
+    expect(activityFor(input({ firstRepo: null })).pick).toEqual({ kind: 'review' });
+  });
+
+  it('defaults to the review at reviewing, review-finished and done', () => {
+    for (const stage of ['reviewing', 'review-finished', 'done'] as const) {
+      expect(activityFor(input({ stage })).pick, stage).toEqual({ kind: 'review' });
+    }
+  });
+
+  it('keeps what the engineer picked while the build runs', () => {
+    for (const stage of ['running', 'running-one-stopped', 'stopped', 'cancelled'] as const) {
+      expect(activityFor(input({ stage, chosen: chosen({ kind: 'task', task: 'T1' }, stage) })).pick, stage).toEqual({ kind: 'task', task: 'T1' });
+    }
+  });
+
+  it('drops a pick made at an earlier stage when the stage moves to the review, but keeps one made at this stage', () => {
+    for (const stage of ['reviewing', 'review-finished', 'done'] as const) {
+      expect(activityFor(input({ stage, chosen: chosen(api, 'running') })).pick, stage).toEqual({ kind: 'review' });
+      expect(activityFor(input({ stage, chosen: chosen(api, stage) })).pick, stage).toEqual(api);
+    }
+  });
+
+  it('carries a Go to as the pick and the focus request while it stands, and drops both with it', () => {
+    const goTo = { repo: 'web', n: 3 };
+    const got = activityFor(input({ chosen: chosen({ kind: 'repo', repo: 'web' }, 'running', goTo) }));
+    expect(got.pick).toEqual({ kind: 'repo', repo: 'web' });
+    expect(got.focus).toBe(goTo);
+    expect(activityFor(input({ stage: 'reviewing', chosen: chosen({ kind: 'repo', repo: 'web' }, 'running', goTo) })).focus).toBeNull();
+    expect(activityFor(input({ chosen: chosen(api, 'running') })).focus).toBeNull();
+  });
+
+  describe('the tasks a live run recorded', () => {
+    const before = status([task('T1', 'api', false), task('T2', 'api', false)]);
+    const now = status([task('T1', 'api', true), task('T2', 'api', false), task('T5', 'web', true)]);
+    const live = [{ runId: 'a2', repo: 'api', before }];
+    const tl = (taskId: string, runId: string, repo = 'api'): TaskLink => ({ workspace_id: 'w1', system: 'shop', change: 'c1', repo, task: taskId, run_id: runId });
+
+    it('links a task recorded while its repository run is live to that run, at once', () => {
+      const got = activityFor(input({ status: now, live }));
+      expect(got.newLinks).toEqual([tl('T1', 'a2')]);
+      expect(got.taskLinks).toEqual([tl('T1', 'a2')]);
+    });
+
+    it('does not link a task that was already recorded when the run started, or one of another repository', () => {
+      const started = status([task('T1', 'api', true), task('T2', 'api', false), task('T5', 'web', false)]);
+      expect(activityFor(input({ status: now, live: [{ runId: 'a2', repo: 'api', before: started }] })).newLinks).toEqual([]);
+    });
+
+    it('does not link a task twice to the same run', () => {
+      const got = activityFor(input({ status: now, live, taskLinks: [tl('T1', 'a2')] }));
+      expect(got.newLinks).toEqual([]);
+      expect(got.taskLinks).toEqual([tl('T1', 'a2')]);
+    });
+
+    it('links nothing without a live run or without the change in scope', () => {
+      expect(activityFor(input({ status: now })).newLinks).toEqual([]);
+      expect(activityFor(input({ status: now, live, scope: null })).newLinks).toEqual([]);
+    });
   });
 });
