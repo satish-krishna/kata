@@ -569,10 +569,13 @@ export function reviewFindings(detail: RunDetail): Finding[] {
   if (result === "") return [];
   const items = numberedItems(result) ?? bulletItems(result);
   if (items === null) return NO_FINDINGS.test(result) ? [] : [asFinding(result)];
+  return mostSeriousFirst(items.filter((t) => t !== "").map(asFinding));
+}
+
+/** The findings most serious first. A finding without a severity ranks as medium, and equal ranks keep the order given. */
+export function mostSeriousFirst(findings: Finding[]): Finding[] {
   const rank = (f: Finding) => SEVERITY_RANK[f.severity ?? "medium"];
-  return items
-    .filter((t) => t !== "")
-    .map(asFinding)
+  return findings
     .map((f, index) => ({ f, index }))
     .sort((a, b) => rank(a.f) - rank(b.f) || a.index - b.index)
     .map(({ f }) => f);
