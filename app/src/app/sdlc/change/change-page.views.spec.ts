@@ -12,7 +12,6 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { diagrams } from '../../lib/mermaid';
 import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE } from '../../lib/sdlc-mock';
-import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
@@ -475,7 +474,6 @@ describe('ChangePage opens an existing change on the build page', () => {
   let draw: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     draw = vi.spyOn(diagrams, 'render').mockResolvedValue('<svg></svg>');
-    vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
   });
   afterEach(() => {
     draw.mockRestore();

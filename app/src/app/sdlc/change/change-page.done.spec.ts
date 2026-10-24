@@ -11,7 +11,6 @@ import { MockTransport } from '../../core/transport/mock-transport';
 import type { StageAction } from '../../lib/sdlc';
 import { canConfirm } from '../../lib/sdlc-done';
 import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE } from '../../lib/sdlc-mock';
-import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
@@ -369,9 +368,6 @@ describe('declaring done from the build page', () => {
     reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: { 'claims-intent': '1111111', 'claims-core': '2222222', 'customer-portal': '3333333' }, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: FINDING }] }],
   } as unknown as Awaited<ReturnType<MockTransport['sdlcReviewRecord']>>;
 
-  beforeEach(() => {
-    vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
-  });
   afterEach(() => vi.restoreAllMocks());
 
   async function mountPage(change: string, transport: MockTransport) {

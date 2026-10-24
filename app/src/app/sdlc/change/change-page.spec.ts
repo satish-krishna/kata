@@ -12,7 +12,6 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { diagrams } from '../../lib/mermaid';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
-import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { BuildPage } from '../build/build-page';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePage } from './change-page';
@@ -147,7 +146,6 @@ describe('ChangePage', () => {
     });
 
     it('crosses the seam: clicking the Build pill shows what changed in the build panel', async () => {
-      vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
       const { container } = await mount(MOCK_BUILD_CHANGE);
       const tile = tab(container, 'Build');
       expect(tile.disabled).toBe(false);
@@ -387,7 +385,6 @@ describe('ChangePage build page', () => {
   let draw: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     draw = vi.spyOn(diagrams, 'render').mockResolvedValue('<svg></svg>');
-    vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
   });
   afterEach(() => {
     draw.mockRestore();
@@ -757,7 +754,6 @@ describe('ChangePage way back', () => {
   let draw: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     draw = vi.spyOn(diagrams, 'render').mockResolvedValue('<svg></svg>');
-    vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
   });
   afterEach(() => {
     draw.mockRestore();

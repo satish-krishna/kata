@@ -7,7 +7,6 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { DiffEditor } from '../../ui/diff-editor/diff-editor';
-import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { ChangesView } from './changes-view';
 import { ChangesViewModel } from './changes-view.view-model';
 
@@ -50,10 +49,6 @@ async function mount(transport = new MockTransport(), inputs: Record<string, unk
   return { ...out, transport, button, buttons, paths, row, editor, turns, inRepo, open, setInput };
 }
 
-beforeEach(() => {
-  // Monaco never loads in a unit test; the editor waits on a load that does not finish.
-  vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
-});
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();

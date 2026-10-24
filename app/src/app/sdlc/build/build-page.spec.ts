@@ -12,7 +12,6 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { By } from '@angular/platform-browser';
 import { ChangesView } from '../changes/changes-view';
-import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { BuildLayoutViewModel, type ArrangeAction, type BuildLayoutState } from './build-layout.view-model';
 import { BuildPage } from './build-page';
 import { BuildPageViewModel } from './build-page.view-model';
@@ -172,10 +171,6 @@ async function mount(view: BuildPageView, extra: { stopped?: string[] } = {}) {
   return { fixture, host: fixture.componentInstance, el, area, button, buttons, bar, barActions, headingButtons };
 }
 
-beforeEach(() => {
-  // Monaco never loads in a unit test; the editor waits on a load that does not finish.
-  vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
-});
 afterEach(() => {
   vi.restoreAllMocks();
 });
