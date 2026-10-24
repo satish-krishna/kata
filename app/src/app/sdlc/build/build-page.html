@@ -1,4 +1,4 @@
-<section class="k-bp" aria-label="Build" (document:keydown)="onKey($event)" [attr.data-narrow]="view().narrow ? '' : null">
+<section class="k-bp" aria-label="Build" (document:keydown)="onKey($event)">
   <div class="sr-only" aria-live="assertive" aria-atomic="true">{{ view().announcement }}</div>
   <div class="k-bp__notice">
     <app-waiting-notice [items]="view().waiting" (goTo)="goToRepo($event)" />
@@ -16,12 +16,7 @@
     </span>
     <button hlmBtn variant="ghost" size="sm" type="button" title="Reset this mode to its default arrangement" (click)="arrange.emit({ kind: 'reset' })">Reset layout</button>
   </div>
-  @if (view().narrow) {
-    <div class="k-bp__switch">
-      <app-segmented [options]="options()" [value]="on()" (valueChange)="panel.set($event)" ariaLabel="Build areas" />
-    </div>
-  }
-  @if (!view().narrow && layout().focus; as focused) {
+  @if (layout().focus; as focused) {
     <div class="k-bp__focus" data-focus-banner>
       <span>Focus: {{ nameOf(focused) }} fills the page.</span>
       <button hlmBtn variant="secondary" size="sm" type="button" (click)="unfocus.emit()">Back to {{ modeName(layout().mode) }}</button>
@@ -35,7 +30,6 @@
       [attr.data-place]="placeOf('tasks')"
       [style.grid-area]="cellOf('tasks')"
       [attr.inert]="shown('tasks') ? null : ''"
-      [hidden]="offNarrow('tasks')"
     >
       <ng-container [ngTemplateOutlet]="head" [ngTemplateOutletContext]="{ $implicit: 'tasks' }" />
       <div class="k-bp__body k-bp__body--stack">
@@ -102,7 +96,6 @@
       [attr.data-place]="placeOf('activity')"
       [style.grid-area]="cellOf('activity')"
       [attr.inert]="shown('activity') ? null : ''"
-      [hidden]="offNarrow('activity')"
     >
       <ng-container [ngTemplateOutlet]="head" [ngTemplateOutletContext]="{ $implicit: 'activity' }" />
       <div class="k-bp__body k-bp__body--stack">
@@ -177,7 +170,6 @@
       [attr.data-place]="placeOf('files')"
       [style.grid-area]="cellOf('files')"
       [attr.inert]="shown('files') ? null : ''"
-      [hidden]="offNarrow('files')"
     >
       <ng-container [ngTemplateOutlet]="head" [ngTemplateOutletContext]="{ $implicit: 'files' }" />
       <div class="k-bp__body">
@@ -206,7 +198,6 @@
       [attr.data-place]="placeOf('findings')"
       [style.grid-area]="cellOf('findings')"
       [attr.inert]="shown('findings') ? null : ''"
-      [hidden]="offNarrow('findings')"
     >
       <ng-container [ngTemplateOutlet]="head" [ngTemplateOutletContext]="{ $implicit: 'findings' }" />
       <div class="k-bp__body k-bp__body--stack">

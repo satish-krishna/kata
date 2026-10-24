@@ -1,5 +1,5 @@
 import { NgTemplateOutlet } from '@angular/common';
-import { Component, DestroyRef, ElementRef, Injector, afterEveryRender, afterNextRender, effect, inject, input, model, output, untracked, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, Injector, afterEveryRender, afterNextRender, effect, inject, input, output, untracked, viewChild } from '@angular/core';
 import type { BuildRow } from '@bindings/BuildRow';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideCheck, lucideChevronDown, lucideChevronRight, lucideEllipsis, lucideMaximize2, lucideMinus } from '@ng-icons/lucide';
@@ -26,17 +26,6 @@ import { WaitingNotice } from '../../ui/waiting-notice';
 import { ChangesView } from '../changes/changes-view';
 import type { ArrangeAction, BuildLayoutState } from './build-layout.view-model';
 import type { BuildChanges, BuildPageView } from './build-page.view-model';
-
-/** The areas of the build page the narrow switch chooses between. */
-export type Panel = 'tasks' | 'activity' | 'files';
-
-const TASKS = { value: 'tasks', label: 'Tasks' } as const;
-const ACTIVITY = { value: 'activity', label: 'Activity' } as const;
-const FILES = { value: 'files', label: 'Files' } as const;
-const ALL: { value: Panel; label: string }[] = [TASKS, ACTIVITY, FILES];
-const NO_FILES: { value: Panel; label: string }[] = [TASKS, ACTIVITY];
-const NO_ACTIVITY: { value: Panel; label: string }[] = [TASKS, FILES];
-const ONLY_TASKS: { value: Panel; label: string }[] = [TASKS];
 
 type Side = Exclude<Place, 'middle'>;
 
@@ -71,7 +60,7 @@ const TUCK_NOTE = 'The page always shows at least one area.';
  * the changed files and the findings. It draws one `BuildPageView` and one `BuildLayoutState` and holds no state of the build or the
  * layout; the host does the work its outputs ask for. The four areas are always in the grid, in the same order, so none is ever
  * removed or moved in the DOM: one that is not on show is inert and hidden by `content-visibility`, which keeps its scroll place
- * and its run panes folding. Below 1024 CSS pixels (`view.narrow`) the areas share one cell behind a switch. */
+ * and its run panes folding. */
 @Component({
   selector: 'app-build-page',
   host: { class: 'block h-full min-h-0' },
@@ -91,8 +80,6 @@ export class BuildPage {
   readonly stopped = input<string[]>([]);
   /** A request to bring the picked repository's open question into view and focus it. */
   readonly focus = input<{ repo: string; n: number } | null>(null);
-  /** The area on show while the page is narrow. */
-  readonly panel = model<Panel>('activity');
 
   readonly pick = output<Pick>();
   readonly repoAction = output<{ repo: string; action: 'cancel' | 'continue' }>();
@@ -173,27 +160,8 @@ export class BuildPage {
     return primaryAction(this.view().actions);
   }
 
-  /** The areas the narrow switch offers: only those with something to show. */
-  protected options(): { value: Panel; label: string }[] {
-    const { activity, files } = this.view().areas;
-    return activity ? (files ? ALL : NO_FILES) : files ? NO_ACTIVITY : ONLY_TASKS;
-  }
-
-  /** The area on show while narrow: the one chosen, else the tasks when the one chosen is not drawn. */
-  protected on(): Panel {
-    const wanted = this.panel();
-    return this.options().some((o) => o.value === wanted) ? wanted : 'tasks';
-  }
-
-  /** True when a narrow page does not show the area: only the three areas of the switch can be, and the findings never are. */
-  protected offNarrow(area: AreaId): boolean {
-    return this.view().narrow && (area === 'findings' || this.on() !== area);
-  }
-
-  /** A pick moves a narrow page to the activity it picked. */
   protected choose(pick: Pick): void {
     this.pick.emit(pick);
-    this.panel.set('activity');
   }
 
   /** A finding that names a file was picked: the changed files become visible first, then show its place. */
@@ -206,7 +174,6 @@ export class BuildPage {
     // The activity is made visible first, so the request to go to the repository finds it on show.
     this.reveal.emit('activity');
     this.goTo.emit(repo);
-    this.panel.set('activity');
   }
 
   // ---- the layout ----
@@ -242,14 +209,14 @@ export class BuildPage {
     return place === 'tucked' ? 'middle' : place;
   }
 
-  /** The area's cell: the whole grid when it is in focus or the page is narrow. */
+  /** The area's cell: the whole grid when it is in focus. */
   protected cellOf(area: AreaId): string {
-    if (this.view().narrow || this.layout().focus === area) return FULL;
+    if (this.layout().focus === area) return FULL;
     return CELLS[this.stackPlace(area)];
   }
 
   protected shown(area: AreaId): boolean {
-    return this.view().narrow ? !this.offNarrow(area) : this.layout().onShow.includes(area);
+    return this.layout().onShow.includes(area);
   }
 
   /** The names in the area's stack, in order; a tucked area or one alone has none to flip between. */
@@ -272,9 +239,9 @@ export class BuildPage {
     return this.layout().drawn.tucked.filter((t) => t.edge === edge).map((t) => t.area);
   }
 
-  /** True when the rails and the separators are drawn: not while one area fills the page or the page is narrow. */
+  /** True when the rails and the separators are drawn: not while one area fills the page. */
   protected showEdges(): boolean {
-    return !this.view().narrow && this.layout().focus === null;
+    return this.layout().focus === null;
   }
 
   protected columns(): string {

@@ -33,12 +33,6 @@
   margin-left: auto;
 }
 
-.k-bp__switch {
-  grid-row: 3;
-  padding: var(--space-3) var(--space-5);
-  border-bottom: 1px solid var(--border-subtle);
-}
-
 .k-bp__focus {
   grid-row: 4;
   display: flex;
@@ -236,11 +230,6 @@
   border-color: var(--border-strong);
   background: var(--surface-hover);
   color: var(--text-primary);
-}
-
-/* Below 1024 pixels the areas share one cell and only the one on show is drawn; the narrow switch chooses it. */
-.k-bp[data-narrow] .k-bp__head {
-  display: none;
 }
 
 .k-bp__group {

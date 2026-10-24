@@ -82,7 +82,6 @@ const base = (over: Partial<BuildPageView> = {}): BuildPageView => ({
   waiting: [],
   announcement: '',
   areas: { activity: true, files: true },
-  narrow: false,
   counts: { files: 5, findings: 3 },
   ...over,
 });
@@ -398,26 +397,6 @@ describe('the build page, questions and stops', () => {
     expect(card.contains(document.activeElement)).toBe(true);
   });
 
-  it('the waiting notice shows while the changed files are in view', async () => {
-    const v = base({
-      narrow: true,
-      groups: [group('claims-core', RUNNING, 'cancel', [task('T1', RUNNING)], true)],
-      pick: { kind: 'repo', repo: 'claims-core' },
-      sessions: [session('r1')],
-      waiting: [{ repo: 'claims-core', kind: 'approval', countdown: '4:00' }],
-    });
-    const { el, area, fixture, button } = await mount(v);
-    button(el, 'Files')!.click();
-    await settle();
-    fixture.detectChanges();
-    expect(area('files')!.hidden).toBe(false);
-    expect(area('tasks')!.hidden).toBe(true);
-    expect(area('activity')!.hidden).toBe(true);
-    const notice = el.querySelector<HTMLElement>('app-waiting-notice')!;
-    expect(notice.closest('[hidden]')).toBeNull();
-    expect(norm(notice.textContent)).toContain('claims-core');
-  });
-
   for (const [reason, exit] of [
     ['it reached the time limit', 124],
     ['it was cancelled', 130],
@@ -539,27 +518,6 @@ describe('the build page, picking and folding', () => {
     expect(b?.hidden).toBe(false);
   });
 
-  it('keeps every area reachable below 1024 pixels: a three-way switch, the panels not on show hidden and not removed', async () => {
-    const v = base({
-      narrow: true,
-      pick: { kind: 'repo', repo: 'claims-core' },
-      groups: [group('claims-core', RUNNING, 'cancel', [task('T1', RUNNING)], true)],
-      sessions: [session('r1')],
-    });
-    const { el, area, button, fixture } = await mount(v);
-    const names = Array.from(el.querySelectorAll('.k-bp__switch button')).map((b) => norm(b.textContent));
-    expect(names).toEqual(['Tasks', 'Activity', 'Files']);
-    expect(area('activity')!.hidden).toBe(false);
-    expect(area('tasks')!.hidden).toBe(true);
-    expect(area('files')!.hidden).toBe(true);
-    expect(area('activity')!.querySelector('app-observe-pane')).not.toBeNull();
-    button(el, 'Tasks')!.click();
-    await settle();
-    fixture.detectChanges();
-    expect(area('tasks')!.hidden).toBe(false);
-    expect(area('activity')!.hidden).toBe(true);
-    expect(area('activity')!.querySelector('app-observe-pane')).not.toBeNull();
-  });
 });
 
 /* The arranged page: a host that drives a real layout view model over a stand-in for the build page's view model, so every step goes
@@ -658,7 +616,7 @@ class ArrangedHost {
     this.focusRequest = { repo, n: (this.focusRequest?.n ?? 0) + 1 };
   }
 
-  /** Mark the pick the way the build page's view model does. The changed files are not narrowed to the task, so the list stays whole. */
+  /** Mark the pick the way the build page's view model does. The changed files are not limited to the task, so the list stays whole. */
   choose(pick: Pick): void {
     const repoOf = (id: string) => this.view.groups.find((g) => g.tasks.some((t) => t.id === id))?.repo;
     const repo = pick.kind === 'repo' ? pick.repo : pick.kind === 'task' ? repoOf(pick.task) : undefined;

@@ -134,7 +134,6 @@ describe('the build page starts, stops and continues the same runs as the build 
     expect(view.areas).toEqual({ activity: true, files: true });
     expect(view.sessions.length).toBeGreaterThan(0);
     expect(view.findingsArea.review).toBeNull();
-    expect(view.narrow).toBe(false);
   });
 
   it('refuses to start while another task holds the lock, and starts nothing', async () => {

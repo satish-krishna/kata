@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
@@ -185,8 +185,6 @@ export type BuildPageView = {
   announcement: string;
   /** Which of the optional areas have something to show; the tasks area always does. */
   areas: { activity: boolean; files: boolean };
-  /** True below 1024 CSS pixels, where the three areas become one column behind a switch. */
-  narrow: boolean;
   /** The counts the area tabs show: changed files and findings. */
   counts: { files: number; findings: number };
 };
@@ -206,8 +204,6 @@ type Review = { at: number | null; label: string | null; findings: Finding[] };
 
 const REVIEW = 'review';
 const RUNNING: readonly RunState[] = ['running', 'awaiting'];
-/** Below this width the build page's three areas share one column. */
-const PAGE_NARROW = '(max-width: 1023.98px)';
 
 /** A task's state as its row says it. */
 const taskStatus = (t: TaskState): StatusText => {
@@ -359,9 +355,6 @@ export class BuildPageViewModel {
   /** Why Continue did not go on, with what the check found; the refusal dialog is open exactly while this is set. */
   readonly refusal = signal<{ reason: string; problems: Problem[] } | null>(null);
 
-  /** True below the width where the build page's three areas become one column behind a switch. */
-  private readonly pageNarrow = signal(false);
-
   readonly tab = signal<BuildTab>('activity');
   readonly announcement = signal('');
   /** A request to bring a repository's open question into view and focus it; the view carries it out. */
@@ -494,13 +487,6 @@ export class BuildPageViewModel {
   readonly emptyText = computed(() => (this.unrecorded() ? 'The review did not record its findings' : this.older() ? 'The review found nothing.' : 'Reviewed, nothing found.'));
 
   constructor() {
-    const pageQuery = typeof globalThis.matchMedia === 'function' ? globalThis.matchMedia(PAGE_NARROW) : null;
-    if (pageQuery !== null) {
-      this.pageNarrow.set(pageQuery.matches);
-      const onPage = (e: MediaQueryListEvent) => this.pageNarrow.set(e.matches);
-      pageQuery.addEventListener('change', onPage);
-      inject(DestroyRef).onDestroy(() => pageQuery.removeEventListener('change', onPage));
-    }
     // Whatever the host sets in `loaded` is read at once.
     effect(() => {
       const input = this.loaded();
@@ -871,7 +857,6 @@ export class BuildPageViewModel {
       waiting: this.waitingNotices(),
       announcement: this.announcement(),
       areas: shownAreas({ stage, hasSessions, hasChanges }),
-      narrow: this.pageNarrow(),
       counts: { files: this.changedFileTotal(), findings: findingsArea.review === null ? 0 : findingsArea.review.findings.length },
     };
   });

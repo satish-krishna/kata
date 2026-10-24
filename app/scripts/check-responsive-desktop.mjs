@@ -1,5 +1,5 @@
 // Desktop-only responsive gate. Kata is a desktop app (laptop to ultrawide, no mobile breakpoints), so jig's 375/768/1280 check is
-// narrowed to 1280/1600, and the window's 1024 minimum is covered for the change page and the workspace home page.
+// narrowed to 1280/1600, and the window's 1280 minimum is the narrowest width the change page and the workspace home page are measured at.
 // Builds, serves dist/angular-jig/browser statically, and asserts that no route scrolls the page horizontally or clips content at
 // either width, then measures the change page's toolbar (real and long content), its Build strip and the home page in a real browser
 // with the fractional clipping measure of scripts/clipping.mjs.
@@ -17,8 +17,8 @@ import { formatCorrectiveMessage } from '../harness/gate/responsive-guidance.mjs
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = join(ROOT, 'dist', 'angular-jig', 'browser');
 const BREAKPOINTS = [1280, 1600];
-// The window has a minimum width of 1024, so the change page is measured there too.
-const CHANGE_WIDTHS = [1024, 1280, 1600];
+// The window has a minimum width of 1280, so the change page is measured from there up.
+const CHANGE_WIDTHS = [1280, 1600];
 const STRIP_WIDTHS = [768, 1024, 1280, 1440];
 const ROUTES = [
   { route: '', anchorSelector: 'app-workbench' },
@@ -90,7 +90,7 @@ try {
       }
     }
     // A document with no sections has no outline column, so its text starts at the left edge.
-    for (const width of [1024, 1280]) {
+    for (const width of [1280]) {
       const fails = await checkDocLayoutLeft(browser, srv.origin, width);
       if (fails.length) {
         process.stderr.write(`${fails.join('\n')}\n`);
