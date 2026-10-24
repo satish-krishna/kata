@@ -144,3 +144,11 @@
     height: auto;
   }
 }
+
+/* The repositories that all have a picked finding's file, for the engineer to choose from. */
+.k-changes__choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}

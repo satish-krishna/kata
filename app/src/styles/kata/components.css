@@ -293,3 +293,7 @@
 .k-lock__activity dd { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
 .k-lock__foot { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-4); }
 .k-lock__deadline { font: var(--font-code-sm); color: var(--warning-text); }
+
+/* A finding's place in the diff editor: the warning edge on its line and its text in a zone below. Monaco draws both, outside any component's styles. */
+.k-finding-line { box-shadow: inset 2px 0 0 var(--warning); }
+.k-finding-note { box-sizing: border-box; height: 100%; margin: 0 var(--space-4) var(--space-3) var(--space-8); padding: var(--space-3); overflow: auto; border: 1px solid var(--warning-border); background: var(--warning-subtle); border-radius: var(--radius-sm); font: var(--text-sm)/1.4 var(--font-sans); color: var(--text-primary); white-space: normal; }

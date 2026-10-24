@@ -38,6 +38,8 @@ export class DiffEditor {
   private editor?: Monaco.editor.IStandaloneDiffEditor;
   private models: Monaco.editor.ITextModel[] = [];
   private destroyed = false;
+  private decorations?: Monaco.editor.IEditorDecorationsCollection;
+  private zoneId: string | null = null;
 
   constructor() {
     afterNextRender(() => void this.create());
@@ -57,6 +59,10 @@ export class DiffEditor {
       const request = this.stepRequest();
       if (request === null) return;
       untracked(() => (request.direction === 'next' ? this.nextChange() : this.previousChange()));
+    });
+    effect(() => {
+      const mark = this.mark();
+      untracked(() => this.applyMark(mark));
     });
     inject(DestroyRef).onDestroy(() => {
       this.destroyed = true;
@@ -107,6 +113,7 @@ export class DiffEditor {
     this.show(this.pair());
     const text = this.modifiedText();
     if (text !== null) this.updateModified(text);
+    this.applyMark(this.mark());
   }
 
   /** Swaps in models for `pair`. The old models are disposed only after the editor lets go of them. */
@@ -114,6 +121,7 @@ export class DiffEditor {
     const { api, editor } = this;
     if (!api || !editor) return;
     const previous = this.models;
+    this.clearMark();
     if (pair && !pair.binary) {
       const original = api.editor.createModel(pair.original, pair.languageHint);
       const modified = api.editor.createModel(pair.modified, pair.languageHint);
@@ -124,6 +132,44 @@ export class DiffEditor {
       this.models = [];
     }
     this.disposeModels(previous);
+    this.applyMark(untracked(this.mark));
+  }
+
+  /**
+   * Brings the finding's line into the centre of the new side, gives it the warning edge and shows the finding's text in a
+   * zone below it. A mark without a line shows the file from its top. It waits for the file's models, so it applies when
+   * the file is shown after the mark arrives as well as before.
+   */
+  private applyMark(mark: FindingMark | null): void {
+    this.clearMark();
+    const editor = this.editor;
+    const model = this.models[1];
+    if (!editor || !model || mark === null) return;
+    const modified = editor.getModifiedEditor();
+    if (mark.line === null) {
+      modified.revealLine(1);
+      return;
+    }
+    const line = Math.min(Math.max(mark.line, 1), model.getLineCount());
+    this.decorations = modified.createDecorationsCollection([
+      { range: { startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1 }, options: { isWholeLine: true, className: 'k-finding-line' } },
+    ]);
+    modified.changeViewZones((zones) => {
+      const note = document.createElement('div');
+      note.className = 'k-finding-note';
+      note.textContent = mark.text;
+      this.zoneId = zones.addZone({ afterLineNumber: line, heightInLines: 3, domNode: note });
+    });
+    modified.setPosition({ lineNumber: line, column: 1 });
+    modified.revealLineInCenter(line);
+  }
+
+  private clearMark(): void {
+    this.decorations?.clear();
+    this.decorations = undefined;
+    const id = this.zoneId;
+    this.zoneId = null;
+    if (id !== null) this.editor?.getModifiedEditor().changeViewZones((zones) => zones.removeZone(id));
   }
 
   private revealChange(pick: (changes: Monaco.editor.ILineChange[], line: number) => number | null): void {
