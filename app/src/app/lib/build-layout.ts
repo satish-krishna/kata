@@ -5,6 +5,7 @@ export type AreaId = 'tasks' | 'activity' | 'files' | 'findings';
 export type Place = 'left' | 'middle' | 'right' | 'bottom';
 export type Edge = 'left' | 'right' | 'bottom';
 export type LayoutMode = 'overview' | 'watch' | 'changes' | 'review';
+/** The room the places have: the grid's box less the rails and the separators that are drawn. */
 export type Room = { width: number; height: number };
 
 export type Arrangement = {
@@ -166,4 +167,9 @@ export function resize(a: Arrangement, side: Side, px: number, room: Room): Arra
   const next = copy(a);
   next.sizes[side] = Math.max(MIN_SIDE, Math.min(px, max));
   return next;
+}
+
+/** The most a side can have: what leaves the middle its minimum, given the other side at its fitted size. */
+export function maxSize(a: Arrangement, side: Side, room: Room): number {
+  return 0 * (a.sizes[side] + room.width);
 }

@@ -448,6 +448,34 @@ try {
   });
   await stays('the findings read');
 
+  // R5.1 and R9.2: the largest a separator goes leaves the middle its minimum with the rails drawn (the room is the grid less its rails and separators).
+  await attempt('R5.1 the left separator with a rail', async () => {
+    await enter(MODES[3]);
+    check((await page.locator('[data-rail="right"]').count()) === 1, 'Review has areas tucked at the right rail');
+    await page.locator('[role="separator"][data-side="left"]').focus();
+    await page.keyboard.press('End');
+    await settle();
+    const middle = await area('files').boundingBox();
+    check(middle !== null && middle.width >= 240 - 0.5, `R5.1 Review: after End on the left separator the middle is at least 240 wide (${Math.round(middle?.width ?? 0)})`);
+  });
+  await attempt('R5.1 the bottom separator with a rail', async () => {
+    await enter(MODES[2]);
+    await page.locator('[data-rail]').getByRole('button', { name: /^Bring back Tasks/ }).click();
+    await settle();
+    await area('tasks').getByRole('button', { name: 'Place Tasks' }).click();
+    await page.getByRole('menuitem', { name: 'Bottom' }).click();
+    await settle();
+    await area('tasks').getByRole('button', { name: 'Tuck Tasks away' }).click();
+    await settle();
+    check((await page.locator('[data-rail="bottom"]').count()) === 1, 'Changes has an area tucked at the bottom rail');
+    await page.locator('[role="separator"][data-side="bottom"]').focus();
+    await page.keyboard.press('End');
+    await settle();
+    const row = await area('files').boundingBox();
+    check(row !== null && row.height >= 280 - 0.5, `R5.1 Changes: after End on the bottom separator the row above the bottom is at least 280 high (${Math.round(row?.height ?? 0)})`);
+    await enter(MODES[2]);
+  });
+
   // Declare done opens its dialog on the same page; opening the pull requests lists them there too.
   await declare.click();
   const doneDialog = page.getByRole('dialog');

@@ -1026,6 +1026,20 @@ describe('the arranged build page from the keyboard', () => {
     expect(current()).toBe(separator(page, 'left'));
   });
 
+  it('F3: the largest the left separator goes leaves the middle its minimum once the drawn rail and separator are taken off', async () => {
+    const page = await mountArranged();
+    await page.mode('review');
+    measure(page);
+    // jsdom lays nothing out, so the right rail (the tucked tasks and activity) is given the 28 px a browser draws.
+    const rail = page.el.querySelector<HTMLElement>('[data-rail="right"]')!;
+    Object.defineProperty(rail, 'offsetWidth', { configurable: true, value: 28 });
+    page.tabTo(separator(page, 'left'));
+    await page.press('End');
+    // 1280 less the rail and the 1 px separator, less the middle's 240.
+    expect(page.host.arranges[page.host.arranges.length - 1]).toEqual({ kind: 'resize', side: 'left', px: 1011 });
+    expect(sizeOf(page, 'left')).toBe(1011);
+  });
+
   it('R13.1: makes an area larger and smaller: the right separator moves left to grow', async () => {
     const page = await mountArranged();
     await page.mode('overview');

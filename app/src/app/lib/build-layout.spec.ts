@@ -1,4 +1,4 @@
-import { areasOnShow, bringBack, canTuck, defaultArrangement, fitSizes, place, resize, tuck, whereIs, type Arrangement } from './build-layout';
+import { MIN_MIDDLE_WIDTH, MIN_ROW_HEIGHT, areasOnShow, bringBack, canTuck, defaultArrangement, fitSizes, maxSize, place, resize, tuck, whereIs, type Arrangement } from './build-layout';
 
 const sizes = { left: 300, right: 360, bottom: 200 };
 const arr = (over: Partial<Arrangement>): Arrangement => ({ middle: 'tasks', left: [], right: [], bottom: [], tucked: [], sizes: { ...sizes }, ...over });
@@ -212,6 +212,25 @@ describe('build-layout', () => {
       const b = arr({ middle: 'files', bottom: ['activity'] });
       expect(resize(b, 'bottom', 5000, room).sizes.bottom).toBe(320);
       expect(resize(b, 'bottom', 10, room).sizes.bottom).toBe(160);
+    });
+    describe('in a room with the rails and separators taken out', () => {
+      // 1280 wide less a 28 px rail and a 1 px separator, 600 high less a 28 px rail and a 1 px separator.
+      const net = { width: 1251, height: 571 };
+      it('F3: the left side stops where the middle keeps exactly its minimum width', () => {
+        expect(net.width - resize(a, 'left', 5000, net).sizes.left).toBe(MIN_MIDDLE_WIDTH);
+      });
+      it('F3: the bottom stops where the row above keeps exactly its minimum height', () => {
+        const b = arr({ middle: 'files', bottom: ['activity'] });
+        expect(net.height - resize(b, 'bottom', 5000, net).sizes.bottom).toBe(MIN_ROW_HEIGHT);
+      });
+      it('F3: the shared maximum is what resize stops at, with the other side taken off it', () => {
+        const b = arr({ middle: 'activity', left: ['tasks'], right: ['findings'] });
+        const c = arr({ middle: 'files', bottom: ['activity'] });
+        for (const [x, side] of [[a, 'left'], [b, 'left'], [b, 'right'], [c, 'bottom']] as const) {
+          expect(resize(x, side, 5000, net).sizes[side], side).toBe(maxSize(x, side, net));
+        }
+        expect(maxSize(b, 'left', net)).toBe(net.width - MIN_MIDDLE_WIDTH - 360);
+      });
     });
   });
 });
