@@ -103,7 +103,7 @@ export class MockTransport extends KataTransport {
       }
       const repo = spec.workdir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
       const tasks = this.sdlc.readyTasks(repo);
-      const script = buildRunScript(repo, tasks, repo === 'customer-portal' && tasks.length > 0 && tasks[0].id === 'T2');
+      const script = buildRunScript(repo, tasks, repo === 'customer-portal' && tasks.length > 0 && tasks[0].id === 'T2', repo === 'billing-api' && tasks.length > 0);
       return { run: make('build', script.mid, () => this.sdlc.commitRows(tasks)), head: script.head };
     }
     if (spec.name.startsWith('sdlc-')) {
@@ -236,6 +236,7 @@ export class MockTransport extends KataTransport {
   }
   async submitDecision(runId: string, id: string, allow: boolean, message: string | null): Promise<void> {
     this.emit(runId, { type: 'permission.decided', id, ...PENDING_PERMISSION, allow, decided_by: 'operator', message: message ?? undefined });
-    this.play(runId, runScriptTail);
+    const run = this.runs.get(runId);
+    this.play(runId, run?.kind === 'build' ? run.mid : runScriptTail);
   }
 }

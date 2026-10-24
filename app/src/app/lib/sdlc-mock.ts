@@ -43,7 +43,7 @@ import type { Stage } from '@bindings/Stage';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { DEMO_SETUP_FOLDER, DEMO_WORKSPACE_FOLDER } from './demo';
-import type { ScriptStep } from './mock';
+import { PENDING_PERMISSION, type ScriptStep } from './mock';
 
 export const MOCK_WORKSPACE_FOLDER = DEMO_WORKSPACE_FOLDER;
 /** A folder the demo can add that has repos but no committed `.ai-sdlc.json`, so adding it runs setup. */
@@ -680,8 +680,8 @@ const taskSteps = (t: PlanTask): ScriptStep[] => [
 const completed = (result: string): ScriptStep =>
   ({ delay: 350, ev: { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 3, cost_usd: 0.04, duration_ms: 30000, result } });
 
-/** A repository run: it does `tasks` and commits each. With `ask`, it pauses on one question before the first task. */
-export function buildRunScript(repo: string, tasks: PlanTask[], ask: boolean): { head: ScriptStep[]; mid: ScriptStep[] } {
+/** A repository run: it does `tasks` and commits each. With `ask`, it pauses on one question before the first task; with `permission`, on one permission check. */
+export function buildRunScript(repo: string, tasks: PlanTask[], ask: boolean, permission = false): { head: ScriptStep[]; mid: ScriptStep[] } {
   const read: ScriptStep[] = [
     buildTranscript(repo),
     { delay: 300, ev: { type: 'turn', n: 1 } },
@@ -694,6 +694,7 @@ export function buildRunScript(repo: string, tasks: PlanTask[], ask: boolean): {
     { delay: 300, ev: { type: 'tool.result', name: 'Bash', ok: true, summary: 'pins hold', id: 'toolu_pins', output: 'intent-pin=0\nspec-pin=0' } },
   ];
   const work = [...pins, ...tasks.flatMap(taskSteps), completed(`${tasks.length} task(s) done in ${repo}.`)];
+  if (permission) return { head: [...read, { delay: 300, ev: { type: 'permission.requested', id: 'p1', ...PENDING_PERMISSION } }], mid: work };
   if (!ask) return { head: [...read, ...work], mid: [] };
   const question: ScriptStep = { delay: 300, ev: { type: 'ask.requested', id: 'q1', questions: [
     { kind: 'select', header: 'picker', question: 'The report form already has a file picker. Reuse it for photos?',
