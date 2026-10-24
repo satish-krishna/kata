@@ -62,7 +62,7 @@
                   <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__task" data-task [attr.aria-current]="t.picked ? 'true' : null" (click)="choose({ kind: 'task', task: t.id })">
                     <span class="k-mono">{{ t.id }}</span>
                     <span class="k-bp__task-name">{{ t.name }}</span>
-                    <span [class]="'k-status k-status--' + t.status.tone"><span class="k-status__dot"></span>{{ t.status.label }}</span>
+                    <span [class]="'k-status k-status--' + t.status.tone"><span class="k-status__dot"></span><span class="k-bp__status-label">{{ t.status.label }}</span></span>
                     @if (t.departure; as departure) {
                       <span class="k-mono k-bp__departure" data-departure>Departure: {{ departure }}</span>
                     }

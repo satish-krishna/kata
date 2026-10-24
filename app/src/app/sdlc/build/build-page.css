@@ -64,6 +64,22 @@
   background: var(--surface-panel);
 }
 
+/* The tasks area is a size container: below 240 pixels wide its tasks draw compact, the status dot without the label. */
+.k-bp__area[data-area='tasks'] {
+  container: tasks-area / inline-size;
+}
+
+/* The label is clipped to nothing, not removed, so the status stays in the accessibility tree. */
+@container tasks-area (width < 240px) {
+  .k-bp__status-label {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+}
+
 /* An area not on show keeps its cell and its rendering state, scroll place included, which display: none would drop. */
 .k-bp__area[inert] {
   content-visibility: hidden;
