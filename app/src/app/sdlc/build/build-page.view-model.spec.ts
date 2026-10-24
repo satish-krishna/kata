@@ -20,7 +20,7 @@ import { givenKey, type KindGroup, type PresetRow } from '../../lib/given';
 import { safetyRules, specFor, type BuildRun } from '../../lib/sdlc';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import type { BuildHandoff } from '../change/change-page.view-model';
-import { BuildPageViewModel, type BuildContext } from './build-page.view-model';
+import { BuildPageViewModel, findingsAreaOf, type BuildContext, type Departure, type FindingsView, type ReviewEntry } from './build-page.view-model';
 
 const FOLDER = MOCK_WORKSPACE_FOLDER;
 const CTX: BuildContext = { workspaceId: 'acme-claims', folder: FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE, systemRepos: [] };
@@ -133,7 +133,7 @@ describe('the build page starts, stops and continues the same runs as the build 
     expect(view.pick).toEqual({ kind: 'repo', repo: 'claims-core' });
     expect(view.areas).toEqual({ activity: true, files: true });
     expect(view.sessions.length).toBeGreaterThan(0);
-    expect(view.findings).toBeNull();
+    expect(view.findingsArea.review).toBeNull();
     expect(view.narrow).toBe(false);
   });
 
@@ -500,7 +500,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       });
       return vi.spyOn(transport, 'sdlcReviewRecord').mockImplementation(async () => ({ layout: 2, reviews: reviewed ? reviews : [], problems: reviewed ? documentProblems : [], master_moved: [] }));
     };
-    const shown = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.view().findings !== null;
+    const shown = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.view().findingsArea.review !== null;
 
     it('findings come from review.md, not the run words (R14.2)', async () => {
       const { vm, transport, lock } = setup();
@@ -526,7 +526,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       await drive(vm, lock, shown(vm));
       const order = ['the limit is not enforced', 'the retry loops forever', 'the message has no test', 'a stale comment'];
       expect(vm.findings().map((f) => f.text)).toEqual(order);
-      expect(vm.view().findings!.findings.map((f) => f.text)).toEqual(order);
+      expect(vm.view().findingsArea.review!.findings.map((f) => f.text)).toEqual(order);
     });
 
     it('a review with no findings shows reviewed, nothing found (R14.3)', async () => {
@@ -1565,7 +1565,7 @@ describe('what the pick is and what the activity area shows for it', () => {
     await drive(vm, lock, finished(vm));
     expect(vm.stage()).toBe('review-finished');
     expect(vm.pick()).toEqual({ kind: 'review' });
-    expect(vm.view().findings).not.toBeNull();
+    expect(vm.view().findingsArea.review).not.toBeNull();
   });
 
   it('a Go to picks the repository and asks for its question to be brought into view, once per Go to', async () => {
@@ -1637,5 +1637,80 @@ describe('what the pick is and what the activity area shows for it', () => {
     commitRows(transport);
     await advance(2500);
     expect(vm.pickedTask()).toBe(again);
+  });
+});
+
+describe('the findings area shows what the review knows at each stage (R4.3)', () => {
+  const READING = 'Reading the review…';
+  const NOT_RUN = 'The review runs by itself once the last task is recorded.';
+  const RUNNING = 'The review is running. Its findings appear here when it ends.';
+  const STALE = 'The work changed since it was reviewed.';
+  const found = [
+    { severity: 'high' as const, text: 'The limit is not enforced on retry', file: 'src/a.ts', line: 4 },
+    { severity: null, text: 'The refusal message has no test' },
+  ];
+  const review = (findings = found): FindingsView => ({ notice: null, findings, replaced: [], older: false, emptyText: 'Reviewed, nothing found.' });
+  const departure: Departure = { repo: 'claims-core', task: 'T2', text: 'Used the shared limiter instead of a new one' };
+  const area = (reading: boolean, entry: ReviewEntry, findings = found, departures: Departure[] = [departure]) =>
+    findingsAreaOf({ reading, entry, review: review(findings), departures });
+
+  it('being read: "Reading the review…", whatever the entry and the findings', () => {
+    for (const entry of ['not run', 'running', 'finished', 'stale'] as const) {
+      expect(area(true, entry), entry).toMatchObject({ message: READING, review: null, staleNotice: null, departures: null });
+    }
+  });
+
+  it('not run: that the review runs by itself, then the departures', () => {
+    expect(area(false, 'not run')).toEqual({ message: NOT_RUN, staleNotice: null, review: null, departures: [departure], noDepartures: null });
+  });
+
+  it('running: that the review is running, then the departures', () => {
+    expect(area(false, 'running')).toEqual({ message: RUNNING, staleNotice: null, review: null, departures: [departure], noDepartures: null });
+  });
+
+  it('finished with findings: the findings, most serious first as given, then the departures', () => {
+    const shown = area(false, 'finished');
+    expect(shown.message).toBeNull();
+    expect(shown.staleNotice).toBeNull();
+    expect(shown.review!.findings.map((f) => f.text)).toEqual(found.map((f) => f.text));
+    expect(shown.departures).toEqual([departure]);
+  });
+
+  it('finished with none: "Reviewed, nothing found." then the departures', () => {
+    const shown = area(false, 'finished', []);
+    expect(shown.message).toBeNull();
+    expect(shown.review!.findings).toEqual([]);
+    expect(shown.review!.emptyText).toBe('Reviewed, nothing found.');
+    expect(shown.departures).toEqual([departure]);
+  });
+
+  it('stale with findings: the out-of-date notice, the findings, then the departures', () => {
+    const shown = area(false, 'stale');
+    expect(shown.staleNotice).toBe(STALE);
+    expect(shown.review!.findings).toHaveLength(2);
+    expect(shown.departures).toEqual([departure]);
+  });
+
+  it('stale with none: the out-of-date notice, the empty text, then the departures', () => {
+    const shown = area(false, 'stale', []);
+    expect(shown.staleNotice).toBe(STALE);
+    expect(shown.review!.findings).toEqual([]);
+    expect(shown.review!.emptyText).toBe('Reviewed, nothing found.');
+    expect(shown.departures).toEqual([departure]);
+  });
+
+  it('with no departure recorded it says "No departures from the plan."', () => {
+    expect(area(false, 'finished', found, [])).toMatchObject({ departures: [], noDepartures: 'No departures from the plan.' });
+    expect(area(false, 'not run', found, [])).toMatchObject({ departures: [], noDepartures: 'No departures from the plan.' });
+  });
+
+  it('showFinding sets the place with the file, the line or null, the text and a count that rises each time', () => {
+    const { vm } = setup();
+    vm.showFinding(found[0]);
+    expect(vm.view().findingPlace).toEqual({ file: 'src/a.ts', line: 4, text: found[0].text, n: 1 });
+    vm.showFinding({ severity: null, text: 'Whole file', file: 'src/b.ts' });
+    expect(vm.view().findingPlace).toEqual({ file: 'src/b.ts', line: null, text: 'Whole file', n: 2 });
+    vm.showFinding(found[1]);
+    expect(vm.view().findingPlace!.n).toBe(2);
   });
 });

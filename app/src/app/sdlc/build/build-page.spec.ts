@@ -10,6 +10,8 @@ import { stopMessage, type Finding, type StageAction } from '../../lib/sdlc';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
+import { By } from '@angular/platform-browser';
+import { ChangesView } from '../changes/changes-view';
 import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { BuildLayoutViewModel, type ArrangeAction, type BuildLayoutState } from './build-layout.view-model';
 import { BuildPage } from './build-page';
@@ -75,7 +77,8 @@ const base = (over: Partial<BuildPageView> = {}): BuildPageView => ({
   sessions: [],
   sessionNote: null,
   stops: [],
-  findings: null,
+  findingsArea: { message: 'The review runs by itself once the last task is recorded.', staleNotice: null, review: null, departures: [], noDepartures: 'No departures from the plan.' },
+  findingPlace: null,
   waiting: [],
   announcement: '',
   areas: { activity: true, files: true },
@@ -99,6 +102,8 @@ const FINDINGS = {
   older: false,
   emptyText: 'Reviewed, nothing found.',
 };
+
+const SHOWN = { message: null, staleNotice: null, review: FINDINGS, departures: [], noDepartures: 'No departures from the plan.' };
 
 @Component({
   imports: [BuildPage],
@@ -307,7 +312,7 @@ describe('the build page at each stage', () => {
       groups: done3,
       review: { status: { tone: 'success', label: 'Finished' }, action: null, picked: true },
       pick: { kind: 'review' },
-      findings: FINDINGS,
+      findingsArea: SHOWN,
       stageMessage: { title: 'Every task is in the build log.', lines: [] },
     });
     const { area, barActions } = await mount(v);
@@ -324,7 +329,7 @@ describe('the build page at each stage', () => {
       groups: done3,
       review: { status: { tone: 'success', label: 'Finished' }, action: null, picked: true },
       pick: { kind: 'review' },
-      findings: FINDINGS,
+      findingsArea: SHOWN,
     });
     const { area, barActions, bar } = await mount(v);
     expect(area('findings')!.querySelector('app-findings-list')).not.toBeNull();
@@ -459,7 +464,7 @@ describe('the build page, questions and stops', () => {
       stage: 'review-finished',
       groups: done3,
       pick: { kind: 'review' },
-      findings: FINDINGS,
+      findingsArea: SHOWN,
       stageMessage: { title: 'Every task is in the build log.', lines: [] },
     });
     const { area } = await mount(v);
@@ -599,10 +604,13 @@ function layoutStandIn(stage: LayoutStage) {
       (unfocus)="layout.unfocus()"
       (flip)="layout.flip($event.place, $event.area)"
       (room)="layout.room.set($event)"
+      (reveal)="layout.reveal($event)"
+      (showFinding)="showFinding($event)"
     />
   `,
 })
 class ArrangedHost {
+  private placed = 0;
   readonly layout = inject(BuildLayoutViewModel);
   readonly context = CHANGES;
   readonly rows: BuildRow[] = [];
@@ -614,8 +622,13 @@ class ArrangedHost {
       group('customer-portal', RUNNING, 'cancel', [task('T3', RUNNING)]),
     ],
     sessions: [session('r1')],
-    findings: FINDINGS,
+    findingsArea: SHOWN,
   });
+
+  /** Set the place the way the build page's view model does. */
+  showFinding(f: Finding): void {
+    this.view = { ...this.view, findingPlace: { file: f.file!, line: f.line ?? null, text: f.text, n: ++this.placed } };
+  }
 
   arranged(action: ArrangeAction): void {
     this.arranges.push(action);
@@ -918,5 +931,50 @@ describe('the arranged build page', () => {
     await page.mode('review');
     await page.click(page.focusButton('files'));
     expect(order()).toEqual(['tasks', 'activity', 'files', 'findings']);
+  });
+});
+
+describe('picking a finding in the findings area', () => {
+  const PICKABLE: Finding[] = [
+    { severity: 'high', text: 'The limit is not enforced on retry.', file: 'src/a.ts', line: 4 },
+    { severity: null, text: 'The refusal message has no test.' },
+  ];
+  const withFindings = (host: ArrangedHost) => {
+    host.view = { ...host.view, findingsArea: { ...SHOWN, review: { ...FINDINGS, findings: PICKABLE } } };
+  };
+  const showAt = (page: Awaited<ReturnType<typeof mountArranged>>) => page.fixture.debugElement.query(By.directive(ChangesView)).componentInstance.showAt();
+
+  it('R4.2: in Review with the changed files moved right and then tucked, it brings them back to the right and shows the line', async () => {
+    const page = await mountArranged();
+    withFindings(page.host);
+    await page.mode('review');
+    await page.placeTo('files', 'Right');
+    await page.click(page.tuckButton('files'));
+    expect(page.where('files')).toBe('tucked');
+    await page.click(page.inside(page.area('findings'), 'button', 'src/a.ts:4'));
+    expect(page.where('files')).toBe('right');
+    expect(page.inert('files')).toBe(false);
+    expect(showAt(page)).toEqual({ file: 'src/a.ts', line: 4, text: PICKABLE[0].text, n: 1 });
+  });
+
+  it('R4.2 and R5.5: the same with the changed files tucked from the middle brings them back to the right', async () => {
+    const page = await mountArranged();
+    withFindings(page.host);
+    await page.mode('review');
+    await page.click(page.tuckButton('files'));
+    expect(page.where('files')).toBe('tucked');
+    await page.click(page.inside(page.area('findings'), 'button', 'src/a.ts:4'));
+    expect(page.where('files')).toBe('right');
+    expect(showAt(page)).toMatchObject({ file: 'src/a.ts', line: 4 });
+  });
+
+  it('a finding that names no file says so and picks nothing', async () => {
+    const page = await mountArranged();
+    withFindings(page.host);
+    await page.mode('review');
+    const items = Array.from(page.area('findings').querySelectorAll('li'));
+    expect(page.text(items[1])).toContain('This finding names no file.');
+    expect(items[1].querySelector('button')).toBeNull();
+    expect(showAt(page)).toBeNull();
   });
 });

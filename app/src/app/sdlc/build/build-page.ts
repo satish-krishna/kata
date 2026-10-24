@@ -16,7 +16,7 @@ import {
   type Place,
 } from '../../lib/build-layout';
 import type { Pick } from '../../lib/build-sessions';
-import { actionLabel, primaryAction, type StageAction } from '../../lib/sdlc';
+import { actionLabel, primaryAction, type Finding, type StageAction } from '../../lib/sdlc';
 import { FindingsList } from '../../ui/findings-list';
 import { ObservePane } from '../../ui/observe-pane';
 import { Segmented } from '../../ui/segmented';
@@ -113,6 +113,10 @@ export class BuildPage {
   readonly flip = output<{ place: Place; area: AreaId }>();
   /** The room the grid has, in pixels, whenever it changes. */
   readonly room = output<{ width: number; height: number }>();
+  /** Make an area visible, whatever has become of it. */
+  readonly reveal = output<AreaId>();
+  /** The engineer picked a finding that names a file. */
+  readonly showFinding = output<Finding>();
 
   protected readonly areas = AREA_ORDER;
   protected readonly places = PLACES;

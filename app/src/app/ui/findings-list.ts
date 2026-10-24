@@ -1,5 +1,5 @@
 import { NgTemplateOutlet } from '@angular/common';
-import { Component, input } from '@angular/core';
+import { Component, input, output } from '@angular/core';
 import type { Finding } from '../lib/sdlc';
 import { MarkdownBody } from './markdown-body';
 
@@ -20,6 +20,11 @@ export class FindingsList {
   readonly older = input(false);
   /** What to say when the review found nothing. */
   readonly emptyText = input('The review found nothing.');
+
+  /** The finding the engineer picked last, to mark; null when none. */
+  readonly picked = input<{ file: string; line: number | null; text: string; n: number } | null>(null);
+  /** A finding that names a file was picked. */
+  readonly pick = output<Finding>();
 
   protected where(f: Finding): string | null {
     return f.file === undefined ? null : f.line === undefined ? f.file : `${f.file}:${f.line}`;

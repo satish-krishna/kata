@@ -209,7 +209,7 @@
     >
       <ng-container [ngTemplateOutlet]="head" [ngTemplateOutletContext]="{ $implicit: 'findings' }" />
       <div class="k-bp__body k-bp__body--stack">
-        @if (view().findings; as found) {
+        @if (view().findingsArea.review; as found) {
           @if (found.notice; as notice) {
             <div [class]="notice.tone === 'warning' ? 'wb-banner wb-banner--warn' : 'wb-banner wb-banner--quiet'" data-testid="review-notice" role="status">
               <span [class]="'k-status k-status--' + (notice.tone === 'warning' ? 'warning' : 'idle')"><span class="k-status__dot"></span>{{ notice.text }}</span>

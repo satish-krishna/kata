@@ -128,6 +128,30 @@ export type ReviewEntryView = { status: StatusText; action: 'cancel' | 'continue
 /** The review's findings, with the notice above them. */
 export type FindingsView = { notice: DocNotice | null; findings: Finding[]; replaced: ReplacedFindings[]; older: boolean; emptyText: string };
 
+/** A task's recorded departure from the plan. */
+export type Departure = { repo: string; task: string; text: string };
+
+/** What the findings area shows: one message in place of the review, or the review with the notice above it, then the departures. */
+export type FindingsAreaView = {
+  /** Said instead of the review: while it is read, before it runs, while it runs; null when the review itself shows. */
+  message: string | null;
+  /** The out-of-date notice above a stale review's findings. */
+  staleNotice: string | null;
+  review: FindingsView | null;
+  /** Every recorded departure; null while the review is read. */
+  departures: Departure[] | null;
+  /** Said in place of the departures when there are none. */
+  noDepartures: string | null;
+};
+
+/** Where the engineer picked a finding: the file and line to show in the changed files, and a count so picking again shows it again. */
+export type FindingPlace = { file: string; line: number | null; text: string; n: number };
+
+/** The findings area for each state of the review. */
+export function findingsAreaOf(_i: { reading: boolean; entry: ReviewEntry; review: FindingsView; departures: Departure[] }): FindingsAreaView {
+  return { message: null, staleNotice: null, review: null, departures: null, noDepartures: null };
+}
+
 /** Everything the build page shows, computed once so the page itself only draws it. */
 export type BuildPageView = {
   stage: BuildStage;
@@ -142,8 +166,10 @@ export type BuildPageView = {
   sessionNote: string | null;
   /** Each repository that stopped and why, for the activity area. */
   stops: { repo: string; reason: string }[];
-  /** The findings once the review finished; null while it has none to show. */
-  findings: FindingsView | null;
+  /** The findings area. */
+  findingsArea: FindingsAreaView;
+  /** The finding last picked, for the changed files to show. */
+  findingPlace: FindingPlace | null;
   waiting: WaitingItem[];
   announcement: string;
   /** Which of the optional areas have something to show; the tasks area always does. */
@@ -801,7 +827,7 @@ export class BuildPageViewModel {
     const pickedRepo = pick?.kind === 'repo' ? pick.repo : pick?.kind === 'task' ? this.status()?.tasks.find((t) => t.id === pick.task)?.repo : undefined;
     const hasSessions = [...this.sessionRefs().values()].some((refs) => refs.length > 0);
     const hasChanges = this.changedFiles();
-    const findings = this.reviewFindingsView(stage);
+    const findingsArea = this.findingsAreaView();
     return {
       stage,
       stageMessage: this.stageMessage(),
@@ -829,21 +855,31 @@ export class BuildPageViewModel {
       sessions: this.mountedSessions(),
       sessionNote: this.sessionNote(),
       stops: areas.flatMap((g) => (g.heading.stopLine === null ? [] : [{ repo: g.repo, reason: g.heading.stopLine }])),
-      findings,
+      findingsArea,
+      findingPlace: this.findingPlace(),
       waiting: this.waitingNotices(),
       announcement: this.announcement(),
       areas: shownAreas({ stage, hasSessions, hasChanges }),
       narrow: this.pageNarrow(),
-      counts: { files: this.changedFileTotal(), findings: findings === null ? 0 : findings.findings.length },
+      counts: { files: this.changedFileTotal(), findings: findingsArea.review === null ? 0 : findingsArea.review.findings.length },
     };
   });
 
-  /** The review's findings for the page: shown once the build's review finished and has been read. */
-  private reviewFindingsView(stage: BuildStage): FindingsView | null {
-    if ((stage !== 'review-finished' && stage !== 'done') || this.reading()) return null;
-    if (this.reviews().length === 0 && !this.unrecorded()) return null;
-    return { notice: this.reviewNotice(), findings: this.findings(), replaced: this.replaced(), older: this.older(), emptyText: this.emptyText() };
+  /** The findings area for the page, from what the review knows. */
+  private findingsAreaView(): FindingsAreaView {
+    const review: FindingsView = { notice: this.reviewNotice(), findings: this.findings(), replaced: this.replaced(), older: this.older(), emptyText: this.emptyText() };
+    const departures = this.taskAreas().flatMap((g) =>
+      g.tasks.flatMap((t) => (t.state.kind === 'done' && t.state.departure !== null ? [{ repo: g.repo, task: t.id, text: t.state.departure }] : [])),
+    );
+    return findingsAreaOf({ reading: this.reading(), entry: this.reviewEntry(), review, departures });
   }
+
+  /** The finding the engineer picked last, for the changed files to show. */
+  readonly findingPlace = signal<FindingPlace | null>(null);
+  private placeCount = 0;
+
+  /** Ask the changed files to show where a finding is. A finding that names no file shows nothing. */
+  showFinding(_f: Finding): void {}
 
   /** Where the master repository is: what the build was started from, else what the change page loaded. */
   private masterRef(): { repo: string; path: string } | null {
