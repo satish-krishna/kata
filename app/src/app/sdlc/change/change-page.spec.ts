@@ -600,6 +600,43 @@ describe('ChangePage build page', () => {
       await stopBuild(fixture);
     }, TOKEN);
 
+    it('answer a question through the observe pane inside the page', async () => {
+      const { container, fixture, transport } = await mount(MOCK_BUILD_CHANGE);
+      await startUntilAsked(container);
+      const submit = vi.spyOn(transport, 'submitAnswer');
+      const session = page(container).querySelector('[data-session]:has(.k-ask:not(.k-ask--answered))')!;
+      const runId = session.getAttribute('data-session')!;
+      const choice = Array.from(session.querySelectorAll<HTMLInputElement>('.k-ask:not(.k-ask--answered) input')).find((i) => i.value === 'Reuse it')!;
+      choice.click();
+      await settle();
+      Array.from(session.querySelectorAll<HTMLButtonElement>('.k-ask button')).find((b) => text(b).startsWith('Send answer'))!.click();
+      await vi.waitFor(() => expect(submit).toHaveBeenCalledWith(runId, 'q1', [['Reuse it']]), { timeout: TOKEN });
+      await stopBuild(fixture);
+    }, TOKEN);
+
+    it('approve or refuse an action through the observe pane inside the page', async () => {
+      const { container, fixture, transport } = await mount(MOCK_BUILD_CHANGE);
+      await startUntilAsked(container);
+      const session = page(container).querySelector('[data-session]:has(.k-ask:not(.k-ask--answered))')!;
+      const runId = session.getAttribute('data-session')!;
+      const decide = vi.spyOn(transport, 'submitDecision');
+      transport['emit'](runId, { type: 'permission.requested', id: 'p1', tool: 'Bash', input_summary: 'git push' });
+      await vi.waitFor(
+        () => {
+          TestBed.tick();
+          expect(session.querySelector('app-permission-panel')).not.toBeNull();
+        },
+        { timeout: TOKEN },
+      );
+      const reason = session.querySelector<HTMLTextAreaElement>('app-permission-panel textarea')!;
+      reason.value = 'not that';
+      reason.dispatchEvent(new Event('input'));
+      await settle();
+      Array.from(session.querySelectorAll<HTMLButtonElement>('app-permission-panel button')).find((b) => text(b) === 'Deny')!.click();
+      await vi.waitFor(() => expect(decide).toHaveBeenCalledWith(runId, 'p1', false, 'not that'), { timeout: TOKEN });
+      await stopBuild(fixture);
+    }, TOKEN);
+
     it('cancel the build', async () => {
       const { container, fixture } = await mount(MOCK_BUILD_CHANGE);
       await startUntilAsked(container);
