@@ -1057,6 +1057,53 @@ describe('the build page starts, stops and continues the same runs as the build 
       expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
       expect(vm.view().groups.find((g) => g.repo === 'claims-core')!.status.label).toBe('Working · T1');
     });
+
+    it('prepares the branches again when the release starts while Continue reads the participants, before the run launches', async () => {
+      const { vm, transport, runner, lock } = setup();
+      let endPortal!: () => void;
+      let answerParticipants!: () => void;
+      let armed = false;
+      const real = transport.sdlcBuildParticipants.bind(transport);
+      vi.spyOn(transport, 'sdlcBuildParticipants').mockImplementation(async (...args) => {
+        const out = await real(...args);
+        if (armed) await new Promise<void>((resolve) => (answerParticipants = resolve));
+        return out;
+      });
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+      vi.spyOn(runner, 'finishBuild').mockResolvedValue();
+      const seen: string[] = [];
+      vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
+        const key = target.kind === 'review' ? 'review' : target.repo;
+        seen.push(key);
+        link.onRun?.(`fake-${seen.length}`);
+        if (key === 'claims-core') {
+          if (seen.filter((k) => k === key).length === 1) return { exit: 124, error: null };
+          await new Promise<void>(() => undefined);
+        }
+        await new Promise<void>((resolve) => (endPortal = resolve));
+        return { exit: 0, error: null };
+      });
+      await vm.start(await handoffFor(transport), CTX);
+      await advance(500);
+      expect(vm.phase()).toBe('building');
+      vm.select('claims-core');
+      const prepared = prepare.mock.calls.length;
+
+      armed = true;
+      const going = vm.continueRun();
+      await vi.waitFor(() => expect(answerParticipants).toBeDefined());
+      endPortal();
+      await advance(500);
+      expect(lock.active()).toBeNull();
+
+      answerParticipants();
+      await going;
+      await advance(200);
+
+      expect(prepare.mock.calls.slice(prepared).map((c) => c[6])).toEqual(['continue']);
+      expect(seen.filter((k) => k === 'claims-core')).toHaveLength(2);
+      expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
+    });
   });
 });
 
