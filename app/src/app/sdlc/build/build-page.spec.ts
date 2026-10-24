@@ -1381,6 +1381,7 @@ describe('a waiting question on the arranged page', () => {
     Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value() {} });
     onTestFinished(() => void delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView);
     const page = await mountArranged(stage);
+    await page.mode('watch');
     page.host.sessionOf = { 'claims-core': 'mine', 'customer-portal': 'asking' };
     page.host.view = {
       ...page.host.view,
@@ -1396,6 +1397,13 @@ describe('a waiting question on the arranged page', () => {
     const card = () => page.area('activity').querySelector<HTMLElement>('[data-session="asking"] .k-ask')!;
     return { ...page, goTo, current, pickedRepo, card };
   }
+
+  /** The middle always holds an area, so the changed files take it, and the activity joins the tasks on the left. */
+  const stackBehindTasks = async (page: Awaited<ReturnType<typeof waitingPage>>) => {
+    await page.click(page.inside(page.el, '[data-rail] button', 'Changed files'));
+    await page.placeTo('files', 'Middle');
+    await page.placeTo('activity', 'Left');
+  };
 
   const noticeNames = (page: Awaited<ReturnType<typeof waitingPage>>) => {
     const notice = page.text(page.el.querySelector('app-waiting-notice')!);
@@ -1424,8 +1432,9 @@ describe('a waiting question on the arranged page', () => {
 
   it('R11.1: stacked behind the tasks, its stack tab carries the mark', async () => {
     const page = await waitingPage();
-    await page.placeTo('activity', 'Left');
+    await stackBehindTasks(page);
     expect(page.where('activity')).toBe('left');
+    expect(page.where('tasks')).toBe('left');
     const tabs = Array.from(page.area('tasks').querySelectorAll<HTMLElement>('[role="tab"]'));
     const tab = tabs.find((t) => page.text(t).startsWith('Activity'))!;
     expect(page.text(tab)).toBe('Activity waiting');
@@ -1457,10 +1466,11 @@ describe('a waiting question on the arranged page', () => {
 
   it('R11.2: with the activity tucked away, Go to brings it back to where it was tucked from', async () => {
     const page = await waitingPage();
+    await page.placeTo('activity', 'Right');
     await page.click(page.tuckButton('activity'));
     expect(page.where('activity')).toBe('tucked');
     await page.click(page.goTo());
-    expect(page.where('activity')).toBe('middle');
+    expect(page.where('activity')).toBe('right');
     expect(page.inert('activity')).toBe(false);
     expect(page.pickedRepo()).toBe('customer-portal');
     expect(page.card().querySelector(FIRST_CONTROL)).toBe(document.activeElement);
@@ -1469,7 +1479,7 @@ describe('a waiting question on the arranged page', () => {
 
   it('R11.2: with the activity stacked behind the tasks, Go to flips the stack to it', async () => {
     const page = await waitingPage();
-    await page.placeTo('activity', 'Left');
+    await stackBehindTasks(page);
     await page.click(page.inside(page.area('tasks'), '[role="tab"]', 'Tasks'));
     expect(page.inert('activity')).toBe(true);
     await page.click(page.goTo());

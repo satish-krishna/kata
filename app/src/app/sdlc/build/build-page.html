@@ -266,7 +266,12 @@
         @if (tucked.length > 0) {
           <nav class="k-bp__rail" [attr.data-rail]="edge" [attr.aria-label]="'Areas tucked at the ' + edge + ' edge'" [style.grid-area]="railCell(edge)">
             @for (a of tucked; track a) {
-              <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__railtab" [attr.aria-label]="'Bring back ' + nameOf(a)" (click)="arrange.emit({ kind: 'bring-back', area: a })">{{ nameOf(a) }}</button>
+              <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__railtab" [attr.aria-label]="'Bring back ' + nameOf(a) + (marked(a) ? ', waiting' : '')" (click)="arrange.emit({ kind: 'bring-back', area: a })">
+                {{ nameOf(a) }}
+                @if (marked(a)) {
+                  <ng-container [ngTemplateOutlet]="mark" />
+                }
+              </button>
             }
           </nav>
         }
@@ -295,6 +300,11 @@
   </div>
 </section>
 
+<!-- The mark an area's name carries while an agent waits on the engineer: a warning dot, and "waiting" for a screen reader. -->
+<ng-template #mark>
+  <span class="k-status k-status--warning k-bp__mark" data-waiting-mark><span class="k-status__dot"></span><span class="sr-only">waiting</span></span>
+</ng-template>
+
 <!-- The header every area carries: its stack's names as tabs (or its own name), then focus, tuck and the Place menu. -->
 <ng-template #head let-a>
   <header class="k-bp__head">
@@ -303,6 +313,9 @@
         @for (t of stackOf(a); track t) {
           <button hlmBtn variant="bare" size="bare" type="button" role="tab" class="k-bp__tab" [attr.aria-selected]="t === a" (keydown)="tabKey($event, t)" (click)="flip.emit({ place: stackPlace(a), area: t })">
             {{ nameOf(t) }}
+            @if (marked(t)) {
+              <ng-container [ngTemplateOutlet]="mark" />
+            }
             @if (countOf(t) > 0) {
               <span class="k-mono k-bp__count">{{ countOf(t) }}</span>
             }
@@ -312,6 +325,9 @@
     } @else {
       <span class="k-bp__title">
         {{ nameOf(a) }}
+        @if (marked(a)) {
+          <ng-container [ngTemplateOutlet]="mark" />
+        }
         @if (countOf(a) > 0) {
           <span class="k-mono k-bp__count">{{ countOf(a) }}</span>
         }

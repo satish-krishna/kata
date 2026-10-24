@@ -157,7 +157,7 @@ export class BuildPage {
   /** Bring the open question or approval of the sessions on show into view and put the focus on its first control. */
   private focusOpenCard(): void {
     const cards = this.host.nativeElement.querySelectorAll<HTMLElement>('[data-area="activity"] .k-ask:not(.k-ask--answered):not(.k-ask--lapsed)');
-    const card = Array.from(cards).find((c) => c.closest('[hidden]') === null);
+    const card = Array.from(cards).find((c) => c.closest('[hidden], [inert]') === null);
     if (card === undefined) return;
     card.scrollIntoView({ block: 'center' });
     card.querySelector<HTMLElement>('button:not([disabled]), input, textarea, select, [tabindex="0"]')?.focus();
@@ -203,11 +203,18 @@ export class BuildPage {
   }
 
   protected goToRepo(repo: string): void {
+    // The activity is made visible first, so the request to go to the repository finds it on show.
+    this.reveal.emit('activity');
     this.goTo.emit(repo);
     this.panel.set('activity');
   }
 
   // ---- the layout ----
+
+  /** True when the area's name carries the waiting mark: the activity, while any agent waits on the engineer. */
+  protected marked(area: AreaId): boolean {
+    return area === 'activity' && this.view().waiting.length > 0;
+  }
 
   protected nameOf(area: AreaId): string {
     return AREA_NAMES[area];
