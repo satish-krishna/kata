@@ -177,6 +177,20 @@ describe('the build page starts, stops and continues the same runs as the build 
     expect(status.mock.calls.length).toBeGreaterThan(before);
   });
 
+  it('the waiting notice says how long the agent has waited, and the time advances with the clock (R11.1)', async () => {
+    const { vm, transport, lock } = setup();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(2000);
+    expect(lock.waiting()).toHaveLength(1);
+    const secs = (text: string) => Number(text.split(':')[0]) * 60 + Number(text.split(':')[1]);
+    const before = vm.waitingNotices()[0].waited;
+    expect(before).toMatch(/^d+:d{2}$/);
+    await advance(83000);
+    const after = vm.waitingNotices()[0].waited;
+    expect(secs(after) - secs(before)).toBeGreaterThanOrEqual(82);
+    expect(secs(after) - secs(before)).toBeLessThanOrEqual(84);
+  });
+
   it('a repository row shows the waiting clock while its run waits (R4.1)', async () => {
     const { vm, transport, lock } = setup();
     await vm.start(await handoffFor(transport), CTX);

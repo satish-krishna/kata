@@ -460,7 +460,7 @@ export class BuildPageViewModel {
       const repo = this.log().find((e) => e.id === w.runId)?.key;
       if (repo === undefined) continue;
       const left = this.lock.deadlineSecs(w.runId);
-      out.push({ repo, kind: w.kind, countdown: left === null ? null : ms(left) });
+      out.push({ repo, kind: w.kind, countdown: left === null ? null : ms(left), waited: '' });
     }
     return out;
   });

@@ -339,6 +339,28 @@ describe('LockStore build view', () => {
     }
   });
 
+  it('waitedSecs counts from when each run was first seen waiting', async () => {
+    vi.useFakeTimers();
+    try {
+      const { store, runs, fake } = setupBuild();
+      store.beginBuild('Building');
+      const a = (await runs.startRun(seedSpec(), 'build:s/c'))!;
+      store.addRun(a);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(store.waitedSecs(a)).toBeNull();
+      fake.emit(a, ask('qa'));
+      await vi.advanceTimersByTimeAsync(83000);
+      expect(store.waitedSecs(a)).toBe(83);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(store.waitedSecs(a)).toBe(85);
+      fake.emit(a, { type: 'ask.answered', id: 'qa', answers: [['x']] } as unknown as KataEvent);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(store.waitedSecs(a)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('the solo run API still drives a Part 1 stage after a build is closed', async () => {
     const { store, runs, fake } = setupBuild();
     store.beginBuild('Building');

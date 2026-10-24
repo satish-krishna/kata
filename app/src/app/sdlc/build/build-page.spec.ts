@@ -344,7 +344,7 @@ describe('the build page, questions and stops', () => {
       groups: [group('claims-core', RUNNING, 'cancel', [task('T1', RUNNING)], true), group('customer-portal', RUNNING, 'cancel', [task('T2', RUNNING)])],
       pick: { kind: 'repo', repo: 'claims-core' },
       sessions: [session('r1')],
-      waiting: [{ repo: 'customer-portal', kind: 'answer', countdown: null }],
+      waiting: [{ repo: 'customer-portal', kind: 'answer', countdown: null, waited: '0:05' }],
     });
     const { el, host, button } = await mount(v);
     const notice = el.querySelector<HTMLElement>('app-waiting-notice')!;
@@ -377,7 +377,7 @@ describe('the build page, questions and stops', () => {
         session('answered', { state: 'running', asks: [ask('a1', [['isolate']])], latest: false, expanded: true }),
         session('open', { state: 'awaiting', asks: [ask('q1', null)] }),
       ],
-      waiting: [{ repo: 'customer-portal', kind: 'answer', countdown: null }],
+      waiting: [{ repo: 'customer-portal', kind: 'answer', countdown: null, waited: '0:05' }],
     });
     const { el, fixture } = await mount(v);
     expect(scrolled).toEqual([]);
@@ -1212,7 +1212,7 @@ describe('the arranged build page from the keyboard', () => {
       groups: [group('claims-core', RUNNING, 'cancel', [task('T1', RUNNING)], true), group('customer-portal', RUNNING, 'cancel', [task('T2', RUNNING)])],
       pick: { kind: 'repo', repo: 'claims-core' },
       sessions: [session('r1')],
-      waiting: [{ repo: 'customer-portal', kind: 'answer', countdown: null }],
+      waiting: [{ repo: 'customer-portal', kind: 'answer', countdown: null, waited: '0:05' }],
     });
     const { el, host, button, fixture } = await mount(v);
     const goTo = button(el.querySelector<HTMLElement>('app-waiting-notice')!, 'Go to customer-portal')!;
@@ -1332,7 +1332,7 @@ describe('a waiting question on the arranged page', () => {
     answers: null,
     at: 0,
   };
-  const WAIT = [{ repo: 'customer-portal', kind: 'answer' as const, countdown: '4:00' }];
+  const WAIT = [{ repo: 'customer-portal', kind: 'answer' as const, countdown: '4:00', waited: '0:05' }];
   const FIRST_CONTROL = 'button:not([disabled]), input, textarea, select, [tabindex="0"]';
 
   async function waitingPage(stage: LayoutStage = 'running') {
