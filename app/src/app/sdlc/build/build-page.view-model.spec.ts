@@ -1496,4 +1496,19 @@ describe('what the pick is and what the activity area shows for it', () => {
     await advance(2500);
     expect(vm.pickedTask()).toBe(before);
   });
+
+  it('a pick of the same task again is a new pick, so the Changes view starts over (T9, R5.2)', async () => {
+    const { vm, transport } = setup();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    vm.choose({ kind: 'task', task: 'T2' });
+    const first = vm.pickedTask();
+    vm.choose({ kind: 'task', task: 'T2' });
+    const again = vm.pickedTask();
+    expect(again).toEqual(expect.objectContaining({ id: 'T2', repo: 'customer-portal' }));
+    expect(again).not.toBe(first);
+    commitRows(transport);
+    await advance(2500);
+    expect(vm.pickedTask()).toBe(again);
+  });
 });
