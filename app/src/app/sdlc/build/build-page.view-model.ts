@@ -25,6 +25,7 @@ import { type AskRecord, type RunGiven, type PermissionRecord, type RunState, ty
 import { activityFor, newlyRecorded, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Chosen, type LiveRun, type Pick, type SessionRef } from '../../lib/build-sessions';
 import { buildActions, buildStage, repoAction, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { fallbackTaskState, hms, ms, situationView, taskState, type SituationView, type Situation, type TaskState } from '../../lib/build-state';
+import type { LayoutStage } from '../../lib/build-layout-stage';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { reviewState } from '../../lib/sdlc-done';
@@ -770,6 +771,12 @@ export class BuildPageViewModel {
     const state = reviewState(this.runLinks(), this.records(), this.heads(), scope, this.reviewDoc(), this.masterRef()?.repo ?? null);
     return state.kind === 'current' || state.kind === 'current-document' ? 'finished' : state.kind === 'stale' ? 'stale' : 'not run';
   });
+
+  /** Where the build stands for the layout: held at its last value while the review is being read. */
+  readonly layoutStage = computed<LayoutStage>(() => 'stopped');
+
+  /** Say something through the page's one assertive live region. */
+  say(_text: string): void {}
 
   /** Everything the build page shows, from the members above; the page itself decides nothing. */
   readonly view = computed<BuildPageView>(() => {
