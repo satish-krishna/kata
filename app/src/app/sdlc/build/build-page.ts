@@ -24,6 +24,13 @@ const NO_FILES: { value: Panel; label: string }[] = [TASKS, ACTIVITY];
 const NO_ACTIVITY: { value: Panel; label: string }[] = [TASKS, FILES];
 const ONLY_TASKS: { value: Panel; label: string }[] = [TASKS];
 
+/* The widths of the areas side by side, in percent, for each set that is drawn. The group is told them whenever the set changes, because
+ * left alone it shares the room by the order the areas appeared in, and the changed files, which come last, ended up the narrowest. */
+const SIDE_BY_SIDE = [22, 39, 39];
+const WITHOUT_FILES = [36, 64];
+const WITHOUT_ACTIVITY = [36, 64];
+const ALONE = [100];
+
 /* The build page: the waiting notice and the action bar above three areas side by side, the tasks, the activity of what the
  * engineer picked, and the changed files. It draws one `BuildPageView` and holds no state of the build; the host does the work
  * its outputs ask for. An area with nothing to show is not drawn and its room goes to the others. Below 1024 CSS pixels
@@ -88,6 +95,12 @@ export class BuildPage {
 
   protected primary(): StageAction | null {
     return primaryAction(this.view().actions);
+  }
+
+  /** How the group shares its width among the areas drawn; the same array for the same set, so the binding only moves when the set does. */
+  protected layout(): number[] {
+    const { activity, files } = this.view().areas;
+    return activity ? (files ? SIDE_BY_SIDE : WITHOUT_FILES) : files ? WITHOUT_ACTIVITY : ALONE;
   }
 
   /** The areas the switch offers: only those with something to show. */
