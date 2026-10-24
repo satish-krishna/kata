@@ -19,7 +19,7 @@
       <app-segmented [options]="options()" [value]="on()" (valueChange)="panel.set($event)" ariaLabel="Build areas" />
     </div>
   }
-  <div hlmResizableGroup class="k-bp__body" direction="horizontal" [layout]="layout()">
+  <div hlmResizableGroup class="k-bp__body" direction="horizontal" [layout]="widths()">
     <section hlmResizablePanel id="build-page-tasks" data-area="tasks" aria-label="Tasks" [defaultSize]="22" [minSize]="12" [collapsible]="false" [hidden]="view().narrow && on() !== 'tasks'">
       @for (g of view().groups; track g.repo) {
         <div class="k-bp__group" data-group>

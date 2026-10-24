@@ -150,6 +150,8 @@ export type BuildPageView = {
   areas: { activity: boolean; files: boolean };
   /** True below 1024 CSS pixels, where the three areas become one column behind a switch. */
   narrow: boolean;
+  /** The counts the area tabs show: changed files and findings. */
+  counts: { files: number; findings: number };
 };
 
 /** The two views of a running build: what the agents say and do, and what they changed. */
@@ -830,6 +832,7 @@ export class BuildPageViewModel {
       announcement: this.announcement(),
       areas: shownAreas({ stage, hasSessions, hasChanges }),
       narrow: this.pageNarrow(),
+      counts: { files: 0, findings: 0 },
     };
   });
 

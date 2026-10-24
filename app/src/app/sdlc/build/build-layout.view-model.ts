@@ -28,6 +28,18 @@ export type ArrangeAction =
   | { kind: 'resize'; side: Exclude<Place, 'middle'>; px: number }
   | { kind: 'reset' };
 
+/** What the build page draws of the layout, as one plain object. */
+export type BuildLayoutState = {
+  mode: LayoutMode;
+  /** The mode's arrangement with the sizes that fit the room. */
+  drawn: Arrangement;
+  /** The areas on show: the focused one alone, else the middle and the top of each side stack. */
+  onShow: AreaId[];
+  focus: AreaId | null;
+  flipped: Partial<Record<Place, AreaId>>;
+  suggested: LayoutMode | null;
+};
+
 const MODES: LayoutMode[] = ['overview', 'watch', 'changes', 'review'];
 const MODE_NAMES: Record<LayoutMode, string> = { overview: 'Overview', watch: 'Watch', changes: 'Changes', review: 'Review' };
 const AREA_NAMES: Record<AreaId, string> = { tasks: 'Tasks', activity: 'Activity', files: 'Changed files', findings: 'Findings' };
@@ -64,6 +76,16 @@ export class BuildLayoutViewModel {
   readonly arrangement = computed<Arrangement>(() => this.saved()[this.mode()] ?? defaultArrangement(this.mode()));
   /** The arrangement with the sizes that fit the room; never written back. */
   readonly drawn = computed<Arrangement>(() => ({ ...this.arrangement(), sizes: fitSizes(this.arrangement(), this.room()) }));
+
+  /** Everything the page draws, in one object. */
+  readonly view = computed<BuildLayoutState>(() => ({
+    mode: this.mode(),
+    drawn: this.drawn(),
+    onShow: areasOnShow(this.drawn(), this.flipped(), this.focus()),
+    focus: this.focus(),
+    flipped: this.flipped(),
+    suggested: this.suggested(),
+  }));
 
   /** The modes whose entry was in the file but unusable, until the page said so. */
   private readonly unusable = new Set<LayoutMode>();

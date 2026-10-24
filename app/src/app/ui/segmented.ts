@@ -8,7 +8,7 @@ import { HlmToggleGroupImports } from '@spartan-ng/helm/toggle-group';
   templateUrl: './segmented.html',
 })
 export class Segmented<T extends string> {
-  readonly options = input.required<{ value: T; label: string }[]>();
+  readonly options = input.required<{ value: T; label: string; title?: string; mark?: string }[]>();
   readonly value = model.required<T>();
   readonly ariaLabel = input<string>();
 

@@ -38,6 +38,7 @@ import { ChangePageViewModel } from './change-page.view-model';
 export class ChangePage {
   protected readonly vm = inject(ChangePageViewModel);
   protected readonly build = inject(BuildPageViewModel);
+  protected readonly layout = inject(BuildLayoutViewModel);
   private readonly route = inject(ActivatedRoute);
 
   constructor() {

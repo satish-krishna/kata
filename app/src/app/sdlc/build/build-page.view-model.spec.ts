@@ -1513,6 +1513,17 @@ describe('the build page shows tasks and sessions from the build log, the run li
     expect(vm.view().areas.files).toBe(false);
   });
 
+  it('counts the changed files for the area tabs', async () => {
+    const { vm, transport, load } = await opened({ built: false });
+    const empty = { files: [], loc: [] };
+    const file = (path: string) => ({ path, oldPath: null, status: 'modified', added: 1, removed: 0, binary: false, uncommitted: true });
+    const listing = { files: [file('src/a.ts'), file('src/b.ts')], loc: [] };
+    vi.spyOn(transport, 'sdlcDiffFiles').mockImplementation((path) => Promise.resolve((path.endsWith('claims-core') ? listing : empty) as never));
+    await load();
+    await advance(100);
+    expect(vm.view().counts).toEqual({ files: 2, findings: 0 });
+  });
+
   it('every live session stays in the view, hidden, whatever is picked', async () => {
     const { vm, transport } = setup();
     await vm.start(await handoffFor(transport), CTX);

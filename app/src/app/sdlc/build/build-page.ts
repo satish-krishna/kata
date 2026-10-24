@@ -11,6 +11,8 @@ import { ObservePane } from '../../ui/observe-pane';
 import { Segmented } from '../../ui/segmented';
 import { WaitingNotice } from '../../ui/waiting-notice';
 import { ChangesView } from '../changes/changes-view';
+import type { AreaId, LayoutMode, Place } from '../../lib/build-layout';
+import type { ArrangeAction, BuildLayoutState } from './build-layout.view-model';
 import type { BuildChanges, BuildPageView } from './build-page.view-model';
 
 /** The areas of the build page the narrow switch chooses between. */
@@ -45,6 +47,8 @@ const ALONE = [100];
 })
 export class BuildPage {
   readonly view = input.required<BuildPageView>();
+  /** The layout as the layout view model has it. */
+  readonly layout = input.required<BuildLayoutState>();
   readonly context = input<BuildChanges | null>(null);
   readonly turns = input(0);
   readonly rows = input<BuildRow[]>([]);
@@ -64,6 +68,13 @@ export class BuildPage {
   readonly decide = output<{ runId: string; id: string; allow: boolean; message: string | null }>();
   readonly goTo = output<string>();
   readonly toggleRun = output<string>();
+  readonly pickMode = output<LayoutMode>();
+  readonly arrange = output<ArrangeAction>();
+  readonly focusOn = output<AreaId>();
+  readonly unfocus = output<void>();
+  readonly flip = output<{ place: Place; area: AreaId }>();
+  /** The room the grid has, in pixels, whenever it changes. */
+  readonly room = output<{ width: number; height: number }>();
 
   protected readonly labelOf = actionLabel;
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -98,7 +109,7 @@ export class BuildPage {
   }
 
   /** How the group shares its width among the areas drawn; the same array for the same set, so the binding only moves when the set does. */
-  protected layout(): number[] {
+  protected widths(): number[] {
     const { activity, files } = this.view().areas;
     return activity ? (files ? SIDE_BY_SIDE : WITHOUT_FILES) : files ? WITHOUT_ACTIVITY : ALONE;
   }
