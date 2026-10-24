@@ -1,4 +1,4 @@
-<section class="k-bp" aria-label="Build" [attr.data-narrow]="view().narrow ? '' : null">
+<section class="k-bp" aria-label="Build" (document:keydown)="onKey($event)" [attr.data-narrow]="view().narrow ? '' : null">
   <div class="sr-only" aria-live="assertive" aria-atomic="true">{{ view().announcement }}</div>
   <div class="k-bp__notice">
     <app-waiting-notice [items]="view().waiting" (goTo)="goToRepo($event)" />
@@ -266,7 +266,7 @@
         @if (tucked.length > 0) {
           <nav class="k-bp__rail" [attr.data-rail]="edge" [attr.aria-label]="'Areas tucked at the ' + edge + ' edge'" [style.grid-area]="railCell(edge)">
             @for (a of tucked; track a) {
-              <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__railtab" (click)="arrange.emit({ kind: 'bring-back', area: a })">{{ nameOf(a) }}</button>
+              <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__railtab" [attr.aria-label]="'Bring back ' + nameOf(a)" (click)="arrange.emit({ kind: 'bring-back', area: a })">{{ nameOf(a) }}</button>
             }
           </nav>
         }
@@ -301,7 +301,7 @@
     @if (stackOf(a).length > 1) {
       <div class="k-bp__tabs" role="tablist" [attr.aria-label]="'Areas stacked on the ' + placeOf(a)">
         @for (t of stackOf(a); track t) {
-          <button hlmBtn variant="bare" size="bare" type="button" role="tab" class="k-bp__tab" [attr.aria-selected]="t === a" (click)="flip.emit({ place: stackPlace(a), area: t })">
+          <button hlmBtn variant="bare" size="bare" type="button" role="tab" class="k-bp__tab" [attr.aria-selected]="t === a" (keydown)="tabKey($event, t)" (click)="flip.emit({ place: stackPlace(a), area: t })">
             {{ nameOf(t) }}
             @if (countOf(t) > 0) {
               <span class="k-mono k-bp__count">{{ countOf(t) }}</span>
@@ -343,31 +343,27 @@
         size="sm"
         type="button"
         class="k-bp__place"
-        aria-haspopup="menu"
-        [attr.popovertarget]="'k-bp-place-' + a"
-        [style.anchor-name]="'--k-bp-place-' + a"
+        [hlmDropdownMenuTrigger]="placeMenu"
+        [attr.aria-label]="'Place ' + nameOf(a)"
       >
         Place
         <ng-icon name="lucideEllipsis" size="14" aria-hidden="true" />
       </button>
-      <div class="k-bp__menu" popover="auto" role="menu" [id]="'k-bp-place-' + a" [attr.aria-label]="'Place ' + nameOf(a)" [style.position-anchor]="'--k-bp-place-' + a">
-        @for (p of places; track p.place) {
-          <button
-            hlmBtn
-            variant="bare"
-            size="bare"
-            type="button"
-            role="menuitem"
-            class="k-bp__menuitem"
-            [attr.aria-current]="placeOf(a) === p.place ? 'true' : null"
-            [attr.popovertarget]="'k-bp-place-' + a"
-            popovertargetaction="hide"
-            (click)="arrange.emit({ kind: 'place', area: a, to: p.place })"
-          >
-            {{ p.label }}
-          </button>
-        }
-      </div>
+      <ng-template #placeMenu>
+        <hlm-dropdown-menu [attr.aria-label]="'Place ' + nameOf(a)">
+          @for (p of places; track p.place) {
+            <button hlmDropdownMenuItem type="button" [attr.aria-current]="placeOf(a) === p.place ? 'true' : null" (triggered)="arrange.emit({ kind: 'place', area: a, to: p.place })">
+              {{ p.label }}
+              @if (placeOf(a) === p.place) {
+                <ng-icon name="lucideCheck" size="14" aria-hidden="true" />
+              }
+            </button>
+          }
+          <hlm-dropdown-menu-separator />
+          <button hlmDropdownMenuItem type="button" [disabled]="!canTuckArea(a)" (triggered)="arrange.emit({ kind: 'tuck', area: a })">Tuck away</button>
+          <button hlmDropdownMenuItem type="button" (triggered)="focusOn.emit(a)">Focus</button>
+        </hlm-dropdown-menu>
+      </ng-template>
     </div>
   </header>
 </ng-template>

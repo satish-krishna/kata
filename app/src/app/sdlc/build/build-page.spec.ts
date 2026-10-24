@@ -658,6 +658,8 @@ class ArrangedHost {
   }
 }
 
+const KEY_CODES: Record<string, number> = { Enter: 13, Escape: 27, ' ': 32, End: 35, Home: 36, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 };
+
 async function mountArranged(stage: LayoutStage = 'running') {
   const standIn = layoutStandIn(stage);
   announced = standIn.announcement;
@@ -709,9 +711,12 @@ async function mountArranged(stage: LayoutStage = 'running') {
   /** Press a key where the focus is, as a browser would: a focused button is activated by Enter, or by Space on release, unless the key was handled. */
   const press = async (key: string, mods: { shift?: boolean; ctrl?: boolean } = {}) => {
     const target = document.activeElement ?? document.body;
-    const down = new KeyboardEvent('keydown', { key, shiftKey: mods.shift ?? false, ctrlKey: mods.ctrl ?? false, bubbles: true, cancelable: true });
+    // The CDK menu reads the legacy keyCode, which a real key press carries.
+    const down = new KeyboardEvent('keydown', { key, keyCode: KEY_CODES[key], shiftKey: mods.shift ?? false, ctrlKey: mods.ctrl ?? false, bubbles: true, cancelable: true });
     target.dispatchEvent(down);
-    if (!down.defaultPrevented && target instanceof HTMLButtonElement && !target.disabled && (key === 'Enter' || key === ' ')) {
+    // The CDK menu takes a synthetic Enter or Space as the activation itself (it leaves a trusted one to the browser's click), so it is not clicked twice.
+    const cdkActs = target instanceof HTMLElement && target.matches('[data-slot="dropdown-menu-trigger"], [data-slot="dropdown-menu-item"]');
+    if (!down.defaultPrevented && !cdkActs && target instanceof HTMLButtonElement && !target.disabled && (key === 'Enter' || key === ' ')) {
       if (key === ' ') target.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }));
       target.click();
     }
@@ -1261,15 +1266,18 @@ describe('the arranged build page from the keyboard', () => {
       for (const b of Array.from(page.el.querySelectorAll<HTMLElement>('[data-rail] button'))) bringBack.add(b.getAttribute('aria-label')!);
     }
     expect(Array.from(bringBack).sort()).toEqual(['Bring back Activity', 'Bring back Changed files', 'Bring back Findings', 'Bring back Tasks']);
+    // A stack holds at most three areas, so the four names show in two stacks: the findings with the tasks and the activity, then the changed files in their place.
     await page.mode('review');
-    for (const a of ['tasks', 'activity', 'files'] as const) {
-      page.host.layout.arrange({ kind: 'bring-back', area: a });
-      page.host.layout.arrange({ kind: 'place', area: a, to: 'left' });
-    }
+    const tabNames = () => Array.from(page.area('findings').parentElement!.querySelectorAll<HTMLElement>('[role="tablist"]')).flatMap((l) => Array.from(l.querySelectorAll<HTMLElement>('[role="tab"]')).map((t) => page.text(t)));
+    for (const a of ['tasks', 'activity'] as const) page.host.layout.arrange({ kind: 'bring-back', area: a });
+    page.host.layout.arrange({ kind: 'place', area: 'tasks', to: 'left' });
+    page.host.layout.arrange({ kind: 'place', area: 'activity', to: 'left' });
     await page.refresh();
-    const tabs = Array.from(page.area('findings').querySelectorAll<HTMLElement>('[role="tablist"] [role="tab"]')).map((t) => page.text(t));
-    expect(tabs).toHaveLength(4);
-    for (const name of NAMES_OF_AREAS) expect(tabs.some((t) => t.startsWith(name)), name).toBe(true);
+    const first = tabNames();
+    page.host.layout.arrange({ kind: 'place', area: 'files', to: 'left' });
+    await page.refresh();
+    const names = new Set([...first, ...tabNames()].map((t) => NAMES_OF_AREAS.find((n) => t.startsWith(n))));
+    expect(Array.from(names).sort()).toEqual([...NAMES_OF_AREAS].sort());
   });
 
   it('R13.3: a mode picked by hand is announced', async () => {

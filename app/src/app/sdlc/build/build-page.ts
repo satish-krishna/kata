@@ -1,9 +1,10 @@
 import { NgTemplateOutlet } from '@angular/common';
-import { Component, DestroyRef, ElementRef, Injector, afterNextRender, effect, inject, input, model, output, untracked, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, Injector, afterEveryRender, afterNextRender, effect, inject, input, model, output, untracked, viewChild } from '@angular/core';
 import type { BuildRow } from '@bindings/BuildRow';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideChevronDown, lucideChevronRight, lucideEllipsis, lucideMaximize2, lucideMinus } from '@ng-icons/lucide';
+import { lucideCheck, lucideChevronDown, lucideChevronRight, lucideEllipsis, lucideMaximize2, lucideMinus } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
+import { HlmDropdownMenuImports } from '@spartan-ng/helm/dropdown-menu';
 import {
   MIN_MIDDLE_WIDTH,
   MIN_ROW_HEIGHT,
@@ -15,6 +16,7 @@ import {
   type LayoutMode,
   type Place,
 } from '../../lib/build-layout';
+import { layoutKeyFor } from '../../lib/build-layout-keys';
 import type { Pick } from '../../lib/build-sessions';
 import { actionLabel, primaryAction, type Finding, type StageAction } from '../../lib/sdlc';
 import { FindingsList } from '../../ui/findings-list';
@@ -42,12 +44,6 @@ type Side = Exclude<Place, 'middle'>;
 const AREA_ORDER: AreaId[] = ['tasks', 'activity', 'files', 'findings'];
 const AREA_NAMES: Record<AreaId, string> = { tasks: 'Tasks', activity: 'Activity', files: 'Changed files', findings: 'Findings' };
 const MODE_NAMES: Record<LayoutMode, string> = { overview: 'Overview', watch: 'Watch', changes: 'Changes', review: 'Review' };
-const MODE_TITLES: Record<LayoutMode, string> = {
-  overview: 'The tasks in the middle, the activity beside them',
-  watch: 'The activity in the middle, the tasks beside it',
-  changes: 'The changed files in the middle, the activity below',
-  review: 'The changed files in the middle, the findings beside them',
-};
 const MODE_ORDER: LayoutMode[] = ['overview', 'watch', 'changes', 'review'];
 const PLACES: { place: Place; label: string }[] = [
   { place: 'left', label: 'Left' },
@@ -66,8 +62,9 @@ const CELLS: Record<Place, string> = { left: '1 / 2 / 2 / 3', middle: '1 / 4 / 2
 const SEPARATOR_CELLS: Record<Side, string> = { left: '1 / 3 / 2 / 4', right: '1 / 5 / 2 / 6', bottom: '2 / 1 / 3 / 8' };
 const RAIL_CELLS: Record<Edge, string> = { left: '1 / 1 / 2 / 2', right: '1 / 7 / 2 / 8', bottom: '4 / 1 / 5 / 8' };
 
-/** What a nudge of a separator by the keyboard moves it by, in pixels. */
+/** What a press of an arrow key moves a focused separator by, in pixels; Shift makes it the larger step. */
 const NUDGE = 16;
+const NUDGE_FAR = 64;
 const TUCK_NOTE = 'The page always shows at least one area.';
 
 /* The build page: the waiting notice and the bar above four areas in one grid, the tasks, the activity of what the engineer picked,
@@ -78,8 +75,8 @@ const TUCK_NOTE = 'The page always shows at least one area.';
 @Component({
   selector: 'app-build-page',
   host: { class: 'block h-full min-h-0' },
-  providers: [provideIcons({ lucideChevronDown, lucideChevronRight, lucideEllipsis, lucideMaximize2, lucideMinus })],
-  imports: [HlmButtonImports, NgIcon, NgTemplateOutlet, FindingsList, ObservePane, Segmented, WaitingNotice, ChangesView],
+  providers: [provideIcons({ lucideCheck, lucideChevronDown, lucideChevronRight, lucideEllipsis, lucideMaximize2, lucideMinus })],
+  imports: [HlmButtonImports, HlmDropdownMenuImports, NgIcon, NgTemplateOutlet, FindingsList, ObservePane, Segmented, WaitingNotice, ChangesView],
   templateUrl: './build-page.html',
   styleUrl: './build-page.css',
 })
@@ -137,6 +134,13 @@ export class BuildPage {
       const request = this.focus();
       if (request === null) return;
       untracked(() => afterNextRender(() => this.focusOpenCard(), { injector: this.injector }));
+    });
+    // Only the selected tab of a stack is in the tab order. BrnButton owns the tabindex of every hlmBtn and clears what a template sets, so it is set here.
+    afterEveryRender(() => {
+      for (const tab of this.host.nativeElement.querySelectorAll<HTMLElement>('[role="tab"]')) {
+        const wanted = tab.getAttribute('aria-selected') === 'true' ? '0' : '-1';
+        if (tab.getAttribute('tabindex') !== wanted) tab.setAttribute('tabindex', wanted);
+      }
     });
     // The layout view model needs the room the grid has to keep the sides from crowding out the middle.
     afterNextRender(() => {
@@ -216,7 +220,7 @@ export class BuildPage {
   /** The mode switcher's options; the one the build's stage suits carries the mark. */
   protected modes(): { value: LayoutMode; label: string; title: string; mark?: string }[] {
     const suggested = this.layout().suggested;
-    return MODE_ORDER.map((m) => ({ value: m, label: MODE_NAMES[m], title: MODE_TITLES[m], ...(suggested === m ? { mark: 'suggested' } : {}) }));
+    return MODE_ORDER.map((m, i) => ({ value: m, label: MODE_NAMES[m], title: `${MODE_NAMES[m]} (Ctrl+${i + 1})`, ...(suggested === m ? { mark: 'suggested' } : {}) }));
   }
 
   /** Where the area is: a place, or `tucked`. */
@@ -349,13 +353,59 @@ export class BuildPage {
     afterNextRender(() => grid.style.removeProperty(SIZE_VARS[drag.side]), { injector: this.injector });
   }
 
-  /** The arrow keys move a focused separator, a step at a time. */
+  /**
+   * The keys of a focused separator: the arrow keys that move it toward the middle's far side make its area larger, the opposite pair make
+   * it smaller, 16 pixels a press and 64 with Shift. Home goes to the smallest and End to the largest. Each press tells the page once; the
+   * page clamps what it is told to the room, so End asks for as much as the grid measures, or for more than any room has when it is not measured yet.
+   */
   protected nudge(event: KeyboardEvent, side: Side): void {
-    const toward = side === 'bottom' ? { ArrowUp: 1, ArrowDown: -1 } : side === 'left' ? { ArrowRight: 1, ArrowLeft: -1 } : { ArrowLeft: 1, ArrowRight: -1 };
-    const step = (toward as Record<string, number | undefined>)[event.key];
-    if (step === undefined) return;
+    const [grow, shrink] = side === 'bottom' ? ['ArrowUp', 'ArrowDown'] : side === 'left' ? ['ArrowRight', 'ArrowLeft'] : ['ArrowLeft', 'ArrowRight'];
+    const now = this.sizeOf(side);
+    const step = event.shiftKey ? NUDGE_FAR : NUDGE;
+    let px: number;
+    if (event.key === grow) px = now + step;
+    else if (event.key === shrink) px = now - step;
+    else if (event.key === 'Home') px = MIN_SIDE;
+    else if (event.key === 'End') px = Number.MAX_SAFE_INTEGER;
+    else return;
     event.preventDefault();
-    const px = this.clampSize(side, this.sizeOf(side) + step * NUDGE);
-    if (px !== this.sizeOf(side)) this.arrange.emit({ kind: 'resize', side, px });
+    px = this.clampSize(side, px);
+    if (px !== now) this.arrange.emit({ kind: 'resize', side, px });
+  }
+
+  // ---- the keys of the page ----
+
+  /** Ctrl+1 to Ctrl+4 pick a mode; Esc ends a focus, and is left alone when nothing is in focus or something else has taken it. */
+  protected onKey(event: KeyboardEvent): void {
+    if (event.defaultPrevented) return;
+    const key = layoutKeyFor(event);
+    if (key === null) return;
+    if (key.kind === 'mode') {
+      event.preventDefault();
+      this.pickMode.emit(key.mode);
+    } else if (this.layout().focus !== null) {
+      event.preventDefault();
+      this.unfocus.emit();
+    }
+  }
+
+  /** The arrow keys, Home and End in a stack's tabs: the tab is picked as it takes the focus, and the focus follows to the area that comes on show. */
+  protected tabKey(event: KeyboardEvent, tab: AreaId): void {
+    const stack = this.stackOf(tab);
+    const at = stack.indexOf(tab);
+    const next =
+      event.key === 'ArrowRight' ? stack[(at + 1) % stack.length]
+      : event.key === 'ArrowLeft' ? stack[(at - 1 + stack.length) % stack.length]
+      : event.key === 'Home' ? stack[0]
+      : event.key === 'End' ? stack[stack.length - 1]
+      : undefined;
+    if (next === undefined) return;
+    event.preventDefault();
+    if (next === tab) return;
+    this.flip.emit({ place: this.stackPlace(tab), area: next });
+    afterNextRender(
+      () => this.host.nativeElement.querySelector<HTMLElement>(`[data-area="${next}"] [role="tab"][aria-selected="true"]`)?.focus(),
+      { injector: this.injector },
+    );
   }
 }

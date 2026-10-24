@@ -138,45 +138,6 @@
   padding: 0 var(--space-2);
 }
 
-/* The Place menu is a native popover anchored to its button, so it takes no state and light-dismisses on its own. */
-.k-bp__menu {
-  position: fixed;
-  inset: auto;
-  top: anchor(bottom);
-  right: anchor(right);
-  margin: 0;
-  min-width: calc(var(--space-9) * 4);
-  padding: var(--space-2);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-  box-shadow: var(--shadow-popover);
-  color: var(--text-secondary);
-}
-
-.k-bp__menu:popover-open {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.k-bp__menuitem {
-  display: flex;
-  align-items: center;
-  padding: var(--space-3);
-  border-radius: var(--radius-xs);
-  font: var(--text-sm) / 1 var(--font-sans);
-  text-align: left;
-}
-
-.k-bp__menuitem:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.k-bp__menuitem[aria-current='true'] {
-  color: var(--accent-text);
-}
-
 /* Every area scrolls on its own. */
 .k-bp__body {
   min-width: 0;
