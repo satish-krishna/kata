@@ -65,7 +65,8 @@ export class MockTransport extends KataTransport {
   private readonly listeners = new Set<(runId: string, ev: KataEvent) => void>();
   private readonly runs = new Map<string, ScriptedRun>();
   private nextRun = 0;
-  private readonly sdlc = new SdlcMock();
+  /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
+  private readonly sdlc = new SdlcMock(typeof location !== 'undefined' && new URLSearchParams(location.search).get('demo') === 'build-long');
   private setupScanned = false;
   /** The build layout a browser session has saved; a fresh session starts with none. */
   private buildLayout: Record<string, unknown> = {};

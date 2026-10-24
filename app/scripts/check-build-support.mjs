@@ -12,8 +12,6 @@ const DIST = join(ROOT, 'dist', 'angular-jig', 'browser');
 
 export const ROUTE = '/sdlc/claims/2026-10-19-build-demo';
 export const WIDTHS = [375, 768, 1280];
-/** The widths the build page is checked at: below 1024 its areas share one place behind a switch. */
-export const BUILD_WIDTHS = [375, 768, 1024, 1280];
 /** The Tailwind `md` breakpoint the views switch columns at: below it the layout stacks. */
 export const MD = 768;
 
@@ -28,8 +26,8 @@ export function desktopCsp() {
 // Same short noise list as the boot gate; anything else fails.
 const NOISE = [/favicon\.ico/i];
 
-/** Serves the production build with the desktop CSP on every response and opens one page that records every error. */
-export async function open({ width = 1280, height = 900 } = {}) {
+/** Serves the production build with the desktop CSP on every response and opens one page that records every error. `query` (for example `?demo=build-long`) picks a mock variant. */
+export async function open({ width = 1280, height = 900, query = '' } = {}) {
   if (!existsSync(join(DIST, 'index.html'))) throw new Error(`no production build at ${DIST}; run "npm run build" first`);
   const srv = await serveStatic(DIST, { spaFallback: true, headers: { 'content-security-policy': desktopCsp() } });
   const browser = await launchChromium();
@@ -45,7 +43,7 @@ export async function open({ width = 1280, height = 900 } = {}) {
   page.on('response', (r) => {
     if (r.status() >= 400 && !NOISE.some((re) => re.test(r.url()))) errors.push(`HTTP ${r.status()}: ${r.url()}`);
   });
-  await page.goto(srv.origin + ROUTE, { waitUntil: 'networkidle' });
+  await page.goto(srv.origin + ROUTE + query, { waitUntil: 'networkidle' });
   return {
     page,
     browser,

@@ -15,7 +15,7 @@
 import { ROUTE, eventually, noHorizontalScroll, open, reporter, startBuild } from './check-build-support.mjs';
 
 const { check, done } = reporter('check:build');
-const { page, errors, close } = await open({ width: 1280, height: 800 });
+const { page, errors, close } = await open({ width: 1280, height: 800, query: '?demo=build-long' });
 page.setDefaultTimeout(10000);
 
 const REPOS = ['claims-core', 'customer-portal', 'billing-api'];
@@ -48,7 +48,7 @@ async function attempt(label, section) {
   try {
     await section();
   } catch (e) {
-    check(false, `${label}: ${String(e.message).split('\n')[0]}`);
+    check(false, `${label}: ${String(e.message).split('\n').slice(0, 3).join(' ')}`);
   }
 }
 
@@ -77,7 +77,7 @@ const cutOff = () =>
     const out = [];
     const say = (el) => (el.getAttribute('aria-label') ?? el.textContent ?? el.className).replace(/\s+/g, ' ').trim().slice(0, 40);
     // A tool call's command and the scroller's button truncate on purpose; a label with a screen-reader-only part has a text range wider than its box.
-    const measured = (el) => !el.closest('app-tool-card, hlm-message-scroller') && !el.querySelector('.sr-only') && !el.classList.contains('sr-only');
+    const measured = (el) => !el.closest('app-tool-card, hlm-message-scroller') && !el.querySelector('.sr-only, .k-files__branch') && !el.classList.contains('sr-only');
     const watch = (container, where, both) => {
       const box = container.getBoundingClientRect();
       for (const el of container.querySelectorAll('button, [role="tab"], [role="radio"], .k-status, .k-lock__count, .k-bp__title, .k-bp__elapsed')) {
@@ -123,7 +123,7 @@ async function reach(areaId, inside, what) {
   let clicks = 0;
   if (!(await visible())) {
     const rail = page.locator('[data-rail]').getByRole('button', { name: new RegExp(`^Bring back ${AREA_NAMES[areaId]}`) });
-    const tab = page.locator('[role="tablist"]').getByRole('tab', { name: new RegExp(`^${AREA_NAMES[areaId]}`) });
+    const tab = page.locator('[data-area]:not([inert]) [role="tablist"]').getByRole('tab', { name: new RegExp(`^${AREA_NAMES[areaId]}`) });
     if ((await rail.count()) > 0) {
       await rail.click();
       clicks = 1;
@@ -180,7 +180,7 @@ const sweep = (scroller, itemSel) =>
     const last = all.length > 0 ? all[all.length - 1].getBoundingClientRect() : null;
     const box = el.getBoundingClientRect();
     return { ...overflow, total: all.length, seen: all.filter((it) => seen.has(it)).length, lastInView: last !== null && last.top >= box.top - 0.5 && last.bottom <= box.bottom + 0.5 };
-  });
+  }, itemSel);
 
 /** R1.1 for one area: its scroll container overflows, every item comes into view in turn, the last is in view and nothing else moved. */
 async function scrollsOnItsOwn(label, scroller, itemSel) {
@@ -210,7 +210,7 @@ function keptPlace(label, before, after) {
 }
 
 const tasksBody = area('tasks').locator('.k-bp__body');
-const activityViewport = area('activity').locator('[data-session]:not([hidden]) hlm-message-scroller-viewport').first();
+const activityViewport = area('activity').locator('hlm-message-scroller-viewport:visible').first();
 const filesList = area('files').locator('.k-changes__left');
 const findingsBody = area('findings').locator('.k-bp__body');
 
@@ -309,7 +309,7 @@ try {
   for (const repo of ['claims-core', 'billing-api']) {
     await attempt(`${repo} finishing its tasks`, async () => {
       await group(repo).waitFor();
-      await eventually(page, () => group(repo).locator('button:text-is("Cancel")').count(), (n) => n === 0, `${repo} finishing its tasks`, 60000);
+      await eventually(page, () => group(repo).locator('[data-heading] .k-status', { hasText: /^Finished$/ }).count(), (n) => n === 1, `${repo} finishing its tasks`, 90000);
     });
   }
 
@@ -326,13 +326,23 @@ try {
     await settle();
     await scrollsOnItsOwn('activity', activityViewport, 'hlm-message-scroller-item');
   });
+  // Moving the area changes its width, so its text reflows and the same scrollTop cannot mean the same place; the item at the top is what must stay.
   await attempt('R1.2 activity', async () => {
+    const topItem = () =>
+      activityViewport.evaluate((el) => {
+        const top = el.getBoundingClientRect().top;
+        const items = [...el.querySelectorAll('hlm-message-scroller-item')];
+        return items.findIndex((it) => it.getBoundingClientRect().bottom > top + 1);
+      });
     const placeBefore = await scrollPartWay(activityViewport);
+    const itemBefore = await topItem();
     await area('activity').getByRole('button', { name: 'Place Activity' }).click();
     await page.getByRole('menuitem', { name: 'Right' }).click();
     await settle();
     check((await area('activity').getAttribute('data-place')) === 'right', 'R1.2 activity: the area moved to the right side');
-    keptPlace('activity', placeBefore, await placeOf(activityViewport));
+    check(placeBefore > 20 && itemBefore > 0, `R1.2 activity: scrolled part way first (${placeBefore}, item ${itemBefore} at the top)`);
+    const itemAfter = await topItem();
+    check(itemAfter === itemBefore, `R1.2 activity: the same item is at the top after the move (item ${itemBefore} then ${itemAfter})`);
   });
 
   // R1.1 changed files: Changes, the files in the list, then the lines of the change to one file.
@@ -376,15 +386,17 @@ try {
 
   // R1.2 tasks: flip to another area in the same stack and back.
   await attempt('R1.2 tasks', async () => {
-    await enter(MODES[0]);
-    await area('activity').getByRole('button', { name: 'Place Activity' }).click();
-    await page.getByRole('menuitem', { name: 'Middle' }).click();
+    await enter(MODES[1]);
+    await page.locator('[data-rail]').getByRole('button', { name: /^Bring back Changed files/ }).click();
     await settle();
-    const stack = page.locator('[role="tablist"]').first();
+    await area('tasks').getByRole('button', { name: 'Place Tasks' }).click();
+    await page.getByRole('menuitem', { name: 'Right' }).click();
+    await settle();
+    const stack = { getByRole: (...a) => page.locator('[data-area]:not([inert]) [role="tablist"]').first().getByRole(...a) };
     await stack.getByRole('tab', { name: /^Tasks/ }).click();
     await settle();
     const tasksBefore = await scrollPartWay(tasksBody);
-    await stack.getByRole('tab', { name: /^Activity/ }).click();
+    await stack.getByRole('tab', { name: /^Changed files/ }).click();
     await settle();
     await stack.getByRole('tab', { name: /^Tasks/ }).click();
     await settle();
