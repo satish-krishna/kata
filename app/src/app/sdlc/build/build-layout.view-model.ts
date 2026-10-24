@@ -90,22 +90,23 @@ export class BuildLayoutViewModel {
   /** The modes whose entry was in the file but unusable, until the page said so. */
   private readonly unusable = new Set<LayoutMode>();
   private openChange: string | null = null;
-  private lastStage: LayoutStage;
+  private lastStage: LayoutStage | null;
   /** Resolves once the layout file has been read; writes wait for it so they never drop a mode that is still arriving. */
   private readonly ready: Promise<void>;
 
   constructor() {
     this.lastStage = untracked(() => this.build.layoutStage());
     this.ready = this.read();
-    // A change other than the one open starts the page over for it; a reload of the same change does nothing.
+    // A change other than the one open starts the page over for it once its stage is settled; a reload of the same change does nothing.
     effect(() => {
       const change = this.build.loaded()?.ctx.change;
-      if (change !== undefined && change !== untracked(() => this.openChange)) untracked(() => this.open(change));
+      const stage = this.build.layoutStage();
+      if (change !== undefined && stage !== null && change !== untracked(() => this.openChange)) untracked(() => this.open(change));
     });
-    // A new stage may move the page or mark the suited mode; nothing else does.
+    // A new stage may move the page or mark the suited mode; nothing else does, and a stage still being settled is not a stage.
     effect(() => {
       const to = this.build.layoutStage();
-      untracked(() => this.stageChanged(to));
+      if (to !== null) untracked(() => this.stageChanged(to));
     });
   }
 
@@ -152,7 +153,7 @@ export class BuildLayoutViewModel {
     this.flipped.set({});
     this.suggested.set(null);
     this.handSwitched.set(false);
-    const mode = suitedMode(this.lastStage);
+    const mode = suitedMode(this.lastStage ?? 'stopped');
     this.mode.set(mode);
     this.noteUnreadable(mode);
   }

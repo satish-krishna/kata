@@ -332,7 +332,19 @@ export class BuildPageViewModel {
   /** The earlier runs the engineer opened in full, by run id. */
   private readonly openedRuns = signal<ReadonlySet<string>>(new Set());
   private readonly broken = signal(false);
-  private readonly reading = signal(false);
+  /** True while the review run's result is being read. */
+  private readonly readingNow = signal(false);
+  /** The id of the review run whose result was read last. */
+  private readonly readReviewId = signal<string | null>(null);
+  /**
+   * Whether the review is being read: from the moment the build finishes until its result is read, with no gap between the phase
+   * changing and the read starting, so nothing in that gap sees a finished build with no review.
+   */
+  private readonly reading = computed(() => {
+    if (this.readingNow()) return true;
+    const entry = this.started() && this.phase() === 'finished' ? this.latest(REVIEW) : null;
+    return entry !== null && this.readReviewId() !== entry.id;
+  });
   private readonly changes = signal<BuildChanges | null>(null);
   /** How many events of each run the engineer had seen when its Activity was last on show, by run id. */
   private readonly seen = signal<Readonly<Record<string, number>>>({});
@@ -587,6 +599,7 @@ export class BuildPageViewModel {
     this.status.set(input.status);
     this.reviewDoc.set(input.review);
     await Promise.all([this.readSessions(), this.readChanges()]);
+    this.sessionsReadFor.set(input);
     if (this.latest(REVIEW) !== null) return;
     // No review run in this session: the findings come from the review document, or from the latest review run's words.
     await this.noteReviewNotice(input.review);
@@ -789,18 +802,33 @@ export class BuildPageViewModel {
     });
   });
 
-  /** What the tasks area says about the review. */
+  /**
+   * What the review counts as, for the tasks area, the findings area and the layout stage: the one place that decides whether the review is in.
+   * A review this session just finished and read counts as finished even before the run links catch up with it.
+   */
   readonly reviewEntry = computed<ReviewEntry>(() => {
     if (this.started() && this.phase() === 'reviewing') return 'running';
     const ctx = this.ctx;
     if (ctx === null) return 'not run';
     const scope = { workspaceId: ctx.workspaceId, system: ctx.system, change: ctx.change };
     const state = reviewState(this.runLinks(), this.records(), this.heads(), scope, this.reviewDoc(), this.masterRef()?.repo ?? null);
-    return state.kind === 'current' || state.kind === 'current-document' ? 'finished' : state.kind === 'stale' ? 'stale' : 'not run';
+    if (state.kind === 'current' || state.kind === 'current-document') return 'finished';
+    if (state.kind === 'stale') return 'stale';
+    const stage = this.stage();
+    const justRead = (stage === 'review-finished' || stage === 'done') && (this.reviews().length > 0 || this.unrecorded());
+    return justRead ? 'finished' : 'not run';
   });
 
-  /** Where the build stands for the layout: held at its last value while the review is being read. */
-  readonly layoutStage = computed<LayoutStage>(() => {
+  /** The change page input whose sessions have been read; the layout stage is settled once it is the loaded one. */
+  private readonly sessionsReadFor = signal<BuildPageInput | null>(null);
+
+  /**
+   * Where the build stands for the layout, held at its last value while the review is being read. Null while the stage is not settled:
+   * the page was loaded but its sessions (run links, records, heads) have not been read yet, so the review cannot be judged.
+   */
+  readonly layoutStage = computed<LayoutStage | null>(() => {
+    const loaded = this.loaded();
+    if (loaded !== null && this.sessionsReadFor() !== loaded) return null;
     // A build that finishes must not pass through "stopped" while its review is read, so the last value holds until the read ends.
     if (this.reading() && this.heldStage !== null) return this.heldStage;
     const next = layoutStageOf({ stage: this.stage(), recorded: this.buildRows().length > 0, review: this.reviewEntry() });
@@ -867,11 +895,7 @@ export class BuildPageViewModel {
     const departures = this.taskAreas().flatMap((g) =>
       g.tasks.flatMap((t) => (t.state.kind === 'done' && t.state.departure !== null ? [{ repo: g.repo, task: t.id, text: t.state.departure }] : [])),
     );
-    // A review this session just finished and read counts as in even before the run links catch up with it.
-    const stage = this.stage();
-    const justRead = (stage === 'review-finished' || stage === 'done') && (this.reviews().length > 0 || this.unrecorded());
-    const entry = this.reviewEntry();
-    return findingsAreaOf({ reading: this.reading(), entry: entry === 'not run' && justRead ? 'finished' : entry, review, departures });
+    return findingsAreaOf({ reading: this.reading(), entry: this.reviewEntry(), review, departures });
   }
 
   /** The finding the engineer picked last, for the changed files to show. */
@@ -1404,11 +1428,12 @@ export class BuildPageViewModel {
     const entry = this.latest(REVIEW);
     if (entry === null || this.readRuns.has(entry.id)) return;
     this.readRuns.add(entry.id);
-    this.reading.set(true);
+    this.readingNow.set(true);
     try {
       await this.readReviewOf();
     } finally {
-      this.reading.set(false);
+      this.readingNow.set(false);
+      this.readReviewId.set(entry.id);
     }
   }
 
