@@ -203,6 +203,10 @@ describe('ChangePage layout', () => {
   });
 
   describe('after the pull requests', () => {
+    beforeEach(() => {
+      vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
+    });
+    afterEach(() => vi.restoreAllMocks());
     const finished = async (only?: number) => {
       const transport = new MockTransport();
       const real = transport.sdlcChanges.bind(transport);
