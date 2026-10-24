@@ -128,6 +128,8 @@ export class TauriTransport extends KataTransport {
   sdlcGhOrigins(repos: PublishRepo[]) { return this.ipc.invoke<void>('sdlc_gh_origins', { repos }); }
   sdlcPublish(folder: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]) { return this.ipc.invoke<PrResult[]>('sdlc_publish', { folder, masterRepo, system, change, repos }); }
   sdlcPullRequests(repos: PublishRepo[], change: string) { return this.ipc.invoke<PrState[]>('sdlc_pull_requests', { repos, change }); }
+  loadBuildLayout(): Promise<unknown> { throw new Error('not implemented'); }
+  saveBuildLayout(_layout: Record<string, unknown>): Promise<void> { throw new Error('not implemented'); }
   zoom(step: ZoomStep) { return this.ipc.invoke<number>('zoom', { step }); }
   pickDirectory() { return this.ipc.open({ directory: true, multiple: false }) as Promise<string | null>; }
   pickOpenSpec() { return this.ipc.open({ multiple: false, filters: SPEC_FILTERS }) as Promise<string | null>; }

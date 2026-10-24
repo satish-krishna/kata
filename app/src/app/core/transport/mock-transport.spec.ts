@@ -238,7 +238,16 @@ describe('MockTransport', () => {
       await expect(t.sdlcReadDoc('/m', 'claims', '2026-10-12-fnol-photo-upload', 'spec.md')).rejects.toThrow(/stem/);
     });
 
-    it('has no window to zoom, so the level stays at 100%', async () => {
+    it('keeps the build layout in memory: a fresh mock loads {}, and the next load returns the last save', async () => {
+    const t = new MockTransport();
+    expect(await t.loadBuildLayout()).toEqual({});
+    await t.saveBuildLayout({ order: ['T2'] });
+    await t.saveBuildLayout({ order: ['T3', 'T1'] });
+    expect(await t.loadBuildLayout()).toEqual({ order: ['T3', 'T1'] });
+    expect(await new MockTransport().loadBuildLayout()).toEqual({});
+  });
+
+  it('has no window to zoom, so the level stays at 100%', async () => {
       expect(await new MockTransport().zoom('in')).toBe(1);
     });
 

@@ -201,6 +201,8 @@ export class MockTransport extends KataTransport {
     const prs = this.sdlc.pullRequests(repos, change);
     return Promise.resolve(demo === 'one-pr' ? prs.slice(0, 1) : prs);
   }
+  loadBuildLayout(): Promise<unknown> { throw new Error('not implemented'); }
+  saveBuildLayout(_layout: Record<string, unknown>): Promise<void> { throw new Error('not implemented'); }
   /** A plain browser has no window to zoom. */
   zoom(_step: ZoomStep): Promise<number> { return Promise.resolve(1); }
   pickDirectory(): Promise<string | null> { return Promise.resolve(null); }

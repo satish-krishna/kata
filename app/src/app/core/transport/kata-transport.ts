@@ -128,6 +128,9 @@ export abstract class KataTransport {
   abstract sdlcGhOrigins(repos: PublishRepo[]): Promise<void>;
   abstract sdlcPublish(folder: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]): Promise<PrResult[]>;
   abstract sdlcPullRequests(repos: PublishRepo[], change: string): Promise<PrState[]>;
+  /** The build page's arrangement, one per mode and shared by every change. `{}` until one is saved. */
+  abstract loadBuildLayout(): Promise<unknown>;
+  abstract saveBuildLayout(layout: Record<string, unknown>): Promise<void>;
   /** Step the window's zoom. Resolves to the new level, which the backend remembers for the next launch. */
   abstract zoom(step: ZoomStep): Promise<number>;
   /** Register for relayed run events, each tagged with the id of the run it came from. Resolves to the unlisten function. */
