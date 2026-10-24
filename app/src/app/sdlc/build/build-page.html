@@ -191,6 +191,7 @@
             [rows]="rows()"
             [task]="task()"
             [stopped]="stopped()"
+            [showAt]="view().findingPlace"
           />
         } @else {
           <p class="k-state__body k-bp__empty">The changed files show here once an agent changes something.</p>
@@ -209,7 +210,15 @@
     >
       <ng-container [ngTemplateOutlet]="head" [ngTemplateOutletContext]="{ $implicit: 'findings' }" />
       <div class="k-bp__body k-bp__body--stack">
-        @if (view().findingsArea.review; as found) {
+        @let area = view().findingsArea;
+        @if (area.message; as message) {
+          <p class="k-state__body">{{ message }}</p>
+        } @else if (area.review; as found) {
+          @if (area.staleNotice; as stale) {
+            <div class="wb-banner wb-banner--warn" data-testid="review-stale" role="status">
+              <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ stale }}</span>
+            </div>
+          }
           @if (found.notice; as notice) {
             <div [class]="notice.tone === 'warning' ? 'wb-banner wb-banner--warn' : 'wb-banner wb-banner--quiet'" data-testid="review-notice" role="status">
               <span [class]="'k-status k-status--' + (notice.tone === 'warning' ? 'warning' : 'idle')"><span class="k-status__dot"></span>{{ notice.text }}</span>
@@ -222,9 +231,31 @@
               }
             </div>
           }
-          <app-findings-list [findings]="found.findings" [replaced]="found.replaced" [older]="found.older" [emptyText]="found.emptyText" />
-        } @else {
-          <p class="k-state__body">The review's findings show here once the review has finished.</p>
+          <app-findings-list
+            [findings]="found.findings"
+            [replaced]="found.replaced"
+            [older]="found.older"
+            [emptyText]="found.emptyText"
+            [picked]="view().findingPlace"
+            (pick)="pickFinding($event)"
+          />
+        }
+        @if (area.departures; as departures) {
+          <section class="k-findings" data-testid="departures" aria-labelledby="departures-title">
+            <h2 id="departures-title" class="k-left__head">Departures from the plan</h2>
+            @if (area.noDepartures; as none) {
+              <p class="k-state__body">{{ none }}</p>
+            } @else {
+              <ol class="k-findings__list">
+                @for (d of departures; track $index) {
+                  <li class="k-findings__item">
+                    <span class="k-mono k-left__note">{{ d.repo }} · {{ d.task }}</span>
+                    <span class="k-findings__text">{{ d.text }}</span>
+                  </li>
+                }
+              </ol>
+            }
+          </section>
         }
       </div>
     </section>

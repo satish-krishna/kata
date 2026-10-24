@@ -192,6 +192,12 @@ export class BuildPage {
     this.panel.set('activity');
   }
 
+  /** A finding that names a file was picked: the changed files become visible first, then show its place. */
+  protected pickFinding(finding: Finding): void {
+    this.reveal.emit('files');
+    this.showFinding.emit(finding);
+  }
+
   protected goToRepo(repo: string): void {
     this.goTo.emit(repo);
     this.panel.set('activity');

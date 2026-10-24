@@ -194,6 +194,8 @@
                 (unfocus)="layout.unfocus()"
                 (flip)="layout.flip($event.place, $event.area)"
                 (room)="layout.room.set($event)"
+                (reveal)="layout.reveal($event)"
+                (showFinding)="build.showFinding($event)"
               />
             }
           </div>

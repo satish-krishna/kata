@@ -1,5 +1,6 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { Component, input, output } from '@angular/core';
+import { HlmButtonImports } from '@spartan-ng/helm/button';
 import type { Finding } from '../lib/sdlc';
 import { MarkdownBody } from './markdown-body';
 
@@ -10,7 +11,7 @@ export type ReplacedFindings = { at: string; findings: Finding[]; label?: string
  * Reviews a newer review replaced stay below, collapsed. */
 @Component({
   selector: 'app-findings-list',
-  imports: [NgTemplateOutlet, MarkdownBody],
+  imports: [NgTemplateOutlet, HlmButtonImports, MarkdownBody],
   templateUrl: './findings-list.html',
 })
 export class FindingsList {
@@ -28,6 +29,11 @@ export class FindingsList {
 
   protected where(f: Finding): string | null {
     return f.file === undefined ? null : f.line === undefined ? f.file : `${f.file}:${f.line}`;
+  }
+
+  protected isPicked(f: Finding): boolean {
+    const at = this.picked();
+    return at !== null && at.file === f.file && at.text === f.text;
   }
 
   protected tone(f: Finding): string {

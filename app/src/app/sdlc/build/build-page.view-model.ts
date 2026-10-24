@@ -28,7 +28,7 @@ import { fallbackTaskState, hms, ms, situationView, taskState, type SituationVie
 import { layoutStage as layoutStageOf, type LayoutStage } from '../../lib/build-layout-stage';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
-import { reviewState } from '../../lib/sdlc-done';
+import { REVIEW_MISSING_TEXT, reviewState } from '../../lib/sdlc-done';
 import { givenFor, reviewFindings, specFor, type BuildRun, type Finding, type StageAction } from '../../lib/sdlc';
 import type { ReplacedFindings } from '../../ui/findings-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
@@ -128,6 +128,11 @@ export type ReviewEntryView = { status: StatusText; action: 'cancel' | 'continue
 /** The review's findings, with the notice above them. */
 export type FindingsView = { notice: DocNotice | null; findings: Finding[]; replaced: ReplacedFindings[]; older: boolean; emptyText: string };
 
+const READING_REVIEW = 'Reading the review…';
+const REVIEW_NOT_RUN = 'The review runs by itself once the last task is recorded.';
+const REVIEW_RUNNING = 'The review is running. Its findings appear here when it ends.';
+const NO_DEPARTURES = 'No departures from the plan.';
+
 /** A task's recorded departure from the plan. */
 export type Departure = { repo: string; task: string; text: string };
 
@@ -148,8 +153,14 @@ export type FindingsAreaView = {
 export type FindingPlace = { file: string; line: number | null; text: string; n: number };
 
 /** The findings area for each state of the review. */
-export function findingsAreaOf(_i: { reading: boolean; entry: ReviewEntry; review: FindingsView; departures: Departure[] }): FindingsAreaView {
-  return { message: null, staleNotice: null, review: null, departures: null, noDepartures: null };
+export function findingsAreaOf(i: { reading: boolean; entry: ReviewEntry; review: FindingsView; departures: Departure[] }): FindingsAreaView {
+  const departures = i.reading ? null : i.departures;
+  const noDepartures = departures !== null && departures.length === 0 ? NO_DEPARTURES : null;
+  const said = (message: string): FindingsAreaView => ({ message, staleNotice: null, review: null, departures, noDepartures });
+  if (i.reading) return said(READING_REVIEW);
+  if (i.entry === 'not run') return said(REVIEW_NOT_RUN);
+  if (i.entry === 'running') return said(REVIEW_RUNNING);
+  return { message: null, staleNotice: i.entry === 'stale' ? REVIEW_MISSING_TEXT.stale : null, review: i.review, departures, noDepartures };
 }
 
 /** Everything the build page shows, computed once so the page itself only draws it. */
@@ -871,7 +882,11 @@ export class BuildPageViewModel {
     const departures = this.taskAreas().flatMap((g) =>
       g.tasks.flatMap((t) => (t.state.kind === 'done' && t.state.departure !== null ? [{ repo: g.repo, task: t.id, text: t.state.departure }] : [])),
     );
-    return findingsAreaOf({ reading: this.reading(), entry: this.reviewEntry(), review, departures });
+    // A review this session just finished and read counts as in even before the run links catch up with it.
+    const stage = this.stage();
+    const justRead = (stage === 'review-finished' || stage === 'done') && (this.reviews().length > 0 || this.unrecorded());
+    const entry = this.reviewEntry();
+    return findingsAreaOf({ reading: this.reading(), entry: entry === 'not run' && justRead ? 'finished' : entry, review, departures });
   }
 
   /** The finding the engineer picked last, for the changed files to show. */
@@ -879,7 +894,10 @@ export class BuildPageViewModel {
   private placeCount = 0;
 
   /** Ask the changed files to show where a finding is. A finding that names no file shows nothing. */
-  showFinding(_f: Finding): void {}
+  showFinding(f: Finding): void {
+    if (f.file === undefined) return;
+    this.findingPlace.set({ file: f.file, line: f.line ?? null, text: f.text, n: ++this.placeCount });
+  }
 
   /** Where the master repository is: what the build was started from, else what the change page loaded. */
   private masterRef(): { repo: string; path: string } | null {

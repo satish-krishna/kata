@@ -317,6 +317,9 @@
 .k-findings__list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
 .k-findings__item { display: grid; grid-template-columns: 7rem 1fr; gap: var(--space-4); align-items: baseline; }
 .k-findings__text { font: var(--text-base)/1.5 var(--font-sans); color: var(--text-primary); }
+.k-findings__place { padding: 0; border: 0; background: none; font: var(--font-code-sm); color: var(--accent); cursor: pointer; text-align: left; }
+.k-findings__place:hover { text-decoration: underline; }
+.k-findings__place[aria-pressed="true"] { color: var(--text-primary); }
 .k-findings__replaced { display: grid; gap: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); }
 .k-findings__replaced > summary { font: var(--font-code-sm); color: var(--text-muted); cursor: pointer; }
 /* A check that did not pass: its words, then the tail of its output in an inset block. */
