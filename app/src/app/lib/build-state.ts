@@ -66,3 +66,27 @@ export function taskState(task: TaskStatus, situation: Situation): TaskState {
       throw new Error(`a task without a row in a ${situation.kind} repository`);
   }
 }
+
+/** The clock facts of one heading: seconds of work so far (null before any run), the limit, seconds of the wait in progress (null when not waiting), and unseen events. */
+export interface ClockFacts {
+  workSecs: number | null;
+  limitSecs: number;
+  waitSecs: number | null;
+  unseen: number;
+}
+
+/** A repository's heading as the build page says it. `situation` is null when the facts were impossible and the heading is a fallback. */
+export interface SituationView {
+  situation: Situation | null;
+  tone: 'success' | 'warning' | 'error' | 'idle';
+  label: string;
+  clock: string | null;
+  paused: string | null;
+  unseen: number;
+  stopLine: string | null;
+}
+
+/** The one owner of how a repository's heading, clocks and stop line say where it stands (R2.1, R6.1). Never throws. */
+export function situationView(_facts: SituationFacts, _clock: ClockFacts): SituationView {
+  return { situation: null, tone: 'idle', label: '', clock: null, paused: null, unseen: 0, stopLine: null };
+}

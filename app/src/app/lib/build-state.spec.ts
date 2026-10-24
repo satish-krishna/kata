@@ -1,6 +1,6 @@
 import type { RepoState } from '@bindings/RepoState';
 import type { TaskStatus } from '@bindings/TaskStatus';
-import { repoSituation, taskState, type Situation, type SituationFacts, type TaskState } from './build-state';
+import { repoSituation, situationView, taskState, type ClockFacts, type Situation, type SituationFacts, type TaskState } from './build-state';
 import { stopMessage } from './sdlc';
 
 const ready = (task: string): RepoState => ({ kind: 'ready', task });
@@ -89,6 +89,46 @@ describe('taskState', () => {
     for (const c of TASK_CASES) {
       if (c.expected === 'impossible') expect(() => taskState(c.task, c.situation), c.name).toThrow();
       else expect(taskState(c.task, c.situation), c.name).toEqual(c.expected);
+    }
+  });
+});
+
+const clockOf = (over: Partial<ClockFacts> = {}): ClockFacts => ({ workSecs: null, limitSecs: 7200, waitSecs: null, unseen: 0, ...over });
+
+describe('situationView', () => {
+  const working = facts({ live: true, state: ready('T1'), session: 'this' });
+
+  it('heads a working repository with its task, the work clock against the limit and the unseen count', () => {
+    const v = situationView(working, clockOf({ workSecs: 720, unseen: 3 }));
+    expect(v).toMatchObject({ tone: 'success', label: 'Working · T1', clock: 'work 0:12:00 of 2:00:00', paused: null, unseen: 3, stopLine: null });
+    expect(v.situation).toEqual({ kind: 'working', task: 'T1' });
+  });
+
+  it('shows no clock before a run exists', () => {
+    expect(situationView(facts({ state: ready('T1'), stage: 'build-ready' }), clockOf()).clock).toBeNull();
+  });
+
+  it('says Waiting for you, in the warning tone, with the paused clock, while a question is open', () => {
+    const v = situationView(working, clockOf({ workSecs: 720, waitSecs: 75 }));
+    expect(v).toMatchObject({ tone: 'warning', label: 'Waiting for you', clock: 'work 0:12:00 of 2:00:00', paused: '1:15 waiting (not counted)' });
+  });
+
+  it('names the stop once, as a line that reads after the repository name', () => {
+    const driver = situationView(facts({ stop: { task: 'T2', reason: 'Stopped: nobody answered' }, state: ready('T2'), session: 'this' }), clockOf());
+    expect(driver).toMatchObject({ tone: 'error', label: 'Stopped at T2', stopLine: 'stopped: nobody answered' });
+    const records = situationView(facts({ state: ready('T1'), stage: 'build-stopped', latestExit: 1 }), clockOf());
+    expect(records.stopLine).toBe('stopped: the agent failed');
+    const unknown = situationView(facts({ state: ready('T1'), stage: 'build-stopped', latestExit: 0 }), clockOf());
+    expect(unknown.stopLine).toBe('stopped');
+  });
+
+  it('returns a fallback heading, and does not throw, for a combination the table calls impossible', () => {
+    for (const c of SITUATION_CASES.filter((c) => c.expected === 'impossible')) {
+      const v = situationView(c.facts, clockOf());
+      expect(v.situation, c.name).toBeNull();
+      expect(v.tone, c.name).toBe('warning');
+      expect(v.label, c.name).toBe('Cannot tell where this stands');
+      expect(v.stopLine, c.name).toBeNull();
     }
   });
 });

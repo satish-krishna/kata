@@ -109,7 +109,18 @@ export type StatusText = { tone: 'success' | 'warning' | 'error' | 'idle'; label
 export type TaskRowView = { id: string; name: string; status: StatusText; departure: string | null; picked: boolean };
 
 /** One repository of the tasks area: its heading (name, situation, the button it offers) and its tasks. */
-export type TaskGroupView = { repo: string; status: StatusText; action: 'cancel' | 'continue' | null; picked: boolean; tasks: TaskRowView[] };
+export type TaskGroupView = {
+  repo: string;
+  status: StatusText;
+  /** The work clock against the limit, the wait in progress (not counted), the events not yet seen and the stop line, from `situationView`. */
+  clock: string | null;
+  paused: string | null;
+  unseen: number;
+  stopLine: string | null;
+  action: 'cancel' | 'continue' | null;
+  picked: boolean;
+  tasks: TaskRowView[];
+};
 
 /** The review's entry under the tasks. */
 export type ReviewEntryView = { status: StatusText; action: 'cancel' | 'continue' | null; picked: boolean };
@@ -781,6 +792,10 @@ export class BuildPageViewModel {
       groups: areas.map((g) => ({
         repo: g.repo,
         status: situationStatus(g.situation),
+        clock: null,
+        paused: null,
+        unseen: 0,
+        stopLine: null,
         action: g.action,
         picked: pickedRepo === g.repo,
         tasks: g.tasks.map((t) => ({

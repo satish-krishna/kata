@@ -27,9 +27,14 @@ const task = (id: string, status: StatusText, extra: { departure?: string | null
   picked: extra.picked ?? false,
 });
 
-const group = (repo: string, status: StatusText, action: TaskGroupView['action'], tasks: TaskGroupView['tasks'], picked = false): TaskGroupView => ({
+const group = (repo: string, status: StatusText, action: TaskGroupView['action'], tasks: TaskGroupView['tasks'], picked = false, extra: Partial<TaskGroupView> = {}): TaskGroupView => ({
   repo,
   status,
+  clock: null,
+  paused: null,
+  unseen: 0,
+  stopLine: null,
+  ...extra,
   action,
   picked,
   tasks,
@@ -194,6 +199,24 @@ describe('the build page at each stage', () => {
     expect(barActions()).toEqual(['Cancel build']);
     expect(headingButtons()).toEqual(['claims-core', 'Cancel', 'customer-portal']);
     expect(norm(el.querySelector('[data-bar]')!.textContent)).toContain('1/3 tasks');
+  });
+
+  it('a heading shows the work clock, the paused clock, Waiting for you and the unseen count', async () => {
+    const v = stage('running', {
+      actions: ['cancel-build'],
+      groups: [
+        group('claims-core', { tone: 'warning', label: 'Waiting for you' }, 'cancel', [task('T1', RUNNING)], true, { clock: 'work 0:12:00 of 2:00:00', paused: '1:15 waiting (not counted)', unseen: 4 }),
+        group('customer-portal', { tone: 'success', label: 'Working · T2' }, 'cancel', [task('T2', RUNNING)]),
+      ],
+    });
+    const { el } = await mount(v);
+    const [first, second] = Array.from(el.querySelectorAll('[data-heading]')).map((h) => norm(h.textContent));
+    expect(first).toContain('Waiting for you');
+    expect(first).toContain('work 0:12:00 of 2:00:00');
+    expect(first).toContain('1:15 waiting (not counted)');
+    expect(first).toContain('4 new');
+    expect(second).not.toContain('new');
+    expect(second).not.toContain('work ');
   });
 
   it('running with one repository stopped: where it stopped, why, the work so far, and continue the stopped repository', async () => {

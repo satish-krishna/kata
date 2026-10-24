@@ -1,3 +1,4 @@
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
@@ -10,7 +11,7 @@ import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
-import { actionsFor, safetyRules } from '../../lib/sdlc';
+import { actionsFor, safetyRules, type StageAction } from '../../lib/sdlc';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
@@ -838,6 +839,20 @@ describe('ChangePageViewModel', () => {
       await vm.showDoc('build');
       expect(vm.actions()).toEqual([]);
       expect(vm.stripShown()).toBe(false);
+    });
+
+    it('offers the build page\'s actions on every tab of a build-stage change, not the change\'s own (R10.2)', async () => {
+      const transport = new MockTransport();
+      withStage(transport, BUILD, 'build-finished');
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      // Cancelled during the review: the page's stage offers Continue build and Another round, where the change's stage would offer Declare done.
+      Object.defineProperty(TestBed.inject(BuildPageViewModel), 'actions', { value: signal<StageAction[]>(['continue-build', 'another-round']) });
+      await vm.showDoc('build');
+      const onBuild = vm.actions();
+      await vm.showDoc('plan');
+      expect(vm.actions()).toEqual(onBuild);
+      expect(vm.actions()).toEqual(['continue-build', 'another-round']);
     });
 
     it('draws no page strip on the Build tab at all: its facts and actions sit in the Changes view strip', async () => {

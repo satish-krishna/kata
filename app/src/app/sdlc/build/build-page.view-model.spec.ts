@@ -2,6 +2,7 @@ import { Component } from '@angular/core';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { Participant } from '@bindings/Participant';
 import type { RunLink } from '@bindings/RunLink';
@@ -88,7 +89,10 @@ const part = (repo: string, over: Partial<Participant> = {}): Participant => ({ 
 const everyone = (over: Record<string, Partial<Participant>> = {}): Participant[] => [MOCK_MASTER, 'claims-core', 'customer-portal'].map((r) => part(r, over[r]));
 const ROW = (repo: string) => `intent/claims/${MOCK_BUILD_CHANGE}/build/${repo}.md`;
 
-const row = (vm: BuildPageViewModel, name: string) => vm.rows().find((r) => r.name === name)!;
+const group = (vm: BuildPageViewModel, repo: string) => vm.view().groups.find((g) => g.repo === repo)!;
+const stopOf = (vm: BuildPageViewModel, repo: string) => vm.view().stops.find((s) => s.repo === repo);
+/** A stop line as the page words it: the lowercase tail of a "Stopped: ..." reason. */
+const stopLine = (reason: string) => reason.replace(/^Stopped: /, 'stopped: ');
 const finished = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.findings().length > 0;
 
 beforeEach(() => {
@@ -146,17 +150,17 @@ describe('the build page starts, stops and continues the same runs as the build 
     const { vm, transport } = setup();
     await vm.start(await handoffFor(transport), CTX);
     await advance(1000);
-    expect(vm.rows().map((r) => r.name)).toEqual(['claims-core', 'customer-portal', 'review']);
-    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'success', label: 'Working · T1' });
-    expect(row(vm, 'customer-portal')).toMatchObject({ tone: 'success', label: 'Working · T2' });
-    expect(row(vm, 'review')).toMatchObject({ tone: 'idle', label: 'Not started' });
+    expect(vm.view().groups.map((g) => g.repo)).toEqual(['claims-core', 'customer-portal']);
+    expect(group(vm, 'claims-core').status).toEqual({ tone: 'success', label: 'Working · T1' });
+    expect(group(vm, 'customer-portal').status).toEqual({ tone: 'success', label: 'Working · T2' });
+    expect(vm.view().review.status).toEqual({ tone: 'idle', label: 'Not run' });
     expect(vm.tasksLabel()).toBe('0/3 tasks');
 
     expect(vm.selected()).toBe('claims-core');
     expect(vm.shownSessions().map((r) => r.spec?.workdir)).toEqual([`${FOLDER}/claims-core`]);
     expect(vm.shownSessions()[0].events.length).toBeGreaterThan(0);
     expect(vm.shownSessions()[0].startedAt).toBe('09:00:00');
-    expect(vm.action()).toBe('cancel');
+    expect(group(vm, 'claims-core').action).toBe('cancel');
 
     vm.select('customer-portal');
     expect(vm.shownSessions().map((r) => r.spec?.workdir)).toEqual([`${FOLDER}/customer-portal`]);
@@ -169,7 +173,7 @@ describe('the build page starts, stops and continues the same runs as the build 
     await advance(1000);
     const before = status.mock.calls.length;
     await advance(1500);
-    expect(vm.action()).toBe('cancel');
+    expect(group(vm, 'claims-core').action).toBe('cancel');
     expect(status.mock.calls.length).toBeGreaterThan(before);
   });
 
@@ -178,19 +182,22 @@ describe('the build page starts, stops and continues the same runs as the build 
     await vm.start(await handoffFor(transport), CTX);
     await advance(2000);
     expect(lock.waiting()).toHaveLength(1);
-    const waiting = row(vm, 'customer-portal');
-    expect(waiting).toMatchObject({ tone: 'warning', label: 'Waiting for you' });
+    const waiting = group(vm, 'customer-portal');
+    expect(waiting.status).toEqual({ tone: 'warning', label: 'Waiting for you' });
     expect(waiting.paused).toMatch(/^\d:\d{2} waiting \(not counted\)$/);
-    expect(row(vm, 'claims-core').paused).toBeNull();
+    expect(waiting.unseen).toBeGreaterThan(0);
+    expect(group(vm, 'claims-core').unseen).toBe(0);
+    expect(group(vm, 'claims-core').paused).toBeNull();
 
-    const clockBefore = row(vm, 'customer-portal').clock;
+    const clockBefore = group(vm, 'customer-portal').clock;
     await advance(3000);
-    expect(row(vm, 'customer-portal').clock).toBe(clockBefore);
-    expect(row(vm, 'customer-portal').paused).not.toBe(waiting.paused);
+    expect(group(vm, 'customer-portal').clock).toBe(clockBefore);
+    expect(group(vm, 'customer-portal').paused).not.toBe(waiting.paused);
 
     vm.answer(lock.waiting()[0].runId, { id: 'q1', answers: [['Reuse it']] });
     await advance(100);
-    expect(row(vm, 'customer-portal')).toMatchObject({ tone: 'success', paused: null });
+    expect(group(vm, 'customer-portal').status.tone).toBe('success');
+    expect(group(vm, 'customer-portal').paused).toBeNull();
   });
 
   it('an agent is denied edits in every product repository of the system, even one the plan does not name (R18.5)', async () => {
@@ -216,8 +223,8 @@ describe('the build page starts, stops and continues the same runs as the build 
     await vm.start(await handoffFor(transport), CTX);
     await advance(500);
     expect(runInRepo.mock.calls.some(([t]) => t.repo === 'claims-core')).toBe(false);
-    expect(row(vm, 'claims-core').tone).toBe('error');
-    expect(row(vm, 'claims-core').label).toContain('claims-core');
+    expect(group(vm, 'claims-core').status.tone).toBe('error');
+    expect(stopOf(vm, 'claims-core')!.reason).toContain('claims-core');
   });
 
   it('a repository the backend does not name is stopped with the R2.4 message alone, not as an agent failure (R2.4)', async () => {
@@ -229,15 +236,16 @@ describe('the build page starts, stops and continues the same runs as the build 
     });
     await vm.start(await handoffFor(transport), CTX);
     await advance(500);
-    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'error', label: 'Stopped: claims-core is not checked out in this workspace' });
-    expect(row(vm, 'claims-core').label).not.toContain('the agent failed');
+    expect(group(vm, 'claims-core').status.tone).toBe('error');
+    expect(stopOf(vm, 'claims-core')!.reason).toBe('stopped: claims-core is not checked out in this workspace');
+    expect(stopOf(vm, 'claims-core')!.reason).not.toContain('the agent failed');
   });
 
   it('names the work clock against the time limit', async () => {
     const { vm, transport } = setup();
     await vm.start(await handoffFor(transport, { timeoutSecs: 5400 }), CTX);
     await advance(3000);
-    expect(row(vm, 'claims-core').clock).toMatch(/^work 0:00:0\d of 1:30:00$/);
+    expect(group(vm, 'claims-core').clock).toMatch(/^work 0:00:0\d of 1:30:00$/);
   });
 
   it.each([
@@ -255,10 +263,12 @@ describe('the build page starts, stops and continues the same runs as the build 
     await vm.start(await handoffFor(transport), CTX);
     await advance(500);
     expect(vm.phase()).toBe('stopped');
-    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'error', label: message });
-    expect(row(vm, 'customer-portal')).toMatchObject({ tone: 'error', label: message });
+    expect(group(vm, 'claims-core').status.tone).toBe('error');
+    expect(stopOf(vm, 'claims-core')!.reason).toBe(stopLine(message));
+    expect(group(vm, 'customer-portal').status.tone).toBe('error');
+    expect(stopOf(vm, 'customer-portal')!.reason).toBe(stopLine(message));
     vm.select('claims-core');
-    expect(vm.action()).toBe('continue');
+    expect(group(vm, 'claims-core').action).toBe('continue');
     expect(discard).not.toHaveBeenCalled();
   });
 
@@ -283,7 +293,7 @@ describe('the build page starts, stops and continues the same runs as the build 
     expect(prepare.mock.calls[1][4]).toBe(false);
     expect(run).toHaveBeenCalledTimes(3);
     expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
-    expect(row(vm, 'claims-core').label).toBe('Working · T1');
+    expect(group(vm, 'claims-core').status.label).toBe('Working · T1');
   });
 
   it('a repository with several runs shows the latest in full and each earlier one as a line that can be opened', async () => {
@@ -435,7 +445,7 @@ describe('the build page starts, stops and continues the same runs as the build 
     await advance(500);
     expect(vm.phase()).toBe('building');
     vm.select('claims-core');
-    expect(vm.action()).toBe('continue');
+    expect(group(vm, 'claims-core').action).toBe('continue');
     const calls = run.mock.calls.length;
 
     await vm.continueRun();
@@ -462,8 +472,8 @@ describe('the build page starts, stops and continues the same runs as the build 
       'The upload limit is duplicated in claims-core and customer-portal.',
       'The refusal message has no test.',
     ]);
-    expect(row(vm, 'review')).toMatchObject({ tone: 'success', label: 'Finished' });
-    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'success', label: 'Finished · 1/1' });
+    expect(vm.view().stage).toBe('review-finished');
+    expect(group(vm, 'claims-core').status).toEqual({ tone: 'success', label: 'Finished' });
     expect(vm.tasksLabel()).toBe('3/3 tasks');
     expect(lock.active()).toBeNull();
   });
@@ -689,7 +699,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       ],
       waiting: [{ repo: 'customer-portal', task: 'T3', onTask: 'T1', onRepo: 'claims-core' }],
     });
-    expect(vm.rows().find((r) => r.name === 'customer-portal')).toMatchObject({ tone: 'idle', label: 'Waiting for T1 in claims-core' });
+    expect(group(vm, 'customer-portal').status).toEqual({ tone: 'idle', label: 'Waiting for T1 in claims-core' });
     expect(finish).toHaveBeenCalledWith(h.start);
     expect(lock.active()).toBeNull();
   });
@@ -723,9 +733,10 @@ describe('the build page starts, stops and continues the same runs as the build 
       await advance(500);
       expect(targets).toEqual([MOCK_MASTER]);
       expect(vm.phase()).toBe('stopped');
-      expect(row(vm, MOCK_MASTER)).toMatchObject({ tone: 'error', label: 'Stopped: reached the time limit' });
+      expect(group(vm, MOCK_MASTER).status.tone).toBe('error');
+      expect(stopOf(vm, MOCK_MASTER)!.reason).toBe('stopped: reached the time limit');
       vm.select(MOCK_MASTER);
-      expect(vm.action()).toBe('continue');
+      expect(group(vm, MOCK_MASTER).action).toBe('continue');
       expect(vm.shownSessions()).toHaveLength(1);
 
       await vm.continueRun();
@@ -744,7 +755,8 @@ describe('the build page starts, stops and continues the same runs as the build 
       });
       await vm.start(await handoffFor(transport, { round }), CTX);
       await advance(500);
-      expect(row(vm, MOCK_MASTER)).toMatchObject({ tone: 'success', label: 'Finished' });
+      expect(group(vm, MOCK_MASTER).status.tone).not.toBe('error');
+      expect(stopOf(vm, MOCK_MASTER)).toBeUndefined();
     });
 
     it('a round that commits there is reviewed again, from heads that include the master (R8.4)', async () => {
@@ -779,7 +791,8 @@ describe('the build page starts, stops and continues the same runs as the build 
     expect(runSpec).toHaveBeenCalledTimes(2);
     expect(vm.phase()).toBe('cancelled');
     expect(vm.active()).toBe(false);
-    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'error', label: 'Stopped: cancelled' });
+    expect(group(vm, 'claims-core').status.tone).toBe('error');
+    expect(stopOf(vm, 'claims-core')!.reason).toBe('stopped: cancelled');
     expect(discard).not.toHaveBeenCalled();
   });
 
@@ -792,8 +805,9 @@ describe('the build page starts, stops and continues the same runs as the build 
     vm.cancelRun();
     await advance(600);
     expect(cancel).toHaveBeenCalledTimes(1);
-    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'error', label: 'Stopped: cancelled' });
-    expect(row(vm, 'customer-portal').tone).not.toBe('error');
+    expect(group(vm, 'claims-core').status.tone).toBe('error');
+    expect(stopOf(vm, 'claims-core')!.reason).toBe('stopped: cancelled');
+    expect(group(vm, 'customer-portal').status.tone).not.toBe('error');
   });
 
   it('Another round on a finished repository, then Cancel, shows Stopped and Continue runs the round again with its instructions (B1)', async () => {
@@ -830,9 +844,10 @@ describe('the build page starts, stops and continues the same runs as the build 
     await advance(500);
     expect(targets).toEqual(['claims-core']);
     expect(vm.phase()).toBe('stopped');
-    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'error', label: 'Stopped: cancelled' });
+    expect(group(vm, 'claims-core').status.tone).toBe('error');
+    expect(stopOf(vm, 'claims-core')!.reason).toBe('stopped: cancelled');
     vm.select('claims-core');
-    expect(vm.action()).toBe('continue');
+    expect(group(vm, 'claims-core').action).toBe('continue');
 
     await vm.continueRun();
     await advance(500);
@@ -888,7 +903,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       await advance(500);
       expect(vm.phase()).toBe('building');
       vm.select(MOCK_MASTER);
-      expect(vm.action()).toBe('continue');
+      expect(group(vm, MOCK_MASTER).action).toBe('continue');
       const calls = run.mock.calls.length;
 
       await vm.continueRun();
@@ -933,7 +948,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       await vm.start(await handoffFor(transport), CTX);
       await advance(500);
       vm.select('claims-core');
-      expect(vm.action()).toBe('continue');
+      expect(group(vm, 'claims-core').action).toBe('continue');
       const calls = run.mock.calls.length;
 
       await vm.continueRun();
@@ -956,7 +971,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       await advance(500);
       expect(vm.phase()).toBe('building');
       vm.select('claims-core');
-      expect(vm.action()).toBe('continue');
+      expect(group(vm, 'claims-core').action).toBe('continue');
       const calls = run.mock.calls.length;
 
       await vm.continueRun();
@@ -1265,14 +1280,15 @@ describe('the build page shows tasks and sessions from the build log, the run li
   const T1_ROW = { task: 'T1', repo: 'claims-core', commits: ['aaaaaaa'], departure: null };
 
   /** A page opened on a change with nothing running; T1 is in the build log when `built`. */
-  async function opened(over: { links?: RunLink[]; taskLinks?: TaskLink[]; records?: RunRecord[]; built?: boolean } = {}) {
+  async function opened(over: { links?: RunLink[]; taskLinks?: TaskLink[]; records?: RunRecord[]; built?: boolean; stage?: ChangeInfo['stage'] } = {}) {
     const s = setup();
     vi.spyOn(s.transport, 'sdlcRunLinks').mockResolvedValue(over.links ?? []);
     vi.spyOn(s.transport, 'sdlcTaskLinks').mockResolvedValue(over.taskLinks ?? []);
     vi.spyOn(s.transport, 'listRuns').mockResolvedValue(over.records ?? []);
     const status = await s.transport.sdlcBuildStatus(FOLDER, 'claims', MOCK_BUILD_CHANGE);
     if (over.built ?? true) status.tasks = status.tasks.map((t) => (t.id === 'T1' ? { ...t, row: T1_ROW } : t));
-    const [change] = (await s.transport.sdlcChanges(`${FOLDER}/${MOCK_MASTER}`, 'claims')).filter((c) => c.change === MOCK_BUILD_CHANGE);
+    const [found] = (await s.transport.sdlcChanges(`${FOLDER}/${MOCK_MASTER}`, 'claims')).filter((c) => c.change === MOCK_BUILD_CHANGE);
+    const change = over.stage === undefined ? found : { ...found, stage: over.stage };
     const load = () => s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change, status, done: false, review: null });
     return { ...s, load, status };
   }
@@ -1310,6 +1326,28 @@ describe('the build page shows tasks and sessions from the build log, the run li
     vm.choose({ kind: 'task', task: 'T1' });
     expect(vm.shownSessions().map((s) => s.id)).toEqual(['run-a', 'run-b']);
     expect(vm.sessionNote()).toBe('This task was recorded before Kata linked tasks to runs, or on another machine. Showing every session of claims-core.');
+  });
+
+  it('a reopened change at build-stopped names why a repository stopped once, in one wording (R2.1, R6.1)', async () => {
+    const { vm, load } = await opened({ built: false, stage: 'build-stopped', links: [link('build:claims-core', 'run-a', secs(8))], records: [record('run-a', 1)] });
+    await load();
+    const view = vm.view();
+    expect(view.stops).toEqual([{ repo: 'claims-core', reason: 'stopped: the agent failed' }]);
+    expect(group(vm, 'claims-core').stopLine).toBe('stopped: the agent failed');
+    expect(view.stageMessage!.lines).toEqual(['claims-core stopped: the agent failed']);
+    expect(JSON.stringify(view)).not.toContain('Stopped: Stopped');
+    expect(JSON.stringify(view)).not.toContain('stopped: Stopped');
+  });
+
+  it('a combination the situation table calls impossible gives one fallback heading and does not break the page (R2.1)', async () => {
+    const { vm, load } = await opened({ built: false, stage: 'build-finished' });
+    await load();
+    expect(() => vm.view()).not.toThrow();
+    const g = group(vm, 'claims-core');
+    expect(g.status).toEqual({ tone: 'warning', label: 'Cannot tell where this stands' });
+    expect(g.action).toBeNull();
+    expect(g.tasks.length).toBeGreaterThan(0);
+    expect(g.tasks.every((t) => t.status.label === 'Not started')).toBe(true);
   });
 
   it('earlier runs fold under the latest with their start time and how they ended', async () => {
