@@ -67,6 +67,8 @@ export class MockTransport extends KataTransport {
   private nextRun = 0;
   private readonly sdlc = new SdlcMock();
   private setupScanned = false;
+  /** The build layout a browser session has saved; a fresh session starts with none. */
+  private buildLayout: Record<string, unknown> = {};
 
   private emit(runId: string, ev: KataEvent): void {
     for (const listen of [...this.listeners]) listen(runId, ev);
@@ -201,8 +203,8 @@ export class MockTransport extends KataTransport {
     const prs = this.sdlc.pullRequests(repos, change);
     return Promise.resolve(demo === 'one-pr' ? prs.slice(0, 1) : prs);
   }
-  loadBuildLayout(): Promise<unknown> { throw new Error('not implemented'); }
-  saveBuildLayout(_layout: Record<string, unknown>): Promise<void> { throw new Error('not implemented'); }
+  loadBuildLayout(): Promise<unknown> { return Promise.resolve(this.buildLayout); }
+  saveBuildLayout(layout: Record<string, unknown>): Promise<void> { this.buildLayout = layout; return Promise.resolve(); }
   /** A plain browser has no window to zoom. */
   zoom(_step: ZoomStep): Promise<number> { return Promise.resolve(1); }
   pickDirectory(): Promise<string | null> { return Promise.resolve(null); }
