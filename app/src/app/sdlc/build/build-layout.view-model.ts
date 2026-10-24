@@ -182,6 +182,11 @@ export class BuildLayoutViewModel {
         break;
       case 'bring-back':
         next = bringBack(a, action.area);
+        // A brought-back area joins the end of its stack; the rail name that asked for it must show it, not leave it behind another tab.
+        {
+          const now = whereIs(next, action.area);
+          if (now.kind === 'place') this.flip(now.place, action.area);
+        }
         break;
       case 'resize':
         next = resize(a, action.side, action.px, this.room());
