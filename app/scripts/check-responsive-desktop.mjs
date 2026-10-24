@@ -32,8 +32,8 @@ let failed = false;
   const problems = [];
   if (!(win.width >= 1280)) problems.push(`width is ${win.width}, not at least 1280`);
   if (!(win.height >= 800)) problems.push(`height is ${win.height}, not at least 800`);
-  if (win.minWidth !== 1024) problems.push(`minWidth is ${win.minWidth}, not 1024`);
-  if (!(win.minHeight >= 640)) problems.push(`minHeight is ${win.minHeight}, not at least 640`);
+  if (win.minWidth !== 1280) problems.push(`minWidth is ${win.minWidth}, not 1280`);
+  if (win.minHeight !== 800) problems.push(`minHeight is ${win.minHeight}, not 800`);
   if (problems.length) {
     process.stderr.write(`tauri.conf.json window: ${problems.join('; ')}\n`);
     failed = true;
