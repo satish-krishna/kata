@@ -1,4 +1,4 @@
-import { Component, input, model, output } from '@angular/core';
+import { Component, ElementRef, Injector, afterNextRender, effect, inject, input, model, output, untracked } from '@angular/core';
 import type { BuildRow } from '@bindings/BuildRow';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideChevronDown, lucideChevronRight } from '@ng-icons/lucide';
@@ -57,6 +57,26 @@ export class BuildPage {
   readonly toggleRun = output<string>();
 
   protected readonly labelOf = actionLabel;
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly injector = inject(Injector);
+
+  constructor() {
+    // A Go to is asked of the view model; the DOM half (scroll and focus) waits until the picked repository's session is on show.
+    effect(() => {
+      const request = this.focus();
+      if (request === null) return;
+      untracked(() => afterNextRender(() => this.focusOpenCard(), { injector: this.injector }));
+    });
+  }
+
+  /** Bring the open question or approval of the sessions on show into view and put the focus on its first control. */
+  private focusOpenCard(): void {
+    const cards = this.host.nativeElement.querySelectorAll<HTMLElement>('[data-area="activity"] .k-ask:not(.k-ask--answered):not(.k-ask--lapsed)');
+    const card = Array.from(cards).find((c) => c.closest('[hidden]') === null);
+    if (card === undefined) return;
+    card.scrollIntoView({ block: 'center' });
+    card.querySelector<HTMLElement>('button:not([disabled]), input, textarea, select, [tabindex="0"]')?.focus();
+  }
 
   protected primary(): StageAction | null {
     return primaryAction(this.view().actions);

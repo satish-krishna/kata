@@ -22,7 +22,7 @@ import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { type AskRecord, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
-import { newlyRecorded, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Pick, type SessionRef } from '../../lib/build-sessions';
+import { activityFor, newlyRecorded, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Chosen, type LiveRun, type Pick, type SessionRef } from '../../lib/build-sessions';
 import { buildActions, buildStage, repoAction, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { fallbackTaskState, hms, ms, situationView, taskState, type SituationView, type Situation, type TaskState } from '../../lib/build-state';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
@@ -285,7 +285,12 @@ export class BuildPageViewModel {
   private dirtyBefore: Snapshot['dirty'] = {};
   /** The warning naming the other files a review run changed in the master; null when it kept to the review document. */
   private readonly runNotice = signal<DocNotice | null>(null);
-  private readonly chosen = signal<Pick | null>(null);
+  /** What the engineer picked, or went to, with the stage it was made at; `activityFor` decides what it means. */
+  private readonly chosen = signal<Chosen | null>(null);
+  /** The build log as it stood before each run of a repository started, by run id: what tells the tasks a run recorded. */
+  private readonly bases = signal<Readonly<Record<string, BuildStatus>>>({});
+  /** The task links written or being written, as `repo/task/run`, so a task is linked to its run once whether it was seen live or at the run's end. */
+  private readonly linked = new Set<string>();
   /** The earlier runs the engineer opened in full, by run id. */
   private readonly openedRuns = signal<ReadonlySet<string>>(new Set());
   private readonly broken = signal(false);
@@ -317,7 +322,7 @@ export class BuildPageViewModel {
   readonly tab = signal<BuildTab>('activity');
   readonly announcement = signal('');
   /** A request to bring a repository's open question into view and focus it; the view carries it out. */
-  readonly focusRequest = signal<{ repo: string; n: number } | null>(null);
+  readonly focusRequest = computed(() => this.activity().focus);
 
   readonly phase = computed<BuildPhase>(() => (this.broken() ? 'stopped' : this.driver.phase()));
   readonly active = computed(() => this.phase() === 'building' || this.phase() === 'reviewing');
@@ -329,15 +334,30 @@ export class BuildPageViewModel {
   });
 
   /** What the engineer picked, else the first repository, or the review once the build is reviewed. Null before the status is read. */
-  readonly pick = computed<Pick | null>(() => {
-    const chosen = this.chosen();
-    if (chosen !== null) return chosen;
-    const status = this.status();
-    if (status === null) return null;
-    const stage = this.stage();
-    if (stage === 'review-finished' || stage === 'done') return { kind: 'review' };
-    const first = this.groupKeys()[0];
-    return first === undefined ? { kind: 'review' } : { kind: 'repo', repo: first };
+  readonly pick = computed<Pick | null>(() => this.activity().pick);
+
+  /** The repositories whose run is live, each with the run and the build log from before it started. */
+  private readonly liveRuns = computed<LiveRun[]>(() => {
+    const bases = this.bases();
+    return [...this.driver.going()].flatMap((repo) => {
+      const run = this.latest(repo);
+      const before = run === null ? undefined : bases[run.id];
+      return run === null || before === undefined ? [] : [{ runId: run.id, repo, before }];
+    });
+  });
+
+  /** What the pick is and what the activity area shows for it: the one owner of the default pick, Go to and the live task links. */
+  private readonly activity = computed(() => {
+    const ctx = this.ctx;
+    return activityFor({
+      stage: this.stage(),
+      chosen: this.chosen(),
+      firstRepo: this.groupKeys()[0] ?? null,
+      status: this.status(),
+      live: this.liveRuns(),
+      taskLinks: this.taskLinks(),
+      scope: ctx === null ? null : { workspaceId: ctx.workspaceId, system: ctx.system, change: ctx.change },
+    });
   });
 
   /** The row on show: the repository (or the review) the pick belongs to. */
@@ -400,12 +420,16 @@ export class BuildPageViewModel {
   /** The build log's rows, which say which task made which commit. */
   readonly buildRows = computed<BuildRow[]>(() => (this.status()?.tasks ?? []).flatMap((t) => (t.row === null ? [] : [t.row])));
   /** The task the engineer picked, with its repository; null when the pick is a repository or the review. */
-  readonly pickedTask = computed<{ id: string; repo: string } | null>(() => {
-    const pick = this.pick();
-    if (pick === null || pick.kind !== 'task') return null;
-    const repo = this.status()?.tasks.find((t) => t.id === pick.task)?.repo;
-    return repo === undefined ? null : { id: pick.task, repo };
-  });
+  readonly pickedTask = computed<{ id: string; repo: string } | null>(
+    () => {
+      const pick = this.pick();
+      if (pick === null || pick.kind !== 'task') return null;
+      const repo = this.status()?.tasks.find((t) => t.id === pick.task)?.repo;
+      return repo === undefined ? null : { id: pick.task, repo };
+    },
+    // A status read must not look like a new pick: the Changes view starts over on a new object.
+    { equal: (a, b) => a === b || (a !== null && b !== null && a.id === b.id && a.repo === b.repo) },
+  );
   /** The repositories whose run stopped, whose uncommitted files were left by it. */
   readonly stoppedRepos = computed<string[]>(() => this.taskAreas().flatMap((g) => (g.situation?.kind === 'stopped' ? [g.repo] : [])));
 
@@ -441,6 +465,11 @@ export class BuildPageViewModel {
       this.phase();
       this.bashDone();
       untracked(() => void this.refresh());
+    });
+    // A task a live run just recorded is linked to that run now, so picking it shows that session.
+    effect(() => {
+      const links = this.activity().newLinks;
+      untracked(() => void this.persistLinks(links));
     });
     // The sessions follow the runs: read them again whenever a run starts or ends.
     effect(() => {
@@ -532,7 +561,7 @@ export class BuildPageViewModel {
 
   /** Show a repository, a task or the review. */
   choose(pick: Pick): void {
-    this.chosen.set(pick);
+    this.chosen.set({ pick, stage: this.stage(), goTo: null });
   }
 
   /** The repositories of the tasks area, in order: the plan's, then the master once it has tasks or runs. */
@@ -636,7 +665,7 @@ export class BuildPageViewModel {
 
   private readonly sessionPick = computed(() => {
     const pick = this.pick();
-    return pick === null ? { sessions: [] as SessionRef[], unknown: false } : sessionsFor(pick, this.status()?.tasks ?? [], this.sessionRefs(), this.taskLinks());
+    return pick === null ? { sessions: [] as SessionRef[], unknown: false } : sessionsFor(pick, this.status()?.tasks ?? [], this.sessionRefs(), this.activity().taskLinks);
   });
 
   /** The sessions of the pick: the latest shows open, every earlier one folds to its start time and outcome until picked. */
@@ -836,7 +865,11 @@ export class BuildPageViewModel {
   }
 
   select(name: string): void {
-    this.choose(name === REVIEW ? { kind: 'review' } : { kind: 'repo', repo: name });
+    this.choose(this.pickOf(name));
+  }
+
+  private pickOf(name: string): Pick {
+    return name === REVIEW ? { kind: 'review' } : { kind: 'repo', repo: name };
   }
 
   /** A heading of the build page asked to cancel or continue its repository (or the review). */
@@ -848,9 +881,8 @@ export class BuildPageViewModel {
 
   /** Go to a waiting repository: its Activity, with its open question brought into view and focused. */
   goTo(repo: string): void {
-    this.select(repo);
+    this.chosen.set({ pick: this.pickOf(repo), stage: this.stage(), goTo: { repo, n: ++this.focusCount } });
     this.tab.set('activity');
-    this.focusRequest.set({ repo, n: ++this.focusCount });
   }
 
   cancelBuild(): void {
@@ -1194,6 +1226,7 @@ export class BuildPageViewModel {
         repos: this.productRepos,
         onRun: (id) => {
           started.id = id;
+          if (before !== null) this.bases.update((b) => ({ ...b, [id]: before }));
           this.noteRun(id, key, spec, opts.signal);
         },
       },
@@ -1203,17 +1236,33 @@ export class BuildPageViewModel {
     return opts.signal.aborted && end.exit !== 0 ? { exit: 130, error: null } : end;
   }
 
-  /** Append a link from the run to each task it recorded in the build log. A failed append is a toast and changes nothing else. */
+  /** Append a link from the run to each task it recorded in the build log that was not linked while it ran. */
   private async linkTasks(before: BuildStatus, repo: string, runId: string): Promise<void> {
     const ctx = this.ctx!;
     try {
       const tasks = newlyRecorded(before, await this.readStatus(), repo);
-      if (tasks.length === 0) return;
-      await this.transport.sdlcLinkTasks(tasks.map((task) => ({ workspace_id: ctx.workspaceId, system: ctx.system, change: ctx.change, repo, task, run_id: runId })));
-      this.taskLinks.set(await this.transport.sdlcTaskLinks());
+      await this.appendLinks(tasks.map((task) => ({ workspace_id: ctx.workspaceId, system: ctx.system, change: ctx.change, repo, task, run_id: runId })));
     } catch (e) {
       this.toasts.error(`Could not link the tasks to the run: ${message(e)}`);
     }
+  }
+
+  /** Persist the links of tasks a live run recorded; a failed append is a toast and changes nothing else. */
+  private async persistLinks(links: TaskLink[]): Promise<void> {
+    try {
+      await this.appendLinks(links);
+    } catch (e) {
+      this.toasts.error(`Could not link the tasks to the run: ${message(e)}`);
+    }
+  }
+
+  /** Write the links not written yet, the one path for a link seen live and one found when the run ends. */
+  private async appendLinks(links: TaskLink[]): Promise<void> {
+    const fresh = links.filter((l) => !this.linked.has(`${l.repo}/${l.task}/${l.run_id}`));
+    if (fresh.length === 0) return;
+    for (const l of fresh) this.linked.add(`${l.repo}/${l.task}/${l.run_id}`);
+    await this.transport.sdlcLinkTasks(fresh);
+    this.taskLinks.update((all) => [...all, ...fresh.filter((f) => !all.some((l) => l.repo === f.repo && l.task === f.task && l.run_id === f.run_id))]);
   }
 
   private noteRun(id: string, key: string, spec: RunSpec, signal: AbortSignal): void {

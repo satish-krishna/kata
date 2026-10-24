@@ -103,5 +103,33 @@ export type Activity = {
   newLinks: TaskLink[];
 };
 
-/** Decides what the pick is and what the activity area shows for it. */
-export const activityFor = (_input: ActivityInput): Activity => ({ pick: null, focus: null, taskLinks: [], newLinks: [] });
+const AT_REVIEW: readonly BuildStage[] = ['reviewing', 'review-finished', 'done'];
+
+/**
+ * Decides what the pick is and what the activity area shows for it.
+ * The default pick is the first repository, and the review once the build reached it: its live session at reviewing, its
+ * findings after. A pick made at an earlier stage does not outlive the move to the review, so an old pick or Go to never hides it.
+ * A Go to is a pick that also asks for its question to be brought into view; it stands exactly as long as the pick does.
+ * A task whose build log row appeared while its repository's run is live is linked to that run now, not when the run ends.
+ */
+export const activityFor = (input: ActivityInput): Activity => {
+  const { stage, status, scope } = input;
+  const chosen = input.chosen !== null && AT_REVIEW.includes(stage) && input.chosen.stage !== stage ? null : input.chosen;
+  const pick: Pick | null =
+    status === null
+      ? null
+      : chosen !== null
+        ? chosen.pick
+        : AT_REVIEW.includes(stage) || input.firstRepo === null
+          ? { kind: 'review' }
+          : { kind: 'repo', repo: input.firstRepo };
+  const newLinks: TaskLink[] =
+    status === null || scope === null
+      ? []
+      : input.live.flatMap((run) =>
+          newlyRecorded(run.before, status, run.repo)
+            .filter((task) => !input.taskLinks.some((l) => l.repo === run.repo && l.task === task && l.run_id === run.runId))
+            .map((task) => ({ workspace_id: scope.workspaceId, system: scope.system, change: scope.change, repo: run.repo, task, run_id: run.runId })),
+        );
+  return { pick, focus: status === null ? null : (chosen?.goTo ?? null), taskLinks: newLinks.length === 0 ? input.taskLinks : [...input.taskLinks, ...newLinks], newLinks };
+};

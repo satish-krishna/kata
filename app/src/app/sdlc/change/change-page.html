@@ -178,6 +178,7 @@
                 [rows]="build.buildRows()"
                 [task]="build.pickedTask()"
                 [stopped]="build.stoppedRepos()"
+                [focus]="build.focusRequest()"
                 (pick)="build.choose($event)"
                 (repoAction)="build.repoAction($event)"
                 (act)="vm.act($event)"

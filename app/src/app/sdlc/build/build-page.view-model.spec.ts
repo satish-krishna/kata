@@ -1466,7 +1466,7 @@ describe('what the pick is and what the activity area shows for it', () => {
     commitRows(transport);
     await advance(2500);
     expect(vm.groups().find((g) => g.key === 'claims-core')!.runs[0].state).toMatch(/running|awaiting/);
-    expect(linkTasks).toHaveBeenCalledWith([expect.objectContaining({ repo: 'claims-core', task: 'T1', run_id: id })]);
+    expect(linkTasks.mock.calls.flat(2)).toContainEqual(expect.objectContaining({ repo: 'claims-core', task: 'T1', run_id: id }));
     vm.choose({ kind: 'task', task: 'T1' });
     expect(vm.shownSessions().map((s) => s.id)).toEqual([id]);
     expect(vm.sessionNote()).toBeNull();

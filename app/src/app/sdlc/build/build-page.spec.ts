@@ -1,5 +1,5 @@
 import { onTestFinished } from 'vitest';
-import { Component } from '@angular/core';
+import { Component, input } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { Pick } from '../../lib/build-sessions';
@@ -103,7 +103,7 @@ const FINDINGS = {
       [rows]="rows"
       [task]="task"
       [stopped]="stopped"
-      [focus]="focus"
+      [focus]="focus()"
       (pick)="picks.push($event)"
       (repoAction)="repoActions.push($event)"
       (act)="acts.push($event)"
@@ -117,7 +117,7 @@ class Host {
   view: BuildPageView = base();
   task: { id: string; repo: string } | null = null;
   stopped: string[] = [];
-  focus: { repo: string; n: number } | null = null;
+  readonly focus = input<{ repo: string; n: number } | null>(null);
   readonly context = CHANGES;
   readonly rows: BuildRow[] = [];
   readonly picks: Pick[] = [];
@@ -359,7 +359,7 @@ describe('the build page, questions and stops', () => {
     });
     const { el, fixture } = await mount(v);
     expect(scrolled).toEqual([]);
-    fixture.componentInstance.focus = { repo: 'customer-portal', n: 1 };
+    fixture.componentRef.setInput('focus', { repo: 'customer-portal', n: 1 });
     fixture.detectChanges();
     await settle();
     const card = el.querySelector<HTMLElement>('[data-session="open"] .k-ask')!;
@@ -368,7 +368,7 @@ describe('the build page, questions and stops', () => {
     expect(card.contains(document.activeElement)).toBe(true);
     // A second Go to to the same repository asks again.
     (document.activeElement as HTMLElement).blur();
-    fixture.componentInstance.focus = { repo: 'customer-portal', n: 2 };
+    fixture.componentRef.setInput('focus', { repo: 'customer-portal', n: 2 });
     fixture.detectChanges();
     await settle();
     expect(scrolled).toEqual([card, card]);
