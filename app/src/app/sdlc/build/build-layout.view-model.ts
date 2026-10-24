@@ -160,8 +160,11 @@ export class BuildLayoutViewModel {
 
   /** The engineer picked a mode. Focus ends and flips go. */
   pickMode(m: LayoutMode): void {
-    if (m !== this.mode()) this.handSwitched.set(true);
-    if (this.suggested() === m) this.suggested.set(null);
+    // Picking the suggested mode follows the stage, so it clears the hand switch with the mark; any other new mode is a hand switch.
+    if (this.suggested() === m) {
+      this.suggested.set(null);
+      this.handSwitched.set(false);
+    } else if (m !== this.mode()) this.handSwitched.set(true);
     this.focus.set(null);
     this.flipped.set({});
     this.mode.set(m);
