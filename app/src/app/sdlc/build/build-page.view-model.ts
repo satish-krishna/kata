@@ -909,25 +909,31 @@ export class BuildPageViewModel {
     await this.pendingFinish;
     const owner = this.ownerOf(key);
     try {
-      if (this.settled) {
-        const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, false, owner, 'continue');
-        if (out.kind === 'refused') {
-          this.refusal.set({ reason: out.message, problems: out.problems });
-          return;
+      // A release that starts while the participants are read settles the branches: read `settled` again and prepare them.
+      for (;;) {
+        if (this.settled) {
+          const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, false, owner, 'continue');
+          if (out.kind === 'refused') {
+            this.refusal.set({ reason: out.message, problems: out.problems });
+            return;
+          }
+          if (out.kind === 'needsConfirm') {
+            this.ask(key, out.leftovers.flatMap((r) => r.files.map((f) => `${r.repo}: ${f}`)));
+            return;
+          }
+          this.handoff = { ...this.handoff!, start: out.start };
+          this.settled = false;
+          break;
         }
-        if (out.kind === 'needsConfirm') {
-          this.ask(key, out.leftovers.flatMap((r) => r.files.map((f) => `${r.repo}: ${f}`)));
-          return;
-        }
-        this.handoff = { ...h, start: out.start };
-        this.settled = false;
-      } else {
         const mine = (await this.readParticipants(owner)).find((p) => p.repo === owner);
+        await this.pendingFinish;
+        if (this.settled) continue;
         const left = [...(mine?.files ?? []), ...(mine?.rows ?? [])];
         if (left.length > 0) {
           this.ask(key, left.map((f) => `${owner}: ${f}`));
           return;
         }
+        break;
       }
     } catch (e) {
       this.toasts.error(`Could not prepare the branches to continue the build: ${message(e)}`);
