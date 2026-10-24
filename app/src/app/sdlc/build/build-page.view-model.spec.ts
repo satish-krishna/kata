@@ -511,6 +511,24 @@ describe('the build page starts, stops and continues the same runs as the build 
       expect(vm.older()).toBe(false);
     });
 
+    it('findings written out of order are shown most serious first, equal ranks in the order written (R7.1)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(
+        transport,
+        section(1, '2026-10-19', [
+          { id: 'F1', severity: 'low', text: 'a stale comment' },
+          { id: 'F2', severity: 'high', text: 'the limit is not enforced' },
+          { id: 'F3', severity: 'medium', text: 'the message has no test' },
+          { id: 'F4', severity: 'high', text: 'the retry loops forever' },
+        ]),
+      );
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      const order = ['the limit is not enforced', 'the retry loops forever', 'the message has no test', 'a stale comment'];
+      expect(vm.findings().map((f) => f.text)).toEqual(order);
+      expect(vm.view().findings!.findings.map((f) => f.text)).toEqual(order);
+    });
+
     it('a review with no findings shows reviewed, nothing found (R14.3)', async () => {
       const { vm, transport, lock } = setup();
       withDocument(transport, section(1, '2026-10-19', []));
