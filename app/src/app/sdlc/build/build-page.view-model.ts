@@ -568,10 +568,6 @@ export class BuildPageViewModel {
         if (report !== null) {
           for (const u of report.unfinished) lines.push(`${u.repo} has unfinished tasks: ${u.tasks.join(', ')}`);
           for (const w of report.waiting) lines.push(`${w.repo} is waiting for ${w.onTask} in ${w.onRepo}`);
-        } else {
-          for (const g of this.taskAreas()) {
-            if (g.situation?.kind === 'stopped' && g.situation.from === 'records' && g.heading.stopLine !== null) lines.push(`${g.repo} ${g.heading.stopLine}`);
-          }
         }
         return { title: 'The build stopped. Nothing more can run.', lines };
       }
