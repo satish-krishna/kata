@@ -364,10 +364,8 @@
 /* The strip under the toolbar belongs to the open tab: its status in words, its file, and the stage actions. */
 /* The change page's strip and the Changes view's strip share one height and one inset, so the page below them does not move between tabs. */
 .k-strip, .k-changes__strip { min-height: calc(var(--control-h) + 2 * var(--space-3) + 1px); padding: var(--space-3) var(--space-4); }
-/* In the Changes strip only the read-only line shrinks; the controls, counts and the actions the page projects keep their size, so no label breaks onto a second line. A strip with slotted end content wraps (see changes-view.css), so none of them is ever pushed out of the panel. */
+/* In the Changes strip only the read-only line shrinks; the controls, counts and the actions the page projects keep their size, so no label breaks onto a second line. The strip wraps (see changes-view.css), so none of them is ever pushed out of the panel. */
 .k-changes__strip > :not(.k-changes__end), .k-changes__end > :not(.k-changes__note) { flex: none; white-space: nowrap; }
-/* The Changes strip is one row unless the page slots content into its end (facts and actions); then it may wrap. */
-.k-changes__strip:has(.k-changes__end > :not(.k-changes__note)) { flex-wrap: wrap; }
 .k-strip { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); background: var(--surface-panel); border-bottom: 1px solid var(--border-default); }
 .k-strip__file { font: var(--text-xs)/1 var(--font-mono); color: var(--text-muted); }
 
