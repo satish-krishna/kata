@@ -585,12 +585,15 @@ function layoutStandIn(stage: LayoutStage) {
   };
 }
 
+/** The stand-in the arranged host reads the announcement from; mountArranged sets it. */
+let announced: () => string = () => '';
+
 @Component({
   imports: [BuildPage],
   providers: [BuildLayoutViewModel],
   template: `
     <app-build-page
-      [view]="view"
+      [view]="shown()"
       [layout]="layout.view()"
       [context]="context"
       [turns]="0"
@@ -611,6 +614,7 @@ function layoutStandIn(stage: LayoutStage) {
 })
 class ArrangedHost {
   private placed = 0;
+  private drawn: { from: BuildPageView; said: string; view: BuildPageView } | null = null;
   readonly layout = inject(BuildLayoutViewModel);
   readonly context = CHANGES;
   readonly rows: BuildRow[] = [];
@@ -624,6 +628,13 @@ class ArrangedHost {
     sessions: [session('r1')],
     findingsArea: SHOWN,
   });
+
+  /** What the page draws: the host's view with the announcement the layout view model asked the build page's view model to make. */
+  shown(): BuildPageView {
+    const said = announced();
+    if (this.drawn === null || this.drawn.from !== this.view || this.drawn.said !== said) this.drawn = { from: this.view, said, view: { ...this.view, announcement: said } };
+    return this.drawn.view;
+  }
 
   /** Set the place the way the build page's view model does. */
   showFinding(f: Finding): void {
@@ -649,6 +660,7 @@ class ArrangedHost {
 
 async function mountArranged(stage: LayoutStage = 'running') {
   const standIn = layoutStandIn(stage);
+  announced = standIn.announcement;
   TestBed.configureTestingModule({
     imports: [ArrangedHost],
     providers: [
@@ -687,14 +699,48 @@ async function mountArranged(stage: LayoutStage = 'running') {
   const rail = (edge: string) => Array.from(el.querySelectorAll<HTMLElement>(`[data-rail="${edge}"] button`)).map(text);
   const tuckButton = (a: AreaId) => area(a).querySelector<HTMLButtonElement>(`button[aria-label="Tuck ${NAMES[a]} away"]`)!;
   const focusButton = (a: AreaId) => area(a).querySelector<HTMLButtonElement>(`button[aria-label="Focus ${NAMES[a]}"]`)!;
+  const trigger = (a: AreaId) => area(a).querySelector<HTMLButtonElement>('button[aria-haspopup="menu"]')!;
+  /** The items of the open Place menu: the Helm menu is portalled to the overlay container, outside the page. */
+  const menuItems = () => Array.from(document.body.querySelectorAll<HTMLElement>('.cdk-overlay-container [role="menuitem"]'));
   const placeTo = async (a: AreaId, to: string) => {
-    const item = Array.from(area(a).querySelectorAll<HTMLElement>('[role="menuitem"]')).find((b) => text(b) === to)!;
-    await click(item);
+    await click(trigger(a));
+    await click(menuItems().find((b) => text(b) === to)!);
   };
+  /** Press a key where the focus is, as a browser would: a focused button is activated by Enter, or by Space on release, unless the key was handled. */
+  const press = async (key: string, mods: { shift?: boolean; ctrl?: boolean } = {}) => {
+    const target = document.activeElement ?? document.body;
+    const down = new KeyboardEvent('keydown', { key, shiftKey: mods.shift ?? false, ctrlKey: mods.ctrl ?? false, bubbles: true, cancelable: true });
+    target.dispatchEvent(down);
+    if (!down.defaultPrevented && target instanceof HTMLButtonElement && !target.disabled && (key === 'Enter' || key === ' ')) {
+      if (key === ' ') target.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }));
+      target.click();
+    }
+    await refresh();
+    return down;
+  };
+  /** Go to a control the way Tab does: only one that Tab can reach, which is neither disabled nor hidden nor inert nor taken out of the tab order. */
+  const tabTo = (e: HTMLElement) => {
+    expect(e.closest('[inert], [hidden]'), 'not inert or hidden').toBeNull();
+    expect((e as HTMLButtonElement).disabled, 'not disabled').not.toBe(true);
+    expect(e.tabIndex, 'in the tab order').toBeGreaterThanOrEqual(0);
+    e.focus();
+    expect(document.activeElement).toBe(e);
+  };
+  const live = () => text(el.querySelector('[aria-live="assertive"]')!);
   const inert = (a: AreaId) => area(a).hasAttribute('inert');
   const banner = () => el.querySelector<HTMLElement>('[data-focus-banner]');
-  return { fixture, host, standIn, el, area, where, places, text, inside, click, bar, switcher, mode, rail, tuckButton, focusButton, placeTo, inert, banner, refresh };
+  return { fixture, host, standIn, el, area, where, places, text, inside, click, bar, switcher, mode, rail, tuckButton, focusButton, trigger, menuItems, placeTo, press, tabTo, live, inert, banner, refresh };
 }
+
+beforeAll(() => {
+  // jsdom has no ResizeObserver (CDK overlay positioning).
+  globalThis.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+});
+afterEach(() => document.body.querySelectorAll('.cdk-overlay-container').forEach((n) => (n.innerHTML = '')));
 
 describe('the arranged build page', () => {
   it('R2.1: each mode opens in its default arrangement, the rest tucked at the right edge', async () => {
@@ -931,6 +977,327 @@ describe('the arranged build page', () => {
     await page.mode('review');
     await page.click(page.focusButton('files'));
     expect(order()).toEqual(['tasks', 'activity', 'files', 'findings']);
+  });
+});
+
+describe('the arranged build page from the keyboard', () => {
+  type Page = Awaited<ReturnType<typeof mountArranged>>;
+  const NAMES_OF_AREAS = ['Tasks', 'Activity', 'Changed files', 'Findings'];
+  const measure = (page: Page) => {
+    const grid = page.el.querySelector<HTMLElement>('.k-bp__grid')!;
+    Object.defineProperty(grid, 'clientWidth', { configurable: true, value: 1280 });
+    Object.defineProperty(grid, 'clientHeight', { configurable: true, value: 800 });
+  };
+  const separator = (page: Page, side: string) => page.el.querySelector<HTMLElement>(`[role="separator"][data-side="${side}"]`)!;
+  const sizeOf = (page: Page, side: string) => Number(separator(page, side).getAttribute('aria-valuenow'));
+  const current = () => document.activeElement as HTMLElement;
+  /** Walk the open Place menu with the arrow keys to the item, then press Enter on it. */
+  const chooseItem = async (page: Page, name: string) => {
+    for (let i = 0; i < 8 && page.text(current()) !== name; i++) await page.press('ArrowDown');
+    expect(page.text(current())).toBe(name);
+    await page.press('Enter');
+  };
+
+  it('R13.1: switches to each of the four modes', async () => {
+    const page = await mountArranged();
+    for (const [key, m] of [['1', 'overview'], ['2', 'watch'], ['3', 'changes'], ['4', 'review']] as const) {
+      const down = await page.press(key, { ctrl: true });
+      expect(down.defaultPrevented, `Ctrl+${key} is the page's`).toBe(true);
+      expect(page.places(), m).toEqual(DEFAULT_PLACES[m]);
+    }
+  });
+
+  it('R13.1: the switcher says each shortcut in its titles', async () => {
+    const page = await mountArranged();
+    const titles = Array.from(page.switcher().querySelectorAll('button')).map((b) => b.getAttribute('title'));
+    expect(titles).toEqual(['Overview (Ctrl+1)', 'Watch (Ctrl+2)', 'Changes (Ctrl+3)', 'Review (Ctrl+4)']);
+  });
+
+  it('R13.1: a key that is not the page\'s is left alone, Esc included while nothing is in focus', async () => {
+    const page = await mountArranged();
+    await page.mode('overview');
+    expect((await page.press('1', { ctrl: true, shift: true })).defaultPrevented).toBe(false);
+    expect((await page.press('5', { ctrl: true })).defaultPrevented).toBe(false);
+    expect((await page.press('Escape')).defaultPrevented).toBe(false);
+    expect(page.places()).toEqual(DEFAULT_PLACES.overview);
+    expect(page.host.arranges).toEqual([]);
+  });
+
+  it('R13.1: makes an area larger and smaller: the left separator', async () => {
+    const page = await mountArranged();
+    await page.mode('watch');
+    measure(page);
+    page.tabTo(separator(page, 'left'));
+    expect(sizeOf(page, 'left')).toBe(300);
+    const steps: [string, { shift?: boolean }, number][] = [
+      ['ArrowRight', {}, 316],
+      ['ArrowLeft', {}, 300],
+      ['ArrowRight', { shift: true }, 364],
+      ['ArrowLeft', { shift: true }, 300],
+      ['Home', {}, 160],
+      ['End', {}, 1040],
+    ];
+    for (const [key, mods, size] of steps) {
+      const before = page.host.arranges.length;
+      await page.press(key, mods);
+      expect(sizeOf(page, 'left'), `${mods.shift ? 'Shift+' : ''}${key}`).toBe(size);
+      expect(page.host.arranges.length - before, 'one resize a press').toBe(1);
+      expect(page.host.arranges[page.host.arranges.length - 1]).toEqual({ kind: 'resize', side: 'left', px: size });
+    }
+    const before = page.host.arranges.length;
+    await page.press('ArrowRight');
+    expect(page.host.arranges.length, 'at the largest there is nothing to emit').toBe(before);
+    expect(current()).toBe(separator(page, 'left'));
+  });
+
+  it('R13.1: makes an area larger and smaller: the right separator moves left to grow', async () => {
+    const page = await mountArranged();
+    await page.mode('overview');
+    measure(page);
+    page.tabTo(separator(page, 'right'));
+    const start = sizeOf(page, 'right');
+    await page.press('ArrowLeft');
+    expect(sizeOf(page, 'right')).toBe(start + 16);
+    await page.press('ArrowRight', { shift: true });
+    expect(sizeOf(page, 'right')).toBe(Math.max(160, start + 16 - 64));
+    await page.press('Home');
+    expect(sizeOf(page, 'right')).toBe(160);
+    await page.press('End');
+    expect(sizeOf(page, 'right')).toBe(1040);
+    expect(page.host.arranges.every((a) => a.kind === 'resize' && a.side === 'right')).toBe(true);
+  });
+
+  it('R13.1: makes an area larger and smaller: the bottom separator grows upward', async () => {
+    const page = await mountArranged();
+    await page.mode('changes');
+    measure(page);
+    page.tabTo(separator(page, 'bottom'));
+    expect(separator(page, 'bottom').getAttribute('aria-orientation')).toBe('horizontal');
+    const start = sizeOf(page, 'bottom');
+    await page.press('ArrowUp');
+    expect(sizeOf(page, 'bottom')).toBe(start + 16);
+    await page.press('ArrowDown', { shift: true });
+    expect(sizeOf(page, 'bottom')).toBe(Math.max(160, start + 16 - 64));
+    const kept = sizeOf(page, 'bottom');
+    await page.press('ArrowLeft');
+    expect(sizeOf(page, 'bottom'), 'a horizontal key does nothing to the bottom').toBe(kept);
+    await page.press('Home');
+    expect(sizeOf(page, 'bottom')).toBe(160);
+    await page.press('End');
+    expect(sizeOf(page, 'bottom')).toBe(520);
+  });
+
+  for (const [a, from, to, mode] of [
+    ['activity', 'right', 'Left', 'overview'],
+    ['activity', 'right', 'Bottom', 'overview'],
+    ['tasks', 'left', 'Right', 'watch'],
+    ['files', 'bottom', 'Right', 'changes'],
+    ['activity', 'right', 'Middle', 'overview'],
+  ] as const) {
+    it(`R13.1: puts the ${a} area from the ${from} to the ${to.toLowerCase()} through its Place menu`, async () => {
+      const page = await mountArranged();
+      await page.mode(mode);
+      if (page.where(a) !== from) page.host.layout.arrange({ kind: 'place', area: a, to: from });
+      await page.refresh();
+      expect(page.where(a)).toBe(from);
+      page.tabTo(page.trigger(a));
+      await page.press('Enter');
+      expect(page.menuItems().map((i) => page.text(i))).toEqual(['Left', 'Middle', 'Right', 'Bottom', 'Tuck away', 'Focus']);
+      await chooseItem(page, to);
+      expect(page.where(a)).toBe(to.toLowerCase());
+      expect(page.menuItems()).toEqual([]);
+    });
+  }
+
+  it('R13.1: the middle takes the area and sends the one there to the side, as with the mouse', async () => {
+    const page = await mountArranged();
+    await page.mode('overview');
+    page.tabTo(page.trigger('activity'));
+    await page.press('Enter');
+    await chooseItem(page, 'Middle');
+    expect(page.where('activity')).toBe('middle');
+    expect(page.where('tasks')).toBe('right');
+  });
+
+  it('R13.1: tucks an area away with its button, and through its Place menu', async () => {
+    const page = await mountArranged();
+    await page.mode('overview');
+    page.tabTo(page.tuckButton('activity'));
+    await page.press('Enter');
+    expect(page.where('activity')).toBe('tucked');
+    expect(page.rail('right')).toContain('Activity');
+    await page.mode('watch');
+    page.tabTo(page.trigger('tasks'));
+    await page.press('Enter');
+    await chooseItem(page, 'Tuck away');
+    expect(page.where('tasks')).toBe('tucked');
+    expect(page.rail('left')).toContain('Tasks');
+  });
+
+  it('R13.1: the last area on show offers no tuck, in its button or its menu', async () => {
+    const page = await mountArranged();
+    await page.mode('overview');
+    await page.click(page.tuckButton('activity'));
+    expect(page.tuckButton('tasks').disabled).toBe(true);
+    await page.click(page.trigger('tasks'));
+    const tuck = page.menuItems().find((i) => page.text(i) === 'Tuck away')!;
+    expect(tuck.hasAttribute('data-disabled')).toBe(true);
+  });
+
+  it('R13.1: brings a tucked area back from its name on the rail', async () => {
+    const page = await mountArranged();
+    await page.mode('changes');
+    await page.click(page.tuckButton('activity'));
+    page.tabTo(page.inside(page.el, '[data-rail="bottom"] button', 'Bring back Activity'));
+    await page.press('Enter');
+    expect(page.where('activity')).toBe('bottom');
+    expect(page.inert('activity')).toBe(false);
+    page.tabTo(page.inside(page.el, '[data-rail="right"] button', 'Bring back Findings'));
+    await page.press(' ');
+    expect(page.where('findings')).toBe('right');
+  });
+
+  it('R13.1: flips between the areas of a stack with the arrow keys, the focus following', async () => {
+    const page = await mountArranged();
+    await page.mode('review');
+    page.host.layout.arrange({ kind: 'bring-back', area: 'tasks' });
+    page.host.layout.arrange({ kind: 'place', area: 'tasks', to: 'left' });
+    await page.refresh();
+    const tablist = page.area('tasks').querySelector<HTMLElement>('[role="tablist"]')!;
+    expect(tablist).not.toBeNull();
+    const selected = (a: AreaId) => page.area(a).querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')!;
+    const others = Array.from(tablist.querySelectorAll<HTMLElement>('[role="tab"][aria-selected="false"]'));
+    expect(others.map((t) => t.tabIndex), 'only the selected tab is in the tab order').toEqual([-1]);
+    page.tabTo(selected('tasks'));
+    await page.press('ArrowLeft');
+    expect(page.inert('findings')).toBe(false);
+    expect(page.inert('tasks')).toBe(true);
+    expect(current()).toBe(selected('findings'));
+    expect(page.text(selected('findings'))).toContain('Findings');
+    await page.press('ArrowRight');
+    expect(page.inert('tasks')).toBe(false);
+    expect(current()).toBe(selected('tasks'));
+    await page.press('Home');
+    expect(page.inert('findings')).toBe(false);
+    expect(current()).toBe(selected('findings'));
+    await page.press('End');
+    expect(page.inert('tasks')).toBe(false);
+    expect(current()).toBe(selected('tasks'));
+  });
+
+  it('R13.1: puts an area in focus with its button', async () => {
+    const page = await mountArranged();
+    await page.mode('watch');
+    page.tabTo(page.focusButton('activity'));
+    await page.press('Enter');
+    expect(page.area('activity').style.gridArea).toBe('1 / 1 / 5 / 8');
+    for (const other of ['tasks', 'files', 'findings'] as const) expect(page.inert(other)).toBe(true);
+    expect(page.text(page.banner()!)).toContain('Focus: Activity fills the page.');
+  });
+
+  it('R13.1: puts an area in focus through its Place menu', async () => {
+    const page = await mountArranged();
+    await page.mode('watch');
+    page.tabTo(page.trigger('tasks'));
+    await page.press('Enter');
+    await chooseItem(page, 'Focus');
+    expect(page.text(page.banner()!)).toContain('Focus: Tasks fills the page.');
+  });
+
+  it('R13.1: returns from focus with Esc, and with Back', async () => {
+    const page = await mountArranged();
+    await page.mode('watch');
+    const before = page.places();
+    await page.click(page.focusButton('activity'));
+    expect(page.banner()).not.toBeNull();
+    await page.press('Escape');
+    expect(page.banner()).toBeNull();
+    expect(page.places()).toEqual(before);
+    expect(page.inert('tasks')).toBe(false);
+    await page.click(page.focusButton('tasks'));
+    page.tabTo(page.inside(page.banner()!, 'button', 'Back to Watch'));
+    await page.press('Enter');
+    expect(page.banner()).toBeNull();
+    expect(page.places()).toEqual(before);
+  });
+
+  it('R13.1: resets the current mode with Reset layout', async () => {
+    const page = await mountArranged();
+    await page.mode('overview');
+    await page.placeTo('activity', 'Left');
+    expect(page.where('activity')).toBe('left');
+    page.tabTo(page.inside(page.bar(), 'button', 'Reset layout'));
+    await page.press('Enter');
+    expect(page.places()).toEqual(DEFAULT_PLACES.overview);
+  });
+
+  it('R13.1: goes to a waiting question with the Go to of the waiting notice', async () => {
+    const v = base({
+      groups: [group('claims-core', RUNNING, 'cancel', [task('T1', RUNNING)], true), group('customer-portal', RUNNING, 'cancel', [task('T2', RUNNING)])],
+      pick: { kind: 'repo', repo: 'claims-core' },
+      sessions: [session('r1')],
+      waiting: [{ repo: 'customer-portal', kind: 'answer', countdown: null }],
+    });
+    const { el, host, button, fixture } = await mount(v);
+    const goTo = button(el.querySelector<HTMLElement>('app-waiting-notice')!, 'Go to customer-portal')!;
+    expect(goTo.disabled).toBe(false);
+    expect(goTo.tabIndex).toBeGreaterThanOrEqual(0);
+    goTo.focus();
+    expect(document.activeElement).toBe(goTo);
+    const down = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    goTo.dispatchEvent(down);
+    if (!down.defaultPrevented) goTo.click();
+    fixture.detectChanges();
+    expect(host.goTos).toEqual(['customer-portal']);
+  });
+
+  it('R13.2: each area is a section named for it, and each rail button and tab carries the name', async () => {
+    const page = await mountArranged();
+    const sections = Array.from(page.el.querySelectorAll<HTMLElement>('.k-bp__grid > section[data-area]'));
+    expect(sections.map((s) => s.getAttribute('aria-label'))).toEqual(NAMES_OF_AREAS);
+    const bringBack = new Set<string>();
+    for (const m of ['overview', 'changes', 'review'] as const) {
+      await page.mode(m);
+      for (const b of Array.from(page.el.querySelectorAll<HTMLElement>('[data-rail] button'))) bringBack.add(b.getAttribute('aria-label')!);
+    }
+    expect(Array.from(bringBack).sort()).toEqual(['Bring back Activity', 'Bring back Changed files', 'Bring back Findings', 'Bring back Tasks']);
+    await page.mode('review');
+    for (const a of ['tasks', 'activity', 'files'] as const) {
+      page.host.layout.arrange({ kind: 'bring-back', area: a });
+      page.host.layout.arrange({ kind: 'place', area: a, to: 'left' });
+    }
+    await page.refresh();
+    const tabs = Array.from(page.area('findings').querySelectorAll<HTMLElement>('[role="tablist"] [role="tab"]')).map((t) => page.text(t));
+    expect(tabs).toHaveLength(4);
+    for (const name of NAMES_OF_AREAS) expect(tabs.some((t) => t.startsWith(name)), name).toBe(true);
+  });
+
+  it('R13.3: a mode picked by hand is announced', async () => {
+    const page = await mountArranged();
+    expect(page.live()).toBe('');
+    await page.press('2', { ctrl: true });
+    expect(page.live()).toBe('Layout: Watch.');
+    await page.press('4', { ctrl: true });
+    expect(page.live()).toBe('Layout: Review.');
+  });
+
+  it('R13.3: a move the stage drives is announced', async () => {
+    const page = await mountArranged('started');
+    expect(page.places()).toEqual(DEFAULT_PLACES.overview);
+    expect(page.live()).toBe('');
+    page.standIn.layoutStage.set('running');
+    await page.refresh();
+    expect(page.places()).toEqual(DEFAULT_PLACES.watch);
+    expect(page.live()).toBe('Layout: Watch.');
+  });
+
+  it('R13.3: an area going into focus and out of it is announced', async () => {
+    const page = await mountArranged();
+    await page.mode('watch');
+    await page.click(page.focusButton('activity'));
+    expect(page.live()).toBe('Focus: Activity fills the page.');
+    await page.press('Escape');
+    expect(page.live()).toBe('Layout: Watch.');
   });
 });
 
