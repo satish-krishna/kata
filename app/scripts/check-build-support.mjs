@@ -85,6 +85,19 @@ export const noHorizontalScroll = (page) =>
     return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, body: document.body.scrollWidth };
   });
 
+/**
+ * The Changes strip's controls that lie outside the strip's own box (empty when none is cut off). The strip wraps or it fits; a
+ * control past its right edge is clipped by the files area. The read-only line may end in an ellipsis, so only its box is measured.
+ */
+export const stripCutOff = (page) =>
+  page.evaluate(() => {
+    const strip = document.querySelector('[data-testid="changes-strip"]');
+    if (!strip) return ['no Changes strip'];
+    const controls = [...strip.querySelectorAll('[role="radio"], button, .k-changes__stat, .k-changes__note')].filter((el) => el.getBoundingClientRect().width > 0);
+    const out = controls.filter((el) => !window.kataClip.isInside(el, strip)).map((el) => (el.textContent ?? '').replace(/s+/g, ' ').trim() || el.className);
+    return controls.length === 0 ? ['the Changes strip has no controls'] : out;
+  });
+
 /** Collects failures and prints them; exits non-zero if any. */
 export function reporter(name) {
   const failures = [];

@@ -5,10 +5,10 @@
 //   1. From the plan accepted to the pull requests opened on one page: start the build, answer `customer-portal`'s
 //      question while the changed files are in view, let the review finish, read the findings, declare done and open
 //      the pull requests. At every step the URL stays on the change, the Build tab stays selected and no `app-build-view` exists.
-//   2. At 375, 768, 1024 and 1280 pixels there is no horizontal page scroll, every area (tasks, activity, files) can be
+//   2. At 375, 768, 1024 and 1280 pixels there is no horizontal page scroll, no control of the Changes strip is cut off, every area (tasks, activity, files) can be
 //      reached (side by side from 1024, through the page's area switch below), and the bar's actions and the waiting notice stay in view.
 //   3. With the run preview open the way back to the changes list cannot be reached, and once it closes it can.
-import { BUILD_WIDTHS, ROUTE, eventually, noHorizontalScroll, open, reporter, startBuild } from './check-build-support.mjs';
+import { BUILD_WIDTHS, ROUTE, eventually, noHorizontalScroll, open, reporter, startBuild, stripCutOff } from './check-build-support.mjs';
 
 const { check, done } = reporter('check:build');
 const { page, errors, close } = await open();
@@ -106,6 +106,8 @@ try {
       const ordered = shown && boxes.every(({ box }, i) => i === 0 || box.x >= boxes[i - 1].box.x + boxes[i - 1].box.width - 1) && boxes.every(({ box }) => box.y === boxes[0].box.y);
       check(ordered, `${width}px: tasks, activity and files sit side by side (${JSON.stringify(boxes.map(({ name, box }) => [name, Math.round(box?.x ?? -1), Math.round(box?.width ?? 0)]))})`);
       await reach('side by side');
+      const cut = await stripCutOff(page);
+      check(cut.length === 0, `${width}px: no control of the Changes strip is cut off${cut.length ? ` (${cut.join(', ')})` : ''}`);
     } else {
       check(await areaSwitch.isVisible(), `${width}px: the area switch shows`);
       for (const name of AREAS) {
@@ -114,7 +116,11 @@ try {
         const states = await eventually(page, () => Promise.all(AREAS.map(async (other) => [other, await area(other).isVisible()])), only, `${name} alone on show at ${width}`).catch(() => Promise.all(AREAS.map(async (other) => [other, await area(other).isVisible()])));
         const box = await area(name).boundingBox();
         check(only(states) && box !== null && box.width > 200 && box.x >= 0 && box.x + box.width <= width + 0.5, `${width}px: the switch reaches ${name} alone and it fits (${JSON.stringify(states)}, width ${Math.round(box?.width ?? 0)})`);
-        if (name === 'files') check((await countOf('[data-area="files"] [data-file]')) > 0, `${width}px: the changed files can be read on Files`);
+        if (name === 'files') {
+          check((await countOf('[data-area="files"] [data-file]')) > 0, `${width}px: the changed files can be read on Files`);
+          const cut = await stripCutOff(page);
+          check(cut.length === 0, `${width}px: no control of the Changes strip is cut off on Files${cut.length ? ` (${cut.join(', ')})` : ''}`);
+        }
         if (name === 'tasks') check((await countOf('[data-area="tasks"] [data-task]')) > 0, `${width}px: the tasks can be read on Tasks`);
         await reach(`on ${name}`);
         const again = await noHorizontalScroll(page);
