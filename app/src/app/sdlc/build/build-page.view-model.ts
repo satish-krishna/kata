@@ -235,8 +235,10 @@ export class BuildPageViewModel {
   private set ctx(value: BuildContext | null) {
     this.ctxSig.set(value);
   }
-  /** What the change page last gave `load`; null until it did. */
-  private readonly loaded = signal<BuildPageInput | null>(null);
+  /** What the change page read about the change on its latest load; the page follows it. The host sets it, and `load` reads everything it names. */
+  readonly loaded = signal<BuildPageInput | null>(null);
+  /** The input `load` last took, so the effect that follows `loaded` does not read the same input twice. */
+  private taken: BuildPageInput | null = null;
   /** The review document as last read, null when the change has none. */
   private readonly reviewDoc = signal<ReviewRecord | null>(null);
   private readonly runLinks = signal<RunLink[]>([]);
@@ -457,6 +459,11 @@ export class BuildPageViewModel {
       pageQuery.addEventListener('change', onPage);
       inject(DestroyRef).onDestroy(() => pageQuery.removeEventListener('change', onPage));
     }
+    // Whatever the host sets in `loaded` is read at once.
+    effect(() => {
+      const input = this.loaded();
+      if (input !== null) untracked(() => void this.load(input));
+    });
     // The rows follow the build log: read it again whenever a run starts or ends, and whenever a run finishes a Bash call,
     // since an agent logs each task by committing it.
     effect(() => {
@@ -545,6 +552,8 @@ export class BuildPageViewModel {
    * running shows the same sessions, tasks and findings as one that just ran.
    */
   async load(input: BuildPageInput): Promise<void> {
+    if (this.taken === input) return;
+    this.taken = input;
     this.loaded.set(input);
     this.ctx = input.ctx;
     this.status.set(input.status);

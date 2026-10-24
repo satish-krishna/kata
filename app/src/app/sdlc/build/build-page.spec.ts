@@ -107,6 +107,7 @@ const FINDINGS = {
       (pick)="picks.push($event)"
       (repoAction)="repoActions.push($event)"
       (act)="acts.push($event)"
+      (cancelBuild)="cancels = cancels + 1"
       (answer)="answers.push($event)"
       (goTo)="goTos.push($event)"
       (toggleRun)="toggles.push($event)"
@@ -123,6 +124,7 @@ class Host {
   readonly picks: Pick[] = [];
   readonly repoActions: { repo: string; action: 'cancel' | 'continue' }[] = [];
   readonly acts: StageAction[] = [];
+  cancels = 0;
   readonly answers: unknown[] = [];
   readonly goTos: string[] = [];
   readonly toggles: string[] = [];
@@ -468,7 +470,8 @@ describe('the build page, picking and folding', () => {
     button(bar(), 'Cancel build')!.click();
     expect(host.picks).toEqual([{ kind: 'task', task: 'T1' }, { kind: 'review' }, { kind: 'repo', repo: 'claims-core' }]);
     expect(host.repoActions).toEqual([{ repo: 'claims-core', action: 'cancel' }]);
-    expect(host.acts).toEqual(['cancel-build']);
+    expect(host.cancels).toBe(1);
+    expect(host.acts).toEqual([]);
   });
 
   it('marks a done task with a departure and says the picked session is not known', async () => {

@@ -10,7 +10,7 @@
     }
     <span class="k-bp__actions">
       @for (a of view().actions; track a) {
-        <button hlmBtn size="sm" type="button" [variant]="primary() === a ? 'primary' : 'secondary'" (click)="act.emit(a)">{{ labelOf(a) }}</button>
+        <button hlmBtn size="sm" type="button" [variant]="primary() === a ? 'primary' : 'secondary'" (click)="press(a)">{{ labelOf(a) }}</button>
       }
     </span>
   </div>

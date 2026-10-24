@@ -182,6 +182,7 @@
                 (pick)="build.choose($event)"
                 (repoAction)="build.repoAction($event)"
                 (act)="vm.act($event)"
+                (cancelBuild)="build.cancelBuild()"
                 (answer)="build.answer($event.runId, $event)"
                 (decide)="build.decide($event.runId, $event)"
                 (goTo)="build.goTo($event)"

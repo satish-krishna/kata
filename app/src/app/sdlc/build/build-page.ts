@@ -51,6 +51,8 @@ export class BuildPage {
   readonly pick = output<Pick>();
   readonly repoAction = output<{ repo: string; action: 'cancel' | 'continue' }>();
   readonly act = output<StageAction>();
+  /** The bar's Cancel build: stops every run, which needs no preview and no confirmation. */
+  readonly cancelBuild = output<void>();
   readonly answer = output<{ runId: string; id: string; answers: string[][] }>();
   readonly decide = output<{ runId: string; id: string; allow: boolean; message: string | null }>();
   readonly goTo = output<string>();
@@ -76,6 +78,12 @@ export class BuildPage {
     if (card === undefined) return;
     card.scrollIntoView({ block: 'center' });
     card.querySelector<HTMLElement>('button:not([disabled]), input, textarea, select, [tabindex="0"]')?.focus();
+  }
+
+  /** A press on the bar: cancelling the build is the page's own, every other action is the host's. */
+  protected press(action: StageAction): void {
+    if (action === 'cancel-build') this.cancelBuild.emit();
+    else this.act.emit(action);
   }
 
   protected primary(): StageAction | null {
