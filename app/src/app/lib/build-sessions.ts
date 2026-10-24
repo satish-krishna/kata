@@ -75,7 +75,7 @@ export const sessionsFor = (
 };
 
 /** What the engineer picked, and the stage the build was at when they did; a Go to also carries its focus request. */
-export type Chosen = { pick: Pick; stage: BuildStage; goTo: { repo: string; n: number } | null };
+export type Chosen = { pick: Pick; stage: BuildStage; /** Counts the engineer's picks, so picking the same thing again is a new pick. */ seq: number; goTo: { repo: string; n: number } | null };
 
 /** A run of a repository that is live now, with the build log as it stood before the run started. */
 export type LiveRun = { runId: string; repo: string; before: BuildStatus };
@@ -95,6 +95,8 @@ export type ActivityInput = {
 export type Activity = {
   /** What the activity area shows; null before the build log was read. */
   pick: Pick | null;
+  /** Which of the engineer's picks this is; 0 for the default. */
+  seq: number;
   /** A request to bring the picked repository's open question into view; set only by a Go to the pick still stands on. */
   focus: { repo: string; n: number } | null;
   /** The task links including those of tasks a live run just recorded, which are not persisted yet. */
@@ -131,5 +133,5 @@ export const activityFor = (input: ActivityInput): Activity => {
             .filter((task) => !input.taskLinks.some((l) => l.repo === run.repo && l.task === task && l.run_id === run.runId))
             .map((task) => ({ workspace_id: scope.workspaceId, system: scope.system, change: scope.change, repo: run.repo, task, run_id: run.runId })),
         );
-  return { pick, focus: status === null ? null : (chosen?.goTo ?? null), taskLinks: newLinks.length === 0 ? input.taskLinks : [...input.taskLinks, ...newLinks], newLinks };
+  return { pick, seq: chosen?.seq ?? 0, focus: status === null ? null : (chosen?.goTo ?? null), taskLinks: newLinks.length === 0 ? input.taskLinks : [...input.taskLinks, ...newLinks], newLinks };
 };

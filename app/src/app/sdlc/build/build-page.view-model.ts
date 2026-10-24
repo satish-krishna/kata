@@ -303,6 +303,7 @@ export class BuildPageViewModel {
   private lastOnShow: string | null = null;
   private announced = new Set<string>();
   private focusCount = 0;
+  private pickCount = 0;
 
   /** The row Continue is waiting to confirm, and the lines the confirm lists. */
   private asking: string | null = null;
@@ -420,15 +421,15 @@ export class BuildPageViewModel {
   /** The build log's rows, which say which task made which commit. */
   readonly buildRows = computed<BuildRow[]>(() => (this.status()?.tasks ?? []).flatMap((t) => (t.row === null ? [] : [t.row])));
   /** The task the engineer picked, with its repository; null when the pick is a repository or the review. */
-  readonly pickedTask = computed<{ id: string; repo: string } | null>(
+  readonly pickedTask = computed<{ id: string; repo: string; pick: number } | null>(
     () => {
       const pick = this.pick();
       if (pick === null || pick.kind !== 'task') return null;
       const repo = this.status()?.tasks.find((t) => t.id === pick.task)?.repo;
-      return repo === undefined ? null : { id: pick.task, repo };
+      return repo === undefined ? null : { id: pick.task, repo, pick: this.activity().seq };
     },
-    // A status read must not look like a new pick: the Changes view starts over on a new object.
-    { equal: (a, b) => a === b || (a !== null && b !== null && a.id === b.id && a.repo === b.repo) },
+    // A status read must not look like a new pick, and picking the same task again must: the Changes view starts over on a new object.
+    { equal: (a, b) => a === b || (a !== null && b !== null && a.id === b.id && a.repo === b.repo && a.pick === b.pick) },
   );
   /** The repositories whose run stopped, whose uncommitted files were left by it. */
   readonly stoppedRepos = computed<string[]>(() => this.taskAreas().flatMap((g) => (g.situation?.kind === 'stopped' ? [g.repo] : [])));
@@ -561,7 +562,7 @@ export class BuildPageViewModel {
 
   /** Show a repository, a task or the review. */
   choose(pick: Pick): void {
-    this.chosen.set({ pick, stage: this.stage(), goTo: null });
+    this.chosen.set({ pick, stage: this.stage(), seq: ++this.pickCount, goTo: null });
   }
 
   /** The repositories of the tasks area, in order: the plan's, then the master once it has tasks or runs. */
@@ -881,7 +882,7 @@ export class BuildPageViewModel {
 
   /** Go to a waiting repository: its Activity, with its open question brought into view and focused. */
   goTo(repo: string): void {
-    this.chosen.set({ pick: this.pickOf(repo), stage: this.stage(), goTo: { repo, n: ++this.focusCount } });
+    this.chosen.set({ pick: this.pickOf(repo), stage: this.stage(), seq: ++this.pickCount, goTo: { repo, n: ++this.focusCount } });
     this.tab.set('activity');
   }
 

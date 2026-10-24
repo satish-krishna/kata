@@ -1491,7 +1491,7 @@ describe('what the pick is and what the activity area shows for it', () => {
     await advance(300);
     vm.choose({ kind: 'task', task: 'T2' });
     const before = vm.pickedTask();
-    expect(before).toEqual({ id: 'T2', repo: 'customer-portal' });
+    expect(before).toEqual(expect.objectContaining({ id: 'T2', repo: 'customer-portal' }));
     commitRows(transport);
     await advance(2500);
     expect(vm.pickedTask()).toBe(before);

@@ -127,7 +127,7 @@ describe('activityFor', () => {
     scope,
     ...over,
   });
-  const chosen = (pick: Pick, stage: BuildStage, goTo: { repo: string; n: number } | null = null) => ({ pick, stage, goTo });
+  const chosen = (pick: Pick, stage: BuildStage, goTo: { repo: string; n: number } | null = null) => ({ pick, stage, seq: 1, goTo });
 
   it('has no pick before the build log was read', () => {
     expect(activityFor(input({ status: null })).pick).toBeNull();
