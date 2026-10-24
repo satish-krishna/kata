@@ -1334,7 +1334,9 @@ describe('the build page shows tasks and sessions from the build log, the run li
     const view = vm.view();
     expect(view.stops).toContainEqual({ repo: 'claims-core', reason: 'stopped: the agent failed' });
     expect(group(vm, 'claims-core').stopLine).toBe('stopped: the agent failed');
-    expect(view.stageMessage!.lines.filter((l) => l.startsWith('claims-core'))).toEqual(['claims-core stopped: the agent failed']);
+    // The stops list says it; the stage message does not say it again (R6.1).
+    expect(view.stageMessage!.lines.filter((l) => l.includes('claims-core'))).toEqual([]);
+    expect(view.stops.filter((s) => s.repo === 'claims-core')).toHaveLength(1);
     expect(JSON.stringify(view)).not.toContain('Stopped: Stopped');
     expect(JSON.stringify(view)).not.toContain('stopped: Stopped');
   });
