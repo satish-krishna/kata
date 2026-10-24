@@ -280,6 +280,19 @@ try {
     const ask = await reach('activity', 'label:has-text("Reuse it")', 'answer a question');
     check(ask.ok, `R15.1 ${mode.name}: after Go to customer-portal the question can be answered${ask.clicks ? ' one click away' : ' where it is on show'}`);
     await enter(mode);
+    // billing-api pauses on a permission check (the long demo's script); its notice leads to the card with both controls.
+    const goBilling = notices.getByRole('button', { name: 'Go to billing-api' });
+    check(await inWindow(goBilling), `R15.1 ${mode.name}: the notice's Go to billing-api is inside the window`);
+    await goBilling.click();
+    await settle();
+    const allow = await reach('activity', 'button:visible:has-text("Allow")', 'approve an action');
+    check(allow.ok, `R15.1 ${mode.name}: after Go to billing-api the action can be approved${allow.clicks ? ' one click away' : ' where it is on show'}`);
+    await enter(mode);
+    await goBilling.click();
+    await settle();
+    const deny = await reach('activity', 'button:visible:text-is("Deny")', 'refuse an action');
+    check(deny.ok, `R15.1 ${mode.name}: after Go to billing-api the action can be refused${deny.clicks ? ' one click away' : ' where it is on show'}`);
+    await enter(mode);
     check(await inWindow(page.locator('[data-bar]').getByRole('button', { name: 'Cancel build' })), `R15.1 ${mode.name}: cancel the build is in the bar`);
     await reachable(mode, 'cancel one repository\'s run', 'tasks', '[data-group]:has-text("customer-portal") button:text-is("Cancel")');
     await reachable(mode, 'continue a stopped repository', 'tasks', 'button:text("Continue claims-core")');
@@ -288,6 +301,16 @@ try {
     }
     await stays(`${mode.name} at its default`);
   }
+
+  // Approve billing-api's action from its notice, so its run goes on to finish its tasks.
+  await attempt("approving billing-api's action", async () => {
+    await enter(MODES[1]);
+    await notices.getByRole('button', { name: 'Go to billing-api' }).click();
+    await settle();
+    await page.getByRole('button', { name: /^Allow/ }).first().click();
+    await eventually(page, () => notices.filter({ hasText: 'billing-api' }).count(), (n) => n === 0, "billing-api's notice going away");
+    check(true, "approving the action clears billing-api's notice");
+  });
 
   // R16.2 and R12.1: continuing the stopped repository opens its preview first; the run starts from it.
   await enter(MODES[0]);
@@ -326,7 +349,8 @@ try {
     await settle();
     await scrollsOnItsOwn('activity', activityViewport, 'hlm-message-scroller-item');
   });
-  // Moving the area changes its width, so its text reflows and the same scrollTop cannot mean the same place; the item at the top is what must stay.
+  // Moving the area changes its width, so its text reflows and the same scrollTop cannot mean the same place after a one-way move; the item at
+  // the top is what must stay there. Moving it back restores the width, so the scroll place must then be the one it had, within a pixel.
   await attempt('R1.2 activity', async () => {
     const topItem = () =>
       activityViewport.evaluate((el) => {
@@ -336,6 +360,7 @@ try {
       });
     const placeBefore = await scrollPartWay(activityViewport);
     const itemBefore = await topItem();
+    const home = await area('activity').getAttribute('data-place');
     await area('activity').getByRole('button', { name: 'Place Activity' }).click();
     await page.getByRole('menuitem', { name: 'Right' }).click();
     await settle();
@@ -343,6 +368,11 @@ try {
     check(placeBefore > 20 && itemBefore > 0, `R1.2 activity: scrolled part way first (${placeBefore}, item ${itemBefore} at the top)`);
     const itemAfter = await topItem();
     check(itemAfter === itemBefore, `R1.2 activity: the same item is at the top after the move (item ${itemBefore} then ${itemAfter})`);
+    await area('activity').getByRole('button', { name: 'Place Activity' }).click();
+    await page.getByRole('menuitem', { name: home.charAt(0).toUpperCase() + home.slice(1), exact: true }).click();
+    await settle();
+    check((await area('activity').getAttribute('data-place')) === home, `R1.2 activity: the area moved back to its ${home} place`);
+    keptPlace('activity, moved away and back', placeBefore, await placeOf(activityViewport));
   });
 
   // R1.1 changed files: Changes, the files in the list, then the lines of the change to one file.
