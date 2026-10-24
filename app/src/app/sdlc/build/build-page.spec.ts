@@ -1,5 +1,5 @@
 import { onTestFinished } from 'vitest';
-import { Component, inject, input, signal } from '@angular/core';
+import { ChangeDetectorRef, Component, inject, input, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { Pick } from '../../lib/build-sessions';
@@ -600,6 +600,8 @@ let announced: () => string = () => '';
       [rows]="rows"
       [task]="task"
       [stopped]="[]"
+      [focus]="focusRequest"
+      (goTo)="goTo($event)"
       (pick)="choose($event)"
       (pickMode)="layout.pickMode($event)"
       (arrange)="arranged($event)"
@@ -620,6 +622,10 @@ class ArrangedHost {
   readonly rows: BuildRow[] = [];
   readonly arranges: ArrangeAction[] = [];
   task: { id: string; repo: string } | null = null;
+  /** The request a Go to makes of the page, as the build page's view model makes it. */
+  focusRequest: { repo: string; n: number } | null = null;
+  /** The session each repository shows, when a test gives the sessions a repository each. */
+  sessionOf: Record<string, string> | null = null;
   view: BuildPageView = base({
     groups: [
       group('claims-core', RUNNING, 'cancel', [task('T1', DONE), task('T2', RUNNING)]),
@@ -646,6 +652,12 @@ class ArrangedHost {
     this.layout.arrange(action);
   }
 
+  /** Pick the repository and ask for its open question, the way the build page's view model does. */
+  goTo(repo: string): void {
+    this.choose({ kind: 'repo', repo });
+    this.focusRequest = { repo, n: (this.focusRequest?.n ?? 0) + 1 };
+  }
+
   /** Mark the pick the way the build page's view model does. The changed files are not narrowed to the task, so the list stays whole. */
   choose(pick: Pick): void {
     const repoOf = (id: string) => this.view.groups.find((g) => g.tasks.some((t) => t.id === id))?.repo;
@@ -653,6 +665,7 @@ class ArrangedHost {
     this.view = {
       ...this.view,
       pick,
+      sessions: this.sessionOf === null ? this.view.sessions : this.view.sessions.map((x) => ({ ...x, shown: this.sessionOf![repo ?? ''] === x.id })),
       groups: this.view.groups.map((g) => ({ ...g, picked: g.repo === repo, tasks: g.tasks.map((t) => ({ ...t, picked: pick.kind === 'task' && pick.task === t.id })) })),
     };
   }
@@ -1351,5 +1364,146 @@ describe('picking a finding in the findings area', () => {
     expect(page.text(items[1])).toContain('This finding names no file.');
     expect(items[1].querySelector('button')).toBeNull();
     expect(showAt(page)).toBeNull();
+  });
+});
+
+describe('a waiting question on the arranged page', () => {
+  const asking = {
+    id: 'q1',
+    questions: [{ kind: 'text' as const, header: 'scope', question: 'Fix or isolate?', optional: false }],
+    answers: null,
+    at: 0,
+  };
+  const WAIT = [{ repo: 'customer-portal', kind: 'answer' as const, countdown: '4:00' }];
+  const FIRST_CONTROL = 'button:not([disabled]), input, textarea, select, [tabindex="0"]';
+
+  async function waitingPage(stage: LayoutStage = 'running') {
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value() {} });
+    onTestFinished(() => void delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView);
+    const page = await mountArranged(stage);
+    page.host.sessionOf = { 'claims-core': 'mine', 'customer-portal': 'asking' };
+    page.host.view = {
+      ...page.host.view,
+      sessions: [session('mine', { shown: true }), session('asking', { state: 'awaiting', asks: [asking], shown: false })],
+      waiting: WAIT,
+    };
+    page.host.choose({ kind: 'repo', repo: 'claims-core' });
+    page.fixture.debugElement.injector.get(ChangeDetectorRef).markForCheck();
+    await page.refresh();
+    const goTo = () => page.inside(page.el.querySelector<HTMLElement>('app-waiting-notice')!, 'button', 'Go to customer-portal');
+    const current = () => page.host.layout.view().mode;
+    const pickedRepo = () => page.el.querySelector('[data-area="tasks"] [data-heading] button[aria-current="true"]')?.textContent?.trim();
+    const card = () => page.area('activity').querySelector<HTMLElement>('[data-session="asking"] .k-ask')!;
+    return { ...page, goTo, current, pickedRepo, card };
+  }
+
+  const noticeNames = (page: Awaited<ReturnType<typeof waitingPage>>) => {
+    const notice = page.text(page.el.querySelector('app-waiting-notice')!);
+    expect(notice).toContain('customer-portal');
+    expect(notice).toContain('waiting for your answer');
+    expect(notice).toContain('4:00');
+  };
+
+  it('R11.1: on show in Watch, the activity header carries the waiting mark and no other area does', async () => {
+    const page = await waitingPage();
+    noticeNames(page);
+    expect(page.where('activity')).toBe('middle');
+    expect(page.text(page.area('activity').querySelector('header')!)).toContain('Activity waiting');
+    for (const a of ['tasks', 'files', 'findings'] as const) expect(page.area(a).querySelector('[data-waiting-mark]'), a).toBeNull();
+  });
+
+  it('R11.1: tucked in Review, its rail button is named with the wait', async () => {
+    const page = await waitingPage();
+    await page.mode('review');
+    expect(page.where('activity')).toBe('tucked');
+    noticeNames(page);
+    const rail = page.inside(page.el, '[data-rail] button', 'Bring back Activity, waiting');
+    expect(rail).toBeDefined();
+    expect(rail.querySelector('[data-waiting-mark]')).not.toBeNull();
+  });
+
+  it('R11.1: stacked behind the tasks, its stack tab carries the mark', async () => {
+    const page = await waitingPage();
+    await page.placeTo('activity', 'Left');
+    expect(page.where('activity')).toBe('left');
+    const tabs = Array.from(page.area('tasks').querySelectorAll<HTMLElement>('[role="tab"]'));
+    const tab = tabs.find((t) => page.text(t).startsWith('Activity'))!;
+    expect(page.text(tab)).toBe('Activity waiting');
+    expect(tab.querySelector('[data-waiting-mark]')).not.toBeNull();
+    expect(page.text(tabs.find((t) => page.text(t).startsWith('Tasks'))!)).toBe('Tasks');
+    noticeNames(page);
+  });
+
+  it('R11.1: while the changed files are in focus, the notice names the wait and the activity keeps its mark', async () => {
+    const page = await waitingPage();
+    await page.mode('changes');
+    await page.click(page.focusButton('files'));
+    expect(page.banner()).not.toBeNull();
+    noticeNames(page);
+    expect(page.text(page.area('activity').querySelector('header')!)).toContain('Activity waiting');
+  });
+
+  it('R11.2: with the activity on show, Go to switches it to the asking repository and focuses its question', async () => {
+    const page = await waitingPage();
+    const before = page.current();
+    expect(page.pickedRepo()).toBe('claims-core');
+    await page.click(page.goTo());
+    expect(page.where('activity')).toBe('middle');
+    expect(page.inert('activity')).toBe(false);
+    expect(page.pickedRepo()).toBe('customer-portal');
+    expect(page.card().querySelector(FIRST_CONTROL)).toBe(document.activeElement);
+    expect(page.current()).toBe(before);
+  });
+
+  it('R11.2: with the activity tucked away, Go to brings it back to where it was tucked from', async () => {
+    const page = await waitingPage();
+    await page.click(page.tuckButton('activity'));
+    expect(page.where('activity')).toBe('tucked');
+    await page.click(page.goTo());
+    expect(page.where('activity')).toBe('middle');
+    expect(page.inert('activity')).toBe(false);
+    expect(page.pickedRepo()).toBe('customer-portal');
+    expect(page.card().querySelector(FIRST_CONTROL)).toBe(document.activeElement);
+    expect(page.current()).toBe('watch');
+  });
+
+  it('R11.2: with the activity stacked behind the tasks, Go to flips the stack to it', async () => {
+    const page = await waitingPage();
+    await page.placeTo('activity', 'Left');
+    await page.click(page.inside(page.area('tasks'), '[role="tab"]', 'Tasks'));
+    expect(page.inert('activity')).toBe(true);
+    await page.click(page.goTo());
+    expect(page.where('activity')).toBe('left');
+    expect(page.inert('activity')).toBe(false);
+    expect(page.inert('tasks')).toBe(true);
+    expect(page.pickedRepo()).toBe('customer-portal');
+    expect(page.card().querySelector(FIRST_CONTROL)).toBe(document.activeElement);
+    expect(page.current()).toBe('watch');
+  });
+
+  it('R11.2: with the changed files in focus, Go to ends the focus and brings the activity into view', async () => {
+    const page = await waitingPage();
+    await page.mode('changes');
+    await page.click(page.focusButton('files'));
+    expect(page.inert('activity')).toBe(true);
+    await page.click(page.goTo());
+    expect(page.banner()).toBeNull();
+    expect(page.inert('activity')).toBe(false);
+    expect(page.pickedRepo()).toBe('customer-portal');
+    expect(page.card().querySelector(FIRST_CONTROL)).toBe(document.activeElement);
+    expect(page.current()).toBe('changes');
+  });
+
+  it('R11.2: with the activity in focus, Go to keeps it in focus and switches repository', async () => {
+    const page = await waitingPage();
+    await page.click(page.focusButton('activity'));
+    expect(page.banner()).not.toBeNull();
+    await page.click(page.goTo());
+    expect(page.banner()).not.toBeNull();
+    expect(page.host.layout.view().focus).toBe('activity');
+    expect(page.inert('activity')).toBe(false);
+    expect(page.pickedRepo()).toBe('customer-portal');
+    expect(page.card().querySelector(FIRST_CONTROL)).toBe(document.activeElement);
+    expect(page.current()).toBe('watch');
   });
 });
