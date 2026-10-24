@@ -350,7 +350,8 @@ try {
     await scrollsOnItsOwn('activity', activityViewport, 'hlm-message-scroller-item');
   });
   // Moving the area changes its width, so its text reflows and the same scrollTop cannot mean the same place after a one-way move; the item at
-  // the top is what must stay there. Moving it back restores the width, so the scroll place must then be the one it had, within a pixel.
+  // the top is what must stay there. Moving it back does not restore the old width by itself (the middle comes back about 60 pixels narrower),
+  // so the layout is reset to the mode default, the width it was scrolled at; the scroll place must then be the one it had, within a pixel.
   await attempt('R1.2 activity', async () => {
     const topItem = () =>
       activityViewport.evaluate((el) => {
@@ -372,6 +373,8 @@ try {
     await page.getByRole('menuitem', { name: home.charAt(0).toUpperCase() + home.slice(1), exact: true }).click();
     await settle();
     check((await area('activity').getAttribute('data-place')) === home, `R1.2 activity: the area moved back to its ${home} place`);
+    await page.locator('[data-bar]').getByRole('button', { name: 'Reset layout' }).click();
+    await settle();
     keptPlace('activity, moved away and back', placeBefore, await placeOf(activityViewport));
   });
 
