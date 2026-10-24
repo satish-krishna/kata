@@ -11,6 +11,7 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { diagrams } from '../../lib/mermaid';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
+import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { ChangePage } from './change-page';
 
 const settle = async () => {
@@ -73,6 +74,8 @@ describe('ChangePage document notices', () => {
   let draw: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     draw = vi.spyOn(diagrams, 'render').mockResolvedValue('<svg></svg>');
+    // Monaco never loads in a unit test; the build panel's editor waits on a load that does not finish.
+    vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
   });
   afterEach(() => draw.mockRestore());
 
