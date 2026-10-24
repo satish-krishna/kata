@@ -193,6 +193,36 @@ describe('BuildLayoutViewModel', () => {
     expect(vm.suggested()).toBeNull();
   });
 
+  it('R10.3: picking the suggested mode clears the hand switch, so the next stage moves the page', async () => {
+    const { vm, standIn } = await make(setup(), 'running');
+    vm.open('A');
+    expect(vm.mode()).toBe('watch');
+    vm.pickMode('changes');
+    expect(vm.handSwitched()).toBe(true);
+    standIn.layoutStage.set('stopped');
+    await flush();
+    expect(vm.mode()).toBe('changes');
+    expect(vm.suggested()).toBe('overview');
+    vm.pickMode('overview');
+    expect(vm.handSwitched()).toBe(false);
+    expect(vm.suggested()).toBeNull();
+    standIn.layoutStage.set('running');
+    await flush();
+    expect(vm.mode()).toBe('watch');
+    expect(vm.suggested()).toBeNull();
+  });
+
+  it('picking a mode other than the suggested one, and not the one on show, is a hand switch', async () => {
+    const { vm, standIn } = await make(setup(), 'running');
+    vm.open('A');
+    standIn.layoutStage.set('stopped');
+    await flush();
+    expect(vm.suggested()).toBe('overview');
+    vm.pickMode('review');
+    expect(vm.handSwitched()).toBe(true);
+    expect(vm.suggested()).toBe('overview');
+  });
+
   it('R10.3: the suggested mark goes at the next stage change', async () => {
     const { vm, standIn } = await make(setup());
     vm.open('A');
