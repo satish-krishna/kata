@@ -2,9 +2,9 @@
  * the closing words of its review run, read the way they were before the document existed. No Angular, no I/O. */
 
 import type { ReviewRecord } from '@bindings/ReviewRecord';
-import type { Finding } from './sdlc';
+import { type Finding, mostSeriousFirst } from './sdlc';
 
-/** One review of the document, with its findings in the order the document lists them (most serious first). */
+/** One review of the document, with its findings most serious first, equal ranks in the order the document lists them. */
 export type ShownReview = { number: number; reviewedAt: string; findings: Finding[] };
 
 export type ReviewShown =
@@ -22,7 +22,7 @@ export function shownSection(section: Section): ShownReview {
   return {
     number: section.number,
     reviewedAt: section.reviewed_at,
-    findings: section.findings.map((f) => ({ id: f.id, severity: f.severity, file: f.file, line: f.line, text: f.text })),
+    findings: mostSeriousFirst(section.findings.map((f) => ({ id: f.id, severity: f.severity, file: f.file, line: f.line, text: f.text }))),
   };
 }
 

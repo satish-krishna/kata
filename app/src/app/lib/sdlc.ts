@@ -35,7 +35,8 @@ export type StageAction =
   | "continue-build"
   | "another-round"
   | "run-review"
-  | "declare-done";
+  | "declare-done"
+  | "cancel-build";
 
 const ACTIONS: Record<Stage, StageAction[]> = {
   "intent-in-progress": ["continue-intent"],
@@ -154,13 +155,14 @@ export const DEFAULT_BUILD_SECS = 7200;
 
 const AI_SDLC = "ai-sdlc";
 
-/** The text of a repository's stop (R6.1). The cancelled fact decides first, and a cancelled stop carries no error text; the exit code only tells the other stops apart. */
-export function stopMessage(exit: number | null, error: string | null, cancelled = false): string {
+/** The text of a repository's stop (R6.1). The cancelled fact decides first, and a cancelled stop carries no error text; the exit code, and for exit 0 whether the task was recorded, tell the other stops apart. */
+export function stopMessage(exit: number | null, error: string | null, cancelled = false, recorded = true): string {
   if (cancelled) return "Stopped: cancelled";
   const base =
     exit === 124 ? "Stopped: reached the time limit"
     : exit === 130 ? "Stopped: cancelled"
     : exit === 123 ? "Stopped: nobody answered"
+    : exit === 0 && !recorded ? "Stopped: ended without its task being recorded"
     : "Stopped: the agent failed";
   return error ? `${base} · ${error}` : base;
 }
@@ -371,6 +373,7 @@ const LABEL: Record<StageAction, string> = {
   "another-round": "Another round",
   "run-review": "Run review",
   "declare-done": "Declare done",
+  "cancel-build": "Cancel build",
 };
 
 export function actionLabel(action: StageAction): string {
@@ -476,9 +479,9 @@ const PILL_STEPS: readonly { step: PillStep; title: string }[] = [
  * The four stage pills of a change. The current step shows the stage's label and tone; steps before it read as
  * accepted and steps after it as not started. A rejected change is closed on the intent step and a done change sits
  * on the build step. A document pill is disabled until its document exists. The Build pill is locked until the plan
- * is accepted, then disabled until a repository has the change's branch.
+ * is accepted, then open.
  */
-export function stagePills(stage: Stage, done: boolean, docs: DocsPresent, build: { hasBranch: boolean }): StagePill[] {
+export function stagePills(stage: Stage, done: boolean, docs: DocsPresent): StagePill[] {
   const label = done ? DONE_LABEL : stageLabel(stage);
   const accepted = label.step === "build" || label.step === "done";
   const sitsOn = label.step === "closed" ? "intent" : label.step === "done" ? "build" : label.step;
@@ -487,9 +490,8 @@ export function stagePills(stage: Stage, done: boolean, docs: DocsPresent, build
   return PILL_STEPS.map(({ step, title }, i) => {
     const current = i === at;
     if (step === "build") {
-      const disabled = !accepted || !build.hasBranch;
       if (!accepted) return { step, title, text: "Build · locked", tone: "idle", disabled: true, current, ariaLabel: null };
-      return { step, title, text: done ? "Build · done" : label.text, tone: done ? "success" : tone, disabled, current, ariaLabel: null };
+      return { step, title, text: done ? "Build · done" : label.text, tone: done ? "success" : tone, disabled: false, current, ariaLabel: null };
     }
     const disabled = !docs[step];
     if (current) return { step, title, text: label.text, tone, disabled, current, ariaLabel: null };
@@ -567,10 +569,13 @@ export function reviewFindings(detail: RunDetail): Finding[] {
   if (result === "") return [];
   const items = numberedItems(result) ?? bulletItems(result);
   if (items === null) return NO_FINDINGS.test(result) ? [] : [asFinding(result)];
+  return mostSeriousFirst(items.filter((t) => t !== "").map(asFinding));
+}
+
+/** The findings most serious first. A finding without a severity ranks as medium, and equal ranks keep the order given. */
+export function mostSeriousFirst(findings: Finding[]): Finding[] {
   const rank = (f: Finding) => SEVERITY_RANK[f.severity ?? "medium"];
-  return items
-    .filter((t) => t !== "")
-    .map(asFinding)
+  return findings
     .map((f, index) => ({ f, index }))
     .sort((a, b) => rank(a.f) - rank(b.f) || a.index - b.index)
     .map(({ f }) => f);

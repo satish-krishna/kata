@@ -17,6 +17,7 @@ import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
+import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { ReadError } from '../../lib/doc-notice';
@@ -27,6 +28,7 @@ import type { PrepareOutcome } from '@bindings/PrepareOutcome';
 import type { BuildStart } from '@bindings/BuildStart';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { Part } from '@bindings/Part';
+import type { CommitFiles } from '@bindings/CommitFiles';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
@@ -87,6 +89,10 @@ export abstract class KataTransport {
   abstract sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean): Promise<DecideOutcome>;
   abstract sdlcRunLinks(): Promise<RunLink[]>;
   abstract sdlcLinkRun(link: RunLink): Promise<void>;
+  /** Which run recorded each task, in the order they were linked. */
+  abstract sdlcTaskLinks(): Promise<TaskLink[]>;
+  /** Append the links for the tasks a run recorded, in one write. */
+  abstract sdlcLinkTasks(links: TaskLink[]): Promise<void>;
   /** Wait until the engine process of run `runId` has exited. False when it is still alive after `timeoutMs`. */
   abstract sdlcWaitRunExit(runId: string, timeoutMs: number): Promise<boolean>;
   abstract sdlcBuildStatus(master: string, system: string, change: string): Promise<BuildStatus>;
@@ -109,6 +115,8 @@ export abstract class KataTransport {
   /** The product repositories in the build that have no `change/<change>` branch, which the Changes view cannot list. */
   abstract sdlcMissingChangeBranches(folder: string, masterRepo: string, system: string, change: string): Promise<string[]>;
   abstract sdlcDiffFiles(repoPath: string, part: Part): Promise<DiffListing>;
+  /** The commits on the change branch since the merge base, oldest first, each with the files it touched. */
+  abstract sdlcCommitFiles(repoPath: string): Promise<CommitFiles[]>;
   abstract sdlcDiffPair(repoPath: string, part: Part, path: string): Promise<FilePair>;
   abstract sdlcDiffBase(repoPath: string): Promise<BaseInfo>;
   abstract sdlcTouchedRepos(folder: string, masterRepo: string, system: string, change: string): Promise<PublishRepo[]>;

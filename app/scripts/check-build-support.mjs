@@ -12,6 +12,8 @@ const DIST = join(ROOT, 'dist', 'angular-jig', 'browser');
 
 export const ROUTE = '/sdlc/claims/2026-10-19-build-demo';
 export const WIDTHS = [375, 768, 1280];
+/** The widths the build page is checked at: below 1024 its areas share one place behind a switch. */
+export const BUILD_WIDTHS = [375, 768, 1024, 1280];
 /** The Tailwind `md` breakpoint the views switch columns at: below it the layout stacks. */
 export const MD = 768;
 
@@ -56,12 +58,12 @@ export async function open({ width = 1280, height = 900 } = {}) {
   };
 }
 
-/** Starts the scripted build from the change page and lands on the build view. */
+/** Starts the scripted build from the change page and lands on the build page. */
 export async function startBuild(page) {
   await page.getByRole('button', { name: 'Start build' }).click();
   // The build's preview opens first; the build starts on Start run.
   await page.getByRole('dialog').getByRole('button', { name: /^Start run$/ }).click();
-  await page.getByRole('tab', { name: 'Changes' }).waitFor();
+  await page.getByRole('button', { name: 'Cancel build' }).waitFor();
 }
 
 /** Retries `read` until `ok(value)` holds or the time runs out, so a check waits for layout instead of sleeping. */
@@ -81,6 +83,19 @@ export const noHorizontalScroll = (page) =>
   page.evaluate(() => {
     const el = document.documentElement;
     return { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth, body: document.body.scrollWidth };
+  });
+
+/**
+ * The Changes strip's controls that lie outside the strip's own box (empty when none is cut off). The strip wraps or it fits; a
+ * control past its right edge is clipped by the files area. The read-only line may end in an ellipsis, so only its box is measured.
+ */
+export const stripCutOff = (page) =>
+  page.evaluate(() => {
+    const strip = document.querySelector('[data-testid="changes-strip"]');
+    if (!strip) return ['no Changes strip'];
+    const controls = [...strip.querySelectorAll('[role="radio"], button, .k-changes__stat, .k-changes__note')].filter((el) => el.getBoundingClientRect().width > 0);
+    const out = controls.filter((el) => !window.kataClip.isInside(el, strip)).map((el) => (el.textContent ?? '').replace(/s+/g, ' ').trim() || el.className);
+    return controls.length === 0 ? ['the Changes strip has no controls'] : out;
   });
 
 /** Collects failures and prints them; exits non-zero if any. */

@@ -280,7 +280,7 @@ export async function checkChangeToolbar(browser, origin, { route, name, pills, 
   return fails;
 }
 
-/** The strip under the toolbar keeps one height from tab to tab, so the page below it does not jump. */
+/** The strip under the toolbar keeps one height from tab to tab, so the page below it does not jump. The Build tab has no page strip: the build page's bar stands in its place. */
 export async function checkStripHeight(browser, origin, route, width) {
   const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1 });
   const page = await context.newPage();
@@ -288,13 +288,15 @@ export async function checkStripHeight(browser, origin, route, width) {
   try {
     await page.goto(`${origin}/${route}`, { waitUntil: 'networkidle' });
     const heights = {};
-    for (const tab of ['Intent', 'Spec', 'Plan', 'Build']) {
+    for (const tab of ['Intent', 'Spec', 'Plan']) {
       await page.locator('app-sdlc-toolbar header [role="tab"]', { hasText: tab }).first().click();
       await page.waitForFunction((t) => document.querySelector('app-sdlc-toolbar header [role="tab"][aria-selected="true"]')?.textContent.trim().startsWith(t), tab, { timeout: 5000 });
       await page.waitForTimeout(150);
-      if (tab === 'Build') await page.locator('[data-testid="changes-strip"]').waitFor({ timeout: 5000 }).catch(() => undefined);
-      heights[tab] = await page.evaluate((t) => document.querySelector(t === 'Build' ? '[data-testid="changes-strip"]' : '[data-testid="strip"]')?.getBoundingClientRect().height ?? null, tab);
+      heights[tab] = await page.evaluate(() => document.querySelector('[data-testid="strip"]')?.getBoundingClientRect().height ?? null);
     }
+    await page.locator('app-sdlc-toolbar header [role="tab"]', { hasText: 'Build' }).first().click();
+    await page.locator('app-build-page [data-bar]').waitFor({ timeout: 5000 });
+    if ((await page.locator('[data-testid="strip"]').count()) > 0) fails.push(`the Build tab at ${width} draws a page strip; the build page bar is its only bar`);
     const values = Object.values(heights);
     if (values.some((h) => h === null)) fails.push(`strip heights at ${width}: a tab has no strip (${JSON.stringify(heights)})`);
     else if (new Set(values.map((h) => Math.round(h))).size !== 1) fails.push(`the strip changes height between tabs at ${width}: ${JSON.stringify(heights)}`);
@@ -304,13 +306,13 @@ export async function checkStripHeight(browser, origin, route, width) {
   return fails;
 }
 
-/** The Build tab strip of a build-ready change and of a finished one with the pull request note: the widest sets of actions the strip carries. */
+/** The build page bar of a build-ready change and of a finished one with the pull request note: the widest sets of actions the bar carries. */
 export const STRIP_STATES = [
   { route: 'sdlc/claims/2026-10-19-build-demo', name: 'a build-ready change' },
   { route: 'sdlc/claims/2026-10-18-photo-limits-shipped?demo=pr-fail', name: 'a finished build with three actions and the pull request note', note: true },
 ];
 
-/** Nothing in the Build tab strip is ever cut off: every control sits inside the strip, the strip inside the window, no control's text is clipped, and from 1280 up the strip is one row. */
+/** Nothing in the build page bar is ever cut off: every control sits inside the bar, the bar inside the window, no control's text is clipped, and from 1280 up the bar is one row. The pull request note sits above the page and must stay inside the window. */
 export async function checkBuildStrip(browser, origin, { route, name, note = false }, width) {
   const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1 });
   await installClipping(context);
@@ -320,13 +322,14 @@ export async function checkBuildStrip(browser, origin, { route, name, note = fal
   try {
     await page.goto(`${origin}/${route}`, { waitUntil: 'networkidle' });
     await page.locator('app-sdlc-toolbar header [role="tab"]', { hasText: 'Build' }).first().click();
-    await page.locator('[data-testid="changes-strip"]').waitFor({ timeout: 5000 });
-    if (note) await page.locator('[data-testid="changes-strip"] [data-testid="pr-note"]').waitFor({ timeout: 5000 });
+    await page.locator('app-build-page [data-bar]').waitFor({ timeout: 5000 });
+    if (note) await page.locator('[data-testid="pr-note"]').waitFor({ timeout: 5000 });
     await page.waitForTimeout(300);
     const m = await page.evaluate(() => {
       const { textClipped, isInside } = window.kataClip;
-      const strip = document.querySelector('[data-testid="changes-strip"]');
-      const items = [...strip.querySelectorAll('button, [role="radio"], .k-changes__stat, .k-strip__file, [data-testid="pr-note"]')].filter((e) => e.getBoundingClientRect().width > 0);
+      const strip = document.querySelector('app-build-page [data-bar]');
+      const noteEl = document.querySelector('[data-testid="pr-note"]');
+      const items = [...strip.querySelectorAll('button, .k-lock__count, .k-bp__elapsed')].filter((e) => e.getBoundingClientRect().width > 0);
       const name = (e) => (e.textContent.trim() || e.getAttribute('aria-label') || e.className).slice(0, 30);
       const mids = items.map((e) => {
         const r = e.getBoundingClientRect();
@@ -335,7 +338,8 @@ export async function checkBuildStrip(browser, origin, { route, name, note = fal
       return {
         outside: items.filter((e) => !isInside(e, strip)).map(name),
         // The read-only line and the pull request note truncate by design; every control's own text must be whole.
-        clipped: items.filter((e) => !e.matches('.k-changes__note, [data-testid="pr-note"]') && textClipped(e, 'border') > 0).map(name),
+        clipped: items.filter((e) => textClipped(e, 'border') > 0).map(name),
+        noteInside: noteEl === null || isInside(noteEl, { left: 0, right: window.innerWidth, top: -Infinity, bottom: Infinity }),
         count: items.length,
         buttons: [...strip.querySelectorAll('button')].map((b) => b.textContent.trim()).filter(Boolean),
         stripInside: isInside(strip, { left: 0, right: window.innerWidth, top: -Infinity, bottom: Infinity }),
@@ -347,6 +351,7 @@ export async function checkBuildStrip(browser, origin, { route, name, note = fal
     if (m.outside.length) fails.push(`${at}: controls cut off by the strip: ${JSON.stringify(m.outside)}`);
     if (m.clipped.length) fails.push(`${at}: controls whose text is clipped: ${JSON.stringify(m.clipped)}`);
     if (!m.stripInside) fails.push(`${at}: the strip runs past the window`);
+    if (!m.noteInside) fails.push(`${at}: the pull request note runs past the window`);
     if (width >= 1280 && m.spread > 4) fails.push(`${at}: the strip is not one row (centers ${Math.round(m.spread)}px apart)`);
   } finally {
     await context.close();

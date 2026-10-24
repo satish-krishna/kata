@@ -406,6 +406,35 @@ describe("stopMessage", () => {
   });
 });
 
+describe("stopMessage table", () => {
+  it("stopMessage decides every row of the stop reason table", () => {
+    const rows: [boolean, number | null, boolean, string | null, string][] = [
+      [true, 0, true, null, "Stopped: cancelled"],
+      [true, 1, false, "boom", "Stopped: cancelled"],
+      [true, 124, true, "late", "Stopped: cancelled"],
+      [true, null, false, null, "Stopped: cancelled"],
+      [false, 124, true, null, "Stopped: reached the time limit"],
+      [false, 124, false, null, "Stopped: reached the time limit"],
+      [false, 124, true, "late", "Stopped: reached the time limit · late"],
+      [false, 130, true, null, "Stopped: cancelled"],
+      [false, 130, false, "x", "Stopped: cancelled · x"],
+      [false, 123, true, null, "Stopped: nobody answered"],
+      [false, 123, false, null, "Stopped: nobody answered"],
+      [false, 0, false, null, "Stopped: ended without its task being recorded"],
+      [false, 0, false, "boom", "Stopped: ended without its task being recorded · boom"],
+      [false, 0, true, null, "Stopped: the agent failed"],
+      [false, 0, true, "review failed", "Stopped: the agent failed · review failed"],
+      [false, 1, true, null, "Stopped: the agent failed"],
+      [false, 1, false, null, "Stopped: the agent failed"],
+      [false, null, true, "boom", "Stopped: the agent failed · boom"],
+      [false, null, false, null, "Stopped: the agent failed"],
+    ];
+    for (const [cancelled, exit, recorded, error, text] of rows) {
+      expect(stopMessage(exit, error, cancelled, recorded), JSON.stringify([cancelled, exit, recorded, error])).toBe(text);
+    }
+  });
+});
+
 describe("reviewFindings", () => {
   const detail = (result: string | null | undefined, extra: KataEvent[] = []): RunDetail => ({
     record: {} as RunDetail["record"],

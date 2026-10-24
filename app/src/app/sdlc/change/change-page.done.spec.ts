@@ -1,15 +1,19 @@
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
+import { render } from '../../../testing/render';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import { toastState } from '@spartan-ng/brain/sonner';
-import { BehaviorSubject } from 'rxjs';
+import { BehaviorSubject, of } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import type { StageAction } from '../../lib/sdlc';
 import { canConfirm } from '../../lib/sdlc-done';
-import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE } from '../../lib/sdlc-mock';
+import { monaco } from '../../ui/diff-editor/monaco.loader';
+import { BuildPageViewModel } from '../build/build-page.view-model';
+import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
 const BUILD = MOCK_BUILD_CHANGE;
@@ -24,6 +28,7 @@ function setup(transport: MockTransport) {
     providers: [
       provideRouter([]),
       ChangePageViewModel,
+      BuildPageViewModel,
       RunPreviewViewModel,
       { provide: KataTransport, useValue: transport },
       { provide: ActivatedRoute, useValue: { paramMap: params.asObservable() } },
@@ -300,11 +305,11 @@ describe('declaring done', () => {
     await vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
     expect(prepare).not.toHaveBeenCalled();
     preview.start();
-    await vi.waitFor(() => expect(vm.handoff()).not.toBeNull());
+    await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull());
     expect(vm.doneReport()).toBeNull();
     expect(prepare).toHaveBeenCalled();
-    expect(vm.handoff()).not.toBeNull();
-    expect(vm.handoff()!.round).toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).current()!.round).toBeNull();
   });
 
   it("the toolbar's Run review starts the review-only build, the same as the done dialog's", async () => {
@@ -316,9 +321,9 @@ describe('declaring done', () => {
     await vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
     expect(prepare).not.toHaveBeenCalled();
     preview.start();
-    await vi.waitFor(() => expect(vm.handoff()).not.toBeNull());
+    await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull());
     expect(prepare).toHaveBeenCalled();
-    expect(vm.handoff()!.round).toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).current()!.round).toBeNull();
   });
 
   it('an action with nothing behind it says so instead of doing nothing', async () => {
@@ -343,5 +348,96 @@ describe('declaring done', () => {
     vm.cancelDone();
     expect(vm.doneReport()).toBeNull();
     expect(publish).not.toHaveBeenCalled();
+  });
+});
+
+describe('declaring done from the build page', () => {
+  const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
+  const button = (root: ParentNode, label: string) => Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === label);
+  const page = (c: HTMLElement) => c.querySelector('app-build-page')!;
+  const settle = async () => {
+    for (let i = 0; i < 4; i++) {
+      TestBed.tick();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  };
+  const FINDING = 'The refusal message has no test.';
+  const REVIEW = {
+    layout: 2,
+    problems: [],
+    master_moved: [],
+    reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: { 'claims-intent': '1111111', 'claims-core': '2222222', 'customer-portal': '3333333' }, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: FINDING }] }],
+  } as unknown as Awaited<ReturnType<MockTransport['sdlcReviewRecord']>>;
+
+  beforeEach(() => {
+    vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  async function mountPage(change: string, transport: MockTransport) {
+    const out = await render(ChangePage, {}, [
+      provideRouter([]),
+      { provide: KataTransport, useValue: transport },
+      { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
+    ]);
+    await settle();
+    return { ...out, transport };
+  }
+
+  it('declaring done from the build page confirms and opens the pull requests', async () => {
+    const transport = new MockTransport();
+    withStage(transport, BUILD, 'build-finished');
+    vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({ files: [], loc: [] });
+    vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
+    const status = transport.sdlcBuildStatus.bind(transport);
+    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => {
+      const got = await status(m, s, c);
+      return { ...got, repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })), tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } })), departures: [DEPARTURE] };
+    });
+    vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', exit: 0 }]);
+    const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], BUILD);
+    await transport.sdlcLinkRun({ workspace_id: 'acme-claims', system: 'claims', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
+    const publish = vi.spyOn(transport, 'sdlcPublish');
+    const { container, fixture } = await mountPage(BUILD, transport);
+    const vm = fixture.debugElement.injector.get(ChangePageViewModel);
+
+    button(page(container), 'Declare done')!.click();
+    await vi.waitFor(() => expect(vm.doneReport()).not.toBeNull(), { timeout: 10000 });
+    const report = vm.doneReport()!;
+    expect(report.departures).toEqual([DEPARTURE]);
+    expect(report.review).toMatchObject({ findings: [expect.objectContaining({ text: FINDING })] });
+    expect(report.repos.map((r) => r.repo)).toEqual(['claims-intent', ...REPOS]);
+    expect(report.repos.every((r) => r.result !== null)).toBe(true);
+    await settle();
+    const dialog = document.body.querySelector('app-done-dialog [role="dialog"], [role="dialog"]')!;
+    expect(text(dialog.querySelector('[hlmDialogTitle]')!)).toBe('Declare the change done');
+    expect(text(dialog)).toContain(DEPARTURE.departure);
+    expect(text(dialog)).toContain(FINDING);
+    for (const repo of REPOS) expect(text(dialog)).toContain(repo);
+
+    button(dialog, 'Open pull requests')!.click();
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1), { timeout: 10000 });
+    await vi.waitFor(() => expect(vm.prList()).not.toBeNull(), { timeout: 10000 });
+    await settle();
+    expect(text(document.body.querySelector('[role="dialog"] [hlmDialogTitle]')!)).toBe('Pull requests');
+    expect(page(container)).not.toBeNull();
+    expect(container.querySelector('app-build-view')).toBeNull();
+    await vi.waitFor(() => expect(container.querySelector('header [data-testid="pr-menu"]')).not.toBeNull(), { timeout: 10000 });
+  }, 30000);
+
+  it('a done change shows every task done, the findings, the pull request links and no declare done', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
+    const { container } = await mountPage(MOCK_DONE_CHANGE, transport);
+    const p = page(container);
+    expect(p).not.toBeNull();
+    const tasks = Array.from(p.querySelectorAll('[data-task]'));
+    expect(tasks.length).toBe(3);
+    expect(tasks.every((t) => text(t).includes('Done'))).toBe(true);
+    expect(text(p.querySelector('app-findings-list')!)).toContain(FINDING);
+    expect(p.querySelector('app-changes-view')).not.toBeNull();
+    expect(container.querySelector('header [data-testid="pr-menu"]')!.textContent).toContain('3 PRs');
+    expect(button(p, 'Declare done')).toBeUndefined();
+    expect(Array.from(p.querySelectorAll('[data-bar] button')).map(text)).toEqual([]);
   });
 });

@@ -1,4 +1,5 @@
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ParsedRequirement } from '@bindings/ParsedRequirement';
 import type { ParsedTask } from '@bindings/ParsedTask';
 import type { ReadResult } from '@bindings/ReadResult';
@@ -10,7 +11,8 @@ import { render } from '../../../testing/render';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { diagrams } from '../../lib/mermaid';
-import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE } from '../../lib/sdlc-mock';
+import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
@@ -164,6 +166,13 @@ async function mount(change: string, docs: Record<string, string | null>, tasks:
   await settle();
   return out;
 }
+/** A change in the build stage opens on its Build tab; the plan's own views are reached from the Plan pill. */
+async function mountOnPlan(...args: Parameters<typeof mount>) {
+  const out = await mount(...args);
+  pill(out.container, 'Plan').click();
+  await settle();
+  return out;
+}
 const pill = (c: HTMLElement, start: string) => Array.from(c.querySelectorAll<HTMLButtonElement>('header [role="tab"]')).find((t) => text(t).startsWith(start))!;
 const toggle = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLButtonElement>('[data-testid="strip"] [role="radio"]'));
 const checked = (c: HTMLElement) => toggle(c).filter((b) => b.getAttribute('aria-checked') === 'true').map(text);
@@ -283,13 +292,13 @@ describe('ChangePage plan views', () => {
   const docs = { plan: PLAN, spec: SPEC };
 
   it('puts the view toggle in the strip: Tasks with the built count (the default), Approach, Whole document', async () => {
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, TASKS);
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, TASKS);
     expect(toggle(container).map(text)).toEqual(['Tasks · 2/4 built', 'Approach', 'Whole document']);
     expect(checked(container)).toEqual(['Tasks · 2/4 built']);
   });
 
   it('lists the tasks in plan order with a built or not built text alternative, and picks the first unbuilt one', async () => {
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, TASKS);
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, TASKS);
     expect(tasksNav(container).map(text)).toEqual(['T1 Refuse an eleventh photo', 'T2 Add the picker', 'T3 Show the message', 'T4 Notes only']);
     expect(tasksNav(container).map((b) => b.querySelector('[role="img"]')!.getAttribute('aria-label'))).toEqual(['built', 'built', 'not built', 'not built']);
     expect(pickedOf(tasksNav(container))).toEqual(['T3']);
@@ -297,12 +306,12 @@ describe('ChangePage plan views', () => {
 
   it('picks the first task when every task is built', async () => {
     const built = TASKS.map((t) => ({ ...t, row: t.row ?? { task: t.id, repo: t.repo, commits: ['x'], departure: null } }));
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, built);
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, built);
     expect(pickedOf(tasksNav(container))).toEqual(['T1']);
   });
 
   it('shows the picked task: a muted line, the name as a heading, and each field but Depends on as a labeled section', async () => {
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, TASKS);
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, TASKS);
     tasksNav(container)[0].click();
     await settle();
     const detail = container.querySelector('[data-testid="task"]')!;
@@ -314,12 +323,12 @@ describe('ChangePage plan views', () => {
   });
 
   it('names the dependencies of a task in the muted line', async () => {
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, TASKS);
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, TASKS);
     expect(text(container.querySelector('[data-testid="task"] .k-task__meta')!)).toBe('T3 · customer-portal · depends on T1');
   });
 
   it('shows the task text itself, without its heading line, when the task has no field bullets', async () => {
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, TASKS);
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, TASKS);
     tasksNav(container)[3].click();
     await settle();
     const detail = container.querySelector('[data-testid="task"]')!;
@@ -329,7 +338,7 @@ describe('ChangePage plan views', () => {
   });
 
   it('shows the build record in the rail: as planned, with its commits as chips', async () => {
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, TASKS);
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, TASKS);
     tasksNav(container)[0].click();
     await settle();
     const rail = container.querySelector('aside[aria-label="Build record"]')!;
@@ -338,7 +347,7 @@ describe('ChangePage plan views', () => {
   });
 
   it('shows a departure in the rail, and says not built for a task without a row', async () => {
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, TASKS);
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, TASKS);
     tasksNav(container)[1].click();
     await settle();
     const rail = container.querySelector('aside[aria-label="Build record"]')!;
@@ -353,7 +362,7 @@ describe('ChangePage plan views', () => {
   it('renders markdown in a task name and in its departure', async () => {
     const row = { task: 'T2', repo: 'customer-portal', commits: ['ccc3333'], departure: 'Reused **the existing** picker.\n\n- kept `onPick`' };
     const tasks = [task('T2', 'Add the `picker`', 'customer-portal', [], row)];
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, tasks, { plan: [planned('T2', 'Add the `picker` from [docs](https://example.com)', 'customer-portal', [], [])] });
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, tasks, { plan: [planned('T2', 'Add the `picker` from [docs](https://example.com)', 'customer-portal', [], [])] });
     const nav = tasksNav(container)[0];
     expect(nav.querySelector('code')!.textContent).toBe('picker');
     expect(nav.querySelector('a')).toBeNull();
@@ -365,7 +374,7 @@ describe('ChangePage plan views', () => {
   });
 
   it('crosses the seam: Needed by lists the tasks that depend on this one, and a click picks that task', async () => {
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, TASKS);
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, TASKS);
     tasksNav(container)[0].click();
     await settle();
     const needed = container.querySelector('[data-testid="needed-by"]')!;
@@ -376,7 +385,7 @@ describe('ChangePage plan views', () => {
   });
 
   it('turns requirement ids in a task field into links that open that requirement on the Spec tab', async () => {
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, TASKS);
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, TASKS);
     tasksNav(container)[0].click();
     await settle();
     const refs = Array.from(container.querySelectorAll<HTMLAnchorElement>('[data-testid="task"] a[href^="#req-"]'));
@@ -393,7 +402,7 @@ describe('ChangePage plan views', () => {
 
   it('opens the Spec tab on its whole document, not on R1, for a requirement id the spec does not have', async () => {
     const plan = TASKS.map((t) => PLANNED[t.id]).map((t) => (t.id === 'T3' ? { ...t, sections: t.sections.map((x) => ({ ...x, body: x.body.replace('R1.1', 'R99.1') })) } : t));
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, TASKS, { plan });
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, TASKS, { plan });
     tasksNav(container)[2].click();
     await settle();
     const ref = container.querySelector<HTMLAnchorElement>('[data-testid="task"] a[href="#req-R99.1"]')!;
@@ -416,7 +425,7 @@ describe('ChangePage plan views', () => {
       { title: 'Depends on', body: 'none' },
       { title: 'Change', body: 'Do it.' },
     ]);
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, [...TASKS, lead], { plan: [...TASKS.map((t) => PLANNED[t.id]), leadPlan] });
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, [...TASKS, lead], { plan: [...TASKS.map((t) => PLANNED[t.id]), leadPlan] });
     tasksNav(container)[4].click();
     await settle();
     const detail = container.querySelector('[data-testid="task"]')!;
@@ -427,7 +436,7 @@ describe('ChangePage plan views', () => {
   });
 
   it('shows the Approach section, or the whole document, in the document layout', async () => {
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, TASKS);
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, TASKS);
     toggle(container)[1].click();
     await settle();
     expect(container.querySelector('nav[aria-label="Tasks"]')).toBeNull();
@@ -439,14 +448,14 @@ describe('ChangePage plan views', () => {
   });
 
   it('shows only the whole document, with no toggle, for a plan without tasks', async () => {
-    const { container } = await mount(MOCK_BUILD_CHANGE, docs, []);
+    const { container } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, []);
     expect(toggle(container)).toEqual([]);
     expect(container.querySelector('nav[aria-label="Tasks"]')).toBeNull();
     expect(container.querySelector('app-doc-layout')).not.toBeNull();
   });
 
   it('keeps the view state in the ViewModel and puts it back when the tab changes', async () => {
-    const { fixture } = await mount(MOCK_BUILD_CHANGE, docs, TASKS);
+    const { fixture } = await mountOnPlan(MOCK_BUILD_CHANGE, docs, TASKS);
     const vm = fixture.debugElement.injector.get(ChangePageViewModel);
     expect(vm.shownView()).toBe('list');
     vm.setView('whole');
@@ -459,5 +468,102 @@ describe('ChangePage plan views', () => {
     await settle();
     expect(vm.shownView()).toBe('list');
     expect(vm.pickedTask()?.id).toBe('T3');
+  });
+});
+
+describe('ChangePage opens an existing change on the build page', () => {
+  let draw: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    draw = vi.spyOn(diagrams, 'render').mockResolvedValue('<svg></svg>');
+    vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
+  });
+  afterEach(() => {
+    draw.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  const EARLIER = 'earlier-run-1';
+  const FINDING = 'The refusal message has no test.';
+  const REVIEW = {
+    layout: 2,
+    problems: [],
+    master_moved: [],
+    reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: { 'claims-intent': '1111111', 'claims-core': '2222222', 'customer-portal': '3333333' }, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: FINDING }] }],
+  } as unknown as Awaited<ReturnType<MockTransport['sdlcReviewRecord']>>;
+  const actions = (c: HTMLElement) => Array.from(c.querySelectorAll('app-build-page [data-bar] button')).map(text);
+  const pickRepo = (c: HTMLElement, repo: string) => Array.from(c.querySelectorAll<HTMLButtonElement>('app-build-page [data-heading] .k-bp__name')).find((b) => text(b) === repo)!.click();
+  const taskLine = (c: HTMLElement, id: string) => text(Array.from(c.querySelectorAll('app-build-page [data-task]')).find((t) => text(t).startsWith(id))!);
+
+  /** A change as an earlier version of Kata left it: build log rows for `built` tasks, a run recorded on this machine, a review document. */
+  async function existing(stage: ChangeInfo['stage'], built: string[], review: boolean) {
+    const transport = new MockTransport();
+    const real = transport.sdlcChanges.bind(transport);
+    vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) => (await real(m, s)).map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage } : c)));
+    const status = transport.sdlcBuildStatus.bind(transport);
+    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => {
+      const got = await status(m, s, c);
+      const all = built.length === got.tasks.length;
+      return { ...got, repos: all ? got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })) : got.repos, tasks: got.tasks.map((t) => (built.includes(t.id) ? { ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } } : t)) };
+    });
+    if (review) vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
+    if (built.length > 0) {
+      await transport.sdlcLinkRun({ workspace_id: 'acme-claims', system: 'claims', change: MOCK_BUILD_CHANGE, stage: 'build:claims-core', run_id: EARLIER, started_at: 1790000000, heads: {} });
+      vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: EARLIER, kata: 'k', started_at: 1790000000, isolation: 'none', exit: 0 }]);
+    }
+    return open(MOCK_BUILD_CHANGE, transport);
+  }
+  const open = async (change: string, transport: MockTransport) => {
+    const out = await render(ChangePage, {}, [
+      provideRouter([]),
+      { provide: KataTransport, useValue: transport },
+      { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
+    ]);
+    await settle();
+    return out;
+  };
+
+  it('an existing change accepted but not built opens on the build page at its stage', async () => {
+    const { container } = await existing('build-ready', [], false);
+    expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
+    expect(actions(container)).toEqual(['Start build', 'Reopen intent']);
+    expect(taskLine(container, 'T1')).toContain('Not started');
+  });
+
+  it('an existing change stopped partway opens on the build page with its log and earlier run', async () => {
+    const { container } = await existing('build-stopped', ['T1'], false);
+    expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
+    expect(actions(container)).toEqual(['Continue build', 'Another round']);
+    expect(taskLine(container, 'T1')).toContain('Done');
+    expect(taskLine(container, 'T3')).not.toContain('Done');
+    expect(container.querySelector(`app-build-page [data-session="${EARLIER}"]`)).not.toBeNull();
+    expect(text(container.querySelector('app-build-page [data-stage]')!)).toContain('The build stopped.');
+  });
+
+  it('an existing finished change opens on the build page with its log, earlier run and review', async () => {
+    const { container } = await existing('build-finished', ['T1', 'T2', 'T3'], true);
+    expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
+    expect(actions(container)).toEqual(['Declare done', 'Another round', 'Run review']);
+    expect(Array.from(container.querySelectorAll('app-build-page [data-task]')).every((t) => text(t).includes('Done'))).toBe(true);
+    expect(text(container.querySelector('app-build-page app-findings-list')!)).toContain(FINDING);
+    pickRepo(container, 'claims-core');
+    await settle();
+    expect(container.querySelector(`app-build-page [data-session="${EARLIER}"]`)).not.toBeNull();
+  });
+
+  it('an existing change done with pull requests open opens on the build page with nothing to do', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
+    await transport.sdlcLinkRun({ workspace_id: 'acme-claims', system: 'claims', change: MOCK_DONE_CHANGE, stage: 'build:claims-core', run_id: EARLIER, started_at: 1790000000, heads: {} });
+    vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: EARLIER, kata: 'k', started_at: 1790000000, isolation: 'none', exit: 0 }]);
+    const { container } = await open(MOCK_DONE_CHANGE, transport);
+    expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
+    expect(text(pill(container, 'Build'))).toBe('Build · done');
+    expect(actions(container)).toEqual([]);
+    expect(Array.from(container.querySelectorAll('app-build-page [data-task]')).every((t) => text(t).includes('Done'))).toBe(true);
+    expect(text(container.querySelector('app-build-page app-findings-list')!)).toContain(FINDING);
+    pickRepo(container, 'claims-core');
+    await settle();
+    expect(container.querySelector(`app-build-page [data-session="${EARLIER}"]`)).not.toBeNull();
+    expect(container.querySelector('header [data-testid="pr-menu"]')).not.toBeNull();
   });
 });

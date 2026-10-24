@@ -45,6 +45,7 @@
       [selected]="vm.selected()"
       (toggle)="vm.toggle($event)"
       (select)="vm.select($event.repo, $event.path)"
+      (showUntied)="vm.showUntied()"
     />
     @for (repo of vm.missingBranches(); track repo) {
       <p class="k-changes__readonly" data-testid="changes-missing">{{ repo }} has no change/{{ change() }} branch, so its changes are not listed.</p>

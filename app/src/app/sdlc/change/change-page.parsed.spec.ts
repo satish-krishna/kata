@@ -42,7 +42,10 @@ describe('ChangePage parsed documents', () => {
     const documents: Record<string, ReadResult> = { spec: parsedSpec(), plan: parsedPlan() };
     vi.spyOn(transport, 'sdlcReadParsed').mockImplementation(async (_m, _s, _c, stem) => documents[stem] ?? null);
     const status = transport.sdlcBuildStatus.bind(transport);
-    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => ({ ...(await status(m, s, c)), tasks: builtTasks() }));
+    vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => {
+      const got = await status(m, s, c);
+      return { ...got, repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })), tasks: builtTasks() };
+    });
     vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({ files: [], loc: [] });
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', exit: 0 }]);
     const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], MOCK_BUILD_CHANGE);

@@ -1,16 +1,15 @@
-import type { ChangedFile } from '@bindings/ChangedFile';
 import { render } from '../../testing/render';
-import { RepoFileList, type RepoFileGroup } from './repo-file-list';
+import { RepoFileList, type RepoFile, type RepoFileGroup } from './repo-file-list';
 
-const file = (path: string, over: Partial<ChangedFile> = {}): ChangedFile => ({
-  path, oldPath: null, status: 'modified', binary: false, added: 2, removed: 1, uncommitted: false, ...over,
+const file = (path: string, over: Partial<RepoFile> = {}): RepoFile => ({
+  path, oldPath: null, status: 'modified', binary: false, added: 2, removed: 1, uncommitted: false, tasks: [], left: false, ...over,
 });
 const GROUPS: RepoFileGroup[] = [
   {
     repo: 'claims-intent',
     branch: 'change/2026-10-19-ai-sdlc-part-2',
     base: 'main',
-    expanded: true,
+    expanded: true, untied: null, untiedShown: false,
     files: [
       file('a.md', { status: 'added', added: 4, removed: 0 }),
       file('b.md', { uncommitted: true }),
@@ -19,7 +18,7 @@ const GROUPS: RepoFileGroup[] = [
       file('f.md', { status: 'untracked', uncommitted: true }),
     ],
   },
-  { repo: 'claims-core', branch: 'change/2026-10-19-ai-sdlc-part-2', base: null, expanded: false, files: [file('src/deep/x.rs'), file('.github/ci.yml')] },
+  { repo: 'claims-core', branch: 'change/2026-10-19-ai-sdlc-part-2', base: null, expanded: false, untied: null, untiedShown: false, files: [file('src/deep/x.rs'), file('.github/ci.yml')] },
 ];
 const text = (e: Element | null) => (e?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
@@ -82,5 +81,32 @@ describe('RepoFileList', () => {
     expect(toggled).toEqual(['claims-core']);
     expect(picked).toEqual([{ repo: 'claims-intent', path: 'a.md' }]);
     expect(container.querySelectorAll('[data-file]')[1].getAttribute('aria-current')).toBe('true');
+  });
+
+  it('shows the task ids of a tied file, a quiet label on an untied one and the stopped run on a file it left', async () => {
+    const tied = file('a.md', { tasks: ['T1', 'T2'] });
+    const left = file('b.md', { uncommitted: true, left: true });
+    const groups: RepoFileGroup[] = [{ ...GROUPS[0], files: [tied, left] }];
+    const { container } = await render(RepoFileList, { groups, selected: null });
+    expect(text(container.querySelector('[data-file="a.md"] [data-tasks]'))).toBe('T1, T2');
+    expect(container.querySelector('[data-file="a.md"] [data-untied]')).toBeNull();
+    expect(text(container.querySelector('[data-file="b.md"] [data-untied]'))).toBe('not tied to a task');
+    expect(text(container.querySelector('[data-file="b.md"] [data-left]'))).toBe('left by the stopped run');
+    expect(container.querySelector('[data-file="a.md"] [data-left]')).toBeNull();
+  });
+
+  it('counts the untied files, lists them on request and says so once for a single file', async () => {
+    const one: RepoFileGroup = { ...GROUPS[0], files: [file('a.md', { tasks: ['T1'] })], untied: [file('b.md')] };
+    const { container, fixture } = await render(RepoFileList, { groups: [one], selected: null });
+    const asked: string[] = [];
+    fixture.componentInstance.showUntied.subscribe((r) => asked.push(r));
+    expect(text(container.querySelector('[data-untied-line] > span'))).toBe('1 file in claims-intent is not tied to a task');
+    expect(container.querySelectorAll('[data-file]')).toHaveLength(1);
+    (container.querySelector('[data-untied-line] button') as HTMLElement).click();
+    expect(asked).toEqual(['claims-intent']);
+    fixture.componentRef.setInput('groups', [{ ...one, untiedShown: true }]);
+    fixture.detectChanges();
+    expect(Array.from(container.querySelectorAll('[data-file]')).map((r) => r.getAttribute('data-file'))).toEqual(['a.md', 'b.md']);
+    expect(container.querySelector('[data-untied-line] button')).toBeNull();
   });
 });

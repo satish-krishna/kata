@@ -5,12 +5,14 @@
     [counts]="vm.counts()"
     [branch]="vm.branchChip()"
     [crumbs]="vm.crumbs()"
+    back="Changes"
     [locked]="vm.locked()"
     (switchMode)="vm.switchMode()"
     (select)="vm.selectWorkspace($event)"
     (add)="vm.toHome()"
     (remove)="vm.toHome()"
     (openSettings)="vm.toHome()"
+    (goBack)="vm.toHome()"
   >
     @if (vm.pills().length > 0) {
       <app-stage-pills toolbarStages [pills]="vm.pills()" />
@@ -49,11 +51,7 @@
     }
   </app-sdlc-toolbar>
 
-  @if (vm.handoff(); as h) {
-    @if (vm.buildContext(); as ctx) {
-      <app-build-view [handoff]="h" [context]="ctx" (closed)="vm.closeBuild()" />
-    }
-  } @else if (vm.session(); as s) {
+  @if (vm.session(); as s) {
     <app-sdlc-session
       [title]="s.title"
       [finished]="s.finished"
@@ -170,25 +168,26 @@
                   }
                 </div>
               }
-              @if (vm.changesContext(); as ctx) {
-                <app-changes-view
-                  [folder]="ctx.folder"
-                  [masterRepo]="ctx.masterRepo"
-                  [system]="ctx.system"
-                  [change]="ctx.change"
-                  [turns]="0"
-                  [banner]="null"
-                  [hasSlot]="true"
-                >
-                  @if (vm.buildFacts(); as facts) {
-                    <span class="k-strip__file" data-testid="build-facts">{{ facts }}</span>
-                  }
-                  @if (vm.prCheckFailed()) {
-                    <span class="k-left__note" data-testid="pr-note">Could not check pull requests</span>
-                  }
-                  <ng-container *ngTemplateOutlet="stageActions" />
-                </app-changes-view>
+              @if (vm.prCheckFailed()) {
+                <p class="k-left__note" data-testid="pr-note">Could not check pull requests</p>
               }
+              <app-build-page
+                [view]="build.view()"
+                [context]="vm.changesContext()"
+                [turns]="build.turns()"
+                [rows]="build.buildRows()"
+                [task]="build.pickedTask()"
+                [stopped]="build.stoppedRepos()"
+                [focus]="build.focusRequest()"
+                (pick)="build.choose($event)"
+                (repoAction)="build.repoAction($event)"
+                (act)="vm.act($event)"
+                (cancelBuild)="build.cancelBuild()"
+                (answer)="build.answer($event.runId, $event)"
+                (decide)="build.decide($event.runId, $event)"
+                (goTo)="build.goTo($event)"
+                (toggleRun)="build.toggleRun($event)"
+              />
             }
           </div>
         </main>
@@ -223,6 +222,15 @@
     (confirm)="vm.confirmLeftovers()"
     (cancel)="vm.cancelLeftovers()"
   />
+  <app-confirm-dialog
+    [open]="build.leftoverPrompt() !== null"
+    message="Continue on top of leftovers?"
+    [details]="build.leftoverPrompt()?.lines ?? []"
+    confirmLabel="Continue"
+    (confirm)="build.confirmContinue()"
+    (cancel)="build.cancelContinue()"
+  />
+  <app-build-refusal-dialog [reason]="build.refusal()?.reason ?? null" [problems]="build.refusal()?.problems ?? []" (close)="build.closeRefusal()" />
   <app-done-dialog
     [report]="vm.doneReport()"
     [change]="vm.changeName()"

@@ -28,7 +28,8 @@ import { ToolCard } from './tool-card';
 export class ObservePane {
   readonly state = input.required<RunState>();
   readonly events = input.required<StreamEvent[]>();
-  readonly spec = input.required<RunSpec>();
+  /** The spec the run started with; null for an earlier run read from the records, which shows no model or isolation. */
+  readonly spec = input.required<RunSpec | null>();
   readonly summary = input.required<RunSummary | null>();
   readonly asks = input<AskRecord[]>([]);
   readonly permissions = input<PermissionRecord[]>([]);

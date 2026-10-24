@@ -3,6 +3,7 @@
  * reflects what the operator did. Deterministic: no clocks, no randomness. */
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { BuildRow } from '@bindings/BuildRow';
+import type { CommitFiles } from '@bindings/CommitFiles';
 import type { BuildStart } from '@bindings/BuildStart';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
@@ -35,6 +36,7 @@ import type { DocState } from '@bindings/DocState';
 import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { RunLink } from '@bindings/RunLink';
+import type { TaskLink } from '@bindings/TaskLink';
 import type { Settings } from '@bindings/Settings';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Stage } from '@bindings/Stage';
@@ -284,6 +286,10 @@ export class SdlcMock {
     id: 'acme-claims', name: 'acme-claims', folder: MOCK_WORKSPACE_FOLDER, base_branch: 'main', last_opened: 1792281600,
   }];
   private links: RunLink[] = [];
+  /** The first demo task is linked to its run; the others are not, so both the known and the unknown session show in the browser. */
+  private taskLinksList: TaskLink[] = [{
+    workspace_id: 'acme-claims', system: MOCK_SYSTEM, change: MOCK_BUILD_CHANGE, repo: 'claims-core', task: 'T1', run_id: 'mock-build-claims-core',
+  }];
   private current = 'main';
   /** Other change branches, without the `change/` prefix, like the real `other_change_branches`. */
   private others = ['2026-10-17-claim-notes'];
@@ -339,7 +345,8 @@ export class SdlcMock {
 
   listChanges(): ChangeInfo[] {
     return this.changes.map((c) => {
-      if (c.change === MOCK_BUILD_CHANGE) return { ...c, build: { tasks: BUILD_PLAN.length, finished: this.rows.size, repos: BUILD_REPOS.length } };
+      // Like the backend, a change whose every task is in the build log has finished its build.
+      if (c.change === MOCK_BUILD_CHANGE) return { ...c, stage: this.rows.size >= BUILD_PLAN.length ? 'build-finished' : c.stage, build: { tasks: BUILD_PLAN.length, finished: this.rows.size, repos: BUILD_REPOS.length } };
       if (c.change === MOCK_DONE_CHANGE) return { ...c, build: { tasks: BUILD_PLAN.length, finished: BUILD_PLAN.length, repos: BUILD_REPOS.length } };
       return { ...c };
     });
@@ -408,6 +415,8 @@ export class SdlcMock {
 
   runLinks(): RunLink[] { return this.links.map((l) => ({ ...l })); }
   linkRun(link: RunLink): void { this.links = [...this.links, { ...link }]; }
+  taskLinks(): TaskLink[] { return this.taskLinksList.map((l) => ({ ...l })); }
+  linkTasks(links: TaskLink[]): void { this.taskLinksList = [...this.taskLinksList, ...links.map((l) => ({ ...l }))]; }
 
   // ---- the build ----
 
@@ -418,7 +427,13 @@ export class SdlcMock {
       changeName === MOCK_DONE_CHANGE ? { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } : (this.rows.get(t.id) ?? null);
     const tasks: TaskStatus[] = BUILD_PLAN.map((t) => ({ ...t, dependsOn: [...t.dependsOn], text: taskText(t), row: rowOf(t) }));
     const departures = tasks.flatMap((t) => (t.row?.departure ? [{ task: t.id, repo: t.repo, planText: t.name, departure: t.row.departure }] : []));
-    return { tasks, repos: BUILD_REPOS.map((r) => this.repoStatus(r)), departures, hasTasks: true, problems: [], logLayouts: [] };
+    return { tasks, repos: BUILD_REPOS.map((r) => (changeName === MOCK_DONE_CHANGE ? this.doneRepoStatus(r) : this.repoStatus(r))), departures, hasTasks: true, problems: [], logLayouts: [] };
+  }
+
+  /** A repository of the finished change: every task of it is built. */
+  private doneRepoStatus(repo: string): RepoStatus {
+    const tasks = BUILD_PLAN.filter((t) => t.repo === repo).length;
+    return { repo, firstUnfinished: null, state: { kind: 'done' }, tasks, finished: tasks };
   }
 
   private repoStatus(repo: string): RepoStatus {
@@ -490,7 +505,9 @@ export class SdlcMock {
   }
 
   diffFiles(part: Part): DiffListing {
-    const files = DIFF_FILES.filter((f) => part === 'whole' || (part === 'uncommitted') === f.uncommitted);
+    // Once the scripted build has logged every task, its agents have committed what they left.
+    const built = this.rows.size >= BUILD_PLAN.length;
+    const files = DIFF_FILES.map((f) => (built ? { ...f, uncommitted: false } : f)).filter((f) => part === 'whole' || (part === 'uncommitted') === f.uncommitted);
     const byType = new Map<string, { extension: string; files: number; added: number; removed: number }>();
     for (const f of files.filter((x) => !x.binary)) {
       const extension = f.path.includes('.') ? f.path.slice(f.path.lastIndexOf('.') + 1) : '(none)';
@@ -498,6 +515,15 @@ export class SdlcMock {
       byType.set(extension, { extension, files: t.files + 1, added: t.added + f.added, removed: t.removed + f.removed });
     }
     return { files: files.map((f) => ({ ...f })), loc: [...byType.values()] };
+  }
+
+  /** One commit per demo task in the repository, with the sha the finished build's row lists (padded to a full hash). */
+  commitFiles(repoPath: string): CommitFiles[] {
+    const repo = repoPath.slice(repoPath.lastIndexOf('/') + 1);
+    return BUILD_PLAN.filter((t) => t.repo === repo).map((t) => ({
+      sha: `${t.id.toLowerCase()}c0ffee`.padEnd(40, '0'),
+      files: COMMIT_FILES[t.id] ?? [],
+    }));
   }
 
   diffPair(path: string): FilePair {
@@ -535,6 +561,13 @@ export class SdlcMock {
 
 const MOCK_CHECKS_DIR = 'C:/Users/demo/.kata/checks';
 const prUrl = (repo: string) => `https://github.com/acme/${repo}/pull/7`;
+
+/** The files each demo task's commit touched. */
+const COMMIT_FILES: Record<string, string[]> = {
+  T1: ['src/attachments.rs'],
+  T2: ['assets/sample.png'],
+  T3: ['src/store.rs'],
+};
 
 /** The canned diff: one file of each kind the Changes view tells apart. */
 const DIFF_FILES: ChangedFile[] = [

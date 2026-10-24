@@ -43,13 +43,13 @@
 
    | order | item                    | gives way how                                           | minimum                                       |
    |-------|-------------------------|---------------------------------------------------------|-----------------------------------------------|
-   | 1     | separators and gaps     | removed / tightened below 1280                          | 0                                             |
+   | 1     | separators, gaps, and the chevron after the back link | removed / tightened below 1280            | 0                                             |
    | 2     | branch chip text        | ellipsis in the chip; below 1280 the icon form instead  | 6rem chip from 1280; the icon below 1280      |
    | 3     | workspace switcher name | ellipsis; full name in its title and accessible name    | 4.5rem                                        |
    | 4     | pill padding            | tightened                                               | --space-2 each side                           |
    | 5     | change name             | ellipsis; full name in its title                        | 6rem                                          |
 
-   Never shrink: the seal, the mode badge, the pills' text, the pull request control, the settings button. */
+   Never shrink: the seal, the mode badge, the pills' text, the pull request control, the settings button, and the back link, which stays whole until the change name has given way to its minimum. */
 .wb-toolbar:has(.k-crumbs__item) .k-branch { flex: 0 1e12 auto; min-width: calc-size(max-content, min(size, 6rem)); }
 .wb-toolbar:has(.k-crumbs__item) .k-branch__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .wb-toolbar:has(.k-crumbs__item) .k-wstrigger { flex: 0 1e8 16rem; width: auto; min-width: 4.5rem; }
@@ -58,12 +58,14 @@
 /* The pill keeps its full padding until it is squeezed; its minimum is the text with --space-2 each side (the strip always has four pills), and the centered text then spills evenly into the padding. */
 .wb-toolbar:has(.k-crumbs__item) .k-pill > * { flex: none; }
 .wb-toolbar:has(.k-crumbs__item) .k-crumbs { flex: 0 1 auto; min-width: calc-size(max-content, min(size, calc(6rem + var(--space-2) + 0.875rem))); }
+.wb-toolbar:has(.k-crumbs__item) .k-crumbs__back { flex: none; }
 .wb-toolbar:has(.k-crumbs__item) .k-crumbs__item { min-width: 0; }
 .wb-toolbar:has(.k-crumbs__item) .k-prlinks { flex: none; }
-/* Order 1, and the icon form of order 2: between 1024 and 1280 the toolbar gives up its separators, tightens its gaps and shows the branch chip as its warning icon. */
+/* Order 1, and the icon form of order 2: between 1024 and 1280 the toolbar gives up its separators and the chevron after the back link, tightens its gaps and shows the branch chip as its warning icon. */
 @media (max-width: 1279px) {
-  .wb-toolbar:has(.k-crumbs__item) { gap: var(--space-3); }
+  .wb-toolbar:has(.k-crumbs__item) { gap: var(--space-2); }
   .wb-toolbar:has(.k-crumbs__item) > .wb-sep { display: none; }
+  .wb-toolbar:has(.k-crumbs__item) .k-crumbs__back + .k-crumbs__sep { display: none; }
   .wb-toolbar:has(.k-crumbs__item) .k-branch { flex: none; min-width: 0; padding: var(--space-1-5); color: var(--warning-text); }
   .wb-toolbar:has(.k-crumbs__item) .k-branch .k-branch__icon { display: inline-flex; }
   .wb-toolbar:has(.k-crumbs__item) .k-branch__text { display: none; }
@@ -243,7 +245,11 @@
 
 /* ---------- AI-SDLC: toolbar, workspace home, dialogs ---------- */
 .k-crumbs { display: flex; align-items: center; gap: var(--space-2); color: var(--text-faint); }
-.k-crumbs > ng-icon { flex: none; }
+.k-crumbs__sep { flex: none; display: inline-flex; }
+/* The way back to the changes list: a link in look, first in the breadcrumb. */
+.k-crumbs__back { white-space: nowrap; cursor: pointer; font: var(--weight-medium) var(--text-base)/1 var(--font-sans); color: var(--accent-text); }
+.k-crumbs__back:hover:not(:disabled) { text-decoration: underline; }
+.k-crumbs__back:disabled { opacity: 0.5; cursor: default; }
 /* A change name is long; it gives way last (the toolbar block above has the order), on one line, and the full name sits in its title. */
 .k-crumbs__item { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--weight-medium) var(--text-base)/1 var(--font-sans); color: var(--text-secondary); }
 .k-branch { flex: none; white-space: nowrap; font: var(--font-code-sm); color: var(--text-secondary); padding: var(--space-1-5) var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); background: var(--surface-inset); }
@@ -301,14 +307,6 @@
 .k-left__warn { margin: 0; font: var(--text-sm)/1.4 var(--font-sans); color: var(--warning-text); }
 
 /* ---------- AI-SDLC: build ---------- */
-.k-repos { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
-.k-repos__row { display: grid; justify-items: start; gap: var(--space-2); width: 100%; padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-card); color: var(--text-primary); text-align: start; cursor: pointer; }
-.k-repos__row:hover { background: var(--surface-hover); }
-.k-repos__row[aria-current="true"] { border-color: var(--accent); }
-.k-repos__name { color: var(--text-primary); }
-.k-repos__clock { color: var(--text-muted); }
-.k-repos__paused { color: var(--warning-text); }
-.k-repos__new { color: var(--text-muted); }
 /* A notice that an agent waits on the engineer: amber dot and words, with the way to it. */
 .k-waiting { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5); padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border-subtle); background: var(--warning-subtle); color: var(--warning-text); font: var(--font-code-sm); }
 .k-waiting--line { padding-block: var(--space-2); }
@@ -336,7 +334,7 @@
 .k-change__doc--layout > .wb-banner { flex: none; margin: var(--space-4) var(--space-5) 0; }
 .k-change__doc--layout > .wb-banner + .wb-banner { margin-top: var(--space-3); }
 /* The Changes view fills its panel edge to edge: no padding and no frame, its own strip, columns and editor do the scrolling. */
-.k-change__doc--flush { display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; padding: 0; }
+.k-change__doc--flush { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); overflow: hidden; padding: 0; }
 .k-change__doc--flush:has(> .wb-banner) { grid-template-rows: auto minmax(0, 1fr); }
 .k-change__doc--flush[hidden] { display: none; }
 .k-change__missing { padding: var(--space-5); }
@@ -366,10 +364,8 @@
 /* The strip under the toolbar belongs to the open tab: its status in words, its file, and the stage actions. */
 /* The change page's strip and the Changes view's strip share one height and one inset, so the page below them does not move between tabs. */
 .k-strip, .k-changes__strip { min-height: calc(var(--control-h) + 2 * var(--space-3) + 1px); padding: var(--space-3) var(--space-4); }
-/* In the Changes strip only the read-only line shrinks; the controls, counts and the actions the page projects keep their size, so no label breaks onto a second line. A strip with slotted end content wraps (see changes-view.css), so none of them is ever pushed out of the panel. */
+/* In the Changes strip only the read-only line shrinks; the controls, counts and the actions the page projects keep their size, so no label breaks onto a second line. The strip wraps (see changes-view.css), so none of them is ever pushed out of the panel. */
 .k-changes__strip > :not(.k-changes__end), .k-changes__end > :not(.k-changes__note) { flex: none; white-space: nowrap; }
-/* The Changes strip is one row unless the page slots content into its end (facts and actions); then it may wrap. */
-.k-changes__strip:has(.k-changes__end > :not(.k-changes__note)) { flex-wrap: wrap; }
 .k-strip { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); background: var(--surface-panel); border-bottom: 1px solid var(--border-default); }
 .k-strip__file { font: var(--text-xs)/1 var(--font-mono); color: var(--text-muted); }
 
@@ -460,6 +456,9 @@
 .k-files__letter--idle { color: var(--text-secondary); }
 .k-files__dot { width: var(--space-3); height: var(--space-3); border-radius: var(--radius-full); background: var(--warning); }
 .k-files__lines { color: var(--text-muted); white-space: nowrap; }
+.k-files__ties { display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: var(--text-xs); color: var(--text-muted); }
+.k-files__left { color: var(--warning-text); }
+.k-files__untied-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-4); font-size: var(--text-xs); color: var(--text-muted); }
 .k-diffbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .k-diffbar__file, .k-diffbar__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
 .k-diffbar__rename, .k-diffbar__folder { color: var(--text-muted); }

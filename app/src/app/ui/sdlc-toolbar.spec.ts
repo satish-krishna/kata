@@ -68,6 +68,26 @@ describe('SdlcToolbar', () => {
     expect(switcher(container).disabled).toBe(true);
   });
 
+  it('the back link is shown, named and disabled while locked', async () => {
+    const back = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('button[aria-label="Back to the changes list"]');
+    const none = await render(SdlcToolbar, inputs({ crumbs: ['c1'] }));
+    expect(back(none.container)).toBeNull();
+    TestBed.resetTestingModule();
+    const { fixture, container } = await render(SdlcToolbar, inputs({ crumbs: ['c1'], back: 'Changes' }));
+    const link = back(container)!;
+    expect(link.textContent!.trim()).toBe('Changes');
+    expect(link.disabled).toBe(false);
+    expect(container.querySelector('nav')!.firstElementChild).toBe(link);
+    let went = 0;
+    fixture.componentInstance.goBack.subscribe(() => went++);
+    link.click();
+    expect(went).toBe(1);
+    TestBed.resetTestingModule();
+    const locked = await render(SdlcToolbar, inputs({ crumbs: ['c1'], back: 'Changes', locked: true }));
+    expect(back(locked.container)!.disabled).toBe(true);
+    expect(locked.container.querySelector('nav')!.textContent).toContain('c1');
+  });
+
   it('withholds the workspace switcher and branch while blocked', async () => {
     const { container } = await render(SdlcToolbar, inputs({ blocked: true }));
     expect(switcher(container)).toBeNull();

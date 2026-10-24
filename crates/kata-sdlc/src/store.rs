@@ -70,6 +70,19 @@ pub struct RunLink {
     pub heads: Option<std::collections::BTreeMap<String, String>>,
 }
 
+/// Which run recorded a task: one entry per task of a finished run, appended and never rewritten.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct TaskLink {
+    pub workspace_id: String,
+    pub system: String,
+    pub change: String,
+    pub repo: String,
+    pub task: String,
+    pub run_id: String,
+}
+
 /// `<kata-home>/workbench`. Mirrors kata-core's home resolution: `KATA_HOME` if
 /// set and non-empty (verbatim), else `<HOME or USERPROFILE>/.kata`.
 pub fn workbench_dir() -> Option<PathBuf> {
@@ -120,6 +133,17 @@ pub fn append_run_link(l: RunLink) -> Result<(), StoreError> {
     let mut links = load_run_links();
     links.push(l);
     write("runs.json", &links)
+}
+
+pub fn load_task_links() -> Vec<TaskLink> {
+    read_or_default("task-runs.json")
+}
+
+/// Append all of `links` in one write.
+pub fn append_task_links(links: &[TaskLink]) -> Result<(), StoreError> {
+    let mut all = load_task_links();
+    all.extend_from_slice(links);
+    write("task-runs.json", &all)
 }
 
 #[cfg(test)]
@@ -245,5 +269,40 @@ mod tests {
         append_run_link(link("a")).unwrap();
         append_run_link(link("b")).unwrap();
         assert_eq!(load_run_links(), vec![link("a"), link("b")]);
+    }
+
+    fn task_link(task: &str, run_id: &str) -> TaskLink {
+        TaskLink {
+            workspace_id: "w1".into(),
+            system: "billing".into(),
+            change: "0001-x".into(),
+            repo: "api".into(),
+            task: task.into(),
+            run_id: run_id.into(),
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn task_links_append_and_load_in_order() {
+        let home = with_home();
+        assert!(load_task_links().is_empty());
+        append_task_links(&[task_link("T1", "a"), task_link("T2", "a")]).unwrap();
+        append_task_links(&[task_link("T3", "b"), task_link("T4", "b")]).unwrap();
+        assert_eq!(
+            load_task_links(),
+            vec![
+                task_link("T1", "a"),
+                task_link("T2", "a"),
+                task_link("T3", "b"),
+                task_link("T4", "b")
+            ]
+        );
+        std::fs::write(
+            home.temp.path().join("workbench").join("task-runs.json"),
+            "not json",
+        )
+        .unwrap();
+        assert!(load_task_links().is_empty());
     }
 }

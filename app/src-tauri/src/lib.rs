@@ -324,6 +324,16 @@ fn sdlc_link_run(link: sdlc::store::RunLink) -> Result<(), String> {
     sdlc::store::append_run_link(link).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn sdlc_task_links() -> Vec<sdlc::store::TaskLink> {
+    sdlc::store::load_task_links()
+}
+
+#[tauri::command]
+fn sdlc_link_tasks(links: Vec<sdlc::store::TaskLink>) -> Result<(), String> {
+    sdlc::store::append_task_links(&links).map_err(|e| e.to_string())
+}
+
 // ---- AI-SDLC mode: the build, the diff, checks and publishing ----
 
 #[tauri::command(async)]
@@ -505,6 +515,11 @@ fn sdlc_diff_files(
         sdlc::diff::changed_files(Path::new(&repo_path), part).map_err(|e| e.to_string())?;
     let loc = sdlc::diff::loc_by_file_type(&files);
     Ok(sdlc::diff::DiffListing { files, loc })
+}
+
+#[tauri::command(async)]
+fn sdlc_commit_files(repo_path: String) -> Result<Vec<sdlc::diff::CommitFiles>, String> {
+    sdlc::diff::commit_files(Path::new(&repo_path)).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -873,6 +888,8 @@ pub fn run() {
             sdlc_checkout,
             sdlc_decide,
             sdlc_run_links,
+            sdlc_task_links,
+            sdlc_link_tasks,
             sdlc_link_run,
             sdlc_wait_run_exit,
             sdlc_build_status,
@@ -887,6 +904,7 @@ pub fn run() {
             sdlc_change_repos,
             sdlc_missing_change_branches,
             sdlc_diff_files,
+            sdlc_commit_files,
             sdlc_diff_pair,
             sdlc_diff_base,
             sdlc_touched_repos,

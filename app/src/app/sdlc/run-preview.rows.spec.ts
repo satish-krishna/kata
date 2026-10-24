@@ -9,7 +9,7 @@ import { KataTransport } from '../core/transport/kata-transport';
 import { MockTransport } from '../core/transport/mock-transport';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../lib/sdlc-mock';
 import { WorkbenchViewModel } from '../workbench/workbench.view-model';
-import { BuildViewModel, type BuildContext } from './build/build-view.view-model';
+import { BuildPageViewModel, type BuildContext } from './build/build-page.view-model';
 import { ChangePageViewModel } from './change/change-page.view-model';
 import { SdlcHomeViewModel } from './home/sdlc-home.view-model';
 
@@ -63,6 +63,7 @@ async function changePage(change: string, stage: ChangeInfo['stage'] | null, sta
     providers: [
       provideRouter([]),
       ChangePageViewModel,
+      BuildPageViewModel,
       RunPreviewViewModel,
       { provide: KataTransport, useValue: transport },
       { provide: ActivatedRoute, useValue: { paramMap: new BehaviorSubject(convertToParamMap({ system: 'claims', change })).asObservable() } },
@@ -80,7 +81,7 @@ async function changePage(change: string, stage: ChangeInfo['stage'] | null, sta
     transport,
     preview: TestBed.inject(RunPreviewViewModel),
     go: () => start(vm),
-    started: () => (kind === 'run' ? runAgent.mock.calls.length > 0 : prepare.mock.calls.length > 0 && vm.handoff() !== null),
+    started: () => (kind === 'run' ? runAgent.mock.calls.length > 0 : prepare.mock.calls.length > 0 && TestBed.inject(BuildPageViewModel).current() !== null),
   };
   if (fill) scenario.fill = () => fill(scenario);
   return scenario;
@@ -89,8 +90,8 @@ async function changePage(change: string, stage: ChangeInfo['stage'] | null, sta
 /** A build whose two repositories stopped at the time limit, so Continue is offered on claims-core. */
 async function continuing(): Promise<Scenario> {
   const transport = new MockTransport();
-  TestBed.configureTestingModule({ providers: [provideRouter([]), BuildViewModel, RunPreviewViewModel, { provide: KataTransport, useValue: transport }] });
-  const vm = TestBed.inject(BuildViewModel);
+  TestBed.configureTestingModule({ providers: [provideRouter([]), BuildPageViewModel, RunPreviewViewModel, { provide: KataTransport, useValue: transport }] });
+  const vm = TestBed.inject(BuildPageViewModel);
   const runner = TestBed.inject(SdlcRunner);
   let continued = false;
   const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
@@ -108,7 +109,7 @@ async function continuing(): Promise<Scenario> {
   await vm.start({ start: out.start, timeoutSecs: 5400, round: null, checksDir: await transport.sdlcChecksDir() }, ctx);
   await vi.waitFor(() => {
     vm.select('claims-core');
-    expect(vm.action()).toBe('continue');
+    expect(vm.view().groups.find((g) => g.repo === 'claims-core')?.action).toBe('continue');
   });
   return { transport, preview: TestBed.inject(RunPreviewViewModel), go: () => vm.continueRun(), started: () => continued };
 }

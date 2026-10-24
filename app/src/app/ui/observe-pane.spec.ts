@@ -245,6 +245,12 @@ describe('ObservePane - status and summary', () => {
     expect(m.container.querySelector('.k-badge--warning')?.textContent).toContain('worktree');
   });
 
+  it('leaves the model and isolation meta out when the run has no spec', async () => {
+    const m = await renderPane({ spec: null });
+    expect(m.container.querySelector('.wb-status__meta')).toBeNull();
+    expect(m.container.querySelector('.k-badge--warning')).toBeNull();
+  });
+
   it('renders the summary stats and result', async () => {
     const m = await renderPane({
       state: 'success',

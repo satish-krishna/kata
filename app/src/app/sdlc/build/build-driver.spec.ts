@@ -106,7 +106,7 @@ describe('BuildDriver', () => {
     await w.driver.begin(3600);
     await flush();
     await w.of('api')[0].end([], { exit: 0 });
-    expect(w.driver.stopped().get('api')).toEqual({ task: 'T1', reason: stopMessage(0, null) });
+    expect(w.driver.stopped().get('api')).toEqual({ task: 'T1', reason: stopMessage(0, null, false, false) });
     expect(w.log).toEqual(['api']);
     expect(w.driver.waiting().map((x) => x.repo)).toEqual(['app']);
     expect(w.driver.stopped().has('app')).toBe(false);
@@ -454,6 +454,14 @@ describe('BuildDriver', () => {
     expect(w.driver.stopped().get('app')?.reason).toBe('Stopped: the agent failed');
   });
 
+  it('a task run that exits 0 without recording its ready task stops with "ended without its task being recorded"', async () => {
+    const w = world([{ id: 'T1', repo: 'app' }]);
+    await w.driver.begin(3600);
+    await flush();
+    await w.of('app')[0].end([], { exit: 0 });
+    expect(w.driver.stopped().get('app')?.reason).toBe('Stopped: ended without its task being recorded');
+  });
+
   it('a cancelled repository that is now waiting is not relaunched when its dependency gets a row (R6.1)', async () => {
     const w = world([
       { id: 'T1', repo: 'app' },
@@ -511,7 +519,7 @@ describe('BuildDriver', () => {
     await flush();
     expect(w.of('app')).toHaveLength(1);
     expect(w.driver.going().has('app')).toBe(false);
-    expect(w.driver.stopped().get('app')).toEqual({ task: 'T1', reason: stopMessage(0, null) });
+    expect(w.driver.stopped().get('app')).toEqual({ task: 'T1', reason: stopMessage(0, null, false, false) });
     expect(w.driver.phase()).toBe('stopped');
     expect(w.driver.round()).not.toBeNull();
     await w.driver.continueRepo('app');

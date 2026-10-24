@@ -6,20 +6,14 @@
   min-height: 0;
 }
 
-/* One row from 768 up: the read-only line shortens with an ellipsis instead of the strip wrapping. A strip with slotted end content (the change page's facts and actions) may wrap (the rule is in workbench.css, since the projected nodes carry no attribute of this component), and so may any strip below 768. */
+/* One row when the controls fit and a second row when they do not: the strip sits in a panel that can be a third of a 1024 window, and a control past its edge would be cut off. The read-only line shortens with an ellipsis before the controls wrap. */
 .k-changes__strip {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border-subtle);
   background: var(--surface-panel);
-}
-
-@media (max-width: 767px) {
-  .k-changes__strip {
-    flex-wrap: wrap;
-  }
 }
 
 /* The repositories with changes, then the diff: stacked below 768, side by side from 768 up. Solo, the host shows the list elsewhere. */
@@ -66,8 +60,10 @@
 /* The right end of the strip: the read-only line, then whatever the host projects (the change page's facts and actions). */
 .k-changes__end {
   display: flex;
-  flex: 0 1 auto;
+  /* It shares a row with the controls when it has this much room left, and otherwise takes a row of its own. */
+  flex: 1 1 calc(var(--space-16) + var(--space-8));
   flex-wrap: wrap;
+  justify-content: flex-end;
   min-width: 0;
   align-items: center;
   gap: var(--space-3) var(--space-4);
@@ -107,14 +103,6 @@
   /* One column that can shrink below its content, so a long repository header truncates instead of widening the list. */
   grid-template-columns: minmax(0, 1fr);
   border-bottom: 1px solid var(--border-subtle);
-}
-
-/* From 1280 the strip is one row; below that it wraps, so the stage actions are never pushed out of the panel. */
-@media (min-width: 1280px) {
-  .k-changes__strip,
-  .k-changes__end {
-    flex-wrap: nowrap;
-  }
 }
 
 @media (min-width: 768px) {

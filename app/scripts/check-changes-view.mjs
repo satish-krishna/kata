@@ -8,25 +8,36 @@
 //      fills its container.
 //   3. Zoom keys: Ctrl +, - and 0 pressed inside the editor still reach the document, unhandled
 //      by Monaco, with their default prevented by the app.
-//   4. Widths: 375, 768 and 1280 pixels have no horizontal page scroll; the file list is in the build's
-//      drawer (the Changes view draws no list of its own there), and below 768 it sits above the diff
+//   4. Widths: 375, 768 and 1280 pixels have no horizontal page scroll; the Changes view in the build page's files area
+//      draws the one file list, and below 768 it sits above the diff
 //      and the editor is inline.
-//   5. Fit on the change page's Build tab (before a build starts), at 1280 and 1440 wide: the diff editor reaches the bottom of
-//      the window, the view sits flush under the tab strip with no frame of its own, and each repository header is one line.
+//   5. Fit on the build page's files area (before a build starts), at 1280 and 1440 wide: the diff editor reaches the bottom of
+//      the window, the view starts at the left edge of the files area with no frame of its own, and each repository header is one line.
 //   6. The strip never cuts a control off: for a build-ready change and for a finished build with three actions and the pull request note,
 //      at 768, 1024, 1280 and 1440 every control sits inside the strip and the strip inside the window, and at 1280 and up it is one row.
-//   7. The live build view's Changes strip has no actions, so it is one row at 1024 and 1280 (4b in the code, run on the page that is inside the build).
+//   7. The Changes strip in the live build page's files area has no actions and wraps to at most two rows at 1024 and 1280 (4b in the code, run on the page that is inside the build).
 import { STRIP_STATES, checkBuildStrip } from './check-change-toolbar.mjs';
 import { MD, WIDTHS, eventually, noHorizontalScroll, open, reporter, startBuild } from './check-build-support.mjs';
 
 const FILE = 'src/limits.rs';
 const { check, done } = reporter('check:changes');
+const FILES_AREA = '[data-area="files"]';
+/** Below 1024 the build page shows one area at a time, so reaching the Changes view means picking Files on the page's area switch. */
+const toFiles = async (p) => {
+  const areas = p.getByRole('radiogroup', { name: 'Build areas' });
+  // The switch is drawn again when the window crosses 1024, so a click can land on a detached button: try again.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (!(await areas.isVisible())) return;
+    const picked = await areas.getByRole('radio', { name: 'Files' }).click({ timeout: 1500 }).then(() => true, () => false);
+    if (picked && (await p.locator(FILES_AREA).isVisible())) return;
+    await p.waitForTimeout(100);
+  }
+};
 const { page, errors, close } = await open();
 
 try {
   await startBuild(page);
-  await page.getByRole('tab', { name: 'Changes' }).click();
-  await page.locator(`[data-file="${FILE}"]`).click();
+  await page.locator(`${FILES_AREA} [data-file="${FILE}"]`).click();
   const editor = page.locator('.monaco-diff-editor');
   await editor.waitFor({ state: 'visible' });
   await page.locator('.monaco-diff-editor .editor.modified .view-line').first().waitFor();
@@ -59,6 +70,7 @@ try {
   for (const [width, scale] of [[1280, 1], [640, 2], [1280, 1]]) {
     await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: scale, mobile: false });
     try {
+      await toFiles(page);
       const g = await eventually(page, geometry, aligned, `zoom ${scale * 100}%`);
       check(true, `zoom ${scale * 100}% (${width} wide): panes aligned (top ${g.original} / ${g.modified}) and the editor fills its container (${g.diffW}x${g.diffH})`);
     } catch (e) {
@@ -72,7 +84,8 @@ try {
     window.__keys = [];
     window.addEventListener('keydown', (e) => e.key !== 'Control' && window.__keys.push({ key: e.key, ctrl: e.ctrlKey, defaultPrevented: e.defaultPrevented }));
   });
-  await page.locator('.monaco-diff-editor .editor.modified .view-lines').click();
+  // The diff pane is a few dozen pixels wide at the default split, so a pointer click has no stable target; focus the editor's input directly.
+  await page.evaluate(() => document.querySelector('.monaco-diff-editor .editor.modified textarea').focus());
   const insideEditor = await page.evaluate(() => !!document.activeElement?.closest('.editor.modified'));
   check(insideEditor, 'focus is inside the modified editor');
   for (const [combo, key] of [['Control+=', '='], ['Control+-', '-'], ['Control+0', '0']]) {
@@ -85,22 +98,22 @@ try {
   // 4. Widths.
   for (const width of WIDTHS) {
     await page.setViewportSize({ width, height: 900 });
+    await toFiles(page);
     const state = await eventually(
       page,
       () =>
         page.evaluate(() => {
           const rect = (sel) => document.querySelector(sel)?.getBoundingClientRect();
-          // Inside the build the file list is in the build's drawer, not in the Changes view.
-          const left = rect('#build-repos');
+          const left = rect(`${'[data-area="files"]'} aside.k-changes__left`);
           const main = rect('.k-changes__main');
           const diff = document.querySelector('.monaco-diff-editor');
-          const list = document.querySelector('#build-repos .k-build__left');
+          const list = document.querySelector('[data-area="files"] aside.k-changes__left');
           return {
             listScroll: list ? list.scrollWidth - list.clientWidth : null,
             listAbove: left && main ? left.bottom <= main.top + 1 : null,
             listBeside: left && main ? left.right <= main.left + 1 : null,
             sideBySide: !!diff?.classList.contains('side-by-side'),
-            ownList: document.querySelectorAll('.k-build aside.k-changes__left').length,
+            ownList: document.querySelectorAll('[data-area="files"] aside.k-changes__left').length,
           };
         }),
       (s) => (width < MD ? s.listAbove === true && !s.sideBySide : s.listBeside === true),
@@ -111,13 +124,13 @@ try {
     if (state.error) check(false, state.error);
     else {
       check(state.listScroll !== null && state.listScroll <= 0, `${width}px: the file list does not scroll sideways (scrollWidth - clientWidth = ${state.listScroll})`);
-      check(state.ownList === 0, `${width}px: inside the build the file list is in the drawer, not a second list in the Changes view (${state.ownList})`);
+      check(state.ownList === 1, `${width}px: the build page's files area draws the Changes view's one file list (${state.ownList})`);
     }
     if (!state.error && width < MD) check(true, `${width}px: the list is above the diff and the editor is inline`);
     else if (!state.error) check(true, `${width}px: the list sits beside the diff`);
   }
 
-  // 4b. The live build view's Changes strip has no actions, so it is one row from 768 up: at the window's minimum width (1024) and its opening width (1280) too.
+  // 4b. The Changes strip in the live build page's files area has no actions, but the files area is a third of the window at the default split, so its controls do not fit one row at the window's minimum width (1024) or its opening width (1280): it wraps to at most two rows and check:build proves none is cut off.
   for (const width of [1024, 1280]) {
     await page.setViewportSize({ width, height: 900 });
     await page.waitForTimeout(300);
@@ -125,9 +138,9 @@ try {
       const strip = document.querySelector('[data-testid="changes-strip"]');
       const kids = [...strip.children, ...strip.querySelectorAll('.k-changes__end > *')].filter((el) => el.getBoundingClientRect().width > 0);
       const mids = kids.map((el) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; });
-      return { spread: Math.max(...mids) - Math.min(...mids), count: kids.length, slotted: strip.querySelectorAll('.k-changes__end > :not(.k-changes__note)').length };
+      return { rows: new Set(mids.map((m) => Math.round(m / 8))).size, count: kids.length, slotted: strip.querySelectorAll('.k-changes__end > :not(.k-changes__note)').length };
     });
-    check(row.count > 0 && row.slotted === 0 && row.spread <= 4, `${width}x900: the live build view's Changes strip is one row (${row.count} items, ${row.slotted} slotted, vertical centers ${Math.round(row.spread)}px apart)`);
+    check(row.count > 0 && row.slotted === 0 && row.rows <= 2, `${width}x900: the Changes strip in the live build page's files area is at most two rows (${row.count} items, ${row.slotted} slotted, ${row.rows} rows)`);
   }
 
   check(errors.length === 0, `no page error, console error or failed request${errors.length ? `: ${errors.join(' | ')}` : ''}`);
@@ -171,7 +184,7 @@ try {
           border: frame.flatMap((el) => sides.map((s) => parseFloat(getComputedStyle(el)['border' + s + 'Width']))),
           frameDepth: frame.length,
           rootLeft: root.getBoundingClientRect().left,
-          stripLeft: box('app-sdlc-toolbar header')?.left,
+          stripLeft: box('[data-area="files"]')?.left,
           strips: document.querySelectorAll('[data-testid="strip"], [data-testid="changes-strip"]').length,
           listScroll: document.querySelector('aside.k-changes__left').scrollWidth - document.querySelector('aside.k-changes__left').clientWidth,
           fileH: file.height,
@@ -193,7 +206,7 @@ try {
       // so a diff that ends short of the window bottom is wasted height whichever box contains it.
       check(Math.abs(m.viewportH - m.editorBottom) <= 4, `${width}x900: the diff editor reaches the bottom of the window (editor bottom ${m.editorBottom} of ${m.viewportH})`);
       check(m.padding.every((p) => p === 0) && m.border.every((b) => b === 0), `${width}x900: the Changes view has no padding or border (${m.frameDepth} boxes; padding ${m.padding}, border ${m.border})`);
-      check(Math.abs(m.rootLeft - m.stripLeft) <= 1, `${width}x900: the Changes view lines up with the tab strip (${m.rootLeft} / ${m.stripLeft})`);
+      check(Math.abs(m.rootLeft - m.stripLeft) <= 1, `${width}x900: the Changes view starts at the left edge of the files area (${m.rootLeft} / ${m.stripLeft})`);
       check(m.listScroll <= 0, `${width}x900: the file list does not scroll sideways (scrollWidth - clientWidth = ${m.listScroll})`);
       check(m.stripRow.count > 0 && m.stripRow.spread <= 4, `${width}x900: the Changes strip is a single row (${m.stripRow.count} items, vertical centers ${m.stripRow.spread}px apart)`);
       if (width === 1280) check(m.repoName !== null && m.repoName <= 0, `${width}x900: the claims-intent group name is not truncated (${m.repoName}px of it is cut off)`);

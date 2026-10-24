@@ -1,7 +1,13 @@
-import { TestBed } from '@angular/core/testing';
+import { Component } from '@angular/core';
+import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { Leftovers } from '@bindings/Leftovers';
 import type { Participant } from '@bindings/Participant';
+import type { RunLink } from '@bindings/RunLink';
+import type { RunRecord } from '@bindings/RunRecord';
+import type { TaskLink } from '@bindings/TaskLink';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
@@ -14,23 +20,39 @@ import { givenKey, type KindGroup, type PresetRow } from '../../lib/given';
 import { safetyRules, specFor, type BuildRun } from '../../lib/sdlc';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import type { BuildHandoff } from '../change/change-page.view-model';
-import { BuildViewModel, type BuildContext } from './build-view.view-model';
+import { BuildPageViewModel, type BuildContext } from './build-page.view-model';
 
 const FOLDER = MOCK_WORKSPACE_FOLDER;
 const CTX: BuildContext = { workspaceId: 'acme-claims', folder: FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE, systemRepos: [] };
 const REVIEW_NAME = `sdlc-claims-${MOCK_BUILD_CHANGE}-review`;
 
+/** Stands in for the change page, which provides the build page's view model and the preview beside its own. */
+@Component({ template: '', providers: [BuildPageViewModel, RunPreviewViewModel] })
+class Host {}
+
+/** The hosts made in this test, so a time step can run the change detection that carries their view effects. */
+let hosts: ComponentFixture<Host>[] = [];
+
+/** Another host, as the change page would be if it were opened a second time. */
+function openHost() {
+  const fixture = TestBed.createComponent(Host);
+  hosts.push(fixture);
+  return fixture;
+}
+
 /** `confirm` (the default) lets the build preview confirm at once with the build's own choices, so a test about something else never meets it; `real` leaves it to the test. */
 function setup(transport = new MockTransport(), preview: 'confirm' | 'real' = 'confirm') {
   TestBed.configureTestingModule({
-    providers: [provideRouter([]), BuildViewModel, RunPreviewViewModel, { provide: KataTransport, useValue: transport }],
+    providers: [provideRouter([]), { provide: KataTransport, useValue: transport }],
   });
-  const previewVm = TestBed.inject(RunPreviewViewModel);
+  const host = openHost();
+  const previewVm = host.debugElement.injector.get(RunPreviewViewModel);
   if (preview === 'confirm') vi.spyOn(previewVm, 'openBuild').mockImplementation(async (req) => ({ off: new Set(req.from.build ?? []), request: null }));
   return {
+    host,
     preview: previewVm,
     givens: TestBed.inject(GivenStore),
-    vm: TestBed.inject(BuildViewModel),
+    vm: host.debugElement.injector.get(BuildPageViewModel),
     transport,
     lock: TestBed.inject(LockStore),
     runner: TestBed.inject(SdlcRunner),
@@ -48,11 +70,12 @@ const advance = async (ms: number) => {
   for (let t = 0; t < ms; t += 50) {
     await vi.advanceTimersByTimeAsync(50);
     TestBed.tick();
+    for (const h of hosts) h.detectChanges();
   }
 };
 
 /** Runs the build to its end, answering every question the agents ask, until `done` holds. */
-async function drive(vm: BuildViewModel, lock: LockStore, done: () => boolean, limitMs = 60000) {
+async function drive(vm: BuildPageViewModel, lock: LockStore, done: () => boolean, limitMs = 60000) {
   for (let t = 0; t < limitMs && !done(); t += 100) {
     await advance(100);
     for (const w of lock.waiting()) if (w.kind === 'answer') vm.answer(w.runId, { id: 'q1', answers: [['Reuse it']] });
@@ -66,10 +89,14 @@ const part = (repo: string, over: Partial<Participant> = {}): Participant => ({ 
 const everyone = (over: Record<string, Partial<Participant>> = {}): Participant[] => [MOCK_MASTER, 'claims-core', 'customer-portal'].map((r) => part(r, over[r]));
 const ROW = (repo: string) => `intent/claims/${MOCK_BUILD_CHANGE}/build/${repo}.md`;
 
-const row = (vm: BuildViewModel, name: string) => vm.rows().find((r) => r.name === name)!;
-const finished = (vm: BuildViewModel) => () => vm.phase() === 'finished' && vm.findings().length > 0;
+const group = (vm: BuildPageViewModel, repo: string) => vm.view().groups.find((g) => g.repo === repo)!;
+const stopOf = (vm: BuildPageViewModel, repo: string) => vm.view().stops.find((s) => s.repo === repo);
+/** A stop line as the page words it: the lowercase tail of a "Stopped: ..." reason. */
+const stopLine = (reason: string) => reason.replace(/^Stopped: /, 'stopped: ');
+const finished = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.findings().length > 0;
 
 beforeEach(() => {
+  hosts = [];
   vi.useFakeTimers();
   vi.setSystemTime(new Date(2026, 9, 19, 9, 0, 0));
 });
@@ -78,7 +105,7 @@ afterEach(() => {
   toastState.reset();
 });
 
-describe('BuildViewModel', () => {
+describe('the build page starts, stops and continues the same runs as the build view did', () => {
   it('starting a build prepares branches and starts every repository that does not wait (R2.1)', async () => {
     const { vm, transport, lock } = setup();
     const runSpec = vi.spyOn(transport, 'runSpec');
@@ -89,6 +116,25 @@ describe('BuildViewModel', () => {
     expect(workdirs).toEqual([`${FOLDER}/claims-core`, `${FOLDER}/customer-portal`]);
     expect(runSpec.mock.calls.every(([, group]) => group === `build:claims/${MOCK_BUILD_CHANGE}`)).toBe(true);
     expect(lock.active()).toMatchObject({ kind: 'build', title: 'Build', finished: false });
+  });
+
+  it('gives the build page its view: a group per repository with its heading, the review entry, the shown areas and the pick', async () => {
+    const { vm, transport } = setup();
+    expect(await vm.start(await handoffFor(transport), CTX)).toBe(true);
+    await advance(2500);
+    const view = vm.view();
+    expect(view.stage).toBe('running');
+    expect(view.facts.tasks).toBe('0/3 tasks');
+    expect(view.actions).toEqual(['cancel-build']);
+    expect(view.groups.map((g) => g.repo)).toEqual(['claims-core', 'customer-portal']);
+    expect(view.groups[0]).toMatchObject({ status: { tone: 'success' }, action: 'cancel', picked: true });
+    expect(view.groups[0].tasks[0].status).toEqual({ tone: 'success', label: 'Running' });
+    expect(view.review.picked).toBe(false);
+    expect(view.pick).toEqual({ kind: 'repo', repo: 'claims-core' });
+    expect(view.areas).toEqual({ activity: true, files: true });
+    expect(view.sessions.length).toBeGreaterThan(0);
+    expect(view.findings).toBeNull();
+    expect(view.narrow).toBe(false);
   });
 
   it('refuses to start while another task holds the lock, and starts nothing', async () => {
@@ -104,33 +150,20 @@ describe('BuildViewModel', () => {
     const { vm, transport } = setup();
     await vm.start(await handoffFor(transport), CTX);
     await advance(1000);
-    expect(vm.rows().map((r) => r.name)).toEqual(['claims-core', 'customer-portal', 'review']);
-    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'success', label: 'Working · T1' });
-    expect(row(vm, 'customer-portal')).toMatchObject({ tone: 'success', label: 'Working · T2' });
-    expect(row(vm, 'review')).toMatchObject({ tone: 'idle', label: 'Not started' });
+    expect(vm.view().groups.map((g) => g.repo)).toEqual(['claims-core', 'customer-portal']);
+    expect(group(vm, 'claims-core').status).toEqual({ tone: 'success', label: 'Working · T1' });
+    expect(group(vm, 'customer-portal').status).toEqual({ tone: 'success', label: 'Working · T2' });
+    expect(vm.view().review.status).toEqual({ tone: 'idle', label: 'Not run' });
     expect(vm.tasksLabel()).toBe('0/3 tasks');
 
     expect(vm.selected()).toBe('claims-core');
-    expect(vm.shown().map((r) => r.spec.workdir)).toEqual([`${FOLDER}/claims-core`]);
-    expect(vm.shown()[0].events.length).toBeGreaterThan(0);
-    expect(vm.shown()[0].startedAt).toBe('09:00:00');
-    expect(vm.action()).toBe('cancel');
+    expect(vm.shownSessions().map((r) => r.spec?.workdir)).toEqual([`${FOLDER}/claims-core`]);
+    expect(vm.shownSessions()[0].events.length).toBeGreaterThan(0);
+    expect(vm.shownSessions()[0].startedAt).toBe('09:00:00');
+    expect(group(vm, 'claims-core').action).toBe('cancel');
 
     vm.select('customer-portal');
-    expect(vm.shown().map((r) => r.spec.workdir)).toEqual([`${FOLDER}/customer-portal`]);
-  });
-
-  it('collapses the repository list and brings it back at the size the engineer dragged it to', () => {
-    const { vm } = setup();
-    expect(vm.reposOpen()).toBe(true);
-    vm.layout.set([30, 70]);
-    vm.toggleRepos();
-    expect(vm.layout()).toEqual([0, 100]);
-    expect(vm.reposOpen()).toBe(false);
-    expect(vm.reposIcon()).toBe('lucidePanelLeftOpen');
-    vm.toggleRepos();
-    expect(vm.layout()).toEqual([30, 70]);
-    expect(vm.reposIcon()).toBe('lucidePanelLeftClose');
+    expect(vm.shownSessions().map((r) => r.spec?.workdir)).toEqual([`${FOLDER}/customer-portal`]);
   });
 
   it('reads the build log again when a run finishes a Bash call, since logging a task is a commit', async () => {
@@ -140,7 +173,7 @@ describe('BuildViewModel', () => {
     await advance(1000);
     const before = status.mock.calls.length;
     await advance(1500);
-    expect(vm.action()).toBe('cancel');
+    expect(group(vm, 'claims-core').action).toBe('cancel');
     expect(status.mock.calls.length).toBeGreaterThan(before);
   });
 
@@ -149,19 +182,22 @@ describe('BuildViewModel', () => {
     await vm.start(await handoffFor(transport), CTX);
     await advance(2000);
     expect(lock.waiting()).toHaveLength(1);
-    const waiting = row(vm, 'customer-portal');
-    expect(waiting).toMatchObject({ tone: 'warning', label: 'Waiting for you' });
+    const waiting = group(vm, 'customer-portal');
+    expect(waiting.status).toEqual({ tone: 'warning', label: 'Waiting for you' });
     expect(waiting.paused).toMatch(/^\d:\d{2} waiting \(not counted\)$/);
-    expect(row(vm, 'claims-core').paused).toBeNull();
+    expect(waiting.unseen).toBeGreaterThan(0);
+    expect(group(vm, 'claims-core').unseen).toBe(0);
+    expect(group(vm, 'claims-core').paused).toBeNull();
 
-    const clockBefore = row(vm, 'customer-portal').clock;
+    const clockBefore = group(vm, 'customer-portal').clock;
     await advance(3000);
-    expect(row(vm, 'customer-portal').clock).toBe(clockBefore);
-    expect(row(vm, 'customer-portal').paused).not.toBe(waiting.paused);
+    expect(group(vm, 'customer-portal').clock).toBe(clockBefore);
+    expect(group(vm, 'customer-portal').paused).not.toBe(waiting.paused);
 
     vm.answer(lock.waiting()[0].runId, { id: 'q1', answers: [['Reuse it']] });
     await advance(100);
-    expect(row(vm, 'customer-portal')).toMatchObject({ tone: 'success', paused: null });
+    expect(group(vm, 'customer-portal').status.tone).toBe('success');
+    expect(group(vm, 'customer-portal').paused).toBeNull();
   });
 
   it('an agent is denied edits in every product repository of the system, even one the plan does not name (R18.5)', async () => {
@@ -187,8 +223,8 @@ describe('BuildViewModel', () => {
     await vm.start(await handoffFor(transport), CTX);
     await advance(500);
     expect(runInRepo.mock.calls.some(([t]) => t.repo === 'claims-core')).toBe(false);
-    expect(row(vm, 'claims-core').tone).toBe('error');
-    expect(row(vm, 'claims-core').label).toContain('claims-core');
+    expect(group(vm, 'claims-core').status.tone).toBe('error');
+    expect(stopOf(vm, 'claims-core')!.reason).toContain('claims-core');
   });
 
   it('a repository the backend does not name is stopped with the R2.4 message alone, not as an agent failure (R2.4)', async () => {
@@ -200,15 +236,16 @@ describe('BuildViewModel', () => {
     });
     await vm.start(await handoffFor(transport), CTX);
     await advance(500);
-    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'error', label: 'Stopped: claims-core is not checked out in this workspace' });
-    expect(row(vm, 'claims-core').label).not.toContain('the agent failed');
+    expect(group(vm, 'claims-core').status.tone).toBe('error');
+    expect(stopOf(vm, 'claims-core')!.reason).toBe('stopped: claims-core is not checked out in this workspace');
+    expect(stopOf(vm, 'claims-core')!.reason).not.toContain('the agent failed');
   });
 
   it('names the work clock against the time limit', async () => {
     const { vm, transport } = setup();
     await vm.start(await handoffFor(transport, { timeoutSecs: 5400 }), CTX);
     await advance(3000);
-    expect(row(vm, 'claims-core').clock).toMatch(/^work 0:00:0\d of 1:30:00$/);
+    expect(group(vm, 'claims-core').clock).toMatch(/^work 0:00:0\d of 1:30:00$/);
   });
 
   it.each([
@@ -226,10 +263,12 @@ describe('BuildViewModel', () => {
     await vm.start(await handoffFor(transport), CTX);
     await advance(500);
     expect(vm.phase()).toBe('stopped');
-    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'error', label: message });
-    expect(row(vm, 'customer-portal')).toMatchObject({ tone: 'error', label: message });
+    expect(group(vm, 'claims-core').status.tone).toBe('error');
+    expect(stopOf(vm, 'claims-core')!.reason).toBe(stopLine(message));
+    expect(group(vm, 'customer-portal').status.tone).toBe('error');
+    expect(stopOf(vm, 'customer-portal')!.reason).toBe(stopLine(message));
     vm.select('claims-core');
-    expect(vm.action()).toBe('continue');
+    expect(group(vm, 'claims-core').action).toBe('continue');
     expect(discard).not.toHaveBeenCalled();
   });
 
@@ -246,7 +285,7 @@ describe('BuildViewModel', () => {
     });
     await vm.start(await handoffFor(transport), CTX);
     await advance(500);
-    expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
+    expect(lock.active()).toBeNull();
     vm.select('claims-core');
     await vm.continueRun();
     await advance(500);
@@ -254,7 +293,7 @@ describe('BuildViewModel', () => {
     expect(prepare.mock.calls[1][4]).toBe(false);
     expect(run).toHaveBeenCalledTimes(3);
     expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
-    expect(row(vm, 'claims-core').label).toBe('Working · T1');
+    expect(group(vm, 'claims-core').status.label).toBe('Working · T1');
   });
 
   it('a repository with several runs shows the latest in full and each earlier one as a line that can be opened', async () => {
@@ -272,15 +311,15 @@ describe('BuildViewModel', () => {
     vm.select('claims-core');
     await vm.continueRun();
     await advance(500);
-    const [earlier, latest] = vm.shown();
-    expect(vm.shown()).toHaveLength(2);
+    const [earlier, latest] = vm.shownSessions();
+    expect(vm.shownSessions()).toHaveLength(2);
     expect(earlier).toMatchObject({ latest: false, expanded: false });
     expect(earlier.outcome).toMatch(/^[A-Z]/);
     expect(latest).toMatchObject({ latest: true });
     vm.toggleRun(earlier.id);
-    expect(vm.shown()[0].expanded).toBe(true);
+    expect(vm.shownSessions()[0].expanded).toBe(true);
     vm.toggleRun(earlier.id);
-    expect(vm.shown()[0].expanded).toBe(false);
+    expect(vm.shownSessions()[0].expanded).toBe(false);
   });
 
   it('Continue after the branches were settled is refused with the problems when a build log fails the check, and starts nothing (R8.1)', async () => {
@@ -406,7 +445,7 @@ describe('BuildViewModel', () => {
     await advance(500);
     expect(vm.phase()).toBe('building');
     vm.select('claims-core');
-    expect(vm.action()).toBe('continue');
+    expect(group(vm, 'claims-core').action).toBe('continue');
     const calls = run.mock.calls.length;
 
     await vm.continueRun();
@@ -433,10 +472,10 @@ describe('BuildViewModel', () => {
       'The upload limit is duplicated in claims-core and customer-portal.',
       'The refusal message has no test.',
     ]);
-    expect(row(vm, 'review')).toMatchObject({ tone: 'success', label: 'Finished' });
-    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'success', label: 'Finished · 1/1' });
+    expect(vm.view().stage).toBe('review-finished');
+    expect(group(vm, 'claims-core').status).toEqual({ tone: 'success', label: 'Finished' });
     expect(vm.tasksLabel()).toBe('3/3 tasks');
-    expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
+    expect(lock.active()).toBeNull();
   });
 
   describe('findings from the review document', () => {
@@ -461,7 +500,7 @@ describe('BuildViewModel', () => {
       });
       return vi.spyOn(transport, 'sdlcReviewRecord').mockImplementation(async () => ({ layout: 2, reviews: reviewed ? reviews : [], problems: reviewed ? documentProblems : [], master_moved: [] }));
     };
-    const shown = (vm: BuildViewModel) => () => vm.phase() === 'finished' && vm.reviewShown();
+    const shown = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.view().findings !== null;
 
     it('findings come from review.md, not the run words (R14.2)', async () => {
       const { vm, transport, lock } = setup();
@@ -470,6 +509,24 @@ describe('BuildViewModel', () => {
       await drive(vm, lock, shown(vm));
       expect(vm.findings().map((f) => [f.severity, f.text])).toEqual([['high', 'The limit is not enforced on retry.']]);
       expect(vm.older()).toBe(false);
+    });
+
+    it('findings written out of order are shown most serious first, equal ranks in the order written (R7.1)', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(
+        transport,
+        section(1, '2026-10-19', [
+          { id: 'F1', severity: 'low', text: 'a stale comment' },
+          { id: 'F2', severity: 'high', text: 'the limit is not enforced' },
+          { id: 'F3', severity: 'medium', text: 'the message has no test' },
+          { id: 'F4', severity: 'high', text: 'the retry loops forever' },
+        ]),
+      );
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      const order = ['the limit is not enforced', 'the retry loops forever', 'the message has no test', 'a stale comment'];
+      expect(vm.findings().map((f) => f.text)).toEqual(order);
+      expect(vm.view().findings!.findings.map((f) => f.text)).toEqual(order);
     });
 
     it('a review with no findings shows reviewed, nothing found (R14.3)', async () => {
@@ -591,25 +648,16 @@ describe('BuildViewModel', () => {
     });
   });
 
-  it('Close releases the lock', async () => {
-    const { vm, transport, lock } = setup();
-    await vm.start(await handoffFor(transport), CTX);
-    await drive(vm, lock, finished(vm));
-    await vm.close();
-    expect(lock.active()).toBeNull();
-  });
-
   it('a round that adds commits is reviewed again and the old findings are marked replaced (R8.4)', async () => {
     const { vm, transport, lock } = setup();
     await vm.start(await handoffFor(transport), CTX);
     await drive(vm, lock, finished(vm));
-    await vm.close();
 
     const heads = vi.spyOn(transport, 'sdlcBuildHeads');
     heads.mockResolvedValueOnce({ 'claims-core': 'aaaaaaa' });
     heads.mockResolvedValue({ 'claims-core': 'bbbbbbb' });
     const runSpec = vi.spyOn(transport, 'runSpec');
-    const next = TestBed.runInInjectionContext(() => new BuildViewModel());
+    const next = openHost().debugElement.injector.get(BuildPageViewModel);
     const round = { instructions: 'rename the status field to state', repo: 'claims-core' };
     await next.start(await handoffFor(transport, { round }), CTX);
     await drive(next, lock, finished(next));
@@ -626,10 +674,9 @@ describe('BuildViewModel', () => {
     const { vm, transport, lock } = setup();
     await vm.start(await handoffFor(transport), CTX);
     await drive(vm, lock, finished(vm));
-    await vm.close();
 
     const runSpec = vi.spyOn(transport, 'runSpec');
-    const next = TestBed.runInInjectionContext(() => new BuildViewModel());
+    const next = openHost().debugElement.injector.get(BuildPageViewModel);
     const round = { instructions: 'look at the logging', repo: 'claims-core' };
     await next.start(await handoffFor(transport, { round }), CTX);
     await drive(next, lock, () => next.phase() === 'finished');
@@ -670,9 +717,9 @@ describe('BuildViewModel', () => {
       ],
       waiting: [{ repo: 'customer-portal', task: 'T3', onTask: 'T1', onRepo: 'claims-core' }],
     });
-    expect(vm.rows().find((r) => r.name === 'customer-portal')).toMatchObject({ tone: 'idle', label: 'Waiting for T1 in claims-core' });
+    expect(group(vm, 'customer-portal').status).toEqual({ tone: 'idle', label: 'Waiting for T1 in claims-core' });
     expect(finish).toHaveBeenCalledWith(h.start);
-    expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
+    expect(lock.active()).toBeNull();
   });
 
   describe('a round for the master repository', () => {
@@ -704,10 +751,11 @@ describe('BuildViewModel', () => {
       await advance(500);
       expect(targets).toEqual([MOCK_MASTER]);
       expect(vm.phase()).toBe('stopped');
-      expect(row(vm, MOCK_MASTER)).toMatchObject({ tone: 'error', label: 'Stopped: reached the time limit' });
+      expect(group(vm, MOCK_MASTER).status.tone).toBe('error');
+      expect(stopOf(vm, MOCK_MASTER)!.reason).toBe('stopped: reached the time limit');
       vm.select(MOCK_MASTER);
-      expect(vm.action()).toBe('continue');
-      expect(vm.shown()).toHaveLength(1);
+      expect(group(vm, MOCK_MASTER).action).toBe('continue');
+      expect(vm.shownSessions()).toHaveLength(1);
 
       await vm.continueRun();
       await advance(500);
@@ -725,7 +773,8 @@ describe('BuildViewModel', () => {
       });
       await vm.start(await handoffFor(transport, { round }), CTX);
       await advance(500);
-      expect(row(vm, MOCK_MASTER)).toMatchObject({ tone: 'success', label: 'Finished' });
+      expect(group(vm, MOCK_MASTER).status.tone).not.toBe('error');
+      expect(stopOf(vm, MOCK_MASTER)).toBeUndefined();
     });
 
     it('a round that commits there is reviewed again, from heads that include the master (R8.4)', async () => {
@@ -760,7 +809,8 @@ describe('BuildViewModel', () => {
     expect(runSpec).toHaveBeenCalledTimes(2);
     expect(vm.phase()).toBe('cancelled');
     expect(vm.active()).toBe(false);
-    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'error', label: 'Stopped: cancelled' });
+    expect(group(vm, 'claims-core').status.tone).toBe('error');
+    expect(stopOf(vm, 'claims-core')!.reason).toBe('stopped: cancelled');
     expect(discard).not.toHaveBeenCalled();
   });
 
@@ -773,8 +823,9 @@ describe('BuildViewModel', () => {
     vm.cancelRun();
     await advance(600);
     expect(cancel).toHaveBeenCalledTimes(1);
-    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'error', label: 'Stopped: cancelled' });
-    expect(row(vm, 'customer-portal').tone).not.toBe('error');
+    expect(group(vm, 'claims-core').status.tone).toBe('error');
+    expect(stopOf(vm, 'claims-core')!.reason).toBe('stopped: cancelled');
+    expect(group(vm, 'customer-portal').status.tone).not.toBe('error');
   });
 
   it('Another round on a finished repository, then Cancel, shows Stopped and Continue runs the round again with its instructions (B1)', async () => {
@@ -811,9 +862,10 @@ describe('BuildViewModel', () => {
     await advance(500);
     expect(targets).toEqual(['claims-core']);
     expect(vm.phase()).toBe('stopped');
-    expect(row(vm, 'claims-core')).toMatchObject({ tone: 'error', label: 'Stopped: cancelled' });
+    expect(group(vm, 'claims-core').status.tone).toBe('error');
+    expect(stopOf(vm, 'claims-core')!.reason).toBe('stopped: cancelled');
     vm.select('claims-core');
-    expect(vm.action()).toBe('continue');
+    expect(group(vm, 'claims-core').action).toBe('continue');
 
     await vm.continueRun();
     await advance(500);
@@ -869,7 +921,7 @@ describe('BuildViewModel', () => {
       await advance(500);
       expect(vm.phase()).toBe('building');
       vm.select(MOCK_MASTER);
-      expect(vm.action()).toBe('continue');
+      expect(group(vm, MOCK_MASTER).action).toBe('continue');
       const calls = run.mock.calls.length;
 
       await vm.continueRun();
@@ -914,7 +966,7 @@ describe('BuildViewModel', () => {
       await vm.start(await handoffFor(transport), CTX);
       await advance(500);
       vm.select('claims-core');
-      expect(vm.action()).toBe('continue');
+      expect(group(vm, 'claims-core').action).toBe('continue');
       const calls = run.mock.calls.length;
 
       await vm.continueRun();
@@ -937,7 +989,7 @@ describe('BuildViewModel', () => {
       await advance(500);
       expect(vm.phase()).toBe('building');
       vm.select('claims-core');
-      expect(vm.action()).toBe('continue');
+      expect(group(vm, 'claims-core').action).toBe('continue');
       const calls = run.mock.calls.length;
 
       await vm.continueRun();
@@ -971,6 +1023,104 @@ describe('BuildViewModel', () => {
       await advance(100);
       expect(run).toHaveBeenCalledTimes(2);
       expect(told(run, 'claims-core')).toContain('already confirmed');
+    });
+  });
+
+  describe('a Continue that lands while the build is being released (R14.1, R16.1)', () => {
+    it('waits for the release and takes the lock again, so the run it starts never has a closed lock', async () => {
+      const { vm, transport, runner, lock, preview } = setup(new MockTransport(), 'real');
+      let endPortal!: () => void;
+      let settleBranches!: () => void;
+      let confirmPreview!: () => void;
+      const finish = vi.spyOn(runner, 'finishBuild').mockImplementation(() => new Promise<void>((resolve) => (settleBranches = resolve)));
+      const seen: string[] = [];
+      vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
+        const key = target.kind === 'review' ? 'review' : target.repo;
+        seen.push(key);
+        link.onRun?.(`fake-${seen.length}`);
+        if (key === 'claims-core') {
+          // The first run stops at once; the run after Continue never ends.
+          if (seen.filter((k) => k === key).length === 1) return { exit: 124, error: null };
+          await new Promise<void>(() => undefined);
+        }
+        await new Promise<void>((resolve) => (endPortal = resolve));
+        return { exit: 0, error: null };
+      });
+      vi.spyOn(preview, 'openBuild').mockImplementation(
+        (req) => new Promise((resolve) => (confirmPreview = () => resolve({ off: new Set(req.from.build ?? []), request: null }))),
+      );
+      await vm.start(await handoffFor(transport), CTX);
+      await advance(500);
+      expect(vm.phase()).toBe('building');
+      vm.select('claims-core');
+      expect(group(vm, 'claims-core').action).toBe('continue');
+
+      // Continue is open on its preview while customer-portal's last run ends and the release starts.
+      const going = vm.continueRun();
+      await vi.waitFor(() => expect(confirmPreview).toBeDefined());
+      endPortal();
+      await advance(500);
+      expect(finish).toHaveBeenCalledTimes(1);
+      expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
+
+      // The engineer confirms inside the release.
+      confirmPreview();
+      await advance(200);
+      settleBranches();
+      await going;
+      await advance(500);
+
+      expect(seen.filter((k) => k === 'claims-core')).toHaveLength(2);
+      expect(vm.phase()).toBe('building');
+      expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
+      expect(vm.view().groups.find((g) => g.repo === 'claims-core')!.status.label).toBe('Working · T1');
+    });
+
+    it('prepares the branches again when the release starts while Continue reads the participants, before the run launches', async () => {
+      const { vm, transport, runner, lock } = setup();
+      let endPortal!: () => void;
+      let answerParticipants!: () => void;
+      let armed = false;
+      const real = transport.sdlcBuildParticipants.bind(transport);
+      vi.spyOn(transport, 'sdlcBuildParticipants').mockImplementation(async (...args) => {
+        const out = await real(...args);
+        if (armed) await new Promise<void>((resolve) => (answerParticipants = resolve));
+        return out;
+      });
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+      vi.spyOn(runner, 'finishBuild').mockResolvedValue();
+      const seen: string[] = [];
+      vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
+        const key = target.kind === 'review' ? 'review' : target.repo;
+        seen.push(key);
+        link.onRun?.(`fake-${seen.length}`);
+        if (key === 'claims-core') {
+          if (seen.filter((k) => k === key).length === 1) return { exit: 124, error: null };
+          await new Promise<void>(() => undefined);
+        }
+        await new Promise<void>((resolve) => (endPortal = resolve));
+        return { exit: 0, error: null };
+      });
+      await vm.start(await handoffFor(transport), CTX);
+      await advance(500);
+      expect(vm.phase()).toBe('building');
+      vm.select('claims-core');
+      const prepared = prepare.mock.calls.length;
+
+      armed = true;
+      const going = vm.continueRun();
+      await vi.waitFor(() => expect(answerParticipants).toBeDefined());
+      endPortal();
+      await advance(500);
+      expect(lock.active()).toBeNull();
+
+      answerParticipants();
+      await going;
+      await advance(200);
+
+      expect(prepare.mock.calls.slice(prepared).map((c) => c[6])).toEqual(['continue']);
+      expect(seen.filter((k) => k === 'claims-core')).toHaveLength(2);
+      expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
     });
   });
 });
@@ -1148,5 +1298,333 @@ describe('the build\'s choices in the build view', () => {
     await advance(500);
     expect(run).toHaveBeenCalledTimes(2);
     expect(givens.build(KEY)!.off).toEqual(new Set([GITHUB]));
+  });
+});
+
+const LEFT: Leftovers = { new_commits: [], discardable: ['src/x.rs'], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
+
+/** claims-core has an unfinished task and customer-portal waits for it, however many runs end. */
+const UNFINISHED: BuildStatus = {
+  hasTasks: true,
+  problems: [],
+  logLayouts: [],
+  departures: [],
+  tasks: [
+    { id: 'T1', name: 'one', repo: 'claims-core', dependsOn: [], text: '### T1', row: null },
+    { id: 'T2', name: 'two', repo: 'customer-portal', dependsOn: ['T1'], text: '### T2', row: null },
+  ],
+  repos: [
+    { repo: 'claims-core', firstUnfinished: 'T1', state: { kind: 'ready', task: 'T1' }, tasks: 1, finished: 0 },
+    { repo: 'customer-portal', firstUnfinished: 'T2', state: { kind: 'waiting', task: 'T2', onTask: 'T1', onRepo: 'claims-core' }, tasks: 1, finished: 0 },
+  ],
+};
+
+/** A build whose runs really run, so each leaves `LEFT` behind, and are then reported as out of time: the build stops with its leftovers on show. */
+async function stoppedWithLeftovers() {
+  const ctx = setup();
+  const { vm, transport, runner, lock } = ctx;
+  vi.spyOn(transport, 'sdlcLeftovers').mockResolvedValue(LEFT);
+  vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(UNFINISHED);
+  const discard = vi.spyOn(transport, 'sdlcDiscard');
+  const real = runner.runInRepo.bind(runner);
+  const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
+    await real(target, spec, link);
+    return { exit: 124, error: null };
+  });
+  await vm.start(await handoffFor(transport), CTX);
+  await drive(vm, lock, () => vm.phase() === 'stopped' && runner.leftovers() !== null);
+  return { ...ctx, run, discard };
+}
+
+it('the lock is released once the build is settled and taken again by Continue', async () => {
+  const { vm, runner, lock } = await stoppedWithLeftovers();
+  // The build is over, but the leftovers are still on show: the page keeps the lock until the engineer has chosen.
+  expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
+  runner.closeLeftovers();
+  await advance(300);
+  expect(runner.leftovers()).toBeNull();
+  expect(lock.active()).toBeNull();
+
+  vm.select('claims-core');
+  await vm.continueRun();
+  await advance(100);
+  expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
+});
+
+describe('no leftover is discarded without the engineer\'s choice', () => {
+  it('continuing the stopped repository on top of its leftovers discards nothing', async () => {
+    const { vm, transport, runner, run, discard } = await stoppedWithLeftovers();
+    runner.closeLeftovers();
+    await advance(300);
+    vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['src/x.rs'] }] });
+    vm.select('claims-core');
+    await vm.continueRun();
+    expect(vm.leftoverPrompt()).toEqual({ lines: ['claims-core: src/x.rs'] });
+    await vm.confirmContinue();
+    await advance(300);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(discard).not.toHaveBeenCalled();
+  });
+
+  it('asking for a round discards nothing', async () => {
+    const { vm, transport, runner, run, discard } = await stoppedWithLeftovers();
+    runner.closeLeftovers();
+    await advance(300);
+    const round = { instructions: 'tidy up the logging', repo: 'claims-core' };
+    expect(await vm.start(await handoffFor(transport, { round }), CTX)).toBe(true);
+    await advance(300);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(run.mock.calls[1][1].task).toContain('tidy up the logging');
+    expect(discard).not.toHaveBeenCalled();
+  });
+
+  it('leaving the page with leftovers on show discards nothing', async () => {
+    const { host, runner, discard } = await stoppedWithLeftovers();
+    expect(runner.leftovers()).not.toBeNull();
+    hosts = hosts.filter((h) => h !== host);
+    host.destroy();
+    await advance(300);
+    expect(discard).not.toHaveBeenCalled();
+  });
+});
+
+describe('the build page shows tasks and sessions from the build log, the run links and the records', () => {
+  const secs = (h: number, m = 0) => Math.floor(new Date(2026, 9, 19, h, m, 0).getTime() / 1000);
+  const link = (stage: string, run_id: string, started_at: number): RunLink => ({ workspace_id: 'acme-claims', system: 'claims', change: MOCK_BUILD_CHANGE, stage, run_id, started_at });
+  const taskLink = (task: string, run_id: string, repo = 'claims-core'): TaskLink => ({ workspace_id: 'acme-claims', system: 'claims', change: MOCK_BUILD_CHANGE, repo, task, run_id });
+  const record = (id: string, exit: number): RunRecord => ({ id, kata: 'build', started_at: 0, isolation: 'none', exit, turns: 7, cost_usd: 0.5 });
+  const T1_ROW = { task: 'T1', repo: 'claims-core', commits: ['aaaaaaa'], departure: null };
+
+  /** A page opened on a change with nothing running; T1 is in the build log when `built`. */
+  async function opened(over: { links?: RunLink[]; taskLinks?: TaskLink[]; records?: RunRecord[]; built?: boolean; stage?: ChangeInfo['stage'] } = {}) {
+    const s = setup();
+    vi.spyOn(s.transport, 'sdlcRunLinks').mockResolvedValue(over.links ?? []);
+    vi.spyOn(s.transport, 'sdlcTaskLinks').mockResolvedValue(over.taskLinks ?? []);
+    vi.spyOn(s.transport, 'listRuns').mockResolvedValue(over.records ?? []);
+    const status = await s.transport.sdlcBuildStatus(FOLDER, 'claims', MOCK_BUILD_CHANGE);
+    if (over.built ?? true) status.tasks = status.tasks.map((t) => (t.id === 'T1' ? { ...t, row: T1_ROW } : t));
+    const [found] = (await s.transport.sdlcChanges(`${FOLDER}/${MOCK_MASTER}`, 'claims')).filter((c) => c.change === MOCK_BUILD_CHANGE);
+    const change = over.stage === undefined ? found : { ...found, stage: over.stage };
+    const load = () => s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change, status, done: false, review: null });
+    return { ...s, load, status };
+  }
+  const states = (vm: BuildPageViewModel, repo: string) => Object.fromEntries(vm.taskAreas().find((g) => g.repo === repo)!.tasks.map((t) => [t.id, t.state.kind]));
+
+  it('a committed row shows its task done and the next one running without a click', async () => {
+    const { vm, transport } = setup();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    expect(states(vm, 'customer-portal')).toEqual({ T2: 'running', T3: 'not-started' });
+    const sdlc = (transport as unknown as { sdlc: { commitRows(t: { id: string; name: string; repo: string; dependsOn: string[] }[]): void } }).sdlc;
+    sdlc.commitRows([
+      { id: 'T1', name: '', repo: 'claims-core', dependsOn: [] },
+      { id: 'T2', name: '', repo: 'customer-portal', dependsOn: [] },
+    ]);
+    await advance(2500);
+    expect(states(vm, 'customer-portal')).toEqual({ T2: 'done', T3: 'running' });
+  });
+
+  it('picking a task shows the session that recorded it', async () => {
+    const { vm, load } = await opened({
+      links: [link('build:claims-core', 'run-a', secs(8)), link('build:claims-core', 'run-b', secs(9))],
+      taskLinks: [taskLink('T1', 'run-b')],
+    });
+    await load();
+    vm.choose({ kind: 'task', task: 'T1' });
+    expect(vm.shownSessions().map((s) => s.id)).toEqual(['run-b']);
+    expect(vm.shownSessions()[0]).toMatchObject({ latest: true, spec: null });
+    expect(vm.sessionNote()).toBeNull();
+  });
+
+  it('a task with no known session shows its repository\'s sessions and says so', async () => {
+    const { vm, load } = await opened({ links: [link('build:claims-core', 'run-a', secs(8)), link('build:claims-core', 'run-b', secs(9))] });
+    await load();
+    vm.choose({ kind: 'task', task: 'T1' });
+    expect(vm.shownSessions().map((s) => s.id)).toEqual(['run-a', 'run-b']);
+    expect(vm.sessionNote()).toBe('This task was recorded before Kata linked tasks to runs, or on another machine. Showing every session of claims-core.');
+  });
+
+  it('a reopened change at build-stopped names why a repository stopped once, in one wording (R2.1, R6.1)', async () => {
+    const { vm, load } = await opened({ built: false, stage: 'build-stopped', links: [link('build:claims-core', 'run-a', secs(8))], records: [record('run-a', 1)] });
+    await load();
+    const view = vm.view();
+    expect(view.stops).toContainEqual({ repo: 'claims-core', reason: 'stopped: the agent failed' });
+    expect(group(vm, 'claims-core').stopLine).toBe('stopped: the agent failed');
+    // The stops list says it; the stage message does not say it again (R6.1).
+    expect(view.stageMessage!.lines.filter((l) => l.includes('claims-core'))).toEqual([]);
+    expect(view.stops.filter((s) => s.repo === 'claims-core')).toHaveLength(1);
+    expect(JSON.stringify(view)).not.toContain('Stopped: Stopped');
+    expect(JSON.stringify(view)).not.toContain('stopped: Stopped');
+  });
+
+  it('a combination the situation table calls impossible gives one fallback heading and does not break the page (R2.1)', async () => {
+    const { vm, load } = await opened({ built: false, stage: 'build-finished' });
+    await load();
+    expect(() => vm.view()).not.toThrow();
+    const g = group(vm, 'claims-core');
+    expect(g.status).toEqual({ tone: 'warning', label: 'Cannot tell where this stands' });
+    expect(g.action).toBeNull();
+    expect(g.tasks.length).toBeGreaterThan(0);
+    expect(g.tasks.every((t) => t.status.label === 'Not started')).toBe(true);
+  });
+
+  it('earlier runs fold under the latest with their start time and how they ended', async () => {
+    const { vm, transport, load } = await opened({
+      built: false,
+      links: [link('build:claims-core', 'run-a', secs(8)), link('build:claims-core', 'run-b', secs(8, 30))],
+      records: [record('run-a', 124), record('run-b', 1)],
+    });
+    await load();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    vm.choose({ kind: 'repo', repo: 'claims-core' });
+    const [a, b, live] = vm.shownSessions();
+    expect([a.id, b.id]).toEqual(['run-a', 'run-b']);
+    expect([a.startedAt, b.startedAt]).toEqual(['08:00:00', '08:30:00']);
+    expect(a.outcome).toContain('exit 124');
+    expect(b.outcome).toContain('exit 1 ');
+    expect([a.latest, b.latest, live.latest]).toEqual([false, false, true]);
+    expect([a.expanded, b.expanded, live.expanded]).toEqual([false, false, false]);
+    expect(live.spec).not.toBeNull();
+    vm.toggleRun('run-a');
+    expect(vm.shownSessions()[0].expanded).toBe(true);
+  });
+
+  it('a run\'s end links the tasks it recorded', async () => {
+    const { vm, transport, lock } = setup();
+    const linkTasks = vi.spyOn(transport, 'sdlcLinkTasks');
+    await vm.start(await handoffFor(transport), CTX);
+    await drive(vm, lock, () => linkTasks.mock.calls.some(([l]) => l.some((x) => x.repo === 'claims-core')));
+    const id = vm.groups().find((g) => g.key === 'claims-core')!.runs[0].id;
+    expect(linkTasks).toHaveBeenCalledWith([taskLink('T1', id)]);
+  });
+
+  it('a not-started change with uncommitted edits shows the files area', async () => {
+    const { vm, transport, load } = await opened({ built: false });
+    const empty = { files: [], loc: [] };
+    const listing = { files: [{ path: 'src/a.ts', oldPath: null, status: 'modified', added: 1, removed: 0, binary: false, uncommitted: true }], loc: [] };
+    const read = vi.spyOn(transport, 'sdlcDiffFiles').mockImplementation((path) => Promise.resolve((path.endsWith('claims-core') ? listing : empty) as never));
+    await load();
+    await advance(100);
+    expect(vm.view().areas.files).toBe(true);
+    read.mockResolvedValue(empty as never);
+    await load();
+    await advance(100);
+    expect(vm.view().areas.files).toBe(false);
+  });
+
+  it('every live session stays in the view, hidden, whatever is picked', async () => {
+    const { vm, transport } = setup();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    const idOf = (key: string) => vm.groups().find((g) => g.key === key)!.runs[0].id;
+    const [core, portal] = [idOf('claims-core'), idOf('customer-portal')];
+    const find = (id: string) => vm.view().sessions.find((x) => x.id === id);
+    vm.choose({ kind: 'repo', repo: 'claims-core' });
+    expect(find(core)?.shown).not.toBe(false);
+    expect(find(portal)?.shown).toBe(false);
+    vm.choose({ kind: 'repo', repo: 'customer-portal' });
+    expect(find(portal)?.shown).not.toBe(false);
+    expect(find(core)?.shown).toBe(false);
+  });
+});
+
+describe('what the pick is and what the activity area shows for it', () => {
+  const commitRows = (transport: MockTransport) =>
+    (transport as unknown as { sdlc: { commitRows(t: { id: string; name: string; repo: string; dependsOn: string[] }[]): void } }).sdlc.commitRows([
+      { id: 'T1', name: '', repo: 'claims-core', dependsOn: [] },
+      { id: 'T2', name: '', repo: 'customer-portal', dependsOn: [] },
+    ]);
+
+  it('picks the review by the stage alone: while it runs, then its findings, whatever was picked or gone to earlier (R2.1, D9)', async () => {
+    const { vm, transport, lock } = setup();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    vm.goTo('customer-portal');
+    vm.choose({ kind: 'task', task: 'T2' });
+    expect(vm.pick()).toEqual({ kind: 'task', task: 'T2' });
+    await drive(vm, lock, () => vm.stage() === 'reviewing');
+    expect(vm.pick()).toEqual({ kind: 'review' });
+    expect(vm.view().review.picked).toBe(true);
+    expect(vm.shownSessions().length).toBe(1);
+    expect(vm.shownSessions()[0].live).toBe(true);
+    expect(vm.focusRequest()).toBeNull();
+    vm.choose({ kind: 'repo', repo: 'claims-core' });
+    expect(vm.pick()).toEqual({ kind: 'repo', repo: 'claims-core' });
+    await drive(vm, lock, finished(vm));
+    expect(vm.stage()).toBe('review-finished');
+    expect(vm.pick()).toEqual({ kind: 'review' });
+    expect(vm.view().findings).not.toBeNull();
+  });
+
+  it('a Go to picks the repository and asks for its question to be brought into view, once per Go to', async () => {
+    const { vm, transport } = setup();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    vm.choose({ kind: 'repo', repo: 'claims-core' });
+    expect(vm.focusRequest()).toBeNull();
+    vm.goTo('customer-portal');
+    const first = vm.focusRequest();
+    expect(vm.pick()).toEqual({ kind: 'repo', repo: 'customer-portal' });
+    expect(first).toMatchObject({ repo: 'customer-portal' });
+    vm.goTo('customer-portal');
+    expect(vm.focusRequest()!.n).toBeGreaterThan(first!.n);
+    vm.choose({ kind: 'repo', repo: 'claims-core' });
+    expect(vm.focusRequest()).toBeNull();
+  });
+
+  it('links a task to the live run that recorded it at once, and a picked task then shows that session (R2 F2, R3.3)', async () => {
+    const { vm, transport } = setup();
+    const linkTasks = vi.spyOn(transport, 'sdlcLinkTasks');
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    const id = vm.groups().find((g) => g.key === 'claims-core')!.runs[0].id;
+    commitRows(transport);
+    await advance(2500);
+    expect(vm.groups().find((g) => g.key === 'claims-core')!.runs[0].state).toMatch(/running|awaiting/);
+    expect(linkTasks.mock.calls.flat(2)).toContainEqual(expect.objectContaining({ repo: 'claims-core', task: 'T1', run_id: id }));
+    vm.choose({ kind: 'task', task: 'T1' });
+    expect(vm.shownSessions().map((s) => s.id)).toEqual([id]);
+    expect(vm.sessionNote()).toBeNull();
+  });
+
+  it('does not write a task link again when the run ends', async () => {
+    const { vm, transport, lock } = setup();
+    const linkTasks = vi.spyOn(transport, 'sdlcLinkTasks');
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    commitRows(transport);
+    await advance(2500);
+    await drive(vm, lock, finished(vm));
+    const written = linkTasks.mock.calls.flatMap(([links]) => links.map((l) => `${l.repo}/${l.task}/${l.run_id}`));
+    expect(written.length).toBeGreaterThan(0);
+    expect(new Set(written).size).toBe(written.length);
+  });
+
+  it('keeps the picked task\'s identity when the build log is read again, so the Changes view keeps its untied files shown (R5.2)', async () => {
+    const { vm, transport } = setup();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    vm.choose({ kind: 'task', task: 'T2' });
+    const before = vm.pickedTask();
+    expect(before).toEqual(expect.objectContaining({ id: 'T2', repo: 'customer-portal' }));
+    commitRows(transport);
+    await advance(2500);
+    expect(vm.pickedTask()).toBe(before);
+  });
+
+  it('a pick of the same task again is a new pick, so the Changes view starts over (T9, R5.2)', async () => {
+    const { vm, transport } = setup();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    vm.choose({ kind: 'task', task: 'T2' });
+    const first = vm.pickedTask();
+    vm.choose({ kind: 'task', task: 'T2' });
+    const again = vm.pickedTask();
+    expect(again).toEqual(expect.objectContaining({ id: 'T2', repo: 'customer-portal' }));
+    expect(again).not.toBe(first);
+    commitRows(transport);
+    await advance(2500);
+    expect(vm.pickedTask()).toBe(again);
   });
 });

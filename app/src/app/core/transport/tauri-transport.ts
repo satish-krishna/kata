@@ -20,6 +20,7 @@ import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Decision } from '@bindings/Decision';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { RunLink } from '@bindings/RunLink';
+import type { TaskLink } from '@bindings/TaskLink';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { ReadError } from '../../lib/doc-notice';
@@ -30,6 +31,7 @@ import type { PrepareOutcome } from '@bindings/PrepareOutcome';
 import type { BuildStart } from '@bindings/BuildStart';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { Part } from '@bindings/Part';
+import type { CommitFiles } from '@bindings/CommitFiles';
 import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { BaseInfo } from '@bindings/BaseInfo';
@@ -91,6 +93,8 @@ export class TauriTransport extends KataTransport {
   sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean) { return this.ipc.invoke<DecideOutcome>('sdlc_decide', { master, system, change, decision, confirmed }); }
   sdlcRunLinks() { return this.ipc.invoke<RunLink[]>('sdlc_run_links'); }
   sdlcLinkRun(link: RunLink) { return this.ipc.invoke<void>('sdlc_link_run', { link }); }
+  sdlcTaskLinks() { return this.ipc.invoke<TaskLink[]>('sdlc_task_links'); }
+  sdlcLinkTasks(links: TaskLink[]) { return this.ipc.invoke<void>('sdlc_link_tasks', { links }); }
   sdlcWaitRunExit(runId: string, timeoutMs: number) { return this.ipc.invoke<boolean>('sdlc_wait_run_exit', { runId, timeoutMs }); }
   sdlcBuildStatus(master: string, system: string, change: string) { return this.ipc.invoke<BuildStatus>('sdlc_build_status', { master, system, change }); }
   async sdlcReadParsed(master: string, system: string, change: string, doc: string): Promise<ReadResult | ReadError | null> {
@@ -112,6 +116,7 @@ export class TauriTransport extends KataTransport {
   sdlcChangeRepos(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<ChangeRepo[]>('sdlc_change_repos', { folder, masterRepo, system, change }); }
   sdlcMissingChangeBranches(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<string[]>('sdlc_missing_change_branches', { folder, masterRepo, system, change }); }
   sdlcDiffFiles(repoPath: string, part: Part) { return this.ipc.invoke<DiffListing>('sdlc_diff_files', { repoPath, part }); }
+  sdlcCommitFiles(repoPath: string) { return this.ipc.invoke<CommitFiles[]>('sdlc_commit_files', { repoPath }); }
   sdlcDiffPair(repoPath: string, part: Part, path: string) { return this.ipc.invoke<FilePair>('sdlc_diff_pair', { repoPath, part, path }); }
   sdlcDiffBase(repoPath: string) { return this.ipc.invoke<BaseInfo>('sdlc_diff_base', { repoPath }); }
   sdlcTouchedRepos(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<PublishRepo[]>('sdlc_touched_repos', { folder, masterRepo, system, change }); }

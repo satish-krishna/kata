@@ -302,7 +302,7 @@ export class BuildDriver {
       outcome = HELD;
       why = ' · could not tell where the build stands';
     }
-    if (outcome.kind === 'stop') this.stopAtCurrentTask(repo, task, now, end, cancelled, outcome.held === true, why);
+    if (outcome.kind === 'stop') this.stopAtCurrentTask(repo, task, now, end, cancelled, outcome.held === true, why, facts.recorded);
     return outcome;
   }
 
@@ -315,10 +315,11 @@ export class BuildDriver {
     cancelled: boolean,
     held: boolean,
     why: string,
+    recorded: boolean,
   ): void {
     // A repository with every task recorded has no task: `look` sees '' for it, so the stop must match that.
     const current = now?.state.kind === 'ready' || now?.state.kind === 'waiting' ? now.state.task : now?.state.kind === 'done' ? '' : launchedOn;
-    const text = end.refused && !cancelled ? `Stopped: ${end.error}` : stopMessage(end.exit, end.error, cancelled);
+    const text = end.refused && !cancelled ? `Stopped: ${end.error}` : stopMessage(end.exit, end.error, cancelled, recorded);
     this.markStopped(repo, current, text + why, held);
   }
 }

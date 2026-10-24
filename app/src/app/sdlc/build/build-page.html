@@ -1,0 +1,175 @@
+<section class="k-bp" aria-label="Build" [attr.data-narrow]="view().narrow ? '' : null">
+  <div class="sr-only" aria-live="assertive" aria-atomic="true">{{ view().announcement }}</div>
+  <div class="k-bp__notice">
+    <app-waiting-notice [items]="view().waiting" (goTo)="goToRepo($event)" />
+  </div>
+  <div class="k-bp__bar" data-bar>
+    <span class="k-lock__count">{{ view().facts.tasks }}</span>
+    @if (view().facts.elapsed; as elapsed) {
+      <span class="k-mono k-bp__elapsed">{{ elapsed }}</span>
+    }
+    <span class="k-bp__actions">
+      @for (a of view().actions; track a) {
+        <button hlmBtn size="sm" type="button" [variant]="primary() === a ? 'primary' : 'secondary'" (click)="press(a)">{{ labelOf(a) }}</button>
+      }
+    </span>
+  </div>
+  @if (view().narrow) {
+    <div class="k-bp__switch">
+      <app-segmented [options]="options()" [value]="on()" (valueChange)="panel.set($event)" ariaLabel="Build areas" />
+    </div>
+  }
+  <div hlmResizableGroup class="k-bp__body" direction="horizontal" [layout]="layout()">
+    <section hlmResizablePanel id="build-page-tasks" data-area="tasks" aria-label="Tasks" [defaultSize]="22" [minSize]="12" [collapsible]="false" [hidden]="view().narrow && on() !== 'tasks'">
+      @for (g of view().groups; track g.repo) {
+        <div class="k-bp__group" data-group>
+          <div class="k-bp__heading" data-heading>
+            <button hlmBtn variant="bare" size="bare" type="button" class="k-mono k-bp__name" [attr.aria-current]="g.picked ? 'true' : null" (click)="choose({ kind: 'repo', repo: g.repo })">{{ g.repo }}</button>
+            <span [class]="'k-status k-status--' + g.status.tone"><span class="k-status__dot"></span>{{ g.status.label }}</span>
+            @if (g.clock) {
+              <span class="k-mono k-bp__clock">{{ g.clock }}</span>
+            }
+            @if (g.paused) {
+              <span class="k-mono k-bp__paused">{{ g.paused }}</span>
+            }
+            @if (g.unseen) {
+              <span class="k-mono k-bp__new">{{ g.unseen }} new</span>
+            }
+            @switch (g.action) {
+              @case ('cancel') {
+                <button hlmBtn variant="secondary" size="sm" type="button" (click)="repoAction.emit({ repo: g.repo, action: 'cancel' })">Cancel</button>
+              }
+              @case ('continue') {
+                <button hlmBtn variant="secondary" size="sm" type="button" (click)="repoAction.emit({ repo: g.repo, action: 'continue' })">Continue {{ g.repo }}</button>
+              }
+            }
+          </div>
+          <ul class="k-bp__tasks">
+            @for (t of g.tasks; track t.id) {
+              <li>
+                <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__task" data-task [attr.aria-current]="t.picked ? 'true' : null" (click)="choose({ kind: 'task', task: t.id })">
+                  <span class="k-mono">{{ t.id }}</span>
+                  <span class="k-bp__task-name">{{ t.name }}</span>
+                  <span [class]="'k-status k-status--' + t.status.tone"><span class="k-status__dot"></span>{{ t.status.label }}</span>
+                  @if (t.departure; as departure) {
+                    <span class="k-mono k-bp__departure" data-departure>Departure: {{ departure }}</span>
+                  }
+                </button>
+              </li>
+            }
+          </ul>
+        </div>
+      }
+      <div class="k-bp__group">
+        <div class="k-bp__heading">
+          <button hlmBtn variant="bare" size="bare" type="button" class="k-mono k-bp__name" data-review [attr.aria-current]="view().review.picked ? 'true' : null" (click)="choose({ kind: 'review' })">Review</button>
+          <span [class]="'k-status k-status--' + view().review.status.tone"><span class="k-status__dot"></span>{{ view().review.status.label }}</span>
+          @switch (view().review.action) {
+            @case ('cancel') {
+              <button hlmBtn variant="secondary" size="sm" type="button" (click)="repoAction.emit({ repo: 'review', action: 'cancel' })">Cancel</button>
+            }
+            @case ('continue') {
+              <button hlmBtn variant="secondary" size="sm" type="button" (click)="repoAction.emit({ repo: 'review', action: 'continue' })">Continue review</button>
+            }
+          }
+        </div>
+      </div>
+    </section>
+    @if (view().areas.activity) {
+      <hlm-resizable-handle withHandle aria-label="Resize the tasks and the activity" />
+      <section hlmResizablePanel id="build-page-activity" data-area="activity" aria-label="Activity" [defaultSize]="39" [minSize]="20" [collapsible]="false" [hidden]="view().narrow && on() !== 'activity'">
+        @if (view().stageMessage; as message) {
+          <div class="k-bp__stage" data-stage>
+            <h2 class="k-state__title">{{ message.title }}</h2>
+            @if (message.lines.length > 0) {
+              <ul class="k-state__list">
+                @for (line of message.lines; track $index) {
+                  <li>{{ line }}</li>
+                }
+              </ul>
+            }
+          </div>
+        }
+        @if (view().stops.length > 0) {
+          <ul class="k-bp__stops" data-stops>
+            @for (s of view().stops; track s.repo) {
+              <li>
+                <span class="k-mono">{{ s.repo }}</span>&ngsp;<span class="k-status k-status--error"><span class="k-status__dot"></span>{{ s.reason }}</span>
+              </li>
+            }
+          </ul>
+        }
+        @if (view().findings; as found) {
+          @if (view().pick?.kind === 'review') {
+            @if (found.notice; as notice) {
+              <div [class]="notice.tone === 'warning' ? 'wb-banner wb-banner--warn' : 'wb-banner wb-banner--quiet'" data-testid="review-notice" role="status">
+                <span [class]="'k-status k-status--' + (notice.tone === 'warning' ? 'warning' : 'idle')"><span class="k-status__dot"></span>{{ notice.text }}</span>
+                @if (notice.lines.length > 0) {
+                  <ul class="wb-banner__list wb-banner__list--lines k-mono">
+                    @for (line of notice.lines; track $index) {
+                      <li>{{ line }}</li>
+                    }
+                  </ul>
+                }
+              </div>
+            }
+            <app-findings-list [findings]="found.findings" [replaced]="found.replaced" [older]="found.older" [emptyText]="found.emptyText" />
+          }
+        }
+        @if (view().sessionNote; as note) {
+          <p class="k-state__body">{{ note }}</p>
+        }
+        @for (s of view().sessions; track s.id) {
+          <div class="k-bp__session" [attr.data-session]="s.id" [hidden]="s.shown === false || (view().findings !== null && view().pick?.kind === 'review')">
+            @if (s.latest) {
+              <div class="k-bp__run-start">Started <span class="k-mono">{{ s.startedAt }}</span></div>
+            } @else {
+              <div class="k-bp__run-start">
+                <button hlmBtn variant="ghost" size="sm" type="button" data-run-line [attr.aria-expanded]="s.expanded" (click)="toggleRun.emit(s.id)">
+                  <ng-icon [name]="s.expanded ? 'lucideChevronDown' : 'lucideChevronRight'" size="14" />
+                  Started <span class="k-mono">{{ s.startedAt }}</span> · {{ s.outcome }}
+                </button>
+              </div>
+            }
+            @if (s.note; as sessionNote) {
+              <p class="k-state__body">{{ sessionNote }}</p>
+            }
+            <!-- An earlier session folds to its line, but its pane stays mounted: RunStore keeps folding its events. -->
+            <div class="k-bp__pane" data-pane [hidden]="!s.latest && !s.expanded">
+              <app-observe-pane
+                [state]="s.state"
+                [events]="s.events"
+                [spec]="s.spec"
+                [summary]="s.summary"
+                [asks]="s.asks"
+                [permissions]="s.permissions"
+                [given]="s.given"
+                mode="sdlc"
+                [unseenFrom]="s.unseenFrom"
+                (answer)="answer.emit({ runId: s.id, id: $event.id, answers: $event.answers })"
+                (decide)="decide.emit({ runId: s.id, id: $event.id, allow: $event.allow, message: $event.message })"
+              />
+            </div>
+          </div>
+        }
+      </section>
+    }
+    @if (view().areas.files) {
+      <hlm-resizable-handle withHandle aria-label="Resize the activity and the changed files" />
+      <section hlmResizablePanel id="build-page-files" data-area="files" aria-label="Changed files" [defaultSize]="39" [minSize]="20" [collapsible]="false" [hidden]="view().narrow && on() !== 'files'">
+        @if (context(); as ctx) {
+          <app-changes-view
+            [folder]="ctx.folder"
+            [masterRepo]="ctx.masterRepo"
+            [system]="ctx.system"
+            [change]="ctx.change"
+            [turns]="turns()"
+            [rows]="rows()"
+            [task]="task()"
+            [stopped]="stopped()"
+          />
+        }
+      </section>
+    }
+  </div>
+</section>

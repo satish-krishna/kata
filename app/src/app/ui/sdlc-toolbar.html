@@ -27,8 +27,20 @@
     />
   }
   <nav class="k-crumbs" aria-label="Breadcrumb">
+    @if (back(); as label) {
+      <button
+        hlmBtn
+        variant="bare"
+        size="bare"
+        class="k-crumbs__back"
+        type="button"
+        aria-label="Back to the changes list"
+        [disabled]="locked()"
+        (click)="goBack.emit()"
+      >{{ label }}</button>
+    }
     @for (crumb of crumbs(); track $index) {
-      <ng-icon name="lucideChevronRight" size="14" />
+      <span class="k-crumbs__sep" aria-hidden="true"><ng-icon name="lucideChevronRight" size="14" /></span>
       <span class="k-crumbs__item" [attr.title]="crumb">{{ crumb }}</span>
     }
   </nav>
