@@ -12,7 +12,7 @@ import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { tieFiles } from '../../lib/file-ties';
 import type { DiffLayout } from '../../ui/diff-bar';
-import type { StepRequest } from '../../ui/diff-editor/diff-editor';
+import type { FindingMark, StepRequest } from '../../ui/diff-editor/diff-editor';
 import type { FileRef, RepoFile, RepoFileGroup } from '../../ui/repo-file-list';
 
 /** What the Changes view looks at: the workspace folder, its master repository, and the system's change. */
@@ -23,6 +23,9 @@ export const PART_OPTIONS: { value: Part; label: string }[] = [
   { value: 'committed', label: 'Committed' },
   { value: 'uncommitted', label: 'Uncommitted' },
 ];
+
+/** A finding the engineer picked, as the host passes it: `n` makes a repeated pick of the same finding a new request. */
+export type ShowAt = { file: string; line: number | null; text: string; n: number };
 
 /** Below this width the list stacks above the diff and the editor is always inline (Tailwind's `md` breakpoint). */
 const NARROW = '(max-width: 767.98px)';
@@ -81,6 +84,12 @@ export class ChangesViewModel {
   readonly narrow = signal(false);
   /** The engineer asked to step to the next or previous change; the editor does it. */
   readonly stepRequest = signal<StepRequest | null>(null);
+  /** One line saying why a picked finding did not simply open, or null. */
+  readonly findingNote = signal<string | null>(null);
+  /** The repositories that all have the picked finding's file, for the engineer to choose from; null when there is no choice to make. */
+  readonly findingChoice = signal<{ repos: string[]; path: string; line: number | null; text: string } | null>(null);
+  /** The picked finding's place in the open file, which the editor marks. */
+  readonly mark = signal<FindingMark | null>(null);
   readonly sideBySide = computed(() => this.layout() === 'side' && !this.narrow());
 
   readonly partOptions = PART_OPTIONS;
@@ -199,6 +208,16 @@ export class ChangesViewModel {
   /** List the files not tied to the picked task under its repository. */
   showUntied(): void {
     this.untiedShown.set(true);
+  }
+
+  /** Show a picked finding's file at its line. Not implemented yet. */
+  async showAt(_request: ShowAt): Promise<void> {
+    await Promise.resolve();
+  }
+
+  /** Continue a picked finding in the repository the engineer chose from the list. Not implemented yet. */
+  async chooseRepo(_repo: string): Promise<void> {
+    await Promise.resolve();
   }
 
   step(direction: StepRequest['direction']): void {

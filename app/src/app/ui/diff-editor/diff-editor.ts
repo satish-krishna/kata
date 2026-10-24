@@ -8,6 +8,9 @@ import { monaco, type MonacoApi } from './monaco.loader';
 /** A request to move to the next or previous change; the serial makes two requests in a row different. */
 export type StepRequest = { direction: 'next' | 'previous'; serial: number };
 
+/** Where a finding sits in the open file: the line to bring into view and mark (null shows the file from its top), and what the finding says. */
+export type FindingMark = { line: number | null; text: string };
+
 /**
  * The one Monaco diff editor of the Changes view. Read-only, folds unchanged regions, and
  * swaps in a fresh pair of models for each file, disposing the previous pair once the editor
@@ -26,6 +29,8 @@ export class DiffEditor {
   readonly modifiedText = input<string | null>(null);
   /** Moves to the next or previous change each time it is a new request. */
   readonly stepRequest = input<StepRequest | null>(null);
+  /** A finding's place in the open file: its line is revealed in the centre of the new side, marked, and its text shown below the line. */
+  readonly mark = input<FindingMark | null>(null);
 
   protected readonly binary = computed(() => this.pair()?.binary === true);
   private readonly host = viewChild.required<ElementRef<HTMLElement>>('host');
