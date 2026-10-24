@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Kata Workbench — build page (docked layout prototype)</title>
+<link rel="stylesheet" href="../design_system/styles.css" />
+<link rel="stylesheet" href="workbench.css" />
+<style>
+  /* ============================================================
+     BUILD PAGE — docked, resizable, mode-based layout.
+     Prototype only: vanilla JS so it opens straight from disk.
+     Recreate in Angular, never copy.
+     ============================================================ */
+  body { margin: 0; }
+  [hidden] { display: none !important; }
+  .bp { display: flex; flex-direction: column; height: 100vh; background: var(--surface-app); color: var(--text-primary); overflow: hidden; }
+
+  /* ---------- Toolbar ---------- */
+  .bp-change { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .bp-change__name { font: var(--weight-semibold) var(--text-md)/1.1 var(--font-sans); white-space: nowrap; }
+  .bp-change__meta { font: var(--text-2xs)/1 var(--font-mono); color: var(--text-faint); letter-spacing: 0.04em; white-space: nowrap; }
+  .bp-modes .k-seg__opt { display: inline-flex; align-items: center; gap: var(--space-2); }
+  .bp-modes .k-kbd { opacity: .7; }
+  .bp-suggest { font: var(--text-2xs)/1 var(--font-mono); color: var(--accent-text); border: 1px dashed var(--accent-border); border-radius: var(--radius-xs); padding: 3px 5px; margin-left: 2px; }
+
+  /* ---------- Attention strip (never moves the layout around) ---------- */
+  .bp-attn { flex: none; display: flex; align-items: center; gap: var(--space-4); padding: var(--space-2) var(--space-5); background: var(--warning-subtle); border-bottom: 1px solid var(--warning-border); font: var(--text-sm)/1.4 var(--font-sans); color: var(--warning-text); }
+  .bp-attn[hidden] { display: none; }
+  .bp-attn .k-mono { color: var(--text-primary); }
+
+  /* ---------- Dock area ---------- */
+  .bp-dock { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .bp-row { flex: 1; min-height: 0; display: flex; }
+  .bp-slot { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface-panel); }
+  .bp-slot--center { flex: 1; min-width: 240px; }
+  .bp-slot--left, .bp-slot--right { flex: none; }
+  .bp-slot--bottom { flex: none; border-top: 0; }
+
+  .bp-split { flex: none; background: var(--border-subtle); position: relative; z-index: 2; }
+  .bp-split--v { width: 1px; cursor: col-resize; }
+  .bp-split--h { height: 1px; cursor: row-resize; }
+  .bp-split::after { content: ""; position: absolute; inset: 0; }
+  .bp-split--v::after { left: -3px; right: -3px; }
+  .bp-split--h::after { top: -3px; bottom: -3px; }
+  .bp-split:hover, .bp-split.is-drag { background: var(--accent); }
+
+  /* Collapsed panels live on the edge rails as tabs. */
+  .bp-rail { flex: none; display: flex; gap: var(--space-2); background: var(--surface-chrome); padding: var(--space-2); }
+  .bp-rail--left { flex-direction: column; border-right: 1px solid var(--border-default); }
+  .bp-rail--right { flex-direction: column; border-left: 1px solid var(--border-default); }
+  .bp-rail--bottom { flex-direction: row; border-top: 1px solid var(--border-default); }
+  .bp-rail:empty { display: none; }
+  .bp-railtab { display: inline-flex; align-items: center; gap: var(--space-2); background: transparent; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); color: var(--text-muted); font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; padding: var(--space-3) var(--space-2); cursor: pointer; }
+  .bp-rail--left .bp-railtab, .bp-rail--right .bp-railtab { writing-mode: vertical-rl; }
+  .bp-rail--left .bp-railtab { transform: rotate(180deg); }
+  .bp-railtab:hover { color: var(--text-primary); border-color: var(--border-strong); background: var(--surface-hover); }
+  .bp-railtab .k-status__dot { width: 6px; height: 6px; }
+
+  /* ---------- A dock slot: tabs + body ---------- */
+  .bp-head { flex: none; display: flex; align-items: stretch; height: 34px; border-bottom: 1px solid var(--border-subtle); background: var(--surface-chrome); }
+  .bp-tabs { display: flex; min-width: 0; overflow: hidden; }
+  .bp-tab { display: inline-flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-4); border: 0; border-right: 1px solid var(--border-subtle); background: transparent; color: var(--text-muted); font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; cursor: pointer; white-space: nowrap; }
+  .bp-tab:hover { color: var(--text-primary); }
+  .bp-tab.is-on { color: var(--text-primary); background: var(--surface-panel); box-shadow: inset 0 2px 0 var(--accent); }
+  .bp-tab__count { color: var(--text-faint); }
+  .bp-tools { margin-left: auto; display: flex; align-items: center; gap: 2px; padding: 0 var(--space-2); position: relative; }
+  .bp-tool { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-faint); cursor: pointer; }
+  .bp-tool:hover { background: var(--surface-hover); color: var(--text-primary); }
+  .bp-tool svg { width: 14px; height: 14px; }
+  .bp-body { flex: 1; min-height: 0; overflow: auto; }
+  .bp-panel { min-height: 100%; }
+  .bp-panel[hidden] { display: none; }
+
+  .bp-menu { position: absolute; top: 28px; right: 4px; z-index: 20; min-width: 180px; background: var(--surface-card); border: 1px solid var(--border-default); border-radius: var(--radius-md); box-shadow: var(--shadow-popover); padding: var(--space-2); display: flex; flex-direction: column; }
+  .bp-menu__label { font: var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-faint); padding: var(--space-3) var(--space-3) var(--space-2); }
+  .bp-menu button { text-align: left; background: transparent; border: 0; color: var(--text-secondary); font: var(--text-sm)/1 var(--font-sans); padding: var(--space-3); border-radius: var(--radius-xs); cursor: pointer; display: flex; justify-content: space-between; }
+  .bp-menu button:hover { background: var(--surface-hover); color: var(--text-primary); }
+  .bp-menu button[disabled] { opacity: .4; cursor: default; }
+
+  /* Focus: one panel fills the dock area. */
+  .bp-focusbar { flex: none; display: flex; align-items: center; gap: var(--space-4); padding: var(--space-2) var(--space-5); background: var(--accent-subtle); border-bottom: 1px solid var(--accent-border); font: var(--text-sm)/1.4 var(--font-sans); color: var(--accent-text); }
+
+  /* ---------- Panel: Tasks ---------- */
+  .tk { padding: var(--space-4) var(--space-5) var(--space-8); display: grid; gap: var(--space-6); }
+  .tk-group { display: grid; gap: var(--space-2); }
+  .tk-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding-bottom: var(--space-2); border-bottom: 1px solid var(--border-subtle); }
+  .tk-repo { font: var(--weight-semibold) var(--text-sm)/1 var(--font-mono); color: var(--text-primary); background: none; border: 0; padding: 0; cursor: pointer; }
+  .tk-repo:hover { color: var(--accent-text); }
+  .tk-clock { font: var(--text-xs)/1 var(--font-mono); color: var(--text-faint); margin-left: auto; }
+  .tk-task { display: grid; grid-template-columns: 36px minmax(0,1fr) auto; gap: var(--space-3); align-items: start; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); color: var(--text-secondary); font: var(--text-sm)/1.35 var(--font-sans); cursor: pointer; }
+  .tk-task:hover { background: var(--surface-hover); }
+  .tk-task.is-on { border-color: var(--accent-border); background: var(--accent-subtle); color: var(--text-primary); }
+  .tk-id { font: var(--text-xs)/1.6 var(--font-mono); color: var(--text-faint); }
+  .tk-dep { grid-column: 2 / 4; font: var(--text-2xs)/1.3 var(--font-mono); color: var(--warning-text); }
+  .tk-compact .tk-task { grid-template-columns: 36px minmax(0,1fr) 12px; }
+  .tk-compact .tk-task .k-status { font-size: 0; gap: 0; }
+
+  /* ---------- Panel: Activity ---------- */
+  .ac { display: flex; flex-direction: column; min-height: 100%; }
+  .ac-repos { position: sticky; top: 0; z-index: 1; display: flex; gap: var(--space-2); padding: var(--space-3) var(--space-4); background: var(--surface-panel); border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
+  .ac-repo { display: inline-flex; align-items: center; gap: var(--space-2); border: 1px solid var(--border-default); background: var(--surface-card); color: var(--text-secondary); border-radius: var(--radius-full); padding: 3px var(--space-4); font: var(--text-xs)/1.2 var(--font-mono); cursor: pointer; }
+  .ac-repo.is-on { border-color: var(--accent); color: var(--text-primary); }
+  .ac-stream { padding: var(--space-3) var(--space-3) var(--space-8); display: flex; flex-direction: column; gap: 2px; }
+  .ac-earlier { margin: var(--space-2) var(--space-4); font: var(--text-xs)/1 var(--font-mono); color: var(--text-muted); border-top: 1px solid var(--border-subtle); padding-top: var(--space-3); }
+  .ac-ask { margin: var(--space-3) var(--space-4); border: 1px solid var(--warning-border); background: var(--warning-subtle); border-radius: var(--radius-md); padding: var(--space-4); display: grid; gap: var(--space-3); }
+  .ac-ask__q { font: var(--text-base)/1.45 var(--font-sans); color: var(--text-primary); }
+  .ac-ask__opts { display: flex; gap: var(--space-3); flex-wrap: wrap; }
+
+  /* ---------- Panel: Changes ---------- */
+  .ch { display: grid; grid-template-columns: var(--ch-list, 260px) 1px minmax(0,1fr); height: 100%; min-height: 0; }
+  .ch-list { overflow: auto; min-height: 0; border-right: 0; }
+  .ch-scope { position: sticky; top: 0; z-index: 1; padding: var(--space-3); background: var(--surface-panel); border-bottom: 1px solid var(--border-subtle); }
+  .ch-scope .k-seg { width: 100%; }
+  .ch-scope .k-seg__opt { flex: 1; justify-content: center; }
+  .ch-repo { font: var(--weight-semibold) var(--text-xs)/1 var(--font-mono); color: var(--text-muted); padding: var(--space-4) var(--space-4) var(--space-2); }
+  .ch-file { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: var(--space-3); width: 100%; text-align: left; background: transparent; border: 0; border-left: 2px solid transparent; padding: var(--space-2) var(--space-4); font: var(--text-xs)/1.4 var(--font-mono); color: var(--text-secondary); cursor: pointer; }
+  .ch-file:hover { background: var(--surface-hover); }
+  .ch-file.is-on { border-left-color: var(--accent); background: var(--accent-subtle); color: var(--text-primary); }
+  .ch-file__path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+  .ch-file__n { color: var(--text-faint); }
+  .ch-file__n b { color: var(--success-text); font-weight: 400; } .ch-file__n i { color: var(--error-text); font-style: normal; }
+  .ch-diff { overflow: auto; min-height: 0; font: var(--text-xs)/1.6 var(--font-mono); }
+  .ch-diff__head { position: sticky; top: 0; padding: var(--space-3) var(--space-4); background: var(--surface-chrome); border-bottom: 1px solid var(--border-subtle); color: var(--text-primary); display: flex; gap: var(--space-3); align-items: center; }
+  .ch-diff__head .k-mono { color: var(--text-faint); margin-left: auto; }
+  .ch-line { display: grid; grid-template-columns: 44px 14px minmax(0,1fr); white-space: pre; color: var(--text-secondary); }
+  .ch-line__n { color: var(--text-faint); text-align: right; padding-right: var(--space-3); user-select: none; }
+  .ch-line--add { background: var(--success-subtle); color: var(--text-primary); }
+  .ch-line--del { background: var(--error-subtle); color: var(--text-muted); }
+  .ch-line--hunk { color: var(--accent-text); background: var(--surface-card); }
+  .ch-line--finding { box-shadow: inset 2px 0 0 var(--warning); }
+  .ch-note { margin: 0 var(--space-4) var(--space-3) 58px; padding: var(--space-3); border: 1px solid var(--warning-border); background: var(--warning-subtle); border-radius: var(--radius-sm); font: var(--text-sm)/1.4 var(--font-sans); color: var(--text-primary); white-space: normal; }
+
+  /* ---------- Panel: Findings ---------- */
+  .fd { padding: var(--space-4) var(--space-4) var(--space-8); display: grid; gap: var(--space-3); }
+  .fd-meta { font: var(--text-xs)/1.4 var(--font-mono); color: var(--text-muted); }
+  .fd-item { display: grid; gap: var(--space-2); text-align: left; background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-4); color: var(--text-secondary); font: var(--text-sm)/1.45 var(--font-sans); cursor: pointer; }
+  .fd-item:hover { border-color: var(--border-strong); }
+  .fd-item.is-on { border-color: var(--accent-border); }
+  .fd-item__top { display: flex; gap: var(--space-3); align-items: center; }
+  .fd-item__where { font: var(--text-xs)/1 var(--font-mono); color: var(--accent-text); }
+  .fd-dep { font: var(--text-xs)/1.4 var(--font-mono); color: var(--warning-text); }
+
+  /* ---------- Prototype controls (not part of the design) ---------- */
+  .proto { position: fixed; right: 12px; bottom: 40px; z-index: 50; border: 1px dashed var(--border-strong); background: var(--surface-chrome); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); display: grid; gap: var(--space-2); font: var(--text-xs)/1.3 var(--font-mono); color: var(--text-muted); box-shadow: var(--shadow-md); }
+  .proto select { background: var(--surface-inset); color: var(--text-primary); border: 1px solid var(--border-default); border-radius: var(--radius-xs); font: inherit; padding: 2px 4px; }
+  .proto__x { justify-self: end; background: none; border: 0; color: var(--text-faint); cursor: pointer; font: inherit; }
+</style>
+</head>
+<body>
+<div class="bp" id="app">
+  <header class="wb-toolbar">
+    <div class="wb-brand"><div class="wb-seal">型</div></div>
+    <div class="wb-sep"></div>
+    <div class="bp-change">
+      <div class="bp-change__name">Claim status self-service</div>
+      <div class="bp-change__meta">2026-10-18-claim-status-self-service · build</div>
+    </div>
+    <span id="stageStatus" class="k-status k-status--running"><span class="k-status__dot"></span><span>Building · 3 of 11 tasks</span></span>
+    <span class="k-mono" style="color:var(--text-faint);font-size:var(--text-xs)" id="elapsed">00:42:18</span>
+    <div class="wb-toolbar__spacer"></div>
+    <div class="k-seg bp-modes" id="modes" role="tablist" aria-label="Layout mode"></div>
+    <button class="k-btn k-btn--ghost k-btn--sm" id="reset" title="Reset this mode to its default arrangement">Reset layout</button>
+    <div class="wb-sep"></div>
+    <button class="k-btn k-btn--secondary k-btn--sm" id="actCancel">Cancel build</button>
+    <button class="k-btn k-btn--primary k-btn--sm" id="actDone" hidden>Declare done</button>
+  </header>
+
+  <div class="bp-attn" id="attn" hidden>
+    <span class="k-status k-status--awaiting"><span class="k-status__dot"></span></span>
+    <span><span class="k-mono">billing-api</span> is waiting on your answer · T6 · asked 0:41 ago</span>
+    <button class="k-btn k-btn--secondary k-btn--sm" id="attnGo">Go to question</button>
+    <span style="margin-left:auto;color:var(--text-muted);font-size:var(--text-xs)">The layout does not change until you choose.</span>
+  </div>
+
+  <div class="bp-focusbar" id="focusbar" hidden>
+    <span>Focus: <b id="focusName"></b> fills the page.</span>
+    <button class="k-btn k-btn--secondary k-btn--sm" id="unfocus">Back to <span id="unfocusMode"></span> <span class="k-kbd">Esc</span></button>
+  </div>
+
+  <main class="bp-dock" id="dock"></main>
+
+  <footer class="wb-statusbar">
+    <span id="hint" style="font:var(--text-xs)/1 var(--font-mono);color:var(--text-faint)">Drag the hairlines to resize · ⋯ on a panel moves, hides or focuses it · Ctrl+1–4 switch mode · each mode remembers its arrangement</span>
+  </footer>
+</div>
+
+<div class="proto" id="proto">
+  <button class="proto__x" onclick="this.parentElement.remove()">hide ×</button>
+  <span>PROTOTYPE CONTROLS · not part of the design</span>
+  <label>Build stage
+    <select id="stage">
+      <option value="start">Just started</option>
+      <option value="running" selected>Running</option>
+      <option value="asking">Running · a question waits</option>
+      <option value="finished">Finished · review in</option>
+    </select>
+  </label>
+</div>
+
+<script>
+/* ---------------- Sample data ---------------- */
+const REPOS = [
+  { repo: 'ai-sdlc', tone: 'success', label: 'Done', clock: '0:06:12', tasks: [
+    ['T1','Record the claim status vocabulary','success','Done'],
+    ['T11','Write the change notes for support','idle','Not started'] ] },
+  { repo: 'claims-core', tone: 'running', label: 'Running', clock: '0:41:55', tasks: [
+    ['T2','Expose next step and expected date for a claim','success','Done'],
+    ['T3','Keep every status change for seven years','success','Done'],
+    ['T4','Refuse status reads for claims the customer does not own','running','Running'],
+    ['T5','Backfill expected dates for open claims','idle','Not started'] ] },
+  { repo: 'billing-api', tone: 'awaiting', label: 'Running', clock: '0:22:03', tasks: [
+    ['T6','Show outstanding payments next to the claim','running','Running'],
+    ['T7','Hide refunded amounts from the customer view','idle','Not started'] ] },
+  { repo: 'customer-portal', tone: 'idle', label: 'Waiting', clock: '', wait: 'Waiting on T4 in claims-core', tasks: [
+    ['T8','Claim status card on the portal home','idle','Waiting'],
+    ['T9','Status history timeline','idle','Waiting'],
+    ['T10','Empty and error states for status','idle','Waiting'] ] },
+];
+const EVENTS = {
+  'claims-core': [
+    ['turn','turn 14'],['assistant','Writing the ownership check first: a customer may read status only for claims on their own policy.'],
+    ['tool','Edit src/claims/status/StatusQuery.cs'],['result','ok · 18 lines'],
+    ['tool','Bash dotnet test --filter StatusQuery'],['result','Passed! 12 passed, 0 failed'],
+    ['assistant','The query now joins on the policy holder. Adding a test for a claim moved between policies.'],
+    ['tool','Edit tests/claims/StatusQueryTests.cs'],['result','ok · 41 lines'],
+    ['turn','turn 15'],['tool','Bash dotnet test'],['result','Passed! 318 passed, 0 failed'],
+    ['assistant','Committing T4 and recording it in the build log.'],['tool','Bash git commit -m "feat(claims): refuse status reads…"'],['result','ok'],
+  ],
+  'billing-api': [
+    ['turn','turn 6'],['assistant','The plan says outstanding payments show next to the claim, but a claim can have payments in two currencies.'],
+    ['tool','Read src/Billing/Outstanding.cs'],['result','ok · 212 lines'],['assistant','I need a decision before going further.'],
+  ],
+  'ai-sdlc': [['assistant','T1 recorded. Nothing else ready in this repository until T10 lands.'],['result','run.completed · exit 0']],
+  'customer-portal': [],
+};
+const FILES = [
+  { repo: 'claims-core', files: [
+    ['src/claims/status/StatusQuery.cs', 48, 12], ['src/claims/status/NextStep.cs', 96, 0], ['src/claims/history/StatusHistory.cs', 71, 4],
+    ['tests/claims/StatusQueryTests.cs', 132, 0], ['tests/claims/NextStepTests.cs', 88, 0], ['src/claims/Retention.cs', 22, 3] ] },
+  { repo: 'billing-api', files: [['src/Billing/Outstanding.cs', 14, 2]] },
+  { repo: 'ai-sdlc', files: [['intent/claims/vocabulary.md', 40, 0], ['intent/claims/2026-10-18-claim-status-self-service/build/claims-core.md', 4, 0]] },
+];
+const FINDINGS = [
+  ['high','claims-core','src/claims/status/StatusQuery.cs:31','A claim moved between policies keeps showing to the old policy holder until the nightly sync runs.'],
+  ['medium','claims-core','src/claims/Retention.cs:12','Seven-year retention counts from the claim date, the intent says from the last status change.'],
+  ['medium','customer-portal','src/status/StatusCard.tsx:58','The expected date shows without a time zone for customers abroad.'],
+  ['low','billing-api','src/Billing/Outstanding.cs:9','Currency formatting duplicates the portal helper.'],
+];
+
+/* ---------------- Panels & modes ---------------- */
+const PANELS = { tasks: 'Tasks', activity: 'Activity', changes: 'Changes', findings: 'Findings' };
+const MODES = {
+  overview: { label: 'Overview', key: '1', def: { left: [], center: ['tasks'], right: ['activity'], bottom: [], hidden: ['changes','findings'], size: { left: 300, right: 520, bottom: 260 } } },
+  watch:    { label: 'Watch',    key: '2', def: { left: ['tasks'], center: ['activity'], right: [], bottom: [], hidden: ['changes','findings'], size: { left: 300, right: 420, bottom: 260 } } },
+  changes:  { label: 'Changes',  key: '3', def: { left: [], center: ['changes'], right: [], bottom: ['activity'], hidden: ['tasks','findings'], size: { left: 280, right: 380, bottom: 200 } } },
+  review:   { label: 'Review',   key: '4', def: { left: ['findings'], center: ['changes'], right: [], bottom: [], hidden: ['tasks','activity'], size: { left: 380, right: 380, bottom: 220 } } },
+};
+const STAGE_MODE = { start: 'overview', running: 'watch', asking: 'watch', finished: 'review' };
+const KEY = m => 'kata.buildpage.layout.' + m;
+
+const state = {
+  mode: 'watch', stage: 'running', focus: null, menu: null,
+  active: {},                 // slot -> visible panel id when a slot holds several
+  activityRepo: 'claims-core', file: 'claims-core/src/claims/status/StatusQuery.cs', scope: 'whole', task: 'T4', finding: null,
+};
+const clone = o => JSON.parse(JSON.stringify(o));
+function layout(m = state.mode) {
+  if (!layout.cache) layout.cache = {};
+  if (!layout.cache[m]) { const saved = localStorage.getItem(KEY(m)); layout.cache[m] = saved ? JSON.parse(saved) : clone(MODES[m].def); }
+  return layout.cache[m];
+}
+function save() { localStorage.setItem(KEY(state.mode), JSON.stringify(layout())); }
+function slotOf(id, L = layout()) { return ['left','center','right','bottom'].find(s => L[s].includes(id)) || 'hidden'; }
+
+/* ---------------- Icons (Lucide paths) ---------------- */
+const I = {
+  max: '<path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/>',
+  min: '<path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="M14 10l7-7"/><path d="M3 21l7-7"/>',
+  hide: '<path d="M5 12h14"/>',
+  more: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+};
+const svg = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const status = (tone, label) => `<span class="k-status k-status--${tone}"><span class="k-status__dot"></span>${label ? esc(label) : ''}</span>`;
+
+/* ---------------- Panel bodies (built once, re-parented, so scroll is kept) ---------------- */
+const bodies = {};
+for (const id of Object.keys(PANELS)) { const el = document.createElement('div'); el.className = 'bp-panel'; el.dataset.panel = id; bodies[id] = el; }
+
+function repoTone(r) { return state.stage === 'asking' && r.repo === 'billing-api' ? ['awaiting','Waiting on you'] : state.stage === 'finished' ? ['success','Done'] : [r.tone === 'awaiting' ? 'running' : r.tone, r.label]; }
+function taskTone(t, r) { if (state.stage === 'finished') return ['success','Done']; if (state.stage === 'start') return t[0] === 'T1' ? ['running','Running'] : ['idle', t[3] === 'Waiting' ? 'Waiting' : 'Not started']; if (state.stage === 'asking' && t[0] === 'T6') return ['awaiting','Waiting on you']; return [t[2], t[3]]; }
+
+function renderTasks() {
+  const el = bodies.tasks, compact = slotOf('tasks') !== 'center' && (layout().size[slotOf('tasks')] || 999) < 240;
+  el.innerHTML = `<div class="tk ${compact ? 'tk-compact' : ''}">` + REPOS.map(r => {
+    const [tone, label] = repoTone(r);
+    return `<div class="tk-group"><div class="tk-head"><button class="tk-repo" data-repo="${r.repo}">${r.repo}</button>${status(tone, label)}<span class="tk-clock">${r.clock}</span></div>` +
+      r.tasks.map(t => { const [tt, tl] = taskTone(t, r); return `<button class="tk-task ${state.task === t[0] ? 'is-on' : ''}" data-task="${t[0]}" data-repo="${r.repo}"><span class="tk-id">${t[0]}</span><span>${esc(t[1])}</span>${status(tt, tl)}${r.wait && state.stage !== 'finished' && t[0] === 'T8' ? `<span class="tk-dep">${r.wait}</span>` : ''}${t[0] === 'T3' && state.stage === 'finished' ? '<span class="tk-dep">Departure: retention counted from claim date</span>' : ''}</button>`; }).join('') + '</div>';
+  }).join('') + `<div class="tk-group"><div class="tk-head"><button class="tk-repo" data-review>Review</button>${state.stage === 'finished' ? status('success','4 findings') : status('idle','After the last task')}</div></div></div>`;
+}
+
+function renderActivity() {
+  const el = bodies.activity, cur = state.activityRepo, top = el.closest('.bp-body')?.scrollTop;
+  const chips = REPOS.map(r => { const [tone] = repoTone(r); return `<button class="ac-repo ${cur === r.repo ? 'is-on' : ''}" data-ac="${r.repo}">${status(tone)}${r.repo}</button>`; }).join('');
+  let stream = '';
+  if (cur === 'claims-core') stream += `<div class="ac-earlier">▸ Started 09:12 · cancelled · 6 turns</div><div class="ac-earlier" style="border:0;padding-top:0">Started <span>09:31</span></div>`;
+  const ev = (EVENTS[cur] || []).concat(cur === 'claims-core' ? EVENTS[cur].slice(0, 9) : []);
+  stream += ev.map(([k, t]) => `<div class="k-event ${k === 'assistant' ? 'k-event--assistant' : k === 'tool' ? 'k-event--tooluse' : k === 'result' ? 'k-event--result-ok' : k === 'turn' ? 'k-event--turn' : ''}"><div class="k-event__gutter">${k}</div><div class="k-event__body">${esc(t)}</div></div>`).join('');
+  if (cur === 'customer-portal') stream += `<p style="padding:var(--space-5);color:var(--text-muted);font-size:var(--text-sm)">Waiting on T4 in claims-core. This repository starts by itself when T4 is recorded.</p>`;
+  if (cur === 'billing-api' && state.stage === 'asking') stream += `<div class="ac-ask"><span class="kata-eyebrow" style="color:var(--warning-text)">QUESTION · T6</span><div class="ac-ask__q">A claim can have outstanding payments in two currencies. Show them separately, or converted to the policy currency?</div><div class="ac-ask__opts"><button class="k-btn k-btn--secondary k-btn--sm">Separately</button><button class="k-btn k-btn--secondary k-btn--sm">Converted</button><button class="k-btn k-btn--ghost k-btn--sm">Type an answer…</button></div></div>`;
+  el.innerHTML = `<div class="ac"><div class="ac-repos">${chips}</div><div class="ac-stream">${stream}</div></div>`;
+  if (top != null) el.closest('.bp-body').scrollTop = top;
+}
+
+function diffFor(path) {
+  const lines = [['hunk','@@ -24,12 +24,31 @@ public sealed class StatusQuery'], ['ctx','    public async Task<ClaimStatus?> Read(ClaimId id, CustomerId who)'], ['ctx','    {'],
+    ['del','        var claim = await _claims.Find(id);'], ['add','        var claim = await _claims.FindOwnedBy(id, who.PolicyHolder);'], ['add','        if (claim is null)'], ['add','        {'], ['add','            _audit.Refused(id, who);'], ['add','            return null;'], ['add','        }'],
+    ['ctx','        var history = await _history.For(claim.Id);'], ['add','        var next = NextStep.From(claim, history);', 'finding'], ['add','        var expected = ExpectedDate.From(claim, next);'], ['ctx','        return new ClaimStatus('], ['ctx','            claim.Status,'], ['add','            next,'], ['add','            expected,'], ['ctx','            history.Last().At);'], ['ctx','    }']];
+  let out = '', n = 24;
+  for (let k = 0; k < 4; k++) for (const [t, s, f] of lines) {
+    out += `<div class="ch-line ch-line--${t} ${f && k === 0 ? 'ch-line--finding' : ''}"><span class="ch-line__n">${t === 'hunk' ? '' : t === 'del' ? '' : n++}</span><span>${t === 'add' ? '+' : t === 'del' ? '−' : ''}</span><span>${esc(s)}</span></div>`;
+    if (f && k === 0 && state.stage === 'finished') out += `<div class="ch-note"><span class="k-badge k-badge--error">high</span> A claim moved between policies keeps showing to the old policy holder until the nightly sync runs.</div>`;
+  }
+  return out;
+}
+function renderChanges() {
+  const el = bodies.changes, listTop = el.querySelector('.ch-list')?.scrollTop, diffTop = el.querySelector('.ch-diff')?.scrollTop;
+  const seg = ['whole','committed','uncommitted'].map(s => `<button class="k-seg__opt ${state.scope === s ? 'k-seg__opt--active' : ''}" data-scope="${s}">${s === 'whole' ? 'All' : s === 'committed' ? 'Committed' : 'Uncommitted'}</button>`).join('');
+  const list = FILES.map(g => `<div class="ch-repo">${g.repo}</div>` + g.files.map(([p, a, d]) => { const id = g.repo + '/' + p; return `<button class="ch-file ${state.file === id ? 'is-on' : ''}" data-file="${id}" title="${p}"><span class="ch-file__path">${p}</span><span class="ch-file__n"><b>+${a}</b> <i>−${d}</i></span></button>`; }).join('')).join('') + `<div class="ch-repo" style="font-weight:400">customer-portal · no change branch yet</div>`;
+  const [repo, ...rest] = state.file.split('/');
+  el.style.height = '100%';
+  el.innerHTML = `<div class="ch"><div class="ch-list"><div class="ch-scope"><div class="k-seg">${seg}</div></div>${list}</div><div class="bp-split bp-split--v" data-inner></div><div class="ch-diff"><div class="ch-diff__head">${esc(rest.join('/'))}<span class="k-mono">${repo} · T4</span></div>${diffFor(state.file)}</div></div>`;
+  if (listTop != null) el.querySelector('.ch-list').scrollTop = listTop;
+  if (diffTop != null) el.querySelector('.ch-diff').scrollTop = diffTop;
+}
+function renderFindings() {
+  const el = bodies.findings;
+  if (state.stage !== 'finished') { el.innerHTML = `<div class="fd"><p class="fd-meta">The review runs by itself once the last task is recorded. Its findings appear here.</p></div>`; return; }
+  el.innerHTML = `<div class="fd"><div class="fd-meta">Review 1 · covers current work · most serious first</div>` + FINDINGS.map(([sev, repo, where, text], i) =>
+    `<button class="fd-item ${state.finding === i ? 'is-on' : ''}" data-finding="${i}"><span class="fd-item__top"><span class="k-badge k-badge--${sev === 'high' ? 'error' : sev === 'medium' ? 'warning' : 'neutral'}">${sev}</span><span class="fd-item__where">${repo} · ${where}</span></span><span>${esc(text)}</span></button>`).join('') +
+    `<div class="fd-meta" style="margin-top:var(--space-4)">DEPARTURES</div><div class="fd-dep">T3 · claims-core · retention counted from the claim date; the plan said last status change.</div></div>`;
+}
+const RENDER = { tasks: renderTasks, activity: renderActivity, changes: renderChanges, findings: renderFindings };
+
+/* ---------------- Dock rendering ---------------- */
+const dock = document.getElementById('dock');
+function slotEl(name, ids) {
+  const s = document.createElement('section');
+  s.className = 'bp-slot bp-slot--' + name; s.dataset.slot = name;
+  const L = layout();
+  if (name !== 'center') { if (name === 'bottom') s.style.height = L.size.bottom + 'px'; else s.style.width = L.size[name] + 'px'; }
+  const on = ids.includes(state.active[name]) ? state.active[name] : ids[0]; state.active[name] = on;
+  const tabs = ids.map(id => `<button class="bp-tab ${id === on ? 'is-on' : ''}" data-tab="${id}" data-in="${name}">${PANELS[id]}${badge(id)}</button>`).join('');
+  const tools = state.focus ? `<button class="bp-tool" title="Back (Esc)" data-act="unfocus">${svg(I.min)}</button>`
+    : `<button class="bp-tool" title="Focus: fill the page" data-act="focus" data-id="${on}">${svg(I.max)}</button>` +
+      (name !== 'center' ? `<button class="bp-tool" title="Collapse to the edge" data-act="hide" data-id="${on}">${svg(I.hide)}</button>` : '') +
+      `<button class="bp-tool" title="Move or hide" data-act="menu" data-id="${on}">${svg(I.more)}</button>` +
+      (state.menu === on ? menuFor(on) : '');
+  s.innerHTML = `<div class="bp-head"><div class="bp-tabs">${tabs}</div><div class="bp-tools">${tools}</div></div><div class="bp-body"></div>`;
+  const body = s.querySelector('.bp-body');
+  for (const id of ids) { bodies[id].hidden = id !== on; body.appendChild(bodies[id]); }
+  if (on === 'changes') body.style.overflow = 'hidden';
+  return s;
+}
+function badge(id) {
+  if (id === 'findings' && state.stage === 'finished') return ' <span class="bp-tab__count">4</span>';
+  if (id === 'changes') return ' <span class="bp-tab__count">9</span>';
+  if (id === 'activity' && state.stage === 'asking') return ' ' + status('awaiting');
+  return '';
+}
+function menuFor(id) {
+  const cur = slotOf(id), b = (to, label) => `<button data-act="move" data-id="${id}" data-to="${to}" ${cur === to ? 'disabled' : ''}>${label}${cur === to ? '<span>✓</span>' : ''}</button>`;
+  return `<div class="bp-menu"><div class="bp-menu__label">Dock ${PANELS[id]}</div>${b('left','Left')}${b('center','Center')}${b('right','Right')}${b('bottom','Bottom')}<div class="bp-menu__label">Or</div><button data-act="hide" data-id="${id}">Collapse to the edge</button><button data-act="focus" data-id="${id}">Focus</button></div>`;
+}
+function railTab(id) { return `<button class="bp-railtab" data-act="show" data-id="${id}">${PANELS[id]}${id === 'activity' && state.stage === 'asking' ? status('awaiting') : ''}</button>`; }
+
+function render() {
+  const L = layout();
+  // Panels with nothing in the center: promote the first docked panel so the page is never empty.
+  if (!L.center.length) { const from = ['left','right','bottom'].find(s => L[s].length); if (from) L.center.push(L[from].shift()); }
+  document.getElementById('focusbar').hidden = !state.focus;
+  dock.innerHTML = '';
+  if (state.focus) {
+    document.getElementById('focusName').textContent = PANELS[state.focus];
+    document.getElementById('unfocusMode').textContent = MODES[state.mode].label;
+    const row = document.createElement('div'); row.className = 'bp-row'; row.appendChild(slotEl('center', [state.focus])); dock.appendChild(row);
+  } else {
+    const row = document.createElement('div'); row.className = 'bp-row';
+    // Collapsed panels sit on the rail of the side they were docked on; hidden-by-default ones on the right.
+    const railL = document.createElement('nav'); railL.className = 'bp-rail bp-rail--left';
+    const railR = document.createElement('nav'); railR.className = 'bp-rail bp-rail--right';
+    const railB = document.createElement('nav'); railB.className = 'bp-rail bp-rail--bottom';
+    for (const id of L.hidden) { const side = (L.home || {})[id] || 'right'; (side === 'left' ? railL : side === 'bottom' ? railB : railR).insertAdjacentHTML('beforeend', railTab(id)); }
+    row.appendChild(railL);
+    if (L.left.length) { row.appendChild(slotEl('left', L.left)); row.appendChild(splitter('left')); }
+    row.appendChild(slotEl('center', L.center));
+    if (L.right.length) { row.appendChild(splitter('right')); row.appendChild(slotEl('right', L.right)); }
+    row.appendChild(railR);
+    dock.appendChild(row);
+    if (L.bottom.length) { dock.appendChild(splitter('bottom')); dock.appendChild(slotEl('bottom', L.bottom)); }
+    dock.appendChild(railB);
+  }
+  for (const id of Object.keys(PANELS)) RENDER[id]();
+  renderModes();
+}
+function renderModes() {
+  const sug = STAGE_MODE[state.stage];
+  document.getElementById('modes').innerHTML = Object.entries(MODES).map(([m, d]) =>
+    `<button class="k-seg__opt ${state.mode === m && !state.focus ? 'k-seg__opt--active' : ''}" data-mode="${m}" title="Ctrl+${d.key}">${d.label}${sug === m && state.mode !== m ? '<span class="bp-suggest">suggested</span>' : ''}</button>`).join('');
+}
+function splitter(side) {
+  const s = document.createElement('div'); s.className = 'bp-split ' + (side === 'bottom' ? 'bp-split--h' : 'bp-split--v');
+  s.onpointerdown = e => {
+    s.setPointerCapture(e.pointerId); s.classList.add('is-drag');
+    const L = layout(), start = side === 'bottom' ? e.clientY : e.clientX, base = L.size[side];
+    const slot = dock.querySelector('.bp-slot--' + side);
+    s.onpointermove = ev => {
+      const d = (side === 'bottom' ? ev.clientY : ev.clientX) - start;
+      const v = Math.max(160, Math.min((side === 'bottom' ? dock.clientHeight : dock.clientWidth) - 280, base + (side === 'left' ? d : -d)));
+      L.size[side] = v; if (side === 'bottom') slot.style.height = v + 'px'; else slot.style.width = v + 'px';
+    };
+    s.onpointerup = () => { s.onpointermove = null; s.classList.remove('is-drag'); save(); if (slotOf('tasks') === side) renderTasks(); };
+  };
+  return s;
+}
+
+/* ---------------- Actions ---------------- */
+function move(id, to) {
+  const L = layout(), from = slotOf(id);
+  if (from !== 'hidden') L[from] = L[from].filter(x => x !== id); else L.hidden = L.hidden.filter(x => x !== id);
+  if (to === 'hidden') { L.home = L.home || {}; L.home[id] = from === 'center' ? 'right' : from; L.hidden.push(id); }
+  else { if (to === 'center' && L.center.length) { /* the old center panel moves aside rather than vanishing */ const old = L.center.pop(); L.right.unshift(old); state.active.right = old; } L[to].push(id); state.active[to] = id; }
+  state.menu = null; save(); render();
+}
+function setMode(m) { state.mode = m; state.focus = null; state.menu = null; render(); }
+function goToQuestion() {
+  state.activityRepo = 'billing-api'; state.task = 'T6';
+  if (slotOf('activity') === 'hidden') move('activity', (layout().home || {}).activity === 'bottom' ? 'bottom' : 'right');
+  const s = slotOf('activity'); state.active[s] = 'activity'; render();
+  const body = bodies.activity.closest('.bp-body'); body.scrollTop = body.scrollHeight;
+}
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('button'); if (!t) { if (state.menu) { state.menu = null; render(); } return; }
+  const d = t.dataset;
+  if (d.mode) return setMode(d.mode);
+  if (d.tab) { state.active[d.in] = d.tab; state.menu = null; return render(); }
+  if (d.act === 'menu') { state.menu = state.menu === d.id ? null : d.id; return render(); }
+  if (d.act === 'move') return move(d.id, d.to);
+  if (d.act === 'hide') return move(d.id, 'hidden');
+  if (d.act === 'show') { const home = (layout().home || {})[d.id]; return move(d.id, home && home !== 'hidden' ? home : 'right'); }
+  if (d.act === 'focus') { state.focus = d.id; state.menu = null; return render(); }
+  if (d.act === 'unfocus' || t.id === 'unfocus') { state.focus = null; return render(); }
+  if (t.id === 'reset') { localStorage.removeItem(KEY(state.mode)); delete layout.cache[state.mode]; state.focus = null; return render(); }
+  if (t.id === 'attnGo') return goToQuestion();
+  if (d.ac) { state.activityRepo = d.ac; return renderActivity(); }
+  if (d.task) { state.task = d.task; state.activityRepo = d.repo; renderTasks(); renderActivity(); return; }
+  if (d.repo) { state.activityRepo = d.repo; return renderActivity(); }
+  if (d.scope) { state.scope = d.scope; return renderChanges(); }
+  if (d.file) { state.file = d.file; return renderChanges(); }
+  if (d.finding) { state.finding = +d.finding; const f = FINDINGS[state.finding]; const hit = FILES.flatMap(g => g.files.map(x => g.repo + '/' + x[0])).find(p => p.startsWith(f[1] + '/' + f[2].split(':')[0])); if (hit) state.file = hit; renderFindings(); renderChanges(); return; }
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && state.focus) { state.focus = null; render(); }
+  if (e.ctrlKey && /^[1-4]$/.test(e.key)) { e.preventDefault(); setMode(Object.keys(MODES)[+e.key - 1]); }
+});
+
+function setStage(s) {
+  state.stage = s;
+  // Stage changes pick a sensible mode; a question only signals, it never rearranges.
+  if (s !== 'asking') state.mode = STAGE_MODE[s];
+  state.focus = null;
+  document.getElementById('attn').hidden = s !== 'asking';
+  const st = document.getElementById('stageStatus');
+  const [tone, label] = { start: ['running','Building · 0 of 11 tasks'], running: ['running','Building · 3 of 11 tasks'], asking: ['awaiting','Building · 3 of 11 tasks · 1 question'], finished: ['success','Build finished · review in'] }[s];
+  st.className = 'k-status k-status--' + tone; st.lastElementChild.textContent = label;
+  document.getElementById('actCancel').hidden = s === 'finished';
+  document.getElementById('actDone').hidden = s !== 'finished';
+  if (s === 'finished') state.activityRepo = 'ai-sdlc';
+  render();
+}
+document.getElementById('stage').onchange = e => setStage(e.target.value);
+setStage('running');
+</script>
+</body>
+</html>
