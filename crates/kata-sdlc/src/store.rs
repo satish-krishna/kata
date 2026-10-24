@@ -149,11 +149,14 @@ pub fn append_task_links(links: &[TaskLink]) -> Result<(), StoreError> {
 /// The engineer's arrangement of the build page, kept beside `settings.json`
 /// and never inside a workspace. The backend never looks inside the value.
 pub fn load_build_layout() -> serde_json::Value {
-    serde_json::Value::Null
+    match read_or_default::<Option<serde_json::Value>>("build-layout.json") {
+        Some(v) if v.is_object() => v,
+        _ => serde_json::Value::Object(Default::default()),
+    }
 }
 
-pub fn save_build_layout(_v: &serde_json::Value) -> Result<(), StoreError> {
-    Ok(())
+pub fn save_build_layout(v: &serde_json::Value) -> Result<(), StoreError> {
+    write("build-layout.json", v)
 }
 
 #[cfg(test)]
