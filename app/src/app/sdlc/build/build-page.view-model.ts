@@ -25,7 +25,7 @@ import { type AskRecord, type RunGiven, type PermissionRecord, type RunState, ty
 import { activityFor, newlyRecorded, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Chosen, type LiveRun, type Pick, type SessionRef } from '../../lib/build-sessions';
 import { buildActions, buildStage, repoAction, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { fallbackTaskState, hms, ms, situationView, taskState, type SituationView, type Situation, type TaskState } from '../../lib/build-state';
-import type { LayoutStage } from '../../lib/build-layout-stage';
+import { layoutStage as layoutStageOf, type LayoutStage } from '../../lib/build-layout-stage';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { reviewState } from '../../lib/sdlc-done';
@@ -773,10 +773,19 @@ export class BuildPageViewModel {
   });
 
   /** Where the build stands for the layout: held at its last value while the review is being read. */
-  readonly layoutStage = computed<LayoutStage>(() => 'stopped');
+  readonly layoutStage = computed<LayoutStage>(() => {
+    // A build that finishes must not pass through "stopped" while its review is read, so the last value holds until the read ends.
+    if (this.reading() && this.heldStage !== null) return this.heldStage;
+    const next = layoutStageOf({ stage: this.stage(), recorded: this.buildRows().length > 0, review: this.reviewEntry() });
+    this.heldStage = next;
+    return next;
+  });
+  private heldStage: LayoutStage | null = null;
 
   /** Say something through the page's one assertive live region. */
-  say(_text: string): void {}
+  say(text: string): void {
+    this.announcement.set(text);
+  }
 
   /** Everything the build page shows, from the members above; the page itself decides nothing. */
   readonly view = computed<BuildPageView>(() => {
