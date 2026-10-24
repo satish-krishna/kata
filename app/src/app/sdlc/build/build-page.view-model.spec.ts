@@ -1055,7 +1055,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       expect(seen.filter((k) => k === 'claims-core')).toHaveLength(2);
       expect(vm.phase()).toBe('building');
       expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
-      expect(lock.active()).toMatchObject({ runs: expect.arrayContaining([expect.any(String)]) });
+      expect(vm.view().groups.find((g) => g.repo === 'claims-core')!.status.label).toBe('Working · T1');
     });
   });
 });

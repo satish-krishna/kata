@@ -226,8 +226,6 @@ export class BuildPageViewModel {
   readonly current = this.handed.asReadonly();
   /** True once a build was started on this page; it stays true after the build ended. */
   readonly started = computed(() => this.handed() !== null);
-  /** True while this page holds the lock for its build, from `start` (or a Continue) until `release` gives it back. */
-  private holding = false;
   /** The runs the engineer's leftovers confirmation still covers; a run's launch spends its entry. */
   private confirmed = new Set<string>();
   private readonly ctxSig = signal<BuildContext | null>(null);
@@ -521,7 +519,6 @@ export class BuildPageViewModel {
       return false;
     }
     if (!this.lock.beginBuild('Build')) return false;
-    this.holding = true;
     this.handoff = handoff;
     this.confirmed = new Set(handoff.continueOnLeftovers ?? []);
     this.ctx = ctx;
@@ -908,6 +905,8 @@ export class BuildPageViewModel {
     if (key === null || h === null || ctx === null) return;
     await this.pendingFinish;
     if (!(await this.previewContinue(key))) return;
+    // The preview may have been open while the last other run ended: let that release finish before reading `settled`.
+    await this.pendingFinish;
     const owner = this.ownerOf(key);
     try {
       if (this.settled) {
@@ -945,6 +944,8 @@ export class BuildPageViewModel {
     this.asking = null;
     this.pendingLeftovers.set(null);
     if (key === null || h === null || ctx === null) return;
+    // A confirm that lands mid-release waits for it, then takes the lock again.
+    await this.pendingFinish;
     if (this.settled) {
       try {
         const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, true, this.ownerOf(key), 'continue');
@@ -1040,11 +1041,13 @@ export class BuildPageViewModel {
 
   private async resume(key: string): Promise<void> {
     this.broken.set(false);
+    // A release may have started during the last await; it ends by closing the lock, so wait for it and then read the lock itself.
+    await this.pendingFinish;
     // While other repositories still run the page already holds the lock; after the build was settled it takes it again.
-    if (!this.holding) {
+    const held = this.lock.active();
+    if (held?.kind !== 'build') {
       if (!this.lock.beginBuild('Build')) return;
-      this.holding = true;
-    }
+    } else if (held.finished) this.lock.resumeBuild();
     await this.driver.continueRepo(key);
   }
 
@@ -1292,7 +1295,6 @@ export class BuildPageViewModel {
       await this.leftoversGone();
       this.freeze();
       this.lock.close();
-      this.holding = false;
     }
   }
 
