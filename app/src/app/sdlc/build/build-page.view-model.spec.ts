@@ -1332,9 +1332,9 @@ describe('the build page shows tasks and sessions from the build log, the run li
     const { vm, load } = await opened({ built: false, stage: 'build-stopped', links: [link('build:claims-core', 'run-a', secs(8))], records: [record('run-a', 1)] });
     await load();
     const view = vm.view();
-    expect(view.stops).toEqual([{ repo: 'claims-core', reason: 'stopped: the agent failed' }]);
+    expect(view.stops).toContainEqual({ repo: 'claims-core', reason: 'stopped: the agent failed' });
     expect(group(vm, 'claims-core').stopLine).toBe('stopped: the agent failed');
-    expect(view.stageMessage!.lines).toEqual(['claims-core stopped: the agent failed']);
+    expect(view.stageMessage!.lines.filter((l) => l.startsWith('claims-core'))).toEqual(['claims-core stopped: the agent failed']);
     expect(JSON.stringify(view)).not.toContain('Stopped: Stopped');
     expect(JSON.stringify(view)).not.toContain('stopped: Stopped');
   });

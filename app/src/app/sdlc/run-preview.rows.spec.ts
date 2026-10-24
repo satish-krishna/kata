@@ -109,7 +109,7 @@ async function continuing(): Promise<Scenario> {
   await vm.start({ start: out.start, timeoutSecs: 5400, round: null, checksDir: await transport.sdlcChecksDir() }, ctx);
   await vi.waitFor(() => {
     vm.select('claims-core');
-    expect(vm.action()).toBe('continue');
+    expect(vm.view().groups.find((g) => g.repo === 'claims-core')?.action).toBe('continue');
   });
   return { transport, preview: TestBed.inject(RunPreviewViewModel), go: () => vm.continueRun(), started: () => continued };
 }

@@ -5,6 +5,7 @@ import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { TaskLink } from '@bindings/TaskLink';
+import type { TaskStatus } from '@bindings/TaskStatus';
 import type { Problem } from '@bindings/Problem';
 import type { Readiness } from '@bindings/Readiness';
 import type { Snapshot } from '@bindings/Snapshot';
@@ -23,7 +24,7 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { type AskRecord, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
 import { newlyRecorded, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Pick, type SessionRef } from '../../lib/build-sessions';
 import { buildActions, buildStage, repoAction, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
-import { repoSituation, taskState, type Situation, type TaskState } from '../../lib/build-state';
+import { fallbackTaskState, hms, ms, situationView, taskState, type SituationView, type Situation, type TaskState } from '../../lib/build-state';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { reviewState } from '../../lib/sdlc-done';
@@ -32,10 +33,6 @@ import type { ReplacedFindings } from '../../ui/findings-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
 import type { BuildHandoff } from '../change/change-page.view-model';
 import { BuildDriver, NotCheckedOut, type BuildPhase, type RunEnd, type RunOptions, type RunTarget } from './build-driver';
-
-export type RepoRowTone = 'success' | 'warning' | 'error' | 'idle';
-/** One repository's row (or the review's): its name, andon status as a dot plus label, and its clocks. */
-export type RepoRow = { name: string; tone: RepoRowTone; label: string; clock: string | null; paused: string | null; unseen?: number };
 
 /** What the build runs against: the workspace, the system and the change. */
 export type BuildContext = {
@@ -97,7 +94,9 @@ export type BuildPageInput = {
 /** One repository of the tasks area: where it stands, what it offers, and its tasks. */
 export type TaskArea = {
   repo: string;
-  situation: Situation;
+  /** Where the repository stands; null when its facts were impossible and the heading is a fallback. */
+  situation: Situation | null;
+  heading: SituationView;
   action: 'cancel' | 'continue' | null;
   tasks: { id: string; name: string; state: TaskState }[];
 };
@@ -170,24 +169,6 @@ const RUNNING: readonly RunState[] = ['running', 'awaiting'];
 /** Below this width the build page's three areas share one column. */
 const PAGE_NARROW = '(max-width: 1023.98px)';
 
-/** A repository's situation as its heading says it. */
-const situationStatus = (s: Situation): StatusText => {
-  switch (s.kind) {
-    case 'working':
-      return { tone: 'success', label: s.task === null ? 'Working' : `Working · ${s.task}` };
-    case 'waiting':
-      return { tone: 'idle', label: `Waiting for ${s.onTask} in ${s.onRepo}` };
-    case 'stopped':
-      return { tone: 'error', label: `Stopped at ${s.task}` };
-    case 'not-started':
-      return { tone: 'idle', label: 'Not started' };
-    case 'finished':
-      return { tone: 'success', label: 'Finished' };
-    case 'idle':
-      return { tone: 'idle', label: 'Idle' };
-  }
-};
-
 /** A task's state as its row says it. */
 const taskStatus = (t: TaskState): StatusText => {
   switch (t.kind) {
@@ -209,15 +190,10 @@ const reviewStatus = (e: ReviewEntry): StatusText =>
 
 const pad = (n: number) => String(n).padStart(2, '0');
 /** The wall-clock time of a start, as the divider names it. */
-const timeOf = (ms: number): string => {
-  const d = new Date(ms);
+const timeOf = (at: number): string => {
+  const d = new Date(at);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 };
-const hms = (secs: number): string => {
-  const s = Math.max(0, Math.floor(secs));
-  return `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`;
-};
-const ms = (secs: number): string => `${Math.floor(Math.max(0, secs) / 60)}:${pad(Math.floor(Math.max(0, secs)) % 60)}`;
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /**
@@ -352,17 +328,6 @@ export class BuildPageViewModel {
     return `${tasks.filter((t) => t.row !== null).length}/${tasks.length} tasks`;
   });
 
-  readonly rows = computed<RepoRow[]>(() => {
-    const status = this.status();
-    if (status === null) return [];
-    const rows = status.repos.map((r) => this.repoRow(r.repo, status));
-    const master = this.masterName();
-    const masterRow = master !== null && !status.repos.some((r) => r.repo === master) ? this.masterRow(master) : null;
-    if (masterRow !== null) rows.push(masterRow);
-    rows.push(this.reviewRow());
-    return rows;
-  });
-
   /** What the engineer picked, else the first repository, or the review once the build is reviewed. Null before the status is read. */
   readonly pick = computed<Pick | null>(() => {
     const chosen = this.chosen();
@@ -432,15 +397,6 @@ export class BuildPageViewModel {
     return out;
   });
 
-  /** What the selected row offers: Cancel while its run goes, Continue once it stopped. */
-  readonly action = computed<'cancel' | 'continue' | null>(() => {
-    const key = this.selected();
-    if (key === null) return null;
-    if (this.driver.stopped().has(key)) return 'continue';
-    const live = key === REVIEW ? this.phase() === 'reviewing' : this.driver.going().has(key);
-    return live ? 'cancel' : null;
-  });
-
   /** The build log's rows, which say which task made which commit. */
   readonly buildRows = computed<BuildRow[]>(() => (this.status()?.tasks ?? []).flatMap((t) => (t.row === null ? [] : [t.row])));
   /** The task the engineer picked, with its repository; null when the pick is a repository or the review. */
@@ -451,7 +407,7 @@ export class BuildPageViewModel {
     return repo === undefined ? null : { id: pick.task, repo };
   });
   /** The repositories whose run stopped, whose uncommitted files were left by it. */
-  readonly stoppedRepos = computed<string[]>(() => this.taskAreas().flatMap((g) => (g.situation.kind === 'stopped' ? [g.repo] : [])));
+  readonly stoppedRepos = computed<string[]>(() => this.taskAreas().flatMap((g) => (g.situation?.kind === 'stopped' ? [g.repo] : [])));
 
   /** The notice above the findings: the review document's problems or its older layout; null when it needs none. */
   readonly reviewNotice = computed(() => this.runNotice() ?? this.reviewDocNotice());
@@ -614,9 +570,7 @@ export class BuildPageViewModel {
           for (const w of report.waiting) lines.push(`${w.repo} is waiting for ${w.onTask} in ${w.onRepo}`);
         } else {
           for (const g of this.taskAreas()) {
-            if (g.situation.kind === 'stopped' && g.situation.from === 'records') {
-              lines.push(g.situation.reason === null ? `${g.repo} stopped` : `${g.repo} stopped: ${g.situation.reason}`);
-            }
+            if (g.situation?.kind === 'stopped' && g.situation.from === 'records' && g.heading.stopLine !== null) lines.push(`${g.repo} ${g.heading.stopLine}`);
           }
         }
         return { title: 'The build stopped. Nothing more can run.', lines };
@@ -745,20 +699,32 @@ export class BuildPageViewModel {
     return this.groupKeys().map((repo) => {
       const repoStatus = status.repos.find((r) => r.repo === repo);
       const stop = this.driver.stopped().get(repo);
-      const situation = repoSituation({
-        live: this.driver.going().has(repo),
-        stop: stop === undefined ? null : { task: stop.task, reason: stop.reason },
-        state: repoStatus?.state ?? null,
-        firstUnfinished: repoStatus?.firstUnfinished ?? null,
-        session: this.started() ? 'this' : 'none',
-        stage: this.changeStage(),
-        latestExit: this.latestExit(repo),
-      });
+      const going = this.driver.going().has(repo);
+      const entry = this.latest(repo);
+      const heading = situationView(
+        {
+          live: going,
+          stop: stop === undefined ? null : { task: stop.task, reason: stop.reason },
+          state: repoStatus?.state ?? null,
+          firstUnfinished: repoStatus?.firstUnfinished ?? null,
+          session: this.started() ? 'this' : 'none',
+          stage: this.changeStage(),
+          latestExit: this.latestExit(repo),
+        },
+        {
+          workSecs: entry === null ? null : (this.clocks()[entry.id]?.work ?? 0),
+          limitSecs: this.handoff?.timeoutSecs ?? 0,
+          waitSecs: entry !== null && going && this.isWaiting(entry.id) ? (this.clocks()[entry.id]?.current ?? 0) : null,
+          unseen: this.unseenOf(repo),
+        },
+      );
+      const { situation } = heading;
       return {
         repo,
         situation,
-        action: repoAction(situation, repo, review),
-        tasks: status.tasks.filter((t) => t.repo === repo).map((t) => ({ id: t.id, name: t.name, state: taskState(t, situation) })),
+        heading,
+        action: repoAction(situation ?? { kind: 'idle' }, repo, review),
+        tasks: status.tasks.filter((t) => t.repo === repo).map((t) => ({ id: t.id, name: t.name, state: this.stateOfTask(t, situation) })),
       };
     });
   });
@@ -791,11 +757,11 @@ export class BuildPageViewModel {
       actions: this.actions(),
       groups: areas.map((g) => ({
         repo: g.repo,
-        status: situationStatus(g.situation),
-        clock: null,
-        paused: null,
-        unseen: 0,
-        stopLine: null,
+        status: { tone: g.heading.tone, label: g.heading.label },
+        clock: g.heading.clock,
+        paused: g.heading.paused,
+        unseen: g.heading.unseen,
+        stopLine: g.heading.stopLine,
         action: g.action,
         picked: pickedRepo === g.repo,
         tasks: g.tasks.map((t) => ({
@@ -810,7 +776,7 @@ export class BuildPageViewModel {
       pick,
       sessions: this.mountedSessions(),
       sessionNote: this.sessionNote(),
-      stops: areas.flatMap((g) => (g.situation.kind === 'stopped' ? [{ repo: g.repo, reason: g.situation.reason ?? 'Stopped' }] : [])),
+      stops: areas.flatMap((g) => (g.heading.stopLine === null ? [] : [{ repo: g.repo, reason: g.heading.stopLine }])),
       findings,
       waiting: this.waitingNotices(),
       announcement: this.announcement(),
@@ -1102,60 +1068,14 @@ export class BuildPageViewModel {
     }
   }
 
-  // --- rows
-
-  private repoRow(name: string, status: BuildStatus): RepoRow {
-    const repo = status.repos.find((r) => r.repo === name)!;
-    const entry = this.latest(name);
-    const clock = entry ? this.clockOf(entry) : null;
-    const paused = entry && this.isWaiting(entry.id) ? this.pausedOf(entry.id) : null;
-    const unseen = this.unseenOf(name);
-    const row = (tone: RepoRow['tone'], label: string): RepoRow => ({ name, tone, label, clock, paused, unseen });
-    const stop = this.driver.stopped().get(name);
-    if (stop) return row('error', stop.reason);
-    if (this.driver.going().has(name)) {
-      if (paused !== null) return row('warning', 'Waiting for you');
-      return row('success', repo.firstUnfinished ? `Working · ${repo.firstUnfinished}` : 'Working');
+  /** What a task shows; a task the situation table cannot place (or a repository whose situation is unknown) shows the fallback. */
+  private stateOfTask(t: TaskStatus, situation: Situation | null): TaskState {
+    if (situation === null) return fallbackTaskState(t);
+    try {
+      return taskState(t, situation);
+    } catch {
+      return fallbackTaskState(t);
     }
-    switch (repo.state.kind) {
-      case 'waiting':
-        return row('idle', `Waiting for ${repo.state.onTask} in ${repo.state.onRepo}`);
-      case 'done':
-        return row('success', `Finished · ${repo.finished}/${repo.tasks}`);
-      default:
-        return row('idle', 'Not started');
-    }
-  }
-
-  private masterName(): string | null {
-    return this.current()?.start.master.repo ?? null;
-  }
-
-  /** The master repository's row, once it has a round pending, running, stopped or done; null when it has nothing to show. */
-  private masterRow(name: string): RepoRow | null {
-    const entry = this.latest(name);
-    const stop = this.driver.stopped().get(name);
-    const going = this.driver.going().has(name);
-    const pending = this.driver.round()?.repo === name;
-    if (!stop && !going && !pending && entry === null) return null;
-    const clock = entry ? this.clockOf(entry) : null;
-    const paused = entry && going && this.isWaiting(entry.id) ? this.pausedOf(entry.id) : null;
-    const row = (tone: RepoRow['tone'], label: string): RepoRow => ({ name, tone, label, clock, paused, unseen: this.unseenOf(name) });
-    if (stop) return row('error', stop.reason);
-    if (going) return paused !== null ? row('warning', 'Waiting for you') : row('success', 'Working');
-    return pending ? row('idle', 'Not started') : row('success', 'Finished');
-  }
-
-  private reviewRow(): RepoRow {
-    const entry = this.latest(REVIEW);
-    const clock = entry ? this.clockOf(entry) : null;
-    const paused = entry && this.phase() === 'reviewing' && this.isWaiting(entry.id) ? this.pausedOf(entry.id) : null;
-    const unseen = this.unseenOf(REVIEW);
-    const row = (tone: RepoRow['tone'], label: string): RepoRow => ({ name: REVIEW, tone, label, clock, paused, unseen });
-    const stop = this.driver.stopped().get(REVIEW);
-    if (stop) return row('error', stop.reason);
-    if (this.phase() === 'reviewing') return paused !== null ? row('warning', 'Waiting for you') : row('success', 'Working');
-    return this.phase() === 'finished' ? row('success', 'Finished') : row('idle', 'Not started');
   }
 
   private latest(key: string): Entry | null {
@@ -1165,15 +1085,6 @@ export class BuildPageViewModel {
 
   private isWaiting(runId: string): boolean {
     return this.lock.waiting().some((w) => w.runId === runId);
-  }
-
-  private clockOf(e: Entry): string {
-    const limit = this.handoff?.timeoutSecs ?? 0;
-    return `work ${hms(this.clocks()[e.id]?.work ?? 0)} of ${hms(limit)}`;
-  }
-
-  private pausedOf(runId: string): string {
-    return `${ms(this.clocks()[runId]?.current ?? 0)} waiting (not counted)`;
   }
 
   private tick(t: number, waiting: ReadonlySet<string>): void {

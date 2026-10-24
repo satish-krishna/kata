@@ -168,3 +168,12 @@
   border: 1px solid var(--border-subtle);
   background: var(--surface-panel);
 }
+
+.k-bp__clock,
+.k-bp__new {
+  color: var(--text-muted);
+}
+
+.k-bp__paused {
+  color: var(--warning-text);
+}

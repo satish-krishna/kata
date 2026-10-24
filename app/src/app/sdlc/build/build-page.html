@@ -26,6 +26,15 @@
           <div class="k-bp__heading" data-heading>
             <button hlmBtn variant="bare" size="bare" type="button" class="k-mono k-bp__name" [attr.aria-current]="g.picked ? 'true' : null" (click)="choose({ kind: 'repo', repo: g.repo })">{{ g.repo }}</button>
             <span [class]="'k-status k-status--' + g.status.tone"><span class="k-status__dot"></span>{{ g.status.label }}</span>
+            @if (g.clock) {
+              <span class="k-mono k-bp__clock">{{ g.clock }}</span>
+            }
+            @if (g.paused) {
+              <span class="k-mono k-bp__paused">{{ g.paused }}</span>
+            }
+            @if (g.unseen) {
+              <span class="k-mono k-bp__new">{{ g.unseen }} new</span>
+            }
             @switch (g.action) {
               @case ('cancel') {
                 <button hlmBtn variant="secondary" size="sm" type="button" (click)="repoAction.emit({ repo: g.repo, action: 'cancel' })">Cancel</button>

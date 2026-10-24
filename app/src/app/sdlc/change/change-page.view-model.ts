@@ -309,11 +309,11 @@ export class ChangePageViewModel {
   readonly stems: readonly DocStem[] = ['intent', 'spec', 'plan'];
   /** The shown document split into its front matter fields and the text under them. */
   readonly docParts = computed(() => parseFrontMatter(this.doc() ?? ''));
-  /** The actions on show: the build page's at its stage on the Build tab, else the change's own. A done change has none. */
+  /** The actions on show: the build page's for a change at the build step, whatever tab is shown, else the change's own. A done change has none. */
   readonly actions = computed(() => {
     const c = this.change();
     if (c === null || this.done()) return [];
-    return this.shownDoc() === 'build' ? this.build.actions() : actionsForChange(c);
+    return stageLabel(c.stage).step === 'build' ? this.build.actions() : actionsForChange(c);
   });
   /** What blocks the build, shown above the plan; null when nothing does or another document is shown. */
   readonly planBanner = computed(() => {
