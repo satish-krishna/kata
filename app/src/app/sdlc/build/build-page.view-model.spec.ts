@@ -1007,6 +1007,57 @@ describe('the build page starts, stops and continues the same runs as the build 
       expect(told(run, 'claims-core')).toContain('already confirmed');
     });
   });
+
+  describe('a Continue that lands while the build is being released (R14.1, R16.1)', () => {
+    it('waits for the release and takes the lock again, so the run it starts never has a closed lock', async () => {
+      const { vm, transport, runner, lock, preview } = setup(new MockTransport(), 'real');
+      let endPortal!: () => void;
+      let settleBranches!: () => void;
+      let confirmPreview!: () => void;
+      const finish = vi.spyOn(runner, 'finishBuild').mockImplementation(() => new Promise<void>((resolve) => (settleBranches = resolve)));
+      const seen: string[] = [];
+      vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
+        const key = target.kind === 'review' ? 'review' : target.repo;
+        seen.push(key);
+        link.onRun?.(`fake-${seen.length}`);
+        if (key === 'claims-core') {
+          // The first run stops at once; the run after Continue never ends.
+          if (seen.filter((k) => k === key).length === 1) return { exit: 124, error: null };
+          await new Promise<void>(() => undefined);
+        }
+        await new Promise<void>((resolve) => (endPortal = resolve));
+        return { exit: 0, error: null };
+      });
+      vi.spyOn(preview, 'openBuild').mockImplementation(
+        (req) => new Promise((resolve) => (confirmPreview = () => resolve({ off: new Set(req.from.build ?? []), request: null }))),
+      );
+      await vm.start(await handoffFor(transport), CTX);
+      await advance(500);
+      expect(vm.phase()).toBe('building');
+      vm.select('claims-core');
+      expect(group(vm, 'claims-core').action).toBe('continue');
+
+      // Continue is open on its preview while customer-portal's last run ends and the release starts.
+      const going = vm.continueRun();
+      await vi.waitFor(() => expect(confirmPreview).toBeDefined());
+      endPortal();
+      await advance(500);
+      expect(finish).toHaveBeenCalledTimes(1);
+      expect(lock.active()).toMatchObject({ kind: 'build', finished: true });
+
+      // The engineer confirms inside the release.
+      confirmPreview();
+      await advance(200);
+      settleBranches();
+      await going;
+      await advance(500);
+
+      expect(seen.filter((k) => k === 'claims-core')).toHaveLength(2);
+      expect(vm.phase()).toBe('building');
+      expect(lock.active()).toMatchObject({ kind: 'build', finished: false });
+      expect(lock.active()).toMatchObject({ runs: expect.arrayContaining([expect.any(String)]) });
+    });
+  });
 });
 
 describe('the build\'s choices in the build view', () => {
