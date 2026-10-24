@@ -444,8 +444,9 @@ describe('ChangePage build page', () => {
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
     expect(Array.from(page(container).querySelectorAll('[data-heading] .k-bp__name')).map(text)).toEqual(expect.arrayContaining(['claims-core', 'customer-portal']));
     expect(area(container, 'tasks')!.querySelectorAll('[data-task]').length).toBe(3);
-    // Nothing has run yet, so the activity area has nothing to show and is not drawn; the changed files are.
-    expect(area(container, 'activity')).toBeNull();
+    // Nothing has run yet, so the activity area is in the grid with nothing to show; the changed files are.
+    expect(area(container, 'activity')!.querySelector('app-observe-pane')).toBeNull();
+    expect(text(area(container, 'activity')!)).toContain('The activity shows here once the build runs.');
     expect(area(container, 'files')!.querySelector('app-changes-view')).not.toBeNull();
   });
 

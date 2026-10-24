@@ -490,7 +490,8 @@ describe('ChangePage opens an existing change on the build page', () => {
     master_moved: [],
     reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: { 'claims-intent': '1111111', 'claims-core': '2222222', 'customer-portal': '3333333' }, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: FINDING }] }],
   } as unknown as Awaited<ReturnType<MockTransport['sdlcReviewRecord']>>;
-  const actions = (c: HTMLElement) => Array.from(c.querySelectorAll('app-build-page [data-bar] button')).map(text);
+  // The bar also holds the mode switcher and Reset layout; only the stage actions are meant here.
+  const actions = (c: HTMLElement) => Array.from(c.querySelectorAll('app-build-page [data-bar] button')).filter((b) => b.closest('app-segmented') === null).map(text).filter((t) => t !== 'Reset layout');
   const pickRepo = (c: HTMLElement, repo: string) => Array.from(c.querySelectorAll<HTMLButtonElement>('app-build-page [data-heading] .k-bp__name')).find((b) => text(b) === repo)!.click();
   const taskLine = (c: HTMLElement, id: string) => text(Array.from(c.querySelectorAll('app-build-page [data-task]')).find((t) => text(t).startsWith(id))!);
 

@@ -1,12 +1,13 @@
 .k-bp {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   overflow: hidden;
 }
 
+/* The notice and the bar sit above the grid and outside it, so neither ever moves with the arrangement. */
 .k-bp__notice {
   grid-row: 1;
 }
@@ -14,6 +15,7 @@
 .k-bp__bar {
   grid-row: 2;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-3) var(--space-5);
@@ -37,42 +39,246 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.k-bp__body {
+.k-bp__focus {
   grid-row: 4;
-  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--accent-border);
+  background: var(--accent-subtle);
+  font: var(--text-sm) / 1.4 var(--font-sans);
 }
 
-.k-bp__body > [data-slot='resizable-panel'] {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
+/* The four areas, the rails and the separators share one grid. Its columns are the left rail, the left, a separator, the middle, a
+ * separator, the right and the right rail; its rows are the main row, a separator, the bottom and the bottom rail. The page sets the
+ * tracks and each cell inline, because they follow the arrangement. */
+.k-bp__grid {
+  grid-row: 5;
+  display: grid;
   min-width: 0;
   min-height: 0;
-  padding: var(--space-5);
-  overflow-y: auto;
-}
-
-.k-bp__body > [data-area='files'] {
-  display: block;
-  padding: 0;
   overflow: hidden;
 }
 
-.k-bp__body > [hidden] {
+.k-bp__area {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-panel);
+}
+
+/* An area not on show keeps its cell and its rendering state, scroll place included, which display: none would drop. */
+.k-bp__area[inert] {
+  content-visibility: hidden;
+  visibility: hidden;
+}
+
+.k-bp__area[hidden] {
   display: none;
 }
 
-/* Below 1024 pixels the three areas share one cell and only the one on show is drawn. */
-.k-bp[data-narrow] .k-bp__body {
+.k-bp__head {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  min-height: var(--space-9);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-chrome);
+}
+
+.k-bp__tabs {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.k-bp__tab,
+.k-bp__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
+  font: var(--weight-medium) var(--text-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.k-bp__tab {
+  border-right: 1px solid var(--border-subtle);
+}
+
+.k-bp__tab:hover {
+  color: var(--text-primary);
+}
+
+.k-bp__tab[aria-selected='true'] {
+  color: var(--text-primary);
+  background: var(--surface-panel);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.k-bp__title {
+  color: var(--text-secondary);
+}
+
+.k-bp__count {
+  color: var(--text-faint);
+}
+
+.k-bp__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+  padding: 0 var(--space-2);
+}
+
+/* The Place menu is a native popover anchored to its button, so it takes no state and light-dismisses on its own. */
+.k-bp__menu {
+  position: fixed;
+  inset: auto;
+  top: anchor(bottom);
+  right: anchor(right);
+  margin: 0;
+  min-width: calc(var(--space-9) * 4);
+  padding: var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-popover);
+  color: var(--text-secondary);
+}
+
+.k-bp__menu:popover-open {
   display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  gap: var(--space-1);
 }
 
-.k-bp[data-narrow] .k-bp__body > [data-slot='resizable-panel'] {
-  grid-area: 1 / 1;
+.k-bp__menuitem {
+  display: flex;
+  align-items: center;
+  padding: var(--space-3);
+  border-radius: var(--radius-xs);
+  font: var(--text-sm) / 1 var(--font-sans);
+  text-align: left;
 }
 
-.k-bp[data-narrow] .k-bp__body > [data-slot='resizable-handle'] {
+.k-bp__menuitem:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.k-bp__menuitem[aria-current='true'] {
+  color: var(--accent-text);
+}
+
+/* Every area scrolls on its own. */
+.k-bp__body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.k-bp__body--stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+}
+
+.k-bp__empty {
+  padding: var(--space-5);
+}
+
+.k-bp__separator {
+  position: relative;
+  z-index: 2;
+  background: var(--border-subtle);
+  touch-action: none;
+}
+
+.k-bp__separator[data-side='bottom'] {
+  cursor: row-resize;
+}
+
+.k-bp__separator[data-side='left'],
+.k-bp__separator[data-side='right'] {
+  cursor: col-resize;
+}
+
+/* The hairline is thin; its grabbing area reaches past it on both sides. */
+.k-bp__separator::after {
+  content: '';
+  position: absolute;
+  inset: 0 calc(var(--space-2) * -1);
+}
+
+.k-bp__separator[data-side='bottom']::after {
+  inset: calc(var(--space-2) * -1) 0;
+}
+
+.k-bp__separator:hover,
+.k-bp__separator:focus-visible {
+  background: var(--accent);
+}
+
+.k-bp__rail {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--surface-chrome);
+}
+
+.k-bp__rail[data-rail='left'],
+.k-bp__rail[data-rail='right'] {
+  flex-direction: column;
+}
+
+.k-bp__rail[data-rail='left'] {
+  border-right: 1px solid var(--border-default);
+}
+
+.k-bp__rail[data-rail='right'] {
+  border-left: 1px solid var(--border-default);
+}
+
+.k-bp__rail[data-rail='bottom'] {
+  border-top: 1px solid var(--border-default);
+}
+
+.k-bp__railtab {
+  padding: var(--space-3) var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  font: var(--weight-medium) var(--text-2xs) / 1 var(--font-mono);
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.k-bp__rail[data-rail='left'] .k-bp__railtab,
+.k-bp__rail[data-rail='right'] .k-bp__railtab {
+  writing-mode: vertical-rl;
+}
+
+.k-bp__rail[data-rail='left'] .k-bp__railtab {
+  transform: rotate(180deg);
+}
+
+.k-bp__railtab:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* Below 1024 pixels the areas share one cell and only the one on show is drawn; the narrow switch chooses it. */
+.k-bp[data-narrow] .k-bp__head {
   display: none;
 }
 

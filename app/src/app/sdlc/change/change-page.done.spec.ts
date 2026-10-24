@@ -438,6 +438,7 @@ describe('declaring done from the build page', () => {
     expect(p.querySelector('app-changes-view')).not.toBeNull();
     expect(container.querySelector('header [data-testid="pr-menu"]')!.textContent).toContain('3 PRs');
     expect(button(p, 'Declare done')).toBeUndefined();
-    expect(Array.from(p.querySelectorAll('[data-bar] button')).map(text)).toEqual([]);
+    // The bar also holds the mode switcher and Reset layout; only the stage actions are meant here.
+    expect(Array.from(p.querySelectorAll('[data-bar] button')).filter((b) => b.closest('app-segmented') === null).map(text).filter((t) => t !== 'Reset layout')).toEqual([]);
   });
 });

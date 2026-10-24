@@ -271,6 +271,8 @@ export class BuildPageViewModel {
   private readonly status = signal<BuildStatus | null>(null);
   /** Whether any repository the page lists has changed files, as the Changes view lists them. */
   private readonly changedFiles = signal(false);
+  /** How many files the repositories list as changed, for the area tabs. */
+  private readonly changedFileTotal = signal(0);
   private readonly log = signal<Entry[]>([]);
   private readonly clocks = signal<Readonly<Record<string, Clock>>>({});
   private readonly reviews = signal<Review[]>([]);
@@ -832,7 +834,7 @@ export class BuildPageViewModel {
       announcement: this.announcement(),
       areas: shownAreas({ stage, hasSessions, hasChanges }),
       narrow: this.pageNarrow(),
-      counts: { files: 0, findings: 0 },
+      counts: { files: this.changedFileTotal(), findings: findings === null ? 0 : findings.findings.length },
     };
   });
 
@@ -1202,9 +1204,11 @@ export class BuildPageViewModel {
     if (ctx === null || master === null) return;
     try {
       const repos = await this.transport.sdlcChangeRepos(ctx.folder, master.repo, ctx.system, ctx.change);
-      const lists = await Promise.all(repos.map((r) => this.transport.sdlcDiffFiles(r.path, 'whole').then((l) => l.files.length > 0, () => false)));
-      this.changedFiles.set(lists.some(Boolean));
+      const counts = await Promise.all(repos.map((r) => this.transport.sdlcDiffFiles(r.path, 'whole').then((l) => l.files.length, () => 0)));
+      this.changedFileTotal.set(counts.reduce((sum, n) => sum + n, 0));
+      this.changedFiles.set(counts.some((n) => n > 0));
     } catch {
+      this.changedFileTotal.set(0);
       this.changedFiles.set(false);
     }
   }

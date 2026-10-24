@@ -159,7 +159,11 @@ async function mount(view: BuildPageView, extra: { stopped?: string[] } = {}) {
   const buttons = (root: ParentNode) => Array.from(root.querySelectorAll<HTMLButtonElement>('button'));
   const button = (root: ParentNode, name: string) => buttons(root).find((b) => norm(b.textContent) === name);
   const bar = () => el.querySelector<HTMLElement>('[data-bar]')!;
-  const barActions = () => buttons(bar()).map((b) => norm(b.textContent)).filter((t) => !t.includes('tasks'));
+  const barActions = () =>
+    buttons(bar())
+      .filter((b) => b.closest('app-segmented') === null)
+      .map((b) => norm(b.textContent))
+      .filter((t) => !t.includes('tasks') && t !== 'Reset layout');
   const headingButtons = () => Array.from(el.querySelectorAll<HTMLElement>('[data-group]')).flatMap((g) => buttons(g.querySelector('[data-heading]')!).map((b) => norm(b.textContent)));
   return { fixture, host: fixture.componentInstance, el, area, button, buttons, bar, barActions, headingButtons };
 }
@@ -187,8 +191,10 @@ describe('the build page at each stage', () => {
       expect.stringContaining('Not started'),
       expect.stringContaining('Not started'),
     ]);
-    expect(area('activity')).toBeNull();
-    expect(area('files')).toBeNull();
+    // The areas stay in the grid with nothing in them.
+    expect(area('activity')!.querySelector('app-observe-pane')).toBeNull();
+    expect(norm(area('activity')!.textContent)).toContain('The activity shows here once the build runs.');
+    expect(area('files')!.querySelector('app-changes-view')).toBeNull();
     expect(el.querySelector('app-changes-view')).toBeNull();
     expect(barActions()).toContain('Start build');
   });
@@ -305,7 +311,8 @@ describe('the build page at each stage', () => {
       stageMessage: { title: 'Every task is in the build log.', lines: [] },
     });
     const { area, barActions } = await mount(v);
-    expect(area('activity')!.querySelector('app-findings-list')).not.toBeNull();
+    expect(area('findings')!.querySelector('app-findings-list')).not.toBeNull();
+    expect(area('activity')!.querySelector('app-findings-list')).toBeNull();
     expect(area('activity')!.querySelector('app-observe-pane')).toBeNull();
     expect(area('files')!.querySelector('app-changes-view')).not.toBeNull();
     expect(barActions()).toEqual(['Declare done', 'Another round', 'Run review']);
@@ -320,7 +327,7 @@ describe('the build page at each stage', () => {
       findings: FINDINGS,
     });
     const { area, barActions, bar } = await mount(v);
-    expect(area('activity')!.querySelector('app-findings-list')).not.toBeNull();
+    expect(area('findings')!.querySelector('app-findings-list')).not.toBeNull();
     expect(area('files')!.querySelector('app-changes-view')).not.toBeNull();
     expect(barActions()).toEqual([]);
     expect(norm(bar().textContent)).not.toContain('Declare done');
@@ -456,7 +463,7 @@ describe('the build page, questions and stops', () => {
       stageMessage: { title: 'Every task is in the build log.', lines: [] },
     });
     const { area } = await mount(v);
-    const items = Array.from(area('activity')!.querySelectorAll('app-findings-list li .k-findings__text')).map((e) => norm(e.textContent));
+    const items = Array.from(area('findings')!.querySelectorAll('app-findings-list li .k-findings__text')).map((e) => norm(e.textContent));
     expect(items).toEqual(['The upload limit is duplicated.', 'The refusal message has no test.', 'A comment is stale.']);
     expect(norm(area('activity')!.textContent)).toContain('Every task is in the build log.');
     expect(area('files')!.querySelector('app-changes-view')).not.toBeNull();
@@ -615,11 +622,10 @@ class ArrangedHost {
     this.layout.arrange(action);
   }
 
-  /** Mark the pick the way the build page's view model does. */
+  /** Mark the pick the way the build page's view model does. The changed files are not narrowed to the task, so the list stays whole. */
   choose(pick: Pick): void {
     const repoOf = (id: string) => this.view.groups.find((g) => g.tasks.some((t) => t.id === id))?.repo;
     const repo = pick.kind === 'repo' ? pick.repo : pick.kind === 'task' ? repoOf(pick.task) : undefined;
-    this.task = pick.kind === 'task' && repo !== undefined ? { id: pick.task, repo } : null;
     this.view = {
       ...this.view,
       pick,

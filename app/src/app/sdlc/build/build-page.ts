@@ -1,9 +1,20 @@
-import { Component, ElementRef, Injector, afterNextRender, effect, inject, input, model, output, untracked } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
+import { Component, DestroyRef, ElementRef, Injector, afterNextRender, effect, inject, input, model, output, untracked, viewChild } from '@angular/core';
 import type { BuildRow } from '@bindings/BuildRow';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideChevronDown, lucideChevronRight } from '@ng-icons/lucide';
+import { lucideChevronDown, lucideChevronRight, lucideEllipsis, lucideMaximize2, lucideMinus } from '@ng-icons/lucide';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
-import { HlmResizableImports } from '@spartan-ng/helm/resizable';
+import {
+  MIN_MIDDLE_WIDTH,
+  MIN_ROW_HEIGHT,
+  MIN_SIDE,
+  canTuck,
+  whereIs,
+  type AreaId,
+  type Edge,
+  type LayoutMode,
+  type Place,
+} from '../../lib/build-layout';
 import type { Pick } from '../../lib/build-sessions';
 import { actionLabel, primaryAction, type StageAction } from '../../lib/sdlc';
 import { FindingsList } from '../../ui/findings-list';
@@ -11,7 +22,6 @@ import { ObservePane } from '../../ui/observe-pane';
 import { Segmented } from '../../ui/segmented';
 import { WaitingNotice } from '../../ui/waiting-notice';
 import { ChangesView } from '../changes/changes-view';
-import type { AreaId, LayoutMode, Place } from '../../lib/build-layout';
 import type { ArrangeAction, BuildLayoutState } from './build-layout.view-model';
 import type { BuildChanges, BuildPageView } from './build-page.view-model';
 
@@ -26,22 +36,50 @@ const NO_FILES: { value: Panel; label: string }[] = [TASKS, ACTIVITY];
 const NO_ACTIVITY: { value: Panel; label: string }[] = [TASKS, FILES];
 const ONLY_TASKS: { value: Panel; label: string }[] = [TASKS];
 
-/* The widths of the areas side by side, in percent, for each set that is drawn. The group is told them whenever the set changes, because
- * left alone it shares the room by the order the areas appeared in, and the changed files, which come last, ended up the narrowest. */
-const SIDE_BY_SIDE = [22, 39, 39];
-const WITHOUT_FILES = [36, 64];
-const WITHOUT_ACTIVITY = [36, 64];
-const ALONE = [100];
+type Side = Exclude<Place, 'middle'>;
 
-/* The build page: the waiting notice and the action bar above three areas side by side, the tasks, the activity of what the
- * engineer picked, and the changed files. It draws one `BuildPageView` and holds no state of the build; the host does the work
- * its outputs ask for. An area with nothing to show is not drawn and its room goes to the others. Below 1024 CSS pixels
- * (`view.narrow`) the areas share one column behind a switch; the ones not on show are hidden, never removed. */
+/** The areas in the order the grid holds them, which never changes. */
+const AREA_ORDER: AreaId[] = ['tasks', 'activity', 'files', 'findings'];
+const AREA_NAMES: Record<AreaId, string> = { tasks: 'Tasks', activity: 'Activity', files: 'Changed files', findings: 'Findings' };
+const MODE_NAMES: Record<LayoutMode, string> = { overview: 'Overview', watch: 'Watch', changes: 'Changes', review: 'Review' };
+const MODE_TITLES: Record<LayoutMode, string> = {
+  overview: 'The tasks in the middle, the activity beside them',
+  watch: 'The activity in the middle, the tasks beside it',
+  changes: 'The changed files in the middle, the activity below',
+  review: 'The changed files in the middle, the findings beside them',
+};
+const MODE_ORDER: LayoutMode[] = ['overview', 'watch', 'changes', 'review'];
+const PLACES: { place: Place; label: string }[] = [
+  { place: 'left', label: 'Left' },
+  { place: 'middle', label: 'Middle' },
+  { place: 'right', label: 'Right' },
+  { place: 'bottom', label: 'Bottom' },
+];
+const SIDES: Side[] = ['left', 'right', 'bottom'];
+const EDGES: Edge[] = ['left', 'right', 'bottom'];
+const SIZE_VARS: Record<Side, string> = { left: '--k-left', right: '--k-right', bottom: '--k-bottom' };
+
+/* The grid has seven columns (left rail, left, separator, middle, separator, right, right rail) and four rows (the main row, a separator,
+ * the bottom, the bottom rail). Every cell has a fixed line number; a place with nothing in it keeps a track of no size. */
+const FULL = '1 / 1 / 5 / 8';
+const CELLS: Record<Place, string> = { left: '1 / 2 / 2 / 3', middle: '1 / 4 / 2 / 5', right: '1 / 6 / 2 / 7', bottom: '3 / 1 / 4 / 8' };
+const SEPARATOR_CELLS: Record<Side, string> = { left: '1 / 3 / 2 / 4', right: '1 / 5 / 2 / 6', bottom: '2 / 1 / 3 / 8' };
+const RAIL_CELLS: Record<Edge, string> = { left: '1 / 1 / 2 / 2', right: '1 / 7 / 2 / 8', bottom: '4 / 1 / 5 / 8' };
+
+/** What a nudge of a separator by the keyboard moves it by, in pixels. */
+const NUDGE = 16;
+const TUCK_NOTE = 'The page always shows at least one area.';
+
+/* The build page: the waiting notice and the bar above four areas in one grid, the tasks, the activity of what the engineer picked,
+ * the changed files and the findings. It draws one `BuildPageView` and one `BuildLayoutState` and holds no state of the build or the
+ * layout; the host does the work its outputs ask for. The four areas are always in the grid, in the same order, so none is ever
+ * removed or moved in the DOM: one that is not on show is inert and hidden by `content-visibility`, which keeps its scroll place
+ * and its run panes folding. Below 1024 CSS pixels (`view.narrow`) the areas share one cell behind a switch. */
 @Component({
   selector: 'app-build-page',
   host: { class: 'block h-full min-h-0' },
-  providers: [provideIcons({ lucideChevronDown, lucideChevronRight })],
-  imports: [HlmButtonImports, HlmResizableImports, NgIcon, FindingsList, ObservePane, Segmented, WaitingNotice, ChangesView],
+  providers: [provideIcons({ lucideChevronDown, lucideChevronRight, lucideEllipsis, lucideMaximize2, lucideMinus })],
+  imports: [HlmButtonImports, NgIcon, NgTemplateOutlet, FindingsList, ObservePane, Segmented, WaitingNotice, ChangesView],
   templateUrl: './build-page.html',
   styleUrl: './build-page.css',
 })
@@ -76,9 +114,18 @@ export class BuildPage {
   /** The room the grid has, in pixels, whenever it changes. */
   readonly room = output<{ width: number; height: number }>();
 
+  protected readonly areas = AREA_ORDER;
+  protected readonly places = PLACES;
+  protected readonly sides = SIDES;
+  protected readonly edgeNames = EDGES;
+  protected readonly tuckNote = TUCK_NOTE;
   protected readonly labelOf = actionLabel;
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
+  private readonly destroyRef = inject(DestroyRef);
+  private readonly grid = viewChild.required<ElementRef<HTMLElement>>('grid');
+  /** The separator being dragged: DOM bookkeeping for the gesture, not state of the page. */
+  private drag: { side: Side; from: number; size: number; px: number } | null = null;
 
   constructor() {
     // A Go to is asked of the view model; the DOM half (scroll and focus) waits until the picked repository's session is on show.
@@ -86,6 +133,16 @@ export class BuildPage {
       const request = this.focus();
       if (request === null) return;
       untracked(() => afterNextRender(() => this.focusOpenCard(), { injector: this.injector }));
+    });
+    // The layout view model needs the room the grid has to keep the sides from crowding out the middle.
+    afterNextRender(() => {
+      if (typeof ResizeObserver === 'undefined') return;
+      const observer = new ResizeObserver((entries) => {
+        const box = entries[entries.length - 1].contentRect;
+        this.room.emit({ width: Math.round(box.width), height: Math.round(box.height) });
+      });
+      observer.observe(this.grid().nativeElement);
+      this.destroyRef.onDestroy(() => observer.disconnect());
     });
   }
 
@@ -108,13 +165,7 @@ export class BuildPage {
     return primaryAction(this.view().actions);
   }
 
-  /** How the group shares its width among the areas drawn; the same array for the same set, so the binding only moves when the set does. */
-  protected widths(): number[] {
-    const { activity, files } = this.view().areas;
-    return activity ? (files ? SIDE_BY_SIDE : WITHOUT_FILES) : files ? WITHOUT_ACTIVITY : ALONE;
-  }
-
-  /** The areas the switch offers: only those with something to show. */
+  /** The areas the narrow switch offers: only those with something to show. */
   protected options(): { value: Panel; label: string }[] {
     const { activity, files } = this.view().areas;
     return activity ? (files ? ALL : NO_FILES) : files ? NO_ACTIVITY : ONLY_TASKS;
@@ -126,6 +177,11 @@ export class BuildPage {
     return this.options().some((o) => o.value === wanted) ? wanted : 'tasks';
   }
 
+  /** True when a narrow page does not show the area: only the three areas of the switch can be, and the findings never are. */
+  protected offNarrow(area: AreaId): boolean {
+    return this.view().narrow && (area === 'findings' || this.on() !== area);
+  }
+
   /** A pick moves a narrow page to the activity it picked. */
   protected choose(pick: Pick): void {
     this.pick.emit(pick);
@@ -135,5 +191,161 @@ export class BuildPage {
   protected goToRepo(repo: string): void {
     this.goTo.emit(repo);
     this.panel.set('activity');
+  }
+
+  // ---- the layout ----
+
+  protected nameOf(area: AreaId): string {
+    return AREA_NAMES[area];
+  }
+
+  protected modeName(mode: LayoutMode): string {
+    return MODE_NAMES[mode];
+  }
+
+  /** The mode switcher's options; the one the build's stage suits carries the mark. */
+  protected modes(): { value: LayoutMode; label: string; title: string; mark?: string }[] {
+    const suggested = this.layout().suggested;
+    return MODE_ORDER.map((m) => ({ value: m, label: MODE_NAMES[m], title: MODE_TITLES[m], ...(suggested === m ? { mark: 'suggested' } : {}) }));
+  }
+
+  /** Where the area is: a place, or `tucked`. */
+  protected placeOf(area: AreaId): Place | 'tucked' {
+    const where = whereIs(this.layout().drawn, area);
+    return where.kind === 'place' ? where.place : 'tucked';
+  }
+
+  /** The side or middle an area's cell is in; a tucked area keeps the middle's cell. */
+  protected stackPlace(area: AreaId): Place {
+    const place = this.placeOf(area);
+    return place === 'tucked' ? 'middle' : place;
+  }
+
+  /** The area's cell: the whole grid when it is in focus or the page is narrow. */
+  protected cellOf(area: AreaId): string {
+    if (this.view().narrow || this.layout().focus === area) return FULL;
+    return CELLS[this.stackPlace(area)];
+  }
+
+  protected shown(area: AreaId): boolean {
+    return this.view().narrow ? !this.offNarrow(area) : this.layout().onShow.includes(area);
+  }
+
+  /** The names in the area's stack, in order; a tucked area or one alone has none to flip between. */
+  protected stackOf(area: AreaId): AreaId[] {
+    const place = this.placeOf(area);
+    return place === 'left' || place === 'right' || place === 'bottom' ? this.layout().drawn[place] : [area];
+  }
+
+  protected canTuckArea(area: AreaId): boolean {
+    return canTuck(this.layout().drawn, area);
+  }
+
+  /** The count an area's name carries: the changed files, the findings. */
+  protected countOf(area: AreaId): number {
+    const counts = this.view().counts;
+    return area === 'files' ? counts.files : area === 'findings' ? counts.findings : 0;
+  }
+
+  protected tuckedAt(edge: Edge): AreaId[] {
+    return this.layout().drawn.tucked.filter((t) => t.edge === edge).map((t) => t.area);
+  }
+
+  /** True when the rails and the separators are drawn: not while one area fills the page or the page is narrow. */
+  protected showEdges(): boolean {
+    return !this.view().narrow && this.layout().focus === null;
+  }
+
+  protected columns(): string {
+    const { drawn } = this.layout();
+    const side = (place: 'left' | 'right') => (drawn[place].length > 0 ? `var(${SIZE_VARS[place]}, ${drawn.sizes[place]}px)` : '0');
+    const divider = (place: 'left' | 'right') => (drawn[place].length > 0 ? '1px' : '0');
+    const rail = (edge: 'left' | 'right') => (this.tuckedAt(edge).length > 0 ? 'auto' : '0');
+    return [rail('left'), side('left'), divider('left'), 'minmax(0, 1fr)', divider('right'), side('right'), rail('right')].join(' ');
+  }
+
+  protected rowTracks(): string {
+    const { drawn } = this.layout();
+    const bottom = drawn.bottom.length > 0;
+    return ['minmax(0, 1fr)', bottom ? '1px' : '0', bottom ? `var(${SIZE_VARS.bottom}, ${drawn.sizes.bottom}px)` : '0', this.tuckedAt('bottom').length > 0 ? 'auto' : '0'].join(' ');
+  }
+
+  protected railCell(edge: Edge): string {
+    return RAIL_CELLS[edge];
+  }
+
+  protected separatorCell(side: Side): string {
+    return SEPARATOR_CELLS[side];
+  }
+
+  /** The area on show in a side's stack. */
+  private onShowAt(side: Side): AreaId {
+    const { drawn, flipped } = this.layout();
+    const wanted = flipped[side];
+    return wanted !== undefined && drawn[side].includes(wanted) ? wanted : drawn[side][0];
+  }
+
+  protected separatorLabel(side: Side): string {
+    return `Resize the ${AREA_NAMES[this.onShowAt(side)].toLowerCase()} and the middle`;
+  }
+
+  protected sizeOf(side: Side): number {
+    return Math.round(this.layout().drawn.sizes[side]);
+  }
+
+  protected minSide(): number {
+    return MIN_SIDE;
+  }
+
+  // ---- dragging a separator ----
+
+  /** The most a side can have: what leaves the middle its minimum. Unknown (null) until the grid has been measured. */
+  private maxSize(side: Side): number | null {
+    const el = this.grid().nativeElement;
+    const { drawn } = this.layout();
+    if (side === 'bottom') return el.clientHeight > 0 ? el.clientHeight - MIN_ROW_HEIGHT : null;
+    const other = side === 'left' ? 'right' : 'left';
+    return el.clientWidth > 0 ? el.clientWidth - MIN_MIDDLE_WIDTH - (drawn[other].length > 0 ? drawn.sizes[other] : 0) : null;
+  }
+
+  private clampSize(side: Side, px: number): number {
+    const max = this.maxSize(side);
+    return Math.round(Math.max(MIN_SIDE, max === null ? px : Math.min(px, max)));
+  }
+
+  protected dragStart(event: PointerEvent, side: Side): void {
+    const el = event.currentTarget as HTMLElement;
+    if (typeof el.setPointerCapture === 'function' && typeof event.pointerId === 'number') el.setPointerCapture(event.pointerId);
+    const size = this.sizeOf(side);
+    this.drag = { side, from: side === 'bottom' ? event.clientY : event.clientX, size, px: size };
+  }
+
+  /** Draw the new size through a CSS variable on the grid while the pointer moves; nothing is told to the page yet. */
+  protected dragMove(event: PointerEvent): void {
+    const drag = this.drag;
+    if (drag === null) return;
+    const delta = (drag.side === 'bottom' ? event.clientY : event.clientX) - drag.from;
+    drag.px = this.clampSize(drag.side, drag.side === 'left' ? drag.size + delta : drag.size - delta);
+    this.grid().nativeElement.style.setProperty(SIZE_VARS[drag.side], `${drag.px}px`);
+  }
+
+  /** The release tells the page the size once, and the variable goes when the page has drawn it. */
+  protected dragEnd(): void {
+    const drag = this.drag;
+    if (drag === null) return;
+    this.drag = null;
+    if (drag.px !== drag.size) this.arrange.emit({ kind: 'resize', side: drag.side, px: drag.px });
+    const grid = this.grid().nativeElement;
+    afterNextRender(() => grid.style.removeProperty(SIZE_VARS[drag.side]), { injector: this.injector });
+  }
+
+  /** The arrow keys move a focused separator, a step at a time. */
+  protected nudge(event: KeyboardEvent, side: Side): void {
+    const toward = side === 'bottom' ? { ArrowUp: 1, ArrowDown: -1 } : side === 'left' ? { ArrowRight: 1, ArrowLeft: -1 } : { ArrowLeft: 1, ArrowRight: -1 };
+    const step = (toward as Record<string, number | undefined>)[event.key];
+    if (step === undefined) return;
+    event.preventDefault();
+    const px = this.clampSize(side, this.sizeOf(side) + step * NUDGE);
+    if (px !== this.sizeOf(side)) this.arrange.emit({ kind: 'resize', side, px });
   }
 }

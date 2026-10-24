@@ -276,6 +276,8 @@
 .k-lock__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); }
 .k-lock__title { margin: 0; font: var(--weight-medium) var(--text-md)/1.3 var(--font-sans); color: var(--text-primary); }
 .k-lock__clock { font: var(--font-code-sm); color: var(--text-muted); }
+/* A small dashed tag after a segmented option's label, such as the mode the build's stage suits. */
+.k-seg-mark { margin-left: var(--space-2); padding: 0 var(--space-2); border: 1px dashed var(--accent-border); border-radius: var(--radius-xs); font: var(--text-2xs)/1 var(--font-mono); color: var(--accent-text); }
 .k-lock__count { font: var(--weight-medium) var(--text-2xs)/1 var(--font-mono); letter-spacing: var(--tracking-label); color: var(--text-secondary); }
 .k-lock__steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
 .k-lock__step { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-3); font: var(--font-code-sm); color: var(--text-muted); }
