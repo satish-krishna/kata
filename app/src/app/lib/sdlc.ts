@@ -69,7 +69,7 @@ const ACTIONS: Record<Stage, StageAction[]> = {
   "fix-accepting": [],
 };
 
-const REVISITS: readonly StageAction[] = ["continue-intent", "reopen-intent", "continue-spec", "reopen-spec", "rerun-plan"];
+const REVISITS: readonly StageAction[] = ["continue-intent", "reopen-intent", "continue-spec", "reopen-spec", "rerun-plan", "finish-fix-draft", "change-fix", "reopen-fix"];
 
 /** True for an action that regenerates a document that already exists, so the operator can say what should change. */
 export function revisits(action: StageAction): boolean {
@@ -82,11 +82,38 @@ export function actionsFor(stage: Stage): StageAction[] {
 }
 
 /**
+ * The actions of a change on the light track, by stage. The stages of the intent, spec and plan documents cannot
+ * occur for a fix, so they give none; an out-of-date plan has one action whatever the cause.
+ */
+function fixActions(stage: Stage): StageAction[] {
+  switch (stage) {
+    case "fix-in-progress":
+      return ["finish-fix-draft", "full-pipeline-instead"];
+    case "fix-awaiting":
+      return ["accept-fix", "change-fix", "full-pipeline-instead"];
+    case "fix-accepting":
+      return ["accept-fix"];
+    case "build-ready":
+      return ["start-build", "reopen-fix"];
+    case "build-stopped":
+      return ["continue-build", "another-round", "reopen-fix"];
+    case "build-finished":
+      return ["declare-done", "another-round", "run-review", "reopen-fix"];
+    case "plan-out-of-date":
+    case "plan-superseded":
+      return ["reopen-fix"];
+    default:
+      return [];
+  }
+}
+
+/**
  * The actions of a change. An out-of-date plan depends on its cause: a broken spec pin means the spec is
  * reopened; a reopened intent or spec keeps its own stage, so it only reaches here from older data and has
  * no action; any other cause means the plan is rewritten.
  */
 export function actionsForChange(c: ChangeInfo): StageAction[] {
+  if (c.track === "fix") return fixActions(c.stage);
   if (c.stage !== "plan-out-of-date") return actionsFor(c.stage);
   switch (c.out_of_date) {
     case "spec-pin":
@@ -122,9 +149,9 @@ const LABELS: Record<Stage, StageLabel> = {
   "build-ready": { step: "build", text: "Build · ready to start", tone: "muted" },
   "build-stopped": { step: "build", text: "Build · in progress (stopped)", tone: "warning" },
   "build-finished": { step: "build", text: "Build · finished, not yet done", tone: "success" },
-  "fix-in-progress": { step: "intent", text: "Fix", tone: "muted" },
-  "fix-awaiting": { step: "intent", text: "Fix", tone: "muted" },
-  "fix-accepting": { step: "intent", text: "Fix", tone: "muted" },
+  "fix-in-progress": { step: "intent", text: "Fix · drafting stopped", tone: "warning" },
+  "fix-awaiting": { step: "intent", text: "Fix · awaiting acceptance", tone: "warning" },
+  "fix-accepting": { step: "plan", text: "Fix · acceptance stopped", tone: "warning" },
 };
 
 /**
@@ -428,11 +455,11 @@ const LABEL: Record<StageAction, string> = {
   "run-review": "Run review",
   "declare-done": "Declare done",
   "cancel-build": "Cancel build",
-  "finish-fix-draft": "",
-  "accept-fix": "",
-  "change-fix": "",
-  "reopen-fix": "",
-  "full-pipeline-instead": "",
+  "finish-fix-draft": "Finish the draft",
+  "accept-fix": "Accept fix",
+  "change-fix": "Change the fix",
+  "reopen-fix": "Reopen the fix",
+  "full-pipeline-instead": "Take the full pipeline instead",
 };
 
 export function actionLabel(action: StageAction): string {
@@ -440,11 +467,11 @@ export function actionLabel(action: StageAction): string {
 }
 
 /** The label of an action at a stage. A stage reads it the same way except accepting a fix whose acceptance stopped. */
-export function actionLabelAt(action: StageAction, _stage: Stage): string {
-  return action;
+export function actionLabelAt(action: StageAction, stage: Stage): string {
+  return action === "accept-fix" && stage === "fix-accepting" ? "Finish acceptance" : LABEL[action];
 }
 
-const PRIMARY_ORDER: RegExp[] = [/^accept-/, /^commit-acceptance$/, /^start-/, /^continue-/, /^declare-done$/];
+const PRIMARY_ORDER: RegExp[] = [/^accept-/, /^commit-acceptance$/, /^start-/, /^continue-/, /^finish-fix-draft$/, /^declare-done$/];
 
 /** The one primary action of a view: accept, commit, start, then continue. Reopen, re-run and reject are never primary. */
 export function primaryAction(actions: readonly StageAction[]): StageAction | null {
