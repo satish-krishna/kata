@@ -849,6 +849,11 @@ fn submit_decision(
     write_to_run(&control, &run_id, &line);
 }
 
+/// Accepts only http and https addresses.
+fn web_url(url: &str) -> Result<&str, String> {
+    Ok(url)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -945,6 +950,24 @@ pub fn run() {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn open_url_refuses_non_web_addresses() {
+        for bad in [
+            "file:///C:/Windows/notepad.exe",
+            "javascript:alert(1)",
+            "C:\\x.exe",
+        ] {
+            let err = web_url(bad).expect_err(bad);
+            assert!(err.contains("http"), "reason should explain: {err}");
+        }
+        assert_eq!(
+            web_url("https://github.com/o/r/pull/1"),
+            Ok("https://github.com/o/r/pull/1")
+        );
+        assert_eq!(web_url("http://example.com"), Ok("http://example.com"));
+        assert!(web_url("HTTPS://example.com").is_ok());
+    }
 
     fn live(id: u64) -> LiveRun<()> {
         LiveRun {

@@ -39,6 +39,7 @@ const rows: Row[] = [
   ['previewRun', (t) => t.previewRun(spec), 'preview_run', { spec }],
   ['runSpec', (t) => t.runSpec(spec), 'run_spec', { spec }],
   ['runSpec with a group', (t) => t.runSpec(spec, 'build:claims/c'), 'run_spec', { spec, group: 'build:claims/c' }],
+  ['openUrl', (t) => t.openUrl('https://github.com/o/r/pull/1'), 'open_url', { url: 'https://github.com/o/r/pull/1' }],
   ['cancelRun', (t) => t.cancelRun('7'), 'cancel_run', { runId: '7' }],
   ['submitAnswer', (t) => t.submitAnswer('7', 'q', [['a']]), 'submit_answer', { runId: '7', id: 'q', answers: [['a']] }],
   ['submitDecision', (t) => t.submitDecision('7', 'p', true, null), 'submit_decision', { runId: '7', id: 'p', allow: true, message: null }],
