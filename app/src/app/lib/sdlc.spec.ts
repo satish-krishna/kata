@@ -646,7 +646,7 @@ describe("triage and fix run-specs (T8)", () => {
       expect([...(s.permissions.deny ?? [])].sort()).toEqual([...deny].sort());
       expect(s.permissions.allow).toEqual(["Read(//d/ws/**)"]);
       expect(s.permissions.ask ?? []).toEqual([]);
-      expect(s.permissions.unmatched).toBeUndefined();
+      expect(s.permissions.unmatched).toBe("ask");
       expect(s.interactive).toEqual({ enabled: true, answer_timeout_secs: 3600 });
       expect(s.env_remove).toEqual(["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"]);
       expect(s.workdir).toBe(WS);
