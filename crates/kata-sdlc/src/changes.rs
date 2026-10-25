@@ -29,6 +29,7 @@ pub enum Stage {
     BuildStopped,
     BuildFinished,
     FixInProgress,
+    FixUnsettled,
     FixAwaiting,
     FixAccepting,
 }
@@ -245,6 +246,31 @@ fn acceptance_stopped(master: &Path, system: &str, change: &str) -> bool {
             .iter()
             .any(|document| subject.ends_with(&format!("accept {document} {change}")))
     })
+}
+
+/// How many of a fix's documents are accepted in `HEAD`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) enum Accepted {
+    #[default]
+    None,
+    Leading,
+    All,
+}
+
+/// What the fix-state table reads from git, for the three documents of a fix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) struct FixFacts {
+    pub intent_rejected: bool,
+    pub unsettled: bool,
+    pub own_lines_only: bool,
+    pub unrecorded: bool,
+    pub accepted: Accepted,
+    pub acceptance_last: bool,
+}
+
+#[allow(dead_code)]
+pub(crate) fn fix_facts(_master: &Path, _system: &str, _change: &str) -> FixFacts {
+    FixFacts::default()
 }
 
 /// The stage of a fix, whose three documents are accepted together. Rows in order, first match wins;
@@ -813,6 +839,7 @@ mod tests {
             testutil::repo(tmp.path(), &format!("m{n}"))
         };
         let at = |file: &str| format!("{FIX_DIR}/{file}");
+        let draft_plan = |repo: &Path| pinned_plan("draft", &last_commit_of(repo, &at("spec.md")));
 
         // Row 1: a rejected intent is rejected whatever else holds.
         let repo = fresh();
@@ -820,90 +847,108 @@ mod tests {
         testutil::commit_file(&repo, &at("intent.md"), &fix_intent("rejected"), "reject");
         assert_eq!(only_change(&repo).stage, Stage::Rejected);
 
-        // Row 2: all three committed and accepted in HEAD gives the plan rows.
+        // Row 2: a status the workflow never leaves on a fix (a superseded plan).
         let repo = fresh();
         commit_fix_drafts(&repo);
-        accept_fix_in_steps(&repo, true, true, true);
-        assert_eq!(only_change(&repo).stage, Stage::BuildReady);
+        testutil::commit_file(
+            &repo,
+            &at("plan.md"),
+            &pinned_plan("superseded", "pending acceptance"),
+            "supersede",
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixUnsettled);
 
-        // Row 3: all committed, one accepted, not reopened.
+        // Row 2: a spec accepted while the intent is still a draft.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        testutil::commit_file(
+            &repo,
+            &at("spec.md"),
+            &pinned_spec("accepted", "pending acceptance"),
+            &accept_subject("spec"),
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixUnsettled);
+
+        // Row 3: a plan not yet recorded.
+        let repo = fresh();
+        testutil::commit_file(&repo, &at("intent.md"), &fix_intent("draft"), "draft");
+        testutil::commit_file(
+            &repo,
+            &at("spec.md"),
+            &pinned_spec("draft", "pending acceptance"),
+            "draft",
+        );
+        testutil::write(
+            &repo,
+            &at("plan.md"),
+            &pinned_plan("draft", "pending acceptance"),
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
+
+        // Row 3: an engineer's edit to a draft's body.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        testutil::write(
+            &repo,
+            &at("plan.md"),
+            &format!("{}\nA note.\n", draft_plan(&repo)),
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
+
+        // Row 3: an edit to an accepted intent.
         let repo = fresh();
         commit_fix_drafts(&repo);
         accept_fix_in_steps(&repo, true, false, false);
-        assert_eq!(only_change(&repo).stage, Stage::FixAccepting);
+        testutil::write(
+            &repo,
+            &at("intent.md"),
+            &format!("{}A note.\n", fix_intent("accepted")),
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
 
-        // Row 3 again, with two accepted.
-        accept_fix_in_steps(&repo, false, true, false);
-        assert_eq!(only_change(&repo).stage, Stage::FixAccepting);
-
-        // Row 4: all committed, two accepted, the latest commit on the folder reopens the fix.
+        // Row 4: an uncommitted `status: accepted` on the intent only.
         let repo = fresh();
         commit_fix_drafts(&repo);
-        accept_fix_in_steps(&repo, true, true, true);
-        testutil::commit_file(
-            &repo,
-            &at("plan.md"),
-            &pinned_plan("draft", &last_commit_of(&repo, &at("spec.md"))),
-            "docs(sdlc): reopen fix 2026-10-23-fix-it",
-        );
-        assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
+        testutil::write(&repo, &at("intent.md"), &fix_intent("accepted"));
+        assert_eq!(only_change(&repo).stage, Stage::FixAccepting);
 
-        // Row 4 again, the redraft: two accepted stay accepted and the fix skill commits the new plan as
-        // a draft, so the latest subject is not an acceptance.
+        // Row 5: some accepted, and the last recorded step was one of those acceptances.
         let repo = fresh();
         commit_fix_drafts(&repo);
         accept_fix_in_steps(&repo, true, true, false);
+        assert_eq!(only_change(&repo).stage, Stage::FixAccepting);
+
+        // Row 6: some accepted, the last recorded step was a redraft.
         testutil::commit_file(
             &repo,
             &at("plan.md"),
-            &pinned_plan("draft", &last_commit_of(&repo, &at("spec.md"))),
+            &draft_plan(&repo),
             "docs(sdlc): draft fix 2026-10-23-fix-it",
         );
         assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
 
-        // Row 4 again, an engineer's own commit on top of a partial acceptance.
+        // Row 6: some accepted, the last recorded step was an engineer's own commit.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        accept_fix_in_steps(&repo, true, true, false);
         testutil::commit_file(
             &repo,
             &at("plan.md"),
-            &format!(
-                "{}\nA note.\n",
-                pinned_plan("draft", &last_commit_of(&repo, &at("spec.md")))
-            ),
+            &format!("{}\nA note.\n", draft_plan(&repo)),
             "chore: tidy",
         );
         assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
 
-        // Row 3 with an accept spec latest subject: the acceptance run stopped part-way.
-        let repo = fresh();
-        commit_fix_drafts(&repo);
-        accept_fix_in_steps(&repo, true, true, false);
-        assert_eq!(only_change(&repo).stage, Stage::FixAccepting);
-
-        // Row 5: all committed, none accepted.
+        // Row 7: all three drafted, none accepted.
         let repo = fresh();
         commit_fix_drafts(&repo);
         assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
 
-        // Row 6: not all committed, none accepted.
-        let repo = fresh();
-        testutil::commit_file(&repo, &at("intent.md"), &fix_intent("draft"), "draft");
-        testutil::write(
-            &repo,
-            &at("spec.md"),
-            &pinned_spec("draft", "pending acceptance"),
-        );
-        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
-
-        // Row 7: not all committed, one accepted in HEAD.
+        // Row 8: all three accepted gives the plan rows.
         let repo = fresh();
         commit_fix_drafts(&repo);
-        accept_fix_in_steps(&repo, true, false, false);
-        testutil::write(
-            &repo,
-            &at("spec.md"),
-            &pinned_spec("accepted", &last_commit_of(&repo, &at("intent.md"))),
-        );
-        assert_eq!(only_change(&repo).stage, Stage::FixAccepting);
+        accept_fix_in_steps(&repo, true, true, true);
+        assert_eq!(only_change(&repo).stage, Stage::BuildReady);
     }
 
     #[test]
