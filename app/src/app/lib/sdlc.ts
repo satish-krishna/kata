@@ -96,7 +96,7 @@ function fixActions(c: ChangeInfo): StageAction[] {
       // pipeline: an accepted document or a built task is work it would discard.
       return c.build.finished > 0 || c.intent.status !== "draft" ? ["accept-fix", "change-fix"] : ["accept-fix", "change-fix", "full-pipeline-instead"];
     case "fix-accepting":
-      return ["accept-fix"];
+      return ["accept-fix", "change-fix"];
     case "build-ready":
       return ["start-build", "reopen-fix"];
     case "build-stopped":

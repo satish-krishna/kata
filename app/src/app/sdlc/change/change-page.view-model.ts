@@ -247,13 +247,19 @@ export class ChangePageViewModel {
   private readonly unsettledNotice = computed<DocNotice | null>(() => {
     const c = this.change();
     if (c === null || c.stage !== 'fix-unsettled') return null;
-    // A document not in HEAD says so: the front matter on disk is not what the last commit holds.
-    const status = (d: { exists: boolean; status: string | null; head_status: string | null }) =>
-      d.status === null ? 'missing' : `${d.status} (HEAD: ${d.exists ? (d.head_status ?? 'not committed') : 'not committed'})`;
+    // Each document shows the status HEAD holds, whether or not the working file exists: a deleted document is
+    // "missing (HEAD: draft)", and one not in HEAD says so.
+    const status = (d: { status: string | null; head_status: string | null }) => {
+      if (d.status === null) return d.head_status === null ? 'missing' : `missing (HEAD: ${d.head_status})`;
+      return `${d.status} (HEAD: ${d.head_status ?? 'not committed'})`;
+    };
+    const lines = [`intent: ${status(c.intent)} · spec: ${status(c.spec)} · plan: ${status(c.plan)}`];
+    // When the format program could not run, its own message says why the statuses are not known.
+    if (c.plan_unreadable && c.plan_unreadable_reason !== null) lines.unshift(c.plan_unreadable_reason);
     return {
       tone: 'warning',
       text: 'The workflow does not leave a fix in these statuses, so nothing can be run on it.',
-      lines: [`intent: ${status(c.intent)} · spec: ${status(c.spec)} · plan: ${status(c.plan)}`],
+      lines,
     };
   });
   /** What the open spec or plan shows, decided by the one owner of that table; null for the other tabs and before the first load. */
