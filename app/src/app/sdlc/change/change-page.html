@@ -267,6 +267,7 @@
     [lightTrack]="vm.lightTrack()"
     [initialIdea]="vm.pipelineIdea()"
     initialTrack="full"
+    [trackFixed]="true"
     [note]="vm.pipelineNote()"
     (start)="vm.startPipeline($event.system, $event.idea)"
     (cancel)="vm.closePipeline()"

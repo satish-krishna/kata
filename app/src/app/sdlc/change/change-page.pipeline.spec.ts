@@ -55,13 +55,11 @@ const start = async () => {
 };
 
 describe('ChangePage: the full pipeline instead of a drafted fix', () => {
-  it('opens the new-change dialog on the full pipeline with the fix as the description and a note', async () => {
+  it('opens the new-change dialog with the fix as the description and a note', async () => {
     const { container } = await mountFix();
     await take(container);
-    expect(dialog()!.textContent).toContain('Full pipeline');
     expect(dialog()!.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe(IDEA);
     expect(dialog()!.textContent).toContain(`This closes the drafted fix ${FIX}.`);
-    expect(dialog()!.querySelector('[role="radio"][aria-checked="true"]')!.textContent!.trim()).toBe('Full pipeline');
   });
 
   it('does not offer a track to pick: the new change is always the full pipeline', async () => {

@@ -92,7 +92,11 @@ type HandledAction =
   | 'cancel-build'
   | 'full-pipeline-instead';
 /** What recording a decision came to; the full-pipeline hand-over goes on only after 'committed'. */
-type DecisionOutcome = 'committed' | 'needsConfirm' | 'gitFailed' | 'error';
+/** A change by system and folder name. */
+type ChangeRef = { system: string; change: string };
+/** The toast for a drafted fix that stays open after the new change that replaces it started. */
+const fixStays = (fix: ChangeRef, why: string): string => `The new change started, but the fix ${fix.change} could not be closed: ${why}. It stays open.`;
+type DecisionOutcome ='committed' | 'needsConfirm' | 'gitFailed' | 'error';
 type StageRun = { kind: 'intent' | 'spec' | 'plan' | 'fix'; title: string; label: string };
 
 /** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result.
@@ -831,13 +835,17 @@ export class ChangePageViewModel {
   async confirmDecision(): Promise<void> {
     const d = this.pendingDecision();
     this.pendingDecision.set(null);
+    const fix = this.pendingFix;
+    this.pendingFix = null;
     if (d === null) return;
-    if ((await this.commitDecision(d, true)) === 'committed' && this.pendingPipeline !== null) await this.continuePipeline();
+    await this.commitDecision(d, true, fix ?? undefined);
   }
 
   cancelConfirm(): void {
     this.pendingDecision.set(null);
-    this.pendingPipeline = null;
+    const fix = this.pendingFix;
+    this.pendingFix = null;
+    if (fix !== null) this.toasts.error(fixStays(fix, 'its other edits were not committed'));
   }
 
   // --- taking the full pipeline instead of a drafted fix
@@ -851,8 +859,8 @@ export class ChangePageViewModel {
     const r = this.readiness();
     return r !== null && r.kind === 'ready' && r.lightTrack;
   });
-  /** The new change waiting on the confirm of the fix's rejection; null when none is. */
-  private pendingPipeline: { system: string; idea: string } | null = null;
+  /** The fix whose rejection waits on the other-edits confirm, after its replacement opened; null when none does. */
+  private pendingFix: ChangeRef | null = null;
 
   /** Read the fix's intent and open New change on the full pipeline with the fix as its description. */
   private async openFullPipeline(): Promise<void> {
@@ -872,26 +880,28 @@ export class ChangePageViewModel {
     this.pipelineOpen.set(false);
   }
 
-  /** Close the fix, then start the new change. The new change never starts unless the fix was closed (R7.1). */
+  /**
+   * Start the new change, and close the fix only once it opened (R7.1). Any other outcome leaves the fix as it was:
+   * the runner has already said why for a refused or stopped start and for a run that made no change, so only an
+   * error thrown here gets a toast. The dialog's Start is the engineer's confirmation that the fix will close.
+   */
   async startPipeline(system: string, idea: string): Promise<void> {
     this.pipelineOpen.set(false);
-    this.pendingPipeline = { system, idea };
-    if ((await this.commitDecision('reject-intent', false)) === 'committed') await this.continuePipeline();
-  }
-
-  private async continuePipeline(): Promise<void> {
-    const next = this.pendingPipeline;
-    this.pendingPipeline = null;
+    const fix = { system: this.system(), change: this.changeName() };
     const workspace = this.current();
     const scan = this.scan();
     const master = this.masterDir();
-    if (next === null || !workspace || !scan || !master) return;
+    if (!workspace || !scan || !master) return;
+    let outcome;
     try {
-      await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, next.system, next.idea, 'full', (spec) => this.confirmRun(spec));
+      outcome = await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, 'full', (spec) => this.confirmRun(spec));
     } catch (e) {
       this.toasts.error(`Could not start the change: ${message(e)}`);
+      return;
     }
-    await this.load();
+    if (outcome.kind !== 'opened') return;
+    // The page may already show the new change, so the rejection names the fix it belongs to.
+    await this.commitDecision('reject-intent', false, fix);
   }
 
   /** The preview a run goes through; null when it was cancelled or could not be opened. */
@@ -1199,24 +1209,29 @@ export class ChangePageViewModel {
     return w && repo ? masterPath(w.folder, repo) : null;
   }
 
-  private async commitDecision(decision: Decision, confirmed: boolean): Promise<DecisionOutcome> {
+  /**
+   * Record a decision on a change. `fix` names the drafted fix a decision closes after its replacement opened: the
+   * decision then goes to that fix, whatever change the page shows by now, and a failure says the fix stays open.
+   */
+  private async commitDecision(decision: Decision, confirmed: boolean, fix?: ChangeRef): Promise<DecisionOutcome> {
     const master = this.masterDir();
     if (master === null) return 'error';
+    const target = fix ?? { system: this.system(), change: this.changeName() };
+    const failure = (text: string): string => (fix ? fixStays(fix, text) : text);
     let out;
     try {
-      out = await this.transport.sdlcDecide(master, this.system(), this.changeName(), decision, confirmed);
+      out = await this.transport.sdlcDecide(master, target.system, target.change, decision, confirmed);
     } catch (e) {
-      this.toasts.error(`Could not record the decision: ${message(e)}`);
-      this.pendingPipeline = null;
+      this.toasts.error(failure(fix ? message(e) : `Could not record the decision: ${message(e)}`));
       return 'error';
     }
     switch (out.kind) {
       case 'needsConfirm':
         this.pendingDecision.set(decision);
+        this.pendingFix = fix ?? null;
         return 'needsConfirm';
       case 'gitFailed':
-        this.toasts.error(out.stderr.trim() === '' ? 'git refused the commit' : out.stderr);
-        this.pendingPipeline = null;
+        this.toasts.error(failure(out.stderr.trim() === '' ? 'git refused the commit' : out.stderr));
         break;
       case 'committed':
         this.toasts.success(`${DONE[decision]} · committed`);

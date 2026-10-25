@@ -52,7 +52,7 @@ export class NewChangeDialog {
   /** Without the light track the workflow cannot decide, so the full pipeline is the only choice. */
   protected readonly track = linkedSignal<StartTrack>(() => {
     this.open();
-    return this.lightTrack() ? this.initialTrack() : 'full';
+    return this.trackFixed() || this.lightTrack() ? this.initialTrack() : 'full';
   });
   protected readonly system = linkedSignal<string | null>(() => {
     this.open();

@@ -22,9 +22,11 @@
       <app-field label="Description" hint="A sentence or two. The agent proposes the title and the folder name and asks you to confirm.">
         <textarea hlmTextarea rows="4" aria-label="Description" [value]="idea()" (input)="onIdea($event)"></textarea>
       </app-field>
-      <app-field label="Track" [hint]="trackHint()">
-        <app-segmented ariaLabel="Track" [options]="tracks()" [(value)]="track" />
-      </app-field>
+      @if (!trackFixed()) {
+        <app-field label="Track" [hint]="trackHint()">
+          <app-segmented ariaLabel="Track" [options]="tracks()" [(value)]="track" />
+        </app-field>
+      }
     </div>
     <hlm-dialog-footer>
       <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
