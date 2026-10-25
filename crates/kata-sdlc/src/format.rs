@@ -130,6 +130,17 @@ pub enum Severity {
     Low,
 }
 
+/// What a review finding concerns.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum Concern {
+    Spec,
+    Bug,
+    Convention,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
@@ -139,6 +150,12 @@ pub struct ParsedFinding {
     pub file: String,
     pub line: u32,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concern: Option<Concern>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -448,5 +465,61 @@ mod tests {
         let (folder, relative) = change_folder(Path::new("x/change/spec.md"));
         assert_eq!(folder, Path::new("x/change"));
         assert_eq!(relative, "spec.md");
+    }
+
+    fn read_review(findings: &str) -> (Vec<ParsedFinding>, Vec<Problem>) {
+        let text = format!(
+            "---\nlayout: 2\n---\n\n# Review findings\n\n## Review 1\n\n```yaml\nreview: 1\nreviewed_at: 2026-10-22\ncommits: {{ kata: 840fa0c }}\n```\n\n{findings}"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("build/review.md");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, text).unwrap();
+        let program = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format/check.mjs");
+        match read(&program, &file).unwrap() {
+            ReadResult::Review {
+                document, problems, ..
+            } => (
+                document
+                    .reviews
+                    .into_iter()
+                    .flat_map(|r| r.findings)
+                    .collect(),
+                problems,
+            ),
+            other => panic!("not a review: {other:?}"),
+        }
+    }
+
+    const FULL: &str = "### F1\n\n```yaml\nid: F1\nseverity: high\nfile: a.ts\nline: 1\nrepo: kata\nconcern: convention\nrule: Use US English\n```\n\nText.\n";
+    const OLD: &str =
+        "### F1\n\n```yaml\nid: F1\nseverity: low\nfile: a.ts\nline: 1\n```\n\nText.\n";
+    const NO_RULE: &str = "### F1\n\n```yaml\nid: F1\nseverity: low\nfile: a.ts\nline: 1\nconcern: convention\n```\n\nText.\n";
+
+    #[test]
+    fn review_finding_fields_are_read_when_present() {
+        let (findings, problems) = read_review(FULL);
+        assert_eq!(problems, vec![]);
+        assert_eq!(findings[0].repo.as_deref(), Some("kata"));
+        assert_eq!(findings[0].concern, Some(Concern::Convention));
+        assert_eq!(findings[0].rule.as_deref(), Some("Use US English"));
+    }
+
+    #[test]
+    fn review_finding_fields_are_none_in_an_older_review() {
+        let (findings, problems) = read_review(OLD);
+        assert_eq!(problems, vec![]);
+        assert_eq!(findings[0].repo, None);
+        assert_eq!(findings[0].concern, None);
+        assert_eq!(findings[0].rule, None);
+    }
+
+    #[test]
+    fn review_finding_fields_report_a_convention_without_a_rule() {
+        let (_, problems) = read_review(NO_RULE);
+        assert!(
+            problems.iter().any(|p| p.message.contains("rule")),
+            "{problems:?}"
+        );
     }
 }
