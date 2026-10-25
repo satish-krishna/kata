@@ -54,6 +54,7 @@ const rows: Row[] = [
   ['sdlcSaveWorkspaces', (t) => t.sdlcSaveWorkspaces([entry]), 'sdlc_save_workspaces', { workspaces: [entry] }],
   ['sdlcScan', (t) => t.sdlcScan('/w'), 'sdlc_scan', { folder: '/w' }],
   ['sdlcContextHealth', (t) => t.sdlcContextHealth('/w', 'm', 's', 'r'), 'sdlc_context_health', { folder: '/w', master: 'm', system: 's', repo: 'r' }],
+  ['sdlcInstructions', (t) => t.sdlcInstructions('/w', 'm'), 'sdlc_instructions', { folder: '/w', masterRepo: 'm' }],
   ['sdlcChanges', (t) => t.sdlcChanges('/m', 's'), 'sdlc_changes', { master: '/m', system: 's' }],
   ['sdlcBranches', (t) => t.sdlcBranches('/m'), 'sdlc_branches', { master: '/m' }],
   ['sdlcWaitRunExit', (t) => t.sdlcWaitRunExit('7', 15000), 'sdlc_wait_run_exit', { runId: '7', timeoutMs: 15000 }],

@@ -232,6 +232,12 @@ fn sdlc_context_health(
 }
 
 #[tauri::command(async)]
+fn sdlc_instructions(folder: String, master_repo: String) -> sdlc::workspace::InstructionsState {
+    let folder = Path::new(&folder);
+    sdlc::workspace::instructions(folder, &folder.join(master_repo))
+}
+
+#[tauri::command(async)]
 fn sdlc_changes(master: String, system: String) -> Vec<sdlc::changes::ChangeInfo> {
     let plugin = ai_sdlc_dir(&master).ok();
     sdlc::changes::list(plugin.as_deref(), Path::new(&master), &system)
@@ -888,6 +894,7 @@ pub fn run() {
             sdlc_save_workspaces,
             sdlc_scan,
             sdlc_context_health,
+            sdlc_instructions,
             sdlc_changes,
             sdlc_branches,
             sdlc_read_doc,

@@ -7,6 +7,7 @@ import type { Settings } from '@bindings/Settings';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
+import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildAction } from '@bindings/BuildAction';
@@ -110,7 +111,7 @@ export class MockTransport extends KataTransport {
       const setup = spec.name === 'sdlc-setup';
       this.sdlc.beginRun();
       const script = setup ? sdlcSetupScript : sdlcSpecScript;
-      return { run: make(setup ? 'sdlc-setup' : 'sdlc-spec', script.mid, setup ? () => this.sdlc.finishSetup() : null), head: script.head };
+      return { run: make(setup ? 'sdlc-setup' : 'sdlc-spec', script.mid, setup ? () => this.sdlc.finishSetup(spec.task.includes('--instructions')) : null), head: script.head };
     }
     return { run: make('workbench', runScriptMid), head: runScriptHead };
   }
@@ -148,6 +149,7 @@ export class MockTransport extends KataTransport {
     return Promise.resolve(this.sdlc.scan(folder));
   }
   sdlcContextHealth(_folder: string, _master: string, _system: string, repo: string): Promise<ContextState> { return Promise.resolve(this.sdlc.contextHealth(repo)); }
+  sdlcInstructions(_folder: string, _masterRepo: string): Promise<InstructionsState> { return Promise.resolve(this.sdlc.instructions()); }
   sdlcChanges(_master: string, _system: string): Promise<ChangeInfo[]> { return Promise.resolve(this.sdlc.listChanges()); }
   sdlcBranches(_master: string): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }
   sdlcReadDoc(_master: string, _system: string, change: string, doc: string): Promise<string | null> {

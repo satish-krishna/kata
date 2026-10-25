@@ -29,6 +29,7 @@ import type { TaskStatus } from '@bindings/TaskStatus';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ContextState } from '@bindings/ContextState';
+import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { DecideOutcome } from '@bindings/DecideOutcome';
 import type { Decision } from '@bindings/Decision';
@@ -348,6 +349,7 @@ export class SdlcMock {
   private published = new Set<string>();
   private docs: Record<string, string> = { ...DOCS };
   private setupDone = false;
+  private instructionsWritten = false;
   private cancelledRun = false;
   private discarded = new Set<string>();
   /** Review runs that finished: the scripted plugin records one review in the review document at the end of each. */
@@ -421,7 +423,13 @@ export class SdlcMock {
   /** A new AI-SDLC run starts clean; cancelling it is what leaves files behind. */
   beginRun(): void { this.cancelledRun = false; this.discarded.clear(); }
   cancelRun(): void { this.cancelledRun = true; }
-  finishSetup(): void { this.setupDone = true; }
+  /** A setup run with `--instructions` refreshes this machine's copy of the workspace instructions; any setup run sets the workspace up. */
+  finishSetup(withInstructions = false): void {
+    this.setupDone = true;
+    if (withInstructions) this.instructionsWritten = true;
+  }
+  /** Out of date until a setup run with `--instructions` has finished. */
+  instructions(): InstructionsState { return this.instructionsWritten ? 'current' : 'out-of-date'; }
 
   startChange(): string {
     this.current = MOCK_PENDING_BRANCH;
