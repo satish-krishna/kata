@@ -88,6 +88,37 @@ describe('ChangePage: the fix runs', () => {
     expect(run.mock.calls[0][0].task).toContain('Operator feedback:\nAlso cover the retry button.');
   });
 
+  it('Change the fix with an empty box runs nothing and shows the error', async () => {
+    const { container, run } = await mountFix('fix-awaiting');
+    button(container, 'Change the fix').click();
+    await settle();
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    button(dialog, 'Run').click();
+    await settle();
+    expect(run).not.toHaveBeenCalled();
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(dialog.querySelector('.k-field__hint--error')!.textContent!.trim()).toBe('Write what should change.');
+    expect(button(document.body, 'Start run')).toBeUndefined();
+  });
+
+  it('Reopen the fix at plan-out-of-date runs with an empty box', async () => {
+    const { vm, run } = await mountFix('plan-out-of-date');
+    await vm.act('reopen-fix');
+    await settle();
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    expect(dialog.querySelector('.k-field__hint--error')).toBeNull();
+    button(dialog, 'Run').click();
+    await confirmPreview();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+  });
+
+  it('a fix whose statuses are not settled offers nothing and lists the statuses', async () => {
+    const { container } = await mountFix('fix-unsettled');
+    const notice = container.querySelector('[data-testid="doc-notice"]')!;
+    expect(notice.textContent).toMatch(/intent: \S+ · spec: \S+ · plan: \S+/);
+    expect(button(container, 'Accept fix')).toBeUndefined();
+  });
+
   it('reopening is disabled while a build run holds the lock, and refused with no run (R6.2)', async () => {
     const { container, vm, run } = await mountFix('build-ready');
     // The build tab has its own bar; the document tabs carry the page's actions, this one among them.

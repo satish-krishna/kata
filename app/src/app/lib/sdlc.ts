@@ -127,6 +127,11 @@ export function actionsForChange(c: ChangeInfo): StageAction[] {
   }
 }
 
+/** Whether the feedback box refuses an empty answer for an action at a stage. */
+export function feedbackRequired(_action: StageAction, _stage: Stage): boolean {
+  return false;
+}
+
 export type StageLabel = {
   step: "intent" | "spec" | "plan" | "build" | "done" | "closed";
   text: string;

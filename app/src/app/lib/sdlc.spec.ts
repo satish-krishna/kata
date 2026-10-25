@@ -6,7 +6,7 @@ import type { Stage } from "@bindings/Stage";
 import type { WorkspaceScan } from "@bindings/WorkspaceScan";
 import type { KataEvent, RunDetail } from "./events";
 import { validateLocal } from "./mock";
-import { DONE_LABEL, actionLabel, actionLabelAt,buildPreviewFor, givenFor, safetyRules, actionsFor, actionsForChange, hasAiSdlcPlugin, isBuildRun, primaryAction, restrictedFor, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type BuildRun, type Restricted, type RunContext, type StageAction } from "./sdlc";
+import { DONE_LABEL, actionLabel, actionLabelAt,buildPreviewFor, givenFor, safetyRules, actionsFor, actionsForChange, feedbackRequired, hasAiSdlcPlugin, isBuildRun, primaryAction, restrictedFor, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type BuildRun, type Restricted, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -79,13 +79,18 @@ describe("plan and build actions", () => {
   });
 });
 
-const fixAt = (stage: Stage, outOfDate: OutOfDate | null = null): ChangeInfo => ({ ...changeAt(stage, outOfDate), track: "fix" });
+const fixAt = (stage: Stage, outOfDate: OutOfDate | null = null, finished = 0): ChangeInfo => ({
+  ...changeAt(stage, outOfDate),
+  track: "fix",
+  build: { tasks: 2, finished, repos: 1 },
+});
 
 const FIX_RESTRICTED = ["continue-intent", "accept-intent", "reject-intent", "commit-acceptance", "start-spec", "continue-spec", "accept-spec", "reopen-spec", "reopen-intent", "start-plan", "rerun-plan", "accept-plan"];
 
 describe("actions of a fix (R4.1, R7.3)", () => {
   const rows: [Stage, OutOfDate | null, string[]][] = [
-    ["fix-in-progress", null, ["finish-fix-draft", "full-pipeline-instead"]],
+    ["fix-in-progress", null, ["finish-fix-draft"]],
+    ["fix-unsettled", null, []],
     ["fix-awaiting", null, ["accept-fix", "change-fix", "full-pipeline-instead"]],
     ["fix-accepting", null, ["accept-fix"]],
     ["rejected", null, []],
@@ -99,7 +104,7 @@ describe("actions of a fix (R4.1, R7.3)", () => {
     ["plan-out-of-date", "plan-pin", ["reopen-fix"]],
     ["plan-out-of-date", "no-tasks", ["reopen-fix"]],
     ["plan-unreadable", null, []],
-    ["plan-superseded", null, ["reopen-fix"]],
+    ["plan-superseded", null, []],
     ["intent-in-progress", null, []],
     ["intent-awaiting", null, []],
     ["intent-accepted-uncommitted", null, []],
@@ -118,12 +123,32 @@ describe("actions of a fix (R4.1, R7.3)", () => {
     });
   }
 
+  it("a built fix awaiting acceptance no longer offers the full pipeline", () => {
+    expect(actionsForChange(fixAt("fix-awaiting", null, 1))).toEqual(["accept-fix", "change-fix"]);
+    expect(actionsForChange(fixAt("fix-awaiting", null, 0))).toEqual(["accept-fix", "change-fix", "full-pipeline-instead"]);
+  });
+
+  it("feedback is required for changing a fix, and for reopening one except when its plan is out of date", () => {
+    for (const stage of Object.keys(ACTIONS) as Stage[]) {
+      for (const action of actionsForChange(fixAt(stage))) {
+        const expected = action === "change-fix" || (action === "reopen-fix" && stage !== "plan-out-of-date");
+        expect(feedbackRequired(action, stage), `${action} at ${stage}`).toBe(expected);
+      }
+    }
+    expect(feedbackRequired("change-fix", "fix-awaiting")).toBe(true);
+    expect(feedbackRequired("reopen-fix", "build-ready")).toBe(true);
+    expect(feedbackRequired("reopen-fix", "plan-out-of-date")).toBe(false);
+    expect(feedbackRequired("finish-fix-draft", "fix-in-progress")).toBe(false);
+    expect(feedbackRequired("continue-spec", "spec-awaiting")).toBe(false);
+  });
+
   it("a closed fix is labeled as closed (R7.3)", () => {
     expect(stageLabel("rejected").text).toBe("Closed · rejected");
   });
 
   it("the fix stages are labeled and sort with early work", () => {
-    expect(stageLabel("fix-in-progress")).toEqual({ step: "intent", text: "Fix · drafting stopped", tone: "warning" });
+    expect(stageLabel("fix-in-progress")).toEqual({ step: "intent", text: "Fix · changes not recorded", tone: "warning" });
+    expect(stageLabel("fix-unsettled")).toEqual({ step: "intent", text: "Fix · statuses not settled", tone: "warning" });
     expect(stageLabel("fix-awaiting")).toEqual({ step: "intent", text: "Fix · awaiting acceptance", tone: "warning" });
     expect(stageLabel("fix-accepting")).toEqual({ step: "plan", text: "Fix · acceptance stopped", tone: "warning" });
   });
@@ -145,7 +170,7 @@ describe("actions of a fix (R4.1, R7.3)", () => {
   });
 
   it("the primary action is the first of the list that fits", () => {
-    expect(primaryAction(["finish-fix-draft", "full-pipeline-instead"])).toBe("finish-fix-draft");
+    expect(primaryAction(["finish-fix-draft"])).toBe("finish-fix-draft");
     expect(primaryAction(["accept-fix", "change-fix", "full-pipeline-instead"])).toBe("accept-fix");
     expect(primaryAction(["reopen-fix"])).toBeNull();
   });
