@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
-import { of } from 'rxjs';
+import { BehaviorSubject } from 'rxjs';
 import { render } from '../../../testing/render';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ToastStore } from '../../core/toast/toast.store';
@@ -38,16 +38,17 @@ async function mountFix() {
   vi.spyOn(transport, 'sdlcBranches').mockImplementation(async (m) => ({ ...(await realBranches(m)), current: FIX_BRANCH }));
   const decide = vi.spyOn(transport, 'sdlcDecide');
   const checkout = vi.spyOn(transport, 'sdlcCheckout');
+  const params = new BehaviorSubject(convertToParamMap({ system: 'claims', change: FIX }));
   const out = await render(ChangePage, {}, [
     provideRouter([]),
     { provide: KataTransport, useValue: transport },
-    { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change: FIX })), snapshot: { queryParamMap: convertToParamMap({}) } } },
+    { provide: ActivatedRoute, useValue: { paramMap: params, snapshot: { queryParamMap: convertToParamMap({}) } } },
   ]);
   await settle();
   const runner = TestBed.inject(SdlcRunner);
   const newChange = vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened', change: NEW, branch: NEW_BRANCH });
   const error = vi.spyOn(TestBed.inject(ToastStore), 'error');
-  return { ...out, transport, decide, checkout, newChange, error };
+  return { ...out, transport, decide, checkout, newChange, error, params };
 }
 
 const take = async (container: HTMLElement) => {
@@ -258,5 +259,48 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
     await settle();
     expect(decide).toHaveBeenCalledTimes(1);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('The new change started, but the fix'));
+  });
+
+  // The real runner navigates to the new change before it resolves; the page and its ViewModel are reused.
+  const navigatesToNew = (m: { newChange: { mockImplementation: (f: () => Promise<{ kind: 'opened'; change: string; branch: string }>) => unknown }; params: BehaviorSubject<ReturnType<typeof convertToParamMap>> }) =>
+    m.newChange.mockImplementation(async () => {
+      m.params.next(convertToParamMap({ system: 'claims', change: NEW }));
+      return { kind: 'opened', change: NEW, branch: NEW_BRANCH };
+    });
+
+  it('closes the fix, not the new change, when the page already moved to the new change (R7.1)', async () => {
+    const m = await mountFix();
+    navigatesToNew(m);
+    await take(m.container);
+    await start();
+    await vi.waitFor(() => expect(m.checkout).toHaveBeenCalledTimes(2));
+    expect(m.decide).toHaveBeenCalledTimes(1);
+    expect(m.decide.mock.calls[0].slice(1)).toEqual(['claims', FIX, 'reject-intent', false]);
+    expect(m.checkout.mock.invocationCallOrder[0]).toBeLessThan(m.decide.mock.invocationCallOrder[0]);
+    expect(m.decide.mock.invocationCallOrder[0]).toBeLessThan(m.checkout.mock.invocationCallOrder[1]);
+  });
+
+  it('confirming other edits after the page moved still closes the fix', async () => {
+    const m = await mountFix();
+    navigatesToNew(m);
+    m.decide.mockResolvedValueOnce({ kind: 'needsConfirm', other_edits: true });
+    await take(m.container);
+    await start();
+    await vi.waitFor(() => expect(button(document.body, 'Commit')).toBeDefined());
+    button(document.body, 'Commit').click();
+    await vi.waitFor(() => expect(m.decide).toHaveBeenCalledTimes(2));
+    expect(m.decide.mock.calls.map((c) => c.slice(1))).toEqual([
+      ['claims', FIX, 'reject-intent', false],
+      ['claims', FIX, 'reject-intent', true],
+    ]);
+  });
+
+  it('names the fix, not the new change, in the failure toast after the page moved (R7.4)', async () => {
+    const m = await mountFix();
+    navigatesToNew(m);
+    m.decide.mockResolvedValue({ kind: 'gitFailed', stderr: 'index.lock exists' });
+    await take(m.container);
+    await start();
+    await vi.waitFor(() => expect(m.error).toHaveBeenCalledWith(expect.stringContaining(`the fix ${FIX} could not be closed`)));
   });
 });
