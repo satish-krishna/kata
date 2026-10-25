@@ -58,7 +58,7 @@ class FakeTransport {
   sdlcFinishChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('finish'); return this.finishResults.shift()!(); });
   sdlcSettings = vi.fn(async () => ({ mode: null, remember: false, permission_mode: 'bypass' as const }));
   catalog = vi.fn(async (..._a: unknown[]) => seedCatalog);
-  readiness: Readiness = { kind: 'ready', dir: '/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] };
+  readiness: Readiness = { kind: 'ready', dir: '/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2], lightTrack: false };
   prepared: PrepareOutcome | (() => Promise<PrepareOutcome>) = { kind: 'ready', start: BUILD_START };
   sdlcPluginReadiness = vi.fn(async (..._a: unknown[]) => { this.calls.push('readiness'); return this.readiness; });
   sdlcBuildPrepare = vi.fn(async (..._a: unknown[]) => {

@@ -43,9 +43,9 @@ pub fn readiness(plugin_dir: Option<&Path>) -> Readiness {
         None => Readiness::Missing,
         Some(have) if at_least(&have, MIN_VERSION) => Readiness::Ready {
             dir: dir.to_path_buf(),
+            light_track: light_track(&have),
             version: have,
             layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
-            light_track: false,
         },
         Some(have) => Readiness::TooOld {
             have,
@@ -55,8 +55,8 @@ pub fn readiness(plugin_dir: Option<&Path>) -> Readiness {
 }
 
 /// Whether `version` is at least [`LIGHT_TRACK_VERSION`].
-pub fn light_track(_version: &str) -> bool {
-    false
+pub fn light_track(version: &str) -> bool {
+    at_least(version, LIGHT_TRACK_VERSION)
 }
 
 /// The `version` field of `<plugin_dir>/.claude-plugin/plugin.json`.
