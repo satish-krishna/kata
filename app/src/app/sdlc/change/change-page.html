@@ -22,7 +22,7 @@
     @if (prs.length === 1) {
       <nav toolbarLinks class="k-prlinks" aria-label="Pull requests">
         <span class="k-prlinks__label">PR</span>
-        <a class="k-mono" [href]="prs[0].url" [attr.title]="prs[0].label" target="_blank" rel="noopener noreferrer"
+        <a class="k-mono" [href]="prs[0].url" [attr.title]="prs[0].label" rel="noopener noreferrer" (click)="$event.preventDefault(); vm.openPr(prs[0].url)"
           ><span class="k-prlinks__repo">{{ prs[0].repo }}</span>@if (prs[0].number !== null) {&ngsp;<span class="k-prlinks__num">#{{ prs[0].number }}</span>}</a
         >
       </nav>
@@ -40,7 +40,7 @@
             <ul class="k-prlist" aria-label="Pull requests">
               @for (link of prs; track link.repo) {
                 <li>
-                  <a class="k-mono k-prlist__link" [href]="link.url" target="_blank" rel="noopener noreferrer"
+                  <a class="k-mono k-prlist__link" [href]="link.url" rel="noopener noreferrer" (click)="$event.preventDefault(); vm.openPr(link.url)"
                     ><span>{{ link.repo }}</span>@if (link.number !== null) {&ngsp;<span>#{{ link.number }}</span>}</a
                   >
                 </li>
@@ -252,7 +252,7 @@
     (runReview)="vm.doneRunReview()"
     (cancel)="vm.cancelDone()"
   />
-  <app-pr-list-dialog [results]="vm.prList()" (retry)="vm.retryPublish()" (close)="vm.closePrList()" />
+  <app-pr-list-dialog [results]="vm.prList()" (openLink)="vm.openPr($event)" (retry)="vm.retryPublish()" (close)="vm.closePrList()" />
   <app-build-refusal-dialog [reason]="vm.refusal()" [problems]="vm.refusalProblems()" (close)="vm.closeRefusal()" />
   <app-confirm-dialog
     [open]="vm.confirmPrompt() !== null"
