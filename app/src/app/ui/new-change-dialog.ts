@@ -26,6 +26,8 @@ export class NewChangeDialog {
   /** The description the dialog opens with, for describing a change again. */
   readonly initialIdea = input('');
   readonly initialTrack = input<StartTrack>('decide');
+  /** Hides the Track field and keeps the track at `initialTrack`, for a caller that has already chosen it. */
+  readonly trackFixed = input(false);
   /** Shown above the description. */
   readonly note = input<string | null>(null);
 

@@ -64,6 +64,13 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
     expect(dialog()!.querySelector('[role="radio"][aria-checked="true"]')!.textContent!.trim()).toBe('Full pipeline');
   });
 
+  it('does not offer a track to pick: the new change is always the full pipeline', async () => {
+    const { container } = await mountFix();
+    await take(container);
+    expect(dialog()!.querySelector('[role="radio"]')).toBeNull();
+    expect(dialog()!.textContent).not.toContain('Let the workflow decide');
+  });
+
   it('cancelling records nothing and starts nothing (R7.2)', async () => {
     const { container, decide, newChange } = await mountFix();
     await take(container);
@@ -74,51 +81,77 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
     expect(dialog()).toBeNull();
   });
 
-  it('starting rejects the fix, then starts the new change on the full track with the description (R7.1)', async () => {
+  it('starting opens the new change on the full track with the description, then closes the fix (R7.1)', async () => {
     const { container, decide, newChange } = await mountFix();
     await take(container);
     await start();
-    await vi.waitFor(() => expect(newChange).toHaveBeenCalledTimes(1));
-    expect(decide).toHaveBeenCalledTimes(1);
-    expect(decide.mock.calls[0].slice(1)).toEqual(['claims', FIX, 'reject-intent', false]);
+    await vi.waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
+    expect(newChange).toHaveBeenCalledTimes(1);
     expect(newChange.mock.calls[0][1]).toBe('claims');
     expect(newChange.mock.calls[0][2]).toBe(IDEA);
     expect(newChange.mock.calls[0][3]).toBe('full');
-    expect(decide.mock.invocationCallOrder[0]).toBeLessThan(newChange.mock.invocationCallOrder[0]);
+    expect(decide.mock.calls[0].slice(1)).toEqual(['claims', FIX, 'reject-intent', false]);
+    expect(newChange.mock.invocationCallOrder[0]).toBeLessThan(decide.mock.invocationCallOrder[0]);
   });
 
-  it('a refused commit shows the error and never starts the new change (R7.1)', async () => {
+  it.each([
+    ['refused', { kind: 'refused' as const }],
+    ['stopped', { kind: 'stopped' as const }],
+    ['none', { kind: 'none' as const, idea: IDEA, runId: 'r1' }],
+  ])('a new change that came to %s leaves the fix open, with no extra toast (R7.1)', async (_name, outcome) => {
     const { container, decide, newChange, error } = await mountFix();
+    newChange.mockResolvedValue(outcome);
+    await take(container);
+    await start();
+    await vi.waitFor(() => expect(newChange).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(decide).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('a new change that throws leaves the fix open and says so (R7.1)', async () => {
+    const { container, decide, newChange, error } = await mountFix();
+    newChange.mockRejectedValue(new Error('boom'));
+    await take(container);
+    await start();
+    await vi.waitFor(() => expect(error).toHaveBeenCalledWith('Could not start the change: boom'));
+    await settle();
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it('a fix that git refuses to close after the new change opened says so and stays open', async () => {
+    const { container, decide, error } = await mountFix();
     decide.mockResolvedValue({ kind: 'gitFailed', stderr: 'index.lock exists' });
     await take(container);
     await start();
-    await vi.waitFor(() => expect(error).toHaveBeenCalledWith('index.lock exists'));
-    expect(newChange).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(error).toHaveBeenCalledWith(expect.stringContaining('The new change started, but the fix')));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('index.lock exists'));
   });
 
-  it('a transport error shows and never starts the new change (R7.1)', async () => {
-    const { container, decide, newChange, error } = await mountFix();
+  it('a transport error while closing the fix says the new change started and the fix stays open', async () => {
+    const { container, decide, error } = await mountFix();
     decide.mockRejectedValue(new Error('boom'));
     await take(container);
     await start();
-    await vi.waitFor(() => expect(error).toHaveBeenCalledWith('Could not record the decision: boom'));
-    expect(newChange).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(error).toHaveBeenCalledWith(expect.stringContaining('The new change started, but the fix')));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('boom'));
   });
 
-  it('other edits ask first: confirming commits and then starts, cancelling records nothing more', async () => {
+  it('other edits ask first, after the new change opened: confirming commits the rejection against the fix', async () => {
     const { container, decide, newChange } = await mountFix();
     decide.mockResolvedValueOnce({ kind: 'needsConfirm', other_edits: true });
     await take(container);
     await start();
     await vi.waitFor(() => expect(button(document.body, 'Commit')).toBeDefined());
-    expect(newChange).not.toHaveBeenCalled();
+    expect(newChange).toHaveBeenCalledTimes(1);
     button(document.body, 'Commit').click();
-    await vi.waitFor(() => expect(newChange).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
     expect(decide.mock.calls.map((c) => c[4])).toEqual([false, true]);
-    expect(decide.mock.invocationCallOrder[1]).toBeLessThan(newChange.mock.invocationCallOrder[0]);
+    expect(decide.mock.calls[1].slice(1, 4)).toEqual(['claims', FIX, 'reject-intent']);
+  });
 
-    decide.mockClear();
-    newChange.mockClear();
+  it('declining that confirm leaves the fix open and says so', async () => {
+    const { container, decide, error } = await mountFix();
     decide.mockResolvedValueOnce({ kind: 'needsConfirm', other_edits: true });
     await take(container);
     await start();
@@ -126,6 +159,6 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
     button(document.body, 'Cancel').click();
     await settle();
     expect(decide).toHaveBeenCalledTimes(1);
-    expect(newChange).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('The new change started, but the fix'));
   });
 });

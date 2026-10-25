@@ -113,6 +113,18 @@ describe('NewChangeDialog', () => {
       expect(got[0].track).toBe('full');
     });
 
+    it('hides the Track field and starts on the given track when the track is fixed', async () => {
+      const { fixture } = await render(NewChangeDialog, { open: true, systems: ['claims'], lightTrack: true, initialTrack: 'full', trackFixed: true });
+      await settle();
+      expect(dialog()!.querySelector('[role="radio"]')).toBeNull();
+      expect(dialog()!.textContent).not.toContain('Let the workflow decide');
+      const got: { track: string }[] = [];
+      fixture.componentInstance.start.subscribe((v) => got.push(v));
+      await type('an idea');
+      button('Start').click();
+      expect(got[0].track).toBe('full');
+    });
+
     it('opens on the track it was given', async () => {
       await render(NewChangeDialog, { open: true, systems: ['claims'], lightTrack: true, initialTrack: 'full' });
       await settle();
