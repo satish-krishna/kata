@@ -133,6 +133,34 @@ describe('ChangePage: the fix runs', () => {
     expect(text).not.toContain('plan: missing (HEAD');
   });
 
+  it('a deleted document still shows the status HEAD holds', async () => {
+    const { container } = await mountFix('fix-unsettled', true, 'fix', {
+      intent: { exists: true, committed: true, status: 'superseded', head_status: 'superseded' },
+      spec: { exists: false, committed: false, status: null, head_status: 'draft' },
+      plan: { exists: false, committed: false, status: null, head_status: null },
+    });
+    const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
+    expect(text).toContain('spec: missing (HEAD: draft)');
+    expect(text).toContain('plan: missing');
+    expect(text).not.toContain('plan: missing (HEAD');
+  });
+
+  it('shows the format program message when the program could not run', async () => {
+    const { container } = await mountFix('fix-unsettled', true, 'fix', {
+      plan_unreadable: true,
+      plan_unreadable_reason: 'Node.js 20 or later is required to read the documents.',
+    });
+    const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
+    expect(text).toContain('Node.js 20 or later is required to read the documents.');
+  });
+
+  it('a fix whose acceptance stopped offers Change the fix after Finish acceptance', async () => {
+    const { container } = await mountFix('fix-accepting');
+    const labels = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).map((b) => b.textContent!.trim());
+    expect(labels.indexOf('Change the fix')).toBeGreaterThan(labels.indexOf('Finish acceptance'));
+    expect(labels).toContain('Finish acceptance');
+  });
+
   it('reopening is disabled while a build run holds the lock, and refused with no run (R6.2)', async () => {
     const { container, vm, run } = await mountFix('build-ready');
     // The build tab has its own bar; the document tabs carry the page's actions, this one among them.

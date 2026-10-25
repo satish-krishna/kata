@@ -92,7 +92,7 @@ describe("actions of a fix (R4.1, R7.3)", () => {
     ["fix-in-progress", null, ["finish-fix-draft"]],
     ["fix-unsettled", null, []],
     ["fix-awaiting", null, ["accept-fix", "change-fix", "full-pipeline-instead"]],
-    ["fix-accepting", null, ["accept-fix"]],
+    ["fix-accepting", null, ["accept-fix", "change-fix"]],
     ["rejected", null, []],
     ["build-ready", null, ["start-build", "reopen-fix"]],
     ["build-ready", "plan-pin", ["start-build", "reopen-fix"]],
@@ -142,6 +142,8 @@ describe("actions of a fix (R4.1, R7.3)", () => {
       }
     }
     expect(feedbackRequired("change-fix", "fix-awaiting", null)).toBe(true);
+    expect(feedbackRequired("change-fix", "fix-accepting", null)).toBe(true);
+    expect(feedbackRequired("accept-fix", "fix-accepting", null)).toBe(false);
     expect(feedbackRequired("reopen-fix", "build-ready", null)).toBe(true);
     expect(feedbackRequired("finish-fix-draft", "fix-in-progress", null)).toBe(false);
     expect(feedbackRequired("continue-spec", "spec-awaiting", null)).toBe(false);
