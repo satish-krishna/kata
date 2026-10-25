@@ -147,7 +147,7 @@ export type RunContext = {
 /** The one action of a fix that is not a stage action of the change page: accepting it in the Workbench. */
 export type FixAction = "accept-fix";
 
-export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan" | "build" | "start" | "fix";
+export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan" | "build" | "start" | "triage" | "fix";
 
 /** What a triage or fix run is held to: the repositories it must not edit and Kata's checks folder. */
 export type Restricted = { workspaceFolder: string; masterRepo: string; systemRepos: string[]; checksDir: string };
@@ -310,6 +310,7 @@ function taskFor(kind: SdlcKind, action: StageAction | FixAction | null, ctx: Ru
     case "build":
       throw new Error("a build run-spec is made from its BuildRun");
     case "start":
+    case "triage":
       return `Use the ai-sdlc start skill for system ${system}. The change: ${ctx.idea ?? ""}. The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.`;
     case "fix":
       return action === "accept-fix"

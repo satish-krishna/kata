@@ -661,6 +661,12 @@ describe("triage and fix run-specs (T8)", () => {
     }
   });
 
+  it("tells a triage or fix run from a build run (the kind `start` names the build preview)", () => {
+    expect(isBuildRun("triage")).toBe(false);
+    expect(isBuildRun("fix")).toBe(false);
+    expect(specFor("triage", null, startCtx, bypass, both, undefined, restricted).given?.build).toBe(false);
+  });
+
   it("refuses to build a start or fix spec without its restriction", () => {
     expect(() => specFor("start", null, startCtx, bypass, both)).toThrow();
     expect(() => specFor("fix", null, wsCtx, bypass, both)).toThrow();
