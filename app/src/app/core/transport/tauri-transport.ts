@@ -132,6 +132,7 @@ export class TauriTransport extends KataTransport {
   sdlcPullRequests(repos: PublishRepo[], change: string) { return this.ipc.invoke<PrState[]>('sdlc_pull_requests', { repos, change }); }
   loadBuildLayout() { return this.ipc.invoke<unknown>('load_build_layout'); }
   saveBuildLayout(layout: Record<string, unknown>) { return this.ipc.invoke<void>('save_build_layout', { layout }); }
+  openUrl(url: string) { return this.ipc.invoke<void>('open_url', { url }); }
   zoom(step: ZoomStep) { return this.ipc.invoke<number>('zoom', { step }); }
   pickDirectory() { return this.ipc.open({ directory: true, multiple: false }) as Promise<string | null>; }
   pickOpenSpec() { return this.ipc.open({ multiple: false, filters: SPEC_FILTERS }) as Promise<string | null>; }

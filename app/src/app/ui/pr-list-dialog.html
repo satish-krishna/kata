@@ -8,7 +8,7 @@
             <span class="k-mono">{{ row.repo }}</span>
             <span [class]="'k-status k-status--' + row.tone"><span class="k-status__dot"></span>{{ row.label }}</span>
             @if (row.url !== null) {
-              <a class="k-mono" [href]="row.url" target="_blank" rel="noopener noreferrer">{{ row.url }}</a>
+              <a class="k-mono" [href]="row.url" rel="noopener noreferrer" (click)="$event.preventDefault(); openLink.emit(row.url)">{{ row.url }}</a>
             }
             @if (row.error !== null) {
               <span class="k-left__tag">{{ row.error }}</span>

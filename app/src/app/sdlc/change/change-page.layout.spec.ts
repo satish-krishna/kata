@@ -234,7 +234,7 @@ describe('ChangePage layout', () => {
       expect(links.length).toBe(1);
       expect(text(links[0].querySelector('.k-prlinks__repo')!)).toMatch(/^[a-z-]+$/);
       expect(text(links[0].querySelector('.k-prlinks__num')!)).toMatch(/^#[0-9]+$/);
-      expect(links[0].target === '_blank' && links[0].rel.includes('noopener') && links[0].href.startsWith('https://')).toBe(true);
+      expect(links[0].rel.includes('noopener') && links[0].href.startsWith('https://')).toBe(true);
       expect(container.querySelector('[data-testid="pr-menu"]')).toBeNull();
     });
 

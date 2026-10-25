@@ -22,6 +22,17 @@ describe('MockTransport', () => {
     expect(seen).toEqual(runScriptHead.map((s) => s.ev));
   });
 
+  it('opens an address in a new tab with no opener', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    try {
+      await new MockTransport().openUrl('https://github.com/o/r/pull/1');
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(open).toHaveBeenCalledWith('https://github.com/o/r/pull/1', '_blank', 'noopener,noreferrer');
+    } finally {
+      open.mockRestore();
+    }
+  });
+
   it('emits ask.answered then plays the middle on submitAnswer', async () => {
     const t = new MockTransport();
     const seen: KataEvent[] = [];

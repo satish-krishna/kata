@@ -114,7 +114,7 @@ Rules:
 
 ## Branches and pull requests
 
-- Branch from `main`. Name branches by type: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, `chore/<topic>`. Never commit directly to `main`.
+- Branch from `main`. Name branches by type: `feat/<topic>`, `fix/<topic>`, `docs/<topic>`, `chore/<topic>`. A branch the Workbench's AI-SDLC build starts keeps the name it gives it, `change/<change folder>` (for example `change/2026-10-25-open-pr-links`), because the Workbench finds a change's work by that name. Never commit directly to `main`.
 - Keep a PR scoped to one logical change. Open it against `main` with a description of **what** changed and **why**, the verification you ran, and any contract/exit-code/binding impact.
 - PRs are reviewed for spec compliance (does it do exactly what was asked — nothing more, nothing less) and code quality. Expect a review loop; address findings and re-request review rather than merging over them.
 - Squash-merge is the norm; the PR title should itself be a valid Conventional Commit.

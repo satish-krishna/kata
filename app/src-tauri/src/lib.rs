@@ -849,11 +849,42 @@ fn submit_decision(
     write_to_run(&control, &run_id, &line);
 }
 
+/// Accepts only http and https addresses.
+fn web_url(url: &str) -> Result<&str, String> {
+    let scheme = url.split_once(':').map_or("", |(s, _)| s);
+    if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") {
+        Ok(url)
+    } else if scheme.is_empty() {
+        Err("only http and https addresses can be opened".to_string())
+    } else {
+        Err(format!(
+            "only http and https addresses can be opened, not {scheme}"
+        ))
+    }
+}
+
+/// Open a web address in the default browser. The webview has no opener permission; it asks here.
+#[tauri::command]
+fn open_url(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let url = web_url(&url)?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        // The plugin's click-catching script would forward target="_blank" and Ctrl/Shift-clicked links to
+        // a command the webview has no permission for, so it is refused and logs an error. Off; `open_url` opens links.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .manage(RunControl::default())
         .setup(|app| {
             // Open at the remembered zoom; a failure leaves the window at 100%.
@@ -935,7 +966,8 @@ pub fn run() {
             sdlc_gh_origins,
             sdlc_publish,
             sdlc_pull_requests,
-            zoom
+            zoom,
+            open_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -945,6 +977,24 @@ pub fn run() {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn open_url_refuses_non_web_addresses() {
+        for bad in [
+            "file:///C:/Windows/notepad.exe",
+            "javascript:alert(1)",
+            "C:\\x.exe",
+        ] {
+            let err = web_url(bad).expect_err(bad);
+            assert!(err.contains("http"), "reason should explain: {err}");
+        }
+        assert_eq!(
+            web_url("https://github.com/o/r/pull/1"),
+            Ok("https://github.com/o/r/pull/1")
+        );
+        assert_eq!(web_url("http://example.com"), Ok("http://example.com"));
+        assert!(web_url("HTTPS://example.com").is_ok());
+    }
 
     fn live(id: u64) -> LiveRun<()> {
         LiveRun {
