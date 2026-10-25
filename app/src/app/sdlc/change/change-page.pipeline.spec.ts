@@ -7,6 +7,7 @@ import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { ChangePage } from './change-page';
+import { ChangePageViewModel } from './change-page.view-model';
 
 const FIX = '2026-10-12-fnol-photo-upload';
 const FIX_BRANCH = `change/${FIX}`;
@@ -30,7 +31,7 @@ async function mountFix() {
   const transport = new MockTransport();
   const real = transport.sdlcChanges.bind(transport);
   vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
-    (await real(m, s)).map((c) => (c.change === FIX ? { ...c, stage: 'fix-awaiting' as const, track: 'fix' as const } : c)),
+    (await real(m, s)).map((c) => (c.change === FIX ? { ...c, stage: 'fix-awaiting' as const, track: 'fix' as const, intent: { ...c.intent, status: 'draft', head_status: 'draft' } } : c)),
   );
   const realDoc = transport.sdlcReadDoc.bind(transport);
   vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (m, s, c, d) => (c === FIX && d === 'intent' ? FIX_INTENT : realDoc(m, s, c, d)));
@@ -302,5 +303,29 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
     await take(m.container);
     await start();
     await vi.waitFor(() => expect(m.error).toHaveBeenCalledWith(expect.stringContaining(`the fix ${FIX} could not be closed`)));
+  });
+
+  it('a workspace change during the intent run does not move the close to another master (R7.1)', async () => {
+    const m = await mountFix();
+    const vm = m.fixture.debugElement.injector.get(ChangePageViewModel);
+    m.newChange.mockImplementation(async () => {
+      vm.workspaces.update((ws) => ws.map((w) => ({ ...w, folder: 'D:/elsewhere', last_opened: w.last_opened + 1000 })));
+      return { kind: 'opened', change: NEW, branch: NEW_BRANCH };
+    });
+    await take(m.container);
+    await start();
+    await vi.waitFor(() => expect(m.checkout).toHaveBeenCalledTimes(2));
+    const masters = new Set([...m.checkout.mock.calls.map((c) => c[0]), ...m.decide.mock.calls.map((c) => c[0])]);
+    expect([...masters]).toHaveLength(1);
+    expect([...masters][0]).not.toContain('elsewhere');
+  });
+
+  it('the other-edits confirm on that path names the fix', async () => {
+    const { container, decide } = await mountFix();
+    decide.mockResolvedValueOnce({ kind: 'needsConfirm', other_edits: true });
+    await take(container);
+    await start();
+    await vi.waitFor(() => expect(button(document.body, 'Commit')).toBeDefined());
+    expect(document.body.textContent).toContain(`${FIX}'s intent.md has other uncommitted edits; rejecting the fix commits them too.`);
   });
 });

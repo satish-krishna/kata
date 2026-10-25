@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { of } from 'rxjs';
+import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { Stage } from '@bindings/Stage';
 import { render } from '../../../testing/render';
 import { LockStore } from '../../core/lock/lock.store';
@@ -32,11 +33,11 @@ const confirmPreview = async () => {
 };
 
 /** A fix at a stage, with the plugin supporting the light track or not, until the mock has its own fixture. */
-async function mountFix(stage: Stage, lightTrack = true, track: 'fix' | 'full' = 'fix') {
+async function mountFix(stage: Stage, lightTrack = true, track: 'fix' | 'full' = 'fix', docs: Partial<ChangeInfo> = {}) {
   const transport = new MockTransport();
   const real = transport.sdlcChanges.bind(transport);
   vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
-    (await real(m, s)).map((c) => (c.change === FIX ? { ...c, stage, track } : c)),
+    (await real(m, s)).map((c) => (c.change === FIX ? { ...c, stage, track, ...docs } : c)),
   );
   const ready = await transport.sdlcPluginReadiness(null);
   vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(ready.kind === 'ready' ? { ...ready, lightTrack } : ready);
@@ -117,6 +118,19 @@ describe('ChangePage: the fix runs', () => {
     const notice = container.querySelector('[data-testid="doc-notice"]')!;
     expect(notice.textContent).toMatch(/intent: \S+ · spec: \S+ · plan: \S+/);
     expect(button(container, 'Accept fix')).toBeUndefined();
+  });
+
+  it('the notice lists each document with the status HEAD holds, and not committed for one not in HEAD', async () => {
+    const { container } = await mountFix('fix-unsettled', true, 'fix', {
+      intent: { exists: true, committed: true, status: 'superseded', head_status: 'draft' },
+      spec: { exists: true, committed: false, status: 'draft', head_status: null },
+      plan: { exists: false, committed: false, status: null, head_status: null },
+    });
+    const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
+    expect(text).toContain('intent: superseded (HEAD: draft)');
+    expect(text).toContain('spec: draft (HEAD: not committed)');
+    expect(text).toContain('plan: missing');
+    expect(text).not.toContain('plan: missing (HEAD');
   });
 
   it('reopening is disabled while a build run holds the lock, and refused with no run (R6.2)', async () => {

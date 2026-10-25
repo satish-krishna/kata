@@ -123,23 +123,38 @@ describe("actions of a fix (R4.1, R7.3)", () => {
     });
   }
 
+  const drafted = (c: ChangeInfo): ChangeInfo => ({ ...c, intent: { ...c.intent, status: "draft", head_status: "draft" } });
+
   it("a built fix awaiting acceptance no longer offers the full pipeline", () => {
-    expect(actionsForChange(fixAt("fix-awaiting", null, 1))).toEqual(["accept-fix", "change-fix"]);
-    expect(actionsForChange(fixAt("fix-awaiting", null, 0))).toEqual(["accept-fix", "change-fix", "full-pipeline-instead"]);
+    expect(actionsForChange(drafted(fixAt("fix-awaiting", null, 1)))).toEqual(["accept-fix", "change-fix"]);
+    expect(actionsForChange(drafted(fixAt("fix-awaiting", null, 0)))).toEqual(["accept-fix", "change-fix", "full-pipeline-instead"]);
   });
 
-  it("feedback is required for changing a fix, and for reopening one except when its plan is out of date", () => {
+  it("a fix awaiting acceptance with its intent accepted and nothing built offers no full pipeline (row 6)", () => {
+    expect(actionsForChange(fixAt("fix-awaiting", null, 0))).toEqual(["accept-fix", "change-fix"]);
+  });
+
+  it("feedback is required for changing a fix, and for reopening one except when its plan is out of date on a broken pin", () => {
     for (const stage of Object.keys(ACTIONS) as Stage[]) {
       for (const action of actionsForChange(fixAt(stage))) {
         const expected = action === "change-fix" || (action === "reopen-fix" && stage !== "plan-out-of-date");
-        expect(feedbackRequired(action, stage), `${action} at ${stage}`).toBe(expected);
+        expect(feedbackRequired(action, stage, null), `${action} at ${stage}`).toBe(expected);
       }
     }
-    expect(feedbackRequired("change-fix", "fix-awaiting")).toBe(true);
-    expect(feedbackRequired("reopen-fix", "build-ready")).toBe(true);
-    expect(feedbackRequired("reopen-fix", "plan-out-of-date")).toBe(false);
-    expect(feedbackRequired("finish-fix-draft", "fix-in-progress")).toBe(false);
-    expect(feedbackRequired("continue-spec", "spec-awaiting")).toBe(false);
+    expect(feedbackRequired("change-fix", "fix-awaiting", null)).toBe(true);
+    expect(feedbackRequired("reopen-fix", "build-ready", null)).toBe(true);
+    expect(feedbackRequired("finish-fix-draft", "fix-in-progress", null)).toBe(false);
+    expect(feedbackRequired("continue-spec", "spec-awaiting", null)).toBe(false);
+  });
+
+  it.each<[OutOfDate, boolean]>([
+    ["intent-reopened", true],
+    ["spec-reopened", true],
+    ["spec-pin", false],
+    ["plan-pin", false],
+    ["no-tasks", true],
+  ])("reopening a fix at plan-out-of-date because of %s requires feedback: %s", (cause, expected) => {
+    expect(feedbackRequired("reopen-fix", "plan-out-of-date", cause)).toBe(expected);
   });
 
   it("a closed fix is labeled as closed (R7.3)", () => {

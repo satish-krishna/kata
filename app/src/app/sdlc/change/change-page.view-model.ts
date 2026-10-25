@@ -438,7 +438,7 @@ export class ChangePageViewModel {
   readonly feedbackRequired = computed(() => {
     const a = this.pendingRevisit();
     const c = this.change();
-    return a !== null && c !== null && feedbackRequired(a, c.stage);
+    return a !== null && c !== null && feedbackRequired(a, c.stage, c.out_of_date);
   });
 
   // --- the build: its dialog, the leftovers confirm, the refusal, and what is handed to the build view

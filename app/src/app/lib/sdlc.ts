@@ -4,6 +4,7 @@
 
 import type { CatalogEntry } from "@bindings/CatalogEntry";
 import type { ChangeInfo } from "@bindings/ChangeInfo";
+import type { OutOfDate } from "@bindings/OutOfDate";
 import type { Given } from "@bindings/Given";
 import type { PluginConfig } from "@bindings/PluginConfig";
 import type { RunLink } from "@bindings/RunLink";
@@ -128,7 +129,7 @@ export function actionsForChange(c: ChangeInfo): StageAction[] {
 }
 
 /** Whether the feedback box refuses an empty answer for an action at a stage. */
-export function feedbackRequired(action: StageAction, stage: Stage): boolean {
+export function feedbackRequired(action: StageAction, stage: Stage, _outOfDate: OutOfDate | null): boolean {
   return action === "change-fix" || (action === "reopen-fix" && stage !== "plan-out-of-date");
 }
 
