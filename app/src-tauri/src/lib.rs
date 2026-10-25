@@ -851,7 +851,26 @@ fn submit_decision(
 
 /// Accepts only http and https addresses.
 fn web_url(url: &str) -> Result<&str, String> {
-    Ok(url)
+    let scheme = url.split_once(':').map_or("", |(s, _)| s);
+    if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") {
+        Ok(url)
+    } else if scheme.is_empty() {
+        Err("only http and https addresses can be opened".to_string())
+    } else {
+        Err(format!(
+            "only http and https addresses can be opened, not {scheme}"
+        ))
+    }
+}
+
+/// Open a web address in the default browser. The webview has no opener permission; it asks here.
+#[tauri::command]
+fn open_url(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let url = web_url(&url)?;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -859,6 +878,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(RunControl::default())
         .setup(|app| {
             // Open at the remembered zoom; a failure leaves the window at 100%.
@@ -940,7 +960,8 @@ pub fn run() {
             sdlc_gh_origins,
             sdlc_publish,
             sdlc_pull_requests,
-            zoom
+            zoom,
+            open_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
