@@ -2,4 +2,4 @@
 import type { Concern } from "./Concern";
 import type { Severity } from "./Severity";
 
-export type ParsedFinding = { id: string, severity: Severity, file: string, line: number, text: string, repo: string | null, concern: Concern | null, rule: string | null, };
+export type ParsedFinding = { id: string, severity: Severity, file: string, line: number, text: string, repo?: string, concern?: Concern, rule?: string, };
