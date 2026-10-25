@@ -169,8 +169,18 @@ pub fn apply(
         return Ok(DecideOutcome::NeedsConfirm { other_edits: true });
     }
 
+    // What a failed decision puts back: the `HEAD` bytes when the file differs from them only in its
+    // status line (or not at all), otherwise the file as the engineer left it, so confirmed edits survive.
+    let restore: Vec<u8> = if has_other_edits(master, &rel, &text) {
+        text.clone().into_bytes()
+    } else {
+        git::run_bytes(master, &["show", &format!("HEAD:{rel}")])
+            .unwrap_or_else(|_| text.clone().into_bytes())
+    };
+
     let edited = edit_status(&text, Some(status));
-    if edited != text {
+    let wrote = edited != text;
+    if wrote {
         std::fs::write(&path, edited)?;
     }
 
@@ -179,7 +189,14 @@ pub fn apply(
         .and_then(|_| git::run(master, &["commit", "-m", &msg, "--", &rel]));
     Ok(match committed {
         Ok(_) => DecideOutcome::Committed,
-        Err(e) => DecideOutcome::GitFailed { stderr: e.stderr },
+        Err(e) => {
+            // A failed decision leaves nothing behind: unstage this one file and undo this call's write.
+            let _ = git::run(master, &["reset", "-q", "--", &rel]);
+            if wrote {
+                let _ = std::fs::write(&path, restore);
+            }
+            DecideOutcome::GitFailed { stderr: e.stderr }
+        }
     })
 }
 

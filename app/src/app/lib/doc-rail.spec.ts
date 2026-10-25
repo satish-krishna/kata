@@ -79,7 +79,7 @@ describe('runResultLabel', () => {
 
 describe('usedBy', () => {
   const change = (spec: ChangeInfo['spec'], plan: ChangeInfo['plan']) => ({ spec, plan }) as ChangeInfo;
-  const doc = (status: string | null): ChangeInfo['spec'] => (status === null ? { exists: false, committed: false, status: null } : { exists: true, committed: true, status });
+  const doc = (status: string | null): ChangeInfo['spec'] => (status === null ? { exists: false, committed: false, status: null, head_status: null } : { exists: true, committed: true, status, head_status: status });
 
   it('names spec.md with its status for the intent, and plan.md with its status for the spec', () => {
     const c = change(doc('draft'), doc('accepted'));

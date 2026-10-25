@@ -42,9 +42,9 @@ const ACTIONS: Record<Stage, string[]> = {
 
 const changeAt = (stage: Stage, outOfDate: OutOfDate | null = null): ChangeInfo => ({
   system: "claims", change: "2026-10-12-fnol", stage, scope: "claims", out_of_date: outOfDate, plan_unreadable: false, plan_unreadable_reason: null, track: 'full',
-  intent: { exists: true, committed: true, status: "accepted" },
-  spec: { exists: true, committed: true, status: "accepted" },
-  plan: { exists: true, committed: true, status: "accepted" },
+  intent: { exists: true, committed: true, status: "accepted", head_status: "accepted" },
+  spec: { exists: true, committed: true, status: "accepted", head_status: "accepted" },
+  plan: { exists: true, committed: true, status: "accepted", head_status: "accepted" },
   build: { tasks: 2, finished: 0, repos: 1 },
 });
 

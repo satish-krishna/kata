@@ -4,7 +4,7 @@ import { render } from '../../testing/render';
 import { ChangesTable } from './changes-table';
 
 const doc = (status: string | null): DocState =>
-  status === null ? { exists: false, committed: false, status: null } : { exists: true, committed: true, status };
+  status === null ? { exists: false, committed: false, status: null, head_status: null } : { exists: true, committed: true, status, head_status: status };
 const change = (name: string, stage: ChangeInfo['stage']): ChangeInfo =>
   ({ system: 'claims', change: name, intent: doc('accepted'), spec: doc(null), plan: doc(null), stage, build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null, track: 'full' });
 

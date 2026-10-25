@@ -299,10 +299,6 @@ fn without_own_lines(text: &str) -> Vec<&str> {
     out
 }
 
-fn lf(text: &str) -> Vec<&str> {
-    text.lines().collect()
-}
-
 /// Read the three documents of a fix from `HEAD` and the working tree (see the spec's fix-state table).
 pub(crate) fn fix_facts(master: &Path, system: &str, change: &str) -> FixFacts {
     let rel = |file: &str| format!("intent/{system}/{change}/{file}");
@@ -343,11 +339,15 @@ pub(crate) fn fix_facts(master: &Path, system: &str, change: &str) -> FixFacts {
     for (i, (head, _, working)) in docs.iter().enumerate() {
         match (head, working) {
             (Some(h), Some(w)) => {
-                if lf(h) == lf(w) {
+                if h == w {
                     continue;
                 }
                 any_diff = true;
-                if carrier != Some(i) || without_own_lines(h) != without_own_lines(w) {
+                // Only the carrier may differ, only in its own lines, and only once its status reads accepted.
+                let own_lines = carrier == Some(i)
+                    && frontmatter::field(w, "status").as_deref() == Some("accepted")
+                    && without_own_lines(h) == without_own_lines(w);
+                if !own_lines {
                     foreign_diff = true;
                 }
             }
@@ -438,6 +438,13 @@ pub(crate) fn is_safe_system(system: &str) -> bool {
         && !system.contains(['/', '\\', ':'])
 }
 
+/// The `status` of the `HEAD` copy of `rel`; `None` when `HEAD` does not have it.
+fn head_status(master: &Path, rel: &str) -> Option<String> {
+    let bytes = git::run_bytes(master, &["show", &format!("HEAD:{rel}")]).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    Some(frontmatter::field(&text, "status").unwrap_or_else(|| "unknown".into()))
+}
+
 fn doc_state(master: &Path, system: &str, change: &str, file: &str) -> DocState {
     let rel = format!("intent/{system}/{change}/{file}");
     match std::fs::read_to_string(master.join(&rel)) {
@@ -445,9 +452,12 @@ fn doc_state(master: &Path, system: &str, change: &str, file: &str) -> DocState 
             exists: true,
             committed: is_committed(master, &rel),
             status: Some(frontmatter::field(&text, "status").unwrap_or_else(|| "unknown".into())),
-            head_status: None,
+            head_status: head_status(master, &rel),
         },
-        Err(_) => DocState::default(),
+        Err(_) => DocState {
+            head_status: head_status(master, &rel),
+            ..DocState::default()
+        },
     }
 }
 

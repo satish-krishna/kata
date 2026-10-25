@@ -169,7 +169,7 @@ const MOCK_SETUP_REPOS = ['billing-intent', 'billing-core'];
 const MOCK_REPOS = ['claims-intent', 'claims-core', 'customer-portal', 'billing-api'];
 
 const doc = (status: string | null, committed = true): DocState =>
-  status === null ? { exists: false, committed: false, status: null } : { exists: true, committed, status };
+  status === null ? { exists: false, committed: false, status: null, head_status: null } : { exists: true, committed, status, head_status: committed ? status : null };
 
 const change = (name: string, intent: DocState, spec: DocState, plan: DocState, stage: Stage, track: Track = 'full'): ChangeInfo =>
   ({
