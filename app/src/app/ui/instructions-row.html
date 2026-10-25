@@ -1,0 +1,7 @@
+<div class="k-instructions">
+  <span class="k-instructions__label">Workspace instructions</span>
+  <span [class]="'k-status k-status--' + tone()"><span class="k-status__dot"></span>{{ word() }}</span>
+  @if (label(); as text) {
+    <button hlmBtn variant="secondary" size="sm" type="button" [disabled]="disabled()" (click)="refresh.emit()">{{ text }}</button>
+  }
+</div>

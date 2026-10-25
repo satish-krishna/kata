@@ -288,6 +288,8 @@
 .k-faint { color: var(--text-faint); }
 .k-cell-end { text-align: right; }
 .k-empty-cell { color: var(--text-muted); }
+.k-instructions { display: flex; align-items: center; gap: var(--space-4); }
+.k-instructions__label { font: var(--weight-medium) var(--text-sm)/1 var(--font-sans); color: var(--text-primary); }
 .k-marker { margin: var(--space-3) 0 0; font: var(--font-code-sm); color: var(--text-faint); }
 
 .k-form { display: grid; gap: var(--space-4); }

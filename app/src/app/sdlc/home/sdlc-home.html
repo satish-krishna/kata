@@ -160,6 +160,9 @@
           <section class="k-home__pane" aria-labelledby="repos-heading">
             <div class="wb-pane__head"><h2 id="repos-heading" class="kata-eyebrow">Repositories</h2></div>
             <div class="k-home__body">
+              @if (vm.instructions(); as instructions) {
+                <app-instructions-row [state]="instructions" [disabled]="vm.locked()" (refresh)="vm.refreshInstructions()" />
+              }
               <app-repos-table
                 [rows]="vm.repoRows()"
                 [marker]="vm.markerLine()"

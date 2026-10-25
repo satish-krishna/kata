@@ -393,7 +393,8 @@ export class SdlcHomeViewModel {
 
   /** Write or refresh the workspace instructions: one setup task, like any other. */
   async refreshInstructions(): Promise<void> {
-    void 0;
+    if (this.refuseWhileLocked()) return;
+    await this.runOnBase('Refreshing workspace instructions', 'Instructions', 'setup', { system: '', instructions: true });
   }
 
   async newChange(system: string, idea: string, track: StartTrack): Promise<void> {
@@ -564,7 +565,7 @@ export class SdlcHomeViewModel {
     title: string,
     label: string,
     kind: 'setup' | 'context',
-    ctx: { system: string; repos?: string[] },
+    ctx: { system: string; repos?: string[]; instructions?: boolean },
   ): Promise<void> {
     const workspace = this.current();
     const scan = this.scan();
@@ -727,6 +728,7 @@ export class SdlcHomeViewModel {
     this.changes.set([]);
     this.contexts.set({});
     this.lastRuns.set({});
+    this.instructions.set(null);
   }
 
   /** Read the current workspace from disk. A newer call supersedes an older one still in flight. */
@@ -772,8 +774,17 @@ export class SdlcHomeViewModel {
         this.toasts.error(`Could not read the workspace: ${message(e)}`);
       }
     }
+    let instructions: InstructionsState | null = null;
+    if (isSetUp(scan) && repo !== null && readiness.kind === 'ready' && readiness.lightTrack) {
+      try {
+        instructions = await this.transport.sdlcInstructions(w.folder, repo);
+      } catch (e) {
+        this.toasts.error(`Could not read the workspace instructions: ${message(e)}`);
+      }
+    }
     if (seq !== this.loadSeq) return;
     this.scan.set(scan);
+    this.instructions.set(instructions);
     this.branches.set(branches);
     this.changes.set(changes);
     this.readiness.set(readiness);
