@@ -13,7 +13,7 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunState } from '../../lib/events';
 import type { RunSnapshot } from '../run/reduce';
-import { specFor, transcriptRunId } from '../../lib/sdlc';
+import { specFor, transcriptRunId, type StartTrack } from '../../lib/sdlc';
 import { masterPath, masterRepo, productRepos as productReposOf } from '../../lib/sdlc-workspace';
 import { LockStore } from '../lock/lock.store';
 import { RunStore } from '../run/run.store';
@@ -46,6 +46,16 @@ export type RunOutcome = { state: RunState; runId: string | null; snapshot: Snap
 /** What the screen needs to place a new change: the workspace, its master repo path and the product repos. */
 /** The preview before a run: takes the built spec, answers with the spec to run or null when the engineer cancelled. */
 export type Confirm = (spec: RunSpec) => Promise<RunSpec | null>;
+
+/**
+ * What starting a change came to. `none`: the run ended and no change folder was created (the idea and the run's id let the engineer describe it again or read the verdict).
+ * `stopped`: nothing to report, because no run started or the run's branch was kept for the engineer to settle; a toast already said why where one was due.
+ */
+export type NewChangeOutcome =
+  | { kind: 'opened' }
+  | { kind: 'refused' }
+  | { kind: 'stopped' }
+  | { kind: 'none'; idea: string; runId: string | null };
 
 export type ChangeTarget = { workspace: WorkspaceEntry; master: string; productRepos: string[] };
 
@@ -412,11 +422,12 @@ export class SdlcRunner {
    * once the run is over, whatever its outcome. `confirm` is the preview: it gets the built spec and answers with the spec to
    * run, or null when the engineer cancelled, in which case no branch is made.
    */
-  async newChange(target: ChangeTarget, system: string, idea: string, confirm?: Confirm): Promise<void> {
+  async newChange(target: ChangeTarget, system: string, idea: string, track: StartTrack, confirm?: Confirm): Promise<NewChangeOutcome> {
+    void track;
     const { workspace, master, productRepos } = target;
     if (this.isBusy()) {
       this.toasts.error('Another task is already running.');
-      return;
+      return { kind: 'stopped' };
     }
     const base = workspace.base_branch;
     let spec: RunSpec;
@@ -425,12 +436,12 @@ export class SdlcRunner {
       spec = specFor('intent', null, { folder: workspace.folder, system, change: null, idea }, settings, catalog);
     } catch (e) {
       this.toasts.error(`Could not prepare the intent run: ${message(e)}`);
-      return;
+      return { kind: 'stopped' };
     }
     // The preview comes before the branch: cancelling it leaves nothing behind.
     if (confirm) {
       const confirmed = await confirm(spec);
-      if (!confirmed) return;
+      if (!confirmed) return { kind: 'stopped' };
       spec = confirmed;
     }
     let branch: string;
@@ -438,7 +449,7 @@ export class SdlcRunner {
       branch = await this.transport.sdlcStartChange(master, base);
     } catch (e) {
       this.toasts.error(`Could not start a change: ${message(e)}`);
-      return;
+      return { kind: 'stopped' };
     }
     const out = await this.run('Starting a change', spec, {
       workspaceId: workspace.id,
@@ -448,14 +459,14 @@ export class SdlcRunner {
       label: 'Intent',
       pendingBranch: branch,
     });
-    if (!out.exited) return;
+    if (!out.exited) return { kind: 'stopped' };
     await this.leftoversClosed();
     const outcome = await this.finish(master, branch, base, out.snapshot, productRepos);
-    if (outcome === null) return;
+    if (outcome === null) return { kind: 'stopped' };
     if (outcome === 'deleted') {
       this.toasts.info('No change was created.');
       await this.router.navigate(['/sdlc']);
-      return;
+      return { kind: 'stopped' };
     }
     const { change } = outcome.renamed;
     if (out.runId) {
@@ -473,6 +484,7 @@ export class SdlcRunner {
       }
     }
     await this.router.navigate(['/sdlc', system, change]);
+    return { kind: 'stopped' };
   }
 
   /** Finish the pending branch. A dirty tree opens the leftover dialog once and retries after it closes. */

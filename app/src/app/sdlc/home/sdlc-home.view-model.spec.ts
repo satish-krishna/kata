@@ -334,7 +334,7 @@ describe('SdlcHomeViewModel runs', () => {
     const open = vi.spyOn(preview, 'open');
     const start = vi.spyOn(transport, 'sdlcStartChange');
     await vm.init();
-    const run = vm.newChange('claims', 'flag fraud');
+    const run = vm.newChange('claims', 'flag fraud', 'full');
     await previewReady(preview);
     expect(open.mock.calls[0][0]).toMatchObject({ mode: 'sdlc' });
     expect(start).not.toHaveBeenCalled();
@@ -431,18 +431,91 @@ describe('SdlcHomeViewModel runs', () => {
     expect(toastText()).toContain('already running');
   });
 
-  it('newChange delegates to the runner with the workspace, master and system', async () => {
+  it('newChange delegates to the runner with the workspace, master, system and track', async () => {
     const { vm, runner } = setup();
     await vm.init();
-    const spy = vi.spyOn(runner, 'newChange').mockResolvedValue();
-    await vm.newChange('claims', 'flag fraud');
+    const spy = vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened' });
+    await vm.newChange('claims', 'flag fraud', 'decide');
     expect(spy).toHaveBeenCalledWith(
       expect.objectContaining({ workspace: expect.objectContaining({ id: 'acme-claims' }), master: `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}` }),
       'claims',
       'flag fraud',
+      'decide',
       expect.any(Function),
     );
     expect(vm.newChangeOpen()).toBe(false);
+  });
+
+  describe('a triage that created no change', () => {
+    const none = { kind: 'none', idea: 'flag fraud', runId: 'sdlc-claims-triage-1' } as const;
+
+    it('shows the notice, and describing again reopens the dialog on the idea and the decide track', async () => {
+      const { vm, runner } = setup();
+      await vm.init();
+      vi.spyOn(runner, 'newChange').mockResolvedValue(none);
+      await vm.newChange('claims', 'flag fraud', 'decide');
+      expect(vm.triageNotice()).toEqual({ idea: 'flag fraud', runId: 'sdlc-claims-triage-1' });
+      vm.describeAgain();
+      expect(vm.newChangeOpen()).toBe(true);
+      expect(vm.newChangeIdea()).toBe('flag fraud');
+      expect(vm.newChangeTrack()).toBe('decide');
+    });
+
+    it('opens the run in the library', async () => {
+      const { vm, runner, navigate } = setup();
+      await vm.init();
+      vi.spyOn(runner, 'newChange').mockResolvedValue(none);
+      await vm.newChange('claims', 'flag fraud', 'decide');
+      await vm.openRun();
+      expect(navigate).toHaveBeenCalledWith(['/library'], { queryParams: { run: 'sdlc-claims-triage-1' } });
+    });
+
+    it('shows no notice when the full pipeline made no change', async () => {
+      const { vm, runner } = setup();
+      await vm.init();
+      vi.spyOn(runner, 'newChange').mockResolvedValue(none);
+      await vm.newChange('claims', 'flag fraud', 'full');
+      expect(vm.triageNotice()).toBeNull();
+    });
+
+    it('clears on the next new change', async () => {
+      const { vm, runner } = setup();
+      await vm.init();
+      const spy = vi.spyOn(runner, 'newChange').mockResolvedValue(none);
+      await vm.newChange('claims', 'flag fraud', 'decide');
+      spy.mockResolvedValue({ kind: 'opened' });
+      await vm.newChange('claims', 'another', 'decide');
+      expect(vm.triageNotice()).toBeNull();
+    });
+
+    it('clears on a workspace switch', async () => {
+      const { vm, runner } = setup();
+      await vm.init();
+      vi.spyOn(runner, 'newChange').mockResolvedValue(none);
+      await vm.newChange('claims', 'flag fraud', 'decide');
+      await vm.selectWorkspace(vm.workspaces()[0].id);
+      expect(vm.triageNotice()).toBeNull();
+    });
+
+    it('a fresh new change starts empty on the decide track', async () => {
+      const { vm, runner } = setup();
+      await vm.init();
+      vi.spyOn(runner, 'newChange').mockResolvedValue(none);
+      await vm.newChange('claims', 'flag fraud', 'decide');
+      vm.describeAgain();
+      vm.closeNewChange();
+      vm.openNewChange();
+      expect(vm.newChangeIdea()).toBe('');
+    });
+  });
+
+  it('offers the light track only when the plugin reports it', async () => {
+    const { vm, transport } = setup();
+    await vm.init();
+    expect(vm.lightTrack()).toBe(false);
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true });
+    await vm.selectWorkspace(vm.workspaces()[0].id);
+    expect(vm.lightTrack()).toBe(true);
   });
 
   it('shows leftovers from the runner and discards through it', async () => {

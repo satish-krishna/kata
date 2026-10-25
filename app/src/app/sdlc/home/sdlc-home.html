@@ -178,7 +178,7 @@
   <app-new-change-dialog
     [open]="vm.newChangeOpen()"
     [systems]="vm.systems()"
-    (start)="vm.newChange($event.system, $event.idea)"
+    (start)="vm.newChange($event.system, $event.idea, $event.track)"
     (cancel)="vm.closeNewChange()"
   />
   @if (vm.settings(); as s) {

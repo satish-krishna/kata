@@ -11,6 +11,8 @@ const type = async (value: string) => {
   idea().dispatchEvent(new Event('input'));
   await settle();
 };
+const radio = (label: string) =>
+  Array.from(dialog()!.querySelectorAll<HTMLButtonElement>('[role="radio"]')).find((b) => b.textContent!.trim() === label)!;
 const settle = async () => {
   TestBed.tick();
   await new Promise((r) => setTimeout(r, 0));
@@ -51,7 +53,7 @@ describe('NewChangeDialog', () => {
     fixture.componentInstance.start.subscribe((v) => got.push(v));
     await type('  flag suspected fraud  ');
     button('Start').click();
-    expect(got).toEqual([{ system: 'claims', idea: 'flag suspected fraud' }]);
+    expect(got).toEqual([{ system: 'claims', idea: 'flag suspected fraud', track: 'full' }]);
   });
 
   it('defaults to the first system when several exist', async () => {
@@ -71,5 +73,71 @@ describe('NewChangeDialog', () => {
     fixture.componentInstance.cancel.subscribe(() => n++);
     button('Cancel').click();
     expect(n).toBe(1);
+  });
+
+  describe('track', () => {
+    it('opens on letting the workflow decide', async () => {
+      const { fixture } = await render(NewChangeDialog, { open: true, systems: ['claims'], lightTrack: true });
+      await settle();
+      expect(radio('Let the workflow decide').getAttribute('aria-checked')).toBe('true');
+      expect(radio('Full pipeline').getAttribute('aria-checked')).toBe('false');
+      const got: { track: string }[] = [];
+      fixture.componentInstance.start.subscribe((v) => got.push(v));
+      await type('an idea');
+      button('Start').click();
+      expect(got[0].track).toBe('decide');
+    });
+
+    it('starts the full pipeline when it is chosen', async () => {
+      const { fixture } = await render(NewChangeDialog, { open: true, systems: ['claims'], lightTrack: true });
+      await settle();
+      radio('Full pipeline').click();
+      await settle();
+      const got: { track: string }[] = [];
+      fixture.componentInstance.start.subscribe((v) => got.push(v));
+      await type('an idea');
+      button('Start').click();
+      expect(got[0].track).toBe('full');
+    });
+
+    it('offers only the full pipeline, with the reason, when the plugin cannot triage', async () => {
+      const { fixture } = await render(NewChangeDialog, { open: true, systems: ['claims'], lightTrack: false });
+      await settle();
+      expect(radio('Let the workflow decide').disabled).toBe(true);
+      expect(radio('Full pipeline').getAttribute('aria-checked')).toBe('true');
+      expect(dialog()!.textContent).toContain('Needs ai-sdlc 0.13.0 or later.');
+      const got: { track: string }[] = [];
+      fixture.componentInstance.start.subscribe((v) => got.push(v));
+      await type('an idea');
+      button('Start').click();
+      expect(got[0].track).toBe('full');
+    });
+
+    it('opens on the track it was given', async () => {
+      await render(NewChangeDialog, { open: true, systems: ['claims'], lightTrack: true, initialTrack: 'full' });
+      await settle();
+      expect(radio('Full pipeline').getAttribute('aria-checked')).toBe('true');
+    });
+  });
+
+  it('labels the description field Description', async () => {
+    await render(NewChangeDialog, { open: true, systems: ['claims'] });
+    await settle();
+    expect(idea().getAttribute('aria-label')).toBe('Description');
+  });
+
+  it('opens with the description it was given', async () => {
+    await render(NewChangeDialog, { open: true, systems: ['claims'], lightTrack: true, initialIdea: 'flag suspected fraud' });
+    await settle();
+    expect(idea().value).toBe('flag suspected fraud');
+    expect((button('Start') as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('shows its note above the description', async () => {
+    await render(NewChangeDialog, { open: true, systems: ['claims'], note: 'Describe it again.' });
+    await settle();
+    const text = dialog()!.textContent!;
+    expect(text).toContain('Describe it again.');
+    expect(text.indexOf('Describe it again.')).toBeLessThan(text.indexOf('Description'));
   });
 });

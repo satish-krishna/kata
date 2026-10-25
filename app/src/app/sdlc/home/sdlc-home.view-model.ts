@@ -19,7 +19,7 @@ import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { inTauri } from '../../lib/mock';
 import { shownChangeList } from '../../lib/doc-notice';
-import { hasAiSdlcPlugin, specFor } from '../../lib/sdlc';
+import { hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
 import { DEMO_SETUP_FOLDER } from '../../lib/demo';
 import {
   folderName,
@@ -144,6 +144,13 @@ export class SdlcHomeViewModel {
   // --- dialogs
   readonly candidate = signal<WorkspaceCandidate | null>(null);
   readonly newChangeOpen = signal(false);
+  /** Set when a triage ended with no change; null otherwise. */
+  readonly triageNotice = signal<{ idea: string; runId: string | null } | null>(null);
+  readonly newChangeIdea = signal('');
+  readonly newChangeTrack = signal<StartTrack>('decide');
+  readonly newChangeNote = signal<string | null>(null);
+  /** Whether the plugin on this machine can triage a change. */
+  readonly lightTrack = computed(() => false);
   readonly settingsOpen = signal(false);
   readonly switchPrompt = signal<string | null>(null);
   private switchResolve: ((ok: boolean) => void) | null = null;
@@ -377,14 +384,15 @@ export class SdlcHomeViewModel {
     await this.runOnBase('Running setup', 'Setup', 'setup', { system: '' });
   }
 
-  async newChange(system: string, idea: string): Promise<void> {
+  async newChange(system: string, idea: string, track: StartTrack): Promise<void> {
+    void track;
     this.newChangeOpen.set(false);
     const workspace = this.current();
     const scan = this.scan();
     const master = this.masterDir();
     if (!workspace || !scan || !master) return;
     try {
-      await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, (spec) => this.confirm(spec));
+      await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, 'full', (spec) => this.confirm(spec));
     } catch (e) {
       this.toasts.error(`Could not start the change: ${message(e)}`);
     }
@@ -394,6 +402,10 @@ export class SdlcHomeViewModel {
   openNewChange(): void {
     if (!this.refuseWhileLocked()) this.newChangeOpen.set(true);
   }
+
+  describeAgain(): void {}
+
+  async openRun(): Promise<void> {}
 
   closeNewChange(): void {
     this.newChangeOpen.set(false);

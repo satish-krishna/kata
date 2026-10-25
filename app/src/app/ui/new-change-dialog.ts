@@ -4,9 +4,10 @@ import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmDialogImports } from '@spartan-ng/helm/dialog';
 import { HlmSelectImports } from '@spartan-ng/helm/select';
 import { HlmTextareaImports } from '@spartan-ng/helm/textarea';
+import type { StartTrack } from '../lib/sdlc';
 import { Field } from './field';
 
-export type NewChange = { system: string; idea: string };
+export type NewChange = { system: string; idea: string; track: StartTrack };
 
 /* New change: the idea in a sentence or two, and the system when the workspace has more than one.
  * The intent skill proposes the title and the folder name itself, so there is no slug field. */
@@ -19,6 +20,13 @@ export type NewChange = { system: string; idea: string };
 export class NewChangeDialog {
   readonly open = input.required<boolean>();
   readonly systems = input.required<string[]>();
+  /** Whether the plugin on this machine can triage a change (ai-sdlc 0.13.0 or later). */
+  readonly lightTrack = input(false);
+  /** The description the dialog opens with, for describing a change again. */
+  readonly initialIdea = input('');
+  readonly initialTrack = input<StartTrack>('decide');
+  /** Shown above the description. */
+  readonly note = input<string | null>(null);
 
   readonly start = output<NewChange>();
   readonly cancel = output<void>();
@@ -41,7 +49,7 @@ export class NewChangeDialog {
   protected submit(): void {
     const system = this.system();
     if (!this.ready() || system === null) return;
-    this.start.emit({ system, idea: this.idea().trim() });
+    this.start.emit({ system, idea: this.idea().trim(), track: 'full' });
   }
 
   /** Escape and a backdrop click close the overlay from inside; surface that as cancel. */

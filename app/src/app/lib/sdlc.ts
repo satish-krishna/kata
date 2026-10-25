@@ -176,6 +176,9 @@ export type RunContext = {
   instructions?: boolean;
 };
 
+/** How a new change starts: the workflow triages the description and decides, or the full pipeline starts at once. */
+export type StartTrack = "decide" | "full";
+
 export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan" | "build" | "triage" | "fix";
 
 /** What a triage or fix run is held to: the repositories it must not edit and Kata's checks folder. */
