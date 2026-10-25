@@ -1,0 +1,134 @@
+import { TestBed } from '@angular/core/testing';
+import { ActivatedRoute, convertToParamMap, provideRouter } from '@angular/router';
+import { toastState } from '@spartan-ng/brain/sonner';
+import { of } from 'rxjs';
+import type { Stage } from '@bindings/Stage';
+import { render } from '../../../testing/render';
+import { LockStore } from '../../core/lock/lock.store';
+import { KataTransport } from '../../core/transport/kata-transport';
+import { MockTransport } from '../../core/transport/mock-transport';
+import type { StageAction } from '../../lib/sdlc';
+import { ChangePage } from './change-page';
+import { ChangePageViewModel } from './change-page.view-model';
+
+const FIX = '2026-10-12-fnol-photo-upload';
+const NEEDS = 'Needs ai-sdlc 0.13.0 or later.';
+const BUSY = 'Another task is already running.';
+const FIX_ACTIONS: StageAction[] = ['finish-fix-draft', 'accept-fix', 'change-fix', 'reopen-fix'];
+
+const settle = async () => {
+  for (let i = 0; i < 4; i++) {
+    TestBed.tick();
+    await new Promise((r) => setTimeout(r, 0));
+  }
+};
+const toastText = () => toastState.toasts().map((t) => String(t.title)).join(' | ');
+const button = (root: ParentNode, label: string) =>
+  Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === label)!;
+const confirmPreview = async () => {
+  const start = () => button(document.body, 'Start run');
+  await vi.waitFor(() => expect(start() && !start().disabled).toBe(true));
+  start().click();
+};
+
+/** A fix at a stage, with the plugin supporting the light track or not, until the mock has its own fixture. */
+async function mountFix(stage: Stage, lightTrack = true) {
+  const transport = new MockTransport();
+  const real = transport.sdlcChanges.bind(transport);
+  vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
+    (await real(m, s)).map((c) => (c.change === FIX ? { ...c, stage, track: 'fix' as const } : c)),
+  );
+  const ready = await transport.sdlcPluginReadiness(null);
+  vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(ready.kind === 'ready' ? { ...ready, lightTrack } : ready);
+  const run = vi.spyOn(transport, 'runSpec').mockResolvedValue('1');
+  const out = await render(ChangePage, {}, [
+    provideRouter([]),
+    { provide: KataTransport, useValue: transport },
+    { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change: FIX })), snapshot: { queryParamMap: convertToParamMap({}) } } },
+  ]);
+  await settle();
+  const vm = out.fixture.debugElement.injector.get(ChangePageViewModel);
+  return { ...out, transport, run, vm };
+}
+
+afterEach(() => toastState.reset());
+
+describe('ChangePage: the fix runs', () => {
+  it('Accept fix previews and runs the fix skill with --accept in the auto mode (R4.2)', async () => {
+    const { container, run } = await mountFix('fix-awaiting');
+    button(container, 'Accept fix').click();
+    await settle();
+    expect(document.body.querySelector('[role="dialog"] textarea')).toBeNull();
+    await confirmPreview();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0][0].task).toContain(`--accept ${FIX}`);
+    expect(run.mock.calls[0][0].permissions.mode).toBe('auto');
+  });
+
+  it('a fix whose acceptance stopped reads Finish acceptance', async () => {
+    const { container } = await mountFix('fix-accepting');
+    expect(button(container, 'Finish acceptance')).toBeDefined();
+    expect(button(container, 'Accept fix')).toBeUndefined();
+  });
+
+  it('Change the fix opens the feedback box and runs with the written changes (R5.1)', async () => {
+    const { container, run } = await mountFix('fix-awaiting');
+    button(container, 'Change the fix').click();
+    await settle();
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    expect(run).not.toHaveBeenCalled();
+    const box = dialog.querySelector<HTMLTextAreaElement>('textarea')!;
+    box.value = 'Also cover the retry button.';
+    box.dispatchEvent(new Event('input'));
+    await settle();
+    button(dialog, 'Run').click();
+    await confirmPreview();
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(run.mock.calls[0][0].task).toContain('Operator feedback:\nAlso cover the retry button.');
+  });
+
+  it('reopening is disabled while a build run holds the lock, and refused with no run (R6.2)', async () => {
+    const { container, vm, run } = await mountFix('build-ready');
+    expect(button(container, 'Reopen the fix')).toBeDefined();
+    expect(button(container, 'Reopen the fix').disabled).toBe(false);
+    expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
+    await settle();
+    expect(button(container, 'Reopen the fix').disabled).toBe(true);
+    toastState.reset();
+    await vm.act('reopen-fix');
+    await settle();
+    expect(toastText()).toContain(BUSY);
+    expect(document.body.querySelector('[role="dialog"] textarea')).toBeNull();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('with the light track unsupported the fix actions are disabled and refuse, and the full pipeline stays (R10.1)', async () => {
+    const { container, vm, run } = await mountFix('fix-awaiting', false);
+    for (const label of ['Accept fix', 'Change the fix']) {
+      expect(button(container, label).disabled).toBe(true);
+      expect(button(container, label).title).toBe(NEEDS);
+    }
+    expect(button(container, 'Take the full pipeline instead').disabled).toBe(false);
+    for (const action of FIX_ACTIONS) {
+      toastState.reset();
+      await vm.act(action);
+      await settle();
+      expect(toastText()).toBe(NEEDS);
+    }
+    expect(document.body.querySelector('[role="dialog"] textarea')).toBeNull();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('every fix run is refused while another task runs, with no run started (R11.2)', async () => {
+    const { vm, run } = await mountFix('fix-awaiting');
+    expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
+    for (const action of FIX_ACTIONS) {
+      toastState.reset();
+      await vm.act(action);
+      await settle();
+      expect(toastText()).toContain(BUSY);
+    }
+    expect(document.body.querySelector('[role="dialog"] textarea')).toBeNull();
+    expect(run).not.toHaveBeenCalled();
+  });
+});
