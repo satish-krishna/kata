@@ -371,6 +371,9 @@ fn a_folder_that_is_not_a_fix_is_could_not_run() {
         "---\nstatus: draft\n---\nintent\n",
     )
     .unwrap();
+    // The program reads the track from `HEAD` when the working intent names none, so the change is recorded.
+    git(dir.path(), &["add", "."]);
+    git(dir.path(), &["commit", "-q", "-m", "not a fix"]);
     match format::fix_state(&program(), &folder) {
         Err(FormatError::CouldNotRun(message)) => {
             assert!(message.contains("not a fix"), "{message}")

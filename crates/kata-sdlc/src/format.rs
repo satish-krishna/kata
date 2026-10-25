@@ -372,9 +372,13 @@ pub struct FixDocumentFacts {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum FixAccepted {
+    /// None of the three documents is accepted in `HEAD`.
     None,
+    /// The intent, or the intent and the spec, are accepted in `HEAD`.
     Leading,
+    /// All three documents are accepted in `HEAD`.
     All,
+    /// Any other set of accepted documents; the program's row 2 catches it.
     Other,
 }
 
@@ -382,14 +386,21 @@ pub enum FixAccepted {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FixFacts {
+    /// The intent's facts.
     pub intent: FixDocumentFacts,
+    /// The spec's facts.
     pub spec: FixDocumentFacts,
+    /// The plan's facts.
     pub plan: FixDocumentFacts,
     /// The documents with unrecorded changes, in document order.
     pub unrecorded: Vec<String>,
+    /// Some document differs from `HEAD` and every difference is an acceptance's own status lines.
     pub own_lines_only: bool,
+    /// Which documents are accepted in `HEAD`.
     pub accepted: FixAccepted,
+    /// The latest commit touching the documents is one of the three acceptances.
     pub acceptance_last: bool,
+    /// Some task of the plan in `HEAD` has an entry in a build log in `HEAD`.
     pub built: bool,
 }
 
@@ -397,7 +408,9 @@ pub struct FixFacts {
 /// and the facts it was decided on.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct FixState {
+    /// The row of the fix-state table, 1 to 8.
     pub row: u8,
+    /// What the row was decided on.
     pub facts: FixFacts,
 }
 
@@ -409,12 +422,59 @@ pub fn fix_state(program: &Path, folder: &Path) -> Result<FixState, FormatError>
         .map_err(|e| FormatError::BadOutput(format!("{e}{}", stderr_note(&output.stderr))))
 }
 
+/// One entry of the program's answer for several folders: the folder as it was given, and either its
+/// result or the error that stopped the program for it.
+#[derive(Deserialize)]
+struct FixEntry {
+    folder: String,
+    result: Option<FixState>,
+    error: Option<String>,
+}
+
 /// Where each fix in `folders` stands, in the order given, from one process. A folder the program could
 /// not answer for gets its own error; a run that failed as a whole gives that error for every folder.
-pub fn fix_states(_program: &Path, folders: &[PathBuf]) -> Vec<Result<FixState, FormatError>> {
-    folders
-        .iter()
-        .map(|_| Err(FormatError::CouldNotRun("not implemented".into())))
+/// Not cached, for the reason [`fix_state`] is not.
+pub fn fix_states(program: &Path, folders: &[PathBuf]) -> Vec<Result<FixState, FormatError>> {
+    // Given one folder the program prints its object, not an array of one, so that case is the single form.
+    match folders {
+        [] => return Vec::new(),
+        [folder] => return vec![fix_state(program, folder)],
+        _ => {}
+    }
+    let whole = |e: FormatError| vec![Err(e); folders.len()];
+    let names: Vec<String> = folders.iter().map(|f| f.display().to_string()).collect();
+    let mut args = vec!["fix-state", "--json"];
+    args.extend(names.iter().map(String::as_str));
+    // The program resolves each folder against the repository that holds it, so any directory will do.
+    let cwd = folders[0].parent().unwrap_or(&folders[0]);
+    let output = match run(program, cwd, &args) {
+        Ok(output) => output,
+        Err(e) => return whole(e),
+    };
+    let entries: Vec<FixEntry> = match serde_json::from_slice(&output.stdout) {
+        Ok(entries) => entries,
+        Err(e) => {
+            return whole(FormatError::BadOutput(format!(
+                "{e}{}",
+                stderr_note(&output.stderr)
+            )))
+        }
+    };
+    if entries.len() != names.len() || entries.iter().zip(&names).any(|(e, n)| e.folder != *n) {
+        return whole(FormatError::BadOutput(
+            "the answer does not match the folders asked about".to_string(),
+        ));
+    }
+    entries
+        .into_iter()
+        .map(|entry| match (entry.result, entry.error) {
+            (Some(state), _) => Ok(state),
+            (None, Some(message)) => Err(FormatError::CouldNotRun(message)),
+            (None, None) => Err(FormatError::BadOutput(format!(
+                "{}: neither a result nor an error",
+                entry.folder
+            ))),
+        })
         .collect()
 }
 

@@ -69,6 +69,7 @@ const ACTIONS: Record<Stage, StageAction[]> = {
   "fix-unsettled": [],
   "fix-awaiting": [],
   "fix-accepting": [],
+  "fix-needs-plugin": [],
 };
 
 const REVISITS: readonly StageAction[] = ["continue-intent", "reopen-intent", "continue-spec", "reopen-spec", "rerun-plan", "finish-fix-draft", "change-fix", "reopen-fix"];
@@ -167,6 +168,7 @@ const LABELS: Record<Stage, StageLabel> = {
   "fix-unsettled": { step: "intent", text: "Fix · statuses not settled", tone: "warning" },
   "fix-awaiting": { step: "intent", text: "Fix · awaiting acceptance", tone: "warning" },
   "fix-accepting": { step: "plan", text: "Fix · acceptance stopped", tone: "warning" },
+  "fix-needs-plugin": { step: "intent", text: "Fix · needs ai-sdlc 0.13.0", tone: "warning" },
 };
 
 /**

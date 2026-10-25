@@ -38,10 +38,11 @@ const ACTIONS: Record<Stage, string[]> = {
   "fix-unsettled": [],
   "fix-awaiting": [],
   "fix-accepting": [],
+  "fix-needs-plugin": [],
 };
 
 const changeAt = (stage: Stage, outOfDate: OutOfDate | null = null): ChangeInfo => ({
-  system: "claims", change: "2026-10-12-fnol", stage, scope: "claims", out_of_date: outOfDate, plan_unreadable: false, plan_unreadable_reason: null, track: 'full',
+  system: "claims", change: "2026-10-12-fnol", stage, scope: "claims", out_of_date: outOfDate, plan_unreadable: false, plan_unreadable_reason: null, track: 'full', fix_row: null,
   intent: { exists: true, committed: true, status: "accepted", head_status: "accepted" },
   spec: { exists: true, committed: true, status: "accepted", head_status: "accepted" },
   plan: { exists: true, committed: true, status: "accepted", head_status: "accepted" },
@@ -93,6 +94,7 @@ describe("actions of a fix (R4.1, R7.3)", () => {
     ["fix-unsettled", null, []],
     ["fix-awaiting", null, ["accept-fix", "change-fix", "full-pipeline-instead"]],
     ["fix-accepting", null, ["accept-fix", "change-fix"]],
+    ["fix-needs-plugin", null, []],
     ["rejected", null, []],
     ["build-ready", null, ["start-build", "reopen-fix"]],
     ["build-ready", "plan-pin", ["start-build", "reopen-fix"]],

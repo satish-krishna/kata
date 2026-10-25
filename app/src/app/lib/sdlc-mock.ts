@@ -174,7 +174,7 @@ const doc = (status: string | null, committed = true): DocState =>
 const change = (name: string, intent: DocState, spec: DocState, plan: DocState, stage: Stage, track: Track = 'full'): ChangeInfo =>
   ({
     system: MOCK_SYSTEM, change: name, intent, spec, plan, stage,
-    build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null, track,
+    build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null, track, fix_row: null,
   });
 
 /** A fix's three documents, drafted: what the light track writes before the engineer accepts it. */

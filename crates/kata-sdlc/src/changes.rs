@@ -236,7 +236,8 @@ pub fn track(intent_text: &str) -> Track {
 }
 
 /// The stage of a fix from the row of the fix-state table the format program computed: rows 1 to 7
-/// are stages of their own and row 8 (all three documents accepted) gives the plan rows.
+/// are stages of their own and row 8 (all three documents accepted) gives the plan rows. Any other row is a
+/// table this Workbench does not know, so nothing is offered.
 fn fix_stage(
     row: u8,
     intent: &DocState,
@@ -250,7 +251,8 @@ fn fix_stage(
         3 => Stage::FixInProgress,
         4 | 5 => Stage::FixAccepting,
         6 | 7 => Stage::FixAwaiting,
-        _ => plan_stage(intent, spec, plan, plan_facts),
+        8 => plan_stage(intent, spec, plan, plan_facts),
+        _ => Stage::FixUnsettled,
     }
 }
 
@@ -368,6 +370,9 @@ fn plan_facts(
     (facts, counts, reason)
 }
 
+/// Why a fix cannot be read on a plugin older than [`crate::plugin::LIGHT_TRACK_VERSION`].
+const NEEDS_PLUGIN: &str = "Needs ai-sdlc 0.13.0 or later.";
+
 /// The folder of one change in the master repo.
 fn change_dir(master: &Path, system: &str, change: &str) -> std::path::PathBuf {
     master.join("intent").join(system).join(change)
@@ -388,26 +393,49 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
         .filter(|n| is_change_name(n))
         .collect();
     names.sort_by(|a, b| b.cmp(a));
+    let tracks: Vec<Track> = names
+        .iter()
+        .map(|change| {
+            std::fs::read_to_string(change_dir(master, system, change).join("intent.md"))
+                .map(|t| track(&t))
+                .unwrap_or(Track::Full)
+        })
+        .collect();
+    // Every fix of the system is read in one program process, and only by a plugin that knows the light track.
+    let needs_plugin = plugin.is_some_and(|p| {
+        !crate::plugin::version(p).is_some_and(|v| crate::plugin::light_track(&v))
+    });
+    let fix_folders: Vec<std::path::PathBuf> = names
+        .iter()
+        .zip(&tracks)
+        .filter(|(_, t)| **t == Track::Fix)
+        .map(|(change, _)| change_dir(master, system, change))
+        .collect();
+    let mut fix_reads = match plugin {
+        Some(_) if needs_plugin => Vec::new(),
+        Some(p) => format::fix_states(&crate::build::program(p), &fix_folders)
+            .into_iter()
+            .map(|r| Some(r.map_err(|e| e.to_string())))
+            .collect(),
+        None => Vec::new(),
+    }
+    .into_iter();
     names
         .into_iter()
-        .map(|change| {
-            let track_of = std::fs::read_to_string(
-                master
-                    .join("intent")
-                    .join(system)
-                    .join(&change)
-                    .join("intent.md"),
-            )
-            .map(|t| track(&t))
-            .unwrap_or(Track::Full);
+        .zip(tracks)
+        .map(|(change, track_of)| {
             // A fix is read by the format program: where it stands, and what each document says in `HEAD`.
-            let fix = (track_of == Track::Fix).then(|| match plugin {
-                Some(p) => format::fix_state(
-                    &crate::build::program(p),
-                    &change_dir(master, system, &change),
-                )
-                .map_err(|e| e.to_string()),
-                None => Err("the ai-sdlc plugin was not found".to_string()),
+            let fix: Option<Result<format::FixState, String>> = (track_of == Track::Fix).then(|| {
+                if needs_plugin {
+                    Err(NEEDS_PLUGIN.to_string())
+                } else if plugin.is_none() {
+                    Err("the ai-sdlc plugin was not found".to_string())
+                } else {
+                    fix_reads
+                        .next()
+                        .flatten()
+                        .unwrap_or_else(|| Err("the format program gave no answer".to_string()))
+                }
             });
             let heads = |pick: fn(&format::FixFacts) -> &format::FixDocumentFacts| match &fix {
                 Some(Ok(state)) => pick(&state.facts).head_status.clone(),
@@ -421,13 +449,27 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
             } else {
                 (PlanFacts::default(), BuildCounts::default(), None)
             };
+            let mut fix_row = None;
             let stage = match &fix {
-                Some(Ok(state)) => fix_stage(state.row, &intent, &spec, &plan, &facts),
+                Some(Ok(state)) => {
+                    fix_row = Some(state.row);
+                    if !(1..=8).contains(&state.row) {
+                        facts.unreadable = true;
+                        plan_unreadable_reason.get_or_insert_with(|| {
+                            format!("the format program reported fix row {}, which this Workbench does not know", state.row)
+                        });
+                    }
+                    fix_stage(state.row, &intent, &spec, &plan, &facts)
+                }
                 Some(Err(message)) => {
                     // The row is unknown, so nothing is offered; the notice carries the program's words.
                     facts.unreadable = true;
                     plan_unreadable_reason.get_or_insert_with(|| message.clone());
-                    Stage::FixUnsettled
+                    if needs_plugin {
+                        Stage::FixNeedsPlugin
+                    } else {
+                        Stage::FixUnsettled
+                    }
                 }
                 None => derive_stage(&intent, &spec, &plan, &facts),
             };
@@ -450,7 +492,7 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
                 plan_unreadable: facts.unreadable,
                 plan_unreadable_reason,
                 track: track_of,
-                fix_row: None,
+                fix_row,
             }
         })
         .collect()
