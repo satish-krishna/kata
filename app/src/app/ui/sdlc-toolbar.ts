@@ -24,6 +24,8 @@ export class SdlcToolbar {
   readonly branch = input.required<string | null>();
   /** Crumbs after the workspace name. */
   readonly crumbs = input<string[]>([]);
+  /** A tag beside the crumbs, such as `fix` for a change on the light track; none when null. */
+  readonly tag = input<string | null>(null);
   /** The first crumb's label: the way back to the changes list. Null where there is nowhere to go back to (the home page). */
   readonly back = input<string | null>(null);
   /** A run or locked operation is in progress. */

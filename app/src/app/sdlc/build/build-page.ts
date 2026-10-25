@@ -78,6 +78,8 @@ export class BuildPage {
   readonly rows = input<BuildRow[]>([]);
   readonly task = input<{ id: string; repo: string } | null>(null);
   readonly stopped = input<string[]>([]);
+  /** Actions the host adds to the bar after the build's own, each with whether it is off and why. */
+  readonly extras = input<{ action: StageAction; disabled: boolean; title: string | null }[]>([]);
   /** A request to bring the picked repository's open question into view and focus it. */
   readonly focus = input<{ repo: string; n: number } | null>(null);
 

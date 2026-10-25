@@ -2,10 +2,11 @@ import { NgTemplateOutlet } from '@angular/common';
 import { Component, input, output } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import type { Finding } from '../lib/sdlc';
+import type { FindingGroup } from '../lib/sdlc-findings';
 import { MarkdownBody } from './markdown-body';
 
 /** A review that a newer one replaced, with the time of the newer one. */
-export type ReplacedFindings = { at: string; findings: Finding[]; label?: string };
+export type ReplacedFindings = { at: string; groups: FindingGroup[]; label?: string };
 
 /* The review's findings, most serious first as given. A severity gets a dot and its name; a finding without one is just a finding.
  * Reviews a newer review replaced stay below, collapsed. */
@@ -15,7 +16,7 @@ export type ReplacedFindings = { at: string; findings: Finding[]; label?: string
   templateUrl: './findings-list.html',
 })
 export class FindingsList {
-  readonly findings = input.required<Finding[]>();
+  readonly groups = input.required<FindingGroup[]>();
   readonly replaced = input<ReplacedFindings[]>([]);
   /** True for findings read from a review run's closing words, because the change has no review document. */
   readonly older = input(false);
@@ -26,6 +27,10 @@ export class FindingsList {
   readonly picked = input<{ file: string; line: number | null; text: string; n: number } | null>(null);
   /** A finding that names a file was picked. */
   readonly pick = output<Finding>();
+
+  protected isEmpty(groups: FindingGroup[]): boolean {
+    return groups.every((g) => g.findings.length === 0);
+  }
 
   protected where(f: Finding): string | null {
     return f.file === undefined ? null : f.line === undefined ? f.file : `${f.file}:${f.line}`;

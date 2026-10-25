@@ -28,6 +28,23 @@ pub enum Stage {
     BuildReady,
     BuildStopped,
     BuildFinished,
+    FixInProgress,
+    FixUnsettled,
+    FixAwaiting,
+    FixAccepting,
+    /// A fix on a machine whose ai-sdlc plugin is older than 0.13.0: it is a fix, and where it stands
+    /// cannot be read.
+    FixNeedsPlugin,
+}
+
+/// Which pipeline a change is on: the full intent, spec, plan flow, or the light track a fix takes.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum Track {
+    Full,
+    Fix,
 }
 
 /// Why an accepted or written plan cannot be built, earliest document first.
@@ -74,6 +91,9 @@ pub struct DocState {
     pub committed: bool,
     /// Raw front-matter `status`; `Some("unknown")` when the file exists but has none.
     pub status: Option<String>,
+    /// The `status` of the `HEAD` copy, as the format program reports it for a fix; `None` when the document is
+    /// not in `HEAD`, and always `None` for a full-pipeline change.
+    pub head_status: Option<String>,
 }
 
 impl DocState {
@@ -101,6 +121,11 @@ pub struct ChangeInfo {
     /// Why, in the format program's own words (or that no plugin was found), when `plan_unreadable`; null otherwise.
     /// The change list words its notice from this, so it never blames Node.js for a layout it does not read.
     pub plan_unreadable_reason: Option<String>,
+    pub track: Track,
+    /// The row of the format program's fix-state table the fix stands at (1 to 8, or one this Workbench
+    /// does not know). `None` for a full-pipeline change, a fix the program could not answer for, and a
+    /// fix on a plugin too old to ask.
+    pub fix_row: Option<u8>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -202,6 +227,56 @@ fn plan_stage(intent: &DocState, spec: &DocState, plan: &DocState, facts: &PlanF
     }
 }
 
+/// The track an intent's front matter names; anything but `fix` is the full pipeline.
+pub fn track(intent_text: &str) -> Track {
+    match frontmatter::field(intent_text, "track").as_deref() {
+        Some("fix") => Track::Fix,
+        _ => Track::Full,
+    }
+}
+
+/// The track of a change, read the way the format program reads it: the working `intent.md`'s `track`,
+/// and when that file is missing, names no track or does not parse, the one in `HEAD`.
+fn track_of_change(master: &Path, system: &str, change: &str) -> Track {
+    let file = change_dir(master, system, change).join("intent.md");
+    let named = |text: &str| frontmatter::field(text, "track").map(|t| t == "fix");
+    let working = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|text| named(&text));
+    let found = working.or_else(|| {
+        let spec = format!("HEAD:intent/{system}/{change}/intent.md");
+        git::run(master, &["show", &spec])
+            .ok()
+            .and_then(|text| named(&text))
+    });
+    if found == Some(true) {
+        Track::Fix
+    } else {
+        Track::Full
+    }
+}
+
+/// The stage of a fix from the row of the fix-state table the format program computed: rows 1 to 7
+/// are stages of their own and row 8 (all three documents accepted) gives the plan rows. Any other row is a
+/// table this Workbench does not know, so nothing is offered.
+fn fix_stage(
+    row: u8,
+    intent: &DocState,
+    spec: &DocState,
+    plan: &DocState,
+    plan_facts: &PlanFacts,
+) -> Stage {
+    match row {
+        1 => Stage::Rejected,
+        2 => Stage::FixUnsettled,
+        3 => Stage::FixInProgress,
+        4 | 5 => Stage::FixAccepting,
+        6 | 7 => Stage::FixAwaiting,
+        8 => plan_stage(intent, spec, plan, plan_facts),
+        _ => Stage::FixUnsettled,
+    }
+}
+
 /// `^\d{4}-\d{2}-\d{2}-[a-z0-9-]+$`, matched by hand.
 pub(crate) fn is_change_name(name: &str) -> bool {
     let b = name.as_bytes();
@@ -231,15 +306,27 @@ pub(crate) fn is_safe_system(system: &str) -> bool {
         && !system.contains(['/', '\\', ':'])
 }
 
-fn doc_state(master: &Path, system: &str, change: &str, file: &str) -> DocState {
+/// The state of one document. `head_status` is what the format program said about the `HEAD` copy (a fix
+/// only); a full-pipeline change has none.
+fn doc_state(
+    master: &Path,
+    system: &str,
+    change: &str,
+    file: &str,
+    head_status: Option<String>,
+) -> DocState {
     let rel = format!("intent/{system}/{change}/{file}");
     match std::fs::read_to_string(master.join(&rel)) {
         Ok(text) => DocState {
             exists: true,
             committed: is_committed(master, &rel),
             status: Some(frontmatter::field(&text, "status").unwrap_or_else(|| "unknown".into())),
+            head_status,
         },
-        Err(_) => DocState::default(),
+        Err(_) => DocState {
+            head_status,
+            ..DocState::default()
+        },
     }
 }
 
@@ -304,6 +391,14 @@ fn plan_facts(
     (facts, counts, reason)
 }
 
+/// Why a fix cannot be read on a plugin older than [`crate::plugin::LIGHT_TRACK_VERSION`].
+const NEEDS_PLUGIN: &str = "Needs ai-sdlc 0.13.0 or later.";
+
+/// The folder of one change in the master repo.
+fn change_dir(master: &Path, system: &str, change: &str) -> std::path::PathBuf {
+    master.join("intent").join(system).join(change)
+}
+
 /// The changes of `system` in the master repo, newest folder name first.
 pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInfo> {
     if !is_safe_system(system) {
@@ -319,18 +414,83 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
         .filter(|n| is_change_name(n))
         .collect();
     names.sort_by(|a, b| b.cmp(a));
+    let tracks: Vec<Track> = names
+        .iter()
+        .map(|change| track_of_change(master, system, change))
+        .collect();
+    // Every fix of the system is read in one program process, and only by a plugin that knows the light track.
+    let needs_plugin = plugin.is_some_and(|p| {
+        !crate::plugin::version(p).is_some_and(|v| crate::plugin::light_track(&v))
+    });
+    let fix_folders: Vec<std::path::PathBuf> = names
+        .iter()
+        .zip(&tracks)
+        .filter(|(_, t)| **t == Track::Fix)
+        .map(|(change, _)| change_dir(master, system, change))
+        .collect();
+    let mut fix_reads = match plugin {
+        Some(_) if needs_plugin => Vec::new(),
+        Some(p) => format::fix_states(&crate::build::program(p), &fix_folders)
+            .into_iter()
+            .map(|r| Some(r.map_err(|e| e.to_string())))
+            .collect(),
+        None => Vec::new(),
+    }
+    .into_iter();
     names
         .into_iter()
-        .map(|change| {
-            let intent = doc_state(master, system, &change, "intent.md");
-            let spec = doc_state(master, system, &change, "spec.md");
-            let plan = doc_state(master, system, &change, "plan.md");
-            let (facts, build, plan_unreadable_reason) = if plan.exists {
+        .zip(tracks)
+        .map(|(change, track_of)| {
+            // A fix is read by the format program: where it stands, and what each document says in `HEAD`.
+            let fix: Option<Result<format::FixState, String>> = (track_of == Track::Fix).then(|| {
+                if needs_plugin {
+                    Err(NEEDS_PLUGIN.to_string())
+                } else if plugin.is_none() {
+                    Err("the ai-sdlc plugin was not found".to_string())
+                } else {
+                    fix_reads
+                        .next()
+                        .flatten()
+                        .unwrap_or_else(|| Err("the format program gave no answer".to_string()))
+                }
+            });
+            let heads = |pick: fn(&format::FixFacts) -> &format::FixDocumentFacts| match &fix {
+                Some(Ok(state)) => pick(&state.facts).head_status.clone(),
+                _ => None,
+            };
+            let intent = doc_state(master, system, &change, "intent.md", heads(|f| &f.intent));
+            let spec = doc_state(master, system, &change, "spec.md", heads(|f| &f.spec));
+            let plan = doc_state(master, system, &change, "plan.md", heads(|f| &f.plan));
+            let (mut facts, build, mut plan_unreadable_reason) = if plan.exists {
                 plan_facts(plugin, master, system, &change)
             } else {
                 (PlanFacts::default(), BuildCounts::default(), None)
             };
-            let stage = derive_stage(&intent, &spec, &plan, &facts);
+            let mut fix_row = None;
+            let stage = match &fix {
+                Some(Ok(state)) => {
+                    fix_row = Some(state.row);
+                    if !(1..=8).contains(&state.row) {
+                        facts.unreadable = true;
+                        plan_unreadable_reason.get_or_insert_with(|| {
+                            format!("the format program reported fix row {}, which this Workbench does not know", state.row)
+                        });
+                    }
+                    fix_stage(state.row, &intent, &spec, &plan, &facts)
+                }
+                Some(Err(message)) => {
+                    // The row is unknown, so nothing is offered; the notice carries the program's words.
+                    facts.unreadable = true;
+                    // The fix-state reason is the one that explains the stage, so it replaces a plan's.
+                    plan_unreadable_reason = Some(message.clone());
+                    if needs_plugin {
+                        Stage::FixNeedsPlugin
+                    } else {
+                        Stage::FixUnsettled
+                    }
+                }
+                None => derive_stage(&intent, &spec, &plan, &facts),
+            };
             let out_of_date = if plan.exists && stage == Stage::PlanOutOfDate {
                 out_of_date(&intent, &spec, &plan, &facts)
             } else {
@@ -349,6 +509,8 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
                 out_of_date,
                 plan_unreadable: facts.unreadable,
                 plan_unreadable_reason,
+                track: track_of,
+                fix_row,
             }
         })
         .collect()
@@ -433,6 +595,7 @@ mod tests {
             exists: true,
             committed,
             status: Some(status.into()),
+            head_status: None,
         }
     }
     fn none() -> DocState {
@@ -616,6 +779,599 @@ mod tests {
             derive_stage(&acc, &acc, &acc, &facts(2, 2)),
             Stage::BuildFinished
         );
+    }
+
+    #[test]
+    fn track_reads_fix_and_nothing_else() {
+        assert_eq!(
+            track("---\nstatus: draft\ntrack: fix\n---\nx\n"),
+            Track::Fix
+        );
+        assert_eq!(
+            track("---\nstatus: draft\ntrack: full\n---\nx\n"),
+            Track::Full
+        );
+        assert_eq!(
+            track("---\nstatus: draft\ntrack: Fix\n---\nx\n"),
+            Track::Full
+        );
+        assert_eq!(track("---\nstatus: draft\ntrack:\n---\nx\n"), Track::Full);
+        assert_eq!(track("---\nstatus: draft\n---\nx\n"), Track::Full);
+        assert_eq!(track("no front matter\ntrack: fix\n"), Track::Full);
+    }
+
+    const FIX_DIR: &str = "intent/claims/2026-10-23-fix-it";
+
+    fn fix_intent(status: &str) -> String {
+        format!("---\nstatus: {status}\ntrack: fix\n---\nintent\n")
+    }
+    fn pinned_spec(status: &str, pin: &str) -> String {
+        format!("---\nstatus: {status}\nsource_intent_commit: {pin}\n---\nspec\n")
+    }
+    fn pinned_plan(status: &str, pin: &str) -> String {
+        format!(
+            "---\nstatus: {status}\nsource_spec_commit: {pin}\n---\n\n## Tasks\n\n### T1: One (`app`)\n\n- **Depends on:** none\n"
+        )
+    }
+    fn last_commit_of(repo: &Path, rel: &str) -> String {
+        git::run(repo, &["log", "-1", "--format=%H", "--", rel]).unwrap()
+    }
+    /// Commit the three drafts the way the fix skill does, pins left as `pending acceptance`.
+    fn commit_fix_drafts(repo: &Path) {
+        let draft = |file: &str, text: String, msg: &str| {
+            testutil::commit_file(repo, &format!("{FIX_DIR}/{file}"), &text, msg);
+        };
+        draft("intent.md", fix_intent("draft"), "draft intent");
+        draft(
+            "spec.md",
+            pinned_spec("draft", "pending acceptance"),
+            "draft spec",
+        );
+        draft(
+            "plan.md",
+            pinned_plan("draft", "pending acceptance"),
+            "draft plan",
+        );
+    }
+    /// The subject the fix skill gives an acceptance commit.
+    fn accept_subject(document: &str) -> String {
+        format!("docs(sdlc): accept {document} 2026-10-23-fix-it")
+    }
+    /// The fix skill's section 6: accept the intent, pin the spec to that commit and accept it, then
+    /// pin the plan to the spec's commit and accept it, one commit each.
+    fn accept_fix_in_steps(repo: &Path, intent: bool, spec: bool, plan: bool) {
+        let at = |file: &str| format!("{FIX_DIR}/{file}");
+        if intent {
+            testutil::commit_file(
+                repo,
+                &at("intent.md"),
+                &fix_intent("accepted"),
+                &accept_subject("intent"),
+            );
+        }
+        if spec {
+            let pin = last_commit_of(repo, &at("intent.md"));
+            testutil::commit_file(
+                repo,
+                &at("spec.md"),
+                &pinned_spec("accepted", &pin),
+                &accept_subject("spec"),
+            );
+        }
+        if plan {
+            let pin = last_commit_of(repo, &at("spec.md"));
+            testutil::commit_file(
+                repo,
+                &at("plan.md"),
+                &pinned_plan("accepted", &pin),
+                &accept_subject("plan"),
+            );
+        }
+    }
+    fn only_change(repo: &Path) -> ChangeInfo {
+        let got = list(Some(testutil::plugin_dir()), repo, "claims");
+        assert_eq!(got.len(), 1);
+        got.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn fix_stage_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut n = 0;
+        let mut fresh = || {
+            n += 1;
+            testutil::repo(tmp.path(), &format!("m{n}"))
+        };
+        let at = |file: &str| format!("{FIX_DIR}/{file}");
+        let draft_plan = |repo: &Path| pinned_plan("draft", &last_commit_of(repo, &at("spec.md")));
+
+        // Row 1: a rejected intent is rejected whatever else holds.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        testutil::commit_file(&repo, &at("intent.md"), &fix_intent("rejected"), "reject");
+        assert_eq!(only_change(&repo).stage, Stage::Rejected);
+
+        // Row 2: a status the workflow never leaves on a fix (a superseded plan).
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        testutil::commit_file(
+            &repo,
+            &at("plan.md"),
+            &pinned_plan("superseded", "pending acceptance"),
+            "supersede",
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixUnsettled);
+
+        // Row 2: a spec accepted while the intent is still a draft.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        testutil::commit_file(
+            &repo,
+            &at("spec.md"),
+            &pinned_spec("accepted", "pending acceptance"),
+            &accept_subject("spec"),
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixUnsettled);
+
+        // Row 3: a plan not yet recorded.
+        let repo = fresh();
+        testutil::commit_file(&repo, &at("intent.md"), &fix_intent("draft"), "draft");
+        testutil::commit_file(
+            &repo,
+            &at("spec.md"),
+            &pinned_spec("draft", "pending acceptance"),
+            "draft",
+        );
+        testutil::write(
+            &repo,
+            &at("plan.md"),
+            &pinned_plan("draft", "pending acceptance"),
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
+
+        // Row 3: an engineer's edit to a draft's body.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        testutil::write(
+            &repo,
+            &at("plan.md"),
+            &format!("{}\nA note.\n", draft_plan(&repo)),
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
+
+        // Row 3: an edit to an accepted intent.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        accept_fix_in_steps(&repo, true, false, false);
+        testutil::write(
+            &repo,
+            &at("intent.md"),
+            &format!("{}A note.\n", fix_intent("accepted")),
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
+
+        // Row 4: an uncommitted `status: accepted` on the intent only.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        testutil::write(&repo, &at("intent.md"), &fix_intent("accepted"));
+        assert_eq!(only_change(&repo).stage, Stage::FixAccepting);
+
+        // Row 5: some accepted, and the last recorded step was one of those acceptances.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        accept_fix_in_steps(&repo, true, true, false);
+        assert_eq!(only_change(&repo).stage, Stage::FixAccepting);
+
+        // Row 6: some accepted, the last recorded step was a redraft.
+        testutil::commit_file(
+            &repo,
+            &at("plan.md"),
+            &draft_plan(&repo),
+            "docs(sdlc): draft fix 2026-10-23-fix-it",
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
+
+        // Row 6: some accepted, the last recorded step was an engineer's own commit.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        accept_fix_in_steps(&repo, true, true, false);
+        testutil::commit_file(
+            &repo,
+            &at("plan.md"),
+            &format!("{}\nA note.\n", draft_plan(&repo)),
+            "chore: tidy",
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
+
+        // Row 7: all three drafted, none accepted.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
+
+        // Row 8: all three accepted gives the plan rows.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        accept_fix_in_steps(&repo, true, true, true);
+        assert_eq!(only_change(&repo).stage, Stage::BuildReady);
+    }
+
+    #[test]
+    fn fix_stage_review_three_rows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut n = 0;
+        let mut fresh = || {
+            n += 1;
+            testutil::repo(tmp.path(), &format!("r{n}"))
+        };
+        let at = |file: &str| format!("{FIX_DIR}/{file}");
+
+        // Row 4: own lines written with CRLF line endings are still own lines.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        testutil::write(
+            &repo,
+            &at("intent.md"),
+            &fix_intent("accepted").replace('\n', "\r\n"),
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixAccepting);
+
+        // Row 3: all three documents untracked.
+        let repo = fresh();
+        testutil::write(&repo, &at("intent.md"), &fix_intent("draft"));
+        testutil::write(
+            &repo,
+            &at("spec.md"),
+            &pinned_spec("draft", "pending acceptance"),
+        );
+        testutil::write(
+            &repo,
+            &at("plan.md"),
+            &pinned_plan("draft", "pending acceptance"),
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
+
+        // Row 6: a leading run, and the latest commit is a `reopen fix` redraft.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        accept_fix_in_steps(&repo, true, false, false);
+        testutil::commit_file(
+            &repo,
+            &at("spec.md"),
+            &format!(
+                "{}\nReworded.\n",
+                pinned_spec("draft", "pending acceptance")
+            ),
+            "docs(sdlc): reopen fix 2026-10-23-fix-it",
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
+
+        // Row 2: a document not in HEAD while another is accepted in HEAD.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        accept_fix_in_steps(&repo, true, false, false);
+        git::run(&repo, &["rm", "-q", "--", &at("plan.md")]).unwrap();
+        git::run(&repo, &["commit", "-q", "-m", "drop the plan"]).unwrap();
+        assert_eq!(only_change(&repo).stage, Stage::FixUnsettled);
+
+        // Row 3: a half-written rejection is not own lines.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        testutil::write(&repo, &at("intent.md"), &fix_intent("rejected"));
+        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
+
+        // Row 3: a difference of the final newline alone, on the first unaccepted document.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        testutil::write(&repo, &at("intent.md"), fix_intent("draft").trim_end());
+        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
+
+        // Row 3: the same on a later document.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        let plan = pinned_plan("draft", "pending acceptance");
+        testutil::write(&repo, &at("plan.md"), plan.trim_end());
+        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
+    }
+
+    #[test]
+    fn fix_documents_checked_out_as_crlf_are_not_edits_f1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        git::run(&repo, &["config", "core.autocrlf", "true"]).unwrap();
+        let at = |file: &str| format!("{FIX_DIR}/{file}");
+        let crlf = |text: String| text.replace('\n', "\r\n");
+        testutil::commit_file(&repo, &at("intent.md"), &crlf(fix_intent("draft")), "draft");
+        testutil::commit_file(
+            &repo,
+            &at("spec.md"),
+            &crlf(pinned_spec("draft", "pending acceptance")),
+            "draft",
+        );
+        testutil::commit_file(
+            &repo,
+            &at("plan.md"),
+            &crlf(pinned_plan("draft", "pending acceptance")),
+            "draft",
+        );
+        // Git stores LF and the working copies read CRLF, yet `git status` reports nothing.
+        assert_eq!(git::run(&repo, &["status", "--porcelain"]).unwrap(), "");
+        let working = std::fs::read(repo.join(at("intent.md"))).unwrap();
+        assert!(working.windows(2).any(|w| w == b"\r\n"));
+        assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
+    }
+
+    #[test]
+    fn a_fix_the_program_cannot_read_is_unsettled_with_its_message_f3() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        commit_fix_drafts(&repo);
+        let got = list(None, &repo, "claims");
+        assert_eq!(got[0].stage, Stage::FixUnsettled);
+        assert_eq!(got[0].intent.head_status, None);
+        assert!(got[0].plan_unreadable);
+        assert!(got[0].plan_unreadable_reason.is_some());
+    }
+
+    #[test]
+    fn a_full_pipeline_change_carries_no_head_status_f5() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        testutil::commit_file(
+            &repo,
+            &format!("{FIX_DIR}/intent.md"),
+            "---\nstatus: draft\n---\nintent\n",
+            "draft",
+        );
+        let info = only_change(&repo);
+        assert_eq!(info.track, Track::Full);
+        assert_eq!(info.intent.head_status, None);
+    }
+
+    #[test]
+    fn doc_state_reads_the_head_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let at = |file: &str| format!("{FIX_DIR}/{file}");
+        testutil::commit_file(&repo, &at("intent.md"), &fix_intent("draft"), "draft");
+        testutil::write(&repo, &at("intent.md"), &fix_intent("accepted"));
+        testutil::write(
+            &repo,
+            &at("spec.md"),
+            &pinned_spec("draft", "pending acceptance"),
+        );
+        let info = only_change(&repo);
+        assert_eq!(info.intent.status.as_deref(), Some("accepted"));
+        assert_eq!(info.intent.head_status.as_deref(), Some("draft"));
+        assert_eq!(info.spec.status.as_deref(), Some("draft"));
+        assert_eq!(info.spec.head_status, None);
+        assert_eq!(info.plan.head_status, None);
+    }
+
+    /// A repo holding one committed `intent.md` per name, each on the track `track`.
+    fn repo_of_intents(tmp: &Path, names: &[(&str, &str)]) -> std::path::PathBuf {
+        let repo = testutil::repo(tmp, "m");
+        for (name, track) in names {
+            testutil::commit_file(
+                &repo,
+                &format!("intent/claims/{name}/intent.md"),
+                &format!("---\nstatus: draft\ntrack: {track}\n---\nintent\n"),
+                "intent",
+            );
+        }
+        repo
+    }
+    fn calls(plugin: &Path) -> Vec<String> {
+        std::fs::read_to_string(plugin.join("format").join("calls.log"))
+            .map(|t| t.lines().map(str::to_string).collect())
+            .unwrap_or_default()
+    }
+    fn change_named<'a>(got: &'a [ChangeInfo], name: &str) -> &'a ChangeInfo {
+        got.iter().find(|c| c.change == name).unwrap()
+    }
+
+    #[test]
+    fn one_program_process_reads_every_fix_of_a_system_r4_1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
+        let repo = repo_of_intents(
+            tmp.path(),
+            &[
+                ("2026-10-01-row6-a", "fix"),
+                ("2026-10-02-row7-b", "fix"),
+                ("2026-10-03-row6-c", "fix"),
+                ("2026-10-04-full", "full"),
+            ],
+        );
+        let got = list(Some(&plugin), &repo, "claims");
+        assert_eq!(calls(&plugin), vec!["fix-state 3"]);
+        let six = change_named(&got, "2026-10-01-row6-a");
+        assert_eq!((six.stage, six.fix_row), (Stage::FixAwaiting, Some(6)));
+        let seven = change_named(&got, "2026-10-02-row7-b");
+        assert_eq!((seven.stage, seven.fix_row), (Stage::FixAwaiting, Some(7)));
+        let full = change_named(&got, "2026-10-04-full");
+        assert_eq!(full.fix_row, None);
+    }
+
+    #[test]
+    fn an_older_plugin_reads_every_fix_as_needing_the_plugin_without_running_it_r10_1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = testutil::fake_fix_plugin(&tmp.path().join("p"), "0.12.0");
+        let repo = repo_of_intents(
+            tmp.path(),
+            &[("2026-10-01-row6-a", "fix"), ("2026-10-02-row7-b", "fix")],
+        );
+        let got = list(Some(&plugin), &repo, "claims");
+        assert_eq!(got.len(), 2);
+        for info in &got {
+            assert_eq!(info.track, Track::Fix);
+            assert_eq!(info.stage, Stage::FixNeedsPlugin);
+            assert_eq!(info.fix_row, None);
+            assert_eq!(
+                info.plan_unreadable_reason.as_deref(),
+                Some("Needs ai-sdlc 0.13.0 or later.")
+            );
+        }
+        assert!(calls(&plugin).is_empty());
+    }
+
+    #[test]
+    fn a_row_the_workbench_does_not_know_and_a_failed_folder_read_as_unsettled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
+        let repo = repo_of_intents(
+            tmp.path(),
+            &[
+                ("2026-10-01-row9", "fix"),
+                ("2026-10-02-broken", "fix"),
+                ("2026-10-03-row6", "fix"),
+            ],
+        );
+        let got = list(Some(&plugin), &repo, "claims");
+        let nine = change_named(&got, "2026-10-01-row9");
+        assert_eq!(nine.stage, Stage::FixUnsettled);
+        assert_eq!(nine.fix_row, Some(9));
+        assert!(nine.plan_unreadable);
+        let broken = change_named(&got, "2026-10-02-broken");
+        assert_eq!(broken.stage, Stage::FixUnsettled);
+        assert_eq!(broken.fix_row, None);
+        assert!(broken
+            .plan_unreadable_reason
+            .as_deref()
+            .unwrap()
+            .contains("git failed"));
+        assert_eq!(
+            change_named(&got, "2026-10-03-row6").stage,
+            Stage::FixAwaiting
+        );
+    }
+
+    #[test]
+    fn a_fix_whose_working_intent_lost_its_track_still_lists_as_a_fix_f3() {
+        let at = |file: &str| format!("{FIX_DIR}/{file}");
+        let cases: [(&str, Option<&str>); 3] = [
+            ("deleted", None),
+            ("no track line", Some("---\nstatus: draft\n---\nintent\n")),
+            (
+                "broken front matter",
+                Some("---\nstatus: draft\ntrack: fix\n"),
+            ),
+        ];
+        for (name, working) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = testutil::repo(tmp.path(), "m");
+            commit_fix_drafts(&repo);
+            match working {
+                Some(text) => testutil::write(&repo, &at("intent.md"), text),
+                None => testutil::remove(&repo, &at("intent.md")),
+            }
+            let info = only_change(&repo);
+            assert_eq!(info.track, Track::Fix, "{name}");
+            assert_eq!(info.fix_row, Some(3), "{name}");
+            assert_eq!(info.stage, Stage::FixInProgress, "{name}");
+        }
+    }
+
+    #[test]
+    fn the_fix_state_reason_wins_over_an_unreadable_plan_reason_f5() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
+        let old = testutil::fake_fix_plugin(&tmp.path().join("old"), "0.12.0");
+        let make = |name: &str| {
+            let repo = testutil::repo(&tmp.path().join(name), "m");
+            // A second fix, so the program is asked about several folders at once (one gets the single form).
+            testutil::commit_file(
+                &repo,
+                "intent/claims/2026-10-01-broken/intent.md",
+                &fix_intent("draft"),
+                "doc",
+            );
+            for (file, text) in [
+                ("intent.md", fix_intent("draft")),
+                ("plan.md", "---\nstatus: draft\n".to_string()),
+            ] {
+                testutil::commit_file(
+                    &repo,
+                    &format!("intent/claims/2026-10-02-broken/{file}"),
+                    &text,
+                    "doc",
+                );
+            }
+            repo
+        };
+        let program_failed = list(Some(&plugin), &make("a"), "claims").remove(0);
+        assert_eq!(program_failed.fix_row, None);
+        assert!(program_failed
+            .plan_unreadable_reason
+            .as_deref()
+            .unwrap()
+            .contains("git failed"));
+        let needs_plugin = list(Some(&old), &make("b"), "claims").remove(0);
+        assert_eq!(needs_plugin.stage, Stage::FixNeedsPlugin);
+        assert_eq!(
+            needs_plugin.plan_unreadable_reason.as_deref(),
+            Some("Needs ai-sdlc 0.13.0 or later.")
+        );
+    }
+
+    #[test]
+    fn fix_stage_drafts_outside_the_workbench_show_as_a_fix_r4_3() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        commit_fix_drafts(&repo);
+        let info = only_change(&repo);
+        assert_eq!(info.track, Track::Fix);
+        assert_eq!(info.stage, Stage::FixAwaiting);
+    }
+
+    #[test]
+    fn fix_stage_accepted_in_three_commits_is_ready_to_build_r4_2() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        commit_fix_drafts(&repo);
+        accept_fix_in_steps(&repo, true, true, true);
+        let info = only_change(&repo);
+        assert_eq!(info.track, Track::Fix);
+        assert_eq!(info.stage, Stage::BuildReady);
+        assert_eq!(info.out_of_date, None);
+    }
+
+    #[test]
+    fn full_pipeline_stages_are_unchanged_r13_1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let dir = "intent/claims/2026-10-12-full";
+        let at = |file: &str| format!("{dir}/{file}");
+        let stage = |repo: &Path| {
+            let info = only_change(repo);
+            assert_eq!(info.track, Track::Full);
+            info.stage
+        };
+        testutil::commit_file(&repo, &at("intent.md"), "---\nstatus: draft\n---\ni\n", "i");
+        assert_eq!(stage(&repo), Stage::IntentAwaiting);
+        testutil::commit_file(
+            &repo,
+            &at("intent.md"),
+            "---\nstatus: accepted\n---\ni\n",
+            "i2",
+        );
+        assert_eq!(stage(&repo), Stage::SpecReady);
+        let pin = last_commit_of(&repo, &at("intent.md"));
+        testutil::commit_file(&repo, &at("spec.md"), &pinned_spec("draft", &pin), "s");
+        assert_eq!(stage(&repo), Stage::SpecAwaiting);
+        testutil::commit_file(&repo, &at("spec.md"), &pinned_spec("accepted", &pin), "s2");
+        assert_eq!(stage(&repo), Stage::PlanReady);
+        let pin = last_commit_of(&repo, &at("spec.md"));
+        testutil::commit_file(&repo, &at("plan.md"), &pinned_plan("draft", &pin), "p");
+        assert_eq!(stage(&repo), Stage::PlanAwaiting);
+        testutil::commit_file(&repo, &at("plan.md"), &pinned_plan("accepted", &pin), "p2");
+        assert_eq!(stage(&repo), Stage::BuildReady);
+        testutil::commit_file(
+            &repo,
+            &at("build/app.md"),
+            "# Build log: app\n\n| Task | Commits | Departure |\n|---|---|---|\n| T1 | `a111111` | none |\n",
+            "log",
+        );
+        assert_eq!(stage(&repo), Stage::BuildFinished);
     }
 
     #[test]

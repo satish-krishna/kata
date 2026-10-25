@@ -4,4 +4,9 @@ export type DocState = { exists: boolean, committed: boolean,
 /**
  * Raw front-matter `status`; `Some("unknown")` when the file exists but has none.
  */
-status: string | null, };
+status: string | null, 
+/**
+ * The `status` of the `HEAD` copy, as the format program reports it for a fix; `None` when the document is
+ * not in `HEAD`, and always `None` for a full-pipeline change.
+ */
+head_status: string | null, };

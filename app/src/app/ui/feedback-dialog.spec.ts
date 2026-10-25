@@ -12,8 +12,8 @@ const settle = async () => {
   TestBed.tick();
 };
 
-async function mount(action: string | null) {
-  const out = await render(FeedbackDialog, { action });
+async function mount(action: string | null, required = false) {
+  const out = await render(FeedbackDialog, { action, required });
   await settle();
   const run = vi.fn();
   const cancel = vi.fn();
@@ -55,5 +55,44 @@ describe('FeedbackDialog', () => {
     button('Cancel').click();
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(run).not.toHaveBeenCalled();
+  });
+
+  describe('a refused Run (WCAG AA)', () => {
+    const refuse = async () => {
+      const out = await mount('Change the fix', true);
+      await settle();
+      button('Run').click();
+      await settle();
+      return out;
+    };
+
+    it('marks the textarea invalid and links it to the message', async () => {
+      const { run } = await refuse();
+      expect(run).not.toHaveBeenCalled();
+      expect(box().getAttribute('aria-invalid')).toBe('true');
+      const id = box().getAttribute('aria-describedby');
+      expect(id).toBeTruthy();
+      expect(document.getElementById(id!)!.textContent).toContain('Write what should change.');
+    });
+
+    it('announces the message in a polite live region', async () => {
+      await refuse();
+      const message = document.getElementById(box().getAttribute('aria-describedby')!)!;
+      expect(message.closest('[aria-live="polite"]')).not.toBeNull();
+    });
+
+    it('moves focus to the textarea', async () => {
+      await refuse();
+      expect(document.activeElement).toBe(box());
+    });
+
+    it('clears when the engineer types', async () => {
+      await refuse();
+      expect(box().getAttribute('aria-invalid')).toBe('true');
+      box().value = 'x';
+      box().dispatchEvent(new Event('input'));
+      await settle();
+      expect(box().getAttribute('aria-invalid')).not.toBe('true');
+    });
   });
 });

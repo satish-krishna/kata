@@ -4,6 +4,7 @@ import type { BranchInfo } from '@bindings/BranchInfo';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ContextState } from '@bindings/ContextState';
+import type { InstructionsState } from '@bindings/InstructionsState';
 import type { Readiness } from '@bindings/Readiness';
 import type { Settings } from '@bindings/Settings';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
@@ -19,8 +20,8 @@ import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { inTauri } from '../../lib/mock';
 import { shownChangeList } from '../../lib/doc-notice';
-import { hasAiSdlcPlugin, specFor } from '../../lib/sdlc';
-import { DEMO_SETUP_FOLDER } from '../../lib/demo';
+import { fixProgramFailed, hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
+import { DEMO_SETUP_FOLDER, DEMO_START_IDEA, DEMO_START_SYSTEM } from '../../lib/demo';
 import {
   folderName,
   isSetUp,
@@ -97,10 +98,23 @@ export class SdlcHomeViewModel {
   readonly lastRuns = signal<Record<string, number>>({});
   private readonly readiness = signal<Readiness>({ kind: 'missing' });
   /** Above the change list when a plan could not be read; null when every plan was. */
-  readonly listNotice = computed(() => shownChangeList(
+  readonly listNotice = computed(() => {
+    const unreadable = this.changes().filter((c) => c.plan_unreadable);
+    // A fix's own reason is worded for the fix and shown as it is; only a plan's goes behind "Could not read this document".
+    const fixReason = (c: ChangeInfo) =>
+      c.stage === 'fix-needs-plugin'
+        ? (c.plan_unreadable_reason ?? 'Needs ai-sdlc 0.13.0 or later.')
+        : fixProgramFailed(c)
+          ? `Kata could not read where ${c.change} stands: ${c.plan_unreadable_reason ?? 'the program gave no message'}`
+          : null;
+    return shownChangeList(
       this.readiness(),
-      this.changes().filter((c) => c.plan_unreadable).map((c) => c.plan_unreadable_reason),
-    ));
+      unreadable.filter((c) => fixReason(c) === null).map((c) => c.plan_unreadable_reason),
+      unreadable.map(fixReason).filter((r): r is string => r !== null),
+    );
+  });
+  /** This machine's workspace instructions against the master's; null when the plugin cannot report it. */
+  readonly instructions = signal<InstructionsState | null>(null);
   private readonly loaded = signal(false);
   private loadSeq = 0;
 
@@ -144,6 +158,16 @@ export class SdlcHomeViewModel {
   // --- dialogs
   readonly candidate = signal<WorkspaceCandidate | null>(null);
   readonly newChangeOpen = signal(false);
+  /** Set when a triage ended with no change; null otherwise. */
+  readonly triageNotice = signal<{ idea: string; runId: string | null } | null>(null);
+  readonly newChangeIdea = signal('');
+  readonly newChangeTrack = signal<StartTrack>('decide');
+  readonly newChangeNote = signal<string | null>(null);
+  /** Whether the plugin on this machine can triage a change. */
+  readonly lightTrack = computed(() => {
+    const r = this.readiness();
+    return r.kind === 'ready' && r.lightTrack;
+  });
   readonly settingsOpen = signal(false);
   readonly switchPrompt = signal<string | null>(null);
   private switchResolve: ((ok: boolean) => void) | null = null;
@@ -183,7 +207,7 @@ export class SdlcHomeViewModel {
     return w && repo ? masterPath(w.folder, repo) : null;
   });
 
-  /** `demo` is the `?demo=` query value: `sdlc-setup` opens the add-workspace flow on a folder that needs setup. Browser only. */
+  /** `demo` is the `?demo=` query value: `sdlc-setup` opens the add-workspace flow on a folder that needs setup, and `start` triages a described change with a scripted run. Browser only. */
   async init(demo: string | null = null): Promise<void> {
     try {
       await this.modes.load();
@@ -202,6 +226,7 @@ export class SdlcHomeViewModel {
     this.loaded.set(true);
     // Browser dev/review only: never fires under Tauri.
     if (!inTauri() && demo === 'sdlc-setup') await this.addWorkspace(DEMO_SETUP_FOLDER);
+    if (!inTauri() && demo === 'start') await this.newChange(DEMO_START_SYSTEM, DEMO_START_IDEA, 'decide');
   }
 
   // --- workspace list
@@ -212,6 +237,7 @@ export class SdlcHomeViewModel {
     const next = this.workspaces().map((x) => (x.id === id ? { ...x, last_opened: nowSecs() } : x));
     this.workspaces.set(next);
     this.currentId.set(id);
+    this.triageNotice.set(null);
     await this.saveList(next);
     await Promise.all([this.loadCatalog(), this.loadCurrent()]);
   }
@@ -377,14 +403,22 @@ export class SdlcHomeViewModel {
     await this.runOnBase('Running setup', 'Setup', 'setup', { system: '' });
   }
 
-  async newChange(system: string, idea: string): Promise<void> {
+  /** Write or refresh the workspace instructions: one setup task, like any other. */
+  async refreshInstructions(): Promise<void> {
+    if (this.refuseWhileLocked()) return;
+    await this.runOnBase('Refreshing workspace instructions', 'Instructions', 'setup', { system: '', instructions: true });
+  }
+
+  async newChange(system: string, idea: string, track: StartTrack): Promise<void> {
     this.newChangeOpen.set(false);
+    this.triageNotice.set(null);
     const workspace = this.current();
     const scan = this.scan();
     const master = this.masterDir();
     if (!workspace || !scan || !master) return;
     try {
-      await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, (spec) => this.confirm(spec));
+      const outcome = await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, track, (spec) => this.confirm(spec));
+      if (outcome.kind === 'none' && track === 'decide') this.triageNotice.set({ idea: outcome.idea, runId: outcome.runId });
     } catch (e) {
       this.toasts.error(`Could not start the change: ${message(e)}`);
     }
@@ -392,7 +426,32 @@ export class SdlcHomeViewModel {
   }
 
   openNewChange(): void {
-    if (!this.refuseWhileLocked()) this.newChangeOpen.set(true);
+    if (this.refuseWhileLocked()) return;
+    this.newChangeIdea.set('');
+    this.newChangeTrack.set('decide');
+    this.newChangeNote.set(null);
+    this.newChangeOpen.set(true);
+  }
+
+  /** Reopen New change on the description the triage could not route, still letting the workflow decide. */
+  describeAgain(): void {
+    const notice = this.triageNotice();
+    if (notice === null || this.refuseWhileLocked()) return;
+    this.newChangeIdea.set(notice.idea);
+    this.newChangeTrack.set('decide');
+    this.newChangeNote.set('The last triage created no change. Change the description and start again.');
+    this.newChangeOpen.set(true);
+  }
+
+  /** The triage's record, in the library. */
+  async openRun(): Promise<void> {
+    const runId = this.triageNotice()?.runId ?? null;
+    if (runId === null) return;
+    try {
+      await this.router.navigate(['/library'], { queryParams: { run: runId } });
+    } catch (e) {
+      this.toasts.error(`Could not open the run: ${message(e)}`);
+    }
   }
 
   closeNewChange(): void {
@@ -518,7 +577,7 @@ export class SdlcHomeViewModel {
     title: string,
     label: string,
     kind: 'setup' | 'context',
-    ctx: { system: string; repos?: string[] },
+    ctx: { system: string; repos?: string[]; instructions?: boolean },
   ): Promise<void> {
     const workspace = this.current();
     const scan = this.scan();
@@ -681,6 +740,7 @@ export class SdlcHomeViewModel {
     this.changes.set([]);
     this.contexts.set({});
     this.lastRuns.set({});
+    this.instructions.set(null);
   }
 
   /** Read the current workspace from disk. A newer call supersedes an older one still in flight. */
@@ -726,8 +786,17 @@ export class SdlcHomeViewModel {
         this.toasts.error(`Could not read the workspace: ${message(e)}`);
       }
     }
+    let instructions: InstructionsState | null = null;
+    if (isSetUp(scan) && repo !== null && readiness.kind === 'ready' && readiness.lightTrack) {
+      try {
+        instructions = await this.transport.sdlcInstructions(w.folder, repo);
+      } catch (e) {
+        this.toasts.error(`Could not read the workspace instructions: ${message(e)}`);
+      }
+    }
     if (seq !== this.loadSeq) return;
     this.scan.set(scan);
+    this.instructions.set(instructions);
     this.branches.set(branches);
     this.changes.set(changes);
     this.readiness.set(readiness);

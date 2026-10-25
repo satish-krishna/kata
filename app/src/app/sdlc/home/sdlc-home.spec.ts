@@ -1,10 +1,11 @@
 import { TestBed } from '@angular/core/testing';
-import { provideRouter } from '@angular/router';
+import { Router, provideRouter } from '@angular/router';
 import { render } from '../../../testing/render';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { seedCatalog } from '../../lib/mock';
 import { SdlcHome } from './sdlc-home';
+import { SdlcHomeViewModel } from './sdlc-home.view-model';
 
 /** Every document run opens the preview first; confirm it once its rows have resolved. */
 const confirmPreview = async () => {
@@ -134,6 +135,23 @@ describe('SdlcHome', () => {
     const { container } = await mount();
     Array.from(container.querySelectorAll('button')).find((b) => b.textContent!.includes('New change'))!.click();
     await settle();
-    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Idea');
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Description');
+  });
+
+  it('shows the triage notice, and its two actions reach the dialog and the library', async () => {
+    const { container, fixture } = await mount();
+    const vm = fixture.debugElement.injector.get(SdlcHomeViewModel);
+    const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
+    expect(container.querySelector('[data-testid="triage-notice"]')).toBeNull();
+    vm.triageNotice.set({ idea: 'flag fraud', runId: 'sdlc-claims-triage-1' });
+    await settle();
+    const notice = container.querySelector('[data-testid="triage-notice"]')!;
+    expect(notice.textContent).toContain('No change was created.');
+    const click = (label: string) => Array.from(notice.querySelectorAll('button')).find((b) => b.textContent!.trim() === label)!.click();
+    click('Open run');
+    expect(navigate).toHaveBeenCalledWith(['/library'], { queryParams: { run: 'sdlc-claims-triage-1' } });
+    click('Describe again');
+    await settle();
+    expect(document.body.querySelector<HTMLTextAreaElement>('[role="dialog"] textarea')!.value).toBe('flag fraud');
   });
 });

@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
+import type { Readiness } from '@bindings/Readiness';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { toastState } from '@spartan-ng/brain/sonner';
@@ -57,7 +58,7 @@ describe('SdlcHomeViewModel init', () => {
     await vm.init();
     expect(vm.current()?.name).toBe('acme-claims');
     expect(vm.state()).toBe('ready');
-    expect(vm.changes().length).toBe(5);
+    expect(vm.changes().length).toBe(7);
     expect(vm.branches()?.others).toEqual(['2026-10-17-claim-notes']);
     expect(vm.masterBranch()).toBe('main');
     expect(vm.contexts()['customer-portal']).toEqual({ kind: 'stale', commits: 14 });
@@ -334,7 +335,7 @@ describe('SdlcHomeViewModel runs', () => {
     const open = vi.spyOn(preview, 'open');
     const start = vi.spyOn(transport, 'sdlcStartChange');
     await vm.init();
-    const run = vm.newChange('claims', 'flag fraud');
+    const run = vm.newChange('claims', 'flag fraud', 'full');
     await previewReady(preview);
     expect(open.mock.calls[0][0]).toMatchObject({ mode: 'sdlc' });
     expect(start).not.toHaveBeenCalled();
@@ -431,18 +432,92 @@ describe('SdlcHomeViewModel runs', () => {
     expect(toastText()).toContain('already running');
   });
 
-  it('newChange delegates to the runner with the workspace, master and system', async () => {
+  it('newChange delegates to the runner with the workspace, master, system and track', async () => {
     const { vm, runner } = setup();
     await vm.init();
-    const spy = vi.spyOn(runner, 'newChange').mockResolvedValue();
-    await vm.newChange('claims', 'flag fraud');
+    const spy = vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened', change: '2026-10-18-new-change', branch: 'change/2026-10-18-new-change' });
+    await vm.newChange('claims', 'flag fraud', 'decide');
     expect(spy).toHaveBeenCalledWith(
       expect.objectContaining({ workspace: expect.objectContaining({ id: 'acme-claims' }), master: `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}` }),
       'claims',
       'flag fraud',
+      'decide',
       expect.any(Function),
     );
     expect(vm.newChangeOpen()).toBe(false);
+  });
+
+  describe('a triage that created no change', () => {
+    const none = { kind: 'none', idea: 'flag fraud', runId: 'sdlc-claims-triage-1' } as const;
+
+    it('shows the notice, and describing again reopens the dialog on the idea and the decide track', async () => {
+      const { vm, runner } = setup();
+      await vm.init();
+      vi.spyOn(runner, 'newChange').mockResolvedValue(none);
+      await vm.newChange('claims', 'flag fraud', 'decide');
+      expect(vm.triageNotice()).toEqual({ idea: 'flag fraud', runId: 'sdlc-claims-triage-1' });
+      vm.describeAgain();
+      expect(vm.newChangeOpen()).toBe(true);
+      expect(vm.newChangeIdea()).toBe('flag fraud');
+      expect(vm.newChangeTrack()).toBe('decide');
+    });
+
+    it('opens the run in the library', async () => {
+      const { vm, runner, navigate } = setup();
+      await vm.init();
+      vi.spyOn(runner, 'newChange').mockResolvedValue(none);
+      await vm.newChange('claims', 'flag fraud', 'decide');
+      await vm.openRun();
+      expect(navigate).toHaveBeenCalledWith(['/library'], { queryParams: { run: 'sdlc-claims-triage-1' } });
+    });
+
+    it('shows no notice when the full pipeline made no change', async () => {
+      const { vm, runner } = setup();
+      await vm.init();
+      vi.spyOn(runner, 'newChange').mockResolvedValue(none);
+      await vm.newChange('claims', 'flag fraud', 'full');
+      expect(vm.triageNotice()).toBeNull();
+    });
+
+    it('clears on the next new change', async () => {
+      const { vm, runner } = setup();
+      await vm.init();
+      const spy = vi.spyOn(runner, 'newChange').mockResolvedValue(none);
+      await vm.newChange('claims', 'flag fraud', 'decide');
+      spy.mockResolvedValue({ kind: 'opened', change: '2026-10-18-new-change', branch: 'change/2026-10-18-new-change' });
+      await vm.newChange('claims', 'another', 'decide');
+      expect(vm.triageNotice()).toBeNull();
+    });
+
+    it('clears on a workspace switch', async () => {
+      const { vm, runner } = setup();
+      await vm.init();
+      vi.spyOn(runner, 'newChange').mockResolvedValue(none);
+      await vm.newChange('claims', 'flag fraud', 'decide');
+      await vm.selectWorkspace(vm.workspaces()[0].id);
+      expect(vm.triageNotice()).toBeNull();
+    });
+
+    it('a fresh new change starts empty on the decide track', async () => {
+      const { vm, runner } = setup();
+      await vm.init();
+      vi.spyOn(runner, 'newChange').mockResolvedValue(none);
+      await vm.newChange('claims', 'flag fraud', 'decide');
+      vm.describeAgain();
+      vm.closeNewChange();
+      vm.openNewChange();
+      expect(vm.newChangeIdea()).toBe('');
+    });
+  });
+
+  it('offers the light track only when the plugin reports it', async () => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.9.0', layouts: [1], lightTrack: false });
+    await vm.init();
+    expect(vm.lightTrack()).toBe(false);
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true });
+    await vm.selectWorkspace(vm.workspaces()[0].id);
+    expect(vm.lightTrack()).toBe(true);
   });
 
   it('shows leftovers from the runner and discards through it', async () => {
@@ -473,7 +548,7 @@ describe('SdlcHomeViewModel navigation', () => {
     await vm.init();
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     vi.spyOn(transport, 'sdlcChanges').mockResolvedValue([
-      { system: 'claims', change: '2026-10-17-claim-notes', intent: { exists: true, committed: true, status: 'draft' }, spec: { exists: false, committed: false, status: null }, plan: { exists: false, committed: false, status: null }, stage: 'intent-awaiting', build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null },
+      { system: 'claims', change: '2026-10-17-claim-notes', intent: { exists: true, committed: true, status: 'draft', head_status: 'draft' }, spec: { exists: false, committed: false, status: null, head_status: null }, plan: { exists: false, committed: false, status: null, head_status: null }, stage: 'intent-awaiting', build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null, track: 'full', fix_row: null },
     ]);
     await vm.openOtherBranch('2026-10-17-claim-notes');
     expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'change/2026-10-17-claim-notes');
@@ -606,9 +681,86 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
     expect(noticeOf(vm)?.text).not.toContain("Node.js 20");
   });
 
+  const withFix = (transport: MockTransport, over: Record<string, unknown>) => {
+    const real = transport.sdlcChanges.bind(transport);
+    vi.spyOn(transport, "sdlcChanges").mockImplementation(async (master, system) => {
+      const list = await real(master, system);
+      return list.map((c, i) => (i === 0 ? ({ ...c, track: "fix", plan_unreadable: true, ...over } as never) : c));
+    });
+  };
+
+  it("shows a fix's needs-the-plugin reason as it is, without the document prefix (F5)", async () => {
+    const { vm, transport } = setup();
+    withFix(transport, { stage: "fix-needs-plugin", fix_row: null, plan_unreadable_reason: "Needs ai-sdlc 0.13.0 or later." });
+    await vm.init();
+    expect(noticeOf(vm)?.text).toBe("Needs ai-sdlc 0.13.0 or later.");
+  });
+
+  it("names the change when the program could not say where a fix stands (F5)", async () => {
+    const { vm, transport } = setup();
+    withFix(transport, { stage: "fix-unsettled", fix_row: null, plan_unreadable_reason: "git failed" });
+    await vm.init();
+    const name = vm.changes()[0].change;
+    expect(noticeOf(vm)?.text).toBe(`Kata could not read where ${name} stands: git failed`);
+  });
+
+  it("keeps the document prefix for a row 2 fix whose plan is unreadable (F5)", async () => {
+    const { vm, transport } = setup();
+    withFix(transport, { stage: "fix-unsettled", fix_row: 2, plan_unreadable_reason: "front matter is not closed" });
+    await vm.init();
+    expect(noticeOf(vm)?.text).toBe("Could not read this document: front matter is not closed");
+  });
+
   it("shows no notice when every plan was read", async () => {
     const { vm } = setup();
     await vm.init();
     expect(noticeOf(vm)).toBeNull();
+  });
+});
+
+describe('SdlcHomeViewModel workspace instructions', () => {
+  const lightReady: Readiness = { kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true };
+
+  it('reads the instructions state only when the plugin supports the light track', async () => {
+    const { vm, transport } = setup();
+    const read = vi.spyOn(transport, 'sdlcInstructions');
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ ...lightReady, version: '0.9.0', lightTrack: false });
+    await vm.init();
+    expect(read).not.toHaveBeenCalled();
+    expect(vm.instructions()).toBeNull();
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(lightReady);
+    await vm.selectWorkspace(vm.workspaces()[0].id);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(vm.instructions()).toBe('out-of-date');
+  });
+
+  it('refreshes through one setup task after the base-branch check, and reads current afterwards', async () => {
+    const { vm, transport, runAgent } = setup();
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(lightReady);
+    const mock = transport as unknown as { sdlc: { finishSetup(withInstructions: boolean): void } };
+    runAgent.mockImplementation(async (_title: string, spec: RunSpec) => {
+      mock.sdlc.finishSetup(spec.task.includes('--instructions'));
+      return 'success';
+    });
+    const branches = vi.spyOn(transport, 'sdlcBranches');
+    await vm.init();
+    branches.mockClear();
+    await vm.refreshInstructions();
+    expect(branches).toHaveBeenCalled();
+    expect(runAgent).toHaveBeenCalledTimes(1);
+    expect(specOf(runAgent).name).toBe('sdlc-setup');
+    expect(specOf(runAgent).task).toBe('Use the ai-sdlc setup skill with --instructions.');
+    expect(vm.instructions()).toBe('current');
+  });
+
+  it('refuses while another task runs', async () => {
+    const { vm, transport, lock, runAgent } = setup();
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(lightReady);
+    await vm.init();
+    void lock.runSteps('Busy', [{ label: 'x', run: () => new Promise<null>(() => undefined) }]);
+    await flush();
+    await vm.refreshInstructions();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(toastText()).toContain('already running');
   });
 });

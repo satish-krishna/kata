@@ -7,6 +7,7 @@ import type { Settings } from '@bindings/Settings';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
+import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildAction } from '@bindings/BuildAction';
@@ -76,6 +77,7 @@ export abstract class KataTransport {
   abstract sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]): Promise<void>;
   abstract sdlcScan(folder: string): Promise<WorkspaceScan>;
   abstract sdlcContextHealth(folder: string, master: string, system: string, repo: string): Promise<ContextState>;
+  abstract sdlcInstructions(folder: string, masterRepo: string): Promise<InstructionsState>;
   abstract sdlcChanges(master: string, system: string): Promise<ChangeInfo[]>;
   abstract sdlcBranches(master: string): Promise<BranchInfo>;
   abstract sdlcReadDoc(master: string, system: string, change: string, doc: string): Promise<string | null>;

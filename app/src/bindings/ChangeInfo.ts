@@ -3,6 +3,7 @@ import type { BuildCounts } from "./BuildCounts";
 import type { DocState } from "./DocState";
 import type { OutOfDate } from "./OutOfDate";
 import type { Stage } from "./Stage";
+import type { Track } from "./Track";
 
 export type ChangeInfo = { system: string, change: string, intent: DocState, spec: DocState, plan: DocState, stage: Stage, build: BuildCounts, scope: string, out_of_date: OutOfDate | null, 
 /**
@@ -14,4 +15,10 @@ plan_unreadable: boolean,
  * Why, in the format program's own words (or that no plugin was found), when `plan_unreadable`; null otherwise.
  * The change list words its notice from this, so it never blames Node.js for a layout it does not read.
  */
-plan_unreadable_reason: string | null, };
+plan_unreadable_reason: string | null, track: Track, 
+/**
+ * The row of the format program's fix-state table the fix stands at (1 to 8, or one this Workbench
+ * does not know). `None` for a full-pipeline change, a fix the program could not answer for, and a
+ * fix on a plugin too old to ask.
+ */
+fix_row: number | null, };

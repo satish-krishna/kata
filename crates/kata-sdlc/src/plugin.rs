@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 /// The oldest plugin version whose format program knows every field Kata's build logs carry, `notes` among them.
 pub const MIN_VERSION: &str = "0.9.0";
 
+/// The first plugin version that can decide the track of a change itself (the light track).
+pub const LIGHT_TRACK_VERSION: &str = "0.13.0";
+
 /// Whether the ai-sdlc plugin can be used: where it is and which version, decided once for the whole app.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(
@@ -22,6 +25,8 @@ pub enum Readiness {
         dir: PathBuf,
         version: String,
         layouts: Vec<u32>,
+        /// Whether the plugin is at least [`LIGHT_TRACK_VERSION`].
+        light_track: bool,
     },
     /// Not installed, or its version cannot be read.
     Missing,
@@ -38,6 +43,7 @@ pub fn readiness(plugin_dir: Option<&Path>) -> Readiness {
         None => Readiness::Missing,
         Some(have) if at_least(&have, MIN_VERSION) => Readiness::Ready {
             dir: dir.to_path_buf(),
+            light_track: light_track(&have),
             version: have,
             layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
         },
@@ -46,6 +52,11 @@ pub fn readiness(plugin_dir: Option<&Path>) -> Readiness {
             need: MIN_VERSION.to_string(),
         },
     }
+}
+
+/// Whether `version` is at least [`LIGHT_TRACK_VERSION`].
+pub fn light_track(version: &str) -> bool {
+    at_least(version, LIGHT_TRACK_VERSION)
 }
 
 /// The `version` field of `<plugin_dir>/.claude-plugin/plugin.json`.
@@ -131,7 +142,8 @@ mod tests {
             Readiness::Ready {
                 dir: current.path().to_path_buf(),
                 version: "0.9.0".to_string(),
-                layouts: crate::format::ACCEPTED_LAYOUTS.to_vec()
+                layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
+                light_track: false
             }
         );
         let old = plugin_with(Some(r#"{"name":"ai-sdlc","version":"0.8.0"}"#));
@@ -146,5 +158,29 @@ mod tests {
         assert_eq!(readiness(Some(unreadable.path())), Readiness::Missing);
         assert_eq!(readiness(None), Readiness::Missing);
         assert_eq!(MIN_VERSION, "0.9.0");
+    }
+
+    #[test]
+    fn light_track_needs_0_13_0() {
+        for no in ["0.12.0", "0.12.9", "0.13.0-rc1"] {
+            assert!(!light_track(no), "{no}");
+        }
+        for yes in ["0.13.0", "0.13.1", "1.0.0"] {
+            assert!(light_track(yes), "{yes}");
+        }
+    }
+
+    #[test]
+    fn readiness_carries_light_track() {
+        for (v, expect) in [("0.12.0", false), ("0.13.0", true)] {
+            let dir = plugin_with(Some(&format!(r#"{{"name":"ai-sdlc","version":"{v}"}}"#)));
+            let r = readiness(Some(dir.path()));
+            assert!(matches!(r, Readiness::Ready { .. }), "{v}");
+            assert_eq!(
+                serde_json::to_value(r).unwrap()["lightTrack"],
+                expect,
+                "{v}"
+            );
+        }
     }
 }

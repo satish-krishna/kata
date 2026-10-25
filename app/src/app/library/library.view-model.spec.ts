@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
-import { Router, provideRouter } from '@angular/router';
+import { of } from 'rxjs';
+import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import type { RunSpec } from '@bindings/RunSpec';
 import { LibraryViewModel } from './library.view-model';
 import { KataTransport } from '../core/transport/kata-transport';
@@ -19,9 +20,14 @@ class FakeTransport {
   pickDirectory = vi.fn(() => Promise.resolve(null as string | null));
 }
 
-function setup(fake = new FakeTransport()) {
+function setup(fake = new FakeTransport(), query: Record<string, string> = {}) {
   TestBed.configureTestingModule({
-    providers: [LibraryViewModel, { provide: KataTransport, useValue: fake }, provideRouter([])],
+    providers: [
+      LibraryViewModel,
+      { provide: KataTransport, useValue: fake },
+      provideRouter([]),
+      { provide: ActivatedRoute, useValue: { queryParamMap: of(convertToParamMap(query)) } },
+    ],
   });
   const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
   return { vm: TestBed.inject(LibraryViewModel), fake, navigate, launches: TestBed.inject(LaunchStore) };
@@ -44,6 +50,22 @@ it('loads history and katas on init and selects the newest run', async () => {
   expect(fake.loadRun).toHaveBeenCalledWith(history[0].id);
   expect(vm.run()?.id).toBe(history[0].id);
   expect(vm.selKata()).toBe(history[0].kata);
+});
+
+it('picks the run named by the run query parameter', async () => {
+  const { vm, fake } = setup(undefined, { run: history[2].id });
+  await vm.init();
+  expect(vm.selRun()).toBe(history[2].id);
+  expect(fake.loadRun).toHaveBeenCalledWith(history[2].id);
+  expect(vm.run()?.id).toBe(history[2].id);
+});
+
+it('picks nothing when the run query parameter names a run that is not in the history', async () => {
+  const { vm, fake } = setup(undefined, { run: 'no-such-run' });
+  await vm.init();
+  expect(vm.selRun()).toBeNull();
+  expect(fake.loadRun).not.toHaveBeenCalled();
+  expect(vm.run()).toBeNull();
 });
 
 it('selecting a run loads its detail and ignores an out-of-order response', async () => {

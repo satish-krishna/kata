@@ -4,6 +4,7 @@
 
 import type { CatalogEntry } from "@bindings/CatalogEntry";
 import type { ChangeInfo } from "@bindings/ChangeInfo";
+import type { OutOfDate } from "@bindings/OutOfDate";
 import type { Given } from "@bindings/Given";
 import type { PluginConfig } from "@bindings/PluginConfig";
 import type { RunLink } from "@bindings/RunLink";
@@ -11,8 +12,10 @@ import type { RunRecord } from "@bindings/RunRecord";
 import type { RunSpec } from "@bindings/RunSpec";
 import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
+import type { WorkspaceScan } from "@bindings/WorkspaceScan";
 import type { KataEvent, RunDetail } from "./events";
 import { givenKey } from "./given";
+import { masterRepo as masterRepoOf, productRepos as productReposOf } from "./sdlc-workspace";
 import { defaultSpec } from "./spec";
 
 /** The plugins an AI-SDLC run cannot work without; passed to `previewRun` so the preview locks them on. */
@@ -36,7 +39,12 @@ export type StageAction =
   | "another-round"
   | "run-review"
   | "declare-done"
-  | "cancel-build";
+  | "cancel-build"
+  | "finish-fix-draft"
+  | "accept-fix"
+  | "change-fix"
+  | "reopen-fix"
+  | "full-pipeline-instead";
 
 const ACTIONS: Record<Stage, StageAction[]> = {
   "intent-in-progress": ["continue-intent"],
@@ -57,9 +65,14 @@ const ACTIONS: Record<Stage, StageAction[]> = {
   "build-ready": ["start-build", "reopen-intent"],
   "build-stopped": ["continue-build", "another-round"],
   "build-finished": ["declare-done", "another-round", "run-review"],
+  "fix-in-progress": [],
+  "fix-unsettled": [],
+  "fix-awaiting": [],
+  "fix-accepting": [],
+  "fix-needs-plugin": [],
 };
 
-const REVISITS: readonly StageAction[] = ["continue-intent", "reopen-intent", "continue-spec", "reopen-spec", "rerun-plan"];
+const REVISITS: readonly StageAction[] = ["continue-intent", "reopen-intent", "continue-spec", "reopen-spec", "rerun-plan", "finish-fix-draft", "change-fix", "reopen-fix"];
 
 /** True for an action that regenerates a document that already exists, so the operator can say what should change. */
 export function revisits(action: StageAction): boolean {
@@ -72,11 +85,39 @@ export function actionsFor(stage: Stage): StageAction[] {
 }
 
 /**
+ * The actions of a change on the light track, by stage. The stages of the intent, spec and plan documents cannot
+ * occur for a fix, so they give none; an out-of-date plan has one action whatever the cause.
+ */
+function fixActions(c: ChangeInfo): StageAction[] {
+  switch (c.stage) {
+    case "fix-in-progress":
+      return ["finish-fix-draft"];
+    case "fix-awaiting":
+      // Only row 6 of the fix-state table (all three drafted, none accepted, nothing built) may be closed by the full
+      // pipeline: an accepted document or a built task is work it would discard. The program reports the row.
+      return c.fix_row === 6 ? ["accept-fix", "change-fix", "full-pipeline-instead"] : ["accept-fix", "change-fix"];
+    case "fix-accepting":
+      return ["accept-fix", "change-fix"];
+    case "build-ready":
+      return ["start-build", "reopen-fix"];
+    case "build-stopped":
+      return ["continue-build", "another-round", "reopen-fix"];
+    case "build-finished":
+      return ["declare-done", "another-round", "run-review", "reopen-fix"];
+    case "plan-out-of-date":
+      return ["reopen-fix"];
+    default:
+      return [];
+  }
+}
+
+/**
  * The actions of a change. An out-of-date plan depends on its cause: a broken spec pin means the spec is
  * reopened; a reopened intent or spec keeps its own stage, so it only reaches here from older data and has
  * no action; any other cause means the plan is rewritten.
  */
 export function actionsForChange(c: ChangeInfo): StageAction[] {
+  if (c.track === "fix") return fixActions(c);
   if (c.stage !== "plan-out-of-date") return actionsFor(c.stage);
   switch (c.out_of_date) {
     case "spec-pin":
@@ -87,6 +128,17 @@ export function actionsForChange(c: ChangeInfo): StageAction[] {
     default:
       return ["rerun-plan"];
   }
+}
+
+/**
+ * Whether the feedback box refuses an empty answer for an action at a stage. Reopening a fix whose plan is out of date
+ * needs no feedback only when the cause is a pin that no longer holds: the documents did not change, so there is
+ * nothing to correct. Any other cause means a document was reopened or the plan has no tasks, and the engineer says why.
+ */
+export function feedbackRequired(action: StageAction, stage: Stage, outOfDate: OutOfDate | null): boolean {
+  if (action === "change-fix") return true;
+  if (action !== "reopen-fix") return false;
+  return stage !== "plan-out-of-date" || (outOfDate !== "spec-pin" && outOfDate !== "plan-pin");
 }
 
 export type StageLabel = {
@@ -112,6 +164,11 @@ const LABELS: Record<Stage, StageLabel> = {
   "build-ready": { step: "build", text: "Build · ready to start", tone: "muted" },
   "build-stopped": { step: "build", text: "Build · in progress (stopped)", tone: "warning" },
   "build-finished": { step: "build", text: "Build · finished, not yet done", tone: "success" },
+  "fix-in-progress": { step: "intent", text: "Fix · changes not recorded", tone: "warning" },
+  "fix-unsettled": { step: "intent", text: "Fix · statuses not settled", tone: "warning" },
+  "fix-awaiting": { step: "intent", text: "Fix · awaiting acceptance", tone: "warning" },
+  "fix-accepting": { step: "plan", text: "Fix · acceptance stopped", tone: "warning" },
+  "fix-needs-plugin": { step: "intent", text: "Fix · needs ai-sdlc 0.13.0", tone: "warning" },
 };
 
 /**
@@ -124,6 +181,20 @@ export function stageLabel(stage: Stage): StageLabel {
   return { ...LABELS[stage] };
 }
 
+/**
+ * Whether the format program could not say where a fix stands: a fix at `fix-unsettled` with no row. A fix with a
+ * row, even 2, was read, and a fix that needs the plugin has its own stage. The one place that decides "program failure".
+ */
+export function fixProgramFailed(c: Pick<ChangeInfo, "track" | "stage" | "fix_row">): boolean {
+  return c.track === "fix" && c.stage === "fix-unsettled" && c.fix_row === null;
+}
+
+/** The label of a change: its stage's, except that a program failure says the fix could not be read. */
+export function changeLabel(c: Pick<ChangeInfo, "track" | "stage" | "fix_row">): StageLabel {
+  const label = stageLabel(c.stage);
+  return fixProgramFailed(c) ? { ...label, text: "Fix · could not be read" } : label;
+}
+
 export type RunContext = {
   folder: string;
   system: string;
@@ -132,9 +203,24 @@ export type RunContext = {
   repos?: string[];
   /** The operator's corrections for a revisit, passed to the skill as `Operator feedback:`. */
   feedback?: string;
+  /** For setup: write the workspace instructions (`--instructions`). */
+  instructions?: boolean;
 };
 
-export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan" | "build";
+/** How a new change starts: the workflow triages the description and decides, or the full pipeline starts at once. */
+export type StartTrack = "decide" | "full";
+
+export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan" | "build" | "triage" | "fix";
+
+/** What a triage or fix run is held to: the repositories it must not edit and Kata's checks folder. */
+export type Restricted = { workspaceFolder: string; masterRepo: string; systemRepos: string[]; checksDir: string };
+
+/** The restriction of a triage or fix run, from the same lists a build uses. Throws when the workspace has no master. */
+export function restrictedFor(workspaceFolder: string, scan: WorkspaceScan, checksDir: string): Restricted {
+  const master = masterRepoOf(scan);
+  if (master === null) throw new Error("the workspace has no single master repository");
+  return { workspaceFolder, masterRepo: master, systemRepos: productReposOf(scan), checksDir };
+}
 
 /** One build run: a repository's run or the whole-change review, with everything its run-spec needs. */
 export type BuildRun = {
@@ -183,11 +269,23 @@ function rulePath(p: string): string {
   return `//${rest}`;
 }
 
+/**
+ * What every restricted run shares: the publish and remote denies, no edit of the checks folder, no edit of any
+ * product repository (every system repository except the master), and read access to the workspace.
+ */
+export function productRepoRules(ws: string, systemRepos: readonly string[], masterRepo: string, checksDir: string): { deny: string[]; allow: string[] } {
+  const root = slashes(ws);
+  const deny = [...BUILD_DENY, `Edit(${rulePath(checksDir)}/**)`];
+  for (const repo of new Set(systemRepos)) {
+    if (repo !== masterRepo) deny.push(`Edit(${rulePath(`${root}/${repo}`)}/**)`);
+  }
+  return { deny, allow: [`Read(${rulePath(root)}/**)`] };
+}
+
 /** Only `Edit(path)` rules are checked by claude's file permissions; they cover Write and every other editing tool. */
 function buildPermissions(run: BuildRun, ctx: RunContext) {
   const ws = slashes(run.workspaceFolder);
-  const deny = [...BUILD_DENY, `Edit(${rulePath(run.checksDir)}/**)`];
-  const allow = [`Read(${rulePath(ws)}/**)`];
+  const { deny, allow } = productRepoRules(ws, run.systemRepos, run.masterRepo, run.checksDir);
   const changeDir = `${ws}/${run.masterRepo}/intent/${ctx.system}/${ctx.change}`;
   const buildDir = `${changeDir}/build`;
   if (run.target === "review") {
@@ -195,10 +293,7 @@ function buildPermissions(run: BuildRun, ctx: RunContext) {
     // claude, so the workspace cannot be denied as a whole: every product repository and every other document of
     // the change is denied by name instead.
     const repos = new Set([...run.systemRepos, run.masterRepo]);
-    for (const other of repos) {
-      if (other !== run.masterRepo) deny.push(`Edit(${rulePath(`${ws}/${other}`)}/**)`);
-      deny.push(`Edit(${rulePath(`${buildDir}/${other}.md`)})`);
-    }
+    for (const other of repos) deny.push(`Edit(${rulePath(`${buildDir}/${other}.md`)})`);
     for (const doc of ["intent.md", "spec.md", "plan.md"]) deny.push(`Edit(${rulePath(`${changeDir}/${doc}`)})`);
     allow.push(`Edit(${rulePath(`${buildDir}/review.md`)})`);
   } else {
@@ -208,8 +303,11 @@ function buildPermissions(run: BuildRun, ctx: RunContext) {
     for (const other of repos) {
       if (other === repo) continue;
       deny.push(`Edit(${rulePath(`${buildDir}/${other}.md`)})`);
-      if (other !== run.masterRepo) deny.push(`Edit(${rulePath(`${ws}/${other}`)}/**)`);
     }
+    // The shared rules deny every product repository; this run's own is the one it works in.
+    const own = `Edit(${rulePath(`${ws}/${repo}`)}/**)`;
+    const at = deny.indexOf(own);
+    if (at >= 0 && repo !== run.masterRepo) deny.splice(at, 1);
     // Earlier reviews are the review run's record; a build run does not rewrite them.
     deny.push(`Edit(${rulePath(`${buildDir}/review.md`)})`);
     allow.push(`Edit(${rulePath(`${buildDir}/${repo}.md`)})`);
@@ -250,6 +348,7 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): s
   const { system, change } = ctx;
   switch (kind) {
     case "setup":
+      if (ctx.instructions) return "Use the ai-sdlc setup skill with --instructions.";
       return system ? `Use the ai-sdlc setup skill. System: ${system}` : "Use the ai-sdlc setup skill.";
     case "context":
       return `Use the ai-sdlc context skill for system ${system}, repositories: ${(ctx.repos ?? []).join(", ")}. Refresh each existing context file, even one that is current.`;
@@ -273,12 +372,19 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): s
     }
     case "build":
       throw new Error("a build run-spec is made from its BuildRun");
+    case "triage":
+      return `Use the ai-sdlc start skill for system ${system}. The change: ${ctx.idea ?? ""}. The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.`;
+    case "fix":
+      return action === "accept-fix"
+        ? `Use the ai-sdlc fix skill for system ${system} with --accept ${change}. The engineer accepted this fix in the Workbench.`
+        : `Use the ai-sdlc fix skill for system ${system} on change folder ${change}. The engineer accepts the fix later in the Workbench, so do not ask for acceptance.`;
   }
 }
 
 /** The given section of an AI-SDLC run: nothing switched off, and what kind of run it is. */
 function sdlcGiven(kind: SdlcKind): Given {
-  return { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [], required_plugins: [...SDLC_REQUIRED_PLUGINS], build: isBuildRun(kind) };
+  const build = isBuildRun(kind);
+  return { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [], required_plugins: [...SDLC_REQUIRED_PLUGINS], build };
 }
 
 const SDLC_TIMEOUT_SECS = 6 * 60 * 60;
@@ -315,6 +421,7 @@ export function specFor(
   settings: Settings,
   catalog: CatalogEntry[],
   run?: BuildRun,
+  restricted?: Restricted,
 ): RunSpec {
   if (kind === "build") {
     if (!run) throw new Error("a build run-spec needs its BuildRun");
@@ -331,9 +438,17 @@ export function specFor(
   // Outside the empty room: `--bare` ignores the operator's claude login and accepts only an API key.
   spec.auth = { bare: false, token_env: null };
   spec.interactive = { enabled: false, answer_timeout_secs: 3600 };
+  if (kind === "triage" || kind === "fix") {
+    // Held to the change's documents whatever `settings.permission_mode` says: bypass cannot carry deny rules.
+    if (!restricted) throw new Error(`a ${kind} run-spec needs its restriction`);
+    const { allow, deny } = productRepoRules(restricted.workspaceFolder, restricted.systemRepos, restricted.masterRepo, restricted.checksDir);
+    spec.permissions = { mode: "auto", allow, deny, ask: [], unmatched: "ask" };
+    spec.interactive = { enabled: true, answer_timeout_secs: 3600 };
+    spec.env_remove = [...GITHUB_TOKENS];
+  }
   // A build works task by task through a whole plan and outlasts the engine's 30-minute default.
   spec.leash.timeout_secs = SDLC_TIMEOUT_SECS;
-  if (settings.permission_mode === "prompt") {
+  if (kind !== "triage" && kind !== "fix" && settings.permission_mode === "prompt") {
     spec.permissions = { mode: "prompt", allow: [], deny: [], unmatched: "ask" };
     spec.interactive.enabled = true;
   }
@@ -374,13 +489,23 @@ const LABEL: Record<StageAction, string> = {
   "run-review": "Run review",
   "declare-done": "Declare done",
   "cancel-build": "Cancel build",
+  "finish-fix-draft": "Finish the draft",
+  "accept-fix": "Accept fix",
+  "change-fix": "Change the fix",
+  "reopen-fix": "Reopen the fix",
+  "full-pipeline-instead": "Take the full pipeline instead",
 };
 
 export function actionLabel(action: StageAction): string {
   return LABEL[action];
 }
 
-const PRIMARY_ORDER: RegExp[] = [/^accept-/, /^commit-acceptance$/, /^start-/, /^continue-/, /^declare-done$/];
+/** The label of an action at a stage. A stage reads it the same way except accepting a fix whose acceptance stopped. */
+export function actionLabelAt(action: StageAction, stage: Stage): string {
+  return action === "accept-fix" && stage === "fix-accepting" ? "Finish acceptance" : LABEL[action];
+}
+
+const PRIMARY_ORDER: RegExp[] = [/^accept-/, /^commit-acceptance$/, /^start-/, /^continue-/, /^finish-fix-draft$/, /^declare-done$/];
 
 /** The one primary action of a view: accept, commit, start, then continue. Reopen, re-run and reject are never primary. */
 export function primaryAction(actions: readonly StageAction[]): StageAction | null {
@@ -481,8 +606,8 @@ const PILL_STEPS: readonly { step: PillStep; title: string }[] = [
  * on the build step. A document pill is disabled until its document exists. The Build pill is locked until the plan
  * is accepted, then open.
  */
-export function stagePills(stage: Stage, done: boolean, docs: DocsPresent): StagePill[] {
-  const label = done ? DONE_LABEL : stageLabel(stage);
+export function stagePills(stage: Stage, done: boolean, docs: DocsPresent, programFailed = false): StagePill[] {
+  const label = done ? DONE_LABEL : programFailed ? changeLabel({ track: "fix", stage, fix_row: null }) : stageLabel(stage);
   const accepted = label.step === "build" || label.step === "done";
   const sitsOn = label.step === "closed" ? "intent" : label.step === "done" ? "build" : label.step;
   const at = PILL_STEPS.findIndex((p) => p.step === sitsOn);
@@ -502,7 +627,19 @@ export function stagePills(stage: Stage, done: boolean, docs: DocsPresent): Stag
 
 export type Severity = "critical" | "high" | "medium" | "low";
 /** One finding of the review, with the severity its text opens with, if it names one. */
-export type Finding = { severity: Severity | null; text: string; id?: string; file?: string; line?: number };
+export type Finding = {
+  severity: Severity | null;
+  text: string;
+  id?: string;
+  file?: string;
+  line?: number;
+  /** The repository the finding is about, when the review names one. */
+  repo?: string;
+  /** What the finding concerns, when the review says. */
+  concern?: 'spec' | 'bug' | 'convention';
+  /** The written rule a convention finding cites. */
+  rule?: string;
+};
 
 
 
@@ -603,7 +740,7 @@ const BUILD_PREVIEWS: Record<BuildPreviewKind, BuildPreviewPlan> = {
 
 /** Whether a run of this kind is a build run (a repository's run, a round, or a review): it keeps the project's hooks on. */
 export function isBuildRun(kind: SdlcKind | BuildPreviewKind): boolean {
-  return kind !== "setup" && kind !== "context" && kind !== "intent" && kind !== "spec" && kind !== "plan";
+  return kind !== "setup" && kind !== "context" && kind !== "intent" && kind !== "spec" && kind !== "plan" && kind !== "triage" && kind !== "fix";
 }
 
 export function buildPreviewFor(kind: BuildPreviewKind): BuildPreviewPlan {

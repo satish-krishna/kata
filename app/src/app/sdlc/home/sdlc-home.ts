@@ -10,6 +10,7 @@ import { LeftoverDialog } from '../../ui/leftover-dialog';
 import { LockOverlay } from '../../ui/lock-overlay';
 import { SdlcSession } from '../../ui/sdlc-session';
 import { NewChangeDialog } from '../../ui/new-change-dialog';
+import { InstructionsRow } from '../../ui/instructions-row';
 import { ReposTable } from '../../ui/repos-table';
 import { SdlcSettingsDialog } from '../../ui/sdlc-settings-dialog';
 import { SdlcToolbar } from '../../ui/sdlc-toolbar';
@@ -26,6 +27,7 @@ import { SdlcHomeViewModel } from './sdlc-home.view-model';
     SdlcToolbar,
     SdlcSession,
     ChangesTable,
+    InstructionsRow,
     ReposTable,
     AddWorkspaceDialog,
     NewChangeDialog,

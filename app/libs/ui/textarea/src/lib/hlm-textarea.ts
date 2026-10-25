@@ -24,7 +24,7 @@ const mono = 'font-mono font-normal text-[length:var(--text-base)] leading-(--le
   selector: '[hlmTextarea]',
   hostDirectives: [
     { directive: BrnTextarea, inputs: ['id', 'forceInvalid'] },
-    BrnFieldControlDescribedBy,
+    { directive: BrnFieldControlDescribedBy, inputs: ['aria-describedby'] },
   ],
   host: { 'data-slot': 'textarea' },
 })

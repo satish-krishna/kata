@@ -3,7 +3,7 @@ import type { ChangeInfo } from '@bindings/ChangeInfo';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmTableImports } from '@spartan-ng/helm/table';
 import { formatWhen } from '../lib/sdlc-workspace';
-import { stageLabel } from '../lib/sdlc';
+import { changeLabel } from '../lib/sdlc';
 
 type Group = { system: string; changes: ChangeInfo[] };
 
@@ -33,11 +33,11 @@ export class ChangesTable {
   });
 
   protected label(c: ChangeInfo): string {
-    return stageLabel(c.stage).text;
+    return changeLabel(c).text;
   }
 
   protected tone(c: ChangeInfo): string {
-    const t = stageLabel(c.stage).tone;
+    const t = changeLabel(c).tone;
     return t === 'muted' ? 'idle' : t;
   }
 

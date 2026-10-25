@@ -135,6 +135,9 @@
       "properties": {
         "id": { "type": "string" },
         "severity": { "enum": ["high", "medium", "low"] },
+        "repo": { "type": "string" },
+        "concern": { "enum": ["spec", "bug", "convention"] },
+        "rule": { "type": "string" },
         "file": { "type": "string" },
         "line": { "type": "integer", "minimum": 1 },
         "text": { "type": "string" }

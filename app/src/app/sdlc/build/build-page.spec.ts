@@ -7,6 +7,7 @@ import type { BuildStage } from '../../lib/build-stage';
 import { defaultArrangement, type AreaId, type LayoutMode } from '../../lib/build-layout';
 import type { LayoutStage } from '../../lib/build-layout-stage';
 import { stopMessage, type Finding, type StageAction } from '../../lib/sdlc';
+import type { FindingGroup } from '../../lib/sdlc-findings';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
@@ -89,13 +90,15 @@ const LAYOUT: BuildLayoutState = { mode: 'overview', drawn: defaultArrangement('
 
 const done3 = [group('claims-core', { tone: 'success', label: 'Finished' }, null, [task('T1', DONE), task('T2', DONE)]), group('customer-portal', { tone: 'success', label: 'Finished' }, null, [task('T3', DONE)])];
 
+const FOUND: Finding[] = [
+  { severity: 'critical', text: 'The upload limit is duplicated.' },
+  { severity: 'high', text: 'The refusal message has no test.' },
+  { severity: 'low', text: 'A comment is stale.' },
+];
 const FINDINGS = {
   notice: null,
-  findings: [
-    { severity: 'critical', text: 'The upload limit is duplicated.' },
-    { severity: 'high', text: 'The refusal message has no test.' },
-    { severity: 'low', text: 'A comment is stale.' },
-  ] as Finding[],
+  groups: [{ repo: null, findings: FOUND }] as FindingGroup[],
+  findings: FOUND,
   replaced: [],
   older: false,
   emptyText: 'Reviewed, nothing found.',
@@ -1295,7 +1298,7 @@ describe('picking a finding in the findings area', () => {
     { severity: null, text: 'The refusal message has no test.' },
   ];
   const withFindings = (host: ArrangedHost) => {
-    host.view = { ...host.view, findingsArea: { ...SHOWN, review: { ...FINDINGS, findings: PICKABLE } } };
+    host.view = { ...host.view, findingsArea: { ...SHOWN, review: { ...FINDINGS, groups: [{ repo: null, findings: PICKABLE }], findings: PICKABLE } } };
   };
   const showAt = (page: Awaited<ReturnType<typeof mountArranged>>) => page.fixture.debugElement.query(By.directive(ChangesView)).componentInstance.showAt();
 

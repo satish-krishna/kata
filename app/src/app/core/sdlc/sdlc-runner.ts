@@ -13,7 +13,7 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunState } from '../../lib/events';
 import type { RunSnapshot } from '../run/reduce';
-import { specFor, transcriptRunId } from '../../lib/sdlc';
+import { restrictedFor, specFor, transcriptRunId, type StartTrack } from '../../lib/sdlc';
 import { masterPath, masterRepo, productRepos as productReposOf } from '../../lib/sdlc-workspace';
 import { LockStore } from '../lock/lock.store';
 import { RunStore } from '../run/run.store';
@@ -46,6 +46,16 @@ export type RunOutcome = { state: RunState; runId: string | null; snapshot: Snap
 /** What the screen needs to place a new change: the workspace, its master repo path and the product repos. */
 /** The preview before a run: takes the built spec, answers with the spec to run or null when the engineer cancelled. */
 export type Confirm = (spec: RunSpec) => Promise<RunSpec | null>;
+
+/**
+ * What starting a change came to. `opened` names the change and its branch, which the master repository is left on. `none`: the run ended and no change folder was created (the idea and the run's id let the engineer describe it again or read the verdict).
+ * `stopped`: nothing to report, because no run started or the run's branch was kept for the engineer to settle; a toast already said why where one was due.
+ */
+export type NewChangeOutcome =
+  | { kind: 'opened'; change: string; branch: string }
+  | { kind: 'refused' }
+  | { kind: 'stopped' }
+  | { kind: 'none'; idea: string; runId: string | null };
 
 export type ChangeTarget = { workspace: WorkspaceEntry; master: string; productRepos: string[] };
 
@@ -408,29 +418,36 @@ export class SdlcRunner {
   }
 
   /**
-   * New change: branch off `change/pending-<stamp>`, run the intent skill, then rename or delete the branch
-   * once the run is over, whatever its outcome. `confirm` is the preview: it gets the built spec and answers with the spec to
+   * New change: branch off `change/pending-<stamp>`, run the intent skill (`full`) or the triage that decides the track (`decide`),
+   * then rename or delete the branch once the run is over, whatever its outcome. `confirm` is the preview: it gets the built spec and answers with the spec to
    * run, or null when the engineer cancelled, in which case no branch is made.
    */
-  async newChange(target: ChangeTarget, system: string, idea: string, confirm?: Confirm): Promise<void> {
+  async newChange(target: ChangeTarget, system: string, idea: string, track: StartTrack, confirm?: Confirm): Promise<NewChangeOutcome> {
     const { workspace, master, productRepos } = target;
     if (this.isBusy()) {
       this.toasts.error('Another task is already running.');
-      return;
+      return { kind: 'refused' };
     }
+    const decide = track === 'decide';
     const base = workspace.base_branch;
     let spec: RunSpec;
     try {
       const [settings, catalog] = await Promise.all([this.transport.sdlcSettings(), this.transport.catalog(workspace.folder)]);
-      spec = specFor('intent', null, { folder: workspace.folder, system, change: null, idea }, settings, catalog);
+      const ctx = { folder: workspace.folder, system, change: null, idea };
+      if (decide) {
+        const restricted = restrictedFor(workspace.folder, await this.transport.sdlcScan(workspace.folder), await this.transport.sdlcChecksDir());
+        spec = specFor('triage', null, ctx, settings, catalog, undefined, restricted);
+      } else {
+        spec = specFor('intent', null, ctx, settings, catalog);
+      }
     } catch (e) {
-      this.toasts.error(`Could not prepare the intent run: ${message(e)}`);
-      return;
+      this.toasts.error(`Could not prepare the ${decide ? 'triage' : 'intent'} run: ${message(e)}`);
+      return { kind: 'stopped' };
     }
     // The preview comes before the branch: cancelling it leaves nothing behind.
     if (confirm) {
       const confirmed = await confirm(spec);
-      if (!confirmed) return;
+      if (!confirmed) return { kind: 'stopped' };
       spec = confirmed;
     }
     let branch: string;
@@ -438,33 +455,36 @@ export class SdlcRunner {
       branch = await this.transport.sdlcStartChange(master, base);
     } catch (e) {
       this.toasts.error(`Could not start a change: ${message(e)}`);
-      return;
+      return { kind: 'stopped' };
     }
     const out = await this.run('Starting a change', spec, {
       workspaceId: workspace.id,
       master,
       productRepos,
       link: null,
-      label: 'Intent',
+      label: decide ? 'Triage' : 'Intent',
       pendingBranch: branch,
     });
-    if (!out.exited) return;
+    if (!out.exited) return { kind: 'stopped' };
     await this.leftoversClosed();
     const outcome = await this.finish(master, branch, base, out.snapshot, productRepos);
-    if (outcome === null) return;
+    if (outcome === null) return { kind: 'stopped' };
     if (outcome === 'deleted') {
-      this.toasts.info('No change was created.');
-      await this.router.navigate(['/sdlc']);
-      return;
+      // The triage's verdict is in the run's record: the home says so, and no toast or navigation talks over it.
+      if (!decide) {
+        this.toasts.info('No change was created.');
+        await this.router.navigate(['/sdlc']);
+      }
+      return { kind: 'none', idea, runId: out.runId };
     }
-    const { change } = outcome.renamed;
+    const { change, branch: changeBranch } = outcome.renamed;
     if (out.runId) {
       try {
         await this.transport.sdlcLinkRun({
           workspace_id: workspace.id,
           system,
           change,
-          stage: 'intent',
+          stage: decide ? 'start' : 'intent',
           run_id: out.runId,
           started_at: Math.floor(Date.now() / 1000),
         });
@@ -473,6 +493,7 @@ export class SdlcRunner {
       }
     }
     await this.router.navigate(['/sdlc', system, change]);
+    return { kind: 'opened', change, branch: changeBranch };
   }
 
   /** Finish the pending branch. A dirty tree opens the leftover dialog once and retries after it closes. */

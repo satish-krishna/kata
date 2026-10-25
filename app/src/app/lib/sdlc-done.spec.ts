@@ -2,7 +2,8 @@ import type { CheckResult } from '@bindings/CheckResult';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
-import { canConfirm, checkLabel, checkTone, reviewState, type DoneReport } from './sdlc-done';
+import type { Finding } from './sdlc';
+import { canConfirm, checkLabel, checkTone, highFindings, reviewState, type DoneReport } from './sdlc-done';
 
 const SCOPE = { workspaceId: 'w1', system: 'claims', change: 'c1' };
 const link = (over: Partial<RunLink> = {}): RunLink => ({
@@ -84,6 +85,14 @@ describe('checkLabel', () => {
     expect(checkTone('failed')).toBe('error');
     expect(checkTone('could not run')).toBe('warning');
     expect(checkTone('no checks')).toBe('idle');
+  });
+});
+
+describe('highFindings', () => {
+  it('counts a high-severity convention finding like any high finding (R8.5)', () => {
+    const convention: Finding = { severity: 'high', concern: 'convention', rule: 'CONTRIBUTING.md:18', text: 'Breaks the rule.' };
+    const minor: Finding = { severity: 'low', concern: 'convention', text: 'Minor.' };
+    expect(highFindings(report({ review: { at: 1, findings: [convention, minor] } }))).toEqual([convention]);
   });
 });
 

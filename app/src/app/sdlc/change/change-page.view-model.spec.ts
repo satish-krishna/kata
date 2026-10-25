@@ -227,7 +227,7 @@ describe('ChangePageViewModel', () => {
 
   it('shows the intent while the spec has not been started', async () => {
     const transport = new MockTransport();
-    withStage(transport, FNOL, 'spec-ready', { spec: { exists: false, committed: false, status: null } });
+    withStage(transport, FNOL, 'spec-ready', { spec: { exists: false, committed: false, status: null, head_status: null } });
     const { vm } = setup(FNOL, transport);
     await ready(vm);
     expect(vm.docName()).toBe('intent.md');

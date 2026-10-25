@@ -1250,6 +1250,7 @@ mod tests {
             dir: dir.to_path_buf(),
             version: "0.9.0".into(),
             layouts: format::ACCEPTED_LAYOUTS.to_vec(),
+            light_track: false,
         }
     }
 

@@ -11,6 +11,7 @@
       role="radio"
       [attr.aria-checked]="opt.value === value()"
       [value]="opt.value"
+      [disabled]="opt.disabled ?? false"
       [attr.title]="opt.title ?? null"
     >
       {{ opt.label }}

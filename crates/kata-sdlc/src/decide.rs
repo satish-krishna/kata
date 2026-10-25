@@ -169,17 +169,58 @@ pub fn apply(
         return Ok(DecideOutcome::NeedsConfirm { other_edits: true });
     }
 
+    // What a failed decision puts back: the `HEAD` bytes when the file differs from them only in its
+    // status line (or not at all), otherwise the file as the engineer left it, so confirmed edits survive.
+    let restore: Vec<u8> = if has_other_edits(master, &rel, &text) {
+        text.clone().into_bytes()
+    } else {
+        git::run_bytes(master, &["show", &format!("HEAD:{rel}")])
+            .unwrap_or_else(|_| text.clone().into_bytes())
+    };
+
+    // Whether the index already has the file. Committing with `--only` leaves the real index alone when the
+    // commit fails, so only a file the index has never heard of needs adding first (and removing again).
+    let tracked = git::run(master, &["ls-files", "--", &rel]).is_ok_and(|out| !out.is_empty());
+
     let edited = edit_status(&text, Some(status));
-    if edited != text {
-        std::fs::write(&path, edited)?;
+    let wrote = edited != text;
+    if wrote {
+        std::fs::write(&path, &edited)?;
     }
 
     let msg = message(decision, &change_scope(master, system, change), change);
-    let committed = git::run(master, &["add", "--", &rel])
-        .and_then(|_| git::run(master, &["commit", "-m", &msg, "--", &rel]));
+    let committed = if tracked {
+        Ok(String::new())
+    } else {
+        git::run(master, &["add", "--", &rel])
+    }
+    .and_then(|_| git::run(master, &["commit", "-m", &msg, "--only", "--", &rel]));
     Ok(match committed {
         Ok(_) => DecideOutcome::Committed,
-        Err(e) => DecideOutcome::GitFailed { stderr: e.stderr },
+        Err(e) => {
+            // A failed decision leaves nothing behind: take back this call's add and this call's write, and
+            // say so when one of them cannot be taken back.
+            let mut stderr = e.stderr;
+            if !tracked {
+                if let Err(e) = git::run(master, &["rm", "-q", "--cached", "--", &rel]) {
+                    stderr.push_str(&format!(
+                        "
+Could not unstage {rel}: {}",
+                        e.stderr
+                    ));
+                }
+            }
+            // Only while the file still holds the bytes this call wrote: an edit made since is the engineer's.
+            if wrote && std::fs::read(&path).is_ok_and(|now| now == edited.as_bytes()) {
+                if let Err(e) = std::fs::write(&path, restore) {
+                    stderr.push_str(&format!(
+                        "
+Could not restore {rel}: {e}"
+                    ));
+                }
+            }
+            DecideOutcome::GitFailed { stderr }
+        }
     })
 }
 
@@ -457,10 +498,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn hook_failure_is_reported() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = seeded(tmp.path());
+    fn failing_hook(repo: &Path) {
         let hook = repo.join(".git/hooks/pre-commit");
         std::fs::write(&hook, "#!/bin/sh\necho hook says no >&2\nexit 1\n").unwrap();
         #[cfg(unix)]
@@ -468,6 +506,101 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+    }
+
+    fn staged(repo: &Path) -> String {
+        git::run(repo, &["diff", "--cached", "--name-only"]).unwrap()
+    }
+
+    #[test]
+    fn failed_decision_keeps_the_engineers_other_edits_and_unrelated_staging() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        failing_hook(&repo);
+        std::fs::write(repo.join("other.txt"), "x").unwrap();
+        git::run(&repo, &["add", "other.txt"]).unwrap();
+        let edited = "---\nstatus: draft\n---\nedited body\n";
+        std::fs::write(repo.join(INTENT), edited).unwrap();
+        let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, true).unwrap();
+        assert!(matches!(out, DecideOutcome::GitFailed { .. }));
+        assert_eq!(std::fs::read_to_string(repo.join(INTENT)).unwrap(), edited);
+        assert_eq!(staged(&repo), "other.txt");
+    }
+
+    fn index_entry(repo: &Path) -> String {
+        git::run(repo, &["ls-files", "-s", "--", INTENT]).unwrap()
+    }
+
+    #[test]
+    fn failed_decision_keeps_a_partly_staged_version_f2() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        failing_hook(&repo);
+        std::fs::write(repo.join(INTENT), "---\nstatus: draft\n---\nstaged body\n").unwrap();
+        git::run(&repo, &["add", "--", INTENT]).unwrap();
+        let entry = index_entry(&repo);
+        let edited = "---\nstatus: draft\n---\nstaged body\nand more\n";
+        std::fs::write(repo.join(INTENT), edited).unwrap();
+        let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, true).unwrap();
+        assert!(matches!(out, DecideOutcome::GitFailed { .. }));
+        assert_eq!(index_entry(&repo), entry);
+        assert_eq!(std::fs::read_to_string(repo.join(INTENT)).unwrap(), edited);
+    }
+
+    #[test]
+    fn failed_decision_keeps_a_file_head_does_not_have_added_f2() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        failing_hook(&repo);
+        let text = "---\nstatus: draft\n---\nbody\n";
+        let path = repo.join(INTENT);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        git::run(&repo, &["add", "--", INTENT]).unwrap();
+        let entry = index_entry(&repo);
+        let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, true).unwrap();
+        assert!(matches!(out, DecideOutcome::GitFailed { .. }));
+        assert_eq!(index_entry(&repo), entry);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[test]
+    fn failed_decision_leaves_an_untracked_file_untracked_f2() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        failing_hook(&repo);
+        let text = "---\nstatus: draft\n---\nbody\n";
+        let path = repo.join(INTENT);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, true).unwrap();
+        assert!(matches!(out, DecideOutcome::GitFailed { .. }));
+        assert_eq!(index_entry(&repo), "");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[test]
+    fn failed_decision_keeps_an_edit_made_during_the_hook_f2() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        let hook = repo.join(".git/hooks/pre-commit");
+        std::fs::write(
+            &hook,
+            format!(
+                "#!/bin/sh\necho 'edited meanwhile' >> {INTENT}\necho hook says no >&2\nexit 1\n"
+            ),
+        )
+        .unwrap();
+        let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, false).unwrap();
+        assert!(matches!(out, DecideOutcome::GitFailed { .. }));
+        let text = std::fs::read_to_string(repo.join(INTENT)).unwrap();
+        assert!(text.ends_with("edited meanwhile\n"), "{text}");
+    }
+    #[test]
+    fn hook_failure_is_reported_and_leaves_nothing_behind_r7_4() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        failing_hook(&repo);
         let h = head(&repo);
         let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, false).unwrap();
         match out {
@@ -476,8 +609,10 @@ mod tests {
             }
             other => panic!("expected GitFailed, got {other:?}"),
         }
-        assert_eq!(status_of(&repo).as_deref(), Some("accepted"));
         assert_eq!(head(&repo), h);
+        let at_head = git::run_bytes(&repo, &["show", &format!("HEAD:{INTENT}")]).unwrap();
+        assert_eq!(std::fs::read(repo.join(INTENT)).unwrap(), at_head);
+        assert_eq!(staged(&repo), "");
     }
 
     #[test]

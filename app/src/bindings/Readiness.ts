@@ -3,4 +3,8 @@
 /**
  * Whether the ai-sdlc plugin can be used: where it is and which version, decided once for the whole app.
  */
-export type Readiness = { "kind": "ready", dir: string, version: string, layouts: Array<number>, } | { "kind": "missing" } | { "kind": "tooOld", have: string, need: string, };
+export type Readiness = { "kind": "ready", dir: string, version: string, layouts: Array<number>, 
+/**
+ * Whether the plugin is at least [`LIGHT_TRACK_VERSION`].
+ */
+lightTrack: boolean, } | { "kind": "missing" } | { "kind": "tooOld", have: string, need: string, };

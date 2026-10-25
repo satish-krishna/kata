@@ -5,6 +5,7 @@
     [counts]="vm.counts()"
     [branch]="vm.branchChip()"
     [crumbs]="vm.crumbs()"
+    [tag]="vm.change()?.track === 'fix' ? 'fix' : null"
     back="Changes"
     [locked]="vm.locked()"
     (switchMode)="vm.switchMode()"
@@ -179,6 +180,7 @@
                 [rows]="build.buildRows()"
                 [task]="build.pickedTask()"
                 [stopped]="build.stoppedRepos()"
+                [extras]="vm.barExtras()"
                 [focus]="build.focusRequest()"
                 (pick)="build.choose($event)"
                 (repoAction)="build.repoAction($event)"
@@ -210,7 +212,8 @@
         hlmBtn
         [variant]="vm.primary() === a ? 'primary' : 'secondary'"
         type="button"
-        [disabled]="vm.locked()"
+        [disabled]="vm.disabledFor(a)"
+        [attr.title]="vm.titleFor(a)"
         (click)="vm.act(a)"
       >{{ vm.labelOf(a) }}</button>
     }
@@ -222,7 +225,7 @@
     (cancel)="vm.cancelLock()"
   />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
-  <app-feedback-dialog [action]="vm.feedbackFor()" (run)="vm.runWithFeedback($event)" (cancel)="vm.cancelFeedback()" />
+  <app-feedback-dialog [action]="vm.feedbackFor()" [required]="vm.feedbackRequired()" (run)="vm.runWithFeedback($event)" (cancel)="vm.cancelFeedback()" />
   <app-confirm-dialog
     [open]="vm.leftoverPrompt() !== null"
     message="Continue on top of leftovers?"
@@ -257,6 +260,17 @@
     confirmLabel="Commit"
     (confirm)="vm.confirmDecision()"
     (cancel)="vm.cancelConfirm()"
+  />
+  <app-new-change-dialog
+    [open]="vm.pipelineOpen()"
+    [systems]="vm.pipelineSystems()"
+    [lightTrack]="vm.lightTrack()"
+    [initialIdea]="vm.pipelineIdea()"
+    initialTrack="full"
+    [trackFixed]="true"
+    [note]="vm.pipelineNote()"
+    (start)="vm.startPipeline($event.system, $event.idea)"
+    (cancel)="vm.closePipeline()"
   />
   <app-run-preview-dialog
     [open]="vm.preview.isOpen()"

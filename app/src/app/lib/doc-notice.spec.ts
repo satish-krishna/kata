@@ -6,7 +6,7 @@ import { shownBuild, shownChangeList, shownDocument, shownPart, type DocNotice, 
 /* The owner of "the Workbench never shows less than a document holds without saying so", tested row by row against
  * the table in the plan, written by hand. */
 
-const ready: Extract<Readiness, { kind: 'ready' }> = { kind: 'ready', dir: 'plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] };
+const ready: Extract<Readiness, { kind: 'ready' }> = { kind: 'ready', dir: 'plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2], lightTrack: false };
 const problems: Problem[] = [
   { file: 'spec.md', line: 14, message: 'requirement has no ID' },
   { file: 'spec.md', line: 31, message: 'scenario is outside a requirement' },

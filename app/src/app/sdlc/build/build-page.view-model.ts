@@ -30,6 +30,7 @@ import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { REVIEW_MISSING_TEXT, reviewState } from '../../lib/sdlc-done';
 import { givenFor, reviewFindings, specFor, type BuildRun, type Finding, type StageAction } from '../../lib/sdlc';
+import { groupFindings, type FindingGroup } from '../../lib/sdlc-findings';
 import type { ReplacedFindings } from '../../ui/findings-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
 import type { BuildHandoff } from '../change/change-page.view-model';
@@ -126,7 +127,7 @@ export type TaskGroupView = {
 export type ReviewEntryView = { status: StatusText; action: 'cancel' | 'continue' | null; picked: boolean };
 
 /** The review's findings, with the notice above them. */
-export type FindingsView = { notice: DocNotice | null; findings: Finding[]; replaced: ReplacedFindings[]; older: boolean; emptyText: string };
+export type FindingsView = { notice: DocNotice | null; groups: FindingGroup[]; findings: Finding[]; replaced: ReplacedFindings[]; older: boolean; emptyText: string };
 
 const READING_REVIEW = 'Reading the review…';
 const REVIEW_NOT_RUN = 'The review runs by itself once the last task is recorded.';
@@ -150,7 +151,7 @@ export type FindingsAreaView = {
 };
 
 /** Where the engineer picked a finding: the file and line to show in the changed files, and a count so picking again shows it again. */
-export type FindingPlace = { file: string; line: number | null; text: string; n: number };
+export type FindingPlace = { file: string; line: number | null; text: string; n: number; repo?: string };
 
 /** The findings area for each state of the review. */
 export function findingsAreaOf(i: { reading: boolean; entry: ReviewEntry; review: FindingsView; departures: Departure[] }): FindingsAreaView {
@@ -200,7 +201,7 @@ type Entry = { id: string; key: string; spec: RunSpec; at: number };
 /** Seconds of a run's work (waiting for the engineer excluded), of all its waiting, and of the wait it is in now. */
 type Clock = { work: number; paused: number; current: number };
 /** A review of the whole change: one section of its review document, or the closing text of its run. */
-type Review = { at: number | null; label: string | null; findings: Finding[] };
+type Review = { at: number | null; label: string | null; repos: string[]; findings: Finding[] };
 
 const REVIEW = 'review';
 const RUNNING: readonly RunState[] = ['running', 'awaiting'];
@@ -485,12 +486,17 @@ export class BuildPageViewModel {
   readonly reviewNotice = computed(() => this.runNotice() ?? this.reviewDocNotice());
   /** The latest review's findings, most serious first. */
   readonly findings = computed<Finding[]>(() => this.reviews().at(-1)?.findings ?? []);
+  /** The latest review's findings grouped by repository, the way the findings list shows them. */
+  readonly findingGroups = computed<FindingGroup[]>(() => {
+    const latest = this.reviews().at(-1);
+    return groupFindings(latest?.findings ?? [], latest?.repos ?? []);
+  });
   /** Earlier reviews, each with the time of the review that replaced it (or its own number and date, from the document), newest first. */
   readonly replaced = computed<ReplacedFindings[]>(() => {
     const all = this.reviews();
     return all
       .slice(0, -1)
-      .map((r, i) => ({ at: all[i + 1].at === null ? '' : timeOf(all[i + 1].at!), findings: r.findings, ...(r.label === null ? {} : { label: r.label }) }))
+      .map((r, i) => ({ at: all[i + 1].at === null ? '' : timeOf(all[i + 1].at!), groups: groupFindings(r.findings, r.repos), ...(r.label === null ? {} : { label: r.label }) }))
       .reverse();
   });
   /** True when the findings are read from the review run's words, the layout before the review document. */
@@ -891,7 +897,7 @@ export class BuildPageViewModel {
 
   /** The findings area for the page, from what the review knows. */
   private findingsAreaView(): FindingsAreaView {
-    const review: FindingsView = { notice: this.reviewNotice(), findings: this.findings(), replaced: this.replaced(), older: this.older(), emptyText: this.emptyText() };
+    const review: FindingsView = { notice: this.reviewNotice(), groups: this.findingGroups(), findings: this.findings(), replaced: this.replaced(), older: this.older(), emptyText: this.emptyText() };
     const departures = this.taskAreas().flatMap((g) =>
       g.tasks.flatMap((t) => (t.state.kind === 'done' && t.state.departure !== null ? [{ repo: g.repo, task: t.id, text: t.state.departure }] : [])),
     );
@@ -905,7 +911,7 @@ export class BuildPageViewModel {
   /** Ask the changed files to show where a finding is. A finding that names no file shows nothing. */
   showFinding(f: Finding): void {
     if (f.file === undefined) return;
-    this.findingPlace.set({ file: f.file, line: f.line ?? null, text: f.text, n: ++this.placeCount });
+    this.findingPlace.set({ file: f.file, line: f.line ?? null, text: f.text, n: ++this.placeCount, ...(f.repo === undefined ? {} : { repo: f.repo }) });
   }
 
   /** Where the master repository is: what the build was started from, else what the change page loaded. */
@@ -1454,16 +1460,17 @@ export class BuildPageViewModel {
     if (shown.kind === 'none') return false;
     if (shown.kind === 'words') {
       this.fromWords.set(true);
-      this.reviews.update((r) => [...r, { at, label: null, findings: shown.findings }]);
+      this.reviews.update((r) => [...r, { at, label: null, repos: [], findings: shown.findings }]);
       return true;
     }
     this.fromWords.set(false);
-    const labeled = (r: { number: number; reviewedAt: string; findings: Finding[] }): Review => ({
+    const labeled = (r: { number: number; reviewedAt: string; repos: string[]; findings: Finding[] }): Review => ({
       at: null,
       label: `Review ${r.number} of ${r.reviewedAt}`,
+      repos: r.repos,
       findings: r.findings,
     });
-    this.reviews.set([...shown.earlier].reverse().map(labeled).concat({ at: null, label: null, findings: shown.latest.findings }));
+    this.reviews.set([...shown.earlier].reverse().map(labeled).concat({ at: null, label: null, repos: shown.latest.repos, findings: shown.latest.findings }));
     return true;
   }
 

@@ -7,6 +7,6 @@
   </div>
   <ng-content />
   @if (hint()) {
-    <div class="k-field__hint" [class.k-field__hint--error]="error()">{{ hint() }}</div>
+    <div class="k-field__hint" [class.k-field__hint--error]="error()" [attr.id]="hintId() ?? null" [attr.aria-live]="live() ? 'polite' : null">{{ hint() }}</div>
   }
 </div>

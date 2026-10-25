@@ -56,9 +56,10 @@ class FakeTransport {
   sdlcLinkRun = vi.fn(async (..._a: unknown[]) => { this.calls.push('link'); });
   sdlcStartChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('start'); return 'change/pending-1'; });
   sdlcFinishChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('finish'); return this.finishResults.shift()!(); });
+  sdlcChecksDir = vi.fn(async () => '/kata/workbench/checks');
   sdlcSettings = vi.fn(async () => ({ mode: null, remember: false, permission_mode: 'bypass' as const }));
   catalog = vi.fn(async (..._a: unknown[]) => seedCatalog);
-  readiness: Readiness = { kind: 'ready', dir: '/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] };
+  readiness: Readiness = { kind: 'ready', dir: '/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2], lightTrack: false };
   prepared: PrepareOutcome | (() => Promise<PrepareOutcome>) = { kind: 'ready', start: BUILD_START };
   sdlcPluginReadiness = vi.fn(async (..._a: unknown[]) => { this.calls.push('readiness'); return this.readiness; });
   sdlcBuildPrepare = vi.fn(async (..._a: unknown[]) => {
@@ -340,7 +341,7 @@ describe('SdlcRunner.newChange', () => {
   it('starts the pending branch, runs intent with the idea, finishes, and opens the renamed change', async () => {
     const { runner, fake, lock, navigate } = setup();
     fake.finishResults.push(async () => ({ renamed: { branch: 'change/2026-10-18-x', change: '2026-10-18-x' } }));
-    await runner.newChange(target, 'claims', 'flag fraud');
+    await runner.newChange(target, 'claims', 'flag fraud', 'full');
     expect(fake.calls.filter((c) => c !== 'link')).toEqual(['start', 'snapshot', 'agent', 'wait', 'dismissed', 'finish']);
     expect(fake.sdlcStartChange).toHaveBeenCalledWith('/ws/claims-intent', 'main');
     expect(fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/claims-intent', 'change/pending-1', 'main');
@@ -357,7 +358,7 @@ describe('SdlcRunner.newChange', () => {
       return 'success' as const;
     });
     ctx.fake.finishResults.push(async () => ({ renamed: { branch: 'change/2026-10-18-x', change: '2026-10-18-x' } }));
-    await ctx.runner.newChange(target, 'claims', 'idea');
+    await ctx.runner.newChange(target, 'claims', 'idea', 'full');
     expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledWith(
       expect.objectContaining({ workspace_id: 'acme', system: 'claims', change: '2026-10-18-x', stage: 'intent', run_id: 'sdlc-claims-new-intent-1' }),
     );
@@ -366,7 +367,7 @@ describe('SdlcRunner.newChange', () => {
   it('returns home with a note when no change folder was created', async () => {
     const { runner, fake, toasts, navigate } = setup();
     fake.finishResults.push(async () => 'deleted');
-    await runner.newChange(target, 'claims', 'idea');
+    await runner.newChange(target, 'claims', 'idea', 'full');
     expect(toasts.info).toHaveBeenCalledWith('No change was created.');
     expect(navigate).toHaveBeenCalledWith(['/sdlc']);
   });
@@ -374,14 +375,14 @@ describe('SdlcRunner.newChange', () => {
   it('still finishes the branch when the run is cancelled', async () => {
     const { runner, fake } = setup(() => 'warning');
     fake.finishResults.push(async () => 'deleted');
-    await runner.newChange(target, 'claims', 'idea');
+    await runner.newChange(target, 'claims', 'idea', 'full');
     expect(fake.sdlcFinishChange).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the pending branch and finishes nothing while the engine is still stopping', async () => {
     const { runner, fake, toasts, navigate } = setup(() => 'warning');
     fake.exited = false;
-    await runner.newChange(target, 'claims', 'idea');
+    await runner.newChange(target, 'claims', 'idea', 'full');
     expect(fake.sdlcFinishChange).not.toHaveBeenCalled();
     expect(fake.sdlcLeftovers).not.toHaveBeenCalled();
     expect(toasts.error).toHaveBeenCalledWith(
@@ -398,7 +399,7 @@ describe('SdlcRunner.newChange', () => {
       () => Promise.reject('the master repo has uncommitted changes: scratch.txt'),
       async () => 'deleted',
     );
-    const done = runner.newChange(target, 'claims', 'idea');
+    const done = runner.newChange(target, 'claims', 'idea', 'full');
     await vi.waitFor(() => expect(runner.leftovers()).not.toBeNull());
     expect(fake.sdlcFinishChange).toHaveBeenCalledTimes(1);
     await runner.discard('claims-intent', ['scratch.txt']);
@@ -414,7 +415,7 @@ describe('SdlcRunner.newChange', () => {
       () => Promise.reject('the master repo has uncommitted changes: scratch.txt'),
       () => Promise.reject('the master repo has uncommitted changes: scratch.txt'),
     );
-    const done = runner.newChange(target, 'claims', 'idea');
+    const done = runner.newChange(target, 'claims', 'idea', 'full');
     await vi.waitFor(() => expect(runner.leftovers()).not.toBeNull());
     runner.closeLeftovers();
     await done;
@@ -425,7 +426,7 @@ describe('SdlcRunner.newChange', () => {
   it('creates no pending branch while a run is active', async () => {
     const { runner, fake, toasts, state, lock } = setup();
     state.set('running');
-    await runner.newChange(target, 'claims', 'idea');
+    await runner.newChange(target, 'claims', 'idea', 'full');
     expect(fake.sdlcStartChange).not.toHaveBeenCalled();
     expect(lock.runAgent).not.toHaveBeenCalled();
     expect(toasts.error).toHaveBeenCalledWith('Another task is already running.');
@@ -434,7 +435,7 @@ describe('SdlcRunner.newChange', () => {
   it('creates no branch when the preview is cancelled', async () => {
     const { runner, fake, lock, navigate } = setup();
     const confirm = vi.fn(async (_spec: RunSpec) => null);
-    await runner.newChange(target, 'claims', 'idea', confirm);
+    await runner.newChange(target, 'claims', 'idea', 'full', confirm);
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(confirm.mock.calls[0][0].task).toContain('idea');
     expect(fake.sdlcStartChange).not.toHaveBeenCalled();
@@ -449,7 +450,7 @@ describe('SdlcRunner.newChange', () => {
       fake.calls.push('preview');
       return { ...spec, name: 'confirmed' };
     });
-    await runner.newChange(target, 'claims', 'idea', confirm);
+    await runner.newChange(target, 'claims', 'idea', 'full', confirm);
     expect(fake.calls.slice(0, 2)).toEqual(['preview', 'start']);
     expect((lock.runAgent.mock.calls[0][1] as RunSpec).name).toBe('confirmed');
   });
@@ -457,9 +458,117 @@ describe('SdlcRunner.newChange', () => {
   it('stops before the run when the pending branch cannot be created', async () => {
     const { runner, fake, toasts, lock } = setup();
     fake.sdlcStartChange.mockRejectedValueOnce('the master repo has uncommitted changes: a.txt');
-    await runner.newChange(target, 'claims', 'idea');
+    await runner.newChange(target, 'claims', 'idea', 'full');
     expect(lock.runAgent).not.toHaveBeenCalled();
     expect(toasts.error).toHaveBeenCalledWith(expect.stringContaining('uncommitted changes'));
+  });
+});
+
+describe('SdlcRunner.newChange track', () => {
+  const target = { workspace: WORKSPACE, master: '/ws/claims-intent', productRepos: ['claims-core'] };
+  const SCAN = {
+    folder: '/ws',
+    repos: ['claims-intent', 'claims-core'],
+    master: { kind: 'one', repo: 'claims-intent', committed: true },
+    marker: { version: 1, systems: { claims: { repos: ['claims-core'] } } },
+    marker_error: null,
+  };
+  const renamed = (change: string) => async () => ({ renamed: { branch: `change/${change}`, change } });
+  const withTranscript = () => {
+    const ctx = setup(async () => {
+      ctx.events.set([transcript('/k/runs/sdlc-claims-triage-1.jsonl')]);
+      TestBed.tick();
+      return 'success' as const;
+    });
+    ctx.fake.scan = SCAN;
+    return ctx;
+  };
+
+  it('full runs the intent skill, under the sdlc permission posture, and opens the change', async () => {
+    const { runner, fake, lock, navigate } = setup();
+    fake.finishResults.push(renamed('2026-10-18-x'));
+    const outcome = await runner.newChange(target, 'claims', 'flag fraud', 'full');
+    const spec = lock.runAgent.mock.calls[0][1] as RunSpec;
+    expect(spec.task.startsWith('Use the ai-sdlc intent skill')).toBe(true);
+    expect(outcome).toEqual({ kind: 'opened', change: '2026-10-18-x', branch: 'change/2026-10-18-x' });
+    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'claims', '2026-10-18-x']);
+  });
+
+  it('decide runs the start skill in auto mode, held to the change documents', async () => {
+    const { runner, fake, lock, toasts } = setup();
+    fake.scan = SCAN;
+    fake.finishResults.push(renamed('2026-10-18-x'));
+    await runner.newChange(target, 'claims', 'flag fraud', 'decide');
+    const spec = lock.runAgent.mock.calls[0][1] as RunSpec;
+    expect(spec.task.startsWith('Use the ai-sdlc start skill')).toBe(true);
+    expect(spec.task).toContain('flag fraud');
+    expect(spec.permissions.mode).toBe('auto');
+    expect(spec.permissions.deny?.length).toBeGreaterThan(0);
+    expect(spec.interactive.enabled).toBe(true);
+    expect(fake.sdlcChecksDir).toHaveBeenCalled();
+    expect(toasts.success).toHaveBeenCalledWith(expect.stringMatching(/^Triage finished/));
+  });
+
+  it('decide previews the restricted spec and runs the one the engineer confirmed', async () => {
+    const { runner, fake, lock } = setup();
+    fake.scan = SCAN;
+    fake.finishResults.push(renamed('2026-10-18-x'));
+    const confirm = vi.fn(async (spec: RunSpec) => ({ ...spec, name: 'confirmed' }));
+    await runner.newChange(target, 'claims', 'flag fraud', 'decide', confirm);
+    expect(confirm.mock.calls[0][0].permissions.mode).toBe('auto');
+    expect((lock.runAgent.mock.calls[0][1] as RunSpec).name).toBe('confirmed');
+  });
+
+  it.each([
+    ['a fix folder', '2026-10-18-fix-login'],
+    ['an intent folder', '2026-10-18-fraud-flag'],
+  ])('decide that ended with %s links the triage run, opens the change and returns opened', async (_label, change) => {
+    const ctx = withTranscript();
+    ctx.fake.finishResults.push(renamed(change));
+    const outcome = await ctx.runner.newChange(target, 'claims', 'idea', 'decide');
+    expect(outcome).toEqual({ kind: 'opened', change, branch: `change/${change}` });
+    expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledWith(
+      expect.objectContaining({ workspace_id: 'acme', system: 'claims', change, stage: 'start', run_id: 'sdlc-claims-triage-1' }),
+    );
+    expect(ctx.navigate).toHaveBeenCalledWith(['/sdlc', 'claims', change]);
+  });
+
+  it('decide that created no change finishes the branch, says nothing and goes nowhere', async () => {
+    const ctx = withTranscript();
+    ctx.fake.finishResults.push(async () => 'deleted');
+    const outcome = await ctx.runner.newChange(target, 'claims', 'flag fraud', 'decide');
+    expect(outcome).toEqual({ kind: 'none', idea: 'flag fraud', runId: 'sdlc-claims-triage-1' });
+    expect(ctx.fake.sdlcFinishChange).toHaveBeenCalledTimes(1);
+    expect(ctx.fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/claims-intent', 'change/pending-1', 'main');
+    expect(ctx.fake.sdlcLinkRun).not.toHaveBeenCalled();
+    expect(ctx.navigate).not.toHaveBeenCalled();
+    expect(ctx.toasts.info).not.toHaveBeenCalled();
+  });
+
+  it('decide while a task is running is refused, with the toast, and starts nothing', async () => {
+    const { runner, fake, toasts, state, lock } = setup();
+    fake.scan = SCAN;
+    state.set('running');
+    const outcome = await runner.newChange(target, 'claims', 'idea', 'decide');
+    expect(outcome).toEqual({ kind: 'refused' });
+    expect(toasts.error).toHaveBeenCalledWith('Another task is already running.');
+    expect(fake.sdlcStartChange).not.toHaveBeenCalled();
+    expect(lock.runAgent).not.toHaveBeenCalled();
+  });
+
+  it('full while a task is running is refused too', async () => {
+    const { runner, state } = setup();
+    state.set('running');
+    expect(await runner.newChange(target, 'claims', 'idea', 'full')).toEqual({ kind: 'refused' });
+  });
+
+  it('full that created no change keeps its toast and the return to the list, and returns none', async () => {
+    const { runner, fake, toasts, navigate } = setup();
+    fake.finishResults.push(async () => 'deleted');
+    const outcome = await runner.newChange(target, 'claims', 'idea', 'full');
+    expect(outcome).toMatchObject({ kind: 'none', idea: 'idea' });
+    expect(toasts.info).toHaveBeenCalledWith('No change was created.');
+    expect(navigate).toHaveBeenCalledWith(['/sdlc']);
   });
 });
 

@@ -113,7 +113,7 @@ pub fn advance_origin_only(repo: &Path, branch: &str, rel: &str, msg: &str) {
 }
 
 /// A stand-in for the ai-sdlc plugin folder: its `format/` is the vendored copy of the plugin's
-/// format program, and its version is the oldest Kata accepts. Made once per test process.
+/// format program, and its version is the first one that supports the light track. Made once per test process.
 pub fn plugin_dir() -> &'static Path {
     static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
@@ -137,11 +137,43 @@ pub fn plugin_dir() -> &'static Path {
             meta.join("plugin.json"),
             format!(
                 r#"{{"name":"ai-sdlc","version":"{}"}}"#,
-                crate::plugin::MIN_VERSION
+                crate::plugin::LIGHT_TRACK_VERSION
             ),
         )
         .unwrap();
         dir
     })
     .path()
+}
+
+/// A stand-in plugin at `dir` whose `format/check.mjs` answers `fix-state --json <folder>...` without
+/// git: a folder named with `row7` or `row9` stands at that row, one named with `broken` gets an `error`
+/// entry, any other stands at row 6. Every call appends a line to `format/calls.log`, so a test counts
+/// the processes a scan started. Returns the plugin folder.
+#[allow(dead_code)]
+pub fn fake_fix_plugin(dir: &Path, version: &str) -> PathBuf {
+    let format = dir.join("format");
+    std::fs::create_dir_all(&format).unwrap();
+    std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+    std::fs::write(
+        dir.join(".claude-plugin").join("plugin.json"),
+        format!(r#"{{"name":"ai-sdlc","version":"{version}"}}"#),
+    )
+    .unwrap();
+    std::fs::write(
+        format.join("check.mjs"),
+        r#"import { appendFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+const [, , command, , ...folders] = process.argv;
+appendFileSync(fileURLToPath(new URL('calls.log', import.meta.url)), `${command} ${folders.length}\n`);
+const doc = { inHead: true, headStatus: 'draft', workingStatus: 'draft' };
+const facts = { intent: doc, spec: doc, plan: doc, unrecorded: [], ownLinesOnly: false, accepted: 'none', acceptanceLast: false, built: false };
+const rowOf = (folder) => (folder.includes('row9') ? 9 : folder.includes('row7') ? 7 : 6);
+console.log(JSON.stringify(folders.map((folder) => folder.includes('broken')
+  ? { folder, error: `${folder}: git failed` }
+  : { folder, result: { row: rowOf(folder), facts } })));
+"#,
+    )
+    .unwrap();
+    dir.to_path_buf()
 }

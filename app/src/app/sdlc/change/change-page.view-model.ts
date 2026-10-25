@@ -40,13 +40,17 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import {
   DEFAULT_BUILD_SECS,
   actionLabel,
+  actionLabelAt,
   actionsForChange,
+  restrictedFor,
   primaryAction,
   reviewFindings,
   parseFrontMatter,
   revisits,
+  feedbackRequired,
   specFor,
   stageLabel,
+  fixProgramFailed,
   stagePills,
   stageRuns,
   type BuildRun,
@@ -59,6 +63,7 @@ import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy
 import { prNumber } from '../../lib/pull-request';
 import { REVIEW_MISSING_TEXT, canConfirm, checkLabel, reviewState, type DoneReport, type DoneReview } from '../../lib/sdlc-done';
 import { section } from '../../lib/doc';
+import { fullPipelineIdea } from '../../lib/sdlc-fix';
 import { inTauri } from '../../lib/mock';
 import { taskRecord, withRows, type TaskView } from '../../lib/task-view';
 import { shownSection } from '../../lib/sdlc-review';
@@ -86,8 +91,17 @@ type HandledAction =
   | 'another-round'
   | 'declare-done'
   | 'run-review'
-  | 'cancel-build';
-type StageRun = { kind: 'intent' | 'spec' | 'plan'; title: string; label: string };
+  | 'cancel-build'
+  | 'full-pipeline-instead';
+/** What recording a decision came to; the full-pipeline hand-over goes on only after 'committed'. */
+/** A change by system and folder name. */
+type ChangeRef = { system: string; change: string };
+/** The toast for a drafted fix that stays open after the new change that replaces it started. */
+/** A drafted fix being closed after its replacement opened: the branch its documents are on, and the new change's branch. */
+type FixClose = ChangeRef & { master: string; fixBranch: string; newBranch: string };
+const fixStays =(fix: ChangeRef, why: string): string => `The new change started, but the fix ${fix.change} could not be closed: ${why}. It stays open.`;
+type DecisionOutcome ='committed' | 'needsConfirm' | 'gitFailed' | 'error';
+type StageRun = { kind: 'intent' | 'spec' | 'plan' | 'fix'; title: string; label: string };
 
 /** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result.
  * Typed over every action `act` does not handle, so a new action with neither a case nor a run does not compile. */
@@ -99,7 +113,14 @@ const RUNS: Record<Exclude<StageAction, HandledAction>, StageRun> = {
   'reopen-spec': { kind: 'spec', title: 'Reopening spec', label: 'Spec' },
   'start-plan': { kind: 'plan', title: 'Starting plan', label: 'Plan' },
   'rerun-plan': { kind: 'plan', title: 'Re-running plan', label: 'Plan' },
+  'finish-fix-draft': { kind: 'fix', title: 'Finishing the fix', label: 'Fix' },
+  'change-fix': { kind: 'fix', title: 'Changing the fix', label: 'Fix' },
+  'reopen-fix': { kind: 'fix', title: 'Reopening the fix', label: 'Fix' },
+  'accept-fix': { kind: 'fix', title: 'Accepting the fix', label: 'Fix' },
 };
+/** The fix runs, which need a plugin that has the light track. */
+const FIX_RUNS: readonly StageAction[] = ['finish-fix-draft', 'change-fix', 'reopen-fix', 'accept-fix'];
+const NEEDS_LIGHT_TRACK = 'Needs ai-sdlc 0.13.0 or later.';
 
 const FILE: Record<Decision, 'intent.md' | 'spec.md' | 'plan.md'> = {
   'accept-intent': 'intent.md',
@@ -222,7 +243,31 @@ export class ChangePageViewModel {
   /** The review document as the format program reads it; null when the change has none or it could not be read. */
   private readonly reviewRecord = signal<ReviewRecord | null>(null);
   /** The notice above the open spec or plan; null when it needs none. */
-  readonly docNotice = computed<DocNotice | null>(() => this.shown()?.notice ?? null);
+  readonly docNotice = computed<DocNotice | null>(() => this.unsettledNotice() ?? this.shown()?.notice ?? null);
+  /** A fix whose documents carry statuses the workflow never leaves on a fix: the page lists them, on every tab. */
+  private readonly unsettledNotice = computed<DocNotice | null>(() => {
+    const c = this.change();
+    if (c === null) return null;
+    // An older plugin or a program failure: the reason alone, since no status was read.
+    if (c.stage === 'fix-needs-plugin') {
+      return { tone: 'warning', text: c.plan_unreadable_reason ?? 'Needs ai-sdlc 0.13.0 or later.', lines: [] };
+    }
+    if (c.stage !== 'fix-unsettled') return null;
+    const text = 'The workflow does not leave a fix in these statuses, so nothing can be run on it.';
+    // When the format program could not run, no status was read, so the headline about statuses would be false: say
+    // what happened, with the program's own message, and show no status line.
+    if (fixProgramFailed(c)) {
+      return { tone: 'warning', text: 'Kata could not read where this fix stands.', lines: c.plan_unreadable_reason === null ? [] : [c.plan_unreadable_reason] };
+    }
+    // Each document shows the status HEAD holds, whether or not the working file exists: a deleted document is
+    // "missing (HEAD: draft)", and one not in HEAD says so.
+    const status = (d: { status: string | null; head_status: string | null }) => {
+      if (d.status === null) return d.head_status === null ? 'missing' : `missing (HEAD: ${d.head_status})`;
+      return `${d.status} (HEAD: ${d.head_status ?? 'not committed'})`;
+    };
+    const lines = [`intent: ${status(c.intent)} · spec: ${status(c.spec)} · plan: ${status(c.plan)}`];
+    return { tone: 'warning', text, lines };
+  });
   /** What the open spec or plan shows, decided by the one owner of that table; null for the other tabs and before the first load. */
   private readonly shown = computed<Shown | null>(() => {
     const readiness = this.readiness();
@@ -282,7 +327,7 @@ export class ChangePageViewModel {
    */
   readonly pills = computed<StagePill[]>(() => {
     const c = this.change();
-    return c === null || this.held() ? [] : stagePills(c.stage, this.done(), this.docs());
+    return c === null || this.held() ? [] : stagePills(c.stage, this.done(), this.docs(), fixProgramFailed(c));
   });
   /** The pull requests that have an address, for the toolbar's links; none while a build or a skill run holds the page. */
   readonly pullLinks = computed(() =>
@@ -313,7 +358,19 @@ export class ChangePageViewModel {
   readonly actions = computed(() => {
     const c = this.change();
     if (c === null || this.done()) return [];
-    return stageLabel(c.stage).step === 'build' ? this.build.actions() : actionsForChange(c);
+    if (stageLabel(c.stage).step !== 'build') return actionsForChange(c);
+    return [...this.build.actions(), ...this.barExtras().map((e) => e.action)];
+  });
+  /**
+   * The actions the build page's bar adds after its own: the build page has no way back to the fix's documents, so a fix's
+   * list contributes the one that reopens it. Each carries whether its button is off and why.
+   */
+  readonly barExtras = computed(() => {
+    const c = this.change();
+    if (c === null || this.done() || c.track !== 'fix' || stageLabel(c.stage).step !== 'build') return [];
+    return actionsForChange(c)
+      .filter((a) => a === 'reopen-fix')
+      .map((action) => ({ action, disabled: this.disabledFor(action), title: this.titleFor(action) }));
   });
   /** What blocks the build, shown above the plan; null when nothing does or another document is shown. */
   readonly planBanner = computed(() => {
@@ -331,7 +388,22 @@ export class ChangePageViewModel {
     return c.stage === 'plan-out-of-date' && c.out_of_date !== null ? OUT_OF_DATE_BANNER[c.out_of_date] : null;
   });
   readonly primary = computed(() => primaryAction(this.actions()));
-  readonly labelOf = actionLabel;
+  /** An action's label at the change's stage: accepting a fix whose acceptance stopped reads differently. */
+  labelOf(action: StageAction): string {
+    const c = this.change();
+    return c === null ? actionLabel(action) : actionLabelAt(action, c.stage);
+  }
+  /** Whether an action's button is off: the lock holds it, or it is a fix run the plugin on this machine cannot do. */
+  disabledFor(action: StageAction): boolean {
+    return this.locked() || this.needsLightTrack(action);
+  }
+  /** Why a fix run is unavailable; null for any other action and while it is available. */
+  titleFor(action: StageAction): string | null {
+    return this.needsLightTrack(action) ? NEEDS_LIGHT_TRACK : null;
+  }
+  private needsLightTrack(action: StageAction): boolean {
+    return FIX_RUNS.includes(action) && !this.lightTrack();
+  }
   /** The front matter fields the rail shows: all but the status, which the strip says in words. */
   readonly railFields = computed(() => this.docParts().fields.filter(([key]) => key !== 'status'));
   /**
@@ -365,6 +437,8 @@ export class ChangePageViewModel {
   readonly confirmPrompt = computed(() => {
     const d = this.pendingDecision();
     if (d === null) return null;
+    const fix = this.pendingFix();
+    if (fix !== null) return `${fix.change}'s ${FILE[d]} has other uncommitted edits; rejecting the fix commits them too.`;
     return `${FILE[d]} has other uncommitted edits; ${d === 'reject-intent' ? 'rejecting' : 'accepting'} commits them too.`;
   });
 
@@ -373,7 +447,14 @@ export class ChangePageViewModel {
   /** The label of the action waiting on the feedback box, or null while the box is closed. */
   readonly feedbackFor = computed(() => {
     const a = this.pendingRevisit();
-    return a === null ? null : actionLabel(a);
+    return a === null ? null : this.labelOf(a);
+  });
+
+  /** The waiting action cannot run with an empty box. */
+  readonly feedbackRequired = computed(() => {
+    const a = this.pendingRevisit();
+    const c = this.change();
+    return a !== null && c !== null && feedbackRequired(a, c.stage, c.out_of_date);
   });
 
   // --- the build: its dialog, the leftovers confirm, the refusal, and what is handed to the build view
@@ -733,6 +814,10 @@ export class ChangePageViewModel {
   async act(action: StageAction): Promise<void> {
     // The build holds the lock it runs under; cancelling it is the one action that is always allowed.
     if (action !== 'cancel-build' && this.refuseWhileLocked()) return;
+    if (this.needsLightTrack(action)) {
+      this.toasts.error(NEEDS_LIGHT_TRACK);
+      return;
+    }
     switch (action) {
       case 'accept-intent':
       case 'reject-intent':
@@ -761,6 +846,9 @@ export class ChangePageViewModel {
       case 'cancel-build':
         this.build.cancelBuild();
         return;
+      case 'full-pipeline-instead':
+        await this.openFullPipeline();
+        return;
       default:
         // Regenerating an existing document first asks what should change; a first draft just runs.
         if (revisits(action)) this.pendingRevisit.set(action);
@@ -784,11 +872,149 @@ export class ChangePageViewModel {
   async confirmDecision(): Promise<void> {
     const d = this.pendingDecision();
     this.pendingDecision.set(null);
-    if (d !== null) await this.commitDecision(d, true);
+    const fix = this.pendingFix();
+    this.pendingFix.set(null);
+    if (d === null) return;
+    if (fix !== null) await this.closeFix(fix, true);
+    else await this.commitDecision(d, true);
   }
 
-  cancelConfirm(): void {
+  async cancelConfirm(): Promise<void> {
     this.pendingDecision.set(null);
+    const fix = this.pendingFix();
+    this.pendingFix.set(null);
+    if (fix === null) return;
+    await this.leaveFixOpen(fix, 'its other edits were not committed');
+    await this.load();
+  }
+
+  // --- taking the full pipeline instead of a drafted fix
+
+  readonly pipelineOpen = signal(false);
+  readonly pipelineIdea = signal('');
+  readonly pipelineNote = computed(() => `This closes the drafted fix ${this.changeName()}.`);
+  readonly pipelineSystems = computed(() => [this.system()]);
+  /** Whether the plugin on this machine can triage a change. */
+  readonly lightTrack = computed(() => {
+    const r = this.readiness();
+    return r !== null && r.kind === 'ready' && r.lightTrack;
+  });
+  /** The fix whose rejection waits on the other-edits confirm, after its replacement opened; null when none does. */
+  private readonly pendingFix = signal<FixClose | null>(null);
+
+  /** Read the fix's intent and open New change on the full pipeline with the fix as its description. */
+  private async openFullPipeline(): Promise<void> {
+    const master = this.masterDir();
+    if (master === null) return;
+    try {
+      const text = await this.transport.sdlcReadDoc(master, this.system(), this.changeName(), 'intent');
+      this.pipelineIdea.set(fullPipelineIdea(text ?? ''));
+    } catch (e) {
+      this.toasts.error(`Could not read the fix: ${message(e)}`);
+      return;
+    }
+    this.pipelineOpen.set(true);
+  }
+
+  closePipeline(): void {
+    this.pipelineOpen.set(false);
+  }
+
+  /**
+   * Start the new change, and close the fix only once it opened (R7.1). Any other outcome leaves the fix as it was:
+   * the runner has already said why for a refused or stopped start and for a run that made no change, so only an
+   * error thrown here gets a toast. The dialog's Start is the engineer's confirmation that the fix will close.
+   *
+   * The sequence: read the branch the master repository is on (the fix's documents live there), start the new change,
+   * which leaves the master on the new change's branch, then check out the fix's branch, commit `reject-intent` for the
+   * fix, and check out the new change's branch again. See `closeFix`.
+   */
+  async startPipeline(system: string, idea: string): Promise<void> {
+    this.pipelineOpen.set(false);
+    const workspace = this.current();
+    const scan = this.scan();
+    const master = this.masterDir();
+    if (!workspace || !scan || !master) return;
+    // Captured before the await: newChange navigates to the new change, and this page and ViewModel are reused.
+    const fixRef: ChangeRef = { system: this.system(), change: this.changeName() };
+    let outcome;
+    let fixBranch: string | null;
+    try {
+      fixBranch = (await this.transport.sdlcBranches(master)).current;
+      if (fixBranch === null) throw new Error('the master repository is not on a branch');
+      outcome = await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, 'full', (spec) => this.confirmRun(spec));
+    } catch (e) {
+      this.toasts.error(`Could not start the change: ${message(e)}`);
+      return;
+    }
+    if (outcome.kind !== 'opened') return;
+    await this.closeFix({ ...fixRef, master, fixBranch, newBranch: outcome.branch }, false);
+  }
+
+  /**
+   * Close the fix after its replacement opened. The master repository is on the new change's branch by now, where the
+   * fix's folder may be missing or stale, so: check out the fix's branch (skipped when it is the new branch), commit the
+   * rejection there, and check out the new change's branch again. A failed first checkout decides nothing; a failed
+   * decision still returns to the new branch; each failure is said in a toast, never left as a half state. An
+   * other-edits confirm keeps the master on the fix's branch until it is answered.
+   */
+  private async closeFix(fix: FixClose, confirmed: boolean): Promise<void> {
+    const master = fix.master;
+    const swap = fix.fixBranch !== fix.newBranch;
+    if (swap && confirmed === false) {
+      try {
+        await this.transport.sdlcCheckout(master, fix.fixBranch);
+      } catch (e) {
+        await this.leaveFixOpen(fix, message(e), false);
+        return;
+      }
+    }
+    let problem: string | null = null;
+    try {
+      const out = await this.transport.sdlcDecide(master, fix.system, fix.change, 'reject-intent', confirmed);
+      switch (out.kind) {
+        case 'needsConfirm':
+          this.pendingDecision.set('reject-intent');
+          this.pendingFix.set(fix);
+          return;
+        case 'gitFailed':
+          problem = out.stderr.trim() === '' ? 'git refused the commit' : out.stderr;
+          break;
+        case 'committed':
+          this.toasts.success(`${DONE['reject-intent']} · committed`);
+          break;
+      }
+    } catch (e) {
+      problem = message(e);
+    }
+    if (problem !== null) await this.leaveFixOpen(fix, problem, swap);
+    else if (swap) await this.returnToNewChange(fix);
+    await this.load();
+  }
+
+  /** Say the fix stays open, after returning the master to the new change's branch when it had left it. */
+  private async leaveFixOpen(fix: FixClose, why: string, returning = true): Promise<void> {
+    if (returning && fix.fixBranch !== fix.newBranch) await this.returnToNewChange(fix);
+    this.toasts.error(fixStays(fix, why));
+  }
+
+  /** Check out the new change's branch again; a failure says where the master and the new change are. */
+  private async returnToNewChange(fix: FixClose): Promise<void> {
+    try {
+      await this.transport.sdlcCheckout(fix.master, fix.newBranch);
+    } catch (e) {
+      this.toasts.error(`The master repository is on ${fix.fixBranch} and the new change is on ${fix.newBranch}: ${message(e)}. Check out ${fix.newBranch} to continue.`);
+    }
+  }
+
+  /** The preview a run goes through; null when it was cancelled or could not be opened. */
+  private async confirmRun(spec: RunSpec): Promise<RunSpec | null> {
+    try {
+      return await this.preview.open({ spec, mode: 'sdlc', workdir: spec.workdir, from: { session: this.givens.session(), job: null, build: null } });
+    } catch (e) {
+      this.toasts.error(`Could not preview the run: ${message(e)}`);
+      return null;
+    }
   }
 
   /** Show another of the change's documents. A newer pick, or a load that finishes, supersedes one still reading. */
@@ -1086,20 +1312,21 @@ export class ChangePageViewModel {
     return w && repo ? masterPath(w.folder, repo) : null;
   }
 
-  private async commitDecision(decision: Decision, confirmed: boolean): Promise<void> {
+  /** Record a decision on the change the page shows. */
+  private async commitDecision(decision: Decision, confirmed: boolean): Promise<DecisionOutcome> {
     const master = this.masterDir();
-    if (master === null) return;
+    if (master === null) return 'error';
     let out;
     try {
       out = await this.transport.sdlcDecide(master, this.system(), this.changeName(), decision, confirmed);
     } catch (e) {
       this.toasts.error(`Could not record the decision: ${message(e)}`);
-      return;
+      return 'error';
     }
     switch (out.kind) {
       case 'needsConfirm':
         this.pendingDecision.set(decision);
-        return;
+        return 'needsConfirm';
       case 'gitFailed':
         this.toasts.error(out.stderr.trim() === '' ? 'git refused the commit' : out.stderr);
         break;
@@ -1108,6 +1335,7 @@ export class ChangePageViewModel {
         break;
     }
     await this.load();
+    return out.kind;
   }
 
   private async runStage(action: StageAction, feedback = ''): Promise<void> {
@@ -1124,7 +1352,14 @@ export class ChangePageViewModel {
     let built;
     try {
       const settings = this.modes.settings() ?? (await this.modes.load());
-      built = specFor(run.kind, action, { folder: workspace.folder, system: this.system(), change: this.changeName(), feedback }, settings, this.catalog());
+      const ctx = { folder: workspace.folder, system: this.system(), change: this.changeName(), feedback };
+      if (run.kind === 'fix') {
+        const checksDir = this.checksDir() ?? (await this.readChecksDir());
+        if (checksDir === null) throw new Error('the checks folder is not known');
+        built = specFor(run.kind, action, ctx, settings, this.catalog(), undefined, restrictedFor(workspace.folder, scan, checksDir));
+      } else {
+        built = specFor(run.kind, action, ctx, settings, this.catalog());
+      }
     } catch (e) {
       this.toasts.error(`Could not prepare the run: ${message(e)}`);
       return;

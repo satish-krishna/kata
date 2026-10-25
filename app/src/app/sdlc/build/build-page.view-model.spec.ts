@@ -562,7 +562,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       await vm.start(await handoffFor(transport), CTX);
       await drive(vm, lock, shown(vm));
       expect(vm.findings().map((f) => f.text)).toEqual(['two']);
-      expect(vm.replaced().map((r) => [r.label, r.findings.map((f) => f.text)])).toEqual([['Review 1 of 2026-10-18', ['one']]]);
+      expect(vm.replaced().map((r) => [r.label, r.groups.flatMap((g) => g.findings).map((f) => f.text)])).toEqual([['Review 1 of 2026-10-18', ['one']]]);
     });
 
     it('a review run that leaves no review document says the review did not record its findings (F14)', async () => {
@@ -680,7 +680,7 @@ describe('the build page starts, stops and continues the same runs as the build 
     expect(specs[0].task).toContain('rename the status field to state');
     expect(next.findings()).toHaveLength(2);
     expect(next.replaced()).toHaveLength(1);
-    expect(next.replaced()[0].findings).toHaveLength(2);
+    expect(next.replaced()[0].groups.flatMap((g) => g.findings)).toHaveLength(2);
     expect(next.replaced()[0].label).toBe('Review 1 of 2026-10-19');
   });
 
@@ -1663,7 +1663,7 @@ describe('the findings area shows what the review knows at each stage (R4.3)', (
     { severity: 'high' as const, text: 'The limit is not enforced on retry', file: 'src/a.ts', line: 4 },
     { severity: null, text: 'The refusal message has no test' },
   ];
-  const review = (findings = found): FindingsView => ({ notice: null, findings, replaced: [], older: false, emptyText: 'Reviewed, nothing found.' });
+  const review = (findings = found): FindingsView => ({ notice: null, groups: [{ repo: null, findings }], findings, replaced: [], older: false, emptyText: 'Reviewed, nothing found.' });
   const departure: Departure = { repo: 'claims-core', task: 'T2', text: 'Used the shared limiter instead of a new one' };
   const area = (reading: boolean, entry: ReviewEntry, findings = found, departures: Departure[] = [departure]) =>
     findingsAreaOf({ reading, entry, review: review(findings), departures });

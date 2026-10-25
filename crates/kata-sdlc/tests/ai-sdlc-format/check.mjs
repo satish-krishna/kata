@@ -2990,7 +2990,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve3.call(this, root, ref);
+      let _sch = resolve4.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3017,7 +3017,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve3(root, ref) {
+    function resolve4(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3881,7 +3881,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve3(baseURI, relativeURI, options) {
+    function resolve4(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -4272,7 +4272,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve3,
+      resolve: resolve4,
       resolveComponent,
       equal,
       serialize,
@@ -23129,8 +23129,8 @@ var require_TransformOperationExecutor = __commonJS({
             return value;
           return Buffer.from(value);
         } else if ((0, utils_1.isPromise)(value) && !isMap) {
-          return new Promise((resolve3, reject) => {
-            value.then((data) => resolve3(this.transform(void 0, data, targetType, void 0, void 0, level + 1)), reject);
+          return new Promise((resolve4, reject) => {
+            value.then((data) => resolve4(this.transform(void 0, data, targetType, void 0, void 0, level + 1)), reject);
           });
         } else if (!isMap && value !== null && typeof value === "object" && typeof value.then === "function") {
           return value;
@@ -27466,8 +27466,8 @@ var require_src2 = __commonJS({
 });
 
 // src/cli.ts
-import { readFileSync as readFileSync2 } from "node:fs";
-import { basename, dirname as dirname2, resolve as resolve2 } from "node:path";
+import { readFileSync as readFileSync3 } from "node:fs";
+import { basename as basename2, dirname as dirname2, resolve as resolve3 } from "node:path";
 
 // src/change.ts
 function fieldLine(task, key) {
@@ -30301,10 +30301,10 @@ function resolveAll(constructs2, events, context) {
   const called = [];
   let index2 = -1;
   while (++index2 < constructs2.length) {
-    const resolve3 = constructs2[index2].resolveAll;
-    if (resolve3 && !called.includes(resolve3)) {
-      events = resolve3(events, context);
-      called.push(resolve3);
+    const resolve4 = constructs2[index2].resolveAll;
+    if (resolve4 && !called.includes(resolve4)) {
+      events = resolve4(events, context);
+      called.push(resolve4);
     }
   }
   return events;
@@ -34839,10 +34839,23 @@ var CouldNotRun = class extends Error {
 };
 
 // src/front-matter.ts
-function parseFrontMatter(text3, file) {
+function fenceLines(text3) {
   const lines = text3.split(/\r\n|\r|\n/);
-  if (lines[0]?.trim() !== "---") return { data: {}, bodyLine: 1 };
-  const close = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+  if (lines[0]?.trim() !== "---") return null;
+  return { lines, close: lines.findIndex((l, i) => i > 0 && l.trim() === "---") };
+}
+function frontMatterCloseLine(text3) {
+  const found = fenceLines(text3);
+  if (found === null || found.close < 0) return 0;
+  const parts = text3.split(/(\r\n|\r|\n)/);
+  let offset = 0;
+  for (let i = 0; i < found.close * 2; i++) offset += parts[i].length;
+  return text3.slice(0, offset).split("\n").length;
+}
+function parseFrontMatter(text3, file) {
+  const found = fenceLines(text3);
+  if (found === null) return { data: {}, bodyLine: 1 };
+  const { lines, close } = found;
   if (close < 0) throw new CouldNotRun(`${file}: front matter is never closed`);
   let data;
   try {
@@ -35056,6 +35069,11 @@ function findMarker(file) {
     dir = parent;
   }
 }
+
+// src/fix-state.ts
+import { execFileSync } from "node:child_process";
+import { existsSync as existsSync2, readFileSync as readFileSync2, statSync } from "node:fs";
+import { basename, join as join2, resolve as resolve2 } from "node:path";
 
 // src/plan.ts
 var import_ajv2 = __toESM(require_ajv(), 1);
@@ -35337,6 +35355,237 @@ function readPlan(text3, file, marker) {
   return { kind: "plan", layout, document: { tasks, shared_decisions }, problems };
 }
 
+// src/fix-state.ts
+var DOCUMENTS = ["intent", "spec", "plan"];
+var OWN_LINES = ["status", "source_intent_commit", "source_spec_commit", "accepted_in_advance"];
+var GIT_OPTIONS = ["-c", "core.quotepath=off", "--no-optional-locks"];
+var DIFF_OPTIONS = ["--no-ext-diff", "--no-textconv"];
+function git(cwd, args) {
+  try {
+    return execFileSync("git", [...GIT_OPTIONS, ...args], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 256 * 1024 * 1024
+    });
+  } catch (e) {
+    const err = e;
+    const detail = (err.stderr ?? "").trim() || err.message;
+    throw new CouldNotRun(`git ${args[0]} failed in ${cwd}: ${detail}`);
+  }
+}
+function gitMaybe(cwd, args) {
+  try {
+    return execFileSync("git", [...GIT_OPTIONS, ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch (e) {
+    if (e.status == null) {
+      throw new CouldNotRun(`git could not run in ${cwd}: ${e.message}`);
+    }
+    return null;
+  }
+}
+function fieldOf(text3, file, field) {
+  try {
+    return parseFrontMatter(text3, file).data[field];
+  } catch {
+    return void 0;
+  }
+}
+function statusOf(text3, file) {
+  const value = fieldOf(text3, file, "status");
+  return value === void 0 || value === null ? null : String(value);
+}
+var FIELD_LINE = /^([A-Za-z_][A-Za-z0-9_]*)\s*:(.*)$/;
+var HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,\d+)? @@/;
+function onlyOwnLines(top, path, headText, workingText) {
+  const out = git(top, ["diff", "HEAD", ...DIFF_OPTIONS, "--no-color", "--unified=0", "--", path]);
+  const headLines = headText.split("\n");
+  const ends = { "-": frontMatterCloseLine(headText), "+": frontMatterCloseLine(workingText) };
+  const next = { "-": 0, "+": 0 };
+  let oldStart = 0;
+  let oldCount = 0;
+  let added = 0;
+  let inHunks = false;
+  let statusAccepted = false;
+  for (const line of out.split("\n")) {
+    const hunk = HUNK.exec(line);
+    if (hunk) {
+      inHunks = true;
+      oldStart = Number(hunk[1]);
+      oldCount = hunk[2] === void 0 ? 1 : Number(hunk[2]);
+      next["-"] = oldStart;
+      next["+"] = Number(hunk[3]);
+      added = 0;
+      continue;
+    }
+    if (!inHunks || line === "") continue;
+    const side = line[0];
+    if (side !== "-" && side !== "+") return false;
+    const number = next[side]++;
+    let text3 = line.slice(1);
+    if (side === "+") {
+      const index2 = added < oldCount ? oldStart - 1 + added : oldCount > 0 ? oldStart + oldCount - 2 : oldStart - 1;
+      added++;
+      const expectsCr = (headLines[index2] ?? "").endsWith("\r");
+      if (expectsCr !== text3.endsWith("\r")) return false;
+    }
+    if (text3.endsWith("\r")) text3 = text3.slice(0, -1);
+    const field = FIELD_LINE.exec(text3);
+    if (!field || number < 2 || number >= ends[side] || !OWN_LINES.includes(field[1])) return false;
+    if (side === "+" && field[1] === "status") {
+      if (field[2].trim() !== "accepted") return false;
+      statusAccepted = true;
+    }
+  }
+  return statusAccepted;
+}
+function reportedPaths(top, paths) {
+  const out = git(top, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...paths]);
+  const reported = /* @__PURE__ */ new Set();
+  const fields = out.split("\0");
+  for (let i = 0; i < fields.length; i++) {
+    const field = fields[i];
+    if (field.length < 4) continue;
+    reported.add(field.slice(3));
+    if (field[0] === "R" || field[0] === "C") reported.add(fields[++i]);
+  }
+  return reported;
+}
+function differsFromHead(top, path) {
+  try {
+    execFileSync("git", [...GIT_OPTIONS, "diff", "--quiet", "HEAD", ...DIFF_OPTIONS, "--", path], { cwd: top, stdio: ["ignore", "ignore", "pipe"] });
+    return false;
+  } catch (e) {
+    const err = e;
+    if (err.status === 1) return true;
+    const detail = (err.stderr?.toString() ?? "").trim() || err.message;
+    throw new CouldNotRun(`git diff failed in ${top}: ${detail}`);
+  }
+}
+function readable(read) {
+  try {
+    return read();
+  } catch (e) {
+    if (e instanceof CouldNotRun) return null;
+    throw e;
+  }
+}
+function isBuilt(top, prefix, folder, inHead) {
+  const planPath = `${prefix}plan.md`;
+  if (!inHead(planPath)) return false;
+  const planFile = join2(folder, "plan.md");
+  const planText = git(top, ["show", `HEAD:${planPath}`]);
+  const planResult = readable(() => readPlan(planText, planFile, findMarker(planFile)));
+  if (planResult?.kind !== "plan") return false;
+  const tasks = new Set(planResult.document.tasks.map((t) => t.id));
+  if (tasks.size === 0) return false;
+  const logs = git(top, ["ls-tree", "-z", "--name-only", "HEAD", "--", `${prefix}build/`]).split("\0").filter((p) => p.endsWith(".md") && !p.endsWith("/review.md"));
+  return logs.some((path) => {
+    const text3 = git(top, ["show", `HEAD:${path}`]);
+    const result = readable(() => readBuildLog(text3, join2(folder, "build", basename(path))));
+    return result?.kind === "build-log" && result.document.entries.some((e) => tasks.has(e.task));
+  });
+}
+function rowOf(facts) {
+  const docs = DOCUMENTS.map((d) => facts[d]);
+  if (facts.intent.headStatus === "rejected") return 1;
+  const oddStatus = docs.some((d) => d.inHead && d.headStatus !== "draft" && d.headStatus !== "accepted");
+  const someAccepted = facts.accepted !== "none";
+  if (oddStatus || facts.accepted === "other" || someAccepted && docs.some((d) => !d.inHead)) return 2;
+  if (facts.unrecorded.length > 0) return 3;
+  if (facts.ownLinesOnly) return 4;
+  if (facts.accepted === "leading" && facts.acceptanceLast) return 5;
+  if (facts.accepted === "none" && !facts.built) return 6;
+  if (facts.accepted !== "all") return 7;
+  return 8;
+}
+function fixState(folderArg) {
+  const folder = resolve2(folderArg);
+  if (!existsSync2(folder)) throw new CouldNotRun(`${folderArg} does not exist`);
+  if (!statSync(folder).isDirectory()) throw new CouldNotRun(`${folderArg} is not a folder`);
+  const top = git(folder, ["rev-parse", "--show-toplevel"]).trim();
+  const prefix = git(folder, ["rev-parse", "--show-prefix"]).trim();
+  const hasHead = gitMaybe(top, ["rev-parse", "--verify", "-q", "HEAD"]) !== null;
+  const inHead = (path) => hasHead && git(top, ["ls-tree", "--name-only", "HEAD", "--", path]).trim() !== "";
+  const paths = DOCUMENTS.map((d) => `${prefix}${d}.md`);
+  const head = paths.map((p) => inHead(p) ? git(top, ["show", `HEAD:${p}`]) : null);
+  const working = DOCUMENTS.map((d) => {
+    try {
+      return readFileSync2(join2(folder, `${d}.md`), "utf8");
+    } catch {
+      return null;
+    }
+  });
+  const intentFile = join2(folder, "intent.md");
+  if (working[0] == null && head[0] == null) {
+    throw new CouldNotRun(`${intentFile}: cannot read the intent: there is no intent.md in the working tree or in HEAD`);
+  }
+  const trackIn = (text3, file) => text3 == null ? void 0 : fieldOf(text3, file, "track");
+  let track = trackIn(working[0] ?? null, intentFile);
+  if (track === void 0 || track === null) track = trackIn(head[0] ?? null, `HEAD:${paths[0]}`);
+  if (track !== "fix") {
+    throw new CouldNotRun(
+      `${intentFile}: not a fix (its track is ${track === void 0 || track === null ? "not set" : JSON.stringify(track)}, expected fix)`
+    );
+  }
+  const perDoc = DOCUMENTS.map((d, i) => ({
+    inHead: head[i] !== null,
+    headStatus: head[i] == null ? null : statusOf(head[i], `HEAD:${paths[i]}`),
+    workingStatus: working[i] == null ? null : statusOf(working[i], join2(folder, `${d}.md`))
+  }));
+  const acceptedInHead = perDoc.map((d) => d.inHead && d.headStatus === "accepted");
+  const count = acceptedInHead.filter(Boolean).length;
+  const leading = count > 0 && acceptedInHead.slice(0, count).every(Boolean);
+  const accepted = count === 0 ? "none" : count === 3 ? "all" : leading ? "leading" : "other";
+  const subject = hasHead ? git(top, ["log", "-1", "--format=%s", "--", ...paths]).trim() : "";
+  const change = basename(folder);
+  const acceptanceLast = DOCUMENTS.some((d) => subject.endsWith(`accept ${d} ${change}`));
+  const [intentFacts, specFacts, planFacts] = perDoc;
+  const facts = {
+    intent: intentFacts,
+    spec: specFacts,
+    plan: planFacts,
+    unrecorded: [],
+    ownLinesOnly: false,
+    accepted,
+    acceptanceLast,
+    built: false
+  };
+  const reported = reportedPaths(top, paths);
+  const early = rowOf(facts);
+  if (early === 1 || early === 2) {
+    facts.unrecorded = DOCUMENTS.filter((_, i) => !perDoc[i].inHead || reported.has(paths[i]));
+    return { row: early, facts };
+  }
+  const carrier = acceptedInHead.findIndex((a) => !a);
+  const unrecorded = [];
+  let anyDiff = false;
+  DOCUMENTS.forEach((d, i) => {
+    if (!perDoc[i].inHead) {
+      unrecorded.push(d);
+      return;
+    }
+    if (!reported.has(paths[i])) return;
+    if (working[i] != null && !differsFromHead(top, paths[i])) return;
+    anyDiff = true;
+    const ownLines = i === carrier && working[i] != null && perDoc[i].workingStatus === "accepted" && onlyOwnLines(top, paths[i], head[i], working[i]);
+    if (!ownLines) unrecorded.push(d);
+  });
+  facts.unrecorded = unrecorded;
+  facts.ownLinesOnly = anyDiff && unrecorded.length === 0;
+  facts.built = hasHead && isBuilt(top, prefix, folder, inHead);
+  return { row: rowOf(facts), facts };
+}
+function fixStates(folders) {
+  return folders.map((folder) => {
+    try {
+      return { folder, result: fixState(folder) };
+    } catch (e) {
+      return { folder, error: e instanceof CouldNotRun ? e.message : `internal error: ${e.message}` };
+    }
+  });
+}
+
 // src/review.ts
 var import_ajv3 = __toESM(require_ajv(), 1);
 
@@ -35350,6 +35599,12 @@ var finding_schema_default = {
   properties: {
     id: { type: "string", pattern: "^F[0-9]+$" },
     severity: { enum: ["high", "medium", "low"] },
+    repo: { type: "string", minLength: 1, description: "The repository the finding is in, as named in the review header's commits." },
+    concern: {
+      enum: ["spec", "bug", "convention"],
+      description: "spec: the change disagrees with the spec or plan; bug: wrong behavior the spec does not cover; convention: the change breaks a written rule of its repository."
+    },
+    rule: { type: "string", minLength: 1, description: "For a convention finding, the written rule it breaks: <file>:<line> in the repository, or a linter's rule ID." },
     file: { type: "string", minLength: 1 },
     line: { type: "integer", minimum: 1 }
   },
@@ -35381,7 +35636,7 @@ var validateHeader = ajv2.compile(review_header_schema_default);
 var validateFinding = ajv2.compile(finding_schema_default);
 var REVIEW_HEADING = /^## Review (\d+)\s*$/;
 var FINDING_HEADING = /^### (F\d+)\s*$/;
-function readFinding(doc, index2, id, end, file, problems, claimed) {
+function readFinding(doc, index2, id, end, file, problems, claimed, section) {
   const line = index2 + 1;
   const who = `finding ${id}`;
   const block = yamlBlock(doc, index2 + 1, end);
@@ -35398,10 +35653,26 @@ function readFinding(doc, index2, id, end, file, problems, claimed) {
   if (typeof f["id"] === "string" && f["id"] !== id) {
     problems.push({ file, line: keyLine(doc, block, "id"), message: `heading says ${id}, fields say ${f["id"]}` });
   }
-  if (!ok) return null;
+  const unruled = f["concern"] === "convention" && f["rule"] === void 0;
+  if (unruled) {
+    problems.push({ file, line, message: `${who} is a convention finding with no rule; cite the written rule it breaks as <file>:<line>` });
+  }
+  const reviewed = Object.keys(section.commits);
+  const stray = typeof f["repo"] === "string" && reviewed.length > 0 && !reviewed.includes(f["repo"]);
+  if (stray) {
+    problems.push({
+      file,
+      line: keyLine(doc, block, "repo"),
+      message: `${who} names repo ${f["repo"]}, which review ${section.number} does not list in its commits`
+    });
+  }
+  if (!ok || unruled || stray) return null;
   return {
     id,
     severity: f["severity"],
+    ...f["repo"] === void 0 ? {} : { repo: f["repo"] },
+    ...f["concern"] === void 0 ? {} : { concern: f["concern"] },
+    ...f["rule"] === void 0 ? {} : { rule: f["rule"] },
     file: f["file"],
     line: f["line"],
     text: doc.lines.slice(block.last + 2, end).join("\n").trim()
@@ -35440,7 +35711,7 @@ function readSection(doc, index2, number, end, file, problems, claimed) {
     if (first === void 0) seen.set(h.id, h.index + 1);
     else problems.push({ file, line: h.index + 1, message: `finding ${h.id} is recorded twice, first on line ${first}` });
     const limit = nextHeading(doc, h.index + 1, heads[n + 1]?.index ?? end, /^#{1,3} /);
-    const finding = readFinding(doc, h.index, h.id, limit, file, problems, claimed);
+    const finding = readFinding(doc, h.index, h.id, limit, file, problems, claimed, section);
     if (finding) section.findings.push(finding);
   });
   return section;
@@ -36478,7 +36749,7 @@ function readSpec(text3, file) {
 }
 
 // src/cli.ts
-var USAGE = "usage: node check.mjs check <file>...\n       node check.mjs read --json <file>";
+var USAGE = "usage: node check.mjs check <file>...\n       node check.mjs read --json <file>\n       node check.mjs fix-state --json <change folder>...";
 function kindOf(file) {
   const parts = file.split(/[\\/]/);
   const name = parts[parts.length - 1] ?? "";
@@ -36495,7 +36766,7 @@ function readDocument(file) {
   const kind = kindOf(file);
   let text3;
   try {
-    text3 = readFileSync2(file, "utf8");
+    text3 = readFileSync3(file, "utf8");
   } catch (e) {
     throw new CouldNotRun(`${file}: cannot read the file: ${e.code ?? e}`);
   }
@@ -36505,8 +36776,8 @@ function readDocument(file) {
   return readReview(text3, file);
 }
 function changeFolder(file) {
-  const folder = dirname2(resolve2(file));
-  return basename(folder) === "build" ? dirname2(folder) : folder;
+  const folder = dirname2(resolve3(file));
+  return basename2(folder) === "build" ? dirname2(folder) : folder;
 }
 function changeProblems(docs) {
   const groups = /* @__PURE__ */ new Map();
@@ -36528,6 +36799,12 @@ function main(argv) {
     const result = readDocument(rest[1]);
     process.stdout.write(JSON.stringify(result) + "\n");
     return result.problems.length === 0 ? EXIT.PASS : EXIT.PROBLEMS;
+  }
+  if (command === "fix-state" && rest.length >= 2 && rest[0] === "--json") {
+    const folders = rest.slice(1);
+    const out = folders.length === 1 ? fixState(folders[0]) : fixStates(folders);
+    process.stdout.write(JSON.stringify(out) + "\n");
+    return EXIT.PASS;
   }
   throw new CouldNotRun(USAGE);
 }
