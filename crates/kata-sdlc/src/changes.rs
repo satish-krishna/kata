@@ -757,12 +757,21 @@ mod tests {
             "draft plan",
         );
     }
+    /// The subject the fix skill gives an acceptance commit.
+    fn accept_subject(document: &str) -> String {
+        format!("docs(sdlc): accept {document} 2026-10-23-fix-it")
+    }
     /// The fix skill's section 6: accept the intent, pin the spec to that commit and accept it, then
     /// pin the plan to the spec's commit and accept it, one commit each.
     fn accept_fix_in_steps(repo: &Path, intent: bool, spec: bool, plan: bool) {
         let at = |file: &str| format!("{FIX_DIR}/{file}");
         if intent {
-            testutil::commit_file(repo, &at("intent.md"), &fix_intent("accepted"), "accept");
+            testutil::commit_file(
+                repo,
+                &at("intent.md"),
+                &fix_intent("accepted"),
+                &accept_subject("intent"),
+            );
         }
         if spec {
             let pin = last_commit_of(repo, &at("intent.md"));
@@ -770,7 +779,7 @@ mod tests {
                 repo,
                 &at("spec.md"),
                 &pinned_spec("accepted", &pin),
-                "accept",
+                &accept_subject("spec"),
             );
         }
         if plan {
@@ -779,7 +788,7 @@ mod tests {
                 repo,
                 &at("plan.md"),
                 &pinned_plan("accepted", &pin),
-                "accept",
+                &accept_subject("plan"),
             );
         }
     }
@@ -832,6 +841,34 @@ mod tests {
             "docs(sdlc): reopen fix 2026-10-23-fix-it",
         );
         assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
+
+        // Row 4 again, the redraft: two accepted stay accepted and the fix skill commits the new plan as
+        // a draft, so the latest subject is not an acceptance.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        accept_fix_in_steps(&repo, true, true, false);
+        testutil::commit_file(
+            &repo,
+            &at("plan.md"),
+            &pinned_plan("draft", &last_commit_of(&repo, &at("spec.md"))),
+            "docs(sdlc): draft fix 2026-10-23-fix-it",
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
+
+        // Row 4 again, an engineer's own commit on top of a partial acceptance.
+        testutil::commit_file(
+            &repo,
+            &at("plan.md"),
+            &pinned_plan("draft", &last_commit_of(&repo, &at("spec.md"))),
+            "chore: tidy",
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
+
+        // Row 3 with an accept spec latest subject: the acceptance run stopped part-way.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        accept_fix_in_steps(&repo, true, true, false);
+        assert_eq!(only_change(&repo).stage, Stage::FixAccepting);
 
         // Row 5: all committed, none accepted.
         let repo = fresh();
