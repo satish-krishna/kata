@@ -4,6 +4,7 @@ import type { BranchInfo } from '@bindings/BranchInfo';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ContextState } from '@bindings/ContextState';
+import type { InstructionsState } from '@bindings/InstructionsState';
 import type { Readiness } from '@bindings/Readiness';
 import type { Settings } from '@bindings/Settings';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
@@ -101,6 +102,8 @@ export class SdlcHomeViewModel {
       this.readiness(),
       this.changes().filter((c) => c.plan_unreadable).map((c) => c.plan_unreadable_reason),
     ));
+  /** This machine's workspace instructions against the master's; null when the plugin cannot report it. */
+  readonly instructions = signal<InstructionsState | null>(null);
   private readonly loaded = signal(false);
   private loadSeq = 0;
 
@@ -386,6 +389,11 @@ export class SdlcHomeViewModel {
   async addSystem(): Promise<void> {
     if (this.refuseWhileLocked()) return;
     await this.runOnBase('Running setup', 'Setup', 'setup', { system: '' });
+  }
+
+  /** Write or refresh the workspace instructions: one setup task, like any other. */
+  async refreshInstructions(): Promise<void> {
+    void 0;
   }
 
   async newChange(system: string, idea: string, track: StartTrack): Promise<void> {

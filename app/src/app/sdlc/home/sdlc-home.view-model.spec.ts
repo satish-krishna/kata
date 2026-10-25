@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
+import type { Readiness } from '@bindings/Readiness';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { toastState } from '@spartan-ng/brain/sonner';
@@ -683,5 +684,51 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
     const { vm } = setup();
     await vm.init();
     expect(noticeOf(vm)).toBeNull();
+  });
+});
+
+describe('SdlcHomeViewModel workspace instructions', () => {
+  const lightReady: Readiness = { kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true };
+
+  it('reads the instructions state only when the plugin supports the light track', async () => {
+    const { vm, transport } = setup();
+    const read = vi.spyOn(transport, 'sdlcInstructions');
+    await vm.init();
+    expect(read).not.toHaveBeenCalled();
+    expect(vm.instructions()).toBeNull();
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(lightReady);
+    await vm.selectWorkspace(vm.workspaces()[0].id);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(vm.instructions()).toBe('out-of-date');
+  });
+
+  it('refreshes through one setup task after the base-branch check, and reads current afterwards', async () => {
+    const { vm, transport, runAgent } = setup();
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(lightReady);
+    const mock = transport as unknown as { sdlc: { finishSetup(withInstructions: boolean): void } };
+    runAgent.mockImplementation(async (_title: string, spec: RunSpec) => {
+      mock.sdlc.finishSetup(spec.task.includes('--instructions'));
+      return 'success';
+    });
+    const branches = vi.spyOn(transport, 'sdlcBranches');
+    await vm.init();
+    branches.mockClear();
+    await vm.refreshInstructions();
+    expect(branches).toHaveBeenCalled();
+    expect(runAgent).toHaveBeenCalledTimes(1);
+    expect(specOf(runAgent).name).toBe('sdlc-setup');
+    expect(specOf(runAgent).task).toBe('Use the ai-sdlc setup skill with --instructions.');
+    expect(vm.instructions()).toBe('current');
+  });
+
+  it('refuses while another task runs', async () => {
+    const { vm, transport, lock, runAgent } = setup();
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(lightReady);
+    await vm.init();
+    void lock.runSteps('Busy', [{ label: 'x', run: () => new Promise<null>(() => undefined) }]);
+    await flush();
+    await vm.refreshInstructions();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(toastText()).toContain('already running');
   });
 });
