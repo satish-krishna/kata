@@ -878,7 +878,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_opener::init())
+        // The plugin's click-catching script would forward target="_blank" and Ctrl/Shift-clicked links to
+        // a command the webview has no permission for, so it is refused and logs an error. Off; `open_url` opens links.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .manage(RunControl::default())
         .setup(|app| {
             // Open at the remembered zoom; a failure leaves the window at 100%.
