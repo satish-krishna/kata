@@ -596,7 +596,19 @@ export function stagePills(stage: Stage, done: boolean, docs: DocsPresent): Stag
 
 export type Severity = "critical" | "high" | "medium" | "low";
 /** One finding of the review, with the severity its text opens with, if it names one. */
-export type Finding = { severity: Severity | null; text: string; id?: string; file?: string; line?: number };
+export type Finding = {
+  severity: Severity | null;
+  text: string;
+  id?: string;
+  file?: string;
+  line?: number;
+  /** The repository the finding is about, when the review names one. */
+  repo?: string;
+  /** What the finding concerns, when the review says. */
+  concern?: 'spec' | 'bug' | 'convention';
+  /** The written rule a convention finding cites. */
+  rule?: string;
+};
 
 
 

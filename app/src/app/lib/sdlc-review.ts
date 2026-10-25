@@ -5,7 +5,7 @@ import type { ReviewRecord } from '@bindings/ReviewRecord';
 import { type Finding, mostSeriousFirst } from './sdlc';
 
 /** One review of the document, with its findings most serious first, equal ranks in the order the document lists them. */
-export type ShownReview = { number: number; reviewedAt: string; findings: Finding[] };
+export type ShownReview = { number: number; reviewedAt: string; repos: string[]; findings: Finding[] };
 
 export type ReviewShown =
   /** Neither a document nor a review run: the change has not been reviewed. */
@@ -22,6 +22,7 @@ export function shownSection(section: Section): ShownReview {
   return {
     number: section.number,
     reviewedAt: section.reviewed_at,
+    repos: [],
     findings: mostSeriousFirst(section.findings.map((f) => ({ id: f.id, severity: f.severity, file: f.file, line: f.line, text: f.text }))),
   };
 }

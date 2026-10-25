@@ -19,6 +19,7 @@ describe('shownReview', () => {
       latest: {
         number: 1,
         reviewedAt: '2026-10-22',
+        repos: ['app'],
         findings: [
           { id: 'F1', severity: 'high', file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' },
           { id: 'F2', severity: 'low', file: 'src/a.ts', line: 4, text: 'A typo.' },
@@ -30,7 +31,7 @@ describe('shownReview', () => {
 
   it('shows reviewed with nothing found when the latest review has no findings (document present, none found)', () => {
     const got = shownReview(record(review(1, '2026-10-22', [])), null);
-    expect(got).toEqual({ kind: 'document', latest: { number: 1, reviewedAt: '2026-10-22', findings: [] }, earlier: [] });
+    expect(got).toEqual({ kind: 'document', latest: { number: 1, reviewedAt: '2026-10-22', repos: ['app'], findings: [] }, earlier: [] });
   });
 
   it('shows the latest review with the earlier ones available, newest first', () => {
@@ -57,5 +58,18 @@ describe('shownReview', () => {
 
   it('says there is no review yet (document absent, words absent)', () => {
     expect(shownReview(null, null)).toEqual({ kind: 'none' });
+  });
+});
+
+describe('shownReview: repositories and finding fields (R8.1, R8.2)', () => {
+  it('lists the repositories of the section in the order the document records them', () => {
+    const got = shownReview(record(review(1, '2026-10-22', [], { web: 'aaaaaaa', api: 'bbbbbbb' })), null);
+    expect(got.kind === 'document' && got.latest.repos).toEqual(['web', 'api']);
+  });
+
+  it('copies the repository, concern and rule of a finding from the document', () => {
+    const f = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'Breaks the rule.', repo: 'web', concern: 'convention' as const, rule: 'CONTRIBUTING.md:18' };
+    const got = shownReview(record(review(1, '2026-10-22', [f])), null);
+    expect(got.kind === 'document' && got.latest.findings).toEqual([f]);
   });
 });

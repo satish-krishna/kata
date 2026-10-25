@@ -15,7 +15,7 @@ export type RepoPaths = { repo: string; whole: string[]; committed: string[]; un
  * without that folder, in that repository only; any other path is looked up in every repository. A finding with a line
  * but no file names nothing.
  */
-export function locateFinding(f: { file?: string; line?: number }, repos: RepoPaths[], part: Part): FindingOutcome {
+export function locateFinding(f: { file?: string; line?: number; repo?: string }, repos: RepoPaths[], part: Part): FindingOutcome {
   const file = f.file?.trim().replaceAll('\\', '/');
   if (!file) return { kind: 'no-file' };
   const line = f.line ?? null;

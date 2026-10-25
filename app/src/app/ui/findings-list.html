@@ -3,15 +3,15 @@
   @if (older()) {
     <p class="k-left__note">Older layout: read from the closing words of the review run.</p>
   }
-  @if (findings().length === 0) {
+  @if ((groups()[0]?.findings ?? []).length === 0) {
     <p class="k-state__body">{{ emptyText() }}</p>
   } @else {
-    <ng-container *ngTemplateOutlet="list; context: { $implicit: findings() }" />
+    <ng-container *ngTemplateOutlet="list; context: { $implicit: groups()[0].findings }" />
   }
   @for (r of replaced(); track $index) {
     <details class="k-findings__replaced">
       <summary>{{ r.label ?? 'Replaced by the review at ' + r.at }}</summary>
-      <ng-container *ngTemplateOutlet="list; context: { $implicit: r.findings }" />
+      <ng-container *ngTemplateOutlet="list; context: { $implicit: r.groups[0].findings }" />
     </details>
   }
 </section>

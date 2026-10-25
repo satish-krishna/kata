@@ -136,4 +136,32 @@ describe('locateFinding', () => {
   it('does not fall back to other repositories when the named repository lacks the file', () => {
     expect(locateFinding({ file: 'customer-portal/src/c.cs', line: 5 }, [portal, core], 'whole')).toEqual({ kind: 'not-in-change' });
   });
+
+  describe('a finding that names its repository (R8.3)', () => {
+    const api: RepoPaths = { repo: 'api', whole: ['src/upload.ts'], committed: ['src/upload.ts'], uncommitted: [] };
+    const web: RepoPaths = { repo: 'web', whole: ['src/upload.ts'], committed: ['src/upload.ts'], uncommitted: [] };
+
+    it('is shown in that repository, not asked about, when the same path changed in two', () => {
+      expect(locateFinding({ file: 'src/upload.ts', line: 9, repo: 'web' }, [api, web], 'whole')).toEqual({
+        kind: 'show',
+        repo: 'web',
+        path: 'src/upload.ts',
+        line: 9,
+        switchToWhole: false,
+      });
+    });
+
+    it('has a leading repository folder stripped from its path', () => {
+      expect(locateFinding({ file: 'web/src/upload.ts', repo: 'web' }, [api, web], 'whole')).toMatchObject({ kind: 'show', repo: 'web', path: 'src/upload.ts' });
+    });
+
+    it('is not in the change when that repository lacks the file', () => {
+      const bare: RepoPaths = { repo: 'web', whole: [], committed: [], uncommitted: [] };
+      expect(locateFinding({ file: 'src/upload.ts', repo: 'web' }, [api, bare], 'whole')).toEqual({ kind: 'not-in-change' });
+    });
+
+    it('falls back to matching every repository when the repository is not listed', () => {
+      expect(locateFinding({ file: 'src/upload.ts', repo: 'ghost' }, [api, web], 'whole')).toMatchObject({ kind: 'choose', repos: ['api', 'web'] });
+    });
+  });
 });
