@@ -94,8 +94,8 @@ function fixActions(c: ChangeInfo): StageAction[] {
       return ["finish-fix-draft"];
     case "fix-awaiting":
       // Only row 6 of the fix-state table (all three drafted, none accepted, nothing built) may be closed by the full
-      // pipeline: an accepted document or a built task is work it would discard.
-      return c.build.finished > 0 || c.intent.status !== "draft" ? ["accept-fix", "change-fix"] : ["accept-fix", "change-fix", "full-pipeline-instead"];
+      // pipeline: an accepted document or a built task is work it would discard. The program reports the row.
+      return c.fix_row === 6 ? ["accept-fix", "change-fix", "full-pipeline-instead"] : ["accept-fix", "change-fix"];
     case "fix-accepting":
       return ["accept-fix", "change-fix"];
     case "build-ready":

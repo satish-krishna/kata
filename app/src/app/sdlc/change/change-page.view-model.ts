@@ -246,7 +246,16 @@ export class ChangePageViewModel {
   /** A fix whose documents carry statuses the workflow never leaves on a fix: the page lists them, on every tab. */
   private readonly unsettledNotice = computed<DocNotice | null>(() => {
     const c = this.change();
-    if (c === null || c.stage !== 'fix-unsettled') return null;
+    if (c === null) return null;
+    // An older plugin or a program failure: the reason alone, since no status was read.
+    if (c.stage === 'fix-needs-plugin') {
+      return { tone: 'warning', text: c.plan_unreadable_reason ?? 'Needs ai-sdlc 0.13.0 or later.', lines: [] };
+    }
+    if (c.stage !== 'fix-unsettled') return null;
+    const text = 'The workflow does not leave a fix in these statuses, so nothing can be run on it.';
+    // When the format program could not run, its own message says why the statuses are not known, and no status
+    // line is shown: none was read.
+    if (c.plan_unreadable && c.plan_unreadable_reason !== null) return { tone: 'warning', text, lines: [c.plan_unreadable_reason] };
     // Each document shows the status HEAD holds, whether or not the working file exists: a deleted document is
     // "missing (HEAD: draft)", and one not in HEAD says so.
     const status = (d: { status: string | null; head_status: string | null }) => {
@@ -254,13 +263,7 @@ export class ChangePageViewModel {
       return `${d.status} (HEAD: ${d.head_status ?? 'not committed'})`;
     };
     const lines = [`intent: ${status(c.intent)} · spec: ${status(c.spec)} · plan: ${status(c.plan)}`];
-    // When the format program could not run, its own message says why the statuses are not known.
-    if (c.plan_unreadable && c.plan_unreadable_reason !== null) lines.unshift(c.plan_unreadable_reason);
-    return {
-      tone: 'warning',
-      text: 'The workflow does not leave a fix in these statuses, so nothing can be run on it.',
-      lines,
-    };
+    return { tone: 'warning', text, lines };
   });
   /** What the open spec or plan shows, decided by the one owner of that table; null for the other tabs and before the first load. */
   private readonly shown = computed<Shown | null>(() => {

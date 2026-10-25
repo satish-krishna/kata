@@ -31,7 +31,7 @@ async function mountFix() {
   const transport = new MockTransport();
   const real = transport.sdlcChanges.bind(transport);
   vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
-    (await real(m, s)).map((c) => (c.change === FIX ? { ...c, stage: 'fix-awaiting' as const, track: 'fix' as const, intent: { ...c.intent, status: 'draft', head_status: 'draft' } } : c)),
+    (await real(m, s)).map((c) => (c.change === FIX ? { ...c, stage: 'fix-awaiting' as const, track: 'fix' as const, fix_row: 6, intent: { ...c.intent, status: 'draft', head_status: 'draft' } } : c)),
   );
   const realDoc = transport.sdlcReadDoc.bind(transport);
   vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (m, s, c, d) => (c === FIX && d === 'intent' ? FIX_INTENT : realDoc(m, s, c, d)));
