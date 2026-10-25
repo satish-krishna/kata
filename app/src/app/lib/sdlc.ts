@@ -11,8 +11,10 @@ import type { RunRecord } from "@bindings/RunRecord";
 import type { RunSpec } from "@bindings/RunSpec";
 import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
+import type { WorkspaceScan } from "@bindings/WorkspaceScan";
 import type { KataEvent, RunDetail } from "./events";
 import { givenKey } from "./given";
+import { masterRepo as masterRepoOf, productRepos as productReposOf } from "./sdlc-workspace";
 import { defaultSpec } from "./spec";
 
 /** The plugins an AI-SDLC run cannot work without; passed to `previewRun` so the preview locks them on. */
@@ -138,9 +140,24 @@ export type RunContext = {
   repos?: string[];
   /** The operator's corrections for a revisit, passed to the skill as `Operator feedback:`. */
   feedback?: string;
+  /** For setup: write the workspace instructions (`--instructions`). */
+  instructions?: boolean;
 };
 
-export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan" | "build";
+/** The one action of a fix that is not a stage action of the change page: accepting it in the Workbench. */
+export type FixAction = "accept-fix";
+
+export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan" | "build" | "start" | "fix";
+
+/** What a triage or fix run is held to: the repositories it must not edit and Kata's checks folder. */
+export type Restricted = { workspaceFolder: string; masterRepo: string; systemRepos: string[]; checksDir: string };
+
+/** The restriction of a triage or fix run, from the same lists a build uses. Throws when the workspace has no master. */
+export function restrictedFor(workspaceFolder: string, scan: WorkspaceScan, checksDir: string): Restricted {
+  void masterRepoOf; void productReposOf;
+  void workspaceFolder; void scan; void checksDir;
+  throw new Error("not implemented");
+}
 
 /** One build run: a repository's run or the whole-change review, with everything its run-spec needs. */
 export type BuildRun = {
@@ -252,7 +269,7 @@ function nameFor(kind: SdlcKind, ctx: RunContext): string {
   }
 }
 
-function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): string {
+function taskFor(kind: SdlcKind, action: StageAction | FixAction | null, ctx: RunContext): string {
   const { system, change } = ctx;
   switch (kind) {
     case "setup":
@@ -279,6 +296,9 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): s
     }
     case "build":
       throw new Error("a build run-spec is made from its BuildRun");
+    case "start":
+    case "fix":
+      return "";
   }
 }
 
@@ -316,12 +336,14 @@ function buildSpec(ctx: RunContext, run: BuildRun): RunSpec {
 /** Build the run-spec for one AI-SDLC run. Always bypass-valid: allow/deny/ask stay empty. */
 export function specFor(
   kind: SdlcKind,
-  action: StageAction | null,
+  action: StageAction | FixAction | null,
   ctx: RunContext,
   settings: Settings,
   catalog: CatalogEntry[],
   run?: BuildRun,
+  restricted?: Restricted,
 ): RunSpec {
+  void restricted;
   if (kind === "build") {
     if (!run) throw new Error("a build run-spec needs its BuildRun");
     return buildSpec(ctx, run);

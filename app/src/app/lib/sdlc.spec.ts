@@ -3,9 +3,10 @@ import type { ChangeInfo } from "@bindings/ChangeInfo";
 import type { OutOfDate } from "@bindings/OutOfDate";
 import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
+import type { WorkspaceScan } from "@bindings/WorkspaceScan";
 import type { KataEvent, RunDetail } from "./events";
 import { validateLocal } from "./mock";
-import { DONE_LABEL, actionLabel, buildPreviewFor, givenFor, safetyRules, actionsFor, actionsForChange, hasAiSdlcPlugin, isBuildRun, primaryAction, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type BuildRun, type RunContext, type StageAction } from "./sdlc";
+import { DONE_LABEL, actionLabel, buildPreviewFor, givenFor, safetyRules, actionsFor, actionsForChange, hasAiSdlcPlugin, isBuildRun, primaryAction, restrictedFor, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type BuildRun, type Restricted, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -583,5 +584,125 @@ describe("what kind of run a spec is", () => {
     expect(isBuildRun("continue-one")).toBe(true);
     expect(isBuildRun("round")).toBe(true);
     expect(isBuildRun("manual-review")).toBe(true);
+  });
+});
+
+describe("triage and fix run-specs (T8)", () => {
+  const WS = "D:\\ws";
+  const CHECKS = "C:\\Users\\u\\.kata\\workbench\\checks";
+  const restricted: Restricted = { workspaceFolder: WS, masterRepo: "intent-repo", systemRepos: ["kata", "api"], checksDir: CHECKS };
+  const scan = (over: Partial<WorkspaceScan> = {}): WorkspaceScan => ({
+    folder: WS,
+    repos: ["intent-repo", "kata", "api"],
+    master: { kind: "one", repo: "intent-repo", committed: true },
+    marker: null,
+    marker_error: null,
+    ...over,
+  });
+  // The auto setting is not in the generated type yet; the spec must not depend on the setting at all.
+  const auto = { ...bypass, permission_mode: "auto" } as unknown as Settings;
+  const wsCtx: RunContext = { folder: WS, system: "claims", change: "2026-10-23-fix-it" };
+  const startCtx: RunContext = { folder: WS, system: "claims", change: null, idea: "Photos fail to upload" };
+
+  it("writes the four task texts out in full", () => {
+    expect(specFor("start", null, startCtx, bypass, both, undefined, restricted).task).toBe(
+      "Use the ai-sdlc start skill for system claims. The change: Photos fail to upload. The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.",
+    );
+    expect(specFor("fix", "accept-fix", wsCtx, bypass, both, undefined, restricted).task).toBe(
+      "Use the ai-sdlc fix skill for system claims with --accept 2026-10-23-fix-it. The engineer accepted this fix in the Workbench.",
+    );
+    expect(specFor("fix", null, wsCtx, bypass, both, undefined, restricted).task).toBe(
+      "Use the ai-sdlc fix skill for system claims on change folder 2026-10-23-fix-it. The engineer accepts the fix later in the Workbench, so do not ask for acceptance.",
+    );
+    expect(specFor("setup", null, { folder: WS, system: "", change: null, instructions: true }, bypass, both).task).toBe(
+      "Use the ai-sdlc setup skill with --instructions.",
+    );
+  });
+
+  it("appends operator feedback as it does for every other kind", () => {
+    const s = specFor("fix", null, { ...wsCtx, feedback: "  narrower  " }, bypass, both, undefined, restricted);
+    expect(s.task.endsWith("\n\nOperator feedback:\nnarrower")).toBe(true);
+  });
+
+  it("holds a start and a fix run to the same restrictions whatever the permission setting (R15.1, R15.2)", () => {
+    const deny = [
+      "Bash(git push:*)",
+      "Bash(gh:*)",
+      "Bash(git remote:*)",
+      "Edit(//c/Users/u/.kata/workbench/checks/**)",
+      "Edit(//d/ws/kata/**)",
+      "Edit(//d/ws/api/**)",
+    ];
+    const specs = [
+      specFor("start", null, startCtx, bypass, both, undefined, restricted),
+      specFor("start", null, startCtx, prompt, both, undefined, restricted),
+      specFor("start", null, startCtx, auto, both, undefined, restricted),
+      specFor("fix", null, wsCtx, bypass, both, undefined, restricted),
+      specFor("fix", null, wsCtx, prompt, both, undefined, restricted),
+      specFor("fix", "accept-fix", wsCtx, auto, both, undefined, restricted),
+    ];
+    for (const s of specs) {
+      expect(s.permissions.mode).toBe("auto");
+      expect([...(s.permissions.deny ?? [])].sort()).toEqual([...deny].sort());
+      expect(s.permissions.allow).toEqual(["Read(//d/ws/**)"]);
+      expect(s.permissions.ask ?? []).toEqual([]);
+      expect(s.permissions.unmatched).toBeUndefined();
+      expect(s.interactive).toEqual({ enabled: true, answer_timeout_secs: 3600 });
+      expect(s.env_remove).toEqual(["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"]);
+      expect(s.workdir).toBe(WS);
+      expect(s.leash.timeout_secs).toBe(6 * 60 * 60);
+      expect(s.given?.build).toBe(false);
+      expect(validateLocal(s)).toEqual([]);
+    }
+    for (const kind of ["start", "fix"] as const) {
+      const [a, b, c] = specs.filter((s) => s.name.endsWith(`-${kind}`));
+      expect(b).toEqual(a);
+      expect(c.permissions).toEqual(a.permissions);
+    }
+  });
+
+  it("refuses to build a start or fix spec without its restriction", () => {
+    expect(() => specFor("start", null, startCtx, bypass, both)).toThrow();
+    expect(() => specFor("fix", null, wsCtx, bypass, both)).toThrow();
+  });
+
+  it("restrictedFor names the master and the product repositories the build protects", () => {
+    expect(restrictedFor(WS, scan(), CHECKS)).toEqual(restricted);
+    expect(() => restrictedFor(WS, scan({ master: { kind: "none" } }), CHECKS)).toThrow();
+    expect(() => restrictedFor(WS, scan({ master: { kind: "many", repos: ["a", "b"] } }), CHECKS)).toThrow();
+  });
+
+  it("leaves the permissions of a repository run and a review run as they were", () => {
+    const run: BuildRun = {
+      target: { repo: "app" }, timeoutSecs: 7200, instructions: null, workspaceFolder: "/home/u/ws", masterRepo: "master",
+      systemRepos: ["master", "app", "api"], checksDir: "/home/u/.kata/checks/claims", continueOnLeftovers: false,
+    };
+    const d = "//home/u/ws/master/intent/claims/2026-10-12-fnol";
+    const base = ["Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)", "Edit(//home/u/.kata/checks/claims/**)"];
+    const repoRun = specFor("build", null, { ...ctx, folder: run.workspaceFolder }, bypass, both, run).permissions;
+    expect([...(repoRun.deny ?? [])].sort()).toEqual(
+      [...base, "Edit(//home/u/ws/api/**)", `Edit(${d}/build/master.md)`, `Edit(${d}/build/api.md)`, `Edit(${d}/build/review.md)`].sort(),
+    );
+    expect(repoRun.allow).toEqual(["Read(//home/u/ws/**)", `Edit(${d}/build/app.md)`]);
+    const review = specFor("build", null, { ...ctx, folder: run.workspaceFolder }, bypass, both, { ...run, target: "review" }).permissions;
+    expect([...(review.deny ?? [])].sort()).toEqual(
+      [
+        ...base, "Edit(//home/u/ws/app/**)", "Edit(//home/u/ws/api/**)",
+        `Edit(${d}/build/master.md)`, `Edit(${d}/build/app.md)`, `Edit(${d}/build/api.md)`,
+        `Edit(${d}/intent.md)`, `Edit(${d}/spec.md)`, `Edit(${d}/plan.md)`,
+      ].sort(),
+    );
+    expect(review.allow).toEqual(["Read(//home/u/ws/**)", `Edit(${d}/build/review.md)`]);
+  });
+
+  it("builds the same run-spec for a fix change as for a full one, since the build takes no track (R11.1)", () => {
+    const run: BuildRun = {
+      target: { repo: "kata" }, timeoutSecs: 7200, instructions: null, workspaceFolder: WS, masterRepo: "intent-repo",
+      systemRepos: ["intent-repo", "kata", "api"], checksDir: CHECKS, continueOnLeftovers: false,
+    };
+    const full = { ...changeAt("build-ready"), track: "full" as const };
+    const fix = { ...changeAt("build-ready"), track: "fix" as const };
+    const forChange = (c: ChangeInfo) => specFor("build", null, { folder: WS, system: c.system, change: c.change }, bypass, both, run);
+    expect(forChange(fix)).toEqual(forChange(full));
   });
 });
