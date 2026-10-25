@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, effect } from '@angular/core';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { BuildStatus } from '@bindings/BuildStatus';
@@ -20,7 +20,8 @@ import { givenKey, type KindGroup, type PresetRow } from '../../lib/given';
 import { safetyRules, specFor, type BuildRun } from '../../lib/sdlc';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import type { BuildHandoff } from '../change/change-page.view-model';
-import { BuildPageViewModel, type BuildContext } from './build-page.view-model';
+import { BuildLayoutViewModel } from './build-layout.view-model';
+import { BuildPageViewModel, findingsAreaOf, type BuildContext, type Departure, type FindingsView, type ReviewEntry } from './build-page.view-model';
 
 const FOLDER = MOCK_WORKSPACE_FOLDER;
 const CTX: BuildContext = { workspaceId: 'acme-claims', folder: FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE, systemRepos: [] };
@@ -133,8 +134,7 @@ describe('the build page starts, stops and continues the same runs as the build 
     expect(view.pick).toEqual({ kind: 'repo', repo: 'claims-core' });
     expect(view.areas).toEqual({ activity: true, files: true });
     expect(view.sessions.length).toBeGreaterThan(0);
-    expect(view.findings).toBeNull();
-    expect(view.narrow).toBe(false);
+    expect(view.findingsArea.review).toBeNull();
   });
 
   it('refuses to start while another task holds the lock, and starts nothing', async () => {
@@ -175,6 +175,20 @@ describe('the build page starts, stops and continues the same runs as the build 
     await advance(1500);
     expect(group(vm, 'claims-core').action).toBe('cancel');
     expect(status.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it('the waiting notice says how long the agent has waited, and the time advances with the clock (R11.1)', async () => {
+    const { vm, transport, lock } = setup();
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(2000);
+    expect(lock.waiting()).toHaveLength(1);
+    const secs = (text: string) => Number(text.split(':')[0]) * 60 + Number(text.split(':')[1]);
+    const before = vm.waitingNotices()[0].waited;
+    expect(before).toMatch(/^[0-9]+:[0-9]{2}$/);
+    await advance(83000);
+    const after = vm.waitingNotices()[0].waited;
+    expect(secs(after) - secs(before)).toBeGreaterThanOrEqual(82);
+    expect(secs(after) - secs(before)).toBeLessThanOrEqual(84);
   });
 
   it('a repository row shows the waiting clock while its run waits (R4.1)', async () => {
@@ -500,7 +514,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       });
       return vi.spyOn(transport, 'sdlcReviewRecord').mockImplementation(async () => ({ layout: 2, reviews: reviewed ? reviews : [], problems: reviewed ? documentProblems : [], master_moved: [] }));
     };
-    const shown = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.view().findings !== null;
+    const shown = (vm: BuildPageViewModel) => () => vm.phase() === 'finished' && vm.view().findingsArea.review !== null;
 
     it('findings come from review.md, not the run words (R14.2)', async () => {
       const { vm, transport, lock } = setup();
@@ -526,7 +540,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       await drive(vm, lock, shown(vm));
       const order = ['the limit is not enforced', 'the retry loops forever', 'the message has no test', 'a stale comment'];
       expect(vm.findings().map((f) => f.text)).toEqual(order);
-      expect(vm.view().findings!.findings.map((f) => f.text)).toEqual(order);
+      expect(vm.view().findingsArea.review!.findings.map((f) => f.text)).toEqual(order);
     });
 
     it('a review with no findings shows reviewed, nothing found (R14.3)', async () => {
@@ -1513,6 +1527,17 @@ describe('the build page shows tasks and sessions from the build log, the run li
     expect(vm.view().areas.files).toBe(false);
   });
 
+  it('counts the changed files for the area tabs', async () => {
+    const { vm, transport, load } = await opened({ built: false });
+    const empty = { files: [], loc: [] };
+    const file = (path: string) => ({ path, oldPath: null, status: 'modified', added: 1, removed: 0, binary: false, uncommitted: true });
+    const listing = { files: [file('src/a.ts'), file('src/b.ts')], loc: [] };
+    vi.spyOn(transport, 'sdlcDiffFiles').mockImplementation((path) => Promise.resolve((path.endsWith('claims-core') ? listing : empty) as never));
+    await load();
+    await advance(100);
+    expect(vm.view().counts).toEqual({ files: 2, findings: 0 });
+  });
+
   it('every live session stays in the view, hidden, whatever is picked', async () => {
     const { vm, transport } = setup();
     await vm.start(await handoffFor(transport), CTX);
@@ -1554,7 +1579,7 @@ describe('what the pick is and what the activity area shows for it', () => {
     await drive(vm, lock, finished(vm));
     expect(vm.stage()).toBe('review-finished');
     expect(vm.pick()).toEqual({ kind: 'review' });
-    expect(vm.view().findings).not.toBeNull();
+    expect(vm.view().findingsArea.review).not.toBeNull();
   });
 
   it('a Go to picks the repository and asks for its question to be brought into view, once per Go to', async () => {
@@ -1626,5 +1651,214 @@ describe('what the pick is and what the activity area shows for it', () => {
     commitRows(transport);
     await advance(2500);
     expect(vm.pickedTask()).toBe(again);
+  });
+});
+
+describe('the findings area shows what the review knows at each stage (R4.3)', () => {
+  const READING = 'Reading the review…';
+  const NOT_RUN = 'The review runs by itself once the last task is recorded.';
+  const RUNNING = 'The review is running. Its findings appear here when it ends.';
+  const STALE = 'The work changed since it was reviewed.';
+  const found = [
+    { severity: 'high' as const, text: 'The limit is not enforced on retry', file: 'src/a.ts', line: 4 },
+    { severity: null, text: 'The refusal message has no test' },
+  ];
+  const review = (findings = found): FindingsView => ({ notice: null, findings, replaced: [], older: false, emptyText: 'Reviewed, nothing found.' });
+  const departure: Departure = { repo: 'claims-core', task: 'T2', text: 'Used the shared limiter instead of a new one' };
+  const area = (reading: boolean, entry: ReviewEntry, findings = found, departures: Departure[] = [departure]) =>
+    findingsAreaOf({ reading, entry, review: review(findings), departures });
+
+  it('being read: "Reading the review…", whatever the entry and the findings', () => {
+    for (const entry of ['not run', 'running', 'finished', 'stale'] as const) {
+      expect(area(true, entry), entry).toMatchObject({ message: READING, review: null, staleNotice: null, departures: null });
+    }
+  });
+
+  it('not run: that the review runs by itself, then the departures', () => {
+    expect(area(false, 'not run')).toEqual({ message: NOT_RUN, staleNotice: null, review: null, departures: [departure], noDepartures: null });
+  });
+
+  it('running: that the review is running, then the departures', () => {
+    expect(area(false, 'running')).toEqual({ message: RUNNING, staleNotice: null, review: null, departures: [departure], noDepartures: null });
+  });
+
+  it('finished with findings: the findings, most serious first as given, then the departures', () => {
+    const shown = area(false, 'finished');
+    expect(shown.message).toBeNull();
+    expect(shown.staleNotice).toBeNull();
+    expect(shown.review!.findings.map((f) => f.text)).toEqual(found.map((f) => f.text));
+    expect(shown.departures).toEqual([departure]);
+  });
+
+  it('finished with none: "Reviewed, nothing found." then the departures', () => {
+    const shown = area(false, 'finished', []);
+    expect(shown.message).toBeNull();
+    expect(shown.review!.findings).toEqual([]);
+    expect(shown.review!.emptyText).toBe('Reviewed, nothing found.');
+    expect(shown.departures).toEqual([departure]);
+  });
+
+  it('stale with findings: the out-of-date notice, the findings, then the departures', () => {
+    const shown = area(false, 'stale');
+    expect(shown.staleNotice).toBe(STALE);
+    expect(shown.review!.findings).toHaveLength(2);
+    expect(shown.departures).toEqual([departure]);
+  });
+
+  it('stale with none: the out-of-date notice, the empty text, then the departures', () => {
+    const shown = area(false, 'stale', []);
+    expect(shown.staleNotice).toBe(STALE);
+    expect(shown.review!.findings).toEqual([]);
+    expect(shown.review!.emptyText).toBe('Reviewed, nothing found.');
+    expect(shown.departures).toEqual([departure]);
+  });
+
+  it('with no departure recorded it says "No departures from the plan."', () => {
+    expect(area(false, 'finished', found, [])).toMatchObject({ departures: [], noDepartures: 'No departures from the plan.' });
+    expect(area(false, 'not run', found, [])).toMatchObject({ departures: [], noDepartures: 'No departures from the plan.' });
+  });
+
+  it('showFinding sets the place with the file, the line or null, the text and a count that rises each time', () => {
+    const { vm } = setup();
+    vm.showFinding(found[0]);
+    expect(vm.view().findingPlace).toEqual({ file: 'src/a.ts', line: 4, text: found[0].text, n: 1 });
+    vm.showFinding({ severity: null, text: 'Whole file', file: 'src/b.ts' });
+    expect(vm.view().findingPlace).toEqual({ file: 'src/b.ts', line: null, text: 'Whole file', n: 2 });
+    vm.showFinding(found[1]);
+    expect(vm.view().findingPlace!.n).toBe(2);
+  });
+});
+
+/** Stands in for the change page when the layout is under test as well: the real build page and the real layout beside the preview. */
+@Component({ selector: 'kata-layout-host', template: '', providers: [BuildPageViewModel, RunPreviewViewModel, BuildLayoutViewModel] })
+class LayoutHost {}
+
+describe('the layout follows the real build page through a finish, whatever order the run links arrive in (R10.1, R10.2, R10.5, R16.1)', () => {
+  const deferred = () => {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => (release = resolve));
+    return { promise, release };
+  };
+
+  /** The real build page and layout over a mock transport; `stages` records every value the layout stage takes, `said` everything the page announced. */
+  function layoutSetup() {
+    const transport = new MockTransport();
+    TestBed.configureTestingModule({ providers: [provideRouter([]), { provide: KataTransport, useValue: transport }] });
+    const fixture = TestBed.createComponent(LayoutHost);
+    hosts.push(fixture);
+    const previewVm = fixture.debugElement.injector.get(RunPreviewViewModel);
+    vi.spyOn(previewVm, 'openBuild').mockImplementation(async (req) => ({ off: new Set(req.from.build ?? []), request: null }));
+    const vm = fixture.debugElement.injector.get(BuildPageViewModel);
+    const layout = fixture.debugElement.injector.get(BuildLayoutViewModel);
+    const stages: (string | null)[] = [];
+    TestBed.runInInjectionContext(() =>
+      effect(() => {
+        stages.push(vm.layoutStage());
+      }),
+    );
+    const said: string[] = [];
+    const say = vm.say.bind(vm);
+    vi.spyOn(vm, 'say').mockImplementation((text: string) => {
+      said.push(text);
+      say(text);
+    });
+    return { fixture, transport, vm, layout, stages, said, lock: TestBed.inject(LockStore) };
+  }
+
+  /** The run links wait for `gate` once it is set; the records say every linked run exited 0. */
+  function lateLinks(transport: MockTransport) {
+    const gate: { current: ReturnType<typeof deferred> | null } = { current: null };
+    const links = transport.sdlcRunLinks.bind(transport);
+    vi.spyOn(transport, 'sdlcRunLinks').mockImplementation(async () => {
+      if (gate.current !== null) await gate.current.promise;
+      return links();
+    });
+    vi.spyOn(transport, 'listRuns').mockImplementation(async () => (await links()).map((l) => ({ id: l.run_id, kata: 'build', started_at: 0, isolation: 'none', exit: 0, turns: 1, cost_usd: 0 })));
+    return gate;
+  }
+
+  const commitFirstTask = (transport: MockTransport) =>
+    (transport as unknown as { sdlc: { commitRows(t: { id: string; name: string; repo: string; dependsOn: string[] }[]): void } }).sdlc.commitRows([
+      { id: 'T1', name: '', repo: 'claims-core', dependsOn: [] },
+    ]);
+
+  it('R10.1: a review that ends before its run link is read never passes through stopped, and Changes stays on show with Review marked', async () => {
+    const { vm, transport, lock, layout, stages } = layoutSetup();
+    const gate = lateLinks(transport);
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    commitFirstTask(transport);
+    await advance(2500);
+    expect(vm.layoutStage()).toBe('running');
+    layout.pickMode('changes');
+    await drive(vm, lock, () => {
+      if (vm.phase() === 'reviewing' && gate.current === null) gate.current = deferred();
+      return vm.phase() === 'finished';
+    });
+    await advance(300);
+    expect(stages).not.toContain('stopped');
+    expect(vm.layoutStage()).toBe('finished');
+    gate.current!.release();
+    await advance(300);
+    expect(stages).not.toContain('stopped');
+    expect(layout.mode()).toBe('changes');
+    expect(layout.suggested()).toBe('review');
+  });
+
+  it('R10.2: with the activity in focus in Watch, a finished review ends the focus and moves the page to Review', async () => {
+    const { vm, transport, lock, layout, stages } = layoutSetup();
+    const gate = lateLinks(transport);
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(300);
+    commitFirstTask(transport);
+    await advance(2500);
+    expect(layout.mode()).toBe('watch');
+    layout.focusOn('activity');
+    await drive(vm, lock, () => {
+      if (vm.phase() === 'reviewing' && gate.current === null) gate.current = deferred();
+      return vm.phase() === 'finished';
+    });
+    await advance(300);
+    expect(stages).not.toContain('stopped');
+    expect(layout.focus()).toBeNull();
+    expect(layout.mode()).toBe('review');
+    gate.current!.release();
+    await advance(300);
+    expect(layout.mode()).toBe('review');
+  });
+
+  it('R10.5, R16.1: a finished change whose review exists only as a run opens in Review, without a move or an announcement, however late its sessions are read', async () => {
+    const { vm, transport, layout, stages, said } = layoutSetup();
+    const heads = await transport.sdlcBuildHeads(FOLDER, [MOCK_MASTER, 'claims-core', 'customer-portal'], MOCK_BUILD_CHANGE);
+    const review: RunLink = { workspace_id: 'acme-claims', system: 'claims', change: MOCK_BUILD_CHANGE, stage: 'review', run_id: 'review-1', started_at: 1, heads };
+    const gate = deferred();
+    vi.spyOn(transport, 'sdlcRunLinks').mockImplementation(async () => {
+      await gate.promise;
+      return [review];
+    });
+    vi.spyOn(transport, 'sdlcTaskLinks').mockResolvedValue([]);
+    vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: 'review-1', kata: 'review', started_at: 0, isolation: 'none', exit: 0, turns: 1, cost_usd: 0 }]);
+    const status = await transport.sdlcBuildStatus(FOLDER, 'claims', MOCK_BUILD_CHANGE);
+    const [found] = (await transport.sdlcChanges(`${FOLDER}/${MOCK_MASTER}`, 'claims')).filter((c) => c.change === MOCK_BUILD_CHANGE);
+    const loading = vm.load({
+      ctx: CTX,
+      master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` },
+      change: { ...found, stage: 'build-finished' },
+      status,
+      done: false,
+      review: null,
+    });
+    await advance(100);
+    // The sessions are still being read: the page has not settled on a stage, so it has not opened and has announced nothing.
+    expect(vm.layoutStage()).toBeNull();
+    expect(said.filter((t) => t.startsWith('Layout:'))).toEqual([]);
+    gate.release();
+    await loading;
+    await advance(300);
+    expect(vm.layoutStage()).toBe('finished');
+    expect(stages).not.toContain('stopped');
+    expect(layout.mode()).toBe('review');
+    expect(layout.suggested()).toBeNull();
+    expect(said.filter((t) => t.startsWith('Layout:'))).toEqual([]);
   });
 });

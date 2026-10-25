@@ -3,9 +3,9 @@
     <span class="k-status k-status--warning">
       <span class="k-status__dot"></span>
       @if (compact()) {
-        The agent in <span class="k-mono">{{ w.repo }}</span> is waiting for you.
+        The agent in <span class="k-mono">{{ w.repo }}</span> is waiting for you. It has waited <span class="k-mono">{{ w.waited }}</span>.
       } @else {
-        The agent in <span class="k-mono">{{ w.repo }}</span> is waiting for your {{ w.kind === 'answer' ? 'answer' : 'approval' }}.
+        The agent in <span class="k-mono">{{ w.repo }}</span> is waiting for your {{ w.kind === 'answer' ? 'answer' : 'approval' }}. It has waited <span class="k-mono">{{ w.waited }}</span>.
       }
     </span>
     @if (!compact() && w.countdown; as countdown) {

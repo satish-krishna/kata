@@ -192,6 +192,16 @@ fn sdlc_settings() -> sdlc::store::Settings {
 }
 
 #[tauri::command]
+fn load_build_layout() -> serde_json::Value {
+    sdlc::store::load_build_layout()
+}
+
+#[tauri::command]
+fn save_build_layout(layout: serde_json::Value) -> Result<(), String> {
+    sdlc::store::save_build_layout(&layout).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn sdlc_save_settings(settings: sdlc::store::Settings) -> Result<(), String> {
     sdlc::store::save_settings(&settings).map_err(|e| e.to_string())
 }
@@ -872,6 +882,8 @@ pub fn run() {
             export_bundle,
             sdlc_settings,
             sdlc_save_settings,
+            load_build_layout,
+            save_build_layout,
             sdlc_workspaces,
             sdlc_save_workspaces,
             sdlc_scan,

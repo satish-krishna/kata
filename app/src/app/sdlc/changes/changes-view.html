@@ -80,6 +80,17 @@
           (previous)="vm.step('previous')"
           (next)="vm.step('next')"
         />
+        @if (vm.findingNote(); as note) {
+          <p class="k-changes__gone" role="status" data-testid="changes-finding-note">{{ note }}</p>
+        }
+        @if (vm.findingChoice(); as choice) {
+          <div class="k-changes__choice" role="group" aria-label="Repositories with this finding's file" data-testid="changes-finding-choice">
+            <span class="k-changes__note">{{ choice.path }} is changed in more than one repository. Pick one.</span>
+            @for (repo of choice.repos; track repo) {
+              <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.chooseRepo(repo)">{{ repo }}</button>
+            }
+          </div>
+        }
         @if (vm.gone()) {
           <p class="k-changes__gone" role="status">This file is no longer part of the change.</p>
         } @else if (vm.pair() === null) {
@@ -92,6 +103,7 @@
           [sideBySide]="vm.sideBySide()"
           [modifiedText]="vm.modifiedText()"
           [stepRequest]="vm.stepRequest()"
+          [mark]="vm.mark()"
         />
       </div>
     </section>

@@ -146,6 +146,19 @@ pub fn append_task_links(links: &[TaskLink]) -> Result<(), StoreError> {
     write("task-runs.json", &all)
 }
 
+/// The engineer's arrangement of the build page, kept beside `settings.json`
+/// and never inside a workspace. The backend never looks inside the value.
+pub fn load_build_layout() -> serde_json::Value {
+    match read_or_default::<Option<serde_json::Value>>("build-layout.json") {
+        Some(v) if v.is_object() => v,
+        _ => serde_json::Value::Object(Default::default()),
+    }
+}
+
+pub fn save_build_layout(v: &serde_json::Value) -> Result<(), StoreError> {
+    write("build-layout.json", v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,6 +214,44 @@ mod tests {
             .join("workbench")
             .join("settings.json")
             .is_file());
+    }
+
+    #[test]
+    #[serial]
+    fn build_layout_round_trips() {
+        let _home = with_home();
+        let v = serde_json::json!({"version": 1, "modes": {"wide": {"order": ["a", "b"]}}});
+        save_build_layout(&v).unwrap();
+        assert_eq!(load_build_layout(), v);
+    }
+
+    #[test]
+    #[serial]
+    fn build_layout_file_is_in_the_workbench_folder_and_alone() {
+        let home = with_home();
+        save_build_layout(&serde_json::json!({"a": 1})).unwrap();
+        let dir = home.temp.path().join("workbench");
+        assert!(dir.join("build-layout.json").is_file());
+        let names: Vec<_> = std::fs::read_dir(home.temp.path())
+            .unwrap()
+            .chain(std::fs::read_dir(&dir).unwrap())
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names.len(), 2, "unexpected files: {names:?}");
+    }
+
+    #[test]
+    #[serial]
+    fn build_layout_reads_empty_object_when_missing_or_unusable() {
+        let home = with_home();
+        let empty = serde_json::json!({});
+        assert_eq!(load_build_layout(), empty);
+        let dir = home.temp.path().join("workbench");
+        std::fs::create_dir_all(&dir).unwrap();
+        for text in ["not json", "[1]"] {
+            std::fs::write(dir.join("build-layout.json"), text).unwrap();
+            assert_eq!(load_build_layout(), empty, "for {text}");
+        }
     }
 
     #[test]

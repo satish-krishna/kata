@@ -7,8 +7,8 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { DiffEditor } from '../../ui/diff-editor/diff-editor';
-import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { ChangesView } from './changes-view';
+import { ChangesViewModel } from './changes-view.view-model';
 
 const INPUTS = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'claims', change: MOCK_BUILD_CHANGE, turns: 0, banner: null };
 const settle = async () => {
@@ -49,10 +49,6 @@ async function mount(transport = new MockTransport(), inputs: Record<string, unk
   return { ...out, transport, button, buttons, paths, row, editor, turns, inRepo, open, setInput };
 }
 
-beforeEach(() => {
-  // Monaco never loads in a unit test; the editor waits on a load that does not finish.
-  vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
-});
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -302,6 +298,152 @@ describe('ChangesView', () => {
     });
     await turns(1);
     expect(paths()).toContain('src/new.rs');
+  });
+
+  describe('showing a picked finding (R4.1)', () => {
+    const NOT_IN_PART = "Showing the whole change: this finding's file is not in the part you were looking at.";
+    const NOT_IN_CHANGE = "This finding's file is not part of this change.";
+    const finding = (file: string, line: number | null, n = 1) => ({ file, line, text: 'The expected date has no time zone.', n });
+    const view = async (inputs: Record<string, unknown> = {}) => {
+      const m = await mount(new MockTransport(), inputs);
+      const vm = m.fixture.debugElement.injector.get(ChangesViewModel);
+      const note = () => m.container.querySelector('[data-testid="changes-finding-note"]')?.textContent?.trim() ?? null;
+      const choice = () => m.container.querySelector('[data-testid="changes-finding-choice"]');
+      const choiceButtons = () => Array.from(choice()?.querySelectorAll('button') ?? []).map((b) => norm(b.textContent));
+      const picked = async (name: string, value: unknown) => {
+        await m.setInput(name, value);
+        m.fixture.detectChanges();
+      };
+      return { ...m, vm, note, choice, choiceButtons, picked };
+    };
+    const asParts = async (m: Awaited<ReturnType<typeof view>>, label: string) => {
+      m.button(label)!.click();
+      await settle();
+    };
+
+    it('the whole change, a file and a line: shows the file with the line marked', async () => {
+      const m = await view();
+      await m.picked('showAt', finding('claims-core/src/limits.rs', 12));
+      expect(m.vm.part()).toBe('whole');
+      expect(m.vm.selected()).toEqual({ repo: 'claims-core', path: 'src/limits.rs' });
+      expect(m.note()).toBeNull();
+      expect(m.choice()).toBeNull();
+      expect(m.editor().mark()).toEqual({ line: 12, text: 'The expected date has no time zone.' });
+    });
+
+    it('only committed work, a file among the committed changes: keeps the part and marks the line', async () => {
+      const m = await view();
+      await asParts(m, 'Committed');
+      await m.picked('showAt', finding('claims-core/src/store.rs', 30));
+      expect(m.vm.part()).toBe('committed');
+      expect(m.vm.selected()).toEqual({ repo: 'claims-core', path: 'src/store.rs' });
+      expect(m.note()).toBeNull();
+      expect(m.editor().mark()).toEqual({ line: 30, text: 'The expected date has no time zone.' });
+    });
+
+    it('only committed work, a file only among the uncommitted changes: switches to the whole change and says so', async () => {
+      const m = await view();
+      await asParts(m, 'Committed');
+      await m.picked('showAt', finding('claims-core/src/limits.rs', 8));
+      expect(m.vm.part()).toBe('whole');
+      expect(m.vm.selected()).toEqual({ repo: 'claims-core', path: 'src/limits.rs' });
+      expect(m.note()).toBe(NOT_IN_PART);
+      expect(m.editor().mark()).toEqual({ line: 8, text: 'The expected date has no time zone.' });
+    });
+
+    it('only uncommitted work, a file only among the committed changes: switches to the whole change and says so', async () => {
+      const m = await view();
+      await asParts(m, 'Uncommitted');
+      await m.picked('showAt', finding('claims-core/src/store.rs', 5));
+      expect(m.vm.part()).toBe('whole');
+      expect(m.vm.selected()).toEqual({ repo: 'claims-core', path: 'src/store.rs' });
+      expect(m.note()).toBe(NOT_IN_PART);
+      expect(m.editor().mark()).toEqual({ line: 5, text: 'The expected date has no time zone.' });
+    });
+
+    it('a file but no line: shows the file from its top', async () => {
+      const m = await view();
+      await m.picked('showAt', finding('claims-core/src/limits.rs', null));
+      expect(m.vm.selected()).toEqual({ repo: 'claims-core', path: 'src/limits.rs' });
+      expect(m.note()).toBeNull();
+      expect(m.editor().mark()).toEqual({ line: null, text: 'The expected date has no time zone.' });
+    });
+
+    it('a file this change did not touch: stays as it was and says so', async () => {
+      const m = await view();
+      m.row('src/limits.rs').click();
+      await settle();
+      const before = m.vm.selected();
+      await m.picked('showAt', finding('src/nowhere.rs', 3));
+      expect(m.vm.part()).toBe('whole');
+      expect(m.vm.selected()).toEqual(before);
+      expect(m.note()).toBe(NOT_IN_CHANGE);
+      expect(m.choice()).toBeNull();
+      expect(m.editor().mark()).toBeNull();
+    });
+
+    it('a file changed in more than one repository: lists them, and a pick shows the file at the line', async () => {
+      const m = await view();
+      await m.picked('showAt', finding('src/store.rs', 21));
+      expect(m.choiceButtons()).toEqual([MOCK_MASTER, 'claims-core', 'customer-portal']);
+      expect(m.vm.selected()).toBeNull();
+      expect(m.editor().mark()).toBeNull();
+      m.button('customer-portal')!.click();
+      await settle();
+      m.fixture.detectChanges();
+      expect(m.vm.selected()).toEqual({ repo: 'customer-portal', path: 'src/store.rs' });
+      expect(m.choice()).toBeNull();
+      expect(m.editor().mark()).toEqual({ line: 21, text: 'The expected date has no time zone.' });
+    });
+
+    it('a pick from the list still switches to the whole change when the part on show lacks the file', async () => {
+      const m = await view();
+      await asParts(m, 'Uncommitted');
+      await m.picked('showAt', finding('src/store.rs', 21));
+      m.button('claims-core')!.click();
+      await settle();
+      m.fixture.detectChanges();
+      expect(m.vm.part()).toBe('whole');
+      expect(m.note()).toBe(NOT_IN_PART);
+      expect(m.vm.selected()).toEqual({ repo: 'claims-core', path: 'src/store.rs' });
+    });
+
+    it('a finding that names no file: leaves the changed files as they were', async () => {
+      const m = await view();
+      await asParts(m, 'Committed');
+      m.row('src/store.rs').click();
+      await settle();
+      const before = m.vm.selected();
+      await m.picked('showAt', finding('', null));
+      expect(m.vm.part()).toBe('committed');
+      expect(m.vm.selected()).toEqual(before);
+      expect(m.note()).toBeNull();
+      expect(m.choice()).toBeNull();
+      expect(m.editor().mark()).toBeNull();
+    });
+
+    it('a new pick clears the previous note, choice and mark', async () => {
+      const m = await view();
+      await m.picked('showAt', finding('claims-core/src/limits.rs', 12, 1));
+      await m.picked('showAt', finding('src/nowhere.rs', 3, 2));
+      expect(m.note()).toBe(NOT_IN_CHANGE);
+      expect(m.editor().mark()).toBeNull();
+      await m.picked('showAt', finding('src/store.rs', 4, 3));
+      expect(m.note()).toBeNull();
+      expect(m.choiceButtons()).toHaveLength(3);
+      await m.picked('showAt', finding('claims-core/src/limits.rs', 9, 4));
+      expect(m.choice()).toBeNull();
+      expect(m.editor().mark()).toEqual({ line: 9, text: 'The expected date has no time zone.' });
+    });
+
+    it('picking a file by hand takes the mark off', async () => {
+      const m = await view();
+      await m.picked('showAt', finding('claims-core/src/limits.rs', 12));
+      m.fixture.detectChanges();
+      m.row('src/store.rs').click();
+      await settle();
+      expect(m.editor().mark()).toBeNull();
+    });
   });
 
   it.each([

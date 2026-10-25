@@ -1,9 +1,10 @@
-<section class="k-bp" aria-label="Build" [attr.data-narrow]="view().narrow ? '' : null">
+<section class="k-bp" aria-label="Build" (document:keydown)="onKey($event)">
   <div class="sr-only" aria-live="assertive" aria-atomic="true">{{ view().announcement }}</div>
   <div class="k-bp__notice">
     <app-waiting-notice [items]="view().waiting" (goTo)="goToRepo($event)" />
   </div>
   <div class="k-bp__bar" data-bar>
+    <app-segmented [options]="modes()" [value]="layout().mode" (valueChange)="pickMode.emit($event)" ariaLabel="Layout mode" />
     <span class="k-lock__count">{{ view().facts.tasks }}</span>
     @if (view().facts.elapsed; as elapsed) {
       <span class="k-mono k-bp__elapsed">{{ elapsed }}</span>
@@ -13,151 +14,166 @@
         <button hlmBtn size="sm" type="button" [variant]="primary() === a ? 'primary' : 'secondary'" (click)="press(a)">{{ labelOf(a) }}</button>
       }
     </span>
+    <button hlmBtn variant="ghost" size="sm" type="button" title="Reset this mode to its default arrangement" (click)="arrange.emit({ kind: 'reset' })">Reset layout</button>
   </div>
-  @if (view().narrow) {
-    <div class="k-bp__switch">
-      <app-segmented [options]="options()" [value]="on()" (valueChange)="panel.set($event)" ariaLabel="Build areas" />
+  @if (layout().focus; as focused) {
+    <div class="k-bp__focus" data-focus-banner>
+      <span>Focus: {{ nameOf(focused) }} fills the page.</span>
+      <button hlmBtn variant="secondary" size="sm" type="button" (click)="unfocus.emit()">Back to {{ modeName(layout().mode) }}</button>
     </div>
   }
-  <div hlmResizableGroup class="k-bp__body" direction="horizontal" [layout]="layout()">
-    <section hlmResizablePanel id="build-page-tasks" data-area="tasks" aria-label="Tasks" [defaultSize]="22" [minSize]="12" [collapsible]="false" [hidden]="view().narrow && on() !== 'tasks'">
-      @for (g of view().groups; track g.repo) {
-        <div class="k-bp__group" data-group>
-          <div class="k-bp__heading" data-heading>
-            <button hlmBtn variant="bare" size="bare" type="button" class="k-mono k-bp__name" [attr.aria-current]="g.picked ? 'true' : null" (click)="choose({ kind: 'repo', repo: g.repo })">{{ g.repo }}</button>
-            <span [class]="'k-status k-status--' + g.status.tone"><span class="k-status__dot"></span>{{ g.status.label }}</span>
-            @if (g.clock) {
-              <span class="k-mono k-bp__clock">{{ g.clock }}</span>
-            }
-            @if (g.paused) {
-              <span class="k-mono k-bp__paused">{{ g.paused }}</span>
-            }
-            @if (g.unseen) {
-              <span class="k-mono k-bp__new">{{ g.unseen }} new</span>
-            }
-            @switch (g.action) {
+  <div #grid class="k-bp__grid" [style.grid-template-columns]="columns()" [style.grid-template-rows]="rowTracks()">
+    <section
+      class="k-bp__area"
+      data-area="tasks"
+      aria-label="Tasks"
+      [attr.data-place]="placeOf('tasks')"
+      [style.grid-area]="cellOf('tasks')"
+      [attr.inert]="shown('tasks') ? null : ''"
+    >
+      <ng-container [ngTemplateOutlet]="head" [ngTemplateOutletContext]="{ $implicit: 'tasks' }" />
+      <div class="k-bp__body k-bp__body--stack">
+        @for (g of view().groups; track g.repo) {
+          <div class="k-bp__group" data-group>
+            <div class="k-bp__heading" data-heading>
+              <button hlmBtn variant="bare" size="bare" type="button" class="k-mono k-bp__name" [attr.aria-current]="g.picked ? 'true' : null" (click)="choose({ kind: 'repo', repo: g.repo })">{{ g.repo }}</button>
+              <span [class]="'k-status k-status--' + g.status.tone"><span class="k-status__dot"></span>{{ g.status.label }}</span>
+              @if (g.clock) {
+                <span class="k-mono k-bp__clock">{{ g.clock }}</span>
+              }
+              @if (g.paused) {
+                <span class="k-mono k-bp__paused">{{ g.paused }}</span>
+              }
+              @if (g.unseen) {
+                <span class="k-mono k-bp__new">{{ g.unseen }} new</span>
+              }
+              @switch (g.action) {
+                @case ('cancel') {
+                  <button hlmBtn variant="secondary" size="sm" type="button" (click)="repoAction.emit({ repo: g.repo, action: 'cancel' })">Cancel</button>
+                }
+                @case ('continue') {
+                  <button hlmBtn variant="secondary" size="sm" type="button" (click)="repoAction.emit({ repo: g.repo, action: 'continue' })">Continue {{ g.repo }}</button>
+                }
+              }
+            </div>
+            <ul class="k-bp__tasks">
+              @for (t of g.tasks; track t.id) {
+                <li>
+                  <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__task" data-task [attr.aria-current]="t.picked ? 'true' : null" (click)="choose({ kind: 'task', task: t.id })">
+                    <span class="k-mono">{{ t.id }}</span>
+                    <span class="k-bp__task-name">{{ t.name }}</span>
+                    <span [class]="'k-status k-status--' + t.status.tone"><span class="k-status__dot"></span><span class="k-bp__status-label">{{ t.status.label }}</span></span>
+                    @if (t.departure; as departure) {
+                      <span class="k-mono k-bp__departure" data-departure>Departure: {{ departure }}</span>
+                    }
+                  </button>
+                </li>
+              }
+            </ul>
+          </div>
+        }
+        <div class="k-bp__group">
+          <div class="k-bp__heading">
+            <button hlmBtn variant="bare" size="bare" type="button" class="k-mono k-bp__name" data-review [attr.aria-current]="view().review.picked ? 'true' : null" (click)="choose({ kind: 'review' })">Review</button>
+            <span [class]="'k-status k-status--' + view().review.status.tone"><span class="k-status__dot"></span>{{ view().review.status.label }}</span>
+            @switch (view().review.action) {
               @case ('cancel') {
-                <button hlmBtn variant="secondary" size="sm" type="button" (click)="repoAction.emit({ repo: g.repo, action: 'cancel' })">Cancel</button>
+                <button hlmBtn variant="secondary" size="sm" type="button" (click)="repoAction.emit({ repo: 'review', action: 'cancel' })">Cancel</button>
               }
               @case ('continue') {
-                <button hlmBtn variant="secondary" size="sm" type="button" (click)="repoAction.emit({ repo: g.repo, action: 'continue' })">Continue {{ g.repo }}</button>
+                <button hlmBtn variant="secondary" size="sm" type="button" (click)="repoAction.emit({ repo: 'review', action: 'continue' })">Continue review</button>
               }
             }
           </div>
-          <ul class="k-bp__tasks">
-            @for (t of g.tasks; track t.id) {
-              <li>
-                <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__task" data-task [attr.aria-current]="t.picked ? 'true' : null" (click)="choose({ kind: 'task', task: t.id })">
-                  <span class="k-mono">{{ t.id }}</span>
-                  <span class="k-bp__task-name">{{ t.name }}</span>
-                  <span [class]="'k-status k-status--' + t.status.tone"><span class="k-status__dot"></span>{{ t.status.label }}</span>
-                  @if (t.departure; as departure) {
-                    <span class="k-mono k-bp__departure" data-departure>Departure: {{ departure }}</span>
-                  }
-                </button>
-              </li>
-            }
-          </ul>
-        </div>
-      }
-      <div class="k-bp__group">
-        <div class="k-bp__heading">
-          <button hlmBtn variant="bare" size="bare" type="button" class="k-mono k-bp__name" data-review [attr.aria-current]="view().review.picked ? 'true' : null" (click)="choose({ kind: 'review' })">Review</button>
-          <span [class]="'k-status k-status--' + view().review.status.tone"><span class="k-status__dot"></span>{{ view().review.status.label }}</span>
-          @switch (view().review.action) {
-            @case ('cancel') {
-              <button hlmBtn variant="secondary" size="sm" type="button" (click)="repoAction.emit({ repo: 'review', action: 'cancel' })">Cancel</button>
-            }
-            @case ('continue') {
-              <button hlmBtn variant="secondary" size="sm" type="button" (click)="repoAction.emit({ repo: 'review', action: 'continue' })">Continue review</button>
-            }
-          }
         </div>
       </div>
     </section>
-    @if (view().areas.activity) {
-      <hlm-resizable-handle withHandle aria-label="Resize the tasks and the activity" />
-      <section hlmResizablePanel id="build-page-activity" data-area="activity" aria-label="Activity" [defaultSize]="39" [minSize]="20" [collapsible]="false" [hidden]="view().narrow && on() !== 'activity'">
-        @if (view().stageMessage; as message) {
-          <div class="k-bp__stage" data-stage>
-            <h2 class="k-state__title">{{ message.title }}</h2>
-            @if (message.lines.length > 0) {
-              <ul class="k-state__list">
-                @for (line of message.lines; track $index) {
-                  <li>{{ line }}</li>
-                }
-              </ul>
-            }
-          </div>
-        }
-        @if (view().stops.length > 0) {
-          <ul class="k-bp__stops" data-stops>
-            @for (s of view().stops; track s.repo) {
-              <li>
-                <span class="k-mono">{{ s.repo }}</span>&ngsp;<span class="k-status k-status--error"><span class="k-status__dot"></span>{{ s.reason }}</span>
-              </li>
-            }
-          </ul>
-        }
-        @if (view().findings; as found) {
-          @if (view().pick?.kind === 'review') {
-            @if (found.notice; as notice) {
-              <div [class]="notice.tone === 'warning' ? 'wb-banner wb-banner--warn' : 'wb-banner wb-banner--quiet'" data-testid="review-notice" role="status">
-                <span [class]="'k-status k-status--' + (notice.tone === 'warning' ? 'warning' : 'idle')"><span class="k-status__dot"></span>{{ notice.text }}</span>
-                @if (notice.lines.length > 0) {
-                  <ul class="wb-banner__list wb-banner__list--lines k-mono">
-                    @for (line of notice.lines; track $index) {
-                      <li>{{ line }}</li>
-                    }
-                  </ul>
-                }
-              </div>
-            }
-            <app-findings-list [findings]="found.findings" [replaced]="found.replaced" [older]="found.older" [emptyText]="found.emptyText" />
-          }
-        }
-        @if (view().sessionNote; as note) {
-          <p class="k-state__body">{{ note }}</p>
-        }
-        @for (s of view().sessions; track s.id) {
-          <div class="k-bp__session" [attr.data-session]="s.id" [hidden]="s.shown === false || (view().findings !== null && view().pick?.kind === 'review')">
-            @if (s.latest) {
-              <div class="k-bp__run-start">Started <span class="k-mono">{{ s.startedAt }}</span></div>
-            } @else {
-              <div class="k-bp__run-start">
-                <button hlmBtn variant="ghost" size="sm" type="button" data-run-line [attr.aria-expanded]="s.expanded" (click)="toggleRun.emit(s.id)">
-                  <ng-icon [name]="s.expanded ? 'lucideChevronDown' : 'lucideChevronRight'" size="14" />
-                  Started <span class="k-mono">{{ s.startedAt }}</span> · {{ s.outcome }}
-                </button>
-              </div>
-            }
-            @if (s.note; as sessionNote) {
-              <p class="k-state__body">{{ sessionNote }}</p>
-            }
-            <!-- An earlier session folds to its line, but its pane stays mounted: RunStore keeps folding its events. -->
-            <div class="k-bp__pane" data-pane [hidden]="!s.latest && !s.expanded">
-              <app-observe-pane
-                [state]="s.state"
-                [events]="s.events"
-                [spec]="s.spec"
-                [summary]="s.summary"
-                [asks]="s.asks"
-                [permissions]="s.permissions"
-                [given]="s.given"
-                mode="sdlc"
-                [unseenFrom]="s.unseenFrom"
-                (answer)="answer.emit({ runId: s.id, id: $event.id, answers: $event.answers })"
-                (decide)="decide.emit({ runId: s.id, id: $event.id, allow: $event.allow, message: $event.message })"
-              />
+
+    <section
+      class="k-bp__area"
+      data-area="activity"
+      aria-label="Activity"
+      [attr.data-place]="placeOf('activity')"
+      [style.grid-area]="cellOf('activity')"
+      [attr.inert]="shown('activity') ? null : ''"
+    >
+      <ng-container [ngTemplateOutlet]="head" [ngTemplateOutletContext]="{ $implicit: 'activity' }" />
+      <div class="k-bp__body k-bp__body--stack">
+        @if (view().areas.activity) {
+          @if (view().stageMessage; as message) {
+            <div class="k-bp__stage" data-stage>
+              <h2 class="k-state__title">{{ message.title }}</h2>
+              @if (message.lines.length > 0) {
+                <ul class="k-state__list">
+                  @for (line of message.lines; track $index) {
+                    <li>{{ line }}</li>
+                  }
+                </ul>
+              }
             </div>
-          </div>
+          }
+          @if (view().stops.length > 0) {
+            <ul class="k-bp__stops" data-stops>
+              @for (s of view().stops; track s.repo) {
+                <li>
+                  <span class="k-mono">{{ s.repo }}</span>&ngsp;<span class="k-status k-status--error"><span class="k-status__dot"></span>{{ s.reason }}</span>
+                </li>
+              }
+            </ul>
+          }
+          @if (view().sessionNote; as note) {
+            <p class="k-state__body">{{ note }}</p>
+          }
+          @for (s of view().sessions; track s.id) {
+            <div class="k-bp__session" [attr.data-session]="s.id" [hidden]="s.shown === false">
+              @if (s.latest) {
+                <div class="k-bp__run-start">Started <span class="k-mono">{{ s.startedAt }}</span></div>
+              } @else {
+                <div class="k-bp__run-start">
+                  <button hlmBtn variant="ghost" size="sm" type="button" data-run-line [attr.aria-expanded]="s.expanded" (click)="toggleRun.emit(s.id)">
+                    <ng-icon [name]="s.expanded ? 'lucideChevronDown' : 'lucideChevronRight'" size="14" />
+                    Started <span class="k-mono">{{ s.startedAt }}</span> · {{ s.outcome }}
+                  </button>
+                </div>
+              }
+              @if (s.note; as sessionNote) {
+                <p class="k-state__body">{{ sessionNote }}</p>
+              }
+              <!-- An earlier session folds to its line, but its pane stays mounted: RunStore keeps folding its events. -->
+              <div class="k-bp__pane" data-pane [hidden]="!s.latest && !s.expanded">
+                <app-observe-pane
+                  [state]="s.state"
+                  [events]="s.events"
+                  [spec]="s.spec"
+                  [summary]="s.summary"
+                  [asks]="s.asks"
+                  [permissions]="s.permissions"
+                  [given]="s.given"
+                  mode="sdlc"
+                  [unseenFrom]="s.unseenFrom"
+                  (answer)="answer.emit({ runId: s.id, id: $event.id, answers: $event.answers })"
+                  (decide)="decide.emit({ runId: s.id, id: $event.id, allow: $event.allow, message: $event.message })"
+                />
+              </div>
+            </div>
+          }
+        } @else {
+          <p class="k-state__body">The activity shows here once the build runs.</p>
         }
-      </section>
-    }
-    @if (view().areas.files) {
-      <hlm-resizable-handle withHandle aria-label="Resize the activity and the changed files" />
-      <section hlmResizablePanel id="build-page-files" data-area="files" aria-label="Changed files" [defaultSize]="39" [minSize]="20" [collapsible]="false" [hidden]="view().narrow && on() !== 'files'">
-        @if (context(); as ctx) {
+      </div>
+    </section>
+
+    <section
+      class="k-bp__area"
+      data-area="files"
+      aria-label="Changed files"
+      [attr.data-place]="placeOf('files')"
+      [style.grid-area]="cellOf('files')"
+      [attr.inert]="shown('files') ? null : ''"
+    >
+      <ng-container [ngTemplateOutlet]="head" [ngTemplateOutletContext]="{ $implicit: 'files' }" />
+      <div class="k-bp__body">
+        @if (view().areas.files && context(); as ctx) {
           <app-changes-view
             [folder]="ctx.folder"
             [masterRepo]="ctx.masterRepo"
@@ -167,9 +183,194 @@
             [rows]="rows()"
             [task]="task()"
             [stopped]="stopped()"
+            [showAt]="view().findingPlace"
+          />
+        } @else {
+          <p class="k-state__body k-bp__empty">The changed files show here once an agent changes something.</p>
+        }
+      </div>
+    </section>
+
+    <section
+      class="k-bp__area"
+      data-area="findings"
+      aria-label="Findings"
+      [attr.data-place]="placeOf('findings')"
+      [style.grid-area]="cellOf('findings')"
+      [attr.inert]="shown('findings') ? null : ''"
+    >
+      <ng-container [ngTemplateOutlet]="head" [ngTemplateOutletContext]="{ $implicit: 'findings' }" />
+      <div class="k-bp__body k-bp__body--stack">
+        @let area = view().findingsArea;
+        @if (area.message; as message) {
+          <p class="k-state__body">{{ message }}</p>
+        } @else if (area.review; as found) {
+          @if (area.staleNotice; as stale) {
+            <div class="wb-banner wb-banner--warn" data-testid="review-stale" role="status">
+              <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ stale }}</span>
+            </div>
+          }
+          @if (found.notice; as notice) {
+            <div [class]="notice.tone === 'warning' ? 'wb-banner wb-banner--warn' : 'wb-banner wb-banner--quiet'" data-testid="review-notice" role="status">
+              <span [class]="'k-status k-status--' + (notice.tone === 'warning' ? 'warning' : 'idle')"><span class="k-status__dot"></span>{{ notice.text }}</span>
+              @if (notice.lines.length > 0) {
+                <ul class="wb-banner__list wb-banner__list--lines k-mono">
+                  @for (line of notice.lines; track $index) {
+                    <li>{{ line }}</li>
+                  }
+                </ul>
+              }
+            </div>
+          }
+          <app-findings-list
+            [findings]="found.findings"
+            [replaced]="found.replaced"
+            [older]="found.older"
+            [emptyText]="found.emptyText"
+            [picked]="view().findingPlace"
+            (pick)="pickFinding($event)"
           />
         }
-      </section>
+        @if (area.departures; as departures) {
+          <section class="k-findings" data-testid="departures" aria-labelledby="departures-title">
+            <h2 id="departures-title" class="k-left__head">Departures from the plan</h2>
+            @if (area.noDepartures; as none) {
+              <p class="k-state__body">{{ none }}</p>
+            } @else {
+              <ol class="k-findings__list">
+                @for (d of departures; track $index) {
+                  <li class="k-findings__item">
+                    <span class="k-mono k-left__note">{{ d.repo }} · {{ d.task }}</span>
+                    <span class="k-findings__text">{{ d.text }}</span>
+                  </li>
+                }
+              </ol>
+            }
+          </section>
+        }
+      </div>
+    </section>
+
+    @if (showEdges()) {
+      @for (edge of edgeNames; track edge) {
+        @let tucked = tuckedAt(edge);
+        @if (tucked.length > 0) {
+          <nav class="k-bp__rail" [attr.data-rail]="edge" [attr.aria-label]="'Areas tucked at the ' + edge + ' edge'" [style.grid-area]="railCell(edge)">
+            @for (a of tucked; track a) {
+              <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__railtab" [attr.aria-label]="'Bring back ' + nameOf(a) + (marked(a) ? ', waiting' : '')" (click)="arrange.emit({ kind: 'bring-back', area: a })">
+                {{ nameOf(a) }}
+                @if (marked(a)) {
+                  <ng-container [ngTemplateOutlet]="mark" />
+                }
+              </button>
+            }
+          </nav>
+        }
+      }
+      @for (side of sides; track side) {
+        @if (layout().drawn[side].length > 0) {
+          <div
+            class="k-bp__separator"
+            role="separator"
+            tabindex="0"
+            [attr.data-side]="side"
+            [attr.aria-orientation]="side === 'bottom' ? 'horizontal' : 'vertical'"
+            [attr.aria-valuenow]="sizeOf(side)"
+            [attr.aria-valuemin]="minSide()"
+            [attr.aria-label]="separatorLabel(side)"
+            [style.grid-area]="separatorCell(side)"
+            (pointerdown)="dragStart($event, side)"
+            (pointermove)="dragMove($event)"
+            (pointerup)="dragEnd()"
+            (pointercancel)="dragEnd()"
+            (keydown)="nudge($event, side)"
+          ></div>
+        }
+      }
     }
   </div>
 </section>
+
+<!-- The mark an area's name carries while an agent waits on the engineer: a warning dot, and "waiting" for a screen reader. -->
+<ng-template #mark>
+  <span class="k-status k-status--warning k-bp__mark" data-waiting-mark><span class="k-status__dot"></span><span class="sr-only">waiting</span></span>
+</ng-template>
+
+<!-- The header every area carries: its stack's names as tabs (or its own name), then focus, tuck and the Place menu. -->
+<ng-template #head let-a>
+  <header class="k-bp__head">
+    @if (stackOf(a).length > 1) {
+      <div class="k-bp__tabs" role="tablist" [attr.aria-label]="'Areas stacked on the ' + placeOf(a)">
+        @for (t of stackOf(a); track t) {
+          <button hlmBtn variant="bare" size="bare" type="button" role="tab" class="k-bp__tab" [attr.aria-selected]="t === a" (keydown)="tabKey($event, t)" (click)="flip.emit({ place: stackPlace(a), area: t })">
+            {{ nameOf(t) }}
+            @if (marked(t)) {
+              <ng-container [ngTemplateOutlet]="mark" />
+            }
+            @if (countOf(t) > 0) {
+              <span class="k-mono k-bp__count">{{ countOf(t) }}</span>
+            }
+          </button>
+        }
+      </div>
+    } @else {
+      <span class="k-bp__title">
+        {{ nameOf(a) }}
+        @if (marked(a)) {
+          <ng-container [ngTemplateOutlet]="mark" />
+        }
+        @if (countOf(a) > 0) {
+          <span class="k-mono k-bp__count">{{ countOf(a) }}</span>
+        }
+      </span>
+    }
+    <div class="k-bp__tools">
+      <button hlmBtn variant="ghost" size="icon-sm" type="button" [attr.aria-label]="'Focus ' + nameOf(a)" [attr.title]="'Focus ' + nameOf(a)" (click)="focusOn.emit(a)">
+        <ng-icon name="lucideMaximize2" size="14" aria-hidden="true" />
+      </button>
+      <button
+        hlmBtn
+        variant="ghost"
+        size="icon-sm"
+        type="button"
+        [attr.aria-label]="'Tuck ' + nameOf(a) + ' away'"
+        [attr.title]="canTuckArea(a) ? 'Tuck ' + nameOf(a) + ' away' : tuckNote"
+        [attr.aria-describedby]="canTuckArea(a) ? null : 'k-bp-tuck-' + a"
+        [disabled]="!canTuckArea(a)"
+        (click)="arrange.emit({ kind: 'tuck', area: a })"
+      >
+        <ng-icon name="lucideMinus" size="14" aria-hidden="true" />
+      </button>
+      @if (!canTuckArea(a)) {
+        <span class="sr-only" [id]="'k-bp-tuck-' + a">{{ tuckNote }}</span>
+      }
+      <button
+        hlmBtn
+        variant="ghost"
+        size="sm"
+        type="button"
+        class="k-bp__place"
+        [hlmDropdownMenuTrigger]="placeMenu"
+        [attr.aria-label]="'Place ' + nameOf(a)"
+      >
+        Place
+        <ng-icon name="lucideEllipsis" size="14" aria-hidden="true" />
+      </button>
+      <ng-template #placeMenu>
+        <hlm-dropdown-menu [attr.aria-label]="'Place ' + nameOf(a)">
+          @for (p of places; track p.place) {
+            <button hlmDropdownMenuItem type="button" [attr.aria-current]="placeOf(a) === p.place ? 'true' : null" (triggered)="arrange.emit({ kind: 'place', area: a, to: p.place })">
+              {{ p.label }}
+              @if (placeOf(a) === p.place) {
+                <ng-icon name="lucideCheck" size="14" aria-hidden="true" />
+              }
+            </button>
+          }
+          <hlm-dropdown-menu-separator />
+          <button hlmDropdownMenuItem type="button" [disabled]="!canTuckArea(a)" (triggered)="arrange.emit({ kind: 'tuck', area: a })">Tuck away</button>
+          <button hlmDropdownMenuItem type="button" (triggered)="focusOn.emit(a)">Focus</button>
+        </hlm-dropdown-menu>
+      </ng-template>
+    </div>
+  </header>
+</ng-template>

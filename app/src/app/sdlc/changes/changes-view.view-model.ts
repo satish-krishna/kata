@@ -11,8 +11,9 @@ import type { Part } from '@bindings/Part';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { tieFiles } from '../../lib/file-ties';
+import { locateFinding, type RepoPaths } from '../../lib/finding-place';
 import type { DiffLayout } from '../../ui/diff-bar';
-import type { StepRequest } from '../../ui/diff-editor/diff-editor';
+import type { FindingMark, StepRequest } from '../../ui/diff-editor/diff-editor';
 import type { FileRef, RepoFile, RepoFileGroup } from '../../ui/repo-file-list';
 
 /** What the Changes view looks at: the workspace folder, its master repository, and the system's change. */
@@ -24,8 +25,13 @@ export const PART_OPTIONS: { value: Part; label: string }[] = [
   { value: 'uncommitted', label: 'Uncommitted' },
 ];
 
+/** A finding the engineer picked, as the host passes it: `n` makes a repeated pick of the same finding a new request. */
+export type ShowAt = { file: string; line: number | null; text: string; n: number };
+
 /** Below this width the list stacks above the diff and the editor is always inline (Tailwind's `md` breakpoint). */
 const NARROW = '(max-width: 767.98px)';
+const NOT_IN_CHANGE = "This finding's file is not part of this change.";
+const NOT_IN_PART = "Showing the whole change: this finding's file is not in the part you were looking at.";
 const NO_FILES: ChangedFile[] = [];
 const NO_COMMITS: CommitFiles[] = [];
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -49,6 +55,10 @@ export class ChangesViewModel {
   private seq = 0;
   private pickSeq = 0;
   private lastTurns = 0;
+  /** A newer finding pick supersedes an older one still reading; a pick made before the repositories are read waits here. */
+  private findingSeq = 0;
+  private pendingFinding: ShowAt | null = null;
+  private findingLists: RepoPaths[] = [];
 
   readonly repos = signal<ChangeRepo[]>([]);
   /** Product repositories in the build with no change branch, which the list cannot show; empty when that could not be read. */
@@ -81,6 +91,12 @@ export class ChangesViewModel {
   readonly narrow = signal(false);
   /** The engineer asked to step to the next or previous change; the editor does it. */
   readonly stepRequest = signal<StepRequest | null>(null);
+  /** One line saying why a picked finding did not simply open, or null. */
+  readonly findingNote = signal<string | null>(null);
+  /** The repositories that all have the picked finding's file, for the engineer to choose from; null when there is no choice to make. */
+  readonly findingChoice = signal<{ repos: string[]; path: string; line: number | null; text: string } | null>(null);
+  /** The picked finding's place in the open file, which the editor marks. */
+  readonly mark = signal<FindingMark | null>(null);
   readonly sideBySide = computed(() => this.layout() === 'side' && !this.narrow());
 
   readonly partOptions = PART_OPTIONS;
@@ -201,6 +217,75 @@ export class ChangesViewModel {
     this.untiedShown.set(true);
   }
 
+  /**
+   * Show a picked finding's file at its line, or say why it cannot be shown. A pick made before the repositories are
+   * read waits for them. A finding that names no file changes nothing here; the findings area says it.
+   */
+  async showAt(request: ShowAt): Promise<void> {
+    const run = ++this.findingSeq;
+    this.findingNote.set(null);
+    this.findingChoice.set(null);
+    this.mark.set(null);
+    if (!this.loaded()) {
+      this.pendingFinding = request;
+      return;
+    }
+    this.pendingFinding = null;
+    let lists: RepoPaths[];
+    try {
+      lists = await Promise.all(this.repos().map((r) => this.readPaths(r)));
+    } catch (e) {
+      if (run === this.findingSeq) this.toasts.error(`Could not read what changed: ${message(e)}`);
+      return;
+    }
+    if (run !== this.findingSeq) return;
+    this.findingLists = lists;
+    const outcome = locateFinding({ file: request.file, line: request.line ?? undefined }, lists, this.part());
+    switch (outcome.kind) {
+      case 'no-file':
+        return;
+      case 'not-in-change':
+        this.findingNote.set(NOT_IN_CHANGE);
+        return;
+      case 'choose':
+        this.findingChoice.set({ repos: outcome.repos, path: outcome.path, line: outcome.line, text: request.text });
+        return;
+      case 'show':
+        await this.present(run, outcome.repo, outcome.path, outcome.line, request.text, outcome.switchToWhole);
+    }
+  }
+
+  /** Continue a picked finding in the repository the engineer chose from the list. */
+  async chooseRepo(repo: string): Promise<void> {
+    const choice = this.findingChoice();
+    if (choice === null) return;
+    const run = ++this.findingSeq;
+    this.findingChoice.set(null);
+    const listed = this.findingLists.find((r) => r.repo === repo);
+    const switchToWhole = listed !== undefined && !listed[this.part()].includes(choice.path);
+    await this.present(run, repo, choice.path, choice.line, choice.text, switchToWhole);
+  }
+
+  /** Every file of each part of one repository's change. */
+  private async readPaths(r: ChangeRepo): Promise<RepoPaths> {
+    const [whole, committed, uncommitted] = await Promise.all(
+      (['whole', 'committed', 'uncommitted'] as const).map(async (p) => (await this.transport.sdlcDiffFiles(r.path, p)).files.map((f) => f.path)),
+    );
+    return { repo: r.repo, whole, committed, uncommitted };
+  }
+
+  /** Open a finding's file, in the whole change when the part on show lacks it, and mark the line once the file is on show. */
+  private async present(run: number, repo: string, path: string, line: number | null, text: string, switchToWhole: boolean): Promise<void> {
+    if (switchToWhole) {
+      await this.setPart('whole');
+      if (run !== this.findingSeq) return;
+      this.findingNote.set(NOT_IN_PART);
+    }
+    await this.select(repo, path);
+    const at = this.selected();
+    if (run === this.findingSeq && at?.repo === repo && at.path === path) this.mark.set({ line, text });
+  }
+
   step(direction: StepRequest['direction']): void {
     this.stepRequest.update((s) => ({ direction, serial: (s?.serial ?? 0) + 1 }));
   }
@@ -222,6 +307,7 @@ export class ChangesViewModel {
     const file = this.listings()[repo]?.files.find((f) => f.path === path);
     if (!r || !file) return;
     const pick = ++this.pickSeq;
+    this.mark.set(null);
     try {
       const pair = await this.transport.sdlcDiffPair(r.path, this.part(), path);
       if (pick !== this.pickSeq) return;
@@ -288,6 +374,8 @@ export class ChangesViewModel {
       // A pick made while this was reading has already chosen what is on show; only the lists are new.
       if (sel === this.selected()) this.keepPlace(kind, sel, file, pair);
       this.loaded.set(true);
+      const pending = this.pendingFinding;
+      if (pending !== null) void this.showAt(pending);
     } catch (e) {
       if (seq === this.seq) this.toasts.error(`Could not read what changed: ${message(e)}`);
     }

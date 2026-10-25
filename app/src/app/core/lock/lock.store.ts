@@ -70,6 +70,11 @@ export class LockStore {
     if (id === null || timeout === null) return null;
     return Math.max(0, timeout - (this.elapsed() - (this.pendingSince()[`${runId ?? ''}:${id}`] ?? 0)));
   };
+  /** Seconds the run's open question or approval has waited on the operator; null when nothing is pending. */
+  readonly waitedSecs = (runId?: string): number | null => {
+    const id = this.pendingOf(runId);
+    return id === null ? null : Math.max(0, this.elapsed() - (this.pendingSince()[`${runId ?? ''}:${id}`] ?? 0));
+  };
   /** Every run of the build with an open question or approval, whichever view the operator is looking at. */
   readonly waiting = computed<Waiting[]>(() => {
     const v = this.view();

@@ -20,10 +20,14 @@
     @for (f of items; track $index) {
       <li class="k-findings__item">
         <span [class]="'k-status k-status--' + tone(f)"><span class="k-status__dot"></span>{{ label(f) }}</span>
-        <div class="k-findings__text">
-          <app-markdown-body [md]="f.text" />
+        <div>
+          <div class="k-findings__text">
+            <app-markdown-body [md]="f.text" />
+          </div>
           @if (where(f); as at) {
-            <span class="k-mono k-left__note">{{ at }}</span>
+            <button hlmBtn variant="bare" size="bare" type="button" class="k-findings__place" [attr.aria-pressed]="isPicked(f)" (click)="pick.emit(f)">{{ at }}</button>
+          } @else {
+            <p class="k-left__note">This finding names no file.</p>
           }
         </div>
       </li>

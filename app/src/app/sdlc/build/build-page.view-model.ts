@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
@@ -25,9 +25,10 @@ import { type AskRecord, type RunGiven, type PermissionRecord, type RunState, ty
 import { activityFor, newlyRecorded, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Chosen, type LiveRun, type Pick, type SessionRef } from '../../lib/build-sessions';
 import { buildActions, buildStage, repoAction, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { fallbackTaskState, hms, ms, situationView, taskState, type SituationView, type Situation, type TaskState } from '../../lib/build-state';
+import { layoutStage as layoutStageOf, type LayoutStage } from '../../lib/build-layout-stage';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
-import { reviewState } from '../../lib/sdlc-done';
+import { REVIEW_MISSING_TEXT, reviewState } from '../../lib/sdlc-done';
 import { givenFor, reviewFindings, specFor, type BuildRun, type Finding, type StageAction } from '../../lib/sdlc';
 import type { ReplacedFindings } from '../../ui/findings-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
@@ -127,6 +128,41 @@ export type ReviewEntryView = { status: StatusText; action: 'cancel' | 'continue
 /** The review's findings, with the notice above them. */
 export type FindingsView = { notice: DocNotice | null; findings: Finding[]; replaced: ReplacedFindings[]; older: boolean; emptyText: string };
 
+const READING_REVIEW = 'Reading the review…';
+const REVIEW_NOT_RUN = 'The review runs by itself once the last task is recorded.';
+const REVIEW_RUNNING = 'The review is running. Its findings appear here when it ends.';
+const NO_DEPARTURES = 'No departures from the plan.';
+
+/** A task's recorded departure from the plan. */
+export type Departure = { repo: string; task: string; text: string };
+
+/** What the findings area shows: one message in place of the review, or the review with the notice above it, then the departures. */
+export type FindingsAreaView = {
+  /** Said instead of the review: while it is read, before it runs, while it runs; null when the review itself shows. */
+  message: string | null;
+  /** The out-of-date notice above a stale review's findings. */
+  staleNotice: string | null;
+  review: FindingsView | null;
+  /** Every recorded departure; null while the review is read. */
+  departures: Departure[] | null;
+  /** Said in place of the departures when there are none. */
+  noDepartures: string | null;
+};
+
+/** Where the engineer picked a finding: the file and line to show in the changed files, and a count so picking again shows it again. */
+export type FindingPlace = { file: string; line: number | null; text: string; n: number };
+
+/** The findings area for each state of the review. */
+export function findingsAreaOf(i: { reading: boolean; entry: ReviewEntry; review: FindingsView; departures: Departure[] }): FindingsAreaView {
+  const departures = i.reading ? null : i.departures;
+  const noDepartures = departures !== null && departures.length === 0 ? NO_DEPARTURES : null;
+  const said = (message: string): FindingsAreaView => ({ message, staleNotice: null, review: null, departures, noDepartures });
+  if (i.reading) return said(READING_REVIEW);
+  if (i.entry === 'not run') return said(REVIEW_NOT_RUN);
+  if (i.entry === 'running') return said(REVIEW_RUNNING);
+  return { message: null, staleNotice: i.entry === 'stale' ? REVIEW_MISSING_TEXT.stale : null, review: i.review, departures, noDepartures };
+}
+
 /** Everything the build page shows, computed once so the page itself only draws it. */
 export type BuildPageView = {
   stage: BuildStage;
@@ -141,14 +177,16 @@ export type BuildPageView = {
   sessionNote: string | null;
   /** Each repository that stopped and why, for the activity area. */
   stops: { repo: string; reason: string }[];
-  /** The findings once the review finished; null while it has none to show. */
-  findings: FindingsView | null;
+  /** The findings area. */
+  findingsArea: FindingsAreaView;
+  /** The finding last picked, for the changed files to show. */
+  findingPlace: FindingPlace | null;
   waiting: WaitingItem[];
   announcement: string;
   /** Which of the optional areas have something to show; the tasks area always does. */
   areas: { activity: boolean; files: boolean };
-  /** True below 1024 CSS pixels, where the three areas become one column behind a switch. */
-  narrow: boolean;
+  /** The counts the area tabs show: changed files and findings. */
+  counts: { files: number; findings: number };
 };
 
 /** The two views of a running build: what the agents say and do, and what they changed. */
@@ -166,8 +204,6 @@ type Review = { at: number | null; label: string | null; findings: Finding[] };
 
 const REVIEW = 'review';
 const RUNNING: readonly RunState[] = ['running', 'awaiting'];
-/** Below this width the build page's three areas share one column. */
-const PAGE_NARROW = '(max-width: 1023.98px)';
 
 /** A task's state as its row says it. */
 const taskStatus = (t: TaskState): StatusText => {
@@ -268,6 +304,8 @@ export class BuildPageViewModel {
   private readonly status = signal<BuildStatus | null>(null);
   /** Whether any repository the page lists has changed files, as the Changes view lists them. */
   private readonly changedFiles = signal(false);
+  /** How many files the repositories list as changed, for the area tabs. */
+  private readonly changedFileTotal = signal(0);
   private readonly log = signal<Entry[]>([]);
   private readonly clocks = signal<Readonly<Record<string, Clock>>>({});
   private readonly reviews = signal<Review[]>([]);
@@ -294,7 +332,19 @@ export class BuildPageViewModel {
   /** The earlier runs the engineer opened in full, by run id. */
   private readonly openedRuns = signal<ReadonlySet<string>>(new Set());
   private readonly broken = signal(false);
-  private readonly reading = signal(false);
+  /** True while the review run's result is being read. */
+  private readonly readingNow = signal(false);
+  /** The id of the review run whose result was read last. */
+  private readonly readReviewId = signal<string | null>(null);
+  /**
+   * Whether the review is being read: from the moment the build finishes until its result is read, with no gap between the phase
+   * changing and the read starting, so nothing in that gap sees a finished build with no review.
+   */
+  private readonly reading = computed(() => {
+    if (this.readingNow()) return true;
+    const entry = this.started() && this.phase() === 'finished' ? this.latest(REVIEW) : null;
+    return entry !== null && this.readReviewId() !== entry.id;
+  });
   private readonly changes = signal<BuildChanges | null>(null);
   /** How many events of each run the engineer had seen when its Activity was last on show, by run id. */
   private readonly seen = signal<Readonly<Record<string, number>>>({});
@@ -316,9 +366,6 @@ export class BuildPageViewModel {
 
   /** Why Continue did not go on, with what the check found; the refusal dialog is open exactly while this is set. */
   readonly refusal = signal<{ reason: string; problems: Problem[] } | null>(null);
-
-  /** True below the width where the build page's three areas become one column behind a switch. */
-  private readonly pageNarrow = signal(false);
 
   readonly tab = signal<BuildTab>('activity');
   readonly announcement = signal('');
@@ -413,7 +460,7 @@ export class BuildPageViewModel {
       const repo = this.log().find((e) => e.id === w.runId)?.key;
       if (repo === undefined) continue;
       const left = this.lock.deadlineSecs(w.runId);
-      out.push({ repo, kind: w.kind, countdown: left === null ? null : ms(left) });
+      out.push({ repo, kind: w.kind, countdown: left === null ? null : ms(left), waited: ms(this.lock.waitedSecs(w.runId) ?? 0) });
     }
     return out;
   });
@@ -452,13 +499,6 @@ export class BuildPageViewModel {
   readonly emptyText = computed(() => (this.unrecorded() ? 'The review did not record its findings' : this.older() ? 'The review found nothing.' : 'Reviewed, nothing found.'));
 
   constructor() {
-    const pageQuery = typeof globalThis.matchMedia === 'function' ? globalThis.matchMedia(PAGE_NARROW) : null;
-    if (pageQuery !== null) {
-      this.pageNarrow.set(pageQuery.matches);
-      const onPage = (e: MediaQueryListEvent) => this.pageNarrow.set(e.matches);
-      pageQuery.addEventListener('change', onPage);
-      inject(DestroyRef).onDestroy(() => pageQuery.removeEventListener('change', onPage));
-    }
     // Whatever the host sets in `loaded` is read at once.
     effect(() => {
       const input = this.loaded();
@@ -559,6 +599,7 @@ export class BuildPageViewModel {
     this.status.set(input.status);
     this.reviewDoc.set(input.review);
     await Promise.all([this.readSessions(), this.readChanges()]);
+    this.sessionsReadFor.set(input);
     if (this.latest(REVIEW) !== null) return;
     // No review run in this session: the findings come from the review document, or from the latest review run's words.
     await this.noteReviewNotice(input.review);
@@ -761,15 +802,45 @@ export class BuildPageViewModel {
     });
   });
 
-  /** What the tasks area says about the review. */
+  /**
+   * What the review counts as, for the tasks area, the findings area and the layout stage: the one place that decides whether the review is in.
+   * A review this session just finished and read counts as finished even before the run links catch up with it.
+   */
   readonly reviewEntry = computed<ReviewEntry>(() => {
     if (this.started() && this.phase() === 'reviewing') return 'running';
     const ctx = this.ctx;
     if (ctx === null) return 'not run';
     const scope = { workspaceId: ctx.workspaceId, system: ctx.system, change: ctx.change };
     const state = reviewState(this.runLinks(), this.records(), this.heads(), scope, this.reviewDoc(), this.masterRef()?.repo ?? null);
-    return state.kind === 'current' || state.kind === 'current-document' ? 'finished' : state.kind === 'stale' ? 'stale' : 'not run';
+    if (state.kind === 'current' || state.kind === 'current-document') return 'finished';
+    if (state.kind === 'stale') return 'stale';
+    const stage = this.stage();
+    const justRead = (stage === 'review-finished' || stage === 'done') && (this.reviews().length > 0 || this.unrecorded());
+    return justRead ? 'finished' : 'not run';
   });
+
+  /** The change page input whose sessions have been read; the layout stage is settled once it is the loaded one. */
+  private readonly sessionsReadFor = signal<BuildPageInput | null>(null);
+
+  /**
+   * Where the build stands for the layout, held at its last value while the review is being read. Null while the stage is not settled:
+   * the page was loaded but its sessions (run links, records, heads) have not been read yet, so the review cannot be judged.
+   */
+  readonly layoutStage = computed<LayoutStage | null>(() => {
+    const loaded = this.loaded();
+    if (loaded !== null && this.sessionsReadFor() !== loaded) return null;
+    // A build that finishes must not pass through "stopped" while its review is read, so the last value holds until the read ends.
+    if (this.reading() && this.heldStage !== null) return this.heldStage;
+    const next = layoutStageOf({ stage: this.stage(), recorded: this.buildRows().length > 0, review: this.reviewEntry() });
+    this.heldStage = next;
+    return next;
+  });
+  private heldStage: LayoutStage | null = null;
+
+  /** Say something through the page's one assertive live region. */
+  say(text: string): void {
+    this.announcement.set(text);
+  }
 
   /** Everything the build page shows, from the members above; the page itself decides nothing. */
   readonly view = computed<BuildPageView>(() => {
@@ -781,7 +852,7 @@ export class BuildPageViewModel {
     const pickedRepo = pick?.kind === 'repo' ? pick.repo : pick?.kind === 'task' ? this.status()?.tasks.find((t) => t.id === pick.task)?.repo : undefined;
     const hasSessions = [...this.sessionRefs().values()].some((refs) => refs.length > 0);
     const hasChanges = this.changedFiles();
-    const findings = this.reviewFindingsView(stage);
+    const findingsArea = this.findingsAreaView();
     return {
       stage,
       stageMessage: this.stageMessage(),
@@ -809,19 +880,32 @@ export class BuildPageViewModel {
       sessions: this.mountedSessions(),
       sessionNote: this.sessionNote(),
       stops: areas.flatMap((g) => (g.heading.stopLine === null ? [] : [{ repo: g.repo, reason: g.heading.stopLine }])),
-      findings,
+      findingsArea,
+      findingPlace: this.findingPlace(),
       waiting: this.waitingNotices(),
       announcement: this.announcement(),
       areas: shownAreas({ stage, hasSessions, hasChanges }),
-      narrow: this.pageNarrow(),
+      counts: { files: this.changedFileTotal(), findings: findingsArea.review === null ? 0 : findingsArea.review.findings.length },
     };
   });
 
-  /** The review's findings for the page: shown once the build's review finished and has been read. */
-  private reviewFindingsView(stage: BuildStage): FindingsView | null {
-    if ((stage !== 'review-finished' && stage !== 'done') || this.reading()) return null;
-    if (this.reviews().length === 0 && !this.unrecorded()) return null;
-    return { notice: this.reviewNotice(), findings: this.findings(), replaced: this.replaced(), older: this.older(), emptyText: this.emptyText() };
+  /** The findings area for the page, from what the review knows. */
+  private findingsAreaView(): FindingsAreaView {
+    const review: FindingsView = { notice: this.reviewNotice(), findings: this.findings(), replaced: this.replaced(), older: this.older(), emptyText: this.emptyText() };
+    const departures = this.taskAreas().flatMap((g) =>
+      g.tasks.flatMap((t) => (t.state.kind === 'done' && t.state.departure !== null ? [{ repo: g.repo, task: t.id, text: t.state.departure }] : [])),
+    );
+    return findingsAreaOf({ reading: this.reading(), entry: this.reviewEntry(), review, departures });
+  }
+
+  /** The finding the engineer picked last, for the changed files to show. */
+  readonly findingPlace = signal<FindingPlace | null>(null);
+  private placeCount = 0;
+
+  /** Ask the changed files to show where a finding is. A finding that names no file shows nothing. */
+  showFinding(f: Finding): void {
+    if (f.file === undefined) return;
+    this.findingPlace.set({ file: f.file, line: f.line ?? null, text: f.text, n: ++this.placeCount });
   }
 
   /** Where the master repository is: what the build was started from, else what the change page loaded. */
@@ -1183,9 +1267,11 @@ export class BuildPageViewModel {
     if (ctx === null || master === null) return;
     try {
       const repos = await this.transport.sdlcChangeRepos(ctx.folder, master.repo, ctx.system, ctx.change);
-      const lists = await Promise.all(repos.map((r) => this.transport.sdlcDiffFiles(r.path, 'whole').then((l) => l.files.length > 0, () => false)));
-      this.changedFiles.set(lists.some(Boolean));
+      const counts = await Promise.all(repos.map((r) => this.transport.sdlcDiffFiles(r.path, 'whole').then((l) => l.files.length, () => 0)));
+      this.changedFileTotal.set(counts.reduce((sum, n) => sum + n, 0));
+      this.changedFiles.set(counts.some((n) => n > 0));
     } catch {
+      this.changedFileTotal.set(0);
       this.changedFiles.set(false);
     }
   }
@@ -1342,11 +1428,12 @@ export class BuildPageViewModel {
     const entry = this.latest(REVIEW);
     if (entry === null || this.readRuns.has(entry.id)) return;
     this.readRuns.add(entry.id);
-    this.reading.set(true);
+    this.readingNow.set(true);
     try {
       await this.readReviewOf();
     } finally {
-      this.reading.set(false);
+      this.readingNow.set(false);
+      this.readReviewId.set(entry.id);
     }
   }
 

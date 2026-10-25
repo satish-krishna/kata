@@ -1,5 +1,6 @@
 import { NgTemplateOutlet } from '@angular/common';
-import { Component, input } from '@angular/core';
+import { Component, input, output } from '@angular/core';
+import { HlmButtonImports } from '@spartan-ng/helm/button';
 import type { Finding } from '../lib/sdlc';
 import { MarkdownBody } from './markdown-body';
 
@@ -10,7 +11,7 @@ export type ReplacedFindings = { at: string; findings: Finding[]; label?: string
  * Reviews a newer review replaced stay below, collapsed. */
 @Component({
   selector: 'app-findings-list',
-  imports: [NgTemplateOutlet, MarkdownBody],
+  imports: [NgTemplateOutlet, HlmButtonImports, MarkdownBody],
   templateUrl: './findings-list.html',
 })
 export class FindingsList {
@@ -21,8 +22,18 @@ export class FindingsList {
   /** What to say when the review found nothing. */
   readonly emptyText = input('The review found nothing.');
 
+  /** The finding the engineer picked last, to mark; null when none. */
+  readonly picked = input<{ file: string; line: number | null; text: string; n: number } | null>(null);
+  /** A finding that names a file was picked. */
+  readonly pick = output<Finding>();
+
   protected where(f: Finding): string | null {
     return f.file === undefined ? null : f.line === undefined ? f.file : `${f.file}:${f.line}`;
+  }
+
+  protected isPicked(f: Finding): boolean {
+    const at = this.picked();
+    return at !== null && at.file === f.file && at.text === f.text;
   }
 
   protected tone(f: Finding): string {

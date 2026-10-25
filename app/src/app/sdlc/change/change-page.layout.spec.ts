@@ -10,7 +10,6 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { diagrams } from '../../lib/mermaid';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
-import { monaco } from '../../ui/diff-editor/monaco.loader';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
@@ -163,9 +162,6 @@ describe('ChangePage layout', () => {
   });
 
   describe('the Build tab strip', () => {
-    beforeEach(() => {
-      vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
-    });
     afterEach(() => vi.restoreAllMocks());
     const openBuild = async () => {
       const out = await mount(MOCK_BUILD_CHANGE);
@@ -277,7 +273,6 @@ describe('ChangePage layout', () => {
     });
 
     it('keeps the Build pill and the Build panel together when a click back on Build outruns a read for another tab', async () => {
-      vi.spyOn(monaco, 'load').mockReturnValue(new Promise(() => undefined));
       const transport = new MockTransport();
       const { container } = await mount(MOCK_BUILD_CHANGE, transport);
       pill(container, 'Build').click();

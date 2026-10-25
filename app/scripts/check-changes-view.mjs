@@ -22,21 +22,12 @@ import { MD, WIDTHS, eventually, noHorizontalScroll, open, reporter, startBuild 
 const FILE = 'src/limits.rs';
 const { check, done } = reporter('check:changes');
 const FILES_AREA = '[data-area="files"]';
-/** Below 1024 the build page shows one area at a time, so reaching the Changes view means picking Files on the page's area switch. */
-const toFiles = async (p) => {
-  const areas = p.getByRole('radiogroup', { name: 'Build areas' });
-  // The switch is drawn again when the window crosses 1024, so a click can land on a detached button: try again.
-  for (let attempt = 0; attempt < 5; attempt++) {
-    if (!(await areas.isVisible())) return;
-    const picked = await areas.getByRole('radio', { name: 'Files' }).click({ timeout: 1500 }).then(() => true, () => false);
-    if (picked && (await p.locator(FILES_AREA).isVisible())) return;
-    await p.waitForTimeout(100);
-  }
-};
 const { page, errors, close } = await open();
 
 try {
   await startBuild(page);
+  // The files area is tucked in the mode a running build opens on; Changes puts it in the middle.
+  await page.keyboard.press('Control+3');
   await page.locator(`${FILES_AREA} [data-file="${FILE}"]`).click();
   const editor = page.locator('.monaco-diff-editor');
   await editor.waitFor({ state: 'visible' });
@@ -70,7 +61,6 @@ try {
   for (const [width, scale] of [[1280, 1], [640, 2], [1280, 1]]) {
     await cdp.send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: scale, mobile: false });
     try {
-      await toFiles(page);
       const g = await eventually(page, geometry, aligned, `zoom ${scale * 100}%`);
       check(true, `zoom ${scale * 100}% (${width} wide): panes aligned (top ${g.original} / ${g.modified}) and the editor fills its container (${g.diffW}x${g.diffH})`);
     } catch (e) {
@@ -98,7 +88,6 @@ try {
   // 4. Widths.
   for (const width of WIDTHS) {
     await page.setViewportSize({ width, height: 900 });
-    await toFiles(page);
     const state = await eventually(
       page,
       () =>
@@ -153,6 +142,8 @@ try {
   const fit = await open({ width: 1440, height: 900 });
   try {
     await fit.page.getByRole('tab', { name: /^Build/ }).click();
+    // Before a build the page opens on Overview, which tucks the files; Changes puts them in the middle.
+    await fit.page.keyboard.press('Control+3');
     await fit.page.locator('[data-testid="changes-strip"]').waitFor();
     await fit.page.locator(`[data-file="${FILE}"]`).first().click();
     await fit.page.locator('.monaco-diff-editor .editor.modified .view-line').first().waitFor();
@@ -179,6 +170,7 @@ try {
         };
         return {
           viewportH: window.innerHeight,
+          areaBottom: box('[data-area="files"]')?.bottom,
           editorBottom: box('app-changes-view app-diff-editor')?.bottom,
           padding: frame.flatMap((el) => sides.map((s) => parseFloat(getComputedStyle(el)['padding' + s]))),
           border: frame.flatMap((el) => sides.map((s) => parseFloat(getComputedStyle(el)['border' + s + 'Width']))),
@@ -202,9 +194,9 @@ try {
           repos: [...document.querySelectorAll('[data-repo]')].map((r) => ({ h: r.getBoundingClientRect().height, wraps: wraps(r) })),
         };
       });
-      // The reference is the bottom of the window: the Build tab fills the page, which never scrolls (the editor scrolls itself),
-      // so a diff that ends short of the window bottom is wasted height whichever box contains it.
-      check(Math.abs(m.viewportH - m.editorBottom) <= 4, `${width}x900: the diff editor reaches the bottom of the window (editor bottom ${m.editorBottom} of ${m.viewportH})`);
+      // The reference is the bottom of the files area: the Build tab fills the page, which never scrolls (the editor scrolls itself),
+      // so a diff that ends short of its area is wasted height whichever box contains it. The area itself ends where the mode's other areas begin.
+      check(Math.abs(m.areaBottom - m.editorBottom) <= 4 && m.areaBottom <= m.viewportH, `${width}x900: the diff editor reaches the bottom of the files area (editor bottom ${m.editorBottom}, area bottom ${m.areaBottom} of ${m.viewportH})`);
       check(m.padding.every((p) => p === 0) && m.border.every((b) => b === 0), `${width}x900: the Changes view has no padding or border (${m.frameDepth} boxes; padding ${m.padding}, border ${m.border})`);
       check(Math.abs(m.rootLeft - m.stripLeft) <= 1, `${width}x900: the Changes view starts at the left edge of the files area (${m.rootLeft} / ${m.stripLeft})`);
       check(m.listScroll <= 0, `${width}x900: the file list does not scroll sideways (scrollWidth - clientWidth = ${m.listScroll})`);

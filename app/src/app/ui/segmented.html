@@ -11,8 +11,12 @@
       role="radio"
       [attr.aria-checked]="opt.value === value()"
       [value]="opt.value"
+      [attr.title]="opt.title ?? null"
     >
       {{ opt.label }}
+      @if (opt.mark; as mark) {
+        <span class="k-seg-mark">{{ mark }}</span>
+      }
     </button>
   }
 </hlm-toggle-group>

@@ -65,8 +65,11 @@ export class MockTransport extends KataTransport {
   private readonly listeners = new Set<(runId: string, ev: KataEvent) => void>();
   private readonly runs = new Map<string, ScriptedRun>();
   private nextRun = 0;
-  private readonly sdlc = new SdlcMock();
+  /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
+  private readonly sdlc = new SdlcMock(typeof location !== 'undefined' && new URLSearchParams(location.search).get('demo') === 'build-long');
   private setupScanned = false;
+  /** The build layout a browser session has saved; a fresh session starts with none. */
+  private buildLayout: Record<string, unknown> = {};
 
   private emit(runId: string, ev: KataEvent): void {
     for (const listen of [...this.listeners]) listen(runId, ev);
@@ -100,7 +103,7 @@ export class MockTransport extends KataTransport {
       }
       const repo = spec.workdir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
       const tasks = this.sdlc.readyTasks(repo);
-      const script = buildRunScript(repo, tasks, repo === 'customer-portal' && tasks.length > 0 && tasks[0].id === 'T2');
+      const script = buildRunScript(repo, tasks, repo === 'customer-portal' && tasks.length > 0 && tasks[0].id === 'T2', repo === 'billing-api' && tasks.length > 0);
       return { run: make('build', script.mid, () => this.sdlc.commitRows(tasks)), head: script.head };
     }
     if (spec.name.startsWith('sdlc-')) {
@@ -201,6 +204,8 @@ export class MockTransport extends KataTransport {
     const prs = this.sdlc.pullRequests(repos, change);
     return Promise.resolve(demo === 'one-pr' ? prs.slice(0, 1) : prs);
   }
+  loadBuildLayout(): Promise<unknown> { return Promise.resolve(this.buildLayout); }
+  saveBuildLayout(layout: Record<string, unknown>): Promise<void> { this.buildLayout = layout; return Promise.resolve(); }
   /** A plain browser has no window to zoom. */
   zoom(_step: ZoomStep): Promise<number> { return Promise.resolve(1); }
   pickDirectory(): Promise<string | null> { return Promise.resolve(null); }
@@ -231,6 +236,7 @@ export class MockTransport extends KataTransport {
   }
   async submitDecision(runId: string, id: string, allow: boolean, message: string | null): Promise<void> {
     this.emit(runId, { type: 'permission.decided', id, ...PENDING_PERMISSION, allow, decided_by: 'operator', message: message ?? undefined });
-    this.play(runId, runScriptTail);
+    const run = this.runs.get(runId);
+    this.play(runId, run?.kind === 'build' ? run.mid : runScriptTail);
   }
 }

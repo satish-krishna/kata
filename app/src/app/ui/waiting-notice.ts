@@ -1,8 +1,8 @@
 import { Component, input, output } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 
-/** One run of the build that waits on the engineer: where, for what, and how long it will wait (null when it has no deadline). */
-export type WaitingItem = { repo: string; kind: 'answer' | 'approval'; countdown: string | null };
+/** One run of the build that waits on the engineer: where, for what, how long it has waited (m:ss) and how long it will wait (null when it has no deadline). */
+export type WaitingItem = { repo: string; kind: 'answer' | 'approval'; countdown: string | null; waited: string };
 
 /* A notice that an agent waits on the engineer, one per waiting run. It cannot be dismissed: it goes when the run stops waiting.
  * `compact` is the one-line banner shown over another repository's activity. It carries no text the agent wrote. */

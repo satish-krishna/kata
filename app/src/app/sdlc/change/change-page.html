@@ -173,6 +173,7 @@
               }
               <app-build-page
                 [view]="build.view()"
+                [layout]="layout.view()"
                 [context]="vm.changesContext()"
                 [turns]="build.turns()"
                 [rows]="build.buildRows()"
@@ -187,6 +188,14 @@
                 (decide)="build.decide($event.runId, $event)"
                 (goTo)="build.goTo($event)"
                 (toggleRun)="build.toggleRun($event)"
+                (pickMode)="layout.pickMode($event)"
+                (arrange)="layout.arrange($event)"
+                (focusOn)="layout.focusOn($event)"
+                (unfocus)="layout.unfocus()"
+                (flip)="layout.flip($event.place, $event.area)"
+                (room)="layout.room.set($event)"
+                (reveal)="layout.reveal($event)"
+                (showFinding)="build.showFinding($event)"
               />
             }
           </div>

@@ -85,6 +85,8 @@ const targetRoutes = routes.length ? routes : DEFAULT_ROUTES;
 const ROUTE_STEPS = {
   'sdlc/claims/2026-10-19-build-demo': async (page) => {
     await page.getByRole('tab', { name: /^Build/ }).click();
+    // The build page opens in the mode its stage suits, which may keep the changed files out of sight. Ctrl+3 is Changes, the mode that puts them in the middle.
+    await page.keyboard.press('Control+3');
     await page.locator('[data-testid="changes-strip"]').waitFor();
   },
 };

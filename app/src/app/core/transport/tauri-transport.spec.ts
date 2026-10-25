@@ -15,6 +15,7 @@ const snap: Snapshot = { head: 'abc', dirty: {} };
 const link: RunLink = { workspace_id: 'w', system: 's', change: 'c', stage: 'intent', run_id: 'r', started_at: 1 };
 const start: BuildStart = { master: { repo: 'm', path: '/w/m', base: 'main', branch: 'change/c', created: false }, repos: [] };
 const publishRepo: PublishRepo = { repo: 'r', path: '/w/r', base: 'main' };
+const layout: Record<string, unknown> = { order: ['T1'] };
 const FILTERS = [{ name: 'Run-spec', extensions: ['toml', 'json'] }];
 
 function fakeIpc() {
@@ -57,6 +58,8 @@ const rows: Row[] = [
   ['sdlcBranches', (t) => t.sdlcBranches('/m'), 'sdlc_branches', { master: '/m' }],
   ['sdlcWaitRunExit', (t) => t.sdlcWaitRunExit('7', 15000), 'sdlc_wait_run_exit', { runId: '7', timeoutMs: 15000 }],
   ['zoom', (t) => t.zoom('in'), 'zoom', { step: 'in' }],
+  ['loadBuildLayout', (t) => t.loadBuildLayout(), 'load_build_layout', undefined],
+  ['saveBuildLayout', (t) => t.saveBuildLayout(layout), 'save_build_layout', { layout }],
   ['sdlcReadDoc', (t) => t.sdlcReadDoc('/m', 's', 'c', 'intent'), 'sdlc_read_doc', { master: '/m', system: 's', change: 'c', doc: 'intent' }],
   ['sdlcSnapshot', (t) => t.sdlcSnapshot('/m'), 'sdlc_snapshot', { master: '/m' }],
   ['sdlcLeftovers', (t) => t.sdlcLeftovers('/m', snap, ['r']), 'sdlc_leftovers', { master: '/m', before: snap, productRepos: ['r'] }],

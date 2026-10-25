@@ -10,7 +10,7 @@ import { DiffBar } from '../../ui/diff-bar';
 import { DiffEditor } from '../../ui/diff-editor/diff-editor';
 import { RepoFileList } from '../../ui/repo-file-list';
 import { Segmented } from '../../ui/segmented';
-import { ChangesViewModel } from './changes-view.view-model';
+import { ChangesViewModel, type ShowAt } from './changes-view.view-model';
 
 /* What changed in a change, read only: a strip across the top (the part of the change on show, its totals, the lines by type and
  * which base it is compared with, and whatever the host projects at its right end), the repositories with changes on the left, and the diff of the open file on the right.
@@ -42,6 +42,8 @@ export class ChangesView {
   readonly hasSlot = input(false);
   /** True when the host shows the file list in a place of its own (the build's drawer), so the view draws only the diff. */
   readonly listOutside = input(false);
+  /** A finding the engineer picked: its file, its line (null when it names none), its text, and a count that makes a repeated pick of the same finding a new request. */
+  readonly showAt = input<ShowAt | null>(null);
   /** The repositories with changes and their files, for a host that shows the list itself; it still reads this view's state. */
   readonly fileList = viewChild.required<TemplateRef<unknown>>('fileList');
 
@@ -61,6 +63,10 @@ export class ChangesView {
     effect(() => {
       const task = this.task();
       untracked(() => this.vm.setTask(task));
+    });
+    effect(() => {
+      const request = this.showAt();
+      if (request !== null) untracked(() => void this.vm.showAt(request));
     });
     effect(() => {
       const turns = this.turns();

@@ -3,13 +3,18 @@ import { render } from '../../../testing/render';
 import { DiffEditor } from './diff-editor';
 import { monaco, type MonacoApi } from './monaco.loader';
 
-type FakeModel = { text: string; disposed: boolean; setValue: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> };
+type FakeModel = { text: string; disposed: boolean; getLineCount: ReturnType<typeof vi.fn>; setValue: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> };
 
 /** A Monaco that records what the component asks of it. jsdom cannot run the real editor. */
 function fakeMonaco(changes: { modifiedStartLineNumber: number; modifiedEndLineNumber: number }[] = []) {
   const events: string[] = [];
   const models: FakeModel[] = [];
+  const decorations = { clear: vi.fn() };
+  const zones = { addZone: vi.fn(() => 'zone-1'), removeZone: vi.fn() };
   const modifiedEditor = {
+    createDecorationsCollection: vi.fn((_items: unknown) => decorations),
+    changeViewZones: vi.fn((run: (z: typeof zones) => void) => run(zones)),
+    revealLine: vi.fn(),
     getPosition: vi.fn(() => ({ lineNumber: 1, column: 1 })),
     setPosition: vi.fn(),
     revealLineInCenter: vi.fn(),
@@ -35,6 +40,7 @@ function fakeMonaco(changes: { modifiedStartLineNumber: number; modifiedEndLineN
         const model: FakeModel = {
           text,
           disposed: false,
+          getLineCount: vi.fn(() => text.split('\n').length),
           setValue: vi.fn((v: string) => (model.text = v)),
           dispose: vi.fn(() => {
             model.disposed = true;
@@ -46,7 +52,7 @@ function fakeMonaco(changes: { modifiedStartLineNumber: number; modifiedEndLineN
       }),
     },
   };
-  return { api: api as unknown as MonacoApi, raw: api, editor, modifiedEditor, models, events };
+  return { api: api as unknown as MonacoApi, raw: api, editor, modifiedEditor, decorations, zones, models, events };
 }
 
 const pair = (original: string, modified: string, binary = false): FilePair => ({
@@ -91,6 +97,44 @@ describe('DiffEditor', () => {
     fixture.componentRef.setInput('sideBySide', false);
     await fixture.whenStable();
     expect(fake.editor.updateOptions).toHaveBeenLastCalledWith({ renderSideBySide: false });
+  });
+
+  describe('a finding mark', () => {
+    const text = 'one\ntwo\nthree\nfour';
+    it('reveals the line in the centre of the new side, marks it and shows the text below it', async () => {
+      const fake = fakeMonaco();
+      await mount(fake, { pair: pair(text, text), mark: { line: 3, text: 'No time zone.' } });
+      const [items] = fake.modifiedEditor.createDecorationsCollection.mock.calls[0] as unknown as [{ range: { startLineNumber: number }; options: { className: string } }[]];
+      expect(items[0].range.startLineNumber).toBe(3);
+      expect(items[0].options.className).toBe('k-finding-line');
+      const [zone] = fake.zones.addZone.mock.calls[0] as unknown as [{ afterLineNumber: number; domNode: HTMLElement }];
+      expect(zone.afterLineNumber).toBe(3);
+      expect(zone.domNode.textContent).toBe('No time zone.');
+      expect(fake.modifiedEditor.revealLineInCenter).toHaveBeenCalledWith(3);
+    });
+
+    it('applies when the mark arrives after the file, and clears the previous mark first', async () => {
+      const fake = fakeMonaco();
+      const { fixture } = await mount(fake, { pair: pair(text, text) });
+      expect(fake.modifiedEditor.createDecorationsCollection).not.toHaveBeenCalled();
+      fixture.componentRef.setInput('mark', { line: 2, text: 'First.' });
+      await fixture.whenStable();
+      fixture.componentRef.setInput('mark', { line: 4, text: 'Second.' });
+      await fixture.whenStable();
+      expect(fake.decorations.clear).toHaveBeenCalledTimes(1);
+      expect(fake.zones.removeZone).toHaveBeenCalledWith('zone-1');
+      expect(fake.modifiedEditor.revealLineInCenter).toHaveBeenLastCalledWith(4);
+      fixture.componentRef.setInput('mark', null);
+      await fixture.whenStable();
+      expect(fake.decorations.clear).toHaveBeenCalledTimes(2);
+    });
+
+    it('shows the file from its top, with no decoration, when the mark has no line', async () => {
+      const fake = fakeMonaco();
+      await mount(fake, { pair: pair(text, text), mark: { line: null, text: 'No line.' } });
+      expect(fake.modifiedEditor.createDecorationsCollection).not.toHaveBeenCalled();
+      expect(fake.modifiedEditor.revealLine).toHaveBeenCalledWith(1);
+    });
   });
 
   it('steps to the next and previous change on each new step request', async () => {
