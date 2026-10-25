@@ -13,6 +13,9 @@
       @for (a of view().actions; track a) {
         <button hlmBtn size="sm" type="button" [variant]="primary() === a ? 'primary' : 'secondary'" (click)="press(a)">{{ labelOf(a) }}</button>
       }
+      @for (e of extras(); track e.action) {
+        <button hlmBtn size="sm" type="button" variant="secondary" [disabled]="e.disabled" [attr.title]="e.title" (click)="press(e.action)">{{ labelOf(e.action) }}</button>
+      }
     </span>
     <button hlmBtn variant="ghost" size="sm" type="button" title="Reset this mode to its default arrangement" (click)="arrange.emit({ kind: 'reset' })">Reset layout</button>
   </div>

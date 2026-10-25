@@ -327,9 +327,18 @@ export class ChangePageViewModel {
     const c = this.change();
     if (c === null || this.done()) return [];
     if (stageLabel(c.stage).step !== 'build') return actionsForChange(c);
-    // The build page has no way back to the fix's documents; a fix's own list adds the one that reopens it.
-    const own = c.track === 'fix' ? actionsForChange(c).filter((a) => a === 'reopen-fix') : [];
-    return [...this.build.actions(), ...own];
+    return [...this.build.actions(), ...this.barExtras().map((e) => e.action)];
+  });
+  /**
+   * The actions the build page's bar adds after its own: the build page has no way back to the fix's documents, so a fix's
+   * list contributes the one that reopens it. Each carries whether its button is off and why.
+   */
+  readonly barExtras = computed(() => {
+    const c = this.change();
+    if (c === null || this.done() || c.track !== 'fix' || stageLabel(c.stage).step !== 'build') return [];
+    return actionsForChange(c)
+      .filter((a) => a === 'reopen-fix')
+      .map((action) => ({ action, disabled: this.disabledFor(action), title: this.titleFor(action) }));
   });
   /** What blocks the build, shown above the plan; null when nothing does or another document is shown. */
   readonly planBanner = computed(() => {
