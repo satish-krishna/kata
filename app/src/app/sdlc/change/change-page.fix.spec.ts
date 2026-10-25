@@ -32,11 +32,11 @@ const confirmPreview = async () => {
 };
 
 /** A fix at a stage, with the plugin supporting the light track or not, until the mock has its own fixture. */
-async function mountFix(stage: Stage, lightTrack = true) {
+async function mountFix(stage: Stage, lightTrack = true, track: 'fix' | 'full' = 'fix') {
   const transport = new MockTransport();
   const real = transport.sdlcChanges.bind(transport);
   vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
-    (await real(m, s)).map((c) => (c.change === FIX ? { ...c, stage, track: 'fix' as const } : c)),
+    (await real(m, s)).map((c) => (c.change === FIX ? { ...c, stage, track } : c)),
   );
   const ready = await transport.sdlcPluginReadiness(null);
   vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(ready.kind === 'ready' ? { ...ready, lightTrack } : ready);
@@ -104,6 +104,38 @@ describe('ChangePage: the fix runs', () => {
     expect(toastText()).toContain(BUSY);
     expect(document.body.querySelector('[role="dialog"] textarea')).toBeNull();
     expect(run).not.toHaveBeenCalled();
+  });
+
+  describe('the Build tab bar (R6.1)', () => {
+    const bar = (root: ParentNode) => root.querySelector('[data-bar]')!;
+    const barButtons = (root: ParentNode) => Array.from(bar(root).querySelectorAll('button')).map((b) => b.textContent!.trim());
+
+    for (const stage of ['build-ready', 'build-stopped', 'build-finished'] as const) {
+      it(`a fix at ${stage} offers Reopen the fix last, and it opens the feedback box`, async () => {
+        const { container, run } = await mountFix(stage);
+        const labels = barButtons(container);
+        expect(labels).toContain('Reopen the fix');
+        expect(labels.indexOf('Reopen the fix')).toBeGreaterThan(0);
+        button(bar(container), 'Reopen the fix').click();
+        await settle();
+        expect(document.body.querySelector('[role="dialog"] textarea')).not.toBeNull();
+        expect(run).not.toHaveBeenCalled();
+      });
+    }
+
+    it('is disabled while the lock is held', async () => {
+      const { container } = await mountFix('build-finished');
+      expect(button(bar(container), 'Reopen the fix').disabled).toBe(false);
+      expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
+      await settle();
+      expect(button(bar(container), 'Reopen the fix').disabled).toBe(true);
+    });
+
+    it('a full-track change has no such button', async () => {
+      const { container } = await mountFix('build-finished', true, 'full');
+      expect(barButtons(container)).toContain('Declare done');
+      expect(barButtons(container)).not.toContain('Reopen the fix');
+    });
   });
 
   it('with the light track unsupported the fix actions are disabled and refuse, and the full pipeline stays (R10.1)', async () => {
