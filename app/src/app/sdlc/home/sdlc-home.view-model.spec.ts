@@ -58,7 +58,7 @@ describe('SdlcHomeViewModel init', () => {
     await vm.init();
     expect(vm.current()?.name).toBe('acme-claims');
     expect(vm.state()).toBe('ready');
-    expect(vm.changes().length).toBe(5);
+    expect(vm.changes().length).toBe(7);
     expect(vm.branches()?.others).toEqual(['2026-10-17-claim-notes']);
     expect(vm.masterBranch()).toBe('main');
     expect(vm.contexts()['customer-portal']).toEqual({ kind: 'stale', commits: 14 });
@@ -512,6 +512,7 @@ describe('SdlcHomeViewModel runs', () => {
 
   it('offers the light track only when the plugin reports it', async () => {
     const { vm, transport } = setup();
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.9.0', layouts: [1], lightTrack: false });
     await vm.init();
     expect(vm.lightTrack()).toBe(false);
     vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true });
@@ -693,6 +694,7 @@ describe('SdlcHomeViewModel workspace instructions', () => {
   it('reads the instructions state only when the plugin supports the light track', async () => {
     const { vm, transport } = setup();
     const read = vi.spyOn(transport, 'sdlcInstructions');
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ ...lightReady, version: '0.9.0', lightTrack: false });
     await vm.init();
     expect(read).not.toHaveBeenCalled();
     expect(vm.instructions()).toBeNull();

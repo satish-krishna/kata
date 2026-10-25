@@ -21,7 +21,7 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import { inTauri } from '../../lib/mock';
 import { shownChangeList } from '../../lib/doc-notice';
 import { hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
-import { DEMO_SETUP_FOLDER } from '../../lib/demo';
+import { DEMO_SETUP_FOLDER, DEMO_START_IDEA, DEMO_START_SYSTEM } from '../../lib/demo';
 import {
   folderName,
   isSetUp,
@@ -196,7 +196,7 @@ export class SdlcHomeViewModel {
     return w && repo ? masterPath(w.folder, repo) : null;
   });
 
-  /** `demo` is the `?demo=` query value: `sdlc-setup` opens the add-workspace flow on a folder that needs setup. Browser only. */
+  /** `demo` is the `?demo=` query value: `sdlc-setup` opens the add-workspace flow on a folder that needs setup, and `start` triages a described change with a scripted run. Browser only. */
   async init(demo: string | null = null): Promise<void> {
     try {
       await this.modes.load();
@@ -215,6 +215,7 @@ export class SdlcHomeViewModel {
     this.loaded.set(true);
     // Browser dev/review only: never fires under Tauri.
     if (!inTauri() && demo === 'sdlc-setup') await this.addWorkspace(DEMO_SETUP_FOLDER);
+    if (!inTauri() && demo === 'start') await this.newChange(DEMO_START_SYSTEM, DEMO_START_IDEA, 'decide');
   }
 
   // --- workspace list

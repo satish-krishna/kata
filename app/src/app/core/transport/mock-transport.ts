@@ -43,7 +43,7 @@ import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import { seedCatalog, validateLocal, previewFixture, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
 import { history, runDetailFixture, katasFixture, presetsFixture } from '../../lib/library';
-import { MOCK_LAYOUTS, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, SdlcMock, buildRunScript, reviewRunScript, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
+import { MOCK_LAYOUTS, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import { KataTransport, NO_BACKEND } from './kata-transport';
 
@@ -52,10 +52,12 @@ const SETUP_SCAN_MS = 1800;
 
 /** One scripted run in flight: what to play after an answer or a decision, and what finishing it does. */
 interface ScriptedRun {
-  kind: 'workbench' | 'sdlc-spec' | 'sdlc-setup' | 'build';
+  kind: 'workbench' | 'sdlc-spec' | 'sdlc-setup' | 'sdlc-triage' | 'build';
   mid: ScriptStep[];
   timers: ReturnType<typeof setTimeout>[];
   onDone: (() => void) | null;
+  /** The label a scripted triage was answered with. */
+  answer?: string;
 }
 
 /** Browser stand-in: fixtures plus scripted runs (head, ask, mid, permission,
@@ -106,6 +108,12 @@ export class MockTransport extends KataTransport {
       const tasks = this.sdlc.readyTasks(repo);
       const script = buildRunScript(repo, tasks, repo === 'customer-portal' && tasks.length > 0 && tasks[0].id === 'T2', repo === 'billing-api' && tasks.length > 0);
       return { run: make('build', script.mid, () => this.sdlc.commitRows(tasks)), head: script.head };
+    }
+    if (spec.name.endsWith('-triage')) {
+      this.sdlc.beginRun();
+      const run = make('sdlc-triage', sdlcTriageScript.mid);
+      run.onDone = () => { if (run.answer === TRIAGE_LIGHT) this.sdlc.createFix(); };
+      return { run, head: sdlcTriageScript.head };
     }
     if (spec.name.startsWith('sdlc-')) {
       const setup = spec.name === 'sdlc-setup';
@@ -183,7 +191,7 @@ export class MockTransport extends KataTransport {
   }
   sdlcBuildSettle(_start: BuildStart): Promise<string[]> { return Promise.resolve([]); }
   sdlcBuildHeads(_folder: string, repos: string[], _change: string): Promise<Record<string, string>> { return Promise.resolve(this.sdlc.heads(repos)); }
-  sdlcPluginReadiness(_workdir: string | null): Promise<Readiness> { return Promise.resolve({ kind: 'ready', dir: '~/.claude/plugins/ai-sdlc', version: MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS, lightTrack: false }); }
+  sdlcPluginReadiness(_workdir: string | null): Promise<Readiness> { return Promise.resolve({ kind: 'ready', dir: '~/.claude/plugins/ai-sdlc', version: MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS, lightTrack: true }); }
   sdlcChangeRepos(folder: string, _masterRepo: string, _system: string, change: string): Promise<ChangeRepo[]> { return Promise.resolve(this.sdlc.changeRepos(folder, change)); }
   sdlcMissingChangeBranches(_folder: string, _masterRepo: string, _system: string, _change: string): Promise<string[]> { return Promise.resolve([]); }
   sdlcDiffFiles(_repoPath: string, part: Part): Promise<DiffListing> { return Promise.resolve(this.sdlc.diffFiles(part)); }
@@ -230,11 +238,18 @@ export class MockTransport extends KataTransport {
     if (!run) return;
     run.timers.forEach(clearTimeout);
     run.timers = [];
-    if (run.kind === 'sdlc-spec' || run.kind === 'sdlc-setup') this.sdlc.cancelRun();
+    if (run.kind === 'sdlc-spec' || run.kind === 'sdlc-setup' || run.kind === 'sdlc-triage') this.sdlc.cancelRun();
   }
   async submitAnswer(runId: string, id: string, answers: string[][]): Promise<void> {
     this.emit(runId, { type: 'ask.answered', id, answers });
-    this.play(runId, (this.runs.get(runId) ?? this.adopt(runId)).mid);
+    const run = this.runs.get(runId) ?? this.adopt(runId);
+    if (run.kind === 'sdlc-triage') {
+      run.answer = answers[0]?.[0];
+      // Only the light track writes the fix; the other two answers end the run at once.
+      this.play(runId, run.answer === TRIAGE_LIGHT ? run.mid : run.mid.slice(-1));
+      return;
+    }
+    this.play(runId, run.mid);
   }
   async submitDecision(runId: string, id: string, allow: boolean, message: string | null): Promise<void> {
     this.emit(runId, { type: 'permission.decided', id, ...PENDING_PERMISSION, allow, decided_by: 'operator', message: message ?? undefined });

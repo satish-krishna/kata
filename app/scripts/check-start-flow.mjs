@@ -69,8 +69,10 @@ try {
   check(await appears(decide), 'New change offers the Track field');
   check(await decide.isEnabled(), 'the workflow can decide with the light-track plugin');
   await full.click();
+  await page.waitForTimeout(200);
   check((await full.getAttribute('aria-checked')) === 'true', 'Track switches to Full pipeline');
   await decide.click();
+  await page.waitForTimeout(200);
   check((await decide.getAttribute('aria-checked')) === 'true', 'Track switches back to Let the workflow decide');
   await page.keyboard.press('Escape');
   check(await gone(dialog), 'New change closes on Escape');
@@ -91,9 +93,10 @@ try {
   check(await appears(light), 'the triage asks with Take the light track');
   check((await visibleCount(page.getByText('Take the full pipeline instead'))) > 0, 'the triage offers the full pipeline instead');
   check((await visibleCount(page.getByText('Stop here'))) > 0, 'the triage offers Stop here');
-  check((await visibleCount(page.getByText(/light track/i))) > 1, 'the triage printed a light-track verdict');
-  await light.click();
+  check((await visibleCount(page.getByText(/light.track/i))) > 1, 'the triage printed a light-track verdict');
+  await page.locator('input[type="radio"][value="Take the light track"]').click();
   await page.getByRole('button', { name: /Send answer/ }).click();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   try {
     await page.waitForURL(`**${STARTED_FIX}`, { timeout: 15000 });
     check(true, 'taking the light track lands on the new fix');

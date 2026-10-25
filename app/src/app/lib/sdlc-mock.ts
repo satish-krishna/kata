@@ -41,6 +41,9 @@ import type { TaskLink } from '@bindings/TaskLink';
 import type { Settings } from '@bindings/Settings';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Stage } from '@bindings/Stage';
+import type { Track } from '@bindings/Track';
+import type { ParsedFinding } from '@bindings/ParsedFinding';
+import type { Concern } from '@bindings/Concern';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { DEMO_SETUP_FOLDER, DEMO_WORKSPACE_FOLDER } from './demo';
@@ -59,7 +62,13 @@ export const MOCK_BUILD_CHANGE = '2026-10-19-build-demo';
 /** A change whose build finished and whose three pull requests are open: the toolbar's links and its "Build · done" pill. */
 export const MOCK_DONE_CHANGE = '2026-10-18-photo-limits-shipped';
 /** The version the demo's `ai-sdlc` plugin reports. */
-export const MOCK_PLUGIN_VERSION = '0.9.0';
+export const MOCK_PLUGIN_VERSION = '0.13.0';
+/** A fix awaiting acceptance: the light track's three documents are drafted. */
+export const MOCK_FIX_CHANGE = '2026-10-22-photo-retry-fix';
+/** A fix that was rejected, so it is closed. */
+export const MOCK_REJECTED_FIX = '2026-10-21-limit-typo-fix';
+/** The fix folder the scripted triage of `?demo=start` creates when the engineer takes the light track. */
+export const MOCK_STARTED_FIX = '2026-10-24-fraud-flag-fix';
 /** The layouts the mock plugin reads, as the backend's `Readiness::Ready` sends them. */
 export const MOCK_LAYOUTS = [1, 2];
 
@@ -93,6 +102,35 @@ export const sdlcSpecScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
     { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: 'claims/2026-10-12-fnol-photo-upload/spec.md', id: 'toolu_s3', input: { file_path: 'claims/2026-10-12-fnol-photo-upload/spec.md' } } },
     { delay: 400, ev: { type: 'tool.result', name: 'Write', ok: true, summary: 'spec.md written', id: 'toolu_s3', output: 'ok' } },
     { delay: 400, ev: { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 21000, result: 'Spec drafted in spec.md.' } },
+  ],
+};
+
+/** The choices the scripted triage asks with when it routes to the light track. */
+export const TRIAGE_LIGHT = 'Take the light track';
+export const TRIAGE_FULL = 'Take the full pipeline instead';
+export const TRIAGE_STOP = 'Stop here';
+
+/**
+ * Scripted `triage` run for `?demo=start`: it prints a light-track verdict (the repository, the root cause and about how many tasks), then asks
+ * with the three fixed choices. The answer finishes it; only "Take the light track" ends with a fix folder created.
+ */
+export const sdlcTriageScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
+  head: [
+    { delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-claims-new-triage-20261024T090000Z.jsonl` } },
+    { delay: 350, ev: { type: 'turn', n: 1 } },
+    { delay: 250, ev: { type: 'tool.use', name: 'Grep', input_summary: 'fraud', id: 'toolu_t1', input: { pattern: 'fraud', path: 'claims-core/src' } } },
+    { delay: 300, ev: { type: 'tool.result', name: 'Grep', ok: true, summary: '3 matches', id: 'toolu_t1', output: 'claims-core/src/intake.rs:41' } },
+    { delay: 300, ev: { type: 'assistant.text', text: 'This is a light-track change. It is one repository (`claims-core`), the intake form never sets the flag the fraud queue reads, and the fix needs about 2 tasks.' } },
+    { delay: 350, ev: { type: 'ask.requested', id: 'q1', questions: [
+      { kind: 'select', header: 'route', question: 'How should this change go?',
+        options: [ { label: TRIAGE_LIGHT, description: 'one repository, about 2 tasks' }, { label: TRIAGE_FULL, description: 'intent, spec and plan first' }, { label: TRIAGE_STOP, description: 'create nothing' } ],
+        multi_select: false },
+    ] } },
+  ],
+  mid: [
+    { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: 'claims/2026-10-24-fraud-flag-fix/intent.md', id: 'toolu_t2', input: { file_path: 'claims/2026-10-24-fraud-flag-fix/intent.md' } } },
+    { delay: 400, ev: { type: 'tool.result', name: 'Write', ok: true, summary: 'intent.md written', id: 'toolu_t2', output: 'ok' } },
+    { delay: 400, ev: { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 18000, result: 'Triage done.' } },
   ],
 };
 
@@ -133,11 +171,18 @@ const MOCK_REPOS = ['claims-intent', 'claims-core', 'customer-portal', 'billing-
 const doc = (status: string | null, committed = true): DocState =>
   status === null ? { exists: false, committed: false, status: null } : { exists: true, committed, status };
 
-const change = (name: string, intent: DocState, spec: DocState, plan: DocState, stage: Stage): ChangeInfo =>
+const change = (name: string, intent: DocState, spec: DocState, plan: DocState, stage: Stage, track: Track = 'full'): ChangeInfo =>
   ({
     system: MOCK_SYSTEM, change: name, intent, spec, plan, stage,
-    build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null, track: 'full',
+    build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null, track,
   });
+
+/** A fix's three documents, drafted: what the light track writes before the engineer accepts it. */
+const fixDocs = (name: string, title: string): Record<string, string> => ({
+  [`${name}/intent`]: `---\nstatus: draft\n---\n# ${title}\n\nThe report form shows a retry button after a failed upload.\n`,
+  [`${name}/spec`]: `---\nstatus: draft\n---\n# Spec: ${title}\n\n## Requirements\n\n1. A failed upload offers a retry.\n2. A retry keeps the photos already chosen.\n`,
+  [`${name}/plan`]: `---\nstatus: draft\n---\n# Plan: ${title}\n\n## Tasks\n\n### T1: Add the retry button to the report form (\`customer-portal\`)\n\n- **Depends on:** none\n`,
+});
 
 /** The demo build's plan: T3 waits for T1, which lives in the other repository. */
 const BUILD_PLAN: PlanTask[] = [
@@ -285,6 +330,8 @@ const DOCS: Record<string, string> = {
   [`${MOCK_DONE_CHANGE}/intent`]: '---\nstatus: accepted\n---\n# Photo limits shipped\n\nPolicyholders see why a photo is refused.\n',
   [`${MOCK_DONE_CHANGE}/spec`]: '---\nstatus: accepted\n---\n# Spec: photo limits\n\n## Design\n\nThe attachment store owns the count.\n',
   [`${MOCK_DONE_CHANGE}/plan`]: '---\nstatus: accepted\n---\n# Plan: photo limits\n\n## Approach\n\nThe store counts and refuses; the portal explains.\n',
+  ...fixDocs(MOCK_FIX_CHANGE, 'Retry a failed photo upload'),
+  [`${MOCK_REJECTED_FIX}/intent`]: '---\nstatus: rejected\n---\n# Correct the limit message typo\n\nThe limit message misspells "photos".\n',
   '2026-10-09-adjuster-reassign/intent': '---\nstatus: accepted\n---\n# Reassign a claim to another adjuster\n\nSupervisors move a claim between adjusters without losing its history.\n',
   '2026-10-09-adjuster-reassign/spec': '---\nstatus: accepted\n---\n# Spec: reassign\n\n1. Only supervisors can reassign.\n2. Reassignment is recorded in the claim history.\n',
   '2026-10-09-adjuster-reassign/plan': '---\nstatus: draft\n---\n# Plan: reassign\n\n- [ ] Add the reassign endpoint to claims-core.\n- [ ] Add the reassign action to customer-portal.\n',
@@ -342,6 +389,8 @@ export class SdlcMock {
     change('2026-10-09-adjuster-reassign', doc('accepted'), doc('accepted'), doc('draft'), 'plan-awaiting'),
     change(MOCK_BUILD_CHANGE, doc('accepted'), doc('accepted'), doc('accepted'), 'build-ready'),
     change(MOCK_DONE_CHANGE, doc('accepted'), doc('accepted'), doc('accepted'), 'build-finished'),
+    change(MOCK_FIX_CHANGE, doc('draft'), doc('draft'), doc('draft'), 'fix-awaiting', 'fix'),
+    change(MOCK_REJECTED_FIX, doc('rejected'), doc(null), doc(null), 'rejected', 'fix'),
   ];
   /** Rows the scripted build has committed, by task id. */
   private rows = new Map<string, BuildRow>();
@@ -350,6 +399,8 @@ export class SdlcMock {
   private docs: Record<string, string> = { ...DOCS };
   private setupDone = false;
   private instructionsWritten = false;
+  /** Set when the scripted triage's light track has created its fix folder. */
+  private fixCreated = false;
   private cancelledRun = false;
   private discarded = new Set<string>();
   /** Review runs that finished: the scripted plugin records one review in the review document at the end of each. */
@@ -431,6 +482,9 @@ export class SdlcMock {
   /** Out of date until a setup run with `--instructions` has finished. */
   instructions(): InstructionsState { return this.instructionsWritten ? 'current' : 'out-of-date'; }
 
+  /** The scripted triage ended on the light track: the fix folder exists once the run is finished. */
+  createFix(): void { this.fixCreated = true; }
+
   startChange(): string {
     this.current = MOCK_PENDING_BRANCH;
     return MOCK_PENDING_BRANCH;
@@ -438,6 +492,13 @@ export class SdlcMock {
 
   finishChange(base: string): FinishOutcome {
     this.current = base;
+    if (this.fixCreated) {
+      this.fixCreated = false;
+      this.others = [...this.others, MOCK_STARTED_FIX];
+      this.changes = [change(MOCK_STARTED_FIX, doc('draft', false), doc('draft', false), doc('draft', false), 'fix-awaiting', 'fix'), ...this.changes];
+      Object.assign(this.docs, fixDocs(MOCK_STARTED_FIX, 'Flag suspected fraud on intake'));
+      return { renamed: { branch: `change/${MOCK_STARTED_FIX}`, change: MOCK_STARTED_FIX } };
+    }
     // A pending branch whose run created no new change folder is deleted.
     if (this.changes.some((c) => c.change === MOCK_NEW_CHANGE)) return 'deleted';
     const branch = `change/${MOCK_NEW_CHANGE}`;
@@ -517,7 +578,14 @@ export class SdlcMock {
   reviewRecord(): ReviewRecord | null {
     if (this.reviewRuns === 0) return null;
     const commits = this.heads([MOCK_MASTER, ...this.repos]);
-    const findings = this.reviewFindings.map((text, i) => ({ id: `F${i + 1}`, severity: 'medium' as const, file: 'src/upload.ts', line: 10 + i, text }));
+    // Each finding names its repository and what it concerns; a convention finding names the rule it breaks.
+    const findings = this.reviewFindings.map((text, i): ParsedFinding => {
+      const concern = CONCERNS[i % CONCERNS.length];
+      return {
+        id: `F${i + 1}`, severity: 'medium', file: 'src/upload.ts', line: 10 + i, text,
+        repo: this.repos[i % this.repos.length], concern, ...(concern === 'convention' ? { rule: 'tests name the rule they prove' } : {}),
+      };
+    });
     return {
       layout: 2,
       problems: [],
@@ -711,6 +779,9 @@ export function buildRunScript(repo: string, tasks: PlanTask[], ask: boolean, pe
   ] } };
   return { head: [...read, question], mid: work };
 }
+
+/** What the demo's findings concern, in turn. */
+const CONCERNS: Concern[] = ['spec', 'bug', 'convention'];
 
 /** The two findings the scripted review closes with, in the order it lists them. */
 const REVIEW_FINDINGS = ['The upload limit is duplicated in claims-core and customer-portal.', 'The refusal message has no test.'];
