@@ -95,7 +95,9 @@ type HandledAction =
 /** A change by system and folder name. */
 type ChangeRef = { system: string; change: string };
 /** The toast for a drafted fix that stays open after the new change that replaces it started. */
-const fixStays = (fix: ChangeRef, why: string): string => `The new change started, but the fix ${fix.change} could not be closed: ${why}. It stays open.`;
+/** A drafted fix being closed after its replacement opened: the branch its documents are on, and the new change's branch. */
+type FixClose = ChangeRef & { fixBranch: string; newBranch: string };
+const fixStays =(fix: ChangeRef, why: string): string => `The new change started, but the fix ${fix.change} could not be closed: ${why}. It stays open.`;
 type DecisionOutcome ='committed' | 'needsConfirm' | 'gitFailed' | 'error';
 type StageRun = { kind: 'intent' | 'spec' | 'plan' | 'fix'; title: string; label: string };
 
@@ -838,14 +840,17 @@ export class ChangePageViewModel {
     const fix = this.pendingFix;
     this.pendingFix = null;
     if (d === null) return;
-    await this.commitDecision(d, true, fix ?? undefined);
+    if (fix !== null) await this.closeFix(fix, true);
+    else await this.commitDecision(d, true);
   }
 
-  cancelConfirm(): void {
+  async cancelConfirm(): Promise<void> {
     this.pendingDecision.set(null);
     const fix = this.pendingFix;
     this.pendingFix = null;
-    if (fix !== null) this.toasts.error(fixStays(fix, 'its other edits were not committed'));
+    if (fix === null) return;
+    await this.leaveFixOpen(fix, 'its other edits were not committed');
+    await this.load();
   }
 
   // --- taking the full pipeline instead of a drafted fix
@@ -860,7 +865,7 @@ export class ChangePageViewModel {
     return r !== null && r.kind === 'ready' && r.lightTrack;
   });
   /** The fix whose rejection waits on the other-edits confirm, after its replacement opened; null when none does. */
-  private pendingFix: ChangeRef | null = null;
+  private pendingFix: FixClose | null = null;
 
   /** Read the fix's intent and open New change on the full pipeline with the fix as its description. */
   private async openFullPipeline(): Promise<void> {
@@ -884,16 +889,22 @@ export class ChangePageViewModel {
    * Start the new change, and close the fix only once it opened (R7.1). Any other outcome leaves the fix as it was:
    * the runner has already said why for a refused or stopped start and for a run that made no change, so only an
    * error thrown here gets a toast. The dialog's Start is the engineer's confirmation that the fix will close.
+   *
+   * The sequence: read the branch the master repository is on (the fix's documents live there), start the new change,
+   * which leaves the master on the new change's branch, then check out the fix's branch, commit `reject-intent` for the
+   * fix, and check out the new change's branch again. See `closeFix`.
    */
   async startPipeline(system: string, idea: string): Promise<void> {
     this.pipelineOpen.set(false);
-    const fix = { system: this.system(), change: this.changeName() };
     const workspace = this.current();
     const scan = this.scan();
     const master = this.masterDir();
     if (!workspace || !scan || !master) return;
     let outcome;
+    let fixBranch: string | null;
     try {
+      fixBranch = (await this.transport.sdlcBranches(master)).current;
+      if (fixBranch === null) throw new Error('the master repository is not on a branch');
       outcome = await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, 'full', (spec) => this.confirmRun(spec));
     } catch (e) {
       this.toasts.error(`Could not start the change: ${message(e)}`);
@@ -901,7 +912,66 @@ export class ChangePageViewModel {
     }
     if (outcome.kind !== 'opened') return;
     // The page may already show the new change, so the rejection names the fix it belongs to.
-    await this.commitDecision('reject-intent', false, fix);
+    await this.closeFix({ system: this.system(), change: this.changeName(), fixBranch, newBranch: outcome.branch }, false);
+  }
+
+  /**
+   * Close the fix after its replacement opened. The master repository is on the new change's branch by now, where the
+   * fix's folder may be missing or stale, so: check out the fix's branch (skipped when it is the new branch), commit the
+   * rejection there, and check out the new change's branch again. A failed first checkout decides nothing; a failed
+   * decision still returns to the new branch; each failure is said in a toast, never left as a half state. An
+   * other-edits confirm keeps the master on the fix's branch until it is answered.
+   */
+  private async closeFix(fix: FixClose, confirmed: boolean): Promise<void> {
+    const master = this.masterDir();
+    if (master === null) return;
+    const swap = fix.fixBranch !== fix.newBranch;
+    if (swap && confirmed === false) {
+      try {
+        await this.transport.sdlcCheckout(master, fix.fixBranch);
+      } catch (e) {
+        await this.leaveFixOpen(fix, message(e), false);
+        return;
+      }
+    }
+    let problem: string | null = null;
+    try {
+      const out = await this.transport.sdlcDecide(master, fix.system, fix.change, 'reject-intent', confirmed);
+      switch (out.kind) {
+        case 'needsConfirm':
+          this.pendingDecision.set('reject-intent');
+          this.pendingFix = fix;
+          return;
+        case 'gitFailed':
+          problem = out.stderr.trim() === '' ? 'git refused the commit' : out.stderr;
+          break;
+        case 'committed':
+          this.toasts.success(`${DONE['reject-intent']} · committed`);
+          break;
+      }
+    } catch (e) {
+      problem = message(e);
+    }
+    if (problem !== null) await this.leaveFixOpen(fix, problem, swap);
+    else if (swap) await this.returnToNewChange(fix);
+    await this.load();
+  }
+
+  /** Say the fix stays open, after returning the master to the new change's branch when it had left it. */
+  private async leaveFixOpen(fix: FixClose, why: string, returning = true): Promise<void> {
+    if (returning && fix.fixBranch !== fix.newBranch) await this.returnToNewChange(fix);
+    this.toasts.error(fixStays(fix, why));
+  }
+
+  /** Check out the new change's branch again; a failure says where the master and the new change are. */
+  private async returnToNewChange(fix: FixClose): Promise<void> {
+    const master = this.masterDir();
+    if (master === null) return;
+    try {
+      await this.transport.sdlcCheckout(master, fix.newBranch);
+    } catch (e) {
+      this.toasts.error(`The master repository is on ${fix.fixBranch} and the new change is on ${fix.newBranch}: ${message(e)}. Check out ${fix.newBranch} to continue.`);
+    }
   }
 
   /** The preview a run goes through; null when it was cancelled or could not be opened. */
@@ -1209,29 +1279,23 @@ export class ChangePageViewModel {
     return w && repo ? masterPath(w.folder, repo) : null;
   }
 
-  /**
-   * Record a decision on a change. `fix` names the drafted fix a decision closes after its replacement opened: the
-   * decision then goes to that fix, whatever change the page shows by now, and a failure says the fix stays open.
-   */
-  private async commitDecision(decision: Decision, confirmed: boolean, fix?: ChangeRef): Promise<DecisionOutcome> {
+  /** Record a decision on the change the page shows. */
+  private async commitDecision(decision: Decision, confirmed: boolean): Promise<DecisionOutcome> {
     const master = this.masterDir();
     if (master === null) return 'error';
-    const target = fix ?? { system: this.system(), change: this.changeName() };
-    const failure = (text: string): string => (fix ? fixStays(fix, text) : text);
     let out;
     try {
-      out = await this.transport.sdlcDecide(master, target.system, target.change, decision, confirmed);
+      out = await this.transport.sdlcDecide(master, this.system(), this.changeName(), decision, confirmed);
     } catch (e) {
-      this.toasts.error(failure(fix ? message(e) : `Could not record the decision: ${message(e)}`));
+      this.toasts.error(`Could not record the decision: ${message(e)}`);
       return 'error';
     }
     switch (out.kind) {
       case 'needsConfirm':
         this.pendingDecision.set(decision);
-        this.pendingFix = fix ?? null;
         return 'needsConfirm';
       case 'gitFailed':
-        this.toasts.error(failure(out.stderr.trim() === '' ? 'git refused the commit' : out.stderr));
+        this.toasts.error(out.stderr.trim() === '' ? 'git refused the commit' : out.stderr);
         break;
       case 'committed':
         this.toasts.success(`${DONE[decision]} · committed`);
