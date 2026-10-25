@@ -35345,9 +35345,10 @@ function readPlan(text3, file, marker) {
 // src/fix-state.ts
 var DOCUMENTS = ["intent", "spec", "plan"];
 var OWN_LINES = ["status", "source_intent_commit", "source_spec_commit", "accepted_in_advance"];
+var GIT_OPTIONS = ["-c", "core.quotepath=off", "--no-optional-locks"];
 function git(cwd, args) {
   try {
-    return execFileSync("git", args, {
+    return execFileSync("git", [...GIT_OPTIONS, ...args], {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -35361,7 +35362,7 @@ function git(cwd, args) {
 }
 function gitMaybe(cwd, args) {
   try {
-    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return execFileSync("git", [...GIT_OPTIONS, ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   } catch (e) {
     if (e.status == null) {
       throw new CouldNotRun(`git could not run in ${cwd}: ${e.message}`);
@@ -35369,32 +35370,58 @@ function gitMaybe(cwd, args) {
     return null;
   }
 }
-function statusOf(text3, file) {
+function fieldOf(text3, file, field) {
   try {
-    const value = parseFrontMatter(text3, file).data["status"];
-    return value === void 0 || value === null ? null : String(value);
+    return parseFrontMatter(text3, file).data[field];
   } catch {
-    return null;
+    return void 0;
   }
 }
-function withoutOwnLines(text3) {
-  const lines = text3.replace(/\r\n/g, "\n").split("\n");
-  const out = [];
-  let inFront = false;
-  lines.forEach((line, i) => {
-    const bare = line.trimEnd();
-    if (i === 0 && bare === "---") inFront = true;
-    else if (inFront && bare === "---") inFront = false;
-    else if (inFront) {
-      const colon = line.indexOf(":");
-      if (colon > 0 && OWN_LINES.includes(line.slice(0, colon).trim())) return;
+function statusOf(text3, file) {
+  const value = fieldOf(text3, file, "status");
+  return value === void 0 || value === null ? null : String(value);
+}
+function frontMatterEnd(text3) {
+  const lines = text3.split("\n");
+  if ((lines[0] ?? "").trimEnd() !== "---") return 0;
+  for (let i = 1; i < lines.length; i++) if (lines[i].trimEnd() === "---") return i + 1;
+  return 0;
+}
+var FIELD_LINE = /^([A-Za-z_][A-Za-z0-9_]*)\s*:(.*)$/;
+var HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+function onlyOwnLines(top, path, headText, workingText) {
+  const out = git(top, ["diff", "HEAD", "--no-color", "--unified=0", "--", path]);
+  const eol = headText.includes("\r\n") ? "\r" : "";
+  const ends = { "-": frontMatterEnd(headText), "+": frontMatterEnd(workingText) };
+  const next = { "-": 0, "+": 0 };
+  let inHunks = false;
+  let statusAccepted = false;
+  for (const line of out.split("\n")) {
+    const hunk = HUNK.exec(line);
+    if (hunk) {
+      inHunks = true;
+      next["-"] = Number(hunk[1]);
+      next["+"] = Number(hunk[2]);
+      continue;
     }
-    out.push(line);
-  });
-  return out.join("\n");
+    if (!inHunks || line === "") continue;
+    const side = line[0];
+    if (side !== "-" && side !== "+") return false;
+    const number = next[side]++;
+    let text3 = line.slice(1);
+    if (eol === "\r" ? !text3.endsWith("\r") : text3.endsWith("\r")) return false;
+    if (eol) text3 = text3.slice(0, -1);
+    const field = FIELD_LINE.exec(text3);
+    if (!field || number < 2 || number >= ends[side] || !OWN_LINES.includes(field[1])) return false;
+    if (side === "+" && field[1] === "status") {
+      if (field[2].trim() !== "accepted") return false;
+      statusAccepted = true;
+    }
+  }
+  return statusAccepted;
 }
 function reportedPaths(top, paths) {
-  const out = git(top, ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...paths]);
+  const out = git(top, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...paths]);
   const reported = /* @__PURE__ */ new Set();
   const fields = out.split("\0");
   for (let i = 0; i < fields.length; i++) {
@@ -35405,18 +35432,39 @@ function reportedPaths(top, paths) {
   }
   return reported;
 }
+function differsFromHead(top, path) {
+  try {
+    execFileSync("git", [...GIT_OPTIONS, "diff", "--quiet", "HEAD", "--", path], { cwd: top, stdio: ["ignore", "ignore", "pipe"] });
+    return false;
+  } catch (e) {
+    const err = e;
+    if (err.status === 1) return true;
+    const detail = (err.stderr?.toString() ?? "").trim() || err.message;
+    throw new CouldNotRun(`git diff failed in ${top}: ${detail}`);
+  }
+}
+function readable(read) {
+  try {
+    return read();
+  } catch (e) {
+    if (e instanceof CouldNotRun) return null;
+    throw e;
+  }
+}
 function isBuilt(top, prefix, folder, inHead) {
   const planPath = `${prefix}plan.md`;
   if (!inHead(planPath)) return false;
   const planFile = join2(folder, "plan.md");
-  const planResult = readPlan(git(top, ["show", `HEAD:${planPath}`]), planFile, findMarker(planFile));
-  if (planResult.kind !== "plan") return false;
+  const planText = git(top, ["show", `HEAD:${planPath}`]);
+  const planResult = readable(() => readPlan(planText, planFile, findMarker(planFile)));
+  if (planResult?.kind !== "plan") return false;
   const tasks = new Set(planResult.document.tasks.map((t) => t.id));
   if (tasks.size === 0) return false;
   const logs = git(top, ["ls-tree", "-z", "--name-only", "HEAD", "--", `${prefix}build/`]).split("\0").filter((p) => p.endsWith(".md") && !p.endsWith("/review.md"));
   return logs.some((path) => {
-    const result = readBuildLog(git(top, ["show", `HEAD:${path}`]), join2(folder, "build", basename(path)));
-    return result.kind === "build-log" && result.document.entries.some((e) => tasks.has(e.task));
+    const text3 = git(top, ["show", `HEAD:${path}`]);
+    const result = readable(() => readBuildLog(text3, join2(folder, "build", basename(path))));
+    return result?.kind === "build-log" && result.document.entries.some((e) => tasks.has(e.task));
   });
 }
 function rowOf(facts) {
@@ -35434,19 +35482,6 @@ function rowOf(facts) {
 }
 function fixState(folderArg) {
   const folder = resolve2(folderArg);
-  const intentFile = join2(folder, "intent.md");
-  let intentText;
-  try {
-    intentText = readFileSync2(intentFile, "utf8");
-  } catch (e) {
-    throw new CouldNotRun(`${intentFile}: cannot read the intent: ${e.code ?? e}`);
-  }
-  const track = parseFrontMatter(intentText, intentFile).data["track"];
-  if (track !== "fix") {
-    throw new CouldNotRun(
-      `${intentFile}: not a fix (its track is ${track === void 0 ? "not set" : JSON.stringify(track)}, expected fix)`
-    );
-  }
   const top = git(folder, ["rev-parse", "--show-toplevel"]).trim();
   const prefix = git(folder, ["rev-parse", "--show-prefix"]).trim();
   const hasHead = gitMaybe(top, ["rev-parse", "--verify", "-q", "HEAD"]) !== null;
@@ -35460,6 +35495,18 @@ function fixState(folderArg) {
       return null;
     }
   });
+  const intentFile = join2(folder, "intent.md");
+  if (working[0] == null && head[0] == null) {
+    throw new CouldNotRun(`${intentFile}: cannot read the intent: there is no intent.md in the working tree or in HEAD`);
+  }
+  const trackIn = (text3, file) => text3 == null ? void 0 : fieldOf(text3, file, "track");
+  let track = trackIn(working[0] ?? null, intentFile);
+  if (track === void 0 || track === null) track = trackIn(head[0] ?? null, `HEAD:${paths[0]}`);
+  if (track !== "fix") {
+    throw new CouldNotRun(
+      `${intentFile}: not a fix (its track is ${track === void 0 || track === null ? "not set" : JSON.stringify(track)}, expected fix)`
+    );
+  }
   const perDoc = DOCUMENTS.map((d, i) => ({
     inHead: head[i] !== null,
     headStatus: head[i] == null ? null : statusOf(head[i], `HEAD:${paths[i]}`),
@@ -35479,8 +35526,9 @@ function fixState(folderArg) {
       return;
     }
     if (!reported.has(paths[i])) return;
+    if (working[i] != null && !differsFromHead(top, paths[i])) return;
     anyDiff = true;
-    const ownLines = i === carrier && working[i] != null && perDoc[i].workingStatus === "accepted" && withoutOwnLines(head[i]) === withoutOwnLines(working[i]);
+    const ownLines = i === carrier && working[i] != null && perDoc[i].workingStatus === "accepted" && onlyOwnLines(top, paths[i], head[i], working[i]);
     if (!ownLines) unrecorded.push(d);
   });
   const subject = hasHead ? git(top, ["log", "-1", "--format=%s", "--", ...paths]).trim() : "";
@@ -35494,9 +35542,22 @@ function fixState(folderArg) {
     ownLinesOnly: anyDiff && unrecorded.length === 0,
     accepted,
     acceptanceLast,
-    built: hasHead && isBuilt(top, prefix, folder, inHead)
+    built: false
   };
+  const early = rowOf(facts);
+  if (early === 1 || early === 2) return { row: early, facts };
+  facts.built = hasHead && isBuilt(top, prefix, folder, inHead);
   return { row: rowOf(facts), facts };
+}
+function fixStates(folders) {
+  return folders.map((folder) => {
+    try {
+      return { folder, result: fixState(folder) };
+    } catch (e) {
+      if (e instanceof CouldNotRun) return { folder, error: e.message };
+      throw e;
+    }
+  });
 }
 
 // src/review.ts
@@ -36662,7 +36723,7 @@ function readSpec(text3, file) {
 }
 
 // src/cli.ts
-var USAGE = "usage: node check.mjs check <file>...\n       node check.mjs read --json <file>\n       node check.mjs fix-state --json <change folder>";
+var USAGE = "usage: node check.mjs check <file>...\n       node check.mjs read --json <file>\n       node check.mjs fix-state --json <change folder>...";
 function kindOf(file) {
   const parts = file.split(/[\\/]/);
   const name = parts[parts.length - 1] ?? "";
@@ -36713,8 +36774,10 @@ function main(argv) {
     process.stdout.write(JSON.stringify(result) + "\n");
     return result.problems.length === 0 ? EXIT.PASS : EXIT.PROBLEMS;
   }
-  if (command === "fix-state" && rest.length === 2 && rest[0] === "--json") {
-    process.stdout.write(JSON.stringify(fixState(rest[1])) + "\n");
+  if (command === "fix-state" && rest.length >= 2 && rest[0] === "--json") {
+    const folders = rest.slice(1);
+    const out = folders.length === 1 ? fixState(folders[0]) : fixStates(folders);
+    process.stdout.write(JSON.stringify(out) + "\n");
     return EXIT.PASS;
   }
   throw new CouldNotRun(USAGE);

@@ -32,6 +32,9 @@ pub enum Stage {
     FixUnsettled,
     FixAwaiting,
     FixAccepting,
+    /// A fix on a machine whose ai-sdlc plugin is older than 0.13.0: it is a fix, and where it stands
+    /// cannot be read.
+    FixNeedsPlugin,
 }
 
 /// Which pipeline a change is on: the full intent, spec, plan flow, or the light track a fix takes.
@@ -119,6 +122,10 @@ pub struct ChangeInfo {
     /// The change list words its notice from this, so it never blames Node.js for a layout it does not read.
     pub plan_unreadable_reason: Option<String>,
     pub track: Track,
+    /// The row of the format program's fix-state table the fix stands at (1 to 8, or one this Workbench
+    /// does not know). `None` for a full-pipeline change, a fix the program could not answer for, and a
+    /// fix on a plugin too old to ask.
+    pub fix_row: Option<u8>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -443,6 +450,7 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
                 plan_unreadable: facts.unreadable,
                 plan_unreadable_reason,
                 track: track_of,
+                fix_row: None,
             }
         })
         .collect()
@@ -1077,6 +1085,104 @@ mod tests {
         assert_eq!(info.spec.status.as_deref(), Some("draft"));
         assert_eq!(info.spec.head_status, None);
         assert_eq!(info.plan.head_status, None);
+    }
+
+    /// A repo holding one committed `intent.md` per name, each on the track `track`.
+    fn repo_of_intents(tmp: &Path, names: &[(&str, &str)]) -> std::path::PathBuf {
+        let repo = testutil::repo(tmp, "m");
+        for (name, track) in names {
+            testutil::commit_file(
+                &repo,
+                &format!("intent/claims/{name}/intent.md"),
+                &format!("---\nstatus: draft\ntrack: {track}\n---\nintent\n"),
+                "intent",
+            );
+        }
+        repo
+    }
+    fn calls(plugin: &Path) -> Vec<String> {
+        std::fs::read_to_string(plugin.join("format").join("calls.log"))
+            .map(|t| t.lines().map(str::to_string).collect())
+            .unwrap_or_default()
+    }
+    fn change_named<'a>(got: &'a [ChangeInfo], name: &str) -> &'a ChangeInfo {
+        got.iter().find(|c| c.change == name).unwrap()
+    }
+
+    #[test]
+    fn one_program_process_reads_every_fix_of_a_system_r4_1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
+        let repo = repo_of_intents(
+            tmp.path(),
+            &[
+                ("2026-10-01-row6-a", "fix"),
+                ("2026-10-02-row7-b", "fix"),
+                ("2026-10-03-row6-c", "fix"),
+                ("2026-10-04-full", "full"),
+            ],
+        );
+        let got = list(Some(&plugin), &repo, "claims");
+        assert_eq!(calls(&plugin), vec!["fix-state 3"]);
+        let six = change_named(&got, "2026-10-01-row6-a");
+        assert_eq!((six.stage, six.fix_row), (Stage::FixAwaiting, Some(6)));
+        let seven = change_named(&got, "2026-10-02-row7-b");
+        assert_eq!((seven.stage, seven.fix_row), (Stage::FixAwaiting, Some(7)));
+        let full = change_named(&got, "2026-10-04-full");
+        assert_eq!(full.fix_row, None);
+    }
+
+    #[test]
+    fn an_older_plugin_reads_every_fix_as_needing_the_plugin_without_running_it_r10_1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = testutil::fake_fix_plugin(&tmp.path().join("p"), "0.12.0");
+        let repo = repo_of_intents(
+            tmp.path(),
+            &[("2026-10-01-row6-a", "fix"), ("2026-10-02-row7-b", "fix")],
+        );
+        let got = list(Some(&plugin), &repo, "claims");
+        assert_eq!(got.len(), 2);
+        for info in &got {
+            assert_eq!(info.track, Track::Fix);
+            assert_eq!(info.stage, Stage::FixNeedsPlugin);
+            assert_eq!(info.fix_row, None);
+            assert_eq!(
+                info.plan_unreadable_reason.as_deref(),
+                Some("Needs ai-sdlc 0.13.0 or later.")
+            );
+        }
+        assert!(calls(&plugin).is_empty());
+    }
+
+    #[test]
+    fn a_row_the_workbench_does_not_know_and_a_failed_folder_read_as_unsettled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
+        let repo = repo_of_intents(
+            tmp.path(),
+            &[
+                ("2026-10-01-row9", "fix"),
+                ("2026-10-02-broken", "fix"),
+                ("2026-10-03-row6", "fix"),
+            ],
+        );
+        let got = list(Some(&plugin), &repo, "claims");
+        let nine = change_named(&got, "2026-10-01-row9");
+        assert_eq!(nine.stage, Stage::FixUnsettled);
+        assert_eq!(nine.fix_row, Some(9));
+        assert!(nine.plan_unreadable);
+        let broken = change_named(&got, "2026-10-02-broken");
+        assert_eq!(broken.stage, Stage::FixUnsettled);
+        assert_eq!(broken.fix_row, None);
+        assert!(broken
+            .plan_unreadable_reason
+            .as_deref()
+            .unwrap()
+            .contains("git failed"));
+        assert_eq!(
+            change_named(&got, "2026-10-03-row6").stage,
+            Stage::FixAwaiting
+        );
     }
 
     #[test]

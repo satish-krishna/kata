@@ -409,6 +409,15 @@ pub fn fix_state(program: &Path, folder: &Path) -> Result<FixState, FormatError>
         .map_err(|e| FormatError::BadOutput(format!("{e}{}", stderr_note(&output.stderr))))
 }
 
+/// Where each fix in `folders` stands, in the order given, from one process. A folder the program could
+/// not answer for gets its own error; a run that failed as a whole gives that error for every folder.
+pub fn fix_states(_program: &Path, folders: &[PathBuf]) -> Vec<Result<FixState, FormatError>> {
+    folders
+        .iter()
+        .map(|_| Err(FormatError::CouldNotRun("not implemented".into())))
+        .collect()
+}
+
 /// What a check depends on: the program, each checked document's name and bytes, and the marker above them.
 type CheckKey = (PathBuf, Vec<(String, u64)>, u64);
 

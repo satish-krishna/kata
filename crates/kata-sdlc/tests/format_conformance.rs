@@ -378,3 +378,19 @@ fn a_folder_that_is_not_a_fix_is_could_not_run() {
         other => panic!("expected CouldNotRun, got {other:?}"),
     }
 }
+
+#[test]
+#[serial]
+fn the_vendored_program_answers_fix_state_for_several_folders_in_one_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let fix = fix_repo(dir.path(), false);
+    let plain = dir.path().join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    fs::write(plain.join("intent.md"), "---\nstatus: draft\n---\nintent\n").unwrap();
+    let before = format::runs_started();
+    let got = format::fix_states(&program(), &[fix, plain]);
+    assert_eq!(format::runs_started() - before, 1);
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0].as_ref().unwrap().row, 6);
+    assert!(matches!(&got[1], Err(FormatError::CouldNotRun(m)) if m.contains("not a fix")));
+}
