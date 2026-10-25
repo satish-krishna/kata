@@ -28,6 +28,10 @@ export class FindingsList {
   /** A finding that names a file was picked. */
   readonly pick = output<Finding>();
 
+  protected isEmpty(groups: FindingGroup[]): boolean {
+    return groups.every((g) => g.findings.length === 0);
+  }
+
   protected where(f: Finding): string | null {
     return f.file === undefined ? null : f.line === undefined ? f.file : `${f.file}:${f.line}`;
   }

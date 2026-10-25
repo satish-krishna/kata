@@ -3,34 +3,48 @@
   @if (older()) {
     <p class="k-left__note">Older layout: read from the closing words of the review run.</p>
   }
-  @if ((groups()[0]?.findings ?? []).length === 0) {
+  @if (isEmpty(groups())) {
     <p class="k-state__body">{{ emptyText() }}</p>
   } @else {
-    <ng-container *ngTemplateOutlet="list; context: { $implicit: groups()[0].findings }" />
+    <ng-container *ngTemplateOutlet="grouped; context: { $implicit: groups() }" />
   }
   @for (r of replaced(); track $index) {
     <details class="k-findings__replaced">
       <summary>{{ r.label ?? 'Replaced by the review at ' + r.at }}</summary>
-      <ng-container *ngTemplateOutlet="list; context: { $implicit: r.groups[0].findings }" />
+      <ng-container *ngTemplateOutlet="grouped; context: { $implicit: r.groups }" />
     </details>
   }
 </section>
-<ng-template #list let-items>
-  <ol class="k-findings__list">
-    @for (f of items; track $index) {
-      <li class="k-findings__item">
-        <span [class]="'k-status k-status--' + tone(f)"><span class="k-status__dot"></span>{{ label(f) }}</span>
-        <div>
-          <div class="k-findings__text">
-            <app-markdown-body [md]="f.text" />
-          </div>
-          @if (where(f); as at) {
-            <button hlmBtn variant="bare" size="bare" type="button" class="k-findings__place" [attr.aria-pressed]="isPicked(f)" (click)="pick.emit(f)">{{ at }}</button>
-          } @else {
-            <p class="k-left__note">This finding names no file.</p>
-          }
-        </div>
-      </li>
-    }
-  </ol>
+<ng-template #grouped let-sets>
+  @for (g of sets; track $index) {
+    <div class="k-findings__group">
+      @if (g.repo !== null) {
+        <h3 class="k-findings__group-head"><span class="k-mono">{{ g.repo }}</span> <span class="k-findings__count">{{ g.findings.length }}</span></h3>
+      } @else if (sets.length > 1) {
+        <h3 class="k-findings__group-head"><span>Repository not recorded</span> <span class="k-findings__count">{{ g.findings.length }}</span></h3>
+      }
+      <ol class="k-findings__list">
+        @for (f of g.findings; track $index) {
+          <li class="k-findings__item">
+            <div>
+              <span [class]="'k-status k-status--' + tone(f)"><span class="k-status__dot"></span>{{ label(f) }}</span>
+              @if (f.concern; as concern) {
+                <span class="k-findings__concern">{{ concern }}@if (f.rule) { rule: {{ f.rule }}}</span>
+              }
+            </div>
+            <div>
+              <div class="k-findings__text">
+                <app-markdown-body [md]="f.text" />
+              </div>
+              @if (where(f); as at) {
+                <button hlmBtn variant="bare" size="bare" type="button" class="k-findings__place" [attr.aria-pressed]="isPicked(f)" (click)="pick.emit(f)">{{ at }}</button>
+              } @else {
+                <p class="k-left__note">This finding names no file.</p>
+              }
+            </div>
+          </li>
+        }
+      </ol>
+    </div>
+  }
 </ng-template>

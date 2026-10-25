@@ -151,7 +151,7 @@ export type FindingsAreaView = {
 };
 
 /** Where the engineer picked a finding: the file and line to show in the changed files, and a count so picking again shows it again. */
-export type FindingPlace = { file: string; line: number | null; text: string; n: number };
+export type FindingPlace = { file: string; line: number | null; text: string; n: number; repo?: string };
 
 /** The findings area for each state of the review. */
 export function findingsAreaOf(i: { reading: boolean; entry: ReviewEntry; review: FindingsView; departures: Departure[] }): FindingsAreaView {
@@ -911,7 +911,7 @@ export class BuildPageViewModel {
   /** Ask the changed files to show where a finding is. A finding that names no file shows nothing. */
   showFinding(f: Finding): void {
     if (f.file === undefined) return;
-    this.findingPlace.set({ file: f.file, line: f.line ?? null, text: f.text, n: ++this.placeCount });
+    this.findingPlace.set({ file: f.file, line: f.line ?? null, text: f.text, n: ++this.placeCount, ...(f.repo === undefined ? {} : { repo: f.repo }) });
   }
 
   /** Where the master repository is: what the build was started from, else what the change page loaded. */

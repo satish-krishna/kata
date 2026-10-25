@@ -12,7 +12,8 @@ export type RepoPaths = { repo: string; whole: string[]; committed: string[]; un
 
 /**
  * Finds where a finding's file is in the change. A path whose first folder is a listed repository's name is looked up,
- * without that folder, in that repository only; any other path is looked up in every repository. A finding with a line
+ * without that folder, in that repository only; any other path is looked up in every repository. A finding whose `repo`
+ * is a listed repository is looked up in that repository only, an unknown `repo` changing nothing. A finding with a line
  * but no file names nothing.
  */
 export function locateFinding(f: { file?: string; line?: number; repo?: string }, repos: RepoPaths[], part: Part): FindingOutcome {
@@ -20,8 +21,11 @@ export function locateFinding(f: { file?: string; line?: number; repo?: string }
   if (!file) return { kind: 'no-file' };
   const line = f.line ?? null;
   const [first, ...rest] = file.split('/');
-  const named = rest.length > 0 ? repos.find((r) => r.repo === first) : undefined;
-  const path = named ? rest.join('/') : file;
+  const given = f.repo === undefined ? undefined : repos.find((r) => r.repo === f.repo);
+  const prefixed = rest.length > 0 ? repos.find((r) => r.repo === first) : undefined;
+  const named = given ?? prefixed;
+  // A leading `<repo>/` is dropped only when it is the repository the file is looked up in.
+  const path = named && rest.length > 0 && first === named.repo ? rest.join('/') : file;
   const having = (named ? [named] : repos).filter((r) => r.whole.includes(path));
   if (having.length === 0) return { kind: 'not-in-change' };
   if (having.length > 1) return { kind: 'choose', repos: having.map((r) => r.repo), path, line };

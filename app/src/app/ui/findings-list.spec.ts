@@ -50,7 +50,7 @@ describe('FindingsList', () => {
     const a: Finding = { severity: 'high', text: 'In api', repo: 'api' };
     const b: Finding = { severity: 'low', text: 'In web', repo: 'web' };
     const c: Finding = { severity: 'medium', text: 'Names none' };
-    const headings = (container: HTMLElement) => Array.from(container.querySelectorAll('h3')).map((h) => h.textContent!.replace(/\s+/g, ' ').trim());
+    const headings = (container: HTMLElement) => Array.from(container.querySelectorAll('h3')).map((h) => Array.from(h.children, (c) => c.textContent).join(' '));
 
     it('shows a heading per named group with the repository and its count', async () => {
       const { container } = await mount({

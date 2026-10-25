@@ -26,7 +26,7 @@ export const PART_OPTIONS: { value: Part; label: string }[] = [
 ];
 
 /** A finding the engineer picked, as the host passes it: `n` makes a repeated pick of the same finding a new request. */
-export type ShowAt = { file: string; line: number | null; text: string; n: number };
+export type ShowAt = { file: string; line: number | null; text: string; n: number; repo?: string };
 
 /** Below this width the list stacks above the diff and the editor is always inline (Tailwind's `md` breakpoint). */
 const NARROW = '(max-width: 767.98px)';
@@ -240,7 +240,7 @@ export class ChangesViewModel {
     }
     if (run !== this.findingSeq) return;
     this.findingLists = lists;
-    const outcome = locateFinding({ file: request.file, line: request.line ?? undefined }, lists, this.part());
+    const outcome = locateFinding({ file: request.file, line: request.line ?? undefined, repo: request.repo }, lists, this.part());
     switch (outcome.kind) {
       case 'no-file':
         return;
