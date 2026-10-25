@@ -86,12 +86,13 @@ export function actionsFor(stage: Stage): StageAction[] {
  * The actions of a change on the light track, by stage. The stages of the intent, spec and plan documents cannot
  * occur for a fix, so they give none; an out-of-date plan has one action whatever the cause.
  */
-function fixActions(stage: Stage): StageAction[] {
-  switch (stage) {
+function fixActions(c: ChangeInfo): StageAction[] {
+  switch (c.stage) {
     case "fix-in-progress":
-      return ["finish-fix-draft", "full-pipeline-instead"];
+      return ["finish-fix-draft"];
     case "fix-awaiting":
-      return ["accept-fix", "change-fix", "full-pipeline-instead"];
+      // Once a task is built, the full pipeline would discard that work, so it is not offered.
+      return c.build.finished > 0 ? ["accept-fix", "change-fix"] : ["accept-fix", "change-fix", "full-pipeline-instead"];
     case "fix-accepting":
       return ["accept-fix"];
     case "build-ready":
@@ -101,7 +102,6 @@ function fixActions(stage: Stage): StageAction[] {
     case "build-finished":
       return ["declare-done", "another-round", "run-review", "reopen-fix"];
     case "plan-out-of-date":
-    case "plan-superseded":
       return ["reopen-fix"];
     default:
       return [];
@@ -114,7 +114,7 @@ function fixActions(stage: Stage): StageAction[] {
  * no action; any other cause means the plan is rewritten.
  */
 export function actionsForChange(c: ChangeInfo): StageAction[] {
-  if (c.track === "fix") return fixActions(c.stage);
+  if (c.track === "fix") return fixActions(c);
   if (c.stage !== "plan-out-of-date") return actionsFor(c.stage);
   switch (c.out_of_date) {
     case "spec-pin":
@@ -128,8 +128,8 @@ export function actionsForChange(c: ChangeInfo): StageAction[] {
 }
 
 /** Whether the feedback box refuses an empty answer for an action at a stage. */
-export function feedbackRequired(_action: StageAction, _stage: Stage): boolean {
-  return false;
+export function feedbackRequired(action: StageAction, stage: Stage): boolean {
+  return action === "change-fix" || (action === "reopen-fix" && stage !== "plan-out-of-date");
 }
 
 export type StageLabel = {
@@ -155,7 +155,7 @@ const LABELS: Record<Stage, StageLabel> = {
   "build-ready": { step: "build", text: "Build · ready to start", tone: "muted" },
   "build-stopped": { step: "build", text: "Build · in progress (stopped)", tone: "warning" },
   "build-finished": { step: "build", text: "Build · finished, not yet done", tone: "success" },
-  "fix-in-progress": { step: "intent", text: "Fix · drafting stopped", tone: "warning" },
+  "fix-in-progress": { step: "intent", text: "Fix · changes not recorded", tone: "warning" },
   "fix-unsettled": { step: "intent", text: "Fix · statuses not settled", tone: "warning" },
   "fix-awaiting": { step: "intent", text: "Fix · awaiting acceptance", tone: "warning" },
   "fix-accepting": { step: "plan", text: "Fix · acceptance stopped", tone: "warning" },

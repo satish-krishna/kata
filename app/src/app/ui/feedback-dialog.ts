@@ -16,10 +16,17 @@ import { Field } from './field';
 export class FeedbackDialog {
   /** The label of the action waiting on the box, or null while it is closed. */
   readonly action = input.required<string | null>();
+  /** The box refuses an empty answer: the action cannot run without saying what should change. */
+  readonly required = input(false);
 
   readonly run = output<string>();
   readonly cancel = output<void>();
 
+  protected readonly hint = computed(() =>
+    this.refused()
+      ? 'Write what should change.'
+      : (this.required() ? '' : 'Optional. ') + 'The agent regenerates the whole document with your corrections; where they disagree with the current version, they win.',
+  );
   protected readonly open = computed(() => this.action() !== null);
   /** Each revisit starts with an empty box. */
   protected readonly text = linkedSignal(() => {
@@ -27,8 +34,24 @@ export class FeedbackDialog {
     return '';
   });
 
+  /** Run was pressed on an empty required box; cleared by typing and by the next revisit. */
+  protected readonly refused = linkedSignal(() => {
+    this.action();
+    return false;
+  });
+
   protected onText(e: Event): void {
     this.text.set((e.target as HTMLTextAreaElement).value);
+    this.refused.set(false);
+  }
+
+  protected onRun(): void {
+    const text = this.text().trim();
+    if (this.required() && text === '') {
+      this.refused.set(true);
+      return;
+    }
+    this.run.emit(text);
   }
 
   /** Escape and a backdrop click close the overlay from inside; surface that as cancel. */

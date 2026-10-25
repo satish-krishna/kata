@@ -47,6 +47,7 @@ import {
   reviewFindings,
   parseFrontMatter,
   revisits,
+  feedbackRequired,
   specFor,
   stageLabel,
   stagePills,
@@ -241,7 +242,18 @@ export class ChangePageViewModel {
   /** The review document as the format program reads it; null when the change has none or it could not be read. */
   private readonly reviewRecord = signal<ReviewRecord | null>(null);
   /** The notice above the open spec or plan; null when it needs none. */
-  readonly docNotice = computed<DocNotice | null>(() => this.shown()?.notice ?? null);
+  readonly docNotice = computed<DocNotice | null>(() => this.unsettledNotice() ?? this.shown()?.notice ?? null);
+  /** A fix whose documents carry statuses the workflow never leaves on a fix: the page lists them, on every tab. */
+  private readonly unsettledNotice = computed<DocNotice | null>(() => {
+    const c = this.change();
+    if (c === null || c.stage !== 'fix-unsettled') return null;
+    const status = (d: { status: string | null }) => d.status ?? 'missing';
+    return {
+      tone: 'warning',
+      text: 'The workflow does not leave a fix in these statuses, so nothing can be run on it.',
+      lines: [`intent: ${status(c.intent)} · spec: ${status(c.spec)} · plan: ${status(c.plan)}`],
+    };
+  });
   /** What the open spec or plan shows, decided by the one owner of that table; null for the other tabs and before the first load. */
   private readonly shown = computed<Shown | null>(() => {
     const readiness = this.readiness();
@@ -420,6 +432,13 @@ export class ChangePageViewModel {
   readonly feedbackFor = computed(() => {
     const a = this.pendingRevisit();
     return a === null ? null : this.labelOf(a);
+  });
+
+  /** The waiting action cannot run with an empty box. */
+  readonly feedbackRequired = computed(() => {
+    const a = this.pendingRevisit();
+    const c = this.change();
+    return a !== null && c !== null && feedbackRequired(a, c.stage);
   });
 
   // --- the build: its dialog, the leftovers confirm, the refusal, and what is handed to the build view

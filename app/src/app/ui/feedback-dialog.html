@@ -4,14 +4,15 @@
     <div class="k-form">
       <app-field
         label="What should change?"
-        hint="Optional. The agent regenerates the whole document with your corrections; where they disagree with the current version, they win."
+        [hint]="hint()"
+        [error]="refused()"
       >
         <textarea hlmTextarea rows="6" aria-label="What should change?" [value]="text()" (input)="onText($event)"></textarea>
       </app-field>
     </div>
     <hlm-dialog-footer>
       <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
-      <button hlmBtn variant="primary" size="sm" type="button" (click)="run.emit(text().trim())">Run</button>
+      <button hlmBtn variant="primary" size="sm" type="button" (click)="onRun()">Run</button>
     </hlm-dialog-footer>
   </hlm-dialog-content>
 </hlm-dialog>

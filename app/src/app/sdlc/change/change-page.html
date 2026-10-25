@@ -225,7 +225,7 @@
     (cancel)="vm.cancelLock()"
   />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
-  <app-feedback-dialog [action]="vm.feedbackFor()" (run)="vm.runWithFeedback($event)" (cancel)="vm.cancelFeedback()" />
+  <app-feedback-dialog [action]="vm.feedbackFor()" [required]="vm.feedbackRequired()" (run)="vm.runWithFeedback($event)" (cancel)="vm.cancelFeedback()" />
   <app-confirm-dialog
     [open]="vm.leftoverPrompt() !== null"
     message="Continue on top of leftovers?"
