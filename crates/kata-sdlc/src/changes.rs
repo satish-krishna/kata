@@ -227,185 +227,22 @@ pub fn track(intent_text: &str) -> Track {
     }
 }
 
-/// Whether the latest commit touching the change folder is one of the fix skill's acceptance commits
-/// (`accept intent`, `accept spec` or `accept plan`). Any other latest subject and any git failure
-/// read as false.
-fn acceptance_last(master: &Path, system: &str, change: &str) -> bool {
-    git::run(
-        master,
-        &[
-            "log",
-            "-1",
-            "--format=%s",
-            "--",
-            &format!("intent/{system}/{change}/"),
-        ],
-    )
-    .is_ok_and(|subject| {
-        let subject = subject.trim_end();
-        ["intent", "spec", "plan"]
-            .iter()
-            .any(|document| subject.ends_with(&format!("accept {document} {change}")))
-    })
-}
-
-/// How many of a fix's documents are accepted in `HEAD`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub(crate) enum Accepted {
-    #[default]
-    None,
-    Leading,
-    All,
-}
-
-/// What the fix-state table reads from git, for the three documents of a fix.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub(crate) struct FixFacts {
-    pub intent_rejected: bool,
-    pub unsettled: bool,
-    pub own_lines_only: bool,
-    pub unrecorded: bool,
-    pub accepted: Accepted,
-    pub acceptance_last: bool,
-}
-
-/// The front matter lines an acceptance run writes on a document.
-const OWN_LINES: [&str; 4] = [
-    "status",
-    "source_intent_commit",
-    "source_spec_commit",
-    "accepted_in_advance",
-];
-
-/// The text as lines, CRLF read as LF, with the acceptance's own front matter lines removed.
-fn without_own_lines(text: &str) -> Vec<&str> {
-    let mut in_front = false;
-    let mut out = Vec::new();
-    for (i, line) in text.lines().enumerate() {
-        let bare = line.trim_end();
-        if i == 0 && bare == "---" {
-            in_front = true;
-        } else if in_front && bare == "---" {
-            in_front = false;
-        } else if in_front
-            && line
-                .split_once(':')
-                .is_some_and(|(key, _)| OWN_LINES.contains(&key.trim()))
-        {
-            continue;
-        }
-        out.push(line);
-    }
-    out
-}
-
-/// Read the three documents of a fix from `HEAD` and the working tree (see the spec's fix-state table).
-pub(crate) fn fix_facts(master: &Path, system: &str, change: &str) -> FixFacts {
-    let rel = |file: &str| format!("intent/{system}/{change}/{file}");
-    // (text in HEAD, status in HEAD, working copy) for intent, spec, plan.
-    let docs: Vec<(Option<String>, Option<String>, Option<String>)> =
-        ["intent.md", "spec.md", "plan.md"]
-            .iter()
-            .map(|file| {
-                let head = git::run_bytes(master, &["show", &format!("HEAD:{}", rel(file))])
-                    .ok()
-                    .map(|b| String::from_utf8_lossy(&b).into_owned());
-                let status = head
-                    .as_deref()
-                    .map(|t| frontmatter::field(t, "status").unwrap_or_else(|| "unknown".into()));
-                let working = std::fs::read_to_string(master.join(rel(file))).ok();
-                (head, status, working)
-            })
-            .collect();
-    let in_head = |i: usize| docs[i].0.is_some();
-    let accepted_in_head = |i: usize| docs[i].1.as_deref() == Some("accepted");
-
-    let intent_rejected = docs[0].1.as_deref() == Some("rejected");
-    let accepted_count = (0..3).filter(|&i| accepted_in_head(i)).count();
-    let leading = (0..accepted_count).all(accepted_in_head);
-    let odd_status = docs.iter().enumerate().any(|(i, d)| {
-        d.1.as_deref()
-            .is_some_and(|s| s != "draft" && s != "accepted" && !(i == 0 && s == "rejected"))
-    });
-    let any_missing = !(0..3).all(in_head);
-    let unsettled = odd_status
-        || (accepted_count > 0 && accepted_count < 3 && !leading)
-        || (accepted_count > 0 && any_missing);
-
-    // The first document not accepted in HEAD is the only one whose own lines may differ.
-    let carrier = (0..3).find(|&i| !accepted_in_head(i));
-    let mut any_diff = false;
-    let mut foreign_diff = false;
-    for (i, (head, _, working)) in docs.iter().enumerate() {
-        match (head, working) {
-            (Some(h), Some(w)) => {
-                if h == w {
-                    continue;
-                }
-                any_diff = true;
-                // Only the carrier may differ, only in its own lines, and only once its status reads accepted.
-                let own_lines = carrier == Some(i)
-                    && frontmatter::field(w, "status").as_deref() == Some("accepted")
-                    && without_own_lines(h) == without_own_lines(w);
-                if !own_lines {
-                    foreign_diff = true;
-                }
-            }
-            (None, None) => {}
-            _ => {
-                any_diff = true;
-                foreign_diff = true;
-            }
-        }
-    }
-    let unrecorded = any_missing || foreign_diff;
-
-    FixFacts {
-        intent_rejected,
-        unsettled,
-        own_lines_only: any_diff && !unrecorded,
-        unrecorded,
-        accepted: match accepted_count {
-            0 => Accepted::None,
-            3 => Accepted::All,
-            _ => Accepted::Leading,
-        },
-        acceptance_last: acceptance_last(master, system, change),
-    }
-}
-
-/// The stage of a fix, rows of the spec's fix-state table in order, first match wins.
+/// The stage of a fix from the row of the fix-state table the format program computed: rows 1 to 7
+/// are stages of their own and row 8 (all three documents accepted) gives the plan rows.
 fn fix_stage(
-    facts: &FixFacts,
+    row: u8,
     intent: &DocState,
     spec: &DocState,
     plan: &DocState,
     plan_facts: &PlanFacts,
 ) -> Stage {
-    if facts.intent_rejected {
-        Stage::Rejected
-    } else if facts.unsettled {
-        Stage::FixUnsettled
-    } else if facts.unrecorded {
-        Stage::FixInProgress
-    } else {
-        match facts.accepted {
-            Accepted::All => plan_stage(intent, spec, plan, plan_facts),
-            Accepted::None => {
-                if facts.own_lines_only {
-                    Stage::FixAccepting
-                } else {
-                    Stage::FixAwaiting
-                }
-            }
-            Accepted::Leading => {
-                if facts.own_lines_only || facts.acceptance_last {
-                    Stage::FixAccepting
-                } else {
-                    Stage::FixAwaiting
-                }
-            }
-        }
+    match row {
+        1 => Stage::Rejected,
+        2 => Stage::FixUnsettled,
+        3 => Stage::FixInProgress,
+        4 | 5 => Stage::FixAccepting,
+        6 | 7 => Stage::FixAwaiting,
+        _ => plan_stage(intent, spec, plan, plan_facts),
     }
 }
 
@@ -438,24 +275,25 @@ pub(crate) fn is_safe_system(system: &str) -> bool {
         && !system.contains(['/', '\\', ':'])
 }
 
-/// The `status` of the `HEAD` copy of `rel`; `None` when `HEAD` does not have it.
-fn head_status(master: &Path, rel: &str) -> Option<String> {
-    let bytes = git::run_bytes(master, &["show", &format!("HEAD:{rel}")]).ok()?;
-    let text = String::from_utf8_lossy(&bytes);
-    Some(frontmatter::field(&text, "status").unwrap_or_else(|| "unknown".into()))
-}
-
-fn doc_state(master: &Path, system: &str, change: &str, file: &str) -> DocState {
+/// The state of one document. `head_status` is what the format program said about the `HEAD` copy (a fix
+/// only); a full-pipeline change has none.
+fn doc_state(
+    master: &Path,
+    system: &str,
+    change: &str,
+    file: &str,
+    head_status: Option<String>,
+) -> DocState {
     let rel = format!("intent/{system}/{change}/{file}");
     match std::fs::read_to_string(master.join(&rel)) {
         Ok(text) => DocState {
             exists: true,
             committed: is_committed(master, &rel),
             status: Some(frontmatter::field(&text, "status").unwrap_or_else(|| "unknown".into())),
-            head_status: head_status(master, &rel),
+            head_status,
         },
         Err(_) => DocState {
-            head_status: head_status(master, &rel),
+            head_status,
             ..DocState::default()
         },
     }
@@ -522,6 +360,11 @@ fn plan_facts(
     (facts, counts, reason)
 }
 
+/// The folder of one change in the master repo.
+fn change_dir(master: &Path, system: &str, change: &str) -> std::path::PathBuf {
+    master.join("intent").join(system).join(change)
+}
+
 /// The changes of `system` in the master repo, newest folder name first.
 pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInfo> {
     if !is_safe_system(system) {
@@ -540,14 +383,6 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
     names
         .into_iter()
         .map(|change| {
-            let intent = doc_state(master, system, &change, "intent.md");
-            let spec = doc_state(master, system, &change, "spec.md");
-            let plan = doc_state(master, system, &change, "plan.md");
-            let (facts, build, plan_unreadable_reason) = if plan.exists {
-                plan_facts(plugin, master, system, &change)
-            } else {
-                (PlanFacts::default(), BuildCounts::default(), None)
-            };
             let track_of = std::fs::read_to_string(
                 master
                     .join("intent")
@@ -557,15 +392,36 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
             )
             .map(|t| track(&t))
             .unwrap_or(Track::Full);
-            let stage = match track_of {
-                Track::Fix => fix_stage(
-                    &fix_facts(master, system, &change),
-                    &intent,
-                    &spec,
-                    &plan,
-                    &facts,
-                ),
-                Track::Full => derive_stage(&intent, &spec, &plan, &facts),
+            // A fix is read by the format program: where it stands, and what each document says in `HEAD`.
+            let fix = (track_of == Track::Fix).then(|| match plugin {
+                Some(p) => format::fix_state(
+                    &crate::build::program(p),
+                    &change_dir(master, system, &change),
+                )
+                .map_err(|e| e.to_string()),
+                None => Err("the ai-sdlc plugin was not found".to_string()),
+            });
+            let heads = |pick: fn(&format::FixFacts) -> &format::FixDocumentFacts| match &fix {
+                Some(Ok(state)) => pick(&state.facts).head_status.clone(),
+                _ => None,
+            };
+            let intent = doc_state(master, system, &change, "intent.md", heads(|f| &f.intent));
+            let spec = doc_state(master, system, &change, "spec.md", heads(|f| &f.spec));
+            let plan = doc_state(master, system, &change, "plan.md", heads(|f| &f.plan));
+            let (mut facts, build, mut plan_unreadable_reason) = if plan.exists {
+                plan_facts(plugin, master, system, &change)
+            } else {
+                (PlanFacts::default(), BuildCounts::default(), None)
+            };
+            let stage = match &fix {
+                Some(Ok(state)) => fix_stage(state.row, &intent, &spec, &plan, &facts),
+                Some(Err(message)) => {
+                    // The row is unknown, so nothing is offered; the notice carries the program's words.
+                    facts.unreadable = true;
+                    plan_unreadable_reason.get_or_insert_with(|| message.clone());
+                    Stage::FixUnsettled
+                }
+                None => derive_stage(&intent, &spec, &plan, &facts),
             };
             let out_of_date = if plan.exists && stage == Stage::PlanOutOfDate {
                 out_of_date(&intent, &spec, &plan, &facts)

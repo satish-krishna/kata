@@ -348,7 +348,7 @@ fn kata_reads_where_a_fix_stands_as_the_check_does() {
     fs::write(folder.join("plan.md"), "---\nstatus: draft\n---\nedited\n").unwrap();
     let state = format::fix_state(&program(), &folder).unwrap();
     assert_eq!(state.row, 3);
-    assert_eq!(state.facts.unrecorded, vec!["intent", "plan"]);
+    assert_eq!(state.facts.unrecorded, vec!["plan"]);
 }
 
 #[test]

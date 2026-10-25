@@ -403,8 +403,10 @@ pub struct FixState {
 
 /// Where the fix in `folder` stands, as the program says. Not cached: the answer depends on git's state
 /// (`HEAD`, the index, the working tree), not on the bytes of any one file.
-pub fn fix_state(_program: &Path, _folder: &Path) -> Result<FixState, FormatError> {
-    Err(FormatError::CouldNotRun("not implemented".into()))
+pub fn fix_state(program: &Path, folder: &Path) -> Result<FixState, FormatError> {
+    let output = run(program, folder, &["fix-state", "--json", "."])?;
+    serde_json::from_slice(&output.stdout)
+        .map_err(|e| FormatError::BadOutput(format!("{e}{}", stderr_note(&output.stderr))))
 }
 
 /// What a check depends on: the program, each checked document's name and bytes, and the marker above them.
