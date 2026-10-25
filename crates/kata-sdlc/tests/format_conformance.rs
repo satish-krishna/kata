@@ -117,7 +117,12 @@ fn kata_checks_every_published_change_as_the_check_does() {
 #[test]
 fn the_vendored_copy_is_at_the_minimum_plugin_version() {
     let version = fs::read_to_string(vendored().join("VERSION")).unwrap();
-    assert_eq!(version.trim(), kata_sdlc::plugin::MIN_VERSION);
+    assert!(
+        kata_sdlc::plugin::at_least(version.trim(), kata_sdlc::plugin::MIN_VERSION),
+        "the vendored copy is {}, below the minimum {}",
+        version.trim(),
+        kata_sdlc::plugin::MIN_VERSION
+    );
 }
 
 /// Line endings differ between checkouts (this repository is LF, the sibling may be CRLF).

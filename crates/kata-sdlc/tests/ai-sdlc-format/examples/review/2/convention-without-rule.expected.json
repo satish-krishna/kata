@@ -1,0 +1,23 @@
+{
+  "kind": "review",
+  "layout": 2,
+  "document": {
+    "reviews": [
+      {
+        "number": 1,
+        "reviewed_at": "2026-10-23",
+        "commits": {
+          "app": "840fa0c"
+        },
+        "findings": []
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "build/review.md",
+      "line": 15,
+      "message": "finding F1 is a convention finding with no rule; cite the written rule it breaks as <file>:<line>"
+    }
+  ]
+}

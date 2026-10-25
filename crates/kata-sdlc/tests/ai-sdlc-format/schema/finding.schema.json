@@ -7,6 +7,12 @@
   "properties": {
     "id": { "type": "string", "pattern": "^F[0-9]+$" },
     "severity": { "enum": ["high", "medium", "low"] },
+    "repo": { "type": "string", "minLength": 1, "description": "The repository the finding is in, as named in the review header's commits." },
+    "concern": {
+      "enum": ["spec", "bug", "convention"],
+      "description": "spec: the change disagrees with the spec or plan; bug: wrong behavior the spec does not cover; convention: the change breaks a written rule of its repository."
+    },
+    "rule": { "type": "string", "minLength": 1, "description": "For a convention finding, the written rule it breaks: <file>:<line> in the repository, or a linter's rule ID." },
     "file": { "type": "string", "minLength": 1 },
     "line": { "type": "integer", "minimum": 1 }
   },

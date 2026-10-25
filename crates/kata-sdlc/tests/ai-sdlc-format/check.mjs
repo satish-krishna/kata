@@ -35350,6 +35350,12 @@ var finding_schema_default = {
   properties: {
     id: { type: "string", pattern: "^F[0-9]+$" },
     severity: { enum: ["high", "medium", "low"] },
+    repo: { type: "string", minLength: 1, description: "The repository the finding is in, as named in the review header's commits." },
+    concern: {
+      enum: ["spec", "bug", "convention"],
+      description: "spec: the change disagrees with the spec or plan; bug: wrong behavior the spec does not cover; convention: the change breaks a written rule of its repository."
+    },
+    rule: { type: "string", minLength: 1, description: "For a convention finding, the written rule it breaks: <file>:<line> in the repository, or a linter's rule ID." },
     file: { type: "string", minLength: 1 },
     line: { type: "integer", minimum: 1 }
   },
@@ -35381,7 +35387,7 @@ var validateHeader = ajv2.compile(review_header_schema_default);
 var validateFinding = ajv2.compile(finding_schema_default);
 var REVIEW_HEADING = /^## Review (\d+)\s*$/;
 var FINDING_HEADING = /^### (F\d+)\s*$/;
-function readFinding(doc, index2, id, end, file, problems, claimed) {
+function readFinding(doc, index2, id, end, file, problems, claimed, section) {
   const line = index2 + 1;
   const who = `finding ${id}`;
   const block = yamlBlock(doc, index2 + 1, end);
@@ -35398,10 +35404,26 @@ function readFinding(doc, index2, id, end, file, problems, claimed) {
   if (typeof f["id"] === "string" && f["id"] !== id) {
     problems.push({ file, line: keyLine(doc, block, "id"), message: `heading says ${id}, fields say ${f["id"]}` });
   }
-  if (!ok) return null;
+  const unruled = f["concern"] === "convention" && f["rule"] === void 0;
+  if (unruled) {
+    problems.push({ file, line, message: `${who} is a convention finding with no rule; cite the written rule it breaks as <file>:<line>` });
+  }
+  const reviewed = Object.keys(section.commits);
+  const stray = typeof f["repo"] === "string" && reviewed.length > 0 && !reviewed.includes(f["repo"]);
+  if (stray) {
+    problems.push({
+      file,
+      line: keyLine(doc, block, "repo"),
+      message: `${who} names repo ${f["repo"]}, which review ${section.number} does not list in its commits`
+    });
+  }
+  if (!ok || unruled || stray) return null;
   return {
     id,
     severity: f["severity"],
+    ...f["repo"] === void 0 ? {} : { repo: f["repo"] },
+    ...f["concern"] === void 0 ? {} : { concern: f["concern"] },
+    ...f["rule"] === void 0 ? {} : { rule: f["rule"] },
     file: f["file"],
     line: f["line"],
     text: doc.lines.slice(block.last + 2, end).join("\n").trim()
@@ -35440,7 +35462,7 @@ function readSection(doc, index2, number, end, file, problems, claimed) {
     if (first === void 0) seen.set(h.id, h.index + 1);
     else problems.push({ file, line: h.index + 1, message: `finding ${h.id} is recorded twice, first on line ${first}` });
     const limit = nextHeading(doc, h.index + 1, heads[n + 1]?.index ?? end, /^#{1,3} /);
-    const finding = readFinding(doc, h.index, h.id, limit, file, problems, claimed);
+    const finding = readFinding(doc, h.index, h.id, limit, file, problems, claimed, section);
     if (finding) section.findings.push(finding);
   });
   return section;
