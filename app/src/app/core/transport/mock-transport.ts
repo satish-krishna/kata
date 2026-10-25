@@ -216,6 +216,7 @@ export class MockTransport extends KataTransport {
   }
   loadBuildLayout(): Promise<unknown> { return Promise.resolve(this.buildLayout); }
   saveBuildLayout(layout: Record<string, unknown>): Promise<void> { this.buildLayout = layout; return Promise.resolve(); }
+  openUrl(_url: string): Promise<void> { return Promise.resolve(); }
   /** A plain browser has no window to zoom. */
   zoom(_step: ZoomStep): Promise<number> { return Promise.resolve(1); }
   pickDirectory(): Promise<string | null> { return Promise.resolve(null); }

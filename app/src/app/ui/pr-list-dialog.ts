@@ -18,6 +18,8 @@ export class PrListDialog {
   /** The results to show, in order; the dialog is open exactly while this is set. */
   readonly results = input.required<PrResult[] | null>();
 
+  /** A row's address was clicked. */
+  readonly openLink = output<string>();
   readonly retry = output<void>();
   readonly close = output<void>();
 

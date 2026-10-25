@@ -437,4 +437,46 @@ describe('declaring done from the build page', () => {
     // The bar also holds the mode switcher and Reset layout; only the stage actions are meant here.
     expect(Array.from(p.querySelectorAll('[data-bar] button')).filter((b) => b.closest('app-segmented') === null).map(text).filter((t) => t !== 'Reset layout')).toEqual([]);
   });
+
+  const PRS = [
+    { repo: 'claims-intent', url: 'https://github.com/acme/claims-intent/pull/11' },
+    { repo: 'claims-core', url: 'https://github.com/acme/claims-core/pull/12' },
+    { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/13' },
+  ];
+  const click = (a: Element) => {
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true });
+    a.dispatchEvent(ev);
+    return ev;
+  };
+
+  it.each([
+    ['toolbar, one pull request', 'toolbar', 1, 0],
+    ['toolbar menu, several', 'menu', 3, 1],
+    ['pull requests dialog', 'dialog', 3, 0],
+  ] as const)('clicking a pull request link opens it in the browser (R1.1): %s', async (_place, place, shown, index) => {
+    const transport = new MockTransport();
+    const open = vi.spyOn(transport, 'openUrl').mockResolvedValue();
+    const { container, fixture } = await mountPage(MOCK_DONE_CHANGE, transport);
+    const vm = fixture.debugElement.injector.get(ChangePageViewModel);
+    vm.pullRequests.set(PRS.slice(0, shown));
+    if (place === 'dialog') vm.prList.set(PRS.map(({ repo, url }) => ({ repo, outcome: { kind: 'opened' as const, url } })));
+    await settle();
+
+    let link: Element;
+    if (place === 'toolbar') {
+      link = container.querySelector('header nav[aria-label="Pull requests"] a')!;
+    } else if (place === 'menu') {
+      (container.querySelector('header [data-testid="pr-menu"]') as HTMLButtonElement).click();
+      await settle();
+      link = document.body.querySelectorAll('[data-testid="pr-list"] a')[index];
+    } else {
+      link = document.body.querySelectorAll('[role="dialog"] a')[index];
+    }
+    expect(link).toBeTruthy();
+
+    const ev = click(link);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith(PRS[index].url);
+    expect(ev.defaultPrevented).toBe(true);
+  });
 });

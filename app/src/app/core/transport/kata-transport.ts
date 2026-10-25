@@ -133,6 +133,8 @@ export abstract class KataTransport {
   /** The build page's arrangement, one per mode and shared by every change. `{}` until one is saved. */
   abstract loadBuildLayout(): Promise<unknown>;
   abstract saveBuildLayout(layout: Record<string, unknown>): Promise<void>;
+  /** Open an address in the default browser; the webview ignores `target="_blank"`. */
+  abstract openUrl(url: string): Promise<void>;
   /** Step the window's zoom. Resolves to the new level, which the backend remembers for the next launch. */
   abstract zoom(step: ZoomStep): Promise<number>;
   /** Register for relayed run events, each tagged with the id of the run it came from. Resolves to the unlisten function. */

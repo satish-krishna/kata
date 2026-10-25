@@ -1101,6 +1101,9 @@ export class ChangePageViewModel {
     await this.load();
   }
 
+  /** Open a pull request's address in the default browser. */
+  async openPr(_url: string): Promise<void> {}
+
   closeLeftovers(): void {
     this.runner.closeLeftovers();
   }
