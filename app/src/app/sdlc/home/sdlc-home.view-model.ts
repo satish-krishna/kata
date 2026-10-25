@@ -20,7 +20,7 @@ import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { inTauri } from '../../lib/mock';
 import { shownChangeList } from '../../lib/doc-notice';
-import { hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
+import { fixProgramFailed, hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
 import { DEMO_SETUP_FOLDER, DEMO_START_IDEA, DEMO_START_SYSTEM } from '../../lib/demo';
 import {
   folderName,
@@ -98,10 +98,21 @@ export class SdlcHomeViewModel {
   readonly lastRuns = signal<Record<string, number>>({});
   private readonly readiness = signal<Readiness>({ kind: 'missing' });
   /** Above the change list when a plan could not be read; null when every plan was. */
-  readonly listNotice = computed(() => shownChangeList(
+  readonly listNotice = computed(() => {
+    const unreadable = this.changes().filter((c) => c.plan_unreadable);
+    // A fix's own reason is worded for the fix and shown as it is; only a plan's goes behind "Could not read this document".
+    const fixReason = (c: ChangeInfo) =>
+      c.stage === 'fix-needs-plugin'
+        ? (c.plan_unreadable_reason ?? 'Needs ai-sdlc 0.13.0 or later.')
+        : fixProgramFailed(c)
+          ? `Kata could not read where ${c.change} stands: ${c.plan_unreadable_reason ?? 'the program gave no message'}`
+          : null;
+    return shownChangeList(
       this.readiness(),
-      this.changes().filter((c) => c.plan_unreadable).map((c) => c.plan_unreadable_reason),
-    ));
+      unreadable.filter((c) => fixReason(c) === null).map((c) => c.plan_unreadable_reason),
+      unreadable.map(fixReason).filter((r): r is string => r !== null),
+    );
+  });
   /** This machine's workspace instructions against the master's; null when the plugin cannot report it. */
   readonly instructions = signal<InstructionsState | null>(null);
   private readonly loaded = signal(false);

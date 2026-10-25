@@ -50,6 +50,7 @@ import {
   feedbackRequired,
   specFor,
   stageLabel,
+  fixProgramFailed,
   stagePills,
   stageRuns,
   type BuildRun,
@@ -255,8 +256,8 @@ export class ChangePageViewModel {
     const text = 'The workflow does not leave a fix in these statuses, so nothing can be run on it.';
     // When the format program could not run, no status was read, so the headline about statuses would be false: say
     // what happened, with the program's own message, and show no status line.
-    if (c.plan_unreadable && c.plan_unreadable_reason !== null) {
-      return { tone: 'warning', text: 'Kata could not read where this fix stands.', lines: [c.plan_unreadable_reason] };
+    if (fixProgramFailed(c)) {
+      return { tone: 'warning', text: 'Kata could not read where this fix stands.', lines: c.plan_unreadable_reason === null ? [] : [c.plan_unreadable_reason] };
     }
     // Each document shows the status HEAD holds, whether or not the working file exists: a deleted document is
     // "missing (HEAD: draft)", and one not in HEAD says so.
@@ -326,7 +327,7 @@ export class ChangePageViewModel {
    */
   readonly pills = computed<StagePill[]>(() => {
     const c = this.change();
-    return c === null || this.held() ? [] : stagePills(c.stage, this.done(), this.docs());
+    return c === null || this.held() ? [] : stagePills(c.stage, this.done(), this.docs(), fixProgramFailed(c));
   });
   /** The pull requests that have an address, for the toolbar's links; none while a build or a skill run holds the page. */
   readonly pullLinks = computed(() =>

@@ -181,6 +181,20 @@ export function stageLabel(stage: Stage): StageLabel {
   return { ...LABELS[stage] };
 }
 
+/**
+ * Whether the format program could not say where a fix stands: a fix at `fix-unsettled` with no row. A fix with a
+ * row, even 2, was read, and a fix that needs the plugin has its own stage. The one place that decides "program failure".
+ */
+export function fixProgramFailed(c: Pick<ChangeInfo, "track" | "stage" | "fix_row">): boolean {
+  return c.track === "fix" && c.stage === "fix-unsettled" && c.fix_row === null;
+}
+
+/** The label of a change: its stage's, except that a program failure says the fix could not be read. */
+export function changeLabel(c: Pick<ChangeInfo, "track" | "stage" | "fix_row">): StageLabel {
+  const label = stageLabel(c.stage);
+  return fixProgramFailed(c) ? { ...label, text: "Fix · could not be read" } : label;
+}
+
 export type RunContext = {
   folder: string;
   system: string;
@@ -592,8 +606,8 @@ const PILL_STEPS: readonly { step: PillStep; title: string }[] = [
  * on the build step. A document pill is disabled until its document exists. The Build pill is locked until the plan
  * is accepted, then open.
  */
-export function stagePills(stage: Stage, done: boolean, docs: DocsPresent): StagePill[] {
-  const label = done ? DONE_LABEL : stageLabel(stage);
+export function stagePills(stage: Stage, done: boolean, docs: DocsPresent, programFailed = false): StagePill[] {
+  const label = done ? DONE_LABEL : programFailed ? changeLabel({ track: "fix", stage, fix_row: null }) : stageLabel(stage);
   const accepted = label.step === "build" || label.step === "done";
   const sitsOn = label.step === "closed" ? "intent" : label.step === "done" ? "build" : label.step;
   const at = PILL_STEPS.findIndex((p) => p.step === sitsOn);

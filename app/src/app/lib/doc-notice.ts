@@ -92,12 +92,19 @@ export function shownPart(part: Part, readiness: Readiness): Shown {
  * The notice above the change list when some plan could not be read, so its stage is withheld. `causes` holds the
  * program's own message for each unreadable plan (null when none came with it). The plugin rows keep their wording
  * from `shownDocument`; with a usable plugin the notice says what the program said, never a guess at Node.js.
+ * `fixCauses` are the reasons a fix could not be read, already worded (the needs-the-plugin reason, or a program
+ * failure naming its change): they are shown as they are, without the document prefix.
  */
-export function shownChangeList(readiness: Readiness, causes: readonly (string | null)[]): DocNotice | null {
-  if (causes.length === 0) return null;
+export function shownChangeList(readiness: Readiness, causes: readonly (string | null)[], fixCauses: readonly string[] = []): DocNotice | null {
+  if (causes.length === 0 && fixCauses.length === 0) return null;
   const stop = unusable(readiness);
   if (stop !== null) return stop.notice;
+  const fixText = [...new Set(fixCauses)].join('; ');
+  if (causes.length === 0) return warning(fixText);
   const messages = [...new Set(causes.filter((c): c is string => c !== null))];
-  if (messages.length === 0) return warning('A plan could not be read, so its stage is not shown');
-  return shownDocument({ kind: 'error', message: messages.join('; ') }, readiness).notice;
+  const plan =
+    messages.length === 0
+      ? warning('A plan could not be read, so its stage is not shown')
+      : shownDocument({ kind: 'error', message: messages.join('; ') }, readiness).notice!;
+  return fixText === '' ? plan : warning(`${plan.text}; ${fixText}`);
 }
