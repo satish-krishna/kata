@@ -125,3 +125,8 @@ jobs:
         run: npm run check:changes
       - name: Build view check
         run: npm run check:build
+      - name: Light-track browser check
+        # The fix routes, their controls and the scripted triage, on the
+        # production build; the only check that crosses the template seam
+        # for the light track.
+        run: npm run check:start-flow
