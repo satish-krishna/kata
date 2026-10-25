@@ -258,6 +258,16 @@
     (confirm)="vm.confirmDecision()"
     (cancel)="vm.cancelConfirm()"
   />
+  <app-new-change-dialog
+    [open]="vm.pipelineOpen()"
+    [systems]="vm.pipelineSystems()"
+    [lightTrack]="vm.lightTrack()"
+    [initialIdea]="vm.pipelineIdea()"
+    initialTrack="full"
+    [note]="vm.pipelineNote()"
+    (start)="vm.startPipeline($event.system, $event.idea)"
+    (cancel)="vm.closePipeline()"
+  />
   <app-run-preview-dialog
     [open]="vm.preview.isOpen()"
     [title]="vm.preview.title()"

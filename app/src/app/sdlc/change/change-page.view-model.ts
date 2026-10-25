@@ -59,6 +59,7 @@ import { docStatus, recentRuns, usedBy, type DocStatus, type RunRow, type UsedBy
 import { prNumber } from '../../lib/pull-request';
 import { REVIEW_MISSING_TEXT, canConfirm, checkLabel, reviewState, type DoneReport, type DoneReview } from '../../lib/sdlc-done';
 import { section } from '../../lib/doc';
+import { fullPipelineIdea } from '../../lib/sdlc-fix';
 import { inTauri } from '../../lib/mock';
 import { taskRecord, withRows, type TaskView } from '../../lib/task-view';
 import { shownSection } from '../../lib/sdlc-review';
@@ -87,12 +88,14 @@ type HandledAction =
   | 'declare-done'
   | 'run-review'
   | 'cancel-build'
-  // Not handled yet: until the fix actions get their handlers they reach `runStage`'s "Nothing runs" toast.
+  | 'full-pipeline-instead'
+  // Not handled yet: until the other fix actions get their handlers they reach `runStage`'s "Nothing runs" toast.
   | 'finish-fix-draft'
   | 'accept-fix'
   | 'change-fix'
-  | 'reopen-fix'
-  | 'full-pipeline-instead';
+  | 'reopen-fix';
+/** What recording a decision came to; the full-pipeline hand-over goes on only after 'committed'. */
+type DecisionOutcome = 'committed' | 'needsConfirm' | 'gitFailed' | 'error';
 type StageRun = { kind: 'intent' | 'spec' | 'plan'; title: string; label: string };
 
 /** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result.
@@ -767,6 +770,9 @@ export class ChangePageViewModel {
       case 'cancel-build':
         this.build.cancelBuild();
         return;
+      case 'full-pipeline-instead':
+        await this.openFullPipeline();
+        return;
       default:
         // Regenerating an existing document first asks what should change; a first draft just runs.
         if (revisits(action)) this.pendingRevisit.set(action);
@@ -790,11 +796,77 @@ export class ChangePageViewModel {
   async confirmDecision(): Promise<void> {
     const d = this.pendingDecision();
     this.pendingDecision.set(null);
-    if (d !== null) await this.commitDecision(d, true);
+    if (d === null) return;
+    if ((await this.commitDecision(d, true)) === 'committed' && this.pendingPipeline !== null) await this.continuePipeline();
   }
 
   cancelConfirm(): void {
     this.pendingDecision.set(null);
+    this.pendingPipeline = null;
+  }
+
+  // --- taking the full pipeline instead of a drafted fix
+
+  readonly pipelineOpen = signal(false);
+  readonly pipelineIdea = signal('');
+  readonly pipelineNote = computed(() => `This closes the drafted fix ${this.changeName()}.`);
+  readonly pipelineSystems = computed(() => [this.system()]);
+  /** Whether the plugin on this machine can triage a change. */
+  readonly lightTrack = computed(() => {
+    const r = this.readiness();
+    return r !== null && r.kind === 'ready' && r.lightTrack;
+  });
+  /** The new change waiting on the confirm of the fix's rejection; null when none is. */
+  private pendingPipeline: { system: string; idea: string } | null = null;
+
+  /** Read the fix's intent and open New change on the full pipeline with the fix as its description. */
+  private async openFullPipeline(): Promise<void> {
+    const master = this.masterDir();
+    if (master === null) return;
+    try {
+      const text = await this.transport.sdlcReadDoc(master, this.system(), this.changeName(), 'intent');
+      this.pipelineIdea.set(fullPipelineIdea(text ?? ''));
+    } catch (e) {
+      this.toasts.error(`Could not read the fix: ${message(e)}`);
+      return;
+    }
+    this.pipelineOpen.set(true);
+  }
+
+  closePipeline(): void {
+    this.pipelineOpen.set(false);
+  }
+
+  /** Close the fix, then start the new change. The new change never starts unless the fix was closed (R7.1). */
+  async startPipeline(system: string, idea: string): Promise<void> {
+    this.pipelineOpen.set(false);
+    this.pendingPipeline = { system, idea };
+    if ((await this.commitDecision('reject-intent', false)) === 'committed') await this.continuePipeline();
+  }
+
+  private async continuePipeline(): Promise<void> {
+    const next = this.pendingPipeline;
+    this.pendingPipeline = null;
+    const workspace = this.current();
+    const scan = this.scan();
+    const master = this.masterDir();
+    if (next === null || !workspace || !scan || !master) return;
+    try {
+      await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, next.system, next.idea, 'full', (spec) => this.confirmRun(spec));
+    } catch (e) {
+      this.toasts.error(`Could not start the change: ${message(e)}`);
+    }
+    await this.load();
+  }
+
+  /** The preview a run goes through; null when it was cancelled or could not be opened. */
+  private async confirmRun(spec: RunSpec): Promise<RunSpec | null> {
+    try {
+      return await this.preview.open({ spec, mode: 'sdlc', workdir: spec.workdir, from: { session: this.givens.session(), job: null, build: null } });
+    } catch (e) {
+      this.toasts.error(`Could not preview the run: ${message(e)}`);
+      return null;
+    }
   }
 
   /** Show another of the change's documents. A newer pick, or a load that finishes, supersedes one still reading. */
@@ -1092,28 +1164,31 @@ export class ChangePageViewModel {
     return w && repo ? masterPath(w.folder, repo) : null;
   }
 
-  private async commitDecision(decision: Decision, confirmed: boolean): Promise<void> {
+  private async commitDecision(decision: Decision, confirmed: boolean): Promise<DecisionOutcome> {
     const master = this.masterDir();
-    if (master === null) return;
+    if (master === null) return 'error';
     let out;
     try {
       out = await this.transport.sdlcDecide(master, this.system(), this.changeName(), decision, confirmed);
     } catch (e) {
       this.toasts.error(`Could not record the decision: ${message(e)}`);
-      return;
+      this.pendingPipeline = null;
+      return 'error';
     }
     switch (out.kind) {
       case 'needsConfirm':
         this.pendingDecision.set(decision);
-        return;
+        return 'needsConfirm';
       case 'gitFailed':
         this.toasts.error(out.stderr.trim() === '' ? 'git refused the commit' : out.stderr);
+        this.pendingPipeline = null;
         break;
       case 'committed':
         this.toasts.success(`${DONE[decision]} · committed`);
         break;
     }
     await this.load();
+    return out.kind;
   }
 
   private async runStage(action: StageAction, feedback = ''): Promise<void> {
