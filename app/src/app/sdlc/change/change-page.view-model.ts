@@ -40,7 +40,9 @@ import { KataTransport } from '../../core/transport/kata-transport';
 import {
   DEFAULT_BUILD_SECS,
   actionLabel,
+  actionLabelAt,
   actionsForChange,
+  restrictedFor,
   primaryAction,
   reviewFindings,
   parseFrontMatter,
@@ -88,15 +90,10 @@ type HandledAction =
   | 'declare-done'
   | 'run-review'
   | 'cancel-build'
-  | 'full-pipeline-instead'
-  // Not handled yet: until the other fix actions get their handlers they reach `runStage`'s "Nothing runs" toast.
-  | 'finish-fix-draft'
-  | 'accept-fix'
-  | 'change-fix'
-  | 'reopen-fix';
+  | 'full-pipeline-instead';
 /** What recording a decision came to; the full-pipeline hand-over goes on only after 'committed'. */
 type DecisionOutcome = 'committed' | 'needsConfirm' | 'gitFailed' | 'error';
-type StageRun = { kind: 'intent' | 'spec' | 'plan'; title: string; label: string };
+type StageRun = { kind: 'intent' | 'spec' | 'plan' | 'fix'; title: string; label: string };
 
 /** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result.
  * Typed over every action `act` does not handle, so a new action with neither a case nor a run does not compile. */
@@ -108,7 +105,14 @@ const RUNS: Record<Exclude<StageAction, HandledAction>, StageRun> = {
   'reopen-spec': { kind: 'spec', title: 'Reopening spec', label: 'Spec' },
   'start-plan': { kind: 'plan', title: 'Starting plan', label: 'Plan' },
   'rerun-plan': { kind: 'plan', title: 'Re-running plan', label: 'Plan' },
+  'finish-fix-draft': { kind: 'fix', title: 'Finishing the fix', label: 'Fix' },
+  'change-fix': { kind: 'fix', title: 'Changing the fix', label: 'Fix' },
+  'reopen-fix': { kind: 'fix', title: 'Reopening the fix', label: 'Fix' },
+  'accept-fix': { kind: 'fix', title: 'Accepting the fix', label: 'Fix' },
 };
+/** The fix runs, which need a plugin that has the light track. */
+const FIX_RUNS: readonly StageAction[] = ['finish-fix-draft', 'change-fix', 'reopen-fix', 'accept-fix'];
+const NEEDS_LIGHT_TRACK = 'Needs ai-sdlc 0.13.0 or later.';
 
 const FILE: Record<Decision, 'intent.md' | 'spec.md' | 'plan.md'> = {
   'accept-intent': 'intent.md',
@@ -322,7 +326,10 @@ export class ChangePageViewModel {
   readonly actions = computed(() => {
     const c = this.change();
     if (c === null || this.done()) return [];
-    return stageLabel(c.stage).step === 'build' ? this.build.actions() : actionsForChange(c);
+    if (stageLabel(c.stage).step !== 'build') return actionsForChange(c);
+    // The build page has no way back to the fix's documents; a fix's own list adds the one that reopens it.
+    const own = c.track === 'fix' ? actionsForChange(c).filter((a) => a === 'reopen-fix') : [];
+    return [...this.build.actions(), ...own];
   });
   /** What blocks the build, shown above the plan; null when nothing does or another document is shown. */
   readonly planBanner = computed(() => {
@@ -340,7 +347,22 @@ export class ChangePageViewModel {
     return c.stage === 'plan-out-of-date' && c.out_of_date !== null ? OUT_OF_DATE_BANNER[c.out_of_date] : null;
   });
   readonly primary = computed(() => primaryAction(this.actions()));
-  readonly labelOf = actionLabel;
+  /** An action's label at the change's stage: accepting a fix whose acceptance stopped reads differently. */
+  labelOf(action: StageAction): string {
+    const c = this.change();
+    return c === null ? actionLabel(action) : actionLabelAt(action, c.stage);
+  }
+  /** Whether an action's button is off: the lock holds it, or it is a fix run the plugin on this machine cannot do. */
+  disabledFor(action: StageAction): boolean {
+    return this.locked() || this.needsLightTrack(action);
+  }
+  /** Why a fix run is unavailable; null for any other action and while it is available. */
+  titleFor(action: StageAction): string | null {
+    return this.needsLightTrack(action) ? NEEDS_LIGHT_TRACK : null;
+  }
+  private needsLightTrack(action: StageAction): boolean {
+    return FIX_RUNS.includes(action) && !this.lightTrack();
+  }
   /** The front matter fields the rail shows: all but the status, which the strip says in words. */
   readonly railFields = computed(() => this.docParts().fields.filter(([key]) => key !== 'status'));
   /**
@@ -382,7 +404,7 @@ export class ChangePageViewModel {
   /** The label of the action waiting on the feedback box, or null while the box is closed. */
   readonly feedbackFor = computed(() => {
     const a = this.pendingRevisit();
-    return a === null ? null : actionLabel(a);
+    return a === null ? null : this.labelOf(a);
   });
 
   // --- the build: its dialog, the leftovers confirm, the refusal, and what is handed to the build view
@@ -742,6 +764,10 @@ export class ChangePageViewModel {
   async act(action: StageAction): Promise<void> {
     // The build holds the lock it runs under; cancelling it is the one action that is always allowed.
     if (action !== 'cancel-build' && this.refuseWhileLocked()) return;
+    if (this.needsLightTrack(action)) {
+      this.toasts.error(NEEDS_LIGHT_TRACK);
+      return;
+    }
     switch (action) {
       case 'accept-intent':
       case 'reject-intent':
@@ -1205,7 +1231,14 @@ export class ChangePageViewModel {
     let built;
     try {
       const settings = this.modes.settings() ?? (await this.modes.load());
-      built = specFor(run.kind, action, { folder: workspace.folder, system: this.system(), change: this.changeName(), feedback }, settings, this.catalog());
+      const ctx = { folder: workspace.folder, system: this.system(), change: this.changeName(), feedback };
+      if (run.kind === 'fix') {
+        const checksDir = this.checksDir() ?? (await this.readChecksDir());
+        if (checksDir === null) throw new Error('the checks folder is not known');
+        built = specFor(run.kind, action, ctx, settings, this.catalog(), undefined, restrictedFor(workspace.folder, scan, checksDir));
+      } else {
+        built = specFor(run.kind, action, ctx, settings, this.catalog());
+      }
     } catch (e) {
       this.toasts.error(`Could not prepare the run: ${message(e)}`);
       return;

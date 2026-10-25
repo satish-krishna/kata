@@ -44,6 +44,9 @@
       <span class="k-crumbs__item" [attr.title]="crumb">{{ crumb }}</span>
     }
   </nav>
+  @if (tag(); as t) {
+    <span class="k-tag k-tag--skill" data-testid="track-tag">{{ t }}</span>
+  }
   @if (!blocked() && branch(); as b) {
     <span class="k-branch" data-testid="branch" role="note" [attr.title]="branchLabel()" [attr.aria-label]="branchLabel()">
       <span class="k-branch__icon" aria-hidden="true"><ng-icon name="lucideGitBranch" size="14" /></span>

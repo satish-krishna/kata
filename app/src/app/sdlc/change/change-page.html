@@ -5,6 +5,7 @@
     [counts]="vm.counts()"
     [branch]="vm.branchChip()"
     [crumbs]="vm.crumbs()"
+    [tag]="vm.change()?.track === 'fix' ? 'fix' : null"
     back="Changes"
     [locked]="vm.locked()"
     (switchMode)="vm.switchMode()"
@@ -210,7 +211,8 @@
         hlmBtn
         [variant]="vm.primary() === a ? 'primary' : 'secondary'"
         type="button"
-        [disabled]="vm.locked()"
+        [disabled]="vm.disabledFor(a)"
+        [attr.title]="vm.titleFor(a)"
         (click)="vm.act(a)"
       >{{ vm.labelOf(a) }}</button>
     }

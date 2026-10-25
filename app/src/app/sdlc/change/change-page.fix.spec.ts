@@ -56,6 +56,7 @@ afterEach(() => toastState.reset());
 describe('ChangePage: the fix runs', () => {
   it('Accept fix previews and runs the fix skill with --accept in the auto mode (R4.2)', async () => {
     const { container, run } = await mountFix('fix-awaiting');
+    expect(container.querySelector('[data-testid="track-tag"]')!.textContent!.trim()).toBe('fix');
     button(container, 'Accept fix').click();
     await settle();
     expect(document.body.querySelector('[role="dialog"] textarea')).toBeNull();
@@ -89,6 +90,9 @@ describe('ChangePage: the fix runs', () => {
 
   it('reopening is disabled while a build run holds the lock, and refused with no run (R6.2)', async () => {
     const { container, vm, run } = await mountFix('build-ready');
+    // The build tab has its own bar; the document tabs carry the page's actions, this one among them.
+    Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.textContent!.trim().startsWith('Intent'))!.click();
+    await settle();
     expect(button(container, 'Reopen the fix')).toBeDefined();
     expect(button(container, 'Reopen the fix').disabled).toBe(false);
     expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
