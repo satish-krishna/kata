@@ -86,7 +86,13 @@ type HandledAction =
   | 'another-round'
   | 'declare-done'
   | 'run-review'
-  | 'cancel-build';
+  | 'cancel-build'
+  // Not handled yet: until the fix actions get their handlers they reach `runStage`'s "Nothing runs" toast.
+  | 'finish-fix-draft'
+  | 'accept-fix'
+  | 'change-fix'
+  | 'reopen-fix'
+  | 'full-pipeline-instead';
 type StageRun = { kind: 'intent' | 'spec' | 'plan'; title: string; label: string };
 
 /** The run actions: which skill each starts, what the lock panel calls it, and what the toast calls the result.

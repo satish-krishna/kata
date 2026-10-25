@@ -38,7 +38,12 @@ export type StageAction =
   | "another-round"
   | "run-review"
   | "declare-done"
-  | "cancel-build";
+  | "cancel-build"
+  | "finish-fix-draft"
+  | "accept-fix"
+  | "change-fix"
+  | "reopen-fix"
+  | "full-pipeline-instead";
 
 const ACTIONS: Record<Stage, StageAction[]> = {
   "intent-in-progress": ["continue-intent"],
@@ -143,9 +148,6 @@ export type RunContext = {
   /** For setup: write the workspace instructions (`--instructions`). */
   instructions?: boolean;
 };
-
-/** The one action of a fix that is not a stage action of the change page: accepting it in the Workbench. */
-export type FixAction = "accept-fix";
 
 export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan" | "build" | "triage" | "fix";
 
@@ -281,7 +283,7 @@ function nameFor(kind: SdlcKind, ctx: RunContext): string {
   }
 }
 
-function taskFor(kind: SdlcKind, action: StageAction | FixAction | null, ctx: RunContext): string {
+function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): string {
   const { system, change } = ctx;
   switch (kind) {
     case "setup":
@@ -353,7 +355,7 @@ function buildSpec(ctx: RunContext, run: BuildRun): RunSpec {
 /** Build the run-spec for one AI-SDLC run. Always bypass-valid: allow/deny/ask stay empty. */
 export function specFor(
   kind: SdlcKind,
-  action: StageAction | FixAction | null,
+  action: StageAction | null,
   ctx: RunContext,
   settings: Settings,
   catalog: CatalogEntry[],
@@ -426,10 +428,20 @@ const LABEL: Record<StageAction, string> = {
   "run-review": "Run review",
   "declare-done": "Declare done",
   "cancel-build": "Cancel build",
+  "finish-fix-draft": "",
+  "accept-fix": "",
+  "change-fix": "",
+  "reopen-fix": "",
+  "full-pipeline-instead": "",
 };
 
 export function actionLabel(action: StageAction): string {
   return LABEL[action];
+}
+
+/** The label of an action at a stage. A stage reads it the same way except accepting a fix whose acceptance stopped. */
+export function actionLabelAt(action: StageAction, _stage: Stage): string {
+  return action;
 }
 
 const PRIMARY_ORDER: RegExp[] = [/^accept-/, /^commit-acceptance$/, /^start-/, /^continue-/, /^declare-done$/];

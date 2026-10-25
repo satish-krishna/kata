@@ -6,7 +6,7 @@ import type { Stage } from "@bindings/Stage";
 import type { WorkspaceScan } from "@bindings/WorkspaceScan";
 import type { KataEvent, RunDetail } from "./events";
 import { validateLocal } from "./mock";
-import { DONE_LABEL, actionLabel, buildPreviewFor, givenFor, safetyRules, actionsFor, actionsForChange, hasAiSdlcPlugin, isBuildRun, primaryAction, restrictedFor, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type BuildRun, type Restricted, type RunContext, type StageAction } from "./sdlc";
+import { DONE_LABEL, actionLabel, actionLabelAt,buildPreviewFor, givenFor, safetyRules, actionsFor, actionsForChange, hasAiSdlcPlugin, isBuildRun, primaryAction, restrictedFor, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type BuildRun, type Restricted, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -76,6 +76,97 @@ describe("plan and build actions", () => {
     expect(actionsForChange(changeAt("plan-out-of-date", "no-tasks"))).toEqual(["rerun-plan"]);
     expect(actionsForChange(changeAt("build-ready"))).toEqual(["start-build", "reopen-intent"]);
   });
+});
+
+const fixAt = (stage: Stage, outOfDate: OutOfDate | null = null): ChangeInfo => ({ ...changeAt(stage, outOfDate), track: "fix" });
+
+const FIX_RESTRICTED = ["continue-intent", "accept-intent", "reject-intent", "commit-acceptance", "start-spec", "continue-spec", "accept-spec", "reopen-spec", "reopen-intent", "start-plan", "rerun-plan", "accept-plan"];
+
+describe("actions of a fix (R4.1, R7.3)", () => {
+  const rows: [Stage, OutOfDate | null, string[]][] = [
+    ["fix-in-progress", null, ["finish-fix-draft", "full-pipeline-instead"]],
+    ["fix-awaiting", null, ["accept-fix", "change-fix", "full-pipeline-instead"]],
+    ["fix-accepting", null, ["accept-fix"]],
+    ["rejected", null, []],
+    ["build-ready", null, ["start-build", "reopen-fix"]],
+    ["build-ready", "plan-pin", ["start-build", "reopen-fix"]],
+    ["build-stopped", null, ["continue-build", "another-round", "reopen-fix"]],
+    ["build-finished", null, ["declare-done", "another-round", "run-review", "reopen-fix"]],
+    ["plan-out-of-date", "spec-pin", ["reopen-fix"]],
+    ["plan-out-of-date", "intent-reopened", ["reopen-fix"]],
+    ["plan-out-of-date", "spec-reopened", ["reopen-fix"]],
+    ["plan-out-of-date", "plan-pin", ["reopen-fix"]],
+    ["plan-out-of-date", "no-tasks", ["reopen-fix"]],
+    ["plan-unreadable", null, []],
+    ["plan-superseded", null, ["reopen-fix"]],
+    ["intent-in-progress", null, []],
+    ["intent-awaiting", null, []],
+    ["intent-accepted-uncommitted", null, []],
+    ["spec-ready", null, []],
+    ["spec-awaiting", null, []],
+    ["spec-accepted-uncommitted", null, []],
+    ["plan-ready", null, []],
+    ["plan-awaiting", null, []],
+    ["plan-accepted-uncommitted", null, []],
+  ];
+  for (const [stage, outOfDate, expected] of rows) {
+    it(`${stage} ${outOfDate ?? "-"}`, () => {
+      const got = actionsForChange(fixAt(stage, outOfDate));
+      expect(got).toEqual(expected);
+      for (const banned of FIX_RESTRICTED) expect(got).not.toContain(banned);
+    });
+  }
+
+  it("a closed fix is labeled as closed (R7.3)", () => {
+    expect(stageLabel("rejected").text).toBe("Closed · rejected");
+  });
+
+  it("the fix stages are labeled and sort with early work", () => {
+    expect(stageLabel("fix-in-progress")).toEqual({ step: "intent", text: "Fix · drafting stopped", tone: "warning" });
+    expect(stageLabel("fix-awaiting")).toEqual({ step: "intent", text: "Fix · awaiting acceptance", tone: "warning" });
+    expect(stageLabel("fix-accepting")).toEqual({ step: "plan", text: "Fix · acceptance stopped", tone: "warning" });
+  });
+
+  it("labels the fix actions", () => {
+    expect(actionLabel("accept-fix")).toBe("Accept fix");
+    expect(actionLabelAt("accept-fix", "fix-accepting")).toBe("Finish acceptance");
+    expect(actionLabelAt("accept-fix", "fix-awaiting")).toBe("Accept fix");
+    expect(actionLabelAt("start-build", "fix-awaiting")).toBe("Start build");
+    expect(actionLabel("finish-fix-draft")).toBe("Finish the draft");
+    expect(actionLabel("change-fix")).toBe("Change the fix");
+    expect(actionLabel("reopen-fix")).toBe("Reopen the fix");
+    expect(actionLabel("full-pipeline-instead")).toBe("Take the full pipeline instead");
+  });
+
+  it("finishing the draft, changing and reopening open the feedback box", () => {
+    for (const a of ["finish-fix-draft", "change-fix", "reopen-fix"] as const) expect(revisits(a)).toBe(true);
+    for (const a of ["accept-fix", "full-pipeline-instead"] as const) expect(revisits(a)).toBe(false);
+  });
+
+  it("the primary action is the first of the list that fits", () => {
+    expect(primaryAction(["finish-fix-draft", "full-pipeline-instead"])).toBe("finish-fix-draft");
+    expect(primaryAction(["accept-fix", "change-fix", "full-pipeline-instead"])).toBe("accept-fix");
+    expect(primaryAction(["reopen-fix"])).toBeNull();
+  });
+});
+
+describe("actions of a full-pipeline change are unchanged (R13.1)", () => {
+  const rows: [Stage, OutOfDate | null, string[]][] = [
+    ["intent-awaiting", null, ["continue-intent", "accept-intent", "reject-intent"]],
+    ["spec-awaiting", null, ["continue-spec", "accept-spec", "reopen-intent"]],
+    ["plan-awaiting", null, ["accept-plan", "rerun-plan", "reopen-intent"]],
+    ["build-ready", null, ["start-build", "reopen-intent"]],
+    ["build-stopped", null, ["continue-build", "another-round"]],
+    ["build-finished", null, ["declare-done", "another-round", "run-review"]],
+    ["rejected", null, []],
+    ["plan-superseded", null, ["rerun-plan"]],
+    ["plan-unreadable", null, []],
+    ["plan-out-of-date", "spec-pin", ["reopen-spec"]],
+    ["plan-out-of-date", "plan-pin", ["rerun-plan"]],
+  ];
+  for (const [stage, outOfDate, expected] of rows) {
+    it(`${stage} ${outOfDate ?? "-"}`, () => expect(actionsForChange(changeAt(stage, outOfDate))).toEqual(expected));
+  }
 });
 
 describe("stageLabel", () => {
