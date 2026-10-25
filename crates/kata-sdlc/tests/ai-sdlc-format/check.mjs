@@ -34839,10 +34839,23 @@ var CouldNotRun = class extends Error {
 };
 
 // src/front-matter.ts
-function parseFrontMatter(text3, file) {
+function fenceLines(text3) {
   const lines = text3.split(/\r\n|\r|\n/);
-  if (lines[0]?.trim() !== "---") return { data: {}, bodyLine: 1 };
-  const close = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+  if (lines[0]?.trim() !== "---") return null;
+  return { lines, close: lines.findIndex((l, i) => i > 0 && l.trim() === "---") };
+}
+function frontMatterCloseLine(text3) {
+  const found = fenceLines(text3);
+  if (found === null || found.close < 0) return 0;
+  const parts = text3.split(/(\r\n|\r|\n)/);
+  let offset = 0;
+  for (let i = 0; i < found.close * 2; i++) offset += parts[i].length;
+  return text3.slice(0, offset).split("\n").length;
+}
+function parseFrontMatter(text3, file) {
+  const found = fenceLines(text3);
+  if (found === null) return { data: {}, bodyLine: 1 };
+  const { lines, close } = found;
   if (close < 0) throw new CouldNotRun(`${file}: front matter is never closed`);
   let data;
   try {
@@ -35059,7 +35072,7 @@ function findMarker(file) {
 
 // src/fix-state.ts
 import { execFileSync } from "node:child_process";
-import { readFileSync as readFileSync2 } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2, statSync } from "node:fs";
 import { basename, join as join2, resolve as resolve2 } from "node:path";
 
 // src/plan.ts
@@ -35346,6 +35359,7 @@ function readPlan(text3, file, marker) {
 var DOCUMENTS = ["intent", "spec", "plan"];
 var OWN_LINES = ["status", "source_intent_commit", "source_spec_commit", "accepted_in_advance"];
 var GIT_OPTIONS = ["-c", "core.quotepath=off", "--no-optional-locks"];
+var DIFF_OPTIONS = ["--no-ext-diff", "--no-textconv"];
 function git(cwd, args) {
   try {
     return execFileSync("git", [...GIT_OPTIONS, ...args], {
@@ -35381,27 +35395,27 @@ function statusOf(text3, file) {
   const value = fieldOf(text3, file, "status");
   return value === void 0 || value === null ? null : String(value);
 }
-function frontMatterEnd(text3) {
-  const lines = text3.split("\n");
-  if ((lines[0] ?? "").trimEnd() !== "---") return 0;
-  for (let i = 1; i < lines.length; i++) if (lines[i].trimEnd() === "---") return i + 1;
-  return 0;
-}
 var FIELD_LINE = /^([A-Za-z_][A-Za-z0-9_]*)\s*:(.*)$/;
-var HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+var HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,\d+)? @@/;
 function onlyOwnLines(top, path, headText, workingText) {
-  const out = git(top, ["diff", "HEAD", "--no-color", "--unified=0", "--", path]);
-  const eol = headText.includes("\r\n") ? "\r" : "";
-  const ends = { "-": frontMatterEnd(headText), "+": frontMatterEnd(workingText) };
+  const out = git(top, ["diff", "HEAD", ...DIFF_OPTIONS, "--no-color", "--unified=0", "--", path]);
+  const headLines = headText.split("\n");
+  const ends = { "-": frontMatterCloseLine(headText), "+": frontMatterCloseLine(workingText) };
   const next = { "-": 0, "+": 0 };
+  let oldStart = 0;
+  let oldCount = 0;
+  let added = 0;
   let inHunks = false;
   let statusAccepted = false;
   for (const line of out.split("\n")) {
     const hunk = HUNK.exec(line);
     if (hunk) {
       inHunks = true;
-      next["-"] = Number(hunk[1]);
-      next["+"] = Number(hunk[2]);
+      oldStart = Number(hunk[1]);
+      oldCount = hunk[2] === void 0 ? 1 : Number(hunk[2]);
+      next["-"] = oldStart;
+      next["+"] = Number(hunk[3]);
+      added = 0;
       continue;
     }
     if (!inHunks || line === "") continue;
@@ -35409,8 +35423,13 @@ function onlyOwnLines(top, path, headText, workingText) {
     if (side !== "-" && side !== "+") return false;
     const number = next[side]++;
     let text3 = line.slice(1);
-    if (eol === "\r" ? !text3.endsWith("\r") : text3.endsWith("\r")) return false;
-    if (eol) text3 = text3.slice(0, -1);
+    if (side === "+") {
+      const index2 = added < oldCount ? oldStart - 1 + added : oldCount > 0 ? oldStart + oldCount - 2 : oldStart - 1;
+      added++;
+      const expectsCr = (headLines[index2] ?? "").endsWith("\r");
+      if (expectsCr !== text3.endsWith("\r")) return false;
+    }
+    if (text3.endsWith("\r")) text3 = text3.slice(0, -1);
     const field = FIELD_LINE.exec(text3);
     if (!field || number < 2 || number >= ends[side] || !OWN_LINES.includes(field[1])) return false;
     if (side === "+" && field[1] === "status") {
@@ -35434,7 +35453,7 @@ function reportedPaths(top, paths) {
 }
 function differsFromHead(top, path) {
   try {
-    execFileSync("git", [...GIT_OPTIONS, "diff", "--quiet", "HEAD", "--", path], { cwd: top, stdio: ["ignore", "ignore", "pipe"] });
+    execFileSync("git", [...GIT_OPTIONS, "diff", "--quiet", "HEAD", ...DIFF_OPTIONS, "--", path], { cwd: top, stdio: ["ignore", "ignore", "pipe"] });
     return false;
   } catch (e) {
     const err = e;
@@ -35482,6 +35501,8 @@ function rowOf(facts) {
 }
 function fixState(folderArg) {
   const folder = resolve2(folderArg);
+  if (!existsSync2(folder)) throw new CouldNotRun(`${folderArg} does not exist`);
+  if (!statSync(folder).isDirectory()) throw new CouldNotRun(`${folderArg} is not a folder`);
   const top = git(folder, ["rev-parse", "--show-toplevel"]).trim();
   const prefix = git(folder, ["rev-parse", "--show-prefix"]).trim();
   const hasHead = gitMaybe(top, ["rev-parse", "--verify", "-q", "HEAD"]) !== null;
@@ -35516,7 +35537,26 @@ function fixState(folderArg) {
   const count = acceptedInHead.filter(Boolean).length;
   const leading = count > 0 && acceptedInHead.slice(0, count).every(Boolean);
   const accepted = count === 0 ? "none" : count === 3 ? "all" : leading ? "leading" : "other";
+  const subject = hasHead ? git(top, ["log", "-1", "--format=%s", "--", ...paths]).trim() : "";
+  const change = basename(folder);
+  const acceptanceLast = DOCUMENTS.some((d) => subject.endsWith(`accept ${d} ${change}`));
+  const [intentFacts, specFacts, planFacts] = perDoc;
+  const facts = {
+    intent: intentFacts,
+    spec: specFacts,
+    plan: planFacts,
+    unrecorded: [],
+    ownLinesOnly: false,
+    accepted,
+    acceptanceLast,
+    built: false
+  };
   const reported = reportedPaths(top, paths);
+  const early = rowOf(facts);
+  if (early === 1 || early === 2) {
+    facts.unrecorded = DOCUMENTS.filter((_, i) => !perDoc[i].inHead || reported.has(paths[i]));
+    return { row: early, facts };
+  }
   const carrier = acceptedInHead.findIndex((a) => !a);
   const unrecorded = [];
   let anyDiff = false;
@@ -35531,21 +35571,8 @@ function fixState(folderArg) {
     const ownLines = i === carrier && working[i] != null && perDoc[i].workingStatus === "accepted" && onlyOwnLines(top, paths[i], head[i], working[i]);
     if (!ownLines) unrecorded.push(d);
   });
-  const subject = hasHead ? git(top, ["log", "-1", "--format=%s", "--", ...paths]).trim() : "";
-  const change = basename(folder);
-  const acceptanceLast = DOCUMENTS.some((d) => subject.endsWith(`accept ${d} ${change}`));
-  const facts = {
-    intent: perDoc[0],
-    spec: perDoc[1],
-    plan: perDoc[2],
-    unrecorded,
-    ownLinesOnly: anyDiff && unrecorded.length === 0,
-    accepted,
-    acceptanceLast,
-    built: false
-  };
-  const early = rowOf(facts);
-  if (early === 1 || early === 2) return { row: early, facts };
+  facts.unrecorded = unrecorded;
+  facts.ownLinesOnly = anyDiff && unrecorded.length === 0;
   facts.built = hasHead && isBuilt(top, prefix, folder, inHead);
   return { row: rowOf(facts), facts };
 }
@@ -35554,8 +35581,7 @@ function fixStates(folders) {
     try {
       return { folder, result: fixState(folder) };
     } catch (e) {
-      if (e instanceof CouldNotRun) return { folder, error: e.message };
-      throw e;
+      return { folder, error: e instanceof CouldNotRun ? e.message : `internal error: ${e.message}` };
     }
   });
 }
