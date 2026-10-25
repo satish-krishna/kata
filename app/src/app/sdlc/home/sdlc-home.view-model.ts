@@ -150,7 +150,10 @@ export class SdlcHomeViewModel {
   readonly newChangeTrack = signal<StartTrack>('decide');
   readonly newChangeNote = signal<string | null>(null);
   /** Whether the plugin on this machine can triage a change. */
-  readonly lightTrack = computed(() => false);
+  readonly lightTrack = computed(() => {
+    const r = this.readiness();
+    return r.kind === 'ready' && r.lightTrack;
+  });
   readonly settingsOpen = signal(false);
   readonly switchPrompt = signal<string | null>(null);
   private switchResolve: ((ok: boolean) => void) | null = null;
@@ -219,6 +222,7 @@ export class SdlcHomeViewModel {
     const next = this.workspaces().map((x) => (x.id === id ? { ...x, last_opened: nowSecs() } : x));
     this.workspaces.set(next);
     this.currentId.set(id);
+    this.triageNotice.set(null);
     await this.saveList(next);
     await Promise.all([this.loadCatalog(), this.loadCurrent()]);
   }
@@ -385,14 +389,15 @@ export class SdlcHomeViewModel {
   }
 
   async newChange(system: string, idea: string, track: StartTrack): Promise<void> {
-    void track;
     this.newChangeOpen.set(false);
+    this.triageNotice.set(null);
     const workspace = this.current();
     const scan = this.scan();
     const master = this.masterDir();
     if (!workspace || !scan || !master) return;
     try {
-      await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, 'full', (spec) => this.confirm(spec));
+      const outcome = await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, track, (spec) => this.confirm(spec));
+      if (outcome.kind === 'none' && track === 'decide') this.triageNotice.set({ idea: outcome.idea, runId: outcome.runId });
     } catch (e) {
       this.toasts.error(`Could not start the change: ${message(e)}`);
     }
@@ -400,12 +405,33 @@ export class SdlcHomeViewModel {
   }
 
   openNewChange(): void {
-    if (!this.refuseWhileLocked()) this.newChangeOpen.set(true);
+    if (this.refuseWhileLocked()) return;
+    this.newChangeIdea.set('');
+    this.newChangeTrack.set('decide');
+    this.newChangeNote.set(null);
+    this.newChangeOpen.set(true);
   }
 
-  describeAgain(): void {}
+  /** Reopen New change on the description the triage could not route, still letting the workflow decide. */
+  describeAgain(): void {
+    const notice = this.triageNotice();
+    if (notice === null || this.refuseWhileLocked()) return;
+    this.newChangeIdea.set(notice.idea);
+    this.newChangeTrack.set('decide');
+    this.newChangeNote.set('The last triage created no change. Change the description and start again.');
+    this.newChangeOpen.set(true);
+  }
 
-  async openRun(): Promise<void> {}
+  /** The triage's record, in the library. */
+  async openRun(): Promise<void> {
+    const runId = this.triageNotice()?.runId ?? null;
+    if (runId === null) return;
+    try {
+      await this.router.navigate(['/library'], { queryParams: { run: runId } });
+    } catch (e) {
+      this.toasts.error(`Could not open the run: ${message(e)}`);
+    }
+  }
 
   closeNewChange(): void {
     this.newChangeOpen.set(false);

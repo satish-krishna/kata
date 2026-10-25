@@ -6,15 +6,16 @@ import { HlmSelectImports } from '@spartan-ng/helm/select';
 import { HlmTextareaImports } from '@spartan-ng/helm/textarea';
 import type { StartTrack } from '../lib/sdlc';
 import { Field } from './field';
+import { Segmented } from './segmented';
 
 export type NewChange = { system: string; idea: string; track: StartTrack };
 
-/* New change: the idea in a sentence or two, and the system when the workspace has more than one.
- * The intent skill proposes the title and the folder name itself, so there is no slug field. */
+/* New change: the description in a sentence or two, the system when the workspace has more than one, and the track.
+ * The workflow proposes the title and the folder name itself, so there is no slug field. */
 @Component({
   selector: 'app-new-change-dialog',
   host: { class: 'contents' },
-  imports: [HlmDialogImports, HlmButtonImports, HlmSelectImports, HlmTextareaImports, Field],
+  imports: [HlmDialogImports, HlmButtonImports, HlmSelectImports, HlmTextareaImports, Field, Segmented],
   templateUrl: './new-change-dialog.html',
 })
 export class NewChangeDialog {
@@ -31,10 +32,25 @@ export class NewChangeDialog {
   readonly start = output<NewChange>();
   readonly cancel = output<void>();
 
-  /** Reopening starts empty, on the first system. */
+  protected readonly tracks = computed(() => [
+    { value: 'decide' as StartTrack, label: 'Let the workflow decide', disabled: !this.lightTrack() },
+    { value: 'full' as StartTrack, label: 'Full pipeline' },
+  ]);
+  protected readonly trackHint = computed(() =>
+    this.lightTrack()
+      ? 'The workflow reads the description and picks the light track or the full pipeline.'
+      : 'Needs ai-sdlc 0.13.0 or later.',
+  );
+
+  /** Reopening starts from the given description, empty when none was given, on the first system. */
   protected readonly idea = linkedSignal(() => {
     this.open();
-    return '';
+    return this.initialIdea();
+  });
+  /** Without the light track the workflow cannot decide, so the full pipeline is the only choice. */
+  protected readonly track = linkedSignal<StartTrack>(() => {
+    this.open();
+    return this.lightTrack() ? this.initialTrack() : 'full';
   });
   protected readonly system = linkedSignal<string | null>(() => {
     this.open();
@@ -49,7 +65,7 @@ export class NewChangeDialog {
   protected submit(): void {
     const system = this.system();
     if (!this.ready() || system === null) return;
-    this.start.emit({ system, idea: this.idea().trim(), track: 'full' });
+    this.start.emit({ system, idea: this.idea().trim(), track: this.track() });
   }
 
   /** Escape and a backdrop click close the overlay from inside; surface that as cancel. */

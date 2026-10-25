@@ -16,8 +16,14 @@
           </hlm-select>
         </app-field>
       }
-      <app-field label="Idea" hint="A sentence or two. The agent proposes the title and the folder name and asks you to confirm.">
-        <textarea hlmTextarea rows="4" aria-label="Idea" [value]="idea()" (input)="onIdea($event)"></textarea>
+      @if (note(); as n) {
+        <p class="k-field__hint" data-testid="new-change-note">{{ n }}</p>
+      }
+      <app-field label="Description" hint="A sentence or two. The agent proposes the title and the folder name and asks you to confirm.">
+        <textarea hlmTextarea rows="4" aria-label="Description" [value]="idea()" (input)="onIdea($event)"></textarea>
+      </app-field>
+      <app-field label="Track" [hint]="trackHint()">
+        <app-segmented ariaLabel="Track" [options]="tracks()" [(value)]="track" />
       </app-field>
     </div>
     <hlm-dialog-footer>

@@ -13,7 +13,7 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunState } from '../../lib/events';
 import type { RunSnapshot } from '../run/reduce';
-import { specFor, transcriptRunId, type StartTrack } from '../../lib/sdlc';
+import { restrictedFor, specFor, transcriptRunId, type StartTrack } from '../../lib/sdlc';
 import { masterPath, masterRepo, productRepos as productReposOf } from '../../lib/sdlc-workspace';
 import { LockStore } from '../lock/lock.store';
 import { RunStore } from '../run/run.store';
@@ -418,24 +418,30 @@ export class SdlcRunner {
   }
 
   /**
-   * New change: branch off `change/pending-<stamp>`, run the intent skill, then rename or delete the branch
-   * once the run is over, whatever its outcome. `confirm` is the preview: it gets the built spec and answers with the spec to
+   * New change: branch off `change/pending-<stamp>`, run the intent skill (`full`) or the triage that decides the track (`decide`),
+   * then rename or delete the branch once the run is over, whatever its outcome. `confirm` is the preview: it gets the built spec and answers with the spec to
    * run, or null when the engineer cancelled, in which case no branch is made.
    */
   async newChange(target: ChangeTarget, system: string, idea: string, track: StartTrack, confirm?: Confirm): Promise<NewChangeOutcome> {
-    void track;
     const { workspace, master, productRepos } = target;
     if (this.isBusy()) {
       this.toasts.error('Another task is already running.');
-      return { kind: 'stopped' };
+      return { kind: 'refused' };
     }
+    const decide = track === 'decide';
     const base = workspace.base_branch;
     let spec: RunSpec;
     try {
       const [settings, catalog] = await Promise.all([this.transport.sdlcSettings(), this.transport.catalog(workspace.folder)]);
-      spec = specFor('intent', null, { folder: workspace.folder, system, change: null, idea }, settings, catalog);
+      const ctx = { folder: workspace.folder, system, change: null, idea };
+      if (decide) {
+        const restricted = restrictedFor(workspace.folder, await this.transport.sdlcScan(workspace.folder), await this.transport.sdlcChecksDir());
+        spec = specFor('triage', null, ctx, settings, catalog, undefined, restricted);
+      } else {
+        spec = specFor('intent', null, ctx, settings, catalog);
+      }
     } catch (e) {
-      this.toasts.error(`Could not prepare the intent run: ${message(e)}`);
+      this.toasts.error(`Could not prepare the ${decide ? 'triage' : 'intent'} run: ${message(e)}`);
       return { kind: 'stopped' };
     }
     // The preview comes before the branch: cancelling it leaves nothing behind.
@@ -456,7 +462,7 @@ export class SdlcRunner {
       master,
       productRepos,
       link: null,
-      label: 'Intent',
+      label: decide ? 'Triage' : 'Intent',
       pendingBranch: branch,
     });
     if (!out.exited) return { kind: 'stopped' };
@@ -464,9 +470,12 @@ export class SdlcRunner {
     const outcome = await this.finish(master, branch, base, out.snapshot, productRepos);
     if (outcome === null) return { kind: 'stopped' };
     if (outcome === 'deleted') {
-      this.toasts.info('No change was created.');
-      await this.router.navigate(['/sdlc']);
-      return { kind: 'stopped' };
+      // The triage's verdict is in the run's record: the home says so, and no toast or navigation talks over it.
+      if (!decide) {
+        this.toasts.info('No change was created.');
+        await this.router.navigate(['/sdlc']);
+      }
+      return { kind: 'none', idea, runId: out.runId };
     }
     const { change } = outcome.renamed;
     if (out.runId) {
@@ -475,7 +484,7 @@ export class SdlcRunner {
           workspace_id: workspace.id,
           system,
           change,
-          stage: 'intent',
+          stage: decide ? 'start' : 'intent',
           run_id: out.runId,
           started_at: Math.floor(Date.now() / 1000),
         });
@@ -484,7 +493,7 @@ export class SdlcRunner {
       }
     }
     await this.router.navigate(['/sdlc', system, change]);
-    return { kind: 'stopped' };
+    return { kind: 'opened' };
   }
 
   /** Finish the pending branch. A dirty tree opens the leftover dialog once and retries after it closes. */

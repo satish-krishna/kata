@@ -1,5 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
-import { Router } from '@angular/router';
+import { toSignal } from '@angular/core/rxjs-interop';
+import { ActivatedRoute, Router } from '@angular/router';
 import type { BrnDialogState } from '@spartan-ng/brain/dialog';
 import type { Mode } from '@bindings/Mode';
 import type { RunSpec } from '@bindings/RunSpec';
@@ -24,6 +25,7 @@ export class LibraryViewModel {
   private readonly launches = inject(LaunchStore);
   private readonly toasts = inject(ToastStore);
   private readonly router = inject(Router);
+  private readonly query = toSignal(inject(ActivatedRoute).queryParamMap);
 
   readonly runs = signal<RunRecord[]>([]);
   private readonly katas = signal<RunSpec[]>([]);
@@ -77,7 +79,11 @@ export class LibraryViewModel {
     this.runs.set(rs);
     this.katas.set(listing.katas);
     this.failures.set(listing.failures);
-    if (this.selRun() === null && rs.length > 0) await this.selectRun(rs[0].id);
+    if (this.selRun() !== null || rs.length === 0) return;
+    // A run named by `?run=` is the one to show; naming one that is not in the history shows none rather than the newest.
+    const wanted = this.query()?.get('run') ?? null;
+    if (wanted === null) await this.selectRun(rs[0].id);
+    else if (rs.some((r) => r.id === wanted)) await this.selectRun(wanted);
   }
 
   async selectRun(id: string): Promise<void> {

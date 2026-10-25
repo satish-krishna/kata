@@ -137,6 +137,15 @@
                 <span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ notice.text }}</span>
               </div>
             }
+            @if (vm.triageNotice(); as t) {
+              <div class="wb-banner wb-banner--quiet" data-testid="triage-notice" role="status">
+                <span>No change was created. The triage's verdict is in the run's record.</span>
+                <button hlmBtn variant="secondary" size="sm" type="button" [disabled]="vm.locked()" (click)="vm.describeAgain()">Describe again</button>
+                @if (t.runId) {
+                  <button hlmBtn variant="secondary" size="sm" type="button" (click)="vm.openRun()">Open run</button>
+                }
+              </div>
+            }
             <div class="k-home__body">
               <app-changes-table
                 [changes]="vm.changes()"
@@ -178,6 +187,10 @@
   <app-new-change-dialog
     [open]="vm.newChangeOpen()"
     [systems]="vm.systems()"
+    [lightTrack]="vm.lightTrack()"
+    [initialIdea]="vm.newChangeIdea()"
+    [initialTrack]="vm.newChangeTrack()"
+    [note]="vm.newChangeNote()"
     (start)="vm.newChange($event.system, $event.idea, $event.track)"
     (cancel)="vm.closeNewChange()"
   />
