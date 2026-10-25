@@ -88,7 +88,8 @@ pub struct DocState {
     pub committed: bool,
     /// Raw front-matter `status`; `Some("unknown")` when the file exists but has none.
     pub status: Option<String>,
-    /// The `status` of the `HEAD` copy; `None` when the document is not in `HEAD`.
+    /// The `status` of the `HEAD` copy, as the format program reports it for a fix; `None` when the document is
+    /// not in `HEAD`, and always `None` for a full-pipeline change.
     pub head_status: Option<String>,
 }
 

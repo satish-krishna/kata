@@ -178,24 +178,48 @@ pub fn apply(
             .unwrap_or_else(|_| text.clone().into_bytes())
     };
 
+    // Whether the index already has the file. Committing with `--only` leaves the real index alone when the
+    // commit fails, so only a file the index has never heard of needs adding first (and removing again).
+    let tracked = git::run(master, &["ls-files", "--", &rel]).is_ok_and(|out| !out.is_empty());
+
     let edited = edit_status(&text, Some(status));
     let wrote = edited != text;
     if wrote {
-        std::fs::write(&path, edited)?;
+        std::fs::write(&path, &edited)?;
     }
 
     let msg = message(decision, &change_scope(master, system, change), change);
-    let committed = git::run(master, &["add", "--", &rel])
-        .and_then(|_| git::run(master, &["commit", "-m", &msg, "--", &rel]));
+    let committed = if tracked {
+        Ok(String::new())
+    } else {
+        git::run(master, &["add", "--", &rel])
+    }
+    .and_then(|_| git::run(master, &["commit", "-m", &msg, "--only", "--", &rel]));
     Ok(match committed {
         Ok(_) => DecideOutcome::Committed,
         Err(e) => {
-            // A failed decision leaves nothing behind: unstage this one file and undo this call's write.
-            let _ = git::run(master, &["reset", "-q", "--", &rel]);
-            if wrote {
-                let _ = std::fs::write(&path, restore);
+            // A failed decision leaves nothing behind: take back this call's add and this call's write, and
+            // say so when one of them cannot be taken back.
+            let mut stderr = e.stderr;
+            if !tracked {
+                if let Err(e) = git::run(master, &["rm", "-q", "--cached", "--", &rel]) {
+                    stderr.push_str(&format!(
+                        "
+Could not unstage {rel}: {}",
+                        e.stderr
+                    ));
+                }
             }
-            DecideOutcome::GitFailed { stderr: e.stderr }
+            // Only while the file still holds the bytes this call wrote: an edit made since is the engineer's.
+            if wrote && std::fs::read(&path).is_ok_and(|now| now == edited.as_bytes()) {
+                if let Err(e) = std::fs::write(&path, restore) {
+                    stderr.push_str(&format!(
+                        "
+Could not restore {rel}: {e}"
+                    ));
+                }
+            }
+            DecideOutcome::GitFailed { stderr }
         }
     })
 }

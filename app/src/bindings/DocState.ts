@@ -6,6 +6,7 @@ export type DocState = { exists: boolean, committed: boolean,
  */
 status: string | null, 
 /**
- * The `status` of the `HEAD` copy; `None` when the document is not in `HEAD`.
+ * The `status` of the `HEAD` copy, as the format program reports it for a fix; `None` when the document is
+ * not in `HEAD`, and always `None` for a full-pipeline change.
  */
 head_status: string | null, };
