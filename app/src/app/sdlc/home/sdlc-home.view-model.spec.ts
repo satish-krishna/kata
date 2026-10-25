@@ -473,7 +473,7 @@ describe('SdlcHomeViewModel navigation', () => {
     await vm.init();
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     vi.spyOn(transport, 'sdlcChanges').mockResolvedValue([
-      { system: 'claims', change: '2026-10-17-claim-notes', intent: { exists: true, committed: true, status: 'draft' }, spec: { exists: false, committed: false, status: null }, plan: { exists: false, committed: false, status: null }, stage: 'intent-awaiting', build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null },
+      { system: 'claims', change: '2026-10-17-claim-notes', intent: { exists: true, committed: true, status: 'draft' }, spec: { exists: false, committed: false, status: null }, plan: { exists: false, committed: false, status: null }, stage: 'intent-awaiting', build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null, track: 'full' },
     ]);
     await vm.openOtherBranch('2026-10-17-claim-notes');
     expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'change/2026-10-17-claim-notes');

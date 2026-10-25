@@ -57,6 +57,9 @@ const ACTIONS: Record<Stage, StageAction[]> = {
   "build-ready": ["start-build", "reopen-intent"],
   "build-stopped": ["continue-build", "another-round"],
   "build-finished": ["declare-done", "another-round", "run-review"],
+  "fix-in-progress": [],
+  "fix-awaiting": [],
+  "fix-accepting": [],
 };
 
 const REVISITS: readonly StageAction[] = ["continue-intent", "reopen-intent", "continue-spec", "reopen-spec", "rerun-plan"];
@@ -112,6 +115,9 @@ const LABELS: Record<Stage, StageLabel> = {
   "build-ready": { step: "build", text: "Build · ready to start", tone: "muted" },
   "build-stopped": { step: "build", text: "Build · in progress (stopped)", tone: "warning" },
   "build-finished": { step: "build", text: "Build · finished, not yet done", tone: "success" },
+  "fix-in-progress": { step: "intent", text: "Fix", tone: "muted" },
+  "fix-awaiting": { step: "intent", text: "Fix", tone: "muted" },
+  "fix-accepting": { step: "intent", text: "Fix", tone: "muted" },
 };
 
 /**

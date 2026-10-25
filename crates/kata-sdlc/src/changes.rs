@@ -217,20 +217,57 @@ fn plan_stage(intent: &DocState, spec: &DocState, plan: &DocState, facts: &PlanF
 }
 
 /// The track an intent's front matter names; anything but `fix` is the full pipeline.
-pub fn track(_intent_text: &str) -> Track {
-    Track::Full
+pub fn track(intent_text: &str) -> Track {
+    match frontmatter::field(intent_text, "track").as_deref() {
+        Some("fix") => Track::Fix,
+        _ => Track::Full,
+    }
 }
 
-/// The rows of a fix, which is accepted in one run. Not implemented yet.
-#[allow(dead_code)]
+/// Whether the latest commit touching the change folder reopened the fix.
+fn reopened(master: &Path, system: &str, change: &str) -> bool {
+    git::run(
+        master,
+        &[
+            "log",
+            "-1",
+            "--format=%s",
+            "--",
+            &format!("intent/{system}/{change}/"),
+        ],
+    )
+    .is_ok_and(|subject| {
+        subject
+            .trim_end()
+            .ends_with(&format!("reopen fix {change}"))
+    })
+}
+
+/// The stage of a fix, whose three documents are accepted together. Rows in order, first match wins;
+/// "accepted in HEAD" is a committed document whose status is accepted.
 fn fix_stage(
-    _intent: &DocState,
-    _spec: &DocState,
-    _plan: &DocState,
-    _facts: &PlanFacts,
-    _reopened: bool,
+    intent: &DocState,
+    spec: &DocState,
+    plan: &DocState,
+    facts: &PlanFacts,
+    reopened: bool,
 ) -> Stage {
-    unimplemented!("fix_stage")
+    if intent.is("rejected") {
+        return Stage::Rejected;
+    }
+    let docs = [intent, spec, plan];
+    let all_committed = docs.iter().all(|d| d.exists && d.committed);
+    let accepted = docs
+        .iter()
+        .filter(|d| d.committed && d.is("accepted"))
+        .count();
+    match (all_committed, accepted) {
+        (true, 3) => plan_stage(intent, spec, plan, facts),
+        (true, 0) => Stage::FixAwaiting,
+        (true, _) if reopened => Stage::FixAwaiting,
+        (_, 0) => Stage::FixInProgress,
+        _ => Stage::FixAccepting,
+    }
 }
 
 /// `^\d{4}-\d{2}-\d{2}-[a-z0-9-]+$`, matched by hand.
@@ -370,7 +407,16 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
             )
             .map(|t| track(&t))
             .unwrap_or(Track::Full);
-            let stage = derive_stage(&intent, &spec, &plan, &facts);
+            let stage = match track_of {
+                Track::Fix => fix_stage(
+                    &intent,
+                    &spec,
+                    &plan,
+                    &facts,
+                    reopened(master, system, &change),
+                ),
+                Track::Full => derive_stage(&intent, &spec, &plan, &facts),
+            };
             let out_of_date = if plan.exists && stage == Stage::PlanOutOfDate {
                 out_of_date(&intent, &spec, &plan, &facts)
             } else {
@@ -690,9 +736,6 @@ mod tests {
         format!(
             "---\nstatus: {status}\nsource_spec_commit: {pin}\n---\n\n## Tasks\n\n### T1: One (`app`)\n\n- **Depends on:** none\n"
         )
-    }
-    fn head(repo: &Path) -> String {
-        git::run(repo, &["rev-parse", "HEAD"]).unwrap()
     }
     fn last_commit_of(repo: &Path, rel: &str) -> String {
         git::run(repo, &["log", "-1", "--format=%H", "--", rel]).unwrap()

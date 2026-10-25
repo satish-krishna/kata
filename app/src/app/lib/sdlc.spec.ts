@@ -33,10 +33,13 @@ const ACTIONS: Record<Stage, string[]> = {
   "build-ready": ["start-build", "reopen-intent"],
   "build-stopped": ["continue-build", "another-round"],
   "build-finished": ["declare-done", "another-round", "run-review"],
+  "fix-in-progress": [],
+  "fix-awaiting": [],
+  "fix-accepting": [],
 };
 
 const changeAt = (stage: Stage, outOfDate: OutOfDate | null = null): ChangeInfo => ({
-  system: "claims", change: "2026-10-12-fnol", stage, scope: "claims", out_of_date: outOfDate, plan_unreadable: false, plan_unreadable_reason: null,
+  system: "claims", change: "2026-10-12-fnol", stage, scope: "claims", out_of_date: outOfDate, plan_unreadable: false, plan_unreadable_reason: null, track: 'full',
   intent: { exists: true, committed: true, status: "accepted" },
   spec: { exists: true, committed: true, status: "accepted" },
   plan: { exists: true, committed: true, status: "accepted" },

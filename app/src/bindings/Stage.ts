@@ -3,4 +3,4 @@
 /**
  * Where a change is in the intent, spec, plan flow.
  */
-export type Stage = "intent-in-progress" | "intent-awaiting" | "intent-accepted-uncommitted" | "rejected" | "spec-ready" | "spec-awaiting" | "spec-accepted-uncommitted" | "plan-ready" | "plan-awaiting" | "plan-accepted-uncommitted" | "plan-out-of-date" | "plan-unreadable" | "plan-superseded" | "build-ready" | "build-stopped" | "build-finished";
+export type Stage = "intent-in-progress" | "intent-awaiting" | "intent-accepted-uncommitted" | "rejected" | "spec-ready" | "spec-awaiting" | "spec-accepted-uncommitted" | "plan-ready" | "plan-awaiting" | "plan-accepted-uncommitted" | "plan-out-of-date" | "plan-unreadable" | "plan-superseded" | "build-ready" | "build-stopped" | "build-finished" | "fix-in-progress" | "fix-awaiting" | "fix-accepting";
