@@ -253,9 +253,11 @@ export class ChangePageViewModel {
     }
     if (c.stage !== 'fix-unsettled') return null;
     const text = 'The workflow does not leave a fix in these statuses, so nothing can be run on it.';
-    // When the format program could not run, its own message says why the statuses are not known, and no status
-    // line is shown: none was read.
-    if (c.plan_unreadable && c.plan_unreadable_reason !== null) return { tone: 'warning', text, lines: [c.plan_unreadable_reason] };
+    // When the format program could not run, no status was read, so the headline about statuses would be false: say
+    // what happened, with the program's own message, and show no status line.
+    if (c.plan_unreadable && c.plan_unreadable_reason !== null) {
+      return { tone: 'warning', text: 'Kata could not read where this fix stands.', lines: [c.plan_unreadable_reason] };
+    }
     // Each document shows the status HEAD holds, whether or not the working file exists: a deleted document is
     // "missing (HEAD: draft)", and one not in HEAD says so.
     const status = (d: { status: string | null; head_status: string | null }) => {
