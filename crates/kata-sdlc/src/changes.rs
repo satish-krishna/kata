@@ -1149,6 +1149,60 @@ mod tests {
     }
 
     #[test]
+    fn fix_documents_checked_out_as_crlf_are_not_edits_f1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        git::run(&repo, &["config", "core.autocrlf", "true"]).unwrap();
+        let at = |file: &str| format!("{FIX_DIR}/{file}");
+        let crlf = |text: String| text.replace('\n', "\r\n");
+        testutil::commit_file(&repo, &at("intent.md"), &crlf(fix_intent("draft")), "draft");
+        testutil::commit_file(
+            &repo,
+            &at("spec.md"),
+            &crlf(pinned_spec("draft", "pending acceptance")),
+            "draft",
+        );
+        testutil::commit_file(
+            &repo,
+            &at("plan.md"),
+            &crlf(pinned_plan("draft", "pending acceptance")),
+            "draft",
+        );
+        // Git stores LF and the working copies read CRLF, yet `git status` reports nothing.
+        assert_eq!(git::run(&repo, &["status", "--porcelain"]).unwrap(), "");
+        let working = std::fs::read(repo.join(at("intent.md"))).unwrap();
+        assert!(working.windows(2).any(|w| w == b"\r\n"));
+        assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
+    }
+
+    #[test]
+    fn a_fix_the_program_cannot_read_is_unsettled_with_its_message_f3() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        commit_fix_drafts(&repo);
+        let got = list(None, &repo, "claims");
+        assert_eq!(got[0].stage, Stage::FixUnsettled);
+        assert_eq!(got[0].intent.head_status, None);
+        assert!(got[0].plan_unreadable);
+        assert!(got[0].plan_unreadable_reason.is_some());
+    }
+
+    #[test]
+    fn a_full_pipeline_change_carries_no_head_status_f5() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        testutil::commit_file(
+            &repo,
+            &format!("{FIX_DIR}/intent.md"),
+            "---\nstatus: draft\n---\nintent\n",
+            "draft",
+        );
+        let info = only_change(&repo);
+        assert_eq!(info.track, Track::Full);
+        assert_eq!(info.intent.head_status, None);
+    }
+
+    #[test]
     fn doc_state_reads_the_head_status() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");

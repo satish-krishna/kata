@@ -503,6 +503,75 @@ mod tests {
         assert_eq!(staged(&repo), "other.txt");
     }
 
+    fn index_entry(repo: &Path) -> String {
+        git::run(repo, &["ls-files", "-s", "--", INTENT]).unwrap()
+    }
+
+    #[test]
+    fn failed_decision_keeps_a_partly_staged_version_f2() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        failing_hook(&repo);
+        std::fs::write(repo.join(INTENT), "---\nstatus: draft\n---\nstaged body\n").unwrap();
+        git::run(&repo, &["add", "--", INTENT]).unwrap();
+        let entry = index_entry(&repo);
+        let edited = "---\nstatus: draft\n---\nstaged body\nand more\n";
+        std::fs::write(repo.join(INTENT), edited).unwrap();
+        let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, true).unwrap();
+        assert!(matches!(out, DecideOutcome::GitFailed { .. }));
+        assert_eq!(index_entry(&repo), entry);
+        assert_eq!(std::fs::read_to_string(repo.join(INTENT)).unwrap(), edited);
+    }
+
+    #[test]
+    fn failed_decision_keeps_a_file_head_does_not_have_added_f2() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        failing_hook(&repo);
+        let text = "---\nstatus: draft\n---\nbody\n";
+        let path = repo.join(INTENT);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        git::run(&repo, &["add", "--", INTENT]).unwrap();
+        let entry = index_entry(&repo);
+        let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, true).unwrap();
+        assert!(matches!(out, DecideOutcome::GitFailed { .. }));
+        assert_eq!(index_entry(&repo), entry);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[test]
+    fn failed_decision_leaves_an_untracked_file_untracked_f2() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        failing_hook(&repo);
+        let text = "---\nstatus: draft\n---\nbody\n";
+        let path = repo.join(INTENT);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, true).unwrap();
+        assert!(matches!(out, DecideOutcome::GitFailed { .. }));
+        assert_eq!(index_entry(&repo), "");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[test]
+    fn failed_decision_keeps_an_edit_made_during_the_hook_f2() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        let hook = repo.join(".git/hooks/pre-commit");
+        std::fs::write(
+            &hook,
+            format!(
+                "#!/bin/sh\necho 'edited meanwhile' >> {INTENT}\necho hook says no >&2\nexit 1\n"
+            ),
+        )
+        .unwrap();
+        let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, false).unwrap();
+        assert!(matches!(out, DecideOutcome::GitFailed { .. }));
+        let text = std::fs::read_to_string(repo.join(INTENT)).unwrap();
+        assert!(text.ends_with("edited meanwhile\n"), "{text}");
+    }
     #[test]
     fn hook_failure_is_reported_and_leaves_nothing_behind_r7_4() {
         let tmp = tempfile::tempdir().unwrap();

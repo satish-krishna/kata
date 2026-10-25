@@ -2990,7 +2990,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve3.call(this, root, ref);
+      let _sch = resolve4.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3017,7 +3017,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve3(root, ref) {
+    function resolve4(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3881,7 +3881,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve3(baseURI, relativeURI, options) {
+    function resolve4(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const {
         parsed: baseParsed,
@@ -4272,7 +4272,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve3,
+      resolve: resolve4,
       resolveComponent,
       equal,
       serialize,
@@ -23129,8 +23129,8 @@ var require_TransformOperationExecutor = __commonJS({
             return value;
           return Buffer.from(value);
         } else if ((0, utils_1.isPromise)(value) && !isMap) {
-          return new Promise((resolve3, reject) => {
-            value.then((data) => resolve3(this.transform(void 0, data, targetType, void 0, void 0, level + 1)), reject);
+          return new Promise((resolve4, reject) => {
+            value.then((data) => resolve4(this.transform(void 0, data, targetType, void 0, void 0, level + 1)), reject);
           });
         } else if (!isMap && value !== null && typeof value === "object" && typeof value.then === "function") {
           return value;
@@ -27466,8 +27466,8 @@ var require_src2 = __commonJS({
 });
 
 // src/cli.ts
-import { readFileSync as readFileSync2 } from "node:fs";
-import { basename, dirname as dirname2, resolve as resolve2 } from "node:path";
+import { readFileSync as readFileSync3 } from "node:fs";
+import { basename as basename2, dirname as dirname2, resolve as resolve3 } from "node:path";
 
 // src/change.ts
 function fieldLine(task, key) {
@@ -30301,10 +30301,10 @@ function resolveAll(constructs2, events, context) {
   const called = [];
   let index2 = -1;
   while (++index2 < constructs2.length) {
-    const resolve3 = constructs2[index2].resolveAll;
-    if (resolve3 && !called.includes(resolve3)) {
-      events = resolve3(events, context);
-      called.push(resolve3);
+    const resolve4 = constructs2[index2].resolveAll;
+    if (resolve4 && !called.includes(resolve4)) {
+      events = resolve4(events, context);
+      called.push(resolve4);
     }
   }
   return events;
@@ -35057,6 +35057,11 @@ function findMarker(file) {
   }
 }
 
+// src/fix-state.ts
+import { execFileSync } from "node:child_process";
+import { readFileSync as readFileSync2 } from "node:fs";
+import { basename, join as join2, resolve as resolve2 } from "node:path";
+
 // src/plan.ts
 var import_ajv2 = __toESM(require_ajv(), 1);
 var import_yaml4 = __toESM(require_dist(), 1);
@@ -35335,6 +35340,163 @@ function readPlan(text3, file, marker) {
   const shared_decisions = decisions2(doc, file, problems, claimed);
   reportUnread(doc, file, problems, [{ prefix: recordPrefix("T\\d+"), strict: HEADING2, what: "a task heading" }], ["id"], /^\s*id\s*:\s*["']?T\d+/, claimed);
   return { kind: "plan", layout, document: { tasks, shared_decisions }, problems };
+}
+
+// src/fix-state.ts
+var DOCUMENTS = ["intent", "spec", "plan"];
+var OWN_LINES = ["status", "source_intent_commit", "source_spec_commit", "accepted_in_advance"];
+function git(cwd, args) {
+  try {
+    return execFileSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 256 * 1024 * 1024
+    });
+  } catch (e) {
+    const err = e;
+    const detail = (err.stderr ?? "").trim() || err.message;
+    throw new CouldNotRun(`git ${args[0]} failed in ${cwd}: ${detail}`);
+  }
+}
+function gitMaybe(cwd, args) {
+  try {
+    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch (e) {
+    if (e.status == null) {
+      throw new CouldNotRun(`git could not run in ${cwd}: ${e.message}`);
+    }
+    return null;
+  }
+}
+function statusOf(text3, file) {
+  try {
+    const value = parseFrontMatter(text3, file).data["status"];
+    return value === void 0 || value === null ? null : String(value);
+  } catch {
+    return null;
+  }
+}
+function withoutOwnLines(text3) {
+  const lines = text3.replace(/\r\n/g, "\n").split("\n");
+  const out = [];
+  let inFront = false;
+  lines.forEach((line, i) => {
+    const bare = line.trimEnd();
+    if (i === 0 && bare === "---") inFront = true;
+    else if (inFront && bare === "---") inFront = false;
+    else if (inFront) {
+      const colon = line.indexOf(":");
+      if (colon > 0 && OWN_LINES.includes(line.slice(0, colon).trim())) return;
+    }
+    out.push(line);
+  });
+  return out.join("\n");
+}
+function reportedPaths(top, paths) {
+  const out = git(top, ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...paths]);
+  const reported = /* @__PURE__ */ new Set();
+  const fields = out.split("\0");
+  for (let i = 0; i < fields.length; i++) {
+    const field = fields[i];
+    if (field.length < 4) continue;
+    reported.add(field.slice(3));
+    if (field[0] === "R" || field[0] === "C") reported.add(fields[++i]);
+  }
+  return reported;
+}
+function isBuilt(top, prefix, folder, inHead) {
+  const planPath = `${prefix}plan.md`;
+  if (!inHead(planPath)) return false;
+  const planFile = join2(folder, "plan.md");
+  const planResult = readPlan(git(top, ["show", `HEAD:${planPath}`]), planFile, findMarker(planFile));
+  if (planResult.kind !== "plan") return false;
+  const tasks = new Set(planResult.document.tasks.map((t) => t.id));
+  if (tasks.size === 0) return false;
+  const logs = git(top, ["ls-tree", "-z", "--name-only", "HEAD", "--", `${prefix}build/`]).split("\0").filter((p) => p.endsWith(".md") && !p.endsWith("/review.md"));
+  return logs.some((path) => {
+    const result = readBuildLog(git(top, ["show", `HEAD:${path}`]), join2(folder, "build", basename(path)));
+    return result.kind === "build-log" && result.document.entries.some((e) => tasks.has(e.task));
+  });
+}
+function rowOf(facts) {
+  const docs = DOCUMENTS.map((d) => facts[d]);
+  if (facts.intent.headStatus === "rejected") return 1;
+  const oddStatus = docs.some((d) => d.inHead && d.headStatus !== "draft" && d.headStatus !== "accepted");
+  const someAccepted = facts.accepted !== "none";
+  if (oddStatus || facts.accepted === "other" || someAccepted && docs.some((d) => !d.inHead)) return 2;
+  if (facts.unrecorded.length > 0) return 3;
+  if (facts.ownLinesOnly) return 4;
+  if (facts.accepted === "leading" && facts.acceptanceLast) return 5;
+  if (facts.accepted === "none" && !facts.built) return 6;
+  if (facts.accepted !== "all") return 7;
+  return 8;
+}
+function fixState(folderArg) {
+  const folder = resolve2(folderArg);
+  const intentFile = join2(folder, "intent.md");
+  let intentText;
+  try {
+    intentText = readFileSync2(intentFile, "utf8");
+  } catch (e) {
+    throw new CouldNotRun(`${intentFile}: cannot read the intent: ${e.code ?? e}`);
+  }
+  const track = parseFrontMatter(intentText, intentFile).data["track"];
+  if (track !== "fix") {
+    throw new CouldNotRun(
+      `${intentFile}: not a fix (its track is ${track === void 0 ? "not set" : JSON.stringify(track)}, expected fix)`
+    );
+  }
+  const top = git(folder, ["rev-parse", "--show-toplevel"]).trim();
+  const prefix = git(folder, ["rev-parse", "--show-prefix"]).trim();
+  const hasHead = gitMaybe(top, ["rev-parse", "--verify", "-q", "HEAD"]) !== null;
+  const inHead = (path) => hasHead && git(top, ["ls-tree", "--name-only", "HEAD", "--", path]).trim() !== "";
+  const paths = DOCUMENTS.map((d) => `${prefix}${d}.md`);
+  const head = paths.map((p) => inHead(p) ? git(top, ["show", `HEAD:${p}`]) : null);
+  const working = DOCUMENTS.map((d) => {
+    try {
+      return readFileSync2(join2(folder, `${d}.md`), "utf8");
+    } catch {
+      return null;
+    }
+  });
+  const perDoc = DOCUMENTS.map((d, i) => ({
+    inHead: head[i] !== null,
+    headStatus: head[i] == null ? null : statusOf(head[i], `HEAD:${paths[i]}`),
+    workingStatus: working[i] == null ? null : statusOf(working[i], join2(folder, `${d}.md`))
+  }));
+  const acceptedInHead = perDoc.map((d) => d.inHead && d.headStatus === "accepted");
+  const count = acceptedInHead.filter(Boolean).length;
+  const leading = count > 0 && acceptedInHead.slice(0, count).every(Boolean);
+  const accepted = count === 0 ? "none" : count === 3 ? "all" : leading ? "leading" : "other";
+  const reported = reportedPaths(top, paths);
+  const carrier = acceptedInHead.findIndex((a) => !a);
+  const unrecorded = [];
+  let anyDiff = false;
+  DOCUMENTS.forEach((d, i) => {
+    if (!perDoc[i].inHead) {
+      unrecorded.push(d);
+      return;
+    }
+    if (!reported.has(paths[i])) return;
+    anyDiff = true;
+    const ownLines = i === carrier && working[i] != null && perDoc[i].workingStatus === "accepted" && withoutOwnLines(head[i]) === withoutOwnLines(working[i]);
+    if (!ownLines) unrecorded.push(d);
+  });
+  const subject = hasHead ? git(top, ["log", "-1", "--format=%s", "--", ...paths]).trim() : "";
+  const change = basename(folder);
+  const acceptanceLast = DOCUMENTS.some((d) => subject.endsWith(`accept ${d} ${change}`));
+  const facts = {
+    intent: perDoc[0],
+    spec: perDoc[1],
+    plan: perDoc[2],
+    unrecorded,
+    ownLinesOnly: anyDiff && unrecorded.length === 0,
+    accepted,
+    acceptanceLast,
+    built: hasHead && isBuilt(top, prefix, folder, inHead)
+  };
+  return { row: rowOf(facts), facts };
 }
 
 // src/review.ts
@@ -36500,7 +36662,7 @@ function readSpec(text3, file) {
 }
 
 // src/cli.ts
-var USAGE = "usage: node check.mjs check <file>...\n       node check.mjs read --json <file>";
+var USAGE = "usage: node check.mjs check <file>...\n       node check.mjs read --json <file>\n       node check.mjs fix-state --json <change folder>";
 function kindOf(file) {
   const parts = file.split(/[\\/]/);
   const name = parts[parts.length - 1] ?? "";
@@ -36517,7 +36679,7 @@ function readDocument(file) {
   const kind = kindOf(file);
   let text3;
   try {
-    text3 = readFileSync2(file, "utf8");
+    text3 = readFileSync3(file, "utf8");
   } catch (e) {
     throw new CouldNotRun(`${file}: cannot read the file: ${e.code ?? e}`);
   }
@@ -36527,8 +36689,8 @@ function readDocument(file) {
   return readReview(text3, file);
 }
 function changeFolder(file) {
-  const folder = dirname2(resolve2(file));
-  return basename(folder) === "build" ? dirname2(folder) : folder;
+  const folder = dirname2(resolve3(file));
+  return basename2(folder) === "build" ? dirname2(folder) : folder;
 }
 function changeProblems(docs) {
   const groups = /* @__PURE__ */ new Map();
@@ -36550,6 +36712,10 @@ function main(argv) {
     const result = readDocument(rest[1]);
     process.stdout.write(JSON.stringify(result) + "\n");
     return result.problems.length === 0 ? EXIT.PASS : EXIT.PROBLEMS;
+  }
+  if (command === "fix-state" && rest.length === 2 && rest[0] === "--json") {
+    process.stdout.write(JSON.stringify(fixState(rest[1])) + "\n");
+    return EXIT.PASS;
   }
   throw new CouldNotRun(USAGE);
 }

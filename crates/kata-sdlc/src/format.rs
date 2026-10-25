@@ -356,6 +356,57 @@ pub fn check_change(
     Ok(problems)
 }
 
+/// What the program found out about one document of a fix.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FixDocumentFacts {
+    /// The document's file is in `HEAD`.
+    pub in_head: bool,
+    /// The `status` of the `HEAD` copy; `None` when `HEAD` does not hold it or names none.
+    pub head_status: Option<String>,
+    /// The `status` of the working copy; `None` when there is none or it names none.
+    pub working_status: Option<String>,
+}
+
+/// How many of a fix's documents are accepted in `HEAD`.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FixAccepted {
+    None,
+    Leading,
+    All,
+    Other,
+}
+
+/// The facts behind a row of the fix-state table.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FixFacts {
+    pub intent: FixDocumentFacts,
+    pub spec: FixDocumentFacts,
+    pub plan: FixDocumentFacts,
+    /// The documents with unrecorded changes, in document order.
+    pub unrecorded: Vec<String>,
+    pub own_lines_only: bool,
+    pub accepted: FixAccepted,
+    pub acceptance_last: bool,
+    pub built: bool,
+}
+
+/// What `check.mjs fix-state --json <change folder>` prints: the row of the fix-state table (1 to 8)
+/// and the facts it was decided on.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct FixState {
+    pub row: u8,
+    pub facts: FixFacts,
+}
+
+/// Where the fix in `folder` stands, as the program says. Not cached: the answer depends on git's state
+/// (`HEAD`, the index, the working tree), not on the bytes of any one file.
+pub fn fix_state(_program: &Path, _folder: &Path) -> Result<FixState, FormatError> {
+    Err(FormatError::CouldNotRun("not implemented".into()))
+}
+
 /// What a check depends on: the program, each checked document's name and bytes, and the marker above them.
 type CheckKey = (PathBuf, Vec<(String, u64)>, u64);
 
