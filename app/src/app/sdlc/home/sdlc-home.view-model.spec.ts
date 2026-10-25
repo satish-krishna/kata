@@ -435,7 +435,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('newChange delegates to the runner with the workspace, master, system and track', async () => {
     const { vm, runner } = setup();
     await vm.init();
-    const spy = vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened' });
+    const spy = vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened', change: '2026-10-18-new-change', branch: 'change/2026-10-18-new-change' });
     await vm.newChange('claims', 'flag fraud', 'decide');
     expect(spy).toHaveBeenCalledWith(
       expect.objectContaining({ workspace: expect.objectContaining({ id: 'acme-claims' }), master: `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}` }),
@@ -484,7 +484,7 @@ describe('SdlcHomeViewModel runs', () => {
       await vm.init();
       const spy = vi.spyOn(runner, 'newChange').mockResolvedValue(none);
       await vm.newChange('claims', 'flag fraud', 'decide');
-      spy.mockResolvedValue({ kind: 'opened' });
+      spy.mockResolvedValue({ kind: 'opened', change: '2026-10-18-new-change', branch: 'change/2026-10-18-new-change' });
       await vm.newChange('claims', 'another', 'decide');
       expect(vm.triageNotice()).toBeNull();
     });

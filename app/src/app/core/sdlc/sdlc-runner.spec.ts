@@ -490,7 +490,7 @@ describe('SdlcRunner.newChange track', () => {
     const outcome = await runner.newChange(target, 'claims', 'flag fraud', 'full');
     const spec = lock.runAgent.mock.calls[0][1] as RunSpec;
     expect(spec.task.startsWith('Use the ai-sdlc intent skill')).toBe(true);
-    expect(outcome).toEqual({ kind: 'opened' });
+    expect(outcome).toEqual({ kind: 'opened', change: '2026-10-18-x', branch: 'change/2026-10-18-x' });
     expect(navigate).toHaveBeenCalledWith(['/sdlc', 'claims', '2026-10-18-x']);
   });
 
@@ -526,7 +526,7 @@ describe('SdlcRunner.newChange track', () => {
     const ctx = withTranscript();
     ctx.fake.finishResults.push(renamed(change));
     const outcome = await ctx.runner.newChange(target, 'claims', 'idea', 'decide');
-    expect(outcome).toEqual({ kind: 'opened' });
+    expect(outcome).toEqual({ kind: 'opened', change, branch: `change/${change}` });
     expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledWith(
       expect.objectContaining({ workspace_id: 'acme', system: 'claims', change, stage: 'start', run_id: 'sdlc-claims-triage-1' }),
     );

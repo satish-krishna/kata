@@ -9,6 +9,9 @@ import { MockTransport } from '../../core/transport/mock-transport';
 import { ChangePage } from './change-page';
 
 const FIX = '2026-10-12-fnol-photo-upload';
+const FIX_BRANCH = `change/${FIX}`;
+const NEW = '2026-10-25-double-refund';
+const NEW_BRANCH = `change/${NEW}`;
 const FIX_INTENT = '---\ntitle: Stop the double refund\nstatus: draft\n---\n\n## Problem\n\nA refund is paid twice when the button is clicked twice.\n\n## Fix\n\nDisable the button.\n';
 const IDEA = 'Stop the double refund\n\nA refund is paid twice when the button is clicked twice.';
 
@@ -31,7 +34,10 @@ async function mountFix() {
   );
   const realDoc = transport.sdlcReadDoc.bind(transport);
   vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (m, s, c, d) => (c === FIX && d === 'intent' ? FIX_INTENT : realDoc(m, s, c, d)));
+  const realBranches = transport.sdlcBranches.bind(transport);
+  vi.spyOn(transport, 'sdlcBranches').mockImplementation(async (m) => ({ ...(await realBranches(m)), current: FIX_BRANCH }));
   const decide = vi.spyOn(transport, 'sdlcDecide');
+  const checkout = vi.spyOn(transport, 'sdlcCheckout');
   const out = await render(ChangePage, {}, [
     provideRouter([]),
     { provide: KataTransport, useValue: transport },
@@ -39,9 +45,9 @@ async function mountFix() {
   ]);
   await settle();
   const runner = TestBed.inject(SdlcRunner);
-  const newChange = vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened' });
+  const newChange = vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened', change: NEW, branch: NEW_BRANCH });
   const error = vi.spyOn(TestBed.inject(ToastStore), 'error');
-  return { ...out, transport, decide, newChange, error };
+  return { ...out, transport, decide, checkout, newChange, error };
 }
 
 const take = async (container: HTMLElement) => {
@@ -146,6 +152,100 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
     await vi.waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
     expect(decide.mock.calls.map((c) => c[4])).toEqual([false, true]);
     expect(decide.mock.calls[1].slice(1, 4)).toEqual(['claims', FIX, 'reject-intent']);
+  });
+
+  // The new change's branch is checked out once it opened, so the fix's documents are on a different branch.
+  const order = (...mocks: { mock: { invocationCallOrder: number[] } }[]) => mocks.flatMap((m) => m.mock.invocationCallOrder).sort((a, b) => a - b);
+
+  it('closes the fix on its own branch, then returns to the new change: checkout fix, decide, checkout new', async () => {
+    const { container, decide, checkout, newChange } = await mountFix();
+    await take(container);
+    await start();
+    await vi.waitFor(() => expect(checkout).toHaveBeenCalledTimes(2));
+    expect(checkout.mock.calls.map((c) => c[1])).toEqual([FIX_BRANCH, NEW_BRANCH]);
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(decide.mock.calls[0].slice(1)).toEqual(['claims', FIX, 'reject-intent', false]);
+    expect(order(newChange, checkout)).toEqual([
+      newChange.mock.invocationCallOrder[0],
+      checkout.mock.invocationCallOrder[0],
+      checkout.mock.invocationCallOrder[1],
+    ]);
+    expect(checkout.mock.invocationCallOrder[0]).toBeLessThan(decide.mock.invocationCallOrder[0]);
+    expect(decide.mock.invocationCallOrder[0]).toBeLessThan(checkout.mock.invocationCallOrder[1]);
+  });
+
+  it('a fix that lives on the new change branch needs no checkout', async () => {
+    const { container, decide, checkout, newChange } = await mountFix();
+    newChange.mockResolvedValue({ kind: 'opened', change: NEW, branch: FIX_BRANCH });
+    await take(container);
+    await start();
+    await vi.waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(checkout).not.toHaveBeenCalled();
+  });
+
+  it('a checkout of the fix branch that fails decides nothing and says the fix stays open', async () => {
+    const { container, decide, checkout, error } = await mountFix();
+    checkout.mockRejectedValueOnce(new Error('working tree is dirty'));
+    await take(container);
+    await start();
+    await vi.waitFor(() => expect(error).toHaveBeenCalledWith(expect.stringContaining('The new change started, but the fix')));
+    await settle();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('working tree is dirty'));
+    expect(decide).not.toHaveBeenCalled();
+    expect(checkout).toHaveBeenCalledTimes(1);
+  });
+
+  it('a decision that fails still returns to the new change and says the fix stays open', async () => {
+    const { container, decide, checkout, error } = await mountFix();
+    decide.mockResolvedValue({ kind: 'gitFailed', stderr: 'index.lock exists' });
+    await take(container);
+    await start();
+    await vi.waitFor(() => expect(error).toHaveBeenCalledWith(expect.stringContaining('The new change started, but the fix')));
+    expect(checkout.mock.calls.map((c) => c[1])).toEqual([FIX_BRANCH, NEW_BRANCH]);
+  });
+
+  it('a decision that throws still returns to the new change and says the fix stays open', async () => {
+    const { container, decide, checkout, error } = await mountFix();
+    decide.mockRejectedValue(new Error('boom'));
+    await take(container);
+    await start();
+    await vi.waitFor(() => expect(error).toHaveBeenCalledWith(expect.stringContaining('The new change started, but the fix')));
+    expect(checkout.mock.calls.map((c) => c[1])).toEqual([FIX_BRANCH, NEW_BRANCH]);
+  });
+
+  it('failing to return to the new change says where the master repository and the new change are', async () => {
+    const { container, checkout, error } = await mountFix();
+    checkout.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('cannot switch'));
+    await take(container);
+    await start();
+    await vi.waitFor(() => expect(error).toHaveBeenCalledWith(expect.stringContaining(`on ${FIX_BRANCH}`)));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining(NEW_BRANCH));
+  });
+
+  it('the other-edits confirm keeps the master on the fix branch until it is answered, then returns', async () => {
+    const { container, decide, checkout } = await mountFix();
+    decide.mockResolvedValueOnce({ kind: 'needsConfirm', other_edits: true });
+    await take(container);
+    await start();
+    await vi.waitFor(() => expect(button(document.body, 'Commit')).toBeDefined());
+    expect(checkout.mock.calls.map((c) => c[1])).toEqual([FIX_BRANCH]);
+    button(document.body, 'Commit').click();
+    await vi.waitFor(() => expect(checkout).toHaveBeenCalledTimes(2));
+    expect(decide).toHaveBeenCalledTimes(2);
+    expect(checkout.mock.calls[1][1]).toBe(NEW_BRANCH);
+  });
+
+  it('declining that confirm returns to the new change too', async () => {
+    const { container, decide, checkout } = await mountFix();
+    decide.mockResolvedValueOnce({ kind: 'needsConfirm', other_edits: true });
+    await take(container);
+    await start();
+    await vi.waitFor(() => expect(button(document.body, 'Commit')).toBeDefined());
+    button(document.body, 'Cancel').click();
+    await vi.waitFor(() => expect(checkout).toHaveBeenCalledTimes(2));
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(checkout.mock.calls[1][1]).toBe(NEW_BRANCH);
   });
 
   it('declining that confirm leaves the fix open and says so', async () => {

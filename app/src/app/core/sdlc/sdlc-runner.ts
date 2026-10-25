@@ -48,11 +48,11 @@ export type RunOutcome = { state: RunState; runId: string | null; snapshot: Snap
 export type Confirm = (spec: RunSpec) => Promise<RunSpec | null>;
 
 /**
- * What starting a change came to. `none`: the run ended and no change folder was created (the idea and the run's id let the engineer describe it again or read the verdict).
+ * What starting a change came to. `opened` names the change and its branch, which the master repository is left on. `none`: the run ended and no change folder was created (the idea and the run's id let the engineer describe it again or read the verdict).
  * `stopped`: nothing to report, because no run started or the run's branch was kept for the engineer to settle; a toast already said why where one was due.
  */
 export type NewChangeOutcome =
-  | { kind: 'opened' }
+  | { kind: 'opened'; change: string; branch: string }
   | { kind: 'refused' }
   | { kind: 'stopped' }
   | { kind: 'none'; idea: string; runId: string | null };
@@ -477,7 +477,7 @@ export class SdlcRunner {
       }
       return { kind: 'none', idea, runId: out.runId };
     }
-    const { change } = outcome.renamed;
+    const { change, branch: changeBranch } = outcome.renamed;
     if (out.runId) {
       try {
         await this.transport.sdlcLinkRun({
@@ -493,7 +493,7 @@ export class SdlcRunner {
       }
     }
     await this.router.navigate(['/sdlc', system, change]);
-    return { kind: 'opened' };
+    return { kind: 'opened', change, branch: changeBranch };
   }
 
   /** Finish the pending branch. A dirty tree opens the leftover dialog once and retries after it closes. */
