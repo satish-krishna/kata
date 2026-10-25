@@ -434,6 +434,16 @@ struct FixEntry {
 /// Where each fix in `folders` stands, in the order given, from one process. A folder the program could
 /// not answer for gets its own error; a run that failed as a whole gives that error for every folder.
 /// Not cached, for the reason [`fix_state`] is not.
+#[cfg(test)]
+fn fix_states_in(
+    program: &Path,
+    folders: &[PathBuf],
+    _chunk: usize,
+    _timeout: Duration,
+) -> Vec<Result<FixState, FormatError>> {
+    fix_states(program, folders)
+}
+
 pub fn fix_states(program: &Path, folders: &[PathBuf]) -> Vec<Result<FixState, FormatError>> {
     // Given one folder the program prints its object, not an array of one, so that case is the single form.
     match folders {
@@ -580,6 +590,58 @@ mod tests {
             })
         );
         assert_eq!(parse_problem("nothing here"), None);
+    }
+
+    /// `n` fix folders that exist under `root`.
+    fn folders_of(root: &Path, n: usize) -> Vec<PathBuf> {
+        (0..n)
+            .map(|i| {
+                let folder = root.join(format!("2026-10-01-fix-{i:03}"));
+                std::fs::create_dir_all(&folder).unwrap();
+                folder
+            })
+            .collect()
+    }
+
+    #[test]
+    fn many_fixes_are_read_in_chunks_one_after_another_f1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = crate::testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
+        let folders = folders_of(tmp.path(), 45);
+        let got = fix_states(&crate::build::program(&plugin), &folders);
+        let calls = std::fs::read_to_string(plugin.join("format").join("calls.log")).unwrap();
+        assert_eq!(
+            calls.lines().collect::<Vec<_>>(),
+            vec!["fix-state 20", "fix-state 20", "fix-state 5"]
+        );
+        assert_eq!(got.len(), 45);
+        assert!(got.iter().all(|r| r.as_ref().is_ok_and(|s| s.row == 6)));
+    }
+
+    #[test]
+    fn a_chunk_that_times_out_fails_only_its_own_folders_f1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = crate::testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
+        let check = plugin.join("format").join("check.mjs");
+        let text = std::fs::read_to_string(&check).unwrap();
+        std::fs::write(
+            &check,
+            format!(
+                "if (process.argv.some((a) => a.includes('slow'))) await new Promise((r) => setTimeout(r, 60000));\n{text}"
+            ),
+        )
+        .unwrap();
+        let mut folders = folders_of(tmp.path(), 6);
+        folders[2] = tmp.path().join("2026-10-01-slow");
+        std::fs::create_dir_all(&folders[2]).unwrap();
+        let got = fix_states_in(
+            &crate::build::program(&plugin),
+            &folders,
+            2,
+            Duration::from_secs(2),
+        );
+        let failed: Vec<bool> = got.iter().map(Result::is_err).collect();
+        assert_eq!(failed, vec![false, false, true, true, false, false]);
     }
 
     #[test]

@@ -1228,6 +1228,67 @@ mod tests {
     }
 
     #[test]
+    fn a_fix_whose_working_intent_lost_its_track_still_lists_as_a_fix_f3() {
+        let at = |file: &str| format!("{FIX_DIR}/{file}");
+        let cases: [(&str, Option<&str>); 3] = [
+            ("deleted", None),
+            ("no track line", Some("---\nstatus: draft\n---\nintent\n")),
+            (
+                "broken front matter",
+                Some("---\nstatus: draft\ntrack: fix\n"),
+            ),
+        ];
+        for (name, working) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = testutil::repo(tmp.path(), "m");
+            commit_fix_drafts(&repo);
+            match working {
+                Some(text) => testutil::write(&repo, &at("intent.md"), text),
+                None => testutil::remove(&repo, &at("intent.md")),
+            }
+            let info = only_change(&repo);
+            assert_eq!(info.track, Track::Fix, "{name}");
+            assert_eq!(info.fix_row, Some(3), "{name}");
+            assert_eq!(info.stage, Stage::FixInProgress, "{name}");
+        }
+    }
+
+    #[test]
+    fn the_fix_state_reason_wins_over_an_unreadable_plan_reason_f5() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
+        let old = testutil::fake_fix_plugin(&tmp.path().join("old"), "0.12.0");
+        let make = |name: &str| {
+            let repo = testutil::repo(&tmp.path().join(name), "m");
+            for (file, text) in [
+                ("intent.md", fix_intent("draft")),
+                ("plan.md", "---\nstatus: draft\n".to_string()),
+            ] {
+                testutil::commit_file(
+                    &repo,
+                    &format!("intent/claims/2026-10-01-broken/{file}"),
+                    &text,
+                    "doc",
+                );
+            }
+            repo
+        };
+        let program_failed = list(Some(&plugin), &make("a"), "claims").remove(0);
+        assert_eq!(program_failed.fix_row, None);
+        assert!(program_failed
+            .plan_unreadable_reason
+            .as_deref()
+            .unwrap()
+            .contains("git failed"));
+        let needs_plugin = list(Some(&old), &make("b"), "claims").remove(0);
+        assert_eq!(needs_plugin.stage, Stage::FixNeedsPlugin);
+        assert_eq!(
+            needs_plugin.plan_unreadable_reason.as_deref(),
+            Some("Needs ai-sdlc 0.13.0 or later.")
+        );
+    }
+
+    #[test]
     fn fix_stage_drafts_outside_the_workbench_show_as_a_fix_r4_3() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
