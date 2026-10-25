@@ -92,7 +92,7 @@ describe("actions of a fix (R4.1, R7.3)", () => {
   const rows: [Stage, OutOfDate | null, string[]][] = [
     ["fix-in-progress", null, ["finish-fix-draft"]],
     ["fix-unsettled", null, []],
-    ["fix-awaiting", null, ["accept-fix", "change-fix", "full-pipeline-instead"]],
+    ["fix-awaiting", null, ["accept-fix", "change-fix"]],
     ["fix-accepting", null, ["accept-fix", "change-fix"]],
     ["fix-needs-plugin", null, []],
     ["rejected", null, []],
@@ -127,13 +127,27 @@ describe("actions of a fix (R4.1, R7.3)", () => {
 
   const drafted = (c: ChangeInfo): ChangeInfo => ({ ...c, intent: { ...c.intent, status: "draft", head_status: "draft" } });
 
-  it("a built fix awaiting acceptance no longer offers the full pipeline", () => {
-    expect(actionsForChange(drafted(fixAt("fix-awaiting", null, 1)))).toEqual(["accept-fix", "change-fix"]);
-    expect(actionsForChange(drafted(fixAt("fix-awaiting", null, 0)))).toEqual(["accept-fix", "change-fix", "full-pipeline-instead"]);
+  const awaiting = (row: number | null, finished = 0, intentStatus = "draft"): ChangeInfo => ({
+    ...fixAt("fix-awaiting", null, finished),
+    fix_row: row,
+    intent: { exists: true, committed: true, status: intentStatus, head_status: intentStatus },
   });
 
-  it("a fix awaiting acceptance with its intent accepted and nothing built offers no full pipeline (row 6)", () => {
-    expect(actionsForChange(fixAt("fix-awaiting", null, 0))).toEqual(["accept-fix", "change-fix"]);
+  it("a fix awaiting acceptance offers the full pipeline at row 6 alone", () => {
+    expect(actionsForChange(awaiting(6))).toEqual(["accept-fix", "change-fix", "full-pipeline-instead"]);
+    expect(actionsForChange(awaiting(7))).toEqual(["accept-fix", "change-fix"]);
+    expect(actionsForChange(awaiting(null))).toEqual(["accept-fix", "change-fix"]);
+  });
+
+  it("the row decides, whatever the build count or the intent status say", () => {
+    expect(actionsForChange(awaiting(6, 1))).toEqual(["accept-fix", "change-fix", "full-pipeline-instead"]);
+    expect(actionsForChange(awaiting(6, 0, "accepted"))).toEqual(["accept-fix", "change-fix", "full-pipeline-instead"]);
+    expect(actionsForChange(awaiting(7, 0, "draft"))).toEqual(["accept-fix", "change-fix"]);
+  });
+
+  it("a fix that needs the plugin is labelled so, as a warning, with no actions", () => {
+    expect(stageLabel("fix-needs-plugin")).toEqual({ step: "intent", text: "Fix · needs ai-sdlc 0.13.0", tone: "warning" });
+    expect(actionsForChange(fixAt("fix-needs-plugin"))).toEqual([]);
   });
 
   it("feedback is required for changing a fix, and for reopening one except when its plan is out of date on a broken pin", () => {

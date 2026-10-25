@@ -154,6 +154,29 @@ describe('ChangePage: the fix runs', () => {
     expect(text).toContain('Node.js 20 or later is required to read the documents.');
   });
 
+  it('a program failure shows its message alone, with no status lines', async () => {
+    const { container } = await mountFix('fix-unsettled', true, 'fix', {
+      plan_unreadable: true,
+      plan_unreadable_reason: 'Node.js 20 or later is required to read the documents.',
+    });
+    const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
+    expect(text).toContain('Node.js 20 or later is required to read the documents.');
+    expect(text).not.toContain('HEAD:');
+    expect(text).not.toContain('intent:');
+  });
+
+  it('a fix that needs the plugin shows the reason and offers nothing', async () => {
+    const { container } = await mountFix('fix-needs-plugin', true, 'fix', {
+      plan_unreadable: true,
+      plan_unreadable_reason: NEEDS,
+    });
+    const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
+    expect(text).toContain(NEEDS);
+    expect(text).not.toContain('HEAD:');
+    expect(button(container, 'Accept fix')).toBeUndefined();
+    expect(button(container, 'Change the fix')).toBeUndefined();
+  });
+
   it('a fix whose acceptance stopped offers Change the fix after Finish acceptance', async () => {
     const { container } = await mountFix('fix-accepting');
     const labels = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).map((b) => b.textContent!.trim());
@@ -212,7 +235,7 @@ describe('ChangePage: the fix runs', () => {
   });
 
   it('with the light track unsupported the fix actions are disabled and refuse, and the full pipeline stays (R10.1)', async () => {
-    const { container, vm, run } = await mountFix('fix-awaiting', false, 'fix', { intent: { exists: true, committed: true, status: 'draft', head_status: 'draft' } });
+    const { container, vm, run } = await mountFix('fix-awaiting', false, 'fix', { fix_row: 6 });
     for (const label of ['Accept fix', 'Change the fix']) {
       expect(button(container, label).disabled).toBe(true);
       expect(button(container, label).title).toBe(NEEDS);
