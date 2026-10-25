@@ -1,4 +1,4 @@
-import { Component, computed, input, linkedSignal, output } from '@angular/core';
+import { Component, computed, input, linkedSignal, output, viewChild, type ElementRef } from '@angular/core';
 import type { BrnDialogState } from '@spartan-ng/brain/dialog';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmDialogImports } from '@spartan-ng/helm/dialog';
@@ -18,6 +18,9 @@ export class FeedbackDialog {
   readonly action = input.required<string | null>();
   /** The box refuses an empty answer: the action cannot run without saying what should change. */
   readonly required = input(false);
+
+  /** The box itself, so a refusal can move focus to it. */
+  private readonly box = viewChild<ElementRef<HTMLTextAreaElement>>('box');
 
   readonly run = output<string>();
   readonly cancel = output<void>();
@@ -49,6 +52,7 @@ export class FeedbackDialog {
     const text = this.text().trim();
     if (this.required() && text === '') {
       this.refused.set(true);
+      this.box()?.nativeElement.focus();
       return;
     }
     this.run.emit(text);

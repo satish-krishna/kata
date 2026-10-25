@@ -117,7 +117,7 @@ describe("actions of a fix (R4.1, R7.3)", () => {
   ];
   for (const [stage, outOfDate, expected] of rows) {
     it(`${stage} ${outOfDate ?? "-"}`, () => {
-      const got = actionsForChange(fixAt(stage, outOfDate));
+      const got = actionsForChange(drafted(fixAt(stage, outOfDate)));
       expect(got).toEqual(expected);
       for (const banned of FIX_RESTRICTED) expect(got).not.toContain(banned);
     });
@@ -136,9 +136,9 @@ describe("actions of a fix (R4.1, R7.3)", () => {
 
   it("feedback is required for changing a fix, and for reopening one except when its plan is out of date on a broken pin", () => {
     for (const stage of Object.keys(ACTIONS) as Stage[]) {
-      for (const action of actionsForChange(fixAt(stage))) {
+      for (const action of actionsForChange(fixAt(stage, "spec-pin"))) {
         const expected = action === "change-fix" || (action === "reopen-fix" && stage !== "plan-out-of-date");
-        expect(feedbackRequired(action, stage, null), `${action} at ${stage}`).toBe(expected);
+        expect(feedbackRequired(action, stage, "spec-pin"), `${action} at ${stage}`).toBe(expected);
       }
     }
     expect(feedbackRequired("change-fix", "fix-awaiting", null)).toBe(true);

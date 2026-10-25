@@ -102,8 +102,8 @@ describe('ChangePage: the fix runs', () => {
     expect(button(document.body, 'Start run')).toBeUndefined();
   });
 
-  it('Reopen the fix at plan-out-of-date runs with an empty box', async () => {
-    const { vm, run } = await mountFix('plan-out-of-date');
+  it('Reopen the fix at plan-out-of-date on a broken pin runs with an empty box', async () => {
+    const { vm, run } = await mountFix('plan-out-of-date', true, 'fix', { out_of_date: 'spec-pin' });
     await vm.act('reopen-fix');
     await settle();
     const dialog = document.body.querySelector('[role="dialog"]')!;
@@ -116,7 +116,7 @@ describe('ChangePage: the fix runs', () => {
   it('a fix whose statuses are not settled offers nothing and lists the statuses', async () => {
     const { container } = await mountFix('fix-unsettled');
     const notice = container.querySelector('[data-testid="doc-notice"]')!;
-    expect(notice.textContent).toMatch(/intent: \S+ · spec: \S+ · plan: \S+/);
+    expect(notice.textContent).toMatch(/intent: .+ · spec: .+ · plan: .+/);
     expect(button(container, 'Accept fix')).toBeUndefined();
   });
 
@@ -184,7 +184,7 @@ describe('ChangePage: the fix runs', () => {
   });
 
   it('with the light track unsupported the fix actions are disabled and refuse, and the full pipeline stays (R10.1)', async () => {
-    const { container, vm, run } = await mountFix('fix-awaiting', false);
+    const { container, vm, run } = await mountFix('fix-awaiting', false, 'fix', { intent: { exists: true, committed: true, status: 'draft', head_status: 'draft' } });
     for (const label of ['Accept fix', 'Change the fix']) {
       expect(button(container, label).disabled).toBe(true);
       expect(button(container, label).title).toBe(NEEDS);

@@ -92,8 +92,9 @@ function fixActions(c: ChangeInfo): StageAction[] {
     case "fix-in-progress":
       return ["finish-fix-draft"];
     case "fix-awaiting":
-      // Once a task is built, the full pipeline would discard that work, so it is not offered.
-      return c.build.finished > 0 ? ["accept-fix", "change-fix"] : ["accept-fix", "change-fix", "full-pipeline-instead"];
+      // Only row 6 of the fix-state table (all three drafted, none accepted, nothing built) may be closed by the full
+      // pipeline: an accepted document or a built task is work it would discard.
+      return c.build.finished > 0 || c.intent.status !== "draft" ? ["accept-fix", "change-fix"] : ["accept-fix", "change-fix", "full-pipeline-instead"];
     case "fix-accepting":
       return ["accept-fix"];
     case "build-ready":
@@ -128,9 +129,15 @@ export function actionsForChange(c: ChangeInfo): StageAction[] {
   }
 }
 
-/** Whether the feedback box refuses an empty answer for an action at a stage. */
-export function feedbackRequired(action: StageAction, stage: Stage, _outOfDate: OutOfDate | null): boolean {
-  return action === "change-fix" || (action === "reopen-fix" && stage !== "plan-out-of-date");
+/**
+ * Whether the feedback box refuses an empty answer for an action at a stage. Reopening a fix whose plan is out of date
+ * needs no feedback only when the cause is a pin that no longer holds: the documents did not change, so there is
+ * nothing to correct. Any other cause means a document was reopened or the plan has no tasks, and the engineer says why.
+ */
+export function feedbackRequired(action: StageAction, stage: Stage, outOfDate: OutOfDate | null): boolean {
+  if (action === "change-fix") return true;
+  if (action !== "reopen-fix") return false;
+  return stage !== "plan-out-of-date" || (outOfDate !== "spec-pin" && outOfDate !== "plan-pin");
 }
 
 export type StageLabel = {

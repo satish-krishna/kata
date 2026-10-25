@@ -97,7 +97,7 @@ type HandledAction =
 type ChangeRef = { system: string; change: string };
 /** The toast for a drafted fix that stays open after the new change that replaces it started. */
 /** A drafted fix being closed after its replacement opened: the branch its documents are on, and the new change's branch. */
-type FixClose = ChangeRef & { fixBranch: string; newBranch: string };
+type FixClose = ChangeRef & { master: string; fixBranch: string; newBranch: string };
 const fixStays =(fix: ChangeRef, why: string): string => `The new change started, but the fix ${fix.change} could not be closed: ${why}. It stays open.`;
 type DecisionOutcome ='committed' | 'needsConfirm' | 'gitFailed' | 'error';
 type StageRun = { kind: 'intent' | 'spec' | 'plan' | 'fix'; title: string; label: string };
@@ -247,7 +247,9 @@ export class ChangePageViewModel {
   private readonly unsettledNotice = computed<DocNotice | null>(() => {
     const c = this.change();
     if (c === null || c.stage !== 'fix-unsettled') return null;
-    const status = (d: { status: string | null }) => d.status ?? 'missing';
+    // A document not in HEAD says so: the front matter on disk is not what the last commit holds.
+    const status = (d: { exists: boolean; status: string | null; head_status: string | null }) =>
+      d.status === null ? 'missing' : `${d.status} (HEAD: ${d.exists ? (d.head_status ?? 'not committed') : 'not committed'})`;
     return {
       tone: 'warning',
       text: 'The workflow does not leave a fix in these statuses, so nothing can be run on it.',
@@ -423,6 +425,8 @@ export class ChangePageViewModel {
   readonly confirmPrompt = computed(() => {
     const d = this.pendingDecision();
     if (d === null) return null;
+    const fix = this.pendingFix();
+    if (fix !== null) return `${fix.change}'s ${FILE[d]} has other uncommitted edits; rejecting the fix commits them too.`;
     return `${FILE[d]} has other uncommitted edits; ${d === 'reject-intent' ? 'rejecting' : 'accepting'} commits them too.`;
   });
 
@@ -856,8 +860,8 @@ export class ChangePageViewModel {
   async confirmDecision(): Promise<void> {
     const d = this.pendingDecision();
     this.pendingDecision.set(null);
-    const fix = this.pendingFix;
-    this.pendingFix = null;
+    const fix = this.pendingFix();
+    this.pendingFix.set(null);
     if (d === null) return;
     if (fix !== null) await this.closeFix(fix, true);
     else await this.commitDecision(d, true);
@@ -865,8 +869,8 @@ export class ChangePageViewModel {
 
   async cancelConfirm(): Promise<void> {
     this.pendingDecision.set(null);
-    const fix = this.pendingFix;
-    this.pendingFix = null;
+    const fix = this.pendingFix();
+    this.pendingFix.set(null);
     if (fix === null) return;
     await this.leaveFixOpen(fix, 'its other edits were not committed');
     await this.load();
@@ -884,7 +888,7 @@ export class ChangePageViewModel {
     return r !== null && r.kind === 'ready' && r.lightTrack;
   });
   /** The fix whose rejection waits on the other-edits confirm, after its replacement opened; null when none does. */
-  private pendingFix: FixClose | null = null;
+  private readonly pendingFix = signal<FixClose | null>(null);
 
   /** Read the fix's intent and open New change on the full pipeline with the fix as its description. */
   private async openFullPipeline(): Promise<void> {
@@ -932,7 +936,7 @@ export class ChangePageViewModel {
       return;
     }
     if (outcome.kind !== 'opened') return;
-    await this.closeFix({ ...fixRef, fixBranch, newBranch: outcome.branch }, false);
+    await this.closeFix({ ...fixRef, master, fixBranch, newBranch: outcome.branch }, false);
   }
 
   /**
@@ -943,8 +947,7 @@ export class ChangePageViewModel {
    * other-edits confirm keeps the master on the fix's branch until it is answered.
    */
   private async closeFix(fix: FixClose, confirmed: boolean): Promise<void> {
-    const master = this.masterDir();
-    if (master === null) return;
+    const master = fix.master;
     const swap = fix.fixBranch !== fix.newBranch;
     if (swap && confirmed === false) {
       try {
@@ -960,7 +963,7 @@ export class ChangePageViewModel {
       switch (out.kind) {
         case 'needsConfirm':
           this.pendingDecision.set('reject-intent');
-          this.pendingFix = fix;
+          this.pendingFix.set(fix);
           return;
         case 'gitFailed':
           problem = out.stderr.trim() === '' ? 'git refused the commit' : out.stderr;
@@ -985,10 +988,8 @@ export class ChangePageViewModel {
 
   /** Check out the new change's branch again; a failure says where the master and the new change are. */
   private async returnToNewChange(fix: FixClose): Promise<void> {
-    const master = this.masterDir();
-    if (master === null) return;
     try {
-      await this.transport.sdlcCheckout(master, fix.newBranch);
+      await this.transport.sdlcCheckout(fix.master, fix.newBranch);
     } catch (e) {
       this.toasts.error(`The master repository is on ${fix.fixBranch} and the new change is on ${fix.newBranch}: ${message(e)}. Check out ${fix.newBranch} to continue.`);
     }
