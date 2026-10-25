@@ -457,10 +457,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn hook_failure_is_reported() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = seeded(tmp.path());
+    fn failing_hook(repo: &Path) {
         let hook = repo.join(".git/hooks/pre-commit");
         std::fs::write(&hook, "#!/bin/sh\necho hook says no >&2\nexit 1\n").unwrap();
         #[cfg(unix)]
@@ -468,6 +465,32 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
+    }
+
+    fn staged(repo: &Path) -> String {
+        git::run(repo, &["diff", "--cached", "--name-only"]).unwrap()
+    }
+
+    #[test]
+    fn failed_decision_keeps_the_engineers_other_edits_and_unrelated_staging() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        failing_hook(&repo);
+        std::fs::write(repo.join("other.txt"), "x").unwrap();
+        git::run(&repo, &["add", "other.txt"]).unwrap();
+        let edited = "---\nstatus: draft\n---\nedited body\n";
+        std::fs::write(repo.join(INTENT), edited).unwrap();
+        let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, true).unwrap();
+        assert!(matches!(out, DecideOutcome::GitFailed { .. }));
+        assert_eq!(std::fs::read_to_string(repo.join(INTENT)).unwrap(), edited);
+        assert_eq!(staged(&repo), "other.txt");
+    }
+
+    #[test]
+    fn hook_failure_is_reported_and_leaves_nothing_behind_r7_4() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        failing_hook(&repo);
         let h = head(&repo);
         let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, false).unwrap();
         match out {
@@ -476,8 +499,10 @@ mod tests {
             }
             other => panic!("expected GitFailed, got {other:?}"),
         }
-        assert_eq!(status_of(&repo).as_deref(), Some("accepted"));
         assert_eq!(head(&repo), h);
+        let at_head = git::run_bytes(&repo, &["show", &format!("HEAD:{INTENT}")]).unwrap();
+        assert_eq!(std::fs::read(repo.join(INTENT)).unwrap(), at_head);
+        assert_eq!(staged(&repo), "");
     }
 
     #[test]

@@ -88,6 +88,8 @@ pub struct DocState {
     pub committed: bool,
     /// Raw front-matter `status`; `Some("unknown")` when the file exists but has none.
     pub status: Option<String>,
+    /// The `status` of the `HEAD` copy; `None` when the document is not in `HEAD`.
+    pub head_status: Option<String>,
 }
 
 impl DocState {
@@ -443,6 +445,7 @@ fn doc_state(master: &Path, system: &str, change: &str, file: &str) -> DocState 
             exists: true,
             committed: is_committed(master, &rel),
             status: Some(frontmatter::field(&text, "status").unwrap_or_else(|| "unknown".into())),
+            head_status: None,
         },
         Err(_) => DocState::default(),
     }
@@ -657,6 +660,7 @@ mod tests {
             exists: true,
             committed,
             status: Some(status.into()),
+            head_status: None,
         }
     }
     fn none() -> DocState {
@@ -1054,6 +1058,104 @@ mod tests {
         commit_fix_drafts(&repo);
         accept_fix_in_steps(&repo, true, true, true);
         assert_eq!(only_change(&repo).stage, Stage::BuildReady);
+    }
+
+    #[test]
+    fn fix_stage_review_three_rows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut n = 0;
+        let mut fresh = || {
+            n += 1;
+            testutil::repo(tmp.path(), &format!("r{n}"))
+        };
+        let at = |file: &str| format!("{FIX_DIR}/{file}");
+
+        // Row 4: own lines written with CRLF line endings are still own lines.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        testutil::write(
+            &repo,
+            &at("intent.md"),
+            &fix_intent("accepted").replace('\n', "\r\n"),
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixAccepting);
+
+        // Row 3: all three documents untracked.
+        let repo = fresh();
+        testutil::write(&repo, &at("intent.md"), &fix_intent("draft"));
+        testutil::write(
+            &repo,
+            &at("spec.md"),
+            &pinned_spec("draft", "pending acceptance"),
+        );
+        testutil::write(
+            &repo,
+            &at("plan.md"),
+            &pinned_plan("draft", "pending acceptance"),
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
+
+        // Row 6: a leading run, and the latest commit is a `reopen fix` redraft.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        accept_fix_in_steps(&repo, true, false, false);
+        testutil::commit_file(
+            &repo,
+            &at("spec.md"),
+            &format!(
+                "{}\nReworded.\n",
+                pinned_spec("draft", "pending acceptance")
+            ),
+            "docs(sdlc): reopen fix 2026-10-23-fix-it",
+        );
+        assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
+
+        // Row 2: a document not in HEAD while another is accepted in HEAD.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        accept_fix_in_steps(&repo, true, false, false);
+        git::run(&repo, &["rm", "-q", "--", &at("plan.md")]).unwrap();
+        git::run(&repo, &["commit", "-q", "-m", "drop the plan"]).unwrap();
+        assert_eq!(only_change(&repo).stage, Stage::FixUnsettled);
+
+        // Row 3: a half-written rejection is not own lines.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        testutil::write(&repo, &at("intent.md"), &fix_intent("rejected"));
+        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
+
+        // Row 3: a difference of the final newline alone, on the first unaccepted document.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        testutil::write(&repo, &at("intent.md"), fix_intent("draft").trim_end());
+        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
+
+        // Row 3: the same on a later document.
+        let repo = fresh();
+        commit_fix_drafts(&repo);
+        let plan = pinned_plan("draft", "pending acceptance");
+        testutil::write(&repo, &at("plan.md"), plan.trim_end());
+        assert_eq!(only_change(&repo).stage, Stage::FixInProgress);
+    }
+
+    #[test]
+    fn doc_state_reads_the_head_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        let at = |file: &str| format!("{FIX_DIR}/{file}");
+        testutil::commit_file(&repo, &at("intent.md"), &fix_intent("draft"), "draft");
+        testutil::write(&repo, &at("intent.md"), &fix_intent("accepted"));
+        testutil::write(
+            &repo,
+            &at("spec.md"),
+            &pinned_spec("draft", "pending acceptance"),
+        );
+        let info = only_change(&repo);
+        assert_eq!(info.intent.status.as_deref(), Some("accepted"));
+        assert_eq!(info.intent.head_status.as_deref(), Some("draft"));
+        assert_eq!(info.spec.status.as_deref(), Some("draft"));
+        assert_eq!(info.spec.head_status, None);
+        assert_eq!(info.plan.head_status, None);
     }
 
     #[test]
