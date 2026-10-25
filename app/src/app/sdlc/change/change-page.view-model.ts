@@ -919,6 +919,8 @@ export class ChangePageViewModel {
     const scan = this.scan();
     const master = this.masterDir();
     if (!workspace || !scan || !master) return;
+    // Captured before the await: newChange navigates to the new change, and this page and ViewModel are reused.
+    const fixRef: ChangeRef = { system: this.system(), change: this.changeName() };
     let outcome;
     let fixBranch: string | null;
     try {
@@ -930,8 +932,7 @@ export class ChangePageViewModel {
       return;
     }
     if (outcome.kind !== 'opened') return;
-    // The page may already show the new change, so the rejection names the fix it belongs to.
-    await this.closeFix({ system: this.system(), change: this.changeName(), fixBranch, newBranch: outcome.branch }, false);
+    await this.closeFix({ ...fixRef, fixBranch, newBranch: outcome.branch }, false);
   }
 
   /**
