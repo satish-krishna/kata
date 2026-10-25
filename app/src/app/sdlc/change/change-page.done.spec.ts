@@ -479,4 +479,20 @@ describe('declaring done from the build page', () => {
     expect(open).toHaveBeenCalledWith(PRS[index].url);
     expect(ev.defaultPrevented).toBe(true);
   });
+
+  it('a pull request link that fails to open shows an error toast naming the address and the cause', async () => {
+    const transport = new MockTransport();
+    const open = vi.spyOn(transport, 'openUrl').mockRejectedValue(new Error('no browser'));
+    const { container, fixture } = await mountPage(MOCK_DONE_CHANGE, transport);
+    const vm = fixture.debugElement.injector.get(ChangePageViewModel);
+    vm.pullRequests.set(PRS.slice(0, 1));
+    await settle();
+
+    const link = container.querySelector('header nav[aria-label="Pull requests"] a')!;
+    expect(link).toBeTruthy();
+    click(link);
+
+    await vi.waitFor(() => expect(toastState.toasts().map((t) => String(t.title))).toContain(`Could not open ${PRS[0].url}: no browser`));
+    expect(open).toHaveBeenCalledWith(PRS[0].url);
+  });
 });
