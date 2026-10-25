@@ -65,6 +65,7 @@ const ACTIONS: Record<Stage, StageAction[]> = {
   "build-stopped": ["continue-build", "another-round"],
   "build-finished": ["declare-done", "another-round", "run-review"],
   "fix-in-progress": [],
+  "fix-unsettled": [],
   "fix-awaiting": [],
   "fix-accepting": [],
 };
@@ -150,6 +151,7 @@ const LABELS: Record<Stage, StageLabel> = {
   "build-stopped": { step: "build", text: "Build · in progress (stopped)", tone: "warning" },
   "build-finished": { step: "build", text: "Build · finished, not yet done", tone: "success" },
   "fix-in-progress": { step: "intent", text: "Fix · drafting stopped", tone: "warning" },
+  "fix-unsettled": { step: "intent", text: "Fix · statuses not settled", tone: "warning" },
   "fix-awaiting": { step: "intent", text: "Fix · awaiting acceptance", tone: "warning" },
   "fix-accepting": { step: "plan", text: "Fix · acceptance stopped", tone: "warning" },
 };

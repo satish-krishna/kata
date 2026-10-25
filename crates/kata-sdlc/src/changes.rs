@@ -226,10 +226,9 @@ pub fn track(intent_text: &str) -> Track {
 }
 
 /// Whether the latest commit touching the change folder is one of the fix skill's acceptance commits
-/// (`accept intent`, `accept spec` or `accept plan`), which means an acceptance run stopped part-way.
-/// Any other latest subject (`reopen fix`, `draft fix`, an engineer's own commit) and any git failure
-/// read as false, the awaiting reading, since it offers more actions.
-fn acceptance_stopped(master: &Path, system: &str, change: &str) -> bool {
+/// (`accept intent`, `accept spec` or `accept plan`). Any other latest subject and any git failure
+/// read as false.
+fn acceptance_last(master: &Path, system: &str, change: &str) -> bool {
     git::run(
         master,
         &[
@@ -268,37 +267,143 @@ pub(crate) struct FixFacts {
     pub acceptance_last: bool,
 }
 
-#[allow(dead_code)]
-pub(crate) fn fix_facts(_master: &Path, _system: &str, _change: &str) -> FixFacts {
-    FixFacts::default()
+/// The front matter lines an acceptance run writes on a document.
+const OWN_LINES: [&str; 4] = [
+    "status",
+    "source_intent_commit",
+    "source_spec_commit",
+    "accepted_in_advance",
+];
+
+/// The text as lines, CRLF read as LF, with the acceptance's own front matter lines removed.
+fn without_own_lines(text: &str) -> Vec<&str> {
+    let mut in_front = false;
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let bare = line.trim_end();
+        if i == 0 && bare == "---" {
+            in_front = true;
+        } else if in_front && bare == "---" {
+            in_front = false;
+        } else if in_front
+            && line
+                .split_once(':')
+                .is_some_and(|(key, _)| OWN_LINES.contains(&key.trim()))
+        {
+            continue;
+        }
+        out.push(line);
+    }
+    out
 }
 
-/// The stage of a fix, whose three documents are accepted together. Rows in order, first match wins;
-/// "accepted in HEAD" is a committed document whose status is accepted. With all three committed and
-/// only some accepted, the fix is accepting only when the latest commit on the change folder is an
-/// acceptance commit; otherwise (reopened, redrafted, edited by hand) it is awaiting acceptance.
+fn lf(text: &str) -> Vec<&str> {
+    text.lines().collect()
+}
+
+/// Read the three documents of a fix from `HEAD` and the working tree (see the spec's fix-state table).
+pub(crate) fn fix_facts(master: &Path, system: &str, change: &str) -> FixFacts {
+    let rel = |file: &str| format!("intent/{system}/{change}/{file}");
+    // (text in HEAD, status in HEAD, working copy) for intent, spec, plan.
+    let docs: Vec<(Option<String>, Option<String>, Option<String>)> =
+        ["intent.md", "spec.md", "plan.md"]
+            .iter()
+            .map(|file| {
+                let head = git::run_bytes(master, &["show", &format!("HEAD:{}", rel(file))])
+                    .ok()
+                    .map(|b| String::from_utf8_lossy(&b).into_owned());
+                let status = head
+                    .as_deref()
+                    .map(|t| frontmatter::field(t, "status").unwrap_or_else(|| "unknown".into()));
+                let working = std::fs::read_to_string(master.join(rel(file))).ok();
+                (head, status, working)
+            })
+            .collect();
+    let in_head = |i: usize| docs[i].0.is_some();
+    let accepted_in_head = |i: usize| docs[i].1.as_deref() == Some("accepted");
+
+    let intent_rejected = docs[0].1.as_deref() == Some("rejected");
+    let accepted_count = (0..3).filter(|&i| accepted_in_head(i)).count();
+    let leading = (0..accepted_count).all(accepted_in_head);
+    let odd_status = docs.iter().enumerate().any(|(i, d)| {
+        d.1.as_deref()
+            .is_some_and(|s| s != "draft" && s != "accepted" && !(i == 0 && s == "rejected"))
+    });
+    let any_missing = !(0..3).all(in_head);
+    let unsettled = odd_status
+        || (accepted_count > 0 && accepted_count < 3 && !leading)
+        || (accepted_count > 0 && any_missing);
+
+    // The first document not accepted in HEAD is the only one whose own lines may differ.
+    let carrier = (0..3).find(|&i| !accepted_in_head(i));
+    let mut any_diff = false;
+    let mut foreign_diff = false;
+    for (i, (head, _, working)) in docs.iter().enumerate() {
+        match (head, working) {
+            (Some(h), Some(w)) => {
+                if lf(h) == lf(w) {
+                    continue;
+                }
+                any_diff = true;
+                if carrier != Some(i) || without_own_lines(h) != without_own_lines(w) {
+                    foreign_diff = true;
+                }
+            }
+            (None, None) => {}
+            _ => {
+                any_diff = true;
+                foreign_diff = true;
+            }
+        }
+    }
+    let unrecorded = any_missing || foreign_diff;
+
+    FixFacts {
+        intent_rejected,
+        unsettled,
+        own_lines_only: any_diff && !unrecorded,
+        unrecorded,
+        accepted: match accepted_count {
+            0 => Accepted::None,
+            3 => Accepted::All,
+            _ => Accepted::Leading,
+        },
+        acceptance_last: acceptance_last(master, system, change),
+    }
+}
+
+/// The stage of a fix, rows of the spec's fix-state table in order, first match wins.
 fn fix_stage(
+    facts: &FixFacts,
     intent: &DocState,
     spec: &DocState,
     plan: &DocState,
-    facts: &PlanFacts,
-    acceptance_stopped: bool,
+    plan_facts: &PlanFacts,
 ) -> Stage {
-    if intent.is("rejected") {
-        return Stage::Rejected;
-    }
-    let docs = [intent, spec, plan];
-    let all_committed = docs.iter().all(|d| d.exists && d.committed);
-    let accepted = docs
-        .iter()
-        .filter(|d| d.committed && d.is("accepted"))
-        .count();
-    match (all_committed, accepted) {
-        (true, 3) => plan_stage(intent, spec, plan, facts),
-        (true, 0) => Stage::FixAwaiting,
-        (true, _) if !acceptance_stopped => Stage::FixAwaiting,
-        (_, 0) => Stage::FixInProgress,
-        _ => Stage::FixAccepting,
+    if facts.intent_rejected {
+        Stage::Rejected
+    } else if facts.unsettled {
+        Stage::FixUnsettled
+    } else if facts.unrecorded {
+        Stage::FixInProgress
+    } else {
+        match facts.accepted {
+            Accepted::All => plan_stage(intent, spec, plan, plan_facts),
+            Accepted::None => {
+                if facts.own_lines_only {
+                    Stage::FixAccepting
+                } else {
+                    Stage::FixAwaiting
+                }
+            }
+            Accepted::Leading => {
+                if facts.own_lines_only || facts.acceptance_last {
+                    Stage::FixAccepting
+                } else {
+                    Stage::FixAwaiting
+                }
+            }
+        }
     }
 }
 
@@ -441,11 +546,11 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
             .unwrap_or(Track::Full);
             let stage = match track_of {
                 Track::Fix => fix_stage(
+                    &fix_facts(master, system, &change),
                     &intent,
                     &spec,
                     &plan,
                     &facts,
-                    acceptance_stopped(master, system, &change),
                 ),
                 Track::Full => derive_stage(&intent, &spec, &plan, &facts),
             };

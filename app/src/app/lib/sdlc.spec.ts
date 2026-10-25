@@ -35,6 +35,7 @@ const ACTIONS: Record<Stage, string[]> = {
   "build-stopped": ["continue-build", "another-round"],
   "build-finished": ["declare-done", "another-round", "run-review"],
   "fix-in-progress": [],
+  "fix-unsettled": [],
   "fix-awaiting": [],
   "fix-accepting": [],
 };
