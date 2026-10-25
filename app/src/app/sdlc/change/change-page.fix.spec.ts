@@ -165,6 +165,29 @@ describe('ChangePage: the fix runs', () => {
     expect(text).not.toContain('intent:');
   });
 
+  it('a program failure says it could not read the fix, not that the statuses are unsettled', async () => {
+    const { container } = await mountFix('fix-unsettled', true, 'fix', {
+      fix_row: null,
+      plan_unreadable: true,
+      plan_unreadable_reason: 'Node.js 20 or later is required to read the documents.',
+    });
+    const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
+    expect(text).not.toContain('does not leave a fix');
+    expect(text).toContain('Kata could not read where this fix stands.');
+    expect(text).toContain('Node.js 20 or later is required to read the documents.');
+  });
+
+  it('a program that ran keeps the headline and the status lines at row 2', async () => {
+    const { container } = await mountFix('fix-unsettled', true, 'fix', {
+      fix_row: 2,
+      intent: { exists: true, committed: true, status: 'superseded', head_status: 'draft' },
+    });
+    const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
+    expect(text).toContain('does not leave a fix in these statuses');
+    expect(text).toContain('intent: superseded (HEAD: draft)');
+    expect(text).not.toContain('Kata could not read');
+  });
+
   it('a fix that needs the plugin shows the reason and offers nothing', async () => {
     const { container } = await mountFix('fix-needs-plugin', true, 'fix', {
       plan_unreadable: true,
