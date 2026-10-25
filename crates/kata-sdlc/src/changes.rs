@@ -235,6 +235,27 @@ pub fn track(intent_text: &str) -> Track {
     }
 }
 
+/// The track of a change, read the way the format program reads it: the working `intent.md`'s `track`,
+/// and when that file is missing, names no track or does not parse, the one in `HEAD`.
+fn track_of_change(master: &Path, system: &str, change: &str) -> Track {
+    let file = change_dir(master, system, change).join("intent.md");
+    let named = |text: &str| frontmatter::field(text, "track").map(|t| t == "fix");
+    let working = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|text| named(&text));
+    let found = working.or_else(|| {
+        let spec = format!("HEAD:intent/{system}/{change}/intent.md");
+        git::run(master, &["show", &spec])
+            .ok()
+            .and_then(|text| named(&text))
+    });
+    if found == Some(true) {
+        Track::Fix
+    } else {
+        Track::Full
+    }
+}
+
 /// The stage of a fix from the row of the fix-state table the format program computed: rows 1 to 7
 /// are stages of their own and row 8 (all three documents accepted) gives the plan rows. Any other row is a
 /// table this Workbench does not know, so nothing is offered.
@@ -395,11 +416,7 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
     names.sort_by(|a, b| b.cmp(a));
     let tracks: Vec<Track> = names
         .iter()
-        .map(|change| {
-            std::fs::read_to_string(change_dir(master, system, change).join("intent.md"))
-                .map(|t| track(&t))
-                .unwrap_or(Track::Full)
-        })
+        .map(|change| track_of_change(master, system, change))
         .collect();
     // Every fix of the system is read in one program process, and only by a plugin that knows the light track.
     let needs_plugin = plugin.is_some_and(|p| {
@@ -464,7 +481,8 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
                 Some(Err(message)) => {
                     // The row is unknown, so nothing is offered; the notice carries the program's words.
                     facts.unreadable = true;
-                    plan_unreadable_reason.get_or_insert_with(|| message.clone());
+                    // The fix-state reason is the one that explains the stage, so it replaces a plan's.
+                    plan_unreadable_reason = Some(message.clone());
                     if needs_plugin {
                         Stage::FixNeedsPlugin
                     } else {
@@ -1260,13 +1278,20 @@ mod tests {
         let old = testutil::fake_fix_plugin(&tmp.path().join("old"), "0.12.0");
         let make = |name: &str| {
             let repo = testutil::repo(&tmp.path().join(name), "m");
+            // A second fix, so the program is asked about several folders at once (one gets the single form).
+            testutil::commit_file(
+                &repo,
+                "intent/claims/2026-10-01-broken/intent.md",
+                &fix_intent("draft"),
+                "doc",
+            );
             for (file, text) in [
                 ("intent.md", fix_intent("draft")),
                 ("plan.md", "---\nstatus: draft\n".to_string()),
             ] {
                 testutil::commit_file(
                     &repo,
-                    &format!("intent/claims/2026-10-01-broken/{file}"),
+                    &format!("intent/claims/2026-10-02-broken/{file}"),
                     &text,
                     "doc",
                 );

@@ -431,25 +431,40 @@ struct FixEntry {
     error: Option<String>,
 }
 
-/// Where each fix in `folders` stands, in the order given, from one process. A folder the program could
+/// Where each fix in `folders` stands, in the order given, from one process per chunk of folders. A folder the program could
 /// not answer for gets its own error; a run that failed as a whole gives that error for every folder.
 /// Not cached, for the reason [`fix_state`] is not.
-#[cfg(test)]
+pub fn fix_states(program: &Path, folders: &[PathBuf]) -> Vec<Result<FixState, FormatError>> {
+    fix_states_in(program, folders, FIX_CHUNK, TIMEOUT)
+}
+
+/// How many fix folders one program process answers for. The program works through its folders one
+/// after another at about 0.3 to 1.2 seconds each, so 10 folders take 12 seconds at the slowest, well
+/// inside [`TIMEOUT`]; each chunk has the whole timeout to itself, so the total grows with the number of
+/// fixes and no realistic chunk can be killed for its size.
+const FIX_CHUNK: usize = 10;
+
+/// [`fix_states`] with the chunk size and the timeout of one chunk given.
 fn fix_states_in(
     program: &Path,
     folders: &[PathBuf],
-    _chunk: usize,
-    _timeout: Duration,
+    chunk: usize,
+    timeout: Duration,
 ) -> Vec<Result<FixState, FormatError>> {
-    fix_states(program, folders)
+    folders
+        .chunks(chunk.max(1))
+        .flat_map(|part| fix_states_chunk(program, part, timeout))
+        .collect()
 }
 
-pub fn fix_states(program: &Path, folders: &[PathBuf]) -> Vec<Result<FixState, FormatError>> {
+fn fix_states_chunk(
+    program: &Path,
+    folders: &[PathBuf],
+    timeout: Duration,
+) -> Vec<Result<FixState, FormatError>> {
     // Given one folder the program prints its object, not an array of one, so that case is the single form.
-    match folders {
-        [] => return Vec::new(),
-        [folder] => return vec![fix_state(program, folder)],
-        _ => {}
+    if let [folder] = folders {
+        return vec![fix_state(program, folder)];
     }
     let whole = |e: FormatError| vec![Err(e); folders.len()];
     let names: Vec<String> = folders.iter().map(|f| f.display().to_string()).collect();
@@ -457,7 +472,7 @@ pub fn fix_states(program: &Path, folders: &[PathBuf]) -> Vec<Result<FixState, F
     args.extend(names.iter().map(String::as_str));
     // The program resolves each folder against the repository that holds it, so any directory will do.
     let cwd = folders[0].parent().unwrap_or(&folders[0]);
-    let output = match run(program, cwd, &args) {
+    let output = match run_within(program, cwd, &args, timeout) {
         Ok(output) => output,
         Err(e) => return whole(e),
     };
@@ -515,10 +530,20 @@ fn marker_hash(file: &Path) -> u64 {
 /// Runs `node <program> <args>` in `cwd`. Exit 0 and 1 are answers (the document passes, or has
 /// problems); anything else is not.
 fn run(program: &Path, cwd: &Path, args: &[&str]) -> Result<process::CapturedExit, FormatError> {
+    run_within(program, cwd, args, TIMEOUT)
+}
+
+/// [`run`] with the time the program may take given.
+fn run_within(
+    program: &Path,
+    cwd: &Path,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<process::CapturedExit, FormatError> {
     let mut argv = vec!["node".to_string(), program.display().to_string()];
     argv.extend(args.iter().map(|a| a.to_string()));
     RUNS.fetch_add(1, Ordering::SeqCst);
-    match process::run_capture(&argv, cwd, TIMEOUT) {
+    match process::run_capture(&argv, cwd, timeout) {
         Ok(out) if matches!(out.code, Some(0 | 1)) => Ok(out),
         Ok(out) => Err(FormatError::CouldNotRun(match out.stderr.trim() {
             "" => format!(
@@ -612,7 +637,13 @@ mod tests {
         let calls = std::fs::read_to_string(plugin.join("format").join("calls.log")).unwrap();
         assert_eq!(
             calls.lines().collect::<Vec<_>>(),
-            vec!["fix-state 20", "fix-state 20", "fix-state 5"]
+            vec![
+                "fix-state 10",
+                "fix-state 10",
+                "fix-state 10",
+                "fix-state 10",
+                "fix-state 5"
+            ]
         );
         assert_eq!(got.len(), 45);
         assert!(got.iter().all(|r| r.as_ref().is_ok_and(|s| s.row == 6)));
