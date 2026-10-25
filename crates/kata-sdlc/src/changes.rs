@@ -224,8 +224,11 @@ pub fn track(intent_text: &str) -> Track {
     }
 }
 
-/// Whether the latest commit touching the change folder reopened the fix.
-fn reopened(master: &Path, system: &str, change: &str) -> bool {
+/// Whether the latest commit touching the change folder is one of the fix skill's acceptance commits
+/// (`accept intent`, `accept spec` or `accept plan`), which means an acceptance run stopped part-way.
+/// Any other latest subject (`reopen fix`, `draft fix`, an engineer's own commit) and any git failure
+/// read as false, the awaiting reading, since it offers more actions.
+fn acceptance_stopped(master: &Path, system: &str, change: &str) -> bool {
     git::run(
         master,
         &[
@@ -237,20 +240,23 @@ fn reopened(master: &Path, system: &str, change: &str) -> bool {
         ],
     )
     .is_ok_and(|subject| {
-        subject
-            .trim_end()
-            .ends_with(&format!("reopen fix {change}"))
+        let subject = subject.trim_end();
+        ["intent", "spec", "plan"]
+            .iter()
+            .any(|document| subject.ends_with(&format!("accept {document} {change}")))
     })
 }
 
 /// The stage of a fix, whose three documents are accepted together. Rows in order, first match wins;
-/// "accepted in HEAD" is a committed document whose status is accepted.
+/// "accepted in HEAD" is a committed document whose status is accepted. With all three committed and
+/// only some accepted, the fix is accepting only when the latest commit on the change folder is an
+/// acceptance commit; otherwise (reopened, redrafted, edited by hand) it is awaiting acceptance.
 fn fix_stage(
     intent: &DocState,
     spec: &DocState,
     plan: &DocState,
     facts: &PlanFacts,
-    reopened: bool,
+    acceptance_stopped: bool,
 ) -> Stage {
     if intent.is("rejected") {
         return Stage::Rejected;
@@ -264,7 +270,7 @@ fn fix_stage(
     match (all_committed, accepted) {
         (true, 3) => plan_stage(intent, spec, plan, facts),
         (true, 0) => Stage::FixAwaiting,
-        (true, _) if reopened => Stage::FixAwaiting,
+        (true, _) if !acceptance_stopped => Stage::FixAwaiting,
         (_, 0) => Stage::FixInProgress,
         _ => Stage::FixAccepting,
     }
@@ -413,7 +419,7 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
                     &spec,
                     &plan,
                     &facts,
-                    reopened(master, system, &change),
+                    acceptance_stopped(master, system, &change),
                 ),
                 Track::Full => derive_stage(&intent, &spec, &plan, &facts),
             };
@@ -859,7 +865,10 @@ mod tests {
         testutil::commit_file(
             &repo,
             &at("plan.md"),
-            &pinned_plan("draft", &last_commit_of(&repo, &at("spec.md"))),
+            &format!(
+                "{}\nA note.\n",
+                pinned_plan("draft", &last_commit_of(&repo, &at("spec.md")))
+            ),
             "chore: tidy",
         );
         assert_eq!(only_change(&repo).stage, Stage::FixAwaiting);
