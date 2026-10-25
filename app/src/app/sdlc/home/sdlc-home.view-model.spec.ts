@@ -681,6 +681,36 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
     expect(noticeOf(vm)?.text).not.toContain("Node.js 20");
   });
 
+  const withFix = (transport: MockTransport, over: Record<string, unknown>) => {
+    const real = transport.sdlcChanges.bind(transport);
+    vi.spyOn(transport, "sdlcChanges").mockImplementation(async (master, system) => {
+      const list = await real(master, system);
+      return list.map((c, i) => (i === 0 ? ({ ...c, track: "fix", plan_unreadable: true, ...over } as never) : c));
+    });
+  };
+
+  it("shows a fix's needs-the-plugin reason as it is, without the document prefix (F5)", async () => {
+    const { vm, transport } = setup();
+    withFix(transport, { stage: "fix-needs-plugin", fix_row: null, plan_unreadable_reason: "Needs ai-sdlc 0.13.0 or later." });
+    await vm.init();
+    expect(noticeOf(vm)?.text).toBe("Needs ai-sdlc 0.13.0 or later.");
+  });
+
+  it("names the change when the program could not say where a fix stands (F5)", async () => {
+    const { vm, transport } = setup();
+    withFix(transport, { stage: "fix-unsettled", fix_row: null, plan_unreadable_reason: "git failed" });
+    await vm.init();
+    const name = vm.changes()[0].change;
+    expect(noticeOf(vm)?.text).toBe(`Kata could not read where ${name} stands: git failed`);
+  });
+
+  it("keeps the document prefix for a row 2 fix whose plan is unreadable (F5)", async () => {
+    const { vm, transport } = setup();
+    withFix(transport, { stage: "fix-unsettled", fix_row: 2, plan_unreadable_reason: "front matter is not closed" });
+    await vm.init();
+    expect(noticeOf(vm)?.text).toBe("Could not read this document: front matter is not closed");
+  });
+
   it("shows no notice when every plan was read", async () => {
     const { vm } = setup();
     await vm.init();

@@ -6,7 +6,7 @@ import type { Stage } from "@bindings/Stage";
 import type { WorkspaceScan } from "@bindings/WorkspaceScan";
 import type { KataEvent, RunDetail } from "./events";
 import { validateLocal } from "./mock";
-import { DONE_LABEL, actionLabel, actionLabelAt,buildPreviewFor, givenFor, safetyRules, actionsFor, actionsForChange, feedbackRequired, hasAiSdlcPlugin, isBuildRun, primaryAction, restrictedFor, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type BuildRun, type Restricted, type RunContext, type StageAction } from "./sdlc";
+import { DONE_LABEL, changeLabel, fixProgramFailed, actionLabel, actionLabelAt,buildPreviewFor, givenFor, safetyRules, actionsFor, actionsForChange, feedbackRequired, hasAiSdlcPlugin, isBuildRun, primaryAction, restrictedFor, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type BuildRun, type Restricted, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -184,6 +184,16 @@ describe("actions of a fix (R4.1, R7.3)", () => {
     expect(stageLabel("fix-unsettled")).toEqual({ step: "intent", text: "Fix · statuses not settled", tone: "warning" });
     expect(stageLabel("fix-awaiting")).toEqual({ step: "intent", text: "Fix · awaiting acceptance", tone: "warning" });
     expect(stageLabel("fix-accepting")).toEqual({ step: "plan", text: "Fix · acceptance stopped", tone: "warning" });
+  });
+
+  it("a program failure at fix-unsettled reads could not be read; row 2 keeps not settled (F5)", () => {
+    const at = (fix_row: number | null) => ({ track: "fix" as const, stage: "fix-unsettled" as const, fix_row });
+    expect(fixProgramFailed(at(null))).toBe(true);
+    expect(fixProgramFailed(at(2))).toBe(false);
+    expect(fixProgramFailed({ track: "full", stage: "fix-unsettled", fix_row: null })).toBe(false);
+    expect(fixProgramFailed({ track: "fix", stage: "fix-needs-plugin", fix_row: null })).toBe(false);
+    expect(changeLabel(at(null))).toEqual({ step: "intent", text: "Fix · could not be read", tone: "warning" });
+    expect(changeLabel(at(2)).text).toBe("Fix · statuses not settled");
   });
 
   it("labels the fix actions", () => {

@@ -147,6 +147,7 @@ describe('ChangePage: the fix runs', () => {
 
   it('shows the format program message when the program could not run', async () => {
     const { container } = await mountFix('fix-unsettled', true, 'fix', {
+      fix_row: null,
       plan_unreadable: true,
       plan_unreadable_reason: 'Node.js 20 or later is required to read the documents.',
     });
@@ -156,6 +157,7 @@ describe('ChangePage: the fix runs', () => {
 
   it('a program failure shows its message alone, with no status lines', async () => {
     const { container } = await mountFix('fix-unsettled', true, 'fix', {
+      fix_row: null,
       plan_unreadable: true,
       plan_unreadable_reason: 'Node.js 20 or later is required to read the documents.',
     });
@@ -186,6 +188,28 @@ describe('ChangePage: the fix runs', () => {
     expect(text).toContain('does not leave a fix in these statuses');
     expect(text).toContain('intent: superseded (HEAD: draft)');
     expect(text).not.toContain('Kata could not read');
+  });
+
+  it('a row 2 fix keeps the headline and its status lines when its plan is unreadable (F5)', async () => {
+    const { container } = await mountFix('fix-unsettled', true, 'fix', {
+      fix_row: 2,
+      intent: { exists: true, committed: true, status: 'superseded', head_status: 'draft' },
+      plan_unreadable: true,
+      plan_unreadable_reason: 'front matter is not closed',
+    });
+    const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
+    expect(text).toContain('does not leave a fix in these statuses');
+    expect(text).toContain('intent: superseded (HEAD: draft)');
+    expect(text).not.toContain('Kata could not read');
+  });
+
+  it('a program failure reads could not be read on the stage pill, and row 2 keeps not settled (F5)', async () => {
+    const failed = await mountFix('fix-unsettled', true, 'fix', { fix_row: null, plan_unreadable: true, plan_unreadable_reason: 'git failed' });
+    expect(failed.container.textContent).toContain('Fix · could not be read');
+    expect(failed.container.textContent).not.toContain('statuses not settled');
+    failed.fixture.destroy();
+    const row2 = await mountFix('fix-unsettled', true, 'fix', { fix_row: 2 });
+    expect(row2.container.textContent).toContain('Fix · statuses not settled');
   });
 
   it('a fix that needs the plugin shows the reason and offers nothing', async () => {
