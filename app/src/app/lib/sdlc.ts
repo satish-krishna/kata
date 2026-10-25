@@ -147,7 +147,7 @@ export type RunContext = {
 /** The one action of a fix that is not a stage action of the change page: accepting it in the Workbench. */
 export type FixAction = "accept-fix";
 
-export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan" | "build" | "start" | "triage" | "fix";
+export type SdlcKind = "setup" | "context" | "intent" | "spec" | "plan" | "build" | "triage" | "fix";
 
 /** What a triage or fix run is held to: the repositories it must not edit and Kata's checks folder. */
 export type Restricted = { workspaceFolder: string; masterRepo: string; systemRepos: string[]; checksDir: string };
@@ -309,7 +309,6 @@ function taskFor(kind: SdlcKind, action: StageAction | FixAction | null, ctx: Ru
     }
     case "build":
       throw new Error("a build run-spec is made from its BuildRun");
-    case "start":
     case "triage":
       return `Use the ai-sdlc start skill for system ${system}. The change: ${ctx.idea ?? ""}. The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.`;
     case "fix":
@@ -321,8 +320,7 @@ function taskFor(kind: SdlcKind, action: StageAction | FixAction | null, ctx: Ru
 
 /** The given section of an AI-SDLC run: nothing switched off, and what kind of run it is. */
 function sdlcGiven(kind: SdlcKind): Given {
-  // A triage and a fix are document runs; `isBuildRun("start")` names the build preview, not this kind.
-  const build = kind !== "start" && kind !== "fix" && isBuildRun(kind);
+  const build = isBuildRun(kind);
   return { hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [], required_plugins: [...SDLC_REQUIRED_PLUGINS], build };
 }
 
@@ -377,7 +375,7 @@ export function specFor(
   // Outside the empty room: `--bare` ignores the operator's claude login and accepts only an API key.
   spec.auth = { bare: false, token_env: null };
   spec.interactive = { enabled: false, answer_timeout_secs: 3600 };
-  if (kind === "start" || kind === "fix") {
+  if (kind === "triage" || kind === "fix") {
     // Held to the change's documents whatever `settings.permission_mode` says: bypass cannot carry deny rules.
     if (!restricted) throw new Error(`a ${kind} run-spec needs its restriction`);
     const { allow, deny } = productRepoRules(restricted.workspaceFolder, restricted.systemRepos, restricted.masterRepo, restricted.checksDir);
@@ -387,7 +385,7 @@ export function specFor(
   }
   // A build works task by task through a whole plan and outlasts the engine's 30-minute default.
   spec.leash.timeout_secs = SDLC_TIMEOUT_SECS;
-  if (kind !== "start" && kind !== "fix" && settings.permission_mode === "prompt") {
+  if (kind !== "triage" && kind !== "fix" && settings.permission_mode === "prompt") {
     spec.permissions = { mode: "prompt", allow: [], deny: [], unmatched: "ask" };
     spec.interactive.enabled = true;
   }
@@ -657,7 +655,7 @@ const BUILD_PREVIEWS: Record<BuildPreviewKind, BuildPreviewPlan> = {
 
 /** Whether a run of this kind is a build run (a repository's run, a round, or a review): it keeps the project's hooks on. */
 export function isBuildRun(kind: SdlcKind | BuildPreviewKind): boolean {
-  return kind !== "setup" && kind !== "context" && kind !== "intent" && kind !== "spec" && kind !== "plan";
+  return kind !== "setup" && kind !== "context" && kind !== "intent" && kind !== "spec" && kind !== "plan" && kind !== "triage" && kind !== "fix";
 }
 
 export function buildPreviewFor(kind: BuildPreviewKind): BuildPreviewPlan {

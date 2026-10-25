@@ -605,7 +605,7 @@ describe("triage and fix run-specs (T8)", () => {
   const startCtx: RunContext = { folder: WS, system: "claims", change: null, idea: "Photos fail to upload" };
 
   it("writes the four task texts out in full", () => {
-    expect(specFor("start", null, startCtx, bypass, both, undefined, restricted).task).toBe(
+    expect(specFor("triage", null, startCtx, bypass, both, undefined, restricted).task).toBe(
       "Use the ai-sdlc start skill for system claims. The change: Photos fail to upload. The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.",
     );
     expect(specFor("fix", "accept-fix", wsCtx, bypass, both, undefined, restricted).task).toBe(
@@ -634,9 +634,9 @@ describe("triage and fix run-specs (T8)", () => {
       "Edit(//d/ws/api/**)",
     ];
     const specs = [
-      specFor("start", null, startCtx, bypass, both, undefined, restricted),
-      specFor("start", null, startCtx, prompt, both, undefined, restricted),
-      specFor("start", null, startCtx, auto, both, undefined, restricted),
+      specFor("triage", null, startCtx, bypass, both, undefined, restricted),
+      specFor("triage", null, startCtx, prompt, both, undefined, restricted),
+      specFor("triage", null, startCtx, auto, both, undefined, restricted),
       specFor("fix", null, wsCtx, bypass, both, undefined, restricted),
       specFor("fix", null, wsCtx, prompt, both, undefined, restricted),
       specFor("fix", "accept-fix", wsCtx, auto, both, undefined, restricted),
@@ -654,7 +654,7 @@ describe("triage and fix run-specs (T8)", () => {
       expect(s.given?.build).toBe(false);
       expect(validateLocal(s)).toEqual([]);
     }
-    for (const kind of ["start", "fix"] as const) {
+    for (const kind of ["triage", "fix"] as const) {
       const [a, b, c] = specs.filter((s) => s.name.endsWith(`-${kind}`));
       expect(b).toEqual(a);
       expect(c.permissions).toEqual(a.permissions);
@@ -668,7 +668,7 @@ describe("triage and fix run-specs (T8)", () => {
   });
 
   it("refuses to build a start or fix spec without its restriction", () => {
-    expect(() => specFor("start", null, startCtx, bypass, both)).toThrow();
+    expect(() => specFor("triage", null, startCtx, bypass, both)).toThrow();
     expect(() => specFor("fix", null, wsCtx, bypass, both)).toThrow();
   });
 
