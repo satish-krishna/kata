@@ -1,5 +1,6 @@
 //! The format reader's cache. This file holds one test on purpose: `format::runs_started` counts
 //! every start in the process, so a second test running beside it would skew the count.
+#![allow(clippy::disallowed_methods)]
 use kata_sdlc::format;
 use std::path::PathBuf;
 

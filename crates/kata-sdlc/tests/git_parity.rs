@@ -2,6 +2,7 @@
 //! gives on the same repositories. The command line here is only the oracle: every fixture is built
 //! with it and every expected answer is computed with it, the way the Workbench did before it read
 //! repositories itself.
+#![allow(clippy::disallowed_methods)]
 use kata_sdlc::branch;
 use kata_sdlc::changes::other_change_branches;
 use kata_sdlc::git::{Repo, StatusEntry};

@@ -299,7 +299,6 @@ mod tests {
     use std::time::Instant;
 
     /// A plain git run for building fixtures (test code only; `hidden_command` refuses git).
-    #[allow(clippy::disallowed_methods)]
     fn git(dir: &Path, args: &[&str]) {
         let out = Command::new("git")
             .args(["-c", "user.name=T", "-c", "user.email=t@example.com"])
@@ -554,7 +553,6 @@ mod tests {
                 )
                 .as_bytes(),
             );
-            #[allow(clippy::disallowed_methods)]
             let mut relay = Command::new(&fake);
             relay
                 .env("KATA_FAKE_MODE", "hook-relay")

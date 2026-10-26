@@ -31,6 +31,7 @@ pub fn hidden_command(program: impl AsRef<Path>) -> Result<Command, SpawnRefused
         });
     }
     #[allow(unused_mut)] // `creation_flags` needs it on Windows
+    #[allow(clippy::disallowed_methods)] // the one place a child process is started
     let mut command = Command::new(program);
     #[cfg(windows)]
     {
@@ -456,7 +457,6 @@ mod tests {
         use std::os::windows::process::CommandExt;
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         // Test code: the relay itself is a plain, console-less Command.
-        #[allow(clippy::disallowed_methods)]
         let mut relay = Command::new(fake_claude());
         relay
             .env("KATA_FAKE_MODE", "consoleprobe-relay")

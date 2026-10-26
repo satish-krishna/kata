@@ -252,8 +252,11 @@ fn pid_alive(pid: u32) -> bool {
 
 #[cfg(not(windows))]
 fn pid_alive(pid: u32) -> bool {
-    use std::process::{Command, Stdio};
-    match Command::new("kill")
+    use std::process::Stdio;
+    let Ok(mut kill) = crate::proc::hidden_command("kill") else {
+        return true;
+    };
+    match kill
         .args(["-0", &pid.to_string()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())

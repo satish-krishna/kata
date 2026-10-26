@@ -12,6 +12,7 @@
 //! authentication on the machines this was written on, so personal-scope behavior is
 //! proven by dropping the `user` source and by the project/local scopes, which use the
 //! same mechanism. Set `KATA_BLESS_FIXTURES=1` to rewrite the two fixtures from a run.
+#![allow(clippy::disallowed_methods)]
 
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};

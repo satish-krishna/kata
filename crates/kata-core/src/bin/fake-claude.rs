@@ -2,6 +2,7 @@
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
 //! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "argsfiles" | "subagent" | "hooks" | "noinit" | "consoleprobe" | "consoleprobe-relay" | "hook-relay"
+#![allow(clippy::disallowed_methods)]
 use std::io::Write;
 use std::{thread, time::Duration};
 
@@ -67,7 +68,6 @@ fn main() {
                 kata_core::proc::hidden_command(&exe).unwrap()
             } else {
                 // Test code: the control child without the hidden flag.
-                #[allow(clippy::disallowed_methods)]
                 std::process::Command::new(&exe)
             };
             let output = cmd
@@ -97,7 +97,6 @@ fn main() {
             } else {
                 let hook = repo.path().join("hooks").join("pre-commit");
                 // Test code: the control child without the hidden flag.
-                #[allow(clippy::disallowed_methods)]
                 let status =
                     std::process::Command::new(std::env::var_os("KATA_RELAY_SHELL").unwrap())
                         .arg(hook.to_string_lossy().replace('\\', "/"))
@@ -115,7 +114,6 @@ fn main() {
             let _ = out.flush();
             if mode == "consoleprobe" {
                 // Test code: a plain Command with no flags shows what a child inherits.
-                #[allow(clippy::disallowed_methods)]
                 let status = std::process::Command::new(std::env::current_exe().unwrap())
                     .env("KATA_FAKE_MODE", "consoleprobe-child")
                     .status();

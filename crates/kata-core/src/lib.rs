@@ -67,6 +67,7 @@
 //! before doing anything else in `main` — or claude cannot start the server and
 //! the run loses its only channel to the operator. Every pure operation here
 //! works from any binary.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 // ---- the run-spec contract ----
 pub mod spec;

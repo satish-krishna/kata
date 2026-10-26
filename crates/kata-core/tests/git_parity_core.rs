@@ -1,5 +1,6 @@
 //! The git2 port of the run-mode repository work must give what the git CLI gave. The reference
 //! computations below are the old CLI ones, kept in the test; the test code may use the git CLI.
+#![allow(clippy::disallowed_methods)]
 
 use kata_core::changeset::diff_at;
 use kata_core::given::items::nested_claude_files;

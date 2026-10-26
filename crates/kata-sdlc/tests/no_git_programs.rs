@@ -419,9 +419,16 @@ fn every_flow_runs_with_no_git_or_gh_on_path() {
         system: SYS.into(),
         change: CHG.into(),
     };
-    let left = snapshot::leftovers(&master, &before, &[app.clone()], Some(&scope)).unwrap();
+    let left =
+        snapshot::leftovers(&master, &before, std::slice::from_ref(&app), Some(&scope)).unwrap();
     assert!(left.discardable.iter().any(|f| f == &plan_rel), "{left:?}");
-    snapshot::discard(&master, &before, &[plan_rel.clone()], Some(&scope)).unwrap();
+    snapshot::discard(
+        &master,
+        &before,
+        std::slice::from_ref(&plan_rel),
+        Some(&scope),
+    )
+    .unwrap();
     // Line endings follow the machine's autocrlf, as a git checkout does.
     let restored = fs::read_to_string(master.join(&plan_rel)).unwrap();
     assert_eq!(

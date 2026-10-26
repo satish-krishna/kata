@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use std::process::Command;
 
 fn kata() -> Command {
