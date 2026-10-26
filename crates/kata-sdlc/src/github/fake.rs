@@ -162,4 +162,7 @@ impl GitHubHosts for FakeGitHub {
         }
         Some(Box::new(self.clone()))
     }
+    fn credential(&self, _host: &str) -> Option<Credential> {
+        None
+    }
 }

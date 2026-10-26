@@ -268,6 +268,8 @@ pub trait GitHub {
 /// A client for each host, or none where there is no sign-in.
 pub trait GitHubHosts {
     fn github(&self, host: &str) -> Option<Box<dyn GitHub>>;
+    /// The credential a push to `host` may carry, if the engineer is signed in to it.
+    fn credential(&self, host: &str) -> Option<Credential>;
 }
 
 /// The real API client for one host.
@@ -527,6 +529,9 @@ impl GitHubHosts for RealHosts<'_> {
         }
         Some(Box::new(Api::new(host, credential)))
     }
+    fn credential(&self, host: &str) -> Option<Credential> {
+        credential_for(host, self.source)
+    }
 }
 
 #[cfg(test)]
@@ -534,4 +539,4 @@ mod fake;
 #[cfg(test)]
 pub(crate) use fake::FakeGitHub;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

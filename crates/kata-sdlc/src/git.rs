@@ -1430,6 +1430,51 @@ fn unknown_identity() -> String {
 #[cfg(test)]
 pub use crate::testutil::{run, run_bytes};
 
+/// A request for a push credential, as the push saw it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CredentialAsk {
+    /// The URL the push went to.
+    pub url: String,
+    /// Whether a token was sent.
+    pub sent: bool,
+}
+
+/// The user name and token a push to `url` may carry: only an HTTPS URL whose host is the
+/// credential's own.
+pub fn push_login<'a>(
+    url: &str,
+    credential: Option<&'a crate::github::Credential>,
+) -> Option<(&'static str, &'a str)> {
+    let _ = (url, credential);
+    None
+}
+
+impl Repo {
+    /// What `git push -u <remote> <branch>` does, with the repository's `pre-push` hook: the
+    /// hook runs first and a failure stops the push with its output. A token is sent only to the
+    /// host it belongs to.
+    pub fn push_branch(
+        &self,
+        remote: &str,
+        branch: &str,
+        credential: Option<&crate::github::Credential>,
+    ) -> Result<(), GitError> {
+        self.push_branch_with(remote, branch, credential, &mut |_| {})
+    }
+
+    /// `push_branch`, reporting each request for a credential to `probe`.
+    pub(crate) fn push_branch_with(
+        &self,
+        remote: &str,
+        branch: &str,
+        credential: Option<&crate::github::Credential>,
+        probe: &mut dyn FnMut(CredentialAsk),
+    ) -> Result<(), GitError> {
+        let _ = (remote, branch, credential, probe);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

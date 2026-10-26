@@ -7,10 +7,10 @@ use std::net::TcpListener;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-const TOKEN: &str = "ghp_faketoken0123456789";
+pub(crate) const TOKEN: &str = "ghp_faketoken0123456789";
 
 #[derive(Default)]
-struct FakeSource {
+pub(crate) struct FakeSource {
     env: HashMap<String, String>,
     stored: HashMap<String, String>,
     hosts: HashMap<String, String>,
@@ -18,15 +18,15 @@ struct FakeSource {
 }
 
 impl FakeSource {
-    fn env(mut self, k: &str, v: &str) -> Self {
+    pub(crate) fn env(mut self, k: &str, v: &str) -> Self {
         self.env.insert(k.into(), v.into());
         self
     }
-    fn stored(mut self, k: &str, v: &str) -> Self {
+    pub(crate) fn stored(mut self, k: &str, v: &str) -> Self {
         self.stored.insert(k.into(), v.into());
         self
     }
-    fn hosts_file(mut self, k: &str, v: &str) -> Self {
+    pub(crate) fn hosts_file(mut self, k: &str, v: &str) -> Self {
         self.hosts.insert(k.into(), v.into());
         self
     }
@@ -50,15 +50,15 @@ impl CredentialSource for FakeSource {
     }
 }
 
-struct Req {
-    method: String,
-    path: String,
+pub(crate) struct Req {
+    pub(crate) method: String,
+    pub(crate) path: String,
     headers: Vec<(String, String)>,
-    body: String,
+    pub(crate) body: String,
 }
 
 impl Req {
-    fn header(&self, name: &str) -> Option<&str> {
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
             .find(|(k, _)| k == name)
@@ -66,13 +66,13 @@ impl Req {
     }
 }
 
-struct Resp {
-    status: u16,
-    headers: Vec<(String, String)>,
-    body: String,
+pub(crate) struct Resp {
+    pub(crate) status: u16,
+    pub(crate) headers: Vec<(String, String)>,
+    pub(crate) body: String,
 }
 
-fn resp(status: u16, body: &str) -> Resp {
+pub(crate) fn resp(status: u16, body: &str) -> Resp {
     Resp {
         status,
         headers: Vec::new(),
@@ -80,16 +80,16 @@ fn resp(status: u16, body: &str) -> Resp {
     }
 }
 
-struct Server {
-    port: u16,
-    seen: Arc<Mutex<Vec<Req>>>,
+pub(crate) struct Server {
+    pub(crate) port: u16,
+    pub(crate) seen: Arc<Mutex<Vec<Req>>>,
 }
 
 impl Server {
-    fn root(&self) -> String {
+    pub(crate) fn root(&self) -> String {
         format!("http://127.0.0.1:{}", self.port)
     }
-    fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.seen.lock().unwrap().len()
     }
     fn first_header(&self, name: &str) -> Option<String> {
@@ -136,7 +136,7 @@ fn read_request(stream: &std::net::TcpStream) -> Option<Req> {
 }
 
 /// A local HTTP server answering every request from `handler`, closing each connection.
-fn serve(handler: impl Fn(&Req) -> Resp + Send + 'static) -> Server {
+pub(crate) fn serve(handler: impl Fn(&Req) -> Resp + Send + 'static) -> Server {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let seen = Arc::new(Mutex::new(Vec::new()));
@@ -164,14 +164,14 @@ fn serve(handler: impl Fn(&Req) -> Resp + Send + 'static) -> Server {
     Server { port, seen }
 }
 
-fn refused_root() -> String {
+pub(crate) fn refused_root() -> String {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = l.local_addr().unwrap().port();
     drop(l);
     format!("http://127.0.0.1:{port}")
 }
 
-fn hosts<'a>(source: &'a FakeSource, root: &str) -> RealHosts<'a> {
+pub(crate) fn hosts<'a>(source: &'a FakeSource, root: &str) -> RealHosts<'a> {
     let mut h = RealHosts::new(source);
     h.root_override = Some(root.to_string());
     h
@@ -478,7 +478,7 @@ fn no_credential_in_errors_logs_or_record() {
     let body = format!(r#"{{"message":"server error {TOKEN}"}}"#);
     let server = serve(move |_| resp(500, &body));
     let h = hosts(&src, &server.root());
-    let results = publish::publish(&h, "app", "s", "2026-10-19-c", &repos);
+    let results = publish::publish(&h, "app", "s", "2026-10-19-c", &repos, &mut |_| {});
     assert!(
         matches!(results[0].outcome, PrOutcome::Failed { .. }),
         "{results:?}"

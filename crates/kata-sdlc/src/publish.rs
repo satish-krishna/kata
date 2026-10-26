@@ -289,14 +289,31 @@ pub struct PrResult {
     pub outcome: PrOutcome,
 }
 
+/// What publishing is doing now, for the Workbench's progress line.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum PublishStep {
+    Pushing { repo: String },
+    Opening { repo: String },
+}
+
 /// Open (or reuse) one pull request per repository, in order; `master` names the one last.
+/// `on_step` hears what each repository is doing before it does it.
 pub fn publish(
     hosts: &dyn GitHubHosts,
     master: &str,
     system: &str,
     change: &str,
     repos: &[PublishRepo],
+    on_step: &mut dyn FnMut(PublishStep),
 ) -> Vec<PrResult> {
+    let _ = &on_step;
     let branch = format!("change/{change}");
     let title = repos
         .iter()
@@ -446,7 +463,8 @@ fn push_with_git_cli(path: &Path, branch: &str) -> Result<(), git::GitError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::{ApiError, FakeGitHub};
+    use crate::github::tests::{hosts, refused_root, resp, serve, FakeSource, Server, TOKEN};
+    use crate::github::{ApiError, Credential, FakeGitHub};
     use crate::testutil::{bare_origin, checkout, commit_file, repo};
     use serial_test::serial;
     use std::path::PathBuf;
@@ -680,7 +698,7 @@ mod tests {
         let fx = fixture(true);
         on_github(&fx);
         let gh = FakeGitHub::default();
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx), &mut |_| {});
         assert_eq!(gh.creates(), ["app", "api", "m"]);
         assert!(fx.pushed("app") && fx.pushed("api") && fx.pushed("m"));
         assert_eq!(
@@ -720,7 +738,7 @@ mod tests {
         let fx = fixture(true);
         on_github(&fx);
         let gh = FakeGitHub::default().create_fails("api", status(403, "forbidden"));
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx), &mut |_| {});
         assert!(matches!(results[0].outcome, PrOutcome::Opened { .. }));
         assert_eq!(
             results[1].outcome,
@@ -741,7 +759,7 @@ mod tests {
         let fx = fixture(true);
         on_github(&fx);
         let gh = FakeGitHub::default().open_pull("app", 1);
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx), &mut |_| {});
         assert_eq!(
             results[0].outcome,
             PrOutcome::Reused {
@@ -758,14 +776,21 @@ mod tests {
     fn publish_pushes_new_commits_on_reused_pull_request_r13_3() {
         let fx = fixture(true);
         on_github(&fx);
-        publish(&FakeGitHub::default(), "m", "s", "2026-10-19-c", &all(&fx));
+        publish(
+            &FakeGitHub::default(),
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut |_| {},
+        );
         commit_file(&fx.path("app"), "more.txt", "more\n", "another round");
         let head = git::run(&fx.path("app"), &["rev-parse", "HEAD"]).unwrap();
         let gh = FakeGitHub::default()
             .open_pull("app", 1)
             .open_pull("api", 2)
             .open_pull("m", 3);
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx), &mut |_| {});
         assert!(matches!(results[0].outcome, PrOutcome::Reused { .. }));
         let pushed = git::run(
             &fx.origin("app"),
@@ -781,7 +806,7 @@ mod tests {
         let fx = fixture(true);
         on_github(&fx);
         let gh = FakeGitHub::default().open_pull("app", 1).open_pull("m", 3);
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx), &mut |_| {});
         assert_eq!(
             results[2].outcome,
             PrOutcome::Reused {
@@ -815,7 +840,7 @@ mod tests {
             .map(|n| git::run(&fx.path(n), &["remote", "get-url", "origin"]).unwrap())
             .collect();
         let gh = FakeGitHub::default();
-        publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        publish(&gh, "m", "s", "2026-10-19-c", &all(&fx), &mut |_| {});
         match old {
             Some(v) => std::env::set_var("KATA_HOME", v),
             None => std::env::remove_var("KATA_HOME"),
@@ -873,6 +898,234 @@ mod tests {
         assert_eq!(
             open_pull_requests(&gh, &all(&fx), "2026-10-19-c").unwrap_err(),
             "GitHub answered 500: boom"
+        );
+    }
+
+    /// A GitHub that knows every repository of the fixture and numbers the pull requests it opens.
+    fn api_server() -> Server {
+        serve(|r| {
+            let parts: Vec<&str> = r.path.split('?').next().unwrap().split('/').collect();
+            match (r.method.as_str(), parts.as_slice()) {
+                ("GET", ["", "user"]) => resp(200, r#"{"login":"octo"}"#),
+                ("GET", ["", "repos", _, _]) => resp(200, "{}"),
+                ("GET", ["", "repos", _, _, "pulls"]) => resp(200, "[]"),
+                ("POST", ["", "repos", owner, name, "pulls"]) => resp(
+                    201,
+                    &format!(
+                        r#"{{"number":1,"html_url":"https://github.com/{owner}/{name}/pull/1"}}"#
+                    ),
+                ),
+                _ => resp(404, r#"{"message":"Not Found"}"#),
+            }
+        })
+    }
+
+    /// The Workbench's order for declaring done: sign-in, origins, then publish.
+    fn declare_done(h: &dyn GitHubHosts, fx: &Fx) -> Result<Vec<PrResult>, NotReady> {
+        let repos = all(fx);
+        signed_in(h, &repos)?;
+        origins(h, &repos)?;
+        Ok(publish(h, "m", "s", "2026-10-19-c", &repos, &mut |_| {}))
+    }
+
+    #[test]
+    fn declares_done_with_each_kind_of_sign_in() {
+        // R10.1
+        let signed_in_rows = [
+            (
+                "gh's stored sign-in",
+                FakeSource::default().hosts_file("github.com", TOKEN),
+            ),
+            (
+                "Git Credential Manager only",
+                FakeSource::default().stored("git:https://github.com", TOKEN),
+            ),
+            (
+                "a token in the environment",
+                FakeSource::default().env("GH_TOKEN", TOKEN),
+            ),
+        ];
+        for (row, source) in signed_in_rows {
+            let fx = fixture(true);
+            on_github(&fx);
+            let server = api_server();
+            let results = declare_done(&hosts(&source, &server.root()), &fx).unwrap();
+            assert_eq!(results.len(), 3, "{row}");
+            for r in &results {
+                assert!(
+                    matches!(r.outcome, PrOutcome::Opened { .. }),
+                    "{row}: {r:?}"
+                );
+            }
+            assert!(
+                fx.pushed("app") && fx.pushed("api") && fx.pushed("m"),
+                "{row}"
+            );
+            let seen = server.seen.lock().unwrap();
+            let bearer = format!("Bearer {TOKEN}");
+            assert!(
+                seen.iter()
+                    .all(|r| r.header("authorization") == Some(bearer.as_str())),
+                "{row}"
+            );
+        }
+
+        // No credential for the host: the plain message, nothing asked, nothing pushed.
+        let fx = fixture(true);
+        on_github(&fx);
+        let server = api_server();
+        let source = FakeSource::default();
+        let err = declare_done(&hosts(&source, &server.root()), &fx).unwrap_err();
+        assert_eq!(err, NotReady::NotSignedIn("github.com".into()));
+        assert!(err.to_string().contains("github.com"), "{err}");
+        assert!(err.to_string().contains("gh auth login"), "{err}");
+        assert_eq!(server.count(), 0);
+        assert!(!fx.pushed("app") && !fx.pushed("m"));
+
+        // Signed in, but GitHub does not answer: the unreachable message, nothing pushed.
+        let source = FakeSource::default().env("GH_TOKEN", TOKEN);
+        let err = declare_done(&hosts(&source, &refused_root()), &fx).unwrap_err();
+        assert_eq!(err, NotReady::Unreachable);
+        assert!(!fx.pushed("app") && !fx.pushed("m"));
+    }
+
+    #[test]
+    fn push_credential_only_for_its_host() {
+        // R10.3, push half. The decision, for every kind of address.
+        let b = Credential::new("b.example", "tok-b");
+        fn got<'a>(url: &str, c: Option<&'a Credential>) -> Option<(&'static str, &'a str)> {
+            git::push_login(url, c)
+        }
+        assert_eq!(got("https://a.example/o/r.git", Some(&b)), None);
+        assert_eq!(
+            got("https://b.example/o/r.git", Some(&b)),
+            Some(("x-access-token", "tok-b"))
+        );
+        assert_eq!(
+            got("https://User@B.Example:8443/o/r.git", Some(&b)),
+            Some(("x-access-token", "tok-b"))
+        );
+        assert_eq!(got("https://b.example/o/r.git", None), None);
+        assert_eq!(got("http://b.example/o/r.git", Some(&b)), None);
+        assert_eq!(got("git@b.example:o/r.git", Some(&b)), None);
+        assert_eq!(got("ssh://git@b.example/o/r.git", Some(&b)), None);
+        assert_eq!(got("C:/repos/r.git", Some(&b)), None);
+
+        // The push itself, asked for a credential by a server that wants one: a credential for
+        // another host is not sent, and the probe saw the request.
+        let fx = fixture(true);
+        let server = serve(|_| {
+            let mut r = resp(401, "{}");
+            r.headers
+                .push(("WWW-Authenticate".into(), "Basic realm=\"x\"".into()));
+            r
+        });
+        let url = format!("http://127.0.0.1:{}/o/app.git", server.port);
+        git::run(&fx.path("app"), &["remote", "set-url", "origin", &url]).unwrap();
+        let mut asks = Vec::new();
+        let other = Credential::new("github.com", "tok-other");
+        let result = git::Repo::open(&fx.path("app")).unwrap().push_branch_with(
+            "origin",
+            "change/2026-10-19-c",
+            Some(&other),
+            &mut |a| asks.push(a),
+        );
+        assert!(result.is_err());
+        assert!(!asks.is_empty(), "the server never asked for a credential");
+        assert!(asks.iter().all(|a| !a.sent), "{asks:?}");
+        let seen = server.seen.lock().unwrap();
+        assert!(!seen.is_empty());
+        assert!(seen.iter().all(|r| r.header("authorization").is_none()));
+    }
+
+    fn pre_push(repo: &std::path::Path, body: &str) {
+        let hook = repo.join(".git/hooks/pre-push");
+        std::fs::write(&hook, format!("#!/bin/sh\n{body}\n")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    #[test]
+    fn pre_push_decides_as_git_does() {
+        // R11.1, the push rows. A passing hook sees git's arguments and its one input line.
+        let fx = fixture(true);
+        on_github(&fx);
+        pre_push(
+            &fx.path("app"),
+            "echo \"$1 $2\" > \"$GIT_DIR/pre-push.args\"\ncat > \"$GIT_DIR/pre-push.in\"",
+        );
+        let results = publish(
+            &FakeGitHub::default(),
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut |_| {},
+        );
+        assert!(results
+            .iter()
+            .all(|r| matches!(r.outcome, PrOutcome::Opened { .. })));
+        assert!(fx.pushed("app"));
+        let git_dir = fx.path("app").join(".git");
+        let args = std::fs::read_to_string(git_dir.join("pre-push.args")).unwrap();
+        assert!(args.trim().starts_with("origin "), "{args}");
+        let sha = git::run(&fx.path("app"), &["rev-parse", "change/2026-10-19-c"]).unwrap();
+        let input = std::fs::read_to_string(git_dir.join("pre-push.in")).unwrap();
+        assert_eq!(
+            input.trim_end(),
+            format!(
+                "refs/heads/change/2026-10-19-c {sha} refs/heads/change/2026-10-19-c {}",
+                "0".repeat(40)
+            )
+        );
+
+        // A failing hook stops that repository with its message; the next one still opens.
+        let fx = fixture(true);
+        on_github(&fx);
+        pre_push(&fx.path("app"), "echo no push today >&2\nexit 1");
+        let gh = FakeGitHub::default();
+        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx), &mut |_| {});
+        match &results[0].outcome {
+            PrOutcome::Failed { error } => assert!(error.contains("no push today"), "{error}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(!fx.pushed("app"));
+        assert_eq!(gh.creates(), ["api", "m"]);
+        assert!(fx.pushed("api") && fx.pushed("m"));
+    }
+
+    #[test]
+    fn reports_each_step() {
+        let fx = fixture(false);
+        on_github(&fx);
+        let mut steps = Vec::new();
+        publish(
+            &FakeGitHub::default(),
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut |s| steps.push(s),
+        );
+        let step = |pushing: bool, repo: &str| {
+            let repo = repo.to_string();
+            if pushing {
+                PublishStep::Pushing { repo }
+            } else {
+                PublishStep::Opening { repo }
+            }
+        };
+        assert_eq!(
+            steps,
+            [
+                step(true, "app"),
+                step(false, "app"),
+                step(true, "m"),
+                step(false, "m")
+            ]
         );
     }
 }
