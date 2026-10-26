@@ -1,5 +1,5 @@
 //! Run snapshot: what the master repo looked like before an agent run, and what the run left behind.
-use crate::git::{self, GitError, Repo};
+use crate::git::{GitError, Repo};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -219,17 +219,15 @@ pub fn discard(
             .ok_or_else(|| DiscardError::NotDiscardable(path.clone()))?;
         plan.push(entry);
     }
+    let repo = Repo::open(master)?;
     for e in plan {
         if e.xy == "??" {
             std::fs::remove_file(master.join(&e.path))?;
         } else if e.xy.starts_with('A') || e.xy.starts_with('R') || e.xy.starts_with('C') {
             // Not in HEAD, so restore has nothing to restore from.
-            git::legacy_cli::run(master, &["rm", "-f", "-q", "--", &e.path])?;
+            repo.remove_paths(&[e.path.as_str()])?;
         } else {
-            git::legacy_cli::run(
-                master,
-                &["restore", "--staged", "--worktree", "--", &e.path],
-            )?;
+            repo.restore_paths(&[e.path.as_str()])?;
         }
     }
     Ok(())
@@ -238,6 +236,7 @@ pub fn discard(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git;
     use crate::testutil::{commit_file, repo};
 
     #[test]

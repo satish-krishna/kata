@@ -840,34 +840,364 @@ impl Repo {
     }
 
     /// What `git checkout -q <name> --` does: switches to the local branch `name`, refusing to
-    /// overwrite a local edit, and runs the repository's `post-checkout` hook afterward.
-    pub fn checkout_branch(&self, _name: &str) -> Result<(), GitError> {
-        todo!("checkout_branch")
+    /// overwrite a local edit with the refusal git gives, and runs the repository's `post-checkout`
+    /// hook afterward (its failure is ignored, as git ignores it for the switch).
+    ///
+    /// Nothing is written when the repository needs a program Kata cannot start.
+    pub fn checkout_branch(&self, name: &str) -> Result<(), GitError> {
+        let action = format!("checkout -q {name} --");
+        let repo = &self.inner;
+        let branch = repo
+            .find_branch(name, git2::BranchType::Local)
+            .map_err(|_| GitError {
+                args: action.clone(),
+                stderr: format!("fatal: invalid reference: {name}"),
+            })?;
+        let target = branch
+            .get()
+            .peel_to_commit()
+            .map_err(|e| GitError::from_git2(&action, e))?;
+        let refname = format!("refs/heads/{name}");
+        self.switch_to(&action, &target, &refname)
     }
 
-    /// What `git checkout -q -b <name> <at>` does.
-    pub fn create_branch(&self, _name: &str, _at: &str) -> Result<(), GitError> {
-        todo!("create_branch")
+    /// What `git checkout -q -b <name> <at>` does: creates the branch at `at`, switches to it, and
+    /// runs `post-checkout`. A start point that is a remote-tracking branch becomes the new
+    /// branch's upstream, as git sets it up.
+    pub fn create_branch(&self, name: &str, at: &str) -> Result<(), GitError> {
+        let action = format!("checkout -q -b {name} {at}");
+        let repo = &self.inner;
+        let git_fail = |e: git2::Error| GitError::from_git2(&action, e);
+        let start = repo
+            .revparse_single(at)
+            .and_then(|o| o.peel_to_commit())
+            .map_err(git_fail)?;
+        let mut branch = repo.branch(name, &start, false).map_err(git_fail)?;
+        let refname = format!("refs/heads/{name}");
+        if let Err(e) = self.switch_to(&action, &start, &refname) {
+            // The switch was refused, so the branch made for it must not stay behind.
+            let _ = branch.delete();
+            return Err(e);
+        }
+        if repo.find_branch(at, git2::BranchType::Remote).is_ok() {
+            branch.set_upstream(Some(at)).map_err(git_fail)?;
+        }
+        Ok(())
     }
 
-    /// What `git branch -m <old> <new>` does.
-    pub fn rename_branch(&self, _old: &str, _new: &str) -> Result<(), GitError> {
-        todo!("rename_branch")
+    /// What `git branch -m <old> <new>` does. Runs no hook.
+    pub fn rename_branch(&self, old: &str, new: &str) -> Result<(), GitError> {
+        let action = format!("branch -m {old} {new}");
+        let fail = |e| GitError::from_git2(&action, e);
+        let mut branch = self
+            .inner
+            .find_branch(old, git2::BranchType::Local)
+            .map_err(fail)?;
+        let was_current = branch.is_head();
+        branch.rename(new, false).map_err(fail)?;
+        if was_current {
+            self.fix_head_reflog_after_rename(old, new);
+        }
+        Ok(())
     }
 
-    /// What `git branch -D <name>` does.
-    pub fn delete_branch(&self, _name: &str) -> Result<(), GitError> {
-        todo!("delete_branch")
+    /// libgit2 logs the move of `HEAD` in a rename with an empty message; git's says what happened.
+    fn fix_head_reflog_after_rename(&self, old: &str, new: &str) {
+        let repo = &self.inner;
+        let (Ok(mut log), Ok(signature), Ok(head)) = (
+            repo.reflog("HEAD"),
+            repo.signature(),
+            repo.head().and_then(|h| h.peel_to_commit()),
+        ) else {
+            return;
+        };
+        let newest_is_blank = log
+            .get(0)
+            .is_some_and(|e| e.message().ok().flatten().is_none_or(str::is_empty));
+        if !newest_is_blank || log.remove(0, true).is_err() {
+            return;
+        }
+        let message = format!("Branch: renamed refs/heads/{old} to refs/heads/{new}");
+        if log.append(head.id(), &signature, Some(&message)).is_ok() {
+            let _ = log.write();
+        }
     }
 
-    /// What `git restore --staged --worktree -- <paths>` does.
-    pub fn restore_paths(&self, _paths: &[&str]) -> Result<(), GitError> {
-        todo!("restore_paths")
+    /// What `git branch -D <name>` does. Runs no hook.
+    pub fn delete_branch(&self, name: &str) -> Result<(), GitError> {
+        let action = format!("branch -D {name}");
+        let fail = |e| GitError::from_git2(&action, e);
+        let mut branch = self
+            .inner
+            .find_branch(name, git2::BranchType::Local)
+            .map_err(fail)?;
+        branch.delete().map_err(fail)
     }
 
-    /// What `git rm -f -q -- <paths>` does.
-    pub fn remove_paths(&self, _paths: &[&str]) -> Result<(), GitError> {
-        todo!("remove_paths")
+    /// What `git restore --staged --worktree -- <paths>` does: each file goes back to its content
+    /// in `HEAD`, in the index and in the working folder. Every path is checked before the first is
+    /// touched, so a refusal leaves everything as it was.
+    pub fn restore_paths(&self, paths: &[&str]) -> Result<(), GitError> {
+        let action = format!("restore --staged --worktree -- {}", paths.join(" "));
+        let repo = &self.inner;
+        let fail = |e| GitError::from_git2(&action, e);
+        let head_tree = self.head_tree()?;
+        let mut entries = Vec::new();
+        for path in paths {
+            match head_tree.get_path(Path::new(path)) {
+                Ok(entry) if entry.kind() == Some(ObjectType::Blob) => {
+                    entries.push((*path, entry.id(), entry.filemode() as u32));
+                }
+                Ok(_) => {
+                    return Err(GitError {
+                        args: action,
+                        stderr: format!("error: {path} is not a file"),
+                    })
+                }
+                Err(e) if e.code() == ErrorCode::NotFound => {
+                    return Err(GitError {
+                        args: action,
+                        stderr: format!(
+                            "error: pathspec '{path}' did not match any file(s) known to git"
+                        ),
+                    })
+                }
+                Err(e) => return Err(fail(e)),
+            }
+        }
+        if let Some(reason) = kata_core::hooks::needs_external(repo, paths) {
+            return Err(GitError {
+                args: action,
+                stderr: reason,
+            });
+        }
+        let stamp = self.index_stamp();
+        let mut index = repo.index().map_err(fail)?;
+        for (path, id, mode) in &entries {
+            set_entry(&mut index, path, Some((*id, *mode))).map_err(fail)?;
+        }
+        index.write().map_err(fail)?;
+        let mut checkout = git2::build::CheckoutBuilder::new();
+        checkout
+            .force()
+            .recreate_missing(true)
+            .disable_pathspec_match(true);
+        for path in paths {
+            checkout.path(path);
+        }
+        repo.checkout_index(Some(&mut index), Some(&mut checkout))
+            .map_err(fail)?;
+        index.write().map_err(fail)?;
+        self.smudge_racy_entries(stamp);
+        Ok(())
+    }
+
+    /// What `git rm -f -q -- <paths>` does: each file leaves the index and the working folder, and
+    /// a folder it leaves empty goes too. Every path is checked before the first is touched.
+    pub fn remove_paths(&self, paths: &[&str]) -> Result<(), GitError> {
+        let action = format!("rm -f -q -- {}", paths.join(" "));
+        let fail = |e| GitError::from_git2(&action, e);
+        let repo = &self.inner;
+        let workdir = repo
+            .workdir()
+            .ok_or_else(|| GitError {
+                args: action.clone(),
+                stderr: "this repository has no working folder".to_string(),
+            })?
+            .to_path_buf();
+        let stamp = self.index_stamp();
+        let mut index = repo.index().map_err(fail)?;
+        for path in paths {
+            if index.get_path(Path::new(path), 0).is_none() {
+                return Err(GitError {
+                    args: action,
+                    stderr: format!("fatal: pathspec '{path}' did not match any files"),
+                });
+            }
+        }
+        for path in paths {
+            index.remove_path(Path::new(path)).map_err(fail)?;
+            let file = workdir.join(path);
+            match std::fs::remove_file(&file) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    return Err(GitError {
+                        args: action,
+                        stderr: format!("fatal: git rm: '{path}': {e}"),
+                    })
+                }
+            }
+            // As git does, a folder the removal leaves empty goes too, up to the working folder.
+            let mut dir = file.parent();
+            while let Some(d) = dir.filter(|d| *d != workdir) {
+                if std::fs::remove_dir(d).is_err() {
+                    break;
+                }
+                dir = d.parent();
+            }
+        }
+        index.write().map_err(fail)?;
+        self.smudge_racy_entries(stamp);
+        Ok(())
+    }
+
+    /// When the index file was last written, in whole seconds; taken before an operation rewrites it.
+    fn index_stamp(&self) -> Option<i64> {
+        let modified = std::fs::metadata(self.inner.path().join("index"))
+            .and_then(|m| m.modified())
+            .ok()?;
+        let since = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+        i64::try_from(since.as_secs()).ok()
+    }
+
+    /// What git does whenever it writes the index: an entry whose file was modified no earlier than
+    /// the old index was written ("racily clean") cannot be told apart from an unchanged file by its
+    /// size and time alone, so when its content differs from the staged content its size is zeroed
+    /// and the next status looks at the content. libgit2 does not do this, and without it an edit
+    /// made in the same second as the previous write would show as no change at all.
+    fn smudge_racy_entries(&self, stamp: Option<i64>) {
+        let Some(stamp) = stamp else { return };
+        let Ok(mut index) = self.inner.index() else {
+            return;
+        };
+        if index.read(true).is_err() {
+            return;
+        }
+        let racy: Vec<git2::IndexEntry> = index
+            .iter()
+            .filter(|e| {
+                (e.flags & 0x3000) == 0
+                    && e.file_size != 0
+                    && e.mode & 0o170000 == 0o100000
+                    && i64::from(e.mtime.seconds()) >= stamp
+            })
+            .collect();
+        let mut changed = false;
+        for mut entry in racy {
+            let path = String::from_utf8_lossy(&entry.path).into_owned();
+            let same = self
+                .hash_file(&path)
+                .is_ok_and(|h| h == entry.id.to_string());
+            if !same {
+                entry.file_size = 0;
+                changed |= index.add(&entry).is_ok();
+            }
+        }
+        if changed {
+            let _ = index.write();
+        }
+    }
+
+    /// The reason a switch to `target` needs a program Kata cannot start; checks the files it
+    /// would write (those that differ between `HEAD` and `target`).
+    fn needs_external_for(&self, target: Option<&git2::Commit>) -> Option<String> {
+        let repo = &self.inner;
+        let mut paths: Vec<String> = Vec::new();
+        if let (Some(target), Ok(head)) = (target, self.head_tree()) {
+            if let Ok(diff) = repo.diff_tree_to_tree(Some(&head), target.tree().ok().as_ref(), None)
+            {
+                for delta in diff.deltas() {
+                    for file in [delta.old_file(), delta.new_file()] {
+                        if let Some(p) = file.path() {
+                            paths.push(utf8(p));
+                        }
+                    }
+                }
+            }
+        }
+        paths.sort();
+        paths.dedup();
+        let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+        kata_core::hooks::needs_external(repo, &refs)
+    }
+
+    /// A safe checkout of `target`'s tree, then `HEAD` to `refname`, then `post-checkout`. A local
+    /// edit the switch would overwrite refuses it with git's text and changes nothing.
+    fn switch_to(
+        &self,
+        action: &str,
+        target: &git2::Commit,
+        refname: &str,
+    ) -> Result<(), GitError> {
+        use kata_core::hooks::{run_hook, Hook};
+        let repo = &self.inner;
+        let git_fail = |e: git2::Error| GitError::from_git2(action, e);
+        if let Some(reason) = self.needs_external_for(Some(target)) {
+            return Err(GitError {
+                args: action.to_string(),
+                stderr: reason,
+            });
+        }
+        let old = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .map(|c| c.id().to_string())
+            .unwrap_or_else(|| "0".repeat(40));
+
+        let stamp = self.index_stamp();
+        let mut conflicts: Vec<String> = Vec::new();
+        let outcome = {
+            let mut checkout = git2::build::CheckoutBuilder::new();
+            checkout
+                .safe()
+                .notify_on(git2::CheckoutNotificationType::CONFLICT)
+                .notify(|_, path, _, _, _| {
+                    if let Some(p) = path {
+                        conflicts.push(utf8(p));
+                    }
+                    true
+                });
+            repo.checkout_tree(target.as_object(), Some(&mut checkout))
+        };
+        if let Err(e) = outcome {
+            if conflicts.is_empty() {
+                return Err(git_fail(e));
+            }
+            return Err(GitError {
+                args: action.to_string(),
+                stderr: self.overwrite_refusal(&conflicts),
+            });
+        }
+        repo.set_head(refname).map_err(git_fail)?;
+        self.smudge_racy_entries(stamp);
+        let new = target.id().to_string();
+        let _ = run_hook(repo, Hook::PostCheckout, &[&old, &new, "1"], None, &[]);
+        Ok(())
+    }
+
+    /// The text git prints when a switch would overwrite local work: the files that are tracked
+    /// and edited, and the untracked ones in the way.
+    fn overwrite_refusal(&self, conflicts: &[String]) -> String {
+        let tracked_in_index = |p: &String| {
+            self.inner
+                .index()
+                .is_ok_and(|i| i.get_path(Path::new(p), 0).is_some())
+        };
+        let (edited, untracked): (Vec<&String>, Vec<&String>) =
+            conflicts.iter().partition(|p| tracked_in_index(p));
+        let list = |files: &[&String]| {
+            files
+                .iter()
+                .map(|f| format!("\t{f}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let mut blocks = Vec::new();
+        if !edited.is_empty() {
+            blocks.push(format!(
+                "error: Your local changes to the following files would be overwritten by checkout:\n{}\nPlease commit your changes or stash them before you switch branches.",
+                list(&edited)
+            ));
+        }
+        if !untracked.is_empty() {
+            blocks.push(format!(
+                "error: The following untracked working tree files would be overwritten by checkout:\n{}\nPlease move or remove them before you switch branches.",
+                list(&untracked)
+            ));
+        }
+        format!("{}\nAborting", blocks.join("\n"))
     }
 
     /// The repository for code that reads it through libgit2 directly.
@@ -903,6 +1233,45 @@ impl Repo {
             .collect();
         names.sort();
         names
+    }
+
+    /// What `git diff --name-only <base>...HEAD` prints: the files that differ between the merge
+    /// base of `base` and `HEAD` and `HEAD` itself, without rename detection.
+    pub(crate) fn files_changed_from_merge_base(
+        &self,
+        base: &str,
+    ) -> Result<Vec<String>, GitError> {
+        let fail = |e| GitError::from_git2(&format!("diff --name-only {base}...HEAD"), e);
+        let base_id = self
+            .inner
+            .revparse_single(base)
+            .and_then(|o| o.peel_to_commit())
+            .map_err(fail)?;
+        let head = self
+            .inner
+            .head()
+            .and_then(|h| h.peel_to_commit())
+            .map_err(fail)?;
+        let fork = self
+            .inner
+            .merge_base(base_id.id(), head.id())
+            .map_err(fail)?;
+        let from = self
+            .inner
+            .find_commit(fork)
+            .and_then(|c| c.tree())
+            .map_err(fail)?;
+        let diff = self
+            .inner
+            .diff_tree_to_tree(Some(&from), Some(&head.tree().map_err(fail)?), None)
+            .map_err(fail)?;
+        let mut files: Vec<String> = diff
+            .deltas()
+            .filter_map(|d| d.new_file().path().or(d.old_file().path()).map(utf8))
+            .collect();
+        files.sort();
+        files.dedup();
+        Ok(files)
     }
 
     /// The files the commits in `since..HEAD` changed, without renames, merges left out as
@@ -1132,43 +1501,9 @@ fn unknown_identity() -> String {
     "Author identity unknown\n\n*** Please tell me who you are.\n\nRun\n\n  git config --global user.email \"you@example.com\"\n  git config --global user.name \"Your Name\"\n\nto set your account's default identity.\nOmit --global to set the identity only in this repository.\n\nfatal: unable to auto-detect email address".to_string()
 }
 
-/// The git command line, kept for the writes that have not moved to libgit2 yet and for the
-/// comparisons that still run it. Nothing new is added here.
-pub(crate) mod legacy_cli {
-    use super::GitError;
-    use std::path::Path;
-
-    fn exec(dir: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
-        let fail = |stderr: String| GitError {
-            args: args.join(" "),
-            stderr,
-        };
-        let mut cmd = std::process::Command::new("git");
-        cmd.arg("-C").arg(dir).args(args);
-        let out = cmd.output().map_err(|e| fail(e.to_string()))?;
-        if !out.status.success() {
-            return Err(fail(
-                String::from_utf8_lossy(&out.stderr).trim().to_string(),
-            ));
-        }
-        Ok(out.stdout)
-    }
-
-    /// Run `git -C <dir> <args>` and return stdout without its trailing newline.
-    pub fn run(dir: &Path, args: &[&str]) -> Result<String, GitError> {
-        exec(dir, args).map(|out| super::trimmed_text(&out))
-    }
-
-    /// Run `git -C <dir> <args>` and return stdout untouched, byte for byte.
-    #[cfg(test)]
-    pub fn run_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
-        exec(dir, args)
-    }
-}
-
 /// Test fixtures build repositories with the command line.
 #[cfg(test)]
-pub use legacy_cli::{run, run_bytes};
+pub use crate::testutil::{run, run_bytes};
 
 #[cfg(test)]
 mod tests {

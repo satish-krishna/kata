@@ -99,7 +99,7 @@ pub fn start_pending(master: &Path, base: &str, now_unix: u64) -> Result<String,
     require_local_branch(master, base)?;
     ensure_clean(master)?;
     let name = format!("change/pending-{}", utc_stamp(now_unix));
-    git::legacy_cli::run(master, &["checkout", "-q", "-b", &name, base])?;
+    git::Repo::open(master)?.create_branch(&name, base)?;
     Ok(name)
 }
 
@@ -117,19 +117,11 @@ fn change_folders<'a>(paths: impl Iterator<Item = &'a str>) -> BTreeSet<String> 
         .collect()
 }
 
-fn existing_on(master: &Path, rev: &str, system_change: &str) -> bool {
-    git::legacy_cli::run(
-        master,
-        &[
-            "ls-tree",
-            "--name-only",
-            rev,
-            "--",
-            &format!("intent/{system_change}"),
-        ],
-    )
-    .map(|o| !o.is_empty())
-    .unwrap_or(false)
+fn existing_on(repo: &git::Repo, rev: &str, system_change: &str) -> bool {
+    repo.entry_at(rev, &format!("intent/{system_change}"))
+        .ok()
+        .flatten()
+        .is_some()
 }
 
 /// Settle a pending branch: rename it to `change/<folder>` if the run created a change folder,
@@ -152,30 +144,25 @@ pub fn finish_pending(
         .into_iter()
         .map(|e| e.path)
         .collect();
-    if let Ok(diff) =
-        git::legacy_cli::run(master, &["diff", "--name-only", &format!("{base}...HEAD")])
-    {
-        paths.extend(diff.lines().map(str::to_string));
+    let repo = git::Repo::open(master)?;
+    if let Ok(changed) = repo.files_changed_from_merge_base(base) {
+        paths.extend(changed);
     }
     let created = change_folders(paths.iter().map(String::as_str))
         .into_iter()
-        .find(|sc| !existing_on(master, base, sc));
+        .find(|sc| !existing_on(&repo, base, sc));
     if let Some(sc) = created {
         let change = sc.rsplit('/').next().unwrap_or(&sc).to_string();
         let branch = format!("change/{change}");
-        git::legacy_cli::run(master, &["branch", "-m", pending, &branch])?;
+        repo.rename_branch(pending, &branch)?;
         return Ok(FinishOutcome::Renamed { branch, change });
     }
-    let ahead = git::legacy_cli::run(
-        master,
-        &["rev-list", "--count", &format!("{base}..{pending}")],
-    )?;
-    if ahead.trim() != "0" {
+    if !repo.revs_between(base, pending)?.is_empty() {
         return Err(BranchError::PendingHasCommits);
     }
     ensure_clean(master)?;
-    git::legacy_cli::run(master, &["checkout", "-q", base])?;
-    git::legacy_cli::run(master, &["branch", "-D", pending])?;
+    repo.checkout_branch(base)?;
+    repo.delete_branch(pending)?;
     Ok(FinishOutcome::Deleted)
 }
 
@@ -183,7 +170,7 @@ pub fn finish_pending(
 pub fn checkout(master: &Path, branch: &str) -> Result<(), BranchError> {
     require_local_branch(master, branch)?;
     ensure_clean(master)?;
-    git::legacy_cli::run(master, &["checkout", "-q", branch, "--"])?;
+    git::Repo::open(master)?.checkout_branch(branch)?;
     Ok(())
 }
 

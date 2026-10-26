@@ -415,7 +415,7 @@ fn open_one(
         Ok(url) => url,
         Err(e) => return failed(e),
     };
-    if let Err(e) = git::legacy_cli::run(path, &["push", "-u", "origin", branch]) {
+    if let Err(e) = push_with_git_cli(path, branch) {
         return failed(e.to_string());
     }
     // A reused pull request keeps its title and, except the master's, its body.
@@ -491,6 +491,29 @@ pub fn open_pull_requests(
             })
         })
         .collect()
+}
+
+/// `git -C <path> push -u origin <branch>`, the one repository write that still runs the git
+/// command line; the push without it replaces this.
+fn push_with_git_cli(path: &Path, branch: &str) -> Result<(), git::GitError> {
+    let args = ["push", "-u", "origin", branch];
+    let fail = |stderr: String| git::GitError {
+        args: args.join(" "),
+        stderr,
+    };
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .output()
+        .map_err(|e| fail(e.to_string()))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(fail(
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        ))
+    }
 }
 
 #[cfg(test)]

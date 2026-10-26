@@ -1,6 +1,32 @@
 //! Git fixtures for tests.
-use crate::git;
+use crate::git::{self, GitError};
 use std::path::{Path, PathBuf};
+
+fn exec(dir: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
+    let fail = |stderr: String| GitError {
+        args: args.join(" "),
+        stderr,
+    };
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("-C").arg(dir).args(args);
+    let out = cmd.output().map_err(|e| fail(e.to_string()))?;
+    if !out.status.success() {
+        return Err(fail(
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        ));
+    }
+    Ok(out.stdout)
+}
+
+/// Run `git -C <dir> <args>` and return stdout without its trailing newline.
+pub fn run(dir: &Path, args: &[&str]) -> Result<String, GitError> {
+    exec(dir, args).map(|out| git::trimmed_text(&out))
+}
+
+/// Run `git -C <dir> <args>` and return stdout untouched, byte for byte.
+pub fn run_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
+    exec(dir, args)
+}
 
 /// Create `<dir>/<name>` as a git repo with a local identity and one commit on `main`.
 pub fn repo(dir: &Path, name: &str) -> PathBuf {
