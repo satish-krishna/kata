@@ -121,6 +121,7 @@ impl Repo {
         }
         // Held from here to the end, as git holds it, so two writers take turns.
         let lock = IndexLock::acquire(&repo.path().join("index")).map_err(fail)?;
+        let stamp = kata_core::git::index_stamp(repo);
         let workdir = repo
             .workdir()
             .ok_or_else(|| fail("this repository has no working folder".to_string()))?;
@@ -201,6 +202,7 @@ impl Repo {
         )
         .map_err(git_fail)?;
         lock.commit(&repo.path().join("index")).map_err(fail)?;
+        kata_core::git::smudge_racy_entries(repo, stamp);
 
         // Git ignores a failing post-commit hook.
         let _ = run_hook(repo, Hook::PostCommit, &[], None, &[]);
