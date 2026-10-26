@@ -39,6 +39,15 @@ pub struct StatusEntry {
     pub from: Option<String>,
 }
 
+/// One commit of `Repo::log_messages`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogEntry {
+    /// The abbreviated id, as `%h` prints it.
+    pub short: String,
+    /// The whole message, as `%B` prints it.
+    pub message: String,
+}
+
 /// A repository opened for reading.
 pub struct Repo {
     inner: git2::Repository,
@@ -446,6 +455,74 @@ impl Repo {
             .into_iter()
             .filter(|id| !hidden.contains(id) && !treesame.contains(id))
             .collect())
+    }
+
+    /// What `git symbolic-ref --quiet <name>` prints; `None` when `name` is not a symbolic ref.
+    #[allow(unused_variables)]
+    pub fn symbolic_target(&self, name: &str) -> Option<String> {
+        unimplemented!("symbolic_target")
+    }
+
+    /// Whether `git rev-parse --verify --quiet <rev>` succeeds.
+    #[allow(unused_variables)]
+    pub fn rev_exists(&self, rev: &str) -> bool {
+        unimplemented!("rev_exists")
+    }
+
+    /// What `git rev-parse <rev>` prints.
+    #[allow(unused_variables)]
+    pub fn resolve(&self, rev: &str) -> Result<String, GitError> {
+        unimplemented!("resolve")
+    }
+
+    /// What `git merge-base <a> <b>` prints.
+    #[allow(unused_variables)]
+    pub fn merge_base(&self, a: &str, b: &str) -> Result<String, GitError> {
+        unimplemented!("merge_base")
+    }
+
+    /// What `git rev-list <base>..<head>` prints, newest first as git prints it.
+    #[allow(unused_variables)]
+    pub fn revs_between(&self, base: &str, head: &str) -> Result<Vec<String>, GitError> {
+        unimplemented!("revs_between")
+    }
+
+    /// What `git rev-list <revs>` prints for revision arguments such as `tip`, `^x` and `a..b`.
+    #[allow(unused_variables)]
+    pub fn rev_list(&self, revs: &[String]) -> Result<Vec<String>, GitError> {
+        unimplemented!("rev_list")
+    }
+
+    /// What `git log --format=%h%x1f%B <revs>` prints, one entry per commit, newest first.
+    #[allow(unused_variables)]
+    pub fn log_messages(&self, revs: &[String]) -> Result<Vec<LogEntry>, GitError> {
+        unimplemented!("log_messages")
+    }
+
+    /// What `git remote get-url <name>` prints; `None` when the remote does not exist.
+    #[allow(unused_variables)]
+    pub fn remote_url(&self, name: &str) -> Option<String> {
+        unimplemented!("remote_url")
+    }
+
+    /// What `git hash-object -- <rel>` prints: the blob id of the working tree file after the
+    /// clean filters.
+    #[allow(unused_variables)]
+    pub fn hash_file(&self, rel: &str) -> Result<String, GitError> {
+        unimplemented!("hash_file")
+    }
+
+    /// The commits of `git log --reverse --no-renames --name-only <revs>`, oldest first, each with
+    /// its sorted file list. A merge lists no files.
+    #[allow(unused_variables)]
+    pub fn commit_files(&self, revs: &[String]) -> Result<Vec<(String, Vec<String>)>, GitError> {
+        unimplemented!("commit_files")
+    }
+
+    /// The blob at `<rev>:<rel>` byte for byte; `None` when `rev` holds no file there.
+    #[allow(unused_variables)]
+    pub fn bytes_at(&self, rev: &str, rel: &str) -> Result<Option<Vec<u8>>, GitError> {
+        unimplemented!("bytes_at")
     }
 
     /// The checked-out branch; `None` on a detached or unborn `HEAD`.
