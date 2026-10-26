@@ -8,6 +8,7 @@ license.workspace = true
 kata-core = { path = "../kata-core" }
 serde.workspace = true
 serde_json.workspace = true
+git2.workspace = true
 tempfile.workspace = true
 toml.workspace = true
 thiserror.workspace = true

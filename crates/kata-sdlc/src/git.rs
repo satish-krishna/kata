@@ -9,6 +9,78 @@ pub struct GitError {
     pub stderr: String,
 }
 
+impl GitError {
+    /// A libgit2 failure reported the way a failed git command was: `action` names the command the
+    /// operation replaces and `stderr` is libgit2's message.
+    pub fn from_git2(action: &str, e: git2::Error) -> GitError {
+        GitError {
+            args: action.to_string(),
+            stderr: e.message().to_string(),
+        }
+    }
+}
+
+/// One line of `git status --porcelain=v1`: the path, the index and work tree codes, and the
+/// source of a rename.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusEntry {
+    pub path: String,
+    pub index: char,
+    pub worktree: char,
+    pub from: Option<String>,
+}
+
+/// A repository opened for reading.
+pub struct Repo {
+    inner: git2::Repository,
+}
+
+impl Repo {
+    pub fn open(path: &Path) -> Result<Repo, GitError> {
+        git2::Repository::open(path)
+            .map(|inner| Repo { inner })
+            .map_err(|e| GitError::from_git2(&format!("-C {} rev-parse", path.display()), e))
+    }
+
+    pub fn head_sha(&self) -> Result<String, GitError> {
+        let _ = &self.inner;
+        todo!("head_sha")
+    }
+
+    pub fn committed_bytes(&self, _rel: &str) -> Result<Option<Vec<u8>>, GitError> {
+        todo!("committed_bytes")
+    }
+
+    pub fn tree_names(&self, _dir: &str) -> Result<Vec<String>, GitError> {
+        todo!("tree_names")
+    }
+
+    pub fn is_committed(&self, _rel: &str) -> bool {
+        false
+    }
+
+    pub fn status(&self, _under: &str) -> Result<Vec<StatusEntry>, GitError> {
+        todo!("status")
+    }
+
+    pub fn blob_id_at(&self, _rev: &str, _rel: &str) -> Result<Option<String>, GitError> {
+        todo!("blob_id_at")
+    }
+
+    pub fn commits_since(&self, _rev: &str, _pathspec: &str) -> Result<Vec<String>, GitError> {
+        todo!("commits_since")
+    }
+
+    pub fn count_since(
+        &self,
+        _rev: &str,
+        _include: &[&str],
+        _exclude: &[&str],
+    ) -> Result<u32, GitError> {
+        todo!("count_since")
+    }
+}
+
 fn exec(dir: &Path, args: &[&str], env: &[(&str, &OsStr)]) -> Result<Vec<u8>, GitError> {
     let fail = |stderr: String| GitError {
         args: args.join(" "),

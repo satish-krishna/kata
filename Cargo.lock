@@ -2055,6 +2055,7 @@ dependencies = [
 name = "kata-sdlc"
 version = "3.2.0"
 dependencies = [
+ "git2",
  "kata-core",
  "process-wrap",
  "serde",

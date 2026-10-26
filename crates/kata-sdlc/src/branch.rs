@@ -4,7 +4,7 @@ use crate::snapshot::status_entries;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-pub(crate) fn branch_exists(repo: &Path, name: &str) -> bool {
+pub fn branch_exists(repo: &Path, name: &str) -> bool {
     git::run(
         repo,
         &[
