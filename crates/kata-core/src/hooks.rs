@@ -1,28 +1,16 @@
 //! Where a repository's hooks live and how one hook is run, and whether an operation needs a
 //! program the Workbench cannot start.
 
-use crate::proc::hidden_command;
+use crate::proc::{run_limited, Limited, Outcome};
 use git2::{AttrCheckFlags, AttrValue, Repository};
-use std::collections::VecDeque;
-use std::ffi::OsStr;
-use std::io::{Read, Write};
+use std::ffi::{OsStr, OsString};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
-use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::sync::OnceLock;
+use std::time::Duration;
 
 /// How long one hook may run before it is killed.
 pub const HOOK_LIMIT: Duration = Duration::from_secs(5 * 60);
-
-const MAX_LINES: usize = 50;
-const MAX_BYTES: usize = 64 * 1024;
-/// How often the runner checks whether the hook has exited.
-const POLL: Duration = Duration::from_millis(20);
-/// How long to wait for the output readers after the hook ended, in case a surviving
-/// grandchild still holds a pipe open.
-const DRAIN: Duration = Duration::from_secs(2);
 
 /// A git hook the Workbench runs itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,210 +117,52 @@ fn execute(
     limit: Duration,
 ) -> Result<(), HookFailure> {
     let name = hook.name();
-    let mut command = if cfg!(windows) && starts_with_shebang(path) {
+    let (program, mut argv): (PathBuf, Vec<OsString>) = if cfg!(windows)
+        && starts_with_shebang(path)
+    {
         let Some(shell) = shell() else {
             return Err(failure(format!(
-                "This repository's {name} check needs Git for Windows' shell, which is not installed."
-            )));
-        };
-        let mut command = hidden_command(shell).map_err(|e| not_started(name, &e))?;
-        // The shell reads a Windows path with backslashes as escapes; forward slashes are safe.
-        command.arg(path.to_string_lossy().replace('\\', "/"));
-        command
-    } else {
-        hidden_command(path).map_err(|e| not_started(name, &e))?
-    };
-    let root = repo.workdir().unwrap_or_else(|| repo.path());
-    command
-        .args(args)
-        .current_dir(root)
-        .env("GIT_DIR", repo.path())
-        .env("GIT_EDITOR", ":")
-        .stdin(if stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    for (key, value) in env {
-        command.env(key, value);
-    }
-
-    let mut child = Running::start(command).map_err(|e| not_started(name, &e))?;
-
-    if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin().take()) {
-        let bytes = bytes.to_vec();
-        // A hook may exit without reading its input; a broken pipe is not an error.
-        thread::spawn(move || {
-            let _ = pipe.write_all(&bytes);
-        });
-    }
-    let tail = Arc::new(Mutex::new(Tail::default()));
-    let mut readers = Vec::new();
-    if let Some(stdout) = child.stdout().take() {
-        readers.push(spawn_reader(stdout, Arc::clone(&tail)));
-    }
-    if let Some(stderr) = child.stderr().take() {
-        readers.push(spawn_reader(stderr, Arc::clone(&tail)));
-    }
-
-    let deadline = Instant::now() + limit;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) if Instant::now() >= deadline => break None,
-            Ok(None) => thread::sleep(POLL),
-            Err(e) => {
-                child.kill_tree();
-                return Err(failure(format!(
-                    "This repository's {name} check could not be waited on: {e}"
+                    "This repository's {name} check needs Git for Windows' shell, which is not installed."
                 )));
-            }
-        }
+        };
+        // The shell reads a Windows path with backslashes as escapes; forward slashes are safe.
+        let script = path.to_string_lossy().replace('\\', "/");
+        (shell, vec![script.into()])
+    } else {
+        (path.to_path_buf(), Vec::new())
     };
-    if status.is_none() {
-        // Killing the job object / process group ends the whole tree and closes the pipes.
-        child.kill_tree();
-    }
-    drain(readers);
-    let tail = tail.lock().unwrap_or_else(|e| e.into_inner()).render();
-    match status {
-        None => Err(failure(format!(
+    argv.extend(args.iter().map(OsString::from));
+    let root = repo.workdir().unwrap_or_else(|| repo.path());
+    let mut vars: Vec<(&str, &OsStr)> = vec![
+        ("GIT_DIR", repo.path().as_os_str()),
+        ("GIT_EDITOR", OsStr::new(":")),
+    ];
+    vars.extend_from_slice(env);
+
+    let outcome = run_limited(&Limited {
+        program: &program,
+        args: argv,
+        cwd: root,
+        env: &vars,
+        stdin,
+        limit,
+        keep_stdout: false,
+    });
+    match outcome {
+        Outcome::NotStarted(e) => Err(not_started(name, &e)),
+        Outcome::WaitFailed(e) => Err(failure(format!(
+            "This repository's {name} check could not be waited on: {e}"
+        ))),
+        Outcome::TimedOut { .. } => Err(failure(format!(
             "This repository's {name} check did not finish in {}.",
             limit_text(limit)
         ))),
-        Some(status) if status.success() => Ok(()),
-        Some(_) if !tail.trim().is_empty() => Err(failure(tail)),
-        Some(status) => Err(failure(match status.code() {
+        Outcome::Exited { code: Some(0), .. } => Ok(()),
+        Outcome::Exited { tail, .. } if !tail.trim().is_empty() => Err(failure(tail)),
+        Outcome::Exited { code, .. } => Err(failure(match code {
             Some(code) => format!("This repository's {name} check failed with exit code {code}."),
             None => format!("This repository's {name} check was ended before it finished."),
         })),
-    }
-}
-
-/// A started hook and its process tree, so a timeout can end all of it.
-///
-/// On Windows the tree is a job object that the process is put into right after it starts. The
-/// job is made here and not by `process-wrap`: its job object starts the process suspended, and
-/// from a process with no console of its own (the Workbench is a GUI program) that start hangs.
-#[cfg(windows)]
-struct Running {
-    child: std::process::Child,
-    job: Option<windows_sys::Win32::Foundation::HANDLE>,
-}
-
-#[cfg(windows)]
-impl Running {
-    fn start(mut command: std::process::Command) -> std::io::Result<Self> {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        };
-        let child = command.spawn()?;
-        // SAFETY: plain Win32 calls on a handle created here and a live child handle; the limit
-        // structure is zero-initialized (all-zero is valid for it) and passed with its own size.
-        let job = unsafe {
-            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if job.is_null() {
-                None
-            } else {
-                let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-                limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                let set = SetInformationJobObject(
-                    job,
-                    JobObjectExtendedLimitInformation,
-                    std::ptr::addr_of!(limits).cast(),
-                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                );
-                let assigned = AssignProcessToJobObject(job, child.as_raw_handle().cast());
-                if set != 0 && assigned != 0 {
-                    Some(job)
-                } else {
-                    windows_sys::Win32::Foundation::CloseHandle(job);
-                    None
-                }
-            }
-        };
-        Ok(Self { child, job })
-    }
-
-    fn stdin(&mut self) -> &mut Option<std::process::ChildStdin> {
-        &mut self.child.stdin
-    }
-
-    fn stdout(&mut self) -> &mut Option<std::process::ChildStdout> {
-        &mut self.child.stdout
-    }
-
-    fn stderr(&mut self) -> &mut Option<std::process::ChildStderr> {
-        &mut self.child.stderr
-    }
-
-    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
-        self.child.try_wait()
-    }
-
-    /// Ends the hook and everything it started, and reaps it.
-    fn kill_tree(&mut self) {
-        if let Some(job) = self.job {
-            // SAFETY: `job` is the live handle created in `start`.
-            unsafe { windows_sys::Win32::System::JobObjects::TerminateJobObject(job, 1) };
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-#[cfg(windows)]
-impl Drop for Running {
-    fn drop(&mut self) {
-        if let Some(job) = self.job {
-            // SAFETY: `job` is the live handle created in `start`; closing it also ends any
-            // process still in the job (KILL_ON_JOB_CLOSE).
-            unsafe { windows_sys::Win32::Foundation::CloseHandle(job) };
-        }
-    }
-}
-
-/// A started hook and its process tree: its own process group, so a timeout can end all of it.
-#[cfg(unix)]
-struct Running {
-    child: Box<dyn process_wrap::std::ChildWrapper>,
-}
-
-#[cfg(unix)]
-impl Running {
-    fn start(command: std::process::Command) -> std::io::Result<Self> {
-        let mut wrapped = CommandWrap::from(command);
-        wrapped.wrap(ProcessGroup::leader());
-        Ok(Self {
-            child: wrapped.spawn()?,
-        })
-    }
-
-    fn stdin(&mut self) -> &mut Option<std::process::ChildStdin> {
-        self.child.stdin()
-    }
-
-    fn stdout(&mut self) -> &mut Option<std::process::ChildStdout> {
-        self.child.stdout()
-    }
-
-    fn stderr(&mut self) -> &mut Option<std::process::ChildStderr> {
-        self.child.stderr()
-    }
-
-    fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
-        self.child.try_wait()
-    }
-
-    /// Ends the hook and everything it started, and reaps it.
-    fn kill_tree(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
@@ -460,118 +290,6 @@ pub fn needs_external(repo: &Repository, paths: &[&str]) -> Option<String> {
             "{path} uses the {filter} filter (for example Git LFS), which Kata cannot run. Commit it yourself with git."
         ))
     })
-}
-
-/// Waits for the reader threads to reach end of stream, giving up after `DRAIN` overall.
-fn drain(readers: Vec<Receiver<()>>) {
-    let deadline = Instant::now() + DRAIN;
-    for done in readers {
-        let _ = done.recv_timeout(deadline.saturating_duration_since(Instant::now()));
-    }
-}
-
-/// Reads `source` to the end on its own thread, feeding whole lines into `tail`.
-fn spawn_reader(mut source: impl Read + Send + 'static, tail: Arc<Mutex<Tail>>) -> Receiver<()> {
-    let (finished, done) = mpsc::channel();
-    thread::spawn(move || {
-        let mut chunk = [0u8; 8192];
-        let mut line: Vec<u8> = Vec::new();
-        loop {
-            let read = match source.read(&mut chunk) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => n,
-            };
-            for &byte in &chunk[..read] {
-                if byte == b'\n' {
-                    push_line(&tail, &line);
-                    line.clear();
-                } else {
-                    line.push(byte);
-                    if line.len() > 2 * MAX_BYTES {
-                        line.drain(..line.len() - MAX_BYTES);
-                    }
-                }
-            }
-        }
-        if !line.is_empty() {
-            push_line(&tail, &line);
-        }
-        let _ = finished.send(());
-    });
-    done
-}
-
-fn push_line(tail: &Mutex<Tail>, raw: &[u8]) {
-    let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
-    let text = strip_ansi(&String::from_utf8_lossy(raw));
-    tail.lock().unwrap_or_else(|e| e.into_inner()).push(text);
-}
-
-/// The most recent whole lines of output, bounded by line count and total size. The same
-/// 50 lines / 64 KiB bound as the checks runner in `kata-sdlc`, which this crate cannot depend on.
-#[derive(Default)]
-struct Tail {
-    lines: VecDeque<String>,
-    /// Length of the lines joined with newlines.
-    bytes: usize,
-}
-
-impl Tail {
-    fn push(&mut self, mut line: String) {
-        if line.len() > MAX_BYTES {
-            let mut cut = line.len() - MAX_BYTES;
-            while !line.is_char_boundary(cut) {
-                cut += 1;
-            }
-            line.drain(..cut);
-        }
-        self.bytes += line.len() + usize::from(!self.lines.is_empty());
-        self.lines.push_back(line);
-        while self.lines.len() > MAX_LINES || (self.bytes > MAX_BYTES && self.lines.len() > 1) {
-            if let Some(oldest) = self.lines.pop_front() {
-                self.bytes -= oldest.len() + 1;
-            }
-        }
-    }
-
-    fn render(&self) -> String {
-        self.lines
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
-
-/// Removes CSI sequences (`ESC [ ... final byte`), OSC sequences (`ESC ] ... BEL` or `ESC \`),
-/// and other two-character escapes.
-fn strip_ansi(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars();
-    while let Some(c) = chars.next() {
-        if c != '\u{1b}' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('[') => {
-                for next in chars.by_ref() {
-                    if ('\u{40}'..='\u{7e}').contains(&next) {
-                        break;
-                    }
-                }
-            }
-            Some(']') => {
-                while let Some(next) = chars.next() {
-                    if next == '\u{7}' || (next == '\u{1b}' && chars.next() == Some('\\')) {
-                        break;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    out
 }
 
 #[cfg(test)]
