@@ -98,14 +98,15 @@ fn main() {
                 let hook = repo.path().join("hooks").join("pre-commit");
                 // Test code: the control child without the hidden flag.
                 #[allow(clippy::disallowed_methods)]
-                let status = std::process::Command::new(std::env::var_os("KATA_RELAY_SHELL").unwrap())
-                    .arg(hook)
-                    .current_dir(&repo_dir)
-                    .env("KATA_FAKE_MODE", "consoleprobe")
-                    .stdin(std::process::Stdio::null())
-                    .status()
-                    .unwrap();
-                assert!(status.success());
+                let status =
+                    std::process::Command::new(std::env::var_os("KATA_RELAY_SHELL").unwrap())
+                        .arg(hook.to_string_lossy().replace('\\', "/"))
+                        .current_dir(&repo_dir)
+                        .env("KATA_FAKE_MODE", "consoleprobe")
+                        .stdin(std::process::Stdio::null())
+                        .output()
+                        .unwrap();
+                assert!(status.status.success(), "{status:?}");
             }
         }
         "consoleprobe" | "consoleprobe-child" => {
