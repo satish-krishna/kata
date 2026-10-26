@@ -228,7 +228,7 @@ describe('declaring done', () => {
     expect(canConfirm(vm.doneReport()!)).toBe(true);
     await vm.confirmDone();
     expect(publish).toHaveBeenCalledTimes(1);
-    expect(publish.mock.calls[0][4].map((r) => r.repo)).toEqual(['claims-intent', ...REPOS]);
+    expect(publish.mock.calls[0][5].map((r) => r.repo)).toEqual(['claims-intent', ...REPOS]);
     expect(vm.doneReport()).toBeNull();
     expect(vm.prList()!.map((r) => r.outcome.kind)).toEqual(['opened', 'opened', 'opened']);
   });
@@ -259,8 +259,8 @@ describe('declaring done', () => {
   it('a failed pull request lists why, and Retry publishes again (R13.2)', async () => {
     const { vm, transport, steps } = await finished();
     const real = transport.sdlcPublish.bind(transport);
-    const publish = vi.spyOn(transport, 'sdlcPublish').mockImplementationOnce(async (f, m, s, c, repos) => {
-      const out = await real(f, m, s, c, repos);
+    const publish = vi.spyOn(transport, 'sdlcPublish').mockImplementationOnce(async (f, w, m, s, c, repos) => {
+      const out = await real(f, w, m, s, c, repos);
       return out.map((r) => (r.repo === 'customer-portal' ? { repo: r.repo, outcome: { kind: 'failed' as const, error: 'gh: HTTP 502' } } : r));
     });
     await vm.act('declare-done');

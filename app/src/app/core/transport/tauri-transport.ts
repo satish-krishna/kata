@@ -43,6 +43,7 @@ import type { RepoChecks } from '@bindings/RepoChecks';
 import type { PrResult } from '@bindings/PrResult';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
+import type { DoneView } from '@bindings/DoneView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
@@ -129,7 +130,9 @@ export class TauriTransport extends KataTransport {
   sdlcRunChecks(folder: string, masterRepo: string, system: string, repo: PublishRepo) { return this.ipc.invoke<RepoChecks>('sdlc_run_checks', { folder, masterRepo, system, repo }); }
   sdlcGhSignedIn(repos: PublishRepo[]) { return this.ipc.invoke<string>('sdlc_gh_signed_in', { repos }); }
   sdlcGhOrigins(repos: PublishRepo[]) { return this.ipc.invoke<void>('sdlc_gh_origins', { repos }); }
-  sdlcPublish(folder: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]) { return this.ipc.invoke<PrResult[]>('sdlc_publish', { folder, masterRepo, system, change, repos }); }
+  sdlcPublish(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]) { return this.ipc.invoke<PrResult[]>('sdlc_publish', { folder, workspaceId, masterRepo, system, change, repos }); }
+  sdlcDoneView(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean) { return this.ipc.invoke<DoneView>('sdlc_done_view', { folder, masterRepo, workspaceId, system, change, buildFinished }); }
+  sdlcRefreshPrStates(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean) { return this.ipc.invoke<DoneView>('sdlc_refresh_pr_states', { folder, masterRepo, workspaceId, system, change, buildFinished }); }
   sdlcPullRequests(repos: PublishRepo[], change: string) { return this.ipc.invoke<PrState[]>('sdlc_pull_requests', { repos, change }); }
   loadBuildLayout() { return this.ipc.invoke<unknown>('load_build_layout'); }
   saveBuildLayout(layout: Record<string, unknown>) { return this.ipc.invoke<void>('save_build_layout', { layout }); }

@@ -732,7 +732,7 @@ export class ChangePageViewModel {
       {
         label: 'Open pull requests',
         run: async () => {
-          results = await this.transport.sdlcPublish(w.folder, master, this.system(), this.changeName(), this.doneRepos);
+          results = await this.transport.sdlcPublish(w.folder, w.id, master, this.system(), this.changeName(), this.doneRepos);
           return plural(results.length, 'repository', 'repositories');
         },
       },

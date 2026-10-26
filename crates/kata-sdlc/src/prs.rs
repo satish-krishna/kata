@@ -1,7 +1,9 @@
 //! The pull requests a change was declared done with: what Kata saved, and whether the change
 //! shows as done and with which links. Kata keeps no credential here.
+use crate::git;
 use crate::github::{ApiError, GitHubHosts, PullState};
-use crate::publish::{PrState, PublishRepo};
+use crate::publish::{open_pull_requests, touched_repos, PrState, PublishRepo};
+use crate::store;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -79,6 +81,7 @@ pub enum LinksFrom {
     Saved,
     EarlierDeclaration,
     Opened,
+    #[serde(rename = "github")]
     GitHub,
 }
 
@@ -116,14 +119,92 @@ pub fn done_view(
     build_finished: bool,
     legacy_open: Option<&[PrState]>,
 ) -> DoneView {
-    let _ = (record, now, build_finished, legacy_open);
-    todo!("done_view")
+    let none = |offer_declare: bool, pr_check_failed: bool| DoneView {
+        done: false,
+        links: Vec::new(),
+        links_from: LinksFrom::None,
+        offer_declare,
+        pr_check_failed,
+    };
+    let Some(rec) = record.filter(|r| !r.repos.is_empty()) else {
+        // No record: today's rule, which asks GitHub only for a finished build.
+        if !build_finished {
+            return none(false, false);
+        }
+        return match legacy_open {
+            None => none(true, true),
+            Some(open) if !open.is_empty() && open.iter().all(|p| p.url.is_some()) => DoneView {
+                done: true,
+                links: open
+                    .iter()
+                    .filter_map(|p| {
+                        Some(PrLink {
+                            repo: p.repo.clone(),
+                            url: p.url.clone()?,
+                            state: PrStateKind::Open,
+                            seen_at: None,
+                        })
+                    })
+                    .collect(),
+                links_from: LinksFrom::GitHub,
+                offer_declare: false,
+                pr_check_failed: false,
+            },
+            Some(_) => none(true, false),
+        };
+    };
+    let links: Vec<PrLink> = rec
+        .repos
+        .iter()
+        .map(|e| PrLink {
+            repo: e.repo.clone(),
+            url: e.url.clone(),
+            state: e.state,
+            seen_at: Some(e.seen_at),
+        })
+        .collect();
+    let view = |done: bool, links_from: LinksFrom, offer_declare: bool| DoneView {
+        done,
+        links: links.clone(),
+        links_from,
+        offer_declare,
+        pr_check_failed: false,
+    };
+    if rec.declared_at.is_none() {
+        return view(false, LinksFrom::Opened, build_finished);
+    }
+    if !build_finished {
+        return view(false, LinksFrom::EarlierDeclaration, false);
+    }
+    // Every touched repository has an entry pushed at the branch's present head.
+    let same_head = now.touched.iter().all(|t| {
+        let head = now.heads.iter().find(|(r, _)| r == t).map(|(_, h)| h);
+        rec.repos
+            .iter()
+            .any(|e| &e.repo == t && Some(&e.pushed_head) == head)
+    });
+    if same_head {
+        view(true, LinksFrom::Saved, false)
+    } else {
+        view(false, LinksFrom::EarlierDeclaration, true)
+    }
 }
 
 /// The touched repositories of `repos` and where `change/<change>` points in each.
 pub fn branch_facts(repos: &[PublishRepo], change: &str) -> BranchFacts {
-    let _ = (repos, change);
-    todo!("branch_facts")
+    let tip = format!("refs/heads/change/{change}");
+    BranchFacts {
+        touched: repos.iter().map(|r| r.repo.clone()).collect(),
+        heads: repos
+            .iter()
+            .filter_map(|r| {
+                let head = git::Repo::open(Path::new(&r.path))
+                    .and_then(|repo| repo.resolve(&tip))
+                    .ok()?;
+                Some((r.repo.clone(), head))
+            })
+            .collect(),
+    }
 }
 
 /// The change's done view from what is saved and the repositories now. GitHub is asked only when
@@ -137,7 +218,100 @@ pub fn done_view_for(
     change: &str,
     build_finished: bool,
 ) -> Result<DoneView, String> {
-    let _ = (
+    let repos = touched_repos(folder, master_repo, system, change).map_err(|e| e.to_string())?;
+    let record = saved_record(workspace_id, system, change);
+    let asked = record.as_ref().is_some_and(|r| !r.repos.is_empty());
+    let legacy = if !asked && build_finished {
+        open_pull_requests(hosts, &repos, change).ok()
+    } else {
+        None
+    };
+    Ok(done_view(
+        record.as_ref(),
+        &branch_facts(&repos, change),
+        build_finished,
+        legacy.as_deref(),
+    ))
+}
+
+/// The state GitHub's answer gives, or none when the request failed or the answer is unknown.
+pub fn shown_state(answer: &Result<PullState, ApiError>) -> Option<PrStateKind> {
+    let state = answer.as_ref().ok()?;
+    match (state.state.as_str(), state.merged) {
+        ("open", _) => Some(PrStateKind::Open),
+        ("closed", true) => Some(PrStateKind::Merged),
+        ("closed", false) => Some(PrStateKind::Closed),
+        _ => None,
+    }
+}
+
+/// Fold an answer into an entry: a state seen updates it and `seen_at`; a failure changes nothing.
+pub fn apply_answer(entry: &mut PrEntry, answer: &Result<PullState, ApiError>, now: u64) {
+    if let Some(state) = shown_state(answer) {
+        entry.state = state;
+        entry.seen_at = now;
+    }
+}
+
+/// Seconds since the Unix epoch.
+pub fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// The number at the end of a pull request URL.
+pub fn pull_number(url: &str) -> u64 {
+    url.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0)
+}
+
+fn saved_record(workspace_id: &str, system: &str, change: &str) -> Option<PrRecord> {
+    store::load_pr_records()
+        .into_iter()
+        .find(|r| r.workspace_id == workspace_id && r.system == system && r.change == change)
+}
+
+/// Where a pull request URL lives: host, owner and repository.
+fn parse_pull_url(url: &str) -> Option<(String, String, String)> {
+    let rest = url.split_once("://")?.1;
+    let mut parts = rest.split('/');
+    let host = parts.next()?.to_ascii_lowercase();
+    let (owner, name) = (parts.next()?, parts.next()?);
+    (!host.is_empty() && !owner.is_empty() && !name.is_empty())
+        .then(|| (host, owner.to_string(), name.to_string()))
+}
+
+/// Ask GitHub for the state of every saved pull request, save what it said, and give the new
+/// done view. A pull request GitHub cannot be asked about keeps its saved state and `seen_at`.
+pub fn refresh_states(
+    hosts: &dyn GitHubHosts,
+    folder: &Path,
+    master_repo: &str,
+    workspace_id: &str,
+    system: &str,
+    change: &str,
+    build_finished: bool,
+) -> Result<DoneView, String> {
+    if let Some(mut rec) = saved_record(workspace_id, system, change) {
+        let now = now_secs();
+        for entry in &mut rec.repos {
+            let answer = match parse_pull_url(&entry.url) {
+                Some((host, owner, name)) => match hosts.github(&host) {
+                    Some(gh) => gh.pull_state(&owner, &name, entry.number),
+                    None => Err(ApiError::Unreachable(format!("not signed in to {host}"))),
+                },
+                None => Err(ApiError::Unreachable("unreadable pull request link".into())),
+            };
+            apply_answer(entry, &answer, now);
+        }
+        store::save_pr_record(&rec).map_err(|e| e.to_string())?;
+    }
+    done_view_for(
         hosts,
         folder,
         master_repo,
@@ -145,20 +319,7 @@ pub fn done_view_for(
         system,
         change,
         build_finished,
-    );
-    todo!("done_view_for")
-}
-
-/// The state GitHub's answer gives, or none when the request failed or the answer is unknown.
-pub fn shown_state(answer: &Result<PullState, ApiError>) -> Option<PrStateKind> {
-    let _ = answer;
-    todo!("shown_state")
-}
-
-/// Fold an answer into an entry: a state seen updates it and `seen_at`; a failure changes nothing.
-pub fn apply_answer(entry: &mut PrEntry, answer: &Result<PullState, ApiError>, now: u64) {
-    let _ = (entry, answer, now);
-    todo!("apply_answer")
+    )
 }
 
 #[cfg(test)]
@@ -400,7 +561,12 @@ mod tests {
         let merged = || answer("closed", true);
         let closed = || answer("closed", false);
         // The spec's five rows: every answer for (app, api, m), then the states shown.
-        let rows: Vec<(&str, [Result<PullState, ApiError>; 3], [PrStateKind; 3])> = vec![
+        type Row = (
+            &'static str,
+            [Result<PullState, ApiError>; 3],
+            [PrStateKind; 3],
+        );
+        let rows: Vec<Row> = vec![
             ("all open", [open(), open(), open()], [Open, Open, Open]),
             (
                 "one merged",
@@ -538,6 +704,16 @@ mod tests {
         assert!(view.done);
         assert_eq!(view.links_from, LinksFrom::Saved);
         assert_eq!(view.links.len(), 3);
+
+        // Asking GitHub for the states saves what it said.
+        let mut rec = saved();
+        rec.repos[0].state = PrStateKind::Merged;
+        rec.repos[0].seen_at = 1;
+        store::save_pr_record(&rec).unwrap();
+        let view = refresh_states(&gh, fx.dir.path(), "m", "w1", "s", CHANGE, true).unwrap();
+        assert!(view.done);
+        assert_eq!(saved().repos[0].state, PrStateKind::Open);
+        assert!(saved().repos[0].seen_at > 1);
 
         // The file holds no credential.
         let text = std::fs::read_to_string(

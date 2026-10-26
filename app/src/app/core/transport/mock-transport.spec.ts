@@ -131,12 +131,25 @@ describe('MockTransport', () => {
     expect(after?.stage).toBe('plan-ready');
   });
 
+  it('shows a change done once every touched repository has a pull request, and refreshing gives the same view', async () => {
+    const t = new MockTransport();
+    const args = [MOCK_WORKSPACE_FOLDER, 'claims-intent', 'w1', 'claims', MOCK_BUILD_CHANGE] as const;
+    const before = await t.sdlcDoneView(...args, true);
+    expect(before).toMatchObject({ done: false, links: [], offerDeclare: true, prCheckFailed: false });
+    const repos = await t.sdlcTouchedRepos(MOCK_WORKSPACE_FOLDER, 'claims-intent', 'claims', MOCK_BUILD_CHANGE);
+    await t.sdlcPublish(MOCK_WORKSPACE_FOLDER, 'w1', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, repos);
+    const after = await t.sdlcDoneView(...args, true);
+    expect(after.done).toBe(true);
+    expect(after.links.map((l) => l.repo)).toEqual(repos.map((r) => r.repo));
+    expect(await t.sdlcRefreshPrStates(...args, true)).toEqual(after);
+  });
+
   it('says what publishing is doing, repository by repository, then returns the results', async () => {
     const t = new MockTransport();
     const steps: PublishStep[] = [];
     await t.onPublishStep((step) => steps.push(step));
     const repos = await t.sdlcTouchedRepos(MOCK_WORKSPACE_FOLDER, 'claims-intent', 'claims', MOCK_BUILD_CHANGE);
-    const results = await t.sdlcPublish(MOCK_WORKSPACE_FOLDER, 'claims-intent', 'claims', MOCK_BUILD_CHANGE, repos);
+    const results = await t.sdlcPublish(MOCK_WORKSPACE_FOLDER, 'w1', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, repos);
     expect(results).toHaveLength(repos.length);
     expect(steps).toEqual(repos.flatMap((r) => [{ kind: 'pushing', repo: r.repo }, { kind: 'opening', repo: r.repo }]));
   });

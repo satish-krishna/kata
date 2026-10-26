@@ -321,7 +321,7 @@ describe('ChangePage after the pull requests', () => {
     return allBuilt(transport);
   };
   const openAll = async (transport: MockTransport) => {
-    await transport.sdlcPublish('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE));
+    await transport.sdlcPublish('f', 'w1', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE));
   };
 
   it('change page shows Done when every pull request is open (R14.1)', async () => {
@@ -725,7 +725,7 @@ describe('ChangePage build page', () => {
 
     it('see the pull requests that opened', async () => {
       const transport = finished();
-      await transport.sdlcPublish('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE));
+      await transport.sdlcPublish('f', 'w1', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE));
       const { container } = await mount(MOCK_BUILD_CHANGE, transport);
       alone(container);
       expect(container.querySelector('header nav[aria-label="Pull requests"]')).not.toBeNull();
@@ -747,7 +747,7 @@ describe('ChangePage way back', () => {
   };
   const doneTransport = async () => {
     const transport = allBuilt(staged('build-finished'));
-    await transport.sdlcPublish('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE));
+    await transport.sdlcPublish('f', 'w1', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE));
     return transport;
   };
 

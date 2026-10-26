@@ -40,6 +40,7 @@ import type { RepoChecks } from '@bindings/RepoChecks';
 import type { PrResult } from '@bindings/PrResult';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
+import type { DoneView } from '@bindings/DoneView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
@@ -129,7 +130,11 @@ export abstract class KataTransport {
   abstract sdlcRunChecks(folder: string, masterRepo: string, system: string, repo: PublishRepo): Promise<RepoChecks>;
   abstract sdlcGhSignedIn(repos: PublishRepo[]): Promise<string>;
   abstract sdlcGhOrigins(repos: PublishRepo[]): Promise<void>;
-  abstract sdlcPublish(folder: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]): Promise<PrResult[]>;
+  abstract sdlcPublish(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]): Promise<PrResult[]>;
+  /** Whether the change shows as done and with which pull request links, from what was saved. GitHub is asked only when nothing is saved and the build is finished. */
+  abstract sdlcDoneView(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView>;
+  /** Ask GitHub for the state of every saved pull request, save the answers, and return the new view. */
+  abstract sdlcRefreshPrStates(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView>;
   abstract sdlcPullRequests(repos: PublishRepo[], change: string): Promise<PrState[]>;
   /** The build page's arrangement, one per mode and shared by every change. `{}` until one is saved. */
   abstract loadBuildLayout(): Promise<unknown>;

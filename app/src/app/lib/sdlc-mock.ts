@@ -20,6 +20,7 @@ import type { Participant } from '@bindings/Participant';
 import type { PlanTask } from '@bindings/PlanTask';
 import type { PrResult } from '@bindings/PrResult';
 import type { PrState } from '@bindings/PrState';
+import type { DoneView } from '@bindings/DoneView';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { RepoChecks } from '@bindings/RepoChecks';
@@ -669,6 +670,14 @@ export class SdlcMock {
   publish(repos: PublishRepo[]): PrResult[] {
     repos.forEach((r) => this.published.add(r.repo));
     return repos.map((r) => ({ repo: r.repo, outcome: { kind: 'opened', url: prUrl(r.repo) } }));
+  }
+
+  /** The done view as the Workbench shows it with nothing saved: done while every touched repository has an open pull request. */
+  doneView(repos: PublishRepo[], changeName: string, buildFinished: boolean): DoneView {
+    const prs = this.pullRequests(repos, changeName);
+    const links = prs.flatMap((p) => (p.url === null ? [] : [{ repo: p.repo, url: p.url, state: 'open' as const, seenAt: null }]));
+    const done = buildFinished && prs.length > 0 && links.length === prs.length;
+    return { done, links: done ? links : [], linksFrom: done ? 'github' as const : 'none' as const, offerDeclare: buildFinished && !done, prCheckFailed: false };
   }
 
   pullRequests(repos: PublishRepo[], changeName: string): PrState[] {

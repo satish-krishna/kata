@@ -97,7 +97,9 @@ const rows: Row[] = [
   ['sdlcRunChecks', (t) => t.sdlcRunChecks('/w', 'm', 's', publishRepo), 'sdlc_run_checks', { folder: '/w', masterRepo: 'm', system: 's', repo: publishRepo }],
   ['sdlcGhSignedIn', (t) => t.sdlcGhSignedIn([publishRepo]), 'sdlc_gh_signed_in', { repos: [publishRepo] }],
   ['sdlcGhOrigins', (t) => t.sdlcGhOrigins([publishRepo]), 'sdlc_gh_origins', { repos: [publishRepo] }],
-  ['sdlcPublish', (t) => t.sdlcPublish('/w', 'm', 's', 'c', [publishRepo]), 'sdlc_publish', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', repos: [publishRepo] }],
+  ['sdlcPublish', (t) => t.sdlcPublish('/w', 'w1', 'm', 's', 'c', [publishRepo]), 'sdlc_publish', { folder: '/w', workspaceId: 'w1', masterRepo: 'm', system: 's', change: 'c', repos: [publishRepo] }],
+  ['sdlcDoneView', (t) => t.sdlcDoneView('/w', 'm', 'w1', 's', 'c', true), 'sdlc_done_view', { folder: '/w', masterRepo: 'm', workspaceId: 'w1', system: 's', change: 'c', buildFinished: true }],
+  ['sdlcRefreshPrStates', (t) => t.sdlcRefreshPrStates('/w', 'm', 'w1', 's', 'c', false), 'sdlc_refresh_pr_states', { folder: '/w', masterRepo: 'm', workspaceId: 'w1', system: 's', change: 'c', buildFinished: false }],
   ['sdlcPullRequests', (t) => t.sdlcPullRequests([publishRepo], 'c'), 'sdlc_pull_requests', { repos: [publishRepo], change: 'c' }],
 ];
 

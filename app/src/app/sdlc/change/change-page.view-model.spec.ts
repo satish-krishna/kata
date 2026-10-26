@@ -736,7 +736,7 @@ describe('ChangePageViewModel', () => {
     const finished = async () => {
       const transport = new MockTransport();
       withStage(transport, BUILD, 'build-finished');
-      await transport.sdlcPublish('f', 'claims-intent', 'claims', BUILD, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', BUILD));
+      await transport.sdlcPublish('f', 'w1', 'claims-intent', 'claims', BUILD, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', BUILD));
       return transport;
     };
 

@@ -644,6 +644,7 @@ fn sdlc_gh_origins(repos: Vec<sdlc::publish::PublishRepo>) -> Result<(), String>
 fn sdlc_publish(
     app: AppHandle,
     folder: String,
+    workspace_id: String,
     master_repo: String,
     system: String,
     change: String,
@@ -656,9 +657,53 @@ fn sdlc_publish(
         &system,
         &change,
         &repos,
+        &mut sdlc::publish::Recorder::stored(&workspace_id, &system, &change),
         &mut |step| {
             let _ = app.emit(PUBLISH_STEP_EVENT, step);
         },
+    )
+}
+
+/// Whether the change shows as done and with which links, from what is saved. GitHub is asked
+/// only when nothing is saved and the build is finished.
+#[tauri::command(async)]
+fn sdlc_done_view(
+    folder: String,
+    master_repo: String,
+    workspace_id: String,
+    system: String,
+    change: String,
+    build_finished: bool,
+) -> Result<sdlc::prs::DoneView, String> {
+    sdlc::prs::done_view_for(
+        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
+        Path::new(&folder),
+        &master_repo,
+        &workspace_id,
+        &system,
+        &change,
+        build_finished,
+    )
+}
+
+/// Ask GitHub for the state of every saved pull request, save the answers and return the new view.
+#[tauri::command(async)]
+fn sdlc_refresh_pr_states(
+    folder: String,
+    master_repo: String,
+    workspace_id: String,
+    system: String,
+    change: String,
+    build_finished: bool,
+) -> Result<sdlc::prs::DoneView, String> {
+    sdlc::prs::refresh_states(
+        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
+        Path::new(&folder),
+        &master_repo,
+        &workspace_id,
+        &system,
+        &change,
+        build_finished,
     )
 }
 
@@ -983,6 +1028,8 @@ pub fn run() {
             sdlc_gh_signed_in,
             sdlc_gh_origins,
             sdlc_publish,
+            sdlc_done_view,
+            sdlc_refresh_pr_states,
             sdlc_pull_requests,
             zoom,
             open_url

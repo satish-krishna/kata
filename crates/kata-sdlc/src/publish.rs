@@ -13,8 +13,9 @@ use crate::diff::{changed_files, Part};
 use crate::frontmatter;
 use crate::git;
 use crate::github::{parse_repo_path, ApiError, GitHub, GitHubHosts};
-use crate::prs::PrRecord;
+use crate::prs::{self, PrEntry, PrRecord, PrStateKind};
 use crate::start::BuildError;
+use crate::store;
 use crate::workspace::{self, system_repos};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -322,8 +323,31 @@ impl<'a> Recorder<'a> {
 
     /// The change's saved record, or a new one, saved to `pull-requests.json` as it changes.
     pub fn stored(workspace_id: &str, system: &str, change: &str) -> Recorder<'static> {
-        let _ = (workspace_id, system, change);
-        todo!("Recorder::stored")
+        let record = store::load_pr_records()
+            .into_iter()
+            .find(|r| r.workspace_id == workspace_id && r.system == system && r.change == change)
+            .unwrap_or_else(|| PrRecord::new(workspace_id, system, change));
+        Recorder::new(record, |r| {
+            // A record that cannot be saved is lost on restart; the pull requests are still
+            // on GitHub and a retry reuses them.
+            let _ = store::save_pr_record(r);
+        })
+    }
+
+    /// Keep one repository's pull request, and mark the change declared when every repository in
+    /// `touched` has one. Saves at once.
+    fn keep(&mut self, entry: PrEntry, touched: &[PublishRepo]) {
+        match self.record.repos.iter_mut().find(|e| e.repo == entry.repo) {
+            Some(old) => *old = entry,
+            None => self.record.repos.push(entry),
+        }
+        if touched
+            .iter()
+            .all(|t| self.record.repos.iter().any(|e| e.repo == t.repo))
+        {
+            self.record.declared_at = Some(prs::now_secs());
+        }
+        (self.save)(&self.record);
     }
 
     /// A record nothing saves, for tests that do not look at it.
@@ -349,7 +373,6 @@ pub fn publish(
     rec: &mut Recorder,
     on_step: &mut dyn FnMut(PublishStep),
 ) -> Vec<PrResult> {
-    let _ = &rec;
     let branch = format!("change/{change}");
     let title = repos
         .iter()
@@ -383,9 +406,25 @@ pub fn publish(
                 error: format!("invalid change name: {change}"),
             }
         };
-        if !is_master {
-            if let PrOutcome::Opened { url } | PrOutcome::Reused { url } = &outcome {
+        if let PrOutcome::Opened { url } | PrOutcome::Reused { url } = &outcome {
+            if !is_master {
                 product_urls.push((r.repo.clone(), url.clone()));
+            }
+            // The branch tip is what was just pushed.
+            if let Ok(head) = git::Repo::open(Path::new(&r.path))
+                .and_then(|repo| repo.resolve(&format!("refs/heads/{branch}")))
+            {
+                rec.keep(
+                    PrEntry {
+                        repo: r.repo.clone(),
+                        url: url.clone(),
+                        number: prs::pull_number(url),
+                        pushed_head: head,
+                        state: PrStateKind::Open,
+                        seen_at: prs::now_secs(),
+                    },
+                    repos,
+                );
             }
         }
         results.push(PrResult {
