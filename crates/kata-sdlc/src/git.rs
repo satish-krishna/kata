@@ -60,6 +60,13 @@ impl LogEntry {
     }
 }
 
+/// What `Repo::commit_only` made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitOutcome {
+    /// The id of the new commit.
+    pub sha: String,
+}
+
 /// A repository opened for reading.
 pub struct Repo {
     inner: git2::Repository,
@@ -90,6 +97,14 @@ impl Repo {
             .and_then(|h| h.peel_to_commit())
             .map(|c| c.id().to_string())
             .map_err(|e| GitError::from_git2("rev-parse HEAD", e))
+    }
+
+    /// Not implemented yet.
+    pub fn commit_only(&self, _rel: &str, _message: &str) -> Result<CommitOutcome, GitError> {
+        Err(GitError {
+            args: "commit --only".to_string(),
+            stderr: "not implemented".to_string(),
+        })
     }
 
     /// The blob at `HEAD:<rel>` byte for byte; `None` when `HEAD` holds no file there.

@@ -617,6 +617,131 @@ mod tests {
         assert_eq!(staged(&repo), "");
     }
 
+    fn hook(repo: &Path, name: &str, body: &str) {
+        let hook = repo.join(".git/hooks").join(name);
+        std::fs::write(&hook, format!("#!/bin/sh\n{body}\n")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    fn body_of_head(repo: &Path) -> String {
+        git::run(repo, &["log", "-1", "--format=%B"]).unwrap()
+    }
+
+    #[test]
+    fn commit_checks_decide_as_git_does() {
+        // (hook, script, whether the commit is made, the message the error must carry)
+        let rows: [(&str, &str, bool, &str); 5] = [
+            ("commit-msg", "grep -q Generated-By \"$1\"", true, ""),
+            (
+                "commit-msg",
+                "grep -q Signed-off-by \"$1\" || { echo 'missing Signed-off-by' >&2; exit 1; }",
+                false,
+                "missing Signed-off-by",
+            ),
+            ("pre-commit", "exit 0", true, ""),
+            (
+                "pre-commit",
+                "echo 'lint says no' >&2; exit 1",
+                false,
+                "lint says no",
+            ),
+            ("none", "", true, ""),
+        ];
+        for (name, script, made, wanted) in rows {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = seeded(tmp.path());
+            if name != "none" {
+                hook(&repo, name, script);
+            }
+            let edited = "---\nstatus: draft\n---\nedited body\n";
+            std::fs::write(repo.join(INTENT), edited).unwrap();
+            let before = head(&repo);
+            let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, true).unwrap();
+            if made {
+                assert_eq!(out, DecideOutcome::Committed, "{name} {script}");
+                assert_ne!(head(&repo), before, "{name} {script}");
+                assert_eq!(status_of(&repo).as_deref(), Some("accepted"));
+            } else {
+                match out {
+                    DecideOutcome::GitFailed { stderr } => {
+                        assert!(stderr.contains(wanted), "{name}: {stderr}")
+                    }
+                    other => panic!("{name}: expected GitFailed, got {other:?}"),
+                }
+                assert_eq!(head(&repo), before, "{name} {script}");
+                assert_eq!(
+                    std::fs::read_to_string(repo.join(INTENT)).unwrap(),
+                    edited,
+                    "{name}: the document keeps its edit"
+                );
+                assert_eq!(staged(&repo), "");
+            }
+        }
+    }
+
+    #[test]
+    fn a_hook_that_edits_the_message_is_honored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        hook(&repo, "commit-msg", "echo 'Reviewed-by: a check' >> \"$1\"");
+        let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, false).unwrap();
+        assert_eq!(out, DecideOutcome::Committed);
+        assert_eq!(
+            body_of_head(&repo).trim_end(),
+            "docs(claims): accept intent 2026-10-12-fnol\n\nGenerated-By: ai-sdlc\nReviewed-by: a check"
+        );
+    }
+
+    #[test]
+    fn post_commit_failure_keeps_the_commit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        hook(&repo, "post-commit", "echo 'after says no' >&2; exit 1");
+        let before = head(&repo);
+        let out = apply(&repo, "claims", CHANGE, Decision::AcceptIntent, false).unwrap();
+        assert_eq!(out, DecideOutcome::Committed);
+        assert_ne!(head(&repo), before);
+        assert!(crate::workspace::is_committed(&repo, INTENT));
+    }
+
+    #[test]
+    fn refuses_a_repository_that_signs_commits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        git::run(&repo, &["config", "commit.gpgsign", "true"]).unwrap();
+        let before = head(&repo);
+        match apply(&repo, "claims", CHANGE, Decision::AcceptIntent, false).unwrap() {
+            DecideOutcome::GitFailed { stderr } => {
+                assert!(stderr.contains("signs every commit"), "{stderr}")
+            }
+            other => panic!("expected GitFailed, got {other:?}"),
+        }
+        assert_eq!(head(&repo), before);
+        assert_eq!(status_of(&repo).as_deref(), Some("draft"));
+        assert_eq!(staged(&repo), "");
+    }
+
+    #[test]
+    fn refuses_a_filtered_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = seeded(tmp.path());
+        std::fs::write(repo.join(".gitattributes"), "*.md filter=lfs\n").unwrap();
+        let before = head(&repo);
+        match apply(&repo, "claims", CHANGE, Decision::AcceptIntent, true).unwrap() {
+            DecideOutcome::GitFailed { stderr } => {
+                assert!(stderr.contains("lfs filter"), "{stderr}")
+            }
+            other => panic!("expected GitFailed, got {other:?}"),
+        }
+        assert_eq!(head(&repo), before);
+        assert_eq!(status_of(&repo).as_deref(), Some("draft"));
+        assert_eq!(staged(&repo), "");
+    }
+
     #[test]
     fn refuses_detached_head() {
         let tmp = tempfile::tempdir().unwrap();

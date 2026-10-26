@@ -1619,3 +1619,276 @@ fn comparisons_touched_repos_and_offenders_equal_the_cli() {
     assert_eq!(got.len(), 3);
     assert!(got.iter().all(|o| log.lines().any(|h| h == o.hash)));
 }
+
+// ---- commits without git (T6) ----
+
+const DOC: &str = "intent/s/c/intent.md";
+
+/// Builds one twin of a commit fixture: the document `DOC` committed as a draft (unless the kind
+/// is a new or deleted document) and a working tree edit that accepts it.
+fn commit_fixture(kind: &str) -> Fx {
+    let fx = Fx::new();
+    let draft = "---\nstatus: draft\n---\nbody\n";
+    let accepted = "---\nstatus: accepted\n---\nbody\n";
+    fx.commit("README.md", "init\n");
+    match kind {
+        "plain" => {
+            fx.commit(DOC, draft);
+            fx.write(DOC, accepted);
+        }
+        "other staged" => {
+            fx.commit(DOC, draft);
+            fx.write(DOC, accepted);
+            fx.write("other.txt", "staged\n");
+            git(&fx.path, &["add", "other.txt"]);
+            fx.write("src/other.rs", "x\n");
+            git(&fx.path, &["add", "src/other.rs"]);
+        }
+        "doc staged differently" => {
+            fx.commit(DOC, draft);
+            fx.write(DOC, "---\nstatus: draft\n---\nstaged body\n");
+            git(&fx.path, &["add", "--", DOC]);
+            fx.write(DOC, accepted);
+        }
+        "crlf with autocrlf" => {
+            git(&fx.path, &["config", "core.autocrlf", "true"]);
+            fx.commit(DOC, "---\r\nstatus: draft\r\n---\r\nbody\r\n");
+            fx.write(DOC, "---\r\nstatus: accepted\r\n---\r\nbody\r\n");
+        }
+        "gitattributes eol lf" => {
+            fx.commit(".gitattributes", "*.md text eol=lf\n");
+            fx.commit(DOC, draft);
+            fx.write(DOC, "---\r\nstatus: accepted\r\n---\r\nbody\r\n");
+        }
+        "gitattributes binary" => {
+            fx.commit(".gitattributes", "*.md -text\n");
+            fx.commit(DOC, "---\r\nstatus: draft\r\n---\r\n");
+            fx.write(DOC, "---\r\nstatus: accepted\r\n---\r\n");
+        }
+        "new document" => {
+            fx.write(DOC, draft);
+        }
+        "new document already staged" => {
+            fx.write(DOC, draft);
+            git(&fx.path, &["add", "--", DOC]);
+            fx.write(DOC, accepted);
+        }
+        "deleted document" => {
+            fx.commit(DOC, draft);
+            std::fs::remove_file(fx.path.join(DOC)).unwrap();
+        }
+        "executable document" => {
+            fx.commit(DOC, draft);
+            git(&fx.path, &["update-index", "--chmod=+x", "--", DOC]);
+            git(&fx.path, &["commit", "-q", "-m", "mode"]);
+            fx.write(DOC, accepted);
+        }
+        other => panic!("unknown fixture {other}"),
+    }
+    fx
+}
+
+const COMMIT_KINDS: [&str; 10] = [
+    "plain",
+    "other staged",
+    "doc staged differently",
+    "crlf with autocrlf",
+    "gitattributes eol lf",
+    "gitattributes binary",
+    "new document",
+    "new document already staged",
+    "deleted document",
+    "executable document",
+];
+
+/// Every file under the work tree except `.git`, keyed by relative path.
+fn work_files(root: &Path) -> BTreeMap<String, Vec<u8>> {
+    fn walk(root: &Path, dir: &Path, out: &mut BTreeMap<String, Vec<u8>>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.file_name().is_some_and(|n| n == ".git") {
+                continue;
+            }
+            if path.is_dir() {
+                walk(root, &path, out);
+            } else {
+                let rel = path.strip_prefix(root).unwrap();
+                out.insert(
+                    rel.to_string_lossy().replace('\\', "/"),
+                    std::fs::read(&path).unwrap(),
+                );
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    walk(root, root, &mut out);
+    out
+}
+
+/// Everything a commit leaves behind that two repositories must agree on.
+fn commit_state(fx: &Fx) -> Vec<String> {
+    let dir = &fx.path;
+    vec![
+        git(dir, &["rev-parse", "HEAD^{tree}"]),
+        git(dir, &["rev-parse", "HEAD^"]),
+        git(dir, &["log", "-1", "--format=%an <%ae>|%cn <%ce>|%s"]),
+        text(&cli(dir, &["log", "-1", "--format=%B"]).unwrap()),
+        git(dir, &["ls-files", "-s"]),
+        git(dir, &["status", "--porcelain"]),
+        git(dir, &["reflog", "-1", "--format=%gs"]),
+        format!("{:?}", work_files(dir)),
+    ]
+}
+
+fn cli_commit_only(fx: &Fx, rel: &str, message: &str) -> Result<(), String> {
+    cli(&fx.path, &["add", "--", rel])?;
+    cli(
+        &fx.path,
+        &["commit", "-q", "-m", message, "--only", "--", rel],
+    )
+    .map(|_| ())
+}
+
+#[test]
+fn commits_equal_git_add_and_commit_only() {
+    let message = "docs(s): accept intent c\n\nGenerated-By: ai-sdlc";
+    for kind in COMMIT_KINDS {
+        let (oracle, ours) = (commit_fixture(kind), commit_fixture(kind));
+        cli_commit_only(&oracle, DOC, message).unwrap_or_else(|e| panic!("{kind}: {e}"));
+        let outcome = Repo::open(&ours.path)
+            .unwrap()
+            .commit_only(DOC, message)
+            .unwrap_or_else(|e| panic!("{kind}: {e}"));
+        assert_eq!(outcome.sha, ours.head(), "{kind}");
+        assert_eq!(commit_state(&oracle), commit_state(&ours), "{kind}");
+    }
+}
+
+#[test]
+fn commits_clean_the_message_as_git_does_for_m() {
+    let messages = [
+        "plain subject",
+        "subject with trailing spaces   \n\nbody line  \t\n",
+        "\n\n  leading blank lines\n",
+        "subject\n\n\n\n\nthree blank lines collapse\n\n\n\n",
+        "# a comment line is kept\n\nbody\n",
+        "subject\r\n\r\nwindows line ends\r\n",
+        "no newline at the end",
+        "  indented subject\n    indented body\n",
+        "subject\n\n\ttab indented\n\n\n",
+    ];
+    for message in messages {
+        let (oracle, ours) = (commit_fixture("plain"), commit_fixture("plain"));
+        cli_commit_only(&oracle, DOC, message).unwrap();
+        Repo::open(&ours.path)
+            .unwrap()
+            .commit_only(DOC, message)
+            .unwrap();
+        let body = |fx: &Fx| {
+            let raw = cli(&fx.path, &["cat-file", "commit", "HEAD"]).unwrap();
+            let raw = String::from_utf8_lossy(&raw).into_owned();
+            raw.split_once("\n\n").map(|(_, m)| m.to_string())
+        };
+        assert_eq!(body(&oracle), body(&ours), "{message:?}");
+    }
+}
+
+#[test]
+fn commits_with_nothing_to_say_are_refused_as_git_refuses() {
+    for message in ["", "   \n\n", "\n"] {
+        let (oracle, ours) = (commit_fixture("plain"), commit_fixture("plain"));
+        assert!(cli_commit_only(&oracle, DOC, message).is_err());
+        let before = ours.head();
+        let err = Repo::open(&ours.path)
+            .unwrap()
+            .commit_only(DOC, message)
+            .unwrap_err();
+        assert!(err.to_string().contains("empty commit message"), "{err}");
+        assert_eq!(ours.head(), before);
+        assert_eq!(git(&ours.path, &["diff", "--cached", "--name-only"]), "");
+    }
+}
+
+#[test]
+fn commits_hook_rows_decide_as_the_cli_does() {
+    // (hook, script, whether the commit is made, text the failure shows)
+    let rows = [
+        ("commit-msg", "grep -q accept \"$1\"", true, ""),
+        (
+            "commit-msg",
+            "echo 'rule says no' >&2; exit 1",
+            false,
+            "rule says no",
+        ),
+        ("pre-commit", "exit 0", true, ""),
+        (
+            "pre-commit",
+            "echo 'check says no' >&2; exit 1",
+            false,
+            "check says no",
+        ),
+        (
+            "prepare-commit-msg",
+            "echo 'prepared by hook' > \"$1\"",
+            true,
+            "",
+        ),
+        ("commit-msg", "echo 'Edited-by: hook' >> \"$1\"", true, ""),
+        ("post-commit", "exit 1", true, ""),
+        ("pre-push", "exit 1", true, ""),
+    ];
+    for (name, script, made, shown) in rows {
+        let (oracle, ours) = (
+            commit_fixture("other staged"),
+            commit_fixture("other staged"),
+        );
+        for fx in [&oracle, &ours] {
+            let hook = fx.path.join(".git/hooks").join(name);
+            std::fs::write(&hook, format!("#!/bin/sh\n{script}\n")).unwrap();
+        }
+        let expected = cli_commit_only(&oracle, DOC, "docs(s): accept intent c");
+        let got = Repo::open(&ours.path)
+            .unwrap()
+            .commit_only(DOC, "docs(s): accept intent c");
+        assert_eq!(expected.is_ok(), made, "{name} {script}: {expected:?}");
+        assert_eq!(got.is_ok(), made, "{name} {script}: {got:?}");
+        if let Err(message) = got {
+            assert!(message.to_string().contains(shown), "{name}: {message}");
+        }
+        assert_eq!(
+            commit_state(&oracle),
+            commit_state(&ours),
+            "{name} {script}"
+        );
+    }
+}
+
+#[test]
+fn commits_leave_the_index_and_document_alone_on_a_hook_failure() {
+    let fx = commit_fixture("doc staged differently");
+    std::fs::write(
+        fx.path.join(".git/hooks/pre-commit"),
+        "#!/bin/sh\necho refused by hook >&2\nexit 1\n",
+    )
+    .unwrap();
+    let state = |fx: &Fx| {
+        (
+            git(&fx.path, &["ls-files", "-s"]),
+            work_files(&fx.path),
+            fx.head(),
+        )
+    };
+    let before = state(&fx);
+    let err = Repo::open(&fx.path)
+        .unwrap()
+        .commit_only(DOC, "docs(s): accept")
+        .unwrap_err();
+    assert!(err.to_string().contains("refused by hook"), "{err}");
+    assert_eq!(before, state(&fx));
+    let leftovers: Vec<_> = std::fs::read_dir(fx.path.join(".git"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains("lock") || n.starts_with("next-index"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
