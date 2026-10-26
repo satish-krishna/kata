@@ -1,6 +1,7 @@
 //! Declaring a change done: is GitHub reachable and signed in, and one pull request per touched
-//! repository, the master last. Every GitHub call goes through the `Gh` trait; Kata keeps no
-//! credential, `gh` owns the engineer's sign-in.
+//! repository, the master last. Every GitHub call goes through the `GitHub` trait and the push
+//! through `git::Repo::push_branch`; Kata keeps no credential, it reads the engineer's sign-in
+//! fresh for each use.
 use crate::base::{
     base_branch, base_info, base_info_for, build_work_revs, commits_ahead_of_local_base, BaseInfo,
 };
@@ -313,7 +314,6 @@ pub fn publish(
     repos: &[PublishRepo],
     on_step: &mut dyn FnMut(PublishStep),
 ) -> Vec<PrResult> {
-    let _ = &on_step;
     let branch = format!("change/{change}");
     let title = repos
         .iter()
@@ -341,7 +341,7 @@ pub fn publish(
             )
         };
         let outcome = if is_change_name(change) {
-            open_one(hosts, r, is_master, &branch, &title, &body)
+            open_one(hosts, r, is_master, &branch, &title, &body, on_step)
         } else {
             PrOutcome::Failed {
                 error: format!("invalid change name: {change}"),
@@ -364,12 +364,12 @@ pub fn publish(
 fn github_target(
     hosts: &dyn GitHubHosts,
     r: &PublishRepo,
-) -> Result<(Box<dyn GitHub>, String, String), NotReady> {
+) -> Result<(Box<dyn GitHub>, String, String, String), NotReady> {
     let no_remote = || NotReady::NoRemote(r.repo.clone());
     let url = origin_url(Path::new(&r.path)).ok_or_else(no_remote)?;
     let (owner, name) = parse_repo_path(&url).ok_or_else(no_remote)?;
     let host = origin_host(&url).ok_or_else(no_remote)?;
-    Ok((client(hosts, &host)?, owner, name))
+    Ok((client(hosts, &host)?, owner, name, host))
 }
 
 fn open_one(
@@ -379,9 +379,10 @@ fn open_one(
     branch: &str,
     title: &str,
     body: &str,
+    on_step: &mut dyn FnMut(PublishStep),
 ) -> PrOutcome {
     let failed = |error: String| PrOutcome::Failed { error };
-    let (gh, owner, name) = match github_target(hosts, r) {
+    let (gh, owner, name, host) = match github_target(hosts, r) {
         Ok(t) => t,
         Err(e) => return failed(e.to_string()),
     };
@@ -389,9 +390,17 @@ fn open_one(
         Ok(pull) => pull,
         Err(e) => return failed(e.to_string()),
     };
-    if let Err(e) = push_with_git_cli(Path::new(&r.path), branch) {
+    on_step(PublishStep::Pushing {
+        repo: r.repo.clone(),
+    });
+    let pushed = git::Repo::open(Path::new(&r.path))
+        .and_then(|repo| repo.push_branch("origin", branch, hosts.credential(&host).as_ref()));
+    if let Err(e) = pushed {
         return failed(e.to_string());
     }
+    on_step(PublishStep::Opening {
+        repo: r.repo.clone(),
+    });
     // A reused pull request keeps its title and, except the master's, its body.
     match (existing, is_master) {
         (Some(pull), false) => PrOutcome::Reused { url: pull.url },
@@ -425,7 +434,7 @@ pub fn open_pull_requests(
     repos
         .iter()
         .map(|r| {
-            let (gh, owner, name) = github_target(hosts, r).map_err(|e| e.to_string())?;
+            let (gh, owner, name, _) = github_target(hosts, r).map_err(|e| e.to_string())?;
             let pull = gh
                 .open_pull_for_branch(&owner, &name, &branch)
                 .map_err(|e| e.to_string())?;
@@ -435,29 +444,6 @@ pub fn open_pull_requests(
             })
         })
         .collect()
-}
-
-/// `git -C <path> push -u origin <branch>`, the one repository write that still runs the git
-/// command line; the push without it replaces this.
-fn push_with_git_cli(path: &Path, branch: &str) -> Result<(), git::GitError> {
-    let args = ["push", "-u", "origin", branch];
-    let fail = |stderr: String| git::GitError {
-        args: args.join(" "),
-        stderr,
-    };
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .output()
-        .map_err(|e| fail(e.to_string()))?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(fail(
-            String::from_utf8_lossy(&out.stderr).trim().to_string(),
-        ))
-    }
 }
 
 #[cfg(test)]
@@ -1069,6 +1055,13 @@ mod tests {
             .iter()
             .all(|r| matches!(r.outcome, PrOutcome::Opened { .. })));
         assert!(fx.pushed("app"));
+        // As `-u` does: the branch follows its remote.
+        let config = |key: &str| git::run(&fx.path("app"), &["config", key]).unwrap();
+        assert_eq!(config("branch.change/2026-10-19-c.remote"), "origin");
+        assert_eq!(
+            config("branch.change/2026-10-19-c.merge"),
+            "refs/heads/change/2026-10-19-c"
+        );
         let git_dir = fx.path("app").join(".git");
         let args = std::fs::read_to_string(git_dir.join("pre-push.args")).unwrap();
         assert!(args.trim().starts_with("origin "), "{args}");
@@ -1095,6 +1088,49 @@ mod tests {
         assert!(!fx.pushed("app"));
         assert_eq!(gh.creates(), ["api", "m"]);
         assert!(fx.pushed("api") && fx.pushed("m"));
+    }
+
+    #[test]
+    fn a_rejected_push_fails_with_a_message_and_changes_nothing() {
+        let fx = fixture(true);
+        on_github(&fx);
+        let app = fx.path("app");
+        let repo = git::Repo::open(&app).unwrap();
+        repo.push_branch("origin", "change/2026-10-19-c", None)
+            .unwrap();
+        // Someone else moves the branch on the remote.
+        let other = fx.dir.path().join("other");
+        let bare = fx.origin("app");
+        git::run(
+            fx.dir.path(),
+            &[
+                "clone",
+                "-q",
+                bare.to_str().unwrap(),
+                other.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        git::run(&other, &["checkout", "-q", "change/2026-10-19-c"]).unwrap();
+        commit_file(
+            &other,
+            "theirs.txt",
+            "theirs
+",
+            "theirs",
+        );
+        git::run(&other, &["push", "-q", "origin", "change/2026-10-19-c"]).unwrap();
+        commit_file(
+            &app, "mine.txt", "mine
+", "mine",
+        );
+        let err = repo
+            .push_branch("origin", "change/2026-10-19-c", None)
+            .unwrap_err();
+        assert!(!err.stderr.is_empty());
+        let tip = git::run(&bare, &["rev-parse", "refs/heads/change/2026-10-19-c"]).unwrap();
+        let theirs = git::run(&other, &["rev-parse", "HEAD"]).unwrap();
+        assert_eq!(tip, theirs);
     }
 
     #[test]

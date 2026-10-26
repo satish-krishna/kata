@@ -138,7 +138,9 @@ export class TauriTransport extends KataTransport {
   pickDirectory() { return this.ipc.open({ directory: true, multiple: false }) as Promise<string | null>; }
   pickOpenSpec() { return this.ipc.open({ multiple: false, filters: SPEC_FILTERS }) as Promise<string | null>; }
   pickSaveSpec() { return this.ipc.save({ filters: SPEC_FILTERS }) as Promise<string | null>; }
-  onPublishStep(_cb: (step: PublishStep) => void): Promise<() => void> { return Promise.resolve(() => undefined); }
+  onPublishStep(cb: (step: PublishStep) => void) {
+    return this.ipc.listen<PublishStep>('sdlc://publish-step', (e) => cb(e.payload));
+  }
   onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
     return this.ipc.listen<{ runId: number; event: KataEvent }>('kata://event', (e) => cb(String(e.payload.runId), e.payload.event));
   }

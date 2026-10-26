@@ -67,6 +67,8 @@ interface ScriptedRun {
 export class MockTransport extends KataTransport {
   /** Every run store listening for events: a build starts several runs, each with its own listener. */
   private readonly listeners = new Set<(runId: string, ev: KataEvent) => void>();
+  /** Everything listening for what publishing is doing. */
+  private readonly publishListeners = new Set<(step: PublishStep) => void>();
   private readonly runs = new Map<string, ScriptedRun>();
   private nextRun = 0;
   /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
@@ -206,7 +208,14 @@ export class MockTransport extends KataTransport {
   sdlcRunChecks(_folder: string, _masterRepo: string, _system: string, repo: PublishRepo): Promise<RepoChecks> { return Promise.resolve(this.sdlc.runChecks(repo.repo)); }
   sdlcGhSignedIn(_repos: PublishRepo[]): Promise<string> { return Promise.resolve('demo-user'); }
   sdlcGhOrigins(_repos: PublishRepo[]): Promise<void> { return Promise.resolve(); }
-  sdlcPublish(_folder: string, _masterRepo: string, _system: string, _change: string, repos: PublishRepo[]): Promise<PrResult[]> { return Promise.resolve(this.sdlc.publish(repos)); }
+  sdlcPublish(_folder: string, _masterRepo: string, _system: string, _change: string, repos: PublishRepo[]): Promise<PrResult[]> {
+    for (const r of repos) {
+      for (const step of [{ kind: 'pushing', repo: r.repo }, { kind: 'opening', repo: r.repo }] as PublishStep[]) {
+        for (const listen of [...this.publishListeners]) listen(step);
+      }
+    }
+    return Promise.resolve(this.sdlc.publish(repos));
+  }
   /** `?demo=pr-fail` makes the read fail, so the browser checks can see the "Could not check pull requests" note; `?demo=one-pr` keeps only the
    *  first pull request, so they can see the single inline link. Browser only; this class never runs under Tauri. */
   sdlcPullRequests(repos: PublishRepo[], change: string): Promise<PrState[]> {
@@ -224,7 +233,10 @@ export class MockTransport extends KataTransport {
   pickOpenSpec(): Promise<string | null> { return Promise.resolve(null); }
   pickSaveSpec(): Promise<string | null> { return Promise.resolve(null); }
 
-  onPublishStep(_cb: (step: PublishStep) => void): Promise<() => void> { return Promise.resolve(() => undefined); }
+  async onPublishStep(cb: (step: PublishStep) => void): Promise<() => void> {
+    this.publishListeners.add(cb);
+    return () => { this.publishListeners.delete(cb); };
+  }
 
   async onRunEvent(cb: (runId: string, ev: KataEvent) => void): Promise<() => void> {
     this.listeners.add(cb);

@@ -724,26 +724,7 @@ impl Repo {
         let remote = self.inner.find_remote(name).ok()?;
         let url = remote.url().ok()?.to_string();
         let config = self.inner.config().ok()?;
-        let mut best: Option<(usize, String)> = None;
-        let mut entries = config.entries(Some(r"^url\..*\.insteadof$")).ok()?;
-        while let Some(Ok(entry)) = entries.next() {
-            let (Some(key), Some(prefix)) = (entry.name().ok(), entry.value().ok()) else {
-                continue;
-            };
-            let Some(base) = key
-                .strip_prefix("url.")
-                .and_then(|k| k.strip_suffix(".insteadof"))
-            else {
-                continue;
-            };
-            if !prefix.is_empty()
-                && url.starts_with(prefix)
-                && best.as_ref().is_none_or(|(len, _)| prefix.len() > *len)
-            {
-                best = Some((prefix.len(), format!("{base}{}", &url[prefix.len()..])));
-            }
-        }
-        Some(best.map_or(url, |(_, rewritten)| rewritten))
+        Some(rewritten(&config, &url, "insteadof").unwrap_or(url))
     }
 
     /// What `git hash-object -- <rel>` prints: the blob id of the working tree file after the
@@ -1440,19 +1421,71 @@ pub struct CredentialAsk {
 }
 
 /// The user name and token a push to `url` may carry: only an HTTPS URL whose host is the
-/// credential's own.
+/// credential's own. Any other address gets nothing.
 pub fn push_login<'a>(
     url: &str,
     credential: Option<&'a crate::github::Credential>,
 ) -> Option<(&'static str, &'a str)> {
-    let _ = (url, credential);
-    None
+    let credential = credential?;
+    let (scheme, _) = url.trim().split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
+    let host = crate::publish::origin_host(url)?;
+    (host == credential.host().to_ascii_lowercase()).then(|| ("x-access-token", credential.token()))
+}
+
+/// The URL `url` becomes under the `url.<base>.<kind>` rewrites, longest matching prefix first.
+fn rewritten(config: &git2::Config, url: &str, kind: &str) -> Option<String> {
+    let mut best: Option<(usize, String)> = None;
+    let mut entries = config.entries(Some(&format!(r"^url\..*\.{kind}$"))).ok()?;
+    while let Some(Ok(entry)) = entries.next() {
+        let (Ok(key), Ok(prefix)) = (entry.name(), entry.value()) else {
+            continue;
+        };
+        let Some(base) = key
+            .strip_prefix("url.")
+            .and_then(|k| k.strip_suffix(&format!(".{kind}")))
+        else {
+            continue;
+        };
+        if !prefix.is_empty()
+            && url.starts_with(prefix)
+            && best.as_ref().is_none_or(|(len, _)| prefix.len() > *len)
+        {
+            best = Some((prefix.len(), format!("{base}{}", &url[prefix.len()..])));
+        }
+    }
+    best.map(|(_, rewritten)| rewritten)
 }
 
 impl Repo {
+    /// The address a push to `name` goes to: its push URL (or URL) under the `pushInsteadOf`
+    /// rewrites, then the `insteadOf` ones when no push rewrite applies, as git reads it.
+    fn push_url(&self, name: &str) -> Option<String> {
+        let remote = self.inner.find_remote(name).ok()?;
+        let config = self.inner.config().ok()?;
+        let explicit = remote
+            .pushurl()
+            .ok()
+            .flatten()
+            .filter(|u| !u.is_empty())
+            .map(String::from);
+        let url = explicit
+            .clone()
+            .or_else(|| remote.url().ok().map(String::from))?;
+        let push = rewritten(&config, &url, "pushinsteadof");
+        Some(match (push, explicit) {
+            (Some(push), _) => push,
+            (None, Some(url)) => url,
+            (None, None) => rewritten(&config, &url, "insteadof").unwrap_or(url),
+        })
+    }
+
     /// What `git push -u <remote> <branch>` does, with the repository's `pre-push` hook: the
     /// hook runs first and a failure stops the push with its output. A token is sent only to the
-    /// host it belongs to.
+    /// host it belongs to; an SSH remote uses the engineer's SSH agent and never asks for a
+    /// passphrase.
     pub fn push_branch(
         &self,
         remote: &str,
@@ -1470,7 +1503,114 @@ impl Repo {
         credential: Option<&crate::github::Credential>,
         probe: &mut dyn FnMut(CredentialAsk),
     ) -> Result<(), GitError> {
-        let _ = (remote, branch, credential, probe);
+        use git2::{Cred, CredentialType, PushOptions, RemoteCallbacks};
+        use kata_core::hooks::{run_hook, Hook};
+        let action = format!("push -u {remote} {branch}");
+        let fail = |stderr: String| GitError {
+            args: action.clone(),
+            stderr,
+        };
+        let git_fail = |e: git2::Error| GitError::from_git2(&action, e);
+
+        let local_ref = format!("refs/heads/{branch}");
+        let local = self
+            .inner
+            .refname_to_id(&local_ref)
+            .map_err(|_| fail(format!("src refspec {branch} does not match any")))?;
+        let url = self
+            .push_url(remote)
+            .ok_or_else(|| fail(format!("'{remote}' does not appear to be a git repository")))?;
+        let tracking = format!("refs/remotes/{remote}/{branch}");
+        let known = self
+            .inner
+            .refname_to_id(&tracking)
+            .map_or_else(|_| "0".repeat(40), |id| id.to_string());
+
+        let line = format!("{local_ref} {local} {local_ref} {known}\n");
+        run_hook(
+            &self.inner,
+            Hook::PrePush,
+            &[remote, &url],
+            Some(line.as_bytes()),
+            &[],
+        )
+        .map_err(|f| fail(f.message))?;
+
+        let mut rejected: Option<String> = None;
+        let mut attempts = 0u32;
+        let ssh_host: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
+        {
+            let mut callbacks = RemoteCallbacks::new();
+            callbacks.credentials(|asked_url, user, allowed| {
+                attempts += 1;
+                if attempts > 2 {
+                    return Err(git2::Error::from_str("the sign-in was not accepted"));
+                }
+                if allowed.contains(CredentialType::USER_PASS_PLAINTEXT) {
+                    return match push_login(asked_url, credential) {
+                        Some((name, token)) => {
+                            probe(CredentialAsk {
+                                url: asked_url.to_string(),
+                                sent: true,
+                            });
+                            Cred::userpass_plaintext(name, token)
+                        }
+                        None => {
+                            probe(CredentialAsk {
+                                url: asked_url.to_string(),
+                                sent: false,
+                            });
+                            Err(git2::Error::from_str(
+                                "Kata has no GitHub sign-in for this host",
+                            ))
+                        }
+                    };
+                }
+                if allowed.contains(CredentialType::SSH_KEY) {
+                    *ssh_host.borrow_mut() = crate::publish::origin_host(asked_url);
+                    return Cred::ssh_key_from_agent(user.unwrap_or("git"));
+                }
+                Err(git2::Error::from_str("no way to sign in to this host"))
+            });
+            callbacks.push_update_reference(|refname, status| {
+                if let Some(message) = status {
+                    rejected = Some(format!("{refname}: {message}"));
+                }
+                Ok(())
+            });
+            let mut options = PushOptions::new();
+            options.remote_callbacks(callbacks);
+            // libgit2 does not read `pushInsteadOf` for a plain URL, so push to the address worked out above.
+            let mut remote_handle = self.inner.remote_anonymous(&url).map_err(git_fail)?;
+            let refspec = format!("{local_ref}:{local_ref}");
+            if let Err(e) = remote_handle.push(&[refspec.as_str()], Some(&mut options)) {
+                if e.class() == git2::ErrorClass::Ssh || ssh_host.borrow().is_some() {
+                    let host = ssh_host
+                        .borrow()
+                        .clone()
+                        .unwrap_or_else(|| "this host".into());
+                    return Err(fail(format!(
+                        "Kata could not reach an SSH agent for {host}. Use an HTTPS remote or start the OpenSSH agent."
+                    )));
+                }
+                return Err(git_fail(e));
+            }
+        }
+        if let Some(message) = rejected {
+            return Err(fail(message));
+        }
+
+        // As `-u` does: the remote-tracking branch moves with the push, and the branch follows it.
+        self.inner
+            .reference(&tracking, local, true, "update by push")
+            .map_err(git_fail)?;
+        let mut config = self.inner.config().map_err(git_fail)?;
+        config
+            .set_str(&format!("branch.{branch}.remote"), remote)
+            .map_err(git_fail)?;
+        config
+            .set_str(&format!("branch.{branch}.merge"), &local_ref)
+            .map_err(git_fail)?;
         Ok(())
     }
 }

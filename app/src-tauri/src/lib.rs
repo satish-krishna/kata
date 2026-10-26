@@ -16,6 +16,8 @@ use tauri_plugin_shell::ShellExt;
 
 /// Channel the engine's normalized KataEvents are relayed on to the webview.
 const RUN_EVENT: &str = "kata://event";
+/// What publishing is doing, one `PublishStep` per event.
+const PUBLISH_STEP_EVENT: &str = "sdlc://publish-step";
 
 /// Shared run control: every live run plus a monotonic id source. A stale
 /// reader task (a finished run still tearing down) removes only its own id, so
@@ -640,6 +642,7 @@ fn sdlc_gh_origins(repos: Vec<sdlc::publish::PublishRepo>) -> Result<(), String>
 
 #[tauri::command(async)]
 fn sdlc_publish(
+    app: AppHandle,
     folder: String,
     master_repo: String,
     system: String,
@@ -653,6 +656,9 @@ fn sdlc_publish(
         &system,
         &change,
         &repos,
+        &mut |step| {
+            let _ = app.emit(PUBLISH_STEP_EVENT, step);
+        },
     )
 }
 
