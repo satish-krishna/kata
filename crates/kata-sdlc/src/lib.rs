@@ -11,6 +11,7 @@ pub mod diff;
 pub mod format;
 pub mod frontmatter;
 pub mod git;
+pub mod github;
 pub mod participants;
 pub mod pins;
 pub mod plugin;

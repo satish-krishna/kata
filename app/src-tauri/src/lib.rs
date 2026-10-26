@@ -622,12 +622,20 @@ fn sdlc_run_checks(
 
 #[tauri::command(async)]
 fn sdlc_gh_signed_in(repos: Vec<sdlc::publish::PublishRepo>) -> Result<String, String> {
-    sdlc::publish::signed_in(&sdlc::publish::GhCli, &repos).map_err(|e| e.to_string())
+    sdlc::publish::signed_in(
+        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
+        &repos,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
 fn sdlc_gh_origins(repos: Vec<sdlc::publish::PublishRepo>) -> Result<(), String> {
-    sdlc::publish::origins(&sdlc::publish::GhCli, &repos).map_err(|e| e.to_string())
+    sdlc::publish::origins(
+        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
+        &repos,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -640,7 +648,7 @@ fn sdlc_publish(
 ) -> Vec<sdlc::publish::PrResult> {
     let _ = folder;
     sdlc::publish::publish(
-        &sdlc::publish::GhCli,
+        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
         &master_repo,
         &system,
         &change,
@@ -653,7 +661,11 @@ fn sdlc_pull_requests(
     repos: Vec<sdlc::publish::PublishRepo>,
     change: String,
 ) -> Result<Vec<sdlc::publish::PrState>, String> {
-    sdlc::publish::open_pull_requests(&sdlc::publish::GhCli, &repos, &change)
+    sdlc::publish::open_pull_requests(
+        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
+        &repos,
+        &change,
+    )
 }
 
 /// Relay a non-JSON stdout/stderr line as a warn-level log event.

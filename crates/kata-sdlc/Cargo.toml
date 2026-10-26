@@ -10,6 +10,7 @@ serde.workspace = true
 serde_json.workspace = true
 git2.workspace = true
 libgit2-sys = "0.18"
+ureq.workspace = true
 tempfile.workspace = true
 toml.workspace = true
 thiserror.workspace = true
@@ -24,3 +25,4 @@ serial_test = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", default-features = false, features = ["Win32_System_Threading"] }
+windows-sys = { workspace = true, features = ["Win32_Security_Credentials"] }
