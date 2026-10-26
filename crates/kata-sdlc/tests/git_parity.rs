@@ -2244,3 +2244,59 @@ fn branches_discard_puts_back_a_runs_stray_edits() {
         );
     }
 }
+
+/// Sets the modification time of `path` to `when`.
+fn set_mtime(path: &Path, when: std::time::SystemTime) {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(when)
+        .unwrap();
+}
+
+/// A file staged in the same second as the previous index write and then edited to the same size
+/// within that second is racily clean: its size and time alone cannot tell it from the staged
+/// file. Git settles that when it writes the index; the write of a commit must too, or the edit is
+/// never seen again once the new index is older than the file.
+#[test]
+fn commits_keep_a_same_size_edit_of_another_file_visible() {
+    let fx = Fx::new();
+    // The change time of a file is not what hides the edit here; its size and modification time
+    // are.
+    git(&fx.path, &["config", "core.trustctime", "false"]);
+    fx.commit("README.md", "init\n");
+    fx.commit(DOC, "---\nstatus: draft\n---\nbody\n");
+    fx.commit("other.txt", "aaaa\n");
+
+    // The previous index write and the staging of other.txt happened in the same past second.
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(30);
+    let since = past.duration_since(std::time::UNIX_EPOCH).unwrap();
+    let stamp = git2::IndexTime::new(since.as_secs() as i32, since.subsec_nanos());
+    {
+        let repo = git2::Repository::open(&fx.path).unwrap();
+        let mut index = repo.index().unwrap();
+        let mut entry = index.get_path(Path::new("other.txt"), 0).unwrap();
+        entry.mtime = stamp;
+        entry.ctime = stamp;
+        index.add(&entry).unwrap();
+        index.write().unwrap();
+    }
+    set_mtime(&fx.path.join(".git/index"), past);
+
+    // The run edits other.txt to the same size in that second, and the document is accepted.
+    fx.write("other.txt", "bbbb\n");
+    set_mtime(&fx.path.join("other.txt"), past);
+    fx.write(DOC, "---\nstatus: accepted\n---\nbody\n");
+
+    Repo::open(&fx.path)
+        .unwrap()
+        .commit_only(DOC, "docs(s): accept intent c")
+        .unwrap();
+
+    let status = git(&fx.path, &["status", "--porcelain"]);
+    assert!(
+        status.contains("other.txt"),
+        "the same-size edit of other.txt is lost, status:\n{status}"
+    );
+}
