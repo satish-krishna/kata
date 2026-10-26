@@ -391,6 +391,17 @@ pub fn status(
     system: &str,
     change: &str,
 ) -> Result<BuildStatus, GitError> {
+    status_with(plugin, master, system, change, format::Reads::Gate)
+}
+
+/// [`status`] for a caller that says whether the parse cache on disk may answer.
+pub fn status_with(
+    plugin: &Path,
+    master: &Path,
+    system: &str,
+    change: &str,
+    _reads: format::Reads,
+) -> Result<BuildStatus, GitError> {
     let committed = read_committed(plugin, master, system, change)?;
     let rows = rows_of(&committed.logs);
     let row_of = |id: &str| rows.iter().find(|r| r.task == id);
@@ -709,6 +720,38 @@ mod tests {
         out.push('\n');
         out.push_str(entries);
         out
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn status_gate_reads_ignore_a_planted_parse_entry_but_shown_reads_take_it() {
+        let home = tempfile::tempdir().unwrap();
+        let old = std::env::var_os("KATA_HOME");
+        std::env::set_var("KATA_HOME", home.path());
+        let tmp = tempfile::tempdir().unwrap();
+        let master = master_with(tmp.path(), &app_tasks());
+        let plugin = testutil::plugin_dir();
+        let ids = |st: &BuildStatus| st.tasks.iter().map(|t| t.id.clone()).collect::<Vec<_>>();
+
+        let real = status_with(plugin, &master, SYS, CHG, format::Reads::Shown).unwrap();
+        let staged = staging_dir(&master, SYS, CHG).join("plan.md");
+        let entry = format::cache_entry_path(&program(plugin), &staged).unwrap();
+        let mut planted: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+        planted["document"]["tasks"][0]["id"] = "T99".into();
+        std::fs::write(&entry, planted.to_string()).unwrap();
+
+        format::forget_memory_cache();
+        let gate = status(plugin, &master, SYS, CHG).unwrap();
+        format::forget_memory_cache();
+        let shown = status_with(plugin, &master, SYS, CHG, format::Reads::Shown).unwrap();
+        match old {
+            Some(v) => std::env::set_var("KATA_HOME", v),
+            None => std::env::remove_var("KATA_HOME"),
+        }
+
+        assert_eq!(ids(&gate), ids(&real));
+        assert_eq!(ids(&shown)[0], "T99");
     }
 
     #[test]

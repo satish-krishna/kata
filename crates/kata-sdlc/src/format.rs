@@ -264,10 +264,40 @@ fn cache() -> &'static Mutex<HashMap<CacheKey, ReadResult>> {
     CACHE.get_or_init(Default::default)
 }
 
+/// Which reads may use the parse cache on disk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reads {
+    /// A read that only shows the document: it may use the parse cache on disk.
+    Shown,
+    /// A read a gate decides on (build start, continue, rounds, declare done): memory only.
+    Gate,
+}
+
+/// Where the parse cache on disk keeps the entry for `file`, for tests.
+#[doc(hidden)]
+pub fn cache_entry_path(_program: &Path, _file: &Path) -> Option<PathBuf> {
+    None
+}
+
+/// Empties the in-memory cache, as a restart would, for tests.
+#[doc(hidden)]
+pub fn forget_memory_cache() {
+    cache().lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// Makes the next `Shown` read prune the folder again, as the first one in a new process does, for tests.
+#[doc(hidden)]
+pub fn prune_on_next_shown_read() {}
+
 /// Reads one document with `program` (the path of `check.mjs`). A document with the same name below
 /// its change folder and the same bytes is read once, wherever it sits: the next call returns the
 /// earlier answer without starting the program.
 pub fn read(program: &Path, file: &Path) -> Result<ReadResult, FormatError> {
+    read_with(program, file, Reads::Gate)
+}
+
+/// [`read`] for a caller that says whether the parse cache on disk may answer.
+pub fn read_with(program: &Path, file: &Path, _reads: Reads) -> Result<ReadResult, FormatError> {
     let canonical = file
         .canonicalize()
         .map_err(|e| FormatError::CouldNotRun(format!("{}: {e}", file.display())))?;
@@ -635,18 +665,35 @@ mod tests {
         let folders = folders_of(tmp.path(), 45);
         let got = fix_states(&crate::build::program(&plugin), &folders);
         let calls = std::fs::read_to_string(plugin.join("format").join("calls.log")).unwrap();
-        assert_eq!(
-            calls.lines().collect::<Vec<_>>(),
-            vec![
-                "fix-state 10",
-                "fix-state 10",
-                "fix-state 10",
-                "fix-state 10",
-                "fix-state 5"
-            ]
-        );
+        assert_eq!(calls.lines().collect::<Vec<_>>(), vec!["fix-state 45"]);
         assert_eq!(got.len(), 45);
         assert!(got.iter().all(|r| r.as_ref().is_ok_and(|s| s.row == 6)));
+    }
+
+    #[test]
+    fn fixes_split_only_when_the_command_line_would_pass_30000_characters_f1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = crate::testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
+        // 300 folders of about 150 characters each: the arguments alone come to about 45,000.
+        let long = tmp.path().join("x".repeat(100));
+        let folders: Vec<PathBuf> = (0..300)
+            .map(|i| {
+                let folder = long.join(format!("2026-10-01-fix-{i:03}"));
+                std::fs::create_dir_all(&folder).unwrap();
+                folder
+            })
+            .collect();
+        let program = crate::build::program(&plugin);
+        let got = fix_states(&program, &folders);
+        let calls = std::fs::read_to_string(plugin.join("format").join("calls.log")).unwrap();
+        let sizes: Vec<usize> = calls
+            .lines()
+            .map(|l| l.trim_start_matches("fix-state ").parse().unwrap())
+            .collect();
+        assert_eq!(got.len(), 300);
+        assert!(got.iter().all(Result::is_ok));
+        assert!(sizes.len() >= 2 && sizes.len() <= 3, "{sizes:?}");
+        assert_eq!(sizes.iter().sum::<usize>(), 300);
     }
 
     #[test]
