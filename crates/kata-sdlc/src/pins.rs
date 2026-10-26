@@ -7,8 +7,20 @@ use std::path::Path;
 /// unchanged at `HEAD`. A missing or empty pin, one that could be read as a git option, an
 /// unknown commit, and any git error are all false.
 pub fn holds(repo: &git::Repo, pin: Option<&str>, upstream_rel: &str) -> bool {
-    let _ = (repo, pin, upstream_rel);
-    false
+    let Some(pin) = pin.filter(|p| !p.is_empty() && !p.starts_with('-')) else {
+        return false;
+    };
+    if !repo.resolves_to_commit(pin) {
+        return false;
+    }
+    // Both absent holds, as `git diff --quiet` decides; a changed file mode does not.
+    match (
+        repo.entry_at(pin, upstream_rel),
+        repo.entry_at("HEAD", upstream_rel),
+    ) {
+        (Ok(then), Ok(now)) => then == now,
+        _ => false,
+    }
 }
 
 /// Whether the spec's `source_intent_commit` still matches `intent.md`.

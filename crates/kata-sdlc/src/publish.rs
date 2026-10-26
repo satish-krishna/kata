@@ -92,7 +92,7 @@ fn is_scp_like(raw: &str) -> bool {
 }
 
 fn origin_url(path: &Path) -> Option<String> {
-    git::run(path, &["remote", "get-url", "origin"])
+    git::legacy_cli::run(path, &["remote", "get-url", "origin"])
         .ok()
         .filter(|u| !u.is_empty())
 }
@@ -414,7 +414,7 @@ fn open_one(
         Ok(url) => url,
         Err(e) => return failed(e),
     };
-    if let Err(e) = git::run(path, &["push", "-u", "origin", branch]) {
+    if let Err(e) = git::legacy_cli::run(path, &["push", "-u", "origin", branch]) {
         return failed(e.to_string());
     }
     // A reused pull request keeps its title and, except the master's, its body.

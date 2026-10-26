@@ -244,10 +244,13 @@ fn track_of_change(master: &Path, system: &str, change: &str) -> Track {
         .ok()
         .and_then(|text| named(&text));
     let found = working.or_else(|| {
-        let spec = format!("HEAD:intent/{system}/{change}/intent.md");
-        git::run(master, &["show", &spec])
+        let rel = format!("intent/{system}/{change}/intent.md");
+        git::Repo::open(master)
+            .ok()?
+            .committed_bytes(&rel)
             .ok()
-            .and_then(|text| named(&text))
+            .flatten()
+            .and_then(|bytes| named(&git::trimmed_text(&bytes)))
     });
     if found == Some(true) {
         Track::Fix
@@ -520,19 +523,17 @@ pub use crate::branch::current_branch;
 
 /// `change/*` branches other than the current one and `change/pending-*`, without the `change/` prefix.
 pub fn other_change_branches(master: &Path) -> Vec<String> {
-    let current = current_branch(master);
-    git::run(
-        master,
-        &["branch", "--list", "change/*", "--format=%(refname:short)"],
-    )
-    .unwrap_or_default()
-    .lines()
-    .map(str::trim)
-    .filter(|b| !b.is_empty() && Some(*b) != current.as_deref())
-    .filter_map(|b| b.strip_prefix("change/"))
-    .filter(|b| !b.starts_with("pending-"))
-    .map(str::to_string)
-    .collect()
+    let Ok(repo) = git::Repo::open(master) else {
+        return Vec::new();
+    };
+    let current = repo.current_branch();
+    repo.local_branches()
+        .iter()
+        .filter(|b| Some(b.as_str()) != current.as_deref())
+        .filter_map(|b| b.strip_prefix("change/"))
+        .filter(|b| !b.starts_with("pending-"))
+        .map(str::to_string)
+        .collect()
 }
 
 /// Read `intent`, `spec`, or `plan` of a change from the working tree.

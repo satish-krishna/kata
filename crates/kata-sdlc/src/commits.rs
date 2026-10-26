@@ -63,7 +63,7 @@ pub fn offenders_to(
 ) -> Result<Vec<Offender>, GitError> {
     let mut args = vec!["log", "--format=%h%x1f%B%x1e"];
     args.extend(revs.iter().map(String::as_str));
-    let log = git::run(repo_dir, &args)?;
+    let log = git::legacy_cli::run(repo_dir, &args)?;
     Ok(log
         .split('\x1e')
         .filter_map(|rec| {

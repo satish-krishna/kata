@@ -63,7 +63,7 @@ pub(crate) struct Entry {
 /// Parse `git status --porcelain=v1 -uall -z`. A rename or copy yields its new path
 /// (code kept) and its origin (reported as a deletion).
 pub(crate) fn status_entries(dir: &Path) -> Result<Vec<Entry>, GitError> {
-    let out = git::run(dir, &["status", "--porcelain=v1", "-uall", "-z"])?;
+    let out = git::legacy_cli::run(dir, &["status", "--porcelain=v1", "-uall", "-z"])?;
     let mut tokens = out.split('\0').filter(|t| !t.is_empty());
     let mut entries = Vec::new();
     while let Some(tok) = tokens.next() {
@@ -111,12 +111,12 @@ fn is_build_log(path: &str, build: Option<&BuildScope>) -> bool {
 }
 
 fn current_head(master: &Path) -> Option<String> {
-    git::run(master, &["rev-parse", "--verify", "-q", "HEAD"]).ok()
+    git::legacy_cli::run(master, &["rev-parse", "--verify", "-q", "HEAD"]).ok()
 }
 
 pub(crate) fn hash_of(master: &Path, path: &str) -> Result<String, GitError> {
     if master.join(path).is_file() {
-        git::run(master, &["hash-object", "--", path])
+        git::legacy_cli::run(master, &["hash-object", "--", path])
     } else {
         Ok(String::new())
     }
@@ -148,12 +148,12 @@ pub fn leftovers(
         (_, None) => Vec::new(),
         (Some(head), Some(_)) => {
             let range = format!("{head}..HEAD");
-            git::run(master, &["log", "--format=%s", &range])?
+            git::legacy_cli::run(master, &["log", "--format=%s", &range])?
                 .lines()
                 .map(str::to_string)
                 .collect()
         }
-        (None, Some(_)) => git::run(master, &["log", "--format=%s"])?
+        (None, Some(_)) => git::legacy_cli::run(master, &["log", "--format=%s"])?
             .lines()
             .map(str::to_string)
             .collect(),
@@ -192,7 +192,7 @@ pub fn leftovers(
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| repo.to_string_lossy().into_owned());
-        match git::run(repo, &["status", "--porcelain"]) {
+        match git::legacy_cli::run(repo, &["status", "--porcelain"]) {
             Ok(out) if !out.is_empty() => product_repos_changed.push(name),
             Ok(_) => {}
             Err(_) => product_repos_unchecked.push(name),
@@ -234,9 +234,9 @@ pub fn discard(
             std::fs::remove_file(master.join(&e.path))?;
         } else if e.xy.starts_with('A') || e.xy.starts_with('R') || e.xy.starts_with('C') {
             // Not in HEAD, so restore has nothing to restore from.
-            git::run(master, &["rm", "-f", "-q", "--", &e.path])?;
+            git::legacy_cli::run(master, &["rm", "-f", "-q", "--", &e.path])?;
         } else {
-            git::run(
+            git::legacy_cli::run(
                 master,
                 &["restore", "--staged", "--worktree", "--", &e.path],
             )?;

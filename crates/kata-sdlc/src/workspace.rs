@@ -82,10 +82,7 @@ pub enum InstructionsState {
 
 /// "Committed": tracked by git and clean in the working tree.
 pub fn is_committed(repo: &Path, rel: &str) -> bool {
-    git::run(repo, &["ls-files", "--error-unmatch", "--", rel]).is_ok()
-        && git::run(repo, &["status", "--porcelain", "--", rel])
-            .map(|out| out.is_empty())
-            .unwrap_or(false)
+    git::Repo::open(repo).is_ok_and(|r| r.is_committed(rel))
 }
 
 /// Scan a workspace folder: immediate child git repos, the master, and the marker.
@@ -177,21 +174,9 @@ pub fn context_health(folder: &Path, master: &str, system: &str, repo: &str) -> 
     let Some(sha) = frontmatter::field(&text, "source_commit").filter(|s| !s.is_empty()) else {
         return ContextState::Stale { commits: 0 };
     };
-    let range = format!("{sha}..HEAD");
-    let counted = git::run(
-        &repo_dir,
-        &[
-            "rev-list",
-            "--count",
-            &range,
-            "--",
-            ".",
-            ":(exclude)intent",
-            ":(exclude).ai-sdlc.json",
-        ],
-    )
-    .ok()
-    .and_then(|out| out.trim().parse::<u32>().ok());
+    let counted = git::Repo::open(&repo_dir)
+        .and_then(|r| r.count_since(&sha, &["."], &["intent", ".ai-sdlc.json"]))
+        .ok();
     match counted {
         Some(0) => ContextState::Fresh,
         Some(n) => ContextState::Stale { commits: n },

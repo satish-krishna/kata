@@ -209,11 +209,10 @@ impl Committed {
 }
 
 /// The text of `path` as committed at `HEAD`; `None` when `HEAD` does not hold it.
-fn committed_file(master: &Path, path: &str) -> Result<Option<String>, GitError> {
-    if git::run(master, &["ls-tree", "--name-only", "HEAD", "--", path])?.is_empty() {
-        return Ok(None);
-    }
-    git::run(master, &["show", &format!("HEAD:{path}")]).map(Some)
+fn committed_file(repo: &git::Repo, path: &str) -> Result<Option<String>, GitError> {
+    Ok(repo
+        .committed_bytes(path)?
+        .map(|bytes| git::trimmed_text(&bytes)))
 }
 
 /// Writes `text` to `file`, or removes `file` when there is none.
@@ -250,29 +249,32 @@ fn read_committed(
     change: &str,
 ) -> Result<Committed, GitError> {
     let dir = format!("{}/build/", change_dir(system, change));
-    let plan = git::run(
-        master,
-        &[
-            "show",
-            &format!("HEAD:{}/plan.md", change_dir(system, change)),
-        ],
-    )?;
-    let listing = git::run(
-        master,
-        &["ls-tree", "-z", "--name-only", "HEAD", "--", &dir],
-    )?;
+    let repo = git::Repo::open(master)?;
+    let plan_rel = format!("{}/plan.md", change_dir(system, change));
+    let plan = committed_file(&repo, &plan_rel)?.ok_or_else(|| GitError {
+        args: format!("show HEAD:{plan_rel}"),
+        stderr: "path does not exist in HEAD".into(),
+    })?;
+    let listing = repo.tree_names(&dir)?;
     let mut paths: Vec<&str> = listing
-        .split('\0')
+        .iter()
+        .map(String::as_str)
         .filter(|p| p.ends_with(".md") && log_repo(p) != "review")
         .collect();
     paths.sort_unstable();
     let texts: Vec<(&str, String)> = paths
         .into_iter()
-        .map(|p| Ok((p, git::run(master, &["show", &format!("HEAD:{p}")])?)))
+        .map(|p| {
+            let text = committed_file(&repo, p)?.ok_or_else(|| GitError {
+                args: format!("show HEAD:{p}"),
+                stderr: "path does not exist in HEAD".into(),
+            })?;
+            Ok((p, text))
+        })
         .collect::<Result<_, GitError>>()?;
 
-    let spec = committed_file(master, &format!("{}/spec.md", change_dir(system, change)))?;
-    let marker = committed_file(master, crate::workspace::MARKER)?;
+    let spec = committed_file(&repo, &format!("{}/spec.md", change_dir(system, change)))?;
+    let marker = committed_file(&repo, crate::workspace::MARKER)?;
 
     let stage = staging_dir(master, system, change);
     let lock = reading(&stage);
@@ -585,17 +587,15 @@ pub fn unsaved_rows(
         .filter(|n| n.ends_with(".md") && log_repo(n) != "review")
         .collect();
     names.sort_unstable();
+    let git_repo = git::Repo::open(master)?;
     let program = program(plugin);
     let mut out = Vec::new();
     for name in names {
         let rel = format!("{rel_dir}/{name}");
         let repo = log_repo(&rel);
         let working = read_log(&program, &master.join(&rel), &rel)?;
-        let listed = git::run(master, &["ls-tree", "--name-only", "HEAD", "--", &rel])?;
-        let added = if listed.is_empty() {
-            &working.entries[..]
-        } else {
-            let text = git::run(master, &["show", &format!("HEAD:{rel}")])?;
+        let committed_text = committed_file(&git_repo, &rel)?;
+        let added = if let Some(text) = &committed_text {
             let committed = {
                 let stage = staging_dir(master, system, change);
                 let lock = reading(&stage);
@@ -604,7 +604,7 @@ pub fn unsaved_rows(
                     .join("unsaved")
                     .join("build")
                     .join(format!("{repo}.md"));
-                put(&file, &text)?;
+                put(&file, text)?;
                 read_log(&program, &file, &rel)?
             };
             let n = committed.entries.len();
@@ -621,8 +621,10 @@ pub fn unsaved_rows(
                 });
             }
             &working.entries[n..]
+        } else {
+            &working.entries[..]
         };
-        if !listed.is_empty() && added.is_empty() {
+        if committed_text.is_some() && added.is_empty() {
             continue;
         }
         out.push(UnsavedRows {

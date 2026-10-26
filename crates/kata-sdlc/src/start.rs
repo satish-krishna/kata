@@ -282,7 +282,7 @@ pub fn prepare(
     }
 
     if current_branch(&master).as_deref() != Some(branch.as_str()) {
-        git::run(&master, &["checkout", "-q", &branch, "--"])?;
+        git::legacy_cli::run(&master, &["checkout", "-q", &branch, "--"])?;
     }
     let mut repos = Vec::new();
     for c in classified {
@@ -294,10 +294,10 @@ pub fn prepare(
                 } else {
                     format!("origin/{}", c.base)
                 };
-                git::run(&c.path, &["checkout", "-q", "-b", &branch, &from])?;
+                git::legacy_cli::run(&c.path, &["checkout", "-q", "-b", &branch, &from])?;
             }
             Action::Checkout => {
-                git::run(&c.path, &["checkout", "-q", &branch, "--"])?;
+                git::legacy_cli::run(&c.path, &["checkout", "-q", &branch, "--"])?;
             }
             Action::Continue => {}
         }
@@ -336,8 +336,8 @@ pub fn settle(start: &BuildStart) -> Result<Vec<String>, BuildError> {
         {
             continue;
         }
-        git::run(path, &["checkout", "-q", &r.base, "--"])?;
-        git::run(path, &["branch", "-D", &r.branch])?;
+        git::legacy_cli::run(path, &["checkout", "-q", &r.base, "--"])?;
+        git::legacy_cli::run(path, &["branch", "-D", &r.branch])?;
         gone.push(r.repo.clone());
     }
     Ok(gone)
@@ -363,7 +363,7 @@ pub fn heads(
         if !branch_exists(&path, &format!("change/{change}")) {
             continue;
         }
-        let head = git::run(
+        let head = git::legacy_cli::run(
             &path,
             &["rev-parse", &format!("refs/heads/change/{change}")],
         )?;

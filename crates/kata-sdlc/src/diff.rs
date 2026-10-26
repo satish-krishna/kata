@@ -83,7 +83,7 @@ pub struct CommitFiles {
 pub fn commit_files(repo: &Path) -> Result<Vec<CommitFiles>, DiffError> {
     let left = left_side(repo, Part::Committed)?;
     let range = format!("{left}..HEAD");
-    let out = git::run_bytes(
+    let out = git::legacy_cli::run_bytes(
         repo,
         &[
             "--no-optional-locks",
@@ -317,7 +317,7 @@ fn lossy(bytes: &[u8]) -> String {
 }
 
 fn show(repo: &Path, object: &str) -> Result<String, GitError> {
-    Ok(lossy(&git::run_bytes(repo, &["show", object])?))
+    Ok(lossy(&git::legacy_cli::run_bytes(repo, &["show", object])?))
 }
 
 /// The revision the part's diff starts from.
@@ -362,8 +362,10 @@ fn diff_output(
     ];
     args.extend_from_slice(revs);
     match index {
-        Some(index) => git::run_env(repo, &args, &[("GIT_INDEX_FILE", index.as_os_str())]),
-        None => git::run_bytes(repo, &args),
+        Some(index) => {
+            git::legacy_cli::run_env(repo, &args, &[("GIT_INDEX_FILE", index.as_os_str())])
+        }
+        None => git::legacy_cli::run_bytes(repo, &args),
     }
 }
 
@@ -374,7 +376,7 @@ fn with_throwaway_index<T>(
     repo: &Path,
     body: impl FnOnce(&Path, &BTreeSet<String>) -> Result<T, DiffError>,
 ) -> Result<T, DiffError> {
-    let real = git::run(repo, &["rev-parse", "--git-path", "index"])?;
+    let real = git::legacy_cli::run(repo, &["rev-parse", "--git-path", "index"])?;
     let real = repo.join(real);
     let temp = tempfile::Builder::new()
         .prefix("kata-index-")
@@ -393,7 +395,7 @@ fn prepare_and_run<T>(
     temp: &Path,
     body: impl FnOnce(&Path, &BTreeSet<String>) -> Result<T, DiffError>,
 ) -> Result<T, DiffError> {
-    let listing = git::run_bytes(
+    let listing = git::legacy_cli::run_bytes(
         repo,
         &[
             "--no-optional-locks",
@@ -417,7 +419,7 @@ fn prepare_and_run<T>(
         }
         let mut args = vec!["--literal-pathspecs", "add", "-N", "--"];
         args.append(chunk);
-        git::run_env(repo, &args, &env).map(|_| ())
+        git::legacy_cli::run_env(repo, &args, &env).map(|_| ())
     };
     for path in &untracked {
         if size + path.len() > 16_000 {

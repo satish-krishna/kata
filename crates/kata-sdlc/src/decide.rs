@@ -136,7 +136,7 @@ fn normalized(text: &str) -> String {
 /// Does the working-tree file differ from `HEAD` in anything other than the status line?
 /// A file `HEAD` does not have counts as edited.
 fn has_other_edits(master: &Path, rel: &str, current: &str) -> bool {
-    match git::run(master, &["show", &format!("HEAD:{rel}")]) {
+    match git::legacy_cli::run(master, &["show", &format!("HEAD:{rel}")]) {
         Ok(head) => normalized(&head).trim_end() != normalized(current).trim_end(),
         Err(_) => true,
     }
@@ -174,13 +174,14 @@ pub fn apply(
     let restore: Vec<u8> = if has_other_edits(master, &rel, &text) {
         text.clone().into_bytes()
     } else {
-        git::run_bytes(master, &["show", &format!("HEAD:{rel}")])
+        git::legacy_cli::run_bytes(master, &["show", &format!("HEAD:{rel}")])
             .unwrap_or_else(|_| text.clone().into_bytes())
     };
 
     // Whether the index already has the file. Committing with `--only` leaves the real index alone when the
     // commit fails, so only a file the index has never heard of needs adding first (and removing again).
-    let tracked = git::run(master, &["ls-files", "--", &rel]).is_ok_and(|out| !out.is_empty());
+    let tracked =
+        git::legacy_cli::run(master, &["ls-files", "--", &rel]).is_ok_and(|out| !out.is_empty());
 
     let edited = edit_status(&text, Some(status));
     let wrote = edited != text;
@@ -192,9 +193,9 @@ pub fn apply(
     let committed = if tracked {
         Ok(String::new())
     } else {
-        git::run(master, &["add", "--", &rel])
+        git::legacy_cli::run(master, &["add", "--", &rel])
     }
-    .and_then(|_| git::run(master, &["commit", "-m", &msg, "--only", "--", &rel]));
+    .and_then(|_| git::legacy_cli::run(master, &["commit", "-m", &msg, "--only", "--", &rel]));
     Ok(match committed {
         Ok(_) => DecideOutcome::Committed,
         Err(e) => {
@@ -202,7 +203,8 @@ pub fn apply(
             // say so when one of them cannot be taken back.
             let mut stderr = e.stderr;
             if !tracked {
-                if let Err(e) = git::run(master, &["rm", "-q", "--cached", "--", &rel]) {
+                if let Err(e) = git::legacy_cli::run(master, &["rm", "-q", "--cached", "--", &rel])
+                {
                     stderr.push_str(&format!(
                         "
 Could not unstage {rel}: {}",

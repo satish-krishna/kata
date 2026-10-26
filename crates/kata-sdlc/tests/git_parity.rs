@@ -255,6 +255,81 @@ fn merges() -> Fx {
     fx
 }
 
+/// A history shaped by a fixed pseudo-random sequence: commits on several tips, and merges built by
+/// hand from the merged tree, so that merges that change nothing for a path filter occur on either
+/// side of every cut-off.
+fn random_history(seed: u64) -> Fx {
+    let fx = Fx::new();
+    fx.commit("README.md", "init\n");
+    let first = fx.head();
+    let mut tips = vec![first.clone(), first];
+    let mut state = seed;
+    let mut next = move || {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (state >> 33) as usize
+    };
+    let files = [
+        "src/a.rs",
+        "src/b.rs",
+        "intent/s/c/x.md",
+        "README.md",
+        ".ai-sdlc.json",
+    ];
+    for step in 0..40 {
+        let pick = next() % tips.len();
+        if next() % 3 != 0 || tips.len() < 2 {
+            git(&fx.path, &["checkout", "-q", "--detach", &tips[pick]]);
+            let file = files[next() % files.len()];
+            let tip = fx.commit(file, &format!("step {step}\n"));
+            if next() % 4 == 0 {
+                tips.push(tip);
+            } else {
+                tips[pick] = tip;
+            }
+        } else {
+            let mut other = next() % tips.len();
+            if other == pick {
+                other = (other + 1) % tips.len();
+            }
+            let Ok(tree) = cli(
+                &fx.path,
+                &["merge-tree", "--write-tree", &tips[pick], &tips[other]],
+            ) else {
+                continue;
+            };
+            let tree = String::from_utf8_lossy(&tree).trim().to_string();
+            let merge = git(
+                &fx.path,
+                &[
+                    "commit-tree",
+                    &tree,
+                    "-p",
+                    &tips[pick],
+                    "-p",
+                    &tips[other],
+                    "-m",
+                    "merge",
+                ],
+            );
+            tips[pick] = merge;
+            tips.remove(other);
+        }
+    }
+    // Join what is left so that every commit is reachable from HEAD.
+    let mut joined = tips[0].clone();
+    for tip in &tips[1..] {
+        let tree = git(&fx.path, &["rev-parse", &format!("{joined}^{{tree}}")]);
+        joined = git(
+            &fx.path,
+            &["commit-tree", &tree, "-p", &joined, "-p", tip, "-m", "join"],
+        );
+    }
+    git(&fx.path, &["checkout", "-q", "-B", "main", &joined]);
+    fx
+}
+
 fn all_fixtures() -> Vec<(&'static str, Fx)> {
     vec![
         ("plain", plain()),
@@ -265,6 +340,9 @@ fn all_fixtures() -> Vec<(&'static str, Fx)> {
         ("branches", branches()),
         ("master branch", master_branch()),
         ("merges", merges()),
+        ("random history 1", random_history(1)),
+        ("random history 2", random_history(7)),
+        ("random history 3", random_history(42)),
         ("unborn", unborn()),
     ]
 }

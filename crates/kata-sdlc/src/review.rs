@@ -40,10 +40,10 @@ pub fn record(
     change: &str,
 ) -> Result<Option<ReviewRecord>, GitError> {
     let rel = format!("{}/build/review.md", change_dir(system, change));
-    if git::run(master, &["ls-tree", "--name-only", "HEAD", "--", &rel])?.is_empty() {
+    let Some(bytes) = git::Repo::open(master)?.committed_bytes(&rel)? else {
         return Ok(None);
-    }
-    let text = git::run(master, &["show", &format!("HEAD:{rel}")])?;
+    };
+    let text = git::trimmed_text(&bytes);
     let read = {
         let stage = staging_dir(master, system, change);
         let lock = reading(&stage);
@@ -101,23 +101,9 @@ fn committed_outside(
     change: &str,
     since: &str,
 ) -> Result<Vec<String>, GitError> {
-    let range = format!("{since}..HEAD");
-    let committed = git::run_bytes(
-        master,
-        &[
-            "log",
-            "-z",
-            "--name-only",
-            "--no-renames",
-            "--pretty=format:",
-            &range,
-        ],
-    )?;
+    let committed = git::Repo::open(master)?.files_changed_since(since)?;
     let allowed = format!("{}/build/review.md", change_dir(system, change));
-    let files: BTreeSet<String> = nul_split(&committed)
-        .filter(|f| *f != allowed)
-        .map(str::to_string)
-        .collect();
+    let files: BTreeSet<String> = committed.into_iter().filter(|f| *f != allowed).collect();
     Ok(files.into_iter().collect())
 }
 
@@ -146,21 +132,14 @@ pub fn verify_run(
         .into_iter()
         .collect();
     let allowed = format!("{}/build/review.md", change_dir(system, change));
-    let status =
-        git::run_bytes(master, &["status", "--porcelain", "-z", "-uall"]).map_err(could_not)?;
+    let status = git::Repo::open(master)
+        .and_then(|repo| repo.status(""))
+        .map_err(could_not)?;
     let mut dirty = BTreeSet::new();
-    let mut entries = nul_split(&status);
-    while let Some(entry) = entries.next() {
-        let Some((code, path)) = entry.split_at_checked(3) else {
-            continue;
-        };
-        dirty.insert(path.to_string());
-        // A rename or copy lists its source as a separate entry.
-        if code.starts_with(['R', 'C']) {
-            if let Some(from) = entries.next() {
-                dirty.insert(from.to_string());
-            }
-        }
+    for entry in status {
+        // A rename lists its source as well.
+        dirty.extend(entry.from);
+        dirty.insert(entry.path);
     }
     // A file dirty before the run and clean now is in `before` only: the run reverted it, which is its doing.
     dirty.extend(before.keys().cloned());
@@ -176,13 +155,6 @@ pub fn verify_run(
     } else {
         Err(touched.into_iter().collect())
     }
-}
-
-fn nul_split(bytes: &[u8]) -> impl Iterator<Item = &str> {
-    bytes
-        .split(|b| *b == 0)
-        .filter(|s| !s.is_empty())
-        .map(|s| std::str::from_utf8(s).unwrap_or("(unreadable file name)"))
 }
 
 #[cfg(test)]

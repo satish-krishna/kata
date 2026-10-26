@@ -29,7 +29,7 @@ pub enum BaseError {
 /// `origin/HEAD`'s target, else `main`, else `master`, each accepted when it exists locally or
 /// on `origin`.
 pub fn base_branch(repo: &Path) -> Option<String> {
-    let from_origin = git::run(
+    let from_origin = git::legacy_cli::run(
         repo,
         &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
     )
@@ -42,7 +42,7 @@ pub fn base_branch(repo: &Path) -> Option<String> {
 }
 
 fn ref_exists(repo: &Path, name: &str) -> bool {
-    git::run(repo, &["rev-parse", "--verify", "--quiet", name]).is_ok()
+    git::legacy_cli::run(repo, &["rev-parse", "--verify", "--quiet", name]).is_ok()
 }
 
 fn branch_exists(repo: &Path, b: &str) -> bool {
@@ -71,7 +71,7 @@ pub fn base_info_for(repo: &Path, rev: &str) -> Result<BaseInfo, BaseError> {
     } else {
         base.clone()
     };
-    let merge_base = git::run(repo, &["merge-base", rev, &reference])?;
+    let merge_base = git::legacy_cli::run(repo, &["merge-base", rev, &reference])?;
     Ok(BaseInfo {
         base,
         reference,
@@ -82,7 +82,7 @@ pub fn base_info_for(repo: &Path, rev: &str) -> Result<BaseInfo, BaseError> {
 /// Commits HEAD has past the merge base: what a pull request would carry.
 pub fn commits_ahead(repo: &Path) -> Result<u32, BaseError> {
     let info = base_info(repo)?;
-    let count = git::run(
+    let count = git::legacy_cli::run(
         repo,
         &["rev-list", "--count", &format!("{}..HEAD", info.merge_base)],
     )?;
@@ -99,7 +99,7 @@ pub fn commits_ahead_of_local_base(repo: &Path, rev: &str) -> Result<u32, BaseEr
     let mut args = vec!["rev-list".to_string(), "--count".to_string()];
     args.extend(revs);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let count = git::run(repo, &args)?;
+    let count = git::legacy_cli::run(repo, &args)?;
     Ok(count.trim().parse().unwrap_or(0))
 }
 
