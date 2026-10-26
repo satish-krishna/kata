@@ -142,10 +142,11 @@ pub enum KataEvent {
         id: String,
         answers: Vec<Vec<String>>,
     },
-    /// A tool call is paused on the operator's decision. Emitted only under
-    /// `[permissions] mode = "prompt"` with `unmatched = "ask"`, and only for a
-    /// call no rule resolved — the exact analogue of `ask.requested`. The run
-    /// stays paused until the matching `permission.decided`.
+    /// A tool call is paused on the operator's decision. Emitted under
+    /// `[permissions] mode = "prompt"` with `unmatched = "ask"` for a call no
+    /// rule resolved, and under `mode = "auto"` for a call a `permissions.ask`
+    /// rule matched — the exact analogue of `ask.requested`. The run stays
+    /// paused until the matching `permission.decided`.
     #[serde(rename = "permission.requested")]
     PermissionRequested {
         id: String,
@@ -155,10 +156,12 @@ pub enum KataEvent {
         /// path, the query — whatever the decision actually turns on.
         input_summary: String,
     },
-    /// How a permission check was resolved. Emitted for **every** check under
-    /// `[permissions] mode = "prompt"`, including the ones a rule or the
-    /// unmatched policy settled without pausing, so the stream is a complete
-    /// audit trail of what the agent was allowed to do.
+    /// How a permission check was resolved. Emitted only for a check that
+    /// reaches Kata's own tool: the `unmatched` policy, the operator, or one of
+    /// Kata's own bridge tools. A call claude's settings (or its built-in
+    /// read-only auto-approve) resolve is never seen by Kata and gets no event,
+    /// so the stream is not a complete audit trail of the agent's permission
+    /// checks.
     #[serde(rename = "permission.decided")]
     PermissionDecided {
         /// Correlates with a preceding `permission.requested`, when there was one.

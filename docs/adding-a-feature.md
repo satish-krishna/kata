@@ -1,6 +1,6 @@
 # Recipe: add a feature
 
-Most changes to Kata are one of four shapes, and each has a regeneration chain that CI gates. Getting the chain wrong is the common failure: the code compiles, the tests pass locally, and CI fails on artifact drift.
+Most changes to Kata are one of five shapes, and each has a regeneration chain that CI gates. Getting the chain wrong is the common failure: the code compiles, the tests pass locally, and CI fails on artifact drift.
 
 Read [`CONTRACTS.md`](../CONTRACTS.md) first if your change touches `RunSpec`, `KataEvent`, an exit code, or the CLI's stdin/stdout behavior. Those are frozen surfaces and the drift gates do **not** catch a semantic break.
 
@@ -14,6 +14,7 @@ Work test-first. TDD is the workflow, not a suggestion.
 | An event type or an event field | [B](#b-add-an-event-type-or-field) |
 | A CLI subcommand or flag | [C](#c-add-a-cli-subcommand-or-flag) |
 | A Workbench pane or control | [D](#d-add-a-workbench-pane-or-control) |
+| A `kata-sdlc` type the frontend reads | [E](#e-change-an-ai-sdlc-backend-type) |
 
 ---
 
@@ -51,7 +52,7 @@ Work test-first. TDD is the workflow, not a suggestion.
    cd app && npm run gen:events
    ```
 
-   Order matters. The schema is generated from Rust; `app/src/bindings/kata-events.ts` is generated from the **schema**, not from Rust. `app/src/lib/events.ts` re-exports it and adds hand-written render helpers — put display logic there, never in the generated file.
+   Order matters. The schema is generated from Rust; `app/src/bindings/kata-events.ts` is generated from the **schema**, not from Rust. `app/src/app/lib/events.ts` re-exports it and adds hand-written render helpers — put display logic there, never in the generated file.
 
 4. **Leave `protocolVersion` at 1** for an additive change. Bump it only on a breaking one.
 
@@ -69,21 +70,34 @@ Work test-first. TDD is the workflow, not a suggestion.
 
 ## D. Add a Workbench pane or control
 
-1. **Backend command** in `app/src-tauri/src/lib.rs`. Follow the existing split: link `kata-core` in-process for cheap pure operations (`catalog`, `load_spec`, `save_spec`, `validate_spec`), and **spawn the `kata` sidecar for anything that runs a kata**. Do not add a second execution path — that is the one rule the Workbench exists to respect.
+1. **Backend command** in `app/src-tauri/src/lib.rs`. Follow the existing split: link `kata-core` (and `kata-sdlc`, for the AI-SDLC mode) in-process for cheap pure operations (`catalog`, `load_spec`, `save_spec`, `validate_spec`), and **spawn the `kata` sidecar for anything that runs a kata**. Do not add a second execution path — that is the one rule the Workbench exists to respect.
 
 2. **Register it** in the `tauri::generate_handler![...]` list.
 
 3. **Frontend**, in this order, using the generated types from `app/src/bindings/` (never hand-write a type that already exists there):
    - Add the call to the abstract `KataTransport` (`app/src/app/core/transport/kata-transport.ts`) and implement it in both `TauriTransport` (the `invoke`) and `MockTransport` (a fixture), each with a spec.
    - Build the presentational component in `app/src/app/ui/` with inputs and outputs only (no injection), plus a spec beside it.
-   - Wire it into the routed screen's ViewModel (`workbench.view-model.ts` or `library.view-model.ts`), which owns the state and calls the transport; the screen's template reads it off `vm`.
-   - Run `npm run lint`, `npm test -- --watch=false`, `npm run check:boot`, `npm run check:interaction`.
+   - Wire it into the routed screen's ViewModel, which owns the state and calls the transport; the screen's template reads it off `vm`. The ViewModels are `workbench/workbench.view-model.ts`, `library/library.view-model.ts` and, for the AI-SDLC mode, `sdlc/home/sdlc-home.view-model.ts`, `sdlc/mode/mode-screen.view-model.ts`, `sdlc/change/change-page.view-model.ts`, `sdlc/changes/changes-view.view-model.ts` and `sdlc/build/build-page.view-model.ts`.
+   - A new route or a new state of an existing screen goes into the `--route` lists of `check:boot` and `check:interaction` in `app/package.json` (an agent session started in `app/` cannot edit that file; hand the owner the line). The mock's change fixtures in `app/src/app/lib/sdlc-mock.ts` supply the states to list.
+   - Run `npm run lint`, `npm test -- --watch=false`, `npm run build`, `npm run check:boot`, `npm run check:interaction` and `npm run check:wiring` (it fails on a ViewModel or component member no template uses). When you touch the build page, the Changes view or the light track, also run `npm run check:build`, `npm run check:changes` or `npm run check:start-flow`; `npm run check:responsive` covers widths.
 
 4. **Respect the design system.** Rules are in `app/CLAUDE.md` and are non-negotiable: style only against CSS custom properties, never a literal hex. The pixel references in `design/prototype/` are HTML and React — recreate in Angular, never copy. Controls are Helm primitives skinned in `app/libs/ui/`; see `app/CLAUDE.md`.
 
 5. **Keep the transport seam.** Every backend call goes through `KataTransport`, so the browser dev path keeps working against `MockTransport` fixtures. Never call `invoke` from a component or ViewModel.
 
 6. **Parity baseline.** `npm run check:parity` diffs the build against the frozen screenshots in `app/parity/baseline/`. A pane that intentionally changes pixels fails it; re-blessing the baseline needs the owner's sign-off, so do not regenerate it on your own.
+
+## E. Change an AI-SDLC backend type
+
+1. **Change the type** in `crates/kata-sdlc/src/` (for example `changes.rs`, `store.rs`, `plugin.rs`). A type the frontend reads carries the `ts-rs` derive behind the `ts` feature and exports to `app/src/bindings/`.
+
+2. **Regenerate the bindings** and never hand-edit them:
+
+   ```console
+   cargo test -p kata-sdlc --features ts export_bindings
+   ```
+
+3. **Follow the type into the frontend**, then do shape D for any new command, mock fixture or route. `kata-sdlc` never touches the run-spec or the event protocol, so `CONTRACTS.md` does not apply. A change to how a plan, spec, build log or review is read belongs in the ai-sdlc plugin's format program: refresh the vendored copy with `node scripts/vendor-ai-sdlc-format.mjs` and run `cargo test -p kata-sdlc --test format_conformance` (needs Node.js 20).
 
 ---
 

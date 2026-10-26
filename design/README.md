@@ -2,15 +2,15 @@
 
 ## Overview
 
-This package restyles the **Kata Workbench** — the Tauri v2 desktop GUI for composing and running a single headless coding-agent run-spec. The functional shell already exists in **`kata` PR #2** (SvelteKit, under `app/`), but it ships with **no visual language**: default browser form controls, `system-ui`, a light background, `#ccc` borders, and blue/purple tags. The Observe pane is a `"Observe pane — M6"` placeholder.
+This package restyles the **Kata Workbench** — the Tauri v2 desktop GUI for composing and running a single headless coding-agent run-spec. The functional shell already exists in **`kata` PR #2** (then a SvelteKit app; the frontend is now Angular 22, see `app/CLAUDE.md`), but it ships with **no visual language**: default browser form controls, `system-ui`, a light background, `#ccc` borders, and blue/purple tags. The Observe pane is a `"Observe pane — M6"` placeholder.
 
-This handoff replaces that baseline with a complete **dark "sumi-ink" design system**: warm near-black surfaces, washi-paper text, a single Hanada-azure accent, an "andon" status palette, and the IBM Plex type system. It covers two screens — the two-pane **Workbench** (Layout A) and the **Library** run-history rail (Layout C).
+This handoff replaces that baseline with a complete **dark "sumi-ink" design system**: warm near-black surfaces, washi-paper text, a single Hanada-azure accent, an "andon" status palette, and the IBM Plex type system. It covers the two-pane **Workbench** (Layout A), the **Library** run-history rail (Layout C) and the human-in-the-loop pause; the AI-SDLC mode that came later is indexed in section 4.
 
 ## About the design files
 
-The files in `prototype/` are **design references created in HTML/React** — they show the intended look and behavior. **They are not the code to ship.** The Kata app is **SvelteKit + Tauri**; the task is to **recreate these designs in the existing Svelte app** (`app/src/`), reusing its components, stores, and the Rust/Tauri command bridge. Do not introduce React.
+The files in `prototype/` are **design references created in HTML/React** — they show the intended look and behavior. **They are not the code to ship.** The Kata app is **Angular 22 + Tauri**; the task is to **recreate these designs as Angular standalone components with ViewModels under `app/src/app/`** (the rules are in `app/CLAUDE.md`), reusing its stores and the Rust/Tauri command bridge. Do not introduce React.
 
-The good news: almost everything you need is **plain CSS on custom properties**. Drop the `design_system/` CSS into the Svelte app and apply the class names; the React in the prototype is only there to make it interactive for review.
+The good news: almost everything you need is **plain CSS on custom properties**. The `design_system/` CSS is already vendored into the Angular app; apply the class names; the React in the prototype is only there to make it interactive for review.
 
 ## Fidelity
 
@@ -20,7 +20,7 @@ The good news: almost everything you need is **plain CSS on custom properties**.
 
 ## Design tokens
 
-Ship these first. Copy `design_system/` into `app/src/` (e.g. `app/src/styles/`) and import `styles.css` once from the root layout (`app/src/routes/+layout.svelte` → `<script> import '../styles/styles.css'</script>`, or link it in `app/src/app.html`). `styles.css` is an `@import` manifest that pulls in fonts, all tokens, the base reset, and the component class layer. Everything below is already defined there — this list is for reference.
+The tokens are already vendored at `app/src/styles/kata/` and imported once by `app/src/styles.css`; there is nothing to copy. `styles.css` is an `@import` manifest that pulls in fonts, all tokens, the base reset, and the component class layer. Everything below is already defined there — this list is for reference.
 
 ### Color (the full semantic set is in `tokens/colors.css`)
 
@@ -54,7 +54,7 @@ Ship these first. Copy `design_system/` into `app/src/` (e.g. `app/src/styles/`)
 
 - **`--font-sans`**: `'IBM Plex Sans'` — all UI text.
 - **`--font-mono`**: `'IBM Plex Mono'` — all *data*: spec keys, paths, model ids, exit codes, cost, the event stream, and uppercase micro-labels.
-- Fonts load from Google Fonts CDN in `fonts.css` (weights 400/500/600/700). **To self-host** (recommended for a desktop app — no network at launch), vendor the `.woff2` files into the app and replace the `@import` with local `@font-face` rules.
+- Fonts are self-hosted: the `.woff2` files are vendored at `app/src/styles/kata/fonts/` and loaded by `fonts.css`, because the desktop app's CSP blocks the CDN (weights 400/500/600/700).
 - Scale (px): `2xs 10 · xs 11 · sm 12 · base 13 · md 14 · lg 16 · xl 20 · 2xl 26 · 3xl 34`. **UI base is 13px.** Dense, IDE-like — keep it.
 - Micro-label (the recurring eyebrow): Plex Mono, 10px, `letter-spacing: 0.12em`, uppercase, `--text-muted`. Class `.kata-eyebrow`.
 
@@ -126,57 +126,76 @@ Ship these first. Copy `design_system/` into `app/src/` (e.g. `app/src/styles/`)
 
 ---
 
+### 4 — AI-SDLC mode (added after this handoff)
+
+A second mode of the same app: take a change from an idea to open pull requests inside a workspace of git repos. It has no spec in this handoff; the only pixel reference is `prototype/build-page.html`, and everything else was built from the tokens and component classes above. This is an index of where each part lives, under `app/src/app/`.
+
+Routed screens:
+
+- `sdlc/mode/mode-screen` — pick the Workbench or the AI-SDLC mode.
+- `sdlc/home/sdlc-home` — the workspace home: workspaces and each system's changes.
+- `sdlc/change/change-page` — one change: the toolbar with stage pills and the document tabs (intent, spec, plan, Build).
+- `sdlc/changes/changes-view` — the Changes view, with `ui/changes-table`, `ui/diff-body`, `ui/diff-bar` and `ui/diff-editor/` (the Monaco diff).
+- `sdlc/build/build-page` — the build page, with `sdlc/build/build-layout.view-model.ts` and `lib/build-layout*.ts` for the four-area arrangement (tasks, activity, changed files, findings) you can rearrange; `prototype/build-page.html` is its reference.
+
+Dialogs and panels in `ui/`:
+
+- `sdlc-toolbar` — the toolbar shared by the three SDLC screens.
+- `new-change-dialog`, `add-workspace-dialog`, `sdlc-settings-dialog` — start a change, add a workspace, AI-SDLC settings.
+- `build-dialog`, `findings-list`, `check-results`, `done-dialog`, `pr-list-dialog` — start a build, review findings, failed checks, declare done, the pull requests that opened.
+- `feedback-dialog`, `confirm-dialog`, `leftover-dialog` — feedback before a revisit, confirmation, what a stopped run left behind.
+- `sdlc-session`, `lock-overlay`, `lock-panel`, `permission-panel` — the agent run that takes the page, the lock while Kata's own checks run, and a permission check that pauses a run.
+- `requirements-view`, `tasks-view`, `repos-table`, `doc-layout` — the spec tab's Requirements view, the plan's tasks, the repositories table, and the document layout of the intent, spec and plan tabs.
+- `workspace-switcher`, `stage-pills`, `waiting-notice`, `build-refusal-dialog` — the toolbar's workspace switcher and stage pills, the notice shown while an agent waits on you, and the dialog that says why a build cannot start.
+- `run-preview-dialog` with `core/given/run-preview.view-model.ts`, and `given-view`, `given-list` — run settings: what a run will start with before Run, and what it was given afterwards.
+
 ## Interactions & behavior
 
 - **Run** (button or **Ctrl+Enter** — this is a Windows desktop app; all shortcuts are Ctrl-based, shown as `Ctrl+Enter` / `Ctrl+S` / `Ctrl+N`): clears the pane, sets state `running` (dot pulses, Cancel shows), then streams the normalized `KataEvent`s. In the real app this is the Tauri bridge: the backend **spawns the `kata` binary**, relays its JSON-lines events to the webview; the frontend stays presentational (per the spec's testing strategy). The prototype fakes this with a scripted timeline (`prototype/data.js`).
 - **HITL checkpoint**: on an `ask.requested` event, set state `awaiting`, render the **AskPanel** at the bottom of the stream, and block until the operator submits. On submit, emit `ask.answered` (the answer becomes the tool result), set the panel to its answered state, and return to `running`. Cancel is still available while awaiting. See `prototype/hitl.js`.
 - **Cancel**: kills the run; the engine traps it, cleans up the plugin-dir + worktree, emits `run.cancelled`; UI goes to `warning`.
 - **On `run.completed`**: render the Summary block; state → `success` (exit 0) or `error` (non-zero).
-- **Live validation** (`prototype/app.jsx` `validate()`, mirrors the Rust): `name`, `task`, `workdir` required; `schema === 1`; `leash.max_turns >= 1`. Errors show in the banner + status bar; **Run is blocked** while invalid. Messages are lowercase and terse ("task is required").
+- **Live validation**: the form restates no engine rule. Validation goes through the engine's `validate_spec` under Tauri (`app/src/app/core/transport/tauri-transport.ts`) and `validateLocal` in browser mode, and the result fills the banner and status bar. `name`, `task`, `workdir` required; `schema === 1`; `leash.max_turns >= 1`. Run is blocked while invalid. Messages are lowercase and terse ("task is required").
 - **Dirty tracking**: compare current spec JSON to the last-saved snapshot; show `● unsaved`.
 - **Library navigation**: selecting a run loads its detail + event log; selecting a saved kata jumps to its latest run.
 - **Hover** lightens a surface one step; **press** darkens the accent + `translateY(0.5px)`; **focus** is the 2px azure ring (`--focus-ring`). **Disabled** = opacity 0.45.
 
-## State management (Svelte stores)
+## State management (Angular)
 
-- `spec` — the `RunSpec` object (writable store); two-way bound to the compose fields. Shape is `app/src/bindings/` (already generated from `kata-core` via ts-rs).
-- `savedSpecJson` — last-saved snapshot for the dirty flag.
-- `runState` — `'idle' | 'running' | 'success' | 'warning' | 'error'`.
-- `events` — array of received `KataEvent`s (appended as the Tauri backend relays them).
-- `summary` — the `run.completed` payload, or null.
-- `catalog` — from `kata catalog` (Tauri command); populates the Kit checklist.
-- Library: `savedKatas`, `history`, selected run/kata ids.
+- `RunStore` (`app/src/app/core/run/run.store.ts`) folds every relayed `KataEvent` into run state (`idle | running | awaiting | success | warning | error`), for every live run whatever is on screen; `LockStore` (`core/lock/lock.store.ts`) reads it to lock the AI-SDLC screens while an agent works.
+- Each routed screen is a thin component over a component-scoped ViewModel that holds its signals: the `RunSpec`, the last-saved snapshot for the dirty flag, the catalog, and on the Library the saved katas, history and selected ids. The shape of the spec is `app/src/bindings/` (generated from `kata-core` via ts-rs).
+- Backend calls go through the abstract `KataTransport` (`core/transport/`); a plain browser gets the Mock transport and its fixtures.
 
 ## Assets & iconography
 
-- **Icons:** Lucide (1.5–2px stroke, `currentColor`) at 16/18px. The prototype hand-rolls the needed subset in `prototype/icons.js`; in the Svelte app use [`lucide-svelte`](https://lucide.dev) — names used: `file-plus, folder-open, folder, save, package, play, square, search, git-branch, terminal, clock, coins, hash, cpu, alert-triangle, check-circle, x-circle`. (Lucide is a flagged substitution — the repo had no icon set.)
+- **Icons:** Lucide (1.5–2px stroke, `currentColor`) at 16/18px. The prototype hand-rolls the needed subset in `prototype/icons.js`; the app uses [`@ng-icons/lucide`](https://lucide.dev): register the icons a component uses with `provideIcons({ lucidePlay })` and render `<ng-icon name="lucidePlay" />`. The prototype's set (Lucide names; the app's `@ng-icons/lucide` names are the camel-case `lucide…` forms, for example `lucideTriangleAlert`): `file-plus, folder-open, folder, save, package, play, square, search, git-branch, terminal, clock, coins, hash, cpu, alert-triangle, check-circle, x-circle`.
 - **Mark:** the kanji **型** on an azure `--radius-xs` square (the seal). Built from type, no asset file. Swap for real artwork if the team has it.
 - **No emoji.** Functional Unicode only (`●` status dots are CSS).
 
 ## Files in this bundle
 
-- `design_system/` — **drop-in CSS + the compiled component runtime.** `styles.css` (import this one), `fonts.css`, `base.css`, `tokens/{colors,typography,spacing}.css`, `components/components.css`, and `_ds_bundle.js` (defines `window.KataDesignSystem_dd74c7` with the 18 primitives — only needed to *run* the prototypes; the Svelte app doesn't use it). All class names referenced above are here.
+- `design_system/` — **drop-in CSS + the compiled component runtime.** `styles.css` (import this one), `fonts.css`, `base.css`, `tokens/{colors,typography,spacing}.css`, `components/components.css`, and `_ds_bundle.js` (defines `window.KataDesignSystem_dd74c7` with the 18 primitives — only needed to *run* the prototypes; the Angular app does not use it). All class names referenced above are here.
 - `prototype/` — the reference designs. **These now run as-is** — open any `*.html` over a static server (`npx serve design/prototype`); they load `../design_system/styles.css` + `../design_system/_ds_bundle.js`:
   - `index.html` + `app.jsx` + `panes.jsx` — the Workbench (Layout A).
   - `library.html` + `library.jsx` — the Library (Layout C).
   - `hitl.html` + `hitl.jsx` — the human-in-the-loop run console (the pause → answer → resume flow; uses the `AskPanel`).
+  - `build-page.html` — the AI-SDLC build page: a docked, resizable layout whose four areas are arranged by mode (vanilla JS, opens from disk; the Angular build page is in the AI-SDLC section above).
   - `data.js`, `library-data.js` — fixtures (default spec, catalog, scripted streams, saved katas, history).
   - `icons.js` — the Lucide subset.
-  - `workbench.css` — **shell layout** (toolbar, panes, sections, rail, detail, HITL recap). Pair this with `components/components.css`. You can lift it almost verbatim into the Svelte app's global stylesheet.
+  - `workbench.css` — **shell layout** (toolbar, panes, sections, rail, detail, HITL recap). Pair this with `components/components.css`. You can lift it almost verbatim into the app's global stylesheet (already vendored as `app/src/styles/kata/workbench.css`).
   - `README.md` — prototype-specific notes.
+- `screenshots/` — captures taken while the design was built (toolbar, compose, kit, banner, observe, library).
 
-## Mapping onto the existing PR #2 Svelte files
+## Where the screens live in the Angular app
 
-| PR #2 file | What to do |
+| Screen or part | Angular file |
 |---|---|
-| `app/src/app.html` (or `+layout.svelte`) | Import `styles.css` once. Set `<body>` to inherit the dark base (it already does via `base.css`). |
-| `app/src/routes/+page.svelte` | Becomes the Workbench column: toolbar + banner + `.wb-panes` + status bar. Lift the structure from `prototype/index.html` + `panes.jsx`. |
-| `Toolbar.svelte` | Restyle to `.wb-toolbar` (seal, spec name, dirty pill, icon group, Run/Cancel). |
-| `ComposePane.svelte` | Restyle to `.wb-compose` sections; replace raw `<input>/<select>/<textarea>` with `.k-input/.k-select/.k-textarea/.k-seg`, each wrapped in `.k-field` with the spec key shown. |
-| `KitChecklist.svelte` | Restyle rows to `.k-kit` (Checkbox + `.k-tag` + name + desc; plugin detail slot). Replace the blue/purple tags with `--tag-skill-*` (jade) / `--tag-plugin-*` (amber). |
-| `ValidationBanner.svelte` | Restyle to `.wb-banner--error`. |
-| **Observe pane (new — was the `— M6` placeholder)** | Build `.wb-status` + `.wb-stream` (EventRow per `KataEvent`) + `.wb-summary`. See `panes.jsx` `ObservePane`. |
-| **New: Library route** (`app/src/routes/library/+page.svelte`) | Build the rail + run detail from `prototype/library.jsx`. |
-| **Observe pane HITL** (extend the Observe pane) | When a relayed event is `ask.requested`, set state `awaiting` and render an `AskPanel` (`.k-ask*`) at the bottom of the stream; on submit emit `ask.answered` back over the Tauri bridge as the tool result, flip the panel to `.k-ask--answered`, and resume. See `prototype/hitl.jsx`. The `awaiting` `StatusDot` + amber pause are already in `components.css`. |
+| Workbench column (toolbar + banner + panes + status bar), Layout A | `app/src/app/workbench/workbench.ts` (+ `workbench.view-model.ts`) |
+| Toolbar (seal, spec name, dirty pill, icon group, Run/Cancel) | `app/src/app/ui/toolbar.ts` |
+| Compose pane (`.wb-compose` sections) | `app/src/app/ui/compose-pane.ts` |
+| Kit checklist (`.k-kit` rows, plugin detail slot) | `app/src/app/ui/kit-checklist.ts` |
+| Validation banner (`.wb-banner--error`) | `app/src/app/ui/validation-banner.ts` |
+| Observe pane (status line, event stream, summary, AskPanel at the bottom) | `app/src/app/ui/observe-pane.ts`, `event-row.ts`, `ask-panel.ts` |
+| Library, Layout C (rail + run detail) | `app/src/app/library/library.ts` (+ `library.view-model.ts`) |
 
 **Watch-outs:** keep the 13px base (don't let it drift up to 14/16); inputs are the *inset* surface (darker than their card), not raised; cards have **no shadow** at rest; tags are warm (jade/amber), never blue/purple; one azure primary action per view; keyboard shortcuts are Windows (Ctrl-based: `Ctrl+Enter` run, `Ctrl+S` save, `Ctrl+N` new). Build everything against the CSS variables so the accent stays a single-file change.

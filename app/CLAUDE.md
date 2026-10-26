@@ -21,7 +21,7 @@ Keep every session on the Workbench on-brand and on-convention. The Kata design 
 - **Controls are Helm primitives skinned in `libs/ui/`** (button, input, select, dialog, tabs, switch, ...). The Kata look is applied by editing the vendored copy under `libs/ui/`, or through the primitive's `variant`/`size` input — never by restyling a control at the call site. Use `variant="bare"` on a primitive when a Kata class (`.k-btn`, `.k-input`, ...) supplies the look.
 - **Kata's non-control classes** (`.k-*` cards, event rows, toolcards, shell layout) live in `src/styles/kata/`, not in component stylesheets.
 - **Windows only.** The Workbench ships on Windows alone, where Tauri renders through WebView2 (Chromium), so Chromium-only CSS such as `calc-size()` is allowed. Shipping to macOS or Linux (WebKit) would mean revisiting it.
-- **Desktop only** (laptop → ultrawide). No mobile breakpoints. The window opens at 1280 wide and its minimum is 1280 by 800 (`minWidth` and `minHeight` in `src-tauri/tauri.conf.json`, which `check:responsive` asserts). `check:responsive` runs at 1280 and 1600 as a no-overflow check, and also covers the change page and the workspace home page at 1024, 1280 and 1600: the toolbar fits without overlap and gives way in the one order the table at the top of its CSS block (`workbench.css`) sets, for long workspace, change and branch names too; the Build strip never cuts a control off; nothing on the home page is cut off. Browser checks measure clipping with `scripts/clipping.mjs` (fractional rects and the rendered text width), never `scrollWidth - clientWidth`, which rounds a sub-pixel ellipsis away.
+- **Desktop only** (laptop → ultrawide). No mobile breakpoints. The window opens at 1280 wide and its minimum is 1280 by 800 (`minWidth` and `minHeight` in `src-tauri/tauri.conf.json`, which `check:responsive` asserts). `check:responsive` runs every route at 1280 and 1600 as a no-overflow check, and also covers the change page and the workspace home page at 1280 and 1600: the toolbar fits without overlap and gives way in the one order the table at the top of its CSS block (`workbench.css`) sets, for long workspace, change and branch names too; nothing on the home page is cut off; the pull request popover fits. The Build strip never cuts a control off at 768, 1024, 1280 and 1440. Browser checks measure clipping with `scripts/clipping.mjs` (fractional rects and the rendered text width), never `scrollWidth - clientWidth`, which rounds a sub-pixel ellipsis away.
 - **The build page has no narrow layout.** The window's minimum is 1280 by 800, and the build page shows its mode's arrangement of four areas (tasks, activity, changed files, findings) at that size, never one area at a time behind a switch. `npm run check:build` checks each mode's default at 1280 by 800 against `?demo=build-long`, a mock variant with enough repositories, tasks, files and findings to overflow every area: nothing cut off, every area scrolling on its own, every action on show or one click away.
 
 ## Where things live
@@ -29,8 +29,8 @@ Keep every session on the Workbench on-brand and on-convention. The Kata design 
 - Tokens: `app/src/styles/kata/tokens/{colors,typography,spacing}.css`
 - Component classes: `app/src/styles/kata/components.css`; base: `base.css`; shell layout: `workbench.css`
 - Self-hosted fonts: `app/src/styles/kata/fonts/` + `app/src/styles/kata/fonts.css` (CSP blocks the CDN — the woff2 files are vendored and came from `@fontsource/ibm-plex-sans` and `@fontsource/ibm-plex-mono`, which are no longer dependencies; install them temporarily to refresh)
-- Presentational components: `app/src/app/ui/` (inputs and outputs only, no injection); routed screens: `app/src/app/workbench/`, `app/src/app/library/`, each a thin component over a component-scoped ViewModel
-- Run store, launch store, toast store: `app/src/app/core/`; the transport seam (`KataTransport`) is `app/src/app/core/transport/`
+- Presentational components: `app/src/app/ui/` (inputs and outputs only, no injection); routed screens: `app/src/app/workbench/`, `app/src/app/library/` and, for the AI-SDLC mode, `app/src/app/sdlc/{mode,home,change,changes,build}/`, each a thin component over a component-scoped ViewModel (`changes` is the Changes view and `build` the build page, both hosted inside the change page rather than on routes of their own)
+- Run store, launch store, toast store, plus the `given`, `lock`, `mode` and `sdlc` stores and the SDLC runner: `app/src/app/core/`; pure logic with no Angular (build arrangement, build state, stage and finding helpers, the browser fixtures `mock.ts` and `sdlc-mock.ts`): `app/src/app/lib/`; the transport seam (`KataTransport`) is `app/src/app/core/transport/`
 - Helm primitives: `app/libs/ui/`
 - Generated event and run-spec types: `app/src/bindings/` — never hand-edit (see the root `CLAUDE.md`)
 - Per-component specs: `design/README.md`
@@ -40,7 +40,7 @@ Keep every session on the Workbench on-brand and on-convention. The Kata design 
 
 - `npm start` serves on `http://localhost:1420`. Tauri `invoke`/`listen` are unreachable in a plain browser, so `provideKataTransport` picks the Mock transport (fixtures and the scripted timeline in `src/app/lib/mock.ts`) outside Tauri and the Tauri transport inside it.
 - `http://localhost:1420/?demo=run` auto-starts the scripted Observe-pane run (browser-only, never under Tauri) — useful for screenshots.
-- `http://localhost:1420/sdlc/claims/2026-10-12-fnol-photo-upload?demo=sdlc` starts a scripted AI-SDLC spec run that pauses on a question, and `http://localhost:1420/sdlc?demo=sdlc-setup` adds an un-set-up folder and plays the scripted setup run (both browser-only, never under Tauri). Cancelling either demo run opens the leftover dialog with fixture files.
+- `http://localhost:1420/sdlc/claims/2026-10-12-fnol-photo-upload?demo=sdlc` starts a scripted AI-SDLC spec run that pauses on a question, and `http://localhost:1420/sdlc?demo=sdlc-setup` adds an un-set-up folder and plays the scripted setup run (both browser-only, never under Tauri). Cancelling either demo run opens the leftover dialog with fixture files. `?demo=start` on `/sdlc` plays the scripted start triage (the light track), `/sdlc/claims/2026-10-19-build-demo` is the scripted build, and `?demo=build-long` on it swaps in a variant with enough repositories, tasks, files and findings to overflow every area. `?demo=one-pr` and `?demo=pr-fail` on a finished change (`/sdlc/claims/2026-10-18-photo-limits-shipped`) show one pull request link and a failed `gh` call.
 - The run bridge (`run_spec`/`cancel_run` in `src-tauri/src/lib.rs`) relays `KataEvent`s over the `kata://event` channel; the frontend stays presentational (store: `src/app/core/run/run.store.ts`).
 - The real engine path runs under Tauri only: `npm run tauri:dev` stages the `kata` sidecar (builds `kata-cli`, copies it to `src-tauri/binaries/kata-<target-triple>`) then launches the desktop app, which spawns `kata run` and relays its live JSON-lines. A real run needs an authenticated `claude` on PATH.
 - The production build outputs to `dist/angular-jig/browser`; Tauri's `frontendDist` points there.
@@ -117,7 +117,7 @@ Every routed screen is a thin component over a component-scoped ViewModel. This 
 Run these before claiming anything is done. A green board from an earlier state proves nothing about the tree in front of you.
 
 ```bash
-npm run lint             # the 28 house rules
+npm run lint             # the house rules
 npm test -- --watch=false # unit tests (plain `npm test` watches)
 npm run build            # production build
 npm run check:boot       # every route renders without a runtime error
@@ -125,6 +125,10 @@ npm run check:interaction # every overlay opens, closes, logs nothing
 npm run check:responsive # 1280 / 1600 (desktop only)
 # check:contrast is not wired in kata (harness reads only hex tokens; Kata's are var() references, so it would pass vacuously)
 npm run check:wiring     # no orphaned members
+npm run check:changes    # the Monaco diff editor under the desktop CSP (needs npm run build first)
+npm run check:build      # the build page at 1280 by 800 (needs npm run build first)
+npm run check:start-flow # the light track routes, New change, scripted triage (needs npm run build first)
+npm run test:harness     # the gate rules' own tests
 ```
 
 Know what each one cannot see. `check:boot` renders and never clicks, so it cannot exercise a dialog, a select or a tab panel. jsdom cannot drive a CDK overlay at all, so no unit test in this repo opens one. A drift counter measures the conformance of code that exists and is blind to code that was never written. When a test and a defect are on opposite sides of a boundary — a template that fails to call a ViewModel method, say — a test that calls the method directly will pass forever. Make the test cross the seam, and prove it by watching it fail before you trust it.

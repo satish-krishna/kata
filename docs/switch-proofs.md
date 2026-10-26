@@ -9,7 +9,7 @@ Which proof backs each `SWITCHABLE` row (`crates/kata-core/src/given/id.rs`):
 | `(kind, source)` | Proof |
 |---|---|
 | `(Skill, RunSpec)`, `(Plugin, RunSpec)`, `(Instruction, RunSpec)` | none needed: Kata builds these itself |
-| `(Plugin, Personal)`, `(Plugin, Project)`, `(Plugin, ProjectLocal)` | `proof_plugin_enabled_false` |
+| `(Plugin, Personal)`, `(Plugin, Project)`, `(Plugin, ProjectLocal)` | `proof_plugin_enabled_false` (and `proof_resupply_user_plugins` for the personal source) |
 | `(Instruction, Personal)`, `(Instruction, Project)`, `(Instruction, ProjectLocal)` | `proof_claude_md_excludes`, `proof_output_style_default` |
 | `(Hook, Project)`, `(Hook, ProjectLocal)` | `proof_combined_carry_over` (a build still locks them) |
 | `(ToolServer, Project)` | `proof_deny_mcp_server_in_settings` |

@@ -1,6 +1,6 @@
 # Example katas
 
-Ready-to-use [run-specs](../../README.md). Each `.toml` is one kata: a precise, reproducible form for a single headless `claude -p` run. Copy them into your library or open them in the Workbench, fill in the task, and run. Three sets live here: the superpowers **brainstorm → plan → execute** trio, the **kata plugin's** engineering-workflow kit (prd → context → plan → implement, plus triage), and two **standalone** examples of permission postures.
+Ready-to-use [run-specs](../../README.md). Each `.toml` is one kata: a precise, reproducible form for a single headless `claude -p` run. Copy them into your library or open them in the Workbench, fill in the task, and run. Four sets live here: the superpowers **brainstorm → plan → execute** trio, the **kata plugin's** engineering-workflow kit (prd → context → plan → implement, plus triage), the superpowers **debug** pair (triage → resolve), and three **standalone** examples of how a run asks and is allowed to act.
 
 ## The trio
 
@@ -25,6 +25,17 @@ Five katas driving the [`kata` plugin](../../.claude/plugins/kata/) — this rep
 | [`triage.toml`](triage.toml) | `kata:triage` | a triage report under `docs/triage/` | yes — gaps + next-action confirm |
 
 They chain: prd feeds context, context feeds plan, plan feeds implement — each run's output file is the next run's task input. triage stands alone and hands its "failing test to start from" to a plan/implement pair.
+
+## The debug pair
+
+Two katas driving the superpowers debugging discipline. Both use `[plugins.superpowers]`, are interactive (they ask through `ask_user`), and tell the run to read the workspace `CLAUDE.md` first and treat it as binding.
+
+| Kata | Skill it drives | Deliverable | Leash |
+|------|-----------------|-------------|-------|
+| [`debug-triage.toml`](debug-triage.toml) | `superpowers:systematic-debugging` | a triage report under `docs/superpowers/triage/`, not committed; diagnosis only | in place (`isolation = "none"`), 40 turns |
+| [`debug-resolve.toml`](debug-resolve.toml) | `superpowers:test-driven-development` through `superpowers:finishing-a-development-branch` | the fix, landed under TDD, verified and reviewed | worktree, 60 turns (`max_turns = 60`), `max_budget_usd = 10.0` |
+
+They chain: debug-triage writes the report, and its "failing test to start from" is debug-resolve's task input.
 
 ## Standalone
 
