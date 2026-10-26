@@ -187,6 +187,31 @@ mod tests {
     }
 
     #[test]
+    fn runs_post_checkout_and_ignores_its_failure() {
+        let repo = init_repo();
+        let marker = tempfile::tempdir().unwrap().keep().join("args.txt");
+        let hooks = repo.path().join(".git").join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let script = format!(
+            "#!/bin/sh\necho \"$1 $2 $3\" > '{}'\nexit 1\n",
+            marker.to_string_lossy().replace('\\', "/")
+        );
+        std::fs::write(hooks.join("post-checkout"), script).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let wt = create_in(&repo.path().to_string_lossy(), "hooked", root.path()).unwrap();
+        assert!(Path::new(&wt.path).join("tracked.txt").exists());
+        let got = std::fs::read_to_string(&marker).expect("post-checkout ran");
+        let head = Command::new("git")
+            .arg("-C")
+            .arg(repo.path())
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+        assert_eq!(got.trim(), format!("{} {head} 1", "0".repeat(40)));
+    }
+
+    #[test]
     fn create_in_non_repo_errors() {
         let notrepo = tempfile::tempdir().unwrap();
         let root = tempfile::tempdir().unwrap();
