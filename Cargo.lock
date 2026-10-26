@@ -2057,6 +2057,7 @@ version = "3.2.0"
 dependencies = [
  "git2",
  "kata-core",
+ "libgit2-sys",
  "process-wrap",
  "serde",
  "serde_json",

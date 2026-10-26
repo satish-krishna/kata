@@ -363,10 +363,7 @@ pub fn heads(
         if !branch_exists(&path, &format!("change/{change}")) {
             continue;
         }
-        let head = git::legacy_cli::run(
-            &path,
-            &["rev-parse", &format!("refs/heads/change/{change}")],
-        )?;
+        let head = git::Repo::open(&path)?.resolve(&format!("refs/heads/change/{change}"))?;
         out.insert(repo.clone(), head);
     }
     Ok(out)

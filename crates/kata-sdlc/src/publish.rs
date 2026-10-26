@@ -92,8 +92,9 @@ fn is_scp_like(raw: &str) -> bool {
 }
 
 fn origin_url(path: &Path) -> Option<String> {
-    git::legacy_cli::run(path, &["remote", "get-url", "origin"])
-        .ok()
+    git::Repo::open(path)
+        .ok()?
+        .remote_url("origin")
         .filter(|u| !u.is_empty())
 }
 

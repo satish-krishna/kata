@@ -1,7 +1,7 @@
 //! Which branch a repository's change is compared with, where the change forked from it, and
 //! how many commits the change carries. Never fetches: it reads only refs already present.
 
-use crate::git::{self, GitError};
+use crate::git::{GitError, Repo};
 use std::path::Path;
 
 /// The base a change is compared with.
@@ -29,25 +29,22 @@ pub enum BaseError {
 /// `origin/HEAD`'s target, else `main`, else `master`, each accepted when it exists locally or
 /// on `origin`.
 pub fn base_branch(repo: &Path) -> Option<String> {
-    let from_origin = git::legacy_cli::run(
-        repo,
-        &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
-    )
-    .ok()
-    .and_then(|t| t.strip_prefix("refs/remotes/origin/").map(String::from));
+    base_branch_in(&Repo::open(repo).ok()?)
+}
+
+fn base_branch_in(repo: &Repo) -> Option<String> {
+    let from_origin = repo
+        .symbolic_target("refs/remotes/origin/HEAD")
+        .and_then(|t| t.strip_prefix("refs/remotes/origin/").map(String::from));
     from_origin
         .into_iter()
         .chain(["main", "master"].map(String::from))
         .find(|b| branch_exists(repo, b))
 }
 
-fn ref_exists(repo: &Path, name: &str) -> bool {
-    git::legacy_cli::run(repo, &["rev-parse", "--verify", "--quiet", name]).is_ok()
-}
-
-fn branch_exists(repo: &Path, b: &str) -> bool {
-    ref_exists(repo, &format!("refs/heads/{b}"))
-        || ref_exists(repo, &format!("refs/remotes/origin/{b}"))
+fn branch_exists(repo: &Repo, b: &str) -> bool {
+    repo.rev_exists(&format!("refs/heads/{b}"))
+        || repo.rev_exists(&format!("refs/remotes/origin/{b}"))
 }
 
 /// The base branch, the ref to compare with (`origin/<base>` when it exists, else `<base>`), and
@@ -58,20 +55,22 @@ pub fn base_info(repo: &Path) -> Result<BaseInfo, BaseError> {
 
 /// Like `base_info`, with the merge base taken for `rev` instead of HEAD.
 pub fn base_info_for(repo: &Path, rev: &str) -> Result<BaseInfo, BaseError> {
-    let base = base_branch(repo).ok_or_else(|| {
+    let unresolved = || {
         BaseError::Unresolved(
             repo.file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| repo.display().to_string()),
         )
-    })?;
+    };
+    let opened = Repo::open(repo).map_err(|_| unresolved())?;
+    let base = base_branch_in(&opened).ok_or_else(unresolved)?;
     let remote = format!("origin/{base}");
-    let reference = if ref_exists(repo, &format!("refs/remotes/{remote}")) {
+    let reference = if opened.rev_exists(&format!("refs/remotes/{remote}")) {
         remote
     } else {
         base.clone()
     };
-    let merge_base = git::legacy_cli::run(repo, &["merge-base", rev, &reference])?;
+    let merge_base = opened.merge_base(rev, &reference)?;
     Ok(BaseInfo {
         base,
         reference,
@@ -82,11 +81,9 @@ pub fn base_info_for(repo: &Path, rev: &str) -> Result<BaseInfo, BaseError> {
 /// Commits HEAD has past the merge base: what a pull request would carry.
 pub fn commits_ahead(repo: &Path) -> Result<u32, BaseError> {
     let info = base_info(repo)?;
-    let count = git::legacy_cli::run(
-        repo,
-        &["rev-list", "--count", &format!("{}..HEAD", info.merge_base)],
-    )?;
-    Ok(count.trim().parse().unwrap_or(0))
+    Ok(Repo::open(repo)?
+        .revs_between(&info.merge_base, "HEAD")?
+        .len() as u32)
 }
 
 /// Commits `rev` has that neither the local base branch nor `origin/<base>` has: the work done
@@ -96,11 +93,7 @@ pub fn commits_ahead(repo: &Path) -> Result<u32, BaseError> {
 /// commits are judged, use this (R10.1).
 pub fn commits_ahead_of_local_base(repo: &Path, rev: &str) -> Result<u32, BaseError> {
     let revs = build_work_revs(repo, rev)?;
-    let mut args = vec!["rev-list".to_string(), "--count".to_string()];
-    args.extend(revs);
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let count = git::legacy_cli::run(repo, &args)?;
-    Ok(count.trim().parse().unwrap_or(0))
+    Ok(Repo::open(repo)?.rev_list(&revs)?.len() as u32)
 }
 
 /// The revision arguments naming the work on a change branch: `rev ^<local base> ^origin/<base>`.
@@ -109,11 +102,12 @@ pub fn commits_ahead_of_local_base(repo: &Path, rev: &str) -> Result<u32, BaseEr
 /// build add" computation (`rev-list`, `log`) starts here.
 pub fn build_work_revs(repo: &Path, rev: &str) -> Result<Vec<String>, BaseError> {
     let info = base_info_for(repo, rev)?;
+    let opened = Repo::open(repo)?;
     let mut revs = vec![rev.to_string()];
-    if ref_exists(repo, &format!("refs/heads/{}", info.base)) {
+    if opened.rev_exists(&format!("refs/heads/{}", info.base)) {
         revs.push(format!("^{}", info.base));
     }
-    if ref_exists(repo, &format!("refs/remotes/origin/{}", info.base)) {
+    if opened.rev_exists(&format!("refs/remotes/origin/{}", info.base)) {
         revs.push(format!("^origin/{}", info.base));
     }
     Ok(revs)
@@ -122,6 +116,7 @@ pub fn build_work_revs(repo: &Path, rev: &str) -> Result<Vec<String>, BaseError>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git;
     use crate::testutil::{bare_origin, checkout, commit_file, repo};
 
     fn tmp() -> tempfile::TempDir {

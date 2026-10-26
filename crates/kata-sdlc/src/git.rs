@@ -48,6 +48,18 @@ pub struct LogEntry {
     pub message: String,
 }
 
+impl LogEntry {
+    /// What `%s` prints: the first paragraph of the message on one line.
+    pub fn subject(&self) -> String {
+        self.message
+            .lines()
+            .map(str::trim_end)
+            .take_while(|l| !l.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
 /// A repository opened for reading.
 pub struct Repo {
     inner: git2::Repository,
@@ -458,71 +470,261 @@ impl Repo {
     }
 
     /// What `git symbolic-ref --quiet <name>` prints; `None` when `name` is not a symbolic ref.
-    #[allow(unused_variables)]
     pub fn symbolic_target(&self, name: &str) -> Option<String> {
-        unimplemented!("symbolic_target")
+        self.inner
+            .find_reference(name)
+            .ok()?
+            .symbolic_target_bytes()
+            .map(|b| String::from_utf8_lossy(b).into_owned())
     }
 
     /// Whether `git rev-parse --verify --quiet <rev>` succeeds.
-    #[allow(unused_variables)]
     pub fn rev_exists(&self, rev: &str) -> bool {
-        unimplemented!("rev_exists")
+        self.inner.revparse_single(rev).is_ok()
     }
 
     /// What `git rev-parse <rev>` prints.
-    #[allow(unused_variables)]
     pub fn resolve(&self, rev: &str) -> Result<String, GitError> {
-        unimplemented!("resolve")
+        self.inner
+            .revparse_single(rev)
+            .map(|o| o.id().to_string())
+            .map_err(|e| GitError::from_git2(&format!("rev-parse {rev}"), e))
+    }
+
+    fn commit_id(&self, rev: &str) -> Result<Oid, git2::Error> {
+        self.inner
+            .revparse_single(rev)
+            .and_then(|o| o.peel_to_commit())
+            .map(|c| c.id())
     }
 
     /// What `git merge-base <a> <b>` prints.
-    #[allow(unused_variables)]
     pub fn merge_base(&self, a: &str, b: &str) -> Result<String, GitError> {
-        unimplemented!("merge_base")
+        let fail = |e| GitError::from_git2(&format!("merge-base {a} {b}"), e);
+        let (x, y) = (
+            self.commit_id(a).map_err(fail)?,
+            self.commit_id(b).map_err(fail)?,
+        );
+        self.inner
+            .merge_base(x, y)
+            .map(|id| id.to_string())
+            .map_err(fail)
     }
 
     /// What `git rev-list <base>..<head>` prints, newest first as git prints it.
-    #[allow(unused_variables)]
     pub fn revs_between(&self, base: &str, head: &str) -> Result<Vec<String>, GitError> {
-        unimplemented!("revs_between")
+        self.rev_list(&[format!("{base}..{head}")])
+    }
+
+    /// The commits `git rev-list <revs>` lists, newest first, for revision arguments such as
+    /// `tip`, `^x` and `a..b`.
+    fn walk(&self, revs: &[String]) -> Result<Vec<Oid>, GitError> {
+        let action = format!("rev-list {}", revs.join(" "));
+        let fail = |e| GitError::from_git2(&action, e);
+        let mut walk = self.inner.revwalk().map_err(fail)?;
+        let mut tips: Vec<Oid> = Vec::new();
+        for rev in revs {
+            if let Some(hidden) = rev.strip_prefix('^') {
+                walk.hide(self.commit_id(hidden).map_err(fail)?)
+                    .map_err(fail)?;
+            } else if let Some((from, to)) = rev.split_once("..") {
+                let or_head = |r: &str| {
+                    if r.is_empty() {
+                        "HEAD".to_string()
+                    } else {
+                        r.to_string()
+                    }
+                };
+                walk.hide(self.commit_id(&or_head(from)).map_err(fail)?)
+                    .map_err(fail)?;
+                let tip = self.commit_id(&or_head(to)).map_err(fail)?;
+                tips.push(tip);
+                walk.push(tip).map_err(fail)?;
+            } else {
+                let tip = self.commit_id(rev).map_err(fail)?;
+                tips.push(tip);
+                walk.push(tip).map_err(fail)?;
+            }
+        }
+        let listed: HashSet<Oid> = walk.collect::<Result<_, _>>().map_err(fail)?;
+
+        // The order git prints them in: the newest commit date first, taken from a queue that
+        // starts at the tips and adds each parent as its child is printed; equal dates come out in
+        // the order they went in.
+        let mut queue: std::collections::BinaryHeap<(i64, std::cmp::Reverse<usize>, Oid)> =
+            std::collections::BinaryHeap::new();
+        let mut queued: HashSet<Oid> = HashSet::new();
+        let mut counter = 0;
+        let mut ordered = Vec::with_capacity(listed.len());
+        let mut push =
+            |queue: &mut std::collections::BinaryHeap<_>, id: Oid| -> Result<(), git2::Error> {
+                if listed.contains(&id) && queued.insert(id) {
+                    let time = self.inner.find_commit(id)?.time().seconds();
+                    queue.push((time, std::cmp::Reverse(counter), id));
+                    counter += 1;
+                }
+                Ok(())
+            };
+        for tip in tips {
+            push(&mut queue, tip).map_err(fail)?;
+        }
+        while let Some((_, _, id)) = queue.pop() {
+            ordered.push(id);
+            for parent in self.inner.find_commit(id).map_err(fail)?.parent_ids() {
+                push(&mut queue, parent).map_err(fail)?;
+            }
+        }
+        Ok(ordered)
     }
 
     /// What `git rev-list <revs>` prints for revision arguments such as `tip`, `^x` and `a..b`.
-    #[allow(unused_variables)]
     pub fn rev_list(&self, revs: &[String]) -> Result<Vec<String>, GitError> {
-        unimplemented!("rev_list")
+        Ok(self.walk(revs)?.iter().map(Oid::to_string).collect())
     }
 
     /// What `git log --format=%h%x1f%B <revs>` prints, one entry per commit, newest first.
-    #[allow(unused_variables)]
     pub fn log_messages(&self, revs: &[String]) -> Result<Vec<LogEntry>, GitError> {
-        unimplemented!("log_messages")
+        let fail = |e| GitError::from_git2(&format!("log {}", revs.join(" ")), e);
+        self.walk(revs)?
+            .into_iter()
+            .map(|id| {
+                let commit = self.inner.find_commit(id)?;
+                let short = commit.as_object().short_id()?;
+                Ok(LogEntry {
+                    short: short.as_str().unwrap_or_default().to_string(),
+                    message: String::from_utf8_lossy(commit.message_bytes()).into_owned(),
+                })
+            })
+            .collect::<Result<Vec<_>, git2::Error>>()
+            .map_err(fail)
     }
 
-    /// What `git remote get-url <name>` prints; `None` when the remote does not exist.
-    #[allow(unused_variables)]
+    /// What `git remote get-url <name>` prints (the url with the `url.<base>.insteadOf` rewrites
+    /// applied); `None` when the remote does not exist.
     pub fn remote_url(&self, name: &str) -> Option<String> {
-        unimplemented!("remote_url")
+        let remote = self.inner.find_remote(name).ok()?;
+        let url = remote.url().ok()?.to_string();
+        let config = self.inner.config().ok()?;
+        let mut best: Option<(usize, String)> = None;
+        let mut entries = config.entries(Some(r"^url\..*\.insteadof$")).ok()?;
+        while let Some(Ok(entry)) = entries.next() {
+            let (Some(key), Some(prefix)) = (entry.name().ok(), entry.value().ok()) else {
+                continue;
+            };
+            let Some(base) = key
+                .strip_prefix("url.")
+                .and_then(|k| k.strip_suffix(".insteadof"))
+            else {
+                continue;
+            };
+            if !prefix.is_empty()
+                && url.starts_with(prefix)
+                && best.as_ref().is_none_or(|(len, _)| prefix.len() > *len)
+            {
+                best = Some((prefix.len(), format!("{base}{}", &url[prefix.len()..])));
+            }
+        }
+        Some(best.map_or(url, |(_, rewritten)| rewritten))
     }
 
     /// What `git hash-object -- <rel>` prints: the blob id of the working tree file after the
-    /// clean filters.
-    #[allow(unused_variables)]
+    /// clean filters, written nowhere.
     pub fn hash_file(&self, rel: &str) -> Result<String, GitError> {
-        unimplemented!("hash_file")
+        extern "C" {
+            fn git_repository_hashfile(
+                out: *mut libgit2_sys::git_oid,
+                repo: *mut libgit2_sys::git_repository,
+                path: *const std::ffi::c_char,
+                otype: libgit2_sys::git_object_t,
+                as_path: *const std::ffi::c_char,
+            ) -> std::ffi::c_int;
+        }
+        use git2::Binding;
+        let action = format!("hash-object -- {rel}");
+        let path = std::ffi::CString::new(rel).map_err(|_| GitError {
+            args: action.clone(),
+            stderr: "path contains a NUL byte".to_string(),
+        })?;
+        let mut oid: libgit2_sys::git_oid = unsafe { std::mem::zeroed() };
+        // SAFETY: the repository pointer lives as long as `self`, the path is a NUL-terminated
+        // string that outlives the call, and `oid` is a valid output location.
+        let code = unsafe {
+            git_repository_hashfile(
+                &mut oid,
+                self.inner.raw(),
+                path.as_ptr(),
+                libgit2_sys::GIT_OBJECT_BLOB,
+                path.as_ptr(),
+            )
+        };
+        if code < 0 {
+            return Err(GitError::from_git2(&action, git2::Error::last_error(code)));
+        }
+        Oid::from_bytes(&oid.id)
+            .map(|id| id.to_string())
+            .map_err(|e| GitError::from_git2(&action, e))
     }
 
     /// The commits of `git log --reverse --no-renames --name-only <revs>`, oldest first, each with
     /// its sorted file list. A merge lists no files.
-    #[allow(unused_variables)]
     pub fn commit_files(&self, revs: &[String]) -> Result<Vec<(String, Vec<String>)>, GitError> {
-        unimplemented!("commit_files")
+        let fail = |e| GitError::from_git2(&format!("log --name-only {}", revs.join(" ")), e);
+        let mut ids = self.walk(revs)?;
+        ids.reverse();
+        let mut out = Vec::new();
+        for id in ids {
+            let commit = self.inner.find_commit(id).map_err(fail)?;
+            let mut files = Vec::new();
+            if commit.parent_count() <= 1 {
+                let parent = commit.parents().next().map(|p| p.tree()).transpose();
+                let diff = self
+                    .inner
+                    .diff_tree_to_tree(
+                        parent.map_err(fail)?.as_ref(),
+                        Some(&commit.tree().map_err(fail)?),
+                        None,
+                    )
+                    .map_err(fail)?;
+                for delta in diff.deltas() {
+                    let file = delta
+                        .new_file()
+                        .path_bytes()
+                        .or(delta.old_file().path_bytes());
+                    if let Some(path) = file {
+                        files.push(String::from_utf8_lossy(path).into_owned());
+                    }
+                }
+            }
+            files.sort();
+            files.dedup();
+            out.push((id.to_string(), files));
+        }
+        Ok(out)
     }
 
     /// The blob at `<rev>:<rel>` byte for byte; `None` when `rev` holds no file there.
-    #[allow(unused_variables)]
     pub fn bytes_at(&self, rev: &str, rel: &str) -> Result<Option<Vec<u8>>, GitError> {
-        unimplemented!("bytes_at")
+        let fail = |e| GitError::from_git2(&format!("show {rev}:{rel}"), e);
+        let tree = self
+            .inner
+            .revparse_single(rev)
+            .and_then(|o| o.peel_to_tree())
+            .map_err(fail)?;
+        let entry = match tree.get_path(Path::new(rel)) {
+            Ok(entry) => entry,
+            Err(e) if e.code() == ErrorCode::NotFound => return Ok(None),
+            Err(e) => return Err(fail(e)),
+        };
+        if entry.kind() != Some(ObjectType::Blob) {
+            return Ok(None);
+        }
+        let blob = self.inner.find_blob(entry.id()).map_err(fail)?;
+        Ok(Some(blob.content().to_vec()))
+    }
+
+    /// The repository for code that reads it through libgit2 directly.
+    pub(crate) fn raw(&self) -> &git2::Repository {
+        &self.inner
     }
 
     /// The checked-out branch; `None` on a detached or unborn `HEAD`.
@@ -634,19 +836,15 @@ pub(crate) fn trimmed_text(bytes: &[u8]) -> String {
 /// comparisons that still run it. Nothing new is added here.
 pub(crate) mod legacy_cli {
     use super::GitError;
-    use std::ffi::OsStr;
     use std::path::Path;
 
-    fn exec(dir: &Path, args: &[&str], env: &[(&str, &OsStr)]) -> Result<Vec<u8>, GitError> {
+    fn exec(dir: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
         let fail = |stderr: String| GitError {
             args: args.join(" "),
             stderr,
         };
         let mut cmd = std::process::Command::new("git");
         cmd.arg("-C").arg(dir).args(args);
-        for (key, value) in env {
-            cmd.env(key, value);
-        }
         let out = cmd.output().map_err(|e| fail(e.to_string()))?;
         if !out.status.success() {
             return Err(fail(
@@ -658,23 +856,18 @@ pub(crate) mod legacy_cli {
 
     /// Run `git -C <dir> <args>` and return stdout without its trailing newline.
     pub fn run(dir: &Path, args: &[&str]) -> Result<String, GitError> {
-        exec(dir, args, &[]).map(|out| super::trimmed_text(&out))
+        exec(dir, args).map(|out| super::trimmed_text(&out))
     }
 
     /// Run `git -C <dir> <args>` and return stdout untouched, byte for byte.
     pub fn run_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
-        exec(dir, args, &[])
-    }
-
-    /// Like `run_bytes`, with extra environment variables for the child, such as `GIT_INDEX_FILE`.
-    pub fn run_env(dir: &Path, args: &[&str], env: &[(&str, &OsStr)]) -> Result<Vec<u8>, GitError> {
-        exec(dir, args, env)
+        exec(dir, args)
     }
 }
 
 /// Test fixtures build repositories with the command line.
 #[cfg(test)]
-pub use legacy_cli::{run, run_bytes, run_env};
+pub use legacy_cli::{run, run_bytes};
 
 #[cfg(test)]
 mod tests {
