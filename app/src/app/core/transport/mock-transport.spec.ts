@@ -4,6 +4,7 @@ import { runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, seedSpe
 import type { KataEvent } from '../../lib/events';
 import { transcriptRunId } from '../../lib/sdlc';
 import type { RunSpec } from '@bindings/RunSpec';
+import type { PublishStep } from '@bindings/PublishStep';
 import type { Resolved } from '@bindings/Resolved';
 import { MOCK_BUILD_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
 
@@ -128,6 +129,16 @@ describe('MockTransport', () => {
     expect(out).toEqual({ kind: 'committed' });
     const after = (await t.sdlcChanges('D:/Work/acme-claims/claims-intent', 'claims')).find((c) => c.change === '2026-10-12-fnol-photo-upload');
     expect(after?.stage).toBe('plan-ready');
+  });
+
+  it('says what publishing is doing, repository by repository, then returns the results', async () => {
+    const t = new MockTransport();
+    const steps: PublishStep[] = [];
+    await t.onPublishStep((step) => steps.push(step));
+    const repos = await t.sdlcTouchedRepos(MOCK_WORKSPACE_FOLDER, 'claims-intent', 'claims', MOCK_BUILD_CHANGE);
+    const results = await t.sdlcPublish(MOCK_WORKSPACE_FOLDER, 'claims-intent', 'claims', MOCK_BUILD_CHANGE, repos);
+    expect(results).toHaveLength(repos.length);
+    expect(steps).toEqual(repos.flatMap((r) => [{ kind: 'pushing', repo: r.repo }, { kind: 'opening', repo: r.repo }]));
   });
 
   describe('several scripted runs at once', () => {

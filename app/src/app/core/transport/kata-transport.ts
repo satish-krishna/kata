@@ -38,6 +38,7 @@ import type { Offender } from '@bindings/Offender';
 import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { PrResult } from '@bindings/PrResult';
+import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
@@ -137,6 +138,8 @@ export abstract class KataTransport {
   abstract openUrl(url: string): Promise<void>;
   /** Step the window's zoom. Resolves to the new level, which the backend remembers for the next launch. */
   abstract zoom(step: ZoomStep): Promise<number>;
+  /** Register for what publishing is doing (pushing or opening a pull request, per repository). Resolves to the unlisten function. */
+  abstract onPublishStep(cb: (step: PublishStep) => void): Promise<() => void>;
   /** Register for relayed run events, each tagged with the id of the run it came from. Resolves to the unlisten function. */
   abstract onRunEvent(cb: (runId: string, ev: KataEvent) => void): Promise<() => void>;
 }

@@ -38,6 +38,7 @@ import type { Offender } from '@bindings/Offender';
 import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { PrResult } from '@bindings/PrResult';
+import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
@@ -222,6 +223,8 @@ export class MockTransport extends KataTransport {
   pickDirectory(): Promise<string | null> { return Promise.resolve(null); }
   pickOpenSpec(): Promise<string | null> { return Promise.resolve(null); }
   pickSaveSpec(): Promise<string | null> { return Promise.resolve(null); }
+
+  onPublishStep(_cb: (step: PublishStep) => void): Promise<() => void> { return Promise.resolve(() => undefined); }
 
   async onRunEvent(cb: (runId: string, ev: KataEvent) => void): Promise<() => void> {
     this.listeners.add(cb);

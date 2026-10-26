@@ -1,5 +1,6 @@
 import { TauriTransport, type TauriIpc } from './tauri-transport';
 import { seedSpec } from '../../lib/mock';
+import type { PublishStep } from '@bindings/PublishStep';
 import type { KataEvent } from '../../lib/events';
 import type { Settings } from '@bindings/Settings';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
@@ -140,6 +141,17 @@ describe('TauriTransport', () => {
     const ev: KataEvent = { type: 'log', level: 'info', message: 'x' };
     handler({ payload: { runId: 3, event: ev } });
     expect(seen).toEqual([['3', ev]]);
+  });
+
+  it('hands the payload of sdlc://publish-step over as the step', async () => {
+    const ipc = fakeIpc();
+    const t = new TauriTransport(asIpc(ipc));
+    const seen: PublishStep[] = [];
+    await t.onPublishStep((step) => seen.push(step));
+    const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: PublishStep }) => void];
+    expect(event).toBe('sdlc://publish-step');
+    handler({ payload: { kind: 'pushing', repo: 'claims-core' } });
+    expect(seen).toEqual([{ kind: 'pushing', repo: 'claims-core' }]);
   });
 
   it('runSpec resolves to the run id the backend returned', async () => {
