@@ -2075,6 +2075,7 @@ name = "kata-core"
 version = "3.2.0"
 dependencies = [
  "git2",
+ "libgit2-sys",
  "process-wrap",
  "regex",
  "schemars 1.2.1",

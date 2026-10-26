@@ -6,7 +6,7 @@
 //! caller degrades to a warning — a diff must never mask a run's outcome.
 
 use crate::event::DiffFile;
-use git2::{Delta, DiffOptions, ErrorCode, Patch, Repository};
+use git2::{Delta, DiffOptions, ErrorCode, Repository};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -99,17 +99,8 @@ pub fn diff_at(dir: &Path) -> Result<DiffSummary, ChangesetError> {
         };
         let path = path.to_string_lossy().replace('\\', "/");
         // A rename's line counts stay zero (known oddity, issue #7).
-        let (ins, del) = if delta.status() == Delta::Renamed {
-            (0, 0)
-        } else {
-            match Patch::from_diff(&diff, idx) {
-                Ok(Some(patch)) => patch
-                    .line_stats()
-                    .map(|(_, a, d)| (a as u32, d as u32))
-                    .unwrap_or((0, 0)),
-                _ => (0, 0),
-            }
-        };
+        let counts = crate::git::file_counts(&diff, idx, false).unwrap_or_default();
+        let (ins, del) = (counts.added, counts.removed);
         insertions += ins;
         deletions += del;
         let e = by_ext.entry(ext_of(&path)).or_insert((0, 0, 0));

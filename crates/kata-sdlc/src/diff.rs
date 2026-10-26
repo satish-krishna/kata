@@ -4,7 +4,7 @@
 
 use crate::base::{self, BaseError};
 use crate::git::{GitError, Repo};
-use git2::{Delta, DiffFindOptions, DiffOptions, Patch};
+use git2::{Delta, DiffFindOptions, DiffOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -341,24 +341,14 @@ fn list(repo: &Path, part: Part) -> Result<Vec<ChangedFile>, DiffError> {
         let old_path = (status == ChangeStatus::Renamed)
             .then(|| name(delta.old_file()))
             .flatten();
-        let (added, removed, binary) = match Patch::from_diff(&diff, index).map_err(fail)? {
-            Some(patch) => {
-                let (_, added, removed) = patch.line_stats().map_err(fail)?;
-                (
-                    added as u32,
-                    removed as u32,
-                    patch.delta().flags().is_binary(),
-                )
-            }
-            None => (0, 0, delta.flags().is_binary()),
-        };
+        let counts = kata_core::git::file_counts(&diff, index, true).map_err(fail)?;
         files.push(ChangedFile {
             path,
             old_path,
             status,
-            binary,
-            added: if binary { 0 } else { added },
-            removed: if binary { 0 } else { removed },
+            binary: counts.binary,
+            added: counts.added,
+            removed: counts.removed,
             uncommitted: false,
         });
     }

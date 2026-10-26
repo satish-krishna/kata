@@ -747,39 +747,9 @@ impl Repo {
     /// What `git hash-object -- <rel>` prints: the blob id of the working tree file after the
     /// clean filters, written nowhere.
     pub fn hash_file(&self, rel: &str) -> Result<String, GitError> {
-        extern "C" {
-            fn git_repository_hashfile(
-                out: *mut libgit2_sys::git_oid,
-                repo: *mut libgit2_sys::git_repository,
-                path: *const std::ffi::c_char,
-                otype: libgit2_sys::git_object_t,
-                as_path: *const std::ffi::c_char,
-            ) -> std::ffi::c_int;
-        }
-        use git2::Binding;
-        let action = format!("hash-object -- {rel}");
-        let path = std::ffi::CString::new(rel).map_err(|_| GitError {
-            args: action.clone(),
-            stderr: "path contains a NUL byte".to_string(),
-        })?;
-        let mut oid: libgit2_sys::git_oid = unsafe { std::mem::zeroed() };
-        // SAFETY: the repository pointer lives as long as `self`, the path is a NUL-terminated
-        // string that outlives the call, and `oid` is a valid output location.
-        let code = unsafe {
-            git_repository_hashfile(
-                &mut oid,
-                self.inner.raw(),
-                path.as_ptr(),
-                libgit2_sys::GIT_OBJECT_BLOB,
-                path.as_ptr(),
-            )
-        };
-        if code < 0 {
-            return Err(GitError::from_git2(&action, git2::Error::last_error(code)));
-        }
-        Oid::from_bytes(&oid.id)
+        kata_core::git::hash_file(&self.inner, rel)
             .map(|id| id.to_string())
-            .map_err(|e| GitError::from_git2(&action, e))
+            .map_err(|e| GitError::from_git2(&format!("hash-object -- {rel}"), e))
     }
 
     /// The commits of `git log --reverse --no-renames --name-only <revs>`, oldest first, each with
@@ -971,7 +941,7 @@ impl Repo {
                 stderr: reason,
             });
         }
-        let stamp = self.index_stamp();
+        let stamp = kata_core::git::index_stamp(&self.inner);
         let mut index = repo.index().map_err(fail)?;
         for (path, id, mode) in &entries {
             set_entry(&mut index, path, Some((*id, *mode))).map_err(fail)?;
@@ -988,7 +958,7 @@ impl Repo {
         repo.checkout_index(Some(&mut index), Some(&mut checkout))
             .map_err(fail)?;
         index.write().map_err(fail)?;
-        self.smudge_racy_entries(stamp);
+        kata_core::git::smudge_racy_entries(&self.inner, stamp);
         Ok(())
     }
 
@@ -1005,7 +975,7 @@ impl Repo {
                 stderr: "this repository has no working folder".to_string(),
             })?
             .to_path_buf();
-        let stamp = self.index_stamp();
+        let stamp = kata_core::git::index_stamp(&self.inner);
         let mut index = repo.index().map_err(fail)?;
         for path in paths {
             if index.get_path(Path::new(path), 0).is_none() {
@@ -1038,55 +1008,8 @@ impl Repo {
             }
         }
         index.write().map_err(fail)?;
-        self.smudge_racy_entries(stamp);
+        kata_core::git::smudge_racy_entries(&self.inner, stamp);
         Ok(())
-    }
-
-    /// When the index file was last written, in whole seconds; taken before an operation rewrites it.
-    fn index_stamp(&self) -> Option<i64> {
-        let modified = std::fs::metadata(self.inner.path().join("index"))
-            .and_then(|m| m.modified())
-            .ok()?;
-        let since = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
-        i64::try_from(since.as_secs()).ok()
-    }
-
-    /// What git does whenever it writes the index: an entry whose file was modified no earlier than
-    /// the old index was written ("racily clean") cannot be told apart from an unchanged file by its
-    /// size and time alone, so when its content differs from the staged content its size is zeroed
-    /// and the next status looks at the content. libgit2 does not do this, and without it an edit
-    /// made in the same second as the previous write would show as no change at all.
-    fn smudge_racy_entries(&self, stamp: Option<i64>) {
-        let Some(stamp) = stamp else { return };
-        let Ok(mut index) = self.inner.index() else {
-            return;
-        };
-        if index.read(true).is_err() {
-            return;
-        }
-        let racy: Vec<git2::IndexEntry> = index
-            .iter()
-            .filter(|e| {
-                (e.flags & 0x3000) == 0
-                    && e.file_size != 0
-                    && e.mode & 0o170000 == 0o100000
-                    && i64::from(e.mtime.seconds()) >= stamp
-            })
-            .collect();
-        let mut changed = false;
-        for mut entry in racy {
-            let path = String::from_utf8_lossy(&entry.path).into_owned();
-            let same = self
-                .hash_file(&path)
-                .is_ok_and(|h| h == entry.id.to_string());
-            if !same {
-                entry.file_size = 0;
-                changed |= index.add(&entry).is_ok();
-            }
-        }
-        if changed {
-            let _ = index.write();
-        }
     }
 
     /// The reason a switch to `target` needs a program Kata cannot start; checks the files it
@@ -1136,7 +1059,7 @@ impl Repo {
             .map(|c| c.id().to_string())
             .unwrap_or_else(|| "0".repeat(40));
 
-        let stamp = self.index_stamp();
+        let stamp = kata_core::git::index_stamp(&self.inner);
         let mut conflicts: Vec<String> = Vec::new();
         let outcome = {
             let mut checkout = git2::build::CheckoutBuilder::new();
@@ -1161,7 +1084,7 @@ impl Repo {
             });
         }
         repo.set_head(refname).map_err(git_fail)?;
-        self.smudge_racy_entries(stamp);
+        kata_core::git::smudge_racy_entries(&self.inner, stamp);
         let new = target.id().to_string();
         let _ = run_hook(repo, Hook::PostCheckout, &[&old, &new, "1"], None, &[]);
         Ok(())
