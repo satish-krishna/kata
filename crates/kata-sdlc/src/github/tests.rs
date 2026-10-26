@@ -512,3 +512,14 @@ fn expired_sign_in_gives_the_plain_message_and_no_prompt() {
         );
     }
 }
+
+#[test]
+fn credential_blobs_decode_as_utf16_or_utf8() {
+    let utf16: Vec<u8> = "gho_abc"
+        .encode_utf16()
+        .flat_map(|u| u.to_le_bytes())
+        .collect();
+    assert_eq!(decode_blob(&utf16).as_deref(), Some("gho_abc"));
+    assert_eq!(decode_blob(b"gho_abc\n").as_deref(), Some("gho_abc"));
+    assert_eq!(decode_blob(b""), None);
+}

@@ -11,7 +11,7 @@ use crate::decide::change_scope;
 use crate::diff::{changed_files, Part};
 use crate::frontmatter;
 use crate::git;
-use crate::github::GitHubHosts;
+use crate::github::{parse_repo_path, ApiError, GitHub, GitHubHosts};
 use crate::start::BuildError;
 use crate::workspace::{self, system_repos};
 use serde::{Deserialize, Serialize};
@@ -45,7 +45,7 @@ pub fn origin_host(url: &str) -> Option<String> {
 
 /// `[user@]host:path`, where the colon comes before any slash and the text is not a Windows
 /// path. scp syntax never contains a backslash.
-fn is_scp_like(raw: &str) -> bool {
+pub(crate) fn is_scp_like(raw: &str) -> bool {
     if raw.contains('\\') {
         return false;
     }
@@ -208,14 +208,62 @@ pub fn change_repos(
     Ok(out)
 }
 
+/// A client for `host`, or the plain not-signed-in answer when no sign-in is found.
+fn client(hosts: &dyn GitHubHosts, host: &str) -> Result<Box<dyn GitHub>, NotReady> {
+    hosts
+        .github(host)
+        .ok_or_else(|| NotReady::NotSignedIn(host.to_string()))
+}
+
+/// What a failed `GET /user` means: a rejected sign-in, or GitHub out of reach.
+fn classify_user(e: &ApiError, host: &str) -> NotReady {
+    match e {
+        ApiError::Status {
+            status: 401 | 403, ..
+        } => NotReady::NotSignedIn(host.to_string()),
+        _ => NotReady::Unreachable,
+    }
+}
+
 /// Signed in to every distinct host the repositories' origins name; returns the account line.
-pub fn signed_in(_hosts: &dyn GitHubHosts, _repos: &[PublishRepo]) -> Result<String, NotReady> {
-    todo!()
+pub fn signed_in(hosts: &dyn GitHubHosts, repos: &[PublishRepo]) -> Result<String, NotReady> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut lines = Vec::new();
+    for r in repos {
+        let Some(url) = origin_url(Path::new(&r.path)) else {
+            continue;
+        };
+        // A local path or an unparsable remote has no host; GitHub's own host is assumed then.
+        let host = origin_host(&url).unwrap_or_else(|| "github.com".to_string());
+        if seen.contains(&host) {
+            continue;
+        }
+        let login = client(hosts, &host)?
+            .user()
+            .map_err(|e| classify_user(&e, &host))?;
+        lines.push(format!("Logged in to {host} as {login}"));
+        seen.push(host);
+    }
+    Ok(lines.join("; "))
 }
 
 /// Every repository has an `origin` GitHub can see.
-pub fn origins(_hosts: &dyn GitHubHosts, _repos: &[PublishRepo]) -> Result<(), NotReady> {
-    todo!()
+pub fn origins(hosts: &dyn GitHubHosts, repos: &[PublishRepo]) -> Result<(), NotReady> {
+    for r in repos {
+        let no_remote = || NotReady::NoRemote(r.repo.clone());
+        let url = origin_url(Path::new(&r.path)).ok_or_else(no_remote)?;
+        let (owner, name) = parse_repo_path(&url).ok_or_else(no_remote)?;
+        let host = origin_host(&url).ok_or_else(no_remote)?;
+        match client(hosts, &host)?.repo(&owner, &name) {
+            Ok(()) => {}
+            Err(ApiError::Status {
+                status: 404 | 401 | 403,
+                ..
+            }) => return Err(no_remote()),
+            Err(_) => return Err(NotReady::Unreachable),
+        }
+    }
+    Ok(())
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -243,13 +291,102 @@ pub struct PrResult {
 
 /// Open (or reuse) one pull request per repository, in order; `master` names the one last.
 pub fn publish(
-    _hosts: &dyn GitHubHosts,
-    _master: &str,
-    _system: &str,
-    _change: &str,
-    _repos: &[PublishRepo],
+    hosts: &dyn GitHubHosts,
+    master: &str,
+    system: &str,
+    change: &str,
+    repos: &[PublishRepo],
 ) -> Vec<PrResult> {
-    todo!()
+    let branch = format!("change/{change}");
+    let title = repos
+        .iter()
+        .find(|r| r.repo == master)
+        .and_then(|r| read_doc(Path::new(&r.path), system, change, "intent"))
+        .and_then(|text| frontmatter::field(&text, "title"))
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| change.to_string());
+    let folder = format!("intent/{system}/{change}");
+    let mut results = Vec::new();
+    let mut product_urls: Vec<(String, String)> = Vec::new();
+    for r in repos {
+        let is_master = r.repo == master;
+        let body = if is_master {
+            let mut b = format!(
+                "The intent, spec, plan and the record of finished tasks for this change: `{folder}`.\n\nPull requests:\n"
+            );
+            for (repo, url) in &product_urls {
+                b.push_str(&format!("- {repo}: {url}\n"));
+            }
+            b
+        } else {
+            format!(
+                "Part of the change `{change}`. Its intent, spec, plan and build record are in the master repository `{master}` under `{folder}`.\n"
+            )
+        };
+        let outcome = if is_change_name(change) {
+            open_one(hosts, r, is_master, &branch, &title, &body)
+        } else {
+            PrOutcome::Failed {
+                error: format!("invalid change name: {change}"),
+            }
+        };
+        if !is_master {
+            if let PrOutcome::Opened { url } | PrOutcome::Reused { url } = &outcome {
+                product_urls.push((r.repo.clone(), url.clone()));
+            }
+        }
+        results.push(PrResult {
+            repo: r.repo.clone(),
+            outcome,
+        });
+    }
+    results
+}
+
+/// Where a repository's pull requests live: its host, owner and name, from the `origin` URL.
+fn github_target(
+    hosts: &dyn GitHubHosts,
+    r: &PublishRepo,
+) -> Result<(Box<dyn GitHub>, String, String), NotReady> {
+    let no_remote = || NotReady::NoRemote(r.repo.clone());
+    let url = origin_url(Path::new(&r.path)).ok_or_else(no_remote)?;
+    let (owner, name) = parse_repo_path(&url).ok_or_else(no_remote)?;
+    let host = origin_host(&url).ok_or_else(no_remote)?;
+    Ok((client(hosts, &host)?, owner, name))
+}
+
+fn open_one(
+    hosts: &dyn GitHubHosts,
+    r: &PublishRepo,
+    is_master: bool,
+    branch: &str,
+    title: &str,
+    body: &str,
+) -> PrOutcome {
+    let failed = |error: String| PrOutcome::Failed { error };
+    let (gh, owner, name) = match github_target(hosts, r) {
+        Ok(t) => t,
+        Err(e) => return failed(e.to_string()),
+    };
+    let existing = match gh.open_pull_for_branch(&owner, &name, branch) {
+        Ok(pull) => pull,
+        Err(e) => return failed(e.to_string()),
+    };
+    if let Err(e) = push_with_git_cli(Path::new(&r.path), branch) {
+        return failed(e.to_string());
+    }
+    // A reused pull request keeps its title and, except the master's, its body.
+    match (existing, is_master) {
+        (Some(pull), false) => PrOutcome::Reused { url: pull.url },
+        (Some(pull), true) => match gh.edit_pull_body(&owner, &name, pull.number, body) {
+            Ok(()) => PrOutcome::Reused { url: pull.url },
+            Err(e) => failed(e.to_string()),
+        },
+        (None, _) => match gh.create_pull(&owner, &name, &r.base, branch, title, body) {
+            Ok(pull) => PrOutcome::Opened { url: pull.url },
+            Err(e) => failed(e.to_string()),
+        },
+    }
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -263,11 +400,24 @@ pub struct PrState {
 
 /// The open pull request of the change in each repository, if any.
 pub fn open_pull_requests(
-    _hosts: &dyn GitHubHosts,
-    _repos: &[PublishRepo],
-    _change: &str,
+    hosts: &dyn GitHubHosts,
+    repos: &[PublishRepo],
+    change: &str,
 ) -> Result<Vec<PrState>, String> {
-    todo!()
+    let branch = format!("change/{change}");
+    repos
+        .iter()
+        .map(|r| {
+            let (gh, owner, name) = github_target(hosts, r).map_err(|e| e.to_string())?;
+            let pull = gh
+                .open_pull_for_branch(&owner, &name, &branch)
+                .map_err(|e| e.to_string())?;
+            Ok(PrState {
+                repo: r.repo.clone(),
+                url: pull.map(|p| p.url),
+            })
+        })
+        .collect()
 }
 
 /// `git -C <path> push -u origin <branch>`, the one repository write that still runs the git
