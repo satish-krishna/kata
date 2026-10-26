@@ -501,6 +501,22 @@ mod tests {
         assert!(lines.iter().any(|l| l == "child-window=0"), "got {lines:?}");
     }
 
+    #[test]
+    fn strip_ansi_removes_csi_sequences() {
+        assert_eq!(strip_ansi("\u{1b}[31;1mred\u{1b}[0m done"), "red done");
+    }
+
+    #[test]
+    fn strip_ansi_removes_an_osc_ended_by_bel() {
+        assert_eq!(strip_ansi("\u{1b}]0;title\u{7}after"), "after");
+    }
+
+    #[test]
+    fn strip_ansi_removes_an_osc_ended_by_st_and_keeps_the_text() {
+        let linked = "\u{1b}]8;;http://x\u{1b}\\error text\u{1b}]8;;\u{1b}\\ tail";
+        assert_eq!(strip_ansi(linked), "error text tail");
+    }
+
     mod limited {
         use super::*;
         use std::ffi::OsString;

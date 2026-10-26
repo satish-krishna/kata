@@ -1,27 +1,9 @@
-//! Runs one command to completion with a bounded output tail and a hard timeout.
-//! The command is spawned inside a Windows job object (Unix: its own process group) so a timeout
-//! kills the whole process tree, not just the direct child.
-use process_wrap::std::CommandWrap;
-#[cfg(windows)]
-use process_wrap::std::JobObject;
-#[cfg(unix)]
-use process_wrap::std::ProcessGroup;
-use std::collections::VecDeque;
-use std::io::Read;
+//! Runs one command to completion with a bounded output tail and a hard timeout, through
+//! `kata_core::proc::run_limited`, which kills the whole process tree on a timeout.
+use kata_core::proc::{run_limited, Limited, Outcome, StartError};
+use std::ffi::OsString;
 use std::path::Path;
-use std::process::Stdio;
-use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
-
-const MAX_LINES: usize = 50;
-const MAX_BYTES: usize = 64 * 1024;
-/// How often the runner checks whether the process has exited.
-const POLL: Duration = Duration::from_millis(20);
-/// How long to wait for the output readers after the process ended, in case a surviving
-/// grandchild still holds a pipe open.
-const DRAIN: Duration = Duration::from_secs(2);
+use std::time::Duration;
 
 /// How a command could not be run to completion.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,28 +30,8 @@ pub(crate) fn run(
     cwd: &Path,
     timeout: Duration,
 ) -> Result<ProcessExit, ProcessError> {
-    let (program, mut child) = spawn(argv, cwd)?;
-    let tail = Arc::new(Mutex::new(Tail::default()));
-    let mut readers = Vec::new();
-    if let Some(stdout) = child.stdout().take() {
-        readers.push(spawn_reader(stdout, Arc::clone(&tail)));
-    }
-    if let Some(stderr) = child.stderr().take() {
-        readers.push(spawn_reader(stderr, Arc::clone(&tail)));
-    }
-    let status = wait(&program, &mut child, timeout)?;
-    drain(readers);
-    let tail = tail.lock().unwrap_or_else(|e| e.into_inner()).render();
-    match status {
-        Some(status) => Ok(ProcessExit {
-            code: status.code(),
-            tail,
-        }),
-        None => Err(ProcessError::TimedOut {
-            secs: timeout.as_secs(),
-            tail,
-        }),
-    }
+    let (code, tail, _) = run_argv(argv, cwd, timeout, false)?;
+    Ok(ProcessExit { code, tail })
 }
 
 /// How a finished process ended, with its whole stdout and its stderr kept apart.
@@ -91,64 +53,24 @@ pub(crate) fn run_capture(
     cwd: &Path,
     timeout: Duration,
 ) -> Result<CapturedExit, ProcessError> {
-    let (program, mut child) = spawn(argv, cwd)?;
-    let stderr_tail = Arc::new(Mutex::new(Tail::default()));
-    let mut readers = Vec::new();
-    let stdout_bytes = Arc::new(Mutex::new(Vec::new()));
-    if let Some(mut stdout) = child.stdout().take() {
-        let sink = Arc::clone(&stdout_bytes);
-        let (finished, done) = mpsc::channel();
-        thread::spawn(move || {
-            let mut chunk = [0u8; 8192];
-            while let Ok(n) = stdout.read(&mut chunk) {
-                if n == 0 {
-                    break;
-                }
-                sink.lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .extend_from_slice(&chunk[..n]);
-            }
-            let _ = finished.send(());
-        });
-        readers.push(done);
-    }
-    if let Some(stderr) = child.stderr().take() {
-        readers.push(spawn_reader(stderr, Arc::clone(&stderr_tail)));
-    }
-    let status = wait(&program, &mut child, timeout)?;
-    drain(readers);
-    let stderr = stderr_tail
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .render();
-    match status {
-        Some(status) => {
-            let stdout =
-                std::mem::take(&mut *stdout_bytes.lock().unwrap_or_else(|e| e.into_inner()));
-            Ok(CapturedExit {
-                code: status.code(),
-                stdout,
-                stderr,
-            })
-        }
-        None => Err(ProcessError::TimedOut {
-            secs: timeout.as_secs(),
-            tail: stderr,
-        }),
-    }
+    let (code, stderr, stdout) = run_argv(argv, cwd, timeout, true)?;
+    Ok(CapturedExit {
+        code,
+        stdout,
+        stderr,
+    })
 }
 
-/// Starts `argv` in `cwd` inside a job object (Unix: its own process group), with a null stdin and
-/// piped stdout and stderr. Returns the program name for messages and the running child.
-fn spawn(
+/// Runs `argv` in `cwd` and returns the exit code, the output tail and the kept stdout.
+fn run_argv(
     argv: &[String],
     cwd: &Path,
-) -> Result<(String, Box<dyn process_wrap::std::ChildWrapper>), ProcessError> {
+    timeout: Duration,
+    keep_stdout: bool,
+) -> Result<(Option<i32>, String, Vec<u8>), ProcessError> {
     let (program, args) = argv
         .split_first()
         .ok_or_else(|| ProcessError::SpawnFailed("the command is empty".into()))?;
-    let not_found =
-        || ProcessError::SpawnFailed(format!("{program} was not found on this machine"));
     #[cfg(windows)]
     let resolved = resolve_program(
         program,
@@ -156,62 +78,36 @@ fn spawn(
         &std::env::var("PATH").unwrap_or_default(),
         std::env::var("PATHEXT").ok().as_deref(),
     )
-    .ok_or_else(not_found)?;
+    .ok_or_else(|| not_found(program))?;
     #[cfg(not(windows))]
     let resolved = std::path::PathBuf::from(program);
-    let mut command = kata_core::proc::hidden_command(resolved)
-        .map_err(|refused| ProcessError::SpawnFailed(refused.to_string()))?;
-    command
-        .args(args)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    let mut wrapped = CommandWrap::from(command);
-    #[cfg(windows)]
-    {
-        // Before JobObject: JobObject rewrites the creation flags and keeps only these.
-        wrapped.wrap(process_wrap::std::CreationFlags(
-            windows::Win32::System::Threading::PROCESS_CREATION_FLAGS(
-                kata_core::proc::CREATE_NO_WINDOW,
-            ),
-        ));
-        wrapped.wrap(JobObject);
+    let outcome = run_limited(&Limited {
+        program: &resolved,
+        args: args.iter().map(OsString::from).collect(),
+        cwd,
+        env: &[],
+        stdin: None,
+        limit: timeout,
+        keep_stdout,
+    });
+    match outcome {
+        Outcome::Exited { code, tail, stdout } => Ok((code, tail, stdout)),
+        Outcome::TimedOut { tail } => Err(ProcessError::TimedOut {
+            secs: timeout.as_secs(),
+            tail,
+        }),
+        Outcome::NotStarted(StartError::Refused(refused)) => {
+            Err(ProcessError::SpawnFailed(refused.to_string()))
+        }
+        Outcome::NotStarted(StartError::Io(_)) => Err(not_found(program)),
+        Outcome::WaitFailed(e) => Err(ProcessError::SpawnFailed(format!(
+            "{program} could not be waited on: {e}"
+        ))),
     }
-    #[cfg(unix)]
-    wrapped.wrap(ProcessGroup::leader());
-    let child = wrapped.spawn().map_err(|_| not_found())?;
-    Ok((program.clone(), child))
 }
 
-/// Waits for `child` to exit. `Ok(None)` means it ran past `timeout` and its whole tree was killed.
-fn wait(
-    program: &str,
-    child: &mut Box<dyn process_wrap::std::ChildWrapper>,
-    timeout: Duration,
-) -> Result<Option<std::process::ExitStatus>, ProcessError> {
-    let deadline = Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) if Instant::now() >= deadline => break None,
-            Ok(None) => thread::sleep(POLL),
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(ProcessError::SpawnFailed(format!(
-                    "{program} could not be waited on: {e}"
-                )));
-            }
-        }
-    };
-    if status.is_none() {
-        // Killing the job object / process group closes the pipes, so the readers finish.
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-    Ok(status)
+fn not_found(program: &str) -> ProcessError {
+    ProcessError::SpawnFailed(format!("{program} was not found on this machine"))
 }
 
 /// Windows only: the full path to spawn for `argv0`. Rust's `Command` appends only `.exe` and
@@ -264,118 +160,6 @@ fn resolve_program(
     })
 }
 
-/// Waits for the reader threads to reach end of stream, giving up after `DRAIN` overall.
-fn drain(readers: Vec<Receiver<()>>) {
-    let deadline = Instant::now() + DRAIN;
-    for done in readers {
-        let _ = done.recv_timeout(deadline.saturating_duration_since(Instant::now()));
-    }
-}
-
-/// Reads `source` to the end on its own thread, feeding whole lines into `tail`.
-/// The returned receiver yields (or disconnects) once the thread is finished.
-fn spawn_reader(mut source: impl Read + Send + 'static, tail: Arc<Mutex<Tail>>) -> Receiver<()> {
-    let (finished, done) = mpsc::channel();
-    thread::spawn(move || {
-        let mut chunk = [0u8; 8192];
-        let mut line: Vec<u8> = Vec::new();
-        loop {
-            let read = match source.read(&mut chunk) {
-                Ok(0) | Err(_) => break,
-                Ok(n) => n,
-            };
-            for &byte in &chunk[..read] {
-                if byte == b'\n' {
-                    push_line(&tail, &line);
-                    line.clear();
-                } else {
-                    line.push(byte);
-                    if line.len() > 2 * MAX_BYTES {
-                        line.drain(..line.len() - MAX_BYTES);
-                    }
-                }
-            }
-        }
-        if !line.is_empty() {
-            push_line(&tail, &line);
-        }
-        let _ = finished.send(());
-    });
-    done
-}
-
-fn push_line(tail: &Mutex<Tail>, raw: &[u8]) {
-    let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
-    let text = strip_ansi(&String::from_utf8_lossy(raw));
-    tail.lock().unwrap_or_else(|e| e.into_inner()).push(text);
-}
-
-/// The most recent whole lines of output, bounded by line count and total size.
-#[derive(Default)]
-struct Tail {
-    lines: VecDeque<String>,
-    /// Length of the lines joined with newlines.
-    bytes: usize,
-}
-
-impl Tail {
-    fn push(&mut self, mut line: String) {
-        if line.len() > MAX_BYTES {
-            let mut cut = line.len() - MAX_BYTES;
-            while !line.is_char_boundary(cut) {
-                cut += 1;
-            }
-            line.drain(..cut);
-        }
-        self.bytes += line.len() + usize::from(!self.lines.is_empty());
-        self.lines.push_back(line);
-        while self.lines.len() > MAX_LINES || (self.bytes > MAX_BYTES && self.lines.len() > 1) {
-            if let Some(oldest) = self.lines.pop_front() {
-                self.bytes -= oldest.len() + 1;
-            }
-        }
-    }
-
-    fn render(&self) -> String {
-        self.lines
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
-
-/// Removes CSI sequences (`ESC [ ... final byte`), OSC sequences (`ESC ] ... BEL` or `ESC \`),
-/// and other two-character escapes.
-fn strip_ansi(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars();
-    while let Some(c) = chars.next() {
-        if c != '\u{1b}' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some('[') => {
-                for next in chars.by_ref() {
-                    if ('\u{40}'..='\u{7e}').contains(&next) {
-                        break;
-                    }
-                }
-            }
-            Some(']') => {
-                while let Some(next) = chars.next() {
-                    if next == '\u{7}' || (next == '\u{1b}' && chars.next() == Some('\\')) {
-                        break;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,22 +180,6 @@ mod tests {
             "-Command".into(),
             command.into(),
         ]
-    }
-
-    #[test]
-    fn strip_ansi_removes_csi_sequences() {
-        assert_eq!(strip_ansi("\u{1b}[31;1mred\u{1b}[0m done"), "red done");
-    }
-
-    #[test]
-    fn strip_ansi_removes_an_osc_ended_by_bel() {
-        assert_eq!(strip_ansi("\u{1b}]0;title\u{7}after"), "after");
-    }
-
-    #[test]
-    fn strip_ansi_removes_an_osc_ended_by_st_and_keeps_the_text() {
-        let linked = "\u{1b}]8;;http://x\u{1b}\\error text\u{1b}]8;;\u{1b}\\ tail";
-        assert_eq!(strip_ansi(linked), "error text tail");
     }
 
     fn run_in_temp(argv: Vec<String>, timeout_secs: u64) -> Result<ProcessExit, ProcessError> {
