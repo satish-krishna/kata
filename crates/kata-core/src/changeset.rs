@@ -1,15 +1,14 @@
-//! Git changeset summary for a directory: `git diff HEAD` (tracked changes)
+//! Changeset summary for a directory: its working folder against `HEAD` (tracked changes)
 //! plus newly-created untracked files, WITHOUT mutating the index. Used for
 //! both worktree-isolated runs (diff the worktree) and default runs (diff the
 //! workdir). A non-git directory is a benign, common case the caller reports
-//! quietly (`ChangesetError::NotARepo`); a missing `git` or any other git
-//! failure is an `Err` the caller degrades to a warning — a diff must never
-//! mask a run's outcome.
+//! quietly (`ChangesetError::NotARepo`); any other failure is an `Err` the
+//! caller degrades to a warning — a diff must never mask a run's outcome.
 
 use crate::event::DiffFile;
+use git2::{Delta, DiffOptions, ErrorCode, Patch, Repository};
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Command;
 
 /// A changeset for a directory, relative to its `HEAD`.
 #[derive(Debug, Clone, PartialEq)]
@@ -22,8 +21,6 @@ pub struct DiffSummary {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ChangesetError {
-    #[error("`git` was not found on PATH")]
-    GitMissing,
     #[error("not a git repository")]
     NotARepo,
     #[error("git {cmd} failed (status {status:?}): {stderr}")]
@@ -36,111 +33,110 @@ pub enum ChangesetError {
     Io(#[from] std::io::Error),
 }
 
+fn failed(cmd: &str, e: git2::Error) -> ChangesetError {
+    ChangesetError::Git {
+        cmd: cmd.into(),
+        status: None,
+        stderr: e.message().trim().to_string(),
+    }
+}
+
 /// Summarize `dir`'s changes vs its `HEAD`, including newly-created untracked
 /// files, WITHOUT mutating the index. A directory that is not a git work tree
 /// surfaces as `Err(ChangesetError::NotARepo)`; any other git failure surfaces
 /// as `Err(ChangesetError::Git { .. })`.
 pub fn diff_at(dir: &Path) -> Result<DiffSummary, ChangesetError> {
-    // A non-git directory is the only benign pre-check failure. git's rev-parse
-    // also exits non-zero for other reasons (e.g. "detected dubious ownership"
-    // on shared/CI checkouts); those are real failures the caller should surface
-    // as a warning, not silently suppress as "not a repository". Gate NotARepo on
-    // git's actual "not a git repository" message.
-    let probe = git(dir, &["rev-parse", "--git-dir"])?;
-    if !probe.status.success() {
-        let stderr = String::from_utf8_lossy(&probe.stderr);
-        if stderr.contains("not a git repository") {
-            return Err(ChangesetError::NotARepo);
-        }
-        return Err(ChangesetError::Git {
-            cmd: "rev-parse --git-dir".into(),
-            status: probe.status.code(),
-            stderr: stderr.trim().to_string(),
-        });
-    }
+    let repo = match Repository::discover(dir) {
+        Ok(repo) => repo,
+        Err(e) if e.code() == ErrorCode::NotFound => return Err(ChangesetError::NotARepo),
+        Err(e) => return Err(failed("rev-parse --git-dir", e)),
+    };
+    let root = repo
+        .workdir()
+        .ok_or(ChangesetError::NotARepo)?
+        .to_path_buf();
+    let tree = repo
+        .head()
+        .and_then(|h| h.peel_to_tree())
+        .map_err(|e| failed("diff HEAD", e))?;
 
-    // Per-file insertions/deletions for tracked changes (binary => "-\t-").
-    let numstat = git(dir, &["diff", "HEAD", "--numstat"])?;
-    if !numstat.status.success() {
-        return Err(ChangesetError::Git {
-            cmd: "diff HEAD --numstat".into(),
-            status: numstat.status.code(),
-            stderr: String::from_utf8_lossy(&numstat.stderr).trim().to_string(),
-        });
-    }
-    let mut counts: HashMap<String, (u32, u32)> = HashMap::new();
-    for line in String::from_utf8_lossy(&numstat.stdout).lines() {
-        let mut it = line.split('\t');
-        let ins = it.next().unwrap_or("0").parse::<u32>().unwrap_or(0);
-        let del = it.next().unwrap_or("0").parse::<u32>().unwrap_or(0);
-        let path = it.next_back().unwrap_or("").to_string();
-        if !path.is_empty() {
-            counts.insert(path, (ins, del));
-        }
-    }
+    let mut opts = DiffOptions::new();
+    opts.include_untracked(true).recurse_untracked_dirs(true);
+    // Tree against the index and the working folder together, like `git diff HEAD`; nothing is
+    // written back to the index.
+    let mut diff = repo
+        .diff_tree_to_workdir_with_index(Some(&tree), Some(&mut opts))
+        .map_err(|e| failed("diff HEAD", e))?;
+    diff.find_similar(None)
+        .map_err(|e| failed("diff HEAD", e))?;
 
-    // Statuses for tracked changes (A/M/D/R...).
-    let name_status = git(dir, &["diff", "HEAD", "--name-status"])?;
-    if !name_status.status.success() {
-        return Err(ChangesetError::Git {
-            cmd: "diff HEAD --name-status".into(),
-            status: name_status.status.code(),
-            stderr: String::from_utf8_lossy(&name_status.stderr)
-                .trim()
-                .to_string(),
-        });
-    }
     let mut files = Vec::new();
+    let mut untracked: Vec<String> = Vec::new();
     let mut insertions = 0u32;
     let mut deletions = 0u32;
     let mut by_ext: HashMap<String, (u32, u32, u32)> = HashMap::new();
-    for line in String::from_utf8_lossy(&name_status.stdout).lines() {
-        let mut it = line.split('\t');
-        let status = it.next().unwrap_or("");
-        let path = it.next_back().unwrap_or("").to_string(); // last field handles renames
-        if status.is_empty() || path.is_empty() {
+    for idx in 0..diff.deltas().len() {
+        let Some(delta) = diff.get_delta(idx) else {
             continue;
-        }
-        let (ins, del) = counts.get(&path).copied().unwrap_or((0, 0));
+        };
+        let status = match delta.status() {
+            Delta::Untracked => {
+                if let Some(path) = delta.new_file().path() {
+                    untracked.push(path.to_string_lossy().replace('\\', "/"));
+                }
+                continue;
+            }
+            Delta::Added => "A",
+            Delta::Deleted => "D",
+            Delta::Modified => "M",
+            Delta::Renamed => "R",
+            Delta::Copied => "C",
+            Delta::Typechange => "T",
+            _ => continue,
+        };
+        let Some(path) = delta.new_file().path().or_else(|| delta.old_file().path()) else {
+            continue;
+        };
+        let path = path.to_string_lossy().replace('\\', "/");
+        // A rename's line counts stay zero (known oddity, issue #7).
+        let (ins, del) = if delta.status() == Delta::Renamed {
+            (0, 0)
+        } else {
+            match Patch::from_diff(&diff, idx) {
+                Ok(Some(patch)) => patch
+                    .line_stats()
+                    .map(|(_, a, d)| (a as u32, d as u32))
+                    .unwrap_or((0, 0)),
+                _ => (0, 0),
+            }
+        };
         insertions += ins;
         deletions += del;
-        files.push(DiffFile {
-            status: status.chars().next().unwrap().to_string(),
-            path: path.clone(),
-        });
         let e = by_ext.entry(ext_of(&path)).or_insert((0, 0, 0));
         e.0 += 1;
         e.1 += ins;
         e.2 += del;
-    }
-
-    // Untracked (newly-created) files: status "A", insertions = line count.
-    let untracked = git(dir, &["ls-files", "--others", "--exclude-standard"])?;
-    if !untracked.status.success() {
-        return Err(ChangesetError::Git {
-            cmd: "ls-files --others --exclude-standard".into(),
-            status: untracked.status.code(),
-            stderr: String::from_utf8_lossy(&untracked.stderr)
-                .trim()
-                .to_string(),
+        files.push(DiffFile {
+            status: status.into(),
+            path,
         });
     }
-    for path in String::from_utf8_lossy(&untracked.stdout).lines() {
-        let path = path.trim();
-        if path.is_empty() {
-            continue;
-        }
-        let ins = std::fs::read_to_string(dir.join(path))
+
+    // Untracked (newly-created) files come after the tracked ones: status "A",
+    // insertions = line count.
+    untracked.sort();
+    for path in untracked {
+        let ins = std::fs::read_to_string(root.join(&path))
             .map(|c| c.lines().count() as u32)
             .unwrap_or(0); // unreadable/binary => 0
         insertions += ins;
-        files.push(DiffFile {
-            status: "A".into(),
-            path: path.to_string(),
-        });
-        let e = by_ext.entry(ext_of(path)).or_insert((0, 0, 0));
+        let e = by_ext.entry(ext_of(&path)).or_insert((0, 0, 0));
         e.0 += 1;
         e.1 += ins;
+        files.push(DiffFile {
+            status: "A".into(),
+            path,
+        });
     }
 
     let mut by_type: Vec<crate::event::DiffTypeStat> = by_ext
@@ -173,22 +169,6 @@ fn ext_of(path: &str) -> String {
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase())
         .unwrap_or_default()
-}
-
-/// Run `git -C <dir> <args>`, mapping a missing binary to `GitMissing`.
-fn git(dir: &Path, args: &[&str]) -> Result<std::process::Output, ChangesetError> {
-    Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                ChangesetError::GitMissing
-            } else {
-                ChangesetError::Io(e)
-            }
-        })
 }
 
 #[cfg(test)]
