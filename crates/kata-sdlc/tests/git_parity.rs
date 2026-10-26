@@ -1730,7 +1730,7 @@ fn commit_state(fx: &Fx) -> Vec<String> {
     let dir = &fx.path;
     vec![
         git(dir, &["rev-parse", "HEAD^{tree}"]),
-        git(dir, &["rev-parse", "HEAD^"]),
+        git(dir, &["rev-list", "--count", "HEAD"]),
         git(dir, &["log", "-1", "--format=%an <%ae>|%cn <%ce>|%s"]),
         text(&cli(dir, &["log", "-1", "--format=%B"]).unwrap()),
         git(dir, &["ls-files", "-s"]),
@@ -1846,7 +1846,21 @@ fn commits_hook_rows_decide_as_the_cli_does() {
             let hook = fx.path.join(".git/hooks").join(name);
             std::fs::write(&hook, format!("#!/bin/sh\n{script}\n")).unwrap();
         }
-        let expected = cli_commit_only(&oracle, DOC, "docs(s): accept intent c");
+        // A tracked document needs no `git add`: `--only` commits the working file, and a refused
+        // commit then leaves the index as it was.
+        let expected = cli(
+            &oracle.path,
+            &[
+                "commit",
+                "-q",
+                "-m",
+                "docs(s): accept intent c",
+                "--only",
+                "--",
+                DOC,
+            ],
+        )
+        .map(|_| ());
         let got = Repo::open(&ours.path)
             .unwrap()
             .commit_only(DOC, "docs(s): accept intent c");

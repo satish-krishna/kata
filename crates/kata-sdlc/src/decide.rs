@@ -133,12 +133,25 @@ fn normalized(text: &str) -> String {
     edit_status(text, None).replace("\r\n", "\n")
 }
 
+/// The file at `HEAD` as `git show HEAD:<rel>` prints it (without the final line break), or `None`
+/// when `HEAD` does not hold it.
+fn committed_text(master: &Path, rel: &str) -> Option<String> {
+    let bytes = git::Repo::open(master)
+        .ok()?
+        .committed_bytes(rel)
+        .ok()
+        .flatten()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let text = text.strip_suffix('\n').unwrap_or(&text);
+    Some(text.strip_suffix('\r').unwrap_or(text).to_string())
+}
+
 /// Does the working-tree file differ from `HEAD` in anything other than the status line?
 /// A file `HEAD` does not have counts as edited.
 fn has_other_edits(master: &Path, rel: &str, current: &str) -> bool {
-    match git::legacy_cli::run(master, &["show", &format!("HEAD:{rel}")]) {
-        Ok(head) => normalized(&head).trim_end() != normalized(current).trim_end(),
-        Err(_) => true,
+    match committed_text(master, rel) {
+        Some(head) => normalized(&head).trim_end() != normalized(current).trim_end(),
+        None => true,
     }
 }
 
@@ -174,14 +187,11 @@ pub fn apply(
     let restore: Vec<u8> = if has_other_edits(master, &rel, &text) {
         text.clone().into_bytes()
     } else {
-        git::legacy_cli::run_bytes(master, &["show", &format!("HEAD:{rel}")])
-            .unwrap_or_else(|_| text.clone().into_bytes())
+        git::Repo::open(master)
+            .ok()
+            .and_then(|repo| repo.committed_bytes(&rel).ok().flatten())
+            .unwrap_or_else(|| text.clone().into_bytes())
     };
-
-    // Whether the index already has the file. Committing with `--only` leaves the real index alone when the
-    // commit fails, so only a file the index has never heard of needs adding first (and removing again).
-    let tracked =
-        git::legacy_cli::run(master, &["ls-files", "--", &rel]).is_ok_and(|out| !out.is_empty());
 
     let edited = edit_status(&text, Some(status));
     let wrote = edited != text;
@@ -189,29 +199,15 @@ pub fn apply(
         std::fs::write(&path, &edited)?;
     }
 
+    // `commit_only` changes the real index only once the commit is certain, so a failed decision has
+    // nothing staged to take back; only this call's write needs undoing.
     let msg = message(decision, &change_scope(master, system, change), change);
-    let committed = if tracked {
-        Ok(String::new())
-    } else {
-        git::legacy_cli::run(master, &["add", "--", &rel])
-    }
-    .and_then(|_| git::legacy_cli::run(master, &["commit", "-m", &msg, "--only", "--", &rel]));
+    let committed = git::Repo::open(master).and_then(|repo| repo.commit_only(&rel, &msg));
     Ok(match committed {
         Ok(_) => DecideOutcome::Committed,
         Err(e) => {
-            // A failed decision leaves nothing behind: take back this call's add and this call's write, and
-            // say so when one of them cannot be taken back.
+            // Say so when this call's write cannot be taken back.
             let mut stderr = e.stderr;
-            if !tracked {
-                if let Err(e) = git::legacy_cli::run(master, &["rm", "-q", "--cached", "--", &rel])
-                {
-                    stderr.push_str(&format!(
-                        "
-Could not unstage {rel}: {}",
-                        e.stderr
-                    ));
-                }
-            }
             // Only while the file still holds the bytes this call wrote: an edit made since is the engineer's.
             if wrote && std::fs::read(&path).is_ok_and(|now| now == edited.as_bytes()) {
                 if let Err(e) = std::fs::write(&path, restore) {

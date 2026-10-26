@@ -1,7 +1,7 @@
 //! Repository reads, done with libgit2 so that reading works on a machine without git installed.
 //! A failed operation is a `GitError`: `args` names the git command the operation replaces and
 //! `stderr` carries libgit2's message.
-use git2::{ErrorCode, ObjectType, Oid, StatusOptions, Tree};
+use git2::{ErrorCode, Index, ObjectType, Oid, StatusOptions, Tree};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -99,11 +99,113 @@ impl Repo {
             .map_err(|e| GitError::from_git2("rev-parse HEAD", e))
     }
 
-    /// Not implemented yet.
-    pub fn commit_only(&self, _rel: &str, _message: &str) -> Result<CommitOutcome, GitError> {
-        Err(GitError {
-            args: "commit --only".to_string(),
-            stderr: "not implemented".to_string(),
+    /// What `git add -- <rel>` followed by `git commit -m <message> --only -- <rel>` does, with the
+    /// repository's commit hooks: commits the working file `rel` (or its removal) on top of `HEAD`
+    /// and leaves every other staged entry alone.
+    ///
+    /// Nothing is written when the repository needs a program Kata cannot start, when a hook
+    /// refuses, or when the real index is locked; the hook's output is the error. A failing
+    /// `post-commit` hook is ignored, as git ignores it.
+    pub fn commit_only(&self, rel: &str, message: &str) -> Result<CommitOutcome, GitError> {
+        use kata_core::hooks::{needs_external, run_hook, Hook};
+        const ACTION: &str = "commit --only";
+        let repo = &self.inner;
+        let fail = |stderr: String| GitError {
+            args: ACTION.to_string(),
+            stderr,
+        };
+        let git_fail = |e: git2::Error| GitError::from_git2(ACTION, e);
+
+        if let Some(reason) = needs_external(repo, &[rel]) {
+            return Err(fail(reason));
+        }
+        // Held from here to the end, as git holds it, so two writers take turns.
+        let lock = IndexLock::acquire(&repo.path().join("index")).map_err(fail)?;
+        let workdir = repo
+            .workdir()
+            .ok_or_else(|| fail("this repository has no working folder".to_string()))?;
+        let head = repo.head().map_err(git_fail)?;
+        let head_name = head.name().unwrap_or("HEAD").to_string();
+        let parent = head.peel_to_commit().map_err(git_fail)?;
+        let head_tree = parent.tree().map_err(git_fail)?;
+        let in_head = match head_tree.get_path(Path::new(rel)) {
+            Ok(entry) => Some(entry.filemode() as u32),
+            Err(e) if e.code() == ErrorCode::NotFound => None,
+            Err(e) => return Err(git_fail(e)),
+        };
+
+        // The entry the commit holds for `rel`: the working file after the clean filters, or none
+        // when the file is gone.
+        let file = workdir.join(rel);
+        let new_entry = if file.is_file() {
+            let blob = hash_into_odb(repo, rel).map_err(git_fail)?;
+            Some((blob, in_head.unwrap_or_else(|| new_file_mode(&file))))
+        } else if in_head.is_some() {
+            None
+        } else {
+            return Err(fail(format!(
+                "pathspec '{rel}' did not match any file(s) known to git"
+            )));
+        };
+
+        // The index the hooks see and the commit is made from: `HEAD`'s tree with only `rel` replaced.
+        let temp_path = repo
+            .path()
+            .join(format!("kata-next-index-{}", std::process::id()));
+        let temp = TempIndex(temp_path);
+        let mut next = Index::open(&temp.0).map_err(git_fail)?;
+        next.read_tree(&head_tree).map_err(git_fail)?;
+        set_entry(&mut next, rel, new_entry).map_err(git_fail)?;
+        next.write().map_err(git_fail)?;
+        let tree_id = next.write_tree_to(repo).map_err(git_fail)?;
+        let env = [("GIT_INDEX_FILE", temp.0.as_os_str())];
+
+        let hook_fail = |f: kata_core::hooks::HookFailure| fail(f.message);
+        run_hook(repo, Hook::PreCommit, &[], None, &env).map_err(hook_fail)?;
+        let message_file = repo.path().join("COMMIT_EDITMSG");
+        let mut text = message.to_string();
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        std::fs::write(&message_file, text).map_err(|e| fail(e.to_string()))?;
+        let arg = message_file.to_string_lossy().replace('\\', "/");
+        run_hook(repo, Hook::PrepareCommitMsg, &[&arg, "message"], None, &env)
+            .map_err(hook_fail)?;
+        run_hook(repo, Hook::CommitMsg, &[&arg], None, &env).map_err(hook_fail)?;
+        let edited = std::fs::read(&message_file).map_err(|e| fail(e.to_string()))?;
+        let message = stripspace(&String::from_utf8_lossy(&edited));
+        if message.is_empty() {
+            return Err(fail(
+                "Aborting commit due to empty commit message.".to_string(),
+            ));
+        }
+
+        let signature = repo.signature().map_err(|_| fail(unknown_identity()))?;
+        let tree = repo.find_tree(tree_id).map_err(git_fail)?;
+        let commit_id = repo
+            .commit(None, &signature, &signature, &message, &tree, &[&parent])
+            .map_err(git_fail)?;
+
+        // The new real index is written into the lock file first, then the branch moves, and only
+        // then does the index replace the old one: a failure before that leaves both as they were.
+        let mut real = Index::open(lock.path()).map_err(git_fail)?;
+        set_entry(&mut real, rel, new_entry).map_err(git_fail)?;
+        real.write().map_err(git_fail)?;
+        let subject = message.lines().next().unwrap_or("");
+        repo.reference_matching(
+            &head_name,
+            commit_id,
+            true,
+            parent.id(),
+            &format!("commit: {subject}"),
+        )
+        .map_err(git_fail)?;
+        lock.commit(&repo.path().join("index")).map_err(fail)?;
+
+        // Git ignores a failing post-commit hook.
+        let _ = run_hook(repo, Hook::PostCommit, &[], None, &[]);
+        Ok(CommitOutcome {
+            sha: commit_id.to_string(),
         })
     }
 
@@ -847,6 +949,158 @@ pub(crate) fn trimmed_text(bytes: &[u8]) -> String {
     text.strip_suffix('\r').unwrap_or(text).to_string()
 }
 
+/// The `index.lock` file git takes before it changes the index. It starts as a copy of the index, is
+/// removed when dropped, and `commit` makes it the index.
+struct IndexLock {
+    path: std::path::PathBuf,
+    live: bool,
+}
+
+impl IndexLock {
+    fn acquire(index: &Path) -> Result<IndexLock, String> {
+        use std::io::Write;
+        let mut name = index.as_os_str().to_owned();
+        name.push(".lock");
+        let path = std::path::PathBuf::from(name);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    format!(
+                        "Unable to create '{}': File exists.
+
+Another git process seems to be running in this repository. Make sure all processes are terminated then try again. If it still fails, a git process may have crashed in this repository earlier: remove the file manually to continue.",
+                        path.display()
+                    )
+                } else {
+                    format!("Unable to create '{}': {e}", path.display())
+                }
+            })?;
+        let lock = IndexLock { path, live: true };
+        let current = std::fs::read(index).unwrap_or_default();
+        file.write_all(&current).map_err(|e| e.to_string())?;
+        Ok(lock)
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Makes the lock file the index.
+    fn commit(mut self, index: &Path) -> Result<(), String> {
+        std::fs::rename(&self.path, index)
+            .map_err(|e| format!("the commit was made, but the index could not be updated: {e}"))?;
+        self.live = false;
+        Ok(())
+    }
+}
+
+impl Drop for IndexLock {
+    fn drop(&mut self) {
+        if self.live {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// The temporary index a commit's hooks see; it is removed when dropped, whatever happened.
+struct TempIndex(std::path::PathBuf);
+
+impl Drop for TempIndex {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        let mut lock = self.0.clone().into_os_string();
+        lock.push(".lock");
+        let _ = std::fs::remove_file(lock);
+    }
+}
+
+/// Writes the working file `rel` into the object database through the clean filters
+/// (`core.autocrlf`, `.gitattributes`), as `git add` does, and returns the blob id.
+fn hash_into_odb(repo: &git2::Repository, rel: &str) -> Result<Oid, git2::Error> {
+    use git2::Binding;
+    let path = std::ffi::CString::new(rel)
+        .map_err(|_| git2::Error::from_str("path contains a NUL byte"))?;
+    let mut oid: libgit2_sys::git_oid = unsafe { std::mem::zeroed() };
+    // SAFETY: the repository pointer lives as long as `repo`, the path is a NUL-terminated string
+    // that outlives the call, and `oid` is a valid output location.
+    let code =
+        unsafe { libgit2_sys::git_blob_create_fromworkdir(&mut oid, repo.raw(), path.as_ptr()) };
+    if code < 0 {
+        return Err(git2::Error::last_error(code));
+    }
+    Oid::from_bytes(&oid.id)
+}
+
+/// The mode of a file `HEAD` does not have yet: executable only where the file system says so.
+fn new_file_mode(file: &Path) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if std::fs::metadata(file).is_ok_and(|m| m.permissions().mode() & 0o111 != 0) {
+            return 0o100755;
+        }
+    }
+    let _ = file;
+    0o100644
+}
+
+/// Sets `rel`'s entry in `index` to the blob and mode given, or removes it. The stat fields stay
+/// zero, so git compares the file's content the next time it looks.
+fn set_entry(
+    index: &mut git2::Index,
+    rel: &str,
+    entry: Option<(Oid, u32)>,
+) -> Result<(), git2::Error> {
+    match entry {
+        Some((id, mode)) => index.add(&git2::IndexEntry {
+            ctime: git2::IndexTime::new(0, 0),
+            mtime: git2::IndexTime::new(0, 0),
+            dev: 0,
+            ino: 0,
+            mode,
+            uid: 0,
+            gid: 0,
+            file_size: 0,
+            id,
+            flags: 0,
+            flags_extended: 0,
+            path: rel.as_bytes().to_vec(),
+        }),
+        None if index.get_path(Path::new(rel), 0).is_some() => index.remove_path(Path::new(rel)),
+        None => Ok(()),
+    }
+}
+
+/// git's `whitespace` cleanup of a commit message: trailing whitespace removed from every line,
+/// leading and trailing blank lines removed, runs of blank lines collapsed to one, a final newline.
+/// Comment lines are kept, as they are for `git commit -m`.
+fn stripspace(message: &str) -> String {
+    let mut out = String::new();
+    let mut blank_pending = false;
+    for line in message.split('\n') {
+        let line = line.trim_end_matches([' ', '\t', '\r', '\n', '\x0b', '\x0c']);
+        if line.is_empty() {
+            blank_pending = !out.is_empty();
+            continue;
+        }
+        if blank_pending {
+            out.push('\n');
+            blank_pending = false;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// What git says when it has no name or email for the author.
+fn unknown_identity() -> String {
+    "Author identity unknown\n\n*** Please tell me who you are.\n\nRun\n\n  git config --global user.email \"you@example.com\"\n  git config --global user.name \"Your Name\"\n\nto set your account's default identity.\nOmit --global to set the identity only in this repository.\n\nfatal: unable to auto-detect email address".to_string()
+}
+
 /// The git command line, kept for the writes that have not moved to libgit2 yet and for the
 /// comparisons that still run it. Nothing new is added here.
 pub(crate) mod legacy_cli {
@@ -875,6 +1129,7 @@ pub(crate) mod legacy_cli {
     }
 
     /// Run `git -C <dir> <args>` and return stdout untouched, byte for byte.
+    #[cfg(test)]
     pub fn run_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
         exec(dir, args)
     }

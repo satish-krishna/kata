@@ -1200,9 +1200,8 @@ mod tests {
                     let rel = format!("{DIR}/build/{repo}.md");
                     let msg = format!("docs(sdlc): log {repo}");
                     for _ in 0..200 {
-                        let done = git::run(master, &["add", "--", &rel]).and_then(|_| {
-                            git::run(master, &["commit", "-q", "-m", &msg, "--", &rel])
-                        });
+                        let done =
+                            git::Repo::open(master).and_then(|repo| repo.commit_only(&rel, &msg));
                         match done {
                             Ok(_) => return,
                             Err(e) if e.stderr.contains("index.lock") => {
