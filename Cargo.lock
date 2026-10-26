@@ -2035,6 +2035,7 @@ dependencies = [
  "thiserror 1.0.69",
  "toml 0.8.2",
  "ts-rs",
+ "windows 0.62.2",
 ]
 
 [[package]]

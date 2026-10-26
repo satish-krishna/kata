@@ -9,7 +9,7 @@ use process_wrap::std::ProcessGroup;
 use std::collections::VecDeque;
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -159,7 +159,8 @@ fn spawn(
     .ok_or_else(not_found)?;
     #[cfg(not(windows))]
     let resolved = std::path::PathBuf::from(program);
-    let mut command = Command::new(resolved);
+    let mut command = kata_core::proc::hidden_command(resolved)
+        .map_err(|refused| ProcessError::SpawnFailed(refused.to_string()))?;
     command
         .args(args)
         .current_dir(cwd)
@@ -169,7 +170,15 @@ fn spawn(
 
     let mut wrapped = CommandWrap::from(command);
     #[cfg(windows)]
-    wrapped.wrap(JobObject);
+    {
+        // Before JobObject: JobObject rewrites the creation flags and keeps only these.
+        wrapped.wrap(process_wrap::std::CreationFlags(
+            windows::Win32::System::Threading::PROCESS_CREATION_FLAGS(
+                kata_core::proc::CREATE_NO_WINDOW,
+            ),
+        ));
+        wrapped.wrap(JobObject);
+    }
     #[cfg(unix)]
     wrapped.wrap(ProcessGroup::leader());
     let child = wrapped.spawn().map_err(|_| not_found())?;

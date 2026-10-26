@@ -615,8 +615,8 @@ mod tests {
     fn run_repo_stops_at_first_failure_r11_2() {
         let dir = tempfile::tempdir().unwrap();
         let plan = plan_of(vec![
-            spec("bad", vec!["git".into(), "not-a-command".into()], 30),
-            spec("never", vec!["git".into(), "--version".into()], 30),
+            spec("bad", vec!["node".into(), "not-a-command".into()], 30),
+            spec("never", vec!["node".into(), "--version".into()], 30),
         ]);
         let run = run_repo(&plan, "api", dir.path());
         assert_eq!(run.results.len(), 1, "{run:?}");

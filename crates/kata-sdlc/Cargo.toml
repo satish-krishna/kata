@@ -11,7 +11,7 @@ serde_json.workspace = true
 tempfile.workspace = true
 toml.workspace = true
 thiserror.workspace = true
-process-wrap = { version = "9.1", features = ["std", "job-object", "process-group"] }
+process-wrap = { version = "9.1", features = ["std", "job-object", "process-group", "creation-flags"] }
 ts-rs = { version = "10", optional = true, default-features = false, features = ["serde-compat"] }
 
 [features]
@@ -19,3 +19,6 @@ ts = ["dep:ts-rs"]
 
 [dev-dependencies]
 serial_test = "3"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", default-features = false, features = ["Win32_System_Threading"] }

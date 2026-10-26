@@ -225,37 +225,43 @@ fn sweep_run_dirs(base: &Path, current: u32, alive: impl Fn(u32) -> bool) {
 /// files deleted.
 /// Whether a process with this pid exists, asked of Windows directly (no `tasklist`).
 #[cfg(windows)]
-fn pid_alive_native(_pid: u32) -> bool {
-    true
+fn pid_alive_native(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_INVALID_PARAMETER};
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    const STILL_ACTIVE: u32 = 259;
+    // SAFETY: plain Win32 calls; the handle is closed before returning.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            // No such pid means gone; any other failure (access denied, ...) cannot say, so alive.
+            return GetLastError() != ERROR_INVALID_PARAMETER;
+        }
+        let mut code = 0u32;
+        let ok = GetExitCodeProcess(handle, &mut code);
+        CloseHandle(handle);
+        ok == 0 || code == STILL_ACTIVE
+    }
 }
 
+#[cfg(windows)]
+fn pid_alive(pid: u32) -> bool {
+    pid_alive_native(pid)
+}
+
+#[cfg(not(windows))]
 fn pid_alive(pid: u32) -> bool {
     use std::process::{Command, Stdio};
-    if cfg!(windows) {
-        let out = Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output();
-        match out {
-            // A match is a CSV row whose second field is the pid; no match prints
-            // an INFO line instead.
-            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .any(|l| l.split("\",\"").nth(1) == Some(&pid.to_string())),
-            _ => true,
-        }
-    } else {
-        match Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-        {
-            Ok(s) => s.success(),
-            Err(_) => true,
-        }
+    match Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+    {
+        Ok(s) => s.success(),
+        Err(_) => true,
     }
 }
 

@@ -15,8 +15,32 @@ pub struct SpawnRefused {
 }
 
 /// A `Command` for `program` that opens no console window on Windows.
+///
+/// Refuses `git` and `gh` on every build, tests included: Kata does that work itself.
 pub fn hidden_command(program: impl AsRef<Path>) -> Result<Command, SpawnRefused> {
-    Ok(Command::new(program.as_ref()))
+    let program = program.as_ref();
+    if is_refused(program) {
+        return Err(SpawnRefused {
+            program: program.to_string_lossy().into_owned(),
+        });
+    }
+    #[allow(unused_mut)] // `creation_flags` needs it on Windows
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    Ok(command)
+}
+
+/// Whether the file name of `program`, without its extension, is `git` or `gh` (any case).
+fn is_refused(program: &Path) -> bool {
+    let name = program.to_string_lossy();
+    // Split by hand: `Path` treats `\` as a separator only on Windows, and the rule is the same everywhere.
+    let file = name.rsplit(['/', '\\']).next().unwrap_or_default();
+    let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
+    stem.eq_ignore_ascii_case("git") || stem.eq_ignore_ascii_case("gh")
 }
 
 #[cfg(test)]
