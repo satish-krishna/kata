@@ -53,7 +53,7 @@ The exit code is the whole signal:
 | 1 | Semantic validation failed. One reason per line on stderr. |
 | 2 | Could not load or parse the file at all. |
 
-You are not *required* to call `validate` — `kata run` validates the spec internally as its first action and fails fast (before spawning `claude`) on an invalid one, so a bad spec never reaches a run either way. The reason to preflight anyway is twofold: `validate` has zero side effects (so you can check speculatively — on save, on keystroke), and it *distinguishes* the failure. Through `kata run`, a validation failure surfaces as exit **2** (the engine maps every startup error to 2), so it reads the same as an unparseable file. Only `kata validate` separates exit **1** ("your spec is wrong") from exit **2** ("I couldn't read it"). If your integration branches on that distinction, preflight with `validate`; do not try to recover it from `run`.
+You are not *required* to call `validate` — `kata run` validates the spec internally as its first action and fails fast (before spawning `claude`) on an invalid one, so a bad spec never reaches a run either way. The reason to preflight anyway is twofold: `validate` has zero side effects (so you can check speculatively — on save, on keystroke), and it *distinguishes* the failure. Through `kata run`, a validation failure surfaces as exit **2** (the engine maps every startup error to 2), so it reads the same as an unparseable file; `kata run` never exits 1 for a bad spec. Only `kata validate` separates exit **1** ("your spec is wrong") from exit **2** ("I couldn't read it"). If your integration branches on that distinction, preflight with `validate`; do not try to recover it from `run`.
 
 If you are Rust, `kata_core::spec::validate` is one of the pure re-exports (see [In-process](#in-process-rust)), so you can run this same preflight in-process with zero process spawns and still run the spec out-of-process.
 
@@ -69,7 +69,7 @@ Your loop is: read a line, parse JSON, switch on `type`.
 
 ### The event protocol
 
-Every event is a JSON object with a `type` field. Fields below are exactly as serialized.
+Every event is a JSON object with a `type` field. Fields below are exactly as serialized. The protocol is versioned: `protocolVersion` is `1` (`KATA_EVENT_PROTOCOL_VERSION`), stamped into `schema/kata-events.schema.json`, and bumped only on a breaking change.
 
 | `type` | Fields | Meaning |
 |---|---|---|
@@ -81,19 +81,19 @@ Every event is a JSON object with a `type` field. Fields below are exactly as se
 | `turn` | `n`, `parent_id?` | The nth assistant turn began (the turn counter the `max_turns` leash counts). `parent_id` is set when the message came from inside a subagent (the spawning `tool.use` id). |
 | `ask.requested` | `id`, `questions[]` | The agent is paused, asking the operator. Any run. See [Interactive](#interactive-runs). |
 | `ask.answered` | `id`, `answers[][]` | The operator's answer was delivered (echo, for your transcript). |
-| `permission.requested` | `id`, `tool`, `input_summary` | A tool call is paused on the operator's decision. Prompt-mode runs only. See [Permissions](#permission-prompting). |
-| `permission.decided` | `id`, `tool`, `input_summary`, `allow`, `decided_by`, `message?` | How a permission check was resolved. Emitted only for a check that reaches Kata's own tool — the `unmatched` policy or the operator. A call claude's own settings (or its built-in read-only auto-approve) resolved is never seen by Kata and gets no event at all — this is **not** a complete audit trail of every permission check. |
-| `run.given` | `items[]`, `settings`, `env[]`, `warnings[]`, `options?` | What the run was given, checked against claude's start report. Emitted when the start report arrives, again when the hooks seen firing change, and on every ending (including a refused or failed-to-spawn run); keep only the last one. `options` is `{ required_plugins[], build }`, the options the run was resolved with. Names of environment variables only, never values. |
-| `run.diff` | `worktree?`, `branch?`, `files[]`, `insertions`, `deletions`, `by_type[]` | Changeset summary, emitted just before the terminal event on every run. worktree/branch present only under worktree isolation. |
+| `permission.requested` | `id`, `tool`, `input_summary` | A tool call is paused on the operator's decision: under `mode = "prompt"` with `unmatched = "ask"`, and under `mode = "auto"` for a call a `permissions.ask` rule matched. See [Permissions](#permission-prompting). |
+| `permission.decided` | `id`, `tool`, `input_summary`, `allow`, `decided_by`, `message?` | How a permission check was resolved. Emitted only for a check that reaches Kata's own tool — the `unmatched` policy, the operator, or one of Kata's own bridge tools (`decided_by: "engine"`). A call claude's own settings (or its built-in read-only auto-approve) resolved is never seen by Kata and gets no event at all — this is **not** a complete audit trail of every permission check. |
+| `run.given` | `items[]`, `settings`, `env[]`, `warnings[]`, `options?` | What the run was given, checked against claude's start report. Emitted when the start report arrives, again when the hooks seen firing change, and, when no start report ever arrived, once on the way out (including a refused or failed-to-spawn run); keep only the last one. `options` is `{ required_plugins[], build }`, the options the run was resolved with. Names of environment variables only, never values. |
+| `run.diff` | `worktree?`, `branch?`, `files[]`, `insertions`, `deletions`, `by_type[]` | Changeset summary, emitted just before the terminal event on every run in a git repository. worktree/branch present only under worktree isolation. |
 | `run.completed` | `exit_code`, `is_error`, `num_turns`, `cost_usd?`, `duration_ms`, `result?` | Terminal: the run finished on its own. |
 | `run.error` | `message`, `exit_code`, `cost_usd?`, `duration_ms` | Terminal: the run was stopped by the leash or failed. |
 | `run.cancelled` | `exit_code`, `cost_usd?`, `duration_ms` | Terminal: the run was cancelled. |
 
-Exactly one terminal event (`run.completed` / `run.error` / `run.cancelled`) ends every stream. `ask.*` events may appear on any run; `permission.*` events only when it sets `[permissions] mode = "prompt"` or `"auto"`.
+Exactly one terminal event (`run.completed` / `run.error` / `run.cancelled`) ends the stream of every run that got under way. A refused authentication or a worktree that cannot be made still ends with `run.error` (exit code 2). The exceptions are startup failures with no terminal event, after which `kata run` exits 2: an invalid spec and a kit that cannot be assembled emit no event at all, and a failure to spawn `claude` may emit only `run.given`. Treat "stdout closed with exit 2 and no terminal event" as a failed start. `ask.*` events may appear on any run; `permission.*` events only when it sets `[permissions] mode = "prompt"` or `"auto"`.
 
 ### The changeset (run.diff)
 
-`run.diff` is emitted on every run, immediately before the terminal event, listing the changed files with per-file status and total insertions/deletions.
+`run.diff` is emitted on every run that reaches its end in a git repository (a run refused for authentication or a worktree failure has none, and see the last paragraph below for any other workdir), immediately before the terminal event, listing the changed files with per-file status and total insertions/deletions.
 
 `by_type` partitions the changeset by lowercased file extension: each entry is `{ file_type, files, insertions, deletions }`, sorted by `file_type`, with `""` for files that have no extension. Summing `by_type[*].insertions` equals the top-level `insertions` (likewise for `deletions`).
 
@@ -120,8 +120,9 @@ The process exit code is the leash outcome, and part of the contract — CI and 
 | Code | Meaning |
 |---|---|
 | 0 | Success. |
-| 1 | (CLI) spec validation failed. |
-| 2 | (CLI) could not load/parse the spec, or an engine error. |
+| 1 | (CLI) `kata validate`: spec validation failed. When no leash trips, `kata run` passes claude's own exit code through, so a failed claude run can also exit 1. |
+| 2 | (CLI) could not load/parse the spec, or an engine error: an invalid spec through `kata run`, a startup failure. |
+| 73 | (CLI) `kata init` refused to overwrite an existing file (`--force` overwrites). |
 | 122 | Budget ceiling reached (`leash.max_budget_usd`). Spend may overshoot by up to one turn. |
 | 123 | Answer deadline exceeded (`interactive.answer_timeout_secs`) — an unanswered question *or* an undecided permission check. Distinct from 124 so logs can tell "nobody answered" from "work ran too long". |
 | 124 | Wall-clock timeout (`leash.timeout_secs`, or the 1800s default when unset). |
@@ -192,11 +193,13 @@ The consequence worth internalizing: a **`deny` rule reaches read-only commands*
 
 ### Choosing a posture
 
-The mode is explicit and never inferred. There is deliberately no automatic fallback from `bypass` to `prompt`: a run whose safety posture silently changed between machines is not reproducible, which is the whole point of a run-spec.
+`mode = "auto"` is the third posture: Kata passes `--permission-mode auto` alongside the same prompt tool, and claude's own classifier decides every call that `allow` and `deny` do not resolve, approving routine work and blocking the destructive or externally-reaching call. Kata's `unmatched` policy does not apply (the classifier is the unmatched handler), so `validate` rejects `unmatched = "deny"` or `"allow"` under `auto`. `permissions.ask` is the operator's entry point under `auto`: a matching call emits `permission.requested` and pauses the run. Under `prompt` an `ask` rule does not pause by itself, because a call that reaches Kata's tool is settled by `unmatched`; a non-empty `ask` list still requires `interactive.enabled` under both modes. Settings `deny` and `allow` are enforced before the classifier, exactly as under `prompt`.
+
+The mode is explicit and never inferred. There is deliberately no automatic fallback between modes: a run whose safety posture silently changed between machines is not reproducible, which is the whole point of a run-spec.
 
 ```toml
 [permissions]
-mode = "prompt"        # "bypass" (default) | "prompt"
+mode = "prompt"        # "bypass" (default) | "prompt" | "auto"
 unmatched = "deny"     # "ask" (default) | "deny" | "allow"
 allow = ["Read", "Grep", "Bash(git *)"]
 deny  = ["Bash(rm *)"]
@@ -258,19 +261,20 @@ serde_json = "1"
 
 ### The public surface
 
-The crate root re-exports the intended API; everything else is `pub(crate)` and off-limits.
+The crate root re-exports the intended API. Engine plumbing (`assemble`, `builtin`, `command`, `fsutil`) is `pub(crate)`; `ask` is public only so the `kata` binary can serve `mcp-ask`, and is hidden from the docs. Other public modules exist but are not the consumer API.
 
 - `RunSpec`, `validate`, and the `spec` module — the run-spec contract (load/save/validate).
 - `KataEvent`, `Question`, `QuestionKind`, `QuestionOption`, and the `event` module — the event protocol.
-- `run`, `answer_channel`, `Answer`, `AnswerRx`, `CancelToken`, `RunOutcome`, `RunError` — driving a run.
+- `run`, `answer_channel`, `Answer`, `AnswerRx`, `decision_channel`, `Decision`, `DecisionRx`, `CancelToken`, `RunOutcome`, `RunError` — driving a run.
+- The `given` module (`ItemKind`, `Source`) — item identities and the preview of what a run starts with — and the `permission` and `changeset` modules.
 - The `catalog`, `bundle`, `worktree`, `history`, `katas`, `presets` modules — the pure operations the GUI and CLI also build on.
 
 ### Driving a run
 
-`run()` takes the spec, the discovered catalog, a cancel token, an answer inbox, and an `FnMut(KataEvent)` sink. It blocks until the run ends and returns the outcome. This block is the crate-root doctest verbatim — CI compiles it, so it cannot silently rot:
+`run()` takes the spec, the discovered catalog, a cancel token, an answer inbox, a permission-decision inbox, and an `FnMut(KataEvent)` sink. It blocks until the run ends and returns the outcome. This block is the crate-root doctest verbatim — CI compiles it, so it cannot silently rot:
 
 ```rust
-use kata_core::{answer_channel, run, Answer, CancelToken, KataEvent};
+use kata_core::{answer_channel, decision_channel, run, Answer, CancelToken, Decision, KataEvent};
 
 let spec = kata_core::spec::load("triage.toml".as_ref())?;
 let catalog = kata_core::catalog::discover(
@@ -278,16 +282,24 @@ let catalog = kata_core::catalog::discover(
 
 // Call cancel.cancel() from another thread to stop the run.
 let cancel = CancelToken::new();
-// Keep the sender to answer questions — any run can ask. Dropping it means a
-// question ends the run with exit 123.
+// Keep the senders to answer questions (any run can ask) and approve tool
+// calls. An `AnswerRx::default()` / `DecisionRx::default()` means nobody can
+// answer: a pause on it ends the run with exit 123.
 let (answer_tx, answers) = answer_channel();
+let (decision_tx, decisions) = decision_channel();
 
-let outcome = run(&spec, &catalog, &cancel, &answers, |event| match event {
+let outcome = run(&spec, &catalog, &cancel, &answers, &decisions, |event| match event {
     // Interactive fork: reply with one Vec<String> per question
     // (chosen option labels, [typed text], or [] to skip an optional one).
     KataEvent::AskRequested { id, questions } => {
         let reply = questions.iter().map(|_| vec![String::from("yes")]).collect();
         let _ = answer_tx.send(Answer { id, answers: reply });
+    }
+    // Permission fork ([permissions] mode = "prompt", unmatched = "ask"):
+    // decide whether this tool call may proceed.
+    KataEvent::PermissionRequested { id, tool, input_summary } => {
+        println!("{tool}: {input_summary}");
+        let _ = decision_tx.send(Decision { id, allow: false, message: None });
     }
     // Everything else: forward to your UI, a socket, a log...
     other => println!("{}", serde_json::to_string(&other).unwrap()),
@@ -333,14 +345,28 @@ Every field, with its default. Only `name`, `task`, and `workdir` are required.
 | `leash.isolation` | `none` \| `worktree` | `none` | `worktree` branches off HEAD and runs there; requires a git workdir. |
 | `auth.bare` | bool | `true` | Run in the empty room (`--bare`). |
 | `auth.token_env` | string? | — | Env var holding the API token; the engine fails fast if it names an unset var under `bare`. |
-| `interactive.enabled` | bool | `false` | Opt in to the `ask_user` tool. |
+| `interactive.enabled` | bool | `false` | Let permission checks (`permissions.ask`, `unmatched = "ask"`) pause on the operator. Questions do not depend on it: `ask_user` is on every run. |
 | `interactive.answer_timeout_secs` | int? | — | How long to wait on an answer, or on a permission decision (exit 123). Unset = wait indefinitely. |
-| `permissions.mode` | `"bypass"` \| `"prompt"` | `bypass` | How claude's permission checks are answered. See [Permission prompting](#permission-prompting). |
-| `permissions.unmatched` | `"ask"` \| `"deny"` \| `"allow"` | `ask` | What Kata's prompt tool does with a call claude's own settings left unresolved. `ask` requires `interactive.enabled`. |
-| `permissions.allow` | string[] | `[]` | Rules written verbatim into claude's generated settings under `mode = "prompt"`; claude enforces them, Kata does not match them. |
-| `permissions.deny` | string[] | `[]` | Rules written verbatim into claude's generated settings under `mode = "prompt"`. Evaluated before `allow`, and reaches read-only commands claude would otherwise auto-approve. |
+| `permissions.mode` | `"bypass"` \| `"prompt"` \| `"auto"` | `bypass` | How claude's permission checks are answered. See [Permission prompting](#permission-prompting). |
+| `permissions.unmatched` | `"ask"` \| `"deny"` \| `"allow"` | `ask` | What Kata's prompt tool does with a call claude's own settings left unresolved. `ask` requires `interactive.enabled`. Rejected as an explicit value under `auto`. |
+| `permissions.allow` | string[] | `[]` | Rules written verbatim into claude's generated settings under `mode = "prompt"` or `"auto"`; claude enforces them, Kata does not match them. Rejected under `bypass`. |
+| `permissions.deny` | string[] | `[]` | Rules written verbatim into claude's generated settings under `mode = "prompt"` or `"auto"`. Evaluated before `allow`, and reaches read-only commands claude would otherwise auto-approve. Rejected under `bypass`. |
+| `permissions.ask` | string[] | `[]` | Under `auto`, rules that route a matching call to Kata's `approve_tool` and pause the run on the operator; under `prompt` a call reaching that tool is settled by `unmatched`. Requires `interactive.enabled`. Rejected under `bypass`. |
+| `given` | table? | — | The items the run starts without: lists `hooks`, `skills`, `plugins`, `instructions`, `tool_servers` of item identities (`<source>:<kind>:<key>`), each entry switching one item off, plus the Workbench-written `required_plugins` and `build`. Absent means the spec makes no choices. See `CONTRACTS.md`. |
 | `env` | map | `{}` | Environment variables to set on the `claude` child (name → literal value). Overrides inherited, plugin-forwarded, and `token_env`-derived values. |
 | `env_remove` | string[] | `[]` | Environment variable names to unset on the `claude` child, applied last so removal wins — even over a `token_env`-derived `ANTHROPIC_API_KEY`. |
+
+### What `validate` enforces
+
+Beyond the required `name`, `task` and `workdir`: `leash.max_turns` is at least 1 when set; `leash.max_budget_usd` is finite and above 0; `env` and `env_remove` are well formed, disjoint and free of engine-reserved names; under `permissions.mode = "bypass"` the `allow`, `deny` and `ask` lists must be empty; `unmatched = "ask"` and any `ask` rule need `interactive.enabled = true`; `mode = "auto"` rejects `unmatched = "deny"` or `"allow"`; rule syntax and `[given]` entries must parse.
+
+### Where things are kept
+
+Saved run-specs live in `~/.kata/katas` (or `$KATA_HOME/katas` when `KATA_HOME` is set), context presets in `presets` beside them, run transcripts in `runs`, and worktrees of a `leash.isolation = "worktree"` run in `worktrees/<slug>-<id>` on the branch `kata/<slug>-<id>`, kept for review until you remove them with `git worktree remove`.
+
+### Bundles and the catalog
+
+`kata catalog` prints the skills and plugins discoverable from the workdir as JSON. `kata bundle <spec> [-o dir] [--force]` vendors the resolved kit into a folder with a `kata-bundle.toml` marker; `kata run <dir>` on that folder runs hermetically, discovering the kit only from the bundle. `kata run --full-payloads` adds the raw tool input and output (each capped at 256 KB) to `tool.use` and `tool.result`.
 
 ### Environment resolution order
 
@@ -356,7 +382,7 @@ So `env` overrides an inherited variable, a plugin-forwarded variable, and the `
 
 The layers are applied to the child process only (via the child's own environment block), never by mutating the host process environment. This is what makes concurrent in-process runs correct by construction: two runs started at the same time with different `env` values for the same key each get their own child value, with no shared-state cross-talk. That is the property an in-process host (e.g. an orchestrator running Agent nodes concurrently against different model egress) depends on. Variable names are matched exactly — no wildcard or prefix matching — and name matching follows the host platform's own rules (case-sensitive on Unix, case-insensitive on Windows).
 
-Generate specs programmatically in TypeScript from the ts-rs bindings in `app/src/bindings/` (build with the `ts` cargo feature). Note: the run-spec types have generated bindings; the `KataEvent` types do not — mirror them by hand (see `app/src/lib/events.ts` for the reference mirror).
+Generate specs programmatically in TypeScript from the ts-rs bindings in `app/src/bindings/` (build with the `ts` cargo feature). The event types have generated TypeScript too: `app/src/bindings/kata-events.ts` is generated from `schema/kata-events.schema.json` by `cd app && npm run gen:events` (CI diffs it), and `app/src/app/lib/events.ts` re-exports it with the Workbench's hand-written render helpers.
 
 ---
 

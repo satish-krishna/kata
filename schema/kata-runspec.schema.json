@@ -18,7 +18,7 @@
       "type": "object"
     },
     "Given": {
-      "description": "The items a run keeps, by identity (`<source>:<kind>:<key>`, see\n`kata_core::given`). Unknown entries are ignored at run time.",
+      "description": "The items a run starts without, by identity (`<source>:<kind>:<key>`, see\n`kata_core::given`): each listed entry switches one item off, and an item\nnot listed stays on. Unknown entries are ignored at run time.",
       "properties": {
         "build": {
           "description": "True for a build run, which keeps the project's hooks on.",

@@ -3,7 +3,9 @@
 // Serves the Angular app with `ng serve` on port 4318 (so it won't clash with
 // `tauri:dev` on 1420), drives the installed Chrome via playwright-core, and
 // captures the key views in browser/fixtures mode (outside Tauri the transport
-// is the mock one — deterministic, no live engine).
+// is the mock one — deterministic, no live engine): the Workbench (compose, observe, library), then
+// every `sdlc-*` view of parity/capture.mjs — the AI-SDLC mode screens (home, change documents, run
+// preview, build page, changes diff, review findings, pull requests, start triage, light-track fix).
 //
 //   npm run screenshots                 # serve with ng serve, capture all views
 //   npm run screenshots -- --url URL    # capture against an already-running server
@@ -15,7 +17,7 @@ import { spawn, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve, isAbsolute } from "node:path";
 import { mkdir } from "node:fs/promises";
-import { answerAsk, launchBrowser, VIEWS } from "../parity/capture.mjs";
+import { answerAsk, launchBrowser, startRun, VIEWS } from "../parity/capture.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(here, "..");
@@ -108,6 +110,8 @@ async function capture(base) {
 
   // Observe pane — the scripted run pauses on the interactive ask_user panel.
   await page.goto(base + "/?demo=run", { waitUntil: "networkidle" });
+  await page.getByRole("dialog").waitFor();
+  await startRun(page);
   await ready(".k-ask", 30_000);
   await shoot("02-observe-ask");
 
@@ -122,9 +126,17 @@ async function capture(base) {
   await allow.click();
   await ready(".wb-summary", 15_000);
 
-  // Open the subagent's tool card so the shot shows its nested calls.
+  // Open the subagent's tool card so the shot shows its nested calls, then scroll the event stream so the whole card sits at the top
+  // of the viewport with the denied Bash call below it and the run.completed summary underneath. The scroller's "Scroll to latest
+  // event" button shows whenever the stream is not at its end, so hide it for this shot.
   await page.locator(".k-toolcard__row", { hasText: "Agent" }).first().click();
-  await page.waitForTimeout(250);
+  await page.waitForTimeout(300);
+  await page.locator("hlm-message-scroller-viewport").first().evaluate((el) => {
+    const row = [...el.querySelectorAll(".k-toolcard__row")].find((r) => r.textContent.includes("Agent"));
+    el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - 8;
+  });
+  await page.addStyleTag({ content: "hlm-message-scroller [hlmMessageScrollerButton] { visibility: hidden !important; }" });
+  await page.waitForTimeout(500);
   await shoot("03-observe-complete");
 
   // Library — saved katas, run history, and the run detail.

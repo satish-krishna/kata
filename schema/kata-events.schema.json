@@ -910,7 +910,7 @@
       "type": "object"
     },
     {
-      "description": "A tool call is paused on the operator's decision. Emitted only under\n`[permissions] mode = \"prompt\"` with `unmatched = \"ask\"`, and only for a\ncall no rule resolved — the exact analogue of `ask.requested`. The run\nstays paused until the matching `permission.decided`.",
+      "description": "A tool call is paused on the operator's decision. Emitted under\n`[permissions] mode = \"prompt\"` with `unmatched = \"ask\"` for a call no\nrule resolved, and under `mode = \"auto\"` for a call a `permissions.ask`\nrule matched — the exact analogue of `ask.requested`. The run stays\npaused until the matching `permission.decided`.",
       "properties": {
         "id": {
           "type": "string"
@@ -937,7 +937,7 @@
       "type": "object"
     },
     {
-      "description": "How a permission check was resolved. Emitted for **every** check under\n`[permissions] mode = \"prompt\"`, including the ones a rule or the\nunmatched policy settled without pausing, so the stream is a complete\naudit trail of what the agent was allowed to do.",
+      "description": "How a permission check was resolved. Emitted only for a check that\nreaches Kata's own tool: the `unmatched` policy, the operator, or one of\nKata's own bridge tools. A call claude's settings (or its built-in\nread-only auto-approve) resolve is never seen by Kata and gets no event,\nso the stream is not a complete audit trail of the agent's permission\nchecks.",
       "properties": {
         "allow": {
           "type": "boolean"

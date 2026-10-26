@@ -5,17 +5,19 @@ Kata releases are built locally on Windows and published by hand. There is no CI
 Each release publishes three artifacts:
 
 - `kata_X.Y.Z_x64.exe` — the standalone headless CLI (CI / Shokunin / no-install use).
-- `Kata Workbench_X.Y.Z_x64-setup.exe` — the Workbench GUI installer (NSIS); it bundles the `kata` CLI as a sidecar.
+- `Kata Workbench_X.Y.Z_x64-setup.exe` — the Workbench GUI installer (NSIS); it bundles the `kata` CLI as a sidecar. (These are the local build names; GitHub shows an uploaded asset with the space turned into a dot, `Kata.Workbench_X.Y.Z_x64-setup.exe`.)
 - `Kata Workbench_X.Y.Z_x64_en-US.msi` — the Workbench GUI installer (MSI); **stable releases only**.
 
 ## Versioning
 
-The version lives in two authoritative places that must always agree:
+The version lives in two authoritative places that must always agree, and `build-release.ps1` refuses to build if they differ:
 
-- `Cargo.toml` `[workspace.package] version` (inherited by `kata-core` and `kata-cli`).
-- `app/src-tauri/tauri.conf.json` `version`.
+- `Cargo.toml` `[workspace.package] version` (inherited by `kata-core`, `kata-cli` and `kata-sdlc`).
+- `app/src-tauri/tauri.conf.json` `version`, which is the version the installers carry.
 
-`scripts/bump-version.ps1` sets both. Tags are `vX.Y.Z` for stable and `vX.Y.Z-rc.N` for pre-releases. Bug fixes bump the patch, features bump the minor (everything is `0.x` for now). A version containing `-` is a pre-release and skips the MSI bundle.
+`scripts/bump-version.ps1` sets both, and keeps the Workbench's npm version in step with them: `app/package.json` `version` and its two copies in `app/package-lock.json`. It does not touch `app/src-tauri/Cargo.toml` `version` (a fixed `0.1.0`; the installer does not read it). `Cargo.lock` records the workspace crates' versions, and CI builds with `--locked`, so a bump also needs `cargo update -w` to refresh the lock.
+
+Tags are `vX.Y.Z` for stable and `vX.Y.Z-rc.N` for pre-releases. Bug fixes bump the patch, features bump the minor, breaking changes to the run-spec or event contract bump the major. A version containing `-` is a pre-release and skips the MSI bundle.
 
 ## Cutting a release
 
@@ -23,7 +25,8 @@ The version lives in two authoritative places that must always agree:
 2. Bump the version, review, and commit:
    ```
    pwsh scripts/bump-version.ps1 X.Y.Z
-   git diff Cargo.toml app/src-tauri/tauri.conf.json
+   cargo update -w
+   git diff Cargo.toml Cargo.lock app/src-tauri/tauri.conf.json app/package.json app/package-lock.json
    git commit -am "chore: bump version to X.Y.Z"
    ```
 3. Build the artifacts (takes a few minutes; close any running `kata.exe`/`kata-app.exe` first):

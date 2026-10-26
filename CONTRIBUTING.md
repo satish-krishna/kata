@@ -9,28 +9,40 @@ Read `CLAUDE.md` (repo-wide engineering notes) and, for any frontend work, `app/
 Before you open a PR, all of these must be green, with no warnings:
 
 ```sh
-cargo fmt --all                              # format your changes (rustfmt defaults)
+cargo fmt --all --check                      # CI gates this; run `cargo fmt --all` to fix
 cargo clippy --all-targets -- -D warnings    # must be clean, no warnings
 cargo test --workspace                       # must pass
 cargo build --locked                         # must build reproducibly
 ```
 
+`cargo test --workspace` needs the sidecar staged first (`node app/scripts/stage-sidecar.mjs`) and Node.js 20 or later on `PATH`, which the `kata-sdlc` tests use to run the vendored ai-sdlc format program. CI also runs `cargo test -p kata-sdlc --test format_conformance` on its own.
+
 For frontend changes (`app/`), additionally from `app/`:
 
 ```sh
+npm run gen:events               # regenerate event types, then git diff --exit-code src/bindings/kata-events.ts
 npm run lint                    # house rules (ESLint)
 npx stylelint "src/**/*.css"    # CSS token gate
-npm test -- --watch=false       # Vitest
 npm run build                   # production build
+npm test -- --watch=false       # Vitest
+npm run test:harness            # the gate rules' own tests
+node --test ../.claude/hooks/protect-gates.test.mjs
 npm run check:boot              # every route renders (needs Playwright Chromium)
-npm run check:interaction       # every overlay opens and closes
-npm run check:parity            # pixel diff against the frozen baseline (local only)
+npm run check:changes           # the Monaco diff editor under the desktop CSP
+npm run check:build             # the build page at 1280 by 800
+npm run check:start-flow        # the light track
 ```
 
-If you changed any `RunSpec` / `KataEvent` / catalog type, regenerate the TypeScript bindings (never hand-edit `app/src/bindings/`):
+CI runs everything above. These run locally only, and you run them when you touch what they cover: `npm run check:interaction` (every overlay opens and closes), `npm run check:responsive` (no overflow or clipping at the desktop widths), `npm run check:wiring` (no ViewModel or component member that no template uses) and `npm run check:parity` (pixel diff against the frozen baseline, Windows-rendered).
+
+If you changed a `RunSpec` / `KataEvent` / catalog type or a `kata-sdlc` type the frontend reads, regenerate the published artifacts (never hand-edit `app/src/bindings/` or `schema/`); CI fails on drift in any of them:
 
 ```sh
 cargo test -p kata-core --features ts export_bindings
+cargo test -p kata-sdlc --features ts export_bindings
+KATA_BLESS_SCHEMA=1 cargo test -p kata-core --features schema runspec_schema_artifact_is_fresh   # run-spec schema
+KATA_BLESS_SCHEMA=1 cargo test -p kata-core --features schema schema_artifact_is_fresh           # event schema
+cd app && npm run gen:events                                                                      # event types from the schema
 ```
 
 A PR that does not pass the gate is not ready for review.
@@ -59,7 +71,7 @@ If your work followed a plan under `docs/superpowers/plans/`, the plan's per-tas
 
 Standard, boring, idiomatic Rust. Edition 2021, workspace `resolver = "2"`.
 
-- **Formatting:** run `cargo fmt --all` before committing (rustfmt defaults; no custom `rustfmt.toml`). Format your own changes; a `cargo fmt --all --check` gate is the standard planned for CI (see the CI track in `ROADMAP.md`).
+- **Formatting:** run `cargo fmt --all` before committing (rustfmt defaults; no custom `rustfmt.toml`). Format your own changes; `cargo fmt --all --check` is a CI gate.
 - **Lints:** `cargo clippy --all-targets -- -D warnings` must be clean. Fix the lint; do not blanket-`#[allow]` it. A narrowly-scoped `#[allow]` with a one-line justifying comment is acceptable only when clippy is demonstrably wrong.
 - **Reproducible builds:** `cargo build --locked` must succeed; commit `Cargo.lock` changes when you add or bump a dependency. Prefer existing `[workspace.dependencies]` over introducing a new crate — justify every new dependency in the PR.
 - **Error handling:** return `Result` with `thiserror`-derived error enums (see `spec`, `assemble`, `run`); never `unwrap`/`expect`/`panic!` on a path reachable from input or I/O. `unwrap` is acceptable in tests and on invariants you document.

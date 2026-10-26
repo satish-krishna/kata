@@ -22,6 +22,12 @@ export async function answerAsk(page) {
   throw new Error('answerAsk: questionnaire did not reach Send');
 }
 
+// Every run opens its preview first, ?demo=run included; the run starts on Start run, and the scripted run then pauses on its first question.
+export async function startRun(page) {
+  await page.getByRole('dialog').getByRole('button', { name: /^Start run$/ }).click();
+  await page.waitForSelector('.k-ask', { state: 'visible', timeout: 30000 });
+}
+
 async function allowPermission(page) {
   const allow = page.getByRole('button', { name: 'Allow · resume' });
   await allow.waitFor({ timeout: 15000 });
@@ -45,6 +51,8 @@ const CHANGE_SPEC = '/sdlc/claims/2026-10-12-fnol-photo-upload';
 
 // An AI-SDLC agent run takes the page as the session view; its questionnaire is the first thing the scripted run asks.
 async function lockAsk(page) {
+  // ?demo=sdlc opens the run preview first; the scripted run starts on Start run.
+  await page.getByRole('dialog').getByRole('button', { name: /^Start run$/ }).click();
   await page.locator('fieldset[hlmQuestionnaireItem]:visible').first().waitFor({ timeout: 15000 });
 }
 
@@ -52,6 +60,22 @@ async function cancelToLeftovers(page) {
   await lockAsk(page);
   await page.getByRole('button', { name: 'Cancel' }).click();
   await page.waitForSelector('.k-left', { state: 'visible', timeout: 15000 });
+}
+
+const BUILD_CHANGE = '/sdlc/claims/2026-10-19-build-demo';
+
+// The scripted build of 2026-10-19-build-demo: Start build, then Start run in its preview, until the build page shows Cancel build.
+async function startBuild(page) {
+  await page.getByRole('button', { name: 'Start build' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: /^Start run$/ }).click();
+  await page.getByRole('button', { name: 'Cancel build' }).waitFor({ timeout: 30000 });
+}
+
+// Opens the modified file src/limits.rs from the files area in the Monaco diff editor, in whichever mode is on show.
+async function openLimitsDiff(page) {
+  if ((await page.locator('[data-area="files"]:not([inert])').count()) === 0) await page.keyboard.press('Control+3');
+  await page.locator('[data-area="files"] [data-file="src/limits.rs"]').click();
+  await page.locator('.monaco-diff-editor .editor.modified .view-line').first().waitFor({ timeout: 30000 });
 }
 
 export const VIEWS = [
@@ -64,16 +88,17 @@ export const VIEWS = [
       await p.waitForFunction(() => !document.querySelector('.wb-banner')?.textContent?.includes('name is required')); } },
   { name: 'dialog-discard', path: '/', ready: '.wb-toolbar',
     act: async (p) => { await p.locator('textarea[rows="3"]').first().fill('changed');
-      await p.getByRole('button', { name: 'New spec' }).click(); await p.waitForSelector('.k-dialog'); } },
+      await p.getByRole('button', { name: 'New spec' }).click(); await p.getByRole('alertdialog').waitFor(); } },
   { name: 'dialog-save-preset', path: '/', ready: '.wb-toolbar',
     act: async (p) => { await p.locator('.wb-presets').locator('xpath=preceding-sibling::textarea').fill('Preset body text.');
-      await p.getByRole('button', { name: 'Save as preset' }).click(); await p.waitForSelector('.k-dialog'); } },
-  { name: 'observe-ask', path: '/?demo=run', ready: '.k-ask' },
-  { name: 'observe-permission', path: '/?demo=run', ready: '.k-ask',
-    act: async (p) => { await answerAsk(p); await allowPermission(p); } },
-  { name: 'observe-complete', path: '/?demo=run', ready: '.k-ask', act: finishRun },
-  { name: 'observe-toolcards-open', path: '/?demo=run', ready: '.k-ask',
-    act: async (p) => { await finishRun(p);
+      await p.getByRole('button', { name: 'Save as preset' }).click(); await p.getByRole('dialog').waitFor(); } },
+  { name: 'observe-ask', path: '/?demo=run', ready: '[role="dialog"]', act: startRun },
+  { name: 'observe-permission', path: '/?demo=run', ready: '[role="dialog"]',
+    act: async (p) => { await startRun(p); await answerAsk(p); await allowPermission(p); } },
+  { name: 'observe-complete', path: '/?demo=run', ready: '[role="dialog"]',
+    act: async (p) => { await startRun(p); await finishRun(p); } },
+  { name: 'observe-toolcards-open', path: '/?demo=run', ready: '[role="dialog"]',
+    act: async (p) => { await startRun(p); await finishRun(p);
       const rows = p.locator('.k-toolcard__row');
       for (let i = 0; i < (await rows.count()); i++) { const r = rows.nth(i); if ((await r.getAttribute('aria-expanded')) === 'false') { await r.click(); await p.waitForFunction((el) => el.getAttribute('aria-expanded') === 'true', await r.elementHandle(), { timeout: 5000 }); } } } },
   { name: 'library-list', path: '/library', ready: '.wb-kata' },
@@ -86,8 +111,8 @@ export const VIEWS = [
   { name: 'sdlc-switcher-open', path: '/sdlc', ready: '.k-rowlink',
     act: async (p) => { await p.getByRole('button', { name: 'Switch workspace' }).click(); await p.getByRole('menuitemradio').first().waitFor({ state: 'visible' }); } },
   { name: 'sdlc-add-workspace-steps', path: '/sdlc?demo=sdlc-setup', ready: '.k-lock__steps' },
-  { name: 'sdlc-lock-ask', path: CHANGE_SPEC + '?demo=sdlc', ready: '.k-session', act: lockAsk },
-  { name: 'sdlc-leftovers', path: CHANGE_SPEC + '?demo=sdlc', ready: '.k-session', act: cancelToLeftovers },
+  { name: 'sdlc-lock-ask', path: CHANGE_SPEC + '?demo=sdlc', ready: '[role="dialog"]', act: lockAsk },
+  { name: 'sdlc-leftovers', path: CHANGE_SPEC + '?demo=sdlc', ready: '[role="dialog"]', act: cancelToLeftovers },
   { name: 'sdlc-change-spec', path: CHANGE_SPEC, ready: '.k-md__diagram svg' },
   { name: 'sdlc-change-intent', path: CHANGE_SPEC, ready: '.k-md__diagram svg',
     act: async (p) => {
@@ -100,6 +125,29 @@ export const VIEWS = [
       await p.getByRole('button', { name: 'Re-run plan' }).click();
       await p.getByRole('dialog').getByRole('textbox', { name: 'What should change?' }).fill('R2 is wrong: team leads can reassign too.');
     } },
+  { name: 'sdlc-run-settings', path: BUILD_CHANGE, ready: 'button:has-text("Start build")',
+    act: async (p) => { await p.getByRole('button', { name: 'Start build' }).click(); await p.getByRole('region', { name: 'Run settings' }).waitFor(); } },
+  { name: 'sdlc-build', path: BUILD_CHANGE, ready: 'button:has-text("Start build")',
+    act: async (p) => { await startBuild(p); await p.locator('[data-waiting]:visible').first().waitFor({ timeout: 60000 }); await p.keyboard.press('Control+2'); await p.waitForTimeout(1500); } },
+  { name: 'sdlc-changes', path: BUILD_CHANGE, ready: 'button:has-text("Start build")',
+    act: async (p) => { await startBuild(p); await openLimitsDiff(p); } },
+  { name: 'sdlc-review', path: BUILD_CHANGE, ready: 'button:has-text("Start build")',
+    act: async (p) => {
+      await startBuild(p);
+      const notice = p.locator('[data-waiting]:visible').first();
+      await notice.waitFor({ timeout: 60000 });
+      await notice.getByRole('button', { name: 'Go to customer-portal' }).click();
+      await p.locator('label', { hasText: 'Reuse it' }).click();
+      await p.getByRole('button', { name: /Send answer/ }).click();
+      await p.locator('[data-bar]').getByRole('button', { name: 'Declare done' }).waitFor({ timeout: 150000 });
+      await p.keyboard.press('Control+4');
+      await openLimitsDiff(p);
+    } },
+  { name: 'sdlc-done-pr', path: '/sdlc/claims/2026-10-18-photo-limits-shipped', ready: '[data-testid="pr-menu"]',
+    act: async (p) => { await p.locator('[data-testid="pr-menu"]').click(); await p.locator('[data-testid="pr-list"]').waitFor(); } },
+  { name: 'sdlc-start-triage', path: '/sdlc?demo=start', ready: '[role="dialog"]',
+    act: async (p) => { await p.getByRole('dialog').getByRole('button', { name: /^Start run$/ }).click(); await p.getByText('Take the light track').first().waitFor({ timeout: 30000 }); } },
+  { name: 'sdlc-fix', path: '/sdlc/claims/2026-10-22-photo-retry-fix', ready: '[data-testid="track-tag"]' },
   { name: 'hover-secondary', path: '/', ready: '.wb-toolbar',
     act: async (p) => { await p.getByRole('button', { name: 'Open spec' }).hover(); } },
 ];

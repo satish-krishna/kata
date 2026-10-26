@@ -29,20 +29,38 @@ The Workbench is a desktop app — Layout A: compose the run-spec on the left, o
 | **Answer a mid-run question** | **Saved katas & run history** |
 | ![Interactive ask](docs/images/02-observe-ask.png) | ![Library](docs/images/04-library.png) |
 
+Before any run starts, Run opens a preview of what the run will start with: its settings and where each came from, the safety rules, the names of the environment variables it will see, and the hooks, skills, plugins, instructions and tool servers it would load, with a switch on each one that can be left out. After the run, the Observe pane shows what the run was actually given.
+
 ## AI-SDLC mode
 
-The same app has a second mode for taking a change through intent, spec and plan inside a workspace of git repos: one master repo holds the intents, specs and plans, and the product repos hold the code they describe. Kata drives the `ai-sdlc` plugin through the same `kata run` path, locks the screen while the agent works, and shows what a stopped run left behind before anything is discarded. Pick the mode on first launch and switch any time from the toolbar.
+The same app has a second mode for taking a change from an idea to open pull requests inside a workspace of git repos: one master repo holds the intents, specs, plans, build logs and reviews, and the product repos hold the code they describe. Kata drives the `ai-sdlc` plugin through the same `kata run` path, locks the screen while the agent works, and shows what a stopped run left behind before anything is discarded. Pick the mode on first launch and switch any time from the toolbar.
 
-| Work a change | Answer the agent mid-run |
+The workspace home lists your workspaces (add or remove one, switch between them) and each system's changes; the AI-SDLC settings dialog holds the mode's own preferences. One change has one page, and it follows the change through these steps:
+
+- **Start.** New change takes a description and a track. With `ai-sdlc` 0.13.0 or later, "Let the workflow decide" triages the description, says why, and routes it to the light track or the full pipeline; before 0.13.0 only the full pipeline is offered.
+- **Intent, spec and plan.** The full pipeline. Each document opens on its own tab, and you accept it (or reject the intent, or send feedback) before the next step. A spec or plan that no longer matches the document above it is marked out of date.
+- **Fix.** The light track for a bug or a small enhancement in one repository: one run writes a short intent, spec and plan, which you accept once. It needs `ai-sdlc` 0.13.0 or later.
+- **Build.** One agent per repository, several at once, on a build page whose four areas (tasks, activity, changed files, findings) you can arrange; `Ctrl+1` to `Ctrl+4` pick the overview, watch, changes and review arrangements.
+- **Changes.** The files each commit on a change branch touched, with a side-by-side diff against the base branch.
+- **Review.** One reviewer per repository plus one across them. Findings are grouped by repository and read from the change's `build/review.md`.
+- **Done.** Declaring a change done runs your checks, then opens one pull request per touched repository with `gh`, the master last.
+
+| The workspace's changes | Triage routes a new change |
 | --- | --- |
-| ![AI-SDLC workspace home](docs/images/sdlc-home.png) | ![A run paused on a question](docs/images/sdlc-lock-ask.png) |
+| ![AI-SDLC workspace home](docs/images/sdlc-home.png) | ![Start triage recommending the light track](docs/images/sdlc-start-triage.png) |
+| **A light-track fix awaiting acceptance** | **What a run will start with** |
+| ![A light-track fix awaiting acceptance](docs/images/sdlc-fix.png) | ![The run settings preview before a build](docs/images/sdlc-run-settings.png) |
+| **Watch the build, one agent per repository** | **Review findings by repository, beside the diff** |
+| ![The build page in Watch mode](docs/images/sdlc-build.png) | ![The build page in Review mode](docs/images/sdlc-review.png) |
+| **A run paused on a question** | **Done, with one pull request per repository** |
+| ![A spec run paused on a question](docs/images/sdlc-lock-ask.png) | ![A finished change with its pull requests](docs/images/sdlc-done-pr.png) |
 
 ### Building a change
 
 Building and declaring a change done have prerequisites beyond an authenticated `claude` on your `PATH`:
 
 - The GitHub CLI (`gh`) installed and signed in with `gh auth login`. Run `gh auth setup-git` as well so pushes use your sign-in. Kata reads and stores no token; pull requests are opened by `gh` as you.
-- The `ai-sdlc` plugin at version 0.6.0 or later.
+- The `ai-sdlc` plugin at version 0.9.0 or later (0.13.0 or later for start triage and the light fix track), and Node.js 20 or later on your `PATH`: Kata reads specs, plans, build logs and reviews through the plugin's format program, which runs on Node.
 
 A build runs one agent per repository, inside that repository, with several running at once. Each run has its own time limit. Builds always run under `permissions.mode = "auto"` with deny rules (no `git push`, `gh` or `git remote`, no edits to the checks folder, no edits to another repository's work), whatever permission setting the rest of the app uses, because deny rules do not exist under the default bypass posture.
 
@@ -63,7 +81,7 @@ timeout_secs = 120
 
 `repo` is required and must be one of the system's repositories or the master repository. `argv` is required, non-empty, and never passes through a shell. `timeout_secs` is required, from 1 to 86,400. `name` is optional and defaults to the joined argv. A missing file means no repository has checks. Any problem fails the whole file with its `file:line:col`, and declaring done runs nothing until it is fixed.
 
-Two costs to know about. Checks are per machine and unversioned: each engineer writes their own file, a new teammate starts with none, and two engineers can declare the same change done against different gates. And the review's findings are read from the review run's transcript on this machine, so they are not stored with the change and do not follow it to another machine.
+Two costs to know about. Checks are per machine and unversioned: each engineer writes their own file, a new teammate starts with none, and two engineers can declare the same change done against different gates. And the review is only as portable as what was committed: findings are read from `build/review.md` as committed in the master repository, and only when the review wrote none does Kata fall back to the closing words of the review run recorded on this machine.
 
 ## Quickstart
 
@@ -111,7 +129,11 @@ $ kata run triage.kata.toml
 {"type":"run.completed","exit_code":0, ...}
 ```
 
-The CLI has three more verbs: `kata validate <spec>` (pure validation), `kata catalog` (discover installed skills/plugins as JSON), and `kata bundle <spec>` (vendor a portable bundle — see below).
+The CLI has four more verbs: `kata init` (scaffold a starter spec, above), `kata validate <spec>` (pure validation), `kata catalog` (discover installed skills/plugins as JSON), and `kata bundle <spec>` (vendor a portable bundle — see below). `kata run --full-payloads` adds the raw tool input and output to `tool.use` and `tool.result` events, each capped at 256 KB; it is off by default to keep CI logs lean.
+
+Two optional tables shape the child's environment. `[auth]` holds `bare` (the empty room, default `true`) and `token_env`, the name of a host environment variable whose value is forwarded to claude as `ANTHROPIC_API_KEY` under a bare run; the secret itself never enters the spec. `env` sets variables on the claude child (name to literal value) and `env_remove` unsets names, applied last so removal wins; neither touches the host process.
+
+The repository is a Cargo workspace of three crates besides the Tauri backend: `kata-core` (the engine), `kata-cli` (the `kata` binary) and `kata-sdlc` (the AI-SDLC mode's workspace, git and store logic, linked in-process by the Workbench).
 
 ## How it works — the edges
 
@@ -120,7 +142,7 @@ Kata's whole job is controlling the four edges around a rented agent loop, then 
 - **The empty room.** Runs start from `claude --bare` (default-on, switchable per run), so nothing leaks in from your ambient `~/.claude` unless the spec asks for it.
 - **Retasking.** A system prompt is appended to — or replaces — the default coding assistant, telling the agent what it is for this one job.
 - **The kit.** The skills and plugins a spec names are assembled into a disposable `--plugin-dir` for the run, then cleaned up.
-- **Permissions.** Every run states outright how claude's permission checks are answered — skipped with `--dangerously-skip-permissions`, or handed to Kata's own MCP tool. See [Permissions](#permissions).
+- **Permissions.** Every run states outright how claude's permission checks are answered — skipped with `--dangerously-skip-permissions`, handed to Kata's own MCP tool, or handed to claude's own classifier. See [Permissions](#permissions).
 - **The leash.** Turn cap, wall-clock timeout, optional git-worktree isolation for writes, and a budget ceiling. The outcome maps to a process exit code so CI and orchestrators can branch on it:
 
 | Exit | Meaning |
@@ -131,8 +153,9 @@ Kata's whole job is controlling the four edges around a rented agent loop, then 
 | `124` | wall-clock timeout (`leash.timeout_secs`) |
 | `125` | turn cap reached (`leash.max_turns`) |
 | `130` | cancelled |
-| `1` | spec validation failure (CLI) |
-| `2` | spec load/parse error (CLI) |
+| `1` | `kata validate`: spec validation failure; `kata run` also passes claude's own exit code through when no leash trips |
+| `2` | spec load/parse error, an invalid spec through `kata run`, or a startup failure |
+| `73` | `kata init` refused to overwrite an existing file |
 
 An unset turn cap means unlimited turns, bounded only by the wall-clock timeout. Exit 122 is a post-turn check, so actual spend can overshoot the ceiling by up to one turn.
 
@@ -177,7 +200,7 @@ A run's default posture is `--dangerously-skip-permissions`: claude never asks, 
 
 ```toml
 [permissions]
-mode      = "prompt"     # "bypass" (default) | "prompt"
+mode      = "prompt"     # "bypass" (default) | "prompt" | "auto"
 unmatched = "deny"       # "ask" (default) | "deny" | "allow"
 allow     = ["Read", "Grep", "Bash(git *)"]
 deny      = ["Bash(rm *)"]
@@ -189,9 +212,13 @@ This is not a bypass wearing a different hat. Claude checks its settings **befor
 
 Rules use claude's own grammar — `Tool` or `Tool(specifier)`, `*` for any run of characters, a space before the `*` for prefix matching (`Bash(git diff *)` matches any command starting with `git diff`; without the space, `Bash(git diff*)` would also match `git diff-index`) — handed to claude verbatim. `deny` is evaluated before `allow`. Kata's own `ask_user`/`approve_tool` bridge tools are exempt from the rules entirely (`decided_by: "engine"`), so a strict deny policy can't silently switch interactivity off.
 
+`mode = "auto"` hands every call the `allow` and `deny` rules do not resolve to claude's own built-in classifier instead of Kata's `unmatched` policy. The classifier approves routine work and blocks the destructive or externally-reaching call on its own judgment, and its defaults are claude's, since the classifier's tuning is not exposed. `allow` and `deny` are still written to the settings file and enforced by claude first. `unmatched` has no meaning under `auto`, and `validate` rejects `unmatched = "deny"` or `"allow"` under `auto`. The AI-SDLC build always runs under `auto` with generated deny rules.
+
+An `ask` list (`ask = ["Bash(git push *)"]`) is the operator's entry point under `auto`: a matching call is routed to Kata's tool and pauses the run on the operator. Under `prompt` an `ask` rule does not pause by itself, since a call that reaches Kata's tool is settled by `unmatched`, and only `unmatched = "ask"` pauses. A non-empty `ask` list requires `[interactive] enabled = true` under both modes. `allow`, `deny` and `ask` are rejected under `bypass`, since nothing would enforce them.
+
 **Nothing falls back automatically.** A spec that says `bypass` gets `bypass` on every machine, and fails loudly where that is forbidden, rather than quietly running under a different safety posture somewhere else. Changing posture is an edit to the spec.
 
-A `permission.decided` event is emitted only for a check that reaches Kata itself — the `unmatched` policy or the operator. A call claude's settings (or its read-only auto-approve) resolved directly is never seen by Kata and produces no event at all, so the event stream is **not** a complete record of every permission check — only of the ones Kata answered:
+A `permission.decided` event is emitted only for a check that reaches Kata itself — the `unmatched` policy, the operator, or one of Kata's own bridge tools (`decided_by: "engine"`). A call claude's settings (or its read-only auto-approve) resolved directly is never seen by Kata and produces no event at all, so the event stream is **not** a complete record of every permission check — only of the ones Kata answered:
 
 ```console
 {"type":"permission.requested","id":"p2","tool":"Bash","input_summary":"rm -rf build/"}

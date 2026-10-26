@@ -1,7 +1,8 @@
 #!/usr/bin/env pwsh
 # Set the release version in Kata's two authoritative sources: the Cargo
-# workspace package version (inherited by kata-core and kata-cli) and the Tauri
-# app config. Edits files only -- review the diff and commit as
+# workspace package version (inherited by kata-core, kata-cli and kata-sdlc) and
+# the Tauri app config. Also keeps the Workbench's npm version (app/package.json
+# and its lockfile) in step. Edits files only -- review the diff and commit as
 # `chore: bump version to X.Y.Z`. Does not git add/commit/tag.
 [CmdletBinding()]
 param(
@@ -37,6 +38,23 @@ $tauriOld = (ConvertFrom-Json $tauriRaw).version
 $tauriRaw = $tauriRaw -replace ('"version": "' + [regex]::Escape($tauriOld) + '"'), "`"version`": `"$Version`""
 [System.IO.File]::WriteAllText($tauriPath, $tauriRaw, $utf8NoBom)
 Write-Host "tauri.conf.json: $tauriOld -> $Version"
+
+# npm package version: package.json's top-level field, and the lockfile's two
+# copies of it (top level and packages[""]). Anchored on indentation so no
+# dependency's version is touched.
+$npmPath = Join-Path $repoRoot 'app/package.json'
+$npmRaw = Get-Content $npmPath -Raw
+$npmOld = (ConvertFrom-Json $npmRaw).version
+$npmRaw = $npmRaw -replace ('(?m)^(  "version": )"' + [regex]::Escape($npmOld) + '"'), "`${1}`"$Version`""
+[System.IO.File]::WriteAllText($npmPath, $npmRaw, $utf8NoBom)
+Write-Host "package.json:    $npmOld -> $Version"
+
+$lockPath = Join-Path $repoRoot 'app/package-lock.json'
+$lockRaw = Get-Content $lockPath -Raw
+$lockRaw = $lockRaw -replace ('(?m)^(  "version": )"' + [regex]::Escape($npmOld) + '"'), "`${1}`"$Version`""
+$lockRaw = $lockRaw -replace ('("": \{\s*"name": "[^"]*",\s*"version": )"' + [regex]::Escape($npmOld) + '"'), "`${1}`"$Version`""
+[System.IO.File]::WriteAllText($lockPath, $lockRaw, $utf8NoBom)
+Write-Host "package-lock:    $npmOld -> $Version"
 
 Write-Host ""
 Write-Host "Version set to $Version. Review the diff, then commit: chore: bump version to $Version"

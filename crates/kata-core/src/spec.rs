@@ -72,8 +72,9 @@ pub struct RunSpec {
     pub given: Option<Given>,
 }
 
-/// The items a run keeps, by identity (`<source>:<kind>:<key>`, see
-/// `kata_core::given`). Unknown entries are ignored at run time.
+/// The items a run starts without, by identity (`<source>:<kind>:<key>`, see
+/// `kata_core::given`): each listed entry switches one item off, and an item
+/// not listed stays on. Unknown entries are ignored at run time.
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
