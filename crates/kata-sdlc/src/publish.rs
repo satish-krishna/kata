@@ -13,6 +13,7 @@ use crate::diff::{changed_files, Part};
 use crate::frontmatter;
 use crate::git;
 use crate::github::{parse_repo_path, ApiError, GitHub, GitHubHosts};
+use crate::prs::PrRecord;
 use crate::start::BuildError;
 use crate::workspace::{self, system_repos};
 use serde::{Deserialize, Serialize};
@@ -304,16 +305,51 @@ pub enum PublishStep {
     Opening { repo: String },
 }
 
+/// What publishing keeps of the pull requests it opened: the record, and where each change to it
+/// is saved.
+pub struct Recorder<'a> {
+    record: PrRecord,
+    save: Box<dyn FnMut(&PrRecord) + 'a>,
+}
+
+impl<'a> Recorder<'a> {
+    pub fn new(record: PrRecord, save: impl FnMut(&PrRecord) + 'a) -> Self {
+        Recorder {
+            record,
+            save: Box::new(save),
+        }
+    }
+
+    /// The change's saved record, or a new one, saved to `pull-requests.json` as it changes.
+    pub fn stored(workspace_id: &str, system: &str, change: &str) -> Recorder<'static> {
+        let _ = (workspace_id, system, change);
+        todo!("Recorder::stored")
+    }
+
+    /// A record nothing saves, for tests that do not look at it.
+    #[cfg(test)]
+    pub(crate) fn unsaved() -> Self {
+        Recorder::new(PrRecord::new("", "", ""), |_| {})
+    }
+
+    pub fn record(&self) -> &PrRecord {
+        &self.record
+    }
+}
+
 /// Open (or reuse) one pull request per repository, in order; `master` names the one last.
-/// `on_step` hears what each repository is doing before it does it.
+/// `rec` keeps each pull request as soon as it opens. `on_step` hears what each repository is
+/// doing before it does it.
 pub fn publish(
     hosts: &dyn GitHubHosts,
     master: &str,
     system: &str,
     change: &str,
     repos: &[PublishRepo],
+    rec: &mut Recorder,
     on_step: &mut dyn FnMut(PublishStep),
 ) -> Vec<PrResult> {
+    let _ = &rec;
     let branch = format!("change/{change}");
     let title = repos
         .iter()
@@ -447,7 +483,7 @@ pub fn open_pull_requests(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::github::tests::{hosts, refused_root, resp, serve, FakeSource, Server, TOKEN};
     use crate::github::{ApiError, Credential, FakeGitHub};
@@ -455,12 +491,12 @@ mod tests {
     use serial_test::serial;
     use std::path::PathBuf;
 
-    struct Fx {
-        dir: tempfile::TempDir,
+    pub(crate) struct Fx {
+        pub(crate) dir: tempfile::TempDir,
     }
 
     impl Fx {
-        fn path(&self, name: &str) -> PathBuf {
+        pub(crate) fn path(&self, name: &str) -> PathBuf {
             self.dir.path().join(name)
         }
         fn origin(&self, name: &str) -> PathBuf {
@@ -482,7 +518,7 @@ mod tests {
 
     /// Workspace `m` (master), `app`, `api`, each with a bare origin. `app` carries a commit on
     /// `change/2026-10-19-c`; `api` has the branch but no commit when `api_ahead` is false.
-    fn fixture(api_ahead: bool) -> Fx {
+    pub(crate) fn fixture(api_ahead: bool) -> Fx {
         let dir = tempfile::tempdir().unwrap();
         let m = repo(dir.path(), "m");
         commit_file(
@@ -511,7 +547,7 @@ mod tests {
         Fx { dir }
     }
 
-    fn all(fx: &Fx) -> Vec<PublishRepo> {
+    pub(crate) fn all(fx: &Fx) -> Vec<PublishRepo> {
         touched_repos(fx.dir.path(), "m", "s", "2026-10-19-c").unwrap()
     }
 
@@ -617,7 +653,7 @@ mod tests {
     /// Points `origin` of every fixture repository at a GitHub address, and sends pushes to the
     /// local bare repository instead, so the API calls see a GitHub remote and the push needs no
     /// network.
-    fn on_github(fx: &Fx) {
+    pub(crate) fn on_github(fx: &Fx) {
         for name in ["m", "app", "api"] {
             let url = format!("https://github.com/o/{name}.git");
             let bare = fx.origin(name).to_string_lossy().replace('\\', "/");
@@ -684,7 +720,15 @@ mod tests {
         let fx = fixture(true);
         on_github(&fx);
         let gh = FakeGitHub::default();
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx), &mut |_| {});
+        let results = publish(
+            &gh,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
         assert_eq!(gh.creates(), ["app", "api", "m"]);
         assert!(fx.pushed("app") && fx.pushed("api") && fx.pushed("m"));
         assert_eq!(
@@ -724,7 +768,15 @@ mod tests {
         let fx = fixture(true);
         on_github(&fx);
         let gh = FakeGitHub::default().create_fails("api", status(403, "forbidden"));
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx), &mut |_| {});
+        let results = publish(
+            &gh,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
         assert!(matches!(results[0].outcome, PrOutcome::Opened { .. }));
         assert_eq!(
             results[1].outcome,
@@ -745,7 +797,15 @@ mod tests {
         let fx = fixture(true);
         on_github(&fx);
         let gh = FakeGitHub::default().open_pull("app", 1);
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx), &mut |_| {});
+        let results = publish(
+            &gh,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
         assert_eq!(
             results[0].outcome,
             PrOutcome::Reused {
@@ -768,6 +828,7 @@ mod tests {
             "s",
             "2026-10-19-c",
             &all(&fx),
+            &mut Recorder::unsaved(),
             &mut |_| {},
         );
         commit_file(&fx.path("app"), "more.txt", "more\n", "another round");
@@ -776,7 +837,15 @@ mod tests {
             .open_pull("app", 1)
             .open_pull("api", 2)
             .open_pull("m", 3);
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx), &mut |_| {});
+        let results = publish(
+            &gh,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
         assert!(matches!(results[0].outcome, PrOutcome::Reused { .. }));
         let pushed = git::run(
             &fx.origin("app"),
@@ -792,7 +861,15 @@ mod tests {
         let fx = fixture(true);
         on_github(&fx);
         let gh = FakeGitHub::default().open_pull("app", 1).open_pull("m", 3);
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx), &mut |_| {});
+        let results = publish(
+            &gh,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
         assert_eq!(
             results[2].outcome,
             PrOutcome::Reused {
@@ -826,7 +903,15 @@ mod tests {
             .map(|n| git::run(&fx.path(n), &["remote", "get-url", "origin"]).unwrap())
             .collect();
         let gh = FakeGitHub::default();
-        publish(&gh, "m", "s", "2026-10-19-c", &all(&fx), &mut |_| {});
+        publish(
+            &gh,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
         match old {
             Some(v) => std::env::set_var("KATA_HOME", v),
             None => std::env::remove_var("KATA_HOME"),
@@ -911,7 +996,15 @@ mod tests {
         let repos = all(fx);
         signed_in(h, &repos)?;
         origins(h, &repos)?;
-        Ok(publish(h, "m", "s", "2026-10-19-c", &repos, &mut |_| {}))
+        Ok(publish(
+            h,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &repos,
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        ))
     }
 
     #[test]
@@ -1049,6 +1142,7 @@ mod tests {
             "s",
             "2026-10-19-c",
             &all(&fx),
+            &mut Recorder::unsaved(),
             &mut |_| {},
         );
         assert!(results
@@ -1080,7 +1174,15 @@ mod tests {
         on_github(&fx);
         pre_push(&fx.path("app"), "echo no push today >&2\nexit 1");
         let gh = FakeGitHub::default();
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx), &mut |_| {});
+        let results = publish(
+            &gh,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
         match &results[0].outcome {
             PrOutcome::Failed { error } => assert!(error.contains("no push today"), "{error}"),
             other => panic!("{other:?}"),
@@ -1144,6 +1246,7 @@ mod tests {
             "s",
             "2026-10-19-c",
             &all(&fx),
+            &mut Recorder::unsaved(),
             &mut |s| steps.push(s),
         );
         let step = |pushing: bool, repo: &str| {

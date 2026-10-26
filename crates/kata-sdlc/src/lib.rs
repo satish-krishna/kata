@@ -16,6 +16,7 @@ pub mod participants;
 pub mod pins;
 pub mod plugin;
 mod process;
+pub mod prs;
 pub mod publish;
 pub mod review;
 pub mod snapshot;

@@ -478,7 +478,15 @@ fn no_credential_in_errors_logs_or_record() {
     let body = format!(r#"{{"message":"server error {TOKEN}"}}"#);
     let server = serve(move |_| resp(500, &body));
     let h = hosts(&src, &server.root());
-    let results = publish::publish(&h, "app", "s", "2026-10-19-c", &repos, &mut |_| {});
+    let results = publish::publish(
+        &h,
+        "app",
+        "s",
+        "2026-10-19-c",
+        &repos,
+        &mut publish::Recorder::unsaved(),
+        &mut |_| {},
+    );
     assert!(
         matches!(results[0].outcome, PrOutcome::Failed { .. }),
         "{results:?}"

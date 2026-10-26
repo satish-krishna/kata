@@ -1,3 +1,4 @@
+use crate::prs::PrRecord;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -144,6 +145,17 @@ pub fn append_task_links(links: &[TaskLink]) -> Result<(), StoreError> {
     let mut all = load_task_links();
     all.extend_from_slice(links);
     write("task-runs.json", &all)
+}
+
+/// Every saved pull request record, from `pull-requests.json`.
+pub fn load_pr_records() -> Vec<PrRecord> {
+    Vec::new()
+}
+
+/// Save `record`, replacing the entry of the same workspace, system and change.
+pub fn save_pr_record(record: &PrRecord) -> Result<(), StoreError> {
+    let _ = record;
+    Ok(())
 }
 
 /// The engineer's arrangement of the build page, kept beside `settings.json`
