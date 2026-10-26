@@ -25,9 +25,12 @@ tempfile.workspace = true
 ts-rs = { version = "10", optional = true, default-features = false }
 schemars = { version = "1", optional = true }
 regex = "1"
+git2.workspace = true
+process-wrap = { version = "9.1", features = ["std", "job-object", "process-group", "creation-flags"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_System_Threading", "Win32_System_Console"] }
+windows-sys = { workspace = true, features = ["Win32_System_Threading", "Win32_System_Console", "Win32_System_Registry"] }
+windows = { version = "0.62", default-features = false, features = ["Win32_System_Threading"] }
 
 [features]
 ts = ["dep:ts-rs"]

@@ -99,6 +99,7 @@ pub mod ask;
 pub mod bundle;
 pub mod changeset;
 pub mod history;
+pub mod hooks;
 pub mod katas;
 pub mod presets;
 pub mod worktree;

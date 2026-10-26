@@ -1,7 +1,7 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "argsfiles" | "subagent" | "hooks" | "noinit" | "consoleprobe" | "consoleprobe-relay"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "argsfiles" | "subagent" | "hooks" | "noinit" | "consoleprobe" | "consoleprobe-relay" | "hook-relay"
 use std::io::Write;
 use std::{thread, time::Duration};
 
@@ -77,6 +77,36 @@ fn main() {
                 .unwrap();
             let _ = out.write_all(&output.stdout);
             let _ = out.flush();
+        }
+        "hook-relay" => {
+            // Runs without a console (the test starts it detached) and runs the repository's
+            // pre-commit hook the way KATA_RELAY_HIDDEN says: through kata_core::hooks, or with
+            // a plain Command on the shell (control). The hook starts a consoleprobe.
+            let repo_dir = std::env::var_os("KATA_RELAY_REPO").unwrap();
+            let repo = git2::Repository::open(&repo_dir).unwrap();
+            if std::env::var_os("KATA_RELAY_HIDDEN").is_some() {
+                let probe = std::ffi::OsStr::new("consoleprobe");
+                kata_core::hooks::run_hook(
+                    &repo,
+                    kata_core::hooks::Hook::PreCommit,
+                    &[],
+                    None,
+                    &[("KATA_FAKE_MODE", probe)],
+                )
+                .unwrap();
+            } else {
+                let hook = repo.path().join("hooks").join("pre-commit");
+                // Test code: the control child without the hidden flag.
+                #[allow(clippy::disallowed_methods)]
+                let status = std::process::Command::new(std::env::var_os("KATA_RELAY_SHELL").unwrap())
+                    .arg(hook)
+                    .current_dir(&repo_dir)
+                    .env("KATA_FAKE_MODE", "consoleprobe")
+                    .stdin(std::process::Stdio::null())
+                    .status()
+                    .unwrap();
+                assert!(status.success());
+            }
         }
         "consoleprobe" | "consoleprobe-child" => {
             let prefix = if mode == "consoleprobe" { "" } else { "child-" };
