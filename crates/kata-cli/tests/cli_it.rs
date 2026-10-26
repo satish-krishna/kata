@@ -862,3 +862,65 @@ fn run_full_payloads_flag_adds_tool_output() {
     let full = run(true);
     assert_eq!(full["output"], "1\thello");
 }
+
+#[cfg(windows)]
+#[test]
+fn ctrl_break_cancels_with_130() {
+    use std::os::windows::process::CommandExt;
+    use std::process::Stdio;
+    use windows_sys::Win32::System::Console::{GenerateConsoleCtrlEvent, CTRL_BREAK_EVENT};
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+
+    let work = tempfile::tempdir().unwrap();
+    let pidfile = work.path().join("fake.pid");
+    let spec = write(work.path(), "c.kata.toml",
+        &format!("schema = 1\nname = \"c\"\ntask = \"t\"\nworkdir = \"{}\"\n\n[leash]\ntimeout_secs = 20\n",
+            work.path().to_string_lossy().replace('\\', "/")));
+
+    let child = kata()
+        .arg("run")
+        .arg(&spec)
+        .env("KATA_CLAUDE_BIN", fake_claude())
+        .env("KATA_FAKE_MODE", "sleep")
+        .env("KATA_FAKE_PIDFILE", &pidfile)
+        .creation_flags(CREATE_NEW_PROCESS_GROUP)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Wait until fake-claude is running and has written its pid.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let fake_pid: u32 = loop {
+        if let Some(pid) = std::fs::read_to_string(&pidfile)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+        {
+            break pid;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "fake-claude never started"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    // SAFETY: plain Win32 call; the pid is the process group id of the child started above.
+    let sent = unsafe { GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child.id()) };
+    assert_ne!(sent, 0, "GenerateConsoleCtrlEvent failed");
+
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(130), "Ctrl+Break should exit 130");
+
+    // The agent process must be gone too.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let tasks = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {fake_pid}"), "/NH"])
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&tasks.stdout).contains(&fake_pid.to_string()),
+        "fake-claude {fake_pid} is still running"
+    );
+}

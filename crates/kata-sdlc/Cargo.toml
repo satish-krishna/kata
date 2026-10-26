@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+kata-core = { path = "../kata-core" }
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

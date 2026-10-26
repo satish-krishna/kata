@@ -223,6 +223,12 @@ fn sweep_run_dirs(base: &Path, current: u32, alive: impl Fn(u32) -> bool) {
 /// Whether a process with this pid exists. When the check cannot be made, the
 /// process is assumed alive: a leftover folder is better than a live run's
 /// files deleted.
+/// Whether a process with this pid exists, asked of Windows directly (no `tasklist`).
+#[cfg(windows)]
+fn pid_alive_native(_pid: u32) -> bool {
+    true
+}
+
 fn pid_alive(pid: u32) -> bool {
     use std::process::{Command, Stdio};
     if cfg!(windows) {
@@ -340,6 +346,18 @@ mod tests {
         assert!(!pid_alive(pid));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn pid_alive_without_tasklist() {
+        assert!(pid_alive_native(std::process::id()));
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "exit"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        assert!(!pid_alive_native(pid));
+    }
     #[test]
     #[serial]
     fn kata_home_resolution_order() {

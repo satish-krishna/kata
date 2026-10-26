@@ -2003,6 +2003,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2018,12 +2019,14 @@ dependencies = [
  "thiserror 1.0.69",
  "toml 0.8.2",
  "ts-rs",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
 name = "kata-sdlc"
 version = "3.2.0"
 dependencies = [
+ "kata-core",
  "process-wrap",
  "serde",
  "serde_json",

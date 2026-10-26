@@ -82,6 +82,7 @@ pub use given::{ItemKind, Source};
 
 // ---- discovery & orchestration ----
 pub mod catalog;
+pub mod proc;
 pub mod run;
 pub use run::{
     answer_channel, decision_channel, run, Answer, AnswerRx, CancelToken, Decision, DecisionRx,
