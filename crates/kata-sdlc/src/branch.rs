@@ -374,6 +374,29 @@ mod tests {
     }
 
     #[test]
+    fn post_checkout_failure_keeps_the_switch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        git::run(&repo, &["branch", "other"]).unwrap();
+        // The hook leaves a mark and then fails; git ignores that failure for the switch.
+        std::fs::write(
+            repo.join(".git/hooks/post-checkout"),
+            "#!/bin/sh\necho \"$@\" >> .git/hook-ran\nexit 1\n",
+        )
+        .unwrap();
+
+        let pending = start_pending(&repo, "main", 1_792_368_000).unwrap();
+        assert_eq!(current_branch(&repo).as_deref(), Some(pending.as_str()));
+        checkout(&repo, "other").unwrap();
+        assert_eq!(current_branch(&repo).as_deref(), Some("other"));
+
+        let ran = std::fs::read_to_string(repo.join(".git/hook-ran")).unwrap();
+        let lines: Vec<&str> = ran.lines().collect();
+        assert_eq!(lines.len(), 2, "{ran}");
+        assert!(lines.iter().all(|l| l.ends_with(" 1")), "{ran}");
+    }
+
+    #[test]
     fn checkout_refuses_dirty() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");

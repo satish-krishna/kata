@@ -1906,3 +1906,341 @@ fn commits_leave_the_index_and_document_alone_on_a_hook_failure() {
         .collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
 }
+
+// ---- branch operations and putting back stray edits (R9.2) ----
+
+/// Everything a branch operation leaves behind that two repositories must agree on.
+fn branch_state(fx: &Fx) -> Vec<String> {
+    let dir = &fx.path;
+    vec![
+        git(dir, &["rev-parse", "HEAD^{tree}"]),
+        text(&cli(dir, &["symbolic-ref", "-q", "HEAD"]).unwrap_or_default()),
+        git(
+            dir,
+            &["for-each-ref", "--format=%(refname) %(tree) %(subject)"],
+        ),
+        git(dir, &["ls-files", "-s"]),
+        git(dir, &["status", "--porcelain"]),
+        git(dir, &["reflog", "-1", "--format=%gs"]),
+        text(&cli(dir, &["config", "--get-regexp", "^branch\\."]).unwrap_or_default()),
+        format!("{:?}", work_files(dir)),
+    ]
+}
+
+/// A repository on `main` whose branch `other` differs from it in `a.txt`, `dir/b.txt` (removed)
+/// and a file only it has, then a local state set by `variant`.
+fn switching(variant: &str) -> Fx {
+    let fx = Fx::new();
+    if variant == "autocrlf" {
+        git(&fx.path, &["config", "core.autocrlf", "true"]);
+    }
+    fx.commit("README.md", "init\n");
+    fx.commit("a.txt", "base\r\nline\r\n");
+    fx.commit("dir/b.txt", "b\n");
+    fx.commit("same.txt", "same\n");
+    git(&fx.path, &["checkout", "-q", "-b", "other"]);
+    fx.commit("a.txt", "other\r\nline\r\n");
+    fx.commit("only-other.txt", "only\n");
+    git(&fx.path, &["rm", "-q", "--", "dir/b.txt"]);
+    git(&fx.path, &["commit", "-q", "-m", "drop b"]);
+    git(&fx.path, &["checkout", "-q", "main"]);
+    git(&fx.path, &["branch", "side/slashed"]);
+    match variant {
+        "clean" | "autocrlf" => {}
+        "edit both branches share" => fx.write("same.txt", "edited\n"),
+        "staged elsewhere" => {
+            fx.write("new.txt", "staged\n");
+            git(&fx.path, &["add", "new.txt"]);
+        }
+        "untracked elsewhere" => fx.write("scratch/notes.txt", "x\n"),
+        "edit a differing file" => fx.write("a.txt", "local edit\r\n"),
+        "staged edit of a differing file" => {
+            fx.write("a.txt", "local edit\r\n");
+            git(&fx.path, &["add", "a.txt"]);
+        }
+        "untracked in the way" => fx.write("only-other.txt", "mine\n"),
+        "removed file the other branch also removes" => {
+            std::fs::remove_file(fx.path.join("dir/b.txt")).unwrap()
+        }
+        other => panic!("unknown variant {other}"),
+    }
+    fx
+}
+
+#[test]
+fn branches_switch_equals_checkout() {
+    for variant in [
+        "clean",
+        "autocrlf",
+        "edit both branches share",
+        "staged elsewhere",
+        "untracked elsewhere",
+        "removed file the other branch also removes",
+    ] {
+        for target in ["other", "side/slashed"] {
+            let (oracle, ours) = (switching(variant), switching(variant));
+            cli(&oracle.path, &["checkout", "-q", target, "--"])
+                .unwrap_or_else(|e| panic!("{variant} {target}: {e}"));
+            Repo::open(&ours.path)
+                .unwrap()
+                .checkout_branch(target)
+                .unwrap_or_else(|e| panic!("{variant} {target}: {e}"));
+            assert_eq!(
+                branch_state(&oracle),
+                branch_state(&ours),
+                "{variant} {target}"
+            );
+        }
+    }
+}
+
+#[test]
+fn branches_refused_switch_gives_gits_message_and_changes_nothing() {
+    for variant in [
+        "edit a differing file",
+        "staged edit of a differing file",
+        "untracked in the way",
+    ] {
+        let (oracle, ours) = (switching(variant), switching(variant));
+        let before = branch_state(&ours);
+        let expected = cli(&oracle.path, &["checkout", "-q", "other", "--"]).unwrap_err();
+        let err = Repo::open(&ours.path)
+            .unwrap()
+            .checkout_branch("other")
+            .unwrap_err();
+        assert_eq!(err.stderr, expected.trim(), "{variant}");
+        assert!(err.stderr.contains("would be overwritten"), "{variant}");
+        assert_eq!(err.args, "checkout -q other --", "{variant}");
+        assert_eq!(branch_state(&oracle), branch_state(&ours), "{variant}");
+        assert_eq!(before, branch_state(&ours), "{variant}");
+    }
+}
+
+#[test]
+fn branches_create_equals_checkout_b() {
+    for variant in ["clean", "staged elsewhere", "edit a differing file"] {
+        for at in ["main", "other", "origin/main", "HEAD"] {
+            let (oracle, ours) = (switching(variant), switching(variant));
+            for fx in [&oracle, &ours] {
+                add_origin(fx, true);
+            }
+            let expected = cli(&oracle.path, &["checkout", "-q", "-b", "change/new", at]);
+            let got = Repo::open(&ours.path)
+                .unwrap()
+                .create_branch("change/new", at);
+            assert_eq!(expected.is_ok(), got.is_ok(), "{variant} {at}: {got:?}");
+            assert_eq!(branch_state(&oracle), branch_state(&ours), "{variant} {at}");
+        }
+    }
+}
+
+#[test]
+fn branches_create_refuses_what_git_refuses() {
+    for (name, at) in [
+        ("main", "other"),
+        ("side/slashed", "main"),
+        ("change/new", "no-such-rev"),
+        ("bad..name", "main"),
+        ("side", "main"),
+    ] {
+        let (oracle, ours) = (switching("clean"), switching("clean"));
+        let expected = cli(&oracle.path, &["checkout", "-q", "-b", name, at]);
+        let got = Repo::open(&ours.path).unwrap().create_branch(name, at);
+        assert!(expected.is_err(), "{name} {at}");
+        assert!(got.is_err(), "{name} {at}");
+        assert_eq!(branch_state(&oracle), branch_state(&ours), "{name} {at}");
+    }
+}
+
+#[test]
+fn branches_rename_and_delete_equal_the_cli() {
+    // (the operation, its arguments)
+    let rows: [(&str, &str, &str); 9] = [
+        ("rename", "other", "change/renamed"),
+        ("rename", "main", "trunk"),
+        ("rename", "other", "main"),
+        ("rename", "no-such", "x"),
+        ("delete", "other", ""),
+        ("delete", "side/slashed", ""),
+        ("delete", "main", ""),
+        ("delete", "no-such", ""),
+        ("rename", "side/slashed", "side-flat"),
+    ];
+    for (op, one, two) in rows {
+        let (oracle, ours) = (switching("clean"), switching("clean"));
+        let repo = Repo::open(&ours.path).unwrap();
+        let (expected, got) = if op == "rename" {
+            (
+                cli(&oracle.path, &["branch", "-m", one, two]),
+                repo.rename_branch(one, two),
+            )
+        } else {
+            (
+                cli(&oracle.path, &["branch", "-D", one]),
+                repo.delete_branch(one),
+            )
+        };
+        assert_eq!(expected.is_ok(), got.is_ok(), "{op} {one} {two}: {got:?}");
+        assert_eq!(
+            branch_state(&oracle),
+            branch_state(&ours),
+            "{op} {one} {two}"
+        );
+    }
+}
+
+/// Dirty states a run can leave: every kind a discard restores or removes.
+fn stray(autocrlf: bool) -> Fx {
+    let fx = Fx::new();
+    if autocrlf {
+        git(&fx.path, &["config", "core.autocrlf", "true"]);
+    }
+    fx.commit("README.md", "init\n");
+    for name in ["a", "b", "c", "d", "e", "g", "keep"] {
+        fx.commit(&format!("docs/{name}.md"), &format!("{name}\r\nline\r\n"));
+    }
+    fx.write("docs/a.md", "a edited\r\n");
+    fx.write("docs/b.md", "b staged\r\n");
+    git(&fx.path, &["add", "--", "docs/b.md"]);
+    fx.write("docs/c.md", "c staged\r\n");
+    git(&fx.path, &["add", "--", "docs/c.md"]);
+    fx.write("docs/c.md", "c staged then edited\r\n");
+    std::fs::remove_file(fx.path.join("docs/d.md")).unwrap();
+    git(&fx.path, &["rm", "-q", "--", "docs/e.md"]);
+    git(&fx.path, &["mv", "docs/g.md", "docs/g2.md"]);
+    fx.write("docs/keep.md", "keep edited\r\n");
+    fx.write("fresh/deep/n.md", "staged new\n");
+    git(&fx.path, &["add", "--", "fresh/deep/n.md"]);
+    fx.write("fresh/deep/untracked.md", "x\n");
+    fx
+}
+
+#[test]
+fn branches_restore_and_remove_equal_restore_and_rm() {
+    for autocrlf in [false, true] {
+        let (oracle, ours) = (stray(autocrlf), stray(autocrlf));
+        let restore = [
+            "docs/a.md",
+            "docs/b.md",
+            "docs/c.md",
+            "docs/d.md",
+            "docs/e.md",
+        ];
+        for p in restore {
+            cli(
+                &oracle.path,
+                &["restore", "--staged", "--worktree", "--", p],
+            )
+            .unwrap();
+        }
+        let repo = Repo::open(&ours.path).unwrap();
+        repo.restore_paths(&restore).unwrap();
+        assert_eq!(
+            branch_state(&oracle),
+            branch_state(&ours),
+            "restore {autocrlf}"
+        );
+        for p in ["fresh/deep/n.md", "docs/g2.md"] {
+            cli(&oracle.path, &["rm", "-f", "-q", "--", p]).unwrap();
+        }
+        repo.remove_paths(&["fresh/deep/n.md", "docs/g2.md"])
+            .unwrap();
+        assert_eq!(
+            branch_state(&oracle),
+            branch_state(&ours),
+            "remove {autocrlf}"
+        );
+        // The file nobody asked about is untouched.
+        assert_eq!(
+            std::fs::read(ours.path.join("docs/keep.md")).unwrap(),
+            b"keep edited\r\n"
+        );
+    }
+}
+
+#[test]
+fn branches_restore_and_remove_refuse_what_git_refuses() {
+    let (oracle, ours) = (stray(false), stray(false));
+    let repo = Repo::open(&ours.path).unwrap();
+    assert!(cli(
+        &oracle.path,
+        &["restore", "--staged", "--worktree", "--", "nope.md"]
+    )
+    .is_err());
+    assert!(repo.restore_paths(&["nope.md"]).is_err());
+    assert!(cli(&oracle.path, &["rm", "-f", "-q", "--", "nope.md"]).is_err());
+    assert!(repo.remove_paths(&["nope.md"]).is_err());
+    assert_eq!(branch_state(&oracle), branch_state(&ours));
+}
+
+/// The R9.2 row "how to put back a run's stray document edits": what a run left is put back, and
+/// what was dirty before the run is left alone.
+#[test]
+fn branches_discard_puts_back_a_runs_stray_edits() {
+    for autocrlf in [false, true] {
+        let build = || {
+            let fx = Fx::new();
+            if autocrlf {
+                git(&fx.path, &["config", "core.autocrlf", "true"]);
+            }
+            fx.commit("README.md", "init\n");
+            for name in ["a", "b", "c", "e", "g", "dirty"] {
+                fx.commit(&format!("docs/{name}.md"), &format!("{name}\r\nline\r\n"));
+            }
+            fx.write("docs/dirty.md", "was dirty before the run\r\n");
+            fx.write("untouched.md", "was untracked before\n");
+            fx
+        };
+        let (oracle, ours) = (build(), build());
+        let before = snapshot::take(&ours.path).unwrap();
+        for fx in [&oracle, &ours] {
+            fx.write("docs/a.md", "a edited\r\n");
+            fx.write("docs/b.md", "b staged\r\n");
+            git(&fx.path, &["add", "--", "docs/b.md"]);
+            std::fs::remove_file(fx.path.join("docs/c.md")).unwrap();
+            git(&fx.path, &["rm", "-q", "--", "docs/e.md"]);
+            git(&fx.path, &["mv", "docs/g.md", "docs/g2.md"]);
+            fx.write("fresh/deep/n.md", "staged new\n");
+            git(&fx.path, &["add", "--", "fresh/deep/n.md"]);
+            fx.write("fresh/untracked.md", "x\n");
+        }
+        let paths: Vec<String> = [
+            "docs/a.md",
+            "docs/b.md",
+            "docs/c.md",
+            "docs/e.md",
+            "docs/g2.md",
+            "fresh/deep/n.md",
+            "fresh/untracked.md",
+        ]
+        .map(str::to_string)
+        .to_vec();
+        // The old procedure, one git command per path, is the oracle.
+        for entry in Repo::open(&oracle.path).unwrap().status("").unwrap() {
+            if !paths.contains(&entry.path) {
+                continue;
+            }
+            let xy = format!("{}{}", entry.index, entry.worktree);
+            if xy == "??" {
+                std::fs::remove_file(oracle.path.join(&entry.path)).unwrap();
+            } else if ["A", "R", "C"].iter().any(|c| xy.starts_with(c)) {
+                git(&oracle.path, &["rm", "-f", "-q", "--", &entry.path]);
+            } else {
+                git(
+                    &oracle.path,
+                    &["restore", "--staged", "--worktree", "--", &entry.path],
+                );
+            }
+        }
+        snapshot::discard(&ours.path, &before, &paths, None).unwrap();
+        assert_eq!(
+            branch_state(&oracle),
+            branch_state(&ours),
+            "discard {autocrlf}"
+        );
+        assert_eq!(
+            std::fs::read(ours.path.join("docs/dirty.md")).unwrap(),
+            b"was dirty before the run\r\n"
+        );
+    }
+}

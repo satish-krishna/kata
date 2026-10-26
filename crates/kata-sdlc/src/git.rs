@@ -839,6 +839,37 @@ impl Repo {
         Ok(Some(blob.content().to_vec()))
     }
 
+    /// What `git checkout -q <name> --` does: switches to the local branch `name`, refusing to
+    /// overwrite a local edit, and runs the repository's `post-checkout` hook afterward.
+    pub fn checkout_branch(&self, _name: &str) -> Result<(), GitError> {
+        todo!("checkout_branch")
+    }
+
+    /// What `git checkout -q -b <name> <at>` does.
+    pub fn create_branch(&self, _name: &str, _at: &str) -> Result<(), GitError> {
+        todo!("create_branch")
+    }
+
+    /// What `git branch -m <old> <new>` does.
+    pub fn rename_branch(&self, _old: &str, _new: &str) -> Result<(), GitError> {
+        todo!("rename_branch")
+    }
+
+    /// What `git branch -D <name>` does.
+    pub fn delete_branch(&self, _name: &str) -> Result<(), GitError> {
+        todo!("delete_branch")
+    }
+
+    /// What `git restore --staged --worktree -- <paths>` does.
+    pub fn restore_paths(&self, _paths: &[&str]) -> Result<(), GitError> {
+        todo!("restore_paths")
+    }
+
+    /// What `git rm -f -q -- <paths>` does.
+    pub fn remove_paths(&self, _paths: &[&str]) -> Result<(), GitError> {
+        todo!("remove_paths")
+    }
+
     /// The repository for code that reads it through libgit2 directly.
     pub(crate) fn raw(&self) -> &git2::Repository {
         &self.inner
