@@ -791,7 +791,13 @@ describe('ChangePage way back', () => {
   it('the way back is shown while the change is being read', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcChanges').mockReturnValue(new Promise(() => undefined));
-    const { container } = await mount(FNOL, transport, routes);
+    // The progress line shows once a read has run for 400 ms.
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const { container, fixture } = await mount(FNOL, transport, routes);
+    vi.advanceTimersByTime(500);
+    TestBed.tick();
+    fixture.detectChanges();
+    vi.useRealTimers();
     expect(container.textContent).toContain('Reading the change');
     expect(back(container)).not.toBeNull();
   });

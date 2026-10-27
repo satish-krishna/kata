@@ -5,6 +5,9 @@
   </div>
 
   <div class="k-lock__count">{{ progress() }}</div>
+  @if (stepProgress(); as p) {
+    <app-progress-line [entry]="p" />
+  }
   <ol class="k-lock__steps">
     @for (s of view().steps; track $index) {
       <li class="k-lock__step" [attr.data-state]="s.state">

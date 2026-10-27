@@ -74,7 +74,11 @@
   } @else {
     @switch (vm.state()) {
       @case ('loading') {
-        <main class="k-home__state"><p class="k-state__body" role="status">Reading the change…</p></main>
+        <main class="k-home__state">
+          @if (vm.readingChange(); as entry) {
+            <app-progress-line [entry]="entry" />
+          }
+        </main>
       }
       @case ('not-found') {
         <main class="k-home__state">
@@ -103,6 +107,9 @@
             <div class="wb-toolbar__spacer"></div>
             <ng-container *ngTemplateOutlet="stageActions" />
           </div>
+        }
+        @if (vm.preparingBuild(); as entry) {
+          <div class="k-change__missing" data-testid="build-progress"><app-progress-line [entry]="entry" /></div>
         }
         <main class="k-change">
           <h1 class="sr-only">{{ vm.changeName() }}</h1>
@@ -151,7 +158,9 @@
                   />
                 }
               } @else if (stem === vm.pendingDoc()) {
-                <p class="k-state__body k-change__missing" role="status">Reading {{ stem }}.md…</p>
+                @if (vm.readingDoc(); as entry) {
+                  <div class="k-change__missing"><app-progress-line [entry]="entry" /></div>
+                }
               }
             </div>
           }
@@ -222,6 +231,7 @@
   <app-lock-overlay
     [view]="vm.lockView()"
     [elapsed]="vm.lockElapsed()"
+    [stepProgress]="vm.lockProgress()"
     (cancel)="vm.cancelLock()"
   />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />

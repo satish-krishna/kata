@@ -256,13 +256,19 @@ describe('ChangePage layout', () => {
   describe('picking a document tab', () => {
     const selected = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLButtonElement>('header [role="tab"]')).filter((t) => t.getAttribute('aria-selected') === 'true').map((t) => text(t).split(' ')[0]);
 
+    afterEach(() => vi.useRealTimers());
+
     it('pulls the pills back to the old tab when the read fails', async () => {
       const transport = new MockTransport();
       const { container } = await mount(FNOL, transport);
       expect(selected(container)).toEqual(['Spec']);
       let fail!: (e: unknown) => void;
       vi.spyOn(transport, 'sdlcReadDoc').mockReturnValue(new Promise<string>((_, no) => (fail = no)));
+      // The progress line shows once a read has run for 400 ms.
+      vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
       pill(container, 'Intent').click();
+      await settle();
+      vi.advanceTimersByTime(500);
       await settle();
       expect(selected(container)).toEqual(['Intent']);
       expect(container.querySelector('[role="tabpanel"]:not([hidden])')!.textContent).toContain('Reading intent.md');

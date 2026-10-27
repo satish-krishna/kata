@@ -5,6 +5,7 @@
       <app-lock-panel
         [view]="v"
         [elapsed]="elapsed()"
+        [stepProgress]="stepProgress()"
         (cancel)="cancel.emit()"
       />
     }

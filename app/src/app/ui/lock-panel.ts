@@ -2,12 +2,13 @@ import { Component, computed, input, output } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import type { StepsView } from '../core/lock/lock.store';
 import type { ProgressView } from '../core/progress/progress.store';
+import { ProgressLine } from './progress-line';
 
 /* The body of the lock dialog (see LockOverlay for the shell, which also carries the accessible title). It only reports what is
  * known: a done/total count for Kata's own checks and the elapsed clock. No percentage, no ETA. */
 @Component({
   selector: 'app-lock-panel',
-  imports: [HlmButtonImports],
+  imports: [HlmButtonImports, ProgressLine],
   templateUrl: './lock-panel.html',
 })
 export class LockPanel {

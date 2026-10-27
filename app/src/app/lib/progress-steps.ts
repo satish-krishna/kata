@@ -98,11 +98,12 @@ export const PROGRESS_NAMES: Record<ProgressStepId, string> = {
 
 /** The plain label of each step, with the facts that stay put while the playful line rotates. */
 export const progressLabels = {
-  readingChange: (): string => '',
-  readingDoc: (_stem: string): string => '',
-  readingDiff: (_repo: string): string => '',
-  preparingBuild: (): string => '',
-  runningChecks: (_repo: string): string => '',
-  pushing: (_change: string, _repo: string): string => '',
-  openingPr: (_repo: string): string => '',
+  readingChange: (): string => 'Reading the change',
+  readingDoc: (stem: string): string => `Reading ${stem}.md`,
+  findingRepos: (): string => 'Finding the repositories with changes',
+  readingDiff: (repo: string): string => `Reading the changes in ${repo}`,
+  preparingBuild: (): string => 'Checking the repositories before building',
+  runningChecks: (repo: string): string => `Running the checks in ${repo}`,
+  pushing: (change: string, repo: string): string => `Pushing change/${change} in ${repo}`,
+  openingPr: (repo: string): string => `Opening a pull request in ${repo}`,
 };

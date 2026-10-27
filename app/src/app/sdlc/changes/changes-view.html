@@ -68,8 +68,8 @@
         @if (vm.active() === null) {
           @if (vm.loaded()) {
             <p class="k-state__body">No repository has changes for this change yet.</p>
-          } @else {
-            <p class="k-state__body" role="status">Reading what changed…</p>
+          } @else if (vm.readProgress(); as entry) {
+            <app-progress-line [entry]="entry" />
           }
         }
         <app-diff-bar

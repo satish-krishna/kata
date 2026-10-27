@@ -35,7 +35,9 @@ import { LockStore } from '../../core/lock/lock.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
+import { ProgressStore } from '../../core/progress/progress.store';
 import { ToastStore } from '../../core/toast/toast.store';
+import { progressLabels } from '../../lib/progress-steps';
 import { KataTransport } from '../../core/transport/kata-transport';
 import {
   DEFAULT_BUILD_SECS,
@@ -209,6 +211,12 @@ export class ChangePageViewModel {
   private readonly build = inject(BuildPageViewModel);
   private readonly modes = inject(ModeStore);
   private readonly toasts = inject(ToastStore);
+  private readonly progress = inject(ProgressStore);
+  /** Reading the change, reading a picked document, preparing a build, and the lock's long step: one progress entry for each place on the page. */
+  readonly readingChange = this.progress.view('page');
+  readonly readingDoc = this.progress.view('doc');
+  readonly preparingBuild = this.progress.view('build');
+  readonly lockProgress = this.progress.view('lock');
   private readonly router = inject(Router);
 
   private readonly params = toSignal(inject(ActivatedRoute).paramMap, { requireSync: true });
@@ -728,15 +736,32 @@ export class ChangePageViewModel {
     const master = this.scanMaster();
     if (!w || master === null) return;
     let results: PrResult[] = [];
-    const out = await this.lock.runSteps('Opening pull requests', [
-      {
-        label: 'Open pull requests',
-        run: async () => {
-          results = await this.transport.sdlcPublish(w.folder, w.id, master, this.system(), this.changeName(), this.doneRepos);
-          return plural(results.length, 'repository', 'repositories');
+    // Each push and each pull request the backend reports becomes the lock's progress line, named by its repository.
+    const unlisten = await this.transport.onPublishStep((step) => {
+      if (step.kind === 'pushing') this.progress.begin('pushing', progressLabels.pushing(this.changeName(), step.repo), 'lock');
+      else this.progress.begin('opening-prs', progressLabels.openingPr(step.repo), 'lock');
+    });
+    let out: Awaited<ReturnType<LockStore['runSteps']>>;
+    try {
+      out = await this.lock.runSteps('Opening pull requests', [
+        {
+          label: 'Open pull requests',
+          run: async () => {
+            try {
+              results = await this.transport.sdlcPublish(w.folder, w.id, master, this.system(), this.changeName(), this.doneRepos);
+            } catch (e) {
+              this.progress.fail('lock');
+              throw e;
+            }
+            this.progress.end('lock');
+            return plural(results.length, 'repository', 'repositories');
+          },
         },
-      },
-    ]);
+      ]);
+    } finally {
+      unlisten();
+      this.progress.end('lock');
+    }
     if (out === 'done') this.prList.set(results);
     await this.load();
   }
@@ -1023,6 +1048,7 @@ export class ChangePageViewModel {
       // The last click wins here too: a click on Build, even when it is already shown, ends a read still pending for another tab.
       this.pickSeq++;
       this.pendingDoc.set(null);
+      this.progress.end('doc');
       if (this.shownDoc() !== 'build' && this.change() !== null) this.picked.set('build');
       return;
     }
@@ -1031,15 +1057,18 @@ export class ChangePageViewModel {
     const seq = ++this.pickSeq;
     if (stem === this.shownDoc()) {
       this.pendingDoc.set(null);
+      this.progress.end('doc');
       return;
     }
     const master = this.masterDir();
     if (!master) {
       this.pendingDoc.set(null);
+      this.progress.end('doc');
       return;
     }
     // The spartan tabs move their own selection on a click, so the pill the operator clicked is held here until the text is read or the read fails; the tabs follow it.
     this.pendingDoc.set(stem);
+    this.progress.begin('reading-change', progressLabels.readingDoc(stem), 'doc');
     try {
       const text = await this.transport.sdlcReadDoc(master, this.system(), this.changeName(), stem);
       const read = await this.readParsed(master, this.system(), this.changeName(), stem);
@@ -1049,9 +1078,11 @@ export class ChangePageViewModel {
       this.read.set(read);
       this.picked.set(stem);
       this.pendingDoc.set(null);
+      this.progress.end('doc');
     } catch (e) {
       if (seq !== this.pickSeq) return;
       this.pendingDoc.set(null);
+      this.progress.fail('doc');
       this.toasts.error(`Could not read ${stem}.md: ${message(e)}`);
     }
   }
@@ -1237,7 +1268,15 @@ export class ChangePageViewModel {
         run: async () => {
           await loadPlan();
           if (got.checksError !== null) return 'not run';
-          const result = await this.transport.sdlcRunChecks(folder, master, system, r);
+          this.progress.begin('running-checks', progressLabels.runningChecks(r.repo), 'lock');
+          let result: RepoChecks;
+          try {
+            result = await this.transport.sdlcRunChecks(folder, master, system, r);
+          } catch (e) {
+            this.progress.fail('lock');
+            throw e;
+          }
+          this.progress.end('lock');
           got.results.set(r.repo, result);
           return checkLabel(result);
         },
@@ -1275,15 +1314,25 @@ export class ChangePageViewModel {
       this.toasts.error("Could not read Kata's checks folder.");
       return;
     }
-    const out = await this.runner.prepareBuild({
-      folder: w.folder,
-      masterRepo: master,
-      system: this.system(),
-      change: this.changeName(),
-      action: this.askedAction,
-      continueWithLeftovers,
-      pending: asked.repo,
-    });
+    this.progress.begin('preparing-build', progressLabels.preparingBuild(), 'build');
+    let out: Awaited<ReturnType<SdlcRunner['prepareBuild']>>;
+    try {
+      out = await this.runner.prepareBuild({
+        folder: w.folder,
+        masterRepo: master,
+        system: this.system(),
+        change: this.changeName(),
+        action: this.askedAction,
+        continueWithLeftovers,
+        pending: asked.repo,
+      });
+    } catch (e) {
+      this.progress.fail('build');
+      throw e;
+    }
+    // A refusal is the preparation failing: its line goes before the refusal shows where it shows today.
+    if (out.kind === 'refused') this.progress.fail('build');
+    else this.progress.end('build');
     switch (out.kind) {
       case 'refused':
         this.asked = null;
@@ -1456,8 +1505,15 @@ export class ChangePageViewModel {
     const seq = ++this.loadSeq;
     const system = this.system();
     const name = this.changeName();
+    this.progress.begin('reading-change', progressLabels.readingChange(), 'page');
+    // A failed read clears its progress line before the error toast shows.
+    const failRead = () => {
+      if (seq === this.loadSeq) this.progress.fail('page');
+    };
     const finish = (state: ChangeState, change: ChangeInfo | null, doc: string | null, read: ReadResult | ReadError | null = null) => {
       if (seq !== this.loadSeq) return;
+      this.progress.end('page');
+      this.progress.end('doc');
       this.pickSeq++;
       this.pendingDoc.set(null);
       this.picked.set(null);
@@ -1470,6 +1526,7 @@ export class ChangePageViewModel {
     try {
       workspaces = await this.transport.sdlcWorkspaces();
     } catch (e) {
+      failRead();
       this.toasts.error(`Could not read the workspace list: ${message(e)}`);
       finish('not-found', null, null);
       return;
@@ -1522,6 +1579,7 @@ export class ChangePageViewModel {
       const context = this.buildContext();
       if (found && context !== null) this.build.loaded.set({ ctx: context, master: { repo, path: master }, change: found, status, done: this.done(), review });
     } catch (e) {
+      failRead();
       this.toasts.error(`Could not read the change: ${message(e)}`);
       finish('not-found', null, null);
     }

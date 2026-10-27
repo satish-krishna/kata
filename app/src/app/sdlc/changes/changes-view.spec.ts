@@ -506,10 +506,10 @@ describe('ChangesView progress line', () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcDiffFiles').mockRejectedValue(new Error('git is gone'));
-    const progress = TestBed.inject(ProgressStore);
-    const begin = vi.spyOn(progress, 'begin');
-    const fail = vi.spyOn(progress, 'fail');
+    const begin = vi.spyOn(ProgressStore.prototype, 'begin');
+    const fail = vi.spyOn(ProgressStore.prototype, 'fail');
     const { container } = await mount(transport);
+    const progress = TestBed.inject(ProgressStore);
     expect(begin).toHaveBeenCalledWith('reading-diff', expect.any(String), 'changes');
     expect(fail).toHaveBeenCalledWith('changes');
     expect(progress.view('changes')()).toBeNull();
