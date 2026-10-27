@@ -556,6 +556,9 @@ describe('SdlcHomeViewModel navigation', () => {
     const { vm, transport, navigate } = setup();
     await vm.init();
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
+    // After the checkout the change exists on the branch just checked out, so the reads can find it.
+    const found = (await readAllChanges(transport))[0];
+    vi.spyOn(transport, 'sdlcReadChange').mockResolvedValue({ ...found, change: '2026-10-17-claim-notes' });
     vi.spyOn(transport, 'sdlcChangeNames').mockResolvedValue([{ change: '2026-10-17-claim-notes', title: null }]);
     await vm.openOtherBranch('2026-10-17-claim-notes');
     expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'change/2026-10-17-claim-notes');
