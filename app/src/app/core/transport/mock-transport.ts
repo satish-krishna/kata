@@ -54,6 +54,9 @@ import { KataTransport, NO_BACKEND } from './kata-transport';
 /** How long the first scan of the demo setup folder takes, long enough to see the checking steps. */
 const SETUP_SCAN_MS = 1800;
 
+/** How long a scripted stage pass takes in all, long enough to see the reading rows. */
+const STAGE_PASS_MS = 1000;
+
 /** One scripted run in flight: what to play after an answer or a decision, and what finishing it does. */
 interface ScriptedRun {
   kind: 'workbench' | 'sdlc-spec' | 'sdlc-setup' | 'sdlc-triage' | 'build';
@@ -72,6 +75,10 @@ export class MockTransport extends KataTransport {
   private readonly listeners = new Set<(runId: string, ev: KataEvent) => void>();
   /** Everything listening for what publishing is doing. */
   private readonly publishListeners = new Set<(step: PublishStep) => void>();
+  /** Everything listening for what a stage pass reports. */
+  private readonly stageListeners = new Set<(ev: StageEvent) => void>();
+  private stageTimers: ReturnType<typeof setTimeout>[] = [];
+  private nextPass = 0;
   private readonly runs = new Map<string, ScriptedRun>();
   private nextRun = 0;
   /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
@@ -165,11 +172,40 @@ export class MockTransport extends KataTransport {
   sdlcContextHealth(_folder: string, _master: string, _system: string, repo: string): Promise<ContextState> { return Promise.resolve(this.sdlc.contextHealth(repo)); }
   sdlcInstructions(_folder: string, _masterRepo: string): Promise<InstructionsState> { return Promise.resolve(this.sdlc.instructions()); }
   sdlcChanges(_master: string, _system: string): Promise<ChangeInfo[]> { return Promise.resolve(this.sdlc.listChanges()); }
-  sdlcChangeNames(_master: string, _system: string): Promise<ChangeName[]> { return Promise.resolve([]); }
-  sdlcReadStages(_master: string, _system: string, _first?: string | null): Promise<number> { return Promise.resolve(0); }
-  sdlcReadChange(_master: string, _system: string, _change: string): Promise<ChangeInfo> { return Promise.reject(new Error('not implemented')); }
+  sdlcChangeNames(_master: string, _system: string): Promise<ChangeName[]> { return Promise.resolve(this.sdlc.changeNames()); }
+  /** Plays a scripted pass: one `stage` per change and a `progress` after each, spread over about a second, then `done`. A new pass cancels the one before. */
+  sdlcReadStages(_master: string, _system: string, first?: string | null): Promise<number> {
+    this.stageTimers.forEach(clearTimeout);
+    this.stageTimers = [];
+    const pass = ++this.nextPass;
+    const infos = this.sdlc.stagePass();
+    const at = infos.findIndex((c) => c.change === first);
+    if (at > 0) infos.unshift(...infos.splice(at, 1));
+    const every = STAGE_PASS_MS / Math.max(infos.length, 1);
+    const send = (ev: StageEvent) => { for (const listen of [...this.stageListeners]) listen(ev); };
+    infos.forEach((info, i) => {
+      this.stageTimers.push(setTimeout(() => {
+        send({ kind: 'stage', pass, change: info.change, info });
+        send({ kind: 'progress', pass, read: i + 1, total: infos.length });
+        if (i === infos.length - 1) send({ kind: 'done', pass });
+      }, every * (i + 1)));
+    });
+    if (infos.length === 0) this.stageTimers.push(setTimeout(() => send({ kind: 'done', pass }), 0));
+    return Promise.resolve(pass);
+  }
+  sdlcReadChange(_master: string, _system: string, change: string): Promise<ChangeInfo> {
+    try {
+      return Promise.resolve(this.sdlc.readChange(change));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
+  /** Every demo folder is there. */
   sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }
-  onStageEvent(_cb: (ev: StageEvent) => void): Promise<() => void> { return Promise.resolve(() => undefined); }
+  async onStageEvent(cb: (ev: StageEvent) => void): Promise<() => void> {
+    this.stageListeners.add(cb);
+    return () => { this.stageListeners.delete(cb); };
+  }
   sdlcBranches(_master: string): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }
   sdlcReadDoc(_master: string, _system: string, change: string, doc: string): Promise<string | null> {
     try {

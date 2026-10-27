@@ -88,11 +88,13 @@ export class TauriTransport extends KataTransport {
   sdlcContextHealth(folder: string, master: string, system: string, repo: string) { return this.ipc.invoke<ContextState>('sdlc_context_health', { folder, master, system, repo }); }
   sdlcInstructions(folder: string, masterRepo: string) { return this.ipc.invoke<InstructionsState>('sdlc_instructions', { folder, masterRepo }); }
   sdlcChanges(master: string, system: string) { return this.ipc.invoke<ChangeInfo[]>('sdlc_changes', { master, system }); }
-  sdlcChangeNames(_master: string, _system: string): Promise<ChangeName[]> { return Promise.resolve([]); }
-  sdlcReadStages(_master: string, _system: string, _first?: string | null): Promise<number> { return Promise.resolve(0); }
-  sdlcReadChange(_master: string, _system: string, _change: string): Promise<ChangeInfo> { return Promise.reject(new Error('not implemented')); }
-  sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }
-  onStageEvent(_cb: (ev: StageEvent) => void): Promise<() => void> { return Promise.resolve(() => undefined); }
+  sdlcChangeNames(master: string, system: string) { return this.ipc.invoke<ChangeName[]>('sdlc_change_names', { master, system }); }
+  sdlcReadStages(master: string, system: string, first?: string | null) { return this.ipc.invoke<number>('sdlc_read_stages', { master, system, first }); }
+  sdlcReadChange(master: string, system: string, change: string) { return this.ipc.invoke<ChangeInfo>('sdlc_read_change', { master, system, change }); }
+  sdlcMissingFolders(folders: string[]) { return this.ipc.invoke<string[]>('sdlc_missing_folders', { folders }); }
+  onStageEvent(cb: (ev: StageEvent) => void) {
+    return this.ipc.listen<StageEvent>('sdlc://stage', (e) => cb(e.payload));
+  }
   sdlcBranches(master: string) { return this.ipc.invoke<BranchInfo>('sdlc_branches', { master }); }
   sdlcReadDoc(master: string, system: string, change: string, doc: string) { return this.ipc.invoke<string | null>('sdlc_read_doc', { master, system, change, doc }); }
   sdlcSnapshot(master: string) { return this.ipc.invoke<Snapshot>('sdlc_snapshot', { master }); }
