@@ -980,6 +980,84 @@
       "type": "object"
     },
     {
+      "description": "A message was accepted and written to Claude's input.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "sent_at": {
+          "description": "Milliseconds since the Unix epoch.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        },
+        "type": {
+          "const": "message.sent",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "text",
+        "sent_at"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Claude took a sent message in.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "read_at": {
+          "description": "Milliseconds since the Unix epoch.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "type": {
+          "const": "message.read",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "read_at"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "A message was not accepted.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why: one of [`refusal`]'s constants. The set is open, like\n`decided_by`; treat an unrecognized value as \"not sent\".",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "type": {
+          "const": "message.refused",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "reason",
+        "text"
+      ],
+      "type": "object"
+    },
+    {
       "properties": {
         "cost_usd": {
           "description": "Total cost claude reported, if a `result` line arrived. `None` when\nthe leash killed the child before it could report (timeout, cancel,\nturn cap); present on the budget path (exit 122).",

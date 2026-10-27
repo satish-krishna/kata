@@ -24,6 +24,11 @@ export function reduce(s: RunSnapshot, ev: KataEvent): RunSnapshot {
     case 'run.started':
     case 'run.diff':
       return s;
+    // Not shown yet: the transcript renders messages in a later task.
+    case 'message.sent':
+    case 'message.read':
+    case 'message.refused':
+      return s;
     // The last one wins, and it is not a row in the stream.
     case 'run.given':
       return { ...s, given: { items: ev.items, settings: ev.settings, env: ev.env, warnings: ev.warnings, ...(ev.options ? { options: ev.options } : {}) } };

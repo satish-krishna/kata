@@ -270,6 +270,8 @@ enum StdinCmd {
     Cancel,
     Answer(kata_core::run::Answer),
     Decide(kata_core::run::Decision),
+    // Forwarded to the run in a later task; nothing reads it yet.
+    #[allow(dead_code)]
     Say(kata_core::run::Message),
 }
 
@@ -277,6 +279,7 @@ enum StdinCmd {
 ///
 /// - `cancel`
 /// - `answer <id> <json-matrix>` — the operator's reply to `ask.requested`
+/// - `say <id> <json-string>` — a message for the agent
 /// - `decide <id> allow|deny [reason]` — the operator's verdict on
 ///   `permission.requested`. The optional trailing reason is free text handed
 ///   to claude on a denial.
@@ -292,6 +295,9 @@ fn parse_stdin_line(line: &str) -> Option<StdinCmd> {
             id: id.trim().to_string(),
             answers,
         }));
+    }
+    if let Some(rest) = line.strip_prefix("say ") {
+        return kata_core::control::parse_say(rest).map(StdinCmd::Say);
     }
     if let Some(rest) = line.strip_prefix("decide ") {
         let rest = rest.trim();

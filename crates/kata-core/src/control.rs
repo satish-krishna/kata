@@ -6,14 +6,26 @@
 use crate::run::Message;
 
 /// Build a `say <id> <json-string>\n` control line.
-pub fn say_line(_id: &str, _text: &str) -> String {
-    String::new()
+pub fn say_line(id: &str, text: &str) -> String {
+    // serde_json escapes line breaks, quotes and control characters, so the
+    // line always ends at the one trailing newline.
+    let json = serde_json::to_string(text).expect("a string always serializes");
+    format!("say {id} {json}\n")
 }
 
 /// Parse the part of a `say` line after `say `. `None` when it does not follow
 /// the grammar; a line that does not parse is ignored, never half-applied.
-pub fn parse_say(_rest: &str) -> Option<Message> {
-    None
+pub fn parse_say(rest: &str) -> Option<Message> {
+    let (id, json) = rest.split_once(' ')?;
+    if id.is_empty() || id.contains(char::is_whitespace) {
+        return None;
+    }
+    // `from_str` rejects anything after the one value except whitespace.
+    let text: String = serde_json::from_str(json).ok()?;
+    Some(Message {
+        id: id.to_string(),
+        text,
+    })
 }
 
 #[cfg(test)]

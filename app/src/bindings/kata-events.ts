@@ -163,6 +163,33 @@ export type KataEvent =
       type: "permission.decided";
     }
   | {
+      id: string;
+      /**
+       * Milliseconds since the Unix epoch.
+       */
+      sent_at: number;
+      text: string;
+      type: "message.sent";
+    }
+  | {
+      id: string;
+      /**
+       * Milliseconds since the Unix epoch.
+       */
+      read_at: number;
+      type: "message.read";
+    }
+  | {
+      id: string;
+      /**
+       * Why: one of [`refusal`]'s constants. The set is open, like
+       * `decided_by`; treat an unrecognized value as "not sent".
+       */
+      reason: string;
+      text: string;
+      type: "message.refused";
+    }
+  | {
       /**
        * Total cost claude reported, if a `result` line arrived. `None` when
        * the leash killed the child before it could report (timeout, cancel,

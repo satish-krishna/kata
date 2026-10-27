@@ -83,6 +83,9 @@ Every event is a JSON object with a `type` field. Fields below are exactly as se
 | `ask.answered` | `id`, `answers[][]` | The operator's answer was delivered (echo, for your transcript). |
 | `permission.requested` | `id`, `tool`, `input_summary` | A tool call is paused on the operator's decision: under `mode = "prompt"` with `unmatched = "ask"`, and under `mode = "auto"` for a call a `permissions.ask` rule matched. See [Permissions](#permission-prompting). |
 | `permission.decided` | `id`, `tool`, `input_summary`, `allow`, `decided_by`, `message?` | How a permission check was resolved. Emitted only for a check that reaches Kata's own tool — the `unmatched` policy, the operator, or one of Kata's own bridge tools (`decided_by: "engine"`). A call claude's own settings (or its built-in read-only auto-approve) resolved is never seen by Kata and gets no event at all — this is **not** a complete audit trail of every permission check. |
+| `message.sent` | `id`, `text`, `sent_at` | A `say` message was accepted and written to Claude's input. `sent_at` is milliseconds since the Unix epoch. See [The control channel](#the-control-channel-stdin). |
+| `message.read` | `id`, `read_at` | Claude took the message in. `read_at` is milliseconds since the Unix epoch. |
+| `message.refused` | `id`, `reason`, `text` | The message was not accepted. `reason` is `waiting-on-operator`, `run-ending` or `repeated`. The set is open, like `decided_by`: show an unrecognized `reason` as "not sent". |
 | `run.given` | `items[]`, `settings`, `env[]`, `warnings[]`, `options?` | What the run was given, checked against claude's start report. Emitted when the start report arrives, again when the hooks seen firing change, and, when no start report ever arrived, once on the way out (including a refused or failed-to-spawn run); keep only the last one. `options` is `{ required_plugins[], build }`, the options the run was resolved with. Names of environment variables only, never values. |
 | `run.diff` | `worktree?`, `branch?`, `files[]`, `insertions`, `deletions`, `by_type[]` | Changeset summary, emitted just before the terminal event on every run in a git repository. worktree/branch present only under worktree isolation. |
 | `run.completed` | `exit_code`, `is_error`, `num_turns`, `cost_usd?`, `duration_ms`, `result?` | Terminal: the run finished on its own. |
@@ -107,11 +110,33 @@ When the workdir is not a git repository, no `run.diff` is emitted; instead a si
 
 ### The control channel (stdin)
 
-The engine reads control lines on its stdin. Three commands:
+The engine reads control lines on its stdin. Four commands:
 
 - `cancel` — stop the run. The engine kills claude, cleans up (worktree, temp kit), emits `run.cancelled`, and exits 130. EOF on stdin is a no-op, so a plain CLI invocation that closes stdin runs normally.
 - `answer <id> <json>` — answer a pending `ask.requested`. `<id>` is the id from the event; `<json>` is the answer matrix (see below). Ignored unless it matches the pending question's id.
 - `decide <id> allow|deny [reason]` — settle a pending `permission.requested`. The optional trailing free text is the reason claude sees on a denial. A line that is neither `allow` nor `deny` is ignored rather than guessed at. Ignored unless it matches the pending check's id.
+- `say <id> <json-string>` — send a message to the agent while it works. `<id>` is chosen by you, has no spaces and must be new within the run. `<json-string>` is one JSON string, so a message with line breaks still fits on one line; build the line with a JSON encoder (`kata_core::control::say_line` in Rust), never by pasting raw text. A line that does not follow this grammar is ignored.
+
+The engine answers a `say` line from its own state, checked in this order: blank text is ignored with no event; an id already used in the run is refused with `message.refused` and reason `repeated`; a run paused on `ask.requested` or `permission.requested` is refused with `waiting-on-operator`; a run whose Claude input is already closed is refused with `run-ending`; anything else is accepted. The same text under a new id is a new message. A run that receives no `say` line emits none of the three message events.
+
+A worked example. You write one line to stdin:
+
+```
+say m1 "Stop editing the parser;\nthe bug is in the lexer"
+```
+
+The engine accepts it and announces it, then announces that Claude took it in:
+
+```json
+{"type":"message.sent","id":"m1","text":"Stop editing the parser;\nthe bug is in the lexer","sent_at":1790000000000}
+{"type":"message.read","id":"m1","read_at":1790000004200}
+```
+
+Sending `m1` again is refused instead:
+
+```json
+{"type":"message.refused","id":"m1","reason":"repeated","text":"Stop editing the parser;\nthe bug is in the lexer"}
+```
 
 ### Exit codes
 
@@ -391,6 +416,6 @@ Generate specs programmatically in TypeScript from the ts-rs bindings in `app/sr
 `CONTRACTS.md` at the repo root is the authoritative list of frozen surfaces and the versioning rules (what change is major vs minor). In brief:
 
 - **Run-spec** and **event protocol**: stable and language-neutral. Build against these.
-- **Exit codes** and the **engine invocation + stdin control channel** (`cancel`, `answer`, `decide`): stable; part of the CI/orchestrator contract.
+- **Exit codes** and the **engine invocation + stdin control channel** (`cancel`, `answer`, `decide`, `say`): stable; part of the CI/orchestrator contract.
 - **The `kata_core` Rust API**: the reference implementation, less stable than the contracts above. The curated crate-root re-exports are the intended surface, but signatures may shift between releases — pin a version.
 - **The `ask_user` and `approve_tool` MCP tools** are internal implementation details, not contracts — drive interactivity via the `ask.*` events and the `answer` control line, and permissions via the `permission.*` events and the `decide` control line.
