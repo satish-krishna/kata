@@ -367,8 +367,15 @@ fn plan_facts(
     let mut repos: Vec<&str> = tasks.iter().map(|t| t.repo.as_str()).collect();
     repos.sort_unstable();
     repos.dedup();
-    let finished = match plugin.map(|p| crate::build::status_with(p, master, system, change, Shown))
-    {
+    // The build status reads this same plan again. When the plan could not be read, that read would fail
+    // the same way and cost the whole failure a second time (a failed read is not cached, and a timeout
+    // is not a verdict), so nothing is finished and the plan's own reason stands.
+    let status = match (plugin, &reason) {
+        (Some(p), None) => Some(crate::build::status_with(p, master, system, change, Shown)),
+        _ => None,
+    };
+    let finished = match status {
+        None => 0,
         Some(Ok(status)) => status.tasks.iter().filter(|t| t.row.is_some()).count() as u32,
         Some(Err(e)) if !crate::build::is_unreadable(&e) => 0,
         other => {
