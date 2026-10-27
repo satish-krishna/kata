@@ -24,6 +24,7 @@
         <a class="k-mono" [href]="prs[0].url" [attr.title]="prs[0].label" rel="noopener noreferrer" (click)="$event.preventDefault(); vm.openPr(prs[0].url)"
           ><span class="k-prlinks__repo">{{ prs[0].repo }}</span>@if (prs[0].number !== null) {&ngsp;<span class="k-prlinks__num">#{{ prs[0].number }}</span>}</a
         >
+        <span class="k-prlinks__label" data-testid="pr-state" [attr.title]="prs[0].seen">{{ prs[0].state }}</span>
       </nav>
     } @else if (prs.length > 1) {
       <nav toolbarLinks class="k-prlinks" aria-label="Pull requests">
@@ -42,6 +43,7 @@
                   <a class="k-mono k-prlist__link" [href]="link.url" rel="noopener noreferrer" (click)="$event.preventDefault(); vm.openPr(link.url)"
                     ><span>{{ link.repo }}</span>@if (link.number !== null) {&ngsp;<span>#{{ link.number }}</span>}</a
                   >
+                  <span class="k-left__tag" data-testid="pr-state">{{ link.state }}@if (link.seen) { · {{ link.seen }}}</span>
                 </li>
               }
             </ul>
@@ -102,6 +104,9 @@
             }
             @if (vm.prCheckFailed()) {
               <span class="k-left__note" data-testid="pr-note">Could not check pull requests</span>
+            }
+            @if (vm.linksNote(); as note) {
+              <span class="k-left__note" data-testid="links-note">Pull requests {{ note }}</span>
             }
             <div class="wb-toolbar__spacer"></div>
             <ng-container *ngTemplateOutlet="stageActions" />
@@ -179,6 +184,9 @@
               }
               @if (vm.prCheckFailed()) {
                 <p class="k-left__note" data-testid="pr-note">Could not check pull requests</p>
+              }
+              @if (vm.linksNote(); as note) {
+                <p class="k-left__note" data-testid="links-note">Pull requests {{ note }}</p>
               }
               <app-build-page
                 [view]="build.view()"

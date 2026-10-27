@@ -496,8 +496,8 @@ describe('ChangePage opens an existing change on the build page', () => {
   /** A change as an earlier version of Kata left it: build log rows for `built` tasks, a run recorded on this machine, a review document. */
   async function existing(stage: ChangeInfo['stage'], built: string[], review: boolean) {
     const transport = new MockTransport();
-    const real = transport.sdlcChanges.bind(transport);
-    vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) => (await real(m, s)).map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage } : c)));
+    const real = transport.sdlcReadChange.bind(transport);
+    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) => [await real(m, s, n)].map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage } : c))[0]);
     const status = transport.sdlcBuildStatus.bind(transport);
     vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => {
       const got = await status(m, s, c);

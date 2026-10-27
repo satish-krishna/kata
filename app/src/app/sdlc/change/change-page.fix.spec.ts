@@ -35,9 +35,9 @@ const confirmPreview = async () => {
 /** A fix at a stage, with the plugin supporting the light track or not, until the mock has its own fixture. */
 async function mountFix(stage: Stage, lightTrack = true, track: 'fix' | 'full' = 'fix', docs: Partial<ChangeInfo> = {}) {
   const transport = new MockTransport();
-  const real = transport.sdlcChanges.bind(transport);
-  vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
-    (await real(m, s)).map((c) => (c.change === FIX ? { ...c, stage, track, ...docs } : c)),
+  const real = transport.sdlcReadChange.bind(transport);
+  vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
+    [await real(m, s, n)].map((c) => (c.change === FIX ? { ...c, stage, track, ...docs } : c))[0],
   );
   const ready = await transport.sdlcPluginReadiness(null);
   vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(ready.kind === 'ready' ? { ...ready, lightTrack } : ready);

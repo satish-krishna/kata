@@ -29,9 +29,9 @@ const dialog = () => document.body.querySelector('[role="dialog"]');
 /** A fix awaiting acceptance, until the mock has its own fixture. */
 async function mountFix() {
   const transport = new MockTransport();
-  const real = transport.sdlcChanges.bind(transport);
-  vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
-    (await real(m, s)).map((c) => (c.change === FIX ? { ...c, stage: 'fix-awaiting' as const, track: 'fix' as const, fix_row: 6, intent: { ...c.intent, status: 'draft', head_status: 'draft' } } : c)),
+  const real = transport.sdlcReadChange.bind(transport);
+  vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
+    [await real(m, s, n)].map((c) => (c.change === FIX ? { ...c, stage: 'fix-awaiting' as const, track: 'fix' as const, fix_row: 6, intent: { ...c.intent, status: 'draft', head_status: 'draft' } } : c))[0],
   );
   const realDoc = transport.sdlcReadDoc.bind(transport);
   vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (m, s, c, d) => (c === FIX && d === 'intent' ? FIX_INTENT : realDoc(m, s, c, d)));

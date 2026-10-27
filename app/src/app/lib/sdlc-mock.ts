@@ -698,7 +698,9 @@ export class SdlcMock {
     const prs = this.pullRequests(repos, changeName);
     const links = prs.flatMap((p) => (p.url === null ? [] : [{ repo: p.repo, url: p.url, state: 'open' as const, seenAt: null }]));
     const done = buildFinished && prs.length > 0 && links.length === prs.length;
-    return { done, links: done ? links : [], linksFrom: done ? 'github' as const : 'none' as const, offerDeclare: buildFinished && !done, prCheckFailed: false };
+    // Like a saved record: the links a partial publish opened stay, labeled as opened.
+    const linksFrom = links.length === 0 ? 'none' as const : done ? 'github' as const : 'opened' as const;
+    return { done, links, linksFrom, offerDeclare: buildFinished && !done, prCheckFailed: false };
   }
 
   pullRequests(repos: PublishRepo[], changeName: string): PrState[] {

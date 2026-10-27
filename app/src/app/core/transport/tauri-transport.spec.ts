@@ -58,7 +58,6 @@ const rows: Row[] = [
   ['sdlcScan', (t) => t.sdlcScan('/w'), 'sdlc_scan', { folder: '/w' }],
   ['sdlcContextHealth', (t) => t.sdlcContextHealth('/w', 'm', 's', 'r'), 'sdlc_context_health', { folder: '/w', master: 'm', system: 's', repo: 'r' }],
   ['sdlcInstructions', (t) => t.sdlcInstructions('/w', 'm'), 'sdlc_instructions', { folder: '/w', masterRepo: 'm' }],
-  ['sdlcChanges', (t) => t.sdlcChanges('/m', 's'), 'sdlc_changes', { master: '/m', system: 's' }],
   ['sdlcChangeNames', (t) => t.sdlcChangeNames('/m', 's'), 'sdlc_change_names', { master: '/m', system: 's' }],
   ['sdlcReadStages', (t) => t.sdlcReadStages('/m', 's'), 'sdlc_read_stages', { master: '/m', system: 's' }],
   ['sdlcReadStages with a first change', (t) => t.sdlcReadStages('/m', 's', 'c'), 'sdlc_read_stages', { master: '/m', system: 's', first: 'c' }],

@@ -45,8 +45,8 @@ const ready = async (vm: ChangePageViewModel) => {
   });
 };
 const withStage = (transport: MockTransport, name: string, stage: ChangeInfo['stage']) => {
-  const real = transport.sdlcChanges.bind(transport);
-  vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) => (await real(m, s)).map((c) => (c.change === name ? { ...c, stage } : c)));
+  const real = transport.sdlcReadChange.bind(transport);
+  vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) => [await real(m, s, n)].map((c) => (c.change === name ? { ...c, stage } : c))[0]);
 };
 
 /** A finished build whose review ran against the current heads and whose repositories have nothing uncommitted. */
@@ -441,9 +441,9 @@ describe('declaring done from the build page', () => {
   });
 
   const PRS = [
-    { repo: 'claims-intent', url: 'https://github.com/acme/claims-intent/pull/11' },
-    { repo: 'claims-core', url: 'https://github.com/acme/claims-core/pull/12' },
-    { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/13' },
+    { repo: 'claims-intent', url: 'https://github.com/acme/claims-intent/pull/11', state: 'open' as const, seenAt: null },
+    { repo: 'claims-core', url: 'https://github.com/acme/claims-core/pull/12', state: 'open' as const, seenAt: null },
+    { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/13', state: 'open' as const, seenAt: null },
   ];
   const click = (a: Element) => {
     const ev = new MouseEvent('click', { bubbles: true, cancelable: true });

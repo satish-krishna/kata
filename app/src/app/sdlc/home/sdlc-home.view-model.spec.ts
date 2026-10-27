@@ -15,6 +15,7 @@ import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
+import { readAllChanges } from '../../../testing/read-all';
 import { MOCK_WORKSPACE_FOLDER, MOCK_MASTER } from '../../lib/sdlc-mock';
 import { seedCatalog } from '../../lib/mock';
 import { SdlcHomeViewModel } from './sdlc-home.view-model';
@@ -643,13 +644,16 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
 
 describe("SdlcHomeViewModel plan notice (F20)", () => {
   const noticeOf = (vm: SdlcHomeViewModel) => vm.listNotice();
-  const withUnreadablePlan = (transport: MockTransport) => {
-    const real = transport.sdlcChanges.bind(transport);
-    vi.spyOn(transport, "sdlcChanges").mockImplementation(async (master, system) => {
-      const list = await real(master, system);
-      return list.map((c, i) => (i === 0 ? { ...c, stage: "plan-unreadable" as never, plan_unreadable: true } : c));
+  /** The first change reads as the callback makes it; the others read as they are. */
+  const alterFirst = (transport: MockTransport, change: (c: ChangeInfo) => ChangeInfo) => {
+    const real = transport.sdlcReadChange.bind(transport);
+    vi.spyOn(transport, "sdlcReadChange").mockImplementation(async (master, system, name) => {
+      const [first] = await transport.sdlcChangeNames(master, system);
+      const info = await real(master, system, name);
+      return name === first.change ? change(info) : info;
     });
   };
+  const withUnreadablePlan = (transport: MockTransport) => alterFirst(transport, (c) => ({ ...c, stage: "plan-unreadable" as never, plan_unreadable: true }));
 
   it("says to install the plugin on the change list when a plan could not be read and the plugin is missing", async () => {
     const { vm, transport } = setup();
@@ -680,11 +684,7 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
 
   it("shows the program's own cause on the change list instead of blaming Node.js (F26)", async () => {
     const { vm, transport } = setup();
-    const real = transport.sdlcChanges.bind(transport);
-    vi.spyOn(transport, "sdlcChanges").mockImplementation(async (master, system) => {
-      const list = await real(master, system);
-      return list.map((c, i) => (i === 0 ? ({ ...c, stage: "plan-unreadable", plan_unreadable: true, plan_unreadable_reason: "layout 3 is newer than this program reads" } as never) : c));
-    });
+    alterFirst(transport, (c) => ({ ...c, stage: "plan-unreadable", plan_unreadable: true, plan_unreadable_reason: "layout 3 is newer than this program reads" }) as never);
     await vm.init();
     await settled(vm);
     expect(noticeOf(vm)?.text).toContain("layout 3 is newer than this program reads");
@@ -692,11 +692,7 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
   });
 
   const withFix = (transport: MockTransport, over: Record<string, unknown>) => {
-    const real = transport.sdlcChanges.bind(transport);
-    vi.spyOn(transport, "sdlcChanges").mockImplementation(async (master, system) => {
-      const list = await real(master, system);
-      return list.map((c, i) => (i === 0 ? ({ ...c, track: "fix", plan_unreadable: true, ...over } as never) : c));
-    });
+    alterFirst(transport, (c) => ({ ...c, track: "fix", plan_unreadable: true, ...over }) as never);
   };
 
   it("shows a fix's needs-the-plugin reason as it is, without the document prefix (F5)", async () => {
@@ -807,12 +803,12 @@ function controlledPass(transport: MockTransport) {
   return { reads, send, finish, next, id: () => last };
 }
 
-/** A pass that answers by itself with every stage `sdlcChanges` gives, for the tests that are not about the pass. */
+/** A pass that answers by itself with every stage `sdlcReadChange` gives, for the tests that are not about the pass. */
 function instantPass(transport: MockTransport) {
   const pass = controlledPass(transport);
   pass.reads.mockImplementation(async (master, system) => {
     const id = pass.next();
-    setTimeout(() => void transport.sdlcChanges(master, system).then((infos) => pass.finish(id, infos)), 0);
+    setTimeout(() => void readAllChanges(transport, master, system).then((infos) => pass.finish(id, infos)), 0);
     return id;
   });
 }
@@ -822,7 +818,7 @@ const settled = (vm: SdlcHomeViewModel) => vi.waitFor(() => expect(vm.reading())
 
 const twelve = (): ChangeName[] => Array.from({ length: 12 }, (_, i) => ({ change: `2026-10-${String(10 + i).padStart(2, '0')}-change-${i}`, title: null }));
 const infoFor = async (transport: MockTransport, change: string, stage: ChangeInfo['stage']): Promise<ChangeInfo> => {
-  const found = (await transport.sdlcChanges('/m', 'claims'))[0];
+  const found = (await readAllChanges(transport))[0];
   return { ...found, change, stage };
 };
 const stageOf = (vm: SdlcHomeViewModel, change: string) => vm.rows().find((r) => r.change === change);

@@ -171,7 +171,6 @@ export class MockTransport extends KataTransport {
   }
   sdlcContextHealth(_folder: string, _master: string, _system: string, repo: string): Promise<ContextState> { return Promise.resolve(this.sdlc.contextHealth(repo)); }
   sdlcInstructions(_folder: string, _masterRepo: string): Promise<InstructionsState> { return Promise.resolve(this.sdlc.instructions()); }
-  sdlcChanges(_master: string, _system: string): Promise<ChangeInfo[]> { return Promise.resolve(this.sdlc.listChanges()); }
   sdlcChangeNames(_master: string, _system: string): Promise<ChangeName[]> { return Promise.resolve(this.sdlc.changeNames()); }
   /** Plays a scripted pass: one `stage` per change and a `progress` after each, spread over about a second, then `done`. A new pass cancels the one before. */
   sdlcReadStages(_master: string, _system: string, first?: string | null): Promise<number> {
@@ -260,20 +259,20 @@ export class MockTransport extends KataTransport {
     }
     return Promise.resolve(this.sdlc.publish(repos));
   }
+  /** `?demo=pr-fail` makes the read fail, so the browser checks can see the "Could not check pull requests" note; `?demo=one-pr` keeps only the
+   *  first pull request, so they can see the single inline link. Browser only; this class never runs under Tauri. */
   async sdlcDoneView(folder: string, masterRepo: string, _workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView> {
+    const demo = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('demo');
+    if (demo === 'pr-fail' && buildFinished) return { done: false, links: [], linksFrom: 'none', offerDeclare: true, prCheckFailed: true };
     const repos = await this.sdlcTouchedRepos(folder, masterRepo, system, change);
-    return this.sdlc.doneView(repos, change, buildFinished);
+    const view = this.sdlc.doneView(repos, change, buildFinished);
+    return demo === 'one-pr' ? { ...view, links: view.links.slice(0, 1) } : view;
   }
   sdlcRefreshPrStates(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView> {
     return this.sdlcDoneView(folder, masterRepo, workspaceId, system, change, buildFinished);
   }
-  /** `?demo=pr-fail` makes the read fail, so the browser checks can see the "Could not check pull requests" note; `?demo=one-pr` keeps only the
-   *  first pull request, so they can see the single inline link. Browser only; this class never runs under Tauri. */
   sdlcPullRequests(repos: PublishRepo[], change: string): Promise<PrState[]> {
-    const demo = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('demo');
-    if (demo === 'pr-fail') return Promise.reject(new Error('gh is not signed in'));
-    const prs = this.sdlc.pullRequests(repos, change);
-    return Promise.resolve(demo === 'one-pr' ? prs.slice(0, 1) : prs);
+    return Promise.resolve(this.sdlc.pullRequests(repos, change));
   }
   loadBuildLayout(): Promise<unknown> { return Promise.resolve(this.buildLayout); }
   saveBuildLayout(layout: Record<string, unknown>): Promise<void> { this.buildLayout = layout; return Promise.resolve(); }

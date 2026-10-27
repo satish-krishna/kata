@@ -56,8 +56,8 @@ async function home(start: (vm: SdlcHomeViewModel) => Promise<unknown>): Promise
 async function changePage(change: string, stage: ChangeInfo['stage'] | null, start: (vm: ChangePageViewModel) => Promise<unknown>, kind: 'run' | 'build', fill?: (s: Scenario) => void): Promise<Scenario> {
   const transport = new MockTransport();
   if (stage) {
-    const real = transport.sdlcChanges.bind(transport);
-    vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) => (await real(m, s)).map((c) => (c.change === change ? { ...c, stage } : c)));
+    const real = transport.sdlcReadChange.bind(transport);
+    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) => [await real(m, s, n)].map((c) => (c.change === change ? { ...c, stage } : c))[0]);
   }
   TestBed.configureTestingModule({
     providers: [

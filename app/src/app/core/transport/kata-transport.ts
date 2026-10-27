@@ -82,7 +82,6 @@ export abstract class KataTransport {
   abstract sdlcScan(folder: string): Promise<WorkspaceScan>;
   abstract sdlcContextHealth(folder: string, master: string, system: string, repo: string): Promise<ContextState>;
   abstract sdlcInstructions(folder: string, masterRepo: string): Promise<InstructionsState>;
-  abstract sdlcChanges(master: string, system: string): Promise<ChangeInfo[]>;
   /** The changes of a system with the title of each intent, from the folder alone: no stage is read and no program is started. */
   abstract sdlcChangeNames(master: string, system: string): Promise<ChangeName[]>;
   /** Start reading the stage of every change in the background and resolve to the pass id at once. Each result arrives through `onStageEvent`. A pass started while another is running supersedes it; the superseded pass reports nothing more. `first` names a change to read before the others. */

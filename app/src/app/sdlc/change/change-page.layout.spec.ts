@@ -151,9 +151,9 @@ describe('ChangePage layout', () => {
 
   it('keeps the plan banner above the plan in the new layout', async () => {
     const transport = new MockTransport();
-    const real = transport.sdlcChanges.bind(transport);
-    vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
-      (await real(m, s)).map((c) => (c.change === '2026-10-09-adjuster-reassign' ? { ...c, stage: 'plan-superseded' as ChangeInfo['stage'] } : c)),
+    const real = transport.sdlcReadChange.bind(transport);
+    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
+      [await real(m, s, n)].map((c) => (c.change === '2026-10-09-adjuster-reassign' ? { ...c, stage: 'plan-superseded' as ChangeInfo['stage'] } : c))[0],
     );
     const { container } = await mount('2026-10-09-adjuster-reassign', transport);
     const banner = container.querySelector('[data-testid="plan-banner"]')!;
@@ -201,9 +201,9 @@ describe('ChangePage layout', () => {
   describe('after the pull requests', () => {
     const finished = async (only?: number) => {
       const transport = new MockTransport();
-      const real = transport.sdlcChanges.bind(transport);
-      vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
-        (await real(m, s)).map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage: 'build-finished' as const } : c)),
+      const real = transport.sdlcReadChange.bind(transport);
+      vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
+        [await real(m, s, n)].map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage: 'build-finished' as const } : c))[0],
       );
       const status = transport.sdlcBuildStatus.bind(transport);
       vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, sys, c) => {

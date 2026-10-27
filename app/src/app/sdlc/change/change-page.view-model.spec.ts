@@ -61,9 +61,9 @@ const settleBuild = async () => {
   });
 };
 const withStage = (transport: MockTransport, name: string, stage: ChangeInfo['stage'], extra: Partial<ChangeInfo> = {}) => {
-  const real = transport.sdlcChanges.bind(transport);
-  vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
-    (await real(m, s)).map((c) => (c.change === name ? { ...c, stage, ...extra } : c)),
+  const real = transport.sdlcReadChange.bind(transport);
+  vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
+    [await real(m, s, n)].map((c) => (c.change === name ? { ...c, stage, ...extra } : c))[0],
   );
 };
 
@@ -114,15 +114,15 @@ describe('ChangePageViewModel', () => {
     const transport = new MockTransport();
     const { vm } = setup(FNOL, transport);
     await ready(vm);
-    const realChanges = transport.sdlcChanges.bind(transport);
+    const realChanges = transport.sdlcReadChange.bind(transport);
     let reloading!: () => void;
     const started = new Promise<void>((r) => (reloading = r));
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, sys) => {
+    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, sys, n) => {
       reloading();
       await gate;
-      return realChanges(m, sys);
+      return realChanges(m, sys, n);
     });
     const decided = vm.act('accept-spec');
     await started;
@@ -532,7 +532,7 @@ describe('ChangePageViewModel', () => {
     it('reloads the change after a run', async () => {
       const { vm, transport, runAgent } = setup(FNOL);
       await ready(vm);
-      const changes = vi.spyOn(transport, 'sdlcChanges');
+      const changes = vi.spyOn(transport, 'sdlcReadChange');
       await vm.act('start-spec');
       expect(runAgent).toHaveBeenCalled();
       expect(changes).toHaveBeenCalled();
@@ -1123,12 +1123,14 @@ describe('ChangePageViewModel reads one change', () => {
   it('reads only its own change (R4.1)', async () => {
     const transport = new MockTransport();
     const one = vi.spyOn(transport, 'sdlcReadChange');
-    const all = vi.spyOn(transport, 'sdlcChanges');
+    const names = vi.spyOn(transport, 'sdlcChangeNames');
+    const pass = vi.spyOn(transport, 'sdlcReadStages');
     const { vm } = setup(FNOL, transport);
     await ready(vm);
     expect(one).toHaveBeenCalledTimes(1);
     expect(one).toHaveBeenCalledWith(expect.any(String), 'claims', FNOL);
-    expect(all).not.toHaveBeenCalled();
+    expect(names).not.toHaveBeenCalled();
+    expect(pass).not.toHaveBeenCalled();
     expect(vm.change()).toEqual(await transport.sdlcReadChange('', 'claims', FNOL));
     expect(vm.docName()).toBe('spec.md');
     expect(vm.doc()).toContain('# Spec: photo upload');

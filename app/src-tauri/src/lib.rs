@@ -242,12 +242,6 @@ fn sdlc_instructions(folder: String, master_repo: String) -> sdlc::workspace::In
     sdlc::workspace::instructions(folder, &folder.join(master_repo))
 }
 
-#[tauri::command(async)]
-fn sdlc_changes(master: String, system: String) -> Vec<sdlc::changes::ChangeInfo> {
-    let plugin = ai_sdlc_dir(&master).ok();
-    sdlc::changes::list(plugin.as_deref(), Path::new(&master), &system)
-}
-
 /// The changes of a system and the title of each intent, from the folder alone.
 #[tauri::command(async)]
 fn sdlc_change_names(master: String, system: String) -> Vec<sdlc::changes::ChangeName> {
@@ -1105,7 +1099,6 @@ pub fn run() {
             sdlc_scan,
             sdlc_context_health,
             sdlc_instructions,
-            sdlc_changes,
             sdlc_change_names,
             sdlc_read_stages,
             sdlc_read_change,
