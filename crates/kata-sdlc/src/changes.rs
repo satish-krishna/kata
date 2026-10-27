@@ -2517,7 +2517,7 @@ source_spec_commit: {spec_pin}
                  const args = process.argv.slice(2);\n\
                  let slow = {slow_batch} && args[0] === 'fix-state' && args.length > 3;\n\
                  if (args[0] === 'read') {{ try {{ slow = readFileSync(args[2], 'utf8').includes('KATA-SLOW'); }} catch {{}} }}\n\
-                 if (slow) await new Promise((r) => setTimeout(r, 20000));\n\
+                 if (slow) await new Promise((r) => setTimeout(r, 600000));\n\
                  await import('./real.mjs');\n"
             ),
         )
@@ -2647,7 +2647,9 @@ source_spec_commit: {spec_pin}
                 }
             });
             let ctx = ReadContext::new(Some(&plugin), &repo);
-            ctx.limit_format_calls(std::time::Duration::from_secs(3));
+            // Far above any ordinary read, even a node start on a loaded machine: only the stalled
+            // read (it never finishes on its own) may reach the limit.
+            ctx.limit_format_calls(std::time::Duration::from_secs(30));
             // The change that cannot be read goes first, so every other one has to get past it.
             let mut order = names.clone();
             order.rotate_left(4);
