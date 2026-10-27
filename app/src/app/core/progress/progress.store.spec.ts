@@ -75,8 +75,9 @@ describe('ProgressStore', () => {
   });
 
   it('rotates the playful line and keeps the plain label', () => {
-    const { lines } = PROGRESS_STEPS['reading-stages'];
-    store.begin('reading-stages', '1 of 12 changes read');
+    // A step that is not yet long at ten seconds, so three lines rotate before the long notice replaces them.
+    const { lines } = PROGRESS_STEPS['running-checks'];
+    store.begin('running-checks', '1 of 12 changes read');
     vi.advanceTimersByTime(1_000);
     expect(shown()).toEqual({ line: lines[0], label: '1 of 12 changes read', long: false });
     vi.advanceTimersByTime(4_000);
