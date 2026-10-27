@@ -19,6 +19,7 @@ import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { Offender } from '@bindings/Offender';
 import type { PrResult } from '@bindings/PrResult';
 import type { PrState } from '@bindings/PrState';
+import type { PrStateKind } from '@bindings/PrStateKind';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { BuildAction } from '@bindings/BuildAction';
@@ -338,9 +339,11 @@ export class ChangePageViewModel {
       : this.pullRequests().flatMap((p) => {
           if (p.url === null) return [];
           const number = prNumber(p.url);
-          return [{ repo: p.repo, url: p.url, number, label: number === null ? p.repo : `${p.repo} #${number}` }];
+          return [{ repo: p.repo, url: p.url, number, label: number === null ? p.repo : `${p.repo} #${number}`, state: 'open' as PrStateKind, seen: null as string | null }];
         }),
   );
+  /** Where the links come from when that is not this page's own declaration: "from the earlier declaration", else null. */
+  readonly linksNote = computed<string | null>(() => null);
   /** The master repository's branch, unless it is the change's own branch, which the pills already imply. */
   readonly branchChip = computed(() => {
     const branch = this.masterBranch();

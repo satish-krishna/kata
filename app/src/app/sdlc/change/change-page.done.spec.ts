@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import { render } from '../../../testing/render';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { PrLink } from '@bindings/PrLink';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject, of } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
@@ -530,5 +531,53 @@ describe('declaring done reports progress', () => {
     expect(fail).toHaveBeenCalledWith('lock');
     expect(progress.view('lock')()).toBeNull();
     expect(toastText()).toContain('push refused');
+  });
+});
+
+describe('lasting links after a publish or a round', () => {
+  const saved = (repo: string, over: Partial<PrLink> = {}): PrLink => ({ repo, url: `https://github.com/acme/${repo}/pull/7`, state: 'open', seenAt: 1790000000, ...over });
+
+  it('keeps the opened link and offers declare done after a partial publish (R8.3)', async () => {
+    const { vm, transport } = await finished();
+    const real = transport.sdlcDoneView.bind(transport);
+    let published = false;
+    const doneView = vi.spyOn(transport, 'sdlcDoneView').mockImplementation(async (...args) =>
+      published ? { done: false, links: [saved('claims-core')], linksFrom: 'opened', offerDeclare: true, prCheckFailed: false } : real(...args),
+    );
+    const publish = vi.spyOn(transport, 'sdlcPublish').mockImplementation(async () => {
+      published = true;
+      return [
+        { repo: 'claims-core', outcome: { kind: 'opened' as const, url: 'https://github.com/acme/claims-core/pull/7' } },
+        { repo: 'customer-portal', outcome: { kind: 'failed' as const, error: 'push refused' } },
+      ];
+    });
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    expect(publish.mock.calls[0][1]).toBe(vm.current()!.id);
+    expect(doneView.mock.calls.length).toBeGreaterThan(1);
+    expect(vm.done()).toBe(false);
+    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['claims-core']);
+    expect(vm.prList()?.length).toBe(2);
+    expect(vm.actions()).toContain('declare-done');
+  });
+
+  it('a round after done shows build finished with the earlier links (T10 row 2)', async () => {
+    const transport = new MockTransport();
+    withStage(transport, BUILD, 'build-finished');
+    vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue({
+      done: false,
+      links: [saved('claims-core'), saved('customer-portal')],
+      linksFrom: 'earlierDeclaration',
+      offerDeclare: true,
+      prCheckFailed: false,
+    });
+    vi.spyOn(transport, 'sdlcRefreshPrStates').mockImplementation(() => new Promise<never>(() => undefined));
+    const { vm } = setup(transport);
+    await ready(vm);
+    expect(vm.done()).toBe(false);
+    expect(vm.change()!.stage).toBe('build-finished');
+    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['claims-core', 'customer-portal']);
+    expect(vm.linksNote()).toBe('from the earlier declaration');
+    expect(vm.actions()).toContain('declare-done');
   });
 });

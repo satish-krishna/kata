@@ -2,12 +2,15 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { DoneView } from '@bindings/DoneView';
+import type { PrLink } from '@bindings/PrLink';
 import type { RunSpec } from '@bindings/RunSpec';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
+import { SdlcStagesStore, stageKey } from '../../core/sdlc/sdlc-stages.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
@@ -1109,5 +1112,94 @@ describe('the build\'s preview', () => {
     expect(TestBed.inject(BuildPageViewModel).current()!.round).toBeNull();
     // The review is the stage button's and the done dialog's one path: it runs with Kata's review limit.
     expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(7200);
+  });
+});
+
+const link = (repo: string, over: Partial<PrLink> = {}): PrLink => ({ repo, url: `https://github.com/acme/${repo}/pull/7`, state: 'open', seenAt: 1790000000, ...over });
+const view = (over: Partial<DoneView> = {}): DoneView => ({ done: true, links: [], linksFrom: 'saved', offerDeclare: false, prCheckFailed: false, ...over });
+const forever = () => new Promise<never>(() => undefined);
+
+describe('ChangePageViewModel reads one change', () => {
+  it('reads only its own change (R4.1)', async () => {
+    const transport = new MockTransport();
+    const one = vi.spyOn(transport, 'sdlcReadChange');
+    const all = vi.spyOn(transport, 'sdlcChanges');
+    const { vm } = setup(FNOL, transport);
+    await ready(vm);
+    expect(one).toHaveBeenCalledTimes(1);
+    expect(one).toHaveBeenCalledWith(expect.any(String), 'claims', FNOL);
+    expect(all).not.toHaveBeenCalled();
+    expect(vm.change()).toEqual(await transport.sdlcReadChange('', 'claims', FNOL));
+    expect(vm.docName()).toBe('spec.md');
+    expect(vm.doc()).toContain('# Spec: photo upload');
+    expect(vm.actions()).toEqual(actionsFor(vm.change()!.stage));
+  });
+
+  it('reads the change itself while the home pass is still going (R4.2)', async () => {
+    const transport = new MockTransport();
+    const pass = vi.spyOn(transport, 'sdlcReadStages').mockImplementation(forever);
+    const { vm } = setup(FNOL, transport);
+    const store = TestBed.inject(SdlcStagesStore);
+    store.markChecking('acme-claims');
+    await ready(vm);
+    expect(vm.state()).toBe('ready');
+    expect(pass).not.toHaveBeenCalled();
+    const row = store.rows(vm.current()!.id)[stageKey('claims', FNOL)];
+    expect(row?.info?.change).toBe(FNOL);
+    expect(row?.info?.stage).toBe(vm.change()!.stage);
+    expect(row?.checking).toBe(false);
+  });
+});
+
+describe('ChangePageViewModel shows lasting links', () => {
+  const finishedBuild = (transport: MockTransport) => withStage(transport, MOCK_BUILD_CHANGE, 'build-finished');
+
+  it('a done change shows its saved links after a restart (R8.1)', async () => {
+    const transport = new MockTransport();
+    finishedBuild(transport);
+    const done = vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue(view({ links: [link('claims-core'), link('customer-portal')] }));
+    vi.spyOn(transport, 'sdlcRefreshPrStates').mockImplementation(forever);
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    await ready(vm);
+    expect(done.mock.calls[0][5]).toBe(true);
+    expect(vm.done()).toBe(true);
+    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['claims-core', 'customer-portal']);
+    expect(vm.actions()).toEqual([]);
+  });
+
+  it.each([
+    ['every pull request still open', ['open', 'open'], false],
+    ['one merged and the rest open', ['merged', 'open'], false],
+    ['every pull request merged', ['merged', 'merged'], false],
+    ['one closed without merging', ['closed', 'open'], false],
+    ['GitHub cannot be asked', ['open', 'merged'], true],
+  ] as const)('updates link states in the background (R8.2): %s', async (_row, states, stale) => {
+    const transport = new MockTransport();
+    finishedBuild(transport);
+    const saved = [link('claims-core'), link('customer-portal')];
+    vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue(view({ links: saved }));
+    const fresh = saved.map((l, i) => ({ ...l, state: states[i], seenAt: stale ? 1790000000 : Math.floor(Date.now() / 1000) + 60 }));
+    let answer!: (v: DoneView) => void;
+    vi.spyOn(transport, 'sdlcRefreshPrStates').mockReturnValue(new Promise<DoneView>((r) => (answer = r)));
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    await ready(vm);
+    expect(vm.done()).toBe(true);
+    expect(vm.pullLinks().every((l) => l.seen === null)).toBe(true);
+    answer(view({ links: fresh }));
+    await vi.waitFor(() => expect(vm.pullLinks().map((l) => l.state)).toEqual(states));
+    expect(vm.done()).toBe(true);
+    expect(vm.pullLinks().map((l) => l.seen !== null)).toEqual([stale, stale]);
+  });
+
+  it('keeps the saved links and says when they were last seen when the refresh fails (R8.2)', async () => {
+    const transport = new MockTransport();
+    finishedBuild(transport);
+    vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue(view({ links: [link('claims-core')] }));
+    vi.spyOn(transport, 'sdlcRefreshPrStates').mockRejectedValue(new Error('offline'));
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    await ready(vm);
+    await vi.waitFor(() => expect(vm.pullLinks()[0].seen).not.toBeNull());
+    expect(vm.done()).toBe(true);
+    expect(vm.pullLinks()[0].state).toBe('open');
   });
 });
