@@ -9,6 +9,8 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeName } from '@bindings/ChangeName';
+import type { StageEvent } from '@bindings/StageEvent';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildAction } from '@bindings/BuildAction';
 import type { BuildScope } from '@bindings/BuildScope';
@@ -81,6 +83,14 @@ export abstract class KataTransport {
   abstract sdlcContextHealth(folder: string, master: string, system: string, repo: string): Promise<ContextState>;
   abstract sdlcInstructions(folder: string, masterRepo: string): Promise<InstructionsState>;
   abstract sdlcChanges(master: string, system: string): Promise<ChangeInfo[]>;
+  /** The changes of a system with the title of each intent, from the folder alone: no stage is read and no program is started. */
+  abstract sdlcChangeNames(master: string, system: string): Promise<ChangeName[]>;
+  /** Start reading the stage of every change in the background and resolve to the pass id at once. Each result arrives through `onStageEvent`. A pass started while another is running supersedes it; the superseded pass reports nothing more. `first` names a change to read before the others. */
+  abstract sdlcReadStages(master: string, system: string, first?: string | null): Promise<number>;
+  /** One change read in full, for the list row and the change page. Rejects with the reason when the change cannot be read. */
+  abstract sdlcReadChange(master: string, system: string, change: string): Promise<ChangeInfo>;
+  /** Which of the folders no longer exist. A folder existence check only. */
+  abstract sdlcMissingFolders(folders: string[]): Promise<string[]>;
   abstract sdlcBranches(master: string): Promise<BranchInfo>;
   abstract sdlcReadDoc(master: string, system: string, change: string, doc: string): Promise<string | null>;
   abstract sdlcSnapshot(master: string): Promise<Snapshot>;
@@ -145,6 +155,8 @@ export abstract class KataTransport {
   abstract zoom(step: ZoomStep): Promise<number>;
   /** Register for what publishing is doing (pushing or opening a pull request, per repository). Resolves to the unlisten function. */
   abstract onPublishStep(cb: (step: PublishStep) => void): Promise<() => void>;
+  /** Register for what a stage pass reports, each event tagged with its pass id. Resolves to the unlisten function. */
+  abstract onStageEvent(cb: (ev: StageEvent) => void): Promise<() => void>;
   /** Register for relayed run events, each tagged with the id of the run it came from. Resolves to the unlisten function. */
   abstract onRunEvent(cb: (runId: string, ev: KataEvent) => void): Promise<() => void>;
 }

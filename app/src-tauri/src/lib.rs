@@ -720,6 +720,24 @@ fn sdlc_pull_requests(
     )
 }
 
+/// The stage pass each window is running, so a new start can cancel the one before it.
+#[derive(Default)]
+struct StagePasses {
+    next: AtomicU64,
+    live: Mutex<std::collections::HashMap<String, (u64, Arc<std::sync::atomic::AtomicBool>)>>,
+}
+
+/// Where a pass sends its events.
+type StageSink = Arc<dyn Fn(sdlc::changes::StageEvent) + Send + Sync>;
+
+/// Starts `work` on a background thread as the window's only pass and returns its id at once.
+fn start_pass<F>(_passes: &Arc<StagePasses>, _window: &str, _sink: StageSink, _work: F) -> u64
+where
+    F: FnOnce(u64, &dyn Fn() -> bool, &mut dyn FnMut(sdlc::changes::StageEvent)) + Send + 'static,
+{
+    0
+}
+
 /// Relay a non-JSON stdout/stderr line as a warn-level log event.
 fn relay_log(app: &AppHandle, run_id: u64, bytes: &[u8]) {
     let line = String::from_utf8_lossy(bytes);
@@ -1060,6 +1078,58 @@ mod tests {
         );
         assert_eq!(web_url("http://example.com"), Ok("http://example.com"));
         assert!(web_url("HTTPS://example.com").is_ok());
+    }
+
+    #[test]
+    fn read_stages_command_supersedes_the_running_pass() {
+        use sdlc::changes::StageEvent;
+        use std::sync::mpsc;
+        let passes = Arc::new(StagePasses::default());
+        let seen: Arc<Mutex<Vec<StageEvent>>> = Arc::default();
+        let sink: StageSink = {
+            let seen = seen.clone();
+            Arc::new(move |ev| seen.lock().unwrap().push(ev))
+        };
+        let (started_tx, started_rx) = mpsc::channel::<()>();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let (ended_tx, ended_rx) = mpsc::channel::<()>();
+        let first = start_pass(&passes, "main", sink.clone(), move |pass, _cancelled, emit| {
+            emit(StageEvent::Progress {
+                pass,
+                read: 1,
+                total: 2,
+            });
+            started_tx.send(()).unwrap();
+            go_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            // The pass was superseded while it waited, so this one must not reach the page.
+            emit(StageEvent::Progress {
+                pass,
+                read: 2,
+                total: 2,
+            });
+            ended_tx.send(()).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (second_tx, second_rx) = mpsc::channel::<()>();
+        let second = start_pass(&passes, "main", sink, move |pass, _cancelled, emit| {
+            emit(StageEvent::Done { pass });
+            second_tx.send(()).unwrap();
+        });
+        assert_ne!(first, second);
+        go_tx.send(()).unwrap();
+        ended_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        second_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                StageEvent::Progress {
+                    pass: first,
+                    read: 1,
+                    total: 2
+                },
+                StageEvent::Done { pass: second },
+            ]
+        );
     }
 
     fn live(id: u64) -> LiveRun<()> {

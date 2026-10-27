@@ -9,6 +9,8 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeName } from '@bindings/ChangeName';
+import type { StageEvent } from '@bindings/StageEvent';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildAction } from '@bindings/BuildAction';
 import type { BuildScope } from '@bindings/BuildScope';
@@ -163,6 +165,11 @@ export class MockTransport extends KataTransport {
   sdlcContextHealth(_folder: string, _master: string, _system: string, repo: string): Promise<ContextState> { return Promise.resolve(this.sdlc.contextHealth(repo)); }
   sdlcInstructions(_folder: string, _masterRepo: string): Promise<InstructionsState> { return Promise.resolve(this.sdlc.instructions()); }
   sdlcChanges(_master: string, _system: string): Promise<ChangeInfo[]> { return Promise.resolve(this.sdlc.listChanges()); }
+  sdlcChangeNames(_master: string, _system: string): Promise<ChangeName[]> { return Promise.resolve([]); }
+  sdlcReadStages(_master: string, _system: string, _first?: string | null): Promise<number> { return Promise.resolve(0); }
+  sdlcReadChange(_master: string, _system: string, _change: string): Promise<ChangeInfo> { return Promise.reject(new Error('not implemented')); }
+  sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }
+  onStageEvent(_cb: (ev: StageEvent) => void): Promise<() => void> { return Promise.resolve(() => undefined); }
   sdlcBranches(_master: string): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }
   sdlcReadDoc(_master: string, _system: string, change: string, doc: string): Promise<string | null> {
     try {

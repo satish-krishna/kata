@@ -1,6 +1,7 @@
 import { TauriTransport, type TauriIpc } from './tauri-transport';
 import { seedSpec } from '../../lib/mock';
 import type { PublishStep } from '@bindings/PublishStep';
+import type { StageEvent } from '@bindings/StageEvent';
 import type { KataEvent } from '../../lib/events';
 import type { Settings } from '@bindings/Settings';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
@@ -58,6 +59,11 @@ const rows: Row[] = [
   ['sdlcContextHealth', (t) => t.sdlcContextHealth('/w', 'm', 's', 'r'), 'sdlc_context_health', { folder: '/w', master: 'm', system: 's', repo: 'r' }],
   ['sdlcInstructions', (t) => t.sdlcInstructions('/w', 'm'), 'sdlc_instructions', { folder: '/w', masterRepo: 'm' }],
   ['sdlcChanges', (t) => t.sdlcChanges('/m', 's'), 'sdlc_changes', { master: '/m', system: 's' }],
+  ['sdlcChangeNames', (t) => t.sdlcChangeNames('/m', 's'), 'sdlc_change_names', { master: '/m', system: 's' }],
+  ['sdlcReadStages', (t) => t.sdlcReadStages('/m', 's'), 'sdlc_read_stages', { master: '/m', system: 's' }],
+  ['sdlcReadStages with a first change', (t) => t.sdlcReadStages('/m', 's', 'c'), 'sdlc_read_stages', { master: '/m', system: 's', first: 'c' }],
+  ['sdlcReadChange', (t) => t.sdlcReadChange('/m', 's', 'c'), 'sdlc_read_change', { master: '/m', system: 's', change: 'c' }],
+  ['sdlcMissingFolders', (t) => t.sdlcMissingFolders(['/a', '/b']), 'sdlc_missing_folders', { folders: ['/a', '/b'] }],
   ['sdlcBranches', (t) => t.sdlcBranches('/m'), 'sdlc_branches', { master: '/m' }],
   ['sdlcWaitRunExit', (t) => t.sdlcWaitRunExit('7', 15000), 'sdlc_wait_run_exit', { runId: '7', timeoutMs: 15000 }],
   ['zoom', (t) => t.zoom('in'), 'zoom', { step: 'in' }],
@@ -154,6 +160,18 @@ describe('TauriTransport', () => {
     expect(event).toBe('sdlc://publish-step');
     handler({ payload: { kind: 'pushing', repo: 'claims-core' } });
     expect(seen).toEqual([{ kind: 'pushing', repo: 'claims-core' }]);
+  });
+
+  it('hands the payload of sdlc://stage over as the event', async () => {
+    const ipc = fakeIpc();
+    const t = new TauriTransport(asIpc(ipc));
+    const seen: StageEvent[] = [];
+    await t.onStageEvent((ev) => seen.push(ev));
+    const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: StageEvent }) => void];
+    expect(event).toBe('sdlc://stage');
+    handler({ payload: { kind: 'progress', pass: 4, read: 1, total: 3 } });
+    handler({ payload: { kind: 'done', pass: 4 } });
+    expect(seen).toEqual([{ kind: 'progress', pass: 4, read: 1, total: 3 }, { kind: 'done', pass: 4 }]);
   });
 
   it('runSpec resolves to the run id the backend returned', async () => {
