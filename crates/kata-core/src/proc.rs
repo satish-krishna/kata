@@ -1,6 +1,7 @@
 //! How the Workbench and kata start a child process: hidden on Windows, and never `git` or `gh`.
 
 use std::collections::VecDeque;
+use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -23,9 +24,9 @@ pub struct SpawnRefused {
 /// A `Command` for `program` that opens no console window on Windows.
 ///
 /// Refuses `git` and `gh` on every build, tests included: Kata does that work itself.
-pub fn hidden_command(program: impl AsRef<Path>) -> Result<Command, SpawnRefused> {
+pub fn hidden_command(program: impl AsRef<OsStr>) -> Result<Command, SpawnRefused> {
     let program = program.as_ref();
-    if is_refused(program) {
+    if is_refused(Path::new(program)) {
         return Err(SpawnRefused {
             program: program.to_string_lossy().into_owned(),
         });
