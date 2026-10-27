@@ -519,6 +519,85 @@ pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInf
         .collect()
 }
 
+/// One change folder of a workspace and the title of its intent, before any stage is read.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct ChangeName {
+    pub change: String,
+    pub title: Option<String>,
+}
+
+/// The changes of `system`, newest first, from files only.
+pub fn names(_master: &Path, _system: &str) -> Vec<ChangeName> {
+    Vec::new()
+}
+
+/// What one pass over a workspace's changes shares.
+pub struct ReadContext {}
+
+impl ReadContext {
+    pub fn new(_plugin: Option<&Path>, _master: &Path) -> ReadContext {
+        ReadContext {}
+    }
+
+    /// Test hook: the time one format program call may take.
+    #[doc(hidden)]
+    pub fn limit_format_calls(&self, _limit: std::time::Duration) {}
+
+    /// Test hook: how many format programs this context started.
+    #[doc(hidden)]
+    pub fn programs_started(&self) -> usize {
+        0
+    }
+}
+
+/// One change's [`ChangeInfo`], or why the request was refused.
+pub fn read_change(_ctx: &ReadContext, _system: &str, _change: &str) -> Result<ChangeInfo, String> {
+    Err("not implemented".to_string())
+}
+
+/// What a stage pass reports to the page.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum StageEvent {
+    Stage {
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
+        pass: u64,
+        change: String,
+        info: ChangeInfo,
+    },
+    Failed {
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
+        pass: u64,
+        change: String,
+        error: String,
+    },
+    Progress {
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
+        pass: u64,
+        read: u32,
+        total: u32,
+    },
+    Done {
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
+        pass: u64,
+    },
+}
+
+/// Reads the stages of the changes in `order`, reporting each through `emit`.
+pub fn read_stages(
+    _ctx: &ReadContext,
+    _system: &str,
+    _order: &[String],
+    _pass: u64,
+    _cancelled: &dyn Fn() -> bool,
+    _emit: &mut dyn FnMut(StageEvent),
+) {
+}
+
 pub use crate::branch::current_branch;
 
 /// `change/*` branches other than the current one and `change/pending-*`, without the `change/` prefix.
@@ -1773,5 +1852,613 @@ source_spec_commit: {spec_pin}
                 "{bad}"
             );
         }
+    }
+
+    // ---- The two passes: names, one change, and a pass over many (T13) ----
+
+    const DIR: &str = "intent/claims/2026-10-12-fnol";
+    const CHANGE: &str = "2026-10-12-fnol";
+
+    fn full_plan(pin: &str, status: &str) -> String {
+        format!(
+            "---\nstatus: {status}\nsource_spec_commit: {pin}\n---\n\n## Tasks\n\n### T1: One (`app`)\n\n- **Depends on:** none\n\n### T2: Two (`app`)\n\n- **Depends on:** T1\n"
+        )
+    }
+    fn full_intent(status: &str) -> String {
+        format!("---\nstatus: {status}\ntitle: Photo upload\n---\nintent\n")
+    }
+    fn log_rows(rows: &[&str]) -> String {
+        let mut text =
+            "# Build log: app\n\n| Task | Commits | Departure |\n|---|---|---|\n".to_string();
+        for task in rows {
+            text.push_str(&format!("| {task} | `a111111` | none |\n"));
+        }
+        text
+    }
+    fn head_of(repo: &Path) -> String {
+        git::run(repo, &["rev-parse", "HEAD"]).unwrap()
+    }
+    fn at(file: &str) -> String {
+        format!("{DIR}/{file}")
+    }
+    /// A repo whose change has an accepted intent and spec; returns the spec commit a plan pins.
+    fn through_spec(repo: &Path) -> String {
+        accepted_spec(repo, DIR)
+    }
+    fn accepted_plan(repo: &Path) -> String {
+        let pin = through_spec(repo);
+        testutil::commit_file(repo, &at("plan.md"), &full_plan(&pin, "accepted"), "plan");
+        pin
+    }
+
+    /// One fixture per row of the spec's R2.2 table: the label, the change it builds and the repo builder.
+    type Fixture = (&'static str, &'static str, fn(&Path));
+    fn fixtures() -> Vec<Fixture> {
+        vec![
+            ("intent drafted", CHANGE, |r| {
+                testutil::commit_file(r, &at("intent.md"), &full_intent("draft"), "i");
+            }),
+            ("intent accepted", CHANGE, |r| {
+                testutil::commit_file(r, &at("intent.md"), &full_intent("accepted"), "i");
+            }),
+            ("intent rejected, closed", CHANGE, |r| {
+                testutil::commit_file(r, &at("intent.md"), &full_intent("rejected"), "i");
+            }),
+            ("spec ready for review", CHANGE, |r| {
+                testutil::commit_file(r, &at("intent.md"), &full_intent("accepted"), "i");
+                let pin = head_of(r);
+                testutil::commit_file(
+                    r,
+                    &at("spec.md"),
+                    &format!("---\nstatus: ready for product owner review\nsource_intent_commit: {pin}\n---\nspec\n"),
+                    "s",
+                );
+            }),
+            ("spec accepted", CHANGE, |r| {
+                through_spec(r);
+            }),
+            ("plan drafted", CHANGE, |r| {
+                let pin = through_spec(r);
+                testutil::commit_file(r, &at("plan.md"), &full_plan(&pin, "draft"), "p");
+            }),
+            ("plan accepted", CHANGE, |r| {
+                accepted_plan(r);
+            }),
+            ("plan superseded", CHANGE, |r| {
+                let pin = through_spec(r);
+                testutil::commit_file(r, &at("plan.md"), &full_plan(&pin, "superseded"), "p");
+            }),
+            ("out of date, documents moved", CHANGE, |r| {
+                accepted_plan(r);
+                testutil::commit_file(
+                    r,
+                    &at("spec.md"),
+                    "---\nstatus: accepted\n---\nspec v2\n",
+                    "spec v2",
+                );
+            }),
+            ("building", CHANGE, |r| {
+                accepted_plan(r);
+                testutil::commit_file(r, &at("build/app.md"), &log_rows(&["T1"]), "log");
+            }),
+            ("build finished, not yet done", CHANGE, |r| {
+                accepted_plan(r);
+                testutil::commit_file(r, &at("build/app.md"), &log_rows(&["T1", "T2"]), "log");
+            }),
+            ("fix drafted", "2026-10-23-fix-it", commit_fix_drafts),
+            ("fix accepted", "2026-10-23-fix-it", |r| {
+                commit_fix_drafts(r);
+                accept_fix_in_steps(r, true, true, true);
+            }),
+            ("fix unsettled", "2026-10-23-fix-it", |r| {
+                commit_fix_drafts(r);
+                testutil::commit_file(
+                    r,
+                    &format!("{FIX_DIR}/plan.md"),
+                    &pinned_plan("superseded", "pending acceptance"),
+                    "supersede",
+                );
+            }),
+        ]
+    }
+
+    use std::path::PathBuf;
+
+    /// The `ChangeInfo` the engineer was shown before the two passes existed, captured from `list` on
+    /// each fixture: documents as `committed:<status>`, `-` for a missing one.
+    fn shown(
+        change: &str,
+        docs: [&str; 3],
+        fix: bool,
+        stage: Stage,
+        build: (u32, u32, u32),
+        out_of_date: Option<OutOfDate>,
+        fix_row: Option<u8>,
+    ) -> ChangeInfo {
+        let state = |d: &str| match d.strip_prefix("committed:") {
+            Some(status) => DocState {
+                exists: true,
+                committed: true,
+                status: Some(status.to_string()),
+                head_status: fix.then(|| status.to_string()),
+            },
+            None => DocState::default(),
+        };
+        ChangeInfo {
+            system: "claims".into(),
+            change: change.into(),
+            intent: state(docs[0]),
+            spec: state(docs[1]),
+            plan: state(docs[2]),
+            stage,
+            build: BuildCounts {
+                tasks: build.0,
+                finished: build.1,
+                repos: build.2,
+            },
+            scope: "claims".into(),
+            out_of_date,
+            plan_unreadable: false,
+            plan_unreadable_reason: None,
+            track: if fix { Track::Fix } else { Track::Full },
+            fix_row,
+        }
+    }
+
+    /// R2.2: a change read on its own is what the list showed before the passes, for every stage in the table.
+    #[test]
+    fn read_change_matches_list_for_every_stage() {
+        let (i_d, i_a, i_r) = (
+            "committed:draft",
+            "committed:accepted",
+            "committed:rejected",
+        );
+        let (s_r, s_a) = (
+            "committed:ready for product owner review",
+            "committed:accepted",
+        );
+        let (p_d, p_a, p_s) = (
+            "committed:draft",
+            "committed:accepted",
+            "committed:superseded",
+        );
+        let none = "-";
+        let full = |docs, stage, build, ood| shown(CHANGE, docs, false, stage, build, ood, None);
+        let fix = "2026-10-23-fix-it";
+        let expected = vec![
+            full([i_d, none, none], Stage::IntentAwaiting, (0, 0, 0), None),
+            full([i_a, none, none], Stage::SpecReady, (0, 0, 0), None),
+            full([i_r, none, none], Stage::Rejected, (0, 0, 0), None),
+            full([i_a, s_r, none], Stage::SpecAwaiting, (0, 0, 0), None),
+            full([i_a, s_a, none], Stage::PlanReady, (0, 0, 0), None),
+            full([i_a, s_a, p_d], Stage::PlanAwaiting, (2, 0, 1), None),
+            full([i_a, s_a, p_a], Stage::BuildReady, (2, 0, 1), None),
+            full([i_a, s_a, p_s], Stage::PlanSuperseded, (2, 0, 1), None),
+            full(
+                [i_a, s_a, p_a],
+                Stage::PlanOutOfDate,
+                (2, 0, 1),
+                Some(OutOfDate::SpecPin),
+            ),
+            full([i_a, s_a, p_a], Stage::BuildStopped, (2, 1, 1), None),
+            full([i_a, s_a, p_a], Stage::BuildFinished, (2, 2, 1), None),
+            shown(
+                fix,
+                [i_d, i_d, p_d],
+                true,
+                Stage::FixAwaiting,
+                (1, 0, 1),
+                None,
+                Some(6),
+            ),
+            shown(
+                fix,
+                [i_a, i_a, p_a],
+                true,
+                Stage::BuildReady,
+                (1, 0, 1),
+                None,
+                Some(8),
+            ),
+            shown(
+                fix,
+                [i_d, i_d, p_s],
+                true,
+                Stage::FixUnsettled,
+                (1, 0, 1),
+                None,
+                Some(2),
+            ),
+        ];
+        let tmp = tempfile::tempdir().unwrap();
+        for (i, ((label, change, build), want)) in fixtures().into_iter().zip(expected).enumerate()
+        {
+            let repo = testutil::repo(tmp.path(), &format!("m{i}"));
+            build(&repo);
+            let ctx = ReadContext::new(Some(testutil::plugin_dir()), &repo);
+            assert_eq!(
+                read_change(&ctx, "claims", change),
+                Ok(want.clone()),
+                "{label}"
+            );
+            // The list gives the same answer.
+            assert_eq!(
+                list(Some(testutil::plugin_dir()), &repo, "claims"),
+                vec![want],
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn names_reads_no_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let put = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        put(
+            "intent/claims/2026-10-12-fnol/intent.md",
+            "---\nstatus: draft\ntitle: \"First notice of loss\"\n---\nbody\n",
+        );
+        put(
+            "intent/claims/2026-10-20-later/intent.md",
+            "---\nstatus: draft\n---\nbody\n",
+        );
+        put("intent/claims/2026-10-25-bare/spec.md", "no intent yet\n");
+        put(
+            "intent/claims/notes/intent.md",
+            "---\ntitle: Not a change\n---\n",
+        );
+        put("intent/claims/2026-10-26-a-file", "a file, not a folder\n");
+        let name = |change: &str, title: Option<&str>| ChangeName {
+            change: change.into(),
+            title: title.map(str::to_string),
+        };
+        assert_eq!(
+            names(root, "claims"),
+            vec![
+                name("2026-10-25-bare", None),
+                name("2026-10-20-later", None),
+                name("2026-10-12-fnol", Some("First notice of loss")),
+            ]
+        );
+        assert!(names(root, "..").is_empty());
+        assert!(names(root, "missing").is_empty());
+    }
+
+    #[test]
+    fn read_change_refuses_names_that_could_leave_the_system_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        testutil::commit_file(&repo, &at("intent.md"), &full_intent("draft"), "i");
+        let ctx = ReadContext::new(Some(testutil::plugin_dir()), &repo);
+        for bad in ["..", "../x", "context", "2026-10-12", "a/b"] {
+            assert!(read_change(&ctx, "claims", bad).is_err(), "{bad}");
+        }
+        for bad in ["..", "", "a/b", "C:"] {
+            assert!(read_change(&ctx, bad, CHANGE).is_err(), "{bad}");
+        }
+        assert!(read_change(&ctx, "claims", CHANGE).is_ok());
+    }
+
+    /// Copies the vendored format program into `dir/format` behind a wrapper that stalls a read of a
+    /// document containing `KATA-SLOW` and, when `slow_batch`, a `fix-state` call for more than one folder.
+    fn slow_plugin(dir: &Path, slow_batch: bool) -> PathBuf {
+        fn copy(from: &Path, to: &Path) {
+            std::fs::create_dir_all(to).unwrap();
+            for entry in std::fs::read_dir(from).unwrap().flatten() {
+                let target = to.join(entry.file_name());
+                if entry.path().is_dir() {
+                    copy(&entry.path(), &target);
+                } else {
+                    std::fs::copy(entry.path(), target).unwrap();
+                }
+            }
+        }
+        let vendored = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format");
+        copy(&vendored, &dir.join("format"));
+        std::fs::rename(dir.join("format/check.mjs"), dir.join("format/real.mjs")).unwrap();
+        std::fs::write(
+            dir.join("format/check.mjs"),
+            format!(
+                "import {{ readFileSync }} from 'node:fs';\n\
+                 const args = process.argv.slice(2);\n\
+                 let slow = {slow_batch} && args[0] === 'fix-state' && args.length > 3;\n\
+                 if (args[0] === 'read') {{ try {{ slow = readFileSync(args[2], 'utf8').includes('KATA-SLOW'); }} catch {{}} }}\n\
+                 if (slow) await new Promise((r) => setTimeout(r, 20000));\n\
+                 await import('./real.mjs');\n"
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            dir.join(".claude-plugin/plugin.json"),
+            format!(
+                r#"{{"name":"ai-sdlc","version":"{}"}}"#,
+                crate::plugin::LIGHT_TRACK_VERSION
+            ),
+        )
+        .unwrap();
+        dir.to_path_buf()
+    }
+
+    /// Every event of one pass over `order`.
+    fn pass_over(ctx: &ReadContext, order: &[String]) -> Vec<StageEvent> {
+        let mut events = Vec::new();
+        read_stages(ctx, "claims", order, 7, &|| false, &mut |e| events.push(e));
+        events
+    }
+
+    fn stage_of<'a>(events: &'a [StageEvent], change: &str) -> &'a ChangeInfo {
+        events
+            .iter()
+            .find_map(|e| match e {
+                StageEvent::Stage {
+                    change: c, info, ..
+                } if c == change => Some(info),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no stage event for {change}: {events:?}"))
+    }
+
+    fn position(events: &[StageEvent], change: &str) -> usize {
+        events
+            .iter()
+            .position(|e| match e {
+                StageEvent::Stage { change: c, .. } | StageEvent::Failed { change: c, .. } => {
+                    c == change
+                }
+                _ => false,
+            })
+            .unwrap_or_else(|| panic!("no event for {change}"))
+    }
+
+    /// `count` changes with accepted intents and specs in one repository, committed in three steps;
+    /// `plan_for(n, pin)` gives the plan text of change `n`.
+    fn changes_with_plans(
+        root: &Path,
+        count: usize,
+        plan_for: &dyn Fn(usize, &str) -> String,
+    ) -> (PathBuf, Vec<String>) {
+        let repo = testutil::repo(root, "many");
+        let names: Vec<String> = (1..=count)
+            .map(|n| format!("2026-10-{n:02}-c{n:02}"))
+            .collect();
+        let commit_all = |message: &str| {
+            git::run(&repo, &["add", "-A"]).unwrap();
+            git::run(&repo, &["commit", "-q", "-m", message]).unwrap();
+        };
+        for name in &names {
+            testutil::write(
+                &repo,
+                &format!("intent/claims/{name}/intent.md"),
+                &full_intent("accepted"),
+            );
+        }
+        commit_all("intents");
+        let intent_pin = head_of(&repo);
+        for name in &names {
+            testutil::write(
+                &repo,
+                &format!("intent/claims/{name}/spec.md"),
+                &format!("---\nstatus: accepted\nsource_intent_commit: {intent_pin}\n---\nspec\n"),
+            );
+        }
+        commit_all("specs");
+        let spec_pin = head_of(&repo);
+        for (i, name) in names.iter().enumerate() {
+            testutil::write(
+                &repo,
+                &format!("intent/claims/{name}/plan.md"),
+                &plan_for(i + 1, &spec_pin),
+            );
+        }
+        commit_all("plans");
+        (repo, names)
+    }
+
+    fn plain_plan(pin: &str, front: &str, title: &str) -> String {
+        format!(
+            "---\nstatus: accepted\nsource_spec_commit: {pin}\n{front}---\n\n# Plan: {title}\n\n## Tasks\n\n### T1: One (`app`)\n\n- **Depends on:** none\n"
+        )
+    }
+
+    /// R2.4: one change that cannot be read shows its reason as today and holds up no other.
+    #[test]
+    fn one_unreadable_change_does_not_hold_up_the_others() {
+        type Case = (&'static str, fn(&str) -> String, &'static str);
+        let cases: [Case; 3] = [
+            (
+                "one of its documents is broken",
+                |pin| plain_plan(pin, "layout: soon\n", "x"),
+                "layout must be a whole number",
+            ),
+            (
+                "the plugin is too old for its documents",
+                |pin| plain_plan(pin, "layout: 3\n", "x"),
+                "layout 3 is newer",
+            ),
+            (
+                "reading it took longer than allowed",
+                |pin| plain_plan(pin, "", "KATA-SLOW"),
+                "did not finish",
+            ),
+        ];
+        for (reason, bad_plan, said) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let plugin = slow_plugin(&tmp.path().join("plugin"), false);
+            let (repo, names) = changes_with_plans(tmp.path(), 12, &|n, pin| {
+                if n == 5 {
+                    bad_plan(pin)
+                } else {
+                    plain_plan(pin, "", &format!("change {n}"))
+                }
+            });
+            let ctx = ReadContext::new(Some(&plugin), &repo);
+            ctx.limit_format_calls(std::time::Duration::from_secs(3));
+            // The change that cannot be read goes first, so every other one has to get past it.
+            let mut order = names.clone();
+            order.rotate_left(4);
+            let events = pass_over(&ctx, &order);
+            let bad = &names[4];
+            let info = stage_of(&events, bad);
+            assert!(info.plan_unreadable, "{reason}");
+            let why = info.plan_unreadable_reason.clone().unwrap_or_default();
+            assert!(why.contains(said), "{reason}: {why:?}");
+            let bad_at = position(&events, bad);
+            for other in names.iter().filter(|n| *n != bad) {
+                assert_eq!(
+                    stage_of(&events, other).stage,
+                    Stage::BuildReady,
+                    "{reason}: {other}"
+                );
+                if reason == "reading it took longer than allowed" {
+                    assert!(position(&events, other) < bad_at, "{reason}: {other}");
+                }
+            }
+            let progress: Vec<u32> = events
+                .iter()
+                .filter_map(|e| match e {
+                    StageEvent::Progress { read, total, .. } => {
+                        assert_eq!(*total, 12);
+                        Some(*read)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(progress, (1..=12).collect::<Vec<_>>(), "{reason}");
+            assert!(matches!(events.last(), Some(StageEvent::Done { pass: 7 })));
+        }
+    }
+
+    /// Sets environment variables for a test and puts them back.
+    struct Env(Vec<(&'static str, Option<std::ffi::OsString>)>);
+
+    impl Env {
+        fn set(&mut self, key: &'static str, value: &Path) {
+            self.0.push((key, std::env::var_os(key)));
+            std::env::set_var(key, value);
+        }
+    }
+
+    impl Drop for Env {
+        fn drop(&mut self) {
+            for (key, old) in self.0.drain(..).rev() {
+                match old {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    /// R2.5: with no Node.js, every change that needs the program says so and the rest show their stage;
+    /// the program is tried once.
+    #[test]
+    #[serial_test::serial]
+    fn node_missing_is_reported_on_every_change_that_needs_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let (repo, mut names) = changes_with_plans(tmp.path(), 6, &|n, pin| {
+            plain_plan(pin, "", &format!("never read {n} {nonce}"))
+        });
+        commit_fix_drafts(&repo);
+        names.push("2026-10-23-fix-it".to_string());
+        testutil::commit_file(
+            &repo,
+            "intent/claims/2026-10-24-only-intent/intent.md",
+            &full_intent("draft"),
+            "i",
+        );
+        names.push("2026-10-24-only-intent".to_string());
+
+        let nowhere = tmp.path().join("no-programs-here");
+        std::fs::create_dir_all(&nowhere).unwrap();
+        let mut env = Env(Vec::new());
+        env.set("PATH", &nowhere);
+        env.set("KATA_HOME", &tmp.path().join("home"));
+        let ctx = ReadContext::new(Some(testutil::plugin_dir()), &repo);
+        let events = pass_over(&ctx, &names);
+        drop(env);
+
+        for name in &names[..6] {
+            let info = stage_of(&events, name);
+            assert!(info.plan_unreadable, "{name}");
+            assert_eq!(info.stage, Stage::PlanUnreadable, "{name}");
+            let why = info.plan_unreadable_reason.clone().unwrap_or_default();
+            assert!(why.contains("Node.js"), "{name}: {why:?}");
+        }
+        let fix = stage_of(&events, "2026-10-23-fix-it");
+        assert_eq!(fix.stage, Stage::FixUnsettled);
+        let why = fix.plan_unreadable_reason.clone().unwrap_or_default();
+        assert!(why.contains("Node.js"), "{why:?}");
+        let only = stage_of(&events, "2026-10-24-only-intent");
+        assert_eq!(only.stage, Stage::IntentAwaiting);
+        assert!(!only.plan_unreadable);
+        assert_eq!(ctx.programs_started(), 1);
+    }
+
+    /// R2.4 for fixes: when the one call for every fix times out, each fix is asked for on its own,
+    /// and the changes that are not fixes do not wait for it.
+    #[test]
+    fn a_timed_out_fix_batch_falls_back_to_one_call_per_fix_r2_4() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = slow_plugin(&tmp.path().join("plugin"), true);
+        let (repo, mut names) = changes_with_plans(tmp.path(), 1, &|n, pin| {
+            plain_plan(pin, "", &format!("change {n}"))
+        });
+        for fix in ["2026-10-21-fix-a", "2026-10-22-fix-b", "2026-10-23-fix-c"] {
+            for (file, text) in [
+                ("intent.md", fix_intent("draft")),
+                ("spec.md", pinned_spec("draft", "pending acceptance")),
+                ("plan.md", pinned_plan("draft", "pending acceptance")),
+            ] {
+                testutil::commit_file(
+                    &repo,
+                    &format!("intent/claims/{fix}/{file}"),
+                    &text,
+                    "draft",
+                );
+            }
+            names.push(fix.to_string());
+        }
+        let ctx = ReadContext::new(Some(&plugin), &repo);
+        ctx.limit_format_calls(std::time::Duration::from_secs(3));
+        let events = pass_over(&ctx, &names);
+        for fix in &names[1..] {
+            let info = stage_of(&events, fix);
+            assert_eq!(info.stage, Stage::FixAwaiting, "{fix}");
+            assert_eq!(info.fix_row, Some(6), "{fix}");
+            assert!(
+                position(&events, &names[0]) < position(&events, fix),
+                "{fix}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cancelled_pass_emits_nothing_more() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (repo, names) = changes_with_plans(tmp.path(), 8, &|n, pin| {
+            plain_plan(pin, "", &format!("change {n}"))
+        });
+        let ctx = ReadContext::new(Some(testutil::plugin_dir()), &repo);
+        let stop = std::cell::Cell::new(false);
+        let mut events = Vec::new();
+        read_stages(&ctx, "claims", &names, 1, &|| stop.get(), &mut |e| {
+            events.push(e);
+            stop.set(true);
+        });
+        assert!(
+            events.len() <= 2,
+            "a stage and its progress at most: {events:?}"
+        );
+        assert!(!events.iter().any(|e| matches!(e, StageEvent::Done { .. })));
     }
 }
