@@ -1879,6 +1879,30 @@ fn commits_hook_rows_decide_as_the_cli_does() {
 }
 
 #[test]
+fn commits_take_the_tree_a_pre_commit_hook_restages() {
+    // A formatter hook: rewrites the document in the work tree and stages it, so the commit holds
+    // what the hook left in the index it was given.
+    let message = "docs(s): accept intent c\n\nGenerated-By: ai-sdlc";
+    for kind in ["plain", "other staged", "doc staged differently"] {
+        let (oracle, ours) = (commit_fixture(kind), commit_fixture(kind));
+        for fx in [&oracle, &ours] {
+            std::fs::write(
+                fx.path.join(".git/hooks/pre-commit"),
+                format!("#!/bin/sh\necho formatted >> {DOC}\ngit add -- {DOC}\n"),
+            )
+            .unwrap();
+        }
+        cli_commit_only(&oracle, DOC, message).unwrap_or_else(|e| panic!("{kind}: {e}"));
+        let outcome = Repo::open(&ours.path)
+            .unwrap()
+            .commit_only(DOC, message)
+            .unwrap_or_else(|e| panic!("{kind}: {e}"));
+        assert_eq!(outcome.sha, ours.head(), "{kind}");
+        assert_eq!(commit_state(&oracle), commit_state(&ours), "{kind}");
+    }
+}
+
+#[test]
 fn commits_leave_the_index_and_document_alone_on_a_hook_failure() {
     let fx = commit_fixture("doc staged differently");
     std::fs::write(
