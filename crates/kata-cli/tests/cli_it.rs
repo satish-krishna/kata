@@ -925,3 +925,34 @@ fn ctrl_break_cancels_with_130() {
         "fake-claude {fake_pid} is still running"
     );
 }
+
+#[test]
+fn run_with_too_old_claude_exits_2() {
+    let work = tempfile::tempdir().unwrap();
+    let kata_home = tempfile::tempdir().unwrap();
+    let spec = write(
+        work.path(),
+        "old.kata.toml",
+        &format!(
+            "schema = 1\nname = \"old\"\ntask = \"t\"\nworkdir = \"{}\"\n",
+            work.path().to_string_lossy().replace('\\', "/")
+        ),
+    );
+    let out = kata()
+        .arg("run")
+        .arg(&spec)
+        .env("KATA_CLAUDE_BIN", fake_claude())
+        .env("KATA_FAKE_CLAUDE_VERSION", "2.0.1 (Claude Code)")
+        .env("KATA_HOME", kata_home.path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains(r#""type":"run.error""#), "{stdout}");
+    assert!(
+        stdout.contains("2.0.1") && stdout.contains("2.1.311"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("run.started"), "{stdout}");
+}

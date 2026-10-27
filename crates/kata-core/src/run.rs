@@ -34,6 +34,8 @@ pub enum RunError {
     Worktree(String),
     #[error("auth: {0}")]
     Auth(String),
+    #[error("claude version: {0}")]
+    ClaudeVersion(String),
 }
 
 /// Cooperative cancellation shared with the run loop.

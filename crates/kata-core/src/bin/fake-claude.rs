@@ -7,6 +7,18 @@ use std::io::Write;
 use std::{thread, time::Duration};
 
 fn main() {
+    // `--version` is answered before anything else. KATA_FAKE_CLAUDE_VERSION is the
+    // line to print (default above the minimum), "fail" exits 3, "sleep" never answers.
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        let value = std::env::var("KATA_FAKE_CLAUDE_VERSION")
+            .unwrap_or_else(|_| "9.9.9 (Claude Code)".into());
+        match value.as_str() {
+            "fail" => std::process::exit(3),
+            "sleep" => thread::sleep(Duration::from_secs(30)),
+            line => println!("{line}"),
+        }
+        return;
+    }
     let mode = std::env::var("KATA_FAKE_MODE").unwrap_or_else(|_| "ok".into());
     let mut out = std::io::stdout();
     // The start report, in the shape of tests/fixtures/claude-init.json (fields

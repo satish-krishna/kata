@@ -3172,3 +3172,75 @@ fn run_given_carries_the_runs_options() {
     assert_eq!(options.required_plugins, vec!["ai-sdlc".to_string()]);
     assert!(options.build);
 }
+
+fn run_collect(workdir: &str) -> (Result<kata_core::run::RunOutcome, RunError>, Vec<KataEvent>) {
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let result = run(
+        &base_spec(workdir),
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
+        |e| events.push(e),
+    );
+    (result, events)
+}
+
+#[test]
+#[serial]
+fn run_refuses_too_old_or_unreadable_claude() {
+    with_fake("ok");
+    let work = tempfile::tempdir().unwrap();
+    let dir = work.path().to_string_lossy().to_string();
+
+    std::env::set_var("KATA_FAKE_CLAUDE_VERSION", "2.0.1 (Claude Code)");
+    let (result, events) = run_collect(&dir);
+    assert!(matches!(result, Err(RunError::ClaudeVersion(_))));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, KataEvent::RunStarted { .. })));
+    let errors: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            KataEvent::RunError {
+                message, exit_code, ..
+            } => Some((message.clone(), *exit_code)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(errors.len(), 1, "{events:?}");
+    assert_eq!(errors[0].1, 2);
+    assert!(errors[0].0.contains("2.0.1") && errors[0].0.contains("2.1.311"));
+
+    std::env::set_var("KATA_FAKE_CLAUDE_VERSION", "garbage");
+    let (result, events) = run_collect(&dir);
+    std::env::remove_var("KATA_FAKE_CLAUDE_VERSION");
+    assert!(matches!(result, Err(RunError::ClaudeVersion(_))));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, KataEvent::RunStarted { .. })));
+    let message = events
+        .iter()
+        .find_map(|e| match e {
+            KataEvent::RunError { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .expect("a run.error");
+    assert!(message.contains("could not read"), "{message}");
+}
+
+#[test]
+#[serial]
+fn unsteered_run_still_refuses_too_old_claude() {
+    with_fake("ok");
+    let work = tempfile::tempdir().unwrap();
+    std::env::set_var("KATA_FAKE_CLAUDE_VERSION", "2.1.310");
+    let (result, events) = run_collect(&work.path().to_string_lossy());
+    std::env::remove_var("KATA_FAKE_CLAUDE_VERSION");
+    assert!(matches!(result, Err(RunError::ClaudeVersion(_))));
+    assert!(!events.iter().any(|e| matches!(
+        e,
+        KataEvent::RunStarted { .. } | KataEvent::AssistantText { .. }
+    )));
+}
