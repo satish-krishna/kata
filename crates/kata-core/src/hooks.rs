@@ -146,6 +146,7 @@ fn execute(
         stdin,
         limit,
         keep_stdout: false,
+        engineers_program: false,
     });
     match outcome {
         Outcome::NotStarted(e) => Err(not_started(name, &e)),

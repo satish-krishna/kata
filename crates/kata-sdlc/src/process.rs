@@ -89,6 +89,7 @@ fn run_argv(
         stdin: None,
         limit: timeout,
         keep_stdout,
+        engineers_program: false,
     });
     match outcome {
         Outcome::Exited { code, tail, stdout } => Ok((code, tail, stdout)),

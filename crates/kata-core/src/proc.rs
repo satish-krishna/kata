@@ -64,6 +64,8 @@ pub struct Limited<'a> {
     pub limit: Duration,
     /// Keep all of stdout apart (in `Outcome::Exited::stdout`) and let the tail hold stderr only.
     pub keep_stdout: bool,
+    /// The engineer chose this program; `git` and `gh` are not refused.
+    pub engineers_program: bool,
 }
 
 /// How a [`Limited`] command ended.
@@ -560,6 +562,7 @@ mod tests {
                 stdin: None,
                 limit: Duration::from_secs(limit_secs),
                 keep_stdout: false,
+                engineers_program: false,
             }
         }
 
@@ -674,6 +677,21 @@ mod tests {
             assert!(matches!(
                 run_limited(&refused),
                 Outcome::NotStarted(StartError::Refused(_))
+            ));
+        }
+
+        #[test]
+        fn run_limited_refuses_git_unless_the_engineer_chose_it() {
+            let dir = tempfile::tempdir().unwrap();
+            let mut run = spec("git", vec![OsString::from("--version")], dir.path(), 10);
+            assert!(matches!(
+                run_limited(&run),
+                Outcome::NotStarted(StartError::Refused(_))
+            ));
+            run.engineers_program = true;
+            assert!(matches!(
+                run_limited(&run),
+                Outcome::Exited { code: Some(0), .. }
             ));
         }
     }
