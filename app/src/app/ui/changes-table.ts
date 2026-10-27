@@ -4,6 +4,7 @@ import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmTableImports } from '@spartan-ng/helm/table';
 import { formatWhen } from '../lib/sdlc-workspace';
 import { changeLabel } from '../lib/sdlc';
+import type { ChangeRow } from '../core/sdlc/sdlc-stages.store';
 
 type Group = { system: string; changes: ChangeInfo[] };
 
@@ -16,11 +17,13 @@ type Group = { system: string; changes: ChangeInfo[] };
 })
 export class ChangesTable {
   /** Changes on the currently checked-out branch. */
-  readonly changes = input.required<ChangeInfo[]>();
+  readonly changes = input<ChangeInfo[]>([]);
   /** Change folder names of change branches that are not checked out. */
   readonly others = input.required<string[]>();
   /** Latest run start (epoch seconds) per `<system>/<change>`. */
   readonly lastRuns = input<Record<string, number>>({});
+  /** Stub: the rows of the change list. */
+  readonly rows = input<ChangeRow[]>([]);
   readonly disabled = input(false);
 
   readonly open = output<ChangeInfo>();

@@ -127,3 +127,10 @@ describe('SdlcToolbar', () => {
     expect(order.map((e) => e.id || e.getAttribute('data-testid') || e.getAttribute('aria-label'))).toEqual(['branch', 'pills', 'links', 'AI-SDLC settings', 'primary']);
   });
 });
+
+describe('SdlcToolbar without counts (R3.1)', () => {
+  it('has no counts input, since the switcher shows names only', async () => {
+    const { fixture } = await render(SdlcToolbar, { workspaces: [WS], current: WS, missing: [], branch: 'main' });
+    expect('counts' in fixture.componentInstance).toBe(false);
+  });
+});

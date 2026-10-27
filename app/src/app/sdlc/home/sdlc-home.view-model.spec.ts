@@ -1,10 +1,16 @@
 import { TestBed } from '@angular/core/testing';
 import { Router, provideRouter } from '@angular/router';
+import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeName } from '@bindings/ChangeName';
 import type { Readiness } from '@bindings/Readiness';
+import type { StageEvent } from '@bindings/StageEvent';
+import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { LockStore } from '../../core/lock/lock.store';
+import { ProgressStore } from '../../core/progress/progress.store';
+import { PROGRESS_STEPS } from '../../lib/progress-steps';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport } from '../../core/transport/kata-transport';
@@ -762,5 +768,281 @@ describe('SdlcHomeViewModel workspace instructions', () => {
     await vm.refreshInstructions();
     expect(runAgent).not.toHaveBeenCalled();
     expect(toastText()).toContain('already running');
+  });
+});
+
+
+/* --- the home page in two passes: names first, stages after --- */
+
+/** A pass the test drives by hand: `send` plays the events the backend would send, `id()` is the latest pass id handed out. */
+function controlledPass(transport: MockTransport) {
+  const listeners = new Set<(e: StageEvent) => void>();
+  let last = 0;
+  vi.spyOn(transport, 'onStageEvent').mockImplementation(async (cb) => {
+    listeners.add(cb);
+    return () => {
+      listeners.delete(cb);
+    };
+  });
+  const reads = vi.spyOn(transport, 'sdlcReadStages').mockImplementation(async () => ++last);
+  const send = (ev: StageEvent) => {
+    for (const l of [...listeners]) l(ev);
+  };
+  const finish = (pass: number, infos: ChangeInfo[] = []) => {
+    infos.forEach((info, i) => {
+      send({ kind: 'stage', pass, change: info.change, info });
+      send({ kind: 'progress', pass, read: i + 1, total: infos.length });
+    });
+    send({ kind: 'done', pass });
+  };
+  return { reads, send, finish, id: () => last };
+}
+
+const twelve = (): ChangeName[] => Array.from({ length: 12 }, (_, i) => ({ change: `2026-10-${String(10 + i).padStart(2, '0')}-change-${i}`, title: null }));
+const infoFor = async (transport: MockTransport, change: string, stage: ChangeInfo['stage']): Promise<ChangeInfo> => {
+  const found = (await transport.sdlcChanges('/m', 'claims'))[0];
+  return { ...found, change, stage };
+};
+const stageOf = (vm: SdlcHomeViewModel, change: string) => vm.rows().find((r) => r.change === change);
+const flushAll = async () => {
+  for (let i = 0; i < 5; i++) await flush();
+};
+const second: WorkspaceEntry = { id: 'second', name: 'second', folder: '/second', base_branch: 'main', last_opened: 1 };
+
+describe('SdlcHomeViewModel stage passes', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('shows the change names before any stage, each reading (R1.1)', async () => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'sdlcChangeNames').mockResolvedValue(twelve());
+    const pass = controlledPass(transport);
+    await vm.init();
+    expect(vm.state()).toBe('ready');
+    expect(vm.rows().map((r) => r.change)).toEqual(twelve().map((n) => n.change));
+    expect(vm.rows().every((r) => r.info === null && r.error === null)).toBe(true);
+    expect(pass.reads).toHaveBeenCalledTimes(1);
+    expect(vm.reading()).toBe(true);
+  });
+
+  it('reads the context health after the names, not before the page shows (R1.1)', async () => {
+    const { vm, transport } = setup();
+    const names = vi.spyOn(transport, 'sdlcChangeNames');
+    const health = vi.spyOn(transport, 'sdlcContextHealth');
+    const instructions = vi.spyOn(transport, 'sdlcInstructions');
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true });
+    controlledPass(transport);
+    await vm.init();
+    expect(health).toHaveBeenCalled();
+    expect(names.mock.invocationCallOrder[0]).toBeLessThan(health.mock.invocationCallOrder[0]);
+    expect(names.mock.invocationCallOrder[0]).toBeLessThan(instructions.mock.invocationCallOrder[0]);
+  });
+
+  it('opens a change and starts a new change while stages are still read (R1.2)', async () => {
+    const { vm, transport, navigate, runner } = setup();
+    controlledPass(transport);
+    const start = vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened', change: '2026-10-30-new', branch: 'change/2026-10-30-new' });
+    await vm.init();
+    expect(vm.reading()).toBe(true);
+    await vm.openChange('claims', '2026-10-12-fnol-photo-upload');
+    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'claims', '2026-10-12-fnol-photo-upload']);
+    await vm.newChange('claims', 'flag fraud', 'full');
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(vm.reading()).toBe(true);
+  });
+
+  it('says how many of the changes are read, and drops the line after the last (R2.1)', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'sdlcChangeNames').mockResolvedValue(twelve());
+    const pass = controlledPass(transport);
+    const line = TestBed.inject(ProgressStore).view('home');
+    await vm.init();
+    vi.advanceTimersByTime(500);
+    expect(line()?.label).toBe('0 of 12 changes read');
+    pass.send({ kind: 'progress', pass: pass.id(), read: 5, total: 12 });
+    expect(line()?.label).toBe('5 of 12 changes read');
+    pass.send({ kind: 'progress', pass: pass.id(), read: 12, total: 12 });
+    pass.send({ kind: 'done', pass: pass.id() });
+    expect(line()).toBeNull();
+    expect(vm.reading()).toBe(false);
+  });
+
+  it('shows the reading-stages progress line (R7.1)', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const { vm, transport } = setup();
+    const pass = controlledPass(transport);
+    const line = TestBed.inject(ProgressStore).view('home');
+    await vm.init();
+    expect(line()).toBeNull();
+    vi.advanceTimersByTime(500);
+    expect(PROGRESS_STEPS['reading-stages'].lines).toContain(line()!.line);
+    expect(line()!.label).toMatch(/^0 of \d+ changes read$/);
+    pass.send({ kind: 'done', pass: pass.id() });
+    expect(line()).toBeNull();
+  });
+
+  it('never shows a stage from before this session (R2.3)', async () => {
+    const first = setup();
+    const before = controlledPass(first.transport);
+    await first.vm.init();
+    const c = first.vm.rows()[0].change;
+    before.finish(before.id(), [await infoFor(first.transport, c, 'plan-ready')]);
+    expect(stageOf(first.vm, c)?.info?.stage).toBe('plan-ready');
+
+    TestBed.resetTestingModule();
+    const next = setup();
+    const after = controlledPass(next.transport);
+    await next.vm.init();
+    expect(stageOf(next.vm, c)).toMatchObject({ info: null, error: null });
+    after.finish(after.id(), [await infoFor(next.transport, c, 'plan-awaiting')]);
+    expect(stageOf(next.vm, c)?.info?.stage).toBe('plan-awaiting');
+  });
+
+  it('reads only the current workspace; the switcher has no counts (R3.1)', async () => {
+    const { vm, transport } = setup();
+    const three: WorkspaceEntry[] = [
+      { id: 'a', name: 'a', folder: '/a', base_branch: 'main', last_opened: 30 },
+      { id: 'b', name: 'b', folder: '/b', base_branch: 'main', last_opened: 20 },
+      { id: 'c', name: 'c', folder: '/c', base_branch: 'main', last_opened: 10 },
+    ];
+    vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue(three);
+    const missing = vi.spyOn(transport, 'sdlcMissingFolders').mockResolvedValue(['/c']);
+    const scan = vi.spyOn(transport, 'sdlcScan');
+    const names = vi.spyOn(transport, 'sdlcChangeNames');
+    const pass = controlledPass(transport);
+    await vm.init();
+    expect(scan.mock.calls.map((c) => c[0])).toEqual(['/a']);
+    expect(names.mock.calls.every((c) => c[0].startsWith('/a/'))).toBe(true);
+    expect(pass.reads.mock.calls.every((c) => c[0].startsWith('/a/'))).toBe(true);
+    expect(missing).toHaveBeenCalledWith(['/a', '/b', '/c']);
+    expect(vm.missing()).toEqual(['c']);
+    expect('counts' in vm).toBe(false);
+  });
+
+  it('picking a workspace runs both passes for it, and the pass before reports nothing more (R3.2)', async () => {
+    const { vm, transport } = setup();
+    const names = vi.spyOn(transport, 'sdlcChangeNames');
+    const pass = controlledPass(transport);
+    await vm.init();
+    const old = pass.id();
+    const c = vm.rows()[0].change;
+    vm.workspaces.set([...vm.workspaces(), second]);
+    await vm.selectWorkspace('second');
+    expect(names.mock.calls.at(-1)![0].startsWith('/second/')).toBe(true);
+    expect(pass.reads.mock.calls.at(-1)![0].startsWith('/second/')).toBe(true);
+    expect(pass.id()).toBeGreaterThan(old);
+    pass.send({ kind: 'stage', pass: old, change: c, info: await infoFor(transport, c, 'plan-ready') });
+    expect(stageOf(vm, c)?.info).toBeNull();
+    pass.finish(pass.id(), [await infoFor(transport, c, 'plan-awaiting')]);
+    expect(stageOf(vm, c)?.info?.stage).toBe('plan-awaiting');
+    expect(vm.reading()).toBe(false);
+  });
+
+  describe('marks rows as checked and reads again on each trigger (R5.1)', () => {
+    const C = '2026-10-12-fnol-photo-upload';
+    type Over = ReturnType<typeof setup>;
+    type Case = { event: string; before: ChangeInfo['stage']; after: ChangeInfo['stage']; first: string | null; again: (vm: SdlcHomeViewModel, over: Over) => Promise<SdlcHomeViewModel> };
+    const reopened = () => TestBed.runInInjectionContext(() => new SdlcHomeViewModel());
+    const cases: Case[] = [
+      {
+        event: 'a document run for change C ends', before: 'intent-awaiting', after: 'intent-accepted-uncommitted', first: C,
+        again: async (vm, { runner }) => {
+          vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened', change: C, branch: `change/${C}` });
+          await vm.newChange('claims', 'idea', 'full');
+          return vm;
+        },
+      },
+      { event: 'a build run for change C ends and the page is reopened', before: 'build-stopped', after: 'build-finished', first: null, again: async () => reopened() },
+      { event: 'the engineer returns to the home page from change C', before: 'spec-accepted-uncommitted', after: 'plan-ready', first: null, again: async () => reopened() },
+      { event: 'the Workbench window regains focus after an outside edit', before: 'plan-accepted-uncommitted', after: 'plan-superseded', first: null, again: async (vm) => { vm.windowFocused(); return vm; } },
+    ];
+
+    it.each(cases)('$event', async (c) => {
+      const over = setup();
+      const { vm, transport } = over;
+      const pass = controlledPass(transport);
+      await vm.init();
+      pass.finish(pass.id(), [await infoFor(transport, C, c.before)]);
+      expect(stageOf(vm, C)).toMatchObject({ checking: false });
+      expect(stageOf(vm, C)?.info?.stage).toBe(c.before);
+
+      const reads = pass.reads.mock.calls.length;
+      const shown = await c.again(vm, over);
+      if (shown !== vm) await shown.init();
+      await vi.waitFor(() => expect(pass.reads.mock.calls.length).toBe(reads + 1));
+      expect(pass.reads.mock.calls.at(-1)![2] ?? null).toBe(c.first);
+      expect(stageOf(shown, C)).toMatchObject({ checking: true });
+      expect(stageOf(shown, C)?.info?.stage).toBe(c.before);
+
+      pass.finish(pass.id(), [await infoFor(transport, C, c.after)]);
+      expect(stageOf(shown, C)).toMatchObject({ checking: false });
+      expect(stageOf(shown, C)?.info?.stage).toBe(c.after);
+    });
+
+    it('trigger table row 1: nothing running, nothing queued, a trigger starts a pass now', async () => {
+      const { vm, transport } = setup();
+      const pass = controlledPass(transport);
+      await vm.init();
+      pass.finish(pass.id());
+      vm.windowFocused();
+      await vi.waitFor(() => expect(pass.reads).toHaveBeenCalledTimes(2));
+    });
+
+    it('trigger table row 2: a pass running, a trigger queues one pass that starts when the running one ends', async () => {
+      const { vm, transport } = setup();
+      const pass = controlledPass(transport);
+      await vm.init();
+      vm.windowFocused();
+      await flushAll();
+      expect(pass.reads).toHaveBeenCalledTimes(1);
+      pass.finish(pass.id());
+      await vi.waitFor(() => expect(pass.reads).toHaveBeenCalledTimes(2));
+    });
+
+    it('trigger table row 3: a pass running and one queued, more triggers add nothing', async () => {
+      const { vm, transport } = setup();
+      const pass = controlledPass(transport);
+      await vm.init();
+      vm.windowFocused();
+      vm.windowFocused();
+      vm.windowFocused();
+      pass.finish(pass.id());
+      await vi.waitFor(() => expect(pass.reads).toHaveBeenCalledTimes(2));
+      pass.finish(pass.id());
+      await flushAll();
+      expect(pass.reads).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('follows the row display table', async () => {
+    const { vm, transport } = setup();
+    const pass = controlledPass(transport);
+    await vm.init();
+    const c = vm.rows()[0].change;
+    // Row 1: no value from this session, a pass running: Reading in place of the stage.
+    expect(stageOf(vm, c)).toMatchObject({ info: null, error: null, checking: false });
+    expect(vm.reading()).toBe(true);
+    // Row 3: a value, no pass running: the stored stage.
+    pass.finish(pass.id(), [await infoFor(transport, c, 'plan-ready')]);
+    expect(stageOf(vm, c)).toMatchObject({ checking: false });
+    expect(stageOf(vm, c)?.info?.stage).toBe('plan-ready');
+    expect(vm.reading()).toBe(false);
+    // Row 2: a value, a pass running that has not sent this row yet: the stored stage, marked as being checked.
+    vm.windowFocused();
+    await vi.waitFor(() => expect(stageOf(vm, c)?.checking).toBe(true));
+    expect(stageOf(vm, c)?.info?.stage).toBe('plan-ready');
+    expect(vm.reading()).toBe(true);
+    // Row 4 (no value and no pass) cannot happen: a name enters the rows only from a names read, and every names read starts a pass.
+  });
+
+  it('shows a change that could not be read with its reason, and goes on with the others', async () => {
+    const { vm, transport } = setup();
+    const pass = controlledPass(transport);
+    await vm.init();
+    const [a, b] = vm.rows().map((r) => r.change);
+    pass.send({ kind: 'failed', pass: pass.id(), change: a, error: 'worker panicked' });
+    pass.finish(pass.id(), [await infoFor(transport, b, 'plan-ready')]);
+    expect(stageOf(vm, a)).toMatchObject({ info: null, error: 'worker panicked' });
+    expect(stageOf(vm, b)?.info?.stage).toBe('plan-ready');
   });
 });

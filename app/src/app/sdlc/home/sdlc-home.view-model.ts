@@ -16,6 +16,7 @@ import { LockStore } from '../../core/lock/lock.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
+import type { ChangeRow } from '../../core/sdlc/sdlc-stages.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { inTauri } from '../../lib/mock';
@@ -96,6 +97,10 @@ export class SdlcHomeViewModel {
   readonly changes = signal<ChangeInfo[]>([]);
   readonly contexts = signal<Record<string, ContextState>>({});
   readonly lastRuns = signal<Record<string, number>>({});
+  /** Stub: the change list rows. */
+  readonly rows = signal<ChangeRow[]>([]);
+  /** Stub: whether a stage pass is running. */
+  readonly reading = signal(false);
   private readonly readiness = signal<Readiness>({ kind: 'missing' });
   /** Above the change list when a plan could not be read; null when every plan was. */
   readonly listNotice = computed(() => {
@@ -241,6 +246,9 @@ export class SdlcHomeViewModel {
     await this.saveList(next);
     await Promise.all([this.loadCatalog(), this.loadCurrent()]);
   }
+
+  /** Stub: the window regained focus. */
+  windowFocused(): void {}
 
   askRemove(): void {
     this.removeId.set(this.currentId());

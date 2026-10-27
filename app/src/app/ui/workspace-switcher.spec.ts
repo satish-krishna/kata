@@ -108,3 +108,17 @@ describe('WorkspaceSwitcher', () => {
     expect(trigger(container).disabled).toBe(true);
   });
 });
+
+describe('WorkspaceSwitcher without counts (R3.1)', () => {
+  it('lists the other workspaces by name and folder only, with no change count input', async () => {
+    const { fixture, container } = await render(WorkspaceSwitcher, { workspaces: [A, B], current: A, missing: ['old-billing'] });
+    expect('counts' in fixture.componentInstance).toBe(false);
+    trigger(container).click();
+    TestBed.tick();
+    await new Promise((r) => setTimeout(r, 0));
+    TestBed.tick();
+    const rows = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]')).map((i) => i.textContent!.replace(/\s+/g, ' '));
+    expect(rows.some((t) => /\d+ changes?/.test(t))).toBe(false);
+    expect(rows.find((t) => t.includes('old-billing'))).toContain('folder missing');
+  });
+});

@@ -1,6 +1,8 @@
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { DocState } from '@bindings/DocState';
+import { TestBed } from '@angular/core/testing';
 import { render } from '../../testing/render';
+import type { ChangeRow } from '../core/sdlc/sdlc-stages.store';
 import { ChangesTable } from './changes-table';
 
 const doc = (status: string | null): DocState =>
@@ -67,5 +69,39 @@ describe('ChangesTable', () => {
   it('disables opening while the app is locked', async () => {
     const { container } = await render(ChangesTable, { changes: [change('c1', 'plan-ready')], others: ['o'], lastRuns: {}, disabled: true });
     expect(buttons(container).every((b) => b.disabled)).toBe(true);
+  });
+});
+
+describe('ChangesTable rows while stages are read (R1.1, R2.1, R5.1)', () => {
+  const row = (name: string, over: Partial<ChangeRow> = {}): ChangeRow => ({ system: 'claims', change: name, title: null, info: null, error: null, checking: false, ...over });
+
+  it('shows Reading in place of the stage for a change whose stage is not read yet, and the change still opens', async () => {
+    const { fixture, container } = await render(ChangesTable, { rows: [row('c1')], others: [], lastRuns: {} });
+    const rowText = text(container.querySelector('tbody tr:nth-child(2)') as HTMLElement);
+    expect(rowText).toContain('c1');
+    expect(rowText).toContain('Reading');
+    const got: unknown[] = [];
+    fixture.componentInstance.open.subscribe((v) => got.push(v));
+    const open = buttons(container).find((b) => b.getAttribute('aria-label') === 'Open change c1')!;
+    expect(open.disabled).toBe(false);
+    open.click();
+    expect(got).toEqual([{ system: 'claims', change: 'c1' }]);
+  });
+
+  it('shows a stored stage as it is, and marks it as being checked while a pass reads it again', async () => {
+    const info = change('c1', 'plan-awaiting');
+    const checked = await render(ChangesTable, { rows: [row('c1', { info, checking: true })], others: [], lastRuns: {} });
+    expect(text(checked.container)).toContain('Plan · awaiting acceptance');
+    expect(text(checked.container)).toContain('checking');
+    TestBed.resetTestingModule();
+    const settled = await render(ChangesTable, { rows: [row('c1', { info })], others: [], lastRuns: {} });
+    expect(text(settled.container)).toContain('Plan · awaiting acceptance');
+    expect(text(settled.container)).not.toContain('checking');
+    expect(text(settled.container)).not.toContain('Reading');
+  });
+
+  it('shows the error of a change that could not be read in place of its stage', async () => {
+    const { container } = await render(ChangesTable, { rows: [row('c1', { error: 'worker panicked' })], others: [], lastRuns: {} });
+    expect(text(container)).toContain('worker panicked');
   });
 });
