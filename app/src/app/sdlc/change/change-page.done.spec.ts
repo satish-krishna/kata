@@ -6,6 +6,7 @@ import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject, of } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
+import { ProgressStore } from '../../core/progress/progress.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import type { StageAction } from '../../lib/sdlc';
@@ -494,5 +495,40 @@ describe('declaring done from the build page', () => {
 
     await vi.waitFor(() => expect(toastState.toasts().map((t) => String(t.title))).toContain(`Could not open ${PRS[0].url}: no browser`));
     expect(open).toHaveBeenCalledWith(PRS[0].url);
+  });
+});
+
+describe('declaring done reports progress', () => {
+  it('names the repository whose checks run, the branch being pushed and the pull request being opened (R7.1)', async () => {
+    const { vm } = await finished();
+    const progress = TestBed.inject(ProgressStore);
+    const begin = vi.spyOn(progress, 'begin');
+    const end = vi.spyOn(progress, 'end');
+    await vm.act('declare-done');
+    const checks = begin.mock.calls.filter((c) => c[0] === 'running-checks');
+    expect(checks.map((c) => c[1])).toEqual(['claims-intent', ...REPOS].map((r) => `Running the checks in ${r}`));
+    expect(checks.every((c) => c[2] === 'lock')).toBe(true);
+    await vm.confirmDone();
+    const pushes = begin.mock.calls.filter((c) => c[0] === 'pushing').map((c) => c[1]);
+    expect(pushes).toEqual(expect.arrayContaining(REPOS.map((r) => `Pushing change/${BUILD} in ${r}`)));
+    const opens = begin.mock.calls.filter((c) => c[0] === 'opening-prs').map((c) => c[1]);
+    expect(opens).toEqual(expect.arrayContaining(REPOS.map((r) => `Opening a pull request in ${r}`)));
+    expect(end).toHaveBeenCalledWith('lock');
+    expect(progress.view('lock')()).toBeNull();
+  });
+
+  it('a failed publish clears the progress line before it raises its error (R7.3)', async () => {
+    const { vm, transport } = await finished();
+    const progress = TestBed.inject(ProgressStore);
+    await vm.act('declare-done');
+    vi.spyOn(transport, 'sdlcPublish').mockImplementation(async () => {
+      progress.begin('pushing', 'Pushing change/x in claims-core', 'lock');
+      throw new Error('push refused');
+    });
+    const fail = vi.spyOn(progress, 'fail');
+    await vm.confirmDone();
+    expect(fail).toHaveBeenCalledWith('lock');
+    expect(progress.view('lock')()).toBeNull();
+    expect(toastText()).toContain('push refused');
   });
 });

@@ -1,6 +1,7 @@
 import { Component, computed, input, output } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import type { StepsView } from '../core/lock/lock.store';
+import type { ProgressView } from '../core/progress/progress.store';
 
 /* The body of the lock dialog (see LockOverlay for the shell, which also carries the accessible title). It only reports what is
  * known: a done/total count for Kata's own checks and the elapsed clock. No percentage, no ETA. */
@@ -12,6 +13,8 @@ import type { StepsView } from '../core/lock/lock.store';
 export class LockPanel {
   readonly view = input.required<StepsView>();
   readonly elapsed = input.required<number>();
+  /** What the running step reports, or null while nothing should show. */
+  readonly stepProgress = input<ProgressView | null>(null);
 
   readonly cancel = output<void>();
 

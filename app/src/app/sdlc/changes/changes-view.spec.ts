@@ -3,6 +3,7 @@ import { By } from '@angular/platform-browser';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { FilePair } from '@bindings/FilePair';
 import { render } from '../../../testing/render';
+import { ProgressStore } from '../../core/progress/progress.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
@@ -457,5 +458,62 @@ describe('ChangesView', () => {
     button(view)!.click();
     await settle();
     expect([...paths()].sort()).toEqual([...expected].sort());
+  });
+});
+
+describe('ChangesView progress line', () => {
+  afterEach(() => {
+    TestBed.inject(ProgressStore).end('changes');
+    vi.useRealTimers();
+  });
+
+  /** A transport whose per-repository diff lists wait for the test, except the first repository's. */
+  function slow() {
+    const transport = new MockTransport();
+    const real = transport.sdlcDiffFiles.bind(transport);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let first = true;
+    vi.spyOn(transport, 'sdlcDiffFiles').mockImplementation(async (path, part) => {
+      if (first) {
+        first = false;
+        return real(path, part);
+      }
+      await gate;
+      return real(path, part);
+    });
+    return { transport, release };
+  }
+
+  it('names the repository being read while what changed loads (R7.1)', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const { transport, release } = slow();
+    const repos = await transport.sdlcChangeRepos(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'claims', MOCK_BUILD_CHANGE);
+    const second = repos[1].repo;
+    const { container, fixture } = await mount(transport);
+    expect(container.querySelector('app-progress-line')).toBeNull();
+    vi.advanceTimersByTime(500);
+    TestBed.tick();
+    fixture.detectChanges();
+    expect(norm(container.querySelector('app-progress-line [data-testid="progress-label"]')?.textContent ?? null)).toBe(`Reading the changes in ${second}`);
+    release();
+    await settle();
+    expect(container.querySelector('app-progress-line')).toBeNull();
+    expect(TestBed.inject(ProgressStore).view('changes')()).toBeNull();
+  });
+
+  it('a failed read clears the progress line before the error toast (R7.3)', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcDiffFiles').mockRejectedValue(new Error('git is gone'));
+    const progress = TestBed.inject(ProgressStore);
+    const begin = vi.spyOn(progress, 'begin');
+    const fail = vi.spyOn(progress, 'fail');
+    const { container } = await mount(transport);
+    expect(begin).toHaveBeenCalledWith('reading-diff', expect.any(String), 'changes');
+    expect(fail).toHaveBeenCalledWith('changes');
+    expect(progress.view('changes')()).toBeNull();
+    vi.advanceTimersByTime(60_000);
+    expect(container.querySelector('app-progress-line')).toBeNull();
   });
 });

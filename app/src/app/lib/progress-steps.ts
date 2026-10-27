@@ -95,3 +95,14 @@ export const PROGRESS_NAMES: Record<ProgressStepId, string> = {
   'pushing': 'Pushing the change branch',
   'opening-prs': 'Opening pull requests',
 };
+
+/** The plain label of each step, with the facts that stay put while the playful line rotates. */
+export const progressLabels = {
+  readingChange: (): string => '',
+  readingDoc: (_stem: string): string => '',
+  readingDiff: (_repo: string): string => '',
+  preparingBuild: (): string => '',
+  runningChecks: (_repo: string): string => '',
+  pushing: (_change: string, _repo: string): string => '',
+  openingPr: (_repo: string): string => '',
+};
