@@ -113,7 +113,7 @@ fn diff_matches_the_cli_for_edits_deletes_and_untracked() {
     write(d.path(), "gone.txt", &lines(4));
     write(d.path(), "dir/b.rs", &lines(3));
     commit_all(d.path());
-    write(d.path(), "a.txt", &format!("{}extra\n", &lines(8)));
+    write(d.path(), "a.txt", &format!("{}extra\n", lines(8)));
     std::fs::remove_file(d.path().join("gone.txt")).unwrap();
     write(d.path(), "new/deep/c.txt", &lines(5));
     write(d.path(), "top.md", "x\ny");
