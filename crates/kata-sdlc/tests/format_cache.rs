@@ -134,6 +134,32 @@ fn gate_reads_never_use_the_disk() {
 
 #[test]
 #[serial]
+fn a_gate_read_refuses_a_disk_entry_a_shown_read_already_loaded() {
+    let _home = Home::new();
+    let tmp = tempfile::tempdir().unwrap();
+    let plan = plan_in(tmp.path());
+    let real = format::read_with(&program(), &plan, Reads::Shown).unwrap();
+
+    let entry = format::cache_entry_path(&program(), &plan).unwrap();
+    let mut planted: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+    planted["document"]["tasks"][0]["id"] = "T99".into();
+    std::fs::write(&entry, planted.to_string()).unwrap();
+    format::forget_memory_cache();
+
+    // The shown read takes the planted entry from disk into memory.
+    let shown = format::read_with(&program(), &plan, Reads::Shown).unwrap();
+    assert_eq!(task_ids(&shown)[0], "T99");
+
+    // The memory cache is not forgotten: the gate read must still not trust that entry.
+    let before = format::runs_started();
+    let gate = format::read(&program(), &plan).unwrap();
+    assert_eq!(gate, real);
+    assert_eq!(format::runs_started() - before, 1);
+}
+
+#[test]
+#[serial]
 fn a_changed_program_or_marker_misses() {
     let _home = Home::new();
     let tmp = tempfile::tempdir().unwrap();
