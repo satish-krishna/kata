@@ -260,8 +260,16 @@ pub fn runs_started() -> usize {
 /// plan, the bytes of the marker above it. The digest names the entry on disk, so it must not collide.
 type CacheKey = [u8; 32];
 
-fn cache() -> &'static Mutex<HashMap<CacheKey, ReadResult>> {
-    static CACHE: OnceLock<Mutex<HashMap<CacheKey, ReadResult>>> = OnceLock::new();
+/// An answer in memory and where it came from. `trusted` is true when the program produced it in this
+/// process; false when it was loaded from the parse cache on disk, which only a `Shown` read may use.
+#[derive(Clone)]
+struct Remembered {
+    result: ReadResult,
+    trusted: bool,
+}
+
+fn cache() -> &'static Mutex<HashMap<CacheKey, Remembered>> {
+    static CACHE: OnceLock<Mutex<HashMap<CacheKey, Remembered>>> = OnceLock::new();
     CACHE.get_or_init(Default::default)
 }
 
@@ -434,7 +442,8 @@ pub fn read_with(program: &Path, file: &Path, reads: Reads) -> Result<ReadResult
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .get(&key)
-        .cloned();
+        .filter(|r| r.trusted || reads == Reads::Shown)
+        .map(|r| r.result.clone());
     if let Some(hit) = remembered {
         // An answer that only a gate read has needed so far still goes to disk for the next session.
         if let Some(path) = on_disk.as_deref().filter(|p| !p.exists()) {
@@ -443,10 +452,13 @@ pub fn read_with(program: &Path, file: &Path, reads: Reads) -> Result<ReadResult
         return Ok(hit);
     }
     if let Some(hit) = on_disk.as_deref().and_then(disk_lookup) {
-        cache()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(key, hit.clone());
+        cache().lock().unwrap_or_else(|e| e.into_inner()).insert(
+            key,
+            Remembered {
+                result: hit.clone(),
+                trusted: false,
+            },
+        );
         return Ok(hit);
     }
 
@@ -456,10 +468,13 @@ pub fn read_with(program: &Path, file: &Path, reads: Reads) -> Result<ReadResult
     if let Some(path) = &on_disk {
         disk_store(path, &result);
     }
-    cache()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(key, result.clone());
+    cache().lock().unwrap_or_else(|e| e.into_inner()).insert(
+        key,
+        Remembered {
+            result: result.clone(),
+            trusted: true,
+        },
+    );
     Ok(result)
 }
 
