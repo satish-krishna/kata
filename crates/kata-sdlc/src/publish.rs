@@ -955,7 +955,24 @@ pub(crate) mod tests {
             Some(v) => std::env::set_var("KATA_HOME", v),
             None => std::env::remove_var("KATA_HOME"),
         }
-        assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 0);
+        // A stage read running beside this test may keep its parse cache in the folder meanwhile; that is
+        // not a credential. Anything else in the folder is.
+        fn files_but_parse_cache(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.file_name().is_some_and(|n| n == "parse-cache") {
+                    continue;
+                }
+                if path.is_dir() {
+                    files_but_parse_cache(&path, found);
+                } else {
+                    found.push(path);
+                }
+            }
+        }
+        let mut left = Vec::new();
+        files_but_parse_cache(home.path(), &mut left);
+        assert!(left.is_empty(), "{left:?}");
         for (n, url) in ["app", "api", "m"].iter().zip(&urls) {
             let cfg = git::run(
                 &fx.path(n),

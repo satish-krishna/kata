@@ -343,7 +343,7 @@ fn every_flow_runs_with_no_git_or_gh_on_path() {
     let _path = PathOnly::new(&fx.only_node);
 
     // The home page and the change page: list the changes and read stages; read one change.
-    let list = changes::list(Some(&fx.plugin), &master, SYS);
+    let list = stages(&fx.plugin, &master);
     let names: Vec<&str> = list.iter().map(|c| c.change.as_str()).collect();
     assert_eq!(names, [DRAFT, CHG]);
     assert!(
@@ -488,7 +488,7 @@ fn home_and_change_page_read_without_git() {
     let master = fx.repo("m");
     let read = |fx: &Fx| {
         (
-            changes::list(Some(&fx.plugin), &master, SYS),
+            stages(&fx.plugin, &master),
             serde_json::to_value(changes::branch_info(&master)).unwrap(),
             changes::read_doc(&master, SYS, CHG, "spec"),
         )
@@ -502,4 +502,38 @@ fn home_and_change_page_read_without_git() {
     assert_eq!(with_git.0, without_git.0);
     assert_eq!(with_git.1, without_git.1);
     assert_eq!(with_git.2, without_git.2);
+}
+
+/// The home page's two passes and the change page's read: the names, then every stage, then each change on
+/// its own. The stages come back in the order of the names, and each one equals the change read alone.
+fn stages(plugin: &Path, master: &Path) -> Vec<changes::ChangeInfo> {
+    let order: Vec<String> = changes::names(master, SYS)
+        .into_iter()
+        .map(|n| n.change)
+        .collect();
+    let ctx = changes::ReadContext::new(Some(plugin), master);
+    let mut events = Vec::new();
+    changes::read_stages(&ctx, SYS, &order, 1, &|| false, &mut |e| events.push(e));
+    assert!(matches!(
+        events.last(),
+        Some(changes::StageEvent::Done { pass: 1 })
+    ));
+    let mut infos: Vec<changes::ChangeInfo> = events
+        .into_iter()
+        .filter_map(|e| match e {
+            changes::StageEvent::Stage { info, .. } => Some(info),
+            changes::StageEvent::Failed { change, error, .. } => {
+                panic!("{change} failed: {error}")
+            }
+            _ => None,
+        })
+        .collect();
+    infos.sort_by_key(|i| order.iter().position(|c| *c == i.change));
+    for info in &infos {
+        assert_eq!(
+            changes::read_change(&ctx, SYS, &info.change).as_ref(),
+            Ok(info)
+        );
+    }
+    infos
 }

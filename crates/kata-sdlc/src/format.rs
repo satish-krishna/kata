@@ -725,8 +725,142 @@ fn run(program: &Path, cwd: &Path, args: &[&str]) -> Result<process::CapturedExi
     run_within(program, cwd, args, TIMEOUT)
 }
 
+/// What every format call made by the threads of one pass shares: whether Node.js is there, how long a
+/// call may take, and how many programs were started. A call made outside a pass shares nothing.
+pub struct Pass {
+    node: Mutex<NodeState>,
+    limit: Mutex<Option<Duration>>,
+    started: AtomicUsize,
+}
+
+/// What a pass knows about Node.js.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NodeState {
+    /// `node` was found on `PATH`, or a program has started since.
+    Present,
+    /// `node` was not found on `PATH`: the first call tries it alone; the answer settles the rest.
+    Suspect,
+    /// A call found `node` missing: every later call is answered so without starting a program.
+    Missing,
+}
+
+thread_local! {
+    static CURRENT: std::cell::RefCell<Option<std::sync::Arc<Pass>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Puts a thread back in the pass it was in before [`Pass::enter`].
+pub struct PassGuard(Option<std::sync::Arc<Pass>>);
+
+impl Drop for PassGuard {
+    fn drop(&mut self) {
+        CURRENT.with(|c| *c.borrow_mut() = self.0.take());
+    }
+}
+
+impl Pass {
+    /// A pass for a machine whose `PATH` is read now.
+    pub fn new() -> std::sync::Arc<Pass> {
+        std::sync::Arc::new(Pass {
+            node: Mutex::new(if node_on_path() {
+                NodeState::Present
+            } else {
+                NodeState::Suspect
+            }),
+            limit: Mutex::new(None),
+            started: AtomicUsize::new(0),
+        })
+    }
+
+    /// Makes the calls of the current thread belong to this pass until the guard is dropped.
+    pub fn enter(self: &std::sync::Arc<Self>) -> PassGuard {
+        PassGuard(CURRENT.with(|c| c.borrow_mut().replace(self.clone())))
+    }
+
+    /// Replaces the 30-second limit of every call in this pass.
+    pub fn set_limit(&self, limit: Duration) {
+        *self.limit.lock().unwrap_or_else(|e| e.into_inner()) = Some(limit);
+    }
+
+    /// How many programs this pass started.
+    pub fn started(&self) -> usize {
+        self.started.load(Ordering::SeqCst)
+    }
+}
+
+/// Whether a `node` program sits in a folder of `PATH`, looked up without starting anything.
+fn node_on_path() -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    let exts: Vec<String> = if cfg!(windows) {
+        std::env::var("PATHEXT")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".to_string())
+            .split(';')
+            .filter(|e| !e.is_empty())
+            .map(str::to_string)
+            .collect()
+    } else {
+        vec![String::new()]
+    };
+    std::env::split_paths(&path).any(|dir| {
+        exts.iter()
+            .any(|ext| dir.join(format!("node{ext}")).is_file())
+    })
+}
+
+impl FormatError {
+    /// The program was killed because it passed its time limit.
+    pub fn timed_out(&self) -> bool {
+        matches!(self, FormatError::CouldNotRun(m) if m.starts_with("it did not finish in "))
+    }
+}
+
 /// [`run`] with the time the program may take given.
 fn run_within(
+    program: &Path,
+    cwd: &Path,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<process::CapturedExit, FormatError> {
+    let Some(pass) = CURRENT.with(|c| c.borrow().clone()) else {
+        return start(program, cwd, args, timeout);
+    };
+    let timeout = pass
+        .limit
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or(timeout);
+    let mut node = pass.node.lock().unwrap_or_else(|e| e.into_inner());
+    match *node {
+        NodeState::Missing => Err(FormatError::NodeMissing),
+        NodeState::Present => {
+            drop(node);
+            pass.started.fetch_add(1, Ordering::SeqCst);
+            let answer = start(program, cwd, args, timeout);
+            if matches!(answer, Err(FormatError::NodeMissing)) {
+                *pass.node.lock().unwrap_or_else(|e| e.into_inner()) = NodeState::Missing;
+            }
+            answer
+        }
+        NodeState::Suspect => {
+            // Held through the attempt, so the other threads of the pass wait for the one answer.
+            pass.started.fetch_add(1, Ordering::SeqCst);
+            let answer = start(program, cwd, args, timeout);
+            *node = if matches!(answer, Err(FormatError::NodeMissing)) {
+                NodeState::Missing
+            } else {
+                NodeState::Present
+            };
+            answer
+        }
+    }
+}
+
+/// Starts `node <program> <args>` in `cwd` and reads its exit.
+fn start(
     program: &Path,
     cwd: &Path,
     args: &[&str],

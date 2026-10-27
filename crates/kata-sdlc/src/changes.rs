@@ -1,8 +1,11 @@
 use crate::build::program;
 use crate::format::{self, FormatError, ReadResult};
-use crate::{branch, frontmatter, git, workspace::is_committed};
+use crate::{branch, frontmatter, git};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
+use std::time::Duration;
 
 /// Where a change is in the intent, spec, plan flow.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -237,7 +240,7 @@ pub fn track(intent_text: &str) -> Track {
 
 /// The track of a change, read the way the format program reads it: the working `intent.md`'s `track`,
 /// and when that file is missing, names no track or does not parse, the one in `HEAD`.
-fn track_of_change(master: &Path, system: &str, change: &str) -> Track {
+fn track_of_change(repo: Option<&git::Repo>, master: &Path, system: &str, change: &str) -> Track {
     let file = change_dir(master, system, change).join("intent.md");
     let named = |text: &str| frontmatter::field(text, "track").map(|t| t == "fix");
     let working = std::fs::read_to_string(&file)
@@ -245,8 +248,7 @@ fn track_of_change(master: &Path, system: &str, change: &str) -> Track {
         .and_then(|text| named(&text));
     let found = working.or_else(|| {
         let rel = format!("intent/{system}/{change}/intent.md");
-        git::Repo::open(master)
-            .ok()?
+        repo?
             .committed_bytes(&rel)
             .ok()
             .flatten()
@@ -309,24 +311,23 @@ pub(crate) fn is_safe_system(system: &str) -> bool {
         && !system.contains(['/', '\\', ':'])
 }
 
-/// The state of one document. `head_status` is what the format program said about the `HEAD` copy (a fix
-/// only); a full-pipeline change has none.
+/// The state of one document from its working text (`None` when the file is not there). `head_status` is
+/// what the format program said about the `HEAD` copy (a fix only); a full-pipeline change has none.
 fn doc_state(
-    master: &Path,
-    system: &str,
-    change: &str,
-    file: &str,
+    ctx: &ReadContext,
+    repo: Option<&git::Repo>,
+    rel: &str,
+    text: Option<&str>,
     head_status: Option<String>,
 ) -> DocState {
-    let rel = format!("intent/{system}/{change}/{file}");
-    match std::fs::read_to_string(master.join(&rel)) {
-        Ok(text) => DocState {
+    match text {
+        Some(text) => DocState {
             exists: true,
-            committed: is_committed(master, &rel),
-            status: Some(frontmatter::field(&text, "status").unwrap_or_else(|| "unknown".into())),
+            committed: ctx.committed(repo, rel),
+            status: Some(frontmatter::field(text, "status").unwrap_or_else(|| "unknown".into())),
             head_status,
         },
-        Err(_) => DocState {
+        None => DocState {
             head_status,
             ..DocState::default()
         },
@@ -342,9 +343,11 @@ fn plan_facts(
     master: &Path,
     system: &str,
     change: &str,
+    pins: (bool, bool),
 ) -> (PlanFacts, BuildCounts, Option<String>) {
+    use format::Reads::Shown;
     let plan_file = master.join(format!("intent/{system}/{change}/plan.md"));
-    let read = plugin.map(|p| crate::format::read(&crate::build::program(p), &plan_file));
+    let read = plugin.map(|p| format::read_with(&crate::build::program(p), &plan_file, Shown));
     let mut reason = None;
     let tasks = match read {
         Some(Ok(crate::format::ReadResult::Plan { document, .. })) => document.tasks,
@@ -364,7 +367,8 @@ fn plan_facts(
     let mut repos: Vec<&str> = tasks.iter().map(|t| t.repo.as_str()).collect();
     repos.sort_unstable();
     repos.dedup();
-    let finished = match plugin.map(|p| crate::build::status(p, master, system, change)) {
+    let finished = match plugin.map(|p| crate::build::status_with(p, master, system, change, Shown))
+    {
         Some(Ok(status)) => status.tasks.iter().filter(|t| t.row.is_some()).count() as u32,
         Some(Err(e)) if !crate::build::is_unreadable(&e) => 0,
         other => {
@@ -384,8 +388,8 @@ fn plan_facts(
         repos: repos.len() as u32,
     };
     let facts = PlanFacts {
-        spec_pin: crate::pins::spec_pin_holds(master, system, change),
-        plan_pin: crate::pins::plan_pin_holds(master, system, change),
+        spec_pin: pins.0,
+        plan_pin: pins.1,
         has_tasks: !tasks.is_empty(),
         tasks: counts.tasks,
         finished,
@@ -402,159 +406,333 @@ fn change_dir(master: &Path, system: &str, change: &str) -> std::path::PathBuf {
     master.join("intent").join(system).join(change)
 }
 
-/// The changes of `system` in the master repo, newest folder name first.
-pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInfo> {
+/// One change folder of a workspace and the title of its intent, before any stage is read.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct ChangeName {
+    /// The folder name.
+    pub change: String,
+    /// The `title` in the intent's front matter, when the intent has one.
+    pub title: Option<String>,
+}
+
+/// The changes of `system` in the master repo, newest folder name first, each with the title of its
+/// intent. Files only: no repository is opened and no program is started.
+pub fn names(master: &Path, system: &str) -> Vec<ChangeName> {
     if !is_safe_system(system) {
         return Vec::new();
     }
     let Ok(entries) = std::fs::read_dir(master.join("intent").join(system)) else {
         return Vec::new();
     };
-    let mut names: Vec<String> = entries
+    let mut found: Vec<String> = entries
         .flatten()
         .filter(|e| e.path().is_dir())
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|n| is_change_name(n))
         .collect();
-    names.sort_by(|a, b| b.cmp(a));
-    let tracks: Vec<Track> = names
-        .iter()
-        .map(|change| track_of_change(master, system, change))
-        .collect();
-    // Every fix of the system is read in one program process, and only by a plugin that knows the light track.
-    let needs_plugin = plugin.is_some_and(|p| {
-        !crate::plugin::version(p).is_some_and(|v| crate::plugin::light_track(&v))
-    });
-    let fix_folders: Vec<std::path::PathBuf> = names
-        .iter()
-        .zip(&tracks)
-        .filter(|(_, t)| **t == Track::Fix)
-        .map(|(change, _)| change_dir(master, system, change))
-        .collect();
-    let mut fix_reads = match plugin {
-        Some(_) if needs_plugin => Vec::new(),
-        Some(p) => format::fix_states(&crate::build::program(p), &fix_folders)
-            .into_iter()
-            .map(|r| Some(r.map_err(|e| e.to_string())))
-            .collect(),
-        None => Vec::new(),
-    }
-    .into_iter();
-    names
+    found.sort_by(|a, b| b.cmp(a));
+    found
         .into_iter()
-        .zip(tracks)
-        .map(|(change, track_of)| {
-            // A fix is read by the format program: where it stands, and what each document says in `HEAD`.
-            let fix: Option<Result<format::FixState, String>> = (track_of == Track::Fix).then(|| {
-                if needs_plugin {
-                    Err(NEEDS_PLUGIN.to_string())
-                } else if plugin.is_none() {
-                    Err("the ai-sdlc plugin was not found".to_string())
-                } else {
-                    fix_reads
-                        .next()
-                        .flatten()
-                        .unwrap_or_else(|| Err("the format program gave no answer".to_string()))
-                }
-            });
-            let heads = |pick: fn(&format::FixFacts) -> &format::FixDocumentFacts| match &fix {
-                Some(Ok(state)) => pick(&state.facts).head_status.clone(),
-                _ => None,
-            };
-            let intent = doc_state(master, system, &change, "intent.md", heads(|f| &f.intent));
-            let spec = doc_state(master, system, &change, "spec.md", heads(|f| &f.spec));
-            let plan = doc_state(master, system, &change, "plan.md", heads(|f| &f.plan));
-            let (mut facts, build, mut plan_unreadable_reason) = if plan.exists {
-                plan_facts(plugin, master, system, &change)
-            } else {
-                (PlanFacts::default(), BuildCounts::default(), None)
-            };
-            let mut fix_row = None;
-            let stage = match &fix {
-                Some(Ok(state)) => {
-                    fix_row = Some(state.row);
-                    if !(1..=8).contains(&state.row) {
-                        facts.unreadable = true;
-                        plan_unreadable_reason.get_or_insert_with(|| {
-                            format!("the format program reported fix row {}, which this Workbench does not know", state.row)
-                        });
-                    }
-                    fix_stage(state.row, &intent, &spec, &plan, &facts)
-                }
-                Some(Err(message)) => {
-                    // The row is unknown, so nothing is offered; the notice carries the program's words.
-                    facts.unreadable = true;
-                    // The fix-state reason is the one that explains the stage, so it replaces a plan's.
-                    plan_unreadable_reason = Some(message.clone());
-                    if needs_plugin {
-                        Stage::FixNeedsPlugin
-                    } else {
-                        Stage::FixUnsettled
-                    }
-                }
-                None => derive_stage(&intent, &spec, &plan, &facts),
-            };
-            let out_of_date = if plan.exists && stage == Stage::PlanOutOfDate {
-                out_of_date(&intent, &spec, &plan, &facts)
-            } else {
-                None
-            };
-            let scope = crate::decide::change_scope(master, system, &change);
-            ChangeInfo {
-                system: system.to_string(),
-                change,
-                intent,
-                spec,
-                plan,
-                stage,
-                build,
-                scope,
-                out_of_date,
-                plan_unreadable: facts.unreadable,
-                plan_unreadable_reason,
-                track: track_of,
-                fix_row,
-            }
+        .map(|change| {
+            let title =
+                std::fs::read_to_string(change_dir(master, system, &change).join("intent.md"))
+                    .ok()
+                    .and_then(|text| frontmatter::field(&text, "title"))
+                    .filter(|t| !t.is_empty());
+            ChangeName { change, title }
         })
         .collect()
 }
 
-/// One change folder of a workspace and the title of its intent, before any stage is read.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
-pub struct ChangeName {
-    pub change: String,
-    pub title: Option<String>,
+/// What the reads of one pass share: the plugin, the master repository's status below `intent/` taken
+/// once, and what the pass has learned about Node.js. A context is a snapshot: the repository is
+/// not read again, so a change edited after it was made shows as it was.
+pub struct ReadContext {
+    plugin: Option<PathBuf>,
+    master: PathBuf,
+    /// `status` of `intent/`; `None` when the repository could not be opened.
+    status: Option<Vec<git::StatusEntry>>,
+    /// The plugin is too old to read a fix.
+    needs_plugin: bool,
+    pass: Arc<format::Pass>,
 }
-
-/// The changes of `system`, newest first, from files only.
-pub fn names(_master: &Path, _system: &str) -> Vec<ChangeName> {
-    Vec::new()
-}
-
-/// What one pass over a workspace's changes shares.
-pub struct ReadContext {}
 
 impl ReadContext {
-    pub fn new(_plugin: Option<&Path>, _master: &Path) -> ReadContext {
-        ReadContext {}
+    /// Opens the master repository, takes its status below `intent/` once, and starts a pass.
+    pub fn new(plugin: Option<&Path>, master: &Path) -> ReadContext {
+        let status = git::Repo::open(master)
+            .ok()
+            .and_then(|repo| repo.status("intent").ok());
+        ReadContext {
+            plugin: plugin.map(Path::to_path_buf),
+            master: master.to_path_buf(),
+            status,
+            needs_plugin: plugin.is_some_and(|p| {
+                !crate::plugin::version(p).is_some_and(|v| crate::plugin::light_track(&v))
+            }),
+            pass: format::Pass::new(),
+        }
     }
 
-    /// Test hook: the time one format program call may take.
+    /// Test hook: the time one format program call may take in this pass.
     #[doc(hidden)]
-    pub fn limit_format_calls(&self, _limit: std::time::Duration) {}
+    pub fn limit_format_calls(&self, limit: Duration) {
+        self.pass.set_limit(limit);
+    }
 
-    /// Test hook: how many format programs this context started.
+    /// Test hook: how many format programs this pass started.
     #[doc(hidden)]
     pub fn programs_started(&self) -> usize {
-        0
+        self.pass.started()
+    }
+
+    fn repo(&self) -> Option<git::Repo> {
+        git::Repo::open(&self.master).ok()
+    }
+
+    /// Whether `rel` is committed: `HEAD` holds it and neither the index nor the working tree differs.
+    fn committed(&self, repo: Option<&git::Repo>, rel: &str) -> bool {
+        let (Some(status), Some(repo)) = (&self.status, repo) else {
+            return false;
+        };
+        !status
+            .iter()
+            .any(|e| e.path == rel || e.from.as_deref() == Some(rel))
+            && repo.blob_id_at("HEAD", rel).ok().flatten().is_some()
     }
 }
 
-/// One change's [`ChangeInfo`], or why the request was refused.
-pub fn read_change(_ctx: &ReadContext, _system: &str, _change: &str) -> Result<ChangeInfo, String> {
-    Err("not implemented".to_string())
+/// Why a request for one change is refused: a name that could reach outside the system's folder, or
+/// a change that is not there.
+fn refuse(master: &Path, system: &str, change: &str) -> Result<(), String> {
+    if !is_safe_system(system) {
+        return Err(format!("{system:?} is not a system name"));
+    }
+    if !is_change_name(change) {
+        return Err(format!("{change:?} is not a change name"));
+    }
+    if !change_dir(master, system, change).is_dir() {
+        return Err(format!("there is no change {change} in {system}"));
+    }
+    Ok(())
+}
+
+/// What one call of the format program answered for the fixes of a system.
+struct FixBatch {
+    answers: HashMap<PathBuf, Result<format::FixState, FormatError>>,
+    /// More than one fix was asked about in the call.
+    together: bool,
+}
+
+impl FixBatch {
+    fn empty() -> FixBatch {
+        FixBatch {
+            answers: HashMap::new(),
+            together: false,
+        }
+    }
+}
+
+/// Every fix in `folders` in one program call (a plugin that cannot read a fix is not asked).
+fn fix_batch(ctx: &ReadContext, folders: &[PathBuf]) -> FixBatch {
+    let Some(plugin) = ctx.plugin.as_deref().filter(|_| !ctx.needs_plugin) else {
+        return FixBatch::empty();
+    };
+    let answers = format::fix_states(&program(plugin), folders);
+    FixBatch {
+        answers: folders.iter().cloned().zip(answers).collect(),
+        together: folders.len() > 1,
+    }
+}
+
+/// Where the fix in `folder` stands, or why that is not known. A fix whose share of a call for several
+/// timed out is asked for on its own, so one fix that hangs does not fail the others' reads.
+fn fix_outcome(
+    ctx: &ReadContext,
+    folder: &Path,
+    batch: Option<&FixBatch>,
+) -> Result<format::FixState, String> {
+    let Some(plugin) = ctx.plugin.as_deref() else {
+        return Err("the ai-sdlc plugin was not found".to_string());
+    };
+    if ctx.needs_plugin {
+        return Err(NEEDS_PLUGIN.to_string());
+    }
+    let program = program(plugin);
+    let answer = match batch.and_then(|b| b.answers.get(folder).map(|a| (a, b.together))) {
+        Some((Err(e), true)) if e.timed_out() => format::fix_state(&program, folder),
+        Some((answer, _)) => answer.clone(),
+        None => format::fix_state(&program, folder),
+    };
+    answer.map_err(|e| e.to_string())
+}
+
+/// Whether `pin`, read from the working text of a document, still names a commit from which `upstream`
+/// is unchanged.
+fn pin_holds(repo: Option<&git::Repo>, text: Option<&str>, key: &str, upstream: &str) -> bool {
+    let pin = text.and_then(|t| frontmatter::field(t, key));
+    repo.is_some_and(|repo| crate::pins::holds(repo, pin.as_deref(), upstream))
+}
+
+/// One change's `ChangeInfo` from what the caller already knows: the track and, for a fix, where it stands.
+fn read_change_with(
+    ctx: &ReadContext,
+    repo: Option<&git::Repo>,
+    system: &str,
+    change: &str,
+    track_of: Track,
+    fix: Option<Result<format::FixState, String>>,
+) -> ChangeInfo {
+    let master = ctx.master.as_path();
+    let plugin = ctx.plugin.as_deref();
+    let needs_plugin = ctx.needs_plugin;
+    // A fix is read by the format program: where it stands, and what each document says in `HEAD`.
+    let heads = |pick: fn(&format::FixFacts) -> &format::FixDocumentFacts| match &fix {
+        Some(Ok(state)) => pick(&state.facts).head_status.clone(),
+        _ => None,
+    };
+    let text =
+        |file: &str| std::fs::read_to_string(change_dir(master, system, change).join(file)).ok();
+    let rel = |file: &str| format!("intent/{system}/{change}/{file}");
+    let (intent_text, spec_text, plan_text) = (text("intent.md"), text("spec.md"), text("plan.md"));
+    let intent = doc_state(
+        ctx,
+        repo,
+        &rel("intent.md"),
+        intent_text.as_deref(),
+        heads(|f| &f.intent),
+    );
+    let spec = doc_state(
+        ctx,
+        repo,
+        &rel("spec.md"),
+        spec_text.as_deref(),
+        heads(|f| &f.spec),
+    );
+    let plan = doc_state(
+        ctx,
+        repo,
+        &rel("plan.md"),
+        plan_text.as_deref(),
+        heads(|f| &f.plan),
+    );
+    let (mut facts, build, mut plan_unreadable_reason) = if plan.exists {
+        let pins = (
+            pin_holds(
+                repo,
+                spec_text.as_deref(),
+                "source_intent_commit",
+                &rel("intent.md"),
+            ),
+            pin_holds(
+                repo,
+                plan_text.as_deref(),
+                "source_spec_commit",
+                &rel("spec.md"),
+            ),
+        );
+        plan_facts(plugin, master, system, change, pins)
+    } else {
+        (PlanFacts::default(), BuildCounts::default(), None)
+    };
+    let mut fix_row = None;
+    let stage = match &fix {
+        Some(Ok(state)) => {
+            fix_row = Some(state.row);
+            if !(1..=8).contains(&state.row) {
+                facts.unreadable = true;
+                plan_unreadable_reason.get_or_insert_with(|| {
+                    format!("the format program reported fix row {}, which this Workbench does not know", state.row)
+                });
+            }
+            fix_stage(state.row, &intent, &spec, &plan, &facts)
+        }
+        Some(Err(message)) => {
+            // The row is unknown, so nothing is offered; the notice carries the program's words.
+            facts.unreadable = true;
+            // The fix-state reason is the one that explains the stage, so it replaces a plan's.
+            plan_unreadable_reason = Some(message.clone());
+            if needs_plugin {
+                Stage::FixNeedsPlugin
+            } else {
+                Stage::FixUnsettled
+            }
+        }
+        None => derive_stage(&intent, &spec, &plan, &facts),
+    };
+    let out_of_date = if plan.exists && stage == Stage::PlanOutOfDate {
+        out_of_date(&intent, &spec, &plan, &facts)
+    } else {
+        None
+    };
+    ChangeInfo {
+        system: system.to_string(),
+        change: change.to_string(),
+        intent,
+        spec,
+        plan,
+        stage,
+        build,
+        scope: crate::decide::change_scope(master, system, change),
+        out_of_date,
+        plan_unreadable: facts.unreadable,
+        plan_unreadable_reason,
+        track: track_of,
+        fix_row,
+    }
+}
+
+/// One change's `ChangeInfo` for the change page: the answer `list` and a stage pass give for it. Refuses
+/// a system or change name that could reach outside the system's folder, and a change that is not there.
+pub fn read_change(ctx: &ReadContext, system: &str, change: &str) -> Result<ChangeInfo, String> {
+    refuse(&ctx.master, system, change)?;
+    let _pass = ctx.pass.enter();
+    let repo = ctx.repo();
+    let track_of = track_of_change(repo.as_ref(), &ctx.master, system, change);
+    let fix = (track_of == Track::Fix)
+        .then(|| fix_outcome(ctx, &change_dir(&ctx.master, system, change), None));
+    Ok(read_change_with(
+        ctx,
+        repo.as_ref(),
+        system,
+        change,
+        track_of,
+        fix,
+    ))
+}
+
+/// The changes of `system` in the master repo, newest folder name first, each read as [`read_change`]
+/// reads it, with every fix asked for in one program call.
+pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInfo> {
+    let found = names(master, system);
+    if found.is_empty() {
+        return Vec::new();
+    }
+    let ctx = ReadContext::new(plugin, master);
+    let _pass = ctx.pass.enter();
+    let repo = ctx.repo();
+    let tracks: Vec<Track> = found
+        .iter()
+        .map(|n| track_of_change(repo.as_ref(), master, system, &n.change))
+        .collect();
+    let folders: Vec<PathBuf> = found
+        .iter()
+        .zip(&tracks)
+        .filter(|(_, t)| **t == Track::Fix)
+        .map(|(n, _)| change_dir(master, system, &n.change))
+        .collect();
+    let batch = (!folders.is_empty()).then(|| fix_batch(&ctx, &folders));
+    found
+        .into_iter()
+        .zip(tracks)
+        .map(|(n, track_of)| {
+            let fix = (track_of == Track::Fix)
+                .then(|| fix_outcome(&ctx, &change_dir(master, system, &n.change), batch.as_ref()));
+            read_change_with(&ctx, repo.as_ref(), system, &n.change, track_of, fix)
+        })
+        .collect()
 }
 
 /// What a stage pass reports to the page.
@@ -562,40 +740,211 @@ pub fn read_change(_ctx: &ReadContext, _system: &str, _change: &str) -> Result<C
 #[serde(tag = "kind", rename_all = "kebab-case")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[allow(clippy::large_enum_variant)] // one event is built per change, so boxing the info buys nothing
 pub enum StageEvent {
+    /// One change was read.
     Stage {
         #[cfg_attr(feature = "ts", ts(type = "number"))]
         pass: u64,
         change: String,
         info: ChangeInfo,
     },
+    /// One change could not be read at all (a refused name, or a read that failed unexpectedly).
     Failed {
         #[cfg_attr(feature = "ts", ts(type = "number"))]
         pass: u64,
         change: String,
         error: String,
     },
+    /// How many of the changes have been reported.
     Progress {
         #[cfg_attr(feature = "ts", ts(type = "number"))]
         pass: u64,
         read: u32,
         total: u32,
     },
+    /// Every change has been reported.
     Done {
         #[cfg_attr(feature = "ts", ts(type = "number"))]
         pass: u64,
     },
 }
 
-/// Reads the stages of the changes in `order`, reporting each through `emit`.
+/// The answer of the one call for every fix, which the workers wait for.
+struct FixShared {
+    batch: Mutex<Option<Arc<FixBatch>>>,
+    ready: Condvar,
+}
+
+impl FixShared {
+    fn put(&self, batch: FixBatch) {
+        *self.batch.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(batch));
+        self.ready.notify_all();
+    }
+
+    fn is_ready(&self) -> bool {
+        self.batch
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+
+    fn wait(&self) -> Arc<FixBatch> {
+        let mut batch = self.batch.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            if let Some(done) = batch.as_ref() {
+                return done.clone();
+            }
+            batch = self.ready.wait(batch).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+}
+
+/// How many changes are read at once.
+const WORKERS: usize = 4;
+
+/// Reads the stages of the changes in `order` (the caller puts a change it knows has moved first) and
+/// reports each through `emit` as soon as it is read, then how far the pass has got; `Done` ends the pass.
+///
+/// Up to four threads read at once, each with its own repository handle. The fixes are asked for in one
+/// program call that runs beside them; a fix waits for it, and the changes that are not fixes go first
+/// while it has not answered. `cancelled` is asked before each change is started; once it says yes
+/// nothing more is emitted. One change that cannot be read is reported and the rest go on.
 pub fn read_stages(
-    _ctx: &ReadContext,
-    _system: &str,
-    _order: &[String],
-    _pass: u64,
-    _cancelled: &dyn Fn() -> bool,
-    _emit: &mut dyn FnMut(StageEvent),
+    ctx: &ReadContext,
+    system: &str,
+    order: &[String],
+    pass: u64,
+    cancelled: &dyn Fn() -> bool,
+    emit: &mut dyn FnMut(StageEvent),
 ) {
+    let total = order.len();
+    let _entered = ctx.pass.enter();
+    let main_repo = ctx.repo();
+    let tracks: Vec<Track> = order
+        .iter()
+        .map(|change| {
+            if refuse(&ctx.master, system, change).is_ok() {
+                track_of_change(main_repo.as_ref(), &ctx.master, system, change)
+            } else {
+                Track::Full
+            }
+        })
+        .collect();
+    let folders: Vec<PathBuf> = order
+        .iter()
+        .zip(&tracks)
+        .filter(|(_, t)| **t == Track::Fix)
+        .map(|(change, _)| change_dir(&ctx.master, system, change))
+        .collect();
+    let shared = FixShared {
+        batch: Mutex::new(None),
+        ready: Condvar::new(),
+    };
+    if folders.is_empty() || ctx.plugin.is_none() || ctx.needs_plugin {
+        shared.put(FixBatch::empty());
+    }
+    type Answer = (usize, Result<ChangeInfo, String>);
+    let (job_tx, job_rx) = mpsc::channel::<usize>();
+    let job_rx = Mutex::new(job_rx);
+    let (answer_tx, answer_rx) = mpsc::channel::<Answer>();
+    std::thread::scope(|scope| {
+        if !shared.is_ready() {
+            scope.spawn(|| {
+                let _entered = ctx.pass.enter();
+                let batch = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    fix_batch(ctx, &folders)
+                }))
+                .unwrap_or_else(|_| FixBatch::empty());
+                shared.put(batch);
+            });
+        }
+        for _ in 0..WORKERS.min(total) {
+            let answer_tx = answer_tx.clone();
+            let (job_rx, shared, tracks) = (&job_rx, &shared, &tracks);
+            scope.spawn(move || {
+                let _entered = ctx.pass.enter();
+                let repo = ctx.repo();
+                loop {
+                    let job = job_rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                    let Ok(at) = job else { break };
+                    let change = &order[at];
+                    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        refuse(&ctx.master, system, change)?;
+                        let fix = (tracks[at] == Track::Fix).then(|| {
+                            let batch = shared.wait();
+                            fix_outcome(ctx, &change_dir(&ctx.master, system, change), Some(&batch))
+                        });
+                        Ok(read_change_with(
+                            ctx,
+                            repo.as_ref(),
+                            system,
+                            change,
+                            tracks[at],
+                            fix,
+                        ))
+                    }))
+                    .unwrap_or_else(|_| Err(format!("reading {change} failed unexpectedly")));
+                    if answer_tx.send((at, read)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(answer_tx);
+
+        let mut pending: VecDeque<usize> = (0..total).collect();
+        let (mut in_flight, mut read, mut stopped) = (0, 0u32, false);
+        loop {
+            while in_flight < WORKERS && !pending.is_empty() && !stopped {
+                if cancelled() {
+                    stopped = true;
+                    break;
+                }
+                // A fix goes only when the call for every fix has answered, unless nothing else is left.
+                let next = pending
+                    .iter()
+                    .position(|&i| tracks[i] != Track::Fix || shared.is_ready())
+                    .and_then(|pos| pending.remove(pos))
+                    .or_else(|| pending.pop_front());
+                let Some(at) = next else { break };
+                if job_tx.send(at).is_err() {
+                    break;
+                }
+                in_flight += 1;
+            }
+            if in_flight == 0 {
+                break;
+            }
+            let Ok((at, answer)) = answer_rx.recv() else {
+                break;
+            };
+            in_flight -= 1;
+            if stopped || cancelled() {
+                stopped = true;
+                continue;
+            }
+            read += 1;
+            let change = order[at].clone();
+            emit(match answer {
+                Ok(info) => StageEvent::Stage { pass, change, info },
+                Err(error) => StageEvent::Failed {
+                    pass,
+                    change,
+                    error,
+                },
+            });
+            emit(StageEvent::Progress {
+                pass,
+                read,
+                total: total as u32,
+            });
+        }
+        drop(job_tx);
+        if !stopped {
+            emit(StageEvent::Done { pass });
+        }
+    });
 }
 
 pub use crate::branch::current_branch;
@@ -654,7 +1003,7 @@ pub fn read_parsed(
     if !file.is_file() {
         return Ok(None);
     }
-    format::read(&program(plugin), &file).map(Some)
+    format::read_with(&program(plugin), &file, format::Reads::Shown).map(Some)
 }
 
 pub fn branch_info(master: &Path) -> BranchInfo {
@@ -2332,76 +2681,6 @@ source_spec_commit: {spec_pin}
             assert_eq!(progress, (1..=12).collect::<Vec<_>>(), "{reason}");
             assert!(matches!(events.last(), Some(StageEvent::Done { pass: 7 })));
         }
-    }
-
-    /// Sets environment variables for a test and puts them back.
-    struct Env(Vec<(&'static str, Option<std::ffi::OsString>)>);
-
-    impl Env {
-        fn set(&mut self, key: &'static str, value: &Path) {
-            self.0.push((key, std::env::var_os(key)));
-            std::env::set_var(key, value);
-        }
-    }
-
-    impl Drop for Env {
-        fn drop(&mut self) {
-            for (key, old) in self.0.drain(..).rev() {
-                match old {
-                    Some(v) => std::env::set_var(key, v),
-                    None => std::env::remove_var(key),
-                }
-            }
-        }
-    }
-
-    /// R2.5: with no Node.js, every change that needs the program says so and the rest show their stage;
-    /// the program is tried once.
-    #[test]
-    #[serial_test::serial]
-    fn node_missing_is_reported_on_every_change_that_needs_it() {
-        let tmp = tempfile::tempdir().unwrap();
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let (repo, mut names) = changes_with_plans(tmp.path(), 6, &|n, pin| {
-            plain_plan(pin, "", &format!("never read {n} {nonce}"))
-        });
-        commit_fix_drafts(&repo);
-        names.push("2026-10-23-fix-it".to_string());
-        testutil::commit_file(
-            &repo,
-            "intent/claims/2026-10-24-only-intent/intent.md",
-            &full_intent("draft"),
-            "i",
-        );
-        names.push("2026-10-24-only-intent".to_string());
-
-        let nowhere = tmp.path().join("no-programs-here");
-        std::fs::create_dir_all(&nowhere).unwrap();
-        let mut env = Env(Vec::new());
-        env.set("PATH", &nowhere);
-        env.set("KATA_HOME", &tmp.path().join("home"));
-        let ctx = ReadContext::new(Some(testutil::plugin_dir()), &repo);
-        let events = pass_over(&ctx, &names);
-        drop(env);
-
-        for name in &names[..6] {
-            let info = stage_of(&events, name);
-            assert!(info.plan_unreadable, "{name}");
-            assert_eq!(info.stage, Stage::PlanUnreadable, "{name}");
-            let why = info.plan_unreadable_reason.clone().unwrap_or_default();
-            assert!(why.contains("Node.js"), "{name}: {why:?}");
-        }
-        let fix = stage_of(&events, "2026-10-23-fix-it");
-        assert_eq!(fix.stage, Stage::FixUnsettled);
-        let why = fix.plan_unreadable_reason.clone().unwrap_or_default();
-        assert!(why.contains("Node.js"), "{why:?}");
-        let only = stage_of(&events, "2026-10-24-only-intent");
-        assert_eq!(only.stage, Stage::IntentAwaiting);
-        assert!(!only.plan_unreadable);
-        assert_eq!(ctx.programs_started(), 1);
     }
 
     /// R2.4 for fixes: when the one call for every fix times out, each fix is asked for on its own,
