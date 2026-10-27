@@ -467,6 +467,13 @@ describe("build run-specs", () => {
     expect(s.env_remove).toEqual(["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"]);
   });
 
+  it("build spec denies edits to the parse cache folder, next to the checks folder (T12)", () => {
+    const posix = build(run({ checksDir: "/home/u/.kata/workbench/checks" }));
+    expect(posix.permissions.deny).toContain("Edit(//home/u/.kata/workbench/parse-cache/**)");
+    const win = build(run({ checksDir: "C:\\Users\\u\\.kata\\workbench\\checks", workspaceFolder: "D:\\ws" }));
+    expect(win.permissions.deny).toContain("Edit(//c/Users/u/.kata/workbench/parse-cache/**)");
+  });
+
   it("build spec denies edits to the checks folder (R11.7)", () => {
     const posix = build(run({ checksDir: "/home/u/.kata/checks/claims" }));
     expect(posix.permissions.deny).toContain("Edit(//home/u/.kata/checks/claims/**)");
@@ -844,7 +851,9 @@ describe("triage and fix run-specs (T8)", () => {
       systemRepos: ["master", "app", "api"], checksDir: "/home/u/.kata/checks/claims", continueOnLeftovers: false,
     };
     const d = "//home/u/ws/master/intent/claims/2026-10-12-fnol";
-    const base = ["Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)", "Edit(//home/u/.kata/checks/claims/**)"];
+    const base = [
+      "Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)", "Edit(//home/u/.kata/checks/claims/**)", "Edit(//home/u/.kata/checks/parse-cache/**)",
+    ];
     const repoRun = specFor("build", null, { ...ctx, folder: run.workspaceFolder }, bypass, both, run).permissions;
     expect([...(repoRun.deny ?? [])].sort()).toEqual(
       [...base, "Edit(//home/u/ws/api/**)", `Edit(${d}/build/master.md)`, `Edit(${d}/build/api.md)`, `Edit(${d}/build/review.md)`].sort(),
