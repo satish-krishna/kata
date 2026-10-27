@@ -1,0 +1,5 @@
+disallowed-methods = [
+    { path = "std::process::Command::new", reason = "start child processes through kata_core::proc::hidden_command" },
+    # allow-invalid: tokio's process feature is off in most crates, so the path does not resolve there.
+    { path = "tokio::process::Command::new", reason = "start child processes through kata_core::proc::hidden_command", allow-invalid = true },
+]

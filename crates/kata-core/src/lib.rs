@@ -67,6 +67,7 @@
 //! before doing anything else in `main` — or claude cannot start the server and
 //! the run loses its only channel to the operator. Every pure operation here
 //! works from any binary.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 
 // ---- the run-spec contract ----
 pub mod spec;
@@ -82,6 +83,7 @@ pub use given::{ItemKind, Source};
 
 // ---- discovery & orchestration ----
 pub mod catalog;
+pub mod proc;
 pub mod run;
 pub use run::{
     answer_channel, decision_channel, run, Answer, AnswerRx, CancelToken, Decision, DecisionRx,
@@ -97,7 +99,9 @@ pub mod ask;
 // ---- portable operations the GUI and CLI also build on ----
 pub mod bundle;
 pub mod changeset;
+pub mod git;
 pub mod history;
+pub mod hooks;
 pub mod katas;
 pub mod presets;
 pub mod worktree;

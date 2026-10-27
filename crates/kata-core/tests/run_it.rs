@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)]
 use kata_core::catalog::CatalogEntry;
 use kata_core::event::KataEvent;
 use kata_core::run::{run, run_with, CancelToken, RunError, RunOptions};

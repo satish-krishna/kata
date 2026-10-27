@@ -209,11 +209,10 @@ impl Committed {
 }
 
 /// The text of `path` as committed at `HEAD`; `None` when `HEAD` does not hold it.
-fn committed_file(master: &Path, path: &str) -> Result<Option<String>, GitError> {
-    if git::run(master, &["ls-tree", "--name-only", "HEAD", "--", path])?.is_empty() {
-        return Ok(None);
-    }
-    git::run(master, &["show", &format!("HEAD:{path}")]).map(Some)
+fn committed_file(repo: &git::Repo, path: &str) -> Result<Option<String>, GitError> {
+    Ok(repo
+        .committed_bytes(path)?
+        .map(|bytes| git::trimmed_text(&bytes)))
 }
 
 /// Writes `text` to `file`, or removes `file` when there is none.
@@ -248,31 +247,35 @@ fn read_committed(
     master: &Path,
     system: &str,
     change: &str,
+    reads: format::Reads,
 ) -> Result<Committed, GitError> {
     let dir = format!("{}/build/", change_dir(system, change));
-    let plan = git::run(
-        master,
-        &[
-            "show",
-            &format!("HEAD:{}/plan.md", change_dir(system, change)),
-        ],
-    )?;
-    let listing = git::run(
-        master,
-        &["ls-tree", "-z", "--name-only", "HEAD", "--", &dir],
-    )?;
+    let repo = git::Repo::open(master)?;
+    let plan_rel = format!("{}/plan.md", change_dir(system, change));
+    let plan = committed_file(&repo, &plan_rel)?.ok_or_else(|| GitError {
+        args: format!("show HEAD:{plan_rel}"),
+        stderr: "path does not exist in HEAD".into(),
+    })?;
+    let listing = repo.tree_names(&dir)?;
     let mut paths: Vec<&str> = listing
-        .split('\0')
+        .iter()
+        .map(String::as_str)
         .filter(|p| p.ends_with(".md") && log_repo(p) != "review")
         .collect();
     paths.sort_unstable();
     let texts: Vec<(&str, String)> = paths
         .into_iter()
-        .map(|p| Ok((p, git::run(master, &["show", &format!("HEAD:{p}")])?)))
+        .map(|p| {
+            let text = committed_file(&repo, p)?.ok_or_else(|| GitError {
+                args: format!("show HEAD:{p}"),
+                stderr: "path does not exist in HEAD".into(),
+            })?;
+            Ok((p, text))
+        })
         .collect::<Result<_, GitError>>()?;
 
-    let spec = committed_file(master, &format!("{}/spec.md", change_dir(system, change)))?;
-    let marker = committed_file(master, crate::workspace::MARKER)?;
+    let spec = committed_file(&repo, &format!("{}/spec.md", change_dir(system, change)))?;
+    let marker = committed_file(&repo, crate::workspace::MARKER)?;
 
     let stage = staging_dir(master, system, change);
     let lock = reading(&stage);
@@ -299,7 +302,8 @@ fn read_committed(
     }
 
     let program = program(plugin);
-    let read_plan = format::read(&program, &stage.join("plan.md")).map_err(unreadable)?;
+    let read_plan =
+        format::read_with(&program, &stage.join("plan.md"), reads).map_err(unreadable)?;
     let plan_problems = read_plan.problems().to_vec();
     let plan_layout = read_plan.layout();
     let ReadResult::Plan { document, .. } = read_plan else {
@@ -313,7 +317,7 @@ fn read_committed(
     let mut log_problems = Vec::new();
     for (path, _) in &texts {
         let file = build.join(format!("{}.md", log_repo(path)));
-        let read_log = format::read(&program, &file).map_err(unreadable)?;
+        let read_log = format::read_with(&program, &file, reads).map_err(unreadable)?;
         log_problems.extend(read_log.problems().iter().cloned());
         log_layouts.push(read_log.layout());
         let ReadResult::BuildLog { document, .. } = read_log else {
@@ -376,7 +380,7 @@ pub fn committed_rows(
     change: &str,
 ) -> Result<Vec<BuildRow>, GitError> {
     Ok(rows_of(
-        &read_committed(plugin, master, system, change)?.logs,
+        &read_committed(plugin, master, system, change, format::Reads::Gate)?.logs,
     ))
 }
 
@@ -389,7 +393,18 @@ pub fn status(
     system: &str,
     change: &str,
 ) -> Result<BuildStatus, GitError> {
-    let committed = read_committed(plugin, master, system, change)?;
+    status_with(plugin, master, system, change, format::Reads::Gate)
+}
+
+/// [`status`] for a caller that says whether the parse cache on disk may answer.
+pub fn status_with(
+    plugin: &Path,
+    master: &Path,
+    system: &str,
+    change: &str,
+    reads: format::Reads,
+) -> Result<BuildStatus, GitError> {
+    let committed = read_committed(plugin, master, system, change, reads)?;
     let rows = rows_of(&committed.logs);
     let row_of = |id: &str| rows.iter().find(|r| r.task == id);
 
@@ -531,7 +546,7 @@ pub fn gate(
         }
         Readiness::Ready { dir, .. } => dir,
     };
-    let committed = read_committed(dir, master, system, change)?;
+    let committed = read_committed(dir, master, system, change, format::Reads::Gate)?;
     let newer = |layout: &u32| !format::ACCEPTED_LAYOUTS.contains(layout);
     Ok(if newer(&committed.plan_layout) {
         refuse("This plan needs a newer Workbench", Vec::new())
@@ -585,17 +600,15 @@ pub fn unsaved_rows(
         .filter(|n| n.ends_with(".md") && log_repo(n) != "review")
         .collect();
     names.sort_unstable();
+    let git_repo = git::Repo::open(master)?;
     let program = program(plugin);
     let mut out = Vec::new();
     for name in names {
         let rel = format!("{rel_dir}/{name}");
         let repo = log_repo(&rel);
         let working = read_log(&program, &master.join(&rel), &rel)?;
-        let listed = git::run(master, &["ls-tree", "--name-only", "HEAD", "--", &rel])?;
-        let added = if listed.is_empty() {
-            &working.entries[..]
-        } else {
-            let text = git::run(master, &["show", &format!("HEAD:{rel}")])?;
+        let committed_text = committed_file(&git_repo, &rel)?;
+        let added = if let Some(text) = &committed_text {
             let committed = {
                 let stage = staging_dir(master, system, change);
                 let lock = reading(&stage);
@@ -604,7 +617,7 @@ pub fn unsaved_rows(
                     .join("unsaved")
                     .join("build")
                     .join(format!("{repo}.md"));
-                put(&file, &text)?;
+                put(&file, text)?;
                 read_log(&program, &file, &rel)?
             };
             let n = committed.entries.len();
@@ -621,8 +634,10 @@ pub fn unsaved_rows(
                 });
             }
             &working.entries[n..]
+        } else {
+            &working.entries[..]
         };
-        if !listed.is_empty() && added.is_empty() {
+        if committed_text.is_some() && added.is_empty() {
             continue;
         }
         out.push(UnsavedRows {
@@ -707,6 +722,45 @@ mod tests {
         out.push('\n');
         out.push_str(entries);
         out
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn status_gate_reads_ignore_a_planted_parse_entry_but_shown_reads_take_it() {
+        let home = tempfile::tempdir().unwrap();
+        let old = std::env::var_os("KATA_HOME");
+        std::env::set_var("KATA_HOME", home.path());
+        let tmp = tempfile::tempdir().unwrap();
+        // Its own last line keeps the parallel tests from finding this plan in the in-memory cache.
+        let plan = format!(
+            "{}
+<!-- parse cache test -->
+",
+            app_tasks()
+        );
+        let master = master_with(tmp.path(), &plan);
+        let plugin = testutil::plugin_dir();
+        let ids = |st: &BuildStatus| st.tasks.iter().map(|t| t.id.clone()).collect::<Vec<_>>();
+
+        let real = status_with(plugin, &master, SYS, CHG, format::Reads::Shown).unwrap();
+        let staged = staging_dir(&master, SYS, CHG).join("plan.md");
+        let entry = format::cache_entry_path(&program(plugin), &staged).unwrap();
+        let mut planted: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&entry).unwrap()).unwrap();
+        planted["document"]["tasks"][0]["id"] = "T99".into();
+        std::fs::write(&entry, planted.to_string()).unwrap();
+
+        format::forget_memory_cache();
+        let gate = status(plugin, &master, SYS, CHG).unwrap();
+        format::forget_memory_cache();
+        let shown = status_with(plugin, &master, SYS, CHG, format::Reads::Shown).unwrap();
+        match old {
+            Some(v) => std::env::set_var("KATA_HOME", v),
+            None => std::env::remove_var("KATA_HOME"),
+        }
+
+        assert_eq!(ids(&gate), ids(&real));
+        assert_eq!(ids(&shown)[0], "T99");
     }
 
     #[test]
@@ -1198,9 +1252,8 @@ mod tests {
                     let rel = format!("{DIR}/build/{repo}.md");
                     let msg = format!("docs(sdlc): log {repo}");
                     for _ in 0..200 {
-                        let done = git::run(master, &["add", "--", &rel]).and_then(|_| {
-                            git::run(master, &["commit", "-q", "-m", &msg, "--", &rel])
-                        });
+                        let done =
+                            git::Repo::open(master).and_then(|repo| repo.commit_only(&rel, &msg));
                         match done {
                             Ok(_) => return,
                             Err(e) if e.stderr.contains("index.lock") => {

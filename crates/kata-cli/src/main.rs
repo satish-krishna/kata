@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;

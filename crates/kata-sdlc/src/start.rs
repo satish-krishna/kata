@@ -282,7 +282,7 @@ pub fn prepare(
     }
 
     if current_branch(&master).as_deref() != Some(branch.as_str()) {
-        git::run(&master, &["checkout", "-q", &branch, "--"])?;
+        git::Repo::open(&master)?.checkout_branch(&branch)?;
     }
     let mut repos = Vec::new();
     for c in classified {
@@ -294,10 +294,10 @@ pub fn prepare(
                 } else {
                     format!("origin/{}", c.base)
                 };
-                git::run(&c.path, &["checkout", "-q", "-b", &branch, &from])?;
+                git::Repo::open(&c.path)?.create_branch(&branch, &from)?;
             }
             Action::Checkout => {
-                git::run(&c.path, &["checkout", "-q", &branch, "--"])?;
+                git::Repo::open(&c.path)?.checkout_branch(&branch)?;
             }
             Action::Continue => {}
         }
@@ -336,8 +336,9 @@ pub fn settle(start: &BuildStart) -> Result<Vec<String>, BuildError> {
         {
             continue;
         }
-        git::run(path, &["checkout", "-q", &r.base, "--"])?;
-        git::run(path, &["branch", "-D", &r.branch])?;
+        let repo = git::Repo::open(path)?;
+        repo.checkout_branch(&r.base)?;
+        repo.delete_branch(&r.branch)?;
         gone.push(r.repo.clone());
     }
     Ok(gone)
@@ -363,10 +364,7 @@ pub fn heads(
         if !branch_exists(&path, &format!("change/{change}")) {
             continue;
         }
-        let head = git::run(
-            &path,
-            &["rev-parse", &format!("refs/heads/change/{change}")],
-        )?;
+        let head = git::Repo::open(&path)?.resolve(&format!("refs/heads/change/{change}"))?;
         out.insert(repo.clone(), head);
     }
     Ok(out)

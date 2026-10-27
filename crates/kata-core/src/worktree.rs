@@ -3,8 +3,8 @@
 //! diff summary. The worktree is NOT removed on drop — it persists for review;
 //! cleanup is the operator's via `git worktree remove` / `git worktree prune`.
 
+use git2::{BranchType, ObjectType, Repository, WorktreeAddOptions};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// A created worktree. Plain data — dropping it does NOT remove the worktree.
@@ -20,8 +20,6 @@ pub struct Worktree {
 pub enum WorktreeError {
     #[error("not a git repository (or no HEAD): {0}")]
     NotAGitRepo(String),
-    #[error("`git` was not found on PATH")]
-    GitMissing,
     #[error("could not resolve a home directory for ~/.kata (HOME/USERPROFILE unset)")]
     NoHome,
     #[error("git {cmd} failed (status {status:?}): {stderr}")]
@@ -30,6 +28,8 @@ pub enum WorktreeError {
         status: Option<i32>,
         stderr: String,
     },
+    #[error("{0}")]
+    External(String),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -45,14 +45,16 @@ pub fn create_in(workdir: &str, name: &str, root: &Path) -> Result<Worktree, Wor
     let wd = Path::new(workdir);
 
     // Verify it is a git repo with a resolvable HEAD; otherwise refuse.
-    if !git(wd, &["rev-parse", "--git-dir"])?.status.success() {
-        return Err(WorktreeError::NotAGitRepo(workdir.to_string()));
-    }
-    if !git(wd, &["rev-parse", "--verify", "HEAD"])?
-        .status
-        .success()
-    {
-        return Err(WorktreeError::NotAGitRepo(workdir.to_string()));
+    let repo =
+        Repository::discover(wd).map_err(|_| WorktreeError::NotAGitRepo(workdir.to_string()))?;
+    let head = repo
+        .head()
+        .and_then(|h| h.peel_to_commit())
+        .map_err(|_| WorktreeError::NotAGitRepo(workdir.to_string()))?;
+
+    // The checkout must not need a filter (for example Git LFS) or a signature Kata cannot run.
+    if let Some(reason) = checkout_needs_external(&repo, &head) {
+        return Err(WorktreeError::External(reason));
     }
 
     let id = unique_id();
@@ -62,18 +64,55 @@ pub fn create_in(workdir: &str, name: &str, root: &Path) -> Result<Worktree, Wor
     std::fs::create_dir_all(root)?;
 
     let path_str = wt_dir.to_string_lossy().into_owned();
-    let out = git(wd, &["worktree", "add", "-b", &branch, &path_str, "HEAD"])?;
-    if !out.status.success() {
-        return Err(WorktreeError::Git {
-            cmd: format!("worktree add {branch}"),
-            status: out.status.code(),
-            stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
-        });
+    let failed = |e: git2::Error| WorktreeError::Git {
+        cmd: format!("worktree add {branch}"),
+        status: None,
+        stderr: e.message().trim().to_string(),
+    };
+    let created = repo.branch(&branch, &head, false).map_err(failed)?;
+    let mut opts = WorktreeAddOptions::new();
+    opts.reference(Some(created.get()));
+    let added = repo.worktree(&format!("{s}-{id}"), &wt_dir, Some(&opts));
+    if let Err(e) = added {
+        // Do not leave the branch of a copy that was never made.
+        if let Ok(mut b) = repo.find_branch(&branch, BranchType::Local) {
+            let _ = b.delete();
+        }
+        return Err(failed(e));
+    }
+
+    // `git worktree add` runs post-checkout and ignores its failure; so do we.
+    if let Ok(wt_repo) = Repository::open(&wt_dir) {
+        let head_sha = head.id().to_string();
+        let null_sha = "0".repeat(head_sha.len());
+        let _ = crate::hooks::run_hook(
+            &wt_repo,
+            crate::hooks::Hook::PostCheckout,
+            &[&null_sha, &head_sha, "1"],
+            None,
+            &[],
+        );
     }
     Ok(Worktree {
         path: path_str,
         branch,
     })
+}
+
+/// Why the checkout of `head` cannot be made by Kata itself, if it cannot.
+fn checkout_needs_external(repo: &Repository, head: &git2::Commit) -> Option<String> {
+    let tree = head.tree().ok()?;
+    let mut paths: Vec<String> = Vec::new();
+    let _ = tree.walk(git2::TreeWalkMode::PreOrder, |dir, entry| {
+        if entry.kind() == Some(ObjectType::Blob) {
+            if let Ok(name) = entry.name() {
+                paths.push(format!("{dir}{name}"));
+            }
+        }
+        git2::TreeWalkResult::Ok
+    });
+    let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+    crate::hooks::needs_external(repo, &refs)
 }
 
 /// Resolve `<kata-home>/worktrees`. Returns `NoHome` rather than falling back to
@@ -116,26 +155,11 @@ fn unique_id() -> String {
     format!("{millis:x}-{n}")
 }
 
-/// Run `git -C <dir> <args>`, mapping a missing binary to `GitMissing`.
-fn git(dir: &Path, args: &[&str]) -> Result<std::process::Output, WorktreeError> {
-    Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                WorktreeError::GitMissing
-            } else {
-                WorktreeError::Io(e)
-            }
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serial_test::serial;
+    use std::process::Command;
 
     /// Init a git repo with one committed file ("tracked.txt").
     fn init_repo() -> tempfile::TempDir {
@@ -184,6 +208,31 @@ mod tests {
             wt.branch
         );
         assert!(Path::new(&wt.path).join("tracked.txt").exists());
+    }
+
+    #[test]
+    fn runs_post_checkout_and_ignores_its_failure() {
+        let repo = init_repo();
+        let marker = tempfile::tempdir().unwrap().keep().join("args.txt");
+        let hooks = repo.path().join(".git").join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let script = format!(
+            "#!/bin/sh\necho \"$1 $2 $3\" > '{}'\nexit 1\n",
+            marker.to_string_lossy().replace('\\', "/")
+        );
+        std::fs::write(hooks.join("post-checkout"), script).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let wt = create_in(&repo.path().to_string_lossy(), "hooked", root.path()).unwrap();
+        assert!(Path::new(&wt.path).join("tracked.txt").exists());
+        let got = std::fs::read_to_string(&marker).expect("post-checkout ran");
+        let head = Command::new("git")
+            .arg("-C")
+            .arg(repo.path())
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let head = String::from_utf8_lossy(&head.stdout).trim().to_string();
+        assert_eq!(got.trim(), format!("{} {head} 1", "0".repeat(40)));
     }
 
     #[test]

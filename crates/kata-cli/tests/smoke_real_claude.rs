@@ -2,6 +2,7 @@
 //! is on PATH (run `claude` once interactively to log in first). Catches drift
 //! between our flag set and the actual CLI by driving a trivial task to a
 //! genuinely successful completion. Costs tokens.
+#![allow(clippy::disallowed_methods)]
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};

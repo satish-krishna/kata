@@ -2,12 +2,15 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { DoneView } from '@bindings/DoneView';
+import type { PrLink } from '@bindings/PrLink';
 import type { RunSpec } from '@bindings/RunSpec';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
+import { SdlcStagesStore, stageKey } from '../../core/sdlc/sdlc-stages.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
@@ -58,9 +61,9 @@ const settleBuild = async () => {
   });
 };
 const withStage = (transport: MockTransport, name: string, stage: ChangeInfo['stage'], extra: Partial<ChangeInfo> = {}) => {
-  const real = transport.sdlcChanges.bind(transport);
-  vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
-    (await real(m, s)).map((c) => (c.change === name ? { ...c, stage, ...extra } : c)),
+  const real = transport.sdlcReadChange.bind(transport);
+  vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
+    [await real(m, s, n)].map((c) => (c.change === name ? { ...c, stage, ...extra } : c))[0],
   );
 };
 
@@ -111,15 +114,15 @@ describe('ChangePageViewModel', () => {
     const transport = new MockTransport();
     const { vm } = setup(FNOL, transport);
     await ready(vm);
-    const realChanges = transport.sdlcChanges.bind(transport);
+    const realChanges = transport.sdlcReadChange.bind(transport);
     let reloading!: () => void;
     const started = new Promise<void>((r) => (reloading = r));
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, sys) => {
+    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, sys, n) => {
       reloading();
       await gate;
-      return realChanges(m, sys);
+      return realChanges(m, sys, n);
     });
     const decided = vm.act('accept-spec');
     await started;
@@ -529,7 +532,7 @@ describe('ChangePageViewModel', () => {
     it('reloads the change after a run', async () => {
       const { vm, transport, runAgent } = setup(FNOL);
       await ready(vm);
-      const changes = vi.spyOn(transport, 'sdlcChanges');
+      const changes = vi.spyOn(transport, 'sdlcReadChange');
       await vm.act('start-spec');
       expect(runAgent).toHaveBeenCalled();
       expect(changes).toHaveBeenCalled();
@@ -736,7 +739,7 @@ describe('ChangePageViewModel', () => {
     const finished = async () => {
       const transport = new MockTransport();
       withStage(transport, BUILD, 'build-finished');
-      await transport.sdlcPublish('f', 'claims-intent', 'claims', BUILD, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', BUILD));
+      await transport.sdlcPublish('f', 'w1', 'claims-intent', 'claims', BUILD, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', BUILD));
       return transport;
     };
 
@@ -1109,5 +1112,96 @@ describe('the build\'s preview', () => {
     expect(TestBed.inject(BuildPageViewModel).current()!.round).toBeNull();
     // The review is the stage button's and the done dialog's one path: it runs with Kata's review limit.
     expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(7200);
+  });
+});
+
+const link = (repo: string, over: Partial<PrLink> = {}): PrLink => ({ repo, url: `https://github.com/acme/${repo}/pull/7`, state: 'open', seenAt: 1790000000, ...over });
+const view = (over: Partial<DoneView> = {}): DoneView => ({ done: true, links: [], linksFrom: 'saved', offerDeclare: false, prCheckFailed: false, ...over });
+const forever = () => new Promise<never>(() => undefined);
+
+describe('ChangePageViewModel reads one change', () => {
+  it('reads only its own change (R4.1)', async () => {
+    const transport = new MockTransport();
+    const one = vi.spyOn(transport, 'sdlcReadChange');
+    const names = vi.spyOn(transport, 'sdlcChangeNames');
+    const pass = vi.spyOn(transport, 'sdlcReadStages');
+    const { vm } = setup(FNOL, transport);
+    await ready(vm);
+    expect(one).toHaveBeenCalledTimes(1);
+    expect(one).toHaveBeenCalledWith(expect.any(String), 'claims', FNOL);
+    expect(names).not.toHaveBeenCalled();
+    expect(pass).not.toHaveBeenCalled();
+    expect(vm.change()).toEqual(await transport.sdlcReadChange('', 'claims', FNOL));
+    expect(vm.docName()).toBe('spec.md');
+    expect(vm.doc()).toContain('# Spec: photo upload');
+    expect(vm.actions()).toEqual(actionsFor(vm.change()!.stage));
+  });
+
+  it('reads the change itself while the home pass is still going (R4.2)', async () => {
+    const transport = new MockTransport();
+    const pass = vi.spyOn(transport, 'sdlcReadStages').mockImplementation(forever);
+    const { vm } = setup(FNOL, transport);
+    const store = TestBed.inject(SdlcStagesStore);
+    store.markChecking('acme-claims');
+    await ready(vm);
+    expect(vm.state()).toBe('ready');
+    expect(pass).not.toHaveBeenCalled();
+    const row = store.rows(vm.current()!.id)[stageKey('claims', FNOL)];
+    expect(row?.info?.change).toBe(FNOL);
+    expect(row?.info?.stage).toBe(vm.change()!.stage);
+    expect(row?.checking).toBe(false);
+  });
+});
+
+describe('ChangePageViewModel shows lasting links', () => {
+  const finishedBuild = (transport: MockTransport) => withStage(transport, MOCK_BUILD_CHANGE, 'build-finished');
+
+  it('a done change shows its saved links after a restart (R8.1)', async () => {
+    const transport = new MockTransport();
+    finishedBuild(transport);
+    const done = vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue(view({ links: [link('claims-core'), link('customer-portal')] }));
+    vi.spyOn(transport, 'sdlcRefreshPrStates').mockImplementation(forever);
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    await ready(vm);
+    expect(done.mock.calls[0][5]).toBe(true);
+    expect(vm.done()).toBe(true);
+    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['claims-core', 'customer-portal']);
+    expect(vm.actions()).toEqual([]);
+  });
+
+  it.each([
+    ['every pull request still open', ['open', 'open'], false],
+    ['one merged and the rest open', ['merged', 'open'], false],
+    ['every pull request merged', ['merged', 'merged'], false],
+    ['one closed without merging', ['closed', 'open'], false],
+    ['GitHub cannot be asked', ['open', 'merged'], true],
+  ] as const)('updates link states in the background (R8.2): %s', async (_row, states, stale) => {
+    const transport = new MockTransport();
+    finishedBuild(transport);
+    const saved = [link('claims-core'), link('customer-portal')];
+    vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue(view({ links: saved }));
+    const fresh = saved.map((l, i) => ({ ...l, state: states[i], seenAt: stale ? 1790000000 : Math.floor(Date.now() / 1000) + 60 }));
+    let answer!: (v: DoneView) => void;
+    vi.spyOn(transport, 'sdlcRefreshPrStates').mockReturnValue(new Promise<DoneView>((r) => (answer = r)));
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    await ready(vm);
+    expect(vm.done()).toBe(true);
+    expect(vm.pullLinks().every((l) => l.seen === null)).toBe(true);
+    answer(view({ links: fresh }));
+    await vi.waitFor(() => expect(vm.pullLinks().map((l) => l.state)).toEqual(states));
+    expect(vm.done()).toBe(true);
+    expect(vm.pullLinks().map((l) => l.seen !== null)).toEqual([stale, stale]);
+  });
+
+  it('keeps the saved links and says when they were last seen when the refresh fails (R8.2)', async () => {
+    const transport = new MockTransport();
+    finishedBuild(transport);
+    vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue(view({ links: [link('claims-core')] }));
+    vi.spyOn(transport, 'sdlcRefreshPrStates').mockRejectedValue(new Error('offline'));
+    const { vm } = setup(MOCK_BUILD_CHANGE, transport);
+    await ready(vm);
+    await vi.waitFor(() => expect(vm.pullLinks()[0].seen).not.toBeNull());
+    expect(vm.done()).toBe(true);
+    expect(vm.pullLinks()[0].state).toBe('open');
   });
 });

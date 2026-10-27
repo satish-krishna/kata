@@ -4,34 +4,23 @@ use crate::snapshot::status_entries;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-pub(crate) fn branch_exists(repo: &Path, name: &str) -> bool {
-    git::run(
-        repo,
-        &[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{name}"),
-        ],
-    )
-    .is_ok()
+pub fn branch_exists(repo: &Path, name: &str) -> bool {
+    git::Repo::open(repo).is_ok_and(|r| r.branch_exists(name))
 }
 
 /// The base branch for change branches: `main` if it exists, else `master`, else the current branch.
 pub fn default_base(master: &Path) -> Option<String> {
+    let repo = git::Repo::open(master).ok()?;
     ["main", "master"]
         .into_iter()
-        .find(|b| branch_exists(master, b))
+        .find(|b| repo.branch_exists(b))
         .map(str::to_string)
-        .or_else(|| current_branch(master))
+        .or_else(|| repo.current_branch())
 }
 
 /// The checked-out branch; `None` on a detached or unborn HEAD.
 pub fn current_branch(master: &Path) -> Option<String> {
-    git::run(master, &["rev-parse", "--verify", "-q", "HEAD"]).ok()?;
-    git::run(master, &["symbolic-ref", "--short", "-q", "HEAD"])
-        .ok()
-        .filter(|b| !b.is_empty())
+    git::Repo::open(master).ok()?.current_branch()
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -110,7 +99,7 @@ pub fn start_pending(master: &Path, base: &str, now_unix: u64) -> Result<String,
     require_local_branch(master, base)?;
     ensure_clean(master)?;
     let name = format!("change/pending-{}", utc_stamp(now_unix));
-    git::run(master, &["checkout", "-q", "-b", &name, base])?;
+    git::Repo::open(master)?.create_branch(&name, base)?;
     Ok(name)
 }
 
@@ -128,19 +117,11 @@ fn change_folders<'a>(paths: impl Iterator<Item = &'a str>) -> BTreeSet<String> 
         .collect()
 }
 
-fn existing_on(master: &Path, rev: &str, system_change: &str) -> bool {
-    git::run(
-        master,
-        &[
-            "ls-tree",
-            "--name-only",
-            rev,
-            "--",
-            &format!("intent/{system_change}"),
-        ],
-    )
-    .map(|o| !o.is_empty())
-    .unwrap_or(false)
+fn existing_on(repo: &git::Repo, rev: &str, system_change: &str) -> bool {
+    repo.entry_at(rev, &format!("intent/{system_change}"))
+        .ok()
+        .flatten()
+        .is_some()
 }
 
 /// Settle a pending branch: rename it to `change/<folder>` if the run created a change folder,
@@ -163,28 +144,25 @@ pub fn finish_pending(
         .into_iter()
         .map(|e| e.path)
         .collect();
-    if let Ok(diff) = git::run(master, &["diff", "--name-only", &format!("{base}...HEAD")]) {
-        paths.extend(diff.lines().map(str::to_string));
+    let repo = git::Repo::open(master)?;
+    if let Ok(changed) = repo.files_changed_from_merge_base(base) {
+        paths.extend(changed);
     }
     let created = change_folders(paths.iter().map(String::as_str))
         .into_iter()
-        .find(|sc| !existing_on(master, base, sc));
+        .find(|sc| !existing_on(&repo, base, sc));
     if let Some(sc) = created {
         let change = sc.rsplit('/').next().unwrap_or(&sc).to_string();
         let branch = format!("change/{change}");
-        git::run(master, &["branch", "-m", pending, &branch])?;
+        repo.rename_branch(pending, &branch)?;
         return Ok(FinishOutcome::Renamed { branch, change });
     }
-    let ahead = git::run(
-        master,
-        &["rev-list", "--count", &format!("{base}..{pending}")],
-    )?;
-    if ahead.trim() != "0" {
+    if !repo.revs_between(base, pending)?.is_empty() {
         return Err(BranchError::PendingHasCommits);
     }
     ensure_clean(master)?;
-    git::run(master, &["checkout", "-q", base])?;
-    git::run(master, &["branch", "-D", pending])?;
+    repo.checkout_branch(base)?;
+    repo.delete_branch(pending)?;
     Ok(FinishOutcome::Deleted)
 }
 
@@ -192,7 +170,7 @@ pub fn finish_pending(
 pub fn checkout(master: &Path, branch: &str) -> Result<(), BranchError> {
     require_local_branch(master, branch)?;
     ensure_clean(master)?;
-    git::run(master, &["checkout", "-q", branch, "--"])?;
+    git::Repo::open(master)?.checkout_branch(branch)?;
     Ok(())
 }
 
@@ -380,6 +358,29 @@ mod tests {
         assert!(matches!(&err, BranchError::Dirty(p) if p == &["README.md"]));
         assert_eq!(current_branch(&repo).as_deref(), Some(pending.as_str()));
         assert!(branch_exists(&repo, &pending));
+    }
+
+    #[test]
+    fn post_checkout_failure_keeps_the_switch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        git::run(&repo, &["branch", "other"]).unwrap();
+        // The hook leaves a mark and then fails; git ignores that failure for the switch.
+        std::fs::write(
+            repo.join(".git/hooks/post-checkout"),
+            "#!/bin/sh\necho \"$@\" >> .git/hook-ran\nexit 1\n",
+        )
+        .unwrap();
+
+        let pending = start_pending(&repo, "main", 1_792_368_000).unwrap();
+        assert_eq!(current_branch(&repo).as_deref(), Some(pending.as_str()));
+        checkout(&repo, "other").unwrap();
+        assert_eq!(current_branch(&repo).as_deref(), Some("other"));
+
+        let ran = std::fs::read_to_string(repo.join(".git/hook-ran")).unwrap();
+        let lines: Vec<&str> = ran.lines().collect();
+        assert_eq!(lines.len(), 2, "{ran}");
+        assert!(lines.iter().all(|l| l.ends_with(" 1")), "{ran}");
     }
 
     #[test]

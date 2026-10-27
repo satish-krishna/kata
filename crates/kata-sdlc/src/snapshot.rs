@@ -1,5 +1,5 @@
 //! Run snapshot: what the master repo looked like before an agent run, and what the run left behind.
-use crate::git::{self, GitError};
+use crate::git::{GitError, Repo};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -63,25 +63,17 @@ pub(crate) struct Entry {
 /// Parse `git status --porcelain=v1 -uall -z`. A rename or copy yields its new path
 /// (code kept) and its origin (reported as a deletion).
 pub(crate) fn status_entries(dir: &Path) -> Result<Vec<Entry>, GitError> {
-    let out = git::run(dir, &["status", "--porcelain=v1", "-uall", "-z"])?;
-    let mut tokens = out.split('\0').filter(|t| !t.is_empty());
     let mut entries = Vec::new();
-    while let Some(tok) = tokens.next() {
-        if tok.len() < 4 || !tok.is_char_boundary(3) {
-            continue;
-        }
-        let (xy, path) = (&tok[..2], &tok[3..]);
+    for e in Repo::open(dir)?.status("")? {
         entries.push(Entry {
-            xy: xy.to_string(),
-            path: path.to_string(),
+            xy: format!("{}{}", e.index, e.worktree),
+            path: e.path,
         });
-        if xy.contains('R') || xy.contains('C') {
-            if let Some(from) = tokens.next() {
-                entries.push(Entry {
-                    xy: " D".to_string(),
-                    path: from.to_string(),
-                });
-            }
+        if let Some(from) = e.from {
+            entries.push(Entry {
+                xy: " D".to_string(),
+                path: from,
+            });
         }
     }
     Ok(entries)
@@ -111,12 +103,12 @@ fn is_build_log(path: &str, build: Option<&BuildScope>) -> bool {
 }
 
 fn current_head(master: &Path) -> Option<String> {
-    git::run(master, &["rev-parse", "--verify", "-q", "HEAD"]).ok()
+    Repo::open(master).ok()?.head_sha().ok()
 }
 
-pub(crate) fn hash_of(master: &Path, path: &str) -> Result<String, GitError> {
+pub fn hash_of(master: &Path, path: &str) -> Result<String, GitError> {
     if master.join(path).is_file() {
-        git::run(master, &["hash-object", "--", path])
+        Repo::open(master)?.hash_file(path)
     } else {
         Ok(String::new())
     }
@@ -144,19 +136,17 @@ pub fn leftovers(
     product_repos: &[PathBuf],
     build: Option<&BuildScope>,
 ) -> Result<Leftovers, GitError> {
+    let subjects = |revs: &[String]| -> Result<Vec<String>, GitError> {
+        Ok(Repo::open(master)?
+            .log_messages(revs)?
+            .iter()
+            .map(|e| e.subject())
+            .collect())
+    };
     let new_commits = match (&before.head, current_head(master)) {
         (_, None) => Vec::new(),
-        (Some(head), Some(_)) => {
-            let range = format!("{head}..HEAD");
-            git::run(master, &["log", "--format=%s", &range])?
-                .lines()
-                .map(str::to_string)
-                .collect()
-        }
-        (None, Some(_)) => git::run(master, &["log", "--format=%s"])?
-            .lines()
-            .map(str::to_string)
-            .collect(),
+        (Some(head), Some(_)) => subjects(&[format!("{head}..HEAD")])?,
+        (None, Some(_)) => subjects(&["HEAD".to_string()])?,
     };
 
     let mut discardable = Vec::new();
@@ -192,7 +182,7 @@ pub fn leftovers(
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| repo.to_string_lossy().into_owned());
-        match git::run(repo, &["status", "--porcelain"]) {
+        match Repo::open(repo).and_then(|r| r.status("")) {
             Ok(out) if !out.is_empty() => product_repos_changed.push(name),
             Ok(_) => {}
             Err(_) => product_repos_unchecked.push(name),
@@ -229,17 +219,15 @@ pub fn discard(
             .ok_or_else(|| DiscardError::NotDiscardable(path.clone()))?;
         plan.push(entry);
     }
+    let repo = Repo::open(master)?;
     for e in plan {
         if e.xy == "??" {
             std::fs::remove_file(master.join(&e.path))?;
         } else if e.xy.starts_with('A') || e.xy.starts_with('R') || e.xy.starts_with('C') {
             // Not in HEAD, so restore has nothing to restore from.
-            git::run(master, &["rm", "-f", "-q", "--", &e.path])?;
+            repo.remove_paths(&[e.path.as_str()])?;
         } else {
-            git::run(
-                master,
-                &["restore", "--staged", "--worktree", "--", &e.path],
-            )?;
+            repo.restore_paths(&[e.path.as_str()])?;
         }
     }
     Ok(())
@@ -248,6 +236,7 @@ pub fn discard(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git;
     use crate::testutil::{commit_file, repo};
 
     #[test]

@@ -1,6 +1,7 @@
 //! Declaring a change done: is GitHub reachable and signed in, and one pull request per touched
-//! repository, the master last. Every GitHub call goes through the `Gh` trait; Kata keeps no
-//! credential, `gh` owns the engineer's sign-in.
+//! repository, the master last. Every GitHub call goes through the `GitHub` trait and the push
+//! through `git::Repo::push_branch`; Kata keeps no credential, it reads the engineer's sign-in
+//! fresh for each use.
 use crate::base::{
     base_branch, base_info, base_info_for, build_work_revs, commits_ahead_of_local_base, BaseInfo,
 };
@@ -11,45 +12,13 @@ use crate::decide::change_scope;
 use crate::diff::{changed_files, Part};
 use crate::frontmatter;
 use crate::git;
+use crate::github::{parse_repo_path, ApiError, GitHub, GitHubHosts};
+use crate::prs::{self, PrEntry, PrRecord, PrStateKind};
 use crate::start::BuildError;
+use crate::store;
 use crate::workspace::{self, system_repos};
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::Path;
-
-/// Runs the GitHub CLI. `Err` carries the text a person can read.
-pub trait Gh {
-    fn run(&self, dir: &Path, args: &[&str]) -> Result<String, String>;
-}
-
-/// The real `gh`, never prompting.
-pub struct GhCli;
-
-impl Gh for GhCli {
-    fn run(&self, dir: &Path, args: &[&str]) -> Result<String, String> {
-        let out = std::process::Command::new("gh")
-            .args(args)
-            .current_dir(dir)
-            .env("GH_PROMPT_DISABLED", "1")
-            .stdin(std::process::Stdio::null())
-            .output()
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    GH_MISSING.to_string()
-                } else {
-                    e.to_string()
-                }
-            })?;
-        let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if out.status.success() {
-            return Ok(stdout);
-        }
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        Err(if stderr.is_empty() { stdout } else { stderr })
-    }
-}
-
-const GH_MISSING: &str = "gh is not installed";
 
 /// The host of a git remote URL, lowercase and without port or user info. Local paths have none.
 pub fn origin_host(url: &str) -> Option<String> {
@@ -79,7 +48,7 @@ pub fn origin_host(url: &str) -> Option<String> {
 
 /// `[user@]host:path`, where the colon comes before any slash and the text is not a Windows
 /// path. scp syntax never contains a backslash.
-fn is_scp_like(raw: &str) -> bool {
+pub(crate) fn is_scp_like(raw: &str) -> bool {
     if raw.contains('\\') {
         return false;
     }
@@ -92,8 +61,9 @@ fn is_scp_like(raw: &str) -> bool {
 }
 
 fn origin_url(path: &Path) -> Option<String> {
-    git::run(path, &["remote", "get-url", "origin"])
-        .ok()
+    git::Repo::open(path)
+        .ok()?
+        .remote_url("origin")
         .filter(|u| !u.is_empty())
 }
 
@@ -111,9 +81,7 @@ pub struct PublishRepo {
 /// Why a change cannot be declared done yet.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum NotReady {
-    #[error("Install the GitHub CLI (gh), run gh auth login, then declare done again.")]
-    GhMissing,
-    #[error("Not signed in to {0}. Run gh auth login, then declare done again.")]
+    #[error("Not signed in to {0}. Sign in with gh auth login or Git Credential Manager, then declare done again.")]
     NotSignedIn(String),
     #[error("{0} has no GitHub remote")]
     NoRemote(String),
@@ -243,71 +211,60 @@ pub fn change_repos(
     Ok(out)
 }
 
-fn unreachable_text(e: &str) -> bool {
-    let e = e.to_lowercase();
-    [
-        "could not connect",
-        "error connecting",
-        "timeout",
-        "no such host",
-    ]
-    .iter()
-    .any(|p| e.contains(p))
+/// A client for `host`, or the plain not-signed-in answer when no sign-in is found.
+fn client(hosts: &dyn GitHubHosts, host: &str) -> Result<Box<dyn GitHub>, NotReady> {
+    hosts
+        .github(host)
+        .ok_or_else(|| NotReady::NotSignedIn(host.to_string()))
 }
 
-fn classify(e: &str, host: &str) -> NotReady {
-    if e == GH_MISSING {
-        NotReady::GhMissing
-    } else if unreachable_text(e) {
-        NotReady::Unreachable
-    } else {
-        NotReady::NotSignedIn(host.to_string())
+/// What a failed `GET /user` means: a rejected sign-in, or GitHub out of reach.
+fn classify_user(e: &ApiError, host: &str) -> NotReady {
+    match e {
+        ApiError::Status {
+            status: 401 | 403, ..
+        } => NotReady::NotSignedIn(host.to_string()),
+        _ => NotReady::Unreachable,
     }
 }
 
 /// Signed in to every distinct host the repositories' origins name; returns the account line.
-pub fn signed_in(gh: &dyn Gh, repos: &[PublishRepo]) -> Result<String, NotReady> {
+pub fn signed_in(hosts: &dyn GitHubHosts, repos: &[PublishRepo]) -> Result<String, NotReady> {
     let mut seen: Vec<String> = Vec::new();
     let mut lines = Vec::new();
     for r in repos {
-        let path = Path::new(&r.path);
-        let Some(url) = origin_url(path) else {
+        let Some(url) = origin_url(Path::new(&r.path)) else {
             continue;
         };
-        // A local path or an unparsable remote has no host; `gh` talks to github.com then.
+        // A local path or an unparsable remote has no host; GitHub's own host is assumed then.
         let host = origin_host(&url).unwrap_or_else(|| "github.com".to_string());
         if seen.contains(&host) {
             continue;
         }
-        let out = gh
-            .run(path, &["auth", "status", "--hostname", &host])
-            .map_err(|e| classify(&e, &host))?;
-        let account = out
-            .lines()
-            .map(str::trim)
-            .find(|l| l.contains("Logged in to"))
-            .or_else(|| out.lines().map(str::trim).find(|l| !l.is_empty()))
-            .map(|l| {
-                l.trim_start_matches(|c: char| !c.is_alphanumeric())
-                    .to_string()
-            })
-            .unwrap_or_else(|| host.clone());
-        lines.push(account);
+        let login = client(hosts, &host)?
+            .user()
+            .map_err(|e| classify_user(&e, &host))?;
+        lines.push(format!("Logged in to {host} as {login}"));
         seen.push(host);
     }
     Ok(lines.join("; "))
 }
 
-/// Every repository has an `origin` that `gh` can see.
-pub fn origins(gh: &dyn Gh, repos: &[PublishRepo]) -> Result<(), NotReady> {
+/// Every repository has an `origin` GitHub can see.
+pub fn origins(hosts: &dyn GitHubHosts, repos: &[PublishRepo]) -> Result<(), NotReady> {
     for r in repos {
-        let path = Path::new(&r.path);
-        let url = origin_url(path).ok_or_else(|| NotReady::NoRemote(r.repo.clone()))?;
-        gh.run(path, &["repo", "view", &url, "--json", "url"])
-            .map_err(|e| match classify(&e, "") {
-                NotReady::NotSignedIn(_) => NotReady::NoRemote(r.repo.clone()),
-                other => other,
-            })?;
+        let no_remote = || NotReady::NoRemote(r.repo.clone());
+        let url = origin_url(Path::new(&r.path)).ok_or_else(no_remote)?;
+        let (owner, name) = parse_repo_path(&url).ok_or_else(no_remote)?;
+        let host = origin_host(&url).ok_or_else(no_remote)?;
+        match client(hosts, &host)?.repo(&owner, &name) {
+            Ok(()) => {}
+            Err(ApiError::Status {
+                status: 404 | 401 | 403,
+                ..
+            }) => return Err(no_remote()),
+            Err(_) => return Err(NotReady::Unreachable),
+        }
     }
     Ok(())
 }
@@ -335,13 +292,86 @@ pub struct PrResult {
     pub outcome: PrOutcome,
 }
 
+/// What publishing is doing now, for the Workbench's progress line.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum PublishStep {
+    Pushing { repo: String },
+    Opening { repo: String },
+}
+
+/// What publishing keeps of the pull requests it opened: the record, and where each change to it
+/// is saved.
+pub struct Recorder<'a> {
+    record: PrRecord,
+    save: Box<dyn FnMut(&PrRecord) + 'a>,
+}
+
+impl<'a> Recorder<'a> {
+    pub fn new(record: PrRecord, save: impl FnMut(&PrRecord) + 'a) -> Self {
+        Recorder {
+            record,
+            save: Box::new(save),
+        }
+    }
+
+    /// The change's saved record, or a new one, saved to `pull-requests.json` as it changes.
+    pub fn stored(workspace_id: &str, system: &str, change: &str) -> Recorder<'static> {
+        let record = store::load_pr_records()
+            .into_iter()
+            .find(|r| r.workspace_id == workspace_id && r.system == system && r.change == change)
+            .unwrap_or_else(|| PrRecord::new(workspace_id, system, change));
+        Recorder::new(record, |r| {
+            // A record that cannot be saved is lost on restart; the pull requests are still
+            // on GitHub and a retry reuses them.
+            let _ = store::save_pr_record(r);
+        })
+    }
+
+    /// Keep one repository's pull request, and mark the change declared when every repository in
+    /// `touched` has one. Saves at once.
+    fn keep(&mut self, entry: PrEntry, touched: &[PublishRepo]) {
+        match self.record.repos.iter_mut().find(|e| e.repo == entry.repo) {
+            Some(old) => *old = entry,
+            None => self.record.repos.push(entry),
+        }
+        if touched
+            .iter()
+            .all(|t| self.record.repos.iter().any(|e| e.repo == t.repo))
+        {
+            self.record.declared_at = Some(prs::now_secs());
+        }
+        (self.save)(&self.record);
+    }
+
+    /// A record nothing saves, for tests that do not look at it.
+    #[cfg(test)]
+    pub(crate) fn unsaved() -> Self {
+        Recorder::new(PrRecord::new("", "", ""), |_| {})
+    }
+
+    pub fn record(&self) -> &PrRecord {
+        &self.record
+    }
+}
+
 /// Open (or reuse) one pull request per repository, in order; `master` names the one last.
+/// `rec` keeps each pull request as soon as it opens. `on_step` hears what each repository is
+/// doing before it does it.
 pub fn publish(
-    gh: &dyn Gh,
+    hosts: &dyn GitHubHosts,
     master: &str,
     system: &str,
     change: &str,
     repos: &[PublishRepo],
+    rec: &mut Recorder,
+    on_step: &mut dyn FnMut(PublishStep),
 ) -> Vec<PrResult> {
     let branch = format!("change/{change}");
     let title = repos
@@ -370,15 +400,31 @@ pub fn publish(
             )
         };
         let outcome = if is_change_name(change) {
-            open_one(gh, r, is_master, &branch, &title, &body)
+            open_one(hosts, r, is_master, &branch, &title, &body, on_step)
         } else {
             PrOutcome::Failed {
                 error: format!("invalid change name: {change}"),
             }
         };
-        if !is_master {
-            if let PrOutcome::Opened { url } | PrOutcome::Reused { url } = &outcome {
+        if let PrOutcome::Opened { url } | PrOutcome::Reused { url } = &outcome {
+            if !is_master {
                 product_urls.push((r.repo.clone(), url.clone()));
+            }
+            // The branch tip is what was just pushed.
+            if let Ok(head) = git::Repo::open(Path::new(&r.path))
+                .and_then(|repo| repo.resolve(&format!("refs/heads/{branch}")))
+            {
+                rec.keep(
+                    PrEntry {
+                        repo: r.repo.clone(),
+                        url: url.clone(),
+                        number: prs::pull_number(url),
+                        pushed_head: head,
+                        state: PrStateKind::Open,
+                        seen_at: prs::now_secs(),
+                    },
+                    repos,
+                );
             }
         }
         results.push(PrResult {
@@ -389,79 +435,58 @@ pub fn publish(
     results
 }
 
-fn list_open(gh: &dyn Gh, r: &PublishRepo, branch: &str) -> Result<Option<String>, String> {
-    let out = gh.run(
-        Path::new(&r.path),
-        &[
-            "pr", "list", "--head", branch, "--state", "open", "--json", "url", "--jq", ".[0].url",
-        ],
-    )?;
-    let url = out.trim();
-    Ok((!url.is_empty()).then(|| url.to_string()))
+/// Where a repository's pull requests live: its host, owner and name, from the `origin` URL.
+fn github_target(
+    hosts: &dyn GitHubHosts,
+    r: &PublishRepo,
+) -> Result<(Box<dyn GitHub>, String, String, String), NotReady> {
+    let no_remote = || NotReady::NoRemote(r.repo.clone());
+    let url = origin_url(Path::new(&r.path)).ok_or_else(no_remote)?;
+    let (owner, name) = parse_repo_path(&url).ok_or_else(no_remote)?;
+    let host = origin_host(&url).ok_or_else(no_remote)?;
+    Ok((client(hosts, &host)?, owner, name, host))
 }
 
 fn open_one(
-    gh: &dyn Gh,
+    hosts: &dyn GitHubHosts,
     r: &PublishRepo,
     is_master: bool,
     branch: &str,
     title: &str,
     body: &str,
+    on_step: &mut dyn FnMut(PublishStep),
 ) -> PrOutcome {
     let failed = |error: String| PrOutcome::Failed { error };
-    let path = Path::new(&r.path);
-    let existing = match list_open(gh, r, branch) {
-        Ok(url) => url,
-        Err(e) => return failed(e),
-    };
-    if let Err(e) = git::run(path, &["push", "-u", "origin", branch]) {
-        return failed(e.to_string());
-    }
-    // A reused pull request keeps its title and, except the master's, its body.
-    if let (Some(url), false) = (&existing, is_master) {
-        return PrOutcome::Reused { url: url.clone() };
-    }
-    let file = match tempfile::NamedTempFile::new().and_then(|mut f| {
-        f.write_all(body.as_bytes())?;
-        f.flush()?;
-        Ok(f.into_temp_path())
-    }) {
-        Ok(f) => f,
+    let (gh, owner, name, host) = match github_target(hosts, r) {
+        Ok(t) => t,
         Err(e) => return failed(e.to_string()),
     };
-    let file_arg = file.to_string_lossy().into_owned();
-    if let Some(url) = existing {
-        let edited = gh.run(path, &["pr", "edit", &url, "--body-file", &file_arg]);
-        drop(file);
-        return match edited {
-            Ok(_) => PrOutcome::Reused { url },
-            Err(e) => failed(e),
-        };
+    let existing = match gh.open_pull_for_branch(&owner, &name, branch) {
+        Ok(pull) => pull,
+        Err(e) => return failed(e.to_string()),
+    };
+    on_step(PublishStep::Pushing {
+        repo: r.repo.clone(),
+    });
+    let pushed = git::Repo::open(Path::new(&r.path))
+        .and_then(|repo| repo.push_branch("origin", branch, hosts.credential(&host).as_ref()));
+    if let Err(e) = pushed {
+        return failed(e.to_string());
     }
-    let created = gh.run(
-        path,
-        &[
-            "pr",
-            "create",
-            "--base",
-            &r.base,
-            "--head",
-            branch,
-            "--title",
-            title,
-            "--body-file",
-            &file_arg,
-        ],
-    );
-    drop(file);
-    match created {
-        Ok(out) => match out.lines().map(str::trim).rfind(|l| !l.is_empty()) {
-            Some(url) => PrOutcome::Opened {
-                url: url.to_string(),
-            },
-            None => failed("gh printed no pull request address".to_string()),
+    on_step(PublishStep::Opening {
+        repo: r.repo.clone(),
+    });
+    // A reused pull request keeps its title and, except the master's, its body.
+    match (existing, is_master) {
+        (Some(pull), false) => PrOutcome::Reused { url: pull.url },
+        (Some(pull), true) => match gh.edit_pull_body(&owner, &name, pull.number, body) {
+            Ok(()) => PrOutcome::Reused { url: pull.url },
+            Err(e) => failed(e.to_string()),
         },
-        Err(e) => failed(e),
+        (None, _) => match gh.create_pull(&owner, &name, &r.base, branch, title, body) {
+            Ok(pull) => PrOutcome::Opened { url: pull.url },
+            Err(e) => failed(e.to_string()),
+        },
     }
 }
 
@@ -476,7 +501,7 @@ pub struct PrState {
 
 /// The open pull request of the change in each repository, if any.
 pub fn open_pull_requests(
-    gh: &dyn Gh,
+    hosts: &dyn GitHubHosts,
     repos: &[PublishRepo],
     change: &str,
 ) -> Result<Vec<PrState>, String> {
@@ -484,83 +509,33 @@ pub fn open_pull_requests(
     repos
         .iter()
         .map(|r| {
+            let (gh, owner, name, _) = github_target(hosts, r).map_err(|e| e.to_string())?;
+            let pull = gh
+                .open_pull_for_branch(&owner, &name, &branch)
+                .map_err(|e| e.to_string())?;
             Ok(PrState {
                 repo: r.repo.clone(),
-                url: list_open(gh, r, &branch)?,
+                url: pull.map(|p| p.url),
             })
         })
         .collect()
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use crate::github::tests::{hosts, refused_root, resp, serve, FakeSource, Server, TOKEN};
+    use crate::github::{ApiError, Credential, FakeGitHub};
     use crate::testutil::{bare_origin, checkout, commit_file, repo};
     use serial_test::serial;
     use std::path::PathBuf;
-    use std::sync::Mutex;
 
-    /// Records every call and answers from a table: the first entry whose needle occurs in
-    /// `"<repo dir> <args>"` wins; anything else answers an empty success.
-    #[derive(Default)]
-    struct FakeGh {
-        table: Vec<(String, Result<String, String>)>,
-        calls: Mutex<Vec<String>>,
-        bodies: Mutex<Vec<(String, String)>>,
-    }
-
-    impl FakeGh {
-        fn answer(mut self, needle: &str, result: Result<&str, &str>) -> Self {
-            self.table.push((
-                needle.to_string(),
-                result.map(String::from).map_err(String::from),
-            ));
-            self
-        }
-        fn calls(&self) -> Vec<String> {
-            self.calls.lock().unwrap().clone()
-        }
-        fn creates(&self) -> Vec<String> {
-            self.calls()
-                .into_iter()
-                .filter(|c| c.contains(" pr create "))
-                .map(|c| c.split(' ').next().unwrap().to_string())
-                .collect()
-        }
-        fn body(&self, repo: &str) -> String {
-            self.bodies
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|(r, _)| r == repo)
-                .map(|(_, b)| b.clone())
-                .unwrap_or_default()
-        }
-    }
-
-    impl Gh for FakeGh {
-        fn run(&self, dir: &Path, args: &[&str]) -> Result<String, String> {
-            let name = dir.file_name().unwrap().to_string_lossy().to_string();
-            let line = format!("{name} {}", args.join(" "));
-            if let Some(i) = args.iter().position(|a| *a == "--body-file") {
-                let body = std::fs::read_to_string(args[i + 1]).unwrap();
-                self.bodies.lock().unwrap().push((name, body));
-            }
-            self.calls.lock().unwrap().push(line.clone());
-            self.table
-                .iter()
-                .find(|(needle, _)| line.contains(needle.as_str()))
-                .map(|(_, r)| r.clone())
-                .unwrap_or_else(|| Ok(String::new()))
-        }
-    }
-
-    struct Fx {
-        dir: tempfile::TempDir,
+    pub(crate) struct Fx {
+        pub(crate) dir: tempfile::TempDir,
     }
 
     impl Fx {
-        fn path(&self, name: &str) -> PathBuf {
+        pub(crate) fn path(&self, name: &str) -> PathBuf {
             self.dir.path().join(name)
         }
         fn origin(&self, name: &str) -> PathBuf {
@@ -582,7 +557,7 @@ mod tests {
 
     /// Workspace `m` (master), `app`, `api`, each with a bare origin. `app` carries a commit on
     /// `change/2026-10-19-c`; `api` has the branch but no commit when `api_ahead` is false.
-    fn fixture(api_ahead: bool) -> Fx {
+    pub(crate) fn fixture(api_ahead: bool) -> Fx {
         let dir = tempfile::tempdir().unwrap();
         let m = repo(dir.path(), "m");
         commit_file(
@@ -611,45 +586,8 @@ mod tests {
         Fx { dir }
     }
 
-    fn all(fx: &Fx) -> Vec<PublishRepo> {
+    pub(crate) fn all(fx: &Fx) -> Vec<PublishRepo> {
         touched_repos(fx.dir.path(), "m", "s", "2026-10-19-c").unwrap()
-    }
-
-    #[test]
-    fn readiness_table_r12_1() {
-        let fx = fixture(true);
-        let repos = all(&fx);
-
-        let gh = FakeGh::default().answer("auth status", Err("You are not logged into any hosts"));
-        let err = signed_in(&gh, &repos).unwrap_err();
-        assert!(err.to_string().contains("gh auth login"), "{err}");
-        assert!(matches!(err, NotReady::NotSignedIn(_)), "{err:?}");
-
-        let gh = FakeGh::default().answer("auth status", Err("gh is not installed"));
-        assert_eq!(signed_in(&gh, &repos).unwrap_err(), NotReady::GhMissing);
-
-        let gh = FakeGh::default().answer(
-            "auth status",
-            Ok("github.com\n  Logged in to github.com account octo (keyring)"),
-        );
-        assert_eq!(
-            signed_in(&gh, &repos).unwrap(),
-            "Logged in to github.com account octo (keyring)"
-        );
-
-        git::run(&fx.path("app"), &["remote", "remove", "origin"]).unwrap();
-        let err = origins(&FakeGh::default(), &all(&fx)).unwrap_err();
-        assert_eq!(err.to_string(), "app has no GitHub remote");
-
-        let fx = fixture(true);
-        let gh = FakeGh::default().answer("repo view", Err("error connecting to api.github.com"));
-        assert_eq!(origins(&gh, &all(&fx)).unwrap_err(), NotReady::Unreachable);
-        let gh = FakeGh::default().answer("auth status", Err("dial tcp: no such host"));
-        assert_eq!(
-            signed_in(&gh, &all(&fx)).unwrap_err(),
-            NotReady::Unreachable
-        );
-        assert!(origins(&FakeGh::default(), &all(&fx)).is_ok());
     }
 
     #[test]
@@ -751,14 +689,85 @@ mod tests {
         assert!(!subjects.contains(&"engineer's own work"), "{subjects:?}");
     }
 
+    /// Points `origin` of every fixture repository at a GitHub address, and sends pushes to the
+    /// local bare repository instead, so the API calls see a GitHub remote and the push needs no
+    /// network.
+    pub(crate) fn on_github(fx: &Fx) {
+        for name in ["m", "app", "api"] {
+            let url = format!("https://github.com/o/{name}.git");
+            let bare = fx.origin(name).to_string_lossy().replace('\\', "/");
+            let key = format!("url.{bare}.pushInsteadOf");
+            git::run(&fx.path(name), &["config", &key, &url]).unwrap();
+            git::run(&fx.path(name), &["remote", "set-url", "origin", &url]).unwrap();
+        }
+    }
+
+    fn status(code: u16, message: &str) -> ApiError {
+        ApiError::Status {
+            status: code,
+            message: message.to_string(),
+        }
+    }
+
+    #[test]
+    fn readiness_table_r12_1() {
+        let fx = fixture(true);
+        on_github(&fx);
+        let repos = all(&fx);
+
+        let gh = FakeGitHub::default().signed_out_of("github.com");
+        let err = signed_in(&gh, &repos).unwrap_err();
+        assert!(err.to_string().contains("gh auth login"), "{err}");
+        assert_eq!(err, NotReady::NotSignedIn("github.com".into()));
+
+        let gh = FakeGitHub::default().user_answers(Err(status(401, "Bad credentials")));
+        assert_eq!(
+            signed_in(&gh, &repos).unwrap_err(),
+            NotReady::NotSignedIn("github.com".into())
+        );
+        let gh = FakeGitHub::default().user_answers(Err(status(500, "")));
+        assert_eq!(signed_in(&gh, &repos).unwrap_err(), NotReady::Unreachable);
+        let gh = FakeGitHub::default().user_answers(Err(ApiError::Unreachable("dns".into())));
+        assert_eq!(signed_in(&gh, &repos).unwrap_err(), NotReady::Unreachable);
+
+        let gh = FakeGitHub::default().user_answers(Ok("octo"));
+        assert_eq!(
+            signed_in(&gh, &repos).unwrap(),
+            "Logged in to github.com as octo"
+        );
+        // One question per host, not per repository.
+        assert_eq!(gh.calls(), ["user"]);
+
+        git::run(&fx.path("app"), &["remote", "remove", "origin"]).unwrap();
+        let err = origins(&FakeGitHub::default(), &all(&fx)).unwrap_err();
+        assert_eq!(err.to_string(), "app has no GitHub remote");
+
+        let fx = fixture(true);
+        on_github(&fx);
+        let gh = FakeGitHub::default().repo_answers(ApiError::Unreachable("down".into()));
+        assert_eq!(origins(&gh, &all(&fx)).unwrap_err(), NotReady::Unreachable);
+        let gh = FakeGitHub::default().repo_answers(status(404, "Not Found"));
+        assert_eq!(
+            origins(&gh, &all(&fx)).unwrap_err(),
+            NotReady::NoRemote("app".into())
+        );
+        assert!(origins(&FakeGitHub::default(), &all(&fx)).is_ok());
+    }
+
     #[test]
     fn publish_opens_product_then_master_r13_1() {
         let fx = fixture(true);
-        let gh = FakeGh::default()
-            .answer("app pr create", Ok("https://github.com/o/app/pull/1\n"))
-            .answer("api pr create", Ok("https://github.com/o/api/pull/2\n"))
-            .answer("m pr create", Ok("https://github.com/o/m/pull/3\n"));
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        on_github(&fx);
+        let gh = FakeGitHub::default();
+        let results = publish(
+            &gh,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
         assert_eq!(gh.creates(), ["app", "api", "m"]);
         assert!(fx.pushed("app") && fx.pushed("api") && fx.pushed("m"));
         assert_eq!(
@@ -784,11 +793,11 @@ mod tests {
         let create = gh
             .calls()
             .into_iter()
-            .find(|c| c.starts_with("app pr create"))
+            .find(|c| c.starts_with("create_pull app"))
             .unwrap();
-        assert!(create.contains("--title Build the thing"), "{create}");
+        assert!(create.contains("title=Build the thing"), "{create}");
         assert!(
-            create.contains("--base main --head change/2026-10-19-c"),
+            create.contains("base=main head=change/2026-10-19-c"),
             "{create}"
         );
     }
@@ -796,16 +805,22 @@ mod tests {
     #[test]
     fn publish_continues_after_one_failure_r13_2() {
         let fx = fixture(true);
-        let gh = FakeGh::default()
-            .answer("app pr create", Ok("https://github.com/o/app/pull/1"))
-            .answer("api pr create", Err("GraphQL: forbidden"))
-            .answer("m pr create", Ok("https://github.com/o/m/pull/3"));
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        on_github(&fx);
+        let gh = FakeGitHub::default().create_fails("api", status(403, "forbidden"));
+        let results = publish(
+            &gh,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
         assert!(matches!(results[0].outcome, PrOutcome::Opened { .. }));
         assert_eq!(
             results[1].outcome,
             PrOutcome::Failed {
-                error: "GraphQL: forbidden".into()
+                error: "GitHub answered 403: forbidden".into()
             }
         );
         assert!(matches!(results[2].outcome, PrOutcome::Opened { .. }));
@@ -819,11 +834,17 @@ mod tests {
     #[test]
     fn publish_reuses_open_pull_request_r13_3() {
         let fx = fixture(true);
-        let gh = FakeGh::default()
-            .answer("app pr list", Ok("https://github.com/o/app/pull/1\n"))
-            .answer("api pr create", Ok("https://github.com/o/api/pull/2"))
-            .answer("m pr create", Ok("https://github.com/o/m/pull/3"));
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        on_github(&fx);
+        let gh = FakeGitHub::default().open_pull("app", 1);
+        let results = publish(
+            &gh,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
         assert_eq!(
             results[0].outcome,
             PrOutcome::Reused {
@@ -839,15 +860,31 @@ mod tests {
     #[test]
     fn publish_pushes_new_commits_on_reused_pull_request_r13_3() {
         let fx = fixture(true);
-        let gh = FakeGh::default().answer("pr create", Ok("https://github.com/o/x/pull/1"));
-        publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        on_github(&fx);
+        publish(
+            &FakeGitHub::default(),
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
         commit_file(&fx.path("app"), "more.txt", "more\n", "another round");
         let head = git::run(&fx.path("app"), &["rev-parse", "HEAD"]).unwrap();
-        let gh = FakeGh::default()
-            .answer("app pr list", Ok("https://github.com/o/app/pull/1\n"))
-            .answer("api pr list", Ok("https://github.com/o/api/pull/2\n"))
-            .answer("m pr list", Ok("https://github.com/o/m/pull/3\n"));
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        let gh = FakeGitHub::default()
+            .open_pull("app", 1)
+            .open_pull("api", 2)
+            .open_pull("m", 3);
+        let results = publish(
+            &gh,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
         assert!(matches!(results[0].outcome, PrOutcome::Reused { .. }));
         let pushed = git::run(
             &fx.origin("app"),
@@ -861,11 +898,17 @@ mod tests {
     #[test]
     fn publish_updates_reused_master_body_with_full_list_r13_1() {
         let fx = fixture(true);
-        let gh = FakeGh::default()
-            .answer("app pr list", Ok("https://github.com/o/app/pull/1\n"))
-            .answer("m pr list", Ok("https://github.com/o/m/pull/3\n"))
-            .answer("api pr create", Ok("https://github.com/o/api/pull/2"));
-        let results = publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        on_github(&fx);
+        let gh = FakeGitHub::default().open_pull("app", 1).open_pull("m", 3);
+        let results = publish(
+            &gh,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
         assert_eq!(
             results[2].outcome,
             PrOutcome::Reused {
@@ -874,16 +917,14 @@ mod tests {
         );
         assert!(gh.creates() == ["api"], "{:?}", gh.creates());
         assert!(
-            gh.calls()
-                .iter()
-                .any(|c| c.starts_with("m pr edit https://github.com/o/m/pull/3 ")),
+            gh.calls().iter().any(|c| c == "edit_pull_body m 3"),
             "{:?}",
             gh.calls()
         );
         let body = gh.body("m");
         assert!(
             body.contains("- app: https://github.com/o/app/pull/1")
-                && body.contains("- api: https://github.com/o/api/pull/2"),
+                && body.contains("- api: https://github.com/o/api/pull/1"),
             "{body}"
         );
     }
@@ -892,6 +933,7 @@ mod tests {
     #[serial]
     fn publish_stores_no_credentials_r13_4() {
         let fx = fixture(true);
+        on_github(&fx);
         let home = tempfile::tempdir().unwrap();
         let old = std::env::var_os("KATA_HOME");
         std::env::set_var("KATA_HOME", home.path());
@@ -899,13 +941,38 @@ mod tests {
             .iter()
             .map(|n| git::run(&fx.path(n), &["remote", "get-url", "origin"]).unwrap())
             .collect();
-        let gh = FakeGh::default().answer("pr create", Ok("https://github.com/o/x/pull/1"));
-        publish(&gh, "m", "s", "2026-10-19-c", &all(&fx));
+        let gh = FakeGitHub::default();
+        publish(
+            &gh,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
         match old {
             Some(v) => std::env::set_var("KATA_HOME", v),
             None => std::env::remove_var("KATA_HOME"),
         }
-        assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 0);
+        // A stage read running beside this test may keep its parse cache in the folder meanwhile; that is
+        // not a credential. Anything else in the folder is.
+        fn files_but_parse_cache(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.file_name().is_some_and(|n| n == "parse-cache") {
+                    continue;
+                }
+                if path.is_dir() {
+                    files_but_parse_cache(&path, found);
+                } else {
+                    found.push(path);
+                }
+            }
+        }
+        let mut left = Vec::new();
+        files_but_parse_cache(home.path(), &mut left);
+        assert!(left.is_empty(), "{left:?}");
         for (n, url) in ["app", "api", "m"].iter().zip(&urls) {
             let cfg = git::run(
                 &fx.path(n),
@@ -934,7 +1001,8 @@ mod tests {
     #[test]
     fn open_pull_requests_reports_each_repo() {
         let fx = fixture(true);
-        let gh = FakeGh::default().answer("app pr list", Ok("https://github.com/o/app/pull/1\n"));
+        on_github(&fx);
+        let gh = FakeGitHub::default().open_pull("app", 1);
         let states = open_pull_requests(&gh, &all(&fx), "2026-10-19-c").unwrap();
         assert_eq!(
             states,
@@ -953,10 +1021,309 @@ mod tests {
                 },
             ]
         );
-        let gh = FakeGh::default().answer("pr list", Err("boom"));
+        let gh = FakeGitHub::default().list_fails(status(500, "boom"));
         assert_eq!(
             open_pull_requests(&gh, &all(&fx), "2026-10-19-c").unwrap_err(),
-            "boom"
+            "GitHub answered 500: boom"
+        );
+    }
+
+    /// A GitHub that knows every repository of the fixture and numbers the pull requests it opens.
+    fn api_server() -> Server {
+        serve(|r| {
+            let parts: Vec<&str> = r.path.split('?').next().unwrap().split('/').collect();
+            match (r.method.as_str(), parts.as_slice()) {
+                ("GET", ["", "user"]) => resp(200, r#"{"login":"octo"}"#),
+                ("GET", ["", "repos", _, _]) => resp(200, "{}"),
+                ("GET", ["", "repos", _, _, "pulls"]) => resp(200, "[]"),
+                ("POST", ["", "repos", owner, name, "pulls"]) => resp(
+                    201,
+                    &format!(
+                        r#"{{"number":1,"html_url":"https://github.com/{owner}/{name}/pull/1"}}"#
+                    ),
+                ),
+                _ => resp(404, r#"{"message":"Not Found"}"#),
+            }
+        })
+    }
+
+    /// The Workbench's order for declaring done: sign-in, origins, then publish.
+    fn declare_done(h: &dyn GitHubHosts, fx: &Fx) -> Result<Vec<PrResult>, NotReady> {
+        let repos = all(fx);
+        signed_in(h, &repos)?;
+        origins(h, &repos)?;
+        Ok(publish(
+            h,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &repos,
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        ))
+    }
+
+    #[test]
+    fn declares_done_with_each_kind_of_sign_in() {
+        // R10.1
+        let signed_in_rows = [
+            (
+                "gh's stored sign-in",
+                FakeSource::default().hosts_file("github.com", TOKEN),
+            ),
+            (
+                "Git Credential Manager only",
+                FakeSource::default().stored("git:https://github.com", TOKEN),
+            ),
+            (
+                "a token in the environment",
+                FakeSource::default().env("GH_TOKEN", TOKEN),
+            ),
+        ];
+        for (row, source) in signed_in_rows {
+            let fx = fixture(true);
+            on_github(&fx);
+            let server = api_server();
+            let results = declare_done(&hosts(&source, &server.root()), &fx).unwrap();
+            assert_eq!(results.len(), 3, "{row}");
+            for r in &results {
+                assert!(
+                    matches!(r.outcome, PrOutcome::Opened { .. }),
+                    "{row}: {r:?}"
+                );
+            }
+            assert!(
+                fx.pushed("app") && fx.pushed("api") && fx.pushed("m"),
+                "{row}"
+            );
+            let seen = server.seen.lock().unwrap();
+            let bearer = format!("Bearer {TOKEN}");
+            assert!(
+                seen.iter()
+                    .all(|r| r.header("authorization") == Some(bearer.as_str())),
+                "{row}"
+            );
+        }
+
+        // No credential for the host: the plain message, nothing asked, nothing pushed.
+        let fx = fixture(true);
+        on_github(&fx);
+        let server = api_server();
+        let source = FakeSource::default();
+        let err = declare_done(&hosts(&source, &server.root()), &fx).unwrap_err();
+        assert_eq!(err, NotReady::NotSignedIn("github.com".into()));
+        assert!(err.to_string().contains("github.com"), "{err}");
+        assert!(err.to_string().contains("gh auth login"), "{err}");
+        assert_eq!(server.count(), 0);
+        assert!(!fx.pushed("app") && !fx.pushed("m"));
+
+        // Signed in, but GitHub does not answer: the unreachable message, nothing pushed.
+        let source = FakeSource::default().env("GH_TOKEN", TOKEN);
+        let err = declare_done(&hosts(&source, &refused_root()), &fx).unwrap_err();
+        assert_eq!(err, NotReady::Unreachable);
+        assert!(!fx.pushed("app") && !fx.pushed("m"));
+    }
+
+    #[test]
+    fn push_credential_only_for_its_host() {
+        // R10.3, push half. The decision, for every kind of address.
+        let b = Credential::new("b.example", "tok-b");
+        fn got<'a>(url: &str, c: Option<&'a Credential>) -> Option<(&'static str, &'a str)> {
+            git::push_login(url, c)
+        }
+        assert_eq!(got("https://a.example/o/r.git", Some(&b)), None);
+        assert_eq!(
+            got("https://b.example/o/r.git", Some(&b)),
+            Some(("x-access-token", "tok-b"))
+        );
+        assert_eq!(
+            got("https://User@B.Example:8443/o/r.git", Some(&b)),
+            Some(("x-access-token", "tok-b"))
+        );
+        assert_eq!(got("https://b.example/o/r.git", None), None);
+        assert_eq!(got("http://b.example/o/r.git", Some(&b)), None);
+        assert_eq!(got("git@b.example:o/r.git", Some(&b)), None);
+        assert_eq!(got("ssh://git@b.example/o/r.git", Some(&b)), None);
+        assert_eq!(got("C:/repos/r.git", Some(&b)), None);
+
+        // The push itself, asked for a credential by a server that wants one: a credential for
+        // another host is not sent, and the probe saw the request.
+        let fx = fixture(true);
+        let server = serve(|_| {
+            let mut r = resp(401, "{}");
+            r.headers
+                .push(("WWW-Authenticate".into(), "Basic realm=\"x\"".into()));
+            r
+        });
+        let url = format!("http://127.0.0.1:{}/o/app.git", server.port);
+        git::run(&fx.path("app"), &["remote", "set-url", "origin", &url]).unwrap();
+        let mut asks = Vec::new();
+        let other = Credential::new("github.com", "tok-other");
+        let result = git::Repo::open(&fx.path("app")).unwrap().push_branch_with(
+            "origin",
+            "change/2026-10-19-c",
+            Some(&other),
+            &mut |a| asks.push(a),
+        );
+        assert!(result.is_err());
+        assert!(!asks.is_empty(), "the server never asked for a credential");
+        assert!(asks.iter().all(|a| !a.sent), "{asks:?}");
+        let seen = server.seen.lock().unwrap();
+        assert!(!seen.is_empty());
+        assert!(seen.iter().all(|r| r.header("authorization").is_none()));
+    }
+
+    fn pre_push(repo: &std::path::Path, body: &str) {
+        let hook = repo.join(".git/hooks/pre-push");
+        std::fs::write(&hook, format!("#!/bin/sh\n{body}\n")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    #[test]
+    fn pre_push_decides_as_git_does() {
+        // R11.1, the push rows. A passing hook sees git's arguments and its one input line.
+        let fx = fixture(true);
+        on_github(&fx);
+        pre_push(
+            &fx.path("app"),
+            "echo \"$1 $2\" > \"$GIT_DIR/pre-push.args\"\ncat > \"$GIT_DIR/pre-push.in\"",
+        );
+        let results = publish(
+            &FakeGitHub::default(),
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
+        assert!(results
+            .iter()
+            .all(|r| matches!(r.outcome, PrOutcome::Opened { .. })));
+        assert!(fx.pushed("app"));
+        // As `-u` does: the branch follows its remote.
+        let config = |key: &str| git::run(&fx.path("app"), &["config", key]).unwrap();
+        assert_eq!(config("branch.change/2026-10-19-c.remote"), "origin");
+        assert_eq!(
+            config("branch.change/2026-10-19-c.merge"),
+            "refs/heads/change/2026-10-19-c"
+        );
+        let git_dir = fx.path("app").join(".git");
+        let args = std::fs::read_to_string(git_dir.join("pre-push.args")).unwrap();
+        assert!(args.trim().starts_with("origin "), "{args}");
+        let sha = git::run(&fx.path("app"), &["rev-parse", "change/2026-10-19-c"]).unwrap();
+        let input = std::fs::read_to_string(git_dir.join("pre-push.in")).unwrap();
+        assert_eq!(
+            input.trim_end(),
+            format!(
+                "refs/heads/change/2026-10-19-c {sha} refs/heads/change/2026-10-19-c {}",
+                "0".repeat(40)
+            )
+        );
+
+        // A failing hook stops that repository with its message; the next one still opens.
+        let fx = fixture(true);
+        on_github(&fx);
+        pre_push(&fx.path("app"), "echo no push today >&2\nexit 1");
+        let gh = FakeGitHub::default();
+        let results = publish(
+            &gh,
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |_| {},
+        );
+        match &results[0].outcome {
+            PrOutcome::Failed { error } => assert!(error.contains("no push today"), "{error}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(!fx.pushed("app"));
+        assert_eq!(gh.creates(), ["api", "m"]);
+        assert!(fx.pushed("api") && fx.pushed("m"));
+    }
+
+    #[test]
+    fn a_rejected_push_fails_with_a_message_and_changes_nothing() {
+        let fx = fixture(true);
+        on_github(&fx);
+        let app = fx.path("app");
+        let repo = git::Repo::open(&app).unwrap();
+        repo.push_branch("origin", "change/2026-10-19-c", None)
+            .unwrap();
+        // Someone else moves the branch on the remote.
+        let other = fx.dir.path().join("other");
+        let bare = fx.origin("app");
+        git::run(
+            fx.dir.path(),
+            &[
+                "clone",
+                "-q",
+                bare.to_str().unwrap(),
+                other.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        // A clone has no identity of its own, and CI has no global one.
+        git::run(&other, &["config", "user.name", "Test"]).unwrap();
+        git::run(&other, &["config", "user.email", "test@example.com"]).unwrap();
+        git::run(&other, &["checkout", "-q", "change/2026-10-19-c"]).unwrap();
+        commit_file(
+            &other,
+            "theirs.txt",
+            "theirs
+",
+            "theirs",
+        );
+        git::run(&other, &["push", "-q", "origin", "change/2026-10-19-c"]).unwrap();
+        commit_file(
+            &app, "mine.txt", "mine
+", "mine",
+        );
+        let err = repo
+            .push_branch("origin", "change/2026-10-19-c", None)
+            .unwrap_err();
+        assert!(!err.stderr.is_empty());
+        let tip = git::run(&bare, &["rev-parse", "refs/heads/change/2026-10-19-c"]).unwrap();
+        let theirs = git::run(&other, &["rev-parse", "HEAD"]).unwrap();
+        assert_eq!(tip, theirs);
+    }
+
+    #[test]
+    fn reports_each_step() {
+        let fx = fixture(false);
+        on_github(&fx);
+        let mut steps = Vec::new();
+        publish(
+            &FakeGitHub::default(),
+            "m",
+            "s",
+            "2026-10-19-c",
+            &all(&fx),
+            &mut Recorder::unsaved(),
+            &mut |s| steps.push(s),
+        );
+        let step = |pushing: bool, repo: &str| {
+            let repo = repo.to_string();
+            if pushing {
+                PublishStep::Pushing { repo }
+            } else {
+                PublishStep::Opening { repo }
+            }
+        };
+        assert_eq!(
+            steps,
+            [
+                step(true, "app"),
+                step(false, "app"),
+                step(true, "m"),
+                step(false, "m")
+            ]
         );
     }
 }

@@ -1,4 +1,5 @@
 import { render } from '../../testing/render';
+import { progressLabels } from '../lib/progress-steps';
 import type { StepsView } from '../core/lock/lock.store';
 import { LockPanel } from './lock-panel';
 
@@ -39,5 +40,30 @@ describe('LockPanel', () => {
   it('never renders a percentage', async () => {
     const { container } = await mount({ view: STEPS });
     expect(container.textContent).not.toContain('%');
+  });
+});
+
+describe('LockPanel progress line', () => {
+  const entry = (label: string) => ({ line: 'Working on it…', label, long: false });
+  const labels: [string, string][] = [
+    ['the checks of a repository', progressLabels.runningChecks('claims-core')],
+    ['a push', progressLabels.pushing('2026-10-18-photo-limits', 'claims-core')],
+    ['a pull request', progressLabels.openingPr('customer-portal')],
+  ];
+
+  it.each(labels)('shows the plain label of %s', async (_what, label) => {
+    const { container } = await mount({ view: STEPS, stepProgress: entry(label) });
+    expect(container.querySelector('app-progress-line [data-testid="progress-label"]')?.textContent?.trim()).toBe(label);
+  });
+
+  it('names the repository in each plain label', () => {
+    expect(progressLabels.runningChecks('claims-core')).toBe('Running the checks in claims-core');
+    expect(progressLabels.pushing('2026-10-18-photo-limits', 'claims-core')).toBe('Pushing change/2026-10-18-photo-limits in claims-core');
+    expect(progressLabels.openingPr('customer-portal')).toBe('Opening a pull request in customer-portal');
+  });
+
+  it('shows no progress line while nothing reports', async () => {
+    const { container } = await mount({ view: STEPS });
+    expect(container.querySelector('app-progress-line')).toBeNull();
   });
 });

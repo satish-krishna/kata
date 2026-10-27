@@ -2,7 +2,6 @@
   <app-sdlc-toolbar
     [workspaces]="vm.workspaces()"
     [current]="vm.current()"
-    [counts]="vm.counts()"
     [branch]="vm.branchChip()"
     [crumbs]="vm.crumbs()"
     [tag]="vm.change()?.track === 'fix' ? 'fix' : null"
@@ -25,6 +24,7 @@
         <a class="k-mono" [href]="prs[0].url" [attr.title]="prs[0].label" rel="noopener noreferrer" (click)="$event.preventDefault(); vm.openPr(prs[0].url)"
           ><span class="k-prlinks__repo">{{ prs[0].repo }}</span>@if (prs[0].number !== null) {&ngsp;<span class="k-prlinks__num">#{{ prs[0].number }}</span>}</a
         >
+        <span class="k-prlinks__label" data-testid="pr-state" [attr.title]="prs[0].seen">{{ prs[0].state }}</span>
       </nav>
     } @else if (prs.length > 1) {
       <nav toolbarLinks class="k-prlinks" aria-label="Pull requests">
@@ -43,6 +43,7 @@
                   <a class="k-mono k-prlist__link" [href]="link.url" rel="noopener noreferrer" (click)="$event.preventDefault(); vm.openPr(link.url)"
                     ><span>{{ link.repo }}</span>@if (link.number !== null) {&ngsp;<span>#{{ link.number }}</span>}</a
                   >
+                  <span class="k-left__tag" data-testid="pr-state">{{ link.state }}@if (link.seen) { · {{ link.seen }}}</span>
                 </li>
               }
             </ul>
@@ -74,7 +75,11 @@
   } @else {
     @switch (vm.state()) {
       @case ('loading') {
-        <main class="k-home__state"><p class="k-state__body" role="status">Reading the change…</p></main>
+        <main class="k-home__state">
+          @if (vm.readingChange(); as entry) {
+            <app-progress-line [entry]="entry" />
+          }
+        </main>
       }
       @case ('not-found') {
         <main class="k-home__state">
@@ -100,9 +105,15 @@
             @if (vm.prCheckFailed()) {
               <span class="k-left__note" data-testid="pr-note">Could not check pull requests</span>
             }
+            @if (vm.linksNote(); as note) {
+              <span class="k-left__note" data-testid="links-note">Pull requests {{ note }}</span>
+            }
             <div class="wb-toolbar__spacer"></div>
             <ng-container *ngTemplateOutlet="stageActions" />
           </div>
+        }
+        @if (vm.preparingBuild(); as entry) {
+          <div class="k-change__missing" data-testid="build-progress"><app-progress-line [entry]="entry" /></div>
         }
         <main class="k-change">
           <h1 class="sr-only">{{ vm.changeName() }}</h1>
@@ -151,7 +162,9 @@
                   />
                 }
               } @else if (stem === vm.pendingDoc()) {
-                <p class="k-state__body k-change__missing" role="status">Reading {{ stem }}.md…</p>
+                @if (vm.readingDoc(); as entry) {
+                  <div class="k-change__missing"><app-progress-line [entry]="entry" /></div>
+                }
               }
             </div>
           }
@@ -171,6 +184,9 @@
               }
               @if (vm.prCheckFailed()) {
                 <p class="k-left__note" data-testid="pr-note">Could not check pull requests</p>
+              }
+              @if (vm.linksNote(); as note) {
+                <p class="k-left__note" data-testid="links-note">Pull requests {{ note }}</p>
               }
               <app-build-page
                 [view]="build.view()"
@@ -222,6 +238,7 @@
   <app-lock-overlay
     [view]="vm.lockView()"
     [elapsed]="vm.lockElapsed()"
+    [stepProgress]="vm.lockProgress()"
     (cancel)="vm.cancelLock()"
   />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />

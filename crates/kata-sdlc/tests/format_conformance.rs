@@ -3,6 +3,7 @@
 //! These tests run the vendored copy of the plugin's format folder in `tests/ai-sdlc-format/`
 //! (refreshed with `node scripts/vendor-ai-sdlc-format.mjs`), never the plugin repository. The
 //! running Workbench always runs the installed plugin's program instead.
+#![allow(clippy::disallowed_methods)]
 use kata_sdlc::format::{self, FormatError, Problem};
 use serde_json::Value;
 use serial_test::serial;

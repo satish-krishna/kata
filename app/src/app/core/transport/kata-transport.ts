@@ -9,6 +9,8 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeName } from '@bindings/ChangeName';
+import type { StageEvent } from '@bindings/StageEvent';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildAction } from '@bindings/BuildAction';
 import type { BuildScope } from '@bindings/BuildScope';
@@ -38,7 +40,9 @@ import type { Offender } from '@bindings/Offender';
 import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { PrResult } from '@bindings/PrResult';
+import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
+import type { DoneView } from '@bindings/DoneView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
@@ -78,7 +82,14 @@ export abstract class KataTransport {
   abstract sdlcScan(folder: string): Promise<WorkspaceScan>;
   abstract sdlcContextHealth(folder: string, master: string, system: string, repo: string): Promise<ContextState>;
   abstract sdlcInstructions(folder: string, masterRepo: string): Promise<InstructionsState>;
-  abstract sdlcChanges(master: string, system: string): Promise<ChangeInfo[]>;
+  /** The changes of a system with the title of each intent, from the folder alone: no stage is read and no program is started. */
+  abstract sdlcChangeNames(master: string, system: string): Promise<ChangeName[]>;
+  /** Start reading the stage of every change in the background and resolve to the pass id at once. Each result arrives through `onStageEvent`. A pass started while another is running supersedes it; the superseded pass reports nothing more. `first` names a change to read before the others. */
+  abstract sdlcReadStages(master: string, system: string, first?: string | null): Promise<number>;
+  /** One change read in full, for the list row and the change page. Rejects with the reason when the change cannot be read. */
+  abstract sdlcReadChange(master: string, system: string, change: string): Promise<ChangeInfo>;
+  /** Which of the folders no longer exist. A folder existence check only. */
+  abstract sdlcMissingFolders(folders: string[]): Promise<string[]>;
   abstract sdlcBranches(master: string): Promise<BranchInfo>;
   abstract sdlcReadDoc(master: string, system: string, change: string, doc: string): Promise<string | null>;
   abstract sdlcSnapshot(master: string): Promise<Snapshot>;
@@ -128,7 +139,11 @@ export abstract class KataTransport {
   abstract sdlcRunChecks(folder: string, masterRepo: string, system: string, repo: PublishRepo): Promise<RepoChecks>;
   abstract sdlcGhSignedIn(repos: PublishRepo[]): Promise<string>;
   abstract sdlcGhOrigins(repos: PublishRepo[]): Promise<void>;
-  abstract sdlcPublish(folder: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]): Promise<PrResult[]>;
+  abstract sdlcPublish(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]): Promise<PrResult[]>;
+  /** Whether the change shows as done and with which pull request links, from what was saved. GitHub is asked only when nothing is saved and the build is finished. */
+  abstract sdlcDoneView(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView>;
+  /** Ask GitHub for the state of every saved pull request, save the answers, and return the new view. */
+  abstract sdlcRefreshPrStates(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView>;
   abstract sdlcPullRequests(repos: PublishRepo[], change: string): Promise<PrState[]>;
   /** The build page's arrangement, one per mode and shared by every change. `{}` until one is saved. */
   abstract loadBuildLayout(): Promise<unknown>;
@@ -137,6 +152,10 @@ export abstract class KataTransport {
   abstract openUrl(url: string): Promise<void>;
   /** Step the window's zoom. Resolves to the new level, which the backend remembers for the next launch. */
   abstract zoom(step: ZoomStep): Promise<number>;
+  /** Register for what publishing is doing (pushing or opening a pull request, per repository). Resolves to the unlisten function. */
+  abstract onPublishStep(cb: (step: PublishStep) => void): Promise<() => void>;
+  /** Register for what a stage pass reports, each event tagged with its pass id. Resolves to the unlisten function. */
+  abstract onStageEvent(cb: (ev: StageEvent) => void): Promise<() => void>;
   /** Register for relayed run events, each tagged with the id of the run it came from. Resolves to the unlisten function. */
   abstract onRunEvent(cb: (runId: string, ev: KataEvent) => void): Promise<() => void>;
 }

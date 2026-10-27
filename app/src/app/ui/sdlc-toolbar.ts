@@ -19,7 +19,6 @@ export class SdlcToolbar {
   readonly workspaces = input.required<WorkspaceEntry[]>();
   readonly current = input.required<WorkspaceEntry | null>();
   readonly missing = input<string[]>([]);
-  readonly counts = input<Record<string, number>>({});
   /** The master repo's checked-out branch, shown in mono so nobody is surprised where a commit lands. */
   readonly branch = input.required<string | null>();
   /** Crumbs after the workspace name. */

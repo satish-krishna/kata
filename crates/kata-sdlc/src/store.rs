@@ -1,3 +1,4 @@
+use crate::prs::PrRecord;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -144,6 +145,31 @@ pub fn append_task_links(links: &[TaskLink]) -> Result<(), StoreError> {
     let mut all = load_task_links();
     all.extend_from_slice(links);
     write("task-runs.json", &all)
+}
+
+/// Every saved pull request record, from `pull-requests.json`.
+pub fn load_pr_records() -> Vec<PrRecord> {
+    read_or_default("pull-requests.json")
+}
+
+/// Save `record`, replacing the entry of the same workspace, system and change.
+pub fn save_pr_record(record: &PrRecord) -> Result<(), StoreError> {
+    let mut all = load_pr_records();
+    let same = |r: &PrRecord| {
+        r.workspace_id == record.workspace_id
+            && r.system == record.system
+            && r.change == record.change
+    };
+    match all.iter_mut().find(|r| same(r)) {
+        Some(old) => *old = record.clone(),
+        None => all.push(record.clone()),
+    }
+    let dir = workbench_dir().ok_or(StoreError::NoHome)?;
+    std::fs::create_dir_all(&dir)?;
+    let temp = dir.join("pull-requests.json.tmp");
+    std::fs::write(&temp, serde_json::to_string_pretty(&all)?)?;
+    std::fs::rename(&temp, dir.join("pull-requests.json"))?;
+    Ok(())
 }
 
 /// The engineer's arrangement of the build page, kept beside `settings.json`
@@ -320,6 +346,28 @@ mod tests {
         append_run_link(link("a")).unwrap();
         append_run_link(link("b")).unwrap();
         assert_eq!(load_run_links(), vec![link("a"), link("b")]);
+    }
+
+    fn pr_record(change: &str, declared_at: Option<u64>) -> PrRecord {
+        let mut r = PrRecord::new("w1", "billing", change);
+        r.declared_at = declared_at;
+        r
+    }
+
+    #[test]
+    #[serial]
+    fn pr_records_replace_the_same_change_and_keep_the_rest() {
+        let home = with_home();
+        assert!(load_pr_records().is_empty());
+        save_pr_record(&pr_record("a", None)).unwrap();
+        save_pr_record(&pr_record("b", None)).unwrap();
+        save_pr_record(&pr_record("a", Some(5))).unwrap();
+        assert_eq!(
+            load_pr_records(),
+            vec![pr_record("a", Some(5)), pr_record("b", None)]
+        );
+        let dir = home.temp.path().join("workbench");
+        assert!(!dir.join("pull-requests.json.tmp").exists());
     }
 
     fn task_link(task: &str, run_id: &str) -> TaskLink {

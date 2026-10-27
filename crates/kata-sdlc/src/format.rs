@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -254,48 +254,227 @@ pub fn runs_started() -> usize {
     RUNS.load(Ordering::SeqCst)
 }
 
-/// What a read depends on: the program, the document's name below its change folder (`plan.md`,
-/// `build/app.md`; the program takes the kind, a build log's repository and the file name in each
-/// problem from it), the document's bytes, and, for a plan, the bytes of the marker above it.
-type CacheKey = (PathBuf, String, u64, u64);
+/// What a read depends on, as a SHA-256 over, each length-prefixed: the program file's bytes, the
+/// document's name below its change folder (`plan.md`, `build/app.md`; the program takes the kind, a
+/// build log's repository and the file name in each problem from it), the document's bytes, and, for a
+/// plan, the bytes of the marker above it. The digest names the entry on disk, so it must not collide.
+type CacheKey = [u8; 32];
 
-fn cache() -> &'static Mutex<HashMap<CacheKey, ReadResult>> {
-    static CACHE: OnceLock<Mutex<HashMap<CacheKey, ReadResult>>> = OnceLock::new();
+/// An answer in memory and where it came from. `trusted` is true when the program produced it in this
+/// process; false when it was loaded from the parse cache on disk, which only a `Shown` read may use.
+#[derive(Clone)]
+struct Remembered {
+    result: ReadResult,
+    trusted: bool,
+}
+
+fn cache() -> &'static Mutex<HashMap<CacheKey, Remembered>> {
+    static CACHE: OnceLock<Mutex<HashMap<CacheKey, Remembered>>> = OnceLock::new();
     CACHE.get_or_init(Default::default)
+}
+
+/// Which reads may use the parse cache on disk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reads {
+    /// A read that only shows the document: it may use the parse cache on disk.
+    Shown,
+    /// A read a gate decides on (build start, continue, rounds, declare done): memory only.
+    Gate,
+}
+
+/// How many entries the folder keeps when it is pruned.
+const KEEP_ENTRIES: usize = 2000;
+
+/// The entries of the parse cache on disk, one JSON file each, named by the key in hex.
+fn parse_cache_dir() -> Option<PathBuf> {
+    crate::store::workbench_dir().map(|d| d.join("parse-cache"))
+}
+
+fn entry_path(key: &CacheKey) -> Option<PathBuf> {
+    let name: String = key.iter().map(|b| format!("{b:02x}")).collect();
+    parse_cache_dir().map(|d| d.join(format!("{name}.json")))
+}
+
+fn key_of(program: &Path, relative: &str, bytes: &[u8], canonical: &Path) -> CacheKey {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    let mut part = |bytes: &[u8]| {
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    };
+    // The program is part of the key: a different plugin version may read the same bytes differently.
+    part(&std::fs::read(program).unwrap_or_default());
+    part(relative.as_bytes());
+    part(bytes);
+    if relative == "plan.md" {
+        match marker_bytes(canonical) {
+            Some(marker) => {
+                part(b"marker");
+                part(&marker);
+            }
+            None => part(b"no marker"),
+        }
+    }
+    hasher.finalize().into()
+}
+
+/// Where the parse cache on disk keeps the entry for `file`, for tests.
+#[doc(hidden)]
+pub fn cache_entry_path(program: &Path, file: &Path) -> Option<PathBuf> {
+    let canonical = file.canonicalize().ok()?;
+    let bytes = std::fs::read(&canonical).ok()?;
+    let (_, relative) = change_folder(file);
+    entry_path(&key_of(program, &relative, &bytes, &canonical))
+}
+
+/// Empties the in-memory cache, as a restart would, for tests.
+#[doc(hidden)]
+pub fn forget_memory_cache() {
+    cache().lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// Whether the next `Shown` read prunes the folder: true at the start of a process.
+static PRUNE_PENDING: AtomicBool = AtomicBool::new(true);
+
+/// Makes the next `Shown` read prune the folder again, as the first one in a new process does, for tests.
+#[doc(hidden)]
+pub fn prune_on_next_shown_read() {
+    PRUNE_PENDING.store(true, Ordering::SeqCst);
+}
+
+/// Keeps the [`KEEP_ENTRIES`] most recently modified entries and deletes the rest, and any temp file a
+/// crashed write left more than an hour ago. Every failure is ignored: the cache is only a shortcut.
+fn prune(dir: &Path) {
+    let Ok(listing) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut entries = Vec::new();
+    for item in listing.flatten() {
+        let path = item.path();
+        let modified = item.metadata().and_then(|m| m.modified()).ok();
+        match path.extension().and_then(|e| e.to_str()) {
+            Some("json") => entries.push((modified.unwrap_or(std::time::UNIX_EPOCH), path)),
+            Some("tmp") => {
+                let old = modified
+                    .and_then(|m| m.elapsed().ok())
+                    .is_some_and(|age| age > Duration::from_secs(3600));
+                if old {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+            _ => {}
+        }
+    }
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    for (_, path) in entries.into_iter().skip(KEEP_ENTRIES) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// The answer stored in `path`. An entry that does not parse is a miss and is deleted; a hit gets a
+/// fresh modified time, so pruning drops what has not been read for longest.
+fn disk_lookup(path: &Path) -> Option<ReadResult> {
+    let bytes = std::fs::read(path).ok()?;
+    match serde_json::from_slice(&bytes) {
+        Ok(result) => {
+            let _ = std::fs::File::options()
+                .write(true)
+                .open(path)
+                .and_then(|f| f.set_modified(std::time::SystemTime::now()));
+            Some(result)
+        }
+        Err(_) => {
+            let _ = std::fs::remove_file(path);
+            None
+        }
+    }
+}
+
+/// Stores `result` at `path` through a temp file and a rename, so a reader never sees half an entry.
+fn disk_store(path: &Path, result: &ReadResult) {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let (Some(dir), Ok(text)) = (path.parent(), serde_json::to_vec(result)) else {
+        return;
+    };
+    let temp = dir.join(format!(
+        "{}.{}.{}.tmp",
+        path.file_stem().unwrap_or_default().to_string_lossy(),
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::SeqCst)
+    ));
+    let stored = std::fs::create_dir_all(dir)
+        .and_then(|_| std::fs::write(&temp, text))
+        .and_then(|_| std::fs::rename(&temp, path));
+    if stored.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
 }
 
 /// Reads one document with `program` (the path of `check.mjs`). A document with the same name below
 /// its change folder and the same bytes is read once, wherever it sits: the next call returns the
-/// earlier answer without starting the program.
+/// earlier answer without starting the program. Never uses the parse cache on disk.
 pub fn read(program: &Path, file: &Path) -> Result<ReadResult, FormatError> {
+    read_with(program, file, Reads::Gate)
+}
+
+/// [`read`] for a caller that says whether the parse cache on disk may answer. `Shown` also looks the
+/// answer up in, and stores a successful one in, `<workbench dir>/parse-cache/`; `Gate` never touches it.
+pub fn read_with(program: &Path, file: &Path, reads: Reads) -> Result<ReadResult, FormatError> {
     let canonical = file
         .canonicalize()
         .map_err(|e| FormatError::CouldNotRun(format!("{}: {e}", file.display())))?;
     let bytes = std::fs::read(&canonical)
         .map_err(|e| FormatError::CouldNotRun(format!("{}: {e}", file.display())))?;
     let (folder, relative) = change_folder(file);
-    // The program is part of the key: a different plugin version may read the same bytes differently.
-    let key = (
-        program.canonicalize().unwrap_or_else(|_| program.into()),
-        relative.clone(),
-        hash_of(&bytes),
-        if relative == "plan.md" {
-            marker_hash(&canonical)
-        } else {
-            0
-        },
-    );
-    if let Some(hit) = cache().lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
-        return Ok(hit.clone());
+    let key = key_of(program, &relative, &bytes, &canonical);
+    let on_disk = match reads {
+        Reads::Gate => None,
+        Reads::Shown => {
+            if PRUNE_PENDING.swap(false, Ordering::SeqCst) {
+                if let Some(dir) = parse_cache_dir() {
+                    prune(&dir);
+                }
+            }
+            entry_path(&key)
+        }
+    };
+    let remembered = cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&key)
+        .filter(|r| r.trusted || reads == Reads::Shown)
+        .map(|r| r.result.clone());
+    if let Some(hit) = remembered {
+        // An answer that only a gate read has needed so far still goes to disk for the next session.
+        if let Some(path) = on_disk.as_deref().filter(|p| !p.exists()) {
+            disk_store(path, &hit);
+        }
+        return Ok(hit);
+    }
+    if let Some(hit) = on_disk.as_deref().and_then(disk_lookup) {
+        cache().lock().unwrap_or_else(|e| e.into_inner()).insert(
+            key,
+            Remembered {
+                result: hit.clone(),
+                trusted: false,
+            },
+        );
+        return Ok(hit);
     }
 
     let output = run(program, &folder, &["read", "--json", &relative])?;
     let result: ReadResult = serde_json::from_slice(&output.stdout)
         .map_err(|e| FormatError::BadOutput(format!("{e}{}", stderr_note(&output.stderr))))?;
-    cache()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(key, result.clone());
+    if let Some(path) = &on_disk {
+        disk_store(path, &result);
+    }
+    cache().lock().unwrap_or_else(|e| e.into_inner()).insert(
+        key,
+        Remembered {
+            result: result.clone(),
+            trusted: true,
+        },
+    );
     Ok(result)
 }
 
@@ -431,28 +610,52 @@ struct FixEntry {
     error: Option<String>,
 }
 
-/// Where each fix in `folders` stands, in the order given, from one process per chunk of folders. A folder the program could
-/// not answer for gets its own error; a run that failed as a whole gives that error for every folder.
-/// Not cached, for the reason [`fix_state`] is not.
+/// Where each fix in `folders` stands, in the order given, from one process for all of them, or for
+/// each part when the argument list would pass [`COMMAND_LINE_BUDGET`] characters. A folder the program
+/// could not answer for gets its own error; a run that failed as a whole gives that error for every folder
+/// it was asked about. Not cached, for the reason [`fix_state`] is not.
 pub fn fix_states(program: &Path, folders: &[PathBuf]) -> Vec<Result<FixState, FormatError>> {
-    fix_states_in(program, folders, FIX_CHUNK, TIMEOUT)
+    let parts = split_for_command_line(program, folders, COMMAND_LINE_BUDGET);
+    fix_states_in(program, &parts, TIMEOUT)
 }
 
-/// How many fix folders one program process answers for. The program works through its folders one
-/// after another at about 0.3 to 1.2 seconds each, so 10 folders take 12 seconds at the slowest, well
-/// inside [`TIMEOUT`]; each chunk has the whole timeout to itself, so the total grows with the number of
-/// fixes and no realistic chunk can be killed for its size.
-const FIX_CHUNK: usize = 10;
+/// How long the argument list of one program process may be. The Windows command line stops at 32,767
+/// characters; this leaves room for the program's own path, the quoting and the other arguments.
+const COMMAND_LINE_BUDGET: usize = 30_000;
 
-/// [`fix_states`] with the chunk size and the timeout of one chunk given.
+/// `folders` cut into the fewest consecutive parts whose argument lists each stay within `budget`
+/// characters (a folder that is too long alone still gets a part of its own).
+fn split_for_command_line<'a>(
+    program: &Path,
+    folders: &'a [PathBuf],
+    budget: usize,
+) -> Vec<&'a [PathBuf]> {
+    let fixed = program.display().to_string().len() + "node fix-state --json".len() + 8;
+    let mut parts = Vec::new();
+    let (mut start, mut used) = (0, fixed);
+    for (i, folder) in folders.iter().enumerate() {
+        // The name, a space and a pair of quotes.
+        let cost = folder.display().to_string().len() + 3;
+        if i > start && used + cost > budget {
+            parts.push(&folders[start..i]);
+            (start, used) = (i, fixed);
+        }
+        used += cost;
+    }
+    if start < folders.len() {
+        parts.push(&folders[start..]);
+    }
+    parts
+}
+
+/// [`fix_states`] for parts already cut, with the timeout of one process given.
 fn fix_states_in(
     program: &Path,
-    folders: &[PathBuf],
-    chunk: usize,
+    parts: &[&[PathBuf]],
     timeout: Duration,
 ) -> Vec<Result<FixState, FormatError>> {
-    folders
-        .chunks(chunk.max(1))
+    parts
+        .iter()
         .flat_map(|part| fix_states_chunk(program, part, timeout))
         .collect()
 }
@@ -517,14 +720,18 @@ fn hash_of(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
-/// The hash of the `.ai-sdlc.json` the program would find above `file` (it walks up from the
-/// document's folder), or 0 when there is none.
-fn marker_hash(file: &Path) -> u64 {
+/// The bytes of the `.ai-sdlc.json` the program would find above `file` (it walks up from the
+/// document's folder), or `None` when there is none.
+fn marker_bytes(file: &Path) -> Option<Vec<u8>> {
     file.ancestors()
         .skip(1)
         .map(|dir| dir.join(crate::workspace::MARKER))
         .find_map(|marker| std::fs::read(marker).ok())
-        .map_or(0, |bytes| hash_of(&bytes))
+}
+
+/// The hash of that marker, or 0 when there is none.
+fn marker_hash(file: &Path) -> u64 {
+    marker_bytes(file).map_or(0, |bytes| hash_of(&bytes))
 }
 
 /// Runs `node <program> <args>` in `cwd`. Exit 0 and 1 are answers (the document passes, or has
@@ -533,8 +740,142 @@ fn run(program: &Path, cwd: &Path, args: &[&str]) -> Result<process::CapturedExi
     run_within(program, cwd, args, TIMEOUT)
 }
 
+/// What every format call made by the threads of one pass shares: whether Node.js is there, how long a
+/// call may take, and how many programs were started. A call made outside a pass shares nothing.
+pub struct Pass {
+    node: Mutex<NodeState>,
+    limit: Mutex<Option<Duration>>,
+    started: AtomicUsize,
+}
+
+/// What a pass knows about Node.js.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NodeState {
+    /// `node` was found on `PATH`, or a program has started since.
+    Present,
+    /// `node` was not found on `PATH`: the first call tries it alone; the answer settles the rest.
+    Suspect,
+    /// A call found `node` missing: every later call is answered so without starting a program.
+    Missing,
+}
+
+thread_local! {
+    static CURRENT: std::cell::RefCell<Option<std::sync::Arc<Pass>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Puts a thread back in the pass it was in before [`Pass::enter`].
+pub struct PassGuard(Option<std::sync::Arc<Pass>>);
+
+impl Drop for PassGuard {
+    fn drop(&mut self) {
+        CURRENT.with(|c| *c.borrow_mut() = self.0.take());
+    }
+}
+
+impl Pass {
+    /// A pass for a machine whose `PATH` is read now.
+    pub fn new() -> std::sync::Arc<Pass> {
+        std::sync::Arc::new(Pass {
+            node: Mutex::new(if node_on_path() {
+                NodeState::Present
+            } else {
+                NodeState::Suspect
+            }),
+            limit: Mutex::new(None),
+            started: AtomicUsize::new(0),
+        })
+    }
+
+    /// Makes the calls of the current thread belong to this pass until the guard is dropped.
+    pub fn enter(self: &std::sync::Arc<Self>) -> PassGuard {
+        PassGuard(CURRENT.with(|c| c.borrow_mut().replace(self.clone())))
+    }
+
+    /// Replaces the 30-second limit of every call in this pass.
+    pub fn set_limit(&self, limit: Duration) {
+        *self.limit.lock().unwrap_or_else(|e| e.into_inner()) = Some(limit);
+    }
+
+    /// How many programs this pass started.
+    pub fn started(&self) -> usize {
+        self.started.load(Ordering::SeqCst)
+    }
+}
+
+/// Whether a `node` program sits in a folder of `PATH`, looked up without starting anything.
+fn node_on_path() -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    let exts: Vec<String> = if cfg!(windows) {
+        std::env::var("PATHEXT")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| ".COM;.EXE;.BAT;.CMD".to_string())
+            .split(';')
+            .filter(|e| !e.is_empty())
+            .map(str::to_string)
+            .collect()
+    } else {
+        vec![String::new()]
+    };
+    std::env::split_paths(&path).any(|dir| {
+        exts.iter()
+            .any(|ext| dir.join(format!("node{ext}")).is_file())
+    })
+}
+
+impl FormatError {
+    /// The program was killed because it passed its time limit.
+    pub fn timed_out(&self) -> bool {
+        matches!(self, FormatError::CouldNotRun(m) if m.starts_with("it did not finish in "))
+    }
+}
+
 /// [`run`] with the time the program may take given.
 fn run_within(
+    program: &Path,
+    cwd: &Path,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<process::CapturedExit, FormatError> {
+    let Some(pass) = CURRENT.with(|c| c.borrow().clone()) else {
+        return start(program, cwd, args, timeout);
+    };
+    let timeout = pass
+        .limit
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or(timeout);
+    let mut node = pass.node.lock().unwrap_or_else(|e| e.into_inner());
+    match *node {
+        NodeState::Missing => Err(FormatError::NodeMissing),
+        NodeState::Present => {
+            drop(node);
+            pass.started.fetch_add(1, Ordering::SeqCst);
+            let answer = start(program, cwd, args, timeout);
+            if matches!(answer, Err(FormatError::NodeMissing)) {
+                *pass.node.lock().unwrap_or_else(|e| e.into_inner()) = NodeState::Missing;
+            }
+            answer
+        }
+        NodeState::Suspect => {
+            // Held through the attempt, so the other threads of the pass wait for the one answer.
+            pass.started.fetch_add(1, Ordering::SeqCst);
+            let answer = start(program, cwd, args, timeout);
+            *node = if matches!(answer, Err(FormatError::NodeMissing)) {
+                NodeState::Missing
+            } else {
+                NodeState::Present
+            };
+            answer
+        }
+    }
+}
+
+/// Starts `node <program> <args>` in `cwd` and reads its exit.
+fn start(
     program: &Path,
     cwd: &Path,
     args: &[&str],
@@ -629,24 +970,41 @@ mod tests {
     }
 
     #[test]
-    fn many_fixes_are_read_in_chunks_one_after_another_f1() {
+    fn many_fixes_are_read_in_one_process_f1() {
         let tmp = tempfile::tempdir().unwrap();
         let plugin = crate::testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
         let folders = folders_of(tmp.path(), 45);
         let got = fix_states(&crate::build::program(&plugin), &folders);
         let calls = std::fs::read_to_string(plugin.join("format").join("calls.log")).unwrap();
-        assert_eq!(
-            calls.lines().collect::<Vec<_>>(),
-            vec![
-                "fix-state 10",
-                "fix-state 10",
-                "fix-state 10",
-                "fix-state 10",
-                "fix-state 5"
-            ]
-        );
+        assert_eq!(calls.lines().collect::<Vec<_>>(), vec!["fix-state 45"]);
         assert_eq!(got.len(), 45);
         assert!(got.iter().all(|r| r.as_ref().is_ok_and(|s| s.row == 6)));
+    }
+
+    #[test]
+    fn fixes_split_only_when_the_command_line_would_pass_30000_characters_f1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = crate::testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
+        // 300 folders of about 150 characters each: the arguments alone come to about 45,000.
+        let long = tmp.path().join("x".repeat(100));
+        let folders: Vec<PathBuf> = (0..300)
+            .map(|i| {
+                let folder = long.join(format!("2026-10-01-fix-{i:03}"));
+                std::fs::create_dir_all(&folder).unwrap();
+                folder
+            })
+            .collect();
+        let program = crate::build::program(&plugin);
+        let got = fix_states(&program, &folders);
+        let calls = std::fs::read_to_string(plugin.join("format").join("calls.log")).unwrap();
+        let sizes: Vec<usize> = calls
+            .lines()
+            .map(|l| l.trim_start_matches("fix-state ").parse().unwrap())
+            .collect();
+        assert_eq!(got.len(), 300);
+        assert!(got.iter().all(Result::is_ok));
+        assert!(sizes.len() >= 2 && sizes.len() <= 3, "{sizes:?}");
+        assert_eq!(sizes.iter().sum::<usize>(), 300);
     }
 
     #[test]
@@ -665,10 +1023,10 @@ mod tests {
         let mut folders = folders_of(tmp.path(), 6);
         folders[2] = tmp.path().join("2026-10-01-slow");
         std::fs::create_dir_all(&folders[2]).unwrap();
+        let parts: Vec<&[PathBuf]> = folders.chunks(2).collect();
         let got = fix_states_in(
             &crate::build::program(&plugin),
-            &folders,
-            2,
+            &parts,
             Duration::from_secs(2),
         );
         let failed: Vec<bool> = got.iter().map(Result::is_err).collect();

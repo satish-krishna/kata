@@ -296,6 +296,10 @@
 .k-lock__foot { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-4); }
 .k-lock__deadline { font: var(--font-code-sm); color: var(--warning-text); }
 
+/* One long step's progress line: the playful line and, beside it, the plain label that never rotates. */
+.k-progress { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-3); }
+.k-progress__label { font: var(--font-code-sm); color: var(--text-muted); }
+
 /* A finding's place in the diff editor: the warning edge on its line and its text in a zone below. Monaco draws both, outside any component's styles. */
 .k-finding-line { box-shadow: inset 2px 0 0 var(--warning); }
 .k-finding-note { box-sizing: border-box; height: 100%; margin: 0 var(--space-4) var(--space-3) var(--space-8); padding: var(--space-3); overflow: auto; border: 1px solid var(--warning-border); background: var(--warning-subtle); border-radius: var(--radius-sm); font: var(--text-sm)/1.4 var(--font-sans); color: var(--text-primary); white-space: normal; }

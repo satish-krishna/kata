@@ -5,12 +5,16 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+kata-core = { path = "../kata-core" }
 serde.workspace = true
 serde_json.workspace = true
+git2.workspace = true
+libgit2-sys = "0.18"
+ureq.workspace = true
 tempfile.workspace = true
 toml.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
-process-wrap = { version = "9.1", features = ["std", "job-object", "process-group"] }
 ts-rs = { version = "10", optional = true, default-features = false, features = ["serde-compat"] }
 
 [features]
@@ -18,3 +22,6 @@ ts = ["dep:ts-rs"]
 
 [dev-dependencies]
 serial_test = "3"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Security_Credentials"] }

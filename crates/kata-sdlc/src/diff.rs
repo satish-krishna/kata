@@ -1,9 +1,10 @@
-//! What changed in one repository, read with the git CLI and never written. A port of mekiki's
+//! What changed in one repository, read with libgit2 and never written. A port of mekiki's
 //! diff behavior: the three parts of a change, their files with line counts, the two sides of a
 //! file for the diff editor, and line counts grouped by file type.
 
 use crate::base::{self, BaseError};
-use crate::git::{self, GitError};
+use crate::git::{GitError, Repo};
+use git2::{Delta, DiffFindOptions, DiffOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -83,58 +84,11 @@ pub struct CommitFiles {
 pub fn commit_files(repo: &Path) -> Result<Vec<CommitFiles>, DiffError> {
     let left = left_side(repo, Part::Committed)?;
     let range = format!("{left}..HEAD");
-    let out = git::run_bytes(
-        repo,
-        &[
-            "--no-optional-locks",
-            "log",
-            "--reverse",
-            "--no-renames",
-            "--format=%x00%H",
-            "--name-only",
-            "-z",
-            &range,
-        ],
-    )?;
-    Ok(parse_commit_files(&out))
-}
-
-/// Parse `log --format=%x00%H --name-only -z`: each commit is an empty token, its hash, then its
-/// paths. A path is never empty, so an empty token marks the start of a commit. Git puts a newline
-/// between the hash and the first path.
-fn parse_commit_files(out: &[u8]) -> Vec<CommitFiles> {
-    let mut commits: Vec<CommitFiles> = Vec::new();
-    let mut next_is_sha = false;
-    let mut after_sha = false;
-    for token in out.split(|b| *b == 0) {
-        let token = String::from_utf8_lossy(token);
-        if token.is_empty() {
-            next_is_sha = true;
-            after_sha = false;
-        } else if next_is_sha {
-            commits.push(CommitFiles {
-                sha: token.trim().to_string(),
-                files: Vec::new(),
-            });
-            next_is_sha = false;
-            after_sha = true;
-        } else if let Some(commit) = commits.last_mut() {
-            let path = if after_sha {
-                token.strip_prefix('\n').unwrap_or(&token)
-            } else {
-                &token
-            };
-            after_sha = false;
-            if !path.is_empty() {
-                commit.files.push(path.to_string());
-            }
-        }
-    }
-    for commit in &mut commits {
-        commit.files.sort();
-        commit.files.dedup();
-    }
-    commits
+    Ok(Repo::open(repo)?
+        .commit_files(&[range])?
+        .into_iter()
+        .map(|(sha, files)| CommitFiles { sha, files })
+        .collect())
 }
 
 /// Both sides of one file, for the diff editor. A missing side is an empty string; a binary file
@@ -296,12 +250,12 @@ pub fn file_pair(repo: &Path, part: Part, path: &str) -> Result<FilePair, DiffEr
         ChangeStatus::Added | ChangeStatus::Untracked => String::new(),
         _ => {
             let old = file.old_path.as_deref().unwrap_or(path);
-            show(repo, &format!("{left}:{old}"))?
+            show(repo, &left, old)?
         }
     };
     let modified = match (file.status, part) {
         (ChangeStatus::Deleted, _) => String::new(),
-        (_, Part::Committed) => show(repo, &format!("HEAD:{path}"))?,
+        (_, Part::Committed) => show(repo, "HEAD", path)?,
         _ => lossy(&std::fs::read(repo.join(path))?),
     };
     Ok(FilePair {
@@ -316,8 +270,14 @@ fn lossy(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-fn show(repo: &Path, object: &str) -> Result<String, GitError> {
-    Ok(lossy(&git::run_bytes(repo, &["show", object])?))
+fn show(repo: &Path, rev: &str, rel: &str) -> Result<String, GitError> {
+    Repo::open(repo)?
+        .bytes_at(rev, rel)?
+        .map(|bytes| lossy(&bytes))
+        .ok_or_else(|| GitError {
+            args: format!("show {rev}:{rel}"),
+            stderr: format!("path '{rel}' does not exist in '{rev}'"),
+        })
 }
 
 /// The revision the part's diff starts from.
@@ -328,172 +288,78 @@ fn left_side(repo: &Path, part: Part) -> Result<String, DiffError> {
     })
 }
 
+/// The files of one part of the change with their line counts, the way `git diff -M --numstat`
+/// and `--name-status` give them. The uncommitted and whole-change parts compare the left tree with
+/// the working tree through the repository's index, which is read and never written; untracked
+/// files that are not ignored count as added, with their lines.
 fn list(repo: &Path, part: Part) -> Result<Vec<ChangedFile>, DiffError> {
     let left = left_side(repo, part)?;
-    let mut files = match part {
-        Part::Committed => {
-            let numstat = diff_output(repo, "--numstat", &[&left, "HEAD"], None)?;
-            let status = diff_output(repo, "--name-status", &[&left, "HEAD"], None)?;
-            parse(&numstat, &status, &BTreeSet::new())
-        }
-        Part::Whole | Part::Uncommitted => with_throwaway_index(repo, |index, untracked| {
-            let numstat = diff_output(repo, "--numstat", &[&left], Some(index))?;
-            let status = diff_output(repo, "--name-status", &[&left], Some(index))?;
-            Ok(parse(&numstat, &status, untracked))
-        })?,
+    let opened = Repo::open(repo)?;
+    let raw = opened.raw();
+    let fail = |e| GitError::from_git2(&format!("diff -M --numstat {left}"), e);
+    let tree = raw
+        .revparse_single(&left)
+        .and_then(|o| o.peel_to_tree())
+        .map_err(fail)?;
+    let mut options = DiffOptions::new();
+    options.include_typechange(true);
+    let mut diff = if part == Part::Committed {
+        let head = raw.head().and_then(|h| h.peel_to_tree()).map_err(fail)?;
+        raw.diff_tree_to_tree(Some(&tree), Some(&head), Some(&mut options))
+    } else {
+        options
+            .include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .show_untracked_content(true);
+        raw.diff_tree_to_workdir_with_index(Some(&tree), Some(&mut options))
+    }
+    .map_err(fail)?;
+    // The same similarity threshold as `git diff -M`: half the file.
+    let mut find = DiffFindOptions::new();
+    find.renames(true)
+        .rename_threshold(50)
+        .for_untracked(part != Part::Committed);
+    diff.find_similar(Some(&mut find)).map_err(fail)?;
+
+    let name = |file: git2::DiffFile<'_>| {
+        file.path_bytes()
+            .map(|b| String::from_utf8_lossy(b).into_owned())
     };
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(files)
-}
-
-fn diff_output(
-    repo: &Path,
-    format: &str,
-    revs: &[&str],
-    index: Option<&Path>,
-) -> Result<Vec<u8>, GitError> {
-    let mut args = vec![
-        "--no-optional-locks",
-        "diff",
-        "--no-ext-diff",
-        "-M",
-        format,
-        "-z",
-    ];
-    args.extend_from_slice(revs);
-    match index {
-        Some(index) => git::run_env(repo, &args, &[("GIT_INDEX_FILE", index.as_os_str())]),
-        None => git::run_bytes(repo, &args),
-    }
-}
-
-/// Copy the repository's index to a temp file, mark the untracked non-ignored files in the copy
-/// as intent-to-add, and hand the copy and the untracked paths to `body`. The repository's own
-/// index is never written; the copy is deleted afterwards.
-fn with_throwaway_index<T>(
-    repo: &Path,
-    body: impl FnOnce(&Path, &BTreeSet<String>) -> Result<T, DiffError>,
-) -> Result<T, DiffError> {
-    let real = git::run(repo, &["rev-parse", "--git-path", "index"])?;
-    let real = repo.join(real);
-    let temp = tempfile::Builder::new()
-        .prefix("kata-index-")
-        .tempfile()?
-        .into_temp_path();
-    if real.exists() {
-        std::fs::copy(&real, &temp)?;
-    }
-    let result = prepare_and_run(repo, &temp, body);
-    let _ = temp.close();
-    result
-}
-
-fn prepare_and_run<T>(
-    repo: &Path,
-    temp: &Path,
-    body: impl FnOnce(&Path, &BTreeSet<String>) -> Result<T, DiffError>,
-) -> Result<T, DiffError> {
-    let listing = git::run_bytes(
-        repo,
-        &[
-            "--no-optional-locks",
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "-z",
-        ],
-    )?;
-    let untracked: Vec<String> = listing
-        .split(|b| *b == 0)
-        .filter(|t| !t.is_empty())
-        .map(lossy)
-        .collect();
-    let env = [("GIT_INDEX_FILE", temp.as_os_str())];
-    let mut chunk: Vec<&str> = Vec::new();
-    let mut size = 0;
-    let flush = |chunk: &mut Vec<&str>| -> Result<(), GitError> {
-        if chunk.is_empty() {
-            return Ok(());
-        }
-        let mut args = vec!["--literal-pathspecs", "add", "-N", "--"];
-        args.append(chunk);
-        git::run_env(repo, &args, &env).map(|_| ())
-    };
-    for path in &untracked {
-        if size + path.len() > 16_000 {
-            flush(&mut chunk)?;
-            size = 0;
-        }
-        size += path.len() + 1;
-        chunk.push(path);
-    }
-    flush(&mut chunk)?;
-    body(temp, &untracked.iter().cloned().collect())
-}
-
-/// Combine `--name-status -z` (status and paths) with `--numstat -z` (counts and binary flag).
-fn parse(numstat: &[u8], name_status: &[u8], untracked: &BTreeSet<String>) -> Vec<ChangedFile> {
-    let tokens = |b: &[u8]| -> Vec<String> { b.split(|c| *c == 0).map(lossy).collect() };
-    let mut counts: BTreeMap<String, (u32, u32, bool)> = BTreeMap::new();
-    let toks = tokens(numstat);
-    let mut i = 0;
-    while i < toks.len() {
-        let mut parts = toks[i].splitn(3, '\t');
-        let (Some(a), Some(r), Some(path)) = (parts.next(), parts.next(), parts.next()) else {
-            i += 1;
-            continue;
-        };
-        let entry = (a.parse().unwrap_or(0), r.parse().unwrap_or(0), a == "-");
-        if path.is_empty() {
-            if let Some(new) = toks.get(i + 2) {
-                counts.insert(new.clone(), entry);
-            }
-            i += 3;
-        } else {
-            counts.insert(path.to_string(), entry);
-            i += 1;
-        }
-    }
     let mut files = Vec::new();
-    let toks = tokens(name_status);
-    let mut i = 0;
-    while i < toks.len() {
-        let Some(code) = toks[i].chars().next() else {
-            i += 1;
+    for (index, delta) in diff.deltas().enumerate() {
+        let status = match delta.status() {
+            Delta::Added | Delta::Copied => ChangeStatus::Added,
+            Delta::Untracked => ChangeStatus::Untracked,
+            Delta::Deleted => ChangeStatus::Deleted,
+            Delta::Renamed => ChangeStatus::Renamed,
+            Delta::Modified | Delta::Typechange => ChangeStatus::Modified,
+            _ => continue,
+        };
+        let Some(path) = name(delta.new_file()).or_else(|| name(delta.old_file())) else {
             continue;
         };
-        let two = matches!(code, 'R' | 'C');
-        let Some(first) = toks.get(i + 1) else { break };
-        let second = toks.get(i + 2);
-        i += if two { 3 } else { 2 };
-        let (path, old_path) = match (two, second) {
-            (true, Some(new)) => (new.clone(), (code == 'R').then(|| first.clone())),
-            _ => (first.clone(), None),
-        };
-        let status = match code {
-            'A' if untracked.contains(&path) => ChangeStatus::Untracked,
-            'A' | 'C' => ChangeStatus::Added,
-            'D' => ChangeStatus::Deleted,
-            'R' => ChangeStatus::Renamed,
-            _ => ChangeStatus::Modified,
-        };
-        let (added, removed, binary) = counts.get(&path).copied().unwrap_or((0, 0, false));
+        let old_path = (status == ChangeStatus::Renamed)
+            .then(|| name(delta.old_file()))
+            .flatten();
+        let counts = kata_core::git::file_counts(&diff, index, true).map_err(fail)?;
         files.push(ChangedFile {
             path,
             old_path,
             status,
-            binary,
-            added: if binary { 0 } else { added },
-            removed: if binary { 0 } else { removed },
+            binary: counts.binary,
+            added: counts.added,
+            removed: counts.removed,
             uncommitted: false,
         });
     }
-    files
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(files)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git;
     use crate::testutil::{checkout, commit_file, remove, rename, repo, stage, write};
     use std::path::PathBuf;
 

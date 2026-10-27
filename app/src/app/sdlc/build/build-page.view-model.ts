@@ -19,6 +19,7 @@ import { ModeStore } from '../../core/mode/mode.store';
 import { IDLE, reduce, type RunSnapshot } from '../../core/run/reduce';
 import { RunStore } from '../../core/run/run.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
+import { ProgressStore } from '../../core/progress/progress.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { type AskRecord, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
@@ -26,6 +27,7 @@ import { activityFor, newlyRecorded, outcomeOf, recordOutcome, repoSessions, ses
 import { buildActions, buildStage, repoAction, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { fallbackTaskState, hms, ms, situationView, taskState, type SituationView, type Situation, type TaskState } from '../../lib/build-state';
 import { layoutStage as layoutStageOf, type LayoutStage } from '../../lib/build-layout-stage';
+import { progressLabels } from '../../lib/progress-steps';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { REVIEW_MISSING_TEXT, reviewState } from '../../lib/sdlc-done';
@@ -247,6 +249,7 @@ export class BuildPageViewModel {
   private readonly runs = inject(RunStore);
   private readonly modes = inject(ModeStore);
   private readonly toasts = inject(ToastStore);
+  private readonly progress = inject(ProgressStore);
   /** The preview Continue opens; the template mounts its dialog. */
   readonly preview = inject(RunPreviewViewModel);
   private readonly givens = inject(GivenStore);
@@ -1011,7 +1014,7 @@ export class BuildPageViewModel {
       // A release that starts while the participants are read settles the branches: read `settled` again and prepare them.
       for (;;) {
         if (this.settled) {
-          const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, false, owner, 'continue');
+          const out = await this.prepareBranches(ctx.folder, h.start.master.repo, ctx.system, ctx.change, false, owner);
           if (out.kind === 'refused') {
             this.refusal.set({ reason: out.message, problems: out.problems });
             return;
@@ -1041,6 +1044,20 @@ export class BuildPageViewModel {
     await this.resume(key);
   }
 
+  /** Prepare the repositories to continue a run, with the build's progress line showing while it takes long; a failure clears the line before the caller's error shows. */
+  private async prepareBranches(folder: string, master: string, system: string, change: string, withLeftovers: boolean, owner: string) {
+    this.progress.begin('preparing-build', progressLabels.preparingBuild(), 'build');
+    try {
+      const out = await this.transport.sdlcBuildPrepare(folder, master, system, change, withLeftovers, owner, 'continue');
+      if (out.kind === 'refused') this.progress.fail('build');
+      else this.progress.end('build');
+      return out;
+    } catch (e) {
+      this.progress.fail('build');
+      throw e;
+    }
+  }
+
   /** The engineer confirmed continuing on top of the leftovers: the run starts without discarding them. */
   async confirmContinue(): Promise<void> {
     const key = this.asking;
@@ -1053,7 +1070,7 @@ export class BuildPageViewModel {
     await this.pendingFinish;
     if (this.settled) {
       try {
-        const out = await this.transport.sdlcBuildPrepare(ctx.folder, h.start.master.repo, ctx.system, ctx.change, true, this.ownerOf(key), 'continue');
+        const out = await this.prepareBranches(ctx.folder, h.start.master.repo, ctx.system, ctx.change, true, this.ownerOf(key));
         if (out.kind === 'refused') {
           this.refusal.set({ reason: out.message, problems: out.problems });
           return;

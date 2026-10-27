@@ -23,8 +23,6 @@
             <span class="k-wsitem__folder">{{ w.folder }}</span>
             @if (missing().includes(w.id)) {
               <span class="k-wsitem__note k-wsitem__note--warn">folder missing</span>
-            } @else if (counts()[w.id] !== undefined) {
-              <span class="k-wsitem__note">{{ counts()[w.id] }} {{ counts()[w.id] === 1 ? 'change' : 'changes' }}</span>
             }
           </span>
           <hlm-dropdown-menu-radio-indicator />

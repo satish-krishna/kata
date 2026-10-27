@@ -1,8 +1,11 @@
 use crate::build::program;
 use crate::format::{self, FormatError, ReadResult};
-use crate::{branch, frontmatter, git, workspace::is_committed};
+use crate::{branch, frontmatter, git};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
+use std::time::Duration;
 
 /// Where a change is in the intent, spec, plan flow.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -237,17 +240,19 @@ pub fn track(intent_text: &str) -> Track {
 
 /// The track of a change, read the way the format program reads it: the working `intent.md`'s `track`,
 /// and when that file is missing, names no track or does not parse, the one in `HEAD`.
-fn track_of_change(master: &Path, system: &str, change: &str) -> Track {
+fn track_of_change(repo: Option<&git::Repo>, master: &Path, system: &str, change: &str) -> Track {
     let file = change_dir(master, system, change).join("intent.md");
     let named = |text: &str| frontmatter::field(text, "track").map(|t| t == "fix");
     let working = std::fs::read_to_string(&file)
         .ok()
         .and_then(|text| named(&text));
     let found = working.or_else(|| {
-        let spec = format!("HEAD:intent/{system}/{change}/intent.md");
-        git::run(master, &["show", &spec])
+        let rel = format!("intent/{system}/{change}/intent.md");
+        repo?
+            .committed_bytes(&rel)
             .ok()
-            .and_then(|text| named(&text))
+            .flatten()
+            .and_then(|bytes| named(&git::trimmed_text(&bytes)))
     });
     if found == Some(true) {
         Track::Fix
@@ -306,24 +311,23 @@ pub(crate) fn is_safe_system(system: &str) -> bool {
         && !system.contains(['/', '\\', ':'])
 }
 
-/// The state of one document. `head_status` is what the format program said about the `HEAD` copy (a fix
-/// only); a full-pipeline change has none.
+/// The state of one document from its working text (`None` when the file is not there). `head_status` is
+/// what the format program said about the `HEAD` copy (a fix only); a full-pipeline change has none.
 fn doc_state(
-    master: &Path,
-    system: &str,
-    change: &str,
-    file: &str,
+    ctx: &ReadContext,
+    repo: Option<&git::Repo>,
+    rel: &str,
+    text: Option<&str>,
     head_status: Option<String>,
 ) -> DocState {
-    let rel = format!("intent/{system}/{change}/{file}");
-    match std::fs::read_to_string(master.join(&rel)) {
-        Ok(text) => DocState {
+    match text {
+        Some(text) => DocState {
             exists: true,
-            committed: is_committed(master, &rel),
-            status: Some(frontmatter::field(&text, "status").unwrap_or_else(|| "unknown".into())),
+            committed: ctx.committed(repo, rel),
+            status: Some(frontmatter::field(text, "status").unwrap_or_else(|| "unknown".into())),
             head_status,
         },
-        Err(_) => DocState {
+        None => DocState {
             head_status,
             ..DocState::default()
         },
@@ -339,9 +343,11 @@ fn plan_facts(
     master: &Path,
     system: &str,
     change: &str,
+    pins: (bool, bool),
 ) -> (PlanFacts, BuildCounts, Option<String>) {
+    use format::Reads::Shown;
     let plan_file = master.join(format!("intent/{system}/{change}/plan.md"));
-    let read = plugin.map(|p| crate::format::read(&crate::build::program(p), &plan_file));
+    let read = plugin.map(|p| format::read_with(&crate::build::program(p), &plan_file, Shown));
     let mut reason = None;
     let tasks = match read {
         Some(Ok(crate::format::ReadResult::Plan { document, .. })) => document.tasks,
@@ -361,7 +367,15 @@ fn plan_facts(
     let mut repos: Vec<&str> = tasks.iter().map(|t| t.repo.as_str()).collect();
     repos.sort_unstable();
     repos.dedup();
-    let finished = match plugin.map(|p| crate::build::status(p, master, system, change)) {
+    // The build status reads this same plan again. When the plan could not be read, that read would fail
+    // the same way and cost the whole failure a second time (a failed read is not cached, and a timeout
+    // is not a verdict), so nothing is finished and the plan's own reason stands.
+    let status = match (plugin, &reason) {
+        (Some(p), None) => Some(crate::build::status_with(p, master, system, change, Shown)),
+        _ => None,
+    };
+    let finished = match status {
+        None => 0,
         Some(Ok(status)) => status.tasks.iter().filter(|t| t.row.is_some()).count() as u32,
         Some(Err(e)) if !crate::build::is_unreadable(&e) => 0,
         other => {
@@ -381,8 +395,8 @@ fn plan_facts(
         repos: repos.len() as u32,
     };
     let facts = PlanFacts {
-        spec_pin: crate::pins::spec_pin_holds(master, system, change),
-        plan_pin: crate::pins::plan_pin_holds(master, system, change),
+        spec_pin: pins.0,
+        plan_pin: pins.1,
         has_tasks: !tasks.is_empty(),
         tasks: counts.tasks,
         finished,
@@ -399,140 +413,562 @@ fn change_dir(master: &Path, system: &str, change: &str) -> std::path::PathBuf {
     master.join("intent").join(system).join(change)
 }
 
-/// The changes of `system` in the master repo, newest folder name first.
-pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInfo> {
+/// One change folder of a workspace and the title of its intent, before any stage is read.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct ChangeName {
+    /// The folder name.
+    pub change: String,
+    /// The `title` in the intent's front matter, when the intent has one.
+    pub title: Option<String>,
+}
+
+/// The changes of `system` in the master repo, newest folder name first, each with the title of its
+/// intent. Files only: no repository is opened and no program is started.
+pub fn names(master: &Path, system: &str) -> Vec<ChangeName> {
     if !is_safe_system(system) {
         return Vec::new();
     }
     let Ok(entries) = std::fs::read_dir(master.join("intent").join(system)) else {
         return Vec::new();
     };
-    let mut names: Vec<String> = entries
+    let mut found: Vec<String> = entries
         .flatten()
         .filter(|e| e.path().is_dir())
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|n| is_change_name(n))
         .collect();
-    names.sort_by(|a, b| b.cmp(a));
-    let tracks: Vec<Track> = names
+    found.sort_by(|a, b| b.cmp(a));
+    found
+        .into_iter()
+        .map(|change| {
+            let title =
+                std::fs::read_to_string(change_dir(master, system, &change).join("intent.md"))
+                    .ok()
+                    .and_then(|text| frontmatter::field(&text, "title"))
+                    .filter(|t| !t.is_empty());
+            ChangeName { change, title }
+        })
+        .collect()
+}
+
+/// What the reads of one pass share: the plugin, the master repository's status below `intent/` taken
+/// once, and what the pass has learned about Node.js. A context is a snapshot: the repository is
+/// not read again, so a change edited after it was made shows as it was.
+pub struct ReadContext {
+    plugin: Option<PathBuf>,
+    master: PathBuf,
+    /// `status` of `intent/`; `None` when the repository could not be opened.
+    status: Option<Vec<git::StatusEntry>>,
+    /// The plugin is too old to read a fix.
+    needs_plugin: bool,
+    pass: Arc<format::Pass>,
+}
+
+impl ReadContext {
+    /// Opens the master repository, takes its status below `intent/` once, and starts a pass.
+    pub fn new(plugin: Option<&Path>, master: &Path) -> ReadContext {
+        let status = git::Repo::open(master)
+            .ok()
+            .and_then(|repo| repo.status("intent").ok());
+        ReadContext {
+            plugin: plugin.map(Path::to_path_buf),
+            master: master.to_path_buf(),
+            status,
+            needs_plugin: plugin.is_some_and(|p| {
+                !crate::plugin::version(p).is_some_and(|v| crate::plugin::light_track(&v))
+            }),
+            pass: format::Pass::new(),
+        }
+    }
+
+    /// Test hook: the time one format program call may take in this pass.
+    #[doc(hidden)]
+    pub fn limit_format_calls(&self, limit: Duration) {
+        self.pass.set_limit(limit);
+    }
+
+    /// Test hook: how many format programs this pass started.
+    #[doc(hidden)]
+    pub fn programs_started(&self) -> usize {
+        self.pass.started()
+    }
+
+    fn repo(&self) -> Option<git::Repo> {
+        git::Repo::open(&self.master).ok()
+    }
+
+    /// Whether `rel` is committed: `HEAD` holds it and neither the index nor the working tree differs.
+    fn committed(&self, repo: Option<&git::Repo>, rel: &str) -> bool {
+        let (Some(status), Some(repo)) = (&self.status, repo) else {
+            return false;
+        };
+        !status
+            .iter()
+            .any(|e| e.path == rel || e.from.as_deref() == Some(rel))
+            && repo.blob_id_at("HEAD", rel).ok().flatten().is_some()
+    }
+}
+
+/// Why a request for one change is refused: a name that could reach outside the system's folder, or
+/// a change that is not there.
+fn refuse(master: &Path, system: &str, change: &str) -> Result<(), String> {
+    if !is_safe_system(system) {
+        return Err(format!("{system:?} is not a system name"));
+    }
+    if !is_change_name(change) {
+        return Err(format!("{change:?} is not a change name"));
+    }
+    if !change_dir(master, system, change).is_dir() {
+        return Err(format!("there is no change {change} in {system}"));
+    }
+    Ok(())
+}
+
+/// What one call of the format program answered for the fixes of a system.
+struct FixBatch {
+    answers: HashMap<PathBuf, Result<format::FixState, FormatError>>,
+    /// More than one fix was asked about in the call.
+    together: bool,
+}
+
+impl FixBatch {
+    fn empty() -> FixBatch {
+        FixBatch {
+            answers: HashMap::new(),
+            together: false,
+        }
+    }
+}
+
+/// Every fix in `folders` in one program call (a plugin that cannot read a fix is not asked).
+fn fix_batch(ctx: &ReadContext, folders: &[PathBuf]) -> FixBatch {
+    let Some(plugin) = ctx.plugin.as_deref().filter(|_| !ctx.needs_plugin) else {
+        return FixBatch::empty();
+    };
+    let answers = format::fix_states(&program(plugin), folders);
+    FixBatch {
+        answers: folders.iter().cloned().zip(answers).collect(),
+        together: folders.len() > 1,
+    }
+}
+
+/// Where the fix in `folder` stands, or why that is not known. A fix whose share of a call for several
+/// timed out is asked for on its own, so one fix that hangs does not fail the others' reads.
+fn fix_outcome(
+    ctx: &ReadContext,
+    folder: &Path,
+    batch: Option<&FixBatch>,
+) -> Result<format::FixState, String> {
+    let Some(plugin) = ctx.plugin.as_deref() else {
+        return Err("the ai-sdlc plugin was not found".to_string());
+    };
+    if ctx.needs_plugin {
+        return Err(NEEDS_PLUGIN.to_string());
+    }
+    let program = program(plugin);
+    let answer = match batch.and_then(|b| b.answers.get(folder).map(|a| (a, b.together))) {
+        Some((Err(e), true)) if e.timed_out() => format::fix_state(&program, folder),
+        Some((answer, _)) => answer.clone(),
+        None => format::fix_state(&program, folder),
+    };
+    answer.map_err(|e| e.to_string())
+}
+
+/// Whether `pin`, read from the working text of a document, still names a commit from which `upstream`
+/// is unchanged.
+fn pin_holds(repo: Option<&git::Repo>, text: Option<&str>, key: &str, upstream: &str) -> bool {
+    let pin = text.and_then(|t| frontmatter::field(t, key));
+    repo.is_some_and(|repo| crate::pins::holds(repo, pin.as_deref(), upstream))
+}
+
+/// One change's `ChangeInfo` from what the caller already knows: the track and, for a fix, where it stands.
+fn read_change_with(
+    ctx: &ReadContext,
+    repo: Option<&git::Repo>,
+    system: &str,
+    change: &str,
+    track_of: Track,
+    fix: Option<Result<format::FixState, String>>,
+) -> ChangeInfo {
+    let master = ctx.master.as_path();
+    let plugin = ctx.plugin.as_deref();
+    let needs_plugin = ctx.needs_plugin;
+    // A fix is read by the format program: where it stands, and what each document says in `HEAD`.
+    let heads = |pick: fn(&format::FixFacts) -> &format::FixDocumentFacts| match &fix {
+        Some(Ok(state)) => pick(&state.facts).head_status.clone(),
+        _ => None,
+    };
+    let text =
+        |file: &str| std::fs::read_to_string(change_dir(master, system, change).join(file)).ok();
+    let rel = |file: &str| format!("intent/{system}/{change}/{file}");
+    let (intent_text, spec_text, plan_text) = (text("intent.md"), text("spec.md"), text("plan.md"));
+    let intent = doc_state(
+        ctx,
+        repo,
+        &rel("intent.md"),
+        intent_text.as_deref(),
+        heads(|f| &f.intent),
+    );
+    let spec = doc_state(
+        ctx,
+        repo,
+        &rel("spec.md"),
+        spec_text.as_deref(),
+        heads(|f| &f.spec),
+    );
+    let plan = doc_state(
+        ctx,
+        repo,
+        &rel("plan.md"),
+        plan_text.as_deref(),
+        heads(|f| &f.plan),
+    );
+    let (mut facts, build, mut plan_unreadable_reason) = if plan.exists {
+        let pins = (
+            pin_holds(
+                repo,
+                spec_text.as_deref(),
+                "source_intent_commit",
+                &rel("intent.md"),
+            ),
+            pin_holds(
+                repo,
+                plan_text.as_deref(),
+                "source_spec_commit",
+                &rel("spec.md"),
+            ),
+        );
+        plan_facts(plugin, master, system, change, pins)
+    } else {
+        (PlanFacts::default(), BuildCounts::default(), None)
+    };
+    let mut fix_row = None;
+    let stage = match &fix {
+        Some(Ok(state)) => {
+            fix_row = Some(state.row);
+            if !(1..=8).contains(&state.row) {
+                facts.unreadable = true;
+                plan_unreadable_reason.get_or_insert_with(|| {
+                    format!("the format program reported fix row {}, which this Workbench does not know", state.row)
+                });
+            }
+            fix_stage(state.row, &intent, &spec, &plan, &facts)
+        }
+        Some(Err(message)) => {
+            // The row is unknown, so nothing is offered; the notice carries the program's words.
+            facts.unreadable = true;
+            // The fix-state reason is the one that explains the stage, so it replaces a plan's.
+            plan_unreadable_reason = Some(message.clone());
+            if needs_plugin {
+                Stage::FixNeedsPlugin
+            } else {
+                Stage::FixUnsettled
+            }
+        }
+        None => derive_stage(&intent, &spec, &plan, &facts),
+    };
+    let out_of_date = if plan.exists && stage == Stage::PlanOutOfDate {
+        out_of_date(&intent, &spec, &plan, &facts)
+    } else {
+        None
+    };
+    ChangeInfo {
+        system: system.to_string(),
+        change: change.to_string(),
+        intent,
+        spec,
+        plan,
+        stage,
+        build,
+        scope: crate::decide::change_scope(master, system, change),
+        out_of_date,
+        plan_unreadable: facts.unreadable,
+        plan_unreadable_reason,
+        track: track_of,
+        fix_row,
+    }
+}
+
+/// One change's `ChangeInfo` for the change page: the answer `list` and a stage pass give for it. Refuses
+/// a system or change name that could reach outside the system's folder, and a change that is not there.
+pub fn read_change(ctx: &ReadContext, system: &str, change: &str) -> Result<ChangeInfo, String> {
+    refuse(&ctx.master, system, change)?;
+    let _pass = ctx.pass.enter();
+    let repo = ctx.repo();
+    let track_of = track_of_change(repo.as_ref(), &ctx.master, system, change);
+    let fix = (track_of == Track::Fix)
+        .then(|| fix_outcome(ctx, &change_dir(&ctx.master, system, change), None));
+    Ok(read_change_with(
+        ctx,
+        repo.as_ref(),
+        system,
+        change,
+        track_of,
+        fix,
+    ))
+}
+
+/// The changes of `system` in the master repo, newest folder name first, each read as [`read_change`]
+/// reads it, with every fix asked for in one program call.
+pub fn list(plugin: Option<&Path>, master: &Path, system: &str) -> Vec<ChangeInfo> {
+    let found = names(master, system);
+    if found.is_empty() {
+        return Vec::new();
+    }
+    let ctx = ReadContext::new(plugin, master);
+    let _pass = ctx.pass.enter();
+    let repo = ctx.repo();
+    let tracks: Vec<Track> = found
         .iter()
-        .map(|change| track_of_change(master, system, change))
+        .map(|n| track_of_change(repo.as_ref(), master, system, &n.change))
         .collect();
-    // Every fix of the system is read in one program process, and only by a plugin that knows the light track.
-    let needs_plugin = plugin.is_some_and(|p| {
-        !crate::plugin::version(p).is_some_and(|v| crate::plugin::light_track(&v))
-    });
-    let fix_folders: Vec<std::path::PathBuf> = names
+    let folders: Vec<PathBuf> = found
         .iter()
         .zip(&tracks)
         .filter(|(_, t)| **t == Track::Fix)
-        .map(|(change, _)| change_dir(master, system, change))
+        .map(|(n, _)| change_dir(master, system, &n.change))
         .collect();
-    let mut fix_reads = match plugin {
-        Some(_) if needs_plugin => Vec::new(),
-        Some(p) => format::fix_states(&crate::build::program(p), &fix_folders)
-            .into_iter()
-            .map(|r| Some(r.map_err(|e| e.to_string())))
-            .collect(),
-        None => Vec::new(),
-    }
-    .into_iter();
-    names
+    let batch = (!folders.is_empty()).then(|| fix_batch(&ctx, &folders));
+    found
         .into_iter()
         .zip(tracks)
-        .map(|(change, track_of)| {
-            // A fix is read by the format program: where it stands, and what each document says in `HEAD`.
-            let fix: Option<Result<format::FixState, String>> = (track_of == Track::Fix).then(|| {
-                if needs_plugin {
-                    Err(NEEDS_PLUGIN.to_string())
-                } else if plugin.is_none() {
-                    Err("the ai-sdlc plugin was not found".to_string())
-                } else {
-                    fix_reads
-                        .next()
-                        .flatten()
-                        .unwrap_or_else(|| Err("the format program gave no answer".to_string()))
-                }
-            });
-            let heads = |pick: fn(&format::FixFacts) -> &format::FixDocumentFacts| match &fix {
-                Some(Ok(state)) => pick(&state.facts).head_status.clone(),
-                _ => None,
-            };
-            let intent = doc_state(master, system, &change, "intent.md", heads(|f| &f.intent));
-            let spec = doc_state(master, system, &change, "spec.md", heads(|f| &f.spec));
-            let plan = doc_state(master, system, &change, "plan.md", heads(|f| &f.plan));
-            let (mut facts, build, mut plan_unreadable_reason) = if plan.exists {
-                plan_facts(plugin, master, system, &change)
-            } else {
-                (PlanFacts::default(), BuildCounts::default(), None)
-            };
-            let mut fix_row = None;
-            let stage = match &fix {
-                Some(Ok(state)) => {
-                    fix_row = Some(state.row);
-                    if !(1..=8).contains(&state.row) {
-                        facts.unreadable = true;
-                        plan_unreadable_reason.get_or_insert_with(|| {
-                            format!("the format program reported fix row {}, which this Workbench does not know", state.row)
-                        });
-                    }
-                    fix_stage(state.row, &intent, &spec, &plan, &facts)
-                }
-                Some(Err(message)) => {
-                    // The row is unknown, so nothing is offered; the notice carries the program's words.
-                    facts.unreadable = true;
-                    // The fix-state reason is the one that explains the stage, so it replaces a plan's.
-                    plan_unreadable_reason = Some(message.clone());
-                    if needs_plugin {
-                        Stage::FixNeedsPlugin
-                    } else {
-                        Stage::FixUnsettled
-                    }
-                }
-                None => derive_stage(&intent, &spec, &plan, &facts),
-            };
-            let out_of_date = if plan.exists && stage == Stage::PlanOutOfDate {
-                out_of_date(&intent, &spec, &plan, &facts)
-            } else {
-                None
-            };
-            let scope = crate::decide::change_scope(master, system, &change);
-            ChangeInfo {
-                system: system.to_string(),
-                change,
-                intent,
-                spec,
-                plan,
-                stage,
-                build,
-                scope,
-                out_of_date,
-                plan_unreadable: facts.unreadable,
-                plan_unreadable_reason,
-                track: track_of,
-                fix_row,
-            }
+        .map(|(n, track_of)| {
+            let fix = (track_of == Track::Fix)
+                .then(|| fix_outcome(&ctx, &change_dir(master, system, &n.change), batch.as_ref()));
+            read_change_with(&ctx, repo.as_ref(), system, &n.change, track_of, fix)
         })
         .collect()
+}
+
+/// What a stage pass reports to the page.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[allow(clippy::large_enum_variant)] // one event is built per change, so boxing the info buys nothing
+pub enum StageEvent {
+    /// One change was read.
+    Stage {
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
+        pass: u64,
+        change: String,
+        info: ChangeInfo,
+    },
+    /// One change could not be read at all (a refused name, or a read that failed unexpectedly).
+    Failed {
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
+        pass: u64,
+        change: String,
+        error: String,
+    },
+    /// How many of the changes have been reported.
+    Progress {
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
+        pass: u64,
+        read: u32,
+        total: u32,
+    },
+    /// Every change has been reported.
+    Done {
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
+        pass: u64,
+    },
+}
+
+/// The answer of the one call for every fix, which the workers wait for.
+struct FixShared {
+    batch: Mutex<Option<Arc<FixBatch>>>,
+    ready: Condvar,
+}
+
+impl FixShared {
+    fn put(&self, batch: FixBatch) {
+        *self.batch.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(batch));
+        self.ready.notify_all();
+    }
+
+    fn is_ready(&self) -> bool {
+        self.batch
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+
+    fn wait(&self) -> Arc<FixBatch> {
+        let mut batch = self.batch.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            if let Some(done) = batch.as_ref() {
+                return done.clone();
+            }
+            batch = self.ready.wait(batch).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+}
+
+/// How many changes are read at once.
+const WORKERS: usize = 4;
+
+/// Reads the stages of the changes in `order` (the caller puts a change it knows has moved first) and
+/// reports each through `emit` as soon as it is read, then how far the pass has got; `Done` ends the pass.
+///
+/// Up to four threads read at once, each with its own repository handle. The fixes are asked for in one
+/// program call that runs beside them; a fix waits for it, and the changes that are not fixes go first
+/// while it has not answered. `cancelled` is asked before each change is started; once it says yes
+/// nothing more is emitted. One change that cannot be read is reported and the rest go on.
+pub fn read_stages(
+    ctx: &ReadContext,
+    system: &str,
+    order: &[String],
+    pass: u64,
+    cancelled: &dyn Fn() -> bool,
+    emit: &mut dyn FnMut(StageEvent),
+) {
+    let total = order.len();
+    let _entered = ctx.pass.enter();
+    let main_repo = ctx.repo();
+    let tracks: Vec<Track> = order
+        .iter()
+        .map(|change| {
+            if refuse(&ctx.master, system, change).is_ok() {
+                track_of_change(main_repo.as_ref(), &ctx.master, system, change)
+            } else {
+                Track::Full
+            }
+        })
+        .collect();
+    let folders: Vec<PathBuf> = order
+        .iter()
+        .zip(&tracks)
+        .filter(|(_, t)| **t == Track::Fix)
+        .map(|(change, _)| change_dir(&ctx.master, system, change))
+        .collect();
+    let shared = FixShared {
+        batch: Mutex::new(None),
+        ready: Condvar::new(),
+    };
+    if folders.is_empty() || ctx.plugin.is_none() || ctx.needs_plugin {
+        shared.put(FixBatch::empty());
+    }
+    type Answer = (usize, Result<ChangeInfo, String>);
+    let (job_tx, job_rx) = mpsc::channel::<usize>();
+    let job_rx = Mutex::new(job_rx);
+    let (answer_tx, answer_rx) = mpsc::channel::<Answer>();
+    std::thread::scope(|scope| {
+        if !shared.is_ready() {
+            scope.spawn(|| {
+                let _entered = ctx.pass.enter();
+                let batch = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    fix_batch(ctx, &folders)
+                }))
+                .unwrap_or_else(|_| FixBatch::empty());
+                shared.put(batch);
+            });
+        }
+        for _ in 0..WORKERS.min(total) {
+            let answer_tx = answer_tx.clone();
+            let (job_rx, shared, tracks) = (&job_rx, &shared, &tracks);
+            scope.spawn(move || {
+                let _entered = ctx.pass.enter();
+                let repo = ctx.repo();
+                loop {
+                    let job = job_rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
+                    let Ok(at) = job else { break };
+                    let change = &order[at];
+                    let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        refuse(&ctx.master, system, change)?;
+                        let fix = (tracks[at] == Track::Fix).then(|| {
+                            let batch = shared.wait();
+                            fix_outcome(ctx, &change_dir(&ctx.master, system, change), Some(&batch))
+                        });
+                        Ok(read_change_with(
+                            ctx,
+                            repo.as_ref(),
+                            system,
+                            change,
+                            tracks[at],
+                            fix,
+                        ))
+                    }))
+                    .unwrap_or_else(|_| Err(format!("reading {change} failed unexpectedly")));
+                    if answer_tx.send((at, read)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(answer_tx);
+
+        let mut pending: VecDeque<usize> = (0..total).collect();
+        let (mut in_flight, mut read, mut stopped) = (0, 0u32, false);
+        loop {
+            while in_flight < WORKERS && !pending.is_empty() && !stopped {
+                if cancelled() {
+                    stopped = true;
+                    break;
+                }
+                // A fix goes only when the call for every fix has answered, unless nothing else is left.
+                let next = pending
+                    .iter()
+                    .position(|&i| tracks[i] != Track::Fix || shared.is_ready())
+                    .and_then(|pos| pending.remove(pos))
+                    .or_else(|| pending.pop_front());
+                let Some(at) = next else { break };
+                if job_tx.send(at).is_err() {
+                    break;
+                }
+                in_flight += 1;
+            }
+            if in_flight == 0 {
+                break;
+            }
+            let Ok((at, answer)) = answer_rx.recv() else {
+                break;
+            };
+            in_flight -= 1;
+            if stopped || cancelled() {
+                stopped = true;
+                continue;
+            }
+            read += 1;
+            let change = order[at].clone();
+            emit(match answer {
+                Ok(info) => StageEvent::Stage { pass, change, info },
+                Err(error) => StageEvent::Failed {
+                    pass,
+                    change,
+                    error,
+                },
+            });
+            emit(StageEvent::Progress {
+                pass,
+                read,
+                total: total as u32,
+            });
+        }
+        drop(job_tx);
+        if !stopped {
+            emit(StageEvent::Done { pass });
+        }
+    });
 }
 
 pub use crate::branch::current_branch;
 
 /// `change/*` branches other than the current one and `change/pending-*`, without the `change/` prefix.
 pub fn other_change_branches(master: &Path) -> Vec<String> {
-    let current = current_branch(master);
-    git::run(
-        master,
-        &["branch", "--list", "change/*", "--format=%(refname:short)"],
-    )
-    .unwrap_or_default()
-    .lines()
-    .map(str::trim)
-    .filter(|b| !b.is_empty() && Some(*b) != current.as_deref())
-    .filter_map(|b| b.strip_prefix("change/"))
-    .filter(|b| !b.starts_with("pending-"))
-    .map(str::to_string)
-    .collect()
+    let Ok(repo) = git::Repo::open(master) else {
+        return Vec::new();
+    };
+    let current = repo.current_branch();
+    repo.local_branches()
+        .iter()
+        .filter(|b| Some(b.as_str()) != current.as_deref())
+        .filter_map(|b| b.strip_prefix("change/"))
+        .filter(|b| !b.starts_with("pending-"))
+        .map(str::to_string)
+        .collect()
 }
 
 /// Read `intent`, `spec`, or `plan` of a change from the working tree.
@@ -574,7 +1010,7 @@ pub fn read_parsed(
     if !file.is_file() {
         return Ok(None);
     }
-    format::read(&program(plugin), &file).map(Some)
+    format::read_with(&program(plugin), &file, format::Reads::Shown).map(Some)
 }
 
 pub fn branch_info(master: &Path) -> BranchInfo {
@@ -1772,5 +2208,578 @@ source_spec_commit: {spec_pin}
                 "{bad}"
             );
         }
+    }
+
+    // ---- The two passes: names, one change, and a pass over many (T13) ----
+
+    const DIR: &str = "intent/claims/2026-10-12-fnol";
+    const CHANGE: &str = "2026-10-12-fnol";
+
+    fn full_plan(pin: &str, status: &str) -> String {
+        format!(
+            "---\nstatus: {status}\nsource_spec_commit: {pin}\n---\n\n## Tasks\n\n### T1: One (`app`)\n\n- **Depends on:** none\n\n### T2: Two (`app`)\n\n- **Depends on:** T1\n"
+        )
+    }
+    fn full_intent(status: &str) -> String {
+        format!("---\nstatus: {status}\ntitle: Photo upload\n---\nintent\n")
+    }
+    fn log_rows(rows: &[&str]) -> String {
+        let mut text =
+            "# Build log: app\n\n| Task | Commits | Departure |\n|---|---|---|\n".to_string();
+        for task in rows {
+            text.push_str(&format!("| {task} | `a111111` | none |\n"));
+        }
+        text
+    }
+    fn head_of(repo: &Path) -> String {
+        git::run(repo, &["rev-parse", "HEAD"]).unwrap()
+    }
+    fn at(file: &str) -> String {
+        format!("{DIR}/{file}")
+    }
+    /// A repo whose change has an accepted intent and spec; returns the spec commit a plan pins.
+    fn through_spec(repo: &Path) -> String {
+        accepted_spec(repo, DIR)
+    }
+    fn accepted_plan(repo: &Path) -> String {
+        let pin = through_spec(repo);
+        testutil::commit_file(repo, &at("plan.md"), &full_plan(&pin, "accepted"), "plan");
+        pin
+    }
+
+    /// One fixture per row of the spec's R2.2 table: the label, the change it builds and the repo builder.
+    type Fixture = (&'static str, &'static str, fn(&Path));
+    fn fixtures() -> Vec<Fixture> {
+        vec![
+            ("intent drafted", CHANGE, |r| {
+                testutil::commit_file(r, &at("intent.md"), &full_intent("draft"), "i");
+            }),
+            ("intent accepted", CHANGE, |r| {
+                testutil::commit_file(r, &at("intent.md"), &full_intent("accepted"), "i");
+            }),
+            ("intent rejected, closed", CHANGE, |r| {
+                testutil::commit_file(r, &at("intent.md"), &full_intent("rejected"), "i");
+            }),
+            ("spec ready for review", CHANGE, |r| {
+                testutil::commit_file(r, &at("intent.md"), &full_intent("accepted"), "i");
+                let pin = head_of(r);
+                testutil::commit_file(
+                    r,
+                    &at("spec.md"),
+                    &format!("---\nstatus: ready for product owner review\nsource_intent_commit: {pin}\n---\nspec\n"),
+                    "s",
+                );
+            }),
+            ("spec accepted", CHANGE, |r| {
+                through_spec(r);
+            }),
+            ("plan drafted", CHANGE, |r| {
+                let pin = through_spec(r);
+                testutil::commit_file(r, &at("plan.md"), &full_plan(&pin, "draft"), "p");
+            }),
+            ("plan accepted", CHANGE, |r| {
+                accepted_plan(r);
+            }),
+            ("plan superseded", CHANGE, |r| {
+                let pin = through_spec(r);
+                testutil::commit_file(r, &at("plan.md"), &full_plan(&pin, "superseded"), "p");
+            }),
+            ("out of date, documents moved", CHANGE, |r| {
+                accepted_plan(r);
+                testutil::commit_file(
+                    r,
+                    &at("spec.md"),
+                    "---\nstatus: accepted\n---\nspec v2\n",
+                    "spec v2",
+                );
+            }),
+            ("building", CHANGE, |r| {
+                accepted_plan(r);
+                testutil::commit_file(r, &at("build/app.md"), &log_rows(&["T1"]), "log");
+            }),
+            ("build finished, not yet done", CHANGE, |r| {
+                accepted_plan(r);
+                testutil::commit_file(r, &at("build/app.md"), &log_rows(&["T1", "T2"]), "log");
+            }),
+            ("fix drafted", "2026-10-23-fix-it", commit_fix_drafts),
+            ("fix accepted", "2026-10-23-fix-it", |r| {
+                commit_fix_drafts(r);
+                accept_fix_in_steps(r, true, true, true);
+            }),
+            ("fix unsettled", "2026-10-23-fix-it", |r| {
+                commit_fix_drafts(r);
+                testutil::commit_file(
+                    r,
+                    &format!("{FIX_DIR}/plan.md"),
+                    &pinned_plan("superseded", "pending acceptance"),
+                    "supersede",
+                );
+            }),
+        ]
+    }
+
+    use std::path::PathBuf;
+
+    /// The `ChangeInfo` the engineer was shown before the two passes existed, captured from `list` on
+    /// each fixture: documents as `committed:<status>`, `-` for a missing one.
+    fn shown(
+        change: &str,
+        docs: [&str; 3],
+        fix: bool,
+        stage: Stage,
+        build: (u32, u32, u32),
+        out_of_date: Option<OutOfDate>,
+        fix_row: Option<u8>,
+    ) -> ChangeInfo {
+        let state = |d: &str| match d.strip_prefix("committed:") {
+            Some(status) => DocState {
+                exists: true,
+                committed: true,
+                status: Some(status.to_string()),
+                head_status: fix.then(|| status.to_string()),
+            },
+            None => DocState::default(),
+        };
+        ChangeInfo {
+            system: "claims".into(),
+            change: change.into(),
+            intent: state(docs[0]),
+            spec: state(docs[1]),
+            plan: state(docs[2]),
+            stage,
+            build: BuildCounts {
+                tasks: build.0,
+                finished: build.1,
+                repos: build.2,
+            },
+            scope: "claims".into(),
+            out_of_date,
+            plan_unreadable: false,
+            plan_unreadable_reason: None,
+            track: if fix { Track::Fix } else { Track::Full },
+            fix_row,
+        }
+    }
+
+    /// R2.2: a change read on its own is what the list showed before the passes, for every stage in the table.
+    #[test]
+    fn read_change_matches_list_for_every_stage() {
+        let (i_d, i_a, i_r) = (
+            "committed:draft",
+            "committed:accepted",
+            "committed:rejected",
+        );
+        let (s_r, s_a) = (
+            "committed:ready for product owner review",
+            "committed:accepted",
+        );
+        let (p_d, p_a, p_s) = (
+            "committed:draft",
+            "committed:accepted",
+            "committed:superseded",
+        );
+        let none = "-";
+        let full = |docs, stage, build, ood| shown(CHANGE, docs, false, stage, build, ood, None);
+        let fix = "2026-10-23-fix-it";
+        let expected = vec![
+            full([i_d, none, none], Stage::IntentAwaiting, (0, 0, 0), None),
+            full([i_a, none, none], Stage::SpecReady, (0, 0, 0), None),
+            full([i_r, none, none], Stage::Rejected, (0, 0, 0), None),
+            full([i_a, s_r, none], Stage::SpecAwaiting, (0, 0, 0), None),
+            full([i_a, s_a, none], Stage::PlanReady, (0, 0, 0), None),
+            full([i_a, s_a, p_d], Stage::PlanAwaiting, (2, 0, 1), None),
+            full([i_a, s_a, p_a], Stage::BuildReady, (2, 0, 1), None),
+            full([i_a, s_a, p_s], Stage::PlanSuperseded, (2, 0, 1), None),
+            full(
+                [i_a, s_a, p_a],
+                Stage::PlanOutOfDate,
+                (2, 0, 1),
+                Some(OutOfDate::SpecPin),
+            ),
+            full([i_a, s_a, p_a], Stage::BuildStopped, (2, 1, 1), None),
+            full([i_a, s_a, p_a], Stage::BuildFinished, (2, 2, 1), None),
+            shown(
+                fix,
+                [i_d, i_d, p_d],
+                true,
+                Stage::FixAwaiting,
+                (1, 0, 1),
+                None,
+                Some(6),
+            ),
+            shown(
+                fix,
+                [i_a, i_a, p_a],
+                true,
+                Stage::BuildReady,
+                (1, 0, 1),
+                None,
+                Some(8),
+            ),
+            shown(
+                fix,
+                [i_d, i_d, p_s],
+                true,
+                Stage::FixUnsettled,
+                (1, 0, 1),
+                None,
+                Some(2),
+            ),
+        ];
+        let tmp = tempfile::tempdir().unwrap();
+        for (i, ((label, change, build), want)) in fixtures().into_iter().zip(expected).enumerate()
+        {
+            let repo = testutil::repo(tmp.path(), &format!("m{i}"));
+            build(&repo);
+            let ctx = ReadContext::new(Some(testutil::plugin_dir()), &repo);
+            assert_eq!(
+                read_change(&ctx, "claims", change),
+                Ok(want.clone()),
+                "{label}"
+            );
+            // The list gives the same answer.
+            assert_eq!(
+                list(Some(testutil::plugin_dir()), &repo, "claims"),
+                vec![want],
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn names_reads_no_repository() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let put = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        put(
+            "intent/claims/2026-10-12-fnol/intent.md",
+            "---\nstatus: draft\ntitle: \"First notice of loss\"\n---\nbody\n",
+        );
+        put(
+            "intent/claims/2026-10-20-later/intent.md",
+            "---\nstatus: draft\n---\nbody\n",
+        );
+        put("intent/claims/2026-10-25-bare/spec.md", "no intent yet\n");
+        put(
+            "intent/claims/notes/intent.md",
+            "---\ntitle: Not a change\n---\n",
+        );
+        put("intent/claims/2026-10-26-a-file", "a file, not a folder\n");
+        let name = |change: &str, title: Option<&str>| ChangeName {
+            change: change.into(),
+            title: title.map(str::to_string),
+        };
+        assert_eq!(
+            names(root, "claims"),
+            vec![
+                name("2026-10-25-bare", None),
+                name("2026-10-20-later", None),
+                name("2026-10-12-fnol", Some("First notice of loss")),
+            ]
+        );
+        assert!(names(root, "..").is_empty());
+        assert!(names(root, "missing").is_empty());
+    }
+
+    #[test]
+    fn read_change_refuses_names_that_could_leave_the_system_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        testutil::commit_file(&repo, &at("intent.md"), &full_intent("draft"), "i");
+        let ctx = ReadContext::new(Some(testutil::plugin_dir()), &repo);
+        for bad in ["..", "../x", "context", "2026-10-12", "a/b"] {
+            assert!(read_change(&ctx, "claims", bad).is_err(), "{bad}");
+        }
+        for bad in ["..", "", "a/b", "C:"] {
+            assert!(read_change(&ctx, bad, CHANGE).is_err(), "{bad}");
+        }
+        assert!(read_change(&ctx, "claims", CHANGE).is_ok());
+    }
+
+    /// Copies the vendored format program into `dir/format` behind a wrapper that stalls a read of a
+    /// document containing `KATA-SLOW` and, when `slow_batch`, a `fix-state` call for more than one folder.
+    fn slow_plugin(dir: &Path, slow_batch: bool) -> PathBuf {
+        fn copy(from: &Path, to: &Path) {
+            std::fs::create_dir_all(to).unwrap();
+            for entry in std::fs::read_dir(from).unwrap().flatten() {
+                let target = to.join(entry.file_name());
+                if entry.path().is_dir() {
+                    copy(&entry.path(), &target);
+                } else {
+                    std::fs::copy(entry.path(), target).unwrap();
+                }
+            }
+        }
+        let vendored = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/ai-sdlc-format");
+        copy(&vendored, &dir.join("format"));
+        std::fs::rename(dir.join("format/check.mjs"), dir.join("format/real.mjs")).unwrap();
+        std::fs::write(
+            dir.join("format/check.mjs"),
+            format!(
+                "import {{ readFileSync }} from 'node:fs';\n\
+                 const args = process.argv.slice(2);\n\
+                 let slow = {slow_batch} && args[0] === 'fix-state' && args.length > 3;\n\
+                 if (args[0] === 'read') {{ try {{ slow = readFileSync(args[2], 'utf8').includes('KATA-SLOW'); }} catch {{}} }}\n\
+                 if (slow) await new Promise((r) => setTimeout(r, 600000));\n\
+                 await import('./real.mjs');\n"
+            ),
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            dir.join(".claude-plugin/plugin.json"),
+            format!(
+                r#"{{"name":"ai-sdlc","version":"{}"}}"#,
+                crate::plugin::LIGHT_TRACK_VERSION
+            ),
+        )
+        .unwrap();
+        dir.to_path_buf()
+    }
+
+    /// Every event of one pass over `order`.
+    fn pass_over(ctx: &ReadContext, order: &[String]) -> Vec<StageEvent> {
+        let mut events = Vec::new();
+        read_stages(ctx, "claims", order, 7, &|| false, &mut |e| events.push(e));
+        events
+    }
+
+    fn stage_of<'a>(events: &'a [StageEvent], change: &str) -> &'a ChangeInfo {
+        events
+            .iter()
+            .find_map(|e| match e {
+                StageEvent::Stage {
+                    change: c, info, ..
+                } if c == change => Some(info),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no stage event for {change}: {events:?}"))
+    }
+
+    fn position(events: &[StageEvent], change: &str) -> usize {
+        events
+            .iter()
+            .position(|e| match e {
+                StageEvent::Stage { change: c, .. } | StageEvent::Failed { change: c, .. } => {
+                    c == change
+                }
+                _ => false,
+            })
+            .unwrap_or_else(|| panic!("no event for {change}"))
+    }
+
+    /// `count` changes with accepted intents and specs in one repository, committed in three steps;
+    /// `plan_for(n, pin)` gives the plan text of change `n`.
+    fn changes_with_plans(
+        root: &Path,
+        count: usize,
+        plan_for: &dyn Fn(usize, &str) -> String,
+    ) -> (PathBuf, Vec<String>) {
+        let repo = testutil::repo(root, "many");
+        let names: Vec<String> = (1..=count)
+            .map(|n| format!("2026-10-{n:02}-c{n:02}"))
+            .collect();
+        let commit_all = |message: &str| {
+            git::run(&repo, &["add", "-A"]).unwrap();
+            git::run(&repo, &["commit", "-q", "-m", message]).unwrap();
+        };
+        for name in &names {
+            testutil::write(
+                &repo,
+                &format!("intent/claims/{name}/intent.md"),
+                &full_intent("accepted"),
+            );
+        }
+        commit_all("intents");
+        let intent_pin = head_of(&repo);
+        for name in &names {
+            testutil::write(
+                &repo,
+                &format!("intent/claims/{name}/spec.md"),
+                &format!("---\nstatus: accepted\nsource_intent_commit: {intent_pin}\n---\nspec\n"),
+            );
+        }
+        commit_all("specs");
+        let spec_pin = head_of(&repo);
+        for (i, name) in names.iter().enumerate() {
+            testutil::write(
+                &repo,
+                &format!("intent/claims/{name}/plan.md"),
+                &plan_for(i + 1, &spec_pin),
+            );
+        }
+        commit_all("plans");
+        (repo, names)
+    }
+
+    fn plain_plan(pin: &str, front: &str, title: &str) -> String {
+        format!(
+            "---\nstatus: accepted\nsource_spec_commit: {pin}\n{front}---\n\n# Plan: {title}\n\n## Tasks\n\n### T1: One (`app`)\n\n- **Depends on:** none\n"
+        )
+    }
+
+    /// R2.4: one change that cannot be read shows its reason as today and holds up no other.
+    #[test]
+    fn one_unreadable_change_does_not_hold_up_the_others() {
+        type Case = (&'static str, fn(&str) -> String, &'static str);
+        let cases: [Case; 3] = [
+            (
+                "one of its documents is broken",
+                |pin| plain_plan(pin, "layout: soon\n", "x"),
+                "layout must be a whole number",
+            ),
+            (
+                "the plugin is too old for its documents",
+                |pin| plain_plan(pin, "layout: 3\n", "x"),
+                "layout 3 is newer",
+            ),
+            (
+                "reading it took longer than allowed",
+                |pin| plain_plan(pin, "", "KATA-SLOW"),
+                "did not finish",
+            ),
+        ];
+        for (reason, bad_plan, said) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let plugin = slow_plugin(&tmp.path().join("plugin"), false);
+            let (repo, names) = changes_with_plans(tmp.path(), 12, &|n, pin| {
+                if n == 5 {
+                    bad_plan(pin)
+                } else {
+                    plain_plan(pin, "", &format!("change {n}"))
+                }
+            });
+            let ctx = ReadContext::new(Some(&plugin), &repo);
+            // Far above any ordinary read, even a node start on a loaded machine: only the stalled
+            // read (it never finishes on its own) may reach the limit.
+            ctx.limit_format_calls(std::time::Duration::from_secs(30));
+            // The change that cannot be read goes first, so every other one has to get past it.
+            let mut order = names.clone();
+            order.rotate_left(4);
+            let events = pass_over(&ctx, &order);
+            let bad = &names[4];
+            let info = stage_of(&events, bad);
+            assert!(info.plan_unreadable, "{reason}");
+            let why = info.plan_unreadable_reason.clone().unwrap_or_default();
+            assert!(why.contains(said), "{reason}: {why:?}");
+            let bad_at = position(&events, bad);
+            for other in names.iter().filter(|n| *n != bad) {
+                assert_eq!(
+                    stage_of(&events, other).stage,
+                    Stage::BuildReady,
+                    "{reason}: {other}"
+                );
+                if reason == "reading it took longer than allowed" {
+                    assert!(position(&events, other) < bad_at, "{reason}: {other}");
+                }
+            }
+            let progress: Vec<u32> = events
+                .iter()
+                .filter_map(|e| match e {
+                    StageEvent::Progress { read, total, .. } => {
+                        assert_eq!(*total, 12);
+                        Some(*read)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(progress, (1..=12).collect::<Vec<_>>(), "{reason}");
+            assert!(matches!(events.last(), Some(StageEvent::Done { pass: 7 })));
+        }
+    }
+
+    /// A plan the format program cannot read is handed to it once: a failed read is not cached, so a
+    /// second read of the same plan (for the build status) would cost the whole failure again.
+    #[test]
+    fn an_unreadable_plan_is_handed_to_the_format_program_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = slow_plugin(&tmp.path().join("plugin"), false);
+        let log = tmp.path().join("reads.log");
+        // The wrapper logs one line for every `read` of a document that holds the broken layout line;
+        // the build status stages a copy of the plan, so the log counts content, not paths.
+        std::fs::write(
+            plugin.join("format/check.mjs"),
+            format!(
+                "import {{ readFileSync, appendFileSync }} from 'node:fs';\n\
+                 const args = process.argv.slice(2);\n\
+                 if (args[0] === 'read') {{ try {{ if (readFileSync(args[2], 'utf8').includes('layout: soon')) appendFileSync({log:?}, 'broken plan\\n'); }} catch {{}} }}\n\
+                 await import('./real.mjs');\n"
+            ),
+        )
+        .unwrap();
+        let (repo, names) = changes_with_plans(tmp.path(), 1, &|_, pin| {
+            plain_plan(pin, "layout: soon\n", "x")
+        });
+        let ctx = ReadContext::new(Some(&plugin), &repo);
+        format::forget_memory_cache();
+        let events = pass_over(&ctx, &names);
+        let info = stage_of(&events, &names[0]);
+        assert!(info.plan_unreadable);
+        let why = info.plan_unreadable_reason.clone().unwrap_or_default();
+        assert!(why.contains("layout must be a whole number"), "{why:?}");
+        let reads = std::fs::read_to_string(&log).unwrap_or_default();
+        assert_eq!(reads.lines().count(), 1, "plan reads: {reads:?}");
+    }
+
+    /// R2.4 for fixes: when the one call for every fix times out, each fix is asked for on its own,
+    /// and the changes that are not fixes do not wait for it.
+    #[test]
+    fn a_timed_out_fix_batch_falls_back_to_one_call_per_fix_r2_4() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = slow_plugin(&tmp.path().join("plugin"), true);
+        let (repo, mut names) = changes_with_plans(tmp.path(), 1, &|n, pin| {
+            plain_plan(pin, "", &format!("change {n}"))
+        });
+        for fix in ["2026-10-21-fix-a", "2026-10-22-fix-b", "2026-10-23-fix-c"] {
+            for (file, text) in [
+                ("intent.md", fix_intent("draft")),
+                ("spec.md", pinned_spec("draft", "pending acceptance")),
+                ("plan.md", pinned_plan("draft", "pending acceptance")),
+            ] {
+                testutil::commit_file(
+                    &repo,
+                    &format!("intent/claims/{fix}/{file}"),
+                    &text,
+                    "draft",
+                );
+            }
+            names.push(fix.to_string());
+        }
+        let ctx = ReadContext::new(Some(&plugin), &repo);
+        ctx.limit_format_calls(std::time::Duration::from_secs(3));
+        let events = pass_over(&ctx, &names);
+        for fix in &names[1..] {
+            let info = stage_of(&events, fix);
+            assert_eq!(info.stage, Stage::FixAwaiting, "{fix}");
+            assert_eq!(info.fix_row, Some(6), "{fix}");
+            assert!(
+                position(&events, &names[0]) < position(&events, fix),
+                "{fix}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cancelled_pass_emits_nothing_more() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (repo, names) = changes_with_plans(tmp.path(), 8, &|n, pin| {
+            plain_plan(pin, "", &format!("change {n}"))
+        });
+        let ctx = ReadContext::new(Some(testutil::plugin_dir()), &repo);
+        let stop = std::cell::Cell::new(false);
+        let mut events = Vec::new();
+        read_stages(&ctx, "claims", &names, 1, &|| stop.get(), &mut |e| {
+            events.push(e);
+            stop.set(true);
+        });
+        assert!(
+            events.len() <= 2,
+            "a stage and its progress at most: {events:?}"
+        );
+        assert!(!events.iter().any(|e| matches!(e, StageEvent::Done { .. })));
     }
 }

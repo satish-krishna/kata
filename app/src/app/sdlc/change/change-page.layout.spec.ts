@@ -151,9 +151,9 @@ describe('ChangePage layout', () => {
 
   it('keeps the plan banner above the plan in the new layout', async () => {
     const transport = new MockTransport();
-    const real = transport.sdlcChanges.bind(transport);
-    vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
-      (await real(m, s)).map((c) => (c.change === '2026-10-09-adjuster-reassign' ? { ...c, stage: 'plan-superseded' as ChangeInfo['stage'] } : c)),
+    const real = transport.sdlcReadChange.bind(transport);
+    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
+      [await real(m, s, n)].map((c) => (c.change === '2026-10-09-adjuster-reassign' ? { ...c, stage: 'plan-superseded' as ChangeInfo['stage'] } : c))[0],
     );
     const { container } = await mount('2026-10-09-adjuster-reassign', transport);
     const banner = container.querySelector('[data-testid="plan-banner"]')!;
@@ -201,9 +201,9 @@ describe('ChangePage layout', () => {
   describe('after the pull requests', () => {
     const finished = async (only?: number) => {
       const transport = new MockTransport();
-      const real = transport.sdlcChanges.bind(transport);
-      vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
-        (await real(m, s)).map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage: 'build-finished' as const } : c)),
+      const real = transport.sdlcReadChange.bind(transport);
+      vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
+        [await real(m, s, n)].map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage: 'build-finished' as const } : c))[0],
       );
       const status = transport.sdlcBuildStatus.bind(transport);
       vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, sys, c) => {
@@ -215,7 +215,7 @@ describe('ChangePage layout', () => {
         };
       });
       const repos = await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE);
-      await transport.sdlcPublish('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, only === undefined ? repos : repos.slice(0, only));
+      await transport.sdlcPublish('f', 'w1', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, only === undefined ? repos : repos.slice(0, only));
       return transport;
     };
 
@@ -256,13 +256,19 @@ describe('ChangePage layout', () => {
   describe('picking a document tab', () => {
     const selected = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLButtonElement>('header [role="tab"]')).filter((t) => t.getAttribute('aria-selected') === 'true').map((t) => text(t).split(' ')[0]);
 
+    afterEach(() => vi.useRealTimers());
+
     it('pulls the pills back to the old tab when the read fails', async () => {
       const transport = new MockTransport();
       const { container } = await mount(FNOL, transport);
       expect(selected(container)).toEqual(['Spec']);
       let fail!: (e: unknown) => void;
       vi.spyOn(transport, 'sdlcReadDoc').mockReturnValue(new Promise<string>((_, no) => (fail = no)));
+      // The progress line shows once a read has run for 400 ms.
+      vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
       pill(container, 'Intent').click();
+      await settle();
+      vi.advanceTimersByTime(500);
       await settle();
       expect(selected(container)).toEqual(['Intent']);
       expect(container.querySelector('[role="tabpanel"]:not([hidden])')!.textContent).toContain('Reading intent.md');

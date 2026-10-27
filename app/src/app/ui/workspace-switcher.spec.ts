@@ -21,7 +21,7 @@ const open = async (c: HTMLElement) => {
 };
 const radioWith = (text: string) => radios().find((i) => i.textContent!.includes(text))!;
 const itemWith = (text: string) => items().find((i) => i.textContent!.includes(text))!;
-const base = { workspaces: [A, B], current: A, missing: [], counts: {} };
+const base = { workspaces: [A, B], current: A, missing: [] };
 
 describe('WorkspaceSwitcher', () => {
   beforeAll(() => {
@@ -52,13 +52,12 @@ describe('WorkspaceSwitcher', () => {
     expect(trigger(container).getAttribute('title')).toBe('No workspace');
   });
 
-  it('lists every workspace with its folder and change count, and flags a missing folder', async () => {
-    const { container } = await render(WorkspaceSwitcher, { ...base, missing: ['old-billing'], counts: { 'acme-claims': 3 } });
+  it('lists every workspace with its folder, and flags a missing folder', async () => {
+    const { container } = await render(WorkspaceSwitcher, { ...base, missing: ['old-billing'] });
     await open(container);
     const acme = radioWith('acme-claims').textContent!.replace(/\s+/g, ' ');
     const billing = radioWith('old-billing').textContent!.replace(/\s+/g, ' ');
     expect(acme).toContain('D:/Work/acme-claims');
-    expect(acme).toContain('3 changes');
     expect(acme).not.toContain('folder missing');
     expect(billing).toContain('folder missing');
   });
@@ -96,7 +95,7 @@ describe('WorkspaceSwitcher', () => {
   });
 
   it('offers only Add workspace… when there is no workspace yet', async () => {
-    const { container } = await render(WorkspaceSwitcher, { workspaces: [], current: null, missing: [], counts: {} });
+    const { container } = await render(WorkspaceSwitcher, { workspaces: [], current: null, missing: [] });
     expect(trigger(container).textContent).toContain('No workspace');
     await open(container);
     expect(radios().length).toBe(0);
@@ -106,5 +105,19 @@ describe('WorkspaceSwitcher', () => {
   it('disables the trigger while locked', async () => {
     const { container } = await render(WorkspaceSwitcher, { ...base, locked: true });
     expect(trigger(container).disabled).toBe(true);
+  });
+});
+
+describe('WorkspaceSwitcher without counts (R3.1)', () => {
+  it('lists the other workspaces by name and folder only, with no change count input', async () => {
+    const { fixture, container } = await render(WorkspaceSwitcher, { workspaces: [A, B], current: A, missing: ['old-billing'] });
+    expect('counts' in fixture.componentInstance).toBe(false);
+    trigger(container).click();
+    TestBed.tick();
+    await new Promise((r) => setTimeout(r, 0));
+    TestBed.tick();
+    const rows = Array.from(document.body.querySelectorAll<HTMLElement>('[role="menuitemradio"]')).map((i) => i.textContent!.replace(/\s+/g, ' '));
+    expect(rows.some((t) => /\d+ changes?/.test(t))).toBe(false);
+    expect(rows.find((t) => t.includes('old-billing'))).toContain('folder missing');
   });
 });

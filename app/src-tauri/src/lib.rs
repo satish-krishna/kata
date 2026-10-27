@@ -1,3 +1,4 @@
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 mod runs;
 mod zoom;
 
@@ -16,6 +17,10 @@ use tauri_plugin_shell::ShellExt;
 
 /// Channel the engine's normalized KataEvents are relayed on to the webview.
 const RUN_EVENT: &str = "kata://event";
+/// What publishing is doing, one `PublishStep` per event.
+const PUBLISH_STEP_EVENT: &str = "sdlc://publish-step";
+/// What a stage pass reports, one `StageEvent` per event.
+const STAGE_EVENT: &str = "sdlc://stage";
 
 /// Shared run control: every live run plus a monotonic id source. A stale
 /// reader task (a finished run still tearing down) removes only its own id, so
@@ -237,10 +242,69 @@ fn sdlc_instructions(folder: String, master_repo: String) -> sdlc::workspace::In
     sdlc::workspace::instructions(folder, &folder.join(master_repo))
 }
 
+/// The changes of a system and the title of each intent, from the folder alone.
 #[tauri::command(async)]
-fn sdlc_changes(master: String, system: String) -> Vec<sdlc::changes::ChangeInfo> {
+fn sdlc_change_names(master: String, system: String) -> Vec<sdlc::changes::ChangeName> {
+    sdlc::changes::names(Path::new(&master), &system)
+}
+
+/// Starts reading the stage of every change of the system on a background thread and returns the pass
+/// id at once; each result goes out on `sdlc://stage`. `first` is read before the others. A pass already
+/// running for the window is superseded and reports nothing more.
+#[tauri::command]
+fn sdlc_read_stages(
+    window: tauri::Window,
+    passes: State<Arc<StagePasses>>,
+    master: String,
+    system: String,
+    first: Option<String>,
+) -> u64 {
+    let sink: StageSink = {
+        let window = window.clone();
+        Arc::new(move |ev| {
+            let _ = window.emit(STAGE_EVENT, ev);
+        })
+    };
+    start_pass(
+        &passes,
+        window.label(),
+        sink,
+        move |pass, cancelled, emit| {
+            let master = Path::new(&master);
+            let mut order: Vec<String> = sdlc::changes::names(master, &system)
+                .into_iter()
+                .map(|n| n.change)
+                .collect();
+            if let Some(at) = first.and_then(|f| order.iter().position(|c| *c == f)) {
+                let moved = order.remove(at);
+                order.insert(0, moved);
+            }
+            let plugin = ai_sdlc_dir(&master.to_string_lossy()).ok();
+            let ctx = sdlc::changes::ReadContext::new(plugin.as_deref(), master);
+            sdlc::changes::read_stages(&ctx, &system, &order, pass, cancelled, emit);
+        },
+    )
+}
+
+/// One change read in full, for the list row and the change page.
+#[tauri::command(async)]
+fn sdlc_read_change(
+    master: String,
+    system: String,
+    change: String,
+) -> Result<sdlc::changes::ChangeInfo, String> {
     let plugin = ai_sdlc_dir(&master).ok();
-    sdlc::changes::list(plugin.as_deref(), Path::new(&master), &system)
+    let ctx = sdlc::changes::ReadContext::new(plugin.as_deref(), Path::new(&master));
+    sdlc::changes::read_change(&ctx, &system, &change)
+}
+
+/// Which of the folders no longer exist. Nothing else is looked at.
+#[tauri::command(async)]
+fn sdlc_missing_folders(folders: Vec<String>) -> Vec<String> {
+    folders
+        .into_iter()
+        .filter(|f| !Path::new(f).is_dir())
+        .collect()
 }
 
 #[tauri::command(async)]
@@ -622,17 +686,27 @@ fn sdlc_run_checks(
 
 #[tauri::command(async)]
 fn sdlc_gh_signed_in(repos: Vec<sdlc::publish::PublishRepo>) -> Result<String, String> {
-    sdlc::publish::signed_in(&sdlc::publish::GhCli, &repos).map_err(|e| e.to_string())
+    sdlc::publish::signed_in(
+        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
+        &repos,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
 fn sdlc_gh_origins(repos: Vec<sdlc::publish::PublishRepo>) -> Result<(), String> {
-    sdlc::publish::origins(&sdlc::publish::GhCli, &repos).map_err(|e| e.to_string())
+    sdlc::publish::origins(
+        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
+        &repos,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
 fn sdlc_publish(
+    app: AppHandle,
     folder: String,
+    workspace_id: String,
     master_repo: String,
     system: String,
     change: String,
@@ -640,11 +714,58 @@ fn sdlc_publish(
 ) -> Vec<sdlc::publish::PrResult> {
     let _ = folder;
     sdlc::publish::publish(
-        &sdlc::publish::GhCli,
+        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
         &master_repo,
         &system,
         &change,
         &repos,
+        &mut sdlc::publish::Recorder::stored(&workspace_id, &system, &change),
+        &mut |step| {
+            let _ = app.emit(PUBLISH_STEP_EVENT, step);
+        },
+    )
+}
+
+/// Whether the change shows as done and with which links, from what is saved. GitHub is asked
+/// only when nothing is saved and the build is finished.
+#[tauri::command(async)]
+fn sdlc_done_view(
+    folder: String,
+    master_repo: String,
+    workspace_id: String,
+    system: String,
+    change: String,
+    build_finished: bool,
+) -> Result<sdlc::prs::DoneView, String> {
+    sdlc::prs::done_view_for(
+        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
+        Path::new(&folder),
+        &master_repo,
+        &workspace_id,
+        &system,
+        &change,
+        build_finished,
+    )
+}
+
+/// Ask GitHub for the state of every saved pull request, save the answers and return the new view.
+#[tauri::command(async)]
+fn sdlc_refresh_pr_states(
+    folder: String,
+    master_repo: String,
+    workspace_id: String,
+    system: String,
+    change: String,
+    build_finished: bool,
+) -> Result<sdlc::prs::DoneView, String> {
+    sdlc::prs::refresh_states(
+        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
+        Path::new(&folder),
+        &master_repo,
+        &workspace_id,
+        &system,
+        &change,
+        build_finished,
     )
 }
 
@@ -653,7 +774,58 @@ fn sdlc_pull_requests(
     repos: Vec<sdlc::publish::PublishRepo>,
     change: String,
 ) -> Result<Vec<sdlc::publish::PrState>, String> {
-    sdlc::publish::open_pull_requests(&sdlc::publish::GhCli, &repos, &change)
+    sdlc::publish::open_pull_requests(
+        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
+        &repos,
+        &change,
+    )
+}
+
+/// The stage pass each window is running, so a new start can cancel the one before it.
+#[derive(Default)]
+struct StagePasses {
+    next: AtomicU64,
+    live: Mutex<std::collections::HashMap<String, (u64, Arc<std::sync::atomic::AtomicBool>)>>,
+}
+
+/// Where a pass sends its events.
+type StageSink = Arc<dyn Fn(sdlc::changes::StageEvent) + Send + Sync>;
+
+/// Starts `work` on a background thread as the window's only pass and returns its id at once.
+///
+/// A pass already running for the window is cancelled first: `work` is asked through its `cancelled`
+/// function, and whatever it still emits is dropped before it reaches `sink`. The page also filters by
+/// pass id, so the one event that can slip between the check and the send does no harm.
+fn start_pass<F>(passes: &Arc<StagePasses>, window: &str, sink: StageSink, work: F) -> u64
+where
+    F: FnOnce(u64, &dyn Fn() -> bool, &mut dyn FnMut(sdlc::changes::StageEvent)) + Send + 'static,
+{
+    let id = passes.next.fetch_add(1, Ordering::SeqCst) + 1;
+    let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let before = passes
+        .live
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(window.to_string(), (id, flag.clone()));
+    if let Some((_, old)) = before {
+        old.store(true, Ordering::SeqCst);
+    }
+    let passes = passes.clone();
+    let window = window.to_string();
+    std::thread::spawn(move || {
+        let cancelled = || flag.load(Ordering::SeqCst);
+        let mut emit = |ev: sdlc::changes::StageEvent| {
+            if !flag.load(Ordering::SeqCst) {
+                sink(ev);
+            }
+        };
+        work(id, &cancelled, &mut emit);
+        let mut live = passes.live.lock().unwrap_or_else(|e| e.into_inner());
+        if live.get(&window).is_some_and(|(current, _)| *current == id) {
+            live.remove(&window);
+        }
+    });
+    id
 }
 
 /// Relay a non-JSON stdout/stderr line as a warn-level log event.
@@ -886,6 +1058,7 @@ pub fn run() {
                 .build(),
         )
         .manage(RunControl::default())
+        .manage(Arc::new(StagePasses::default()))
         .setup(|app| {
             // Open at the remembered zoom; a failure leaves the window at 100%.
             let saved = zoom::load();
@@ -926,7 +1099,10 @@ pub fn run() {
             sdlc_scan,
             sdlc_context_health,
             sdlc_instructions,
-            sdlc_changes,
+            sdlc_change_names,
+            sdlc_read_stages,
+            sdlc_read_change,
+            sdlc_missing_folders,
             sdlc_branches,
             sdlc_read_doc,
             sdlc_read_parsed,
@@ -965,6 +1141,8 @@ pub fn run() {
             sdlc_gh_signed_in,
             sdlc_gh_origins,
             sdlc_publish,
+            sdlc_done_view,
+            sdlc_refresh_pr_states,
             sdlc_pull_requests,
             zoom,
             open_url
@@ -994,6 +1172,63 @@ mod tests {
         );
         assert_eq!(web_url("http://example.com"), Ok("http://example.com"));
         assert!(web_url("HTTPS://example.com").is_ok());
+    }
+
+    #[test]
+    fn read_stages_command_supersedes_the_running_pass() {
+        use sdlc::changes::StageEvent;
+        use std::sync::mpsc;
+        let passes = Arc::new(StagePasses::default());
+        let seen: Arc<Mutex<Vec<StageEvent>>> = Arc::default();
+        let sink: StageSink = {
+            let seen = seen.clone();
+            Arc::new(move |ev| seen.lock().unwrap().push(ev))
+        };
+        let (started_tx, started_rx) = mpsc::channel::<()>();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let (ended_tx, ended_rx) = mpsc::channel::<()>();
+        let first = start_pass(
+            &passes,
+            "main",
+            sink.clone(),
+            move |pass, _cancelled, emit| {
+                emit(StageEvent::Progress {
+                    pass,
+                    read: 1,
+                    total: 2,
+                });
+                started_tx.send(()).unwrap();
+                go_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                // The pass was superseded while it waited, so this one must not reach the page.
+                emit(StageEvent::Progress {
+                    pass,
+                    read: 2,
+                    total: 2,
+                });
+                ended_tx.send(()).unwrap();
+            },
+        );
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (second_tx, second_rx) = mpsc::channel::<()>();
+        let second = start_pass(&passes, "main", sink, move |pass, _cancelled, emit| {
+            emit(StageEvent::Done { pass });
+            second_tx.send(()).unwrap();
+        });
+        assert_ne!(first, second);
+        go_tx.send(()).unwrap();
+        ended_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        second_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                StageEvent::Progress {
+                    pass: first,
+                    read: 1,
+                    total: 2
+                },
+                StageEvent::Done { pass: second },
+            ]
+        );
     }
 
     fn live(id: u64) -> LiveRun<()> {

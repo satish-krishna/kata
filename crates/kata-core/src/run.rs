@@ -8,7 +8,7 @@ use crate::given::{
 use crate::spec::{validate, Isolation, PermissionMode, RunSpec, UnmatchedPolicy};
 use std::io::{BufReader, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -563,7 +563,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
     }
 
     let start = Instant::now();
-    let mut cmd = Command::new(&inv.program);
+    let mut cmd = crate::proc::hidden_command(&inv.program).map_err(|e| spawn_fail!(e))?;
     // claude runs headless (`-p`): it never reads stdin, so give it a closed one.
     // Inheriting the parent's stdin lets an unauthenticated claude block forever on
     // an interactive login prompt instead of fast-failing. (Cancellation uses the

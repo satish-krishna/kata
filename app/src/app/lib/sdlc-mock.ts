@@ -20,6 +20,7 @@ import type { Participant } from '@bindings/Participant';
 import type { PlanTask } from '@bindings/PlanTask';
 import type { PrResult } from '@bindings/PrResult';
 import type { PrState } from '@bindings/PrState';
+import type { DoneView } from '@bindings/DoneView';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { RepoChecks } from '@bindings/RepoChecks';
@@ -28,6 +29,7 @@ import type { RepoStatus } from '@bindings/RepoStatus';
 import type { TaskStatus } from '@bindings/TaskStatus';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeName } from '@bindings/ChangeName';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
@@ -361,7 +363,11 @@ export class SdlcMock {
   private readonly pairs: Record<string, FilePair>;
   private readonly reviewFindings: string[];
 
+  /** The long demo's change whose plan the format program cannot read, so the reading rows show a reason. */
+  private readonly unreadable: string | null;
+
   constructor(long = false) {
+    this.unreadable = long ? '2026-10-09-adjuster-reassign' : null;
     this.plan = long ? [...BUILD_PLAN, ...LONG_PLAN] : BUILD_PLAN;
     this.repos = long ? [...BUILD_REPOS, 'billing-api'] : BUILD_REPOS;
     this.planTasks = long ? parsedTasks(this.plan) : BUILD_TASKS;
@@ -445,6 +451,22 @@ export class SdlcMock {
       if (c.change === MOCK_DONE_CHANGE) return { ...c, build: { tasks: this.plan.length, finished: this.plan.length, repos: this.repos.length } };
       return { ...c };
     });
+  }
+  /** Like the backend's `names`: every change folder, before any stage is read. The demo's intents carry no title. */
+  changeNames(): ChangeName[] {
+    return this.changes.map((c) => ({ change: c.change, title: null }));
+  }
+  /** Like the backend's `read_change`; refuses a change the workspace does not have. */
+  readChange(changeName: string): ChangeInfo {
+    const found = this.listChanges().find((c) => c.change === changeName);
+    if (!found) throw new Error(`no change folder named ${changeName}`);
+    return found;
+  }
+  /** What a stage pass reports, change by change. In the long demo one change's plan is unreadable, shown with its reason like the Workbench shows it today. */
+  stagePass(): ChangeInfo[] {
+    return this.listChanges().map((c) => (c.change === this.unreadable
+      ? { ...c, plan_unreadable: true, plan_unreadable_reason: 'the plan has a task with no id' }
+      : c));
   }
   branches(): BranchInfo { return { current: this.current, others: [...this.others], default_base: 'main' }; }
   /** Like the backend's `read_doc`: the document is named by its stem; anything else is a caller bug. */
@@ -669,6 +691,16 @@ export class SdlcMock {
   publish(repos: PublishRepo[]): PrResult[] {
     repos.forEach((r) => this.published.add(r.repo));
     return repos.map((r) => ({ repo: r.repo, outcome: { kind: 'opened', url: prUrl(r.repo) } }));
+  }
+
+  /** The done view as the Workbench shows it with nothing saved: done while every touched repository has an open pull request. */
+  doneView(repos: PublishRepo[], changeName: string, buildFinished: boolean): DoneView {
+    const prs = this.pullRequests(repos, changeName);
+    const links = prs.flatMap((p) => (p.url === null ? [] : [{ repo: p.repo, url: p.url, state: 'open' as const, seenAt: null }]));
+    const done = buildFinished && prs.length > 0 && links.length === prs.length;
+    // Like a saved record: the links a partial publish opened stay, labeled as opened.
+    const linksFrom = links.length === 0 ? 'none' as const : done ? 'github' as const : 'opened' as const;
+    return { done, links, linksFrom, offerDeclare: buildFinished && !done, prCheckFailed: false };
   }
 
   pullRequests(repos: PublishRepo[], changeName: string): PrState[] {

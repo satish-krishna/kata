@@ -1,7 +1,8 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "argsfiles" | "subagent" | "hooks" | "noinit"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "argsfiles" | "subagent" | "hooks" | "noinit" | "consoleprobe" | "consoleprobe-relay" | "hook-relay"
+#![allow(clippy::disallowed_methods)]
 use std::io::Write;
 use std::{thread, time::Duration};
 
@@ -59,7 +60,70 @@ fn main() {
             );
             let _ = out.flush();
         }
+        "consoleprobe-relay" => {
+            // Runs without a console (the test starts it detached) and starts the probe the way
+            // KATA_RELAY_HIDDEN says: through kata_core::proc, or as a plain Command (control).
+            let exe = std::env::current_exe().unwrap();
+            let mut cmd = if std::env::var_os("KATA_RELAY_HIDDEN").is_some() {
+                kata_core::proc::hidden_command(&exe).unwrap()
+            } else {
+                // Test code: the control child without the hidden flag.
+                std::process::Command::new(&exe)
+            };
+            let output = cmd
+                .env("KATA_FAKE_MODE", "consoleprobe")
+                .stdin(std::process::Stdio::null())
+                .output()
+                .unwrap();
+            let _ = out.write_all(&output.stdout);
+            let _ = out.flush();
+        }
+        "hook-relay" => {
+            // Runs without a console (the test starts it detached) and runs the repository's
+            // pre-commit hook the way KATA_RELAY_HIDDEN says: through kata_core::hooks, or with
+            // a plain Command on the shell (control). The hook starts a consoleprobe.
+            let repo_dir = std::env::var_os("KATA_RELAY_REPO").unwrap();
+            let repo = git2::Repository::open(&repo_dir).unwrap();
+            if std::env::var_os("KATA_RELAY_HIDDEN").is_some() {
+                let probe = std::ffi::OsStr::new("consoleprobe");
+                kata_core::hooks::run_hook(
+                    &repo,
+                    kata_core::hooks::Hook::PreCommit,
+                    &[],
+                    None,
+                    &[("KATA_FAKE_MODE", probe)],
+                )
+                .unwrap();
+            } else {
+                let hook = repo.path().join("hooks").join("pre-commit");
+                // Test code: the control child without the hidden flag.
+                let status =
+                    std::process::Command::new(std::env::var_os("KATA_RELAY_SHELL").unwrap())
+                        .arg(hook.to_string_lossy().replace('\\', "/"))
+                        .current_dir(&repo_dir)
+                        .env("KATA_FAKE_MODE", "consoleprobe")
+                        .stdin(std::process::Stdio::null())
+                        .output()
+                        .unwrap();
+                assert!(status.status.success(), "{status:?}");
+            }
+        }
+        "consoleprobe" | "consoleprobe-child" => {
+            let prefix = if mode == "consoleprobe" { "" } else { "child-" };
+            let _ = writeln!(out, "{prefix}window={}", console_window());
+            let _ = out.flush();
+            if mode == "consoleprobe" {
+                // Test code: a plain Command with no flags shows what a child inherits.
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .env("KATA_FAKE_MODE", "consoleprobe-child")
+                    .status();
+                let _ = status;
+            }
+        }
         "sleep" => {
+            if let Some(path) = std::env::var_os("KATA_FAKE_PIDFILE") {
+                let _ = std::fs::write(path, std::process::id().to_string());
+            }
             let _ = writeln!(
                 out,
                 r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"working"}}]}}}}"#
@@ -437,4 +501,16 @@ fn main() {
             let _ = out.flush();
         }
     }
+}
+
+/// 1 when this process has a console window, else 0.
+#[cfg(windows)]
+fn console_window() -> u8 {
+    // SAFETY: GetConsoleWindow takes no arguments and only reads process state.
+    u8::from(!unsafe { windows_sys::Win32::System::Console::GetConsoleWindow() }.is_null())
+}
+
+#[cfg(not(windows))]
+fn console_window() -> u8 {
+    0
 }

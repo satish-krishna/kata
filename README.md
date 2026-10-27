@@ -43,7 +43,7 @@ The workspace home lists your workspaces (add or remove one, switch between them
 - **Build.** One agent per repository, several at once, on a build page whose four areas (tasks, activity, changed files, findings) you can arrange; `Ctrl+1` to `Ctrl+4` pick the overview, watch, changes and review arrangements.
 - **Changes.** The files each commit on a change branch touched, with a side-by-side diff against the base branch.
 - **Review.** One reviewer per repository plus one across them. Findings are grouped by repository and read from the change's `build/review.md`.
-- **Done.** Declaring a change done runs your checks, then opens one pull request per touched repository with `gh`, the master last.
+- **Done.** Declaring a change done runs your checks, then opens one pull request per touched repository through GitHub's API, the master last.
 
 | The workspace's changes | Triage routes a new change |
 | --- | --- |
@@ -59,7 +59,7 @@ The workspace home lists your workspaces (add or remove one, switch between them
 
 Building and declaring a change done have prerequisites beyond an authenticated `claude` on your `PATH`:
 
-- The GitHub CLI (`gh`) installed and signed in with `gh auth login`. Run `gh auth setup-git` as well so pushes use your sign-in. Kata reads and stores no token; pull requests are opened by `gh` as you.
+- A GitHub sign-in on this machine: Git Credential Manager, or the GitHub CLI's `gh auth login`. Kata finds the sign-in, uses it for the push and the pull request as you, and stores no token. Neither `git` nor `gh` needs to be installed; Kata reads and writes repositories itself.
 - The `ai-sdlc` plugin at version 0.9.0 or later (0.13.0 or later for start triage and the light fix track), and Node.js 20 or later on your `PATH`: Kata reads specs, plans, build logs and reviews through the plugin's format program, which runs on Node.
 
 A build runs one agent per repository, inside that repository, with several running at once. Each run has its own time limit. Builds always run under `permissions.mode = "auto"` with deny rules (no `git push`, `gh` or `git remote`, no edits to the checks folder, no edits to another repository's work), whatever permission setting the rest of the app uses, because deny rules do not exist under the default bypass posture.

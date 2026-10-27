@@ -8,10 +8,12 @@ import type { DiffListing } from '@bindings/DiffListing';
 import type { FilePair } from '@bindings/FilePair';
 import type { FileTypeStats } from '@bindings/FileTypeStats';
 import type { Part } from '@bindings/Part';
+import { ProgressStore } from '../../core/progress/progress.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { tieFiles } from '../../lib/file-ties';
 import { locateFinding, type RepoPaths } from '../../lib/finding-place';
+import { progressLabels } from '../../lib/progress-steps';
 import type { DiffLayout } from '../../ui/diff-bar';
 import type { FindingMark, StepRequest } from '../../ui/diff-editor/diff-editor';
 import type { FileRef, RepoFile, RepoFileGroup } from '../../ui/repo-file-list';
@@ -34,6 +36,8 @@ const NOT_IN_CHANGE = "This finding's file is not part of this change.";
 const NOT_IN_PART = "Showing the whole change: this finding's file is not in the part you were looking at.";
 const NO_FILES: ChangedFile[] = [];
 const NO_COMMITS: CommitFiles[] = [];
+/** The progress entry of this view: the Changes view is the only place on its page that reads what changed. */
+const PROGRESS_OWNER = 'changes';
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /** How a reload treats the open file: leave it alone, show it for the new part, or keep up with it. */
@@ -49,6 +53,9 @@ type Reload = 'open' | 'part' | 'refresh';
 export class ChangesViewModel {
   private readonly transport = inject(KataTransport);
   private readonly toasts = inject(ToastStore);
+  private readonly progress = inject(ProgressStore);
+  /** What reading the change's repositories reports while it runs long enough to show. */
+  readonly readProgress = this.progress.view(PROGRESS_OWNER);
 
   private context: ChangesContext | null = null;
   /** Newer reloads supersede older ones still reading; picks have their own count so a pick never cancels a reload. */
@@ -345,14 +352,23 @@ export class ChangesViewModel {
     const seq = ++this.seq;
     const part = this.part();
     const sel = this.selected();
+    this.progress.begin('reading-diff', progressLabels.findingRepos(), PROGRESS_OWNER);
     try {
       // A failure here only loses the note; the repositories with changes still list.
       const missing = this.transport.sdlcMissingChangeBranches(ctx.folder, ctx.masterRepo, ctx.system, ctx.change).catch(() => []);
       const found = await this.transport.sdlcChangeRepos(ctx.folder, ctx.masterRepo, ctx.system, ctx.change);
       const repos = [...found.filter((r) => r.repo === ctx.masterRepo), ...found.filter((r) => r.repo !== ctx.masterRepo)];
       // A commit read that fails leaves that repository's files untied; it never fails the list.
+      // The plain label names the first repository still being read and moves on as each one is read.
+      const waiting = new Set(repos.map((r) => r.repo));
+      const readOne = (repo: string): void => {
+        waiting.delete(repo);
+        const next = waiting.values().next();
+        if (!next.done && seq === this.seq) this.progress.update(progressLabels.readingDiff(next.value), PROGRESS_OWNER);
+      };
+      if (repos.length > 0) this.progress.update(progressLabels.readingDiff(repos[0].repo), PROGRESS_OWNER);
       const [lists, commitLists] = await Promise.all([
-        Promise.all(repos.map((r) => this.transport.sdlcDiffFiles(r.path, part))),
+        Promise.all(repos.map((r) => this.transport.sdlcDiffFiles(r.path, part).finally(() => readOne(r.repo)))),
         Promise.all(repos.map((r) => this.transport.sdlcCommitFiles(r.path).catch((): CommitFiles[] => NO_COMMITS))),
       ]);
       const name = repos.find((r) => r.repo === this.activeName())?.repo ?? repos[0]?.repo ?? null;
@@ -363,6 +379,7 @@ export class ChangesViewModel {
       const pair = file && sel ? await this.transport.sdlcDiffPair(repos[at].path, part, sel.path) : null;
       const noBranch = await missing;
       if (seq !== this.seq) return;
+      this.progress.end(PROGRESS_OWNER);
       this.repos.set(repos);
       this.missingBranches.set(noBranch);
       this.listings.set(Object.fromEntries(repos.map((r, i) => [r.repo, lists[i]])));
@@ -377,7 +394,10 @@ export class ChangesViewModel {
       const pending = this.pendingFinding;
       if (pending !== null) void this.showAt(pending);
     } catch (e) {
-      if (seq === this.seq) this.toasts.error(`Could not read what changed: ${message(e)}`);
+      if (seq === this.seq) {
+        this.progress.fail(PROGRESS_OWNER);
+        this.toasts.error(`Could not read what changed: ${message(e)}`);
+      }
     }
   }
 

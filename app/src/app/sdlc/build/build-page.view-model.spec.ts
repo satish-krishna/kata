@@ -22,6 +22,7 @@ import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib
 import type { BuildHandoff } from '../change/change-page.view-model';
 import { BuildLayoutViewModel } from './build-layout.view-model';
 import { BuildPageViewModel, findingsAreaOf, type BuildContext, type Departure, type FindingsView, type ReviewEntry } from './build-page.view-model';
+import { readAllChanges } from '../../../testing/read-all';
 
 const FOLDER = MOCK_WORKSPACE_FOLDER;
 const CTX: BuildContext = { workspaceId: 'acme-claims', folder: FOLDER, system: 'claims', change: MOCK_BUILD_CHANGE, systemRepos: [] };
@@ -1417,7 +1418,7 @@ describe('the build page shows tasks and sessions from the build log, the run li
     vi.spyOn(s.transport, 'listRuns').mockResolvedValue(over.records ?? []);
     const status = await s.transport.sdlcBuildStatus(FOLDER, 'claims', MOCK_BUILD_CHANGE);
     if (over.built ?? true) status.tasks = status.tasks.map((t) => (t.id === 'T1' ? { ...t, row: T1_ROW } : t));
-    const [found] = (await s.transport.sdlcChanges(`${FOLDER}/${MOCK_MASTER}`, 'claims')).filter((c) => c.change === MOCK_BUILD_CHANGE);
+    const [found] = (await readAllChanges(s.transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
     const change = over.stage === undefined ? found : { ...found, stage: over.stage };
     const load = () => s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change, status, done: false, review: null });
     return { ...s, load, status };
@@ -1839,7 +1840,7 @@ describe('the layout follows the real build page through a finish, whatever orde
     vi.spyOn(transport, 'sdlcTaskLinks').mockResolvedValue([]);
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: 'review-1', kata: 'review', started_at: 0, isolation: 'none', exit: 0, turns: 1, cost_usd: 0 }]);
     const status = await transport.sdlcBuildStatus(FOLDER, 'claims', MOCK_BUILD_CHANGE);
-    const [found] = (await transport.sdlcChanges(`${FOLDER}/${MOCK_MASTER}`, 'claims')).filter((c) => c.change === MOCK_BUILD_CHANGE);
+    const [found] = (await readAllChanges(transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
     const loading = vm.load({
       ctx: CTX,
       master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` },

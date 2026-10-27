@@ -9,6 +9,8 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeName } from '@bindings/ChangeName';
+import type { StageEvent } from '@bindings/StageEvent';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { BuildAction } from '@bindings/BuildAction';
 import type { BuildScope } from '@bindings/BuildScope';
@@ -38,7 +40,9 @@ import type { Offender } from '@bindings/Offender';
 import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { PrResult } from '@bindings/PrResult';
+import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
+import type { DoneView } from '@bindings/DoneView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import { seedCatalog, validateLocal, previewFixture, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
@@ -49,6 +53,9 @@ import { KataTransport, NO_BACKEND } from './kata-transport';
 
 /** How long the first scan of the demo setup folder takes, long enough to see the checking steps. */
 const SETUP_SCAN_MS = 1800;
+
+/** How long a scripted stage pass takes in all, long enough to see the reading rows. */
+const STAGE_PASS_MS = 1000;
 
 /** One scripted run in flight: what to play after an answer or a decision, and what finishing it does. */
 interface ScriptedRun {
@@ -66,6 +73,12 @@ interface ScriptedRun {
 export class MockTransport extends KataTransport {
   /** Every run store listening for events: a build starts several runs, each with its own listener. */
   private readonly listeners = new Set<(runId: string, ev: KataEvent) => void>();
+  /** Everything listening for what publishing is doing. */
+  private readonly publishListeners = new Set<(step: PublishStep) => void>();
+  /** Everything listening for what a stage pass reports. */
+  private readonly stageListeners = new Set<(ev: StageEvent) => void>();
+  private stageTimers: ReturnType<typeof setTimeout>[] = [];
+  private nextPass = 0;
   private readonly runs = new Map<string, ScriptedRun>();
   private nextRun = 0;
   /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
@@ -158,7 +171,40 @@ export class MockTransport extends KataTransport {
   }
   sdlcContextHealth(_folder: string, _master: string, _system: string, repo: string): Promise<ContextState> { return Promise.resolve(this.sdlc.contextHealth(repo)); }
   sdlcInstructions(_folder: string, _masterRepo: string): Promise<InstructionsState> { return Promise.resolve(this.sdlc.instructions()); }
-  sdlcChanges(_master: string, _system: string): Promise<ChangeInfo[]> { return Promise.resolve(this.sdlc.listChanges()); }
+  sdlcChangeNames(_master: string, _system: string): Promise<ChangeName[]> { return Promise.resolve(this.sdlc.changeNames()); }
+  /** Plays a scripted pass: one `stage` per change and a `progress` after each, spread over about a second, then `done`. A new pass cancels the one before. */
+  sdlcReadStages(_master: string, _system: string, first?: string | null): Promise<number> {
+    this.stageTimers.forEach(clearTimeout);
+    this.stageTimers = [];
+    const pass = ++this.nextPass;
+    const infos = this.sdlc.stagePass();
+    const at = infos.findIndex((c) => c.change === first);
+    if (at > 0) infos.unshift(...infos.splice(at, 1));
+    const every = STAGE_PASS_MS / Math.max(infos.length, 1);
+    const send = (ev: StageEvent) => { for (const listen of [...this.stageListeners]) listen(ev); };
+    infos.forEach((info, i) => {
+      this.stageTimers.push(setTimeout(() => {
+        send({ kind: 'stage', pass, change: info.change, info });
+        send({ kind: 'progress', pass, read: i + 1, total: infos.length });
+        if (i === infos.length - 1) send({ kind: 'done', pass });
+      }, every * (i + 1)));
+    });
+    if (infos.length === 0) this.stageTimers.push(setTimeout(() => send({ kind: 'done', pass }), 0));
+    return Promise.resolve(pass);
+  }
+  sdlcReadChange(_master: string, _system: string, change: string): Promise<ChangeInfo> {
+    try {
+      return Promise.resolve(this.sdlc.readChange(change));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
+  /** Every demo folder is there. */
+  sdlcMissingFolders(_folders: string[]): Promise<string[]> { return Promise.resolve([]); }
+  async onStageEvent(cb: (ev: StageEvent) => void): Promise<() => void> {
+    this.stageListeners.add(cb);
+    return () => { this.stageListeners.delete(cb); };
+  }
   sdlcBranches(_master: string): Promise<BranchInfo> { return Promise.resolve(this.sdlc.branches()); }
   sdlcReadDoc(_master: string, _system: string, change: string, doc: string): Promise<string | null> {
     try {
@@ -205,14 +251,28 @@ export class MockTransport extends KataTransport {
   sdlcRunChecks(_folder: string, _masterRepo: string, _system: string, repo: PublishRepo): Promise<RepoChecks> { return Promise.resolve(this.sdlc.runChecks(repo.repo)); }
   sdlcGhSignedIn(_repos: PublishRepo[]): Promise<string> { return Promise.resolve('demo-user'); }
   sdlcGhOrigins(_repos: PublishRepo[]): Promise<void> { return Promise.resolve(); }
-  sdlcPublish(_folder: string, _masterRepo: string, _system: string, _change: string, repos: PublishRepo[]): Promise<PrResult[]> { return Promise.resolve(this.sdlc.publish(repos)); }
+  sdlcPublish(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, _change: string, repos: PublishRepo[]): Promise<PrResult[]> {
+    for (const r of repos) {
+      for (const step of [{ kind: 'pushing', repo: r.repo }, { kind: 'opening', repo: r.repo }] as PublishStep[]) {
+        for (const listen of [...this.publishListeners]) listen(step);
+      }
+    }
+    return Promise.resolve(this.sdlc.publish(repos));
+  }
   /** `?demo=pr-fail` makes the read fail, so the browser checks can see the "Could not check pull requests" note; `?demo=one-pr` keeps only the
    *  first pull request, so they can see the single inline link. Browser only; this class never runs under Tauri. */
-  sdlcPullRequests(repos: PublishRepo[], change: string): Promise<PrState[]> {
+  async sdlcDoneView(folder: string, masterRepo: string, _workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView> {
     const demo = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('demo');
-    if (demo === 'pr-fail') return Promise.reject(new Error('gh is not signed in'));
-    const prs = this.sdlc.pullRequests(repos, change);
-    return Promise.resolve(demo === 'one-pr' ? prs.slice(0, 1) : prs);
+    if (demo === 'pr-fail' && buildFinished) return { done: false, links: [], linksFrom: 'none', offerDeclare: true, prCheckFailed: true };
+    const repos = await this.sdlcTouchedRepos(folder, masterRepo, system, change);
+    const view = this.sdlc.doneView(repos, change, buildFinished);
+    return demo === 'one-pr' ? { ...view, links: view.links.slice(0, 1) } : view;
+  }
+  sdlcRefreshPrStates(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView> {
+    return this.sdlcDoneView(folder, masterRepo, workspaceId, system, change, buildFinished);
+  }
+  sdlcPullRequests(repos: PublishRepo[], change: string): Promise<PrState[]> {
+    return Promise.resolve(this.sdlc.pullRequests(repos, change));
   }
   loadBuildLayout(): Promise<unknown> { return Promise.resolve(this.buildLayout); }
   saveBuildLayout(layout: Record<string, unknown>): Promise<void> { this.buildLayout = layout; return Promise.resolve(); }
@@ -222,6 +282,11 @@ export class MockTransport extends KataTransport {
   pickDirectory(): Promise<string | null> { return Promise.resolve(null); }
   pickOpenSpec(): Promise<string | null> { return Promise.resolve(null); }
   pickSaveSpec(): Promise<string | null> { return Promise.resolve(null); }
+
+  async onPublishStep(cb: (step: PublishStep) => void): Promise<() => void> {
+    this.publishListeners.add(cb);
+    return () => { this.publishListeners.delete(cb); };
+  }
 
   async onRunEvent(cb: (runId: string, ev: KataEvent) => void): Promise<() => void> {
     this.listeners.add(cb);

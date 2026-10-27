@@ -6,15 +6,21 @@ use std::path::Path;
 /// The plugin's rule: true only when `pin` names a commit from which `upstream_rel` is
 /// unchanged at `HEAD`. A missing or empty pin, one that could be read as a git option, an
 /// unknown commit, and any git error are all false.
-pub fn holds(master: &Path, pin: Option<&str>, upstream_rel: &str) -> bool {
+pub fn holds(repo: &git::Repo, pin: Option<&str>, upstream_rel: &str) -> bool {
     let Some(pin) = pin.filter(|p| !p.is_empty() && !p.starts_with('-')) else {
         return false;
     };
-    git::run(
-        master,
-        &["diff", "--quiet", pin, "HEAD", "--", upstream_rel],
-    )
-    .is_ok()
+    if !repo.resolves_to_commit(pin) {
+        return false;
+    }
+    // Both absent holds, as `git diff --quiet` decides; a changed file mode does not.
+    match (
+        repo.entry_at(pin, upstream_rel),
+        repo.entry_at("HEAD", upstream_rel),
+    ) {
+        (Ok(then), Ok(now)) => then == now,
+        _ => false,
+    }
 }
 
 /// Whether the spec's `source_intent_commit` still matches `intent.md`.
@@ -53,8 +59,11 @@ fn pin_holds(
     let pin = std::fs::read_to_string(dir.join(doc))
         .ok()
         .and_then(|t| frontmatter::field(&t, key));
+    let Ok(repo) = git::Repo::open(master) else {
+        return false;
+    };
     holds(
-        master,
+        &repo,
         pin.as_deref(),
         &format!("intent/{system}/{change}/{upstream}"),
     )
@@ -69,6 +78,10 @@ mod tests {
     const CHG: &str = "2026-10-12-fnol";
     const INTENT: &str = "intent/claims/2026-10-12-fnol/intent.md";
     const SPEC: &str = "intent/claims/2026-10-12-fnol/spec.md";
+
+    fn open(repo: &Path) -> git::Repo {
+        git::Repo::open(repo).unwrap()
+    }
 
     fn head(repo: &Path) -> String {
         git::run(repo, &["rev-parse", "HEAD"]).unwrap()
@@ -91,7 +104,7 @@ mod tests {
     fn pin_holds_when_upstream_is_unchanged() {
         let tmp = tempfile::tempdir().unwrap();
         let (repo, pin) = pinned(tmp.path());
-        assert!(holds(&repo, Some(&pin), INTENT));
+        assert!(holds(&open(&repo), Some(&pin), INTENT));
         assert!(spec_pin_holds(&repo, SYS, CHG));
     }
 
@@ -100,7 +113,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (repo, pin) = pinned(tmp.path());
         testutil::commit_file(&repo, INTENT, "v2\n", "intent changed");
-        assert!(!holds(&repo, Some(&pin), INTENT));
+        assert!(!holds(&open(&repo), Some(&pin), INTENT));
         assert!(!spec_pin_holds(&repo, SYS, CHG));
     }
 
@@ -108,10 +121,10 @@ mod tests {
     fn pin_fails_when_missing_or_unknown() {
         let tmp = tempfile::tempdir().unwrap();
         let (repo, _) = pinned(tmp.path());
-        assert!(!holds(&repo, None, INTENT));
-        assert!(!holds(&repo, Some(""), INTENT));
-        assert!(!holds(&repo, Some("deadbeef"), INTENT));
-        assert!(!holds(&repo, Some("--output=x"), INTENT));
+        assert!(!holds(&open(&repo), None, INTENT));
+        assert!(!holds(&open(&repo), Some(""), INTENT));
+        assert!(!holds(&open(&repo), Some("deadbeef"), INTENT));
+        assert!(!holds(&open(&repo), Some("--output=x"), INTENT));
         assert!(!repo.join("x").exists());
         // A spec without the field, and a change with no spec at all.
         testutil::commit_file(&repo, SPEC, "---\nstatus: accepted\n---\n", "no pin");
@@ -131,7 +144,7 @@ mod tests {
 ",
             "readme",
         );
-        assert!(holds(&repo, Some(&pin), INTENT));
+        assert!(holds(&open(&repo), Some(&pin), INTENT));
         // The plan pin follows spec.md the same way.
         let spec_commit = head(&repo);
         testutil::commit_file(

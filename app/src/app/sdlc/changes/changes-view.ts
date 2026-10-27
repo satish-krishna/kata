@@ -8,6 +8,7 @@ import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmPopoverImports } from '@spartan-ng/helm/popover';
 import { DiffBar } from '../../ui/diff-bar';
 import { DiffEditor } from '../../ui/diff-editor/diff-editor';
+import { ProgressLine } from '../../ui/progress-line';
 import { RepoFileList } from '../../ui/repo-file-list';
 import { Segmented } from '../../ui/segmented';
 import { ChangesViewModel, type ShowAt } from './changes-view.view-model';
@@ -19,7 +20,7 @@ import { ChangesViewModel, type ShowAt } from './changes-view.view-model';
   selector: 'app-changes-view',
   host: { class: 'block h-full min-h-0' },
   providers: [ChangesViewModel, provideIcons({ lucideChevronDown, lucideTriangleAlert })],
-  imports: [NgIcon, NgTemplateOutlet, HlmAlertImports, HlmButtonImports, HlmPopoverImports, RepoFileList, Segmented, DiffBar, DiffEditor],
+  imports: [NgIcon, NgTemplateOutlet, HlmAlertImports, HlmButtonImports, HlmPopoverImports, RepoFileList, Segmented, DiffBar, DiffEditor, ProgressLine],
   templateUrl: './changes-view.html',
   styleUrl: './changes-view.css',
 })

@@ -34,9 +34,9 @@ describe('ChangePage parsed documents', () => {
 
   it('change page shows every requirement, scenario, task, build record and finding', async () => {
     const transport = new MockTransport();
-    const real = transport.sdlcChanges.bind(transport);
-    vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) =>
-      (await real(m, s)).map((c): ChangeInfo => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage: 'build-finished' } : c)),
+    const real = transport.sdlcReadChange.bind(transport);
+    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
+      [await real(m, s, n)].map((c): ChangeInfo => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage: 'build-finished' } : c))[0],
     );
     vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_m, _s, _c, stem) => PROSE(stem));
     const documents: Record<string, ReadResult> = { spec: parsedSpec(), plan: parsedPlan() };

@@ -2,10 +2,12 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import { render } from '../../../testing/render';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { PrLink } from '@bindings/PrLink';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject, of } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
+import { ProgressStore } from '../../core/progress/progress.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import type { StageAction } from '../../lib/sdlc';
@@ -43,8 +45,8 @@ const ready = async (vm: ChangePageViewModel) => {
   });
 };
 const withStage = (transport: MockTransport, name: string, stage: ChangeInfo['stage']) => {
-  const real = transport.sdlcChanges.bind(transport);
-  vi.spyOn(transport, 'sdlcChanges').mockImplementation(async (m, s) => (await real(m, s)).map((c) => (c.change === name ? { ...c, stage } : c)));
+  const real = transport.sdlcReadChange.bind(transport);
+  vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) => [await real(m, s, n)].map((c) => (c.change === name ? { ...c, stage } : c))[0]);
 };
 
 /** A finished build whose review ran against the current heads and whose repositories have nothing uncommitted. */
@@ -228,7 +230,7 @@ describe('declaring done', () => {
     expect(canConfirm(vm.doneReport()!)).toBe(true);
     await vm.confirmDone();
     expect(publish).toHaveBeenCalledTimes(1);
-    expect(publish.mock.calls[0][4].map((r) => r.repo)).toEqual(['claims-intent', ...REPOS]);
+    expect(publish.mock.calls[0][5].map((r) => r.repo)).toEqual(['claims-intent', ...REPOS]);
     expect(vm.doneReport()).toBeNull();
     expect(vm.prList()!.map((r) => r.outcome.kind)).toEqual(['opened', 'opened', 'opened']);
   });
@@ -259,8 +261,8 @@ describe('declaring done', () => {
   it('a failed pull request lists why, and Retry publishes again (R13.2)', async () => {
     const { vm, transport, steps } = await finished();
     const real = transport.sdlcPublish.bind(transport);
-    const publish = vi.spyOn(transport, 'sdlcPublish').mockImplementationOnce(async (f, m, s, c, repos) => {
-      const out = await real(f, m, s, c, repos);
+    const publish = vi.spyOn(transport, 'sdlcPublish').mockImplementationOnce(async (f, w, m, s, c, repos) => {
+      const out = await real(f, w, m, s, c, repos);
       return out.map((r) => (r.repo === 'customer-portal' ? { repo: r.repo, outcome: { kind: 'failed' as const, error: 'gh: HTTP 502' } } : r));
     });
     await vm.act('declare-done');
@@ -439,9 +441,9 @@ describe('declaring done from the build page', () => {
   });
 
   const PRS = [
-    { repo: 'claims-intent', url: 'https://github.com/acme/claims-intent/pull/11' },
-    { repo: 'claims-core', url: 'https://github.com/acme/claims-core/pull/12' },
-    { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/13' },
+    { repo: 'claims-intent', url: 'https://github.com/acme/claims-intent/pull/11', state: 'open' as const, seenAt: null },
+    { repo: 'claims-core', url: 'https://github.com/acme/claims-core/pull/12', state: 'open' as const, seenAt: null },
+    { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/13', state: 'open' as const, seenAt: null },
   ];
   const click = (a: Element) => {
     const ev = new MouseEvent('click', { bubbles: true, cancelable: true });
@@ -494,5 +496,88 @@ describe('declaring done from the build page', () => {
 
     await vi.waitFor(() => expect(toastState.toasts().map((t) => String(t.title))).toContain(`Could not open ${PRS[0].url}: no browser`));
     expect(open).toHaveBeenCalledWith(PRS[0].url);
+  });
+});
+
+describe('declaring done reports progress', () => {
+  it('names the repository whose checks run, the branch being pushed and the pull request being opened (R7.1)', async () => {
+    const { vm } = await finished();
+    const progress = TestBed.inject(ProgressStore);
+    const begin = vi.spyOn(progress, 'begin');
+    const end = vi.spyOn(progress, 'end');
+    await vm.act('declare-done');
+    const checks = begin.mock.calls.filter((c) => c[0] === 'running-checks');
+    expect(checks.map((c) => c[1])).toEqual(['claims-intent', ...REPOS].map((r) => `Running the checks in ${r}`));
+    expect(checks.every((c) => c[2] === 'lock')).toBe(true);
+    await vm.confirmDone();
+    const pushes = begin.mock.calls.filter((c) => c[0] === 'pushing').map((c) => c[1]);
+    expect(pushes).toEqual(expect.arrayContaining(REPOS.map((r) => `Pushing change/${BUILD} in ${r}`)));
+    const opens = begin.mock.calls.filter((c) => c[0] === 'opening-prs').map((c) => c[1]);
+    expect(opens).toEqual(expect.arrayContaining(REPOS.map((r) => `Opening a pull request in ${r}`)));
+    expect(end).toHaveBeenCalledWith('lock');
+    expect(progress.view('lock')()).toBeNull();
+  });
+
+  it('a failed publish clears the progress line before it raises its error (R7.3)', async () => {
+    const { vm, transport } = await finished();
+    const progress = TestBed.inject(ProgressStore);
+    await vm.act('declare-done');
+    vi.spyOn(transport, 'sdlcPublish').mockImplementation(async () => {
+      progress.begin('pushing', 'Pushing change/x in claims-core', 'lock');
+      throw new Error('push refused');
+    });
+    const fail = vi.spyOn(progress, 'fail');
+    await vm.confirmDone();
+    expect(fail).toHaveBeenCalledWith('lock');
+    expect(progress.view('lock')()).toBeNull();
+    expect(toastText()).toContain('push refused');
+  });
+});
+
+describe('lasting links after a publish or a round', () => {
+  const saved = (repo: string, over: Partial<PrLink> = {}): PrLink => ({ repo, url: `https://github.com/acme/${repo}/pull/7`, state: 'open', seenAt: 1790000000, ...over });
+
+  it('keeps the opened link and offers declare done after a partial publish (R8.3)', async () => {
+    const { vm, transport } = await finished();
+    const real = transport.sdlcDoneView.bind(transport);
+    let published = false;
+    const doneView = vi.spyOn(transport, 'sdlcDoneView').mockImplementation(async (...args) =>
+      published ? { done: false, links: [saved('claims-core')], linksFrom: 'opened', offerDeclare: true, prCheckFailed: false } : real(...args),
+    );
+    const publish = vi.spyOn(transport, 'sdlcPublish').mockImplementation(async () => {
+      published = true;
+      return [
+        { repo: 'claims-core', outcome: { kind: 'opened' as const, url: 'https://github.com/acme/claims-core/pull/7' } },
+        { repo: 'customer-portal', outcome: { kind: 'failed' as const, error: 'push refused' } },
+      ];
+    });
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    expect(publish.mock.calls[0][1]).toBe(vm.current()!.id);
+    expect(doneView.mock.calls.length).toBeGreaterThan(1);
+    expect(vm.done()).toBe(false);
+    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['claims-core']);
+    expect(vm.prList()?.length).toBe(2);
+    expect(vm.actions()).toContain('declare-done');
+  });
+
+  it('a round after done shows build finished with the earlier links (T10 row 2)', async () => {
+    const transport = new MockTransport();
+    withStage(transport, BUILD, 'build-finished');
+    vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue({
+      done: false,
+      links: [saved('claims-core'), saved('customer-portal')],
+      linksFrom: 'earlierDeclaration',
+      offerDeclare: true,
+      prCheckFailed: false,
+    });
+    vi.spyOn(transport, 'sdlcRefreshPrStates').mockImplementation(() => new Promise<never>(() => undefined));
+    const { vm } = setup(transport);
+    await ready(vm);
+    expect(vm.done()).toBe(false);
+    expect(vm.change()!.stage).toBe('build-finished');
+    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['claims-core', 'customer-portal']);
+    expect(vm.linksNote()).toBe('from the earlier declaration');
+    expect(vm.actions()).toContain('declare-done');
   });
 });

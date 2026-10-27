@@ -1,5 +1,7 @@
 import { TauriTransport, type TauriIpc } from './tauri-transport';
 import { seedSpec } from '../../lib/mock';
+import type { PublishStep } from '@bindings/PublishStep';
+import type { StageEvent } from '@bindings/StageEvent';
 import type { KataEvent } from '../../lib/events';
 import type { Settings } from '@bindings/Settings';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
@@ -56,7 +58,11 @@ const rows: Row[] = [
   ['sdlcScan', (t) => t.sdlcScan('/w'), 'sdlc_scan', { folder: '/w' }],
   ['sdlcContextHealth', (t) => t.sdlcContextHealth('/w', 'm', 's', 'r'), 'sdlc_context_health', { folder: '/w', master: 'm', system: 's', repo: 'r' }],
   ['sdlcInstructions', (t) => t.sdlcInstructions('/w', 'm'), 'sdlc_instructions', { folder: '/w', masterRepo: 'm' }],
-  ['sdlcChanges', (t) => t.sdlcChanges('/m', 's'), 'sdlc_changes', { master: '/m', system: 's' }],
+  ['sdlcChangeNames', (t) => t.sdlcChangeNames('/m', 's'), 'sdlc_change_names', { master: '/m', system: 's' }],
+  ['sdlcReadStages', (t) => t.sdlcReadStages('/m', 's'), 'sdlc_read_stages', { master: '/m', system: 's' }],
+  ['sdlcReadStages with a first change', (t) => t.sdlcReadStages('/m', 's', 'c'), 'sdlc_read_stages', { master: '/m', system: 's', first: 'c' }],
+  ['sdlcReadChange', (t) => t.sdlcReadChange('/m', 's', 'c'), 'sdlc_read_change', { master: '/m', system: 's', change: 'c' }],
+  ['sdlcMissingFolders', (t) => t.sdlcMissingFolders(['/a', '/b']), 'sdlc_missing_folders', { folders: ['/a', '/b'] }],
   ['sdlcBranches', (t) => t.sdlcBranches('/m'), 'sdlc_branches', { master: '/m' }],
   ['sdlcWaitRunExit', (t) => t.sdlcWaitRunExit('7', 15000), 'sdlc_wait_run_exit', { runId: '7', timeoutMs: 15000 }],
   ['zoom', (t) => t.zoom('in'), 'zoom', { step: 'in' }],
@@ -96,7 +102,9 @@ const rows: Row[] = [
   ['sdlcRunChecks', (t) => t.sdlcRunChecks('/w', 'm', 's', publishRepo), 'sdlc_run_checks', { folder: '/w', masterRepo: 'm', system: 's', repo: publishRepo }],
   ['sdlcGhSignedIn', (t) => t.sdlcGhSignedIn([publishRepo]), 'sdlc_gh_signed_in', { repos: [publishRepo] }],
   ['sdlcGhOrigins', (t) => t.sdlcGhOrigins([publishRepo]), 'sdlc_gh_origins', { repos: [publishRepo] }],
-  ['sdlcPublish', (t) => t.sdlcPublish('/w', 'm', 's', 'c', [publishRepo]), 'sdlc_publish', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', repos: [publishRepo] }],
+  ['sdlcPublish', (t) => t.sdlcPublish('/w', 'w1', 'm', 's', 'c', [publishRepo]), 'sdlc_publish', { folder: '/w', workspaceId: 'w1', masterRepo: 'm', system: 's', change: 'c', repos: [publishRepo] }],
+  ['sdlcDoneView', (t) => t.sdlcDoneView('/w', 'm', 'w1', 's', 'c', true), 'sdlc_done_view', { folder: '/w', masterRepo: 'm', workspaceId: 'w1', system: 's', change: 'c', buildFinished: true }],
+  ['sdlcRefreshPrStates', (t) => t.sdlcRefreshPrStates('/w', 'm', 'w1', 's', 'c', false), 'sdlc_refresh_pr_states', { folder: '/w', masterRepo: 'm', workspaceId: 'w1', system: 's', change: 'c', buildFinished: false }],
   ['sdlcPullRequests', (t) => t.sdlcPullRequests([publishRepo], 'c'), 'sdlc_pull_requests', { repos: [publishRepo], change: 'c' }],
 ];
 
@@ -140,6 +148,29 @@ describe('TauriTransport', () => {
     const ev: KataEvent = { type: 'log', level: 'info', message: 'x' };
     handler({ payload: { runId: 3, event: ev } });
     expect(seen).toEqual([['3', ev]]);
+  });
+
+  it('hands the payload of sdlc://publish-step over as the step', async () => {
+    const ipc = fakeIpc();
+    const t = new TauriTransport(asIpc(ipc));
+    const seen: PublishStep[] = [];
+    await t.onPublishStep((step) => seen.push(step));
+    const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: PublishStep }) => void];
+    expect(event).toBe('sdlc://publish-step');
+    handler({ payload: { kind: 'pushing', repo: 'claims-core' } });
+    expect(seen).toEqual([{ kind: 'pushing', repo: 'claims-core' }]);
+  });
+
+  it('hands the payload of sdlc://stage over as the event', async () => {
+    const ipc = fakeIpc();
+    const t = new TauriTransport(asIpc(ipc));
+    const seen: StageEvent[] = [];
+    await t.onStageEvent((ev) => seen.push(ev));
+    const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: StageEvent }) => void];
+    expect(event).toBe('sdlc://stage');
+    handler({ payload: { kind: 'progress', pass: 4, read: 1, total: 3 } });
+    handler({ payload: { kind: 'done', pass: 4 } });
+    expect(seen).toEqual([{ kind: 'progress', pass: 4, read: 1, total: 3 }, { kind: 'done', pass: 4 }]);
   });
 
   it('runSpec resolves to the run id the backend returned', async () => {

@@ -1,5 +1,5 @@
 //! The commit rules for a change branch: the change's scope and the ai-sdlc trailer.
-use crate::git::{self, GitError};
+use crate::git::{GitError, Repo};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -61,17 +61,20 @@ pub fn offenders_to(
     revs: &[String],
     scope: &str,
 ) -> Result<Vec<Offender>, GitError> {
-    let mut args = vec!["log", "--format=%h%x1f%B%x1e"];
-    args.extend(revs.iter().map(String::as_str));
-    let log = git::run(repo_dir, &args)?;
-    Ok(log
-        .split('\x1e')
-        .filter_map(|rec| {
-            let (hash, message) = rec.trim_start_matches('\n').split_once('\x1f')?;
-            (!follows_rules(message, scope)).then(|| Offender {
+    Ok(Repo::open(repo_dir)?
+        .log_messages(revs)?
+        .into_iter()
+        .filter_map(|entry| {
+            (!follows_rules(&entry.message, scope)).then(|| Offender {
                 repo: repo.to_string(),
-                hash: hash.to_string(),
-                subject: message.lines().next().unwrap_or("").trim_end().to_string(),
+                hash: entry.short,
+                subject: entry
+                    .message
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim_end()
+                    .to_string(),
             })
         })
         .collect())
@@ -80,6 +83,7 @@ pub fn offenders_to(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git;
     use crate::testutil;
 
     #[test]

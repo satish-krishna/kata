@@ -286,6 +286,9 @@ export function productRepoRules(ws: string, systemRepos: readonly string[], mas
 function buildPermissions(run: BuildRun, ctx: RunContext) {
   const ws = slashes(run.workspaceFolder);
   const { deny, allow } = productRepoRules(ws, run.systemRepos, run.masterRepo, run.checksDir);
+  // The parse cache folder sits beside the checks folder; an agent that edited an entry would change what the page shows.
+  const workbenchDir = slashes(run.checksDir).replace(/\/[^/]*\/?$/, "");
+  deny.push(`Edit(${rulePath(`${workbenchDir}/parse-cache`)}/**)`);
   const changeDir = `${ws}/${run.masterRepo}/intent/${ctx.system}/${ctx.change}`;
   const buildDir = `${changeDir}/build`;
   if (run.target === "review") {
