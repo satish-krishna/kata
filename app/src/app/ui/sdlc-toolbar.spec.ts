@@ -7,7 +7,7 @@ import { SdlcToolbar } from './sdlc-toolbar';
 
 const WS: WorkspaceEntry = { id: 'acme', name: 'acme-claims', folder: '/a', base_branch: 'main', last_opened: 1 };
 const inputs = (over: Record<string, unknown> = {}) => ({
-  workspaces: [WS], current: WS, missing: [], counts: {}, branch: 'main', locked: false, ...over,
+  workspaces: [WS], current: WS, missing: [], branch: 'main', locked: false, ...over,
 });
 const byLabel = (c: HTMLElement, label: string) => c.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
 const switcher = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('button[aria-label^="Switch workspace"]')!;
@@ -98,7 +98,7 @@ describe('SdlcToolbar', () => {
   it('projects the primary action', async () => {
     @Component({
       imports: [SdlcToolbar],
-      template: `<app-sdlc-toolbar [workspaces]="[]" [current]="null" [missing]="[]" [counts]="{}" [branch]="null">
+      template: `<app-sdlc-toolbar [workspaces]="[]" [current]="null" [missing]="[]" [branch]="null">
         <span id="primary">New change</span>
       </app-sdlc-toolbar>`,
     })
@@ -112,7 +112,7 @@ describe('SdlcToolbar', () => {
   it('projects the stage pills after the branch and the links before settings', async () => {
     @Component({
       imports: [SdlcToolbar],
-      template: `<app-sdlc-toolbar [workspaces]="[]" [current]="null" [missing]="[]" [counts]="{}" branch="main" [crumbs]="['c1']">
+      template: `<app-sdlc-toolbar [workspaces]="[]" [current]="null" [missing]="[]" branch="main" [crumbs]="['c1']">
         <span id="links" toolbarLinks>PRs</span>
         <span id="pills" toolbarStages>Pills</span>
         <span id="primary">New change</span>

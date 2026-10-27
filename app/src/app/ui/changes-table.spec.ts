@@ -7,6 +7,8 @@ import { ChangesTable } from './changes-table';
 
 const doc = (status: string | null): DocState =>
   status === null ? { exists: false, committed: false, status: null, head_status: null } : { exists: true, committed: true, status, head_status: status };
+const row = (name: string, over: Partial<ChangeRow> = {}): ChangeRow => ({ system: 'claims', change: name, title: null, info: null, error: null, checking: false, ...over });
+const staged = (name: string, stage: ChangeInfo['stage']): ChangeRow => row(name, { info: change(name, stage) });
 const change = (name: string, stage: ChangeInfo['stage']): ChangeInfo =>
   ({ system: 'claims', change: name, intent: doc('accepted'), spec: doc(null), plan: doc(null), stage, build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null, track: 'full', fix_row: null });
 
@@ -16,7 +18,7 @@ const buttons = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLButtonElem
 describe('ChangesTable', () => {
   it('groups changes by system and shows each stage as a labelled status', async () => {
     const { container } = await render(ChangesTable, {
-      changes: [change('2026-10-12-fnol', 'spec-awaiting'), change('2026-10-09-reassign', 'plan-awaiting')],
+      rows: [staged('2026-10-12-fnol', 'spec-awaiting'), staged('2026-10-09-reassign', 'plan-awaiting')],
       others: [], lastRuns: {},
     });
     expect(container.querySelector('[data-testid="system-claims"]')).not.toBeNull();
@@ -28,7 +30,7 @@ describe('ChangesTable', () => {
 
   it('shows the last run time, or a dash when the change has never run', async () => {
     const { container } = await render(ChangesTable, {
-      changes: [change('c1', 'plan-ready'), change('c2', 'plan-ready')],
+      rows: [staged('c1', 'plan-ready'), staged('c2', 'plan-ready')],
       others: [], lastRuns: { 'claims/c1': 1792281600 },
     });
     const rows = Array.from(container.querySelectorAll('tbody tr')).filter((r) => r.querySelector('td')).map((r) => text(r as HTMLElement));
@@ -37,7 +39,7 @@ describe('ChangesTable', () => {
   });
 
   it('renders the other-branches group by folder name with no stage', async () => {
-    const { container } = await render(ChangesTable, { changes: [change('c1', 'plan-ready')], others: ['2026-10-17-claim-notes'], lastRuns: {} });
+    const { container } = await render(ChangesTable, { rows: [staged('c1', 'plan-ready')], others: ['2026-10-17-claim-notes'], lastRuns: {} });
     const group = container.querySelector('[data-testid="other-branches"]')!;
     expect(group).not.toBeNull();
     expect(text(group as HTMLElement)).toContain('In progress on other branches');
@@ -46,35 +48,32 @@ describe('ChangesTable', () => {
   });
 
   it('omits the other-branches group when there are none', async () => {
-    const { container } = await render(ChangesTable, { changes: [change('c1', 'plan-ready')], others: [], lastRuns: {} });
+    const { container } = await render(ChangesTable, { rows: [staged('c1', 'plan-ready')], others: [], lastRuns: {} });
     expect(container.querySelector('[data-testid="other-branches"]')).toBeNull();
   });
 
   it('says so when there are no changes at all', async () => {
-    const { container } = await render(ChangesTable, { changes: [], others: [], lastRuns: {} });
+    const { container } = await render(ChangesTable, { rows: [], others: [], lastRuns: {} });
     expect(text(container)).toContain('No changes yet');
   });
 
   it('emits open for a change and openOther for a branch', async () => {
-    const c = change('c1', 'plan-ready');
-    const { fixture, container } = await render(ChangesTable, { changes: [c], others: ['other-one'], lastRuns: {} });
+    const { fixture, container } = await render(ChangesTable, { rows: [staged('c1', 'plan-ready')], others: ['other-one'], lastRuns: {} });
     const got: unknown[] = [];
     fixture.componentInstance.open.subscribe((v) => got.push(v));
     fixture.componentInstance.openOther.subscribe((v) => got.push(v));
     buttons(container).find((b) => b.getAttribute('aria-label') === 'Open change c1')!.click();
     buttons(container).find((b) => b.getAttribute('aria-label') === 'Switch to branch change/other-one')!.click();
-    expect(got).toEqual([c, 'other-one']);
+    expect(got).toEqual([{ system: 'claims', change: 'c1' }, 'other-one']);
   });
 
   it('disables opening while the app is locked', async () => {
-    const { container } = await render(ChangesTable, { changes: [change('c1', 'plan-ready')], others: ['o'], lastRuns: {}, disabled: true });
+    const { container } = await render(ChangesTable, { rows: [staged('c1', 'plan-ready')], others: ['o'], lastRuns: {}, disabled: true });
     expect(buttons(container).every((b) => b.disabled)).toBe(true);
   });
 });
 
 describe('ChangesTable rows while stages are read (R1.1, R2.1, R5.1)', () => {
-  const row = (name: string, over: Partial<ChangeRow> = {}): ChangeRow => ({ system: 'claims', change: name, title: null, info: null, error: null, checking: false, ...over });
-
   it('shows Reading in place of the stage for a change whose stage is not read yet, and the change still opens', async () => {
     const { fixture, container } = await render(ChangesTable, { rows: [row('c1')], others: [], lastRuns: {} });
     const rowText = text(container.querySelector('tbody tr:nth-child(2)') as HTMLElement);

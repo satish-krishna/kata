@@ -3,7 +3,6 @@
     [workspaces]="vm.workspaces()"
     [current]="vm.current()"
     [missing]="vm.missing()"
-    [counts]="vm.counts()"
     [branch]="vm.masterBranch()"
     [locked]="vm.locked()"
     [blocked]="vm.state() === 'plugin-missing'"
@@ -147,8 +146,11 @@
               </div>
             }
             <div class="k-home__body">
+              @if (vm.readingProgress(); as entry) {
+                <div data-testid="reading-progress"><app-progress-line [entry]="entry" /></div>
+              }
               <app-changes-table
-                [changes]="vm.changes()"
+                [rows]="vm.rows()"
                 [others]="vm.otherBranches()"
                 [lastRuns]="vm.lastRuns()"
                 [disabled]="vm.locked()"

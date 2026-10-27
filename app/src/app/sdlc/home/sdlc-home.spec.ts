@@ -30,9 +30,12 @@ async function mount(transport = new MockTransport()) {
 describe('SdlcHome', () => {
   it('renders the changes and repositories of the open workspace with the New change action', async () => {
     const { container } = await mount();
-    const text = container.textContent!.replace(/\s+/g, ' ');
-    expect(text).toContain('2026-10-12-fnol-photo-upload');
-    expect(text).toContain('Spec · awaiting acceptance');
+    const read = () => container.textContent!.replace(/\s+/g, ' ');
+    // The names come first, each reading; each stage fills in when the scripted pass reads it.
+    expect(read()).toContain('2026-10-12-fnol-photo-upload');
+    expect(read()).toContain('Reading');
+    await vi.waitFor(async () => { await settle(); expect(read()).toContain('Spec · awaiting acceptance'); }, { timeout: 4000, interval: 100 });
+    const text = read();
     expect(text).toContain('In progress on other branches');
     expect(text).toContain('2026-10-17-claim-notes');
     expect(text).toContain('customer-portal');

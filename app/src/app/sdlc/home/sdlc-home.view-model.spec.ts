@@ -41,6 +41,7 @@ function setup(over: { catalogHasPlugin?: boolean; preview?: 'confirm' | 'real' 
   const saveSettings = vi.spyOn(transport, 'sdlcSaveSettings');
   const preview = TestBed.inject(RunPreviewViewModel);
   if (over.preview !== 'real') vi.spyOn(preview, 'open').mockImplementation(async (req) => req.spec);
+  instantPass(transport);
   return { vm: TestBed.inject(SdlcHomeViewModel), preview, transport, lock, runAgent, runSteps, navigate, saveWorkspaces, saveSettings, runner: TestBed.inject(SdlcRunner) };
 }
 
@@ -64,6 +65,7 @@ describe('SdlcHomeViewModel init', () => {
     await vm.init();
     expect(vm.current()?.name).toBe('acme-claims');
     expect(vm.state()).toBe('ready');
+    await settled(vm);
     expect(vm.changes().length).toBe(7);
     expect(vm.branches()?.others).toEqual(['2026-10-17-claim-notes']);
     expect(vm.masterBranch()).toBe('main');
@@ -553,9 +555,7 @@ describe('SdlcHomeViewModel navigation', () => {
     const { vm, transport, navigate } = setup();
     await vm.init();
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
-    vi.spyOn(transport, 'sdlcChanges').mockResolvedValue([
-      { system: 'claims', change: '2026-10-17-claim-notes', intent: { exists: true, committed: true, status: 'draft', head_status: 'draft' }, spec: { exists: false, committed: false, status: null, head_status: null }, plan: { exists: false, committed: false, status: null, head_status: null }, stage: 'intent-awaiting', build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null, track: 'full', fix_row: null },
-    ]);
+    vi.spyOn(transport, 'sdlcChangeNames').mockResolvedValue([{ change: '2026-10-17-claim-notes', title: null }]);
     await vm.openOtherBranch('2026-10-17-claim-notes');
     expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'change/2026-10-17-claim-notes');
     expect(navigate).toHaveBeenCalledWith(['/sdlc', 'claims', '2026-10-17-claim-notes']);
@@ -656,6 +656,7 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
     withUnreadablePlan(transport);
     vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "missing" });
     await vm.init();
+    await settled(vm);
     expect(noticeOf(vm)?.text).toBe("Install the ai-sdlc plugin to read this document");
     expect(noticeOf(vm)?.tone).toBe("warning");
   });
@@ -665,6 +666,7 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
     withUnreadablePlan(transport);
     vi.spyOn(transport, "sdlcPluginReadiness").mockResolvedValue({ kind: "tooOld", have: "0.6.0", need: "0.9.0" });
     await vm.init();
+    await settled(vm);
     expect(noticeOf(vm)?.text).toBe("Update the ai-sdlc plugin to 0.9.0 or later");
   });
 
@@ -672,6 +674,7 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
     const { vm, transport } = setup();
     withUnreadablePlan(transport);
     await vm.init();
+    await settled(vm);
     expect(noticeOf(vm)?.text).toContain("could not be read");
   });
 
@@ -683,6 +686,7 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
       return list.map((c, i) => (i === 0 ? ({ ...c, stage: "plan-unreadable", plan_unreadable: true, plan_unreadable_reason: "layout 3 is newer than this program reads" } as never) : c));
     });
     await vm.init();
+    await settled(vm);
     expect(noticeOf(vm)?.text).toContain("layout 3 is newer than this program reads");
     expect(noticeOf(vm)?.text).not.toContain("Node.js 20");
   });
@@ -699,6 +703,7 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
     const { vm, transport } = setup();
     withFix(transport, { stage: "fix-needs-plugin", fix_row: null, plan_unreadable_reason: "Needs ai-sdlc 0.13.0 or later." });
     await vm.init();
+    await settled(vm);
     expect(noticeOf(vm)?.text).toBe("Needs ai-sdlc 0.13.0 or later.");
   });
 
@@ -706,6 +711,7 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
     const { vm, transport } = setup();
     withFix(transport, { stage: "fix-unsettled", fix_row: null, plan_unreadable_reason: "git failed" });
     await vm.init();
+    await settled(vm);
     const name = vm.changes()[0].change;
     expect(noticeOf(vm)?.text).toBe(`Kata could not read where ${name} stands: git failed`);
   });
@@ -714,12 +720,14 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
     const { vm, transport } = setup();
     withFix(transport, { stage: "fix-unsettled", fix_row: 2, plan_unreadable_reason: "front matter is not closed" });
     await vm.init();
+    await settled(vm);
     expect(noticeOf(vm)?.text).toBe("Could not read this document: front matter is not closed");
   });
 
   it("shows no notice when every plan was read", async () => {
     const { vm } = setup();
     await vm.init();
+    await settled(vm);
     expect(noticeOf(vm)).toBeNull();
   });
 });
@@ -785,6 +793,7 @@ function controlledPass(transport: MockTransport) {
     };
   });
   const reads = vi.spyOn(transport, 'sdlcReadStages').mockImplementation(async () => ++last);
+  const next = () => ++last;
   const send = (ev: StageEvent) => {
     for (const l of [...listeners]) l(ev);
   };
@@ -795,8 +804,21 @@ function controlledPass(transport: MockTransport) {
     });
     send({ kind: 'done', pass });
   };
-  return { reads, send, finish, id: () => last };
+  return { reads, send, finish, next, id: () => last };
 }
+
+/** A pass that answers by itself with every stage `sdlcChanges` gives, for the tests that are not about the pass. */
+function instantPass(transport: MockTransport) {
+  const pass = controlledPass(transport);
+  pass.reads.mockImplementation(async (master, system) => {
+    const id = pass.next();
+    setTimeout(() => void transport.sdlcChanges(master, system).then((infos) => pass.finish(id, infos)), 0);
+    return id;
+  });
+}
+
+/** The stage pass has ended: every stage the mock reads is in. */
+const settled = (vm: SdlcHomeViewModel) => vi.waitFor(() => expect(vm.reading()).toBe(false));
 
 const twelve = (): ChangeName[] => Array.from({ length: 12 }, (_, i) => ({ change: `2026-10-${String(10 + i).padStart(2, '0')}-change-${i}`, title: null }));
 const infoFor = async (transport: MockTransport, change: string, stage: ChangeInfo['stage']): Promise<ChangeInfo> => {
@@ -863,7 +885,7 @@ describe('SdlcHomeViewModel stage passes', () => {
     expect(line()?.label).toBe('5 of 12 changes read');
     pass.send({ kind: 'progress', pass: pass.id(), read: 12, total: 12 });
     pass.send({ kind: 'done', pass: pass.id() });
-    expect(line()).toBeNull();
+    await vi.waitFor(() => expect(line()).toBeNull());
     expect(vm.reading()).toBe(false);
   });
 
@@ -878,7 +900,7 @@ describe('SdlcHomeViewModel stage passes', () => {
     expect(PROGRESS_STEPS['reading-stages'].lines).toContain(line()!.line);
     expect(line()!.label).toMatch(/^0 of \d+ changes read$/);
     pass.send({ kind: 'done', pass: pass.id() });
-    expect(line()).toBeNull();
+    await vi.waitFor(() => expect(line()).toBeNull());
   });
 
   it('never shows a stage from before this session (R2.3)', async () => {
@@ -935,7 +957,7 @@ describe('SdlcHomeViewModel stage passes', () => {
     expect(stageOf(vm, c)?.info).toBeNull();
     pass.finish(pass.id(), [await infoFor(transport, c, 'plan-awaiting')]);
     expect(stageOf(vm, c)?.info?.stage).toBe('plan-awaiting');
-    expect(vm.reading()).toBe(false);
+    await settled(vm);
   });
 
   describe('marks rows as checked and reads again on each trigger (R5.1)', () => {
@@ -1026,7 +1048,7 @@ describe('SdlcHomeViewModel stage passes', () => {
     pass.finish(pass.id(), [await infoFor(transport, c, 'plan-ready')]);
     expect(stageOf(vm, c)).toMatchObject({ checking: false });
     expect(stageOf(vm, c)?.info?.stage).toBe('plan-ready');
-    expect(vm.reading()).toBe(false);
+    await settled(vm);
     // Row 2: a value, a pass running that has not sent this row yet: the stored stage, marked as being checked.
     vm.windowFocused();
     await vi.waitFor(() => expect(stageOf(vm, c)?.checking).toBe(true));

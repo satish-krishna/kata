@@ -231,7 +231,6 @@ export class ChangePageViewModel {
   private readonly catalog = signal<CatalogEntry[]>([]);
   private readonly links = signal<RunLink[]>([]);
   private readonly records = signal<RunRecord[]>([]);
-  private readonly changeTotal = signal<number | null>(null);
   readonly change = signal<ChangeInfo | null>(null);
   /** The pull request of each touched repository, read at build-finished; empty at any other stage or when GitHub could not be asked. */
   readonly pullRequests = signal<PrState[]>([]);
@@ -313,11 +312,6 @@ export class ChangePageViewModel {
 
   readonly masterBranch = computed(() => this.branches()?.current ?? null);
   readonly crumbs = computed(() => (this.changeName() === '' ? [] : [this.changeName()]));
-  readonly counts = computed(() => {
-    const w = this.current();
-    const n = this.changeTotal();
-    return w && n !== null ? { [w.id]: n } : {};
-  });
 
   readonly shownDoc = computed<Tab>(() => {
     const c = this.change();
@@ -1573,7 +1567,6 @@ export class ChangePageViewModel {
       this.links.set(links);
       this.records.set(records);
       this.catalog.set(catalog);
-      this.changeTotal.set(changes.length);
       finish(found ? 'ready' : 'not-found', found, doc, read);
       // The build page shows the change's tasks, sessions and findings whether or not a build ran on this page.
       const context = this.buildContext();
