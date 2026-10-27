@@ -158,11 +158,14 @@ impl Repo {
         next.read_tree(&head_tree).map_err(git_fail)?;
         set_entry(&mut next, rel, new_entry).map_err(git_fail)?;
         next.write().map_err(git_fail)?;
-        let tree_id = next.write_tree_to(repo).map_err(git_fail)?;
         let env = [("GIT_INDEX_FILE", temp.0.as_os_str())];
 
         let hook_fail = |f: kata_core::hooks::HookFailure| fail(f.message);
         run_hook(repo, Hook::PreCommit, &[], None, &env).map_err(hook_fail)?;
+        // Git re-reads the index file after `pre-commit`, which may have restaged files in it
+        // (a formatter), and commits what it holds then.
+        next.read(true).map_err(git_fail)?;
+        let tree_id = next.write_tree_to(repo).map_err(git_fail)?;
         let message_file = repo.path().join("COMMIT_EDITMSG");
         let mut text = message.to_string();
         if !text.is_empty() && !text.ends_with('\n') {
