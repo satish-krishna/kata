@@ -181,6 +181,30 @@ pub enum KataEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+    /// A message was accepted and written to Claude's input.
+    #[serde(rename = "message.sent")]
+    MessageSent {
+        id: String,
+        text: String,
+        /// Milliseconds since the Unix epoch.
+        sent_at: u64,
+    },
+    /// Claude took a sent message in.
+    #[serde(rename = "message.read")]
+    MessageRead {
+        id: String,
+        /// Milliseconds since the Unix epoch.
+        read_at: u64,
+    },
+    /// A message was not accepted.
+    #[serde(rename = "message.refused")]
+    MessageRefused {
+        id: String,
+        /// Why: one of [`refusal`]'s constants. The set is open, like
+        /// `decided_by`; treat an unrecognized value as "not sent".
+        reason: String,
+        text: String,
+    },
     #[serde(rename = "run.error")]
     RunError {
         message: String,
@@ -207,6 +231,16 @@ pub enum KataEvent {
         #[serde(default)]
         duration_ms: u64,
     },
+}
+
+/// The `message.refused.reason` values the engine emits today.
+pub mod refusal {
+    /// The run is paused on `ask.requested` or `permission.requested`.
+    pub const WAITING_ON_OPERATOR: &str = "waiting-on-operator";
+    /// Claude's input is already closed.
+    pub const RUN_ENDING: &str = "run-ending";
+    /// The id was already used in this run.
+    pub const REPEATED: &str = "repeated";
 }
 
 /// One changed file in a run's changeset. Part of the `run.diff` event
@@ -991,6 +1025,44 @@ mod tests {
             !s.contains("message"),
             "absent message must be omitted: {s}"
         );
+    }
+
+    #[test]
+    fn message_events_serialize_with_their_type_tags() {
+        let cases = [
+            (
+                KataEvent::MessageSent {
+                    id: "m1".into(),
+                    text: "look at the lexer".into(),
+                    sent_at: 1_700_000_000_000,
+                },
+                "message.sent",
+            ),
+            (
+                KataEvent::MessageRead {
+                    id: "m1".into(),
+                    read_at: 1_700_000_001_000,
+                },
+                "message.read",
+            ),
+            (
+                KataEvent::MessageRefused {
+                    id: "m2".into(),
+                    reason: refusal::REPEATED.into(),
+                    text: "again".into(),
+                },
+                "message.refused",
+            ),
+        ];
+        for (ev, tag) in cases {
+            let json = serde_json::to_string(&ev).unwrap();
+            assert!(json.contains(&format!(r#""type":"{tag}""#)), "{json}");
+            let back: KataEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(ev, back, "round-trip mismatch for {json}");
+        }
+        assert_eq!(refusal::WAITING_ON_OPERATOR, "waiting-on-operator");
+        assert_eq!(refusal::RUN_ENDING, "run-ending");
+        assert_eq!(refusal::REPEATED, "repeated");
     }
 
     #[test]

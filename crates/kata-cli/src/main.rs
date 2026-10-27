@@ -270,6 +270,7 @@ enum StdinCmd {
     Cancel,
     Answer(kata_core::run::Answer),
     Decide(kata_core::run::Decision),
+    Say(kata_core::run::Message),
 }
 
 /// Parse one engine-stdin control line:
@@ -367,6 +368,8 @@ fn cmd_run(path: &std::path::Path, full_payloads: bool) -> ExitCode {
                 Some(StdinCmd::Decide(d)) => {
                     let _ = decision_tx.send(d);
                 }
+                // Forwarded to the run in a later task.
+                Some(StdinCmd::Say(_)) => {}
                 None => {}
             }
             line.clear();
@@ -413,6 +416,19 @@ mod tests {
             other => panic!("expected Answer, got {other:?}"),
         }
         assert!(parse_stdin_line("garbage").is_none());
+    }
+
+    #[test]
+    fn parses_say_lines() {
+        match parse_stdin_line(r#"say m1 "look at the lexer""#) {
+            Some(StdinCmd::Say(m)) => {
+                assert_eq!(m.id, "m1");
+                assert_eq!(m.text, "look at the lexer");
+            }
+            other => panic!("expected Say, got {other:?}"),
+        }
+        assert!(parse_stdin_line("say").is_none());
+        assert!(parse_stdin_line("say m1").is_none());
     }
 
     #[test]

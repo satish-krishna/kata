@@ -66,6 +66,15 @@ pub struct Answer {
     pub answers: Vec<Vec<String>>,
 }
 
+/// A message a program or the operator sends to a live run, routed from the
+/// engine's stdin (kata-cli) into the run loop. `id` is chosen by the sender
+/// and must be new within the run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Message {
+    pub id: String,
+    pub text: String,
+}
+
 /// What polling an operator inbox found.
 enum Inbox<T> {
     /// A reply arrived.

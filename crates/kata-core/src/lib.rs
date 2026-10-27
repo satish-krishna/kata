@@ -83,6 +83,7 @@ pub use given::{ItemKind, Source};
 
 // ---- discovery & orchestration ----
 pub mod catalog;
+pub mod control;
 pub mod proc;
 pub mod run;
 pub use run::{
