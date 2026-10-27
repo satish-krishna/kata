@@ -99,17 +99,15 @@ fn run_hook_with(
     if !path.is_file() {
         return Ok(());
     }
-    match execute(repo, hook, &path, args, stdin, env, shell, limit) {
+    match execute(repo, hook, args, stdin, env, shell, limit) {
         Err(err) if hook.blocking() => Err(err),
         _ => Ok(()),
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn execute(
     repo: &Repository,
     hook: Hook,
-    path: &Path,
     args: &[&str],
     stdin: Option<&[u8]>,
     env: &[(&str, &OsStr)],
@@ -117,8 +115,9 @@ fn execute(
     limit: Duration,
 ) -> Result<(), HookFailure> {
     let name = hook.name();
+    let path = hooks_dir(repo).join(name);
     let (program, mut argv): (PathBuf, Vec<OsString>) = if cfg!(windows)
-        && starts_with_shebang(path)
+        && starts_with_shebang(&path)
     {
         let Some(shell) = shell() else {
             return Err(failure(format!(
