@@ -2685,6 +2685,39 @@ source_spec_commit: {spec_pin}
         }
     }
 
+    /// A plan the format program cannot read is handed to it once: a failed read is not cached, so a
+    /// second read of the same plan (for the build status) would cost the whole failure again.
+    #[test]
+    fn an_unreadable_plan_is_handed_to_the_format_program_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = slow_plugin(&tmp.path().join("plugin"), false);
+        let log = tmp.path().join("reads.log");
+        // The wrapper logs one line for every `read` of a document that holds the broken layout line;
+        // the build status stages a copy of the plan, so the log counts content, not paths.
+        std::fs::write(
+            plugin.join("format/check.mjs"),
+            format!(
+                "import {{ readFileSync, appendFileSync }} from 'node:fs';\n\
+                 const args = process.argv.slice(2);\n\
+                 if (args[0] === 'read') {{ try {{ if (readFileSync(args[2], 'utf8').includes('layout: soon')) appendFileSync({log:?}, 'broken plan\\n'); }} catch {{}} }}\n\
+                 await import('./real.mjs');\n"
+            ),
+        )
+        .unwrap();
+        let (repo, names) = changes_with_plans(tmp.path(), 1, &|_, pin| {
+            plain_plan(pin, "layout: soon\n", "x")
+        });
+        let ctx = ReadContext::new(Some(&plugin), &repo);
+        format::forget_memory_cache();
+        let events = pass_over(&ctx, &names);
+        let info = stage_of(&events, &names[0]);
+        assert!(info.plan_unreadable);
+        let why = info.plan_unreadable_reason.clone().unwrap_or_default();
+        assert!(why.contains("layout must be a whole number"), "{why:?}");
+        let reads = std::fs::read_to_string(&log).unwrap_or_default();
+        assert_eq!(reads.lines().count(), 1, "plan reads: {reads:?}");
+    }
+
     /// R2.4 for fixes: when the one call for every fix times out, each fix is asked for on its own,
     /// and the changes that are not fixes do not wait for it.
     #[test]
