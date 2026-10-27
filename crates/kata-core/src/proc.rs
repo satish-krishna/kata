@@ -437,6 +437,21 @@ fn is_refused(program: &Path) -> bool {
 mod tests {
     use super::*;
 
+    /// A program name that is `AsRef<OsStr>` but not `AsRef<Path>`.
+    struct Name(&'static str);
+
+    impl AsRef<std::ffi::OsStr> for Name {
+        fn as_ref(&self) -> &std::ffi::OsStr {
+            std::ffi::OsStr::new(self.0)
+        }
+    }
+
+    #[test]
+    fn hidden_command_takes_any_os_str_and_still_refuses_git() {
+        assert!(hidden_command(Name("git")).is_err());
+        assert!(hidden_command(Name("node")).is_ok());
+    }
+
     #[cfg(windows)]
     fn fake_claude() -> std::path::PathBuf {
         // The test binary lives in target/<profile>/deps; fake-claude one level up.
