@@ -1269,6 +1269,9 @@ pub(crate) mod tests {
             ],
         )
         .unwrap();
+        // A clone has no identity of its own, and CI has no global one.
+        git::run(&other, &["config", "user.name", "Test"]).unwrap();
+        git::run(&other, &["config", "user.email", "test@example.com"]).unwrap();
         git::run(&other, &["checkout", "-q", "change/2026-10-19-c"]).unwrap();
         commit_file(
             &other,
