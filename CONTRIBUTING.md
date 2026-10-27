@@ -15,7 +15,7 @@ cargo test --workspace                       # must pass
 cargo build --locked                         # must build reproducibly
 ```
 
-`cargo test --workspace` needs the sidecar staged first (`node app/scripts/stage-sidecar.mjs`) and Node.js 20 or later on `PATH`, which the `kata-sdlc` tests use to run the vendored ai-sdlc format program. CI also runs `cargo test -p kata-sdlc --test format_conformance` on its own.
+`cargo test --workspace` needs the sidecar staged first (`node app/scripts/stage-sidecar.mjs`) and Node.js 20 or later on `PATH`, which the `kata-sdlc` tests use to run the vendored ai-sdlc format program. The parity tests also use the `git` command as an oracle, so `git` must be on `PATH` for the tests (the Workbench itself does not need it). CI also runs `cargo test -p kata-sdlc --test format_conformance` on its own.
 
 For frontend changes (`app/`), additionally from `app/`:
 
