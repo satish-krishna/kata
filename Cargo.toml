@@ -18,3 +18,4 @@ ctrlc = "3"
 windows-sys = { version = "0.59", features = ["Win32_Foundation"] }
 git2 = { version = "0.21", default-features = false, features = ["vendored-libgit2", "https", "ssh"] }
 ureq = { version = "3", default-features = false, features = ["native-tls"] }
+sha2 = "0.10"

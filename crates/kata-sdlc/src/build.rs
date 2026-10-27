@@ -247,6 +247,7 @@ fn read_committed(
     master: &Path,
     system: &str,
     change: &str,
+    reads: format::Reads,
 ) -> Result<Committed, GitError> {
     let dir = format!("{}/build/", change_dir(system, change));
     let repo = git::Repo::open(master)?;
@@ -301,7 +302,8 @@ fn read_committed(
     }
 
     let program = program(plugin);
-    let read_plan = format::read(&program, &stage.join("plan.md")).map_err(unreadable)?;
+    let read_plan =
+        format::read_with(&program, &stage.join("plan.md"), reads).map_err(unreadable)?;
     let plan_problems = read_plan.problems().to_vec();
     let plan_layout = read_plan.layout();
     let ReadResult::Plan { document, .. } = read_plan else {
@@ -315,7 +317,7 @@ fn read_committed(
     let mut log_problems = Vec::new();
     for (path, _) in &texts {
         let file = build.join(format!("{}.md", log_repo(path)));
-        let read_log = format::read(&program, &file).map_err(unreadable)?;
+        let read_log = format::read_with(&program, &file, reads).map_err(unreadable)?;
         log_problems.extend(read_log.problems().iter().cloned());
         log_layouts.push(read_log.layout());
         let ReadResult::BuildLog { document, .. } = read_log else {
@@ -378,7 +380,7 @@ pub fn committed_rows(
     change: &str,
 ) -> Result<Vec<BuildRow>, GitError> {
     Ok(rows_of(
-        &read_committed(plugin, master, system, change)?.logs,
+        &read_committed(plugin, master, system, change, format::Reads::Gate)?.logs,
     ))
 }
 
@@ -400,9 +402,9 @@ pub fn status_with(
     master: &Path,
     system: &str,
     change: &str,
-    _reads: format::Reads,
+    reads: format::Reads,
 ) -> Result<BuildStatus, GitError> {
-    let committed = read_committed(plugin, master, system, change)?;
+    let committed = read_committed(plugin, master, system, change, reads)?;
     let rows = rows_of(&committed.logs);
     let row_of = |id: &str| rows.iter().find(|r| r.task == id);
 
@@ -544,7 +546,7 @@ pub fn gate(
         }
         Readiness::Ready { dir, .. } => dir,
     };
-    let committed = read_committed(dir, master, system, change)?;
+    let committed = read_committed(dir, master, system, change, format::Reads::Gate)?;
     let newer = |layout: &u32| !format::ACCEPTED_LAYOUTS.contains(layout);
     Ok(if newer(&committed.plan_layout) {
         refuse("This plan needs a newer Workbench", Vec::new())
@@ -729,7 +731,14 @@ mod tests {
         let old = std::env::var_os("KATA_HOME");
         std::env::set_var("KATA_HOME", home.path());
         let tmp = tempfile::tempdir().unwrap();
-        let master = master_with(tmp.path(), &app_tasks());
+        // Its own last line keeps the parallel tests from finding this plan in the in-memory cache.
+        let plan = format!(
+            "{}
+<!-- parse cache test -->
+",
+            app_tasks()
+        );
+        let master = master_with(tmp.path(), &plan);
         let plugin = testutil::plugin_dir();
         let ids = |st: &BuildStatus| st.tasks.iter().map(|t| t.id.clone()).collect::<Vec<_>>();
 
