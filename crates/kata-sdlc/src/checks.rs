@@ -632,6 +632,47 @@ mod tests {
     }
 
     #[test]
+    fn a_git_or_gh_check_runs_and_passes_r1_1() {
+        let dir = tempfile::tempdir().unwrap();
+        let (name, body) = if cfg!(windows) {
+            ("gh.cmd", "@echo gh stand-in ran\r\n@exit /b 0\r\n")
+        } else {
+            ("gh", "#!/bin/sh\necho gh stand-in ran\nexit 0\n")
+        };
+        let stand_in = dir.path().join(name);
+        std::fs::write(&stand_in, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&stand_in, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let rows = [
+            (
+                "git",
+                vec!["git".to_string(), "--version".to_string()],
+                "git version",
+            ),
+            ("gh", vec![format!("./{name}")], "gh stand-in ran"),
+        ];
+        // Run both rows before asserting so a failing row cannot hide the other one.
+        let runs: Vec<_> = rows
+            .iter()
+            .map(|(row, argv, _)| {
+                let plan = plan_of(vec![spec(row, argv.clone(), 30)]);
+                run_repo(&plan, "api", dir.path())
+            })
+            .collect();
+        let mut failures = Vec::new();
+        for ((row, _, expected), run) in rows.iter().zip(&runs) {
+            let result = &run.results[0];
+            if result.outcome != CheckOutcome::Passed || !result.tail.contains(expected) {
+                failures.push(format!("row {row}: {result:?}"));
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    #[test]
     fn could_not_run_is_not_failed_r11_6() {
         let dir = tempfile::tempdir().unwrap();
         let slow = sh("ping -n 30 127.0.0.1 >NUL", "echo waiting; sleep 30");

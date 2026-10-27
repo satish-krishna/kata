@@ -30,7 +30,7 @@ pub(crate) fn run(
     cwd: &Path,
     timeout: Duration,
 ) -> Result<ProcessExit, ProcessError> {
-    let (code, tail, _) = run_argv(argv, cwd, timeout, false)?;
+    let (code, tail, _) = run_argv(argv, cwd, timeout, false, true)?;
     Ok(ProcessExit { code, tail })
 }
 
@@ -53,7 +53,7 @@ pub(crate) fn run_capture(
     cwd: &Path,
     timeout: Duration,
 ) -> Result<CapturedExit, ProcessError> {
-    let (code, stderr, stdout) = run_argv(argv, cwd, timeout, true)?;
+    let (code, stderr, stdout) = run_argv(argv, cwd, timeout, true, false)?;
     Ok(CapturedExit {
         code,
         stdout,
@@ -67,6 +67,7 @@ fn run_argv(
     cwd: &Path,
     timeout: Duration,
     keep_stdout: bool,
+    engineers_program: bool,
 ) -> Result<(Option<i32>, String, Vec<u8>), ProcessError> {
     let (program, args) = argv
         .split_first()
@@ -89,6 +90,7 @@ fn run_argv(
         stdin: None,
         limit: timeout,
         keep_stdout,
+        engineers_program,
     });
     match outcome {
         Outcome::Exited { code, tail, stdout } => Ok((code, tail, stdout)),
