@@ -1,7 +1,7 @@
 //! Test stand-in for the real `claude` CLI. Ignores all args except behavior
 //! controlled by env vars, and emits canned stream-json on stdout.
 //!
-//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "argsfiles" | "subagent" | "hooks" | "noinit" | "consoleprobe" | "consoleprobe-relay" | "hook-relay"
+//! KATA_FAKE_MODE = "ok" (default) | "sleep" | "fail" | "manyturns" | "writefile" | "stderr" | "blockstdin" | "closestdio" | "ask" | "approve" | "budget" | "envreport" | "settingsecho" | "argsfiles" | "subagent" | "hooks" | "noinit" | "consoleprobe" | "consoleprobe-relay" | "hook-relay" | "steer"
 #![allow(clippy::disallowed_methods)]
 use std::io::Write;
 use std::{thread, time::Duration};
@@ -45,6 +45,7 @@ fn main() {
     }
 
     match mode.as_str() {
+        "steer" => steer(&mut out),
         "noinit" => {
             // A run that ends without ever sending the start report.
             let _ = writeln!(
@@ -532,4 +533,128 @@ fn console_window() -> u8 {
 #[cfg(not(windows))]
 fn console_window() -> u8 {
     0
+}
+
+fn env_num<T: std::str::FromStr>(name: &str, default: T) -> T {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+/// One round trip with the engine's ask bridge on KATA_ASK_PORT: send a frame, wait
+/// (possibly forever) for the reply line.
+fn bridge_call(frame: &str) {
+    use std::io::{BufRead, BufReader};
+    use std::net::TcpStream;
+    let port: u16 = env_num("KATA_ASK_PORT", 0);
+    if let Ok(sock) = TcpStream::connect(("127.0.0.1", port)) {
+        let mut write_half = sock.try_clone().expect("clone sock");
+        let _ = writeln!(write_half, "{frame}");
+        let _ = write_half.flush();
+        let mut line = String::new();
+        let _ = BufReader::new(sock).read_line(&mut line);
+    }
+}
+
+/// Streaming-input claude that takes user messages one request at a time, the way the
+/// trial against Claude Code 2.1.311 showed:
+///
+/// - each queued user message is echoed (`isReplay`) only when the previous request
+///   has ended, then answered by KATA_FAKE_STEP_TURNS assistant turns (default 1),
+///   KATA_FAKE_STEP_MS apart (default 50), then a `result` with that request's own
+///   `num_turns` and a session running `total_cost_usd` (0.01 per request);
+/// - KATA_FAKE_BUDGET_AT=k ends the k-th request with `error_max_budget_usd` and exits 1;
+/// - KATA_FAKE_ASK_AT=k / KATA_FAKE_APPROVE_AT=k makes the k-th request call the bridge
+///   (a question / an approval) before it echoes its message;
+/// - KATA_FAKE_FAIL_AT=k exits 1 after the first turn of the k-th request;
+/// - KATA_FAKE_LATE_TEXT=<text> prints one more assistant line after every result, which
+///   a test uses to act after the engine has read that result;
+/// - stdin EOF with nothing queued exits 0.
+fn steer(out: &mut std::io::Stdout) {
+    use std::io::BufRead;
+    let (tx, rx) = std::sync::mpsc::channel::<(String, String)>();
+    thread::spawn(move || {
+        for line in std::io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            if v["type"] != "user" {
+                continue;
+            }
+            let uuid = v["uuid"].as_str().unwrap_or_default().to_string();
+            let text = v["message"]["content"].as_str().unwrap_or_default();
+            if tx.send((uuid, text.to_string())).is_err() {
+                break;
+            }
+        }
+    });
+    let step_turns: u32 = env_num("KATA_FAKE_STEP_TURNS", 1);
+    let step_ms: u64 = env_num("KATA_FAKE_STEP_MS", 50);
+    let budget_at: u32 = env_num("KATA_FAKE_BUDGET_AT", 0);
+    let ask_at: u32 = env_num("KATA_FAKE_ASK_AT", 0);
+    let approve_at: u32 = env_num("KATA_FAKE_APPROVE_AT", 0);
+    let fail_at: u32 = env_num("KATA_FAKE_FAIL_AT", 0);
+    let late_text = std::env::var("KATA_FAKE_LATE_TEXT").ok();
+    let mut request = 0u32;
+    while let Ok((uuid, text)) = rx.recv() {
+        request += 1;
+        if request == ask_at {
+            bridge_call(
+                r#"{"kind":"ask","questions":[{"kind":"text","header":"h","question":"q?"}]}"#,
+            );
+        }
+        if request == approve_at {
+            bridge_call(r#"{"kind":"approve","tool":"Bash","input":{"command":"rm -rf build/"}}"#);
+        }
+        let echo = serde_json::json!({
+            "type": "user",
+            "isReplay": true,
+            "uuid": uuid,
+            "message": {"role": "user", "content": text},
+        });
+        let _ = writeln!(out, "{echo}");
+        let _ = out.flush();
+        for turn in 1..=step_turns {
+            let line = serde_json::json!({
+                "type": "assistant",
+                "message": {
+                    "id": format!("msg-{request}-{turn}"),
+                    "content": [{"type": "text", "text": format!("ack: {text}")}],
+                },
+            });
+            let _ = writeln!(out, "{line}");
+            let _ = out.flush();
+            if turn == 1 && request == fail_at {
+                std::process::exit(1);
+            }
+            thread::sleep(Duration::from_millis(step_ms));
+        }
+        let over_budget = request == budget_at;
+        let result = serde_json::json!({
+            "type": "result",
+            "subtype": if over_budget { "error_max_budget_usd" } else { "success" },
+            "is_error": over_budget,
+            "num_turns": step_turns,
+            "total_cost_usd": f64::from(request) / 100.0,
+            "result": if over_budget { serde_json::Value::Null } else { format!("ack: {text}").into() },
+        });
+        let _ = writeln!(out, "{result}");
+        let _ = out.flush();
+        if over_budget {
+            std::process::exit(1);
+        }
+        if let Some(late) = &late_text {
+            let line = serde_json::json!({
+                "type": "assistant",
+                "message": {
+                    "id": format!("late-{request}"),
+                    "content": [{"type": "text", "text": late}],
+                },
+            });
+            let _ = writeln!(out, "{line}");
+            let _ = out.flush();
+        }
+    }
 }

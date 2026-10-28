@@ -357,6 +357,8 @@ fn cmd_run(path: &std::path::Path, full_payloads: bool) -> ExitCode {
     // decision inbox. EOF (plain CLI use closes stdin) is a no-op.
     let (answer_tx, answers) = kata_core::run::answer_channel();
     let (decision_tx, decisions) = kata_core::run::decision_channel();
+    let (message_tx, messages) = kata_core::run::message_channel();
+    let _ = &message_tx;
     let stdin_flag = cancel.flag();
     std::thread::spawn(move || {
         use std::io::BufRead;
@@ -390,7 +392,9 @@ fn cmd_run(path: &std::path::Path, full_payloads: bool) -> ExitCode {
     };
 
     let opts = kata_core::run::RunOptions { full_payloads };
-    match kata_core::run::run_with(&spec, &catalog, &cancel, &answers, &decisions, opts, emit) {
+    match kata_core::run::run_with(
+        &spec, &catalog, &cancel, &answers, &decisions, &messages, opts, emit,
+    ) {
         Ok(outcome) => {
             if let Some(p) = &outcome.transcript_path {
                 eprintln!("transcript: {p}");

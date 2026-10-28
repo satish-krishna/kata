@@ -1027,3 +1027,188 @@ fn run_with_too_old_claude_exits_2() {
     );
     assert!(!stdout.contains("run.started"), "{stdout}");
 }
+
+/// Run `kata run` against the `steer` fake with its stdin piped. `on_line` sees each
+/// stdout event as it arrives and may write control lines to the engine's stdin; the
+/// run is synchronized on events, never on sleeps. Returns the exit code and the events.
+fn run_steer_cli(
+    env: &[(&str, &str)],
+    interactive: bool,
+    mut on_line: impl FnMut(&serde_json::Value, &mut std::process::ChildStdin),
+) -> (Option<i32>, Vec<serde_json::Value>) {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let work = tempfile::tempdir().unwrap();
+    let kata_home = tempfile::tempdir().unwrap();
+    let workdir = work.path().to_string_lossy().replace('\\', "/");
+    let interactive = if interactive {
+        "\n[interactive]\nenabled = true\nanswer_timeout_secs = 30\n"
+    } else {
+        ""
+    };
+    let spec = write(
+        work.path(),
+        "steer.kata.toml",
+        &format!(
+            "schema = 1\nname = \"steer\"\ntask = \"t\"\nworkdir = \"{workdir}\"\n\n\
+             [leash]\ntimeout_secs = 60\n{interactive}"
+        ),
+    );
+    let mut cmd = kata();
+    cmd.arg("run")
+        .arg(&spec)
+        .env("KATA_CLAUDE_BIN", fake_claude())
+        .env("KATA_FAKE_MODE", "steer")
+        .env("KATA_HOME", kata_home.path())
+        .env("HOME", kata_home.path().join("home"))
+        .env("USERPROFILE", kata_home.path().join("home"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let mut child = cmd.spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let reader = BufReader::new(child.stdout.take().unwrap());
+    let mut events = Vec::new();
+    for line in reader.lines() {
+        let line = line.unwrap();
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+            on_line(&v, &mut stdin);
+            events.push(v);
+        }
+    }
+    let status = child.wait().unwrap();
+    (status.code(), events)
+}
+
+/// `(type, id)` of each message event, in stream order.
+fn message_events(events: &[serde_json::Value]) -> Vec<(String, String)> {
+    events
+        .iter()
+        .filter(|v| {
+            v["type"]
+                .as_str()
+                .is_some_and(|t| t.starts_with("message."))
+        })
+        .map(|v| {
+            (
+                v["type"].as_str().unwrap().to_string(),
+                v["id"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect()
+}
+
+fn pair(kind: &str, id: &str) -> (String, String) {
+    (kind.to_string(), id.to_string())
+}
+
+#[test]
+fn say_outcomes_for_a_program() {
+    use std::io::Write;
+
+    // A new id is accepted and read; a repeated id is refused; blank text is ignored.
+    let mut said = false;
+    let (code, events) = run_steer_cli(&[], false, |v, stdin| {
+        if !said && v["type"] == "assistant.text" {
+            said = true;
+            let _ = stdin
+                .write_all(b"say m1 \"first\"\nsay m1 \"again\"\nsay m3 \"  \"\nsay m4 \"last\"\n");
+            let _ = stdin.flush();
+        }
+    });
+    assert_eq!(code, Some(0));
+    let all = message_events(&events);
+    let early: Vec<_> = all.iter().take(3).cloned().collect();
+    assert_eq!(
+        early,
+        [
+            pair("message.sent", "m1"),
+            pair("message.refused", "m1"),
+            pair("message.sent", "m4")
+        ],
+        "{all:?}"
+    );
+    let rest: Vec<_> = all.iter().skip(3).cloned().collect();
+    assert_eq!(
+        rest,
+        [pair("message.read", "m1"), pair("message.read", "m4")],
+        "{all:?}"
+    );
+    let refused = events
+        .iter()
+        .find(|v| v["type"] == "message.refused")
+        .unwrap();
+    assert_eq!(refused["reason"], "repeated");
+    assert_eq!(refused["text"], "again");
+    assert!(
+        !all.iter().any(|(_, id)| id == "m3"),
+        "a blank message is not announced: {all:?}"
+    );
+
+    // During a question the message is refused; the answer follows the refusal.
+    let (code, events) = run_steer_cli(&[("KATA_FAKE_ASK_AT", "1")], true, |v, stdin| {
+        if v["type"] == "ask.requested" {
+            let _ = stdin.write_all(b"say m1 \"hold on\"\n");
+            let _ = stdin.flush();
+        }
+        if v["type"] == "message.refused" {
+            let _ = stdin.write_all(b"answer q1 [[\"ok\"]]\n");
+            let _ = stdin.flush();
+        }
+    });
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        message_events(&events),
+        [pair("message.refused", "m1")],
+        "{events:?}"
+    );
+    let refused = events
+        .iter()
+        .find(|v| v["type"] == "message.refused")
+        .unwrap();
+    assert_eq!(refused["reason"], "waiting-on-operator");
+    assert_eq!(refused["text"], "hold on");
+
+    // After the run has begun to end the message is refused. The fake prints one more
+    // line after its result, which arrives after the engine closed Claude's input.
+    let (code, events) = run_steer_cli(&[("KATA_FAKE_LATE_TEXT", "late")], false, |v, stdin| {
+        if v["type"] == "assistant.text" && v["text"] == "late" {
+            let _ = stdin.write_all(b"say m9 \"too late\"\n");
+            let _ = stdin.flush();
+        }
+    });
+    assert_eq!(code, Some(0));
+    assert_eq!(message_events(&events), [pair("message.refused", "m9")]);
+    let refused = events
+        .iter()
+        .find(|v| v["type"] == "message.refused")
+        .unwrap();
+    assert_eq!(refused["reason"], "run-ending");
+}
+
+#[test]
+fn say_same_text_under_two_ids_is_two_messages() {
+    use std::io::Write;
+
+    let mut said = false;
+    let (code, events) = run_steer_cli(&[], false, |v, stdin| {
+        if !said && v["type"] == "assistant.text" {
+            said = true;
+            let _ = stdin.write_all(b"say a \"rerun the tests\"\nsay b \"rerun the tests\"\n");
+            let _ = stdin.flush();
+        }
+    });
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        message_events(&events),
+        [
+            pair("message.sent", "a"),
+            pair("message.sent", "b"),
+            pair("message.read", "a"),
+            pair("message.read", "b"),
+        ]
+    );
+}

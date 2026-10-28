@@ -115,6 +115,24 @@ pub fn answer_channel() -> (mpsc::Sender<Answer>, AnswerRx) {
     (tx, AnswerRx(Some(rx)))
 }
 
+/// The run loop's message inbox. `Default` is a closed inbox: nobody sends.
+/// A closed inbox is never an error and never ends a run. Build a live one
+/// with [`message_channel`].
+#[derive(Default)]
+pub struct MessageRx(Option<mpsc::Receiver<Message>>);
+
+impl MessageRx {
+    fn poll(&self) -> Inbox<Message> {
+        poll(self.0.as_ref())
+    }
+}
+
+/// Create a connected (sender, inbox) pair for a run that takes messages.
+pub fn message_channel() -> (mpsc::Sender<Message>, MessageRx) {
+    let (tx, rx) = mpsc::channel();
+    (tx, MessageRx(Some(rx)))
+}
+
 /// An operator's verdict on a pending `permission.requested`, routed from the
 /// engine's stdin (kata-cli) into the run loop.
 #[derive(Debug, Clone)]
@@ -277,6 +295,7 @@ pub fn run<F: FnMut(KataEvent)>(
     cancel: &CancelToken,
     answers: &AnswerRx,
     decisions: &DecisionRx,
+    messages: &MessageRx,
     emit: F,
 ) -> Result<RunOutcome, RunError> {
     run_with(
@@ -285,6 +304,7 @@ pub fn run<F: FnMut(KataEvent)>(
         cancel,
         answers,
         decisions,
+        messages,
         RunOptions::default(),
         emit,
     )
@@ -296,6 +316,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
     cancel: &CancelToken,
     answers: &AnswerRx,
     decisions: &DecisionRx,
+    messages: &MessageRx,
     opts: RunOptions,
     mut emit: F,
 ) -> Result<RunOutcome, RunError> {
@@ -1138,6 +1159,34 @@ pub fn run_with<F: FnMut(KataEvent)>(
     })
 }
 
+/// What the run is waiting on the operator for, as `admit` sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingKind {
+    None,
+    Ask,
+    Approve,
+}
+
+/// What the run does with one message from the operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Admission {
+    /// Blank text: no event.
+    Ignore,
+    /// Refused with this reason (`event::refusal`).
+    Refuse(&'static str),
+    Accept,
+}
+
+/// Decide what to do with a message. Not implemented yet.
+fn admit(
+    _text: &str,
+    _already_accepted: bool,
+    _pending: PendingKind,
+    _input_open: bool,
+) -> Admission {
+    Admission::Ignore
+}
+
 /// How one `result` line from Claude ended its request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultKind {
@@ -1321,6 +1370,41 @@ mod tests {
                 after_result(kind, unread, open),
                 want,
                 "{kind:?} unread={unread} input_open={open}"
+            );
+        }
+    }
+
+    #[test]
+    fn admit_table() {
+        use super::{
+            admit,
+            Admission::{Accept, Ignore, Refuse},
+            PendingKind::{Approve, Ask, None as Idle},
+        };
+        use crate::event::refusal::{REPEATED, RUN_ENDING, WAITING_ON_OPERATOR};
+        // (text, already accepted, pending, input open, outcome); rows in precedence order.
+        let rows = [
+            // 1: blank text is ignored whatever else is true.
+            ("", false, Idle, true, Ignore),
+            ("  \t ", true, Ask, false, Ignore),
+            // 2: an accepted id is repeated.
+            ("go", true, Idle, true, Refuse(REPEATED)),
+            ("go", true, Approve, true, Refuse(REPEATED)),
+            // 3: waiting on the operator while the input is open.
+            ("go", false, Ask, true, Refuse(WAITING_ON_OPERATOR)),
+            ("go", false, Approve, true, Refuse(WAITING_ON_OPERATOR)),
+            // 5: nothing pending, the input already closed.
+            ("go", false, Idle, false, Refuse(RUN_ENDING)),
+            // 6: nothing pending, the input open.
+            ("go", false, Idle, true, Accept),
+            // A refused id is not "already accepted", so the retry is admitted.
+            ("go", false, Idle, true, Accept),
+        ];
+        for (text, accepted, pending, open, want) in rows {
+            assert_eq!(
+                admit(text, accepted, pending, open),
+                want,
+                "{text:?} accepted={accepted} {pending:?} open={open}"
             );
         }
     }
