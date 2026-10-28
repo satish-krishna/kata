@@ -157,4 +157,27 @@ describe('SdlcHome', () => {
     await settle();
     expect(document.body.querySelector<HTMLTextAreaElement>('[role="dialog"] textarea')!.value).toBe('flag fraud');
   });
+
+  it('R6.1: a triage run that is running offers the message box, and sending reaches that run', async () => {
+    const { container, fixture, transport } = await mount();
+    const vm = fixture.debugElement.injector.get(SdlcHomeViewModel);
+    const send = vi.spyOn(transport, 'sendMessage');
+    const started = vi.spyOn(transport, 'runSpec');
+    void vm.newChange('claims', 'Flag suspected fraud on intake', 'decide');
+    await confirmPreview();
+    // The scripted triage is running until its question; the box is enabled only then.
+    const input = () => container.querySelector<HTMLInputElement>('app-message-box [data-message-input]');
+    await vi.waitFor(() => {
+      TestBed.tick();
+      expect(input() !== null && !input()!.disabled).toBe(true);
+    });
+    input()!.value = 'look at intake only';
+    input()!.dispatchEvent(new Event('input'));
+    TestBed.tick();
+    container.querySelector<HTMLButtonElement>('[data-message-send]')!.click();
+    const runId = await started.mock.results[0].value;
+    expect(started.mock.calls[0][0].name).toMatch(/-triage$/);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(runId, expect.any(String), 'look at intake only');
+  });
 });

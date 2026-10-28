@@ -57,6 +57,8 @@ const session = (id: string, over: Partial<ShownSession> = {}): ShownSession => 
   asks: [],
   permissions: [],
   given: null,
+  messages: [],
+  refusal: null,
   unseenFrom: null,
   latest: true,
   expanded: false,
@@ -123,6 +125,7 @@ const SHOWN = { message: null, staleNotice: null, review: FINDINGS, departures: 
       (act)="acts.push($event)"
       (cancelBuild)="cancels = cancels + 1"
       (answer)="answers.push($event)"
+      (say)="says.push($event)"
       (goTo)="goTos.push($event)"
       (toggleRun)="toggles.push($event)"
     />
@@ -141,6 +144,7 @@ class Host {
   readonly acts: StageAction[] = [];
   cancels = 0;
   readonly answers: unknown[] = [];
+  readonly says: { runId: string; text: string }[] = [];
   readonly goTos: string[] = [];
   readonly toggles: string[] = [];
 }
@@ -1485,5 +1489,54 @@ describe('a waiting question on the arranged page', () => {
     expect(page.pickedRepo()).toBe('customer-portal');
     expect(page.card().querySelector(FIRST_CONTROL)).toBe(document.activeElement);
     expect(page.current()).toBe('watch');
+  });
+});
+
+describe('the message box on the build page', () => {
+  /** Type into the box of the session `id` and send. */
+  const sayIn = (el: HTMLElement, id: string, words: string) => {
+    const input = el.querySelector<HTMLInputElement>(`[data-session="${id}"] app-message-box [data-message-input]`)!;
+    input.value = words;
+    input.dispatchEvent(new Event('input'));
+    TestBed.tick();
+    el.querySelector<HTMLButtonElement>(`[data-session="${id}"] app-message-box [data-message-send]`)!.click();
+  };
+
+  it('R6.1: a build run in one repository offers the box, and sending names that run', async () => {
+    const v = base({
+      groups: [group('claims-core', RUNNING, 'cancel', [task('T1', RUNNING)], true)],
+      pick: { kind: 'repo', repo: 'claims-core' },
+      sessions: [session('r1')],
+    });
+    const { el, host } = await mount(v);
+    expect(el.querySelector('[data-session="r1"] app-message-box')).not.toBeNull();
+    sayIn(el, 'r1', 'skip the refactor');
+    expect(host.says).toEqual([{ runId: 'r1', text: 'skip the refactor' }]);
+  });
+
+  it('R6.1: a review run offers the box, and sending names that run', async () => {
+    const v = base({
+      stage: 'reviewing',
+      actions: ['cancel-build'],
+      groups: done3,
+      review: { status: { tone: 'success', label: 'Running' }, action: 'cancel', picked: true },
+      pick: { kind: 'review' },
+      sessions: [session('rv1')],
+    });
+    const { el, host } = await mount(v);
+    expect(el.querySelector('[data-session="rv1"] app-message-box')).not.toBeNull();
+    sayIn(el, 'rv1', 'check the limits too');
+    expect(host.says).toEqual([{ runId: 'rv1', text: 'check the limits too' }]);
+  });
+
+  it('R6.2: a message goes to the run of the repository being watched', async () => {
+    const v = base({
+      groups: [group('api', RUNNING, 'cancel', [task('T1', RUNNING)], true), group('web', RUNNING, 'cancel', [task('T2', RUNNING)])],
+      pick: { kind: 'repo', repo: 'api' },
+      sessions: [session('api-run'), session('web-run', { shown: false })],
+    });
+    const { el, host } = await mount(v);
+    sayIn(el, 'api-run', 'use the v2 route');
+    expect(host.says).toEqual([{ runId: 'api-run', text: 'use the v2 route' }]);
   });
 });

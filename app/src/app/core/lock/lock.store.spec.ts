@@ -12,6 +12,7 @@ class FakeTransport {
   runSpec = vi.fn((..._a: unknown[]) => Promise.resolve('1'));
   cancelRun = vi.fn((): Promise<void> => Promise.resolve());
   submitAnswer = vi.fn((..._a: unknown[]) => Promise.resolve());
+  sendMessage = vi.fn((..._a: unknown[]) => Promise.resolve());
   submitDecision = vi.fn((..._a: unknown[]) => Promise.resolve());
   onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
     this.listeners.push((ev) => cb('1', ev));
@@ -208,6 +209,7 @@ class MultiTransport {
   runSpec = vi.fn((..._a: unknown[]) => Promise.resolve(`run-${String.fromCharCode(97 + this.next++)}`));
   cancelRun = vi.fn((_id: string): Promise<void> => Promise.resolve());
   submitAnswer = vi.fn((..._a: unknown[]) => Promise.resolve());
+  sendMessage = vi.fn((..._a: unknown[]) => Promise.resolve());
   submitDecision = vi.fn((..._a: unknown[]) => Promise.resolve());
   onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
     this.callbacks.push(cb);
@@ -380,5 +382,29 @@ describe('LockStore build view', () => {
     fake.emit(solo, { type: 'run.completed', exit_code: 0 } as never);
     await flush();
     expect(await p).toBe('success');
+  });
+
+  it('say(text) messages the solo run', async () => {
+    const { store, runs, fake } = setupBuild();
+    const p = store.runAgent('Reading context', seedSpec());
+    await flush();
+    const solo = runs.lastRunId()!;
+    store.say('use the cache');
+    expect(fake.sendMessage).toHaveBeenCalledWith(solo, expect.any(String), 'use the cache');
+    fake.emit(solo, { type: 'run.completed', exit_code: 0 } as never);
+    await flush();
+    await p;
+  });
+
+  it('say(runId, text) messages only the build run named', async () => {
+    const { store, runs, fake } = setupBuild();
+    store.beginBuild('Building');
+    const a = (await runs.startRun(seedSpec(), 'build:s/c'))!;
+    store.addRun(a);
+    const b = (await runs.startRun(seedSpec(), 'build:s/c'))!;
+    store.addRun(b);
+    store.say(a, 'use the v2 route');
+    expect(fake.sendMessage).toHaveBeenCalledTimes(1);
+    expect(fake.sendMessage).toHaveBeenCalledWith(a, expect.any(String), 'use the v2 route');
   });
 });
