@@ -65,6 +65,16 @@ describe('MessageBox', () => {
     expect(m.field().value).toBe('my words');
   });
 
+  it('restores again for a new refusal with the same text', async () => {
+    const m = await mount();
+    m.fixture.componentRef.setInput('view', { ...RUNNING, restore: 'again', restoreId: 'r1' });
+    await m.fixture.whenStable();
+    await m.type('');
+    m.fixture.componentRef.setInput('view', { ...RUNNING, restore: 'again', restoreId: 'r2' });
+    await m.fixture.whenStable();
+    expect(m.field().value).toBe('again');
+  });
+
   it('keeps the operator edits when the same refusal comes back in a new view', async () => {
     const m = await mount();
     m.fixture.componentRef.setInput('view', { ...RUNNING, note: 'Not sent: answer the agent first', restore: 'refused words' });

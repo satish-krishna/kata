@@ -175,7 +175,7 @@ describe("message helpers", () => {
     const cases: [string, RunState, PendingKind, MessageRefusal | null, MessageBoxView][] = [
       ["1 idle", "idle", "none", null, hidden],
       ["2 running", "running", "none", null, { shown: true, enabled: true, note: "The agent reads this before its next step.", restore: null }],
-      ["3 running refused", "running", "none", refusal, { shown: true, enabled: true, note: "Not sent: already sent", restore: "again" }],
+      ["3 running refused", "running", "none", refusal, { shown: true, enabled: true, note: "Not sent: already sent", restore: "again", restoreId: refusal.id }],
       ["5 awaiting ask", "awaiting", "ask", null, { shown: true, enabled: false, note: "Answer the question first", restore: null }],
       ["5 awaiting ask refused", "awaiting", "ask", refusal, { shown: true, enabled: false, note: "Answer the question first", restore: null }],
       ["6 awaiting approval", "awaiting", "approval", null, { shown: true, enabled: false, note: "Decide the approval first", restore: null }],

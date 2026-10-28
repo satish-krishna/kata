@@ -174,7 +174,7 @@ export type MessageRecord = { id: string; text: string; sent_at: number; read_at
 /** A message the engine refused, kept so the box can say why and give the text back. */
 export type MessageRefusal = { id: string; reason: string; text: string };
 export type PendingKind = "ask" | "approval" | "none";
-export type MessageBoxView = { shown: boolean; enabled: boolean; note: string; restore: string | null };
+export type MessageBoxView = { shown: boolean; enabled: boolean; note: string; restore: string | null; restoreId?: string };
 
 /** Fold one event into the messages. A read for an unknown id is ignored; any other event leaves them as they were. */
 export function foldMessage(records: MessageRecord[], ev: KataEvent, at: number): MessageRecord[] {
@@ -213,7 +213,7 @@ export function pendingKind(asks: AskRecord[], permissions: PermissionRecord[]):
 export function messageBox(state: RunState, pending: PendingKind, refusal: MessageRefusal | null): MessageBoxView {
   if (state === "running") {
     return refusal
-      ? { shown: true, enabled: true, note: refusalText(refusal.reason), restore: refusal.text }
+      ? { shown: true, enabled: true, note: refusalText(refusal.reason), restore: refusal.text, restoreId: refusal.id }
       : { shown: true, enabled: true, note: "The agent reads this before its next step.", restore: null };
   }
   if (state === "awaiting") {

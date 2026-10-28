@@ -19,9 +19,14 @@ export class MessageBox {
 
   constructor() {
     // A refused message comes back so the operator can copy it.
+    // Keyed on the refusal, so a rebuilt view for the same refusal leaves the operator's edits alone.
+    const refusal = computed(() => {
+      const { restore, restoreId } = this.view();
+      return restore === null ? null : (restoreId ?? restore);
+    });
     effect(() => {
-      const restore = this.view().restore;
-      if (restore !== null) untracked(() => this.text.set(restore));
+      if (refusal() === null) return;
+      untracked(() => this.text.set(this.view().restore ?? ''));
     });
   }
 
