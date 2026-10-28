@@ -70,7 +70,7 @@ describe('stageRuns', () => {
 
   it('names a link whose record is missing by the stage’s deterministic run name', () => {
     const got = stageRuns([link('intent', 'gone', 4)], [], 'ws', 'claims', 'c1', 'intent');
-    expect(got).toEqual([{ id: 'gone', kata: 'sdlc-claims-c1-intent', started_at: 4, isolation: 'none' }]);
+    expect(got).toEqual([{ id: 'gone', kata: 'sdlc-claims-c1-intent', started_at: 4, isolation: 'none', steered: false }]);
   });
 
   it('leaves out other changes, systems and workspaces', () => {
