@@ -53,6 +53,9 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  /* The containing block for the absolutely placed screen-reader-only text inside the areas. Without one, that text sits at its static place
+   * inside a scrolling area, escapes the area's clip and makes the document itself scroll, so the page scrolled as a whole. */
+  position: relative;
 }
 
 .k-bp__area {
@@ -314,9 +317,13 @@
 
 .k-bp__session {
   display: flex;
-  flex: 1 0 auto;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: var(--space-3);
+}
+
+.k-bp__session--open {
+  flex: 1 0 auto;
 }
 
 .k-bp__session[hidden],

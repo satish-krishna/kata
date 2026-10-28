@@ -128,7 +128,7 @@
             <p class="k-state__body">{{ note }}</p>
           }
           @for (s of view().sessions; track s.id) {
-            <div class="k-bp__session" [attr.data-session]="s.id" [hidden]="s.shown === false">
+            <div class="k-bp__session" [class.k-bp__session--open]="s.latest || s.expanded" [attr.data-session]="s.id" [hidden]="s.shown === false">
               @if (s.latest) {
                 <div class="k-bp__run-start">Started <span class="k-mono">{{ s.startedAt }}</span></div>
               } @else {
