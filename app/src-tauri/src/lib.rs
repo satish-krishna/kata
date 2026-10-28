@@ -987,6 +987,27 @@ fn submit_answer(
     write_to_run(&control, &run_id, &line);
 }
 
+/// Something a line can be written to: a run's engine stdin, or a fake in a test.
+trait InputSink {
+    fn send(&mut self, bytes: &[u8]);
+}
+
+impl InputSink for tauri_plugin_shell::process::CommandChild {
+    fn send(&mut self, bytes: &[u8]) {
+        let _ = self.write(bytes);
+    }
+}
+
+/// Write one line to the input of run `run_id` in `table`, and to no other run's.
+#[cfg_attr(not(test), allow(dead_code))]
+fn write_line<C: InputSink>(_table: &mut RunTable<C>, _run_id: &str, _line: &str) {}
+
+/// Check the installed Claude Code before a run starts.
+#[cfg_attr(not(test), allow(dead_code))]
+fn claude_ready() -> Result<(), String> {
+    Ok(())
+}
+
 /// Write one line to the stdin of run `run_id`'s engine, and to no other run's.
 fn write_to_run(control: &RunControl, run_id: &str, line: &str) {
     let Some(run_id) = parse_run_id(run_id) else {
@@ -1229,6 +1250,73 @@ mod tests {
                 StageEvent::Done { pass: second },
             ]
         );
+    }
+
+    #[derive(Default)]
+    struct FakeInput(Vec<u8>);
+
+    impl InputSink for FakeInput {
+        fn send(&mut self, bytes: &[u8]) {
+            self.0.extend_from_slice(bytes);
+        }
+    }
+
+    fn live_with_input(id: u64) -> LiveRun<FakeInput> {
+        LiveRun {
+            id,
+            workdir: std::path::PathBuf::from(format!("D:/ws/repo{id}")),
+            group: Some("build:s/c".into()),
+            child: Some(FakeInput::default()),
+        }
+    }
+
+    #[test]
+    fn send_message_writes_only_to_the_named_run() {
+        let mut table = RunTable::<FakeInput>::default();
+        table.insert(live_with_input(1));
+        table.insert(live_with_input(2));
+        let line = kata_core::control::say_line("m1", "Stop editing the parser");
+        write_line(&mut table, "2", &line);
+        let sent = |t: &mut RunTable<FakeInput>, id| {
+            t.get_mut(id).unwrap().child.as_ref().unwrap().0.clone()
+        };
+        assert_eq!(sent(&mut table, 2), line.as_bytes());
+        assert!(sent(&mut table, 1).is_empty());
+    }
+
+    /// The tests that point `KATA_CLAUDE_BIN` at fake-claude share the process environment.
+    static CLAUDE_ENV: Mutex<()> = Mutex::new(());
+
+    /// Run `claude_ready` with `KATA_CLAUDE_BIN` set to the fake-claude beside the test binaries
+    /// (`cargo build -p kata-core --bin fake-claude` builds it) and its version set to `version`.
+    fn ready_with(version: Option<&str>) -> Result<(), String> {
+        let _guard = CLAUDE_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let exe = std::env::current_exe().unwrap();
+        let fake = exe
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("fake-claude{}", std::env::consts::EXE_SUFFIX));
+        assert!(fake.exists(), "build fake-claude first: {}", fake.display());
+        std::env::set_var("KATA_CLAUDE_BIN", &fake);
+        match version {
+            Some(v) => std::env::set_var("KATA_FAKE_CLAUDE_VERSION", v),
+            None => std::env::remove_var("KATA_FAKE_CLAUDE_VERSION"),
+        }
+        let got = claude_ready();
+        std::env::remove_var("KATA_CLAUDE_BIN");
+        std::env::remove_var("KATA_FAKE_CLAUDE_VERSION");
+        got
+    }
+
+    #[test]
+    fn run_spec_refuses_too_old_claude() {
+        let err = ready_with(Some("2.0.1 (Claude Code)")).unwrap_err();
+        assert!(err.contains("2.0.1") && err.contains("2.1.311"), "{err}");
+        let err = ready_with(Some("garbage")).unwrap_err();
+        assert!(err.contains("could not read"), "{err}");
+        assert_eq!(ready_with(None), Ok(()));
     }
 
     fn live(id: u64) -> LiveRun<()> {

@@ -65,6 +65,7 @@ export abstract class KataTransport {
   abstract runSpec(spec: RunSpec, group?: string): Promise<string>;
   abstract cancelRun(runId: string): Promise<void>;
   abstract submitAnswer(runId: string, id: string, answers: string[][]): Promise<void>;
+  abstract sendMessage(runId: string, id: string, text: string): Promise<void>;
   abstract submitDecision(runId: string, id: string, allow: boolean, message: string | null): Promise<void>;
   abstract listKatas(): Promise<KataListing>;
   abstract loadKata(name: string): Promise<RunSpec>;

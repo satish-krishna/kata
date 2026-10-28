@@ -84,6 +84,17 @@ describe('RunStore', () => {
     expect(store.events().at(-1)).toEqual({ type: 'log', level: 'error', message: 'run failed: boom' });
   });
 
+  it('a refused start shows the version message and starts nothing', async () => {
+    const { store, fake } = setup();
+    const message = 'Claude Code 2.0.1 is installed; Kata needs 2.1.311 or later to run a job. Update Claude Code and try again.';
+    fake.runSpec.mockRejectedValueOnce(message);
+    expect(await store.startRun(seedSpec())).toBeNull();
+    expect(store.state()).toBe('error');
+    const shown = JSON.stringify(store.events());
+    expect(shown).toContain('2.0.1');
+    expect(shown).toContain('2.1.311');
+  });
+
   it('forwards answers only while awaiting', async () => {
     const { store, fake } = setup();
     await store.startRun(seedSpec());

@@ -317,6 +317,7 @@ export class MockTransport extends KataTransport {
     }
     this.play(runId, run.mid);
   }
+  async sendMessage(_runId: string, _id: string, _text: string): Promise<void> {}
   async submitDecision(runId: string, id: string, allow: boolean, message: string | null): Promise<void> {
     this.emit(runId, { type: 'permission.decided', id, ...PENDING_PERMISSION, allow, decided_by: 'operator', message: message ?? undefined });
     const run = this.runs.get(runId);
