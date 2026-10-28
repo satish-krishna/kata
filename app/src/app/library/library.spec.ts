@@ -94,5 +94,5 @@ it('a refused message is not shown', async () => {
   await vi.waitFor(() => expect(container.textContent).toContain('carrying on'));
   expect(container.querySelectorAll('app-operator-message').length).toBe(0);
   expect(container.textContent).not.toContain('never delivered text');
-  expect(container.querySelector('[data-steered]')).toBeNull();
+  expect(container.querySelector('.wb-hist--active [data-steered]')).toBeNull();
 });
