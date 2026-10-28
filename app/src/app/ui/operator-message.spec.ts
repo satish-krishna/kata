@@ -27,4 +27,16 @@ describe('OperatorMessage', () => {
     expect(t).toContain(`read ${clock(READ)}`);
     expect(t).not.toContain('waiting');
   });
+
+  it('pairs the waiting label with a status dot', async () => {
+    const { container } = await render(OperatorMessage, { record: rec(null) });
+    const badge = container.querySelector('[data-message-state="waiting"]');
+    expect(badge?.querySelector('.k-status__dot')).not.toBeNull();
+  });
+
+  it('pairs the read label with a status dot', async () => {
+    const { container } = await render(OperatorMessage, { record: rec(READ) });
+    const badge = container.querySelector('[data-message-state="read"]');
+    expect(badge?.querySelector('.k-status__dot')).not.toBeNull();
+  });
 });
