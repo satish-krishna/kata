@@ -1032,9 +1032,16 @@ fn write_to_run(control: &RunControl, run_id: &str, line: &str) {
 /// formatter, never here. The engine answers with `message.sent`, `message.read` or
 /// `message.refused` on the event channel.
 #[tauri::command]
-fn send_message(control: State<RunControl>, run_id: String, id: String, text: String) {
-    let line = kata_core::control::say_line(&id, &text);
+fn send_message(
+    control: State<RunControl>,
+    run_id: String,
+    id: String,
+    text: String,
+) -> Result<(), String> {
+    let line = kata_core::control::say_line(&id, &text)
+        .ok_or_else(|| "a message id must be non-empty and contain no whitespace".to_string())?;
     write_to_run(&control, &run_id, &line);
+    Ok(())
 }
 
 /// Send the operator's verdict on a paused permission check: write a
@@ -1294,7 +1301,7 @@ mod tests {
         let mut table = RunTable::<FakeInput>::default();
         table.insert(live_with_input(1));
         table.insert(live_with_input(2));
-        let line = kata_core::control::say_line("m1", "Stop editing the parser");
+        let line = kata_core::control::say_line("m1", "Stop editing the parser").unwrap();
         write_line(&mut table, "2", &line);
         let sent = |t: &mut RunTable<FakeInput>, id| {
             t.get_mut(id).unwrap().child.as_ref().unwrap().0.clone()

@@ -6,11 +6,11 @@
 use crate::run::Message;
 
 /// Build a `say <id> <json-string>\n` control line.
-pub fn say_line(id: &str, text: &str) -> String {
+pub fn say_line(id: &str, text: &str) -> Option<String> {
     // serde_json escapes line breaks, quotes and control characters, so the
     // line always ends at the one trailing newline.
     let json = serde_json::to_string(text).expect("a string always serializes");
-    format!("say {id} {json}\n")
+    Some(format!("say {id} {json}\n"))
 }
 
 /// Parse the part of a `say` line after `say `. `None` when it does not follow
@@ -35,7 +35,7 @@ mod tests {
     #[test]
     fn say_line_round_trips_through_parse_say() {
         let text = "line one\nsays \"hi\" \\ back\ttab \u{1}ctl é 日本 🙂";
-        let line = say_line("m1", text);
+        let line = say_line("m1", text).expect("a good id");
         assert!(line.starts_with("say m1 "));
         assert!(line.ends_with('\n'));
         assert_eq!(
@@ -52,6 +52,22 @@ mod tests {
                 text: text.into()
             }
         );
+    }
+
+    #[test]
+    fn say_line_rejects_an_id_that_would_split_or_blur_the_line() {
+        for bad in [
+            "",
+            "a b",
+            "a\tb",
+            "a\nb",
+            "a\rb",
+            " a",
+            "a ",
+            "a \"x\"\ndecide p1 allow\nsay b",
+        ] {
+            assert!(say_line(bad, "hi").is_none(), "should reject {bad:?}");
+        }
     }
 
     #[test]
