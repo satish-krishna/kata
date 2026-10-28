@@ -35,8 +35,9 @@ pub fn build_invocation_with(
     if spec.auth.bare {
         args.push("--bare".into());
     }
+    // `-p` stays a bare flag: the task is the first user message on claude's
+    // input (see run.rs), so a run can take more messages later.
     args.push("-p".into());
-    args.push(compose_prompt(spec));
 
     if let Some(sp) = spec
         .identity
@@ -77,11 +78,15 @@ pub fn build_invocation_with(
     args.push("--output-format".into());
     args.push("stream-json".into());
     args.push("--verbose".into()); // claude requires --verbose with stream-json under --print
-                                   // The permission posture. `bypass` is what every run did before the field
-                                   // existed, and a machine whose managed settings set
-                                   // `permissions.disableBypassPermissionsMode` rejects the flag at startup —
-                                   // `prompt` is the way through, handing each check to Kata's MCP tool
-                                   // (wired in run.rs) instead of skipping the check entirely.
+    args.push("--input-format".into());
+    args.push("stream-json".into());
+    // Claude echoes each user message it takes in, with the `uuid` Kata gave it.
+    args.push("--replay-user-messages".into());
+    // The permission posture. `bypass` is what every run did before the field
+    // existed, and a machine whose managed settings set
+    // `permissions.disableBypassPermissionsMode` rejects the flag at startup —
+    // `prompt` is the way through, handing each check to Kata's MCP tool
+    // (wired in run.rs) instead of skipping the check entirely.
     match spec.permissions.mode {
         PermissionMode::Bypass => args.push("--dangerously-skip-permissions".into()),
         PermissionMode::Prompt => {
@@ -163,7 +168,7 @@ pub fn build_invocation_with(
     }
 }
 
-fn compose_prompt(spec: &RunSpec) -> String {
+pub(crate) fn compose_prompt(spec: &RunSpec) -> String {
     match spec
         .context
         .as_ref()

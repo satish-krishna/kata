@@ -469,6 +469,11 @@ impl StreamParser {
                 }
             }
             Some("user") => {
+                // Claude's echo of a message Kata wrote: content is a string.
+                if v.get("isReplay").and_then(|r| r.as_bool()) == Some(true) {
+                    out.replay = v.get("uuid").and_then(|u| u.as_str()).map(String::from);
+                    return out;
+                }
                 if let Some(content) = v.pointer("/message/content").and_then(|c| c.as_array()) {
                     for block in content {
                         if block.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
@@ -601,8 +606,14 @@ fn parse_hook(v: &serde_json::Value) -> Option<HookFired> {
 /// One user message for Claude's streaming input, newline-terminated. Claude
 /// echoes `uuid` back verbatim on the replayed line.
 pub fn user_message_line(uuid: &str, text: &str) -> String {
-    let _ = (uuid, text);
-    String::new()
+    let mut line = serde_json::json!({
+        "type": "user",
+        "message": {"role": "user", "content": text},
+        "uuid": uuid,
+    })
+    .to_string();
+    line.push('\n');
+    line
 }
 
 pub fn parse_stream_line(line: &str) -> Parsed {

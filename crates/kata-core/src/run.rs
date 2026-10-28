@@ -1,14 +1,14 @@
 use crate::assemble::{assemble, AssembleError};
 use crate::catalog::CatalogEntry;
 use crate::command::{build_invocation_with, ClaudeInvocation};
-use crate::event::KataEvent;
+use crate::event::{user_message_line, KataEvent};
 use crate::given::{
     apply, given_event, hooks_fired, merge_settings, resolve, ResolveOptions, ResolveRoots,
 };
 use crate::spec::{validate, Isolation, PermissionMode, RunSpec, UnmatchedPolicy};
 use std::io::{BufReader, Write};
 use std::path::Path;
-use std::process::Stdio;
+use std::process::{ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -589,13 +589,15 @@ pub fn run_with<F: FnMut(KataEvent)>(
 
     let start = Instant::now();
     let mut cmd = crate::proc::hidden_command(&inv.program).map_err(|e| spawn_fail!(e))?;
-    // claude runs headless (`-p`): it never reads stdin, so give it a closed one.
-    // Inheriting the parent's stdin lets an unauthenticated claude block forever on
-    // an interactive login prompt instead of fast-failing. (Cancellation uses the
-    // *engine's* stdin, handled in kata-cli — not the child's.)
+    // claude runs headless (`-p`) in streaming-input mode: the task and any later
+    // message arrive on its stdin, a pipe Kata owns. Never inherit the parent's
+    // stdin: it would let an unauthenticated claude block forever on an
+    // interactive login prompt instead of fast-failing. Kata closes the pipe once
+    // the run begins to end. (Cancellation uses the *engine's* stdin, handled in
+    // kata-cli — not the child's.)
     cmd.args(&inv.args)
         .current_dir(&cwd)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     // The child inherits the parent process environment by default. Apply the set
@@ -611,6 +613,16 @@ pub fn run_with<F: FnMut(KataEvent)>(
         cmd.env_remove(k);
     }
     let mut child = cmd.spawn().map_err(|e| spawn_fail!(e))?;
+    let input_tx = spawn_input_writer(child.stdin.take().expect("piped stdin"));
+    // The task is the first user message. A send fails only if the writer has
+    // already stopped, which is the same as Claude being gone.
+    let _ = input_tx.send(InputCmd::Line(user_message_line(
+        TASK_UUID,
+        &crate::command::compose_prompt(spec),
+    )));
+    let mut input_open = true;
+    // Accepted messages not yet echoed by Claude; nothing is accepted yet.
+    let unread: usize = 0;
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
 
@@ -664,7 +676,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
     // One parser for the whole stream: it carries the tool_use_id → name map
     // that labels each tool.result. A fresh parser per line loses it.
     let mut parser = crate::event::StreamParser::new(opts.full_payloads);
-    let mut result = None;
+    let mut totals = RunTotals::default();
     // Claude's start report and the hooks seen firing, checked against
     // `resolved`, the list the run was given at the start (R16.1). The first
     // `run.given` is the report; each hook's first firing adds another.
@@ -875,7 +887,9 @@ pub fn run_with<F: FnMut(KataEvent)>(
                     continue;
                 }
                 let parsed = parser.push(&line);
-                if let Some(report) = parsed.init {
+                // Claude sends another start report at each new request; only the
+                // first is the run's start report.
+                if let Some(report) = parsed.init.filter(|_| start_report.is_none()) {
                     start_report = Some(report);
                     emit(given_event(
                         &resolved,
@@ -883,6 +897,11 @@ pub fn run_with<F: FnMut(KataEvent)>(
                         start_report.as_ref(),
                         &fired,
                     ));
+                }
+                // Claude's echo of a message Kata wrote, the task included, is not
+                // an event.
+                if parsed.replay.is_some() {
+                    continue;
                 }
                 if let Some(hook) = parsed.hook {
                     if parsed.hook_started {
@@ -927,7 +946,18 @@ pub fn run_with<F: FnMut(KataEvent)>(
                     emit(e);
                 }
                 if let Some(r) = parsed.result {
-                    result = Some(r);
+                    let kind = if r.is_budget_exhausted() {
+                        ResultKind::Budget
+                    } else if r.is_error {
+                        ResultKind::Failed
+                    } else {
+                        ResultKind::Success
+                    };
+                    totals.add(&r);
+                    if after_result(kind, unread, input_open) == AfterResult::CloseInput {
+                        let _ = input_tx.send(InputCmd::Close);
+                        input_open = false;
+                    }
                 }
             }
             Ok(ChildLine::Err(line)) => {
@@ -969,7 +999,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
             let duration_ms = start.elapsed().as_millis() as u64;
             // A killed child never emitted its final `result` line, so cost is
             // usually absent here; forward whatever we have.
-            let cost_usd = result.as_ref().and_then(|r| r.cost_usd);
+            let cost_usd = totals.cost_usd();
             match term {
                 Termination::Cancelled => (
                     130,
@@ -1032,13 +1062,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
                 RunError::Spawn(e.to_string())
             })?;
             let code = status.code().unwrap_or(1);
-            let payload = result.unwrap_or(crate::event::ResultPayload {
-                num_turns: turns,
-                cost_usd: None,
-                is_error: code != 0,
-                result: None,
-                subtype: None,
-            });
+            let payload = totals.payload(turns, code);
             // Guard on the spec actually setting a budget: exit 122 is only
             // reachable when leash.max_budget_usd is set, so a result that
             // carries the subtype without a configured ceiling stays a normal
@@ -1136,8 +1160,17 @@ pub enum AfterResult {
 /// When the run begins to end. `unread` is the number of accepted messages not
 /// yet echoed back by Claude.
 pub fn after_result(kind: ResultKind, unread: usize, input_open: bool) -> AfterResult {
-    let _ = (kind, unread, input_open);
-    AfterResult::KeepOpen
+    if !input_open {
+        // Already closed: a message written before the close may still be in
+        // Claude's queue; keep reading until Claude exits.
+        return AfterResult::KeepOpen;
+    }
+    match kind {
+        // Claude works on the waiting message; check again at the next result.
+        ResultKind::Success if unread > 0 => AfterResult::KeepOpen,
+        // A budget stop or a failure ends the run; waiting messages stay unread.
+        ResultKind::Success | ResultKind::Budget | ResultKind::Failed => AfterResult::CloseInput,
+    }
 }
 
 /// The run's totals across several `result` lines (one per request Claude makes).
@@ -1154,7 +1187,16 @@ pub struct RunTotals {
 impl RunTotals {
     /// Fold in one request's result.
     pub fn add(&mut self, r: &crate::event::ResultPayload) {
-        let _ = r;
+        self.seen = true;
+        // Each request reports only its own turns; the run's turns are their sum.
+        self.turns += r.num_turns;
+        // `total_cost_usd` is the session's running total, so the last one wins.
+        if r.cost_usd.is_some() {
+            self.cost_usd = r.cost_usd;
+        }
+        self.is_error = r.is_error;
+        self.result = r.result.clone();
+        self.subtype = r.subtype.clone();
     }
 
     /// True once at least one result was added.
@@ -1170,15 +1212,55 @@ impl RunTotals {
     /// The run's result. With no result added, the fallback a run that ended
     /// without one reports: the engine's own turn count and `exit != 0`.
     pub fn payload(&self, fallback_turns: u32, exit: i32) -> crate::event::ResultPayload {
-        let _ = (&self.turns, &self.is_error, &self.result, &self.subtype);
+        if !self.seen {
+            return crate::event::ResultPayload {
+                num_turns: fallback_turns,
+                cost_usd: None,
+                is_error: exit != 0,
+                result: None,
+                subtype: None,
+            };
+        }
         crate::event::ResultPayload {
-            num_turns: fallback_turns,
-            cost_usd: None,
-            is_error: exit != 0,
-            result: None,
-            subtype: None,
+            num_turns: self.turns,
+            cost_usd: self.cost_usd,
+            is_error: self.is_error,
+            result: self.result.clone(),
+            subtype: self.subtype.clone(),
         }
     }
+}
+
+/// What the run asks of the thread that owns Claude's input.
+enum InputCmd {
+    Line(String),
+    Close,
+}
+
+/// The `uuid` of the task message, the first user message on Claude's input.
+const TASK_UUID: &str = "kata-task";
+
+/// Start the thread that owns Claude's input. The run loop only sends commands,
+/// so it never blocks on a full pipe and the leash keeps ticking. A write error
+/// (Claude already gone, a closed pipe) is the input being closed, never a run
+/// error. The thread drops stdin, which is what closes Claude's input, when it
+/// is told to or when it can no longer write.
+fn spawn_input_writer(mut stdin: ChildStdin) -> mpsc::Sender<InputCmd> {
+    let (tx, rx) = mpsc::channel::<InputCmd>();
+    // Detached on purpose: it ends when the sender is dropped or a write fails.
+    thread::spawn(move || {
+        for cmd in rx {
+            match cmd {
+                InputCmd::Line(line) => {
+                    if stdin.write_all(line.as_bytes()).is_err() || stdin.flush().is_err() {
+                        break;
+                    }
+                }
+                InputCmd::Close => break,
+            }
+        }
+    });
+    tx
 }
 
 /// A line drained from the child, tagged by which stream it came from.
