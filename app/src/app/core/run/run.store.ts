@@ -50,6 +50,8 @@ export class RunStore {
   readonly asks = computed(() => this.solo().asks);
   readonly permissions = computed(() => this.solo().permissions);
   readonly given = computed(() => this.solo().given);
+  readonly messages = computed(() => this.solo().messages);
+  readonly refusal = computed(() => this.solo().refusal);
 
   /** The folded view of one run by its backend id; idle for an id the store does not know. */
   snapshot(id: string): Signal<RunSnapshot> {
@@ -245,6 +247,13 @@ export class RunStore {
     if (!rec || rec.id === null || this.current(rec).state !== 'awaiting') return;
     if (args.length === 2) await this.transport.submitAnswer(rec.id, args[0], args[1]);
     else await this.transport.submitAnswer(rec.id, args[1], args[2]);
+  }
+
+  /** Send a message to the agent: `(text)` for the solo run, `(runId, text)` for the run named. */
+  sendMessage(text: string): Promise<void>;
+  sendMessage(runId: string, text: string): Promise<void>;
+  async sendMessage(..._args: [string] | [string, string]): Promise<void> {
+    // Stub: behavior arrives with the implementation.
   }
 
   /** Decide a permission check: `(askId, allow, message)` for the solo run, `(runId, id, allow, message)` for the run named. */

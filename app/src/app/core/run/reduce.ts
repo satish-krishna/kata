@@ -1,4 +1,4 @@
-import type { KataEvent, RunGiven, StreamEvent, RunSummary, RunState, PermissionRecord, AskRecord } from '../../lib/events';
+import type { KataEvent, RunGiven, StreamEvent, RunSummary, RunState, PermissionRecord, AskRecord, MessageRecord, MessageRefusal } from '../../lib/events';
 import { terminalStateFor } from '../../lib/events';
 
 export type { AskRecord };
@@ -11,11 +11,15 @@ export type RunSnapshot = {
   permissions: PermissionRecord[];
   /** What the run was given, from the last `run.given`; null until one arrives. */
   given: RunGiven | null;
+  /** Messages the operator sent, in the order sent. */
+  messages: MessageRecord[];
+  /** The latest refused message, until the next one is sent. */
+  refusal: MessageRefusal | null;
   /** The engine's exit code once the run has ended; absent while it runs. */
   exit?: number | null;
 };
 
-export const IDLE: RunSnapshot = { state: 'idle', events: [], summary: null, asks: [], permissions: [], given: null };
+export const IDLE: RunSnapshot = { state: 'idle', events: [], summary: null, asks: [], permissions: [], given: null, messages: [], refusal: null };
 
 /** The Observe pane's state machine as a pure function. Always returns new
  *  arrays rather than mutating, because a signal only notifies on a new reference. */

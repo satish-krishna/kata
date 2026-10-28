@@ -168,3 +168,26 @@ export type PermissionRecord = {
    *  piling every card at the end of the transcript. */
   at: number;
 };
+
+/** A message the operator sent to a running agent. `at` is the number of stream rows before it was sent. */
+export type MessageRecord = { id: string; text: string; sent_at: number; read_at: number | null; at: number };
+/** A message the engine refused, kept so the box can say why and give the text back. */
+export type MessageRefusal = { id: string; reason: string; text: string };
+export type PendingKind = "ask" | "approval" | "none";
+export type MessageBoxView = { shown: boolean; enabled: boolean; note: string; restore: string | null };
+
+export function foldMessage(records: MessageRecord[], _ev: KataEvent, _at: number): MessageRecord[] {
+  return records;
+}
+export function messagesFrom(_events: KataEvent[]): MessageRecord[] {
+  return [];
+}
+export function refusalText(_reason: string): string {
+  return "";
+}
+export function pendingKind(_asks: AskRecord[], _permissions: PermissionRecord[]): PendingKind {
+  return "none";
+}
+export function messageBox(_state: RunState, _pending: PendingKind, _refusal: MessageRefusal | null): MessageBoxView {
+  return { shown: false, enabled: false, note: "", restore: null };
+}

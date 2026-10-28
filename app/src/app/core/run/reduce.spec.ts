@@ -88,3 +88,38 @@ describe('reduce - run.given', () => {
     expect(second.events).toEqual([]);
   });
 });
+
+describe('reduce - messages', () => {
+  const sent = (id: string, text: string, sent_at: number): KataEvent => ({ type: 'message.sent', id, text, sent_at });
+
+  it('message.sent adds a waiting message with its send time', () => {
+    const withRow = reduce(running, log('x'));
+    const next = reduce(withRow, sent('m1', 'hi', 1000));
+    expect(next.messages).toEqual([{ id: 'm1', text: 'hi', sent_at: 1000, read_at: null, at: 1 }]);
+  });
+
+  it('message.read marks it read with its time', () => {
+    const next = reduce(reduce(running, sent('m1', 'hi', 1000)), { type: 'message.read', id: 'm1', read_at: 2000 });
+    expect(next.messages[0].read_at).toBe(2000);
+    expect(next.messages[0].sent_at).toBe(1000);
+  });
+
+  it('messages keep the order they were sent', () => {
+    const next = reduce(reduce(running, sent('m1', 'Use the lexer tests', 1)), sent('m2', 'Skip the docs', 2));
+    expect(next.messages.map((m) => m.id)).toEqual(['m1', 'm2']);
+  });
+
+  it('message.refused sets the refusal and adds no message; the next send clears it', () => {
+    const refused = reduce(running, { type: 'message.refused', id: 'm1', reason: 'run-ending', text: 'hi' });
+    expect(refused.refusal).toEqual({ id: 'm1', reason: 'run-ending', text: 'hi' });
+    expect(refused.messages).toEqual([]);
+    expect(reduce(refused, sent('m2', 'again', 5)).refusal).toBeNull();
+  });
+
+  it('message events never become stream rows', () => {
+    let s = reduce(running, sent('m1', 'hi', 1));
+    s = reduce(s, { type: 'message.read', id: 'm1', read_at: 2 });
+    s = reduce(s, { type: 'message.refused', id: 'm2', reason: 'repeated', text: 'x' });
+    expect(s.events).toEqual([]);
+  });
+});
