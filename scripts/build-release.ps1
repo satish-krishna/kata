@@ -114,7 +114,7 @@ try {
     }
     if (-not $isPrerelease -and -not $msi) { Write-Warning "no MSI bundle found (expected for a stable release)" }
     Write-Host ""
-    Write-Host "Done. Next: tag and 'gh release create' per docs/releasing.md"
+    Write-Host "Done."
 }
 catch {
     Write-Error "build-release failed at step '$step': $_"
