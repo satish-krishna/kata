@@ -64,4 +64,14 @@ describe('MessageBox', () => {
     await m.fixture.whenStable();
     expect(m.field().value).toBe('my words');
   });
+
+  it('keeps the operator edits when the same refusal comes back in a new view', async () => {
+    const m = await mount();
+    m.fixture.componentRef.setInput('view', { ...RUNNING, note: 'Not sent: answer the agent first', restore: 'refused words' });
+    await m.fixture.whenStable();
+    await m.type('refused words, edited');
+    m.fixture.componentRef.setInput('view', { ...RUNNING, enabled: false, note: 'Answer the question first', restore: 'refused words' });
+    await m.fixture.whenStable();
+    expect(m.field().value).toBe('refused words, edited');
+  });
 });
