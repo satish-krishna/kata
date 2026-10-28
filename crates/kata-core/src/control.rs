@@ -5,8 +5,17 @@
 
 use crate::run::Message;
 
+/// A message id is non-empty and holds no whitespace; `say_line` and `parse_say` share this rule.
+fn valid_id(id: &str) -> bool {
+    !id.is_empty() && !id.contains(char::is_whitespace)
+}
+
 /// Build a `say <id> <json-string>\n` control line.
 pub fn say_line(id: &str, text: &str) -> Option<String> {
+    // An id with whitespace would let the caller inject further control lines.
+    if !valid_id(id) {
+        return None;
+    }
     // serde_json escapes line breaks, quotes and control characters, so the
     // line always ends at the one trailing newline.
     let json = serde_json::to_string(text).expect("a string always serializes");
@@ -17,7 +26,7 @@ pub fn say_line(id: &str, text: &str) -> Option<String> {
 /// the grammar; a line that does not parse is ignored, never half-applied.
 pub fn parse_say(rest: &str) -> Option<Message> {
     let (id, json) = rest.split_once(' ')?;
-    if id.is_empty() || id.contains(char::is_whitespace) {
+    if !valid_id(id) {
         return None;
     }
     // `from_str` rejects anything after the one value except whitespace.
