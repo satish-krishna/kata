@@ -21,6 +21,17 @@ Tags are `vX.Y.Z` for stable and `vX.Y.Z-rc.N` for pre-releases. Bug fixes bump 
 
 ## Cutting a release
 
+`scripts/release.ps1` runs the steps below in one command, from an up-to-date, clean `main`:
+
+```
+pwsh scripts/release.ps1 X.Y.Z                       # draft release, notes generated from the PRs
+pwsh scripts/release.ps1 X.Y.Z -NotesFile notes.md -Publish
+```
+
+It refuses to start unless the version is newer than the current one, `main` matches `origin/main`, the tag is free locally and on origin, and `gh` is signed in. It bumps and commits, builds, checks that the CLI reports the new version, then asks before it pushes `main` and the tag and creates the release (`-Yes` skips the question). The release is a draft unless `-Publish` is given, so the notes can be edited on GitHub first; a version containing `-` is marked a pre-release and ships no MSI. If the build fails, fix it and rerun the same command: it sees the bump already committed and skips it.
+
+The manual steps, for when a step needs doing by hand:
+
 1. Merge the feature PR(s) into `main` and pull.
 2. Bump the version, review, and commit:
    ```
