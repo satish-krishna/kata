@@ -506,6 +506,28 @@ describe('the build page, picking and folding', () => {
     expect(el.querySelector('[data-session="r1"] [data-pane]')).not.toBeNull();
   });
 
+  it('lets only a session with a showing pane grow', async () => {
+    const v = base({
+      pick: { kind: 'repo', repo: 'claims-core' },
+      sessions: [session('r0', { latest: false, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
+    });
+    const { el } = await mount(v);
+    const grow = (id: string) => getComputedStyle(el.querySelector<HTMLElement>(`[data-session="${id}"]`)!).flexGrow;
+    expect(grow('r0')).toBe('0');
+    expect(grow('r1')).toBe('1');
+  });
+
+  it('lets an expanded finished session grow like the live one', async () => {
+    const v = base({
+      pick: { kind: 'repo', repo: 'claims-core' },
+      sessions: [session('r0', { latest: false, expanded: true, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
+    });
+    const { el } = await mount(v);
+    const grow = (id: string) => getComputedStyle(el.querySelector<HTMLElement>(`[data-session="${id}"]`)!).flexGrow;
+    expect(grow('r0')).toBe('1');
+    expect(grow('r1')).toBe('1');
+  });
+
   it('a live pane stays mounted, hidden, when another repository is picked', async () => {
     const v = base({
       pick: { kind: 'repo', repo: 'customer-portal' },
