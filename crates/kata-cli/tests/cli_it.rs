@@ -295,30 +295,122 @@ fn run_ok_event_stream_matches_golden() {
     );
 }
 
-/// Run the `ok` fake-claude mode with the engine's stdin closed at once, the way a
-/// CI pipeline does (R8.1, R8.2). Returns the finished process output.
-fn run_ok_with_stdin_closed() -> std::process::Output {
-    let work = tempfile::tempdir().unwrap();
-    let kata_home = tempfile::tempdir().unwrap();
-    let workdir = work.path().to_string_lossy().replace('\\', "/");
+/// The `kata run` command for the `ok` fake-claude mode, with the spec written
+/// into `work` and an empty home, so the event stream is the same on every
+/// machine. The caller chooses what the engine's stdin is.
+fn ok_run_command(work: &std::path::Path, kata_home: &std::path::Path) -> Command {
+    let workdir = work.to_string_lossy().replace('\\', "/");
     let spec = write(
-        work.path(),
+        work,
         "g.kata.toml",
         &format!(
             "schema = 1\nname = \"golden\"\ntask = \"t\"\nworkdir = \"{workdir}\"\n\n[leash]\ntimeout_secs = 60\n"
         ),
     );
-    kata()
-        .arg("run")
+    let mut cmd = kata();
+    cmd.arg("run")
         .arg(&spec)
         .env("KATA_CLAUDE_BIN", fake_claude())
         .env("KATA_FAKE_MODE", "ok")
-        .env("KATA_HOME", kata_home.path())
-        .env("HOME", kata_home.path().join("home"))
-        .env("USERPROFILE", kata_home.path().join("home"))
+        .env("KATA_HOME", kata_home)
+        .env("HOME", kata_home.join("home"))
+        .env("USERPROFILE", kata_home.join("home"));
+    cmd
+}
+
+/// Run the `ok` fake-claude mode with the engine's stdin closed at once, the way a
+/// CI pipeline does (R8.1, R8.2). Returns the finished process output.
+fn run_ok_with_stdin_closed() -> std::process::Output {
+    let work = tempfile::tempdir().unwrap();
+    let kata_home = tempfile::tempdir().unwrap();
+    ok_run_command(work.path(), kata_home.path())
         .stdin(std::process::Stdio::null())
         .output()
         .unwrap()
+}
+
+/// R8.1, "a CI pipeline that keeps its input open": nobody sends a message and
+/// the input stays open (nothing written, never closed) until the run is over.
+/// The run must finish by itself with outcome 0 and report exactly the events it
+/// reported before steering existed. A run that waited for end of input before
+/// finishing would hang here, so every wait is bounded.
+#[test]
+fn run_ok_with_stdin_held_open_matches_golden() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let work = tempfile::tempdir().unwrap();
+    let kata_home = tempfile::tempdir().unwrap();
+    let mut child = ok_run_command(work.path(), kata_home.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Held open and untouched until the assertions are done.
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut lines = Vec::new();
+    let mut completed = false;
+    while !completed {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(left) {
+            Ok(line) => {
+                completed = serde_json::from_str::<serde_json::Value>(&line)
+                    .is_ok_and(|v| v["type"] == "run.completed");
+                lines.push(line);
+            }
+            Err(_) => {
+                let _ = child.kill();
+                panic!(
+                    "no run.completed within 30s while stdin stayed open; the run is \
+                     waiting for end of input. Events so far:\n{}",
+                    lines.join("\n")
+                );
+            }
+        }
+    }
+
+    // The process must also exit on its own while the input is still open.
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!(
+                "run.completed arrived but the process did not exit within 30s while stdin stayed open"
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    // Anything after run.completed still belongs to the stream.
+    lines.extend(rx.try_iter());
+    drop(stdin);
+
+    assert_eq!(status.code(), Some(0), "events:\n{}", lines.join("\n"));
+    let actual = normalize_events(&lines.join("\n"));
+    let golden_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/run_ok_events.jsonl");
+    let golden = std::fs::read_to_string(&golden_path)
+        .unwrap_or_else(|_| panic!("missing golden fixture {}", golden_path.display()))
+        .replace("\r\n", "\n");
+    assert_eq!(
+        actual, golden,
+        "an unsteered run with its input held open drifted from the golden fixture"
+    );
 }
 
 /// A run whose input was closed at once and whose agent asks nothing ends with 0.
