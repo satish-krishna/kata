@@ -50,6 +50,8 @@ export class WorkbenchViewModel {
   readonly events = this.runs.events;
   readonly summary = this.runs.summary;
   readonly asks = this.runs.asks;
+  readonly messages = this.runs.messages;
+  readonly refusal = this.runs.refusal;
   readonly permissions = this.runs.permissions;
   readonly given = this.runs.given;
   readonly running = computed(() => this.runState() === 'running' || this.runState() === 'awaiting');
@@ -258,6 +260,10 @@ export class WorkbenchViewModel {
 
   answer(e: { id: string; answers: string[][] }): void {
     void this.runs.submitAnswer(e.id, e.answers);
+  }
+
+  say(text: string): void {
+    void this.runs.sendMessage(text);
   }
 
   decide(e: { id: string; allow: boolean; message: string | null }): void {

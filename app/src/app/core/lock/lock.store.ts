@@ -261,7 +261,10 @@ export class LockStore {
   /** Message the agent: `(text)` for the solo run, `(runId, text)` for a build run. */
   say(text: string): void;
   say(runId: string, text: string): void;
-  say(..._args: [string] | [string, string]): void {}
+  say(...args: [string] | [string, string]): void {
+    if (args.length === 1) void this.runs.sendMessage(args[0]);
+    else void this.runs.sendMessage(args[0], args[1]);
+  }
 
   /** Decide a permission check: `(id, allow, message)` for the solo run, `(runId, id, allow, message)` for a build run. */
   decide(id: string, allow: boolean, message: string | null): void;

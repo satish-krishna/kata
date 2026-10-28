@@ -40,9 +40,12 @@
         [spec]="vm.spec()"
         [summary]="vm.summary()"
         [asks]="vm.asks()"
+        [messages]="vm.messages()"
+        [refusal]="vm.refusal()"
         [permissions]="vm.permissions()"
         [given]="vm.given()"
         (answer)="vm.answer($event)"
+        (say)="vm.say($event)"
         (decide)="vm.decide($event)"
       />
     </div>

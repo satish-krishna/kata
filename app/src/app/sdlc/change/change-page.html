@@ -65,11 +65,14 @@
       [spec]="s.spec"
       [summary]="vm.summary()"
       [asks]="vm.asks()"
+      [messages]="vm.messages()"
+      [refusal]="vm.messageRefusal()"
       [permissions]="vm.permissions()"
       [given]="vm.given()"
       (cancel)="vm.cancelLock()"
       (close)="vm.closeSession()"
       (answer)="vm.answer($event)"
+      (say)="vm.say($event)"
       (decide)="vm.decide($event)"
     />
   } @else {
@@ -203,6 +206,7 @@
                 (act)="vm.act($event)"
                 (cancelBuild)="build.cancelBuild()"
                 (answer)="build.answer($event.runId, $event)"
+                (say)="build.sendMessage($event.runId, $event.text)"
                 (decide)="build.decide($event.runId, $event)"
                 (goTo)="build.goTo($event)"
                 (toggleRun)="build.toggleRun($event)"

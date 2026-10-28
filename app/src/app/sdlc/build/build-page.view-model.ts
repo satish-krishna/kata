@@ -1183,6 +1183,11 @@ export class BuildPageViewModel {
     this.lock.answer(runId, e.id, e.answers);
   }
 
+  /** Message the agent of one build run. Not `say`, which is the page's live-region announcer. */
+  sendMessage(runId: string, text: string): void {
+    this.lock.say(runId, text);
+  }
+
   decide(runId: string, e: { id: string; allow: boolean; message: string | null }): void {
     this.lock.decide(runId, e.id, e.allow, e.message);
   }
