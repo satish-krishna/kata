@@ -295,6 +295,77 @@ fn run_ok_event_stream_matches_golden() {
     );
 }
 
+/// Run the `ok` fake-claude mode with the engine's stdin closed at once, the way a
+/// CI pipeline does (R8.1, R8.2). Returns the finished process output.
+fn run_ok_with_stdin_closed() -> std::process::Output {
+    let work = tempfile::tempdir().unwrap();
+    let kata_home = tempfile::tempdir().unwrap();
+    let workdir = work.path().to_string_lossy().replace('\\', "/");
+    let spec = write(
+        work.path(),
+        "g.kata.toml",
+        &format!(
+            "schema = 1\nname = \"golden\"\ntask = \"t\"\nworkdir = \"{workdir}\"\n\n[leash]\ntimeout_secs = 60\n"
+        ),
+    );
+    kata()
+        .arg("run")
+        .arg(&spec)
+        .env("KATA_CLAUDE_BIN", fake_claude())
+        .env("KATA_FAKE_MODE", "ok")
+        .env("KATA_HOME", kata_home.path())
+        .env("HOME", kata_home.path().join("home"))
+        .env("USERPROFILE", kata_home.path().join("home"))
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap()
+}
+
+/// A run whose input was closed at once and whose agent asks nothing ends with 0.
+#[test]
+fn run_with_stdin_closed_at_once_exits_zero() {
+    let out = run_ok_with_stdin_closed();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The same event stream, order and outcome as before steering existed, for a
+/// pipeline that closes its input at once.
+#[test]
+fn run_ok_with_stdin_closed_at_once_matches_golden() {
+    let out = run_ok_with_stdin_closed();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let actual = normalize_events(&String::from_utf8(out.stdout).unwrap());
+
+    let golden_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden/run_ok_stdin_closed_events.jsonl");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::create_dir_all(golden_path.parent().unwrap()).unwrap();
+        std::fs::write(&golden_path, &actual).unwrap();
+    }
+    let golden = std::fs::read_to_string(&golden_path)
+        .unwrap_or_else(|_| {
+            panic!(
+                "missing golden fixture {}; generate it with UPDATE_GOLDEN=1",
+                golden_path.display()
+            )
+        })
+        .replace("\r\n", "\n");
+    assert_eq!(
+        actual, golden,
+        "the stdin-closed run event stream drifted from the golden fixture. If this \
+         change is intentional, regenerate with UPDATE_GOLDEN=1 and review the diff."
+    );
+}
+
 /// Golden test for the interactive path: drive the `ask` fake mode through
 /// `kata run`, answer the question on stdin, and pin the resulting
 /// `ask.requested` -> `ask.answered` -> `run.completed` exchange against a

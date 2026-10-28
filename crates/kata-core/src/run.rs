@@ -1114,6 +1114,73 @@ pub fn run_with<F: FnMut(KataEvent)>(
     })
 }
 
+/// How one `result` line from Claude ended its request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultKind {
+    Success,
+    /// Claude stopped on `--max-budget-usd` (`error_max_budget_usd`).
+    Budget,
+    /// Any other `is_error: true` result.
+    Failed,
+}
+
+/// What the run does with Claude's input once a request has ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterResult {
+    /// The run begins to end: close Claude's input so it exits.
+    CloseInput,
+    /// Keep reading; check again at the next result.
+    KeepOpen,
+}
+
+/// When the run begins to end. `unread` is the number of accepted messages not
+/// yet echoed back by Claude.
+pub fn after_result(kind: ResultKind, unread: usize, input_open: bool) -> AfterResult {
+    let _ = (kind, unread, input_open);
+    AfterResult::KeepOpen
+}
+
+/// The run's totals across several `result` lines (one per request Claude makes).
+#[derive(Debug, Default)]
+pub struct RunTotals {
+    seen: bool,
+    turns: u32,
+    cost_usd: Option<f64>,
+    is_error: bool,
+    result: Option<String>,
+    subtype: Option<String>,
+}
+
+impl RunTotals {
+    /// Fold in one request's result.
+    pub fn add(&mut self, r: &crate::event::ResultPayload) {
+        let _ = r;
+    }
+
+    /// True once at least one result was added.
+    pub fn is_empty(&self) -> bool {
+        !self.seen
+    }
+
+    /// The running cost so far, if Claude reported one.
+    pub fn cost_usd(&self) -> Option<f64> {
+        self.cost_usd
+    }
+
+    /// The run's result. With no result added, the fallback a run that ended
+    /// without one reports: the engine's own turn count and `exit != 0`.
+    pub fn payload(&self, fallback_turns: u32, exit: i32) -> crate::event::ResultPayload {
+        let _ = (&self.turns, &self.is_error, &self.result, &self.subtype);
+        crate::event::ResultPayload {
+            num_turns: fallback_turns,
+            cost_usd: None,
+            is_error: exit != 0,
+            result: None,
+            subtype: None,
+        }
+    }
+}
+
 /// A line drained from the child, tagged by which stream it came from.
 enum ChildLine {
     Out(String),
@@ -1146,7 +1213,71 @@ enum Pending {
 
 #[cfg(test)]
 mod tests {
-    use super::{append_interactive_retask, ClaudeInvocation, INTERACTIVE_RETASK};
+    use super::{
+        after_result, append_interactive_retask, AfterResult, ClaudeInvocation, ResultKind,
+        RunTotals, INTERACTIVE_RETASK,
+    };
+    use crate::event::ResultPayload;
+
+    #[test]
+    fn after_result_table() {
+        use AfterResult::{CloseInput, KeepOpen};
+        use ResultKind::{Budget, Failed, Success};
+        let rows = [
+            (Success, 0, true, CloseInput),
+            (Success, 1, true, KeepOpen),
+            (Budget, 0, true, CloseInput),
+            (Budget, 2, true, CloseInput),
+            (Failed, 0, true, CloseInput),
+            (Failed, 1, true, CloseInput),
+            (Success, 0, false, KeepOpen),
+            (Budget, 1, false, KeepOpen),
+            (Failed, 0, false, KeepOpen),
+        ];
+        for (kind, unread, open, want) in rows {
+            assert_eq!(
+                after_result(kind, unread, open),
+                want,
+                "{kind:?} unread={unread} input_open={open}"
+            );
+        }
+    }
+
+    fn result(turns: u32, cost: f64, text: &str) -> ResultPayload {
+        ResultPayload {
+            num_turns: turns,
+            cost_usd: Some(cost),
+            is_error: false,
+            result: Some(text.into()),
+            subtype: Some("success".into()),
+        }
+    }
+
+    #[test]
+    fn run_totals_sum_turns_and_keep_last_cost() {
+        let mut totals = RunTotals::default();
+        totals.add(&result(2, 0.005, "first"));
+        totals.add(&result(1, 0.006, "second"));
+        totals.add(&result(1, 0.007, "third"));
+        let p = totals.payload(99, 0);
+        assert_eq!(p.num_turns, 4);
+        assert_eq!(p.cost_usd, Some(0.007));
+        assert_eq!(p.result.as_deref(), Some("third"));
+
+        let mut one = RunTotals::default();
+        one.add(&result(2, 0.02, "done"));
+        assert_eq!(one.payload(99, 0), result(2, 0.02, "done"));
+    }
+
+    #[test]
+    fn run_totals_with_no_result_use_the_fallback() {
+        let totals = RunTotals::default();
+        assert!(totals.is_empty());
+        let p = totals.payload(3, 1);
+        assert_eq!(p.num_turns, 3);
+        assert!(p.is_error);
+        assert_eq!(p.cost_usd, None);
+    }
 
     fn has_inline_append(inv: &ClaudeInvocation) -> bool {
         inv.args.iter().any(|a| a == "--append-system-prompt")

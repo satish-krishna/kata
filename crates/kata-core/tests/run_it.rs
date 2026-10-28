@@ -97,16 +97,18 @@ fn run_surfaces_child_stderr_as_log_events() {
 
 #[test]
 #[serial]
-fn run_gives_child_noninteractive_stdin_so_it_cannot_block() {
-    // A child that reads stdin must not hang waiting for input it will never get.
-    // Kata gives claude a closed (null) stdin, so the read EOFs immediately and the
-    // run completes; without that, a blocked child would trip the leash timeout.
+fn run_closes_claudes_input_once_the_run_begins_to_end() {
+    // Claude (streaming input) reads the task from its input, reports a result,
+    // then waits for more input until it is closed. The run completes only
+    // because Kata closes that input once the run begins to end; otherwise the
+    // child blocks and the leash timeout fires.
     with_fake("blockstdin");
     let work = tempfile::tempdir().unwrap();
     let mut spec = base_spec(&work.path().to_string_lossy());
-    spec.leash.timeout_secs = Some(2); // guard: a stdin-blocked child times out (124)
+    spec.leash.timeout_secs = Some(5);
     let cancel = CancelToken::new();
     let mut events: Vec<KataEvent> = Vec::new();
+    let started = std::time::Instant::now();
     let outcome = run(
         &spec,
         &[] as &[CatalogEntry],
@@ -119,7 +121,11 @@ fn run_gives_child_noninteractive_stdin_so_it_cannot_block() {
 
     assert_eq!(
         outcome.exit_code, 0,
-        "child blocked on stdin (timed out) instead of completing; events={events:?}"
+        "claude's input was not closed (or the task never arrived); events={events:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "completed only by timeout"
     );
     assert!(matches!(
         events.last().unwrap(),

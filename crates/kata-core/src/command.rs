@@ -264,9 +264,27 @@ mod tests {
     fn prompt_is_task_then_context() {
         let mut s = spec();
         s.context = Some("background".into());
+        assert_eq!(compose_prompt(&s), "do it\n\nbackground");
+    }
+
+    // The task reaches claude as the first user message on its input, never as
+    // an argument.
+    #[test]
+    fn invocation_streams_input_and_carries_no_task_text() {
+        let mut s = spec();
+        s.context = Some("background".into());
         let inv = build_invocation(&s, &assembled_with(None, None));
+        assert!(inv.args.contains(&"-p".to_string()));
+        assert!(inv
+            .args
+            .windows(2)
+            .any(|w| w[0] == "--input-format" && w[1] == "stream-json"));
+        assert!(inv.args.contains(&"--replay-user-messages".to_string()));
+        assert!(!inv.args.contains(&compose_prompt(&s)));
+        assert!(!inv.args.contains(&"do it".to_string()));
+        // -p stays a bare flag: the argument after it is another flag.
         let p_idx = inv.args.iter().position(|a| a == "-p").unwrap();
-        assert_eq!(inv.args[p_idx + 1], "do it\n\nbackground");
+        assert!(inv.args[p_idx + 1].starts_with("--"));
     }
 
     #[test]

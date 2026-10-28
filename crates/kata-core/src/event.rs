@@ -376,6 +376,9 @@ pub struct Parsed {
     pub hook: Option<HookFired>,
     /// True when the hook line is a `hook_started` line (not a `hook_response`).
     pub hook_started: bool,
+    /// The `uuid` of a `type: "user"` line Claude echoes with `isReplay: true`:
+    /// a message Kata wrote on its input, taken in. Produces no event.
+    pub replay: Option<String>,
 }
 
 /// Stateful translator for a `stream-json` line sequence. Holds the
@@ -595,6 +598,13 @@ fn parse_hook(v: &serde_json::Value) -> Option<HookFired> {
 /// `tool_use` arrived on an earlier line will have an empty `name` here — use
 /// [`StreamParser`] across a stream to correlate. Defensive: unknown shapes
 /// and malformed JSON yield an empty `Parsed`.
+/// One user message for Claude's streaming input, newline-terminated. Claude
+/// echoes `uuid` back verbatim on the replayed line.
+pub fn user_message_line(uuid: &str, text: &str) -> String {
+    let _ = (uuid, text);
+    String::new()
+}
+
 pub fn parse_stream_line(line: &str) -> Parsed {
     StreamParser::default().push(line)
 }
@@ -1735,5 +1745,36 @@ mod tests {
             r#"{"type":"system","subtype":"hook_response","hook_event":"PreToolUse","hook_name":"PreToolUse:Bash","hook_id":"h"}"#,
         );
         assert_eq!(p.hook.unwrap().name, "PreToolUse:Bash");
+    }
+
+    #[test]
+    fn user_message_line_shape() {
+        let line = user_message_line("kata-task", "do \"it\"\nnow");
+        assert!(line.ends_with('\n'));
+        assert_eq!(line.matches('\n').count(), 1, "one line: {line:?}");
+        let v: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "type": "user",
+                "message": {"role": "user", "content": "do \"it\"\nnow"},
+                "uuid": "kata-task",
+            })
+        );
+    }
+
+    #[test]
+    fn replay_line_sets_replay_and_emits_nothing() {
+        let line = r#"{"type":"user","message":{"role":"user","content":"do it"},"parent_tool_use_id":null,"session_id":"5f1c1c8e-0000-4000-8000-000000000001","uuid":"kata-task","timestamp":"2026-10-27T10:00:00.000Z","isReplay":true}"#;
+        let p = parse_stream_line(line);
+        assert_eq!(p.replay.as_deref(), Some("kata-task"));
+        assert!(p.events.is_empty());
+        assert!(!p.starts_turn && p.result.is_none() && p.init.is_none());
+        // A user line without isReplay (a tool result) is not an echo.
+        let p = parse_stream_line(
+            r#"{"type":"user","uuid":"u1","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"x"}]}}"#,
+        );
+        assert_eq!(p.replay, None);
+        assert_eq!(p.events.len(), 1);
     }
 }

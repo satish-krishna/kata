@@ -180,13 +180,18 @@ fn main() {
             }
         }
         "blockstdin" => {
-            // Block until stdin reaches EOF, then complete. With an inherited,
-            // open-but-idle stdin this never returns on its own; with Stdio::null()
-            // the read EOFs immediately. Proves Kata hands claude a
-            // non-interactive stdin so it can't hang waiting for input.
-            use std::io::Read;
-            let mut buf = String::new();
-            let _ = std::io::stdin().read_to_string(&mut buf);
+            // Streaming-input claude: read the task (the first stdin line), do
+            // one turn, report a result, then keep reading stdin until EOF and
+            // exit 0, the way claude waits for more input after a result. Proves
+            // Kata sends the task on stdin and closes the input once the run
+            // begins to end. A missing task is an error, not a hang.
+            use std::io::{BufRead, Read};
+            let mut stdin = std::io::stdin().lock();
+            let mut task = String::new();
+            if stdin.read_line(&mut task).unwrap_or(0) == 0 {
+                eprintln!("blockstdin: no task on stdin");
+                std::process::exit(3);
+            }
             let _ = writeln!(
                 out,
                 r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"hi"}}]}}}}"#
@@ -196,6 +201,8 @@ fn main() {
                 r#"{{"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.0,"result":"done"}}"#
             );
             let _ = out.flush();
+            let mut rest = Vec::new();
+            let _ = stdin.read_to_end(&mut rest);
         }
         "stderr" => {
             // Write a human-readable diagnostic to stderr (as the real claude does
