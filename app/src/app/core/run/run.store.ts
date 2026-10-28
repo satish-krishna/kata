@@ -36,6 +36,7 @@ export class RunStore {
   /** Events that arrived for an id nobody has claimed while several starts were still waiting for theirs. */
   private readonly early = new Map<string, KataEvent[]>();
   private counter = 0;
+  private messageCounter = 0;
   /** The id of the latest solo run, kept after it ends. */
   private lastId: string | null = null;
 
@@ -252,8 +253,11 @@ export class RunStore {
   /** Send a message to the agent: `(text)` for the solo run, `(runId, text)` for the run named. */
   sendMessage(text: string): Promise<void>;
   sendMessage(runId: string, text: string): Promise<void>;
-  async sendMessage(..._args: [string] | [string, string]): Promise<void> {
-    // Stub: behavior arrives with the implementation.
+  async sendMessage(...args: [string] | [string, string]): Promise<void> {
+    const rec = args.length === 1 ? this.soloRec() : this.byId(args[0]);
+    const text = args.length === 1 ? args[0] : args[1];
+    if (text.trim() === '' || !rec || rec.id === null || this.current(rec).state !== 'running') return;
+    await this.transport.sendMessage(rec.id, `w${Date.now().toString(36)}-${++this.messageCounter}`, text);
   }
 
   /** Decide a permission check: `(askId, allow, message)` for the solo run, `(runId, id, allow, message)` for the run named. */

@@ -1,5 +1,5 @@
 import type { KataEvent, RunGiven, StreamEvent, RunSummary, RunState, PermissionRecord, AskRecord, MessageRecord, MessageRefusal } from '../../lib/events';
-import { terminalStateFor } from '../../lib/events';
+import { foldMessage, terminalStateFor } from '../../lib/events';
 
 export type { AskRecord };
 
@@ -28,11 +28,13 @@ export function reduce(s: RunSnapshot, ev: KataEvent): RunSnapshot {
     case 'run.started':
     case 'run.diff':
       return s;
-    // Not shown yet: the transcript renders messages in a later task.
+    // Messages are never stream rows; they sit beside the events at the position they were sent.
     case 'message.sent':
+      return { ...s, messages: foldMessage(s.messages, ev, s.events.length), refusal: null };
     case 'message.read':
+      return { ...s, messages: foldMessage(s.messages, ev, s.events.length) };
     case 'message.refused':
-      return s;
+      return { ...s, refusal: { id: ev.id, reason: ev.reason, text: ev.text } };
     // The last one wins, and it is not a row in the stream.
     case 'run.given':
       return { ...s, given: { items: ev.items, settings: ev.settings, env: ev.env, warnings: ev.warnings, ...(ev.options ? { options: ev.options } : {}) } };

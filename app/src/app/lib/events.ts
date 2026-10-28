@@ -176,18 +176,48 @@ export type MessageRefusal = { id: string; reason: string; text: string };
 export type PendingKind = "ask" | "approval" | "none";
 export type MessageBoxView = { shown: boolean; enabled: boolean; note: string; restore: string | null };
 
-export function foldMessage(records: MessageRecord[], _ev: KataEvent, _at: number): MessageRecord[] {
+/** Fold one event into the messages. A read for an unknown id is ignored; any other event leaves them as they were. */
+export function foldMessage(records: MessageRecord[], ev: KataEvent, at: number): MessageRecord[] {
+  if (ev.type === "message.sent") return [...records, { id: ev.id, text: ev.text, sent_at: ev.sent_at, read_at: null, at }];
+  if (ev.type === "message.read") return records.map((m) => (m.id === ev.id ? { ...m, read_at: ev.read_at } : m));
   return records;
 }
-export function messagesFrom(_events: KataEvent[]): MessageRecord[] {
-  return [];
+
+/** The messages of a whole transcript, each placed by the number of stream rows before it. */
+export function messagesFrom(events: KataEvent[]): MessageRecord[] {
+  let records: MessageRecord[] = [];
+  let rows = 0;
+  for (const ev of events) {
+    records = foldMessage(records, ev, rows);
+    if (isStreamEvent(ev)) rows++;
+  }
+  return records;
 }
-export function refusalText(_reason: string): string {
-  return "";
+
+export function refusalText(reason: string): string {
+  switch (reason) {
+    case "waiting-on-operator": return "Not sent: answer the agent first";
+    case "run-ending": return "Not sent: the run is ending";
+    case "repeated": return "Not sent: already sent";
+    default: return "Not sent";
+  }
 }
-export function pendingKind(_asks: AskRecord[], _permissions: PermissionRecord[]): PendingKind {
+
+export function pendingKind(asks: AskRecord[], permissions: PermissionRecord[]): PendingKind {
+  if (asks.some((a) => a.answers === null)) return "ask";
+  if (permissions.some((p) => p.decided === null)) return "approval";
   return "none";
 }
-export function messageBox(_state: RunState, _pending: PendingKind, _refusal: MessageRefusal | null): MessageBoxView {
+
+/** What the message box shows for a run. The send button also needs non-blank text; the component adds that. */
+export function messageBox(state: RunState, pending: PendingKind, refusal: MessageRefusal | null): MessageBoxView {
+  if (state === "running") {
+    return refusal
+      ? { shown: true, enabled: true, note: refusalText(refusal.reason), restore: refusal.text }
+      : { shown: true, enabled: true, note: "The agent reads this before its next step.", restore: null };
+  }
+  if (state === "awaiting") {
+    return { shown: true, enabled: false, note: pending === "approval" ? "Decide the approval first" : "Answer the question first", restore: null };
+  }
   return { shown: false, enabled: false, note: "", restore: null };
 }
