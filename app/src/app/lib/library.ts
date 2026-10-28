@@ -9,6 +9,9 @@ import type { Preset } from "@bindings/Preset";
 
 export type { RunRecord };
 
+/** The one fixture run the operator steered: two messages, both read by the agent. */
+export const STEERED_RUN_ID = "release-notes-20260615T080000Z";
+
 export const history: RunRecord[] = [
   { id: "triage-flaky-test-20260618T142200Z", kata: "triage-flaky-test", started_at: 1781792520, isolation: "worktree", steered: false, exit: 0, turns: 4, cost_usd: 0.041, duration_ms: 48120, result: "## Isolation Report\n\nIsolated `AuthTests.LoginExpiry` flake to a **clock-skew race**: `TokenValidator.IsExpired` mixes `DateTime.Now` (expiry) with `DateTime.UtcNow` (check).\n\n| Field | Value |\n|---|---|\n| Cause | Mixed Now/UtcNow in token expiry |\n| Repro | Pin clock to `23:59:59.6` local |\n| Prod code changed | No |\n\nNo production code was changed." },
   { id: "release-notes-20260618T110500Z", kata: "release-notes", started_at: 1781780700, isolation: "none", steered: false, exit: 0, turns: 3, cost_usd: 0.028, duration_ms: 31540, result: "Drafted release notes for v2.4.0 from 18 merged PRs since v2.3.0; grouped by Added / Fixed / Changed." },
@@ -16,6 +19,7 @@ export const history: RunRecord[] = [
   { id: "triage-flaky-test-20260617T091400Z", kata: "triage-flaky-test", started_at: 1781687640, isolation: "worktree", steered: false, exit: 0, turns: 5, cost_usd: 0.052, duration_ms: 61900, result: "Could not reproduce in 30 iterations on this commit; flake likely fixed by #1182. Recommend closing." },
   { id: "perf-sweep-20260616T160200Z", kata: "perf-sweep", started_at: 1781625720, isolation: "worktree", steered: false, exit: 130, turns: null, cost_usd: null, duration_ms: null, result: "cancelled" },
   { id: "doc-refresh-20260616T103900Z", kata: "doc-refresh", started_at: 1781606340, isolation: "none", steered: false, exit: 0, turns: 6, cost_usd: 0.061, duration_ms: 72400, result: "Updated README + 4 module docs for the renamed Auth API surface; 0 code changes." },
+  { id: STEERED_RUN_ID, kata: "release-notes", started_at: 1781520000, isolation: "none", steered: true, exit: 0, turns: 3, cost_usd: 0.033, duration_ms: 40200, result: "Drafted release notes for v2.3.1, leading with the security fix." },
 ];
 
 export const runStreams: Record<string, StreamEvent[]> = {
@@ -51,9 +55,23 @@ export const runStreams: Record<string, StreamEvent[]> = {
   ],
 };
 
+/** The transcript of the steered run. Each message sits after the stream rows before it was sent, and each was read a few seconds later. */
+export const steeredRunEvents: KataEvent[] = [
+  { type: "turn", n: 1 },
+  { type: "assistant.text", text: "Collecting the merged PRs since v2.3.0." },
+  { type: "message.sent", id: "m1", text: "lead with the security fix", sent_at: 1781520010000 },
+  { type: "message.read", id: "m1", read_at: 1781520014000 },
+  { type: "assistant.text", text: "Reordered: the security fix leads." },
+  { type: "turn", n: 2 },
+  { type: "message.sent", id: "m2", text: "keep it under ten lines", sent_at: 1781520020000 },
+  { type: "message.read", id: "m2", read_at: 1781520023000 },
+  { type: "assistant.text", text: "Trimmed the notes to eight lines." },
+];
+
 /** Browser-fallback detail: the fixture record + its scripted stream as KataEvents. */
 export function runDetailFixture(id: string): RunDetail {
   const record = history.find((r) => r.id === id) ?? history[0];
+  if (record.id === STEERED_RUN_ID) return { record, events: steeredRunEvents };
   const stream = (runStreams[record.id] ?? []) as RunDetail["events"];
   // The newest run recorded what it was given; the others are from before the view existed.
   return { record, events: record.id === history[0].id ? [runGivenFixture, ...stream] : stream };
