@@ -270,8 +270,6 @@ enum StdinCmd {
     Cancel,
     Answer(kata_core::run::Answer),
     Decide(kata_core::run::Decision),
-    // Forwarded to the run in a later task; nothing reads it yet.
-    #[allow(dead_code)]
     Say(kata_core::run::Message),
 }
 
@@ -358,7 +356,6 @@ fn cmd_run(path: &std::path::Path, full_payloads: bool) -> ExitCode {
     let (answer_tx, answers) = kata_core::run::answer_channel();
     let (decision_tx, decisions) = kata_core::run::decision_channel();
     let (message_tx, messages) = kata_core::run::message_channel();
-    let _ = &message_tx;
     let stdin_flag = cancel.flag();
     std::thread::spawn(move || {
         use std::io::BufRead;
@@ -376,8 +373,9 @@ fn cmd_run(path: &std::path::Path, full_payloads: bool) -> ExitCode {
                 Some(StdinCmd::Decide(d)) => {
                     let _ = decision_tx.send(d);
                 }
-                // Forwarded to the run in a later task.
-                Some(StdinCmd::Say(_)) => {}
+                Some(StdinCmd::Say(m)) => {
+                    let _ = message_tx.send(m);
+                }
                 None => {}
             }
             line.clear();

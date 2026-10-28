@@ -569,7 +569,8 @@ fn bridge_call(frame: &str) {
 ///   (a question / an approval) before it echoes its message;
 /// - KATA_FAKE_FAIL_AT=k exits 1 after the first turn of the k-th request;
 /// - KATA_FAKE_LATE_TEXT=<text> prints one more assistant line after every result, which
-///   a test uses to act after the engine has read that result;
+///   a test uses to act after the engine has read that result, then stays alive
+///   KATA_FAKE_LATE_MS (default 0) before it reads its input again;
 /// - stdin EOF with nothing queued exits 0.
 fn steer(out: &mut std::io::Stdout) {
     use std::io::BufRead;
@@ -597,6 +598,7 @@ fn steer(out: &mut std::io::Stdout) {
     let approve_at: u32 = env_num("KATA_FAKE_APPROVE_AT", 0);
     let fail_at: u32 = env_num("KATA_FAKE_FAIL_AT", 0);
     let late_text = std::env::var("KATA_FAKE_LATE_TEXT").ok();
+    let late_ms: u64 = env_num("KATA_FAKE_LATE_MS", 0);
     let mut request = 0u32;
     while let Ok((uuid, text)) = rx.recv() {
         request += 1;
@@ -655,6 +657,7 @@ fn steer(out: &mut std::io::Stdout) {
             });
             let _ = writeln!(out, "{line}");
             let _ = out.flush();
+            thread::sleep(Duration::from_millis(late_ms));
         }
     }
 }

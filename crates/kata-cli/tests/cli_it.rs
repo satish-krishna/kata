@@ -1111,7 +1111,7 @@ fn say_outcomes_for_a_program() {
 
     // A new id is accepted and read; a repeated id is refused; blank text is ignored.
     let mut said = false;
-    let (code, events) = run_steer_cli(&[], false, |v, stdin| {
+    let (code, events) = run_steer_cli(&[("KATA_FAKE_STEP_MS", "1000")], false, |v, stdin| {
         if !said && v["type"] == "assistant.text" {
             said = true;
             let _ = stdin
@@ -1174,12 +1174,19 @@ fn say_outcomes_for_a_program() {
 
     // After the run has begun to end the message is refused. The fake prints one more
     // line after its result, which arrives after the engine closed Claude's input.
-    let (code, events) = run_steer_cli(&[("KATA_FAKE_LATE_TEXT", "late")], false, |v, stdin| {
-        if v["type"] == "assistant.text" && v["text"] == "late" {
-            let _ = stdin.write_all(b"say m9 \"too late\"\n");
-            let _ = stdin.flush();
-        }
-    });
+    let (code, events) = run_steer_cli(
+        &[
+            ("KATA_FAKE_LATE_TEXT", "late"),
+            ("KATA_FAKE_LATE_MS", "1000"),
+        ],
+        false,
+        |v, stdin| {
+            if v["type"] == "assistant.text" && v["text"] == "late" {
+                let _ = stdin.write_all(b"say m9 \"too late\"\n");
+                let _ = stdin.flush();
+            }
+        },
+    );
     assert_eq!(code, Some(0));
     assert_eq!(message_events(&events), [pair("message.refused", "m9")]);
     let refused = events
@@ -1194,7 +1201,7 @@ fn say_same_text_under_two_ids_is_two_messages() {
     use std::io::Write;
 
     let mut said = false;
-    let (code, events) = run_steer_cli(&[], false, |v, stdin| {
+    let (code, events) = run_steer_cli(&[("KATA_FAKE_STEP_MS", "1000")], false, |v, stdin| {
         if !said && v["type"] == "assistant.text" {
             said = true;
             let _ = stdin.write_all(b"say a \"rerun the tests\"\nsay b \"rerun the tests\"\n");

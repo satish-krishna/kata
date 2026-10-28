@@ -1,11 +1,12 @@
 use crate::assemble::{assemble, AssembleError};
 use crate::catalog::CatalogEntry;
 use crate::command::{build_invocation_with, ClaudeInvocation};
-use crate::event::{user_message_line, KataEvent};
+use crate::event::{refusal, user_message_line, KataEvent};
 use crate::given::{
     apply, given_event, hooks_fired, merge_settings, resolve, ResolveOptions, ResolveRoots,
 };
 use crate::spec::{validate, Isolation, PermissionMode, RunSpec, UnmatchedPolicy};
+use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, Write};
 use std::path::Path;
 use std::process::{ChildStdin, Stdio};
@@ -310,6 +311,8 @@ pub fn run<F: FnMut(KataEvent)>(
     )
 }
 
+// The three inboxes are separate on purpose: each has its own sender in kata-cli.
+#[allow(clippy::too_many_arguments)]
 pub fn run_with<F: FnMut(KataEvent)>(
     spec: &RunSpec,
     catalog: &[CatalogEntry],
@@ -642,8 +645,12 @@ pub fn run_with<F: FnMut(KataEvent)>(
         &crate::command::compose_prompt(spec),
     )));
     let mut input_open = true;
-    // Accepted messages not yet echoed by Claude; nothing is accepted yet.
-    let unread: usize = 0;
+    // Operator messages: ids accepted so far (only accepted ids count as used, so a
+    // refused id can be retried), the acceptances counted for the `kata-msg-<n>`
+    // uuids, and the accepted messages Claude has not echoed back yet, by uuid.
+    let mut accepted_ids: HashSet<String> = HashSet::new();
+    let mut accepted_n: u32 = 0;
+    let mut unread: HashMap<String, String> = HashMap::new();
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
 
@@ -902,6 +909,41 @@ pub fn run_with<F: FnMut(KataEvent)>(
             },
             None => {}
         }
+        // Decide every waiting message before the next child line is read, so a
+        // message that reached Kata before a `result` is settled before that result
+        // is acted on. Nothing here pauses the work clock.
+        while let Inbox::Reply(m) = messages.poll() {
+            let pending_kind = match &pending {
+                Some(Pending::Ask { .. }) => PendingKind::Ask,
+                Some(Pending::Approve { .. }) => PendingKind::Approve,
+                None => PendingKind::None,
+            };
+            match admit(
+                &m.text,
+                accepted_ids.contains(&m.id),
+                pending_kind,
+                input_open,
+            ) {
+                Admission::Ignore => {}
+                Admission::Refuse(reason) => emit(KataEvent::MessageRefused {
+                    id: m.id,
+                    reason: reason.to_string(),
+                    text: m.text,
+                }),
+                Admission::Accept => {
+                    accepted_n += 1;
+                    let uuid = format!("kata-msg-{accepted_n}");
+                    accepted_ids.insert(m.id.clone());
+                    unread.insert(uuid.clone(), m.id.clone());
+                    let _ = input_tx.send(InputCmd::Line(user_message_line(&uuid, &m.text)));
+                    emit(KataEvent::MessageSent {
+                        id: m.id,
+                        text: m.text,
+                        sent_at: now_ms(),
+                    });
+                }
+            }
+        }
         match rx.recv_timeout(POLL) {
             Ok(ChildLine::Out(line)) => {
                 if line.trim().is_empty() {
@@ -919,9 +961,15 @@ pub fn run_with<F: FnMut(KataEvent)>(
                         &fired,
                     ));
                 }
-                // Claude's echo of a message Kata wrote, the task included, is not
-                // an event.
-                if parsed.replay.is_some() {
+                // Claude's echo of a message Kata wrote: the task's is not an event;
+                // an accepted operator message's is the moment it was read.
+                if let Some(uuid) = &parsed.replay {
+                    if let Some(id) = unread.remove(uuid) {
+                        emit(KataEvent::MessageRead {
+                            id,
+                            read_at: now_ms(),
+                        });
+                    }
                     continue;
                 }
                 if let Some(hook) = parsed.hook {
@@ -975,7 +1023,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
                         ResultKind::Success
                     };
                     totals.add(&r);
-                    if after_result(kind, unread, input_open) == AfterResult::CloseInput {
+                    if after_result(kind, unread.len(), input_open) == AfterResult::CloseInput {
                         let _ = input_tx.send(InputCmd::Close);
                         input_open = false;
                     }
@@ -1177,14 +1225,35 @@ enum Admission {
     Accept,
 }
 
-/// Decide what to do with a message. Not implemented yet.
-fn admit(
-    _text: &str,
-    _already_accepted: bool,
-    _pending: PendingKind,
-    _input_open: bool,
-) -> Admission {
-    Admission::Ignore
+/// Decide what to do with a message, by the first row that applies:
+///
+/// 1. blank text: ignored, whatever else is true;
+/// 2. an id already accepted: refused as repeated;
+/// 3. a question or approval pending: refused as waiting on the operator (the
+///    input cannot be closed then, because Claude cannot end a request while it
+///    is blocked on a bridge tool call);
+/// 4. Claude's input already closed: refused as the run ending;
+/// 5. otherwise accepted.
+fn admit(text: &str, already_accepted: bool, pending: PendingKind, input_open: bool) -> Admission {
+    if text.trim().is_empty() {
+        Admission::Ignore
+    } else if already_accepted {
+        Admission::Refuse(refusal::REPEATED)
+    } else if pending != PendingKind::None {
+        Admission::Refuse(refusal::WAITING_ON_OPERATOR)
+    } else if !input_open {
+        Admission::Refuse(refusal::RUN_ENDING)
+    } else {
+        Admission::Accept
+    }
+}
+
+/// Milliseconds since the Unix epoch, from the system clock.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// How one `result` line from Claude ended its request.
