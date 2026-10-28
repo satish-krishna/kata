@@ -77,12 +77,17 @@ fn validate_spec(spec: RunSpec) -> Vec<String> {
 /// inside it, so the table can tell which runs belong to a build. Every relayed
 /// event is wrapped as `{ runId, event }`.
 #[tauri::command]
-fn run_spec(
+async fn run_spec(
     app: AppHandle,
-    control: State<RunControl>,
+    control: State<'_, RunControl>,
     spec: RunSpec,
     group: Option<String>,
 ) -> Result<String, String> {
+    // Refuse an old Claude Code before anything is claimed or spawned. The probe
+    // blocks, so it runs off the async worker and ahead of the table lock.
+    tauri::async_runtime::spawn_blocking(claude_ready)
+        .await
+        .map_err(|e| e.to_string())??;
     // Hold the table across claim, spawn and insert so two starts cannot both
     // pass the claim.
     let mut table = control.state.lock().unwrap();
@@ -999,24 +1004,37 @@ impl InputSink for tauri_plugin_shell::process::CommandChild {
 }
 
 /// Write one line to the input of run `run_id` in `table`, and to no other run's.
-#[cfg_attr(not(test), allow(dead_code))]
-fn write_line<C: InputSink>(_table: &mut RunTable<C>, _run_id: &str, _line: &str) {}
+fn write_line<C: InputSink>(table: &mut RunTable<C>, run_id: &str, line: &str) {
+    let Some(run_id) = parse_run_id(run_id) else {
+        return;
+    };
+    if let Some(child) = table.get_mut(run_id).and_then(|r| r.child.as_mut()) {
+        child.send(line.as_bytes());
+    }
+}
 
-/// Check the installed Claude Code before a run starts.
-#[cfg_attr(not(test), allow(dead_code))]
+/// Check the installed Claude Code before a run starts, with the same function the
+/// engine uses, so the Workbench refuses a run the engine would refuse. Blocks for
+/// up to the version probe's limit; callers keep it off the UI thread.
 fn claude_ready() -> Result<(), String> {
-    Ok(())
+    kata_core::claude::check_installed(&kata_core::claude::program())
+        .map(|_| ())
+        .map_err(|refusal| refusal.to_string())
 }
 
 /// Write one line to the stdin of run `run_id`'s engine, and to no other run's.
 fn write_to_run(control: &RunControl, run_id: &str, line: &str) {
-    let Some(run_id) = parse_run_id(run_id) else {
-        return;
-    };
-    let mut table = control.state.lock().unwrap();
-    if let Some(child) = table.get_mut(run_id).and_then(|r| r.child.as_mut()) {
-        let _ = child.write(line.as_bytes());
-    }
+    write_line(&mut control.state.lock().unwrap(), run_id, line);
+}
+
+/// Send the operator's message to a live run: write a `say <id> <json>` line to that
+/// run's engine stdin and to no other run's. The line is built by the engine's own
+/// formatter, never here. The engine answers with `message.sent`, `message.read` or
+/// `message.refused` on the event channel.
+#[tauri::command]
+fn send_message(control: State<RunControl>, run_id: String, id: String, text: String) {
+    let line = kata_core::control::say_line(&id, &text);
+    write_to_run(&control, &run_id, &line);
 }
 
 /// Send the operator's verdict on a paused permission check: write a
@@ -1102,6 +1120,7 @@ pub fn run() {
             run_spec,
             cancel_run,
             submit_answer,
+            send_message,
             submit_decision,
             list_runs,
             load_run,

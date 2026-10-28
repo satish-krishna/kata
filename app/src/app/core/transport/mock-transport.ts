@@ -57,12 +57,19 @@ const SETUP_SCAN_MS = 1800;
 /** How long a scripted stage pass takes in all, long enough to see the reading rows. */
 const STAGE_PASS_MS = 1000;
 
+/** How long the scripted agent takes to read a message the operator sent. */
+const MESSAGE_READ_MS = 600;
+
 /** One scripted run in flight: what to play after an answer or a decision, and what finishing it does. */
 interface ScriptedRun {
   kind: 'workbench' | 'sdlc-spec' | 'sdlc-setup' | 'sdlc-triage' | 'build';
   mid: ScriptStep[];
   timers: ReturnType<typeof setTimeout>[];
   onDone: (() => void) | null;
+  /** The run is paused on an ask or a permission the operator has not settled. */
+  awaiting?: boolean;
+  /** The run has reached a terminal event or been cancelled. */
+  ended?: boolean;
   /** The label a scripted triage was answered with. */
   answer?: string;
 }
@@ -98,6 +105,8 @@ export class MockTransport extends KataTransport {
       acc += step.delay;
       run.timers.push(setTimeout(() => {
         if (step.ev.type === 'run.completed') run.onDone?.();
+        if (step.ev.type === 'ask.requested' || step.ev.type === 'permission.requested') run.awaiting = true;
+        if (step.ev.type === 'run.completed' || step.ev.type === 'run.error' || step.ev.type === 'run.cancelled') run.ended = true;
         this.emit(runId, step.ev);
       }, acc));
     }
@@ -304,11 +313,13 @@ export class MockTransport extends KataTransport {
     if (!run) return;
     run.timers.forEach(clearTimeout);
     run.timers = [];
+    run.ended = true;
     if (run.kind === 'sdlc-spec' || run.kind === 'sdlc-setup' || run.kind === 'sdlc-triage') this.sdlc.cancelRun();
   }
   async submitAnswer(runId: string, id: string, answers: string[][]): Promise<void> {
     this.emit(runId, { type: 'ask.answered', id, answers });
     const run = this.runs.get(runId) ?? this.adopt(runId);
+    run.awaiting = false;
     if (run.kind === 'sdlc-triage') {
       run.answer = answers[0]?.[0];
       // Only the light track writes the fix; the other two answers end the run at once.
@@ -317,10 +328,23 @@ export class MockTransport extends KataTransport {
     }
     this.play(runId, run.mid);
   }
-  async sendMessage(_runId: string, _id: string, _text: string): Promise<void> {}
+  /** The scripted run answers the way the engine does: refused while it waits on the operator, silent once it has ended, otherwise sent and, a moment later, read. */
+  async sendMessage(runId: string, id: string, text: string): Promise<void> {
+    const run = this.runs.get(runId) ?? this.adopt(runId);
+    if (run.ended) return;
+    if (run.awaiting) {
+      this.emit(runId, { type: 'message.refused', id, reason: 'waiting-on-operator', text });
+      return;
+    }
+    this.emit(runId, { type: 'message.sent', id, text, sent_at: Date.now() });
+    run.timers.push(setTimeout(() => {
+      if (!run.ended) this.emit(runId, { type: 'message.read', id, read_at: Date.now() });
+    }, MESSAGE_READ_MS));
+  }
   async submitDecision(runId: string, id: string, allow: boolean, message: string | null): Promise<void> {
     this.emit(runId, { type: 'permission.decided', id, ...PENDING_PERMISSION, allow, decided_by: 'operator', message: message ?? undefined });
     const run = this.runs.get(runId);
+    if (run) run.awaiting = false;
     this.play(runId, run?.kind === 'build' ? run.mid : runScriptTail);
   }
 }

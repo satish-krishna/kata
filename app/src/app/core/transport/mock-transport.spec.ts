@@ -57,8 +57,8 @@ describe('MockTransport', () => {
     await t.sendMessage(id, 'm1', 'Stop editing the parser');
     expect(seen).toEqual([{ type: 'message.sent', id: 'm1', text: 'Stop editing the parser', sent_at: 1_000_000 + runScriptHead[0].delay }]);
     vi.advanceTimersByTime(600);
-    expect(seen.map((e) => e.type)).toEqual(['message.sent', 'message.read']);
-    expect(seen[1]).toMatchObject({ type: 'message.read', id: 'm1' });
+    expect(seen.map((e) => e.type).filter((type) => type.startsWith('message.'))).toEqual(['message.sent', 'message.read']);
+    expect(seen.find((e) => e.type === 'message.read')).toMatchObject({ id: 'm1' });
   });
 
   it('sendMessage while the scripted ask is pending emits message.refused waiting-on-operator', async () => {
