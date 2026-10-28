@@ -47,7 +47,7 @@ describe('ChangePage parsed documents', () => {
       return { ...got, repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })), tasks: builtTasks() };
     });
     vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({ files: [], loc: [] });
-    vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', exit: 0 }]);
+    vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 0 }]);
     const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], MOCK_BUILD_CHANGE);
     const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(reviewOfSix(commits));

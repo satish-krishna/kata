@@ -243,8 +243,8 @@ describe('ChangePageViewModel', () => {
       { workspace_id: 'acme-claims', system: 'claims', change: FNOL, stage: 'spec', run_id: 'r2', started_at: 2 },
     ]);
     vi.spyOn(transport, 'listRuns').mockResolvedValue([
-      { id: 'r2', kata: `sdlc-claims-${FNOL}-spec`, started_at: 2, isolation: 'none' },
-      { id: 'r3', kata: `sdlc-claims-${FNOL}-spec`, started_at: 3, isolation: 'none' },
+      { id: 'r2', kata: `sdlc-claims-${FNOL}-spec`, started_at: 2, isolation: 'none', steered: false },
+      { id: 'r3', kata: `sdlc-claims-${FNOL}-spec`, started_at: 3, isolation: 'none', steered: false },
     ]);
     const { vm } = setup(FNOL, transport);
     await ready(vm);

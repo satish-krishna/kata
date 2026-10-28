@@ -189,14 +189,16 @@ fn build_record(stem: &str, events: &[KataEvent]) -> Option<RunRecord> {
         cost_usd,
         duration_ms,
         result,
-        steered: false,
+        steered: is_steered(events),
     })
 }
 
 /// Whether the operator's message was accepted during the run: a
 /// `message.sent` event. Refusals do not count.
-pub fn is_steered(_events: &[KataEvent]) -> bool {
-    false
+pub fn is_steered(events: &[KataEvent]) -> bool {
+    events
+        .iter()
+        .any(|e| matches!(e, KataEvent::MessageSent { .. }))
 }
 
 #[cfg(test)]
@@ -318,8 +320,14 @@ mod tests {
             ("triage-20260618T110000Z.jsonl", COMPLETED),
         ]);
         let runs = list_runs();
-        let steered = runs.iter().find(|r| r.id == "triage-20260618T100000Z").unwrap();
-        let plain = runs.iter().find(|r| r.id == "triage-20260618T110000Z").unwrap();
+        let steered = runs
+            .iter()
+            .find(|r| r.id == "triage-20260618T100000Z")
+            .unwrap();
+        let plain = runs
+            .iter()
+            .find(|r| r.id == "triage-20260618T110000Z")
+            .unwrap();
         assert!(steered.steered);
         assert!(!plain.steered);
     }
@@ -340,11 +348,17 @@ mod tests {
         let detail = load_run("triage-20260618T100000Z").unwrap();
         assert!(detail.events.iter().any(|e| matches!(
             e,
-            KataEvent::MessageSent { sent_at: 1_700_000_000_000, .. }
+            KataEvent::MessageSent {
+                sent_at: 1_700_000_000_000,
+                ..
+            }
         )));
         assert!(detail.events.iter().any(|e| matches!(
             e,
-            KataEvent::MessageRead { read_at: 1_700_000_001_000, .. }
+            KataEvent::MessageRead {
+                read_at: 1_700_000_001_000,
+                ..
+            }
         )));
     }
 
