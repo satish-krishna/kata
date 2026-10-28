@@ -8,10 +8,10 @@ import type { KataLoadFailure } from '@bindings/KataLoadFailure';
 import { KataTransport } from '../core/transport/kata-transport';
 import { LaunchStore } from '../core/launch/launch.store';
 import { ToastStore } from '../core/toast/toast.store';
-import { givenFrom, isStreamEvent, statusForExit, type RunGiven, type RunDetail, type RunRecord, type RunState } from '../lib/events';
+import { givenFrom, isStreamEvent, messagesFrom, type MessageRecord, statusForExit, type RunGiven, type RunDetail, type RunRecord, type RunState } from '../lib/events';
 import { modeOf } from '../lib/given';
 import { kataViews, withTask } from '../lib/katas';
-import { pairToolEvents } from '../lib/toolcards';
+import { pairToolEvents, withPauses } from '../lib/toolcards';
 
 const DAY_MS = 86_400_000;
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -58,8 +58,11 @@ export class LibraryViewModel {
   });
   readonly stream = computed(() => {
     const d = this.detail();
-    return d ? pairToolEvents(d.events.filter(isStreamEvent)) : null;
+    return d ? withPauses(pairToolEvents(d.events.filter(isStreamEvent)), [], [], this.messages()) : null;
   });
+
+  /** The messages the operator sent into the selected run, placed by their position in the transcript. */
+  readonly messages = computed<MessageRecord[]>(() => messagesFrom(this.detail()?.events ?? []));
 
   openGiven(): void {
     this.givenOpen.set(true);
@@ -195,6 +198,13 @@ export class LibraryViewModel {
     const days = Math.round((startOfDay(new Date()) - startOfDay(d)) / DAY_MS);
     const day = days === 0 ? 'today' : days === 1 ? 'yesterday' : days < 7 ? WEEKDAYS[d.getDay()] : d.toLocaleDateString();
     return `${day} · ${hh}:${mm}`;
+  }
+
+  /** Local wall-clock time, HH:MM:SS, of a millisecond epoch. */
+  fmtClock(ms: number): string {
+    const d = new Date(ms);
+    const p = (n: number) => `${n}`.padStart(2, '0');
+    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
   }
 
   baseName(path: string): string {

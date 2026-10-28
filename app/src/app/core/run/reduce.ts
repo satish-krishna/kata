@@ -1,5 +1,5 @@
-import type { KataEvent, RunGiven, StreamEvent, RunSummary, RunState, PermissionRecord, AskRecord } from '../../lib/events';
-import { terminalStateFor } from '../../lib/events';
+import type { KataEvent, RunGiven, StreamEvent, RunSummary, RunState, PermissionRecord, AskRecord, MessageRecord, MessageRefusal } from '../../lib/events';
+import { foldMessage, terminalStateFor } from '../../lib/events';
 
 export type { AskRecord };
 
@@ -11,11 +11,15 @@ export type RunSnapshot = {
   permissions: PermissionRecord[];
   /** What the run was given, from the last `run.given`; null until one arrives. */
   given: RunGiven | null;
+  /** Messages the operator sent, in the order sent. */
+  messages: MessageRecord[];
+  /** The latest refused message, until the next one is sent. */
+  refusal: MessageRefusal | null;
   /** The engine's exit code once the run has ended; absent while it runs. */
   exit?: number | null;
 };
 
-export const IDLE: RunSnapshot = { state: 'idle', events: [], summary: null, asks: [], permissions: [], given: null };
+export const IDLE: RunSnapshot = { state: 'idle', events: [], summary: null, asks: [], permissions: [], given: null, messages: [], refusal: null };
 
 /** The Observe pane's state machine as a pure function. Always returns new
  *  arrays rather than mutating, because a signal only notifies on a new reference. */
@@ -24,6 +28,13 @@ export function reduce(s: RunSnapshot, ev: KataEvent): RunSnapshot {
     case 'run.started':
     case 'run.diff':
       return s;
+    // Messages are never stream rows; they sit beside the events at the position they were sent.
+    case 'message.sent':
+      return { ...s, messages: foldMessage(s.messages, ev, s.events.length), refusal: null };
+    case 'message.read':
+      return { ...s, messages: foldMessage(s.messages, ev, s.events.length) };
+    case 'message.refused':
+      return { ...s, refusal: { id: ev.id, reason: ev.reason, text: ev.text } };
     // The last one wins, and it is not a row in the stream.
     case 'run.given':
       return { ...s, given: { items: ev.items, settings: ev.settings, env: ev.env, warnings: ev.warnings, ...(ev.options ? { options: ev.options } : {}) } };

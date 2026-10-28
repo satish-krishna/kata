@@ -8,12 +8,14 @@ import { HlmEmptyImports } from '@spartan-ng/helm/empty';
 import { HlmMessageScrollerImports } from '@spartan-ng/helm/message-scroller';
 import type { Mode } from '@bindings/Mode';
 import type { RunSpec } from '@bindings/RunSpec';
-import { STATUS_LABEL, type AskRecord, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../lib/events';
+import { STATUS_LABEL, messageBox, pendingKind, type AskRecord, type MessageRecord, type MessageRefusal, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../lib/events';
 import { pairToolEvents, withPauses, type PausedItem } from '../lib/toolcards';
 import { AskPanel } from './ask-panel';
 import { EventRow } from './event-row';
 import { GivenView } from './given-view';
 import { MarkdownBody } from './markdown-body';
+import { MessageBox } from './message-box';
+import { OperatorMessage } from './operator-message';
 import { PermissionPanel } from './permission-panel';
 import { SummaryStat } from './summary-stat';
 import { ToolCard } from './tool-card';
@@ -21,7 +23,7 @@ import { ToolCard } from './tool-card';
 @Component({
   selector: 'app-observe-pane',
   host: { class: 'wb-observe' },
-  imports: [NgIcon, HlmButtonImports, HlmDialogImports, HlmEmptyImports, HlmMessageScrollerImports, EventRow, ToolCard, SummaryStat, AskPanel, PermissionPanel, MarkdownBody, GivenView],
+  imports: [NgIcon, HlmButtonImports, HlmDialogImports, HlmEmptyImports, HlmMessageScrollerImports, EventRow, ToolCard, SummaryStat, AskPanel, PermissionPanel, MarkdownBody, GivenView, MessageBox, OperatorMessage],
   providers: [provideIcons({ lucideCpu, lucideGitBranch, lucideTerminal, lucideCheckCircle, lucideXCircle })],
   templateUrl: './observe-pane.html',
 })
@@ -39,6 +41,9 @@ export class ObservePane {
   readonly mode = input<Mode>('workbench');
   /** The index of the first event the engineer has not seen, when they come back to a pane that kept running. */
   readonly unseenFrom = input<number | null>(null);
+  readonly messages = input<MessageRecord[]>([]);
+  readonly refusal = input<MessageRefusal | null>(null);
+  readonly say = output<string>();
   readonly answer = output<{ id: string; answers: string[][] }>();
   readonly decide = output<{ id: string; allow: boolean; message: string | null }>();
 
@@ -48,12 +53,13 @@ export class ObservePane {
   /** An open pause outlives its run (cancel, deadline exit); it must not stay answerable. */
   protected readonly ended = computed(() => this.state() !== 'running' && this.state() !== 'awaiting');
   protected readonly empty = computed(
-    () => this.events().length === 0 && !this.summary() && this.asks().length === 0 && this.permissions().length === 0,
+    () => this.events().length === 0 && !this.summary() && this.asks().length === 0 && this.permissions().length === 0 && this.messages().length === 0,
   );
   /* A pause belongs where it happened, not in a pile at the end of the
    * transcript. Tool calls are paired first, then each ask and permission
    * record is spliced back by its `at` (see withPauses). */
-  protected readonly streamItems = computed(() => withPauses(pairToolEvents(this.events()), this.permissions(), this.asks()));
+  protected readonly streamItems = computed(() => withPauses(pairToolEvents(this.events()), this.permissions(), this.asks(), this.messages()));
+  protected readonly box = computed(() => messageBox(this.state(), pendingKind(this.asks(), this.permissions()), this.refusal()));
   protected readonly unseenCount = computed(() => {
     const from = this.unseenFrom();
     return from === null ? 0 : Math.max(0, this.events().length - from);

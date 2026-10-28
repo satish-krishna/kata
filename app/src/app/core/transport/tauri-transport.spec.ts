@@ -45,6 +45,7 @@ const rows: Row[] = [
   ['cancelRun', (t) => t.cancelRun('7'), 'cancel_run', { runId: '7' }],
   ['submitAnswer', (t) => t.submitAnswer('7', 'q', [['a']]), 'submit_answer', { runId: '7', id: 'q', answers: [['a']] }],
   ['submitDecision', (t) => t.submitDecision('7', 'p', true, null), 'submit_decision', { runId: '7', id: 'p', allow: true, message: null }],
+  ['sendMessage', (t) => t.sendMessage('7', 'm1', 'Stop editing the parser'), 'send_message', { runId: '7', id: 'm1', text: 'Stop editing the parser' }],
   ['listKatas', (t) => t.listKatas(), 'list_katas', undefined],
   ['loadKata', (t) => t.loadKata('k'), 'load_kata', { name: 'k' }],
   ['saveKata', (t) => t.saveKata(spec), 'save_kata', { spec }],

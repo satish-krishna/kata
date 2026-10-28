@@ -70,6 +70,9 @@
                 <span class="wb-hist__kata">{{ r.kata }}</span>
                 <span class="wb-hist__when">{{ vm.fmtWhen(r.started_at) }} · {{ vm.fmtTurns(r.turns) }} turns · {{ vm.fmtCost(r.cost_usd) }}</span>
               </div>
+              @if (r.steered) {
+                <span class="k-badge k-badge--neutral" data-steered aria-label="Steered run: the operator sent it messages">steered</span>
+              }
               <span class="k-badge" [class]="'k-badge--' + vm.tone(vm.stateOf(r))">exit {{ r.exit ?? '—' }}</span>
             </div>
           }
@@ -118,7 +121,15 @@
                 @for (item of stream; track item.key) {
                   @if (item.kind === 'call') {
                     <app-tool-card [call]="item.call" />
-                  } @else {
+                  } @else if (item.kind === 'msg') {
+                    <div>
+                      <app-operator-message [record]="item.m" />
+                      <div class="k-event">
+                        <span class="k-event__gutter"></span>
+                        <span class="k-event__body"><span class="k-badge k-badge--neutral" data-message-sent>sent {{ vm.fmtClock(item.m.sent_at) }}</span></span>
+                      </div>
+                    </div>
+                  } @else if (item.kind === 'event') {
                     <app-event-row [ev]="item.ev" />
                   }
                 }

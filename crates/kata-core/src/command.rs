@@ -29,14 +29,15 @@ pub fn build_invocation_with(
     assembled: &Assembled,
     applied: &Applied,
 ) -> ClaudeInvocation {
-    let program = std::env::var("KATA_CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string());
+    let program = crate::claude::program();
 
     let mut args: Vec<String> = Vec::new();
     if spec.auth.bare {
         args.push("--bare".into());
     }
+    // `-p` stays a bare flag: the task is the first user message on claude's
+    // input (see run.rs), so a run can take more messages later.
     args.push("-p".into());
-    args.push(compose_prompt(spec));
 
     if let Some(sp) = spec
         .identity
@@ -77,11 +78,15 @@ pub fn build_invocation_with(
     args.push("--output-format".into());
     args.push("stream-json".into());
     args.push("--verbose".into()); // claude requires --verbose with stream-json under --print
-                                   // The permission posture. `bypass` is what every run did before the field
-                                   // existed, and a machine whose managed settings set
-                                   // `permissions.disableBypassPermissionsMode` rejects the flag at startup —
-                                   // `prompt` is the way through, handing each check to Kata's MCP tool
-                                   // (wired in run.rs) instead of skipping the check entirely.
+    args.push("--input-format".into());
+    args.push("stream-json".into());
+    // Claude echoes each user message it takes in, with the `uuid` Kata gave it.
+    args.push("--replay-user-messages".into());
+    // The permission posture. `bypass` is what every run did before the field
+    // existed, and a machine whose managed settings set
+    // `permissions.disableBypassPermissionsMode` rejects the flag at startup —
+    // `prompt` is the way through, handing each check to Kata's MCP tool
+    // (wired in run.rs) instead of skipping the check entirely.
     match spec.permissions.mode {
         PermissionMode::Bypass => args.push("--dangerously-skip-permissions".into()),
         PermissionMode::Prompt => {
@@ -163,7 +168,7 @@ pub fn build_invocation_with(
     }
 }
 
-fn compose_prompt(spec: &RunSpec) -> String {
+pub(crate) fn compose_prompt(spec: &RunSpec) -> String {
     match spec
         .context
         .as_ref()
@@ -264,9 +269,27 @@ mod tests {
     fn prompt_is_task_then_context() {
         let mut s = spec();
         s.context = Some("background".into());
+        assert_eq!(compose_prompt(&s), "do it\n\nbackground");
+    }
+
+    // The task reaches claude as the first user message on its input, never as
+    // an argument.
+    #[test]
+    fn invocation_streams_input_and_carries_no_task_text() {
+        let mut s = spec();
+        s.context = Some("background".into());
         let inv = build_invocation(&s, &assembled_with(None, None));
+        assert!(inv.args.contains(&"-p".to_string()));
+        assert!(inv
+            .args
+            .windows(2)
+            .any(|w| w[0] == "--input-format" && w[1] == "stream-json"));
+        assert!(inv.args.contains(&"--replay-user-messages".to_string()));
+        assert!(!inv.args.contains(&compose_prompt(&s)));
+        assert!(!inv.args.contains(&"do it".to_string()));
+        // -p stays a bare flag: the argument after it is another flag.
         let p_idx = inv.args.iter().position(|a| a == "-p").unwrap();
-        assert_eq!(inv.args[p_idx + 1], "do it\n\nbackground");
+        assert!(inv.args[p_idx + 1].starts_with("--"));
     }
 
     #[test]

@@ -270,12 +270,14 @@ enum StdinCmd {
     Cancel,
     Answer(kata_core::run::Answer),
     Decide(kata_core::run::Decision),
+    Say(kata_core::run::Message),
 }
 
 /// Parse one engine-stdin control line:
 ///
 /// - `cancel`
 /// - `answer <id> <json-matrix>` — the operator's reply to `ask.requested`
+/// - `say <id> <json-string>` — a message for the agent
 /// - `decide <id> allow|deny [reason]` — the operator's verdict on
 ///   `permission.requested`. The optional trailing reason is free text handed
 ///   to claude on a denial.
@@ -291,6 +293,9 @@ fn parse_stdin_line(line: &str) -> Option<StdinCmd> {
             id: id.trim().to_string(),
             answers,
         }));
+    }
+    if let Some(rest) = line.strip_prefix("say ") {
+        return kata_core::control::parse_say(rest).map(StdinCmd::Say);
     }
     if let Some(rest) = line.strip_prefix("decide ") {
         let rest = rest.trim();
@@ -350,6 +355,7 @@ fn cmd_run(path: &std::path::Path, full_payloads: bool) -> ExitCode {
     // decision inbox. EOF (plain CLI use closes stdin) is a no-op.
     let (answer_tx, answers) = kata_core::run::answer_channel();
     let (decision_tx, decisions) = kata_core::run::decision_channel();
+    let (message_tx, messages) = kata_core::run::message_channel();
     let stdin_flag = cancel.flag();
     std::thread::spawn(move || {
         use std::io::BufRead;
@@ -367,6 +373,9 @@ fn cmd_run(path: &std::path::Path, full_payloads: bool) -> ExitCode {
                 Some(StdinCmd::Decide(d)) => {
                     let _ = decision_tx.send(d);
                 }
+                Some(StdinCmd::Say(m)) => {
+                    let _ = message_tx.send(m);
+                }
                 None => {}
             }
             line.clear();
@@ -381,7 +390,9 @@ fn cmd_run(path: &std::path::Path, full_payloads: bool) -> ExitCode {
     };
 
     let opts = kata_core::run::RunOptions { full_payloads };
-    match kata_core::run::run_with(&spec, &catalog, &cancel, &answers, &decisions, opts, emit) {
+    match kata_core::run::run_with(
+        &spec, &catalog, &cancel, &answers, &decisions, &messages, opts, emit,
+    ) {
         Ok(outcome) => {
             if let Some(p) = &outcome.transcript_path {
                 eprintln!("transcript: {p}");
@@ -413,6 +424,19 @@ mod tests {
             other => panic!("expected Answer, got {other:?}"),
         }
         assert!(parse_stdin_line("garbage").is_none());
+    }
+
+    #[test]
+    fn parses_say_lines() {
+        match parse_stdin_line(r#"say m1 "look at the lexer""#) {
+            Some(StdinCmd::Say(m)) => {
+                assert_eq!(m.id, "m1");
+                assert_eq!(m.text, "look at the lexer");
+            }
+            other => panic!("expected Say, got {other:?}"),
+        }
+        assert!(parse_stdin_line("say").is_none());
+        assert!(parse_stdin_line("say m1").is_none());
     }
 
     #[test]

@@ -89,6 +89,7 @@ export class BuildPage {
   /** The bar's Cancel build: stops every run, which needs no preview and no confirmation. */
   readonly cancelBuild = output<void>();
   readonly answer = output<{ runId: string; id: string; answers: string[][] }>();
+  readonly say = output<{ runId: string; text: string }>();
   readonly decide = output<{ runId: string; id: string; allow: boolean; message: string | null }>();
   readonly goTo = output<string>();
   readonly toggleRun = output<string>();

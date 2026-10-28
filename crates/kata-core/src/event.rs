@@ -181,6 +181,30 @@ pub enum KataEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+    /// A message was accepted and written to Claude's input.
+    #[serde(rename = "message.sent")]
+    MessageSent {
+        id: String,
+        text: String,
+        /// Milliseconds since the Unix epoch.
+        sent_at: u64,
+    },
+    /// Claude took a sent message in.
+    #[serde(rename = "message.read")]
+    MessageRead {
+        id: String,
+        /// Milliseconds since the Unix epoch.
+        read_at: u64,
+    },
+    /// A message was not accepted.
+    #[serde(rename = "message.refused")]
+    MessageRefused {
+        id: String,
+        /// Why: one of [`refusal`]'s constants. The set is open, like
+        /// `decided_by`; treat an unrecognized value as "not sent".
+        reason: String,
+        text: String,
+    },
     #[serde(rename = "run.error")]
     RunError {
         message: String,
@@ -207,6 +231,16 @@ pub enum KataEvent {
         #[serde(default)]
         duration_ms: u64,
     },
+}
+
+/// The `message.refused.reason` values the engine emits today.
+pub mod refusal {
+    /// The run is paused on `ask.requested` or `permission.requested`.
+    pub const WAITING_ON_OPERATOR: &str = "waiting-on-operator";
+    /// Claude's input is already closed.
+    pub const RUN_ENDING: &str = "run-ending";
+    /// The id was already used in this run.
+    pub const REPEATED: &str = "repeated";
 }
 
 /// One changed file in a run's changeset. Part of the `run.diff` event
@@ -342,6 +376,9 @@ pub struct Parsed {
     pub hook: Option<HookFired>,
     /// True when the hook line is a `hook_started` line (not a `hook_response`).
     pub hook_started: bool,
+    /// The `uuid` of a `type: "user"` line Claude echoes with `isReplay: true`:
+    /// a message Kata wrote on its input, taken in. Produces no event.
+    pub replay: Option<String>,
 }
 
 /// Stateful translator for a `stream-json` line sequence. Holds the
@@ -432,6 +469,11 @@ impl StreamParser {
                 }
             }
             Some("user") => {
+                // Claude's echo of a message Kata wrote: content is a string.
+                if v.get("isReplay").and_then(|r| r.as_bool()) == Some(true) {
+                    out.replay = v.get("uuid").and_then(|u| u.as_str()).map(String::from);
+                    return out;
+                }
                 if let Some(content) = v.pointer("/message/content").and_then(|c| c.as_array()) {
                     for block in content {
                         if block.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
@@ -561,6 +603,19 @@ fn parse_hook(v: &serde_json::Value) -> Option<HookFired> {
 /// `tool_use` arrived on an earlier line will have an empty `name` here — use
 /// [`StreamParser`] across a stream to correlate. Defensive: unknown shapes
 /// and malformed JSON yield an empty `Parsed`.
+/// One user message for Claude's streaming input, newline-terminated. Claude
+/// echoes `uuid` back verbatim on the replayed line.
+pub fn user_message_line(uuid: &str, text: &str) -> String {
+    let mut line = serde_json::json!({
+        "type": "user",
+        "message": {"role": "user", "content": text},
+        "uuid": uuid,
+    })
+    .to_string();
+    line.push('\n');
+    line
+}
+
 pub fn parse_stream_line(line: &str) -> Parsed {
     StreamParser::default().push(line)
 }
@@ -991,6 +1046,44 @@ mod tests {
             !s.contains("message"),
             "absent message must be omitted: {s}"
         );
+    }
+
+    #[test]
+    fn message_events_serialize_with_their_type_tags() {
+        let cases = [
+            (
+                KataEvent::MessageSent {
+                    id: "m1".into(),
+                    text: "look at the lexer".into(),
+                    sent_at: 1_700_000_000_000,
+                },
+                "message.sent",
+            ),
+            (
+                KataEvent::MessageRead {
+                    id: "m1".into(),
+                    read_at: 1_700_000_001_000,
+                },
+                "message.read",
+            ),
+            (
+                KataEvent::MessageRefused {
+                    id: "m2".into(),
+                    reason: refusal::REPEATED.into(),
+                    text: "again".into(),
+                },
+                "message.refused",
+            ),
+        ];
+        for (ev, tag) in cases {
+            let json = serde_json::to_string(&ev).unwrap();
+            assert!(json.contains(&format!(r#""type":"{tag}""#)), "{json}");
+            let back: KataEvent = serde_json::from_str(&json).unwrap();
+            assert_eq!(ev, back, "round-trip mismatch for {json}");
+        }
+        assert_eq!(refusal::WAITING_ON_OPERATOR, "waiting-on-operator");
+        assert_eq!(refusal::RUN_ENDING, "run-ending");
+        assert_eq!(refusal::REPEATED, "repeated");
     }
 
     #[test]
@@ -1663,5 +1756,36 @@ mod tests {
             r#"{"type":"system","subtype":"hook_response","hook_event":"PreToolUse","hook_name":"PreToolUse:Bash","hook_id":"h"}"#,
         );
         assert_eq!(p.hook.unwrap().name, "PreToolUse:Bash");
+    }
+
+    #[test]
+    fn user_message_line_shape() {
+        let line = user_message_line("kata-task", "do \"it\"\nnow");
+        assert!(line.ends_with('\n'));
+        assert_eq!(line.matches('\n').count(), 1, "one line: {line:?}");
+        let v: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({
+                "type": "user",
+                "message": {"role": "user", "content": "do \"it\"\nnow"},
+                "uuid": "kata-task",
+            })
+        );
+    }
+
+    #[test]
+    fn replay_line_sets_replay_and_emits_nothing() {
+        let line = r#"{"type":"user","message":{"role":"user","content":"do it"},"parent_tool_use_id":null,"session_id":"5f1c1c8e-0000-4000-8000-000000000001","uuid":"kata-task","timestamp":"2026-10-27T10:00:00.000Z","isReplay":true}"#;
+        let p = parse_stream_line(line);
+        assert_eq!(p.replay.as_deref(), Some("kata-task"));
+        assert!(p.events.is_empty());
+        assert!(!p.starts_turn && p.result.is_none() && p.init.is_none());
+        // A user line without isReplay (a tool result) is not an echo.
+        let p = parse_stream_line(
+            r#"{"type":"user","uuid":"u1","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":"x"}]}}"#,
+        );
+        assert_eq!(p.replay, None);
+        assert_eq!(p.events.len(), 1);
     }
 }

@@ -572,7 +572,7 @@ export function stageRuns(
   for (const l of mine) {
     if (linkStage(l.stage) !== stage || out.has(l.run_id)) continue;
     const kata = `${prefix}${l.stage.replace(":", "-")}`;
-    out.set(l.run_id, byId.get(l.run_id) ?? { id: l.run_id, kata, started_at: l.started_at, isolation: "none" });
+    out.set(l.run_id, byId.get(l.run_id) ?? { id: l.run_id, kata, started_at: l.started_at, isolation: "none", steered: false });
   }
   for (const r of records) {
     if (linked.has(r.id) || out.has(r.id)) continue;

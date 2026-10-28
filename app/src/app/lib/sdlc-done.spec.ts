@@ -9,7 +9,7 @@ const SCOPE = { workspaceId: 'w1', system: 'claims', change: 'c1' };
 const link = (over: Partial<RunLink> = {}): RunLink => ({
   workspace_id: 'w1', system: 'claims', change: 'c1', stage: 'review', run_id: 'r1', started_at: 100, heads: { a: '1111111' }, ...over,
 });
-const record = (id: string, exit: number | null | undefined): RunRecord => ({ id, kata: 'k', started_at: 100, isolation: 'none', exit });
+const record = (id: string, exit: number | null | undefined): RunRecord => ({ id, kata: 'k', started_at: 100, isolation: 'none', steered: false, exit });
 const HEADS = { a: '1111111' };
 
 const result = (kind: 'Passed' | 'Failed' | 'CouldNotRun'): CheckResult => ({

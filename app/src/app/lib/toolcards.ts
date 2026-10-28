@@ -4,7 +4,7 @@
 
 import { diffLines } from "diff";
 import type { StreamEvent } from "./events";
-import type { AskRecord, PermissionRecord } from "./events";
+import type { AskRecord, MessageRecord, PermissionRecord } from "./events";
 
 export type ToolUseEv = Extract<StreamEvent, { type: "tool.use" }>;
 export type ToolResultEv = Extract<StreamEvent, { type: "tool.result" }>;
@@ -27,7 +27,8 @@ export type StreamItem =
 export type PausedItem =
   | StreamItem
   | { kind: "perm"; key: string; p: PermissionRecord }
-  | { kind: "ask"; key: string; a: AskRecord };
+  | { kind: "ask"; key: string; a: AskRecord }
+  | { kind: "msg"; key: string; at: number; m: MessageRecord };
 
 type Slot = { list: StreamItem[]; depth: 0 | 1 };
 
@@ -70,16 +71,19 @@ export function pairToolEvents(events: StreamEvent[]): StreamItem[] {
  *  raw events before it, so it goes after the last top-level item that opened
  *  before that point: a pause between a call and its result lands right after
  *  that call's row. Permissions precede asks at the same slot so the order is
- *  deterministic (a run is only ever paused on one thing at a time). */
+ *  deterministic (a run is only ever paused on one thing at a time). The
+ *  operator's messages splice the same way, after any pause at their slot. */
 export function withPauses(
   items: StreamItem[],
   permissions: PermissionRecord[],
   asks: AskRecord[],
+  messages: MessageRecord[] = [],
 ): PausedItem[] {
   const slotOf = (at: number) => items.filter((it) => it.at < at).length;
   const pauses: PausedItem[][] = Array.from({ length: items.length + 1 }, () => []);
   for (const p of permissions) pauses[slotOf(p.at)].push({ kind: "perm", key: `p:${p.id}`, p });
   for (const a of asks) pauses[slotOf(a.at)].push({ kind: "ask", key: `a:${a.id}`, a });
+  for (const m of messages) pauses[slotOf(m.at)].push({ kind: "msg", key: `m:${m.id}`, at: m.at, m });
   const out: PausedItem[] = [...pauses[0]];
   items.forEach((it, k) => out.push(it, ...pauses[k + 1]));
   return out;

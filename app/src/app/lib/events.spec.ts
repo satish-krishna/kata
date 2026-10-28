@@ -1,4 +1,4 @@
-import { terminalStateFor, statusForExit, isStreamEvent, gutterFor, variantFor, bodyFor, givenFrom, GIVEN_STATUS_LABEL, type GivenStatus, type KataEvent } from "./events";
+import { terminalStateFor, statusForExit, isStreamEvent, gutterFor, variantFor, bodyFor, givenFrom, GIVEN_STATUS_LABEL, messageBox, refusalText, pendingKind, messagesFrom, type GivenStatus, type KataEvent, type RunState, type PendingKind, type MessageRefusal, type MessageBoxView, type AskRecord, type PermissionRecord } from "./events";
 import { runGivenFixture } from "./library";
 
 describe("statusForExit", () => {
@@ -161,5 +161,53 @@ describe("givenFrom", () => {
       "switched-off-no-start-report": "switched off, Claude made no start report",
     };
     expect(GIVEN_STATUS_LABEL).toEqual(expected);
+  });
+});
+
+describe("message helpers", () => {
+  const sent = (id: string, text: string, sent_at: number): KataEvent => ({ type: "message.sent", id, text, sent_at });
+  const read = (id: string, read_at: number): KataEvent => ({ type: "message.read", id, read_at });
+  const log: KataEvent = { type: "log", level: "info", message: "x" };
+
+  it("messageBox decides each reachable row", () => {
+    const refusal = { id: "m", reason: "repeated", text: "again" };
+    const hidden = { shown: false, enabled: false, note: "", restore: null };
+    const cases: [string, RunState, PendingKind, MessageRefusal | null, MessageBoxView][] = [
+      ["1 idle", "idle", "none", null, hidden],
+      ["2 running", "running", "none", null, { shown: true, enabled: true, note: "The agent reads this before its next step.", restore: null }],
+      ["3 running refused", "running", "none", refusal, { shown: true, enabled: true, note: "Not sent: already sent", restore: "again", restoreId: refusal.id }],
+      ["5 awaiting ask", "awaiting", "ask", null, { shown: true, enabled: false, note: "Answer the question first", restore: null }],
+      ["5 awaiting ask refused", "awaiting", "ask", refusal, { shown: true, enabled: false, note: "Answer the question first", restore: null }],
+      ["6 awaiting approval", "awaiting", "approval", null, { shown: true, enabled: false, note: "Decide the approval first", restore: null }],
+      ["8 success", "success", "none", null, hidden],
+      ["8 warning", "warning", "none", refusal, hidden],
+      ["8 error", "error", "ask", null, hidden],
+    ];
+    for (const [name, state, pending, ref, want] of cases) expect(messageBox(state, pending, ref), name).toEqual(want);
+  });
+
+  it("refusalText words the known reasons", () => {
+    expect(refusalText("waiting-on-operator")).toBe("Not sent: answer the agent first");
+    expect(refusalText("run-ending")).toBe("Not sent: the run is ending");
+    expect(refusalText("repeated")).toBe("Not sent: already sent");
+    expect(refusalText("weird")).toBe("Not sent");
+  });
+
+  it("pendingKind finds an open ask, then an open approval", () => {
+    const ask = (answers: string[][] | null): AskRecord => ({ id: "a", questions: [], answers, at: 0 });
+    const perm = (decided: PermissionRecord["decided"]): PermissionRecord => ({ id: "p", tool: "Bash", input_summary: "", decided, at: 0 });
+    expect(pendingKind([ask(null)], [])).toBe("ask");
+    expect(pendingKind([ask([[]])], [perm(null)])).toBe("approval");
+    expect(pendingKind([ask([[]])], [perm({ allow: true, message: null })])).toBe("none");
+    expect(pendingKind([], [])).toBe("none");
+  });
+
+  it("messagesFrom folds a transcript, counting stream rows for at", () => {
+    const refused: KataEvent = { type: "message.refused", id: "m9", reason: "repeated", text: "t" };
+    const got = messagesFrom([log, sent("m1", "one", 10), refused, read("m1", 12), log, sent("m2", "two", 20), read("zz", 30)]);
+    expect(got).toEqual([
+      { id: "m1", text: "one", sent_at: 10, read_at: 12, at: 1 },
+      { id: "m2", text: "two", sent_at: 20, read_at: null, at: 2 },
+    ]);
   });
 });

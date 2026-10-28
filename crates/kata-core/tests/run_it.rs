@@ -42,6 +42,7 @@ fn run_ok_streams_events_and_completes_zero() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -82,6 +83,7 @@ fn run_surfaces_child_stderr_as_log_events() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -97,29 +99,36 @@ fn run_surfaces_child_stderr_as_log_events() {
 
 #[test]
 #[serial]
-fn run_gives_child_noninteractive_stdin_so_it_cannot_block() {
-    // A child that reads stdin must not hang waiting for input it will never get.
-    // Kata gives claude a closed (null) stdin, so the read EOFs immediately and the
-    // run completes; without that, a blocked child would trip the leash timeout.
+fn run_closes_claudes_input_once_the_run_begins_to_end() {
+    // Claude (streaming input) reads the task from its input, reports a result,
+    // then waits for more input until it is closed. The run completes only
+    // because Kata closes that input once the run begins to end; otherwise the
+    // child blocks and the leash timeout fires.
     with_fake("blockstdin");
     let work = tempfile::tempdir().unwrap();
     let mut spec = base_spec(&work.path().to_string_lossy());
-    spec.leash.timeout_secs = Some(2); // guard: a stdin-blocked child times out (124)
+    spec.leash.timeout_secs = Some(5);
     let cancel = CancelToken::new();
     let mut events: Vec<KataEvent> = Vec::new();
+    let started = std::time::Instant::now();
     let outcome = run(
         &spec,
         &[] as &[CatalogEntry],
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
 
     assert_eq!(
         outcome.exit_code, 0,
-        "child blocked on stdin (timed out) instead of completing; events={events:?}"
+        "claude's input was not closed (or the task never arrived); events={events:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "completed only by timeout"
     );
     assert!(matches!(
         events.last().unwrap(),
@@ -144,6 +153,7 @@ fn run_logs_default_timeout_cap_when_unset() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -174,6 +184,7 @@ fn run_reaps_child_that_closes_stdio_but_lingers() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -200,6 +211,7 @@ fn run_invalid_spec_errors_before_spawn() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |_| {},
     )
     .unwrap_err();
@@ -221,6 +233,7 @@ fn run_timeout_kills_child_and_reports_error() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -249,6 +262,7 @@ fn run_cancel_kills_child() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -273,6 +287,7 @@ fn run_max_turns_kills_child() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -306,6 +321,7 @@ fn run_max_turns_counts_messages_not_lines() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -339,6 +355,7 @@ fn run_unlimited_turns_does_not_cap() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -376,6 +393,7 @@ fn run_envreport(spec: &RunSpec, probe: &str) -> Vec<String> {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -521,6 +539,7 @@ fn concurrent_runs_get_divergent_env_without_crosstalk() {
             &cancel,
             &kata_core::run::AnswerRx::default(),
             &kata_core::run::DecisionRx::default(),
+            &kata_core::run::MessageRx::default(),
             |e| events.push(e),
         )
         .unwrap();
@@ -592,6 +611,7 @@ fn worktree_isolation_runs_in_worktree_and_emits_diff() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -658,6 +678,7 @@ fn run_refuses_bare_run_with_unresolved_token_env() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap_err();
@@ -692,6 +713,7 @@ fn worktree_isolation_refuses_non_repo() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap_err();
@@ -727,6 +749,7 @@ fn interactive_run_pauses_and_resumes_on_answer() {
         &cancel,
         &answers,
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| {
             if let KataEvent::AskRequested { id, .. } = &e {
                 tx.send(kata_core::run::Answer {
@@ -781,6 +804,7 @@ fn awaiting_does_not_count_against_the_wall_clock_r4_1() {
         &cancel,
         &answers,
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| {
             if let KataEvent::AskRequested { id, .. } = &e {
                 let tx = tx.clone();
@@ -825,6 +849,7 @@ fn interactive_run_answer_deadline_reaps_with_123() {
         &cancel,
         &answers,
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -853,6 +878,7 @@ fn run_writes_transcript_of_the_event_stream() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -905,6 +931,7 @@ fn run_budget_exhausted_reports_122() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -939,6 +966,7 @@ fn budget_subtype_without_configured_ceiling_is_not_122() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -967,6 +995,7 @@ fn run_survives_when_transcript_cannot_be_written() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -1001,6 +1030,7 @@ fn default_run_in_git_workdir_emits_changeset() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -1037,6 +1067,7 @@ fn default_run_in_non_git_workdir_notes_no_changeset() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -1077,6 +1108,7 @@ fn cancelled_run_reports_duration() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -1122,6 +1154,7 @@ fn run_prompt(spec: &RunSpec, tool: Option<&str>, input: Option<&str>) -> (i32, 
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -1223,6 +1256,7 @@ fn prompt_mode_ask_pauses_until_the_operator_decides() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &decisions,
+        &kata_core::run::MessageRx::default(),
         |e| {
             if let KataEvent::PermissionRequested { id, .. } = &e {
                 tx.send(kata_core::run::Decision {
@@ -1272,6 +1306,7 @@ fn prompt_mode_ask_hits_the_answer_deadline_with_123() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &decisions,
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -1299,6 +1334,7 @@ fn bypass_mode_wires_no_permission_bridge() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -1354,6 +1390,7 @@ fn prompt_mode_writes_a_settings_file_with_the_spec_rules_verbatim() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -1397,6 +1434,7 @@ fn auto_mode_writes_ask_rules_into_the_settings_file() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap();
@@ -1442,6 +1480,7 @@ fn auto_mode_routes_a_reaching_call_to_the_operator() {
         &cancel,
         &kata_core::run::AnswerRx::default(),
         &decisions,
+        &kata_core::run::MessageRx::default(),
         |e| {
             if let KataEvent::PermissionRequested { id, .. } = &e {
                 tx.send(kata_core::run::Decision {
@@ -1520,6 +1559,7 @@ fn non_interactive_run_still_pauses_on_a_question_for_the_operator() {
         &cancel,
         &answers,
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| {
             if let KataEvent::AskRequested { id, .. } = &e {
                 answer_tx
@@ -1574,6 +1614,7 @@ fn a_question_nobody_can_answer_ends_the_run_with_123() {
             &cancel,
             &answers,
             &kata_core::run::DecisionRx::default(),
+            &kata_core::run::MessageRx::default(),
             |e| events.push(e),
         )
         .unwrap();
@@ -1604,6 +1645,7 @@ fn run_subagent(opts: RunOptions) -> Vec<KataEvent> {
         &CancelToken::new(),
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         opts,
         |e| events.push(e),
     )
@@ -2293,6 +2335,7 @@ body
             &cancel,
             &kata_core::run::AnswerRx::default(),
             &kata_core::run::DecisionRx::default(),
+            &kata_core::run::MessageRx::default(),
             |e| events.push(e),
         )
         .unwrap();
@@ -2640,6 +2683,7 @@ impl Rig {
             &CancelToken::new(),
             &kata_core::run::AnswerRx::default(),
             &kata_core::run::DecisionRx::default(),
+            &kata_core::run::MessageRx::default(),
             |e| {
                 on_event(&e);
                 events.push(e);
@@ -3125,6 +3169,7 @@ fn a_run_refused_before_spawning_still_records_what_it_was_given() {
         &CancelToken::new(),
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap_err();
@@ -3143,6 +3188,7 @@ fn a_run_refused_before_spawning_still_records_what_it_was_given() {
         &CancelToken::new(),
         &kata_core::run::AnswerRx::default(),
         &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
         |e| events.push(e),
     )
     .unwrap_err();
@@ -3171,4 +3217,664 @@ fn run_given_carries_the_runs_options() {
         .expect("a run.given");
     assert_eq!(options.required_plugins, vec!["ai-sdlc".to_string()]);
     assert!(options.build);
+}
+
+fn run_collect(workdir: &str) -> (Result<kata_core::run::RunOutcome, RunError>, Vec<KataEvent>) {
+    let cancel = CancelToken::new();
+    let mut events: Vec<KataEvent> = Vec::new();
+    let result = run(
+        &base_spec(workdir),
+        &[] as &[CatalogEntry],
+        &cancel,
+        &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
+        &kata_core::run::MessageRx::default(),
+        |e| events.push(e),
+    );
+    (result, events)
+}
+
+#[test]
+#[serial]
+fn run_refuses_too_old_or_unreadable_claude() {
+    with_fake("ok");
+    let work = tempfile::tempdir().unwrap();
+    let dir = work.path().to_string_lossy().to_string();
+
+    std::env::set_var("KATA_FAKE_CLAUDE_VERSION", "2.0.1 (Claude Code)");
+    let (result, events) = run_collect(&dir);
+    assert!(matches!(result, Err(RunError::ClaudeVersion(_))));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, KataEvent::RunStarted { .. })));
+    let errors: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            KataEvent::RunError {
+                message, exit_code, ..
+            } => Some((message.clone(), *exit_code)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(errors.len(), 1, "{events:?}");
+    assert_eq!(errors[0].1, 2);
+    assert!(errors[0].0.contains("2.0.1") && errors[0].0.contains("2.1.311"));
+
+    std::env::set_var("KATA_FAKE_CLAUDE_VERSION", "garbage");
+    let (result, events) = run_collect(&dir);
+    std::env::remove_var("KATA_FAKE_CLAUDE_VERSION");
+    assert!(matches!(result, Err(RunError::ClaudeVersion(_))));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, KataEvent::RunStarted { .. })));
+    let message = events
+        .iter()
+        .find_map(|e| match e {
+            KataEvent::RunError { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .expect("a run.error");
+    assert!(message.contains("could not read"), "{message}");
+}
+
+#[test]
+#[serial]
+fn unsteered_run_still_refuses_too_old_claude() {
+    with_fake("ok");
+    let work = tempfile::tempdir().unwrap();
+    std::env::set_var("KATA_FAKE_CLAUDE_VERSION", "2.1.310");
+    let (result, events) = run_collect(&work.path().to_string_lossy());
+    std::env::remove_var("KATA_FAKE_CLAUDE_VERSION");
+    assert!(matches!(result, Err(RunError::ClaudeVersion(_))));
+    assert!(!events.iter().any(|e| matches!(
+        e,
+        KataEvent::RunStarted { .. } | KataEvent::AssistantText { .. }
+    )));
+}
+
+// ---------------------------------------------------------------------------
+// Steering a live run: messages the operator sends while the agent works. The
+// `steer` fake takes one user message per request, echoes it when it takes it
+// in, and answers it. Every test synchronizes on events (the emit callback
+// sends the message when a given event arrives) instead of sleeping.
+// ---------------------------------------------------------------------------
+
+use kata_core::run::{message_channel, Message};
+
+/// Sets environment variables for one test and removes them when it ends, even
+/// when an assertion panics, so the next serial test starts clean.
+struct EnvGuard(Vec<&'static str>);
+
+impl EnvGuard {
+    fn set(vars: &[(&'static str, &str)]) -> Self {
+        for (k, v) in vars {
+            std::env::set_var(k, v);
+        }
+        EnvGuard(vars.iter().map(|(k, _)| *k).collect())
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        for k in &self.0 {
+            std::env::remove_var(k);
+        }
+    }
+}
+
+fn msg(id: &str, text: &str) -> Message {
+    Message {
+        id: id.into(),
+        text: text.into(),
+    }
+}
+
+fn sent_ids(events: &[KataEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            KataEvent::MessageSent { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn read_ids(events: &[KataEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            KataEvent::MessageRead { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `(id, reason, text)` of each refusal, in stream order.
+fn refusals(events: &[KataEvent]) -> Vec<(String, String, String)> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            KataEvent::MessageRefused { id, reason, text } => {
+                Some((id.clone(), reason.clone(), text.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn is_first_text(e: &KataEvent) -> bool {
+    matches!(e, KataEvent::AssistantText { .. })
+}
+
+/// Run the `steer` fake with the given inboxes. `on_event` sees every event as it
+/// is emitted and is where a test sends its messages and answers.
+fn run_steer(
+    spec: &RunSpec,
+    answers: &kata_core::run::AnswerRx,
+    decisions: &kata_core::run::DecisionRx,
+    messages: &kata_core::run::MessageRx,
+    cancel: &CancelToken,
+    mut on_event: impl FnMut(&KataEvent),
+) -> (i32, Vec<KataEvent>) {
+    with_fake("steer");
+    let mut events: Vec<KataEvent> = Vec::new();
+    let outcome = run(
+        spec,
+        &[] as &[CatalogEntry],
+        cancel,
+        answers,
+        decisions,
+        messages,
+        |e| {
+            on_event(&e);
+            events.push(e);
+        },
+    )
+    .unwrap();
+    (outcome.exit_code, events)
+}
+
+/// Run `steer` with only a message inbox, sending `to_send` when `trigger` first matches.
+fn run_steer_sending(
+    spec: &RunSpec,
+    to_send: Vec<Message>,
+    trigger: impl Fn(&KataEvent) -> bool,
+) -> (i32, Vec<KataEvent>) {
+    let (tx, messages) = message_channel();
+    let mut sent = false;
+    run_steer(
+        spec,
+        &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
+        &messages,
+        &CancelToken::new(),
+        |e| {
+            if !sent && trigger(e) {
+                sent = true;
+                for m in &to_send {
+                    tx.send(m.clone()).unwrap();
+                }
+            }
+        },
+    )
+}
+
+#[test]
+#[serial]
+fn steer_message_is_written_as_a_user_message_and_marked_read() {
+    let work = tempfile::tempdir().unwrap();
+    let spec = base_spec(&work.path().to_string_lossy());
+    let (code, events) =
+        run_steer_sending(&spec, vec![msg("m1", "look at the lexer")], is_first_text);
+
+    assert_eq!(code, 0, "{events:?}");
+    let sent_at = events.iter().find_map(|e| match e {
+        KataEvent::MessageSent { id, text, sent_at }
+            if id == "m1" && text == "look at the lexer" =>
+        {
+            Some(*sent_at)
+        }
+        _ => None,
+    });
+    let read_at = events.iter().find_map(|e| match e {
+        KataEvent::MessageRead { id, read_at } if id == "m1" => Some(*read_at),
+        _ => None,
+    });
+    let (sent_at, read_at) = (
+        sent_at.expect("message.sent"),
+        read_at.expect("message.read"),
+    );
+    assert!(sent_at > 0 && read_at >= sent_at, "{sent_at} {read_at}");
+    let sent_pos = events
+        .iter()
+        .position(|e| matches!(e, KataEvent::MessageSent { .. }))
+        .unwrap();
+    let read_pos = events
+        .iter()
+        .position(|e| matches!(e, KataEvent::MessageRead { .. }))
+        .unwrap();
+    assert!(sent_pos < read_pos);
+    // The fake answers a user message with `ack: <text>`, so Claude received it as one.
+    assert!(
+        assistant_texts(&events).contains(&"ack: look at the lexer".to_string()),
+        "{events:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn steer_run_carries_on_after_a_message_without_restarting() {
+    let work = tempfile::tempdir().unwrap();
+    let spec = base_spec(&work.path().to_string_lossy());
+    let (code, events) = run_steer_sending(&spec, vec![msg("m1", "go left")], is_first_text);
+
+    assert_eq!(code, 0);
+    let started = events
+        .iter()
+        .filter(|e| matches!(e, KataEvent::RunStarted { .. }))
+        .count();
+    let completed = events
+        .iter()
+        .filter(|e| matches!(e, KataEvent::RunCompleted { exit_code: 0, .. }))
+        .count();
+    assert_eq!((started, completed), (1, 1));
+    let texts = assistant_texts(&events);
+    let before = texts
+        .iter()
+        .position(|t| t.starts_with("ack: ") && !t.contains("go left"));
+    let after = texts.iter().position(|t| t == "ack: go left");
+    assert!(
+        before.is_some() && after.is_some() && before < after,
+        "the work before the message stays in the stream: {texts:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn steer_two_messages_are_written_and_read_in_order() {
+    let work = tempfile::tempdir().unwrap();
+    let spec = base_spec(&work.path().to_string_lossy());
+    let (code, events) = run_steer_sending(
+        &spec,
+        vec![msg("a", "Use the lexer tests"), msg("b", "Skip the docs")],
+        is_first_text,
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(sent_ids(&events), ["a", "b"]);
+    assert_eq!(read_ids(&events), ["a", "b"]);
+    let texts = assistant_texts(&events);
+    let first = texts.iter().position(|t| t == "ack: Use the lexer tests");
+    let second = texts.iter().position(|t| t == "ack: Skip the docs");
+    assert!(
+        first.is_some() && second.is_some() && first < second,
+        "{texts:?}"
+    );
+}
+
+#[test]
+#[serial]
+fn steer_message_after_a_read_is_accepted() {
+    let work = tempfile::tempdir().unwrap();
+    let spec = base_spec(&work.path().to_string_lossy());
+    let (tx, messages) = message_channel();
+    let mut first_sent = false;
+    let mut second_sent = false;
+    let (code, events) = run_steer(
+        &spec,
+        &kata_core::run::AnswerRx::default(),
+        &kata_core::run::DecisionRx::default(),
+        &messages,
+        &CancelToken::new(),
+        |e| {
+            if !first_sent && is_first_text(e) {
+                first_sent = true;
+                tx.send(msg("m1", "one")).unwrap();
+            }
+            // The operator sends again once the first has been read.
+            if !second_sent && matches!(e, KataEvent::MessageRead { id, .. } if id == "m1") {
+                second_sent = true;
+                tx.send(msg("m2", "two")).unwrap();
+            }
+        },
+    );
+
+    assert_eq!(code, 0);
+    assert_eq!(sent_ids(&events), ["m1", "m2"]);
+    assert_eq!(read_ids(&events), ["m1", "m2"]);
+    assert!(refusals(&events).is_empty());
+}
+
+/// One plain case of the R4.1 outline: send "change course" when `trigger` matches.
+fn state_case(
+    env: &[(&'static str, &str)],
+    trigger: fn(&KataEvent) -> bool,
+) -> (i32, Vec<KataEvent>) {
+    let work = tempfile::tempdir().unwrap();
+    let spec = base_spec(&work.path().to_string_lossy());
+    let _env = EnvGuard::set(env);
+    run_steer_sending(&spec, vec![msg("m1", "change course")], trigger)
+}
+
+#[test]
+#[serial]
+fn steer_acceptance_by_run_state() {
+    // Row: the agent is working on a step. Sent as the first turn begins.
+    let (code, events) = state_case(&[], |e| matches!(e, KataEvent::Turn { n: 1, .. }));
+    assert_eq!(code, 0);
+    assert_eq!(sent_ids(&events), ["m1"]);
+    assert_eq!(read_ids(&events), ["m1"]);
+    assert!(refusals(&events).is_empty());
+
+    // Row: the agent is between steps. Two turns 300 ms apart; sent after the first.
+    let (code, events) = state_case(
+        &[("KATA_FAKE_STEP_TURNS", "2"), ("KATA_FAKE_STEP_MS", "300")],
+        is_first_text,
+    );
+    assert_eq!(code, 0);
+    assert_eq!(sent_ids(&events), ["m1"]);
+    assert_eq!(read_ids(&events), ["m1"]);
+    assert!(refusals(&events).is_empty());
+
+    // Row: the agent has just finished its work and the run has not begun to end.
+    // The message is sent from the callback of the last turn, so it is in the
+    // engine's inbox before the result line is read.
+    let (code, events) = state_case(&[("KATA_FAKE_STEP_MS", "0")], is_first_text);
+    assert_eq!(code, 0);
+    assert_eq!(sent_ids(&events), ["m1"]);
+    assert_eq!(read_ids(&events), ["m1"]);
+    assert!(refusals(&events).is_empty());
+    assert!(matches!(
+        events.last().unwrap(),
+        KataEvent::RunCompleted { exit_code: 0, .. }
+    ));
+    assert_eq!(
+        assistant_texts(&events).last().map(String::as_str),
+        Some("ack: change course")
+    );
+
+    // Row: the run has begun to end. The fake prints one more line after its result,
+    // which the engine reads after it closed Claude's input; the message goes out then.
+    let (code, events) = state_case(
+        &[("KATA_FAKE_LATE_TEXT", "late")],
+        |e| matches!(e, KataEvent::AssistantText { text, .. } if text == "late"),
+    );
+    assert_eq!(code, 0);
+    assert!(sent_ids(&events).is_empty(), "{events:?}");
+    assert_eq!(
+        refusals(&events),
+        [("m1".into(), "run-ending".into(), "change course".into())]
+    );
+
+    // Row: the run waits on the operator's answer to a question. The answer goes
+    // out only after the refusal is seen.
+    {
+        let work = tempfile::tempdir().unwrap();
+        let mut spec = base_spec(&work.path().to_string_lossy());
+        spec.interactive.enabled = true;
+        let _env = EnvGuard::set(&[("KATA_FAKE_ASK_AT", "1")]);
+        let (msg_tx, messages) = message_channel();
+        let (answer_tx, answers) = kata_core::run::answer_channel();
+        let (code, events) = run_steer(
+            &spec,
+            &answers,
+            &kata_core::run::DecisionRx::default(),
+            &messages,
+            &CancelToken::new(),
+            |e| match e {
+                KataEvent::AskRequested { .. } => msg_tx.send(msg("m1", "change course")).unwrap(),
+                KataEvent::MessageRefused { .. } => answer_tx
+                    .send(kata_core::run::Answer {
+                        id: "q1".into(),
+                        answers: vec![vec!["ok".into()]],
+                    })
+                    .unwrap(),
+                _ => {}
+            },
+        );
+        assert_eq!(code, 0);
+        assert!(sent_ids(&events).is_empty(), "{events:?}");
+        assert_eq!(
+            refusals(&events),
+            [(
+                "m1".into(),
+                "waiting-on-operator".into(),
+                "change course".into()
+            )]
+        );
+    }
+
+    // Row: the run waits on the operator's approval of an action.
+    {
+        let work = tempfile::tempdir().unwrap();
+        let mut spec = prompt_spec(&work.path().to_string_lossy());
+        spec.permissions.unmatched = kata_core::spec::UnmatchedPolicy::Ask;
+        spec.interactive.enabled = true;
+        let _env = EnvGuard::set(&[("KATA_FAKE_APPROVE_AT", "1")]);
+        let (msg_tx, messages) = message_channel();
+        let (decision_tx, decisions) = kata_core::run::decision_channel();
+        let (code, events) = run_steer(
+            &spec,
+            &kata_core::run::AnswerRx::default(),
+            &decisions,
+            &messages,
+            &CancelToken::new(),
+            |e| match e {
+                KataEvent::PermissionRequested { .. } => {
+                    msg_tx.send(msg("m1", "change course")).unwrap()
+                }
+                KataEvent::MessageRefused { .. } => decision_tx
+                    .send(kata_core::run::Decision {
+                        id: "p1".into(),
+                        allow: true,
+                        message: None,
+                    })
+                    .unwrap(),
+                _ => {}
+            },
+        );
+        assert_eq!(code, 0);
+        assert!(sent_ids(&events).is_empty(), "{events:?}");
+        assert_eq!(
+            refusals(&events),
+            [(
+                "m1".into(),
+                "waiting-on-operator".into(),
+                "change course".into()
+            )]
+        );
+    }
+}
+
+/// One ending of the R5.1 outline: the exit code, and a message that was sent and
+/// never read.
+fn assert_unread_at_ending(code: i32, want: i32, events: &[KataEvent], what: &str) {
+    assert_eq!(code, want, "{what}: {events:?}");
+    assert_eq!(sent_ids(events), ["m1"], "{what}: {events:?}");
+    assert!(read_ids(events).is_empty(), "{what}: {events:?}");
+}
+
+#[test]
+#[serial]
+fn steer_unread_message_survives_each_ending() {
+    let work = tempfile::tempdir().unwrap();
+    let dir = work.path().to_string_lossy().into_owned();
+    let one = || vec![msg("m1", "later")];
+
+    // 124: the step outlasts the time limit.
+    {
+        let _env = EnvGuard::set(&[("KATA_FAKE_STEP_MS", "30000")]);
+        let mut spec = base_spec(&dir);
+        spec.leash.timeout_secs = Some(2);
+        let (code, events) = run_steer_sending(&spec, one(), is_first_text);
+        assert_unread_at_ending(code, 124, &events, "time limit");
+    }
+    // 125: the cap is reached inside the step, after the message was accepted.
+    {
+        let _env = EnvGuard::set(&[("KATA_FAKE_STEP_TURNS", "3")]);
+        let mut spec = base_spec(&dir);
+        spec.leash.max_turns = Some(2);
+        let (code, events) = run_steer_sending(&spec, one(), is_first_text);
+        assert_unread_at_ending(code, 125, &events, "turn cap");
+    }
+    // 122: the task's request ends on the ceiling while the message is queued.
+    {
+        let _env = EnvGuard::set(&[("KATA_FAKE_BUDGET_AT", "1"), ("KATA_FAKE_STEP_MS", "200")]);
+        let mut spec = base_spec(&dir);
+        spec.leash.max_budget_usd = Some(0.01);
+        let (code, events) = run_steer_sending(&spec, one(), is_first_text);
+        assert_unread_at_ending(code, 122, &events, "budget");
+    }
+    // 130: cancelled once the message has been announced as sent.
+    {
+        let _env = EnvGuard::set(&[("KATA_FAKE_STEP_MS", "30000")]);
+        let spec = base_spec(&dir);
+        let (tx, messages) = message_channel();
+        let cancel = CancelToken::new();
+        let mut sent = false;
+        let c = cancel.clone();
+        let (code, events) = run_steer(
+            &spec,
+            &kata_core::run::AnswerRx::default(),
+            &kata_core::run::DecisionRx::default(),
+            &messages,
+            &cancel,
+            |e| {
+                if !sent && is_first_text(e) {
+                    sent = true;
+                    tx.send(msg("m1", "later")).unwrap();
+                }
+                if matches!(e, KataEvent::MessageSent { .. }) {
+                    c.cancel();
+                }
+            },
+        );
+        assert_unread_at_ending(code, 130, &events, "cancel");
+    }
+    // 123: the request that takes the message first asks a question, and nobody can answer.
+    {
+        let _env = EnvGuard::set(&[("KATA_FAKE_ASK_AT", "2")]);
+        let spec = base_spec(&dir);
+        let (code, events) = run_steer_sending(&spec, one(), is_first_text);
+        assert_unread_at_ending(code, 123, &events, "nobody answered");
+    }
+    // The agent's own failure code: it exits 1 in the middle of the task.
+    {
+        let _env = EnvGuard::set(&[("KATA_FAKE_FAIL_AT", "1")]);
+        let spec = base_spec(&dir);
+        let (code, events) = run_steer_sending(&spec, one(), is_first_text);
+        assert_unread_at_ending(code, 1, &events, "agent failed");
+    }
+}
+
+#[test]
+#[serial]
+fn steer_operator_wait_after_messages_still_pauses_the_clock() {
+    // The message is accepted, then the request that takes it asks a question the
+    // operator answers after 3 seconds, past the 2-second work limit.
+    let _env = EnvGuard::set(&[("KATA_FAKE_ASK_AT", "2")]);
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.leash.timeout_secs = Some(2);
+    let (msg_tx, messages) = message_channel();
+    let (answer_tx, answers) = kata_core::run::answer_channel();
+    let mut sent = false;
+    let (code, events) = run_steer(
+        &spec,
+        &answers,
+        &kata_core::run::DecisionRx::default(),
+        &messages,
+        &CancelToken::new(),
+        |e| {
+            if !sent && is_first_text(e) {
+                sent = true;
+                msg_tx.send(msg("m1", "later")).unwrap();
+            }
+            if let KataEvent::AskRequested { id, .. } = e {
+                let tx = answer_tx.clone();
+                let id = id.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(3));
+                    let _ = tx.send(kata_core::run::Answer {
+                        id,
+                        answers: vec![vec!["ok".into()]],
+                    });
+                });
+            }
+        },
+    );
+    assert_eq!(code, 0, "{events:?}");
+    assert_eq!(read_ids(&events), ["m1"]);
+}
+
+#[test]
+#[serial]
+fn steer_turns_on_a_message_count_toward_the_cap() {
+    // Two turns for the task, two for the message: the cap of 3 is reached on the message.
+    let _env = EnvGuard::set(&[("KATA_FAKE_STEP_TURNS", "2")]);
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.leash.max_turns = Some(3);
+    let (code, events) = run_steer_sending(&spec, vec![msg("m1", "more")], is_first_text);
+    assert_eq!(code, 125, "{events:?}");
+    assert_eq!(
+        read_ids(&events),
+        ["m1"],
+        "the cap was reached on the message"
+    );
+}
+
+#[test]
+#[serial]
+fn steer_spending_on_a_message_reaches_the_ceiling() {
+    // The task's request succeeds; the message's request is the one that ends on the ceiling.
+    let _env = EnvGuard::set(&[("KATA_FAKE_BUDGET_AT", "2")]);
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.leash.max_budget_usd = Some(0.015);
+    let (code, events) = run_steer_sending(&spec, vec![msg("m1", "more")], is_first_text);
+    assert_eq!(code, 122, "{events:?}");
+    assert_eq!(read_ids(&events), ["m1"]);
+}
+
+#[test]
+#[serial]
+fn steer_waiting_message_does_not_pause_the_clock() {
+    let _env = EnvGuard::set(&[("KATA_FAKE_STEP_MS", "5000")]);
+    let work = tempfile::tempdir().unwrap();
+    let mut spec = base_spec(&work.path().to_string_lossy());
+    spec.leash.timeout_secs = Some(2);
+    let started = std::time::Instant::now();
+    let (code, events) = run_steer_sending(&spec, vec![msg("m1", "later")], is_first_text);
+    let elapsed = started.elapsed();
+    assert_eq!(code, 124, "{events:?}");
+    assert_eq!(sent_ids(&events), ["m1"]);
+    assert!(
+        elapsed >= Duration::from_secs(2) && elapsed < Duration::from_secs(4),
+        "ended at {elapsed:?}, not about 2s"
+    );
+}
+
+#[test]
+#[serial]
+fn steer_totals_cover_work_on_messages() {
+    let _env = EnvGuard::set(&[("KATA_FAKE_STEP_MS", "100")]);
+    let work = tempfile::tempdir().unwrap();
+    let spec = base_spec(&work.path().to_string_lossy());
+    let (code, events) =
+        run_steer_sending(&spec, vec![msg("a", "one"), msg("b", "two")], is_first_text);
+    assert_eq!(code, 0);
+    match events.last().unwrap() {
+        KataEvent::RunCompleted {
+            num_turns,
+            cost_usd,
+            duration_ms,
+            ..
+        } => {
+            assert_eq!(*num_turns, 3, "the task and both messages, one turn each");
+            assert!((cost_usd.unwrap() - 0.03).abs() < 1e-9, "{cost_usd:?}");
+            assert!(*duration_ms >= 300, "{duration_ms}");
+        }
+        other => panic!("expected run.completed, got {other:?}"),
+    }
 }

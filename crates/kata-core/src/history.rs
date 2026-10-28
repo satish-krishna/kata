@@ -25,6 +25,8 @@ pub struct RunRecord {
     pub duration_ms: Option<u64>,
     #[cfg_attr(feature = "ts", ts(optional = nullable))]
     pub result: Option<String>,
+    /// True when the operator's message was accepted during the run.
+    pub steered: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -187,7 +189,16 @@ fn build_record(stem: &str, events: &[KataEvent]) -> Option<RunRecord> {
         cost_usd,
         duration_ms,
         result,
+        steered: is_steered(events),
     })
+}
+
+/// Whether the operator's message was accepted during the run: a
+/// `message.sent` event. Refusals do not count.
+pub fn is_steered(events: &[KataEvent]) -> bool {
+    events
+        .iter()
+        .any(|e| matches!(e, KataEvent::MessageSent { .. }))
 }
 
 #[cfg(test)]
@@ -280,6 +291,75 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].exit, None);
         assert_eq!(runs[0].result, None);
+    }
+
+    const STEERED: &str = concat!(
+        r#"{"type":"run.started","spec":"triage","model":null,"workdir":"/w","isolation":"none"}"#,
+        "\n",
+        r#"{"type":"message.sent","id":"m1","text":"look at the lexer","sent_at":1700000000000}"#,
+        "\n",
+        r#"{"type":"message.read","id":"m1","read_at":1700000001000}"#,
+        "\n",
+        r#"{"type":"run.completed","exit_code":0,"is_error":false,"num_turns":4,"cost_usd":0.041,"duration_ms":48120,"result":"done"}"#,
+        "\n",
+    );
+    const REFUSED_ONLY: &str = concat!(
+        r#"{"type":"run.started","spec":"triage","model":null,"workdir":"/w","isolation":"none"}"#,
+        "\n",
+        r#"{"type":"message.refused","id":"m2","reason":"repeated","text":"again"}"#,
+        "\n",
+        r#"{"type":"run.completed","exit_code":0,"is_error":false,"num_turns":4,"cost_usd":0.041,"duration_ms":48120,"result":"done"}"#,
+        "\n",
+    );
+
+    #[test]
+    #[serial]
+    fn steered_only_when_a_message_was_accepted() {
+        let _h = seed(&[
+            ("triage-20260618T100000Z.jsonl", STEERED),
+            ("triage-20260618T110000Z.jsonl", COMPLETED),
+        ]);
+        let runs = list_runs();
+        let steered = runs
+            .iter()
+            .find(|r| r.id == "triage-20260618T100000Z")
+            .unwrap();
+        let plain = runs
+            .iter()
+            .find(|r| r.id == "triage-20260618T110000Z")
+            .unwrap();
+        assert!(steered.steered);
+        assert!(!plain.steered);
+    }
+
+    #[test]
+    #[serial]
+    fn refused_message_does_not_mark_steered() {
+        let _h = seed(&[("triage-20260618T100000Z.jsonl", REFUSED_ONLY)]);
+        let runs = list_runs();
+        assert_eq!(runs.len(), 1);
+        assert!(!runs[0].steered);
+    }
+
+    #[test]
+    #[serial]
+    fn load_run_keeps_message_events() {
+        let _h = seed(&[("triage-20260618T100000Z.jsonl", STEERED)]);
+        let detail = load_run("triage-20260618T100000Z").unwrap();
+        assert!(detail.events.iter().any(|e| matches!(
+            e,
+            KataEvent::MessageSent {
+                sent_at: 1_700_000_000_000,
+                ..
+            }
+        )));
+        assert!(detail.events.iter().any(|e| matches!(
+            e,
+            KataEvent::MessageRead {
+                read_at: 1_700_000_001_000,
+                ..
+            }
+        )));
     }
 
     #[test]

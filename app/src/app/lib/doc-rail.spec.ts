@@ -3,7 +3,7 @@ import type { RunRecord } from '@bindings/RunRecord';
 import { docStatus, recentRuns, runResultLabel, runTime, usedBy } from './doc-rail';
 
 const secs = (y: number, mo: number, d: number, h: number, mi: number) => Math.floor(new Date(y, mo, d, h, mi).getTime() / 1000);
-const record = (id: string, started_at: number, exit?: number | null): RunRecord => ({ id, kata: 'sdlc-claims-c1-intent', started_at, isolation: 'none', exit });
+const record = (id: string, started_at: number, exit?: number | null): RunRecord => ({ id, kata: 'sdlc-claims-c1-intent', started_at, isolation: 'none', steered: false, exit });
 
 describe('docStatus', () => {
   it.each([

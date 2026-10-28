@@ -805,6 +805,8 @@ export class ChangePageViewModel {
   readonly events = this.runs.events;
   readonly summary = this.runs.summary;
   readonly asks = this.runs.asks;
+  readonly messages = this.runs.messages;
+  readonly messageRefusal = this.runs.refusal;
   readonly permissions = this.runs.permissions;
   readonly given = this.runs.given;
   readonly leftovers = this.runner.leftovers;
@@ -1126,6 +1128,10 @@ export class ChangePageViewModel {
 
   answer(e: { id: string; answers: string[][] }): void {
     this.lock.answer(e.id, e.answers);
+  }
+
+  say(text: string): void {
+    this.lock.say(text);
   }
 
   decide(e: { id: string; allow: boolean; message: string | null }): void {

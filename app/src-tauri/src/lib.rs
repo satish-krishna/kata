@@ -77,12 +77,17 @@ fn validate_spec(spec: RunSpec) -> Vec<String> {
 /// inside it, so the table can tell which runs belong to a build. Every relayed
 /// event is wrapped as `{ runId, event }`.
 #[tauri::command]
-fn run_spec(
+async fn run_spec(
     app: AppHandle,
-    control: State<RunControl>,
+    control: State<'_, RunControl>,
     spec: RunSpec,
     group: Option<String>,
 ) -> Result<String, String> {
+    // Refuse an old Claude Code before anything is claimed or spawned. The probe
+    // blocks, so it runs off the async worker and ahead of the table lock.
+    tauri::async_runtime::spawn_blocking(claude_ready)
+        .await
+        .map_err(|e| e.to_string())??;
     // Hold the table across claim, spawn and insert so two starts cannot both
     // pass the claim.
     let mut table = control.state.lock().unwrap();
@@ -987,15 +992,56 @@ fn submit_answer(
     write_to_run(&control, &run_id, &line);
 }
 
-/// Write one line to the stdin of run `run_id`'s engine, and to no other run's.
-fn write_to_run(control: &RunControl, run_id: &str, line: &str) {
+/// Something a line can be written to: a run's engine stdin, or a fake in a test.
+trait InputSink {
+    fn send(&mut self, bytes: &[u8]);
+}
+
+impl InputSink for tauri_plugin_shell::process::CommandChild {
+    fn send(&mut self, bytes: &[u8]) {
+        let _ = self.write(bytes);
+    }
+}
+
+/// Write one line to the input of run `run_id` in `table`, and to no other run's.
+fn write_line<C: InputSink>(table: &mut RunTable<C>, run_id: &str, line: &str) {
     let Some(run_id) = parse_run_id(run_id) else {
         return;
     };
-    let mut table = control.state.lock().unwrap();
     if let Some(child) = table.get_mut(run_id).and_then(|r| r.child.as_mut()) {
-        let _ = child.write(line.as_bytes());
+        child.send(line.as_bytes());
     }
+}
+
+/// Check the installed Claude Code before a run starts, with the same function the
+/// engine uses, so the Workbench refuses a run the engine would refuse. Blocks for
+/// up to the version probe's limit; callers keep it off the UI thread.
+fn claude_ready() -> Result<(), String> {
+    kata_core::claude::check_installed(&kata_core::claude::program())
+        .map(|_| ())
+        .map_err(|refusal| refusal.to_string())
+}
+
+/// Write one line to the stdin of run `run_id`'s engine, and to no other run's.
+fn write_to_run(control: &RunControl, run_id: &str, line: &str) {
+    write_line(&mut control.state.lock().unwrap(), run_id, line);
+}
+
+/// Send the operator's message to a live run: write a `say <id> <json>` line to that
+/// run's engine stdin and to no other run's. The line is built by the engine's own
+/// formatter, never here. The engine answers with `message.sent`, `message.read` or
+/// `message.refused` on the event channel.
+#[tauri::command]
+fn send_message(
+    control: State<RunControl>,
+    run_id: String,
+    id: String,
+    text: String,
+) -> Result<(), String> {
+    let line = kata_core::control::say_line(&id, &text)
+        .ok_or_else(|| "a message id must be non-empty and contain no whitespace".to_string())?;
+    write_to_run(&control, &run_id, &line);
+    Ok(())
 }
 
 /// Send the operator's verdict on a paused permission check: write a
@@ -1081,6 +1127,7 @@ pub fn run() {
             run_spec,
             cancel_run,
             submit_answer,
+            send_message,
             submit_decision,
             list_runs,
             load_run,
@@ -1229,6 +1276,73 @@ mod tests {
                 StageEvent::Done { pass: second },
             ]
         );
+    }
+
+    #[derive(Default)]
+    struct FakeInput(Vec<u8>);
+
+    impl InputSink for FakeInput {
+        fn send(&mut self, bytes: &[u8]) {
+            self.0.extend_from_slice(bytes);
+        }
+    }
+
+    fn live_with_input(id: u64) -> LiveRun<FakeInput> {
+        LiveRun {
+            id,
+            workdir: std::path::PathBuf::from(format!("D:/ws/repo{id}")),
+            group: Some("build:s/c".into()),
+            child: Some(FakeInput::default()),
+        }
+    }
+
+    #[test]
+    fn send_message_writes_only_to_the_named_run() {
+        let mut table = RunTable::<FakeInput>::default();
+        table.insert(live_with_input(1));
+        table.insert(live_with_input(2));
+        let line = kata_core::control::say_line("m1", "Stop editing the parser").unwrap();
+        write_line(&mut table, "2", &line);
+        let sent = |t: &mut RunTable<FakeInput>, id| {
+            t.get_mut(id).unwrap().child.as_ref().unwrap().0.clone()
+        };
+        assert_eq!(sent(&mut table, 2), line.as_bytes());
+        assert!(sent(&mut table, 1).is_empty());
+    }
+
+    /// The tests that point `KATA_CLAUDE_BIN` at fake-claude share the process environment.
+    static CLAUDE_ENV: Mutex<()> = Mutex::new(());
+
+    /// Run `claude_ready` with `KATA_CLAUDE_BIN` set to the fake-claude beside the test binaries
+    /// (`cargo build -p kata-core --bin fake-claude` builds it) and its version set to `version`.
+    fn ready_with(version: Option<&str>) -> Result<(), String> {
+        let _guard = CLAUDE_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let exe = std::env::current_exe().unwrap();
+        let fake = exe
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("fake-claude{}", std::env::consts::EXE_SUFFIX));
+        assert!(fake.exists(), "build fake-claude first: {}", fake.display());
+        std::env::set_var("KATA_CLAUDE_BIN", &fake);
+        match version {
+            Some(v) => std::env::set_var("KATA_FAKE_CLAUDE_VERSION", v),
+            None => std::env::remove_var("KATA_FAKE_CLAUDE_VERSION"),
+        }
+        let got = claude_ready();
+        std::env::remove_var("KATA_CLAUDE_BIN");
+        std::env::remove_var("KATA_FAKE_CLAUDE_VERSION");
+        got
+    }
+
+    #[test]
+    fn run_spec_refuses_too_old_claude() {
+        let err = ready_with(Some("2.0.1 (Claude Code)")).unwrap_err();
+        assert!(err.contains("2.0.1") && err.contains("2.1.311"), "{err}");
+        let err = ready_with(Some("garbage")).unwrap_err();
+        assert!(err.contains("could not read"), "{err}");
+        assert_eq!(ready_with(None), Ok(()));
     }
 
     fn live(id: u64) -> LiveRun<()> {

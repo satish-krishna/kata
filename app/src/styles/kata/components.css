@@ -39,6 +39,7 @@
   font: var(--weight-medium) var(--text-xs)/1 var(--font-mono);
   padding: var(--space-2) var(--space-3); border-radius: var(--radius-xs); border: 1px solid transparent;
 }
+.k-badge .k-status { color: inherit; font: inherit; gap: var(--space-2); }
 .k-badge--neutral { background: var(--surface-inset); color: var(--text-secondary); border-color: var(--border-default); }
 .k-badge--accent  { background: var(--accent-subtle); color: var(--accent-text); border-color: var(--accent-border); }
 .k-badge--success { background: var(--success-subtle); color: var(--success-text); border-color: var(--success-border); }

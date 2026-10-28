@@ -56,7 +56,7 @@ async function finished(tweak: (t: MockTransport) => void = () => undefined) {
   vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({ files: [], loc: [] });
   const status = transport.sdlcBuildStatus.bind(transport);
   vi.spyOn(transport, 'sdlcBuildStatus').mockImplementation(async (m, s, c) => ({ ...(await status(m, s, c)), departures: [DEPARTURE] }));
-  vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', exit: 0 }]);
+  vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 0 }]);
   tweak(transport);
   const s = setup(transport);
   await ready(s.vm);
@@ -187,7 +187,7 @@ describe('declaring done', () => {
 
   it('with a review document the done dialog reads its latest review against the heads, not the run exit code (R14.2)', async () => {
     const { vm, transport } = await finished((t) => {
-      vi.spyOn(t, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', exit: 1 }]);
+      vi.spyOn(t, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 1 }]);
     });
     const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], BUILD);
     const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
@@ -278,7 +278,7 @@ describe('declaring done', () => {
 
   it.each([
     ['none', (t: MockTransport) => vi.spyOn(t, 'sdlcRunLinks').mockResolvedValue([])],
-    ['unfinished', (t: MockTransport) => vi.spyOn(t, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', exit: 1 }])],
+    ['unfinished', (t: MockTransport) => vi.spyOn(t, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 1 }])],
     ['stale', (t: MockTransport) => vi.spyOn(t, 'sdlcBuildHeads').mockResolvedValue({ 'claims-core': 'ffffffff', 'customer-portal': 'eeeeeee' })],
   ] as const)('done needs a finished review of the current heads (R20.3): %s', async (missing, tweak) => {
     const { vm, transport } = await finished();
@@ -392,7 +392,7 @@ describe('declaring done from the build page', () => {
       const got = await status(m, s, c);
       return { ...got, repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })), tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } })), departures: [DEPARTURE] };
     });
-    vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', exit: 0 }]);
+    vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 0 }]);
     const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], BUILD);
     await transport.sdlcLinkRun({ workspace_id: 'acme-claims', system: 'claims', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
     const publish = vi.spyOn(transport, 'sdlcPublish');

@@ -22,7 +22,7 @@ import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { ProgressStore } from '../../core/progress/progress.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
-import { type AskRecord, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
+import { type AskRecord, type MessageRecord, type MessageRefusal, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
 import { activityFor, newlyRecorded, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Chosen, type LiveRun, type Pick, type SessionRef } from '../../lib/build-sessions';
 import { buildActions, buildStage, repoAction, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { fallbackTaskState, hms, ms, situationView, taskState, type SituationView, type Situation, type TaskState } from '../../lib/build-state';
@@ -59,6 +59,8 @@ export type ShownRun = {
   asks: AskRecord[];
   permissions: PermissionRecord[];
   given: RunGiven | null;
+  messages: MessageRecord[];
+  refusal: MessageRefusal | null;
   /** The index of the first event the engineer has not seen since they came back to this run, or null. */
   unseenFrom: number | null;
   /** True for the newest run of its repository, which always shows in full. */
@@ -439,6 +441,8 @@ export class BuildPageViewModel {
         asks: snap.asks,
         permissions: snap.permissions,
         given: snap.given,
+        messages: snap.messages,
+        refusal: snap.refusal,
         unseenFrom: marks[e.id] ?? null,
         latest: false,
         expanded: opened.has(e.id),
@@ -708,6 +712,8 @@ export class BuildPageViewModel {
           asks: snap.asks,
           permissions: snap.permissions,
           given: snap.given,
+          messages: snap.messages,
+          refusal: snap.refusal,
           unseenFrom: null,
           latest: false,
           expanded: opened.has(ref.runId),
@@ -1175,6 +1181,11 @@ export class BuildPageViewModel {
 
   answer(runId: string, e: { id: string; answers: string[][] }): void {
     this.lock.answer(runId, e.id, e.answers);
+  }
+
+  /** Message the agent of one build run. Not `say`, which is the page's live-region announcer. */
+  sendMessage(runId: string, text: string): void {
+    this.lock.say(runId, text);
   }
 
   decide(runId: string, e: { id: string; allow: boolean; message: string | null }): void {

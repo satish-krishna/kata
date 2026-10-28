@@ -150,11 +150,14 @@
                   [spec]="s.spec"
                   [summary]="s.summary"
                   [asks]="s.asks"
+                  [messages]="s.messages"
+                  [refusal]="s.refusal"
                   [permissions]="s.permissions"
                   [given]="s.given"
                   mode="sdlc"
                   [unseenFrom]="s.unseenFrom"
                   (answer)="answer.emit({ runId: s.id, id: $event.id, answers: $event.answers })"
+                  (say)="say.emit({ runId: s.id, text: $event })"
                   (decide)="decide.emit({ runId: s.id, id: $event.id, allow: $event.allow, message: $event.message })"
                 />
               </div>

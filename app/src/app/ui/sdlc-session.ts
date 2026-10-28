@@ -1,7 +1,7 @@
 import { Component, computed, input, output } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import type { RunSpec } from '@bindings/RunSpec';
-import type { AskRecord, RunGiven, PermissionRecord, RunState, RunSummary, StreamEvent } from '../lib/events';
+import type { AskRecord, MessageRecord, MessageRefusal, RunGiven, PermissionRecord, RunState, RunSummary, StreamEvent } from '../lib/events';
 import { ObservePane } from './observe-pane';
 
 /* The AI-SDLC session view: an agent run takes the page's main region (the toolbar above stays, locked)
@@ -26,12 +26,15 @@ export class SdlcSession {
   readonly spec = input.required<RunSpec>();
   readonly summary = input.required<RunSummary | null>();
   readonly asks = input<AskRecord[]>([]);
+  readonly messages = input<MessageRecord[]>([]);
+  readonly refusal = input<MessageRefusal | null>(null);
   readonly permissions = input<PermissionRecord[]>([]);
   readonly given = input<RunGiven | null>(null);
 
   readonly cancel = output<void>();
   readonly close = output<void>();
   readonly answer = output<{ id: string; answers: string[][] }>();
+  readonly say = output<string>();
   readonly decide = output<{ id: string; allow: boolean; message: string | null }>();
 
   protected readonly deadlineLabel = computed(() => {

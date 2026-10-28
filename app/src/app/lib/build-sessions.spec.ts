@@ -61,7 +61,7 @@ describe('newlyRecorded', () => {
 });
 
 describe('recordOutcome', () => {
-  const record = (over: Partial<RunRecord>): RunRecord => ({ id: 'r', kata: 'k', started_at: 1, isolation: 'none', ...over });
+  const record = (over: Partial<RunRecord>): RunRecord => ({ id: 'r', kata: 'k', started_at: 1, isolation: 'none', steered: false, ...over });
   it("words an earlier run's ending", () => {
     expect(recordOutcome(null)).toBe('Outcome not recorded');
     expect(recordOutcome(record({ exit: 0, turns: 12, cost_usd: 1.5 }))).toBe('Completed · exit 0 · 12 turns · $1.50');

@@ -24,6 +24,7 @@ import { EventRow } from '../ui/event-row';
 import { GivenView } from '../ui/given-view';
 import { MarkdownBody } from '../ui/markdown-body';
 import { SummaryStat } from '../ui/summary-stat';
+import { OperatorMessage } from '../ui/operator-message';
 import { TaskEditor } from '../ui/task-editor';
 import { ToolCard } from '../ui/tool-card';
 import { LibraryViewModel } from './library.view-model';
@@ -49,7 +50,7 @@ import { LibraryViewModel } from './library.view-model';
       lucideTriangleAlert,
     }),
   ],
-  imports: [NgIcon, RouterLink, HlmButtonImports, HlmDialogImports, DetailActions, GivenView, EventRow, MarkdownBody, SummaryStat, TaskEditor, ToolCard],
+  imports: [NgIcon, RouterLink, HlmButtonImports, HlmDialogImports, DetailActions, GivenView, EventRow, MarkdownBody, OperatorMessage, SummaryStat, TaskEditor, ToolCard],
   templateUrl: './library.html',
 })
 export class Library {

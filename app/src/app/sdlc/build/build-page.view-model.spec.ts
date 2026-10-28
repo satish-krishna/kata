@@ -1407,7 +1407,7 @@ describe('the build page shows tasks and sessions from the build log, the run li
   const secs = (h: number, m = 0) => Math.floor(new Date(2026, 9, 19, h, m, 0).getTime() / 1000);
   const link = (stage: string, run_id: string, started_at: number): RunLink => ({ workspace_id: 'acme-claims', system: 'claims', change: MOCK_BUILD_CHANGE, stage, run_id, started_at });
   const taskLink = (task: string, run_id: string, repo = 'claims-core'): TaskLink => ({ workspace_id: 'acme-claims', system: 'claims', change: MOCK_BUILD_CHANGE, repo, task, run_id });
-  const record = (id: string, exit: number): RunRecord => ({ id, kata: 'build', started_at: 0, isolation: 'none', exit, turns: 7, cost_usd: 0.5 });
+  const record = (id: string, exit: number): RunRecord => ({ id, kata: 'build', started_at: 0, isolation: 'none', steered: false, exit, turns: 7, cost_usd: 0.5 });
   const T1_ROW = { task: 'T1', repo: 'claims-core', commits: ['aaaaaaa'], departure: null };
 
   /** A page opened on a change with nothing running; T1 is in the build log when `built`. */
@@ -1774,7 +1774,7 @@ describe('the layout follows the real build page through a finish, whatever orde
       if (gate.current !== null) await gate.current.promise;
       return links();
     });
-    vi.spyOn(transport, 'listRuns').mockImplementation(async () => (await links()).map((l) => ({ id: l.run_id, kata: 'build', started_at: 0, isolation: 'none', exit: 0, turns: 1, cost_usd: 0 })));
+    vi.spyOn(transport, 'listRuns').mockImplementation(async () => (await links()).map((l) => ({ id: l.run_id, kata: 'build', started_at: 0, isolation: 'none', steered: false, exit: 0, turns: 1, cost_usd: 0 })));
     return gate;
   }
 
@@ -1838,7 +1838,7 @@ describe('the layout follows the real build page through a finish, whatever orde
       return [review];
     });
     vi.spyOn(transport, 'sdlcTaskLinks').mockResolvedValue([]);
-    vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: 'review-1', kata: 'review', started_at: 0, isolation: 'none', exit: 0, turns: 1, cost_usd: 0 }]);
+    vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: 'review-1', kata: 'review', started_at: 0, isolation: 'none', steered: false, exit: 0, turns: 1, cost_usd: 0 }]);
     const status = await transport.sdlcBuildStatus(FOLDER, 'claims', MOCK_BUILD_CHANGE);
     const [found] = (await readAllChanges(transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
     const loading = vm.load({

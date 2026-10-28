@@ -10,7 +10,7 @@ const spec = (name: string, over: Partial<RunSpec> = {}): RunSpec => ({
 } as RunSpec);
 
 const rec = (kata: string, exit: number | null): RunRecord => ({
-  id: `${kata}-x`, kata, started_at: 1, isolation: "none", exit, turns: null, cost_usd: null, duration_ms: null, result: null,
+  id: `${kata}-x`, kata, started_at: 1, isolation: "none", steered: false, exit, turns: null, cost_usd: null, duration_ms: null, result: null,
 });
 
 describe("kataViews", () => {

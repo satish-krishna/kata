@@ -563,6 +563,29 @@ describe('ChangePage build page', () => {
     await stopBuild(fixture);
   });
 
+  it('R6.1: a build run in one repository offers the message box, and sending reaches that run', async () => {
+    const { container, fixture, transport } = await mount(MOCK_BUILD_CHANGE);
+    await startBuild(container);
+    const send = vi.spyOn(transport, 'sendMessage');
+    const input = () => page(container).querySelector<HTMLInputElement>('[data-session] app-message-box [data-message-input]');
+    // The scripted build is running before its first question; the box is enabled only then.
+    await vi.waitFor(
+      () => {
+        TestBed.tick();
+        expect(input() !== null && !input()!.disabled).toBe(true);
+      },
+      { timeout: TOKEN },
+    );
+    const runId = input()!.closest('[data-session]')!.getAttribute('data-session')!;
+    input()!.value = 'skip the refactor';
+    input()!.dispatchEvent(new Event('input'));
+    TestBed.tick();
+    page(container).querySelector<HTMLButtonElement>('[data-session] [data-message-send]')!.click();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(runId, expect.any(String), 'skip the refactor');
+    await stopBuild(fixture);
+  }, TOKEN);
+
   describe('each of today’s build actions is on the build page', () => {
     /** The page component, to drive its outputs the way the template does. */
     const pageOf = (fixture: ComponentFixture<ChangePage>) => fixture.debugElement.query(By.directive(BuildPage)).componentInstance as BuildPage;
@@ -802,6 +825,58 @@ describe('ChangePage way back', () => {
     expect(back(container)).not.toBeNull();
   });
 
+
+  const say = (root: ParentNode, words: string) => {
+    const input = root.querySelector<HTMLInputElement>('app-message-box [data-message-input]')!;
+    input.value = words;
+    input.dispatchEvent(new Event('input'));
+    TestBed.tick();
+    root.querySelector<HTMLButtonElement>('app-message-box [data-message-send]')!.click();
+  };
+  /** The box is offered and enabled: the scripted run is running, not yet paused on its question. */
+  const boxReady = (root: ParentNode) => {
+    TestBed.tick();
+    const input = root.querySelector<HTMLInputElement>('app-message-box [data-message-input]');
+    expect(input !== null && !input.disabled).toBe(true);
+  };
+
+  it('R6.1: an intent, spec or plan run that is running offers the message box, and sending reaches that run', async () => {
+    const { container, transport } = await mount(FNOL);
+    const send = vi.spyOn(transport, 'sendMessage');
+    const started = vi.spyOn(transport, 'runSpec');
+    Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === 'Continue spec')!.click();
+    await settle();
+    Array.from(document.body.querySelector('[role="dialog"]')!.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === 'Run')!.click();
+    await confirmPreview();
+    await vi.waitFor(() => boxReady(container.querySelector('app-sdlc-session')!));
+    say(container.querySelector('app-sdlc-session')!, 'keep it small');
+    const runId = await started.mock.results[0].value;
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(runId, expect.any(String), 'keep it small');
+    TestBed.inject(LockStore).cancel();
+  });
+
+  it('R6.1: a fix run that is running offers the message box, and sending reaches that run', async () => {
+    const transport = new MockTransport();
+    const real = transport.sdlcReadChange.bind(transport);
+    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
+      [await real(m, s, n)].map((c) => (c.change === FNOL ? { ...c, stage: 'fix-awaiting' as const, track: 'fix' as const } : c))[0],
+    );
+    const ready = await transport.sdlcPluginReadiness(null);
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(ready.kind === 'ready' ? { ...ready, lightTrack: true } : ready);
+    const { container } = await mount(FNOL, transport);
+    const send = vi.spyOn(transport, 'sendMessage');
+    const started = vi.spyOn(transport, 'runSpec');
+    Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === 'Accept fix')!.click();
+    await settle();
+    await confirmPreview();
+    await vi.waitFor(() => boxReady(container.querySelector('app-sdlc-session')!));
+    say(container.querySelector('app-sdlc-session')!, 'the flag is set in intake');
+    const runId = await started.mock.results[0].value;
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(runId, expect.any(String), 'the flag is set in intake');
+    TestBed.inject(LockStore).cancel();
+  });
   it('the way back is shown but disabled while a run is in progress', async () => {
     const { container } = await mount(FNOL, new MockTransport(), routes);
     expect(back(container)!.disabled).toBe(false);

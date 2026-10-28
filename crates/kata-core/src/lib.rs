@@ -7,7 +7,10 @@
 //! callback. This example is compiled as a doctest, so the guide stays honest:
 //!
 //! ```no_run
-//! use kata_core::{answer_channel, decision_channel, run, Answer, CancelToken, Decision, KataEvent};
+//! use kata_core::{
+//!     answer_channel, decision_channel, message_channel, run, Answer, CancelToken, Decision,
+//!     KataEvent,
+//! };
 //!
 //! let spec = kata_core::spec::load("triage.toml".as_ref())?;
 //! let catalog = kata_core::catalog::discover(
@@ -20,8 +23,11 @@
 //! // answer: a pause on it ends the run with exit 123.
 //! let (answer_tx, answers) = answer_channel();
 //! let (decision_tx, decisions) = decision_channel();
+//! // Send a `Message` on `message_tx` to steer the live run. A default inbox is
+//! // closed, which is fine: nobody sends.
+//! let (message_tx, messages) = message_channel();
 //!
-//! let outcome = run(&spec, &catalog, &cancel, &answers, &decisions, |event| match event {
+//! let outcome = run(&spec, &catalog, &cancel, &answers, &decisions, &messages, |event| match event {
 //!     // Interactive fork: reply with one Vec<String> per question
 //!     // (chosen option labels, [typed text], or [] to skip an optional one).
 //!     KataEvent::AskRequested { id, questions } => {
@@ -83,11 +89,13 @@ pub use given::{ItemKind, Source};
 
 // ---- discovery & orchestration ----
 pub mod catalog;
+pub mod claude;
+pub mod control;
 pub mod proc;
 pub mod run;
 pub use run::{
-    answer_channel, decision_channel, run, Answer, AnswerRx, CancelToken, Decision, DecisionRx,
-    RunError, RunOutcome,
+    answer_channel, decision_channel, message_channel, run, Answer, AnswerRx, CancelToken,
+    Decision, DecisionRx, Message, MessageRx, RunError, RunOutcome,
 };
 
 // ---- the interactive ask MCP tool: owned by the engine, not consumer API ----

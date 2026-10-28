@@ -1,14 +1,15 @@
 use crate::assemble::{assemble, AssembleError};
 use crate::catalog::CatalogEntry;
 use crate::command::{build_invocation_with, ClaudeInvocation};
-use crate::event::KataEvent;
+use crate::event::{refusal, user_message_line, KataEvent};
 use crate::given::{
     apply, given_event, hooks_fired, merge_settings, resolve, ResolveOptions, ResolveRoots,
 };
 use crate::spec::{validate, Isolation, PermissionMode, RunSpec, UnmatchedPolicy};
+use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, Write};
 use std::path::Path;
-use std::process::Stdio;
+use std::process::{ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -34,6 +35,8 @@ pub enum RunError {
     Worktree(String),
     #[error("auth: {0}")]
     Auth(String),
+    #[error("claude version: {0}")]
+    ClaudeVersion(String),
 }
 
 /// Cooperative cancellation shared with the run loop.
@@ -64,6 +67,15 @@ const POLL: Duration = Duration::from_millis(100);
 pub struct Answer {
     pub id: String,
     pub answers: Vec<Vec<String>>,
+}
+
+/// A message a program or the operator sends to a live run, routed from the
+/// engine's stdin (kata-cli) into the run loop. `id` is chosen by the sender
+/// and must be new within the run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Message {
+    pub id: String,
+    pub text: String,
 }
 
 /// What polling an operator inbox found.
@@ -102,6 +114,24 @@ impl AnswerRx {
 pub fn answer_channel() -> (mpsc::Sender<Answer>, AnswerRx) {
     let (tx, rx) = mpsc::channel();
     (tx, AnswerRx(Some(rx)))
+}
+
+/// The run loop's message inbox. `Default` is a closed inbox: nobody sends.
+/// A closed inbox is never an error and never ends a run. Build a live one
+/// with [`message_channel`].
+#[derive(Default)]
+pub struct MessageRx(Option<mpsc::Receiver<Message>>);
+
+impl MessageRx {
+    fn poll(&self) -> Inbox<Message> {
+        poll(self.0.as_ref())
+    }
+}
+
+/// Create a connected (sender, inbox) pair for a run that takes messages.
+pub fn message_channel() -> (mpsc::Sender<Message>, MessageRx) {
+    let (tx, rx) = mpsc::channel();
+    (tx, MessageRx(Some(rx)))
 }
 
 /// An operator's verdict on a pending `permission.requested`, routed from the
@@ -266,6 +296,7 @@ pub fn run<F: FnMut(KataEvent)>(
     cancel: &CancelToken,
     answers: &AnswerRx,
     decisions: &DecisionRx,
+    messages: &MessageRx,
     emit: F,
 ) -> Result<RunOutcome, RunError> {
     run_with(
@@ -274,17 +305,21 @@ pub fn run<F: FnMut(KataEvent)>(
         cancel,
         answers,
         decisions,
+        messages,
         RunOptions::default(),
         emit,
     )
 }
 
+// The three inboxes are separate on purpose: each has its own sender in kata-cli.
+#[allow(clippy::too_many_arguments)]
 pub fn run_with<F: FnMut(KataEvent)>(
     spec: &RunSpec,
     catalog: &[CatalogEntry],
     cancel: &CancelToken,
     answers: &AnswerRx,
     decisions: &DecisionRx,
+    messages: &MessageRx,
     opts: RunOptions,
     mut emit: F,
 ) -> Result<RunOutcome, RunError> {
@@ -362,6 +397,20 @@ pub fn run_with<F: FnMut(KataEvent)>(
                 return Err(RunError::Auth(message));
             }
         }
+    }
+
+    // Kata needs a Claude Code new enough to take messages mid-run. There is no
+    // fallback to the old way for a run nobody intends to steer.
+    if let Err(refusal) = crate::claude::check_installed(&crate::claude::program()) {
+        record_given_none!();
+        let message = refusal.to_string();
+        emit(KataEvent::RunError {
+            message: message.clone(),
+            exit_code: 2,
+            cost_usd: None,
+            duration_ms: 0,
+        });
+        return Err(RunError::ClaudeVersion(message));
     }
 
     let isolation = match spec.leash.isolation {
@@ -564,13 +613,15 @@ pub fn run_with<F: FnMut(KataEvent)>(
 
     let start = Instant::now();
     let mut cmd = crate::proc::hidden_command(&inv.program).map_err(|e| spawn_fail!(e))?;
-    // claude runs headless (`-p`): it never reads stdin, so give it a closed one.
-    // Inheriting the parent's stdin lets an unauthenticated claude block forever on
-    // an interactive login prompt instead of fast-failing. (Cancellation uses the
-    // *engine's* stdin, handled in kata-cli — not the child's.)
+    // claude runs headless (`-p`) in streaming-input mode: the task and any later
+    // message arrive on its stdin, a pipe Kata owns. Never inherit the parent's
+    // stdin: it would let an unauthenticated claude block forever on an
+    // interactive login prompt instead of fast-failing. Kata closes the pipe once
+    // the run begins to end. (Cancellation uses the *engine's* stdin, handled in
+    // kata-cli — not the child's.)
     cmd.args(&inv.args)
         .current_dir(&cwd)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     // The child inherits the parent process environment by default. Apply the set
@@ -586,6 +637,20 @@ pub fn run_with<F: FnMut(KataEvent)>(
         cmd.env_remove(k);
     }
     let mut child = cmd.spawn().map_err(|e| spawn_fail!(e))?;
+    let input_tx = spawn_input_writer(child.stdin.take().expect("piped stdin"));
+    // The task is the first user message. A send fails only if the writer has
+    // already stopped, which is the same as Claude being gone.
+    let _ = input_tx.send(InputCmd::Line(user_message_line(
+        TASK_UUID,
+        &crate::command::compose_prompt(spec),
+    )));
+    let mut input_open = true;
+    // Operator messages: ids accepted so far (only accepted ids count as used, so a
+    // refused id can be retried), the acceptances counted for the `kata-msg-<n>`
+    // uuids, and the accepted messages Claude has not echoed back yet, by uuid.
+    let mut accepted_ids: HashSet<String> = HashSet::new();
+    let mut accepted_n: u32 = 0;
+    let mut unread: HashMap<String, String> = HashMap::new();
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
 
@@ -639,7 +704,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
     // One parser for the whole stream: it carries the tool_use_id → name map
     // that labels each tool.result. A fresh parser per line loses it.
     let mut parser = crate::event::StreamParser::new(opts.full_payloads);
-    let mut result = None;
+    let mut totals = RunTotals::default();
     // Claude's start report and the hooks seen firing, checked against
     // `resolved`, the list the run was given at the start (R16.1). The first
     // `run.given` is the report; each hook's first firing adds another.
@@ -844,13 +909,50 @@ pub fn run_with<F: FnMut(KataEvent)>(
             },
             None => {}
         }
+        // Decide every waiting message before the next child line is read, so a
+        // message that reached Kata before a `result` is settled before that result
+        // is acted on. Nothing here pauses the work clock.
+        while let Inbox::Reply(m) = messages.poll() {
+            let pending_kind = match &pending {
+                Some(Pending::Ask { .. }) => PendingKind::Ask,
+                Some(Pending::Approve { .. }) => PendingKind::Approve,
+                None => PendingKind::None,
+            };
+            match admit(
+                &m.text,
+                accepted_ids.contains(&m.id),
+                pending_kind,
+                input_open,
+            ) {
+                Admission::Ignore => {}
+                Admission::Refuse(reason) => emit(KataEvent::MessageRefused {
+                    id: m.id,
+                    reason: reason.to_string(),
+                    text: m.text,
+                }),
+                Admission::Accept => {
+                    accepted_n += 1;
+                    let uuid = format!("kata-msg-{accepted_n}");
+                    accepted_ids.insert(m.id.clone());
+                    unread.insert(uuid.clone(), m.id.clone());
+                    let _ = input_tx.send(InputCmd::Line(user_message_line(&uuid, &m.text)));
+                    emit(KataEvent::MessageSent {
+                        id: m.id,
+                        text: m.text,
+                        sent_at: now_ms(),
+                    });
+                }
+            }
+        }
         match rx.recv_timeout(POLL) {
             Ok(ChildLine::Out(line)) => {
                 if line.trim().is_empty() {
                     continue;
                 }
                 let parsed = parser.push(&line);
-                if let Some(report) = parsed.init {
+                // Claude sends another start report at each new request; only the
+                // first is the run's start report.
+                if let Some(report) = parsed.init.filter(|_| start_report.is_none()) {
                     start_report = Some(report);
                     emit(given_event(
                         &resolved,
@@ -858,6 +960,17 @@ pub fn run_with<F: FnMut(KataEvent)>(
                         start_report.as_ref(),
                         &fired,
                     ));
+                }
+                // Claude's echo of a message Kata wrote: the task's is not an event;
+                // an accepted operator message's is the moment it was read.
+                if let Some(uuid) = &parsed.replay {
+                    if let Some(id) = unread.remove(uuid) {
+                        emit(KataEvent::MessageRead {
+                            id,
+                            read_at: now_ms(),
+                        });
+                    }
+                    continue;
                 }
                 if let Some(hook) = parsed.hook {
                     if parsed.hook_started {
@@ -902,7 +1015,18 @@ pub fn run_with<F: FnMut(KataEvent)>(
                     emit(e);
                 }
                 if let Some(r) = parsed.result {
-                    result = Some(r);
+                    let kind = if r.is_budget_exhausted() {
+                        ResultKind::Budget
+                    } else if r.is_error {
+                        ResultKind::Failed
+                    } else {
+                        ResultKind::Success
+                    };
+                    totals.add(&r);
+                    if after_result(kind, unread.len(), input_open) == AfterResult::CloseInput {
+                        let _ = input_tx.send(InputCmd::Close);
+                        input_open = false;
+                    }
                 }
             }
             Ok(ChildLine::Err(line)) => {
@@ -944,7 +1068,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
             let duration_ms = start.elapsed().as_millis() as u64;
             // A killed child never emitted its final `result` line, so cost is
             // usually absent here; forward whatever we have.
-            let cost_usd = result.as_ref().and_then(|r| r.cost_usd);
+            let cost_usd = totals.cost_usd();
             match term {
                 Termination::Cancelled => (
                     130,
@@ -1007,13 +1131,7 @@ pub fn run_with<F: FnMut(KataEvent)>(
                 RunError::Spawn(e.to_string())
             })?;
             let code = status.code().unwrap_or(1);
-            let payload = result.unwrap_or(crate::event::ResultPayload {
-                num_turns: turns,
-                cost_usd: None,
-                is_error: code != 0,
-                result: None,
-                subtype: None,
-            });
+            let payload = totals.payload(turns, code);
             // Guard on the spec actually setting a budget: exit 122 is only
             // reachable when leash.max_budget_usd is set, so a result that
             // carries the subtype without a configured ceiling stays a normal
@@ -1089,6 +1207,180 @@ pub fn run_with<F: FnMut(KataEvent)>(
     })
 }
 
+/// What the run is waiting on the operator for, as `admit` sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingKind {
+    None,
+    Ask,
+    Approve,
+}
+
+/// What the run does with one message from the operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Admission {
+    /// Blank text: no event.
+    Ignore,
+    /// Refused with this reason (`event::refusal`).
+    Refuse(&'static str),
+    Accept,
+}
+
+/// Decide what to do with a message, by the first row that applies:
+///
+/// 1. blank text: ignored, whatever else is true;
+/// 2. an id already accepted: refused as repeated;
+/// 3. a question or approval pending: refused as waiting on the operator (the
+///    input cannot be closed then, because Claude cannot end a request while it
+///    is blocked on a bridge tool call);
+/// 4. Claude's input already closed: refused as the run ending;
+/// 5. otherwise accepted.
+fn admit(text: &str, already_accepted: bool, pending: PendingKind, input_open: bool) -> Admission {
+    if text.trim().is_empty() {
+        Admission::Ignore
+    } else if already_accepted {
+        Admission::Refuse(refusal::REPEATED)
+    } else if pending != PendingKind::None {
+        Admission::Refuse(refusal::WAITING_ON_OPERATOR)
+    } else if !input_open {
+        Admission::Refuse(refusal::RUN_ENDING)
+    } else {
+        Admission::Accept
+    }
+}
+
+/// Milliseconds since the Unix epoch, from the system clock.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// How one `result` line from Claude ended its request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResultKind {
+    Success,
+    /// Claude stopped on `--max-budget-usd` (`error_max_budget_usd`).
+    Budget,
+    /// Any other `is_error: true` result.
+    Failed,
+}
+
+/// What the run does with Claude's input once a request has ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterResult {
+    /// The run begins to end: close Claude's input so it exits.
+    CloseInput,
+    /// Keep reading; check again at the next result.
+    KeepOpen,
+}
+
+/// When the run begins to end. `unread` is the number of accepted messages not
+/// yet echoed back by Claude.
+pub fn after_result(kind: ResultKind, unread: usize, input_open: bool) -> AfterResult {
+    if !input_open {
+        // Already closed: a message written before the close may still be in
+        // Claude's queue; keep reading until Claude exits.
+        return AfterResult::KeepOpen;
+    }
+    match kind {
+        // Claude works on the waiting message; check again at the next result.
+        ResultKind::Success if unread > 0 => AfterResult::KeepOpen,
+        // A budget stop or a failure ends the run; waiting messages stay unread.
+        ResultKind::Success | ResultKind::Budget | ResultKind::Failed => AfterResult::CloseInput,
+    }
+}
+
+/// The run's totals across several `result` lines (one per request Claude makes).
+#[derive(Debug, Default)]
+pub struct RunTotals {
+    seen: bool,
+    turns: u32,
+    cost_usd: Option<f64>,
+    is_error: bool,
+    result: Option<String>,
+    subtype: Option<String>,
+}
+
+impl RunTotals {
+    /// Fold in one request's result.
+    pub fn add(&mut self, r: &crate::event::ResultPayload) {
+        self.seen = true;
+        // Each request reports only its own turns; the run's turns are their sum.
+        self.turns += r.num_turns;
+        // `total_cost_usd` is the session's running total, so the last one wins.
+        if r.cost_usd.is_some() {
+            self.cost_usd = r.cost_usd;
+        }
+        self.is_error = r.is_error;
+        self.result = r.result.clone();
+        self.subtype = r.subtype.clone();
+    }
+
+    /// True once at least one result was added.
+    pub fn is_empty(&self) -> bool {
+        !self.seen
+    }
+
+    /// The running cost so far, if Claude reported one.
+    pub fn cost_usd(&self) -> Option<f64> {
+        self.cost_usd
+    }
+
+    /// The run's result. With no result added, the fallback a run that ended
+    /// without one reports: the engine's own turn count and `exit != 0`.
+    pub fn payload(&self, fallback_turns: u32, exit: i32) -> crate::event::ResultPayload {
+        if !self.seen {
+            return crate::event::ResultPayload {
+                num_turns: fallback_turns,
+                cost_usd: None,
+                is_error: exit != 0,
+                result: None,
+                subtype: None,
+            };
+        }
+        crate::event::ResultPayload {
+            num_turns: self.turns,
+            cost_usd: self.cost_usd,
+            is_error: self.is_error,
+            result: self.result.clone(),
+            subtype: self.subtype.clone(),
+        }
+    }
+}
+
+/// What the run asks of the thread that owns Claude's input.
+enum InputCmd {
+    Line(String),
+    Close,
+}
+
+/// The `uuid` of the task message, the first user message on Claude's input.
+const TASK_UUID: &str = "kata-task";
+
+/// Start the thread that owns Claude's input. The run loop only sends commands,
+/// so it never blocks on a full pipe and the leash keeps ticking. A write error
+/// (Claude already gone, a closed pipe) is the input being closed, never a run
+/// error. The thread drops stdin, which is what closes Claude's input, when it
+/// is told to or when it can no longer write.
+fn spawn_input_writer(mut stdin: ChildStdin) -> mpsc::Sender<InputCmd> {
+    let (tx, rx) = mpsc::channel::<InputCmd>();
+    // Detached on purpose: it ends when the sender is dropped or a write fails.
+    thread::spawn(move || {
+        for cmd in rx {
+            match cmd {
+                InputCmd::Line(line) => {
+                    if stdin.write_all(line.as_bytes()).is_err() || stdin.flush().is_err() {
+                        break;
+                    }
+                }
+                InputCmd::Close => break,
+            }
+        }
+    });
+    tx
+}
+
 /// A line drained from the child, tagged by which stream it came from.
 enum ChildLine {
     Out(String),
@@ -1121,7 +1413,106 @@ enum Pending {
 
 #[cfg(test)]
 mod tests {
-    use super::{append_interactive_retask, ClaudeInvocation, INTERACTIVE_RETASK};
+    use super::{
+        after_result, append_interactive_retask, AfterResult, ClaudeInvocation, ResultKind,
+        RunTotals, INTERACTIVE_RETASK,
+    };
+    use crate::event::ResultPayload;
+
+    #[test]
+    fn after_result_table() {
+        use AfterResult::{CloseInput, KeepOpen};
+        use ResultKind::{Budget, Failed, Success};
+        let rows = [
+            (Success, 0, true, CloseInput),
+            (Success, 1, true, KeepOpen),
+            (Budget, 0, true, CloseInput),
+            (Budget, 2, true, CloseInput),
+            (Failed, 0, true, CloseInput),
+            (Failed, 1, true, CloseInput),
+            (Success, 0, false, KeepOpen),
+            (Budget, 1, false, KeepOpen),
+            (Failed, 0, false, KeepOpen),
+        ];
+        for (kind, unread, open, want) in rows {
+            assert_eq!(
+                after_result(kind, unread, open),
+                want,
+                "{kind:?} unread={unread} input_open={open}"
+            );
+        }
+    }
+
+    #[test]
+    fn admit_table() {
+        use super::{
+            admit,
+            Admission::{Accept, Ignore, Refuse},
+            PendingKind::{Approve, Ask, None as Idle},
+        };
+        use crate::event::refusal::{REPEATED, RUN_ENDING, WAITING_ON_OPERATOR};
+        // (text, already accepted, pending, input open, outcome); rows in precedence order.
+        let rows = [
+            // 1: blank text is ignored whatever else is true.
+            ("", false, Idle, true, Ignore),
+            ("  \t ", true, Ask, false, Ignore),
+            // 2: an accepted id is repeated.
+            ("go", true, Idle, true, Refuse(REPEATED)),
+            ("go", true, Approve, true, Refuse(REPEATED)),
+            // 3: waiting on the operator while the input is open.
+            ("go", false, Ask, true, Refuse(WAITING_ON_OPERATOR)),
+            ("go", false, Approve, true, Refuse(WAITING_ON_OPERATOR)),
+            // 5: nothing pending, the input already closed.
+            ("go", false, Idle, false, Refuse(RUN_ENDING)),
+            // 6: nothing pending, the input open.
+            ("go", false, Idle, true, Accept),
+            // A refused id is not "already accepted", so the retry is admitted.
+            ("go", false, Idle, true, Accept),
+        ];
+        for (text, accepted, pending, open, want) in rows {
+            assert_eq!(
+                admit(text, accepted, pending, open),
+                want,
+                "{text:?} accepted={accepted} {pending:?} open={open}"
+            );
+        }
+    }
+
+    fn result(turns: u32, cost: f64, text: &str) -> ResultPayload {
+        ResultPayload {
+            num_turns: turns,
+            cost_usd: Some(cost),
+            is_error: false,
+            result: Some(text.into()),
+            subtype: Some("success".into()),
+        }
+    }
+
+    #[test]
+    fn run_totals_sum_turns_and_keep_last_cost() {
+        let mut totals = RunTotals::default();
+        totals.add(&result(2, 0.005, "first"));
+        totals.add(&result(1, 0.006, "second"));
+        totals.add(&result(1, 0.007, "third"));
+        let p = totals.payload(99, 0);
+        assert_eq!(p.num_turns, 4);
+        assert_eq!(p.cost_usd, Some(0.007));
+        assert_eq!(p.result.as_deref(), Some("third"));
+
+        let mut one = RunTotals::default();
+        one.add(&result(2, 0.02, "done"));
+        assert_eq!(one.payload(99, 0), result(2, 0.02, "done"));
+    }
+
+    #[test]
+    fn run_totals_with_no_result_use_the_fallback() {
+        let totals = RunTotals::default();
+        assert!(totals.is_empty());
+        let p = totals.payload(3, 1);
+        assert_eq!(p.num_turns, 3);
+        assert!(p.is_error);
+        assert_eq!(p.cost_usd, None);
+    }
 
     fn has_inline_append(inv: &ClaudeInvocation) -> bool {
         inv.args.iter().any(|a| a == "--append-system-prompt")

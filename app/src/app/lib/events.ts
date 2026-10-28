@@ -59,12 +59,12 @@ export type RunSummary = Extract<KataEvent, { type: "run.completed" }>;
  *  card *is* open, the run store resolves it instead of pushing a row. */
 export type StreamEvent = Exclude<
   KataEvent,
-  { type: "run.started" | "run.completed" | "run.error" | "run.cancelled" | "run.diff" | "run.given" | "ask.requested" | "ask.answered" | "permission.requested" }
+  { type: "run.started" | "run.completed" | "run.error" | "run.cancelled" | "run.diff" | "run.given" | "ask.requested" | "ask.answered" | "permission.requested" | "message.sent" | "message.read" | "message.refused" }
 >;
 
 const NON_ROW_TYPES = new Set([
   "run.started", "run.completed", "run.error", "run.cancelled", "run.diff", "run.given", "ask.requested", "ask.answered",
-  "permission.requested",
+  "permission.requested", "message.sent", "message.read", "message.refused",
 ]);
 /** Narrow a KataEvent to the row-renderable subset (for the event log). */
 export function isStreamEvent(ev: KataEvent): ev is StreamEvent {
@@ -168,3 +168,56 @@ export type PermissionRecord = {
    *  piling every card at the end of the transcript. */
   at: number;
 };
+
+/** A message the operator sent to a running agent. `at` is the number of stream rows before it was sent. */
+export type MessageRecord = { id: string; text: string; sent_at: number; read_at: number | null; at: number };
+/** A message the engine refused, kept so the box can say why and give the text back. */
+export type MessageRefusal = { id: string; reason: string; text: string };
+export type PendingKind = "ask" | "approval" | "none";
+export type MessageBoxView = { shown: boolean; enabled: boolean; note: string; restore: string | null; restoreId?: string };
+
+/** Fold one event into the messages. A read for an unknown id is ignored; any other event leaves them as they were. */
+export function foldMessage(records: MessageRecord[], ev: KataEvent, at: number): MessageRecord[] {
+  if (ev.type === "message.sent") return [...records, { id: ev.id, text: ev.text, sent_at: ev.sent_at, read_at: null, at }];
+  if (ev.type === "message.read") return records.map((m) => (m.id === ev.id ? { ...m, read_at: ev.read_at } : m));
+  return records;
+}
+
+/** The messages of a whole transcript, each placed by the number of stream rows before it. */
+export function messagesFrom(events: KataEvent[]): MessageRecord[] {
+  let records: MessageRecord[] = [];
+  let rows = 0;
+  for (const ev of events) {
+    records = foldMessage(records, ev, rows);
+    if (isStreamEvent(ev)) rows++;
+  }
+  return records;
+}
+
+export function refusalText(reason: string): string {
+  switch (reason) {
+    case "waiting-on-operator": return "Not sent: answer the agent first";
+    case "run-ending": return "Not sent: the run is ending";
+    case "repeated": return "Not sent: already sent";
+    default: return "Not sent";
+  }
+}
+
+export function pendingKind(asks: AskRecord[], permissions: PermissionRecord[]): PendingKind {
+  if (asks.some((a) => a.answers === null)) return "ask";
+  if (permissions.some((p) => p.decided === null)) return "approval";
+  return "none";
+}
+
+/** What the message box shows for a run. The send button also needs non-blank text; the component adds that. */
+export function messageBox(state: RunState, pending: PendingKind, refusal: MessageRefusal | null): MessageBoxView {
+  if (state === "running") {
+    return refusal
+      ? { shown: true, enabled: true, note: refusalText(refusal.reason), restore: refusal.text, restoreId: refusal.id }
+      : { shown: true, enabled: true, note: "The agent reads this before its next step.", restore: null };
+  }
+  if (state === "awaiting") {
+    return { shown: true, enabled: false, note: pending === "approval" ? "Decide the approval first" : "Answer the question first", restore: null };
+  }
+  return { shown: false, enabled: false, note: "", restore: null };
+}

@@ -295,6 +295,169 @@ fn run_ok_event_stream_matches_golden() {
     );
 }
 
+/// The `kata run` command for the `ok` fake-claude mode, with the spec written
+/// into `work` and an empty home, so the event stream is the same on every
+/// machine. The caller chooses what the engine's stdin is.
+fn ok_run_command(work: &std::path::Path, kata_home: &std::path::Path) -> Command {
+    let workdir = work.to_string_lossy().replace('\\', "/");
+    let spec = write(
+        work,
+        "g.kata.toml",
+        &format!(
+            "schema = 1\nname = \"golden\"\ntask = \"t\"\nworkdir = \"{workdir}\"\n\n[leash]\ntimeout_secs = 60\n"
+        ),
+    );
+    let mut cmd = kata();
+    cmd.arg("run")
+        .arg(&spec)
+        .env("KATA_CLAUDE_BIN", fake_claude())
+        .env("KATA_FAKE_MODE", "ok")
+        .env("KATA_HOME", kata_home)
+        .env("HOME", kata_home.join("home"))
+        .env("USERPROFILE", kata_home.join("home"));
+    cmd
+}
+
+/// Run the `ok` fake-claude mode with the engine's stdin closed at once, the way a
+/// CI pipeline does (R8.1, R8.2). Returns the finished process output.
+fn run_ok_with_stdin_closed() -> std::process::Output {
+    let work = tempfile::tempdir().unwrap();
+    let kata_home = tempfile::tempdir().unwrap();
+    ok_run_command(work.path(), kata_home.path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap()
+}
+
+/// R8.1, "a CI pipeline that keeps its input open": nobody sends a message and
+/// the input stays open (nothing written, never closed) until the run is over.
+/// The run must finish by itself with outcome 0 and report exactly the events it
+/// reported before steering existed. A run that waited for end of input before
+/// finishing would hang here, so every wait is bounded.
+#[test]
+fn run_ok_with_stdin_held_open_matches_golden() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let work = tempfile::tempdir().unwrap();
+    let kata_home = tempfile::tempdir().unwrap();
+    let mut child = ok_run_command(work.path(), kata_home.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Held open and untouched until the assertions are done.
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut lines = Vec::new();
+    let mut completed = false;
+    while !completed {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match rx.recv_timeout(left) {
+            Ok(line) => {
+                completed = serde_json::from_str::<serde_json::Value>(&line)
+                    .is_ok_and(|v| v["type"] == "run.completed");
+                lines.push(line);
+            }
+            Err(_) => {
+                let _ = child.kill();
+                panic!(
+                    "no run.completed within 30s while stdin stayed open; the run is \
+                     waiting for end of input. Events so far:\n{}",
+                    lines.join("\n")
+                );
+            }
+        }
+    }
+
+    // The process must also exit on its own while the input is still open.
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            panic!(
+                "run.completed arrived but the process did not exit within 30s while stdin stayed open"
+            );
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    // Anything after run.completed still belongs to the stream.
+    lines.extend(rx.try_iter());
+    drop(stdin);
+
+    assert_eq!(status.code(), Some(0), "events:\n{}", lines.join("\n"));
+    let actual = normalize_events(&lines.join("\n"));
+    let golden_path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/run_ok_events.jsonl");
+    let golden = std::fs::read_to_string(&golden_path)
+        .unwrap_or_else(|_| panic!("missing golden fixture {}", golden_path.display()))
+        .replace("\r\n", "\n");
+    assert_eq!(
+        actual, golden,
+        "an unsteered run with its input held open drifted from the golden fixture"
+    );
+}
+
+/// A run whose input was closed at once and whose agent asks nothing ends with 0.
+#[test]
+fn run_with_stdin_closed_at_once_exits_zero() {
+    let out = run_ok_with_stdin_closed();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The same event stream, order and outcome as before steering existed, for a
+/// pipeline that closes its input at once.
+#[test]
+fn run_ok_with_stdin_closed_at_once_matches_golden() {
+    let out = run_ok_with_stdin_closed();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let actual = normalize_events(&String::from_utf8(out.stdout).unwrap());
+
+    let golden_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/golden/run_ok_stdin_closed_events.jsonl");
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::create_dir_all(golden_path.parent().unwrap()).unwrap();
+        std::fs::write(&golden_path, &actual).unwrap();
+    }
+    let golden = std::fs::read_to_string(&golden_path)
+        .unwrap_or_else(|_| {
+            panic!(
+                "missing golden fixture {}; generate it with UPDATE_GOLDEN=1",
+                golden_path.display()
+            )
+        })
+        .replace("\r\n", "\n");
+    assert_eq!(
+        actual, golden,
+        "the stdin-closed run event stream drifted from the golden fixture. If this \
+         change is intentional, regenerate with UPDATE_GOLDEN=1 and review the diff."
+    );
+}
+
 /// Golden test for the interactive path: drive the `ask` fake mode through
 /// `kata run`, answer the question on stdin, and pin the resulting
 /// `ask.requested` -> `ask.answered` -> `run.completed` exchange against a
@@ -923,5 +1086,228 @@ fn ctrl_break_cancels_with_130() {
     assert!(
         !String::from_utf8_lossy(&tasks.stdout).contains(&fake_pid.to_string()),
         "fake-claude {fake_pid} is still running"
+    );
+}
+
+#[test]
+fn run_with_too_old_claude_exits_2() {
+    let work = tempfile::tempdir().unwrap();
+    let kata_home = tempfile::tempdir().unwrap();
+    let spec = write(
+        work.path(),
+        "old.kata.toml",
+        &format!(
+            "schema = 1\nname = \"old\"\ntask = \"t\"\nworkdir = \"{}\"\n",
+            work.path().to_string_lossy().replace('\\', "/")
+        ),
+    );
+    let out = kata()
+        .arg("run")
+        .arg(&spec)
+        .env("KATA_CLAUDE_BIN", fake_claude())
+        .env("KATA_FAKE_CLAUDE_VERSION", "2.0.1 (Claude Code)")
+        .env("KATA_HOME", kata_home.path())
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains(r#""type":"run.error""#), "{stdout}");
+    assert!(
+        stdout.contains("2.0.1") && stdout.contains("2.1.311"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("run.started"), "{stdout}");
+}
+
+/// Run `kata run` against the `steer` fake with its stdin piped. `on_line` sees each
+/// stdout event as it arrives and may write control lines to the engine's stdin; the
+/// run is synchronized on events, never on sleeps. Returns the exit code and the events.
+fn run_steer_cli(
+    env: &[(&str, &str)],
+    interactive: bool,
+    mut on_line: impl FnMut(&serde_json::Value, &mut std::process::ChildStdin),
+) -> (Option<i32>, Vec<serde_json::Value>) {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let work = tempfile::tempdir().unwrap();
+    let kata_home = tempfile::tempdir().unwrap();
+    let workdir = work.path().to_string_lossy().replace('\\', "/");
+    let interactive = if interactive {
+        "\n[interactive]\nenabled = true\nanswer_timeout_secs = 30\n"
+    } else {
+        ""
+    };
+    let spec = write(
+        work.path(),
+        "steer.kata.toml",
+        &format!(
+            "schema = 1\nname = \"steer\"\ntask = \"t\"\nworkdir = \"{workdir}\"\n\n\
+             [leash]\ntimeout_secs = 60\n{interactive}"
+        ),
+    );
+    let mut cmd = kata();
+    cmd.arg("run")
+        .arg(&spec)
+        .env("KATA_CLAUDE_BIN", fake_claude())
+        .env("KATA_FAKE_MODE", "steer")
+        .env("KATA_HOME", kata_home.path())
+        .env("HOME", kata_home.path().join("home"))
+        .env("USERPROFILE", kata_home.path().join("home"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let mut child = cmd.spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let reader = BufReader::new(child.stdout.take().unwrap());
+    let mut events = Vec::new();
+    for line in reader.lines() {
+        let line = line.unwrap();
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+            on_line(&v, &mut stdin);
+            events.push(v);
+        }
+    }
+    let status = child.wait().unwrap();
+    (status.code(), events)
+}
+
+/// `(type, id)` of each message event, in stream order.
+fn message_events(events: &[serde_json::Value]) -> Vec<(String, String)> {
+    events
+        .iter()
+        .filter(|v| {
+            v["type"]
+                .as_str()
+                .is_some_and(|t| t.starts_with("message."))
+        })
+        .map(|v| {
+            (
+                v["type"].as_str().unwrap().to_string(),
+                v["id"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect()
+}
+
+fn pair(kind: &str, id: &str) -> (String, String) {
+    (kind.to_string(), id.to_string())
+}
+
+#[test]
+fn say_outcomes_for_a_program() {
+    use std::io::Write;
+
+    // A new id is accepted and read; a repeated id is refused; blank text is ignored.
+    let mut said = false;
+    let (code, events) = run_steer_cli(&[("KATA_FAKE_STEP_MS", "1000")], false, |v, stdin| {
+        if !said && v["type"] == "assistant.text" {
+            said = true;
+            let _ = stdin
+                .write_all(b"say m1 \"first\"\nsay m1 \"again\"\nsay m3 \"  \"\nsay m4 \"last\"\n");
+            let _ = stdin.flush();
+        }
+    });
+    assert_eq!(code, Some(0));
+    let all = message_events(&events);
+    let early: Vec<_> = all.iter().take(3).cloned().collect();
+    assert_eq!(
+        early,
+        [
+            pair("message.sent", "m1"),
+            pair("message.refused", "m1"),
+            pair("message.sent", "m4")
+        ],
+        "{all:?}"
+    );
+    let rest: Vec<_> = all.iter().skip(3).cloned().collect();
+    assert_eq!(
+        rest,
+        [pair("message.read", "m1"), pair("message.read", "m4")],
+        "{all:?}"
+    );
+    let refused = events
+        .iter()
+        .find(|v| v["type"] == "message.refused")
+        .unwrap();
+    assert_eq!(refused["reason"], "repeated");
+    assert_eq!(refused["text"], "again");
+    assert!(
+        !all.iter().any(|(_, id)| id == "m3"),
+        "a blank message is not announced: {all:?}"
+    );
+
+    // During a question the message is refused; the answer follows the refusal.
+    let (code, events) = run_steer_cli(&[("KATA_FAKE_ASK_AT", "1")], true, |v, stdin| {
+        if v["type"] == "ask.requested" {
+            let _ = stdin.write_all(b"say m1 \"hold on\"\n");
+            let _ = stdin.flush();
+        }
+        if v["type"] == "message.refused" {
+            let _ = stdin.write_all(b"answer q1 [[\"ok\"]]\n");
+            let _ = stdin.flush();
+        }
+    });
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        message_events(&events),
+        [pair("message.refused", "m1")],
+        "{events:?}"
+    );
+    let refused = events
+        .iter()
+        .find(|v| v["type"] == "message.refused")
+        .unwrap();
+    assert_eq!(refused["reason"], "waiting-on-operator");
+    assert_eq!(refused["text"], "hold on");
+
+    // After the run has begun to end the message is refused. The fake prints one more
+    // line after its result, which arrives after the engine closed Claude's input.
+    let (code, events) = run_steer_cli(
+        &[
+            ("KATA_FAKE_LATE_TEXT", "late"),
+            ("KATA_FAKE_LATE_MS", "1000"),
+        ],
+        false,
+        |v, stdin| {
+            if v["type"] == "assistant.text" && v["text"] == "late" {
+                let _ = stdin.write_all(b"say m9 \"too late\"\n");
+                let _ = stdin.flush();
+            }
+        },
+    );
+    assert_eq!(code, Some(0));
+    assert_eq!(message_events(&events), [pair("message.refused", "m9")]);
+    let refused = events
+        .iter()
+        .find(|v| v["type"] == "message.refused")
+        .unwrap();
+    assert_eq!(refused["reason"], "run-ending");
+}
+
+#[test]
+fn say_same_text_under_two_ids_is_two_messages() {
+    use std::io::Write;
+
+    let mut said = false;
+    let (code, events) = run_steer_cli(&[("KATA_FAKE_STEP_MS", "1000")], false, |v, stdin| {
+        if !said && v["type"] == "assistant.text" {
+            said = true;
+            let _ = stdin.write_all(b"say a \"rerun the tests\"\nsay b \"rerun the tests\"\n");
+            let _ = stdin.flush();
+        }
+    });
+    assert_eq!(code, Some(0));
+    assert_eq!(
+        message_events(&events),
+        [
+            pair("message.sent", "a"),
+            pair("message.sent", "b"),
+            pair("message.read", "a"),
+            pair("message.read", "b"),
+        ]
     );
 }

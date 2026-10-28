@@ -40,6 +40,8 @@
                 <div class="wb-event-enter"><app-tool-card [call]="item.call" /></div>
               } @else if (item.kind === 'perm') {
                 <div class="wb-event-enter"><app-permission-panel [record]="item.p" [ended]="ended()" (decide)="decide.emit($event)" /></div>
+              } @else if (item.kind === 'msg') {
+                <div class="wb-event-enter"><app-operator-message [record]="item.m" /></div>
               } @else {
                 <div class="wb-event-enter"><app-ask-panel [ask]="item.a" [ended]="ended()" (answer)="answer.emit($event)" /></div>
               }
@@ -51,6 +53,12 @@
     <button hlmMessageScrollerButton aria-label="Scroll to latest event"></button>
   </hlm-message-scroller>
 </div>
+
+@if (box(); as view) {
+  @if (view.shown) {
+    <app-message-box [view]="view" (send)="say.emit($event)" />
+  }
+}
 
 @if (summary(); as s) {
   <div class="wb-summary">

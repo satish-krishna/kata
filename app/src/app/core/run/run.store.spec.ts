@@ -11,6 +11,7 @@ class FakeTransport {
   cancelRun = vi.fn((): Promise<void> => Promise.resolve());
   submitAnswer = vi.fn((..._a: unknown[]) => Promise.resolve());
   submitDecision = vi.fn((..._a: unknown[]) => Promise.resolve());
+  sendMessage = vi.fn((..._a: unknown[]) => Promise.resolve());
   onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
     this.listeners.push((ev) => cb('1', ev));
     return Promise.resolve(() => { this.unlistened++; });
@@ -82,6 +83,17 @@ describe('RunStore', () => {
     await store.startRun(seedSpec());
     expect(store.state()).toBe('error');
     expect(store.events().at(-1)).toEqual({ type: 'log', level: 'error', message: 'run failed: boom' });
+  });
+
+  it('a refused start shows the version message and starts nothing', async () => {
+    const { store, fake } = setup();
+    const message = 'Claude Code 2.0.1 is installed; Kata needs 2.1.311 or later to run a job. Update Claude Code and try again.';
+    fake.runSpec.mockRejectedValueOnce(message);
+    expect(await store.startRun(seedSpec())).toBeNull();
+    expect(store.state()).toBe('error');
+    const shown = JSON.stringify(store.events());
+    expect(shown).toContain('2.0.1');
+    expect(shown).toContain('2.1.311');
   });
 
   it('forwards answers only while awaiting', async () => {
@@ -349,5 +361,35 @@ describe('RunStore with several runs', () => {
     pending.resolve('run-y');
     const y = (await p)!;
     expect(store.snapshot(y)().events).toEqual([log('before the answer')]);
+  });
+});
+
+describe('RunStore sendMessage', () => {
+  it('sends with a generated id for a running run, solo and by run id', async () => {
+    const { store, fake } = setup();
+    await store.startRun(seedSpec());
+    await store.sendMessage('Use the lexer tests');
+    await store.sendMessage('1', 'Skip the docs');
+    expect(fake.sendMessage).toHaveBeenCalledTimes(2);
+    const [first, second] = fake.sendMessage.mock.calls;
+    expect(first[0]).toBe('1');
+    expect(first[1]).toMatch(/^w[0-9a-z]+-\d+$/);
+    expect(first[2]).toBe('Use the lexer tests');
+    expect(second[1]).not.toBe(first[1]);
+    expect(second[2]).toBe('Skip the docs');
+  });
+
+  it('does nothing for blank text, an unknown run, an ended run or an awaiting run', async () => {
+    const { store, fake } = setup();
+    await store.sendMessage('before any run');
+    await store.startRun(seedSpec());
+    await store.sendMessage('   ');
+    await store.sendMessage('nope', 'text');
+    fake.listeners[0]({ type: 'ask.requested', id: 'a', questions: [] });
+    await store.sendMessage('while asking');
+    fake.listeners[0]({ type: 'ask.answered', id: 'a', answers: [] });
+    fake.listeners[0]({ type: 'run.completed', exit_code: 0, is_error: false, num_turns: 1, cost_usd: null, duration_ms: 1, result: null });
+    await store.sendMessage('after the end');
+    expect(fake.sendMessage).not.toHaveBeenCalled();
   });
 });

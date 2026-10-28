@@ -178,3 +178,34 @@ it('no run open has no given view', () => {
   const { vm } = setup();
   expect(vm.given()).toBeNull();
 });
+
+describe('a steered run', () => {
+  const texts = ['lead with the security fix', 'keep it under ten lines'];
+  const steered = () => history.find((r) => r.steered)!;
+
+  it('rerunning or saving a steered run uses the run-spec alone', async () => {
+    const { vm, launches } = setup();
+    await vm.init();
+    await vm.selectRun(steered().id);
+
+    await vm.reRun();
+    vm.confirmReRun('new task');
+    const rerun = launches.take();
+    expect(rerun?.autorun).toBe(true);
+    expect(rerun?.spec.task).toBe('new task');
+    for (const t of texts) expect(JSON.stringify(rerun?.spec)).not.toContain(t);
+
+    await vm.openInCompose();
+    const compose = launches.take();
+    expect(compose?.autorun).toBe(false);
+    for (const t of texts) expect(JSON.stringify(compose?.spec)).not.toContain(t);
+  });
+});
+
+it('exposes the selected run\'s messages and none when no run is open', async () => {
+  const { vm } = setup();
+  expect(vm.messages()).toEqual([]);
+  await vm.init();
+  await vm.selectRun(history.find((r) => r.steered)!.id);
+  expect(vm.messages().map((m) => m.text)).toEqual(['lead with the security fix', 'keep it under ten lines']);
+});

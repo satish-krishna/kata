@@ -46,6 +46,33 @@ describe('MockTransport', () => {
     expect(seen.slice(1)).toEqual(runScriptMid.map((s) => s.ev));
   });
 
+  it('sendMessage on a running mock run emits message.sent, then message.read', async () => {
+    vi.setSystemTime(1_000_000);
+    const t = new MockTransport();
+    const seen: KataEvent[] = [];
+    await t.onRunEvent((_id, e) => seen.push(e));
+    const id = await t.runSpec(seedSpec());
+    vi.advanceTimersByTime(runScriptHead[0].delay);
+    seen.length = 0;
+    await t.sendMessage(id, 'm1', 'Stop editing the parser');
+    expect(seen).toEqual([{ type: 'message.sent', id: 'm1', text: 'Stop editing the parser', sent_at: 1_000_000 + runScriptHead[0].delay }]);
+    vi.advanceTimersByTime(600);
+    expect(seen.map((e) => e.type).filter((type) => type.startsWith('message.'))).toEqual(['message.sent', 'message.read']);
+    expect(seen.find((e) => e.type === 'message.read')).toMatchObject({ id: 'm1' });
+  });
+
+  it('sendMessage while the scripted ask is pending emits message.refused waiting-on-operator', async () => {
+    const t = new MockTransport();
+    const seen: KataEvent[] = [];
+    await t.onRunEvent((_id, e) => seen.push(e));
+    const id = await t.runSpec(seedSpec());
+    vi.advanceTimersByTime(total(runScriptHead));
+    seen.length = 0;
+    await t.sendMessage(id, 'm1', 'hello');
+    vi.advanceTimersByTime(1000);
+    expect(seen).toEqual([{ type: 'message.refused', id: 'm1', reason: 'waiting-on-operator', text: 'hello' }]);
+  });
+
   it('emits the operator decision then plays the tail on submitDecision', async () => {
     const t = new MockTransport();
     const seen: KataEvent[] = [];
