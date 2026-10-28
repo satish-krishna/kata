@@ -2,7 +2,7 @@
 
 Which ways of leaving an item out of a run actually work on a real Claude Code. The proofs are in `crates/kata-core/tests/switch_proofs.rs`; run them with `KATA_SMOKE_REAL=1 cargo test -p kata-core --test switch_proofs -- --nocapture --test-threads=1` on a machine with an authenticated `claude`. Without the variable every test skips.
 
-Rows marked 2.1.308 were run against Claude Code 2.1.308, rows marked 2.1.309 against 2.1.309 (haiku, bypass permissions, `--include-hook-events`, which the installed claude accepts). Every row was re-run on Claude Code 2.1.311 on 2026-10-28, the minimum version since runs give Claude their task on its input (`--input-format stream-json`); see "Re-run on 2.1.311" below. None differed from its earlier verdict. A row that did not hold is marked "unproven: ships locked", and the item kind it covers is locked in `SWITCHABLE` (T2).
+Rows marked 2.1.308 were run against Claude Code 2.1.308, rows marked 2.1.309 against 2.1.309 (haiku, bypass permissions, `--include-hook-events`, which the installed claude accepts). The proofs were re-run on Claude Code 2.1.311 on 2026-10-28, the minimum version since runs give Claude their task on its input (`--input-format stream-json`); see "Re-run on 2.1.311" below. None that ran differed from its earlier verdict; `proof_bare_loads` and `real_claude_trivial_run_completes` need `ANTHROPIC_API_KEY` and are not yet confirmed on 2.1.311. A row that did not hold is marked "unproven: ships locked", and the item kind it covers is locked in `SWITCHABLE` (T2).
 
 Which proof backs each `SWITCHABLE` row (`crates/kata-core/src/given/id.rs`):
 
@@ -51,7 +51,7 @@ Which proof backs each `SWITCHABLE` row (`crates/kata-core/src/given/id.rs`):
 
 ## Re-run on 2.1.311
 
-Run on 2026-10-28 with Claude Code 2.1.311 (haiku where a model is set), now that every Kata run gives Claude its task on its input under `--input-format stream-json` and the minimum Claude Code version is 2.1.311. Every verdict above held and every proof passed. The switch-off proofs call `claude -p` directly with their own flags, as before, so they prove what the flags do on 2.1.311; the streaming-input invocation itself is exercised end to end by the Kata-driven tests in the second list below.
+Run on 2026-10-28 with Claude Code 2.1.311 (haiku where a model is set), now that every Kata run gives Claude its task on its input under `--input-format stream-json` and the minimum Claude Code version is 2.1.311. Every proof that ran held its verdict above; the two that need `ANTHROPIC_API_KEY` are listed below as not confirmed. The switch-off proofs call `claude -p` directly with their own flags, as before, so they prove what the flags do on 2.1.311; the streaming-input invocation itself is exercised end to end by the Kata-driven tests in the second list below.
 
 Switch-off proofs, `KATA_SMOKE_REAL=1 cargo test -p kata-core --test switch_proofs -- --nocapture --test-threads=1`: 20 passed, 0 failed. `proof_bare_loads` skipped itself because no `ANTHROPIC_API_KEY` is set on this machine (its 2.1.309 result stands, not re-run). `proof_deny_personal_and_local_servers` skips without a second gate, so it was run on its own with `KATA_PROOF_WRITE_HOME=1`: passed; both servers removed, every other server and tool identical, and `~/.claude.json` was restored (only Claude's own `cachedGrowthBookFeaturesAt` and `pluginUsage` keys differ from the backup, as before).
 
