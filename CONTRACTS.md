@@ -68,6 +68,8 @@ The process exit code of `kata run` (and the CLI's own codes). Consumers and CI 
 | 125 | Turn cap reached (`leash.max_turns`). |
 | 130 | Cancelled. |
 
+A machine whose Claude Code is older than 2.1.311, or whose version cannot be read, is refused: the run ends with a `run.error` naming the installed version and the minimum (or saying the version could not be read), outcome 2, and no `run.started`. Shokunin and any other consumer on such a machine now gets exit 2. This is the existing `run.error` with exit 2, so it is a minor change; there is no fallback to running without messages.
+
 **Breaking (major):** reassigning the meaning of any code above.
 
 **Additive (minor):** assigning a new, previously-unused code to a new condition. (`70`/`EX_SOFTWARE` is an internal "unexpected error" placeholder, not a contractual outcome.)

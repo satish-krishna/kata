@@ -154,6 +154,8 @@ The process exit code is the leash outcome, and part of the contract — CI and 
 | 125 | Turn cap reached (`leash.max_turns`). Only reachable when the cap is set. |
 | 130 | Cancelled. |
 
+Kata needs Claude Code 2.1.311 or later. On a machine with an older one, or one whose `claude --version` cannot be read, `kata run` ends with a `run.error` naming the installed version and the minimum (or saying the version could not be read) and exit 2, before any `run.started`. Consumers, Shokunin included, should expect exit 2 there and tell the user to update Claude Code.
+
 ---
 
 ## Interactive runs

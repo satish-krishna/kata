@@ -4,6 +4,8 @@ use std::fmt;
 use std::path::Path;
 use std::time::Duration;
 
+use crate::proc::{run_limited, Limited, Outcome};
+
 /// The oldest Claude Code Kata will run a job on (pinned from the 2026-10-27 trial).
 pub const MIN_VERSION: &str = "2.1.311";
 
@@ -50,16 +52,50 @@ impl std::error::Error for VersionRefusal {}
 
 /// Reads the leading `major.minor.patch` of the first line (`2.1.311 (Claude Code)`).
 pub fn parse_version(output: &str) -> Option<ClaudeVersion> {
-    let _ = output;
-    None
+    let token = output.lines().next()?.split_whitespace().next()?;
+    let (core, pre_release) = match token.find(['-', '+']) {
+        Some(at) => (&token[..at], token[at..].starts_with('-')),
+        None => (token, false),
+    };
+    let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
+    let major = parts.next()??;
+    let minor = parts.next()??;
+    let patch = parts.next()??;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(ClaudeVersion {
+        major,
+        minor,
+        patch,
+        pre_release,
+        text: token.to_string(),
+    })
 }
 
 /// Parses `output` and compares it with [`MIN_VERSION`].
 pub fn judge(output: &str) -> Result<ClaudeVersion, VersionRefusal> {
-    let _ = output;
-    Err(VersionRefusal::Unreadable {
-        detail: String::new(),
-    })
+    let Some(version) = parse_version(output) else {
+        let line = output.lines().next().unwrap_or("").trim();
+        let detail: String = line.chars().take(80).collect();
+        return Err(VersionRefusal::Unreadable {
+            detail: if detail.is_empty() {
+                "no output".to_string()
+            } else {
+                detail
+            },
+        });
+    };
+    let minimum = parse_version(MIN_VERSION).expect("MIN_VERSION is a valid version");
+    // A pre-release sorts below its release, so `false` (a release) is the larger.
+    let key = |v: &ClaudeVersion| (v.major, v.minor, v.patch, !v.pre_release);
+    if key(&version) < key(&minimum) {
+        return Err(VersionRefusal::TooOld {
+            installed: version.text,
+            minimum: MIN_VERSION.to_string(),
+        });
+    }
+    Ok(version)
 }
 
 /// Runs `<program> --version` and checks the answer against [`MIN_VERSION`].
@@ -68,14 +104,28 @@ pub fn check_installed(program: &str) -> Result<ClaudeVersion, VersionRefusal> {
 }
 
 fn check_with_limit(program: &str, limit: Duration) -> Result<ClaudeVersion, VersionRefusal> {
-    let _ = (program, limit, Path::new(""));
-    Ok(ClaudeVersion {
-        major: 0,
-        minor: 0,
-        patch: 0,
-        pre_release: false,
-        text: String::new(),
-    })
+    let cwd = std::env::temp_dir();
+    let outcome = run_limited(&Limited {
+        program: Path::new(program),
+        args: vec!["--version".into()],
+        cwd: &cwd,
+        env: &[],
+        stdin: None,
+        limit,
+        keep_stdout: true,
+        engineers_program: false,
+    });
+    let unreadable = |detail: String| Err(VersionRefusal::Unreadable { detail });
+    match outcome {
+        Outcome::NotStarted(e) => unreadable(e.to_string()),
+        Outcome::WaitFailed(e) => unreadable(e.to_string()),
+        Outcome::TimedOut { .. } => unreadable("timed out".to_string()),
+        Outcome::Exited { code, stdout, .. } => match code {
+            Some(0) => judge(&String::from_utf8_lossy(&stdout)),
+            Some(code) => unreadable(format!("exit code {code}")),
+            None => unreadable("ended by a signal".to_string()),
+        },
+    }
 }
 
 #[cfg(test)]

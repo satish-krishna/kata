@@ -375,6 +375,20 @@ pub fn run_with<F: FnMut(KataEvent)>(
         }
     }
 
+    // Kata needs a Claude Code new enough to take messages mid-run. There is no
+    // fallback to the old way for a run nobody intends to steer.
+    if let Err(refusal) = crate::claude::check_installed(&crate::claude::program()) {
+        record_given_none!();
+        let message = refusal.to_string();
+        emit(KataEvent::RunError {
+            message: message.clone(),
+            exit_code: 2,
+            cost_usd: None,
+            duration_ms: 0,
+        });
+        return Err(RunError::ClaudeVersion(message));
+    }
+
     let isolation = match spec.leash.isolation {
         Isolation::None => "none",
         Isolation::Worktree => "worktree",

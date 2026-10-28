@@ -29,7 +29,7 @@ pub fn build_invocation_with(
     assembled: &Assembled,
     applied: &Applied,
 ) -> ClaudeInvocation {
-    let program = std::env::var("KATA_CLAUDE_BIN").unwrap_or_else(|_| "claude".to_string());
+    let program = crate::claude::program();
 
     let mut args: Vec<String> = Vec::new();
     if spec.auth.bare {
