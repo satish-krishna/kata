@@ -314,9 +314,13 @@
 
 .k-bp__session {
   display: flex;
-  flex: 1 0 auto;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: var(--space-3);
+}
+
+.k-bp__session--open {
+  flex: 1 0 auto;
 }
 
 .k-bp__session[hidden],
