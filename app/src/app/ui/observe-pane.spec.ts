@@ -456,3 +456,73 @@ describe('ObservePane - what the run was given', () => {
     expect(container.querySelector('.wb-status [data-given-button]')).not.toBeNull();
   });
 });
+
+describe('ObservePane - operator messages and the message box', () => {
+  const ev = (text: string): StreamEvent => ({ type: 'assistant.text', text }) as StreamEvent;
+  const MSG = { id: 'm1', text: 'Stop editing the parser', sent_at: 1_700_000_000_000, read_at: null, at: 1 };
+  const field = (m: { container: HTMLElement }) => m.container.querySelector('app-message-box input') as HTMLInputElement | null;
+  const sendButton = (m: { container: HTMLElement }) => m.container.querySelector('app-message-box button') as HTMLButtonElement | null;
+  const clock = (ms: number) => {
+    const d = new Date(ms);
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  };
+
+  it('an accepted message shows as waiting at the point it was sent', async () => {
+    const m = await renderPane({ events: [ev('first'), ev('second')], messages: [MSG] });
+    const rows = [...m.container.querySelectorAll('.k-event, app-operator-message')].map((el) => (el.tagName === 'APP-OPERATOR-MESSAGE' ? 'msg' : 'event'));
+    expect(rows).toEqual(['event', 'msg', 'event']);
+    const entry = m.container.querySelector('app-operator-message')!.textContent ?? '';
+    expect(entry).toContain('Stop editing the parser');
+    expect(entry).toContain('waiting');
+    expect(entry).toContain(`sent ${clock(MSG.sent_at)}`);
+  });
+
+  it('a read message shows its read time', async () => {
+    const read = MSG.sent_at + 4000;
+    const m = await renderPane({ events: [ev('first')], messages: [{ ...MSG, read_at: read }] });
+    const entry = m.container.querySelector('app-operator-message')!.textContent ?? '';
+    expect(entry).toContain(`read ${clock(read)}`);
+    expect(entry).not.toContain('waiting');
+  });
+
+  it('the message box says the agent reads it before its next step', async () => {
+    const m = await renderPane({ state: 'running' });
+    expect(m.text()).toContain('The agent reads this before its next step.');
+  });
+
+  it('sending is disabled while a question is open and enabled after it is answered', async () => {
+    const ask = { id: 'q1', questions: [{ kind: 'text', header: 'H', question: 'Which?' }], answers: null, at: 0 };
+    const m = await renderPane({ state: 'awaiting', asks: [ask] });
+    expect(field(m)!.disabled).toBe(true);
+    expect(sendButton(m)!.disabled).toBe(true);
+    expect(m.text()).toContain('Answer the question first');
+    m.fixture.componentRef.setInput('state', 'running');
+    m.fixture.componentRef.setInput('asks', [{ ...ask, answers: [['x']] }]);
+    await m.fixture.whenStable();
+    expect(field(m)!.disabled).toBe(false);
+  });
+
+  it.each(['success', 'warning', 'error'])('an ended run (%s) has no message box', async (state) => {
+    const m = await renderPane({ state });
+    expect(m.container.querySelector('app-message-box')).toBeNull();
+  });
+
+  it('a refusal shows its text and puts the message back', async () => {
+    const m = await renderPane({ state: 'running', refusal: { id: 'r1', reason: 'run-ending', text: 'my words' } });
+    expect(m.text()).toContain('Not sent: the run is ending');
+    expect(field(m)!.value).toBe('my words');
+  });
+
+  it('emits say when the box sends', async () => {
+    const m = await renderPane({ state: 'running' });
+    const say = vi.fn();
+    m.fixture.componentInstance.say.subscribe(say);
+    const f = field(m)!;
+    f.value = 'hello';
+    f.dispatchEvent(new Event('input'));
+    await m.fixture.whenStable();
+    sendButton(m)!.click();
+    expect(say).toHaveBeenCalledWith('hello');
+  });
+});

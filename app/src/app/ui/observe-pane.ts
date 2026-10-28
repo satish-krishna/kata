@@ -8,7 +8,7 @@ import { HlmEmptyImports } from '@spartan-ng/helm/empty';
 import { HlmMessageScrollerImports } from '@spartan-ng/helm/message-scroller';
 import type { Mode } from '@bindings/Mode';
 import type { RunSpec } from '@bindings/RunSpec';
-import { STATUS_LABEL, type AskRecord, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../lib/events';
+import { STATUS_LABEL, type AskRecord, type MessageRecord, type MessageRefusal, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../lib/events';
 import { pairToolEvents, withPauses, type PausedItem } from '../lib/toolcards';
 import { AskPanel } from './ask-panel';
 import { EventRow } from './event-row';
@@ -39,6 +39,9 @@ export class ObservePane {
   readonly mode = input<Mode>('workbench');
   /** The index of the first event the engineer has not seen, when they come back to a pane that kept running. */
   readonly unseenFrom = input<number | null>(null);
+  readonly messages = input<MessageRecord[]>([]);
+  readonly refusal = input<MessageRefusal | null>(null);
+  readonly say = output<string>();
   readonly answer = output<{ id: string; answers: string[][] }>();
   readonly decide = output<{ id: string; allow: boolean; message: string | null }>();
 
