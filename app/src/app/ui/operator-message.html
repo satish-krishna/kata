@@ -1,1 +1,9 @@
-
+<div class="k-event k-event--operator">
+  <span class="k-event__gutter">you</span>
+  <span class="k-event__body">{{ record().text }}</span>
+  @if (readAt(); as read) {
+    <span class="k-badge k-badge--success" data-message-state="read">read {{ read }}</span>
+  } @else {
+    <span class="k-badge k-badge--warning" data-message-state="waiting">waiting · sent {{ sentAt() }}</span>
+  }
+</div>

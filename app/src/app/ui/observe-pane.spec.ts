@@ -470,7 +470,7 @@ describe('ObservePane - operator messages and the message box', () => {
 
   it('an accepted message shows as waiting at the point it was sent', async () => {
     const m = await renderPane({ events: [ev('first'), ev('second')], messages: [MSG] });
-    const rows = [...m.container.querySelectorAll('.k-event, app-operator-message')].map((el) => (el.tagName === 'APP-OPERATOR-MESSAGE' ? 'msg' : 'event'));
+    const rows = [...m.container.querySelectorAll('.k-event:not(.k-event--operator), app-operator-message')].map((el) => (el.tagName === 'APP-OPERATOR-MESSAGE' ? 'msg' : 'event'));
     expect(rows).toEqual(['event', 'msg', 'event']);
     const entry = m.container.querySelector('app-operator-message')!.textContent ?? '';
     expect(entry).toContain('Stop editing the parser');
