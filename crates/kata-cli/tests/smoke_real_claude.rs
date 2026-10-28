@@ -381,3 +381,162 @@ struct AutoObserved {
     completed: Option<serde_json::Value>,
     captured: String,
 }
+
+/// Steering against live claude: a cheap job runs `sleep 8` once with Bash, the
+/// test writes a `say` line about 3 seconds after the sleep starts, and the run
+/// must report `message.sent`, then `message.read` after the sleep's
+/// `tool.result`, and the final answer must carry the word asked for. This is
+/// the proof that real claude takes a message from its input between steps
+/// under streaming input. Costs tokens.
+#[test]
+fn smoke_real_steering() {
+    if std::env::var("KATA_SMOKE_REAL").as_deref() != Ok("1") {
+        eprintln!("skipping real-claude smoke test (set KATA_SMOKE_REAL=1 to enable)");
+        return;
+    }
+    let work = tempfile::tempdir().unwrap();
+    let spec_path = work.path().join("steer.kata.toml");
+    let workdir = work.path().to_string_lossy().replace('\\', "/");
+    let toml = format!(
+        "schema = 1\n\
+         name = \"steer-smoke\"\n\
+         task = \"Run `sleep 8` once with the Bash tool, then reply with the single word DONE. If you receive a message from the engineer meanwhile, follow it in your final answer.\"\n\
+         workdir = \"{workdir}\"\n\
+         \n\
+         [model]\n\
+         id = \"haiku\"\n\
+         \n\
+         [leash]\n\
+         max_turns = 12\n\
+         timeout_secs = 180\n\
+         \n\
+         [auth]\n\
+         bare = false\n\
+         \n\
+         [permissions]\n\
+         mode = \"prompt\"\n\
+         allow = [\"Bash(sleep *)\"]\n\
+         unmatched = \"deny\"\n",
+    );
+    std::fs::write(&spec_path, toml).unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kata"))
+        .arg("run")
+        .arg(&spec_path)
+        // KATA_CLAUDE_BIN unset -> uses the real `claude` on PATH.
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+
+    // The worker keeps stdin open for the whole run and writes the `say` line
+    // 3 seconds after the Bash call starts, from a short-lived thread so the
+    // event loop never blocks.
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<serde_json::Value>>();
+    let done = Arc::new(AtomicBool::new(false));
+    let done_w = done.clone();
+    let worker = std::thread::spawn(move || {
+        let mut events = Vec::new();
+        let mut stdin = Some(stdin);
+        let mut sender: Option<std::thread::JoinHandle<()>> = None;
+        for line in BufReader::new(stdout).lines() {
+            let line = match line {
+                Ok(l) => l,
+                Err(_) => break,
+            };
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                if v["type"] == "tool.use" && v["name"] == "Bash" && sender.is_none() {
+                    let mut input = stdin.take().unwrap();
+                    sender = Some(std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_secs(3));
+                        let _ = writeln!(
+                            input,
+                            "say s1 \"Also include the word PINEAPPLE in your final answer\""
+                        );
+                        let _ = input.flush();
+                        // Hold the input open until the run ends.
+                        std::thread::sleep(Duration::from_secs(190));
+                    }));
+                }
+                events.push(v);
+            }
+        }
+        done_w.store(true, Ordering::SeqCst);
+        let _ = tx.send(events);
+        // The sender thread is detached on purpose: it only holds the pipe.
+        drop(sender);
+    });
+
+    // Wall-clock guard: 200s ~= leash timeout (180s) plus headroom for cleanup.
+    let result = rx.recv_timeout(Duration::from_secs(200));
+    if result.is_err() && !done.load(Ordering::SeqCst) {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    let mut stderr = String::new();
+    {
+        use std::io::Read;
+        if let Some(mut e) = child.stderr.take() {
+            let _ = e.read_to_string(&mut stderr);
+        }
+    }
+    let events = match result {
+        Ok(events) => events,
+        Err(_) => {
+            let _ = worker.join();
+            panic!("steering run hung past the wall-clock deadline; stderr:\n{stderr}");
+        }
+    };
+    let _ = worker.join();
+
+    for e in &events {
+        if matches!(
+            e["type"].as_str(),
+            Some("message.sent" | "message.read" | "message.refused" | "run.completed")
+        ) {
+            eprintln!("[smoke] {e}");
+        }
+    }
+    let types: Vec<&str> = events.iter().filter_map(|e| e["type"].as_str()).collect();
+    let pos = |t: &str| types.iter().position(|x| *x == t);
+    let sent = pos("message.sent")
+        .unwrap_or_else(|| panic!("no message.sent; events: {types:?}\nstderr:\n{stderr}"));
+    let read = pos("message.read")
+        .unwrap_or_else(|| panic!("no message.read; events: {types:?}\nstderr:\n{stderr}"));
+    assert!(sent < read, "message.sent must come before message.read");
+    let sleep_result = events
+        .iter()
+        .position(|e| e["type"] == "tool.result" && e["name"] == "Bash")
+        .unwrap_or_else(|| panic!("no Bash tool.result; events: {types:?}"));
+    assert!(
+        sleep_result < read,
+        "message.read must come after the sleep's tool.result; events: {types:?}"
+    );
+    let done_ev = events
+        .iter()
+        .find(|e| e["type"] == "run.completed")
+        .unwrap_or_else(|| panic!("no run.completed; events: {types:?}\nstderr:\n{stderr}"));
+    assert_eq!(
+        done_ev["exit_code"], 0,
+        "expected exit 0; result: {}",
+        done_ev["result"]
+    );
+    assert!(
+        done_ev["result"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("PINEAPPLE"),
+        "final result lacks PINEAPPLE: {}",
+        done_ev["result"]
+    );
+    // The engine re-sends run.given each time a hook fires and keeps the last as
+    // the complete one, so a run reports at least one, never none.
+    assert!(
+        types.contains(&"run.given"),
+        "expected a run.given; events: {types:?}"
+    );
+}
