@@ -245,6 +245,22 @@ mod tests {
 
     #[test]
     #[serial]
+    fn settings_default_to_auto() {
+        let home = with_home();
+        assert_eq!(load_settings().permission_mode, SdlcPermissionMode::Auto);
+
+        let dir = home.temp.path().join("workbench");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"mode":null,"remember":false}"#,
+        )
+        .unwrap();
+        assert_eq!(load_settings().permission_mode, SdlcPermissionMode::Auto);
+    }
+
+    #[test]
+    #[serial]
     fn build_layout_round_trips() {
         let _home = with_home();
         let v = serde_json::json!({"version": 1, "modes": {"wide": {"order": ["a", "b"]}}});
