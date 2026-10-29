@@ -25,8 +25,8 @@ describe('SdlcSettingsDialog', () => {
     await render(SdlcSettingsDialog, { open: true, settings: SETTINGS, workspace: WS });
     await settle();
     const radios = Array.from(dialog()!.querySelectorAll('[role="radio"]'));
-    expect(radios.map((r) => r.textContent!.trim())).toEqual(['bypass', 'prompt']);
-    expect(radios[0].getAttribute('aria-checked')).toBe('true');
+    expect(radios.map((r) => r.textContent!.trim())).toEqual(['auto', 'bypass', 'prompt']);
+    expect(radios[1].getAttribute('aria-checked')).toBe('true');
     expect(dialog()!.querySelector<HTMLInputElement>('input[aria-label="Base branch"]')!.value).toBe('main');
   });
 

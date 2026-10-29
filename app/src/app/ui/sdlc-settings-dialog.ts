@@ -12,6 +12,7 @@ import { Segmented } from './segmented';
 export type SettingsSave = { settings: Settings; baseBranch: string | null };
 
 const MODES: { value: SdlcPermissionMode; label: string }[] = [
+  { value: 'auto', label: 'auto' },
   { value: 'bypass', label: 'bypass' },
   { value: 'prompt', label: 'prompt' },
 ];
