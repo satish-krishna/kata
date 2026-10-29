@@ -253,10 +253,13 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("settings.json"),
-            r#"{"mode":null,"remember":false}"#,
+            r#"{"mode":"sdlc","remember":true}"#,
         )
         .unwrap();
-        assert_eq!(load_settings().permission_mode, SdlcPermissionMode::Auto);
+        let s = load_settings();
+        assert_eq!(s.mode, Some(Mode::Sdlc));
+        assert!(s.remember);
+        assert_eq!(s.permission_mode, SdlcPermissionMode::Auto);
     }
 
     #[test]
