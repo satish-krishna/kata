@@ -1,3 +1,4 @@
+use crate::changes::is_safe_system;
 use crate::{frontmatter, git};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -182,6 +183,22 @@ pub fn context_health(folder: &Path, master: &str, system: &str, repo: &str) -> 
         Some(n) => ContextState::Stale { commits: n },
         None => ContextState::Stale { commits: 0 },
     }
+}
+
+/// The text of `intent/<system>/context/<repo>.md` in the master, for the Workbench's context viewer. `None` for
+/// a system or repo name that is not one plain folder name, or a file that is not there. Reads only.
+pub fn read_context(master: &Path, system: &str, repo: &str) -> Option<String> {
+    if !is_safe_system(system) || !is_safe_system(repo) {
+        return None;
+    }
+    std::fs::read_to_string(
+        master
+            .join("intent")
+            .join(system)
+            .join("context")
+            .join(format!("{repo}.md")),
+    )
+    .ok()
 }
 
 /// The state of `<workspace>/CLAUDE.md` against `<master>/intent/workspace.md` (ai-sdlc `references/workspace.md` section 2). Reads only.
@@ -510,5 +527,25 @@ mod tests {
             context_health(tmp.path(), "m", "sys", "svc"),
             ContextState::Stale { commits: 0 }
         );
+    }
+
+    #[test]
+    fn read_context_reads_the_file_and_refuses_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = repo(tmp.path(), "m");
+        assert_eq!(read_context(&master, "sys", "svc"), None);
+        commit_file(
+            &master,
+            "intent/sys/context/svc.md",
+            "---\nrepo: svc\n---\n# svc\n",
+            "ctx",
+        );
+        assert_eq!(
+            read_context(&master, "sys", "svc").as_deref(),
+            Some("---\nrepo: svc\n---\n# svc\n")
+        );
+        assert_eq!(read_context(&master, "sys", "../context/svc"), None);
+        assert_eq!(read_context(&master, "..", "svc"), None);
+        assert_eq!(read_context(&master, "sys/../sys", "svc"), None);
     }
 }

@@ -302,6 +302,22 @@ describe('SdlcHomeViewModel runs', () => {
     expect(health).toHaveBeenCalled();
   });
 
+  it('openContext goes to the context screen of the repo, under its system', async () => {
+    const { vm, navigate } = setup();
+    await vm.init();
+    await vm.openContext('customer-portal');
+    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'claims', 'context', 'customer-portal']);
+  });
+
+  it('a context run handed over by the context screen starts once the workspace is read, after the address drops it', async () => {
+    const { vm, runAgent, navigate } = setup();
+    await vm.init(null, 'customer-portal');
+    expect(navigate).toHaveBeenCalledWith(['/sdlc'], { replaceUrl: true });
+    expect(runAgent).toHaveBeenCalledTimes(1);
+    expect(specOf(runAgent).name).toBe('sdlc-claims-context');
+    expect(specOf(runAgent).task).toContain('customer-portal');
+  });
+
   it('setup and a context run open the preview first; cancel starts nothing', async () => {
     const { vm, runAgent, preview, transport } = setup({ preview: 'real' });
     await vm.init();

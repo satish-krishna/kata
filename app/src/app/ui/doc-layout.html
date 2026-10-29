@@ -45,21 +45,23 @@
         </p>
       </section>
     }
-    <section class="k-card k-docview__card" data-testid="recent-runs">
-      <h2 class="k-docview__label">Recent runs · {{ runTotal() }}</h2>
-      @if (runs().length === 0) {
-        <p class="k-left__note">No runs yet</p>
-      } @else {
-        <ul class="k-docview__runs">
-          @for (r of runs(); track r.id) {
-            <li>
-              <span [class]="'k-status k-status--' + r.tone"><span class="k-status__dot"></span>{{ outcome(r.exit) }}</span>&ngsp;
-              <span>{{ r.kind }}</span>&ngsp;
-              <span class="k-mono k-docview__when">{{ r.time }}</span>
-            </li>
-          }
-        </ul>
-      }
-    </section>
+    @if (showRuns()) {
+      <section class="k-card k-docview__card" data-testid="recent-runs">
+        <h2 class="k-docview__label">Recent runs · {{ runTotal() }}</h2>
+        @if (runs().length === 0) {
+          <p class="k-left__note">No runs yet</p>
+        } @else {
+          <ul class="k-docview__runs">
+            @for (r of runs(); track r.id) {
+              <li>
+                <span [class]="'k-status k-status--' + r.tone"><span class="k-status__dot"></span>{{ outcome(r.exit) }}</span>&ngsp;
+                <span>{{ r.kind }}</span>&ngsp;
+                <span class="k-mono k-docview__when">{{ r.time }}</span>
+              </li>
+            }
+          </ul>
+        }
+      </section>
+    }
   </aside>
 </div>

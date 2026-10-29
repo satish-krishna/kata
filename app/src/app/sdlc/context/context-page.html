@@ -1,0 +1,78 @@
+<div class="k-home">
+  <app-sdlc-toolbar
+    [workspaces]="vm.workspaces()"
+    [current]="vm.current()"
+    [branch]="vm.masterBranch()"
+    [crumbs]="vm.crumbs()"
+    back="Changes"
+    [locked]="vm.locked()"
+    (switchMode)="vm.switchMode()"
+    (select)="vm.selectWorkspace($event)"
+    (add)="vm.toHome()"
+    (remove)="vm.toHome()"
+    (openSettings)="vm.toHome()"
+    (goBack)="vm.toHome()"
+  >
+    @if (vm.action(); as label) {
+      <button
+        hlmBtn
+        variant="primary"
+        type="button"
+        [attr.aria-label]="label + ' for ' + vm.repo()"
+        [disabled]="vm.locked()"
+        (click)="vm.runContext()"
+      >{{ label }}</button>
+    }
+  </app-sdlc-toolbar>
+
+  @if (vm.state() === 'not-found') {
+    <main class="k-home__state">
+      <section class="k-state" aria-labelledby="state-title">
+        <h1 id="state-title" class="k-state__title">No workspace to read</h1>
+        <p class="k-state__body">Kata could not find the master repo of the open workspace.</p>
+        <button hlmBtn variant="secondary" type="button" (click)="vm.toHome()">Back to the workspace</button>
+      </section>
+    </main>
+  } @else {
+    <main class="k-ctxpage">
+      <h1 class="sr-only">Context of {{ vm.repo() }}</h1>
+      <nav class="k-list k-ctxpage__repos" aria-label="Repositories">
+        <span class="k-docview__label k-ctxpage__label">Repositories</span>
+        @for (r of vm.rows(); track r.name) {
+          <button
+            hlmBtn
+            variant="bare"
+            size="bare"
+            type="button"
+            class="k-list__row k-list__row--ctx"
+            [attr.aria-current]="r.name === vm.repo() ? 'page' : null"
+            (click)="vm.openRepo(r.name)"
+          >
+            <span class="k-mono k-list__name">{{ r.name }}</span>&ngsp;
+            <span [class]="'k-status k-status--' + vm.label(r.context).tone"><span class="k-status__dot"></span>{{ vm.label(r.context).text }}</span>
+          </button>
+        }
+      </nav>
+      <section class="k-ctxpage__doc" data-testid="context-doc" [attr.aria-label]="'Context of ' + vm.repo()">
+        <header class="k-ctxpage__head">
+          <span class="k-mono">intent/{{ vm.system() }}/context/{{ vm.repo() }}.md</span>
+          @if (vm.picked()) {
+            <span [class]="'k-status k-status--' + vm.pickedLabel().tone"><span class="k-status__dot"></span>{{ vm.pickedLabel().text }}</span>
+          }
+        </header>
+        @if (vm.text() === undefined) {
+          <p class="k-state__body k-ctxpage__note" role="status">Reading the context…</p>
+        } @else if (vm.doc(); as d) {
+          <app-doc-layout [body]="d.body" [fields]="d.fields" [showRuns]="false" />
+        } @else {
+          <p class="k-state__body k-ctxpage__note">
+            <span class="k-mono">{{ vm.repo() }}</span> has no context file yet.
+            @if (vm.action()) {
+              Run context to write one.
+            }
+          </p>
+        }
+      </section>
+    </main>
+  }
+</div>

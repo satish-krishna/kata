@@ -26,6 +26,8 @@ export class DocLayout {
   readonly runs = input<RunRow[]>([]);
   /** How many runs the stage has had; the rail lists only the latest. */
   readonly runTotal = input(0);
+  /** Whether the rail has a recent-runs card; a document no run belongs to has none. */
+  readonly showRuns = input(true);
 
   protected readonly outcome = runResultLabel;
   protected readonly headings = computed(() => outline(this.body()).filter((h) => h.level === 2 || h.level === 3));

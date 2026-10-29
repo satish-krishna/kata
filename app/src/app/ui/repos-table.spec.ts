@@ -55,4 +55,18 @@ describe('ReposTable', () => {
     const { container } = await render(ReposTable, { rows, marker: '', disabled: true });
     expect(runButtons(container).every((b) => b.disabled)).toBe(true);
   });
+
+  it('offers View on every product repo with a context file to read, and emits its name', async () => {
+    const { fixture, container } = await render(ReposTable, { rows, marker: '' });
+    const views = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter((b) => b.textContent!.trim() === 'View');
+    expect(views.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'View context of claims-core',
+      'View context of customer-portal',
+      'View context of billing-api',
+    ]);
+    const got: string[] = [];
+    fixture.componentInstance.viewContext.subscribe((n) => got.push(n));
+    views[1].click();
+    expect(got).toEqual(['customer-portal']);
+  });
 });

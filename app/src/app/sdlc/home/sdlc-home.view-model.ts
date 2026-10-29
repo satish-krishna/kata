@@ -32,6 +32,7 @@ import {
   masterPath,
   masterRepo,
   productRepos,
+  readContextStates,
   repoRows,
   systemNames,
   systemOf,
@@ -237,8 +238,8 @@ export class SdlcHomeViewModel {
     return w && repo ? masterPath(w.folder, repo) : null;
   });
 
-  /** `demo` is the `?demo=` query value: `sdlc-setup` opens the add-workspace flow on a folder that needs setup, and `start` triages a described change with a scripted run. Browser only. */
-  async init(demo: string | null = null): Promise<void> {
+  /** `demo` is the `?demo=` query value: `sdlc-setup` opens the add-workspace flow on a folder that needs setup, and `start` triages a described change with a scripted run. Browser only. `context` is the `?context=` query value, a repo the context screen handed over to run or refresh its context. */
+  async init(demo: string | null = null, context: string | null = null): Promise<void> {
     this.destroyRef.onDestroy(() => this.stop());
     await this.listen();
     try {
@@ -258,6 +259,11 @@ export class SdlcHomeViewModel {
     // Browser dev/review only: never fires under Tauri.
     if (!inTauri() && demo === 'sdlc-setup') await this.addWorkspace(DEMO_SETUP_FOLDER);
     if (!inTauri() && demo === 'start') await this.newChange(DEMO_START_SYSTEM, DEMO_START_IDEA, 'decide');
+    if (context !== null) {
+      // Drop the hand-off from the address first, so going back to this screen never starts the run again.
+      await this.router.navigate(['/sdlc'], { replaceUrl: true });
+      await this.runContext(context);
+    }
   }
 
   // --- workspace list
@@ -435,6 +441,13 @@ export class SdlcHomeViewModel {
     if (!scan || this.refuseWhileLocked()) return;
     const system = systemOf(scan, repo) ?? systemNames(scan)[0] ?? '';
     await this.runOnBase('Reading context', 'Context', 'context', { system, repos: [repo] });
+  }
+
+  /** Open the context screen on `repo`. */
+  openContext(repo: string): Promise<boolean> {
+    const scan = this.scan();
+    const system = (scan && systemOf(scan, repo)) ?? this.systems()[0] ?? '';
+    return this.router.navigate(['/sdlc', system, 'context', repo]);
   }
 
   /** Setup is idempotent and supports adding a system, so Add system simply runs it again. */
@@ -742,17 +755,8 @@ export class SdlcHomeViewModel {
     this.catalogRead.set(true);
   }
 
-  private async readContexts(folder: string, scan: WorkspaceScan): Promise<Record<string, ContextState>> {
-    const repo = masterRepo(scan);
-    if (repo === null) return {};
-    const out: Record<string, ContextState> = {};
-    const jobs = Object.entries(scan.marker?.systems ?? {}).flatMap(([system, def]) =>
-      (def?.repos ?? []).filter((r) => r !== repo && !(r in out)).map(async (r) => {
-        out[r] = await this.transport.sdlcContextHealth(folder, repo, system, r);
-      }),
-    );
-    await Promise.all(jobs);
-    return out;
+  private readContexts(folder: string, scan: WorkspaceScan): Promise<Record<string, ContextState>> {
+    return readContextStates(scan, (master, system, repo) => this.transport.sdlcContextHealth(folder, master, system, repo));
   }
 
   /** The change folders of every system, from the folders alone: no stage is read and no program is started. */

@@ -5,8 +5,8 @@ import { contextAction, contextLabel, type RepoRole, type RepoRow } from '../lib
 
 const ROLE: Record<RepoRole, string> = { master: 'master', product: 'product', 'not-checked-out': 'product' };
 
-/* The workspace home's Repositories table: each repo, its role, its context state, and Run or Refresh
- * context on each product repo that is checked out. */
+/* The workspace home's Repositories table: each repo, its role, its context state, View to read its context file,
+ * and Run or Refresh context on each product repo that is checked out. */
 @Component({
   selector: 'app-repos-table',
   imports: [HlmButtonImports, HlmTableImports],
@@ -19,6 +19,8 @@ export class ReposTable {
   readonly disabled = input(false);
 
   readonly runContext = output<string>();
+  /** Open the context viewer on a repo. */
+  readonly viewContext = output<string>();
 
   protected role(role: RepoRole): string {
     return role === 'not-checked-out' ? 'product' : ROLE[role];
