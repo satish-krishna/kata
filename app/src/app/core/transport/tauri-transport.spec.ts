@@ -57,6 +57,7 @@ const rows: Row[] = [
   ['sdlcWorkspaces', (t) => t.sdlcWorkspaces(), 'sdlc_workspaces', undefined],
   ['sdlcSaveWorkspaces', (t) => t.sdlcSaveWorkspaces([entry]), 'sdlc_save_workspaces', { workspaces: [entry] }],
   ['sdlcScan', (t) => t.sdlcScan('/w'), 'sdlc_scan', { folder: '/w' }],
+  ['sdlcReadContext', (t) => t.sdlcReadContext('/m', 's', 'r'), 'sdlc_read_context', { master: '/m', system: 's', repo: 'r' }],
   ['sdlcContextHealth', (t) => t.sdlcContextHealth('/w', 'm', 's', 'r'), 'sdlc_context_health', { folder: '/w', master: 'm', system: 's', repo: 'r' }],
   ['sdlcInstructions', (t) => t.sdlcInstructions('/w', 'm'), 'sdlc_instructions', { folder: '/w', masterRepo: 'm' }],
   ['sdlcChangeNames', (t) => t.sdlcChangeNames('/m', 's'), 'sdlc_change_names', { master: '/m', system: 's' }],

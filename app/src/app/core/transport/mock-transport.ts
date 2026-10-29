@@ -179,6 +179,7 @@ export class MockTransport extends KataTransport {
     return Promise.resolve(this.sdlc.scan(folder));
   }
   sdlcContextHealth(_folder: string, _master: string, _system: string, repo: string): Promise<ContextState> { return Promise.resolve(this.sdlc.contextHealth(repo)); }
+  sdlcReadContext(_master: string, _system: string, repo: string): Promise<string | null> { return Promise.resolve(this.sdlc.readContext(repo)); }
   sdlcInstructions(_folder: string, _masterRepo: string): Promise<InstructionsState> { return Promise.resolve(this.sdlc.instructions()); }
   sdlcChangeNames(_master: string, _system: string): Promise<ChangeName[]> { return Promise.resolve(this.sdlc.changeNames()); }
   /** Plays a scripted pass: one `stage` per change and a `progress` after each, spread over about a second, then `done`. A new pass cancels the one before. */

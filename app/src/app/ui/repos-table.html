@@ -23,6 +23,16 @@
             }
           </td>
           <td hlmTableCell class="k-cell-end">
+            @if (r.role !== 'master' && r.context?.kind !== 'missing') {
+              <button
+                hlmBtn
+                variant="ghost"
+                size="sm"
+                type="button"
+                [attr.aria-label]="'View context of ' + r.name"
+                (click)="viewContext.emit(r.name)"
+              >View</button>
+            }
             @if (r.role !== 'master' && action(r); as label) {
               <button
                 hlmBtn

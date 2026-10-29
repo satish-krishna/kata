@@ -173,6 +173,7 @@
                 [marker]="vm.markerLine()"
                 [disabled]="vm.locked()"
                 (runContext)="vm.runContext($event)"
+                (viewContext)="vm.openContext($event)"
               />
               <div>
                 <button hlmBtn variant="secondary" size="sm" type="button" [disabled]="vm.locked()" (click)="vm.addSystem()">
@@ -211,6 +212,13 @@
       (cancel)="vm.closeSettings()"
     />
   }
+  <app-context-dialog
+    [view]="vm.contextView()"
+    [disabled]="vm.locked()"
+    (pick)="vm.openContext($event)"
+    (runContext)="vm.runContextFromViewer($event)"
+    (close)="vm.closeContext()"
+  />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
   <app-confirm-dialog
     [open]="vm.switchPrompt() !== null"

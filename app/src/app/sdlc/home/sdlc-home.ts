@@ -6,6 +6,7 @@ import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { AddWorkspaceDialog } from '../../ui/add-workspace-dialog';
 import { ChangesTable } from '../../ui/changes-table';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
+import { ContextDialog } from '../../ui/context-dialog';
 import { LeftoverDialog } from '../../ui/leftover-dialog';
 import { LockOverlay } from '../../ui/lock-overlay';
 import { ProgressLine } from '../../ui/progress-line';
@@ -37,6 +38,7 @@ import { SdlcHomeViewModel } from './sdlc-home.view-model';
     LeftoverDialog,
     LockOverlay,
     ConfirmDialog,
+    ContextDialog,
     RunPreviewDialog,
   ],
   templateUrl: './sdlc-home.html',

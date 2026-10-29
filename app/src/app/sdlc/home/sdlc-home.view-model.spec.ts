@@ -302,6 +302,44 @@ describe('SdlcHomeViewModel runs', () => {
     expect(health).toHaveBeenCalled();
   });
 
+  it('the context viewer reads the picked repo from the master, moves between repos, and closes', async () => {
+    const { vm, transport } = setup();
+    await vm.init();
+    const read = vi.spyOn(transport, 'sdlcReadContext');
+    await vm.openContext('claims-core');
+    expect(read).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'claims', 'claims-core');
+    const view = vm.contextView()!;
+    expect(view.repo).toBe('claims-core');
+    expect(view.text).toContain('# claims-core');
+    expect(view.rows.map((r) => r.name)).not.toContain(MOCK_MASTER);
+    await vm.openContext('billing-api');
+    expect(vm.contextView()!.text).toBeNull();
+    vm.closeContext();
+    expect(vm.contextView()).toBeNull();
+  });
+
+  it('a slower read for a repo no longer picked does not replace the one now shown', async () => {
+    const { vm, transport } = setup();
+    await vm.init();
+    let release!: (t: string) => void;
+    vi.spyOn(transport, 'sdlcReadContext').mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const first = vm.openContext('claims-core');
+    await vm.openContext('customer-portal');
+    release('# old');
+    await first;
+    expect(vm.contextView()!.repo).toBe('customer-portal');
+    expect(vm.contextView()!.text).toContain('# customer-portal');
+  });
+
+  it('running context from the viewer closes it and starts the run', async () => {
+    const { vm, runAgent } = setup();
+    await vm.init();
+    await vm.openContext('customer-portal');
+    await vm.runContextFromViewer('customer-portal');
+    expect(vm.contextView()).toBeNull();
+    expect(specOf(runAgent).task).toContain('customer-portal');
+  });
+
   it('setup and a context run open the preview first; cancel starts nothing', async () => {
     const { vm, runAgent, preview, transport } = setup({ preview: 'real' });
     await vm.init();

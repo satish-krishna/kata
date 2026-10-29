@@ -170,6 +170,76 @@ const MOCK_SETUP_REPOS = ['billing-intent', 'billing-core'];
 
 const MOCK_REPOS = ['claims-intent', 'claims-core', 'customer-portal', 'billing-api'];
 
+/** The context files of the demo workspace, by repo. billing-api has none. */
+const CONTEXTS: Record<string, string> = {
+  'claims-core': [
+    '---',
+    'repo: claims-core',
+    'system: claims',
+    'source_commit: 4f1c9e2a7b3d5e6f8091a2b3c4d5e6f708192a3b',
+    'updated: 2026-10-10',
+    '---',
+    '# claims-core',
+    '',
+    'The claims service: first notice of loss intake, claim lifecycle, and the attachment store.',
+    '',
+    '## Stack',
+    '',
+    '- .NET 8 Web API, EF Core over PostgreSQL',
+    '- Attachments in blob storage behind `IAttachmentStore`',
+    '',
+    '## Modules',
+    '',
+    '| Module | Owns |',
+    '| --- | --- |',
+    '| `Intake` | the first notice of loss form and its validation |',
+    '| `Lifecycle` | claim states and the transitions between them |',
+    '| `Attachments` | police reports and other uploaded files |',
+    '',
+    '### Intake',
+    '',
+    'A notice is validated in `FnolValidator` before it is saved. Attachments are stored first and linked by id.',
+    '',
+    '### Lifecycle',
+    '',
+    '```mermaid',
+    'stateDiagram-v2',
+    '  [*] --> Open',
+    '  Open --> Assessed',
+    '  Assessed --> Settled',
+    '  Assessed --> Rejected',
+    '```',
+    '',
+    '## Conventions',
+    '',
+    '- Commands and queries are separate handlers under `Features/`.',
+    '- Every endpoint has an integration test in `tests/Api`.',
+    '',
+  ].join('\n'),
+  'customer-portal': [
+    '---',
+    'repo: customer-portal',
+    'system: claims',
+    'source_commit: 9a8b7c6d5e4f30211203a4b5c6d7e8f901a2b3c4',
+    'updated: 2026-09-02',
+    '---',
+    '# customer-portal',
+    '',
+    'The Angular portal policyholders use to report and follow a claim.',
+    '',
+    '## Stack',
+    '',
+    '- Angular with standalone components and signals',
+    '- Talks to claims-core over its public REST API',
+    '',
+    '## Screens',
+    '',
+    '- **Report a claim**: the first notice of loss form, in three steps.',
+    '- **My claims**: the list and the detail of each claim.',
+    '',
+  ].join('\n'),
+};
+
 const doc = (status: string | null, committed = true): DocState =>
   status === null ? { exists: false, committed: false, status: null, head_status: null } : { exists: true, committed, status, head_status: committed ? status : null };
 
@@ -442,6 +512,11 @@ export class SdlcMock {
       case 'billing-api': return { kind: 'notCheckedOut' };
       default: return { kind: 'fresh' };
     }
+  }
+
+  /** Like the backend's `read_context`: the repo's context file, or null when it has none. */
+  readContext(repo: string): string | null {
+    return CONTEXTS[repo] ?? null;
   }
 
   listChanges(): ChangeInfo[] {

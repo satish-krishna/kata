@@ -17,6 +17,8 @@ export type WorkspaceCandidate = {
 export type RepoRole = 'master' | 'product' | 'not-checked-out';
 export type RepoRow = { name: string; role: RepoRole; system: string | null; context: ContextState | null };
 export type Tone = 'success' | 'warning' | 'error' | 'idle';
+/** The context viewer: the repos it can show, the one picked, and its file (`null` when there is none, `undefined` while it is read). */
+export type ContextView = { repo: string; rows: RepoRow[]; text: string | null | undefined };
 
 /** `folder` and a repo folder name joined with a forward slash, which every platform's git accepts. */
 export function masterPath(folder: string, repo: string): string {

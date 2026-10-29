@@ -35,6 +35,7 @@ import {
   repoRows,
   systemNames,
   systemOf,
+  type ContextView,
   type WorkspaceCandidate,
 } from '../../lib/sdlc-workspace';
 import type { SettingsSave } from '../../ui/sdlc-settings-dialog';
@@ -159,6 +160,13 @@ export class SdlcHomeViewModel {
   readonly repoRows = computed(() => {
     const s = this.scan();
     return s ? repoRows(s, this.contexts()) : [];
+  });
+  /** The repo the context viewer shows and its file: `null` when there is none, `undefined` while it is read. */
+  private readonly contextPick = signal<{ repo: string; text: string | null | undefined } | null>(null);
+  /** The context viewer, open while set: every repo but the master, and the picked one's context file. */
+  readonly contextView = computed<ContextView | null>(() => {
+    const pick = this.contextPick();
+    return pick ? { ...pick, rows: this.repoRows().filter((r) => r.role !== 'master') } : null;
   });
   readonly markerLine = computed(() => {
     const s = this.scan();
@@ -435,6 +443,33 @@ export class SdlcHomeViewModel {
     if (!scan || this.refuseWhileLocked()) return;
     const system = systemOf(scan, repo) ?? systemNames(scan)[0] ?? '';
     await this.runOnBase('Reading context', 'Context', 'context', { system, repos: [repo] });
+  }
+
+  /** Open the context viewer on `repo`, or move it there, and read its context file from the master. */
+  async openContext(repo: string): Promise<void> {
+    const scan = this.scan();
+    const master = this.masterDir();
+    if (!scan || master === null) return;
+    this.contextPick.set({ repo, text: undefined });
+    const system = systemOf(scan, repo) ?? systemNames(scan)[0] ?? '';
+    let text: string | null = null;
+    try {
+      text = await this.transport.sdlcReadContext(master, system, repo);
+    } catch (e) {
+      this.toasts.error(`Could not read the context of ${repo}: ${message(e)}`);
+    }
+    // Another repo picked while this one was read keeps its own result.
+    if (this.contextPick()?.repo === repo) this.contextPick.set({ repo, text });
+  }
+
+  closeContext(): void {
+    this.contextPick.set(null);
+  }
+
+  /** Run or refresh context from the viewer: the run's session takes the screen, so the viewer closes first. */
+  async runContextFromViewer(repo: string): Promise<void> {
+    this.closeContext();
+    await this.runContext(repo);
   }
 
   /** Setup is idempotent and supports adding a system, so Add system simply runs it again. */
@@ -786,6 +821,7 @@ export class SdlcHomeViewModel {
     this.branches.set(null);
     this.names.set([]);
     this.contexts.set({});
+    this.contextPick.set(null);
     this.lastRuns.set({});
     this.instructions.set(null);
   }
