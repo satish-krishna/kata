@@ -106,6 +106,8 @@ jobs:
         run: npm run lint
       - name: Stylelint (token gate)
         run: npx stylelint "src/**/*.css"
+      - name: Wiring check (no orphaned ViewModel or component members)
+        run: npm run check:wiring
       - name: Build
         run: npm run build
       - name: Unit tests (Vitest)
