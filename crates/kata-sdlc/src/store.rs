@@ -26,9 +26,10 @@ pub enum Mode {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum SdlcPermissionMode {
-    #[default]
     Bypass,
     Prompt,
+    #[default]
+    Auto,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -240,6 +241,25 @@ mod tests {
             .join("workbench")
             .join("settings.json")
             .is_file());
+    }
+
+    #[test]
+    #[serial]
+    fn settings_default_to_auto() {
+        let home = with_home();
+        assert_eq!(load_settings().permission_mode, SdlcPermissionMode::Auto);
+
+        let dir = home.temp.path().join("workbench");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"mode":"sdlc","remember":true}"#,
+        )
+        .unwrap();
+        let s = load_settings();
+        assert_eq!(s.mode, Some(Mode::Sdlc));
+        assert!(s.remember);
+        assert_eq!(s.permission_mode, SdlcPermissionMode::Auto);
     }
 
     #[test]

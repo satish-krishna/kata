@@ -455,6 +455,10 @@ export function specFor(
     spec.permissions = { mode: "prompt", allow: [], deny: [], unmatched: "ask" };
     spec.interactive.enabled = true;
   }
+  if (kind !== "triage" && kind !== "fix" && settings.permission_mode === "auto") {
+    spec.permissions = { mode: "auto", allow: [], deny: [], ask: [], unmatched: "ask" };
+    spec.interactive.enabled = true;
+  }
   return spec;
 }
 
