@@ -29,6 +29,7 @@ pub enum SdlcPermissionMode {
     #[default]
     Bypass,
     Prompt,
+    Auto,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]

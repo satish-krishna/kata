@@ -287,6 +287,17 @@ describe("specFor", () => {
     const s = specFor("plan", null, ctx, bypass, both);
     expect(s.leash.timeout_secs).toBe(6 * 60 * 60);
   });
+  it("runs the document kinds under the classifier when the setting is auto", () => {
+    const autoSettings: Settings = { ...bypass, permission_mode: "auto" };
+    const intent = specFor("intent", null, { ...ctx, change: null, idea: "x" }, autoSettings, both);
+    const context = specFor("context", null, { ...ctx, change: null, repos: ["a"] }, autoSettings, both);
+    for (const s of [intent, context]) {
+      expect(s.permissions.mode).toBe("auto");
+      expect(s.permissions.allow).toEqual([]);
+      expect(s.permissions.deny).toEqual([]);
+      expect(s.interactive.enabled).toBe(true);
+    }
+  });
   it("setup with a system", () => {
     const s = specFor("setup", null, { folder: "/ws", system: "claims", change: null }, bypass, both);
     expect(s.task).toBe("Use the ai-sdlc setup skill. System: claims");
