@@ -524,7 +524,7 @@ describe('ChangePage opens an existing change on the build page', () => {
   it('an existing change accepted but not built opens on the build page at its stage', async () => {
     const { container } = await existing('build-ready', [], false);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
-    expect(actions(container)).toEqual(['Start build', 'Reopen intent', 'Reopen spec']);
+    expect(actions(container)).toEqual(['Start build', 'Reopen spec', 'Reopen intent']);
     expect(taskLine(container, 'T1')).toContain('Not started');
   });
 

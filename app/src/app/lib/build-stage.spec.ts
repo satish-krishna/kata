@@ -48,7 +48,7 @@ describe('build-stage', () => {
   });
 
   it('buildActions gives each stage its actions', () => {
-    expect(buildActions('not-started')).toEqual(['start-build', 'reopen-intent']);
+    expect(buildActions('not-started')).toEqual(['start-build']);
     expect(buildActions('running')).toEqual(['cancel-build']);
     expect(buildActions('running-one-stopped')).toEqual(['cancel-build']);
     expect(buildActions('reviewing')).toEqual(['cancel-build']);

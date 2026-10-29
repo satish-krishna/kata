@@ -868,13 +868,27 @@ describe('ChangePageViewModel', () => {
       expect(vm.barExtras().map((e) => e.action)).toEqual(['reopen-spec', 'reopen-intent']);
     });
 
-    it('does not offer an action twice when the build page already lists it (R1.2)', async () => {
+    it('leaves the reopen actions to the change page at build-ready, offering each once in the change\'s order (R1.2)', async () => {
       const { vm } = setup(BUILD);
       await ready(vm);
       expect(vm.change()!.stage).toBe('build-ready');
-      expect(TestBed.inject(BuildPageViewModel).actions()).toContain('reopen-intent');
-      expect(vm.actions().filter((a) => a === 'reopen-intent')).toHaveLength(1);
-      expect(vm.actions().filter((a) => a === 'reopen-spec')).toHaveLength(1);
+      expect(TestBed.inject(BuildPageViewModel).actions()).not.toContain('reopen-intent');
+      expect(vm.actions()).toEqual(['start-build', 'reopen-spec', 'reopen-intent']);
+      expect(vm.barExtras().map((e) => e.action)).toEqual(['reopen-spec', 'reopen-intent']);
+    });
+
+    it('turns both reopen actions off at build-ready while a live build run holds the lock (R1.3)', async () => {
+      const { vm } = setup(BUILD);
+      await ready(vm);
+      expect(vm.change()!.stage).toBe('build-ready');
+      expect(vm.disabledFor('reopen-intent')).toBe(false);
+      expect(vm.disabledFor('reopen-spec')).toBe(false);
+      expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
+      expect(vm.actions()).toContain('reopen-intent');
+      expect(vm.actions()).toContain('reopen-spec');
+      expect(vm.disabledFor('reopen-intent')).toBe(true);
+      expect(vm.disabledFor('reopen-spec')).toBe(true);
+      expect(vm.barExtras().every((e) => e.disabled)).toBe(true);
     });
 
     it('turns the reopen actions off while a live build run holds the lock (R1.3)', async () => {
