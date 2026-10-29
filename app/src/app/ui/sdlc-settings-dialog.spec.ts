@@ -41,6 +41,17 @@ describe('SdlcSettingsDialog', () => {
     expect(got).toEqual([{ settings: { ...SETTINGS, permission_mode: 'prompt' }, baseBranch: 'main' }]);
   });
 
+  it('saves auto mode with the unchanged base branch', async () => {
+    const { fixture } = await render(SdlcSettingsDialog, { open: true, settings: SETTINGS, workspace: WS });
+    await settle();
+    const got: unknown[] = [];
+    fixture.componentInstance.save.subscribe((v) => got.push(v));
+    button('auto').click();
+    await settle();
+    button('Save').click();
+    expect(got).toEqual([{ settings: { ...SETTINGS, permission_mode: 'auto' }, baseBranch: 'main' }]);
+  });
+
   it('saves an edited base branch, trimmed', async () => {
     const { fixture } = await render(SdlcSettingsDialog, { open: true, settings: SETTINGS, workspace: WS });
     await settle();
