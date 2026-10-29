@@ -62,9 +62,9 @@ const ACTIONS: Record<Stage, StageAction[]> = {
   // The plan could not be read, so nothing may be built or rewritten from what is shown; the list says why.
   "plan-unreadable": [],
   "plan-superseded": ["rerun-plan"],
-  "build-ready": ["start-build", "reopen-intent"],
-  "build-stopped": ["continue-build", "another-round"],
-  "build-finished": ["declare-done", "another-round", "run-review"],
+  "build-ready": ["start-build", "reopen-spec", "reopen-intent"],
+  "build-stopped": ["continue-build", "another-round", "reopen-spec", "reopen-intent"],
+  "build-finished": ["declare-done", "another-round", "run-review", "reopen-spec", "reopen-intent"],
   "fix-in-progress": [],
   "fix-unsettled": [],
   "fix-awaiting": [],
