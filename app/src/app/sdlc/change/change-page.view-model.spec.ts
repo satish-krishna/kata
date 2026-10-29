@@ -858,6 +858,41 @@ describe('ChangePageViewModel', () => {
       expect(vm.actions()).toEqual(['continue-build', 'another-round']);
     });
 
+    it('offers Reopen intent and Reopen spec once each on the build step of a full-pipeline change (R1.2)', async () => {
+      const transport = new MockTransport();
+      withStage(transport, BUILD, 'build-finished');
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      expect(vm.actions().filter((a) => a === 'reopen-intent')).toHaveLength(1);
+      expect(vm.actions().filter((a) => a === 'reopen-spec')).toHaveLength(1);
+      expect(vm.barExtras().map((e) => e.action)).toEqual(['reopen-intent', 'reopen-spec']);
+    });
+
+    it('does not offer an action twice when the build page already lists it (R1.2)', async () => {
+      const { vm } = setup(BUILD);
+      await ready(vm);
+      expect(vm.change()!.stage).toBe('build-ready');
+      expect(TestBed.inject(BuildPageViewModel).actions()).toContain('reopen-intent');
+      expect(vm.actions().filter((a) => a === 'reopen-intent')).toHaveLength(1);
+      expect(vm.actions().filter((a) => a === 'reopen-spec')).toHaveLength(1);
+    });
+
+    it('turns the reopen actions off while a live build run holds the lock (R1.3)', async () => {
+      const transport = new MockTransport();
+      withStage(transport, BUILD, 'build-finished');
+      const { vm } = setup(BUILD, transport);
+      await ready(vm);
+      expect(vm.actions()).toContain('reopen-intent');
+      expect(vm.actions()).toContain('reopen-spec');
+      expect(vm.disabledFor('reopen-intent')).toBe(false);
+      expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
+      expect(vm.actions()).toContain('reopen-intent');
+      expect(vm.actions()).toContain('reopen-spec');
+      expect(vm.disabledFor('reopen-intent')).toBe(true);
+      expect(vm.disabledFor('reopen-spec')).toBe(true);
+      expect(vm.barExtras().every((e) => e.disabled)).toBe(true);
+    });
+
     it('draws no page strip on the Build tab at all: its facts and actions sit in the Changes view strip', async () => {
       const { vm } = setup(BUILD);
       await ready(vm);
