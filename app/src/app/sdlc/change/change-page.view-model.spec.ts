@@ -855,7 +855,7 @@ describe('ChangePageViewModel', () => {
       const onBuild = vm.actions();
       await vm.showDoc('plan');
       expect(vm.actions()).toEqual(onBuild);
-      expect(vm.actions()).toEqual(['continue-build', 'another-round']);
+      expect(vm.actions()).toEqual(['continue-build', 'another-round', 'reopen-spec', 'reopen-intent']);
     });
 
     it('offers Reopen intent and Reopen spec once each on the build step of a full-pipeline change (R1.2)', async () => {
@@ -865,7 +865,7 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       expect(vm.actions().filter((a) => a === 'reopen-intent')).toHaveLength(1);
       expect(vm.actions().filter((a) => a === 'reopen-spec')).toHaveLength(1);
-      expect(vm.barExtras().map((e) => e.action)).toEqual(['reopen-intent', 'reopen-spec']);
+      expect(vm.barExtras().map((e) => e.action)).toEqual(['reopen-spec', 'reopen-intent']);
     });
 
     it('does not offer an action twice when the build page already lists it (R1.2)', async () => {
