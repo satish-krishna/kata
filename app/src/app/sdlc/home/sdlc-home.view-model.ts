@@ -32,10 +32,10 @@ import {
   masterPath,
   masterRepo,
   productRepos,
+  readContextStates,
   repoRows,
   systemNames,
   systemOf,
-  type ContextView,
   type WorkspaceCandidate,
 } from '../../lib/sdlc-workspace';
 import type { SettingsSave } from '../../ui/sdlc-settings-dialog';
@@ -161,13 +161,6 @@ export class SdlcHomeViewModel {
     const s = this.scan();
     return s ? repoRows(s, this.contexts()) : [];
   });
-  /** The repo the context viewer shows and its file: `null` when there is none, `undefined` while it is read. */
-  private readonly contextPick = signal<{ repo: string; text: string | null | undefined } | null>(null);
-  /** The context viewer, open while set: every repo but the master, and the picked one's context file. */
-  readonly contextView = computed<ContextView | null>(() => {
-    const pick = this.contextPick();
-    return pick ? { ...pick, rows: this.repoRows().filter((r) => r.role !== 'master') } : null;
-  });
   readonly markerLine = computed(() => {
     const s = this.scan();
     if (!s?.marker) return '';
@@ -245,8 +238,8 @@ export class SdlcHomeViewModel {
     return w && repo ? masterPath(w.folder, repo) : null;
   });
 
-  /** `demo` is the `?demo=` query value: `sdlc-setup` opens the add-workspace flow on a folder that needs setup, and `start` triages a described change with a scripted run. Browser only. */
-  async init(demo: string | null = null): Promise<void> {
+  /** `demo` is the `?demo=` query value: `sdlc-setup` opens the add-workspace flow on a folder that needs setup, and `start` triages a described change with a scripted run. Browser only. `context` is the `?context=` query value, a repo the context screen handed over to run or refresh its context. */
+  async init(demo: string | null = null, context: string | null = null): Promise<void> {
     this.destroyRef.onDestroy(() => this.stop());
     await this.listen();
     try {
@@ -266,6 +259,11 @@ export class SdlcHomeViewModel {
     // Browser dev/review only: never fires under Tauri.
     if (!inTauri() && demo === 'sdlc-setup') await this.addWorkspace(DEMO_SETUP_FOLDER);
     if (!inTauri() && demo === 'start') await this.newChange(DEMO_START_SYSTEM, DEMO_START_IDEA, 'decide');
+    if (context !== null) {
+      // Drop the hand-off from the address first, so going back to this screen never starts the run again.
+      await this.router.navigate(['/sdlc'], { replaceUrl: true });
+      await this.runContext(context);
+    }
   }
 
   // --- workspace list
@@ -445,31 +443,11 @@ export class SdlcHomeViewModel {
     await this.runOnBase('Reading context', 'Context', 'context', { system, repos: [repo] });
   }
 
-  /** Open the context viewer on `repo`, or move it there, and read its context file from the master. */
-  async openContext(repo: string): Promise<void> {
+  /** Open the context screen on `repo`. */
+  openContext(repo: string): Promise<boolean> {
     const scan = this.scan();
-    const master = this.masterDir();
-    if (!scan || master === null) return;
-    this.contextPick.set({ repo, text: undefined });
-    const system = systemOf(scan, repo) ?? systemNames(scan)[0] ?? '';
-    let text: string | null = null;
-    try {
-      text = await this.transport.sdlcReadContext(master, system, repo);
-    } catch (e) {
-      this.toasts.error(`Could not read the context of ${repo}: ${message(e)}`);
-    }
-    // Another repo picked while this one was read keeps its own result.
-    if (this.contextPick()?.repo === repo) this.contextPick.set({ repo, text });
-  }
-
-  closeContext(): void {
-    this.contextPick.set(null);
-  }
-
-  /** Run or refresh context from the viewer: the run's session takes the screen, so the viewer closes first. */
-  async runContextFromViewer(repo: string): Promise<void> {
-    this.closeContext();
-    await this.runContext(repo);
+    const system = (scan && systemOf(scan, repo)) ?? this.systems()[0] ?? '';
+    return this.router.navigate(['/sdlc', system, 'context', repo]);
   }
 
   /** Setup is idempotent and supports adding a system, so Add system simply runs it again. */
@@ -777,17 +755,8 @@ export class SdlcHomeViewModel {
     this.catalogRead.set(true);
   }
 
-  private async readContexts(folder: string, scan: WorkspaceScan): Promise<Record<string, ContextState>> {
-    const repo = masterRepo(scan);
-    if (repo === null) return {};
-    const out: Record<string, ContextState> = {};
-    const jobs = Object.entries(scan.marker?.systems ?? {}).flatMap(([system, def]) =>
-      (def?.repos ?? []).filter((r) => r !== repo && !(r in out)).map(async (r) => {
-        out[r] = await this.transport.sdlcContextHealth(folder, repo, system, r);
-      }),
-    );
-    await Promise.all(jobs);
-    return out;
+  private readContexts(folder: string, scan: WorkspaceScan): Promise<Record<string, ContextState>> {
+    return readContextStates(scan, (master, system, repo) => this.transport.sdlcContextHealth(folder, master, system, repo));
   }
 
   /** The change folders of every system, from the folders alone: no stage is read and no program is started. */
@@ -821,7 +790,6 @@ export class SdlcHomeViewModel {
     this.branches.set(null);
     this.names.set([]);
     this.contexts.set({});
-    this.contextPick.set(null);
     this.lastRuns.set({});
     this.instructions.set(null);
   }

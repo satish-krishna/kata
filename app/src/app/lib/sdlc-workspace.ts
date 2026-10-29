@@ -17,8 +17,6 @@ export type WorkspaceCandidate = {
 export type RepoRole = 'master' | 'product' | 'not-checked-out';
 export type RepoRow = { name: string; role: RepoRole; system: string | null; context: ContextState | null };
 export type Tone = 'success' | 'warning' | 'error' | 'idle';
-/** The context viewer: the repos it can show, the one picked, and its file (`null` when there is none, `undefined` while it is read). */
-export type ContextView = { repo: string; rows: RepoRow[]; text: string | null | undefined };
 
 /** `folder` and a repo folder name joined with a forward slash, which every platform's git accepts. */
 export function masterPath(folder: string, repo: string): string {
@@ -67,6 +65,23 @@ export function repoRows(scan: WorkspaceScan, contexts: Record<string, ContextSt
     const role: RepoRole = name === master ? 'master' : scan.repos.includes(name) ? 'product' : 'not-checked-out';
     return { name, role, system: systemOf(scan, name), context: role === 'master' ? null : (contexts[name] ?? null) };
   });
+}
+
+/** The context state of every repo a system of the marker names, other than the master, each read through `health`. */
+export async function readContextStates(
+  scan: WorkspaceScan,
+  health: (master: string, system: string, repo: string) => Promise<ContextState>,
+): Promise<Record<string, ContextState>> {
+  const master = masterRepo(scan);
+  if (master === null) return {};
+  const out: Record<string, ContextState> = {};
+  const jobs = Object.entries(scan.marker?.systems ?? {}).flatMap(([system, def]) =>
+    (def?.repos ?? []).filter((r) => r !== master && !(r in out)).map(async (r) => {
+      out[r] = await health(master, system, r);
+    }),
+  );
+  await Promise.all(jobs);
+  return out;
 }
 
 export function contextLabel(state: ContextState | null): { text: string; tone: Tone } {
