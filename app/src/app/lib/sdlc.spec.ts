@@ -31,9 +31,9 @@ const ACTIONS: Record<Stage, string[]> = {
   "plan-out-of-date": [],
   "plan-unreadable": [],
   "plan-superseded": ["rerun-plan"],
-  "build-ready": ["start-build", "reopen-intent"],
-  "build-stopped": ["continue-build", "another-round"],
-  "build-finished": ["declare-done", "another-round", "run-review"],
+  "build-ready": ["start-build", "reopen-spec", "reopen-intent"],
+  "build-stopped": ["continue-build", "another-round", "reopen-spec", "reopen-intent"],
+  "build-finished": ["declare-done", "another-round", "run-review", "reopen-spec", "reopen-intent"],
   "fix-in-progress": [],
   "fix-unsettled": [],
   "fix-awaiting": [],
@@ -76,7 +76,7 @@ describe("plan and build actions", () => {
     expect(actionsForChange(changeAt("plan-out-of-date", "spec-reopened"))).toEqual([]);
     expect(actionsForChange(changeAt("plan-out-of-date", "plan-pin"))).toEqual(["rerun-plan"]);
     expect(actionsForChange(changeAt("plan-out-of-date", "no-tasks"))).toEqual(["rerun-plan"]);
-    expect(actionsForChange(changeAt("build-ready"))).toEqual(["start-build", "reopen-intent"]);
+    expect(actionsForChange(changeAt("build-ready"))).toEqual(["start-build", "reopen-spec", "reopen-intent"]);
   });
 });
 
@@ -219,14 +219,24 @@ describe("actions of a fix (R4.1, R7.3)", () => {
   });
 });
 
+describe("the build-step stages offer both reopen actions (R1.1)", () => {
+  for (const stage of ["build-ready", "build-stopped", "build-finished"] as Stage[]) {
+    it(stage, () => {
+      const got = actionsForChange({ ...changeAt(stage), track: "full" });
+      expect(got).toContain("reopen-intent");
+      expect(got).toContain("reopen-spec");
+    });
+  }
+});
+
 describe("actions of a full-pipeline change are unchanged (R13.1)", () => {
   const rows: [Stage, OutOfDate | null, string[]][] = [
     ["intent-awaiting", null, ["continue-intent", "accept-intent", "reject-intent"]],
     ["spec-awaiting", null, ["continue-spec", "accept-spec", "reopen-intent"]],
     ["plan-awaiting", null, ["accept-plan", "rerun-plan", "reopen-intent"]],
-    ["build-ready", null, ["start-build", "reopen-intent"]],
-    ["build-stopped", null, ["continue-build", "another-round"]],
-    ["build-finished", null, ["declare-done", "another-round", "run-review"]],
+    ["build-ready", null, ["start-build", "reopen-spec", "reopen-intent"]],
+    ["build-stopped", null, ["continue-build", "another-round", "reopen-spec", "reopen-intent"]],
+    ["build-finished", null, ["declare-done", "another-round", "run-review", "reopen-spec", "reopen-intent"]],
     ["rejected", null, []],
     ["plan-superseded", null, ["rerun-plan"]],
     ["plan-unreadable", null, []],
