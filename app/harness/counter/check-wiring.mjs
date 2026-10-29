@@ -171,9 +171,9 @@ for (const vm of classes.viewModels) {
     if (usedInOwnFile(vm.text, member.name)) continue;
     if (template && wordRe(member.name).test(template)) continue;
     // Also allow a sibling ViewModel or component TS file to reference it.
-    const referencedElsewhere = classes.components.some(
-      (c) => c.className !== vm.className && wordRe(`${member.name}`).test(c.text) && wordRe(vm.className).test(c.text),
-    );
+    const readsIt = (c) =>
+      c.className !== vm.className && wordRe(member.name).test(c.text) && wordRe(vm.className).test(c.text);
+    const referencedElsewhere = classes.components.some(readsIt) || classes.viewModels.some(readsIt);
     if (referencedElsewhere) continue;
 
     violations.push({
