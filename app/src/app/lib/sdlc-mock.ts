@@ -377,7 +377,7 @@ export class SdlcMock {
     this.reviewFindings = long ? LONG_REVIEW_FINDINGS : REVIEW_FINDINGS;
   }
 
-  private settings: Settings = { mode: 'workbench', remember: true, permission_mode: 'bypass' };
+  private settings: Settings = { mode: 'workbench', remember: true, permission_mode: 'auto' };
   private workspaces: WorkspaceEntry[] = [{
     id: 'acme-claims', name: 'acme-claims', folder: MOCK_WORKSPACE_FOLDER, base_branch: 'main', last_opened: 1792281600,
   }];

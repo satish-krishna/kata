@@ -26,9 +26,9 @@ pub enum Mode {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum SdlcPermissionMode {
-    #[default]
     Bypass,
     Prompt,
+    #[default]
     Auto,
 }
 
