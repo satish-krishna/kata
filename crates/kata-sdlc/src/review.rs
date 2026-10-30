@@ -188,6 +188,22 @@ mod tests {
     }
 
     #[test]
+    fn a_run_that_committed_the_branch_record_is_flagged() {
+        let (_dir, master, since) = started();
+        testutil::commit_file(&master, REVIEW, "# Review\n", "review");
+        testutil::commit_file(
+            &master,
+            "intent/s/2026-10-21-c/branch.md",
+            "branch: main\n",
+            "branch",
+        );
+        assert_eq!(
+            verify_run(&master, S, C, &since, &BTreeMap::new()),
+            Err(vec!["intent/s/2026-10-21-c/branch.md".to_string()])
+        );
+    }
+
+    #[test]
     fn a_run_that_changed_nothing_passes() {
         let (_dir, master, since) = started();
         assert_eq!(verify_run(&master, S, C, &since, &BTreeMap::new()), Ok(()));
