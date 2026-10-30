@@ -190,7 +190,7 @@ pub fn prepare(
         ));
     }
     let master = folder.join(master_repo);
-    let branch = format!("change/{change}");
+    let branch = recorded_branch(&master, system, change)?;
     if !branch_exists(&master, &branch) {
         return refuse(format!("the master repo has no branch {branch}"));
     }
@@ -344,8 +344,18 @@ pub fn settle(start: &BuildStart) -> Result<Vec<String>, BuildError> {
     Ok(gone)
 }
 
-/// The commit each repository's `change/<change>` points at. A repository without that branch
-/// is left out.
+/// The change's branch name, from its record or else `change/<change>`, as a refusal.
+pub(crate) fn recorded_branch(
+    master: &Path,
+    system: &str,
+    change: &str,
+) -> Result<String, BuildError> {
+    crate::branch_record::change_branch(master, system, change)
+        .map_err(|e| BuildError::Refused(e.to_string()))
+}
+
+/// The commit each repository's recorded change branch points at. A repository without that
+/// branch is left out.
 pub fn heads(
     folder: &Path,
     master_repo: &str,
@@ -353,10 +363,18 @@ pub fn heads(
     repos: &[String],
     change: &str,
 ) -> Result<BTreeMap<String, String>, BuildError> {
-    let _ = (master_repo, system);
     if !is_change_name(change) {
         return refuse(format!("invalid change name: {change}"));
     }
+    // An empty master or system (a caller that has neither yet) reads no record.
+    if (!master_repo.is_empty() && !is_safe_system(master_repo))
+        || (!system.is_empty() && !is_safe_system(system))
+    {
+        return refuse(format!(
+            "invalid master repository or system name: {master_repo}, {system}"
+        ));
+    }
+    let branch = recorded_branch(&folder.join(master_repo), system, change)?;
     let mut out = BTreeMap::new();
     for repo in repos {
         if !is_safe_system(repo) {
@@ -364,10 +382,10 @@ pub fn heads(
         }
         let path = folder.join(repo);
         // settle removed the branch of a repository the build never changed (R10.1).
-        if !branch_exists(&path, &format!("change/{change}")) {
+        if !branch_exists(&path, &branch) {
             continue;
         }
-        let head = git::Repo::open(&path)?.resolve(&format!("refs/heads/change/{change}"))?;
+        let head = git::Repo::open(&path)?.resolve(&format!("refs/heads/{branch}"))?;
         out.insert(repo.clone(), head);
     }
     Ok(out)

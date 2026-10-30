@@ -2,7 +2,7 @@
 //! shows as done and with which links. Kata keeps no credential here.
 use crate::git;
 use crate::github::{ApiError, GitHubHosts, PullState};
-use crate::publish::{open_pull_requests, touched_repos, PrState, PublishRepo};
+use crate::publish::{branch_in, open_pull_requests, touched_repos, PrState, PublishRepo};
 use crate::store;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -197,8 +197,8 @@ pub fn branch_facts(
     repos: &[PublishRepo],
     change: &str,
 ) -> BranchFacts {
-    let _ = (master, system);
-    let tip = format!("refs/heads/change/{change}");
+    let branch = branch_in(repos, master, system, change).unwrap_or_default();
+    let tip = format!("refs/heads/{branch}");
     BranchFacts {
         touched: repos.iter().map(|r| r.repo.clone()).collect(),
         heads: repos

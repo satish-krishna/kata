@@ -5,7 +5,7 @@ use crate::branch::branch_exists;
 use crate::build::{self, BuildStatus, RepoState};
 use crate::changes::{is_change_name, is_safe_system};
 use crate::snapshot::{build_log_owner, dirty_files};
-use crate::start::{refuse, BuildError};
+use crate::start::{recorded_branch, refuse, BuildError};
 use crate::workspace::{self, system_repos};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -41,8 +41,8 @@ pub fn participants(
     Ok(model(plugin, folder, master_repo, system, change, pending)?.0)
 }
 
-/// The product repositories taking part in the change's build that have no `change/<change>`
-/// branch. The Changes view lists only repositories with that branch, so it names these rather
+/// The product repositories taking part in the change's build that lack the change's recorded
+/// branch (`change/<change>` when it has no record). No other name is searched for. The Changes view lists only repositories with that branch, so it names these rather
 /// than leaving them out without a word.
 pub fn missing_change_branches(
     plugin: &Path,
@@ -51,7 +51,7 @@ pub fn missing_change_branches(
     system: &str,
     change: &str,
 ) -> Result<Vec<String>, BuildError> {
-    let branch = format!("change/{change}");
+    let branch = recorded_branch(&folder.join(master_repo), system, change)?;
     Ok(
         participants(plugin, folder, master_repo, system, change, None)?
             .into_iter()

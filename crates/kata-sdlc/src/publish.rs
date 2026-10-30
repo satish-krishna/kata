@@ -14,7 +14,7 @@ use crate::frontmatter;
 use crate::git;
 use crate::github::{parse_repo_path, ApiError, GitHub, GitHubHosts};
 use crate::prs::{self, PrEntry, PrRecord, PrStateKind};
-use crate::start::BuildError;
+use crate::start::{recorded_branch, BuildError};
 use crate::store;
 use crate::workspace::{self, system_repos};
 use serde::{Deserialize, Serialize};
@@ -89,6 +89,22 @@ pub enum NotReady {
     Unreachable,
 }
 
+/// The change's branch name as the master among `repos` records it.
+pub(crate) fn branch_in(
+    repos: &[PublishRepo],
+    master: &str,
+    system: &str,
+    change: &str,
+) -> Result<String, String> {
+    let Some(m) = repos.iter().find(|r| r.repo == master) else {
+        return Err(format!(
+            "{master} is not among the repositories of the change"
+        ));
+    };
+    crate::branch_record::change_branch(Path::new(&m.path), system, change)
+        .map_err(|e| e.to_string())
+}
+
 /// The product repositories carrying commits on `change/<change>`, then the master.
 pub fn touched_repos(
     folder: &Path,
@@ -101,7 +117,7 @@ pub fn touched_repos(
             "invalid master repository, system or change name: {master_repo}, {system}, {change}"
         )));
     }
-    let branch = format!("change/{change}");
+    let branch = recorded_branch(&folder.join(master_repo), system, change)?;
     let tip = format!("refs/heads/{branch}");
     let scan = workspace::scan(folder)?;
     let mut out = Vec::new();
@@ -147,7 +163,10 @@ pub fn change_offenders(
     change: &str,
 ) -> Result<Vec<Offender>, BuildError> {
     let scope = change_scope(&folder.join(master_repo), system, change);
-    let tip = format!("refs/heads/change/{change}");
+    let tip = format!(
+        "refs/heads/{}",
+        recorded_branch(&folder.join(master_repo), system, change)?
+    );
     let mut out = Vec::new();
     for r in touched_repos(folder, master_repo, system, change)? {
         let path = Path::new(&r.path);
@@ -183,7 +202,8 @@ pub fn change_repos(
             "invalid master repository, system or change name: {master_repo}, {system}, {change}"
         ));
     }
-    let branch = format!("change/{change}");
+    let branch =
+        recorded_branch(&folder.join(master_repo), system, change).map_err(|e| e.to_string())?;
     let scan = workspace::scan(folder).map_err(|e| e.to_string())?;
     let entry = |name: &str, path: &Path| -> Result<ChangeRepo, String> {
         Ok(ChangeRepo {
@@ -373,7 +393,20 @@ pub fn publish(
     rec: &mut Recorder,
     on_step: &mut dyn FnMut(PublishStep),
 ) -> Vec<PrResult> {
-    let branch = format!("change/{change}");
+    let branch = match branch_in(repos, master, system, change) {
+        Ok(branch) => branch,
+        Err(error) => {
+            return repos
+                .iter()
+                .map(|r| PrResult {
+                    repo: r.repo.clone(),
+                    outcome: PrOutcome::Failed {
+                        error: error.clone(),
+                    },
+                })
+                .collect();
+        }
+    };
     let title = repos
         .iter()
         .find(|r| r.repo == master)
@@ -507,8 +540,7 @@ pub fn open_pull_requests(
     repos: &[PublishRepo],
     change: &str,
 ) -> Result<Vec<PrState>, String> {
-    let _ = (master, system);
-    let branch = format!("change/{change}");
+    let branch = branch_in(repos, master, system, change)?;
     repos
         .iter()
         .map(|r| {
@@ -1334,7 +1366,7 @@ pub(crate) mod tests {
     const CHANGE: &str = "2026-10-19-c";
 
     /// Commit a `branch.md` naming `branch` on the master, rename the change branch of `app` and
-    /// `api` to it, and leave a decoy `change/<change>` branch at the base in each.
+    /// `api` (and the master) to it, and leave a decoy `change/<change>` branch at the base in each.
     fn record_branch(fx: &Fx, branch: &str) {
         let m = fx.path("m");
         commit_file(
@@ -1351,7 +1383,7 @@ Kata writes this file.
             ),
             "docs(s): name branch",
         );
-        for name in ["app", "api"] {
+        for name in ["m", "app", "api"] {
             let r = fx.path(name);
             git::run(&r, &["branch", "-m", &format!("change/{CHANGE}"), branch]).unwrap();
             git::run(&r, &["branch", &format!("change/{CHANGE}"), "main"]).unwrap();
@@ -1399,7 +1431,7 @@ body
 
     #[test]
     fn publish_consumers_use_the_recorded_branch_r7_1() {
-        let fx = fixture(true);
+        let fx = fixture(false);
         record_branch(&fx, RECORDED);
         let touched = touched_repos(fx.dir.path(), "m", "s", CHANGE).unwrap();
         let names: Vec<&str> = touched.iter().map(|r| r.repo.as_str()).collect();
@@ -1434,7 +1466,7 @@ body
         let fx = fixture(false);
         record_branch(&fx, RECORDED);
         let m = fx.path("m");
-        git::run(&m, &["push", "-q", "origin", &format!("change/{CHANGE}")]).unwrap();
+        git::run(&m, &["push", "-q", "origin", RECORDED]).unwrap();
         let clone = fx.dir.path().join("teammate");
         git::run(
             fx.dir.path(),
@@ -1446,7 +1478,7 @@ body
             ],
         )
         .unwrap();
-        git::run(&clone, &["checkout", "-q", &format!("change/{CHANGE}")]).unwrap();
+        git::run(&clone, &["checkout", "-q", RECORDED]).unwrap();
         assert_eq!(
             crate::branch_record::change_branch(&clone, "s", CHANGE).unwrap(),
             RECORDED
@@ -1455,7 +1487,7 @@ body
 
     #[test]
     fn in_flight_change_keeps_its_name_after_pattern_change_r8_2() {
-        let fx = fixture(true);
+        let fx = fixture(false);
         record_branch(&fx, RECORDED);
         let m = fx.path("m");
         git::run(&m, &["checkout", "-q", "main"]).unwrap();
@@ -1466,7 +1498,7 @@ body
 ",
             "new pattern",
         );
-        git::run(&m, &["checkout", "-q", &format!("change/{CHANGE}")]).unwrap();
+        git::run(&m, &["checkout", "-q", RECORDED]).unwrap();
         assert_eq!(
             crate::branch_record::change_branch(&m, "s", CHANGE).unwrap(),
             RECORDED
@@ -1477,7 +1509,7 @@ body
 
     #[test]
     fn renamed_by_hand_is_reported_missing_not_searched_r8_3() {
-        let fx = fixture(true);
+        let fx = fixture(false);
         record_branch(&fx, RECORDED);
         git::run(
             &fx.path("app"),
@@ -1501,7 +1533,7 @@ body
         git::run(&app, &["checkout", "-q", RECORDED]).unwrap();
         commit_as(&app, "a.txt", "feat(PROJ-123): good");
         commit_as(&app, "b.txt", "feat(proj-123): wrong case");
-        assert_eq!(subjects(&fx), ["feat(proj-123): wrong case"]);
+        assert_eq!(subjects(&fx), ["feat(proj-123): wrong case", "work"]);
     }
 
     #[test]
