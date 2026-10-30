@@ -7,6 +7,10 @@ use crate::snapshot::status_entries;
 use std::collections::BTreeSet;
 use std::path::Path;
 
+/// The prefix of the temporary branch a change has before it is named. Kata treats any branch
+/// starting with it as an unnamed change, so no change may be recorded under it.
+pub(crate) const PENDING_PREFIX: &str = "change/pending-";
+
 pub fn branch_exists(repo: &Path, name: &str) -> bool {
     git::Repo::open(repo).is_ok_and(|r| r.branch_exists(name))
 }
@@ -113,7 +117,7 @@ pub fn start_pending(master: &Path, base: &str, now_unix: u64) -> Result<String,
     }
     require_local_branch(master, base)?;
     ensure_clean(master)?;
-    let name = format!("change/pending-{}", utc_stamp(now_unix));
+    let name = format!("{PENDING_PREFIX}{}", utc_stamp(now_unix));
     git::Repo::open(master)?.create_branch(&name, base)?;
     Ok(name)
 }
@@ -150,7 +154,7 @@ pub fn finish_pending(
     pending: &str,
     base: &str,
 ) -> Result<FinishOutcome, BranchError> {
-    if !pending.starts_with("change/pending-") {
+    if !pending.starts_with(PENDING_PREFIX) {
         return Err(BranchError::InvalidName(pending.to_string()));
     }
     require_local_branch(master, pending)?;
@@ -208,7 +212,7 @@ pub fn confirm_branch(
     work_type: &str,
 ) -> Result<FinishOutcome, BranchError> {
     let master = folder.join(master_repo);
-    if !pending.starts_with("change/pending-") {
+    if !pending.starts_with(PENDING_PREFIX) {
         return Err(BranchError::InvalidName(pending.to_string()));
     }
     require_local_branch(&master, pending)?;

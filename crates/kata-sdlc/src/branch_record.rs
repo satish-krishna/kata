@@ -3,7 +3,7 @@
 //! The record lives in `intent/<system>/<change>/branch.md` of the master repository. A change that
 //! has none uses `change/<change>`. This module reads and writes the record and checks a proposed
 //! name against the branches already on the machine; it never fetches.
-use crate::branch::current_branch;
+use crate::branch::{current_branch, PENDING_PREFIX};
 use crate::naming::{self, NamingError};
 use crate::plugin::Readiness;
 use crate::snapshot::status_entries;
@@ -62,7 +62,13 @@ pub fn change_branch(master: &Path, system: &str, change: &str) -> Result<String
     let Some(branch) = frontmatter::field(&text, "branch").filter(|b| !b.is_empty()) else {
         return Err(RecordError::Invalid(format!("{rel} has no branch")));
     };
-    if branch.starts_with('-') || !git2::Reference::is_valid_name(&format!("refs/heads/{branch}")) {
+    // A local check is enough here: Kata checked the name through the format program when it wrote
+    // the record, so this only keeps a hand edit from reaching git. The resolver runs on every page
+    // read and has no plugin handle. A pending name is reserved, so a record may not use it.
+    if branch.starts_with('-')
+        || branch.starts_with(PENDING_PREFIX)
+        || !git2::Reference::is_valid_name(&format!("refs/heads/{branch}"))
+    {
         return Err(RecordError::Invalid(format!(
             "{rel} names \"{branch}\", which is not a usable branch name"
         )));
@@ -158,12 +164,10 @@ pub fn clashes(
             continue;
         };
         let mut seen: Vec<String> = Vec::new();
-        for existing in opened
-            .local_branches()
-            .into_iter()
-            .chain(opened.remote_tracking_branches())
-        {
-            if clashes_with(&existing, name, own) && !seen.contains(&existing) {
+        // Each branch is compared without its remote and reported with it.
+        let local = opened.local_branches().into_iter().map(|b| (b.clone(), b));
+        for (existing, bare) in local.chain(opened.remote_tracking_branches()) {
+            if clashes_with(&bare, name, own) && !seen.contains(&existing) {
                 seen.push(existing.clone());
                 found.push(Clash {
                     repo: repo.clone(),
