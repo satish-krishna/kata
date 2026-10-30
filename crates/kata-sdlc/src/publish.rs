@@ -448,6 +448,7 @@ impl<'a> Recorder<'a> {
 /// Open (or reuse) one pull request per repository, in order; `master` names the one last.
 /// `rec` keeps each pull request as soon as it opens. `on_step` hears what each repository is
 /// doing before it does it.
+// The host, plugin, recorder and step callback are separate collaborators; bundling them would hide which one a test fakes.
 #[allow(clippy::too_many_arguments)]
 pub fn publish(
     hosts: &dyn GitHubHosts,

@@ -240,6 +240,7 @@ const WORK_TYPES: [&str; 11] = [
 
 /// Name a pending branch after the engineer's confirmed `name`: record it in `branch.md` and rename the
 /// pending branch to it. Every check runs before the first write.
+// Each argument is a distinct input the Tauri command passes through; a struct would only rename them.
 #[allow(clippy::too_many_arguments)]
 pub fn confirm_branch(
     plugin: &Readiness,
