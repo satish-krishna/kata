@@ -1,5 +1,7 @@
 use crate::changes::is_change_name;
 use crate::git::{self, GitError};
+use crate::naming::NamingError;
+use crate::plugin::Readiness;
 use crate::snapshot::status_entries;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -53,8 +55,18 @@ fn require_local_branch(master: &Path, name: &str) -> Result<(), BranchError> {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum FinishOutcome {
-    Renamed { branch: String, change: String },
+    Renamed {
+        branch: String,
+        change: String,
+    },
     Deleted,
+    /// The system declares a naming setting: the pending branch stays checked out until the engineer
+    /// confirms a name through `confirm_branch`.
+    NeedsName {
+        pending: String,
+        system: String,
+        change: String,
+    },
 }
 
 /// Seconds since the Unix epoch as `YYYYMMDDThhmmssZ`. Same output as `kata_core::fsutil::utc_stamp`.
@@ -164,6 +176,32 @@ pub fn finish_pending(
     repo.checkout_branch(base)?;
     repo.delete_branch(pending)?;
     Ok(FinishOutcome::Deleted)
+}
+
+/// Name a pending branch after the engineer's confirmed `name` and record it.
+#[allow(clippy::too_many_arguments)]
+pub fn confirm_branch(
+    _plugin: &Readiness,
+    _folder: &Path,
+    _master_repo: &str,
+    _system: &str,
+    _change: &str,
+    _pending: &str,
+    _name: &str,
+    _work_type: &str,
+) -> Result<FinishOutcome, BranchError> {
+    todo!()
+}
+
+/// The branch name the system's pattern gives `change`.
+pub fn suggest_branch(
+    _plugin: &Readiness,
+    _master: &Path,
+    _system: &str,
+    _change: &str,
+    _work_type: &str,
+) -> Result<String, NamingError> {
+    todo!()
 }
 
 /// Switch branches. Refuses a dirty working tree.
@@ -381,6 +419,252 @@ mod tests {
         let lines: Vec<&str> = ran.lines().collect();
         assert_eq!(lines.len(), 2, "{ran}");
         assert!(lines.iter().all(|l| l.ends_with(" 1")), "{ran}");
+    }
+
+    const NAMED: &str = r#"{"version":1,"systems":{"kata":{"repos":["kata"],"naming":{"branch":"{type}/{scope}-{slug}","pullRequestTitle":"{type}({scope}): {title}"}}}}"#;
+    const UNNAMED: &str = r#"{"version":1,"systems":{"kata":{"repos":["kata"]}}}"#;
+    const CHANGE: &str = "2026-11-02-password-reset";
+
+    fn ready() -> Readiness {
+        Readiness::Ready {
+            dir: testutil::plugin_dir().to_path_buf(),
+            version: crate::plugin::NAMING_VERSION.to_string(),
+            layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
+            light_track: true,
+            naming: crate::plugin::naming(crate::plugin::NAMING_VERSION),
+        }
+    }
+
+    /// A workspace folder with the master `ai-sdlc` (marker committed) and the product repo `kata`.
+    fn workspace(tmp: &Path, marker: &str) -> std::path::PathBuf {
+        let master = testutil::repo(tmp, "ai-sdlc");
+        testutil::commit_file(&master, ".ai-sdlc.json", marker, "marker");
+        testutil::repo(tmp, "kata");
+        master
+    }
+
+    fn intent(master: &Path, committed: bool) {
+        let rel = format!("intent/kata/{CHANGE}/intent.md");
+        let body =
+            "---\nstatus: draft\nscope: PROJ-123\ntitle: Customer can reset password\n---\nx\n";
+        if committed {
+            testutil::commit_file(master, &rel, body, "intent");
+        } else {
+            testutil::write(master, &rel, body);
+        }
+    }
+
+    #[test]
+    fn finish_follows_the_table() {
+        let needs = |pending: &str| FinishOutcome::NeedsName {
+            pending: pending.to_string(),
+            system: "kata".into(),
+            change: CHANGE.into(),
+        };
+        let renamed = FinishOutcome::Renamed {
+            branch: format!("change/{CHANGE}"),
+            change: CHANGE.into(),
+        };
+        // Rows 1 and 2: a folder was created, with and without commits on the pending branch.
+        for committed in [false, true] {
+            for (row, marker) in [(1, UNNAMED), (2, NAMED)] {
+                let tmp = tempfile::tempdir().unwrap();
+                let master = workspace(tmp.path(), marker);
+                let pending = start_pending(&master, "main", 1_792_368_000).unwrap();
+                intent(&master, committed);
+                let out = finish_pending(&master, &pending, "main").unwrap();
+                if row == 1 {
+                    assert_eq!(out, renamed, "row 1 committed={committed}");
+                    assert_eq!(
+                        current_branch(&master).as_deref(),
+                        Some(format!("change/{CHANGE}").as_str())
+                    );
+                } else {
+                    assert_eq!(out, needs(&pending), "row 2 committed={committed}");
+                    assert_eq!(current_branch(&master).as_deref(), Some(pending.as_str()));
+                    assert!(branch_exists(&master, &pending));
+                }
+            }
+        }
+        // Rows 3 and 4: no folder created, whether or not the system declares a setting.
+        for marker in [UNNAMED, NAMED] {
+            let tmp = tempfile::tempdir().unwrap();
+            let master = workspace(tmp.path(), marker);
+            let pending = start_pending(&master, "main", 1_792_368_000).unwrap();
+            testutil::commit_file(&master, "notes.txt", "x\n", "stray");
+            assert!(
+                matches!(
+                    finish_pending(&master, &pending, "main"),
+                    Err(BranchError::PendingHasCommits)
+                ),
+                "row 3"
+            );
+            let tmp = tempfile::tempdir().unwrap();
+            let master = workspace(tmp.path(), marker);
+            let pending = start_pending(&master, "main", 1_792_368_000).unwrap();
+            assert_eq!(
+                finish_pending(&master, &pending, "main").unwrap(),
+                FinishOutcome::Deleted,
+                "row 4"
+            );
+            assert!(!branch_exists(&master, &pending));
+            assert_eq!(current_branch(&master).as_deref(), Some("main"));
+        }
+    }
+
+    #[test]
+    fn finish_without_setting_renames_to_change_folder_r2_1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = workspace(tmp.path(), UNNAMED);
+        let pending = start_pending(&master, "main", 1_792_368_000).unwrap();
+        intent(&master, true);
+        assert_eq!(
+            finish_pending(&master, &pending, "main").unwrap(),
+            FinishOutcome::Renamed {
+                branch: "change/2026-11-02-password-reset".into(),
+                change: CHANGE.into()
+            }
+        );
+        assert!(branch_exists(&master, "change/2026-11-02-password-reset"));
+    }
+
+    fn pending_with_intent(tmp: &Path) -> (std::path::PathBuf, String) {
+        let master = workspace(tmp, NAMED);
+        let pending = start_pending(&master, "main", 1_792_368_000).unwrap();
+        intent(&master, true);
+        (master, pending)
+    }
+
+    #[test]
+    fn confirm_names_and_commits_the_record() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (master, pending) = pending_with_intent(tmp.path());
+        let out = confirm_branch(
+            &ready(),
+            tmp.path(),
+            "ai-sdlc",
+            "kata",
+            CHANGE,
+            &pending,
+            "feat/PROJ-123-password-reset",
+            "feat",
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            FinishOutcome::Renamed {
+                branch: "feat/PROJ-123-password-reset".into(),
+                change: CHANGE.into()
+            }
+        );
+        assert_eq!(
+            current_branch(&master).as_deref(),
+            Some("feat/PROJ-123-password-reset")
+        );
+        assert!(!branch_exists(&master, &pending));
+        let files = git::run(&master, &["show", "--name-only", "--format=", "HEAD"]).unwrap();
+        assert_eq!(files, format!("intent/kata/{CHANGE}/branch.md"));
+        assert_eq!(
+            crate::branch_record::change_branch(&master, "kata", CHANGE).unwrap(),
+            "feat/PROJ-123-password-reset"
+        );
+    }
+
+    #[test]
+    fn confirm_refuses_a_name_with_a_space_r6_5() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (master, pending) = pending_with_intent(tmp.path());
+        let head = git::run(&master, &["rev-parse", "HEAD"]).unwrap();
+        let err = confirm_branch(
+            &ready(),
+            tmp.path(),
+            "ai-sdlc",
+            "kata",
+            CHANGE,
+            &pending,
+            "feat/PROJ 123",
+            "feat",
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("a branch name cannot contain a space"),
+            "{err}"
+        );
+        assert_eq!(current_branch(&master).as_deref(), Some(pending.as_str()));
+        assert_eq!(git::run(&master, &["rev-parse", "HEAD"]).unwrap(), head);
+        assert!(!master
+            .join(format!("intent/kata/{CHANGE}/branch.md"))
+            .exists());
+    }
+
+    #[test]
+    fn confirm_refuses_unsafe_names_before_any_git_call_r12_1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (master, pending) = pending_with_intent(tmp.path());
+        let snapshot = || {
+            (
+                git::run(&master, &["for-each-ref"]).unwrap(),
+                std::fs::read(master.join(".git/logs/HEAD")).unwrap(),
+                std::fs::read(master.join(".git/HEAD")).unwrap(),
+            )
+        };
+        let before = snapshot();
+        for bad in ["-D", "feat/../main", "feat/@{1}"] {
+            let err = confirm_branch(
+                &ready(),
+                tmp.path(),
+                "ai-sdlc",
+                "kata",
+                CHANGE,
+                &pending,
+                bad,
+                "feat",
+            );
+            assert!(err.is_err(), "{bad}");
+            assert!(snapshot() == before, "{bad} changed the repository");
+        }
+    }
+
+    #[test]
+    fn confirm_refuses_a_clash_a_non_pending_branch_and_a_bad_type() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (master, pending) = pending_with_intent(tmp.path());
+        git::run(&tmp.path().join("kata"), &["branch", "feat/taken"]).unwrap();
+        let go = |pending: &str, name: &str, work_type: &str| {
+            confirm_branch(
+                &ready(),
+                tmp.path(),
+                "ai-sdlc",
+                "kata",
+                CHANGE,
+                pending,
+                name,
+                work_type,
+            )
+        };
+        let err = go(&pending, "feat/taken", "feat").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("clashes with `feat/taken` in `kata`"),
+            "{err}"
+        );
+        assert!(go(&pending, "feat/ok", "feature").is_err());
+        assert!(go("main", "feat/ok", "feat").is_err());
+        assert_eq!(current_branch(&master).as_deref(), Some(pending.as_str()));
+        assert!(!master
+            .join(format!("intent/kata/{CHANGE}/branch.md"))
+            .exists());
+    }
+
+    #[test]
+    fn suggest_gives_the_pattern_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (master, _pending) = pending_with_intent(tmp.path());
+        assert_eq!(
+            suggest_branch(&ready(), &master, "kata", CHANGE, "feat").unwrap(),
+            "feat/PROJ-123-password-reset"
+        );
     }
 
     #[test]
