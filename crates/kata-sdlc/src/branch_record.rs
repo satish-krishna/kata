@@ -650,6 +650,18 @@ mod tests {
     }
 
     #[test]
+    fn a_hand_edited_head_name_is_invalid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (master, _) = workspace(tmp.path());
+        let rel = format!("intent/{SYSTEM}/{CHANGE}/branch.md");
+        testutil::write(&master, &rel, "---\nbranch: HEAD\n---\n\ntext\n");
+        match change_branch(&master, SYSTEM, CHANGE) {
+            Err(RecordError::Invalid(msg)) => assert!(msg.contains("branch.md"), "{msg}"),
+            other => panic!("gave {other:?}"),
+        }
+    }
+
+    #[test]
     fn a_symbolic_remote_head_is_skipped() {
         let tmp = tempfile::tempdir().unwrap();
         let (_, kata) = workspace(tmp.path());
