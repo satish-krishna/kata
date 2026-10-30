@@ -21,7 +21,7 @@ import { SdlcRunner, type DiscardChoice, type PickedNaming } from '../../core/sd
 import { SdlcStagesStore, stageKey, type ChangeRow } from '../../core/sdlc/sdlc-stages.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
-import { defaultWorkType, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
+import { defaultWorkType, namingRefusal, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
 import { inTauri } from '../../lib/mock';
 import { shownChangeList } from '../../lib/doc-notice';
 import { fixProgramFailed, hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
@@ -226,8 +226,7 @@ export class SdlcHomeViewModel {
   readonly namingError = computed(() => {
     const n = this.naming();
     if (n?.kind !== 'error') return null;
-    const base = this.current()?.base_branch ?? 'the base branch';
-    return `Naming for ${this.namingSystem() ?? 'this system'} cannot be used: ${n.message}. The setting must be fixed in .ai-sdlc.json and committed to ${base}; until then no change can start here.`;
+    return namingRefusal(this.namingSystem() ?? 'this system', this.current()?.base_branch, n.message);
   });
   /** Whether the naming part of the dialog allows Start: the answer is in, and a setting comes with a scope that passed its check. */
   readonly namingReady = computed(() => {

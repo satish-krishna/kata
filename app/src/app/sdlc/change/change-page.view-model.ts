@@ -74,7 +74,7 @@ import { inTauri } from '../../lib/mock';
 import { taskRecord, withRows, type TaskView } from '../../lib/task-view';
 import { shownSection } from '../../lib/sdlc-review';
 import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
-import type { WorkType } from '../../lib/sdlc-naming';
+import { namingRefusal, type WorkType } from '../../lib/sdlc-naming';
 
 export type ChangeState = 'loading' | 'ready' | 'not-found';
 
@@ -1088,6 +1088,18 @@ export class ChangePageViewModel {
     try {
       fixBranch = (await this.transport.sdlcBranches(master)).current;
       if (fixBranch === null) throw new Error('the master repository is not on a branch');
+      // A setting that cannot be used stops the start, as on the workspace home; there is no fall back to `change/` naming (R3.2).
+      const repo = masterRepo(scan);
+      let naming: NamingState = { kind: 'none' };
+      try {
+        if (repo) naming = await this.transport.sdlcNaming(workspace.folder, repo, system);
+      } catch (e) {
+        naming = { kind: 'error', reason: 'unreadable', message: message(e) };
+      }
+      if (naming.kind === 'error') {
+        this.toasts.error(namingRefusal(system, workspace.base_branch, naming.message));
+        return;
+      }
       outcome = await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, 'full', (spec) => this.confirmRun(spec));
     } catch (e) {
       this.toasts.error(`Could not start the change: ${message(e)}`);
