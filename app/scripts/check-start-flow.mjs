@@ -13,9 +13,9 @@ import { open, reporter } from './check-build-support.mjs';
 
 const { check, done } = reporter('check-start-flow');
 
-const FIX = '/sdlc/claims/2026-10-22-photo-retry-fix';
-const REJECTED = '/sdlc/claims/2026-10-21-limit-typo-fix';
-const STARTED_FIX = '/sdlc/claims/2026-10-24-fraud-flag-fix';
+const FIX = '/sdlc/commerce/2026-10-22-photo-retry-fix';
+const REJECTED = '/sdlc/commerce/2026-10-21-limit-typo-fix';
+const STARTED_FIX = '/sdlc/commerce/2026-10-24-price-flag-fix';
 
 const { page, origin, errors, close } = await open({ width: 1600, height: 1000 });
 page.setDefaultTimeout(8000);

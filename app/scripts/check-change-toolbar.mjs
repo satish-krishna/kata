@@ -9,23 +9,23 @@
 import { installClipping } from './clipping.mjs';
 
 export const CHANGE_ROUTES = [
-  { route: 'sdlc/claims/2026-10-16-fraud-flag', name: 'a change in an early stage', pills: 4, links: 0 },
-  { route: 'sdlc/claims/2026-10-18-photo-limits-shipped', name: 'a finished change with three pull requests', pills: 4, links: 0, menu: '3 PRs' },
-  { route: 'sdlc/claims/2026-10-18-photo-limits-shipped?demo=one-pr', name: 'a finished change with one pull request', pills: 4, links: 1 },
+  { route: 'sdlc/commerce/2026-10-16-price-flag', name: 'a change in an early stage', pills: 4, links: 0 },
+  { route: 'sdlc/commerce/2026-10-18-photo-limits-shipped', name: 'a finished change with three pull requests', pills: 4, links: 0, menu: '3 PRs' },
+  { route: 'sdlc/commerce/2026-10-18-photo-limits-shipped?demo=one-pr', name: 'a finished change with one pull request', pills: 4, links: 1 },
 ];
 
-const LONG_WORKSPACE = 'acme-claims-regional-underwriting-plat-x'; // 40 characters
-const LONG_CHANGE = '2026-10-16-fraud-flag-for-repeat-claimants-xx'; // 45 characters
-const LONG_BRANCH = 'change/2026-10-09-adjuster-reassign';
-const LONG_REPO = 'claims-adjuster-reassignment-service-x'; // 38 characters
-const ONE_PR = 'sdlc/claims/2026-10-18-photo-limits-shipped?demo=one-pr';
-const THREE_PRS = 'sdlc/claims/2026-10-18-photo-limits-shipped';
+const LONG_WORKSPACE = 'acme-commerce-regional-merchandise-pla-x'; // 40 characters
+const LONG_CHANGE = '2026-10-16-price-flag-for-repeat-resellers-xx'; // 45 characters
+const LONG_BRANCH = 'change/2026-10-09-merchant-reassign';
+const LONG_REPO = 'commerce-seller-reassignment-service-x'; // 38 characters
+const ONE_PR = 'sdlc/commerce/2026-10-18-photo-limits-shipped?demo=one-pr';
+const THREE_PRS = 'sdlc/commerce/2026-10-18-photo-limits-shipped';
 
 /** Long values set in the rendered DOM (the way checkPrPopover sets its repository name), so no fixture data is needed. */
 export const LONG_FIXTURES = [
-  { route: 'sdlc/claims/2026-10-16-fraud-flag', name: 'a 40-character workspace name', pills: 4, links: 0, fixture: { workspace: LONG_WORKSPACE } },
-  { route: 'sdlc/claims/2026-10-16-fraud-flag', name: 'a 45-character change name', pills: 4, links: 0, fixture: { change: LONG_CHANGE } },
-  { route: 'sdlc/claims/2026-10-09-adjuster-reassign', name: 'a long branch on another change', pills: 4, links: 0, fixture: { branch: LONG_BRANCH } },
+  { route: 'sdlc/commerce/2026-10-16-price-flag', name: 'a 40-character workspace name', pills: 4, links: 0, fixture: { workspace: LONG_WORKSPACE } },
+  { route: 'sdlc/commerce/2026-10-16-price-flag', name: 'a 45-character change name', pills: 4, links: 0, fixture: { change: LONG_CHANGE } },
+  { route: 'sdlc/commerce/2026-10-09-merchant-reassign', name: 'a long branch on another change', pills: 4, links: 0, fixture: { branch: LONG_BRANCH } },
   { route: THREE_PRS, name: 'three pull requests with a 40-character workspace name', pills: 4, links: 0, menu: '3 PRs', fixture: { workspace: LONG_WORKSPACE } },
   {
     route: THREE_PRS,
@@ -308,8 +308,8 @@ export async function checkStripHeight(browser, origin, route, width) {
 
 /** The build page bar of a build-ready change and of a finished one with the pull request note: the widest sets of actions the bar carries. */
 export const STRIP_STATES = [
-  { route: 'sdlc/claims/2026-10-19-build-demo', name: 'a build-ready change' },
-  { route: 'sdlc/claims/2026-10-18-photo-limits-shipped?demo=pr-fail', name: 'a finished build with three actions and the pull request note', note: true },
+  { route: 'sdlc/commerce/2026-10-19-build-demo', name: 'a build-ready change' },
+  { route: 'sdlc/commerce/2026-10-18-photo-limits-shipped?demo=pr-fail', name: 'a finished build with three actions and the pull request note', note: true },
 ];
 
 /** Nothing in the build page bar is ever cut off: every control sits inside the bar, the bar inside the window, no control's text is clipped, and from 1280 up the bar is one row. The pull request note sits above the page and must stay inside the window. */
@@ -366,7 +366,7 @@ export async function checkPrPopover(browser, origin, width) {
   const page = await context.newPage();
   const fails = [];
   try {
-    await page.goto(`${origin}/sdlc/claims/2026-10-18-photo-limits-shipped`, { waitUntil: 'networkidle' });
+    await page.goto(`${origin}/sdlc/commerce/2026-10-18-photo-limits-shipped`, { waitUntil: 'networkidle' });
     await page.locator('[data-testid="pr-menu"]').click();
     await page.locator('[data-testid="pr-list"] a').first().waitFor();
     // The popover is positioned and has its width a moment after it opens; measuring before that sees a box of a few pixels.
@@ -376,7 +376,7 @@ export async function checkPrPopover(browser, origin, width) {
       const { isInside } = window.kataClip;
       const a = document.querySelector('[data-testid="pr-list"] a');
       const [name, num] = a.children;
-      name.textContent = 'claims-adjuster-reassignment-service';
+      name.textContent = 'commerce-merchant-reassignment-service';
       num.textContent = '#1234';
       const list = document.querySelector('[data-testid="pr-list"]');
       const out = [...a.children].filter((s) => !isInside(s, list)).map((s) => s.textContent);

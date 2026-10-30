@@ -47,7 +47,7 @@ async function newSpec(page) {
   await page.waitForSelector('.wb-banner');
 }
 
-const CHANGE_SPEC = '/sdlc/claims/2026-10-12-fnol-photo-upload';
+const CHANGE_SPEC = '/sdlc/commerce/2026-10-12-product-photo-upload';
 
 // An AI-SDLC agent run takes the page as the session view; its questionnaire is the first thing the scripted run asks.
 async function lockAsk(page) {
@@ -62,7 +62,7 @@ async function cancelToLeftovers(page) {
   await page.waitForSelector('.k-left', { state: 'visible', timeout: 15000 });
 }
 
-const BUILD_CHANGE = '/sdlc/claims/2026-10-19-build-demo';
+const BUILD_CHANGE = '/sdlc/commerce/2026-10-19-build-demo';
 
 // The scripted build of 2026-10-19-build-demo: Start build, then Start run in its preview, until the build page shows Cancel build.
 async function startBuild(page) {
@@ -117,10 +117,10 @@ export const VIEWS = [
   { name: 'sdlc-change-intent', path: CHANGE_SPEC, ready: '.k-md__diagram svg',
     act: async (p) => {
       await p.getByRole('tab', { name: /^Intent/ }).click();
-      await p.getByRole('heading', { name: 'Photo upload at first notice of loss' }).waitFor();
+      await p.getByRole('heading', { name: 'Photo upload on the product form' }).waitFor();
     } },
-  { name: 'sdlc-change-plan', path: '/sdlc/claims/2026-10-09-adjuster-reassign', ready: '.k-docview' },
-  { name: 'sdlc-feedback', path: '/sdlc/claims/2026-10-09-adjuster-reassign', ready: '.k-docview',
+  { name: 'sdlc-change-plan', path: '/sdlc/commerce/2026-10-09-merchant-reassign', ready: '.k-docview' },
+  { name: 'sdlc-feedback', path: '/sdlc/commerce/2026-10-09-merchant-reassign', ready: '.k-docview',
     act: async (p) => {
       await p.getByRole('button', { name: 'Re-run plan' }).click();
       await p.getByRole('dialog').getByRole('textbox', { name: 'What should change?' }).fill('R2 is wrong: team leads can reassign too.');
@@ -143,11 +143,11 @@ export const VIEWS = [
       await p.keyboard.press('Control+4');
       await openLimitsDiff(p);
     } },
-  { name: 'sdlc-done-pr', path: '/sdlc/claims/2026-10-18-photo-limits-shipped', ready: '[data-testid="pr-menu"]',
+  { name: 'sdlc-done-pr', path: '/sdlc/commerce/2026-10-18-photo-limits-shipped', ready: '[data-testid="pr-menu"]',
     act: async (p) => { await p.locator('[data-testid="pr-menu"]').click(); await p.locator('[data-testid="pr-list"]').waitFor(); } },
   { name: 'sdlc-start-triage', path: '/sdlc?demo=start', ready: '[role="dialog"]',
     act: async (p) => { await p.getByRole('dialog').getByRole('button', { name: /^Start run$/ }).click(); await p.getByText('Take the light track').first().waitFor({ timeout: 30000 }); } },
-  { name: 'sdlc-fix', path: '/sdlc/claims/2026-10-22-photo-retry-fix', ready: '[data-testid="track-tag"]' },
+  { name: 'sdlc-fix', path: '/sdlc/commerce/2026-10-22-photo-retry-fix', ready: '[data-testid="track-tag"]' },
   { name: 'hover-secondary', path: '/', ready: '.wb-toolbar',
     act: async (p) => { await p.getByRole('button', { name: 'Open spec' }).hover(); } },
 ];

@@ -5,7 +5,7 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import { render } from '../../testing/render';
 import { SdlcToolbar } from './sdlc-toolbar';
 
-const WS: WorkspaceEntry = { id: 'acme', name: 'acme-claims', folder: '/a', base_branch: 'main', last_opened: 1 };
+const WS: WorkspaceEntry = { id: 'acme', name: 'acme-commerce', folder: '/a', base_branch: 'main', last_opened: 1 };
 const inputs = (over: Record<string, unknown> = {}) => ({
   workspaces: [WS], current: WS, missing: [], branch: 'main', locked: false, ...over,
 });
@@ -16,7 +16,7 @@ describe('SdlcToolbar', () => {
   it('shows the ai-sdlc badge, the workspace, and the master branch in mono', async () => {
     const { container } = await render(SdlcToolbar, inputs());
     expect(byLabel(container, 'Switch mode (ai-sdlc)').textContent!.trim()).toBe('ai-sdlc');
-    expect(container.textContent).toContain('acme-claims');
+    expect(container.textContent).toContain('acme-commerce');
     expect(container.querySelector('[data-testid="branch"]')!.textContent!.trim()).toBe('main');
   });
 
@@ -26,9 +26,9 @@ describe('SdlcToolbar', () => {
   });
 
   it('names the branch chip for a reader who cannot see its text: title and accessible name say which branch is out of place', async () => {
-    const { container } = await render(SdlcToolbar, inputs({ branch: 'main', crumbs: ['2026-10-16-fraud-flag'] }));
+    const { container } = await render(SdlcToolbar, inputs({ branch: 'main', crumbs: ['2026-10-16-price-flag'] }));
     const chip = container.querySelector('[data-testid="branch"]')!;
-    const said = 'Master repository is on main, not change/2026-10-16-fraud-flag';
+    const said = 'Master repository is on main, not change/2026-10-16-price-flag';
     expect(chip.getAttribute('title')).toBe(said);
     expect(chip.getAttribute('aria-label')).toBe(said);
     expect(chip.querySelector('ng-icon[name="lucideGitBranch"]')).not.toBeNull();
@@ -43,8 +43,8 @@ describe('SdlcToolbar', () => {
   });
 
   it('shows the breadcrumb after the workspace', async () => {
-    const { container } = await render(SdlcToolbar, inputs({ crumbs: ['claims', '2026-10-12-fnol'] }));
-    expect(container.querySelector('nav')!.textContent).toContain('2026-10-12-fnol');
+    const { container } = await render(SdlcToolbar, inputs({ crumbs: ['commerce', '2026-10-12-photos'] }));
+    expect(container.querySelector('nav')!.textContent).toContain('2026-10-12-photos');
   });
 
   it('emits switchMode and openSettings', async () => {

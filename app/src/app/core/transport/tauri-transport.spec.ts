@@ -40,7 +40,7 @@ const rows: Row[] = [
   ['validateSpec', (t) => t.validateSpec(spec), 'validate_spec', { spec }],
   ['previewRun', (t) => t.previewRun(spec), 'preview_run', { spec }],
   ['runSpec', (t) => t.runSpec(spec), 'run_spec', { spec }],
-  ['runSpec with a group', (t) => t.runSpec(spec, 'build:claims/c'), 'run_spec', { spec, group: 'build:claims/c' }],
+  ['runSpec with a group', (t) => t.runSpec(spec, 'build:commerce/c'), 'run_spec', { spec, group: 'build:commerce/c' }],
   ['openUrl', (t) => t.openUrl('https://github.com/o/r/pull/1'), 'open_url', { url: 'https://github.com/o/r/pull/1' }],
   ['cancelRun', (t) => t.cancelRun('7'), 'cancel_run', { runId: '7' }],
   ['submitAnswer', (t) => t.submitAnswer('7', 'q', [['a']]), 'submit_answer', { runId: '7', id: 'q', answers: [['a']] }],
@@ -57,6 +57,7 @@ const rows: Row[] = [
   ['sdlcWorkspaces', (t) => t.sdlcWorkspaces(), 'sdlc_workspaces', undefined],
   ['sdlcSaveWorkspaces', (t) => t.sdlcSaveWorkspaces([entry]), 'sdlc_save_workspaces', { workspaces: [entry] }],
   ['sdlcScan', (t) => t.sdlcScan('/w'), 'sdlc_scan', { folder: '/w' }],
+  ['sdlcReadContext', (t) => t.sdlcReadContext('/m', 's', 'r'), 'sdlc_read_context', { master: '/m', system: 's', repo: 'r' }],
   ['sdlcContextHealth', (t) => t.sdlcContextHealth('/w', 'm', 's', 'r'), 'sdlc_context_health', { folder: '/w', master: 'm', system: 's', repo: 'r' }],
   ['sdlcInstructions', (t) => t.sdlcInstructions('/w', 'm'), 'sdlc_instructions', { folder: '/w', masterRepo: 'm' }],
   ['sdlcChangeNames', (t) => t.sdlcChangeNames('/m', 's'), 'sdlc_change_names', { master: '/m', system: 's' }],
@@ -158,8 +159,8 @@ describe('TauriTransport', () => {
     await t.onPublishStep((step) => seen.push(step));
     const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: PublishStep }) => void];
     expect(event).toBe('sdlc://publish-step');
-    handler({ payload: { kind: 'pushing', repo: 'claims-core' } });
-    expect(seen).toEqual([{ kind: 'pushing', repo: 'claims-core' }]);
+    handler({ payload: { kind: 'pushing', repo: 'commerce-core' } });
+    expect(seen).toEqual([{ kind: 'pushing', repo: 'commerce-core' }]);
   });
 
   it('hands the payload of sdlc://stage over as the event', async () => {

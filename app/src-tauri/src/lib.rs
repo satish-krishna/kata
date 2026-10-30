@@ -241,6 +241,12 @@ fn sdlc_context_health(
     sdlc::workspace::context_health(Path::new(&folder), &master, &system, &repo)
 }
 
+/// The text of one repo's context file in the master, or `None` when it is not there.
+#[tauri::command(async)]
+fn sdlc_read_context(master: String, system: String, repo: String) -> Option<String> {
+    sdlc::workspace::read_context(Path::new(&master), &system, &repo)
+}
+
 #[tauri::command(async)]
 fn sdlc_instructions(folder: String, master_repo: String) -> sdlc::workspace::InstructionsState {
     let folder = Path::new(&folder);
@@ -1145,6 +1151,7 @@ pub fn run() {
             sdlc_save_workspaces,
             sdlc_scan,
             sdlc_context_health,
+            sdlc_read_context,
             sdlc_instructions,
             sdlc_change_names,
             sdlc_read_stages,

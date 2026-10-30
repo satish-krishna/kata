@@ -50,9 +50,9 @@ const previewReady = (preview: RunPreviewViewModel) => vi.waitFor(() => expect(p
 
 const scanOf = (over: Partial<WorkspaceScan>): WorkspaceScan => ({
   folder: NEW_FOLDER,
-  repos: ['claims-intent', 'customer-portal'],
-  master: { kind: 'one', repo: 'claims-intent', committed: true },
-  marker: { version: 1, systems: { claims: { repos: ['customer-portal'] } } },
+  repos: ['commerce-docs', 'customer-portal'],
+  master: { kind: 'one', repo: 'commerce-docs', committed: true },
+  marker: { version: 1, systems: { commerce: { repos: ['customer-portal'] } } },
   marker_error: null,
   ...over,
 });
@@ -64,11 +64,11 @@ describe('SdlcHomeViewModel init', () => {
   it('opens the last-used workspace with its changes, branches and context health', async () => {
     const { vm } = setup();
     await vm.init();
-    expect(vm.current()?.name).toBe('acme-claims');
+    expect(vm.current()?.name).toBe('acme-commerce');
     expect(vm.state()).toBe('ready');
     await settled(vm);
     expect(vm.changes().length).toBe(7);
-    expect(vm.branches()?.others).toEqual(['2026-10-17-claim-notes']);
+    expect(vm.branches()?.others).toEqual(['2026-10-17-product-notes']);
     expect(vm.masterBranch()).toBe('main');
     expect(vm.contexts()['customer-portal']).toEqual({ kind: 'stale', commits: 14 });
     expect(vm.pluginMissing()).toBe(false);
@@ -107,7 +107,7 @@ describe('SdlcHomeViewModel init', () => {
     await vm.init();
     expect(vm.state()).toBe('folder-missing');
     expect(vm.scanError()).toContain('no such folder');
-    expect(vm.missing()).toEqual(['acme-claims']);
+    expect(vm.missing()).toEqual(['acme-commerce']);
   });
 
   it('reports a workspace without a master repo', async () => {
@@ -127,16 +127,16 @@ describe('SdlcHomeViewModel init', () => {
 
   it('reports a master whose marker is not committed as not set up', async () => {
     const { vm, transport } = setup();
-    vi.spyOn(transport, 'sdlcScan').mockResolvedValue(scanOf({ master: { kind: 'one', repo: 'claims-intent', committed: false } }));
+    vi.spyOn(transport, 'sdlcScan').mockResolvedValue(scanOf({ master: { kind: 'one', repo: 'commerce-docs', committed: false } }));
     await vm.init();
     expect(vm.state()).toBe('not-set-up');
   });
 
   it('shows the last run time per change from the run links', async () => {
     const { vm, transport } = setup();
-    await transport.sdlcLinkRun({ workspace_id: 'acme-claims', system: 'claims', change: '2026-10-12-fnol-photo-upload', stage: 'spec', run_id: 'r', started_at: 1792281600 });
+    await transport.sdlcLinkRun({ workspace_id: 'acme-commerce', system: 'commerce', change: '2026-10-12-product-photo-upload', stage: 'spec', run_id: 'r', started_at: 1792281600 });
     await vm.init();
-    expect(vm.lastRuns()['claims/2026-10-12-fnol-photo-upload']).toBe(1792281600);
+    expect(vm.lastRuns()['commerce/2026-10-12-product-photo-upload']).toBe(1792281600);
   });
 });
 
@@ -182,7 +182,7 @@ describe('SdlcHomeViewModel add workspace', () => {
     runAgent.mockResolvedValue('warning');
     await vm.init();
     vi.spyOn(transport, 'sdlcScan').mockResolvedValueOnce(
-      scanOf({ master: { kind: 'one', repo: 'claims-intent', committed: false }, marker: null }),
+      scanOf({ master: { kind: 'one', repo: 'commerce-docs', committed: false }, marker: null }),
     );
     await vm.addWorkspace();
     expect(vm.leftovers()?.[0].data.discardable).toEqual(['.ai-sdlc.json']);
@@ -201,10 +201,10 @@ describe('SdlcHomeViewModel add workspace', () => {
     });
     vi.spyOn(transport, 'sdlcScan')
       .mockResolvedValueOnce(scanOf({ master: { kind: 'none' }, marker: null }))
-      .mockResolvedValueOnce(scanOf({ master: { kind: 'one', repo: 'claims-intent', committed: false }, marker: null }));
+      .mockResolvedValueOnce(scanOf({ master: { kind: 'one', repo: 'commerce-docs', committed: false }, marker: null }));
     await vm.addWorkspace();
-    expect(snap.mock.calls.map((c) => c[0])).toEqual([`${NEW_FOLDER}/claims-intent`, `${NEW_FOLDER}/customer-portal`]);
-    expect(left).toHaveBeenCalledWith(`${NEW_FOLDER}/claims-intent`, expect.anything(), [`${NEW_FOLDER}/customer-portal`]);
+    expect(snap.mock.calls.map((c) => c[0])).toEqual([`${NEW_FOLDER}/commerce-docs`, `${NEW_FOLDER}/customer-portal`]);
+    expect(left).toHaveBeenCalledWith(`${NEW_FOLDER}/commerce-docs`, expect.anything(), [`${NEW_FOLDER}/customer-portal`]);
     expect(vm.leftovers()?.[0].data.discardable).toEqual(['.ai-sdlc.json']);
     expect(vm.candidate()).toBeNull();
   });
@@ -271,9 +271,9 @@ describe('SdlcHomeViewModel add workspace', () => {
   it('treats a listed folder as already listed despite slashes, a trailing separator and case', async () => {
     const { vm, transport, runSteps } = setup();
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
-      { id: 'acme-claims', name: 'acme-claims', folder: 'D:\\Work\\acme-claims\\', base_branch: 'main', last_opened: 1 },
+      { id: 'acme-commerce', name: 'acme-commerce', folder: 'D:\\Work\\acme-commerce\\', base_branch: 'main', last_opened: 1 },
     ]);
-    vi.spyOn(transport, 'pickDirectory').mockResolvedValue('d:/work/acme-claims');
+    vi.spyOn(transport, 'pickDirectory').mockResolvedValue('d:/work/acme-commerce');
     await vm.init();
     await vm.addWorkspace();
     expect(runSteps).not.toHaveBeenCalled();
@@ -297,9 +297,25 @@ describe('SdlcHomeViewModel runs', () => {
     const health = vi.spyOn(transport, 'sdlcContextHealth');
     await vm.runContext('customer-portal');
     expect(runAgent).toHaveBeenCalledTimes(1);
-    expect(specOf(runAgent).name).toBe('sdlc-claims-context');
+    expect(specOf(runAgent).name).toBe('sdlc-commerce-context');
     expect(specOf(runAgent).task).toContain('customer-portal');
     expect(health).toHaveBeenCalled();
+  });
+
+  it('openContext goes to the context screen of the repo, under its system', async () => {
+    const { vm, navigate } = setup();
+    await vm.init();
+    await vm.openContext('customer-portal');
+    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', 'context', 'customer-portal']);
+  });
+
+  it('a context run handed over by the context screen starts once the workspace is read, after the address drops it', async () => {
+    const { vm, runAgent, navigate } = setup();
+    await vm.init(null, 'customer-portal');
+    expect(navigate).toHaveBeenCalledWith(['/sdlc'], { replaceUrl: true });
+    expect(runAgent).toHaveBeenCalledTimes(1);
+    expect(specOf(runAgent).name).toBe('sdlc-commerce-context');
+    expect(specOf(runAgent).task).toContain('customer-portal');
   });
 
   it('setup and a context run open the preview first; cancel starts nothing', async () => {
@@ -322,7 +338,7 @@ describe('SdlcHomeViewModel runs', () => {
     preview.start();
     await confirmed;
     expect(runAgent).toHaveBeenCalledTimes(1);
-    expect(specOf(runAgent).name).toBe('sdlc-claims-context');
+    expect(specOf(runAgent).name).toBe('sdlc-commerce-context');
   });
 
   it('first-time setup of a new folder opens the preview first; cancel starts nothing', async () => {
@@ -344,7 +360,7 @@ describe('SdlcHomeViewModel runs', () => {
     const open = vi.spyOn(preview, 'open');
     const start = vi.spyOn(transport, 'sdlcStartChange');
     await vm.init();
-    const run = vm.newChange('claims', 'flag fraud', 'full');
+    const run = vm.newChange('commerce', 'flag prices', 'full');
     await previewReady(preview);
     expect(open.mock.calls[0][0]).toMatchObject({ mode: 'sdlc' });
     expect(start).not.toHaveBeenCalled();
@@ -445,11 +461,11 @@ describe('SdlcHomeViewModel runs', () => {
     const { vm, runner } = setup();
     await vm.init();
     const spy = vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened', change: '2026-10-18-new-change', branch: 'change/2026-10-18-new-change' });
-    await vm.newChange('claims', 'flag fraud', 'decide');
+    await vm.newChange('commerce', 'flag prices', 'decide');
     expect(spy).toHaveBeenCalledWith(
-      expect.objectContaining({ workspace: expect.objectContaining({ id: 'acme-claims' }), master: `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}` }),
-      'claims',
-      'flag fraud',
+      expect.objectContaining({ workspace: expect.objectContaining({ id: 'acme-commerce' }), master: `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}` }),
+      'commerce',
+      'flag prices',
       'decide',
       expect.any(Function),
     );
@@ -457,17 +473,17 @@ describe('SdlcHomeViewModel runs', () => {
   });
 
   describe('a triage that created no change', () => {
-    const none = { kind: 'none', idea: 'flag fraud', runId: 'sdlc-claims-triage-1' } as const;
+    const none = { kind: 'none', idea: 'flag prices', runId: 'sdlc-commerce-triage-1' } as const;
 
     it('shows the notice, and describing again reopens the dialog on the idea and the decide track', async () => {
       const { vm, runner } = setup();
       await vm.init();
       vi.spyOn(runner, 'newChange').mockResolvedValue(none);
-      await vm.newChange('claims', 'flag fraud', 'decide');
-      expect(vm.triageNotice()).toEqual({ idea: 'flag fraud', runId: 'sdlc-claims-triage-1' });
+      await vm.newChange('commerce', 'flag prices', 'decide');
+      expect(vm.triageNotice()).toEqual({ idea: 'flag prices', runId: 'sdlc-commerce-triage-1' });
       vm.describeAgain();
       expect(vm.newChangeOpen()).toBe(true);
-      expect(vm.newChangeIdea()).toBe('flag fraud');
+      expect(vm.newChangeIdea()).toBe('flag prices');
       expect(vm.newChangeTrack()).toBe('decide');
     });
 
@@ -475,16 +491,16 @@ describe('SdlcHomeViewModel runs', () => {
       const { vm, runner, navigate } = setup();
       await vm.init();
       vi.spyOn(runner, 'newChange').mockResolvedValue(none);
-      await vm.newChange('claims', 'flag fraud', 'decide');
+      await vm.newChange('commerce', 'flag prices', 'decide');
       await vm.openRun();
-      expect(navigate).toHaveBeenCalledWith(['/library'], { queryParams: { run: 'sdlc-claims-triage-1' } });
+      expect(navigate).toHaveBeenCalledWith(['/library'], { queryParams: { run: 'sdlc-commerce-triage-1' } });
     });
 
     it('shows no notice when the full pipeline made no change', async () => {
       const { vm, runner } = setup();
       await vm.init();
       vi.spyOn(runner, 'newChange').mockResolvedValue(none);
-      await vm.newChange('claims', 'flag fraud', 'full');
+      await vm.newChange('commerce', 'flag prices', 'full');
       expect(vm.triageNotice()).toBeNull();
     });
 
@@ -492,9 +508,9 @@ describe('SdlcHomeViewModel runs', () => {
       const { vm, runner } = setup();
       await vm.init();
       const spy = vi.spyOn(runner, 'newChange').mockResolvedValue(none);
-      await vm.newChange('claims', 'flag fraud', 'decide');
+      await vm.newChange('commerce', 'flag prices', 'decide');
       spy.mockResolvedValue({ kind: 'opened', change: '2026-10-18-new-change', branch: 'change/2026-10-18-new-change' });
-      await vm.newChange('claims', 'another', 'decide');
+      await vm.newChange('commerce', 'another', 'decide');
       expect(vm.triageNotice()).toBeNull();
     });
 
@@ -502,7 +518,7 @@ describe('SdlcHomeViewModel runs', () => {
       const { vm, runner } = setup();
       await vm.init();
       vi.spyOn(runner, 'newChange').mockResolvedValue(none);
-      await vm.newChange('claims', 'flag fraud', 'decide');
+      await vm.newChange('commerce', 'flag prices', 'decide');
       await vm.selectWorkspace(vm.workspaces()[0].id);
       expect(vm.triageNotice()).toBeNull();
     });
@@ -511,7 +527,7 @@ describe('SdlcHomeViewModel runs', () => {
       const { vm, runner } = setup();
       await vm.init();
       vi.spyOn(runner, 'newChange').mockResolvedValue(none);
-      await vm.newChange('claims', 'flag fraud', 'decide');
+      await vm.newChange('commerce', 'flag prices', 'decide');
       vm.describeAgain();
       vm.closeNewChange();
       vm.openNewChange();
@@ -548,8 +564,8 @@ describe('SdlcHomeViewModel navigation', () => {
   it('openChange navigates to the change page', async () => {
     const { vm, navigate } = setup();
     await vm.init();
-    await vm.openChange('claims', '2026-10-12-fnol-photo-upload');
-    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'claims', '2026-10-12-fnol-photo-upload']);
+    await vm.openChange('commerce', '2026-10-12-product-photo-upload');
+    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-12-product-photo-upload']);
   });
 
   it('openOtherBranch checks the branch out, then opens the change found there', async () => {
@@ -558,18 +574,18 @@ describe('SdlcHomeViewModel navigation', () => {
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     // After the checkout the change exists on the branch just checked out, so the reads can find it.
     const found = (await readAllChanges(transport))[0];
-    vi.spyOn(transport, 'sdlcReadChange').mockResolvedValue({ ...found, change: '2026-10-17-claim-notes' });
-    vi.spyOn(transport, 'sdlcChangeNames').mockResolvedValue([{ change: '2026-10-17-claim-notes', title: null }]);
-    await vm.openOtherBranch('2026-10-17-claim-notes');
-    expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'change/2026-10-17-claim-notes');
-    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'claims', '2026-10-17-claim-notes']);
+    vi.spyOn(transport, 'sdlcReadChange').mockResolvedValue({ ...found, change: '2026-10-17-product-notes' });
+    vi.spyOn(transport, 'sdlcChangeNames').mockResolvedValue([{ change: '2026-10-17-product-notes', title: null }]);
+    await vm.openOtherBranch('2026-10-17-product-notes');
+    expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'change/2026-10-17-product-notes');
+    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-17-product-notes']);
   });
 
   it('openOtherBranch shows git message on a dirty refusal and stays put', async () => {
     const { vm, transport, navigate } = setup();
     await vm.init();
     vi.spyOn(transport, 'sdlcCheckout').mockRejectedValue('the master repo has uncommitted changes: notes.md');
-    await vm.openOtherBranch('2026-10-17-claim-notes');
+    await vm.openOtherBranch('2026-10-17-product-notes');
     expect(toastText()).toContain('the master repo has uncommitted changes: notes.md');
     expect(navigate).not.toHaveBeenCalled();
   });
@@ -601,7 +617,7 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     const { vm, saveWorkspaces } = setup();
     await vm.init();
     vm.askRemove();
-    expect(vm.removePrompt()).toContain('acme-claims');
+    expect(vm.removePrompt()).toContain('acme-commerce');
     expect(saveWorkspaces).not.toHaveBeenCalled();
     await vm.confirmRemove();
     expect(saveWorkspaces).toHaveBeenCalledWith([]);
@@ -633,7 +649,7 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     const { vm, saveWorkspaces } = setup();
     await vm.init();
     await vm.saveSettings({ settings: vm.settings()!, baseBranch: 'develop' });
-    expect(saveWorkspaces).toHaveBeenCalledWith([expect.objectContaining({ id: 'acme-claims', base_branch: 'develop' })]);
+    expect(saveWorkspaces).toHaveBeenCalledWith([expect.objectContaining({ id: 'acme-commerce', base_branch: 'develop' })]);
     expect(vm.current()?.base_branch).toBe('develop');
   });
 
@@ -864,9 +880,9 @@ describe('SdlcHomeViewModel stage passes', () => {
     const start = vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened', change: '2026-10-30-new', branch: 'change/2026-10-30-new' });
     await vm.init();
     expect(vm.reading()).toBe(true);
-    await vm.openChange('claims', '2026-10-12-fnol-photo-upload');
-    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'claims', '2026-10-12-fnol-photo-upload']);
-    await vm.newChange('claims', 'flag fraud', 'full');
+    await vm.openChange('commerce', '2026-10-12-product-photo-upload');
+    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-12-product-photo-upload']);
+    await vm.newChange('commerce', 'flag prices', 'full');
     expect(start).toHaveBeenCalledTimes(1);
     expect(vm.reading()).toBe(true);
   });
@@ -960,7 +976,7 @@ describe('SdlcHomeViewModel stage passes', () => {
   });
 
   describe('marks rows as checked and reads again on each trigger (R5.1)', () => {
-    const C = '2026-10-12-fnol-photo-upload';
+    const C = '2026-10-12-product-photo-upload';
     type Over = ReturnType<typeof setup>;
     type Case = { event: string; before: ChangeInfo['stage']; after: ChangeInfo['stage']; first: string | null; again: (vm: SdlcHomeViewModel, over: Over) => Promise<SdlcHomeViewModel> };
     const reopened = () => TestBed.runInInjectionContext(() => new SdlcHomeViewModel());
@@ -969,7 +985,7 @@ describe('SdlcHomeViewModel stage passes', () => {
         event: 'a document run for change C ends', before: 'intent-awaiting', after: 'intent-accepted-uncommitted', first: C,
         again: async (vm, { runner }) => {
           vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'opened', change: C, branch: `change/${C}` });
-          await vm.newChange('claims', 'idea', 'full');
+          await vm.newChange('commerce', 'idea', 'full');
           return vm;
         },
       },

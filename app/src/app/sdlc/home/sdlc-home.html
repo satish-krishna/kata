@@ -173,6 +173,7 @@
                 [marker]="vm.markerLine()"
                 [disabled]="vm.locked()"
                 (runContext)="vm.runContext($event)"
+                (viewContext)="vm.openContext($event)"
               />
               <div>
                 <button hlmBtn variant="secondary" size="sm" type="button" [disabled]="vm.locked()" (click)="vm.addSystem()">

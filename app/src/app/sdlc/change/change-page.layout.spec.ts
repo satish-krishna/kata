@@ -14,7 +14,7 @@ import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
-const FNOL = '2026-10-12-fnol-photo-upload';
+const PHOTOS_CHANGE = '2026-10-12-product-photo-upload';
 const settle = async () => {
   for (let i = 0; i < 4; i++) {
     TestBed.tick();
@@ -23,11 +23,11 @@ const settle = async () => {
 };
 const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
 
-async function mount(change = FNOL, transport = new MockTransport()) {
+async function mount(change = PHOTOS_CHANGE, transport = new MockTransport()) {
   const out = await render(ChangePage, {}, [
     provideRouter([]),
     { provide: KataTransport, useValue: transport },
-    { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
+    { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'commerce', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
   ]);
   await settle();
   return { ...out, transport };
@@ -61,7 +61,7 @@ describe('ChangePage layout', () => {
   it('crosses the seam: clicking the Intent pill shows the accepted intent in the document layout and marks the pill', async () => {
     const { container } = await mount();
     pill(container, 'Intent').click();
-    await vi.waitFor(() => expect(container.querySelector('app-doc-layout h1')?.textContent).toBe('Photo upload at first notice of loss'));
+    await vi.waitFor(() => expect(container.querySelector('app-doc-layout h1')?.textContent).toBe('Photo upload on the product form'));
     expect(pill(container, 'Intent').getAttribute('aria-selected')).toBe('true');
     expect(pill(container, 'Spec').getAttribute('aria-current')).toBe('step');
     const panel = container.querySelector('[role="tabpanel"]:not([hidden])')!;
@@ -99,7 +99,7 @@ describe('ChangePage layout', () => {
   it('shows the front matter in the rail as fields, and no longer as a line above the text', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcReadDoc').mockResolvedValue('---\nauthor: Sam\nstatus: draft\n---\n# Spec: photo upload\n\n## Rules\n\nOne.\n');
-    const { container } = await mount(FNOL, transport);
+    const { container } = await mount(PHOTOS_CHANGE, transport);
     const rail = container.querySelector('aside[aria-label="About this document"]')!;
     expect(Array.from(rail.querySelectorAll('dt')).map(text)).toEqual(['author']);
     expect(Array.from(rail.querySelectorAll('dd')).map(text)).toEqual(['Sam']);
@@ -109,7 +109,7 @@ describe('ChangePage layout', () => {
   it('lists the document sections in the outline and scrolls the clicked one inside its own document', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcReadDoc').mockResolvedValue('# Spec\n\n## Rules\n\nOne.\n\n## Design\n\nTwo.\n');
-    const { container } = await mount(FNOL, transport);
+    const { container } = await mount(PHOTOS_CHANGE, transport);
     const entries = Array.from(container.querySelectorAll<HTMLButtonElement>('nav[aria-label="On this page"] button'));
     expect(entries.map(text)).toEqual(['Rules', 'Design']);
     entries[1].click();
@@ -122,10 +122,10 @@ describe('ChangePage layout', () => {
   it('lists the recent runs of the open stage in the rail, as kind and time with no link', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcRunLinks').mockResolvedValue([
-      { workspace_id: 'acme-claims', system: 'claims', change: FNOL, stage: 'spec', run_id: 'r1', started_at: 1_790_000_000 },
-      { workspace_id: 'acme-claims', system: 'claims', change: FNOL, stage: 'spec', run_id: 'r2', started_at: 1_790_100_000 },
+      { workspace_id: 'acme-commerce', system: 'commerce', change: PHOTOS_CHANGE, stage: 'spec', run_id: 'r1', started_at: 1_790_000_000 },
+      { workspace_id: 'acme-commerce', system: 'commerce', change: PHOTOS_CHANGE, stage: 'spec', run_id: 'r2', started_at: 1_790_100_000 },
     ]);
-    const { container } = await mount(FNOL, transport);
+    const { container } = await mount(PHOTOS_CHANGE, transport);
     const runs = container.querySelector('[data-testid="recent-runs"]')!;
     expect(text(runs.querySelector('h2')!)).toBe('Recent runs · 2');
     const rows = Array.from(runs.querySelectorAll('li')).map(text);
@@ -137,14 +137,14 @@ describe('ChangePage layout', () => {
   it('says what uses the intent in the rail of the intent', async () => {
     const { container } = await mount();
     pill(container, 'Intent').click();
-    await vi.waitFor(() => expect(container.querySelector('app-doc-layout h1')?.textContent).toBe('Photo upload at first notice of loss'));
+    await vi.waitFor(() => expect(container.querySelector('app-doc-layout h1')?.textContent).toBe('Photo upload on the product form'));
     expect(text(container.querySelector('[data-testid="used-by"]')!)).toContain('spec.md');
   });
 
   it('keeps the not-in-folder message when the document is missing', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcReadDoc').mockResolvedValue(null);
-    const { container } = await mount(FNOL, transport);
+    const { container } = await mount(PHOTOS_CHANGE, transport);
     expect(container.textContent).toContain('spec.md is not in this change folder.');
     expect(container.querySelector('app-doc-layout')).toBeNull();
   });
@@ -153,9 +153,9 @@ describe('ChangePage layout', () => {
     const transport = new MockTransport();
     const real = transport.sdlcReadChange.bind(transport);
     vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-      [await real(m, s, n)].map((c) => (c.change === '2026-10-09-adjuster-reassign' ? { ...c, stage: 'plan-superseded' as ChangeInfo['stage'] } : c))[0],
+      [await real(m, s, n)].map((c) => (c.change === '2026-10-09-merchant-reassign' ? { ...c, stage: 'plan-superseded' as ChangeInfo['stage'] } : c))[0],
     );
-    const { container } = await mount('2026-10-09-adjuster-reassign', transport);
+    const { container } = await mount('2026-10-09-merchant-reassign', transport);
     const banner = container.querySelector('[data-testid="plan-banner"]')!;
     expect(banner).not.toBeNull();
     expect(banner.nextElementSibling!.tagName).toBe('APP-DOC-LAYOUT');
@@ -214,8 +214,8 @@ describe('ChangePage layout', () => {
           tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: ['c0ffee1'], departure: null } })),
         };
       });
-      const repos = await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE);
-      await transport.sdlcPublish('f', 'w1', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, only === undefined ? repos : repos.slice(0, only));
+      const repos = await transport.sdlcTouchedRepos('f', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE);
+      await transport.sdlcPublish('f', 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, only === undefined ? repos : repos.slice(0, only));
       return transport;
     };
 
@@ -260,7 +260,7 @@ describe('ChangePage layout', () => {
 
     it('pulls the pills back to the old tab when the read fails', async () => {
       const transport = new MockTransport();
-      const { container } = await mount(FNOL, transport);
+      const { container } = await mount(PHOTOS_CHANGE, transport);
       expect(selected(container)).toEqual(['Spec']);
       let fail!: (e: unknown) => void;
       vi.spyOn(transport, 'sdlcReadDoc').mockReturnValue(new Promise<string>((_, no) => (fail = no)));
@@ -303,7 +303,7 @@ describe('ChangePage layout', () => {
     it('leaves the pills on the new tab once the read succeeds', async () => {
       const { container } = await mount();
       pill(container, 'Intent').click();
-      await vi.waitFor(() => expect(container.querySelector('app-doc-layout h1')?.textContent).toBe('Photo upload at first notice of loss'));
+      await vi.waitFor(() => expect(container.querySelector('app-doc-layout h1')?.textContent).toBe('Photo upload on the product form'));
       expect(selected(container)).toEqual(['Intent']);
     });
   });

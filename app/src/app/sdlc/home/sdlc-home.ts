@@ -48,6 +48,7 @@ export class SdlcHome {
   private readonly route = inject(ActivatedRoute);
 
   constructor() {
-    void this.vm.init(this.route.snapshot.queryParamMap.get('demo'));
+    const query = this.route.snapshot.queryParamMap;
+    void this.vm.init(query.get('demo'), query.get('context'));
   }
 }

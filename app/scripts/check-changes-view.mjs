@@ -187,7 +187,7 @@ try {
             return { spread: Math.max(...mids) - Math.min(...mids), count: kids.length };
           })(),
           repoName: (() => {
-            const el = [...document.querySelectorAll('[data-repo] .k-files__name')].find((n) => n.textContent.trim() === 'claims-intent');
+            const el = [...document.querySelectorAll('[data-repo] .k-files__name')].find((n) => n.textContent.trim() === 'commerce-docs');
             if (!el) return null;
             return window.kataClip.textClipped(el);
           })(),
@@ -201,7 +201,7 @@ try {
       check(Math.abs(m.rootLeft - m.stripLeft) <= 1, `${width}x900: the Changes view starts at the left edge of the files area (${m.rootLeft} / ${m.stripLeft})`);
       check(m.listScroll <= 0, `${width}x900: the file list does not scroll sideways (scrollWidth - clientWidth = ${m.listScroll})`);
       check(m.stripRow.count > 0 && m.stripRow.spread <= 4, `${width}x900: the Changes strip is a single row (${m.stripRow.count} items, vertical centers ${m.stripRow.spread}px apart)`);
-      if (width === 1280) check(m.repoName !== null && m.repoName <= 0, `${width}x900: the claims-intent group name is not truncated (${m.repoName}px of it is cut off)`);
+      if (width === 1280) check(m.repoName !== null && m.repoName <= 0, `${width}x900: the commerce-docs group name is not truncated (${m.repoName}px of it is cut off)`);
       check(m.strips === 1, `${width}x900: the Build tab has exactly one strip (${m.strips})`);
       check(m.repos.length > 0 && m.repos.every((r) => r.h <= m.fileH * 1.5), `${width}x900: every repository header is at most 1.5 file rows tall (file row ${m.fileH}; headers ${m.repos.map((r) => r.h)})`);
       check(m.repos.every((r) => !r.wraps), `${width}x900: no repository header wraps its branch (${m.repos.map((r) => r.wraps)})`);

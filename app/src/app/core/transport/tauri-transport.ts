@@ -87,6 +87,7 @@ export class TauriTransport extends KataTransport {
   sdlcSaveWorkspaces(workspaces: WorkspaceEntry[]) { return this.ipc.invoke<void>('sdlc_save_workspaces', { workspaces }); }
   sdlcScan(folder: string) { return this.ipc.invoke<WorkspaceScan>('sdlc_scan', { folder }); }
   sdlcContextHealth(folder: string, master: string, system: string, repo: string) { return this.ipc.invoke<ContextState>('sdlc_context_health', { folder, master, system, repo }); }
+  sdlcReadContext(master: string, system: string, repo: string) { return this.ipc.invoke<string | null>('sdlc_read_context', { master, system, repo }); }
   sdlcInstructions(folder: string, masterRepo: string) { return this.ipc.invoke<InstructionsState>('sdlc_instructions', { folder, masterRepo }); }
   sdlcChangeNames(master: string, system: string) { return this.ipc.invoke<ChangeName[]>('sdlc_change_names', { master, system }); }
   sdlcReadStages(master: string, system: string, first?: string | null) { return this.ipc.invoke<number>('sdlc_read_stages', { master, system, first }); }

@@ -7,21 +7,21 @@ import {
 
 const scan = (over: Partial<WorkspaceScan> = {}): WorkspaceScan => ({
   folder: '/ws',
-  repos: ['claims-intent', 'customer-portal'],
-  master: { kind: 'one', repo: 'claims-intent', committed: true },
-  marker: { version: 1, systems: { claims: { repos: ['customer-portal', 'billing-api'] } } },
+  repos: ['commerce-docs', 'customer-portal'],
+  master: { kind: 'one', repo: 'commerce-docs', committed: true },
+  marker: { version: 1, systems: { commerce: { repos: ['customer-portal', 'billing-api'] } } },
   marker_error: null,
   ...over,
 });
 
 describe('sdlc-workspace', () => {
   it('joins the master path with a forward slash and drops a trailing separator', () => {
-    expect(masterPath('D:\\Work\\acme\\', 'claims-intent')).toBe('D:\\Work\\acme/claims-intent');
+    expect(masterPath('D:\\Work\\acme\\', 'commerce-docs')).toBe('D:\\Work\\acme/commerce-docs');
     expect(masterPath('/ws', 'm')).toBe('/ws/m');
   });
 
   it('names a workspace after its folder', () => {
-    expect(folderName('D:\\Work\\acme-claims\\')).toBe('acme-claims');
+    expect(folderName('D:\\Work\\acme-commerce\\')).toBe('acme-commerce');
     expect(folderName('/a/b')).toBe('b');
   });
 
@@ -34,7 +34,7 @@ describe('sdlc-workspace', () => {
   });
 
   it('finds the system that lists a repo, and the product repos', () => {
-    expect(systemOf(scan(), 'customer-portal')).toBe('claims');
+    expect(systemOf(scan(), 'customer-portal')).toBe('commerce');
     expect(systemOf(scan(), 'nope')).toBeNull();
     expect(productRepos(scan())).toEqual(['customer-portal']);
   });
@@ -42,12 +42,12 @@ describe('sdlc-workspace', () => {
   it('lists the master first, then checked-out repos, then repos the marker names but are absent', () => {
     const rows = repoRows(scan(), { 'customer-portal': { kind: 'stale', commits: 3 }, 'billing-api': { kind: 'notCheckedOut' } });
     expect(rows.map((r) => [r.name, r.role])).toEqual([
-      ['claims-intent', 'master'],
+      ['commerce-docs', 'master'],
       ['customer-portal', 'product'],
       ['billing-api', 'not-checked-out'],
     ]);
     expect(rows[0].context).toBeNull();
-    expect(rows[1].system).toBe('claims');
+    expect(rows[1].system).toBe('commerce');
   });
 
   it('words every context state and offers Run context when missing and Refresh context once a file exists', () => {
@@ -63,9 +63,9 @@ describe('sdlc-workspace', () => {
 
   it('keeps the latest run start per change for one workspace', () => {
     const link = (workspace_id: string, change: string, started_at: number): RunLink =>
-      ({ workspace_id, system: 'claims', change, stage: 'spec', run_id: 'r', started_at });
+      ({ workspace_id, system: 'commerce', change, stage: 'spec', run_id: 'r', started_at });
     expect(lastRunTimes([link('a', 'c1', 5), link('a', 'c1', 9), link('b', 'c1', 99), link('a', 'c2', 1)], 'a')).toEqual({
-      'claims/c1': 9, 'claims/c2': 1,
+      'commerce/c1': 9, 'commerce/c2': 1,
     });
   });
 

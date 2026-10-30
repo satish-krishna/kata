@@ -4,7 +4,7 @@ import { MockTransport } from '../../core/transport/mock-transport';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { ChangesViewModel } from './changes-view.view-model';
 
-const CTX = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'claims', change: MOCK_BUILD_CHANGE };
+const CTX = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'commerce', change: MOCK_BUILD_CHANGE };
 
 function setup() {
   const transport = new MockTransport();
@@ -16,7 +16,7 @@ describe('ChangesViewModel', () => {
   it('lists the master first and opens it', async () => {
     const { vm } = setup();
     await vm.open(CTX);
-    expect(vm.repos().map((r) => r.repo)).toEqual([MOCK_MASTER, 'claims-core', 'customer-portal']);
+    expect(vm.repos().map((r) => r.repo)).toEqual([MOCK_MASTER, 'commerce-core', 'customer-portal']);
     expect(vm.active()?.repo).toBe(MOCK_MASTER);
     expect(vm.part()).toBe('whole');
     expect(vm.gone()).toBe(false);
@@ -34,7 +34,7 @@ describe('ChangesViewModel', () => {
     const { vm, transport } = setup();
     vi.spyOn(transport, 'sdlcMissingChangeBranches').mockRejectedValue(new Error('boom'));
     await vm.open(CTX);
-    expect(vm.repos().map((r) => r.repo)).toEqual([MOCK_MASTER, 'claims-core', 'customer-portal']);
+    expect(vm.repos().map((r) => r.repo)).toEqual([MOCK_MASTER, 'commerce-core', 'customer-portal']);
     expect(vm.missingBranches()).toEqual([]);
   });
 
@@ -94,7 +94,7 @@ describe('ChangesViewModel', () => {
     await vm.open(CTX);
     expect(vm.groups().map((g) => [g.repo, g.branch, g.base])).toEqual([
       [MOCK_MASTER, `change/${MOCK_BUILD_CHANGE}`, 'main'],
-      ['claims-core', `change/${MOCK_BUILD_CHANGE}`, 'main'],
+      ['commerce-core', `change/${MOCK_BUILD_CHANGE}`, 'main'],
       ['customer-portal', `change/${MOCK_BUILD_CHANGE}`, 'main'],
     ]);
   });

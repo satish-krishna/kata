@@ -7,7 +7,7 @@ import type { Source } from '@bindings/Source';
 import { runGivenFixture } from './library';
 import { groupRows, givenKey, presetRows, modeOf, settingSourceLabel, toGiven, toggle, type PresetFrom, type PresetRow } from './given';
 
-const WORKDIR = 'D:\\ws\\claims\\';
+const WORKDIR = 'D:\\ws\\commerce\\';
 const KATA_LOCK: LockReason = { kind: 'kata', text: 'the run needs it to ask you questions' };
 
 const item = (kind: ItemKind, source: Source, key: string, extra: Partial<ResolvedItem> = {}): ResolvedItem => ({
@@ -21,15 +21,15 @@ const from = (over: Partial<PresetFrom> = {}): PresetFrom => ({ workdir: WORKDIR
 const byId = (rows: PresetRow[], id: string): PresetRow => rows.find((r) => r.item.id === id)!;
 
 const github = item('tool-server', 'personal', 'github');
-const dbServer = item('tool-server', 'project', 'claims-db');
+const dbServer = item('tool-server', 'project', 'commerce-db');
 const kataAsk = item('tool-server', 'kata', 'kata-ask', { name: 'kata-ask', lock: KATA_LOCK });
 
 describe('givenKey', () => {
   it('givenKey qualifies project items only', () => {
-    expect(givenKey('project:hook:a:b', 'D:\\ws\\Claims\\')).toBe('d:/ws/Claims|project:hook:a:b');
-    expect(givenKey('project-local:instruction:CLAUDE.local.md', 'D:/ws/claims')).toBe('d:/ws/claims|project-local:instruction:CLAUDE.local.md');
-    expect(givenKey('personal:tool-server:github', 'D:\\ws\\claims')).toBe('personal:tool-server:github');
-    expect(givenKey('plugin:skill:x:y', 'D:\\ws\\claims')).toBe('plugin:skill:x:y');
+    expect(givenKey('project:hook:a:b', 'D:\\ws\\Commerce\\')).toBe('d:/ws/Commerce|project:hook:a:b');
+    expect(givenKey('project-local:instruction:CLAUDE.local.md', 'D:/ws/commerce')).toBe('d:/ws/commerce|project-local:instruction:CLAUDE.local.md');
+    expect(givenKey('personal:tool-server:github', 'D:\\ws\\commerce')).toBe('personal:tool-server:github');
+    expect(givenKey('plugin:skill:x:y', 'D:\\ws\\commerce')).toBe('plugin:skill:x:y');
   });
 });
 

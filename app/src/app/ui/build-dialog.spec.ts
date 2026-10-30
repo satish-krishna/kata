@@ -27,7 +27,7 @@ const pickRepo = async (fixture: ComponentFixture<BuildDialog>, repo: string) =>
 };
 
 /** The form is made by whoever owns the preview; the component only draws it. */
-async function open(mode: BuildDialogMode, repos = ['claims-intent', 'claims-core', 'customer-portal']) {
+async function open(mode: BuildDialogMode, repos = ['commerce-docs', 'commerce-core', 'customer-portal']) {
   TestBed.configureTestingModule({ imports: [BuildDialog] });
   const state: BuildFormState = createBuildForm(TestBed.inject(Injector), mode === 'round');
   const fixture = TestBed.createComponent(BuildDialog);
@@ -83,11 +83,11 @@ describe('BuildDialog', () => {
     expect(valid()).toBe(false);
     await typeInto(instructions(), '  rename the status field to state  ');
     expect(valid()).toBe(false);
-    await pickRepo(fixture, 'claims-core');
+    await pickRepo(fixture, 'commerce-core');
     expect(valid()).toBe(true);
     await typeInto(hours(), '4');
     await typeInto(minutes(), '0');
-    expect(request()).toEqual({ timeoutSecs: 14400, instructions: 'rename the status field to state', repo: 'claims-core' });
+    expect(request()).toEqual({ timeoutSecs: 14400, instructions: 'rename the status field to state', repo: 'commerce-core' });
   });
 
   it('round mode cannot start without a repository (R8.3)', async () => {
@@ -98,7 +98,7 @@ describe('BuildDialog', () => {
 
   it('round mode cannot start on blank instructions', async () => {
     const { fixture, valid } = await open('round');
-    await pickRepo(fixture, 'claims-core');
+    await pickRepo(fixture, 'commerce-core');
     await typeInto(instructions(), '   ');
     expect(valid()).toBe(false);
   });

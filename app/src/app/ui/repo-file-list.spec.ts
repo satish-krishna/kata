@@ -6,7 +6,7 @@ const file = (path: string, over: Partial<RepoFile> = {}): RepoFile => ({
 });
 const GROUPS: RepoFileGroup[] = [
   {
-    repo: 'claims-intent',
+    repo: 'commerce-docs',
     branch: 'change/2026-10-19-ai-sdlc-part-2',
     base: 'main',
     expanded: true, untied: null, untiedShown: false,
@@ -18,7 +18,7 @@ const GROUPS: RepoFileGroup[] = [
       file('f.md', { status: 'untracked', uncommitted: true }),
     ],
   },
-  { repo: 'claims-core', branch: 'change/2026-10-19-ai-sdlc-part-2', base: null, expanded: false, untied: null, untiedShown: false, files: [file('src/deep/x.rs'), file('.github/ci.yml')] },
+  { repo: 'commerce-core', branch: 'change/2026-10-19-ai-sdlc-part-2', base: null, expanded: false, untied: null, untiedShown: false, files: [file('src/deep/x.rs'), file('.github/ci.yml')] },
 ];
 const text = (e: Element | null) => (e?.textContent ?? '').replace(/\s+/g, ' ').trim();
 
@@ -26,7 +26,7 @@ describe('RepoFileList', () => {
   it('lists each repository with its file count and expands only the open ones', async () => {
     const { container } = await render(RepoFileList, { groups: GROUPS, selected: null });
     const heads = Array.from(container.querySelectorAll('[data-repo]'));
-    expect(heads.map((h) => text(h))).toEqual(['claims-intent 5 change/… → main', 'claims-core 2 change/…']);
+    expect(heads.map((h) => text(h))).toEqual(['commerce-docs 5 change/… → main', 'commerce-core 2 change/…']);
     expect(heads.map((h) => h.getAttribute('aria-expanded'))).toEqual(['true', 'false']);
     expect(container.querySelectorAll('[data-file]')).toHaveLength(5);
   });
@@ -71,15 +71,15 @@ describe('RepoFileList', () => {
   });
 
   it('emits the toggled repository and the picked file, and marks the selected one', async () => {
-    const { container, fixture } = await render(RepoFileList, { groups: GROUPS, selected: { repo: 'claims-intent', path: 'b.md' } });
+    const { container, fixture } = await render(RepoFileList, { groups: GROUPS, selected: { repo: 'commerce-docs', path: 'b.md' } });
     const toggled: string[] = [];
     const picked: unknown[] = [];
     fixture.componentInstance.toggle.subscribe((r) => toggled.push(r));
     fixture.componentInstance.select.subscribe((s) => picked.push(s));
     (container.querySelectorAll('[data-repo]')[1] as HTMLElement).click();
     (container.querySelectorAll('[data-file]')[0] as HTMLElement).click();
-    expect(toggled).toEqual(['claims-core']);
-    expect(picked).toEqual([{ repo: 'claims-intent', path: 'a.md' }]);
+    expect(toggled).toEqual(['commerce-core']);
+    expect(picked).toEqual([{ repo: 'commerce-docs', path: 'a.md' }]);
     expect(container.querySelectorAll('[data-file]')[1].getAttribute('aria-current')).toBe('true');
   });
 
@@ -100,10 +100,10 @@ describe('RepoFileList', () => {
     const { container, fixture } = await render(RepoFileList, { groups: [one], selected: null });
     const asked: string[] = [];
     fixture.componentInstance.showUntied.subscribe((r) => asked.push(r));
-    expect(text(container.querySelector('[data-untied-line] > span'))).toBe('1 file in claims-intent is not tied to a task');
+    expect(text(container.querySelector('[data-untied-line] > span'))).toBe('1 file in commerce-docs is not tied to a task');
     expect(container.querySelectorAll('[data-file]')).toHaveLength(1);
     (container.querySelector('[data-untied-line] button') as HTMLElement).click();
-    expect(asked).toEqual(['claims-intent']);
+    expect(asked).toEqual(['commerce-docs']);
     fixture.componentRef.setInput('groups', [{ ...one, untiedShown: true }]);
     fixture.detectChanges();
     expect(Array.from(container.querySelectorAll('[data-file]')).map((r) => r.getAttribute('data-file'))).toEqual(['a.md', 'b.md']);

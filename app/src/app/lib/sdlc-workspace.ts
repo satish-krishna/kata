@@ -67,6 +67,23 @@ export function repoRows(scan: WorkspaceScan, contexts: Record<string, ContextSt
   });
 }
 
+/** The context state of every repo a system of the marker names, other than the master, each read through `health`. */
+export async function readContextStates(
+  scan: WorkspaceScan,
+  health: (master: string, system: string, repo: string) => Promise<ContextState>,
+): Promise<Record<string, ContextState>> {
+  const master = masterRepo(scan);
+  if (master === null) return {};
+  const out: Record<string, ContextState> = {};
+  const jobs = Object.entries(scan.marker?.systems ?? {}).flatMap(([system, def]) =>
+    (def?.repos ?? []).filter((r) => r !== master && !(r in out)).map(async (r) => {
+      out[r] = await health(master, system, r);
+    }),
+  );
+  await Promise.all(jobs);
+  return out;
+}
+
 export function contextLabel(state: ContextState | null): { text: string; tone: Tone } {
   switch (state?.kind) {
     case 'fresh':

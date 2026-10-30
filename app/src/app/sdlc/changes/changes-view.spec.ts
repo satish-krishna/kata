@@ -11,7 +11,7 @@ import { DiffEditor } from '../../ui/diff-editor/diff-editor';
 import { ChangesView } from './changes-view';
 import { ChangesViewModel } from './changes-view.view-model';
 
-const INPUTS = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'claims', change: MOCK_BUILD_CHANGE, turns: 0, banner: null };
+const INPUTS = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'commerce', change: MOCK_BUILD_CHANGE, turns: 0, banner: null };
 const settle = async () => {
   for (let i = 0; i < 4; i++) {
     TestBed.tick();
@@ -61,7 +61,7 @@ describe('ChangesView', () => {
     const heads = Array.from(container.querySelectorAll('app-repo-file-list [data-repo]')).map((h) => norm(h.textContent));
     expect(heads[0]).toContain(MOCK_MASTER);
     expect(heads[0]).toContain('5');
-    expect(heads.some((h) => h.includes('claims-core'))).toBe(true);
+    expect(heads.some((h) => h.includes('commerce-core'))).toBe(true);
     const expected: FilePair = await transport.sdlcDiffPair('x', 'whole', 'src/limits.rs');
     row('src/limits.rs').click();
     await settle();
@@ -250,15 +250,15 @@ describe('ChangesView', () => {
   });
 
   it('each file row carries its tasks or not tied to a task', async () => {
-    const { open, inRepo } = await mount(new MockTransport(), { rows: [buildRow('T1', 'claims-core', 't1c0ffee')], stopped: ['claims-core'] });
-    await open('claims-core');
-    expect(norm(inRepo('claims-core', 'src/attachments.rs').querySelector('[data-tasks]')?.textContent ?? null)).toBe('T1');
-    expect(inRepo('claims-core', 'src/attachments.rs').querySelector('[data-untied]')).toBeNull();
-    expect(norm(inRepo('claims-core', 'src/store.rs').querySelector('[data-untied]')?.textContent ?? null)).toBe('not tied to a task');
-    expect(inRepo('claims-core', 'src/store.rs').querySelector('[data-tasks]')).toBeNull();
+    const { open, inRepo } = await mount(new MockTransport(), { rows: [buildRow('T1', 'commerce-core', 't1c0ffee')], stopped: ['commerce-core'] });
+    await open('commerce-core');
+    expect(norm(inRepo('commerce-core', 'src/attachments.rs').querySelector('[data-tasks]')?.textContent ?? null)).toBe('T1');
+    expect(inRepo('commerce-core', 'src/attachments.rs').querySelector('[data-untied]')).toBeNull();
+    expect(norm(inRepo('commerce-core', 'src/store.rs').querySelector('[data-untied]')?.textContent ?? null)).toBe('not tied to a task');
+    expect(inRepo('commerce-core', 'src/store.rs').querySelector('[data-tasks]')).toBeNull();
     // Only an uncommitted file of a stopped repository was left by the stopped run.
-    expect(norm(inRepo('claims-core', 'src/limits.rs').querySelector('[data-left]')?.textContent ?? null)).toBe('left by the stopped run');
-    expect(inRepo('claims-core', 'src/attachments.rs').querySelector('[data-left]')).toBeNull();
+    expect(norm(inRepo('commerce-core', 'src/limits.rs').querySelector('[data-left]')?.textContent ?? null)).toBe('left by the stopped run');
+    expect(inRepo('commerce-core', 'src/attachments.rs').querySelector('[data-left]')).toBeNull();
     // The master repository has no task rows and did not stop.
     expect(norm(inRepo(MOCK_MASTER, 'src/attachments.rs').querySelector('[data-untied]')?.textContent ?? null)).toBe('not tied to a task');
     expect(inRepo(MOCK_MASTER, 'src/limits.rs').querySelector('[data-left]')).toBeNull();
@@ -267,20 +267,20 @@ describe('ChangesView', () => {
   it('picking a task narrows the files and counts the untied ones (R5.2)', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcCommitFiles').mockImplementation((path: string) =>
-      Promise.resolve(path.endsWith('claims-core') ? [{ sha: sha('t1c0ffee'), files: ['src/attachments.rs', 'src/store.rs'] }] : []),
+      Promise.resolve(path.endsWith('commerce-core') ? [{ sha: sha('t1c0ffee'), files: ['src/attachments.rs', 'src/store.rs'] }] : []),
     );
     const { container, paths, button, setInput } = await mount(transport, {
-      rows: [buildRow('T1', 'claims-core', 't1c0ffee')],
-      task: { id: 'T1', repo: 'claims-core' },
+      rows: [buildRow('T1', 'commerce-core', 't1c0ffee')],
+      task: { id: 'T1', repo: 'commerce-core' },
     });
     expect(paths()).toEqual(['src/attachments.rs', 'src/store.rs']);
     expect(container.querySelectorAll('app-repo-file-list [data-repo]')).toHaveLength(1);
-    expect(norm(container.querySelector('[data-untied-line] > span')?.textContent ?? null)).toBe('3 files in claims-core are not tied to a task');
+    expect(norm(container.querySelector('[data-untied-line] > span')?.textContent ?? null)).toBe('3 files in commerce-core are not tied to a task');
     button('Show them')!.click();
     await settle();
     expect(paths()).toEqual(['src/attachments.rs', 'src/store.rs', 'src/limits.rs', 'notes/todo.txt', 'assets/sample.png']);
     // Picking the task again starts over.
-    await setInput('task', { id: 'T1', repo: 'claims-core' });
+    await setInput('task', { id: 'T1', repo: 'commerce-core' });
     expect(paths()).toEqual(['src/attachments.rs', 'src/store.rs']);
     expect(button('Show them')).toBeDefined();
     // Putting the pick away lists every repository again.
@@ -324,9 +324,9 @@ describe('ChangesView', () => {
 
     it('the whole change, a file and a line: shows the file with the line marked', async () => {
       const m = await view();
-      await m.picked('showAt', finding('claims-core/src/limits.rs', 12));
+      await m.picked('showAt', finding('commerce-core/src/limits.rs', 12));
       expect(m.vm.part()).toBe('whole');
-      expect(m.vm.selected()).toEqual({ repo: 'claims-core', path: 'src/limits.rs' });
+      expect(m.vm.selected()).toEqual({ repo: 'commerce-core', path: 'src/limits.rs' });
       expect(m.note()).toBeNull();
       expect(m.choice()).toBeNull();
       expect(m.editor().mark()).toEqual({ line: 12, text: 'The expected date has no time zone.' });
@@ -335,9 +335,9 @@ describe('ChangesView', () => {
     it('only committed work, a file among the committed changes: keeps the part and marks the line', async () => {
       const m = await view();
       await asParts(m, 'Committed');
-      await m.picked('showAt', finding('claims-core/src/store.rs', 30));
+      await m.picked('showAt', finding('commerce-core/src/store.rs', 30));
       expect(m.vm.part()).toBe('committed');
-      expect(m.vm.selected()).toEqual({ repo: 'claims-core', path: 'src/store.rs' });
+      expect(m.vm.selected()).toEqual({ repo: 'commerce-core', path: 'src/store.rs' });
       expect(m.note()).toBeNull();
       expect(m.editor().mark()).toEqual({ line: 30, text: 'The expected date has no time zone.' });
     });
@@ -345,9 +345,9 @@ describe('ChangesView', () => {
     it('only committed work, a file only among the uncommitted changes: switches to the whole change and says so', async () => {
       const m = await view();
       await asParts(m, 'Committed');
-      await m.picked('showAt', finding('claims-core/src/limits.rs', 8));
+      await m.picked('showAt', finding('commerce-core/src/limits.rs', 8));
       expect(m.vm.part()).toBe('whole');
-      expect(m.vm.selected()).toEqual({ repo: 'claims-core', path: 'src/limits.rs' });
+      expect(m.vm.selected()).toEqual({ repo: 'commerce-core', path: 'src/limits.rs' });
       expect(m.note()).toBe(NOT_IN_PART);
       expect(m.editor().mark()).toEqual({ line: 8, text: 'The expected date has no time zone.' });
     });
@@ -355,17 +355,17 @@ describe('ChangesView', () => {
     it('only uncommitted work, a file only among the committed changes: switches to the whole change and says so', async () => {
       const m = await view();
       await asParts(m, 'Uncommitted');
-      await m.picked('showAt', finding('claims-core/src/store.rs', 5));
+      await m.picked('showAt', finding('commerce-core/src/store.rs', 5));
       expect(m.vm.part()).toBe('whole');
-      expect(m.vm.selected()).toEqual({ repo: 'claims-core', path: 'src/store.rs' });
+      expect(m.vm.selected()).toEqual({ repo: 'commerce-core', path: 'src/store.rs' });
       expect(m.note()).toBe(NOT_IN_PART);
       expect(m.editor().mark()).toEqual({ line: 5, text: 'The expected date has no time zone.' });
     });
 
     it('a file but no line: shows the file from its top', async () => {
       const m = await view();
-      await m.picked('showAt', finding('claims-core/src/limits.rs', null));
-      expect(m.vm.selected()).toEqual({ repo: 'claims-core', path: 'src/limits.rs' });
+      await m.picked('showAt', finding('commerce-core/src/limits.rs', null));
+      expect(m.vm.selected()).toEqual({ repo: 'commerce-core', path: 'src/limits.rs' });
       expect(m.note()).toBeNull();
       expect(m.editor().mark()).toEqual({ line: null, text: 'The expected date has no time zone.' });
     });
@@ -386,7 +386,7 @@ describe('ChangesView', () => {
     it('a file changed in more than one repository: lists them, and a pick shows the file at the line', async () => {
       const m = await view();
       await m.picked('showAt', finding('src/store.rs', 21));
-      expect(m.choiceButtons()).toEqual([MOCK_MASTER, 'claims-core', 'customer-portal']);
+      expect(m.choiceButtons()).toEqual([MOCK_MASTER, 'commerce-core', 'customer-portal']);
       expect(m.vm.selected()).toBeNull();
       expect(m.editor().mark()).toBeNull();
       m.button('customer-portal')!.click();
@@ -401,12 +401,12 @@ describe('ChangesView', () => {
       const m = await view();
       await asParts(m, 'Uncommitted');
       await m.picked('showAt', finding('src/store.rs', 21));
-      m.button('claims-core')!.click();
+      m.button('commerce-core')!.click();
       await settle();
       m.fixture.detectChanges();
       expect(m.vm.part()).toBe('whole');
       expect(m.note()).toBe(NOT_IN_PART);
-      expect(m.vm.selected()).toEqual({ repo: 'claims-core', path: 'src/store.rs' });
+      expect(m.vm.selected()).toEqual({ repo: 'commerce-core', path: 'src/store.rs' });
     });
 
     it('a finding that names no file: leaves the changed files as they were', async () => {
@@ -425,21 +425,21 @@ describe('ChangesView', () => {
 
     it('a new pick clears the previous note, choice and mark', async () => {
       const m = await view();
-      await m.picked('showAt', finding('claims-core/src/limits.rs', 12, 1));
+      await m.picked('showAt', finding('commerce-core/src/limits.rs', 12, 1));
       await m.picked('showAt', finding('src/nowhere.rs', 3, 2));
       expect(m.note()).toBe(NOT_IN_CHANGE);
       expect(m.editor().mark()).toBeNull();
       await m.picked('showAt', finding('src/store.rs', 4, 3));
       expect(m.note()).toBeNull();
       expect(m.choiceButtons()).toHaveLength(3);
-      await m.picked('showAt', finding('claims-core/src/limits.rs', 9, 4));
+      await m.picked('showAt', finding('commerce-core/src/limits.rs', 9, 4));
       expect(m.choice()).toBeNull();
       expect(m.editor().mark()).toEqual({ line: 9, text: 'The expected date has no time zone.' });
     });
 
     it('picking a file by hand takes the mark off', async () => {
       const m = await view();
-      await m.picked('showAt', finding('claims-core/src/limits.rs', 12));
+      await m.picked('showAt', finding('commerce-core/src/limits.rs', 12));
       m.fixture.detectChanges();
       m.row('src/store.rs').click();
       await settle();
@@ -488,7 +488,7 @@ describe('ChangesView progress line', () => {
   it('names the repository being read while what changed loads (R7.1)', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     const { transport, release } = slow();
-    const repos = await transport.sdlcChangeRepos(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'claims', MOCK_BUILD_CHANGE);
+    const repos = await transport.sdlcChangeRepos(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE);
     const second = repos[1].repo;
     const { container, fixture } = await mount(transport);
     expect(container.querySelector('app-progress-line')).toBeNull();
