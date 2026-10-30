@@ -131,12 +131,25 @@ pub struct ChangeInfo {
     pub fix_row: Option<u8>,
 }
 
+/// A local branch other than the current one that holds a change.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct OtherBranch {
+    /// The full branch name.
+    pub branch: String,
+    /// The change folder name the branch holds.
+    pub change: String,
+    /// The change was created on a pending branch whose system declares naming and is waiting for a name.
+    pub needs_name: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct BranchInfo {
     pub current: Option<String>,
-    pub others: Vec<String>,
+    pub others: Vec<OtherBranch>,
     pub default_base: Option<String>,
 }
 
@@ -957,7 +970,7 @@ pub fn read_stages(
 pub use crate::branch::current_branch;
 
 /// `change/*` branches other than the current one and `change/pending-*`, without the `change/` prefix.
-pub fn other_change_branches(master: &Path) -> Vec<String> {
+pub fn other_change_branches(master: &Path) -> Vec<OtherBranch> {
     let Ok(repo) = git::Repo::open(master) else {
         return Vec::new();
     };
@@ -967,7 +980,11 @@ pub fn other_change_branches(master: &Path) -> Vec<String> {
         .filter(|b| Some(b.as_str()) != current.as_deref())
         .filter_map(|b| b.strip_prefix("change/"))
         .filter(|b| !b.starts_with("pending-"))
-        .map(str::to_string)
+        .map(|c| OtherBranch {
+            branch: format!("change/{c}"),
+            change: c.to_string(),
+            needs_name: false,
+        })
         .collect()
 }
 
@@ -2140,9 +2157,130 @@ source_spec_commit: {spec_pin}
         }
         git::run(&repo, &["checkout", "-q", "change/a"]).unwrap();
         assert_eq!(current_branch(&repo).as_deref(), Some("change/a"));
-        assert_eq!(other_change_branches(&repo), ["b"]);
+        assert_eq!(
+            other_change_branches(&repo),
+            [OtherBranch {
+                branch: "change/b".into(),
+                change: "b".into(),
+                needs_name: false
+            }]
+        );
         let info = branch_info(&repo);
         assert_eq!(info.default_base.as_deref(), Some("main"));
+    }
+
+    const NAMED_S: &str = r#"{"version":1,"systems":{"s":{"repos":["m"],"naming":{"branch":"{type}/{slug}","pullRequestTitle":"{title}"}},"u":{"repos":["m"]}}}"#;
+
+    /// Create `name` from `main` holding `files`, then return to `main`.
+    fn branch_holding(repo: &Path, name: &str, files: &[(&str, &str)]) {
+        git::run(repo, &["checkout", "-q", "-b", name, "main"]).unwrap();
+        for (rel, text) in files {
+            testutil::commit_file(repo, rel, text, "tip");
+        }
+        git::run(repo, &["checkout", "-q", "main"]).unwrap();
+    }
+
+    fn other(branch: &str, change: &str, needs_name: bool) -> OtherBranch {
+        OtherBranch {
+            branch: branch.into(),
+            change: change.into(),
+            needs_name,
+        }
+    }
+
+    #[test]
+    fn listing_includes_named_branch_whose_record_names_it_r7_3() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        testutil::commit_file(&repo, ".ai-sdlc.json", NAMED_S, "marker");
+        branch_holding(
+            &repo,
+            "feat/PROJ-123-password-reset",
+            &[
+                ("intent/s/2026-11-02-password-reset/intent.md", "x\n"),
+                (
+                    "intent/s/2026-11-02-password-reset/branch.md",
+                    "---\nbranch: feat/PROJ-123-password-reset\n---\n",
+                ),
+            ],
+        );
+        assert_eq!(current_branch(&repo).as_deref(), Some("main"));
+        assert_eq!(
+            other_change_branches(&repo),
+            [other(
+                "feat/PROJ-123-password-reset",
+                "2026-11-02-password-reset",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn listing_follows_the_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        testutil::commit_file(&repo, ".ai-sdlc.json", NAMED_S, "marker");
+        // Row 1: a plain change branch, whatever its tip holds.
+        branch_holding(&repo, "change/2026-11-01-a", &[]);
+        // Row 2: a pending branch holding a new change without a record, in a declaring system.
+        branch_holding(
+            &repo,
+            "change/pending-20261102T000000Z",
+            &[("intent/s/2026-11-02-b/intent.md", "x\n")],
+        );
+        // Row 3: the system declares no naming.
+        branch_holding(
+            &repo,
+            "change/pending-20261102T000001Z",
+            &[("intent/u/2026-11-02-u/intent.md", "x\n")],
+        );
+        // Row 3: the change already has a record.
+        branch_holding(
+            &repo,
+            "change/pending-20261102T000002Z",
+            &[
+                ("intent/s/2026-11-02-r/intent.md", "x\n"),
+                (
+                    "intent/s/2026-11-02-r/branch.md",
+                    "---\nbranch: feat/r\n---\n",
+                ),
+            ],
+        );
+        // Row 3: a pending branch holding nothing.
+        branch_holding(&repo, "change/pending-20261102T000003Z", &[]);
+        // Row 4: another name whose record names exactly it.
+        branch_holding(
+            &repo,
+            "feat/c",
+            &[
+                ("intent/s/2026-11-03-c/intent.md", "x\n"),
+                (
+                    "intent/s/2026-11-03-c/branch.md",
+                    "---\nbranch: feat/c\n---\n",
+                ),
+            ],
+        );
+        // Row 5: another name whose record names a different branch, and one with no change.
+        branch_holding(
+            &repo,
+            "wip/d",
+            &[
+                ("intent/s/2026-11-04-d/intent.md", "x\n"),
+                (
+                    "intent/s/2026-11-04-d/branch.md",
+                    "---\nbranch: feat/other\n---\n",
+                ),
+            ],
+        );
+        branch_holding(&repo, "wip/e", &[]);
+        assert_eq!(
+            other_change_branches(&repo),
+            [
+                other("change/2026-11-01-a", "2026-11-01-a", false),
+                other("change/pending-20261102T000000Z", "2026-11-02-b", true),
+                other("feat/c", "2026-11-03-c", false),
+            ]
+        );
     }
 
     #[test]
