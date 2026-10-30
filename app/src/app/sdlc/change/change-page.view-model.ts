@@ -375,6 +375,7 @@ export class ChangePageViewModel {
     if (refreshed === null || p.seenAt === null || p.seenAt >= refreshed) return null;
     return `last seen ${new Date(p.seenAt * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
   }
+  readonly expectedBranch = computed<string | null>(() => null);
   /** The master repository's branch, unless it is the change's own branch, which the pills already imply. */
   readonly branchChip = computed(() => {
     const branch = this.masterBranch();

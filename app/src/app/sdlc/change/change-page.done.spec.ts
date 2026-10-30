@@ -520,6 +520,20 @@ describe('declaring done reports progress', () => {
     expect(progress.view('lock')()).toBeNull();
   });
 
+  it('names the recorded branch in the push line (R7.1)', async () => {
+    const RECORDED = 'feat/PROJ-123-password-reset';
+    const { vm } = await finished((t) => {
+      const real = t.sdlcChangeRepos.bind(t);
+      vi.spyOn(t, 'sdlcChangeRepos').mockImplementation(async (...args) => (await real(...args)).map((r) => ({ ...r, branch: RECORDED })));
+    });
+    const begin = vi.spyOn(TestBed.inject(ProgressStore), 'begin');
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    const pushes = begin.mock.calls.filter((c) => c[0] === 'pushing').map((c) => c[1]);
+    expect(pushes).toEqual(expect.arrayContaining(REPOS.map((r) => `Pushing ${RECORDED} in ${r}`)));
+    expect(pushes.some((p) => p.includes('change/'))).toBe(false);
+  });
+
   it('a failed publish clears the progress line before it raises its error (R7.3)', async () => {
     const { vm, transport } = await finished();
     const progress = TestBed.inject(ProgressStore);

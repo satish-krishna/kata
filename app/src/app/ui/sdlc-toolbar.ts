@@ -21,6 +21,7 @@ export class SdlcToolbar {
   readonly missing = input<string[]>([]);
   /** The master repo's checked-out branch, shown in mono so nobody is surprised where a commit lands. */
   readonly branch = input.required<string | null>();
+  readonly changeBranch = input<string | null>(null);
   /** Crumbs after the workspace name. */
   readonly crumbs = input<string[]>([]);
   /** A tag beside the crumbs, such as `fix` for a change on the light track; none when null. */
