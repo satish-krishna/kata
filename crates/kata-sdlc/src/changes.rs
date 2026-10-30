@@ -1,6 +1,6 @@
 use crate::build::program;
 use crate::format::{self, FormatError, ReadResult};
-use crate::{branch, frontmatter, git, naming};
+use crate::{base, branch, frontmatter, git, naming};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -1003,7 +1003,7 @@ pub fn other_change_branches(master: &Path) -> Vec<OtherBranch> {
         return Vec::new();
     };
     let current = repo.current_branch();
-    let base = branch::default_base(master);
+    let base = base::base_branch(master).and_then(|b| base::compare_ref(master, &b));
     let mut found = Vec::new();
     for name in repo.local_branches() {
         if Some(name.as_str()) == current.as_deref() {
@@ -1094,7 +1094,7 @@ pub fn branch_info(master: &Path) -> BranchInfo {
     BranchInfo {
         current: current_branch(master),
         others: other_change_branches(master),
-        default_base: branch::default_base(master),
+        default_base: base::base_branch(master),
         pending_change: branch::pending_created(master),
     }
 }
@@ -2359,7 +2359,7 @@ source_spec_commit: {spec_pin}
         std::fs::create_dir_all(&repo).unwrap();
         git::run(&repo, &["init", "-q", "-b", "main"]).unwrap();
         assert_eq!(current_branch(&repo), None);
-        assert_eq!(crate::base::base_branch(&repo), None);
+        assert_eq!(base::base_branch(&repo), None);
         assert!(other_change_branches(&repo).is_empty());
     }
 

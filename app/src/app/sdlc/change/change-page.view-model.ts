@@ -1092,7 +1092,8 @@ export class ChangePageViewModel {
     let outcome;
     let fixBranch: string | null;
     try {
-      fixBranch = (await this.transport.sdlcBranches(master)).current;
+      const branches = await this.transport.sdlcBranches(master);
+      fixBranch = branches.current;
       if (fixBranch === null) throw new Error('the master repository is not on a branch');
       // A setting that cannot be used stops the start, as on the workspace home; there is no fall back to `change/` naming (R3.2).
       const repo = masterRepo(scan);
@@ -1103,7 +1104,7 @@ export class ChangePageViewModel {
         naming = { kind: 'error', reason: 'unreadable', message: message(e) };
       }
       if (naming.kind === 'error') {
-        this.toasts.error(namingRefusal(system, workspace.base_branch, naming.message));
+        this.toasts.error(namingRefusal(system, branches.default_base, naming.message));
         return;
       }
       outcome = await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, 'full', (spec) => this.confirmRun(spec));

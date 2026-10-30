@@ -42,6 +42,19 @@ fn base_branch_in(repo: &Repo) -> Option<String> {
         .find(|b| branch_exists(repo, b))
 }
 
+/// The ref that stands for `base` where only a revision is read (a diff, a listing, a count): the
+/// local branch when there is one, else `origin/<base>` for a base that exists only on `origin`.
+pub fn compare_ref(repo: &Path, base: &str) -> Option<String> {
+    let opened = Repo::open(repo).ok()?;
+    if opened.rev_exists(&format!("refs/heads/{base}")) {
+        return Some(base.to_string());
+    }
+    let remote = format!("origin/{base}");
+    opened
+        .rev_exists(&format!("refs/remotes/{remote}"))
+        .then_some(remote)
+}
+
 fn branch_exists(repo: &Repo, b: &str) -> bool {
     repo.rev_exists(&format!("refs/heads/{b}"))
         || repo.rev_exists(&format!("refs/remotes/origin/{b}"))

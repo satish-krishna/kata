@@ -18,7 +18,7 @@ export function orderedWorkTypes(route: StartTrack): WorkType[] {
 }
 
 /** Why a system's unusable naming setting stops a new change (R3.2), worded for the dialog or a toast. */
-export function namingRefusal(system: string, baseBranch: string | undefined, problem: string): string {
+export function namingRefusal(system: string, baseBranch: string | null, problem: string): string {
   const base = baseBranch ?? 'the base branch';
   return `Naming for ${system} cannot be used: ${problem}. The setting must be fixed in .ai-sdlc.json and committed to ${base}; until then no change can start here.`;
 }

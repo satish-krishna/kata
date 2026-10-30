@@ -1,11 +1,9 @@
 import { TestBed } from '@angular/core/testing';
 import type { Settings } from '@bindings/Settings';
-import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import { render } from '../../testing/render';
 import { SdlcSettingsDialog } from './sdlc-settings-dialog';
 
 const SETTINGS: Settings = { mode: 'sdlc', remember: true, permission_mode: 'bypass' };
-const WS: WorkspaceEntry = { id: 'a', name: 'a', folder: '/a', base_branch: 'main', last_opened: 1 };
 const dialog = () => document.body.querySelector('[role="dialog"]');
 const button = (label: string) =>
   Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent!.trim() === label)!;
@@ -17,12 +15,12 @@ const settle = async () => {
 
 describe('SdlcSettingsDialog', () => {
   it('renders nothing while closed', async () => {
-    await render(SdlcSettingsDialog, { open: false, settings: SETTINGS, workspace: WS });
+    await render(SdlcSettingsDialog, { open: false, settings: SETTINGS });
     expect(dialog()).toBeNull();
   });
 
   it('shows the permission mode as a segmented choice and no base-branch field', async () => {
-    await render(SdlcSettingsDialog, { open: true, settings: SETTINGS, workspace: WS });
+    await render(SdlcSettingsDialog, { open: true, settings: SETTINGS });
     await settle();
     const radios = Array.from(dialog()!.querySelectorAll('[role="radio"]'));
     expect(radios.map((r) => r.textContent!.trim())).toEqual(['auto', 'bypass', 'prompt']);
@@ -32,7 +30,7 @@ describe('SdlcSettingsDialog', () => {
   });
 
   it('saves prompt mode and only the settings', async () => {
-    const { fixture } = await render(SdlcSettingsDialog, { open: true, settings: SETTINGS, workspace: WS });
+    const { fixture } = await render(SdlcSettingsDialog, { open: true, settings: SETTINGS });
     await settle();
     const got: unknown[] = [];
     fixture.componentInstance.save.subscribe((v) => got.push(v));
@@ -43,7 +41,7 @@ describe('SdlcSettingsDialog', () => {
   });
 
   it('saves auto mode and only the settings', async () => {
-    const { fixture } = await render(SdlcSettingsDialog, { open: true, settings: SETTINGS, workspace: WS });
+    const { fixture } = await render(SdlcSettingsDialog, { open: true, settings: SETTINGS });
     await settle();
     const got: unknown[] = [];
     fixture.componentInstance.save.subscribe((v) => got.push(v));
@@ -54,7 +52,7 @@ describe('SdlcSettingsDialog', () => {
   });
 
   it('emits cancel from Cancel', async () => {
-    const { fixture } = await render(SdlcSettingsDialog, { open: true, settings: SETTINGS, workspace: WS });
+    const { fixture } = await render(SdlcSettingsDialog, { open: true, settings: SETTINGS });
     await settle();
     let n = 0;
     fixture.componentInstance.cancel.subscribe(() => n++);

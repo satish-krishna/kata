@@ -5,7 +5,7 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import { render } from '../../testing/render';
 import { SdlcToolbar } from './sdlc-toolbar';
 
-const WS: WorkspaceEntry = { id: 'acme', name: 'acme-commerce', folder: '/a', base_branch: 'main', last_opened: 1 };
+const WS: WorkspaceEntry = { id: 'acme', name: 'acme-commerce', folder: '/a', last_opened: 1 };
 const inputs = (over: Record<string, unknown> = {}) => ({
   workspaces: [WS], current: WS, missing: [], branch: 'main', locked: false, ...over,
 });

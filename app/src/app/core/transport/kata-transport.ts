@@ -109,8 +109,8 @@ export abstract class KataTransport {
   /** `build` scopes the run to a build: only that change's build log rows are build log data. A run outside a build passes none. */
   abstract sdlcLeftovers(master: string, before: Snapshot, productRepos: string[], build?: BuildScope): Promise<Leftovers>;
   abstract sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope): Promise<void>;
-  abstract sdlcStartChange(master: string, base: string): Promise<string>;
-  abstract sdlcFinishChange(master: string, pending: string, base: string): Promise<FinishOutcome>;
+  abstract sdlcStartChange(master: string): Promise<string>;
+  abstract sdlcFinishChange(master: string, pending: string): Promise<FinishOutcome>;
   /** The system's naming setting, or why it cannot be used. */
   abstract sdlcNaming(folder: string, masterRepo: string, system: string): Promise<NamingState>;
   /** The branch name the setting gives the change, or the reason it cannot be made. */

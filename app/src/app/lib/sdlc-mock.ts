@@ -59,6 +59,7 @@ export const MOCK_SETUP_FOLDER = DEMO_SETUP_FOLDER;
 export const MOCK_MASTER = 'commerce-docs';
 export const MOCK_SYSTEM = 'commerce';
 export const MOCK_PENDING_BRANCH = 'change/pending-20261018T000000Z';
+export const MOCK_BASE = 'main';
 export const MOCK_NEW_CHANGE = '2026-10-18-new-change';
 
 /** The change the browser demo builds: three tasks across two repositories. */
@@ -451,7 +452,7 @@ export class SdlcMock {
 
   private settings: Settings = { mode: 'workbench', remember: true, permission_mode: 'auto' };
   private workspaces: WorkspaceEntry[] = [{
-    id: 'acme-commerce', name: 'acme-commerce', folder: MOCK_WORKSPACE_FOLDER, base_branch: 'main', last_opened: 1792281600,
+    id: 'acme-commerce', name: 'acme-commerce', folder: MOCK_WORKSPACE_FOLDER, last_opened: 1792281600,
   }];
   private links: RunLink[] = [];
   /** The first demo task is linked to its run; the others are not, so both the known and the unknown session show in the browser. */
@@ -545,7 +546,7 @@ export class SdlcMock {
       ? { ...c, plan_unreadable: true, plan_unreadable_reason: 'the plan has a task with no id' }
       : c));
   }
-  branches(): BranchInfo { return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change, needs_name: false })), default_base: 'main', pending_change: null }; }
+  branches(): BranchInfo { return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change, needs_name: false })), default_base: MOCK_BASE, pending_change: null }; }
   /** Like the backend's `read_doc`: the document is named by its stem; anything else is a caller bug. */
   readDoc(changeName: string, docName: string): string | null {
     if (!DOC_STEMS.has(docName)) throw new Error(`read_doc takes a document stem (intent, spec or plan), not "${docName}"`);
@@ -589,8 +590,8 @@ export class SdlcMock {
     return MOCK_PENDING_BRANCH;
   }
 
-  finishChange(base: string): FinishOutcome {
-    this.current = base;
+  finishChange(): FinishOutcome {
+    this.current = MOCK_BASE;
     if (this.fixCreated) {
       this.fixCreated = false;
       this.others = [...this.others, MOCK_STARTED_FIX];

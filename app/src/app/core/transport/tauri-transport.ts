@@ -102,8 +102,8 @@ export class TauriTransport extends KataTransport {
   sdlcSnapshot(master: string) { return this.ipc.invoke<Snapshot>('sdlc_snapshot', { master }); }
   sdlcLeftovers(master: string, before: Snapshot, productRepos: string[], build?: BuildScope) { return this.ipc.invoke<Leftovers>('sdlc_leftovers', { master, before, productRepos, build }); }
   sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope) { return this.ipc.invoke<void>('sdlc_discard', { master, before, paths, build }); }
-  sdlcStartChange(master: string, base: string) { return this.ipc.invoke<string>('sdlc_start_change', { master, base }); }
-  sdlcFinishChange(master: string, pending: string, base: string) { return this.ipc.invoke<FinishOutcome>('sdlc_finish_change', { master, pending, base }); }
+  sdlcStartChange(master: string) { return this.ipc.invoke<string>('sdlc_start_change', { master }); }
+  sdlcFinishChange(master: string, pending: string) { return this.ipc.invoke<FinishOutcome>('sdlc_finish_change', { master, pending }); }
   sdlcNaming(folder: string, masterRepo: string, system: string) { return this.ipc.invoke<NamingState>('sdlc_naming', { folder, masterRepo, system }); }
   sdlcSuggestBranch(folder: string, masterRepo: string, system: string, change: string, workType: string) { return this.ipc.invoke<string>('sdlc_suggest_branch', { folder, masterRepo, system, change, workType }); }
   sdlcConfirmBranch(folder: string, masterRepo: string, system: string, change: string, pending: string, name: string, workType: string) { return this.ipc.invoke<FinishOutcome>('sdlc_confirm_branch', { folder, masterRepo, system, change, pending, name, workType }); }

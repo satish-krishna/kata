@@ -226,7 +226,7 @@ export class SdlcHomeViewModel {
   readonly namingError = computed(() => {
     const n = this.naming();
     if (n?.kind !== 'error') return null;
-    return namingRefusal(this.namingSystem() ?? 'this system', this.current()?.base_branch, n.message);
+    return namingRefusal(this.namingSystem() ?? 'this system', this.branches()?.default_base ?? null, n.message);
   });
   /** Whether the naming part of the dialog allows Start: the answer is in, and a setting comes with a scope that passed its check. */
   readonly namingReady = computed(() => {
@@ -488,7 +488,7 @@ export class SdlcHomeViewModel {
 
     const name = folderName(dir);
     if (scan.repos.length === 0 || scan.master.kind === 'many') {
-      this.candidate.set({ folder: dir, name, scan, contexts: {}, baseBranch: '' });
+      this.candidate.set({ folder: dir, name, scan, contexts: {} });
       return;
     }
     if (scan.marker_error !== null) {
@@ -507,17 +507,8 @@ export class SdlcHomeViewModel {
         return;
       }
     }
-    const repo = masterRepo(scan);
-    if (repo === null) return;
-    let baseBranch = 'main';
-    try {
-      const b = await this.transport.sdlcBranches(masterPath(dir, repo));
-      baseBranch = b.default_base ?? b.current ?? baseBranch;
-    } catch (e) {
-      this.toasts.error(`Could not read the master repo's branches: ${message(e)}`);
-      return;
-    }
-    this.candidate.set({ folder: dir, name, scan, contexts, baseBranch });
+    if (masterRepo(scan) === null) return;
+    this.candidate.set({ folder: dir, name, scan, contexts });
   }
 
   async confirmAddWorkspace(): Promise<void> {
@@ -528,7 +519,7 @@ export class SdlcHomeViewModel {
     const slug = c.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace';
     let id = slug;
     for (let n = 2; taken.has(id); n++) id = `${slug}-${n}`;
-    const entry: WorkspaceEntry = { id, name: c.name, folder: c.folder, base_branch: c.baseBranch, last_opened: nowSecs() };
+    const entry: WorkspaceEntry = { id, name: c.name, folder: c.folder, last_opened: nowSecs() };
     const next = [...this.workspaces(), entry];
     this.workspaces.set(next);
     this.currentId.set(id);
@@ -721,10 +712,6 @@ export class SdlcHomeViewModel {
       this.toasts.error(`Could not save the settings: ${message(e)}`);
       return;
     }
-    const w = this.current();
-    if (w && save.baseBranch !== null && save.baseBranch !== w.base_branch) {
-      await this.saveList(this.workspaces().map((x) => (x.id === w.id ? { ...x, base_branch: save.baseBranch! } : x)), true);
-    }
     this.settingsOpen.set(false);
   }
 
@@ -786,7 +773,7 @@ export class SdlcHomeViewModel {
     const scan = this.scan();
     const master = this.masterDir();
     if (!workspace || !scan || !master) return;
-    if (!(await this.onBase(master, masterRepo(scan) ?? 'the master repo', workspace.base_branch))) return;
+    if (!(await this.onBase(master, masterRepo(scan) ?? 'the master repo'))) return;
     const built = specFor(kind, null, { folder: workspace.folder, change: null, ...ctx }, await this.currentSettings(), this.catalog() ?? []);
     const spec = await this.confirm(built);
     if (!spec) return;
@@ -804,7 +791,7 @@ export class SdlcHomeViewModel {
   private async runSetup(folder: string, scan: WorkspaceScan): Promise<WorkspaceScan | null> {
     const repo = masterRepo(scan);
     const master = repo ? masterPath(folder, repo) : null;
-    if (master && repo && !(await this.onBase(master, repo, null))) return null;
+    if (master && repo && !(await this.onBase(master, repo))) return null;
     const built = specFor('setup', null, { folder, system: '', change: null }, await this.currentSettings(), this.catalog() ?? []);
     const spec = await this.confirm(built);
     if (!spec) return null;
@@ -833,10 +820,9 @@ export class SdlcHomeViewModel {
   }
 
   /**
-   * Offer to leave a change branch before a run that belongs on the base branch. `base` is null when the
-   * workspace has no recorded base yet, in which case the repo's own default is used.
+   * Offer to leave a change branch before a run that belongs on the base branch, which the backend resolves.
    */
-  private async onBase(master: string, repo: string, base: string | null): Promise<boolean> {
+  private async onBase(master: string, repo: string): Promise<boolean> {
     let info: BranchInfo;
     try {
       info = await this.transport.sdlcBranches(master);
@@ -850,7 +836,7 @@ export class SdlcHomeViewModel {
       this.toasts.error(`${repo} is not on a branch (detached or unknown HEAD). Check out a branch first.`);
       return false;
     }
-    const target = base ?? info.default_base;
+    const target = info.default_base;
     if (target === null || info.current === target) return true;
     if (!(await this.confirmSwitch(`Switch ${repo} to ${target} first?`))) return false;
     try {

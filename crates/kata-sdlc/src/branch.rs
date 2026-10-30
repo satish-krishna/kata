@@ -1,3 +1,4 @@
+use crate::base;
 use crate::branch_record::{self, BranchRecord, RecordVerb};
 use crate::changes::is_change_name;
 use crate::git::{self, GitError};
@@ -13,16 +14,6 @@ pub(crate) const PENDING_PREFIX: &str = "change/pending-";
 
 pub fn branch_exists(repo: &Path, name: &str) -> bool {
     git::Repo::open(repo).is_ok_and(|r| r.branch_exists(name))
-}
-
-/// The base branch for change branches: `main` if it exists, else `master`, else the current branch.
-pub fn default_base(master: &Path) -> Option<String> {
-    let repo = git::Repo::open(master).ok()?;
-    ["main", "master"]
-        .into_iter()
-        .find(|b| repo.branch_exists(b))
-        .map(str::to_string)
-        .or_else(|| repo.current_branch())
 }
 
 /// The checked-out branch; `None` on a detached or unborn HEAD.
@@ -50,6 +41,28 @@ pub enum BranchError {
     BaseNotLocal(String),
     #[error(transparent)]
     Git(#[from] GitError),
+}
+
+/// The master's base (`base::base_branch`), or `NoBase` when it has none: never the current branch.
+fn resolve_base(master: &Path) -> Result<String, BranchError> {
+    base::base_branch(master).ok_or_else(|| {
+        BranchError::NoBase(
+            master
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| master.display().to_string()),
+        )
+    })
+}
+
+/// The base as a local branch, for a checkout or to cut a branch from. A base that exists only on
+/// `origin` is refused, never swapped for another branch.
+fn require_local_base(master: &Path, base: &str) -> Result<(), BranchError> {
+    if branch_exists(master, base) {
+        Ok(())
+    } else {
+        Err(BranchError::BaseNotLocal(base.to_string()))
+    }
 }
 
 /// A name that cannot be read as a git option and names an existing local branch.
@@ -114,17 +127,17 @@ pub(crate) fn ensure_clean(master: &Path) -> Result<(), BranchError> {
     }
 }
 
-/// Create and check out `change/pending-<stamp>` from `base`. Refuses a dirty tree or a detached/unborn HEAD.
+/// Create and check out `change/pending-<stamp>` from the master's base. Refuses a dirty tree, a detached or
+/// unborn HEAD, a master with no base and a base that exists only on `origin`.
 pub fn start_pending(master: &Path, now_unix: u64) -> Result<String, BranchError> {
     if current_branch(master).is_none() {
         return Err(BranchError::Detached);
     }
-    let base = default_base(master).ok_or(BranchError::Detached)?;
-    let base = base.as_str();
-    require_local_branch(master, base)?;
+    let base = resolve_base(master)?;
+    require_local_base(master, &base)?;
     ensure_clean(master)?;
     let name = format!("{PENDING_PREFIX}{}", utc_stamp(now_unix));
-    git::Repo::open(master)?.create_branch(&name, base)?;
+    git::Repo::open(master)?.create_branch(&name, &base)?;
     Ok(name)
 }
 
@@ -174,13 +187,15 @@ pub fn pending_created(master: &Path) -> Option<String> {
     if !current.starts_with(PENDING_PREFIX) {
         return None;
     }
-    let base = default_base(master)?;
+    let base = base::base_branch(master)?;
+    let reference = base::compare_ref(master, &base)?;
     let repo = git::Repo::open(master).ok()?;
-    created_folder(master, &repo, &base).ok().flatten()
+    created_folder(master, &repo, &reference).ok().flatten()
 }
 
 /// Settle a pending branch: rename it to `change/<folder>` if the run created a change folder,
-/// otherwise return to `base` and delete it (only when it carries no commits).
+/// otherwise return to the master's base and delete it (only when it carries no commits). Returning
+/// needs the base as a local branch; the comparisons read `origin/<base>` when there is no local one.
 ///
 /// The delete path refuses a dirty tree with `BranchError::Dirty` and leaves the pending branch
 /// checked out and untouched. The caller resolves the leftovers (discard or keep) and calls
@@ -189,12 +204,12 @@ pub fn finish_pending(master: &Path, pending: &str) -> Result<FinishOutcome, Bra
     if !pending.starts_with(PENDING_PREFIX) {
         return Err(BranchError::InvalidName(pending.to_string()));
     }
-    let base = default_base(master).ok_or(BranchError::Detached)?;
-    let base = base.as_str();
+    let base = resolve_base(master)?;
     require_local_branch(master, pending)?;
-    require_local_branch(master, base)?;
     let repo = git::Repo::open(master)?;
-    if let Some(sc) = created_folder(master, &repo, base)? {
+    let reference =
+        base::compare_ref(master, &base).ok_or_else(|| BranchError::NoBase(base.clone()))?;
+    if let Some(sc) = created_folder(master, &repo, &reference)? {
         let (system, change) = sc.split_once('/').unwrap_or(("", &sc));
         let (system, change) = (system.to_string(), change.to_string());
         if naming::declared(master, &system) {
@@ -208,11 +223,12 @@ pub fn finish_pending(master: &Path, pending: &str) -> Result<FinishOutcome, Bra
         repo.rename_branch(pending, &branch)?;
         return Ok(FinishOutcome::Renamed { branch, change });
     }
-    if !repo.revs_between(base, pending)?.is_empty() {
+    if !repo.revs_between(&reference, pending)?.is_empty() {
         return Err(BranchError::PendingHasCommits);
     }
+    require_local_base(master, &base)?;
     ensure_clean(master)?;
-    repo.checkout_branch(base)?;
+    repo.checkout_branch(&base)?;
     repo.delete_branch(pending)?;
     Ok(FinishOutcome::Deleted)
 }

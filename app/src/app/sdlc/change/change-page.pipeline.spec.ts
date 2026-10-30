@@ -118,8 +118,7 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
 
     it('names the base branch the backend resolves, not a stored one', async () => {
       const { container, transport, error } = await mountFix();
-      const real = transport.sdlcBranches.bind(transport);
-      vi.spyOn(transport, 'sdlcBranches').mockImplementation(async (m) => ({ ...(await real(m)), current: FIX_BRANCH, default_base: 'develop' }));
+      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: FIX_BRANCH, others: [], default_base: 'develop', pending_change: null });
       vi.spyOn(transport, 'sdlcNaming').mockResolvedValue({ kind: 'error', reason: 'unusable', message: 'no {slug}' } as never);
       await take(container);
       await start();

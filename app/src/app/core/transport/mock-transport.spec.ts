@@ -127,16 +127,16 @@ describe('MockTransport', () => {
 
   it('finishing a change renames it once, then deletes a pending branch that created nothing', async () => {
     const t = new MockTransport();
-    const pending = await t.sdlcStartChange('/m', 'main');
-    const out = await t.sdlcFinishChange('/m', pending, 'main');
+    const pending = await t.sdlcStartChange('/m');
+    const out = await t.sdlcFinishChange('/m', pending);
     expect(out).toEqual({ renamed: { branch: 'change/2026-10-18-new-change', change: '2026-10-18-new-change' } });
     const b = await t.sdlcBranches('/m');
     expect(b.current).toBe('main');
     expect(b.others.map((o) => o.change)).toEqual(['2026-10-17-product-notes', '2026-10-18-new-change']);
     expect((await readAllChanges(t))[0].change).toBe('2026-10-18-new-change');
 
-    const again = await t.sdlcStartChange('/m', 'main');
-    expect(await t.sdlcFinishChange('/m', again, 'main')).toBe('deleted');
+    const again = await t.sdlcStartChange('/m');
+    expect(await t.sdlcFinishChange('/m', again)).toBe('deleted');
     const after = await t.sdlcBranches('/m');
     expect(after.current).toBe('main');
     expect(after.others).toEqual(b.others);

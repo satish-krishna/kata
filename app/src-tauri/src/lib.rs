@@ -371,12 +371,12 @@ fn sdlc_discard(
 }
 
 #[tauri::command(async)]
-fn sdlc_start_change(master: String, base: String) -> Result<String, String> {
+fn sdlc_start_change(master: String) -> Result<String, String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
         .as_secs();
-    sdlc::branch::start_pending(Path::new(&master), &base, now).map_err(|e| e.to_string())
+    sdlc::branch::start_pending(Path::new(&master), now).map_err(|e| e.to_string())
 }
 
 /// A system's naming setting as the window sees it: none declared, the patterns, or why they cannot be
@@ -558,9 +558,8 @@ fn sdlc_remote_clashes(
 fn sdlc_finish_change(
     master: String,
     pending: String,
-    base: String,
 ) -> Result<sdlc::branch::FinishOutcome, String> {
-    sdlc::branch::finish_pending(Path::new(&master), &pending, &base).map_err(|e| e.to_string())
+    sdlc::branch::finish_pending(Path::new(&master), &pending).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]

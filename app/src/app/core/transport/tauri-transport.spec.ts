@@ -12,7 +12,7 @@ import type { PublishRepo } from '@bindings/PublishRepo';
 
 const spec = seedSpec();
 const settings: Settings = { mode: 'sdlc', remember: true, permission_mode: 'bypass' };
-const entry: WorkspaceEntry = { id: 'w', name: 'w', folder: '/w', base_branch: 'main', last_opened: 1 };
+const entry: WorkspaceEntry = { id: 'w', name: 'w', folder: '/w', last_opened: 1 };
 const snap: Snapshot = { head: 'abc', dirty: {} };
 const link: RunLink = { workspace_id: 'w', system: 's', change: 'c', stage: 'intent', run_id: 'r', started_at: 1 };
 const start: BuildStart = { master: { repo: 'm', path: '/w/m', base: 'main', branch: 'change/c', created: false }, repos: [] };
@@ -76,8 +76,8 @@ const rows: Row[] = [
   ['sdlcDiscard', (t) => t.sdlcDiscard('/m', snap, ['p']), 'sdlc_discard', { master: '/m', before: snap, paths: ['p'] }],
   ['sdlcLeftovers in a build', (t) => t.sdlcLeftovers('/m', snap, ['r'], { system: 's', change: 'c' }), 'sdlc_leftovers', { master: '/m', before: snap, productRepos: ['r'], build: { system: 's', change: 'c' } }],
   ['sdlcDiscard in a build', (t) => t.sdlcDiscard('/m', snap, ['p'], { system: 's', change: 'c' }), 'sdlc_discard', { master: '/m', before: snap, paths: ['p'], build: { system: 's', change: 'c' } }],
-  ['sdlcStartChange', (t) => t.sdlcStartChange('/m', 'main'), 'sdlc_start_change', { master: '/m', base: 'main' }],
-  ['sdlcFinishChange', (t) => t.sdlcFinishChange('/m', 'pending', 'main'), 'sdlc_finish_change', { master: '/m', pending: 'pending', base: 'main' }],
+  ['sdlcStartChange', (t) => t.sdlcStartChange('/m'), 'sdlc_start_change', { master: '/m' }],
+  ['sdlcFinishChange', (t) => t.sdlcFinishChange('/m', 'pending'), 'sdlc_finish_change', { master: '/m', pending: 'pending' }],
   ['sdlcNaming', (t) => t.sdlcNaming('/w', 'm', 's'), 'sdlc_naming', { folder: '/w', masterRepo: 'm', system: 's' }],
   ['sdlcCheckScope', (t) => t.sdlcCheckScope('/w', 'PROJ 123'), 'sdlc_check_scope', { folder: '/w', scope: 'PROJ 123' }],
   ['sdlcSuggestBranch', (t) => t.sdlcSuggestBranch('/w', 'm', 's', 'c', 'feat'), 'sdlc_suggest_branch', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', workType: 'feat' }],

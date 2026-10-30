@@ -11,7 +11,6 @@ export type WorkspaceCandidate = {
   name: string;
   scan: WorkspaceScan;
   contexts: Record<string, ContextState>;
-  baseBranch: string;
 };
 
 export type RepoRole = 'master' | 'product' | 'not-checked-out';

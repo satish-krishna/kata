@@ -3,7 +3,7 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import { render } from '../../testing/render';
 import { WorkspaceSwitcher } from './workspace-switcher';
 
-const ws = (id: string, folder: string): WorkspaceEntry => ({ id, name: id, folder, base_branch: 'main', last_opened: 1 });
+const ws = (id: string, folder: string): WorkspaceEntry => ({ id, name: id, folder, last_opened: 1 });
 const A = ws('acme-commerce', 'D:/Work/acme-commerce');
 const B = ws('old-billing', 'D:/Gone/old-billing');
 

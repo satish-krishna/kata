@@ -606,7 +606,6 @@ export class SdlcRunner {
       return { kind: 'refused' };
     }
     const decide = track === 'decide';
-    const base = workspace.base_branch;
     this.picked.set(naming?.workType ?? null);
     let spec: RunSpec;
     try {
@@ -630,7 +629,7 @@ export class SdlcRunner {
     }
     let branch: string;
     try {
-      branch = await this.transport.sdlcStartChange(master, base);
+      branch = await this.transport.sdlcStartChange(master);
     } catch (e) {
       this.toasts.error(`Could not start a change: ${message(e)}`);
       return { kind: 'stopped' };
@@ -645,7 +644,7 @@ export class SdlcRunner {
     });
     if (!out.exited) return { kind: 'stopped' };
     await this.leftoversClosed();
-    const outcome = await this.finish(master, branch, base, out.snapshot, productRepos);
+    const outcome = await this.finish(master, branch, out.snapshot, productRepos);
     if (outcome === null) return { kind: 'stopped' };
     if (outcome === 'deleted') {
       // The triage's verdict is in the run's record: the home says so, and no toast or navigation talks over it.
@@ -700,13 +699,12 @@ export class SdlcRunner {
   private async finish(
     master: string,
     branch: string,
-    base: string,
     snapshot: Snapshot | null,
     productRepos: string[],
   ): Promise<FinishOutcome | null> {
     for (let attempt = 0; ; attempt++) {
       try {
-        return await this.transport.sdlcFinishChange(master, branch, base);
+        return await this.transport.sdlcFinishChange(master, branch);
       } catch (e) {
         const dirty = message(e).includes(DIRTY);
         const data = dirty && attempt === 0 && snapshot ? await this.readLeftovers(master, snapshot, productRepos) : EMPTY;

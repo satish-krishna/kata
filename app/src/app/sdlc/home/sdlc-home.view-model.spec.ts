@@ -77,8 +77,8 @@ describe('SdlcHomeViewModel init', () => {
   it('opens the workspace with the newest last_opened when several exist', async () => {
     const { vm, transport } = setup();
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
-      { id: 'old', name: 'old', folder: '/old', base_branch: 'main', last_opened: 5 },
-      { id: 'new', name: 'new', folder: '/new', base_branch: 'main', last_opened: 50 },
+      { id: 'old', name: 'old', folder: '/old', last_opened: 5 },
+      { id: 'new', name: 'new', folder: '/new', last_opened: 50 },
     ]);
     await vm.init();
     expect(vm.current()?.id).toBe('new');
@@ -272,7 +272,7 @@ describe('SdlcHomeViewModel add workspace', () => {
   it('treats a listed folder as already listed despite slashes, a trailing separator and case', async () => {
     const { vm, transport, runSteps } = setup();
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([
-      { id: 'acme-commerce', name: 'acme-commerce', folder: 'D:\\Work\\acme-commerce\\', base_branch: 'main', last_opened: 1 },
+      { id: 'acme-commerce', name: 'acme-commerce', folder: 'D:\\Work\\acme-commerce\\', last_opened: 1 },
     ]);
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue('d:/work/acme-commerce');
     await vm.init();
@@ -635,7 +635,7 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue([]);
     vm.workspaces.set([
       ...vm.workspaces(),
-      { id: 'second', name: 'second', folder: '/second', base_branch: 'main', last_opened: 1 },
+      { id: 'second', name: 'second', folder: '/second', last_opened: 1 },
     ]);
     await vm.selectWorkspace('second');
     expect(vm.current()?.id).toBe('second');
@@ -669,7 +669,7 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     const { vm, saveSettings, transport } = setup();
     await vm.init();
     vm.openSettings();
-    await vm.saveSettings({ settings: { ...vm.settings()!, permission_mode: 'prompt' }, baseBranch: 'main' });
+    await vm.saveSettings({ settings: { ...vm.settings()!, permission_mode: 'prompt' } });
     expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ permission_mode: 'prompt' }));
     expect((await transport.sdlcSettings()).permission_mode).toBe('prompt');
     expect(vm.settingsOpen()).toBe(false);
@@ -678,7 +678,7 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
   it('never rewrites the workspaces when the settings are saved: the base branch is not stored', async () => {
     const { vm, saveWorkspaces } = setup();
     await vm.init();
-    await vm.saveSettings({ settings: vm.settings()!, baseBranch: 'develop' });
+    await vm.saveSettings({ settings: vm.settings()! });
     expect(saveWorkspaces).not.toHaveBeenCalled();
     expect(vm.current()).not.toHaveProperty('base_branch', 'develop');
   });
@@ -867,7 +867,7 @@ const stageOf = (vm: SdlcHomeViewModel, change: string) => vm.rows().find((r) =>
 const flushAll = async () => {
   for (let i = 0; i < 5; i++) await flush();
 };
-const second: WorkspaceEntry = { id: 'second', name: 'second', folder: '/second', base_branch: 'main', last_opened: 1 };
+const second: WorkspaceEntry = { id: 'second', name: 'second', folder: '/second', last_opened: 1 };
 
 describe('SdlcHomeViewModel stage passes', () => {
   afterEach(() => vi.useRealTimers());
@@ -961,9 +961,9 @@ describe('SdlcHomeViewModel stage passes', () => {
   it('reads only the current workspace; the switcher has no counts (R3.1)', async () => {
     const { vm, transport } = setup();
     const three: WorkspaceEntry[] = [
-      { id: 'a', name: 'a', folder: '/a', base_branch: 'main', last_opened: 30 },
-      { id: 'b', name: 'b', folder: '/b', base_branch: 'main', last_opened: 20 },
-      { id: 'c', name: 'c', folder: '/c', base_branch: 'main', last_opened: 10 },
+      { id: 'a', name: 'a', folder: '/a', last_opened: 30 },
+      { id: 'b', name: 'b', folder: '/b', last_opened: 20 },
+      { id: 'c', name: 'c', folder: '/c', last_opened: 10 },
     ];
     vi.spyOn(transport, 'sdlcWorkspaces').mockResolvedValue(three);
     const missing = vi.spyOn(transport, 'sdlcMissingFolders').mockResolvedValue(['/c']);

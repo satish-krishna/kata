@@ -230,7 +230,6 @@
     <app-sdlc-settings-dialog
       [open]="vm.settingsOpen()"
       [settings]="s"
-      [workspace]="vm.current()"
       (save)="vm.saveSettings($event)"
       (cancel)="vm.closeSettings()"
     />

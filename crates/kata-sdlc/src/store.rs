@@ -50,7 +50,6 @@ pub struct WorkspaceEntry {
     pub id: String,
     pub name: String,
     pub folder: String,
-    pub base_branch: String,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub last_opened: u64,
 }
@@ -343,8 +342,19 @@ mod tests {
             serde_json::from_str(r#"[{"id":"w1","name":"Acme","folder":"D:/acme"}]"#).unwrap();
         assert_eq!(w[0].id, "w1");
         assert_eq!(w[0].folder, "D:/acme");
-        assert_eq!(w[0].base_branch, "");
         assert_eq!(w[0].last_opened, 0);
+    }
+
+    #[test]
+    fn a_workspace_file_with_a_stored_base_branch_still_loads() {
+        let w: Vec<WorkspaceEntry> = serde_json::from_str(
+            r#"[{"id":"w1","name":"Acme","folder":"D:/acme","base_branch":"develop","last_opened":7}]"#,
+        )
+        .unwrap();
+        assert_eq!(w[0].folder, "D:/acme");
+        assert_eq!(w[0].last_opened, 7);
+        let again = serde_json::to_string(&w).unwrap();
+        assert!(!again.contains("base_branch"), "{again}");
     }
 
     #[test]
