@@ -3,7 +3,8 @@
 //! The record lives in `intent/<system>/<change>/branch.md` of the master repository. A change that
 //! has none uses `change/<change>`. This module reads and writes the record and checks a proposed
 //! name against the branches already on the machine; it never fetches.
-use crate::workspace::ScanError;
+use crate::workspace::{self, ScanError};
+use crate::{decide, frontmatter, git};
 use std::path::Path;
 
 /// What `branch.md` holds.
@@ -37,11 +38,35 @@ pub struct Clash {
     pub existing: String,
 }
 
-pub fn change_branch(master: &Path, system: &str, change: &str) -> Result<String, RecordError> {
-    let _ = (master, system, change);
-    todo!()
+const FIXED_TEXT: &str = "The branch this change uses in every repository it touches. Kata writes this file; rename the branch through Kata, not by editing it.";
+
+fn record_rel(system: &str, change: &str) -> String {
+    format!("intent/{system}/{change}/branch.md")
 }
 
+/// The branch the change uses: the recorded one, or `change/<change>` when it has no record.
+/// A record that is present but unusable is `Invalid`, so a hand edit can never reach git.
+pub fn change_branch(master: &Path, system: &str, change: &str) -> Result<String, RecordError> {
+    let rel = record_rel(system, change);
+    let text = match std::fs::read_to_string(master.join(&rel)) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(format!("change/{change}"));
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let Some(branch) = frontmatter::field(&text, "branch").filter(|b| !b.is_empty()) else {
+        return Err(RecordError::Invalid(format!("{rel} has no branch")));
+    };
+    if branch.starts_with('-') || !git2::Reference::is_valid_name(&format!("refs/heads/{branch}")) {
+        return Err(RecordError::Invalid(format!(
+            "{rel} names \"{branch}\", which is not a usable branch name"
+        )));
+    }
+    Ok(branch)
+}
+
+/// Write `branch.md` and commit only it, with the change's scope and the `Generated-By` trailer.
 pub fn write(
     master: &Path,
     system: &str,
@@ -49,10 +74,54 @@ pub fn write(
     record: &BranchRecord,
     verb: RecordVerb,
 ) -> Result<(), RecordError> {
-    let _ = (master, system, change, record, verb);
-    todo!()
+    let rel = record_rel(system, change);
+    let path = master.join(&rel);
+    let mut text = format!("---\nbranch: {}\n", record.branch);
+    if let Some(work_type) = &record.work_type {
+        text.push_str(&format!("type: {work_type}\n"));
+    }
+    text.push_str(&format!("---\n\n{FIXED_TEXT}\n"));
+    let before = std::fs::read(&path).ok();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, &text)?;
+    let verb = match verb {
+        RecordVerb::Name => "name",
+        RecordVerb::Rename => "rename",
+    };
+    let scope = decide::change_scope(master, system, change);
+    let message = format!("docs({scope}): {verb} branch {change}\n\nGenerated-By: ai-sdlc");
+    let committed = git::Repo::open(master).and_then(|repo| repo.commit_only(&rel, &message));
+    if let Err(e) = committed {
+        // Take back this call's write so a refused commit leaves the file as it was.
+        let _ = match before {
+            Some(bytes) => std::fs::write(&path, bytes),
+            None => std::fs::remove_file(&path),
+        };
+        return Err(RecordError::Git(e.stderr));
+    }
+    Ok(())
 }
 
+fn folder_of(a: &str, b: &str) -> bool {
+    let (a, b) = (a.to_ascii_lowercase(), b.to_ascii_lowercase());
+    a.strip_prefix(&b).is_some_and(|r| r.starts_with('/'))
+        || b.strip_prefix(&a).is_some_and(|r| r.starts_with('/'))
+}
+
+/// Whether `existing` clashes with `name`: identical, equal ignoring ASCII case, or one a
+/// `/`-folder of the other. The change's own branch (`own`, compared exactly) never clashes.
+fn clashes_with(existing: &str, name: &str, own: Option<&str>) -> bool {
+    if own == Some(existing) {
+        return false;
+    }
+    existing.eq_ignore_ascii_case(name) || folder_of(existing, name)
+}
+
+/// The branches on this machine that `name` clashes with, in the master and in every repository of
+/// the system checked out in `folder`: local branches and remote-tracking branches already fetched.
+/// Never fetches. `own` is the change's current branch, `None` at first naming.
 pub fn clashes(
     folder: &Path,
     master_repo: &str,
@@ -60,8 +129,38 @@ pub fn clashes(
     name: &str,
     own: Option<&str>,
 ) -> Result<Vec<Clash>, ScanError> {
-    let _ = (folder, master_repo, system, name, own);
-    todo!()
+    let scan = workspace::scan(folder)?;
+    let mut repos = vec![master_repo.to_string()];
+    for repo in workspace::system_repos(&scan, system) {
+        if !repos.contains(&repo) {
+            repos.push(repo);
+        }
+    }
+    let mut found = Vec::new();
+    for repo in repos {
+        let dir = folder.join(&repo);
+        if !dir.join(".git").exists() {
+            continue;
+        }
+        let Ok(opened) = git::Repo::open(&dir) else {
+            continue;
+        };
+        let mut seen: Vec<String> = Vec::new();
+        for existing in opened
+            .local_branches()
+            .into_iter()
+            .chain(opened.remote_tracking_branches())
+        {
+            if clashes_with(&existing, name, own) && !seen.contains(&existing) {
+                seen.push(existing.clone());
+                found.push(Clash {
+                    repo: repo.clone(),
+                    existing,
+                });
+            }
+        }
+    }
+    Ok(found)
 }
 
 #[cfg(test)]
@@ -434,6 +533,7 @@ mod tests {
             "---\nbranch: feat/PROJ-123-password-reset\ntype: feat\n---\n\nThe branch this change uses in every repository it touches. Kata writes this file; rename the branch through Kata, not by editing it.\n"
         ), "{text}");
         let message = git::run(&master, &["log", "-1", "--format=%B"]).unwrap();
+        let message = message.trim_end();
         assert_eq!(
             message,
             format!("docs(PROJ-123): name branch {CHANGE}\n\nGenerated-By: ai-sdlc")
