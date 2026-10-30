@@ -54,8 +54,15 @@ fn is_scope(s: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
+/// What a commit header's scope group takes: non-empty, no whitespace, no parentheses. Capitals stay, so
+/// a ticket ID such as `PROJ-123` can be a scope.
+fn fits_header(s: &str) -> bool {
+    !s.is_empty() && !s.contains(|c: char| c.is_whitespace() || c == '(' || c == ')')
+}
+
 /// The change's scope, as the ai-sdlc plugin resolves it: the intent's `scope`, then the
-/// marker's `systems.<system>.commitScope`, then the system name. A malformed value is skipped.
+/// marker's `systems.<system>.commitScope`, then the system name. A malformed value is skipped: the
+/// intent's must fit a commit header's scope group, the marker's must be lowercase kebab-case.
 pub fn change_scope(master: &Path, system: &str, change: &str) -> String {
     let intent =
         std::fs::read_to_string(master.join(format!("intent/{system}/{change}/intent.md")))
@@ -65,10 +72,9 @@ pub fn change_scope(master: &Path, system: &str, change: &str) -> String {
         .ok()
         .and_then(|t| serde_json::from_str::<Marker>(&t).ok())
         .and_then(|m| m.systems.get(system)?.commit_scope.clone());
-    [intent, marker]
-        .into_iter()
-        .flatten()
-        .find(|s| is_scope(s))
+    intent
+        .filter(|s| fits_header(s))
+        .or_else(|| marker.filter(|s| is_scope(s)))
         .unwrap_or_else(|| system.to_string())
 }
 

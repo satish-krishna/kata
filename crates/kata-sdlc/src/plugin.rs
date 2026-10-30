@@ -66,8 +66,8 @@ pub fn light_track(version: &str) -> bool {
 }
 
 /// Whether `version` is at least [`NAMING_VERSION`].
-pub fn naming(_version: &str) -> bool {
-    false
+pub fn naming(version: &str) -> bool {
+    at_least(version, NAMING_VERSION)
 }
 
 /// The `version` field of `<plugin_dir>/.claude-plugin/plugin.json`.

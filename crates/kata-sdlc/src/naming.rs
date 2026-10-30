@@ -4,8 +4,11 @@
 //! read only from the commit at the base branch, so it is the same for every engineer and cannot be
 //! changed on one machine. The ai-sdlc plugin's format program holds every rule about what a usable
 //! setting is and how the patterns are filled; this module only asks it.
-use crate::plugin::Readiness;
-use std::path::Path;
+use crate::format::{self, NamingAnswer, NamingPatterns, NamingValues};
+use crate::plugin::{Readiness, NAMING_VERSION};
+use crate::workspace::MARKER;
+use crate::{branch, build, decide, frontmatter, git};
+use std::path::{Path, PathBuf};
 
 /// The patterns of a usable naming setting.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,37 +42,151 @@ pub enum NamingError {
     Name(String),
 }
 
+/// The marker as committed at the master's base branch; `None` when there is no such commit or file.
+fn committed_marker(master: &Path) -> Option<Vec<u8>> {
+    let base = branch::default_base(master)?;
+    git::Repo::open(master)
+        .ok()?
+        .bytes_at(&base, MARKER)
+        .ok()
+        .flatten()
+}
+
 /// Whether the shared settings declare a naming setting for `system`. False only when the marker at the
 /// master's base branch parses and the system has no `naming` key; a marker that cannot be read counts as
 /// declared, so a broken marker never falls back to `change/` naming.
-pub fn declared(_master: &Path, _system: &str) -> bool {
-    false
+pub fn declared(master: &Path, system: &str) -> bool {
+    let Some(marker) = committed_marker(master)
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+    else {
+        return true;
+    };
+    match marker.get("systems") {
+        Some(serde_json::Value::Object(systems)) => match systems.get(system) {
+            Some(serde_json::Value::Object(entry)) => entry.contains_key("naming"),
+            Some(_) => true,
+            None => false,
+        },
+        _ => true,
+    }
+}
+
+/// The plugin folder, when it can run the naming commands.
+fn naming_program(plugin: &Readiness) -> Result<PathBuf, NamingError> {
+    match plugin {
+        Readiness::Missing => Err(NamingError::PluginMissing),
+        Readiness::TooOld { have, .. } => Err(NamingError::PluginTooOld {
+            have: have.clone(),
+            need: NAMING_VERSION.to_string(),
+        }),
+        Readiness::Ready {
+            version,
+            naming: false,
+            ..
+        } => Err(NamingError::PluginTooOld {
+            have: version.clone(),
+            need: NAMING_VERSION.to_string(),
+        }),
+        Readiness::Ready { dir, .. } => Ok(build::program(dir)),
+    }
+}
+
+/// Asks the program about `system`'s setting in the base branch's marker. `Ok(None)` when not declared.
+fn read(
+    plugin: &Readiness,
+    master: &Path,
+    system: &str,
+    values: Option<&NamingValues>,
+) -> Result<Option<NamingAnswer>, NamingError> {
+    if !declared(master, system) {
+        return Ok(None);
+    }
+    let program = naming_program(plugin)?;
+    let bytes = committed_marker(master).ok_or_else(|| {
+        NamingError::Unreadable(format!("{MARKER} is not committed at the base branch"))
+    })?;
+    // The program reads a file, so the committed bytes are staged beside the other committed documents.
+    let stage = build::staging_dir(master, system, "naming");
+    let lock = build::reading(&stage);
+    let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let file = stage.join(MARKER);
+    std::fs::create_dir_all(&stage)
+        .and_then(|_| std::fs::write(&file, &bytes))
+        .map_err(|e| NamingError::Unreadable(format!("{}: {e}", file.display())))?;
+    let answer = format::naming_read(&program, &file, system, values)
+        .map_err(|e| NamingError::Unreadable(e.to_string()))?;
+    if !answer.problems.is_empty() {
+        return Err(NamingError::Unusable(answer.problems));
+    }
+    Ok(Some(answer))
 }
 
 /// The system's naming setting. `Ok(None)` when none is declared.
 pub fn setting(
-    _plugin: &Readiness,
-    _master: &Path,
-    _system: &str,
+    plugin: &Readiness,
+    master: &Path,
+    system: &str,
 ) -> Result<Option<Naming>, NamingError> {
-    Ok(None)
+    let Some(answer) = read(plugin, master, system, None)? else {
+        return Ok(None);
+    };
+    match answer.setting {
+        Some(NamingPatterns {
+            branch: Some(branch),
+            pull_request_title: Some(pull_request_title),
+        }) => Ok(Some(Naming {
+            branch,
+            pull_request_title,
+        })),
+        _ => Err(NamingError::Unreadable(
+            "the program found no patterns in a setting without problems".into(),
+        )),
+    }
 }
 
 /// The branch name and pull request title the setting gives `change`. `Ok(None)` when none is declared.
 pub fn names(
-    _plugin: &Readiness,
-    _master: &Path,
-    _system: &str,
-    _change: &str,
-    _work_type: &str,
+    plugin: &Readiness,
+    master: &Path,
+    system: &str,
+    change: &str,
+    work_type: &str,
 ) -> Result<Option<Names>, NamingError> {
-    Ok(None)
+    let title = std::fs::read_to_string(master.join(format!("intent/{system}/{change}/intent.md")))
+        .ok()
+        .and_then(|t| frontmatter::field(&t, "title"))
+        .filter(|t| !t.is_empty());
+    let values = NamingValues {
+        work_type: work_type.to_string(),
+        scope: decide::change_scope(master, system, change),
+        change: change.to_string(),
+        title,
+    };
+    let Some(answer) = read(plugin, master, system, Some(&values))? else {
+        return Ok(None);
+    };
+    answer
+        .names
+        .map(|n| {
+            Some(Names {
+                branch: n.branch,
+                pull_request_title: n.pull_request_title,
+            })
+        })
+        .ok_or_else(|| NamingError::Unreadable("the program rendered no names".into()))
 }
 
 /// Refuses a branch name git or Kata would not accept. Called before any branch is created or renamed
 /// from a name Kata did not build itself.
-pub fn check_branch_name(_plugin: &Readiness, _name: &str) -> Result<(), NamingError> {
-    Ok(())
+pub fn check_branch_name(plugin: &Readiness, name: &str) -> Result<(), NamingError> {
+    let program = naming_program(plugin)?;
+    let problems =
+        format::branch_name(&program, name).map_err(|e| NamingError::Unreadable(e.to_string()))?;
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(NamingError::Name(problems.join("; ")))
+    }
 }
 
 #[cfg(test)]
