@@ -69,6 +69,11 @@ pub enum PrepareOutcome {
         message: String,
         problems: Vec<Problem>,
     },
+    /// The change's branch already holds work from outside this change in `repo`: nothing was created.
+    BranchTaken {
+        repo: String,
+        branch: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -636,10 +641,9 @@ mod tests {
         let fx = fixture();
         someone_else(&fx);
         let before = state(&fx);
-        let msg = refusal(prep(&fx, false));
         assert_eq!(
-            msg,
-            format!("api already has a branch change/{C} holding work from outside this change")
+            taken(prep(&fx, false)),
+            ("api".to_string(), format!("change/{C}"))
         );
         assert_eq!(state(&fx), before);
 
@@ -648,8 +652,65 @@ mod tests {
         someone_else(&fx);
         testutil::checkout(&fx.repo("api"), &format!("change/{C}"), false);
         let before = state(&fx);
-        assert!(refusal(prep(&fx, false)).contains("holding work from outside this change"));
+        assert_eq!(
+            taken(prep(&fx, false)),
+            ("api".to_string(), format!("change/{C}"))
+        );
         assert_eq!(state(&fx), before);
+    }
+
+    fn taken(out: Result<PrepareOutcome, BuildError>) -> (String, String) {
+        match out {
+            Ok(PrepareOutcome::BranchTaken { repo, branch }) => (repo, branch),
+            other => panic!("expected BranchTaken, got {other:?}"),
+        }
+    }
+
+    /// `kata` holds `feat/PROJ-123-reset` beside the master, which records the same branch.
+    fn kata_fixture(commits: &[(&str, &str)]) -> Fx {
+        let fx = fixture_with(&[("T1", "kata")], &["kata"], &["kata"]);
+        record_on_master(&fx, "feat/PROJ-123-reset");
+        let kata = fx.repo("kata");
+        testutil::checkout(&kata, "feat/PROJ-123-reset", true);
+        for (i, (file, msg)) in commits.iter().enumerate() {
+            testutil::commit_msg(&kata, file, &format!("{i}\n"), msg);
+        }
+        testutil::checkout(&kata, "main", false);
+        fx
+    }
+
+    fn branches(fx: &Fx) -> Vec<(String, String, String)> {
+        ["m", "kata"]
+            .iter()
+            .map(|r| {
+                let p = fx.repo(r);
+                (
+                    r.to_string(),
+                    branch_of(&p),
+                    git::run(&p, &["branch", "--format=%(refname:short) %(objectname)"]).unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn prepare_returns_branch_taken_and_touches_nothing_r9_1() {
+        let fx = kata_fixture(&[("theirs.txt", "wip: my own thing")]);
+        let before = branches(&fx);
+        assert_eq!(
+            taken(prep(&fx, false)),
+            ("kata".to_string(), "feat/PROJ-123-reset".to_string())
+        );
+        assert_eq!(branches(&fx), before);
+    }
+
+    #[test]
+    fn prepare_reuses_a_branch_the_change_owns_r9_3() {
+        let fx = kata_fixture(&[("own.txt", OWN)]);
+        let start = ready(prep(&fx, false));
+        let kata = start.repos.iter().find(|r| r.repo == "kata").unwrap();
+        assert!(!kata.created);
+        assert_eq!(kata.branch, "feat/PROJ-123-reset");
     }
 
     #[test]
