@@ -740,7 +740,8 @@ export class SdlcMock {
 
   diffFiles(part: Part): DiffListing {
     // Once the scripted build has logged every task, its agents have committed what they left.
-    const built = this.rows.size >= this.plan.length;
+    // The clash demos declare a finished change done, so its work is all committed too.
+    const built = this.rows.size >= this.plan.length || (this.demo?.startsWith('clash') ?? false);
     const files = this.diff.map((f) => (built ? { ...f, uncommitted: false } : f)).filter((f) => part === 'whole' || (part === 'uncommitted') === f.uncommitted);
     const byType = new Map<string, { extension: string; files: number; added: number; removed: number }>();
     for (const f of files.filter((x) => !x.binary)) {
