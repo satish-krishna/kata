@@ -115,6 +115,13 @@
             <ng-container *ngTemplateOutlet="stageActions" />
           </div>
         }
+        @if (vm.needsName()) {
+          <div class="wb-banner wb-banner--warn" data-testid="branch-needs-name" role="status">
+            <span class="k-status k-status--warning"><span class="k-status__dot"></span>Branch needs a name</span>
+            <div class="wb-toolbar__spacer"></div>
+            <button hlmBtn variant="secondary" size="sm" type="button" [disabled]="vm.locked()" (click)="vm.openNameDialog()">Name the branch</button>
+          </div>
+        }
         @if (vm.preparingBuild(); as entry) {
           <div class="k-change__missing" data-testid="build-progress"><app-progress-line [entry]="entry" /></div>
         }
@@ -200,6 +207,7 @@
                 [task]="build.pickedTask()"
                 [stopped]="build.stoppedRepos()"
                 [extras]="vm.barExtras()"
+                [holdBuild]="vm.needsName()"
                 [focus]="build.focusRequest()"
                 (pick)="build.choose($event)"
                 (repoAction)="build.repoAction($event)"
@@ -245,6 +253,7 @@
     [stepProgress]="vm.lockProgress()"
     (cancel)="vm.cancelLock()"
   />
+  <app-branch-name-dialog [request]="vm.nameRequest()" (typeChange)="vm.nameType($event)" (accept)="vm.acceptName($event)" (cancel)="vm.closeName()" />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
   <app-feedback-dialog [action]="vm.feedbackFor()" [required]="vm.feedbackRequired()" (run)="vm.runWithFeedback($event)" (cancel)="vm.cancelFeedback()" />
   <app-confirm-dialog

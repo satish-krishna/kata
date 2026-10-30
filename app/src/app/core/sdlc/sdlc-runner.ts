@@ -1,4 +1,4 @@
-import type { WorkType } from '../../lib/sdlc-naming';
+import { defaultWorkType, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
 import { Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Router } from '@angular/router';
 import type { BuildAction } from '@bindings/BuildAction';
@@ -195,17 +195,101 @@ export class SdlcRunner {
   private readonly request = signal<NameRequest | null>(null);
   /** The branch name confirmation on show; null when none is open. */
   readonly nameRequest = this.request.asReadonly();
+  private readonly namedCount = signal(0);
+  /** Counts the branches named so far; a page showing the change reads it again when this moves. */
+  readonly named = this.namedCount.asReadonly();
+  private ask: NameAsk | null = null;
+  private settleName: ((named: { branch: string; change: string } | null) => void) | null = null;
+  private nameSeq = 0;
+  /** The type picked at the start of the change that is waiting for a name, kept for opening the confirmation again. */
+  private pickedFor: { change: string; type: WorkType } | null = null;
 
-  /** Ask the engineer to confirm the name of `change`'s pending branch. Resolves with the renamed branch, or null when the dialog was closed. */
-  async requestName(_ask: NameAsk): Promise<{ branch: string; change: string } | null> {
-    return null;
+  /**
+   * Ask the engineer to confirm the name of `change`'s pending branch. The type starts as the start pick, else the change's own track's default.
+   * Resolves with the renamed branch, or null when the dialog was closed.
+   */
+  async requestName(ask: NameAsk): Promise<{ branch: string; change: string } | null> {
+    this.closeName();
+    const picked = this.pickedFor?.change === ask.change ? this.pickedFor.type : null;
+    const track = defaultWorkType(ask.track === 'fix' ? 'decide' : 'full');
+    const workType = ask.workType ?? picked ?? track;
+    this.ask = ask;
+    this.request.set({
+      system: ask.system,
+      change: ask.change,
+      pending: ask.pending,
+      workType,
+      workTypes: orderedWorkTypes(ask.track === 'fix' ? 'decide' : 'full'),
+      suggestion: '',
+      error: null,
+      busy: true,
+    });
+    const named = new Promise<{ branch: string; change: string } | null>((resolve) => {
+      this.settleName = resolve;
+    });
+    await this.suggest(workType);
+    return named;
   }
 
-  async setNameType(_type: WorkType): Promise<void> {}
+  /** The engineer picked another type: the suggestion follows it. */
+  async setNameType(type: WorkType): Promise<void> {
+    const cur = this.request();
+    if (cur === null) return;
+    this.request.set({ ...cur, workType: type, busy: true });
+    await this.suggest(type);
+  }
 
-  async confirmName(_name: string): Promise<void> {}
+  private async suggest(type: WorkType): Promise<void> {
+    const ask = this.ask;
+    if (ask === null) return;
+    const seq = ++this.nameSeq;
+    let suggestion = '';
+    let error: string | null = null;
+    try {
+      suggestion = await this.transport.sdlcSuggestBranch(ask.folder, ask.masterRepo, ask.system, ask.change, type);
+    } catch (e) {
+      error = message(e);
+    }
+    const cur = this.request();
+    if (seq !== this.nameSeq || cur === null) return;
+    this.request.set({ ...cur, suggestion, error, busy: false });
+  }
 
-  closeName(): void {}
+  /** Rename the pending branch to `name`. A refusal stays on the request and the confirmation stays open. */
+  async confirmName(name: string): Promise<void> {
+    const ask = this.ask;
+    const cur = this.request();
+    if (ask === null || cur === null || cur.busy) return;
+    this.request.set({ ...cur, error: null, busy: true });
+    let outcome: FinishOutcome;
+    try {
+      outcome = await this.transport.sdlcConfirmBranch(ask.folder, ask.masterRepo, ask.system, ask.change, ask.pending, name, cur.workType);
+    } catch (e) {
+      this.request.update((r) => (r === null ? r : { ...r, error: message(e), busy: false }));
+      return;
+    }
+    if (typeof outcome === 'string' || !('renamed' in outcome)) {
+      this.request.update((r) => (r === null ? r : { ...r, error: 'The branch was not renamed.', busy: false }));
+      return;
+    }
+    this.pickedFor = null;
+    this.finishName(outcome.renamed);
+    this.namedCount.update((n) => n + 1);
+  }
+
+  /** Close the confirmation without naming: the change stays on its pending branch and offers the confirmation again. */
+  closeName(): void {
+    this.finishName(null);
+  }
+
+  private finishName(named: { branch: string; change: string } | null): void {
+    const settle = this.settleName;
+    this.settleName = null;
+    this.ask = null;
+    this.nameSeq++;
+    this.request.set(null);
+    settle?.(named);
+  }
 
   constructor() {
     // Link the transcript the moment its id shows up, not at the end: a run that never ends still gets linked.
@@ -525,9 +609,8 @@ export class SdlcRunner {
       }
       return { kind: 'none', idea, runId: out.runId };
     }
-    // A branch that still needs a name is handled by the confirmation step, not here.
-    if (!('renamed' in outcome)) return { kind: 'stopped' };
-    const { change, branch: changeBranch } = outcome.renamed;
+    const waiting = 'needs-name' in outcome;
+    const change = waiting ? outcome['needs-name'].change : outcome.renamed.change;
     if (out.runId) {
       try {
         await this.transport.sdlcLinkRun({
@@ -543,7 +626,28 @@ export class SdlcRunner {
       }
     }
     await this.router.navigate(['/sdlc', system, change]);
-    return { kind: 'opened', change, branch: changeBranch };
+    if (!waiting) return { kind: 'opened', change, branch: outcome.renamed.branch };
+    // The change page shows the confirmation. Closing it leaves the change on its pending branch, which the page offers it again for.
+    if (naming) this.pickedFor = { change, type: naming.workType };
+    const named = await this.requestName({
+      folder: workspace.folder,
+      masterRepo: repoName(master),
+      system,
+      change,
+      pending: outcome['needs-name'].pending,
+      workType: naming?.workType ?? null,
+      track: await this.trackOf(master, system, change, decide),
+    });
+    return named === null ? { kind: 'stopped' } : { kind: 'opened', change: named.change, branch: named.branch };
+  }
+
+  /** The track the change ended on, for the type the confirmation preselects; the start's own track when it cannot be read. */
+  private async trackOf(master: string, system: string, change: string, decide: boolean): Promise<'full' | 'fix'> {
+    try {
+      return (await this.transport.sdlcReadChange(master, system, change)).track;
+    } catch {
+      return decide ? 'fix' : 'full';
+    }
   }
 
   /** Finish the pending branch. A dirty tree opens the leftover dialog once and retries after it closes. */

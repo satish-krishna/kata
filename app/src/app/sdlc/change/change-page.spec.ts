@@ -923,14 +923,17 @@ describe('ChangePage branch name', () => {
   });
 
   /** One row of the table: whether the system declares naming, and whether the master stands on a pending branch holding the change. */
-  const row = (naming: 'declared' | 'none', current: string, change = MOCK_BUILD_CHANGE) => {
+  const row = (naming: 'declared' | 'none', start: string, change = MOCK_BUILD_CHANGE) => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcNaming').mockResolvedValue(naming === 'declared' ? declared : { kind: 'none' });
     const branches = transport.sdlcBranches.bind(transport);
-    vi.spyOn(transport, 'sdlcBranches').mockImplementation(async (m) => ({ ...(await branches(m)), current }));
+    vi.spyOn(transport, 'sdlcBranches').mockImplementation(async (m) => ({ ...(await branches(m)), current: onBranch.current }));
+    onBranch.current = start;
     vi.spyOn(transport, 'sdlcSuggestBranch').mockImplementation(async (_f, _m, _s, _c, type) => `${type}/PROJ-123-build-demo`);
     return mount(change, transport);
   };
+  /** The branch the master stands on, which a confirmation moves. */
+  const onBranch = { current: '' };
   const find = (c: ParentNode, label: string) => Array.from(c.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === label);
 
   it('row 2: a named change shows no prompt', async () => {
@@ -988,18 +991,15 @@ describe('ChangePage branch name', () => {
 
   it('accepting the name reads the change again and drops the prompt (R6.1)', async () => {
     const { container, transport } = await row('declared', 'change/pending-1730000000');
-    let current = 'change/pending-1730000000';
-    const branches = transport.sdlcBranches.bind(transport);
-    vi.spyOn(transport, 'sdlcBranches').mockImplementation(async (m) => ({ ...(await branches(m)), current }));
     vi.spyOn(transport, 'sdlcConfirmBranch').mockImplementation(async (_f, _m, _s, change, _p, name) => {
-      current = name;
+      onBranch.current = name;
       return { renamed: { branch: name, change } };
     });
     find(container, 'Name the branch')!.click();
     await settle();
     find(document.body.querySelector('[role="dialog"]')!, 'Accept')!.click();
     await settle();
-    await vi.waitFor(() => expect(container.textContent).not.toContain(NEEDS));
-    expect(find(container, 'Start build')!.disabled).toBe(false);
+    await vi.waitFor(() => expect(find(container, 'Start build')?.disabled).toBe(false));
+    expect(container.textContent).not.toContain(NEEDS);
   });
 });

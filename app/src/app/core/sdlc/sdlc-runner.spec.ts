@@ -605,6 +605,7 @@ describe('SdlcRunner.newChange confirming the branch name', () => {
   const withTrack = (track: 'full' | 'fix') => {
     const ctx = setup();
     ctx.fake.finishResults.push(needsName);
+    ctx.fake.scan = { folder: '/ws', repos: [], master: { kind: 'one', repo: 'commerce-docs', committed: true }, marker: null, marker_error: null };
     ctx.fake.sdlcReadChange.mockResolvedValue({ track });
     return ctx;
   };

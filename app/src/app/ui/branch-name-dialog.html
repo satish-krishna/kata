@@ -1,0 +1,37 @@
+<hlm-dialog [state]="request() !== null ? 'open' : 'closed'" (stateChanged)="onState($event)">
+  <hlm-dialog-content *hlmDialogPortal="let ctx">
+    <div hlmDialogTitle>Name the branch</div>
+    @if (request(); as req) {
+      <div class="k-form">
+        <app-field label="Work type">
+          <hlm-select [value]="req.workType" (valueChange)="onType($event)">
+            <hlm-select-trigger aria-label="Work type">
+              <hlm-select-value placeholder="Choose a work type" />
+            </hlm-select-trigger>
+            <hlm-select-content *hlmSelectPortal>
+              @for (t of req.workTypes; track t) {
+                <hlm-select-item [value]="t">{{ t }}</hlm-select-item>
+              }
+            </hlm-select-content>
+          </hlm-select>
+        </app-field>
+        <app-field label="Branch name" [hint]="hint()" [error]="req.error !== null" hintId="branch-name-hint" [live]="true">
+          <input
+            hlmInput
+            variant="mono"
+            aria-label="Branch name"
+            aria-describedby="branch-name-hint"
+            [attr.aria-invalid]="req.error !== null"
+            [value]="name()"
+            (input)="onName($event)"
+            (keydown.enter)="submit()"
+          />
+        </app-field>
+      </div>
+    }
+    <hlm-dialog-footer>
+      <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
+      <button hlmBtn variant="primary" size="sm" type="button" [disabled]="!ready()" (click)="submit()">Accept</button>
+    </hlm-dialog-footer>
+  </hlm-dialog-content>
+</hlm-dialog>

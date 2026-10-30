@@ -25,6 +25,8 @@ export class ChangesTable {
   /** Change folder names of change branches that are not checked out. */
   readonly others = input.required<string[]>();
   /** Latest run start (epoch seconds) per `<system>/<change>`. */
+  /** Which of those wait for their branch to be named: they carry a tag saying so. */
+  readonly needsName = input<string[]>([]);
   readonly lastRuns = input<Record<string, number>>({});
   readonly disabled = input(false);
 

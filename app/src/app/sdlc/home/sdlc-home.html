@@ -155,6 +155,7 @@
               <app-changes-table
                 [rows]="vm.rows()"
                 [others]="vm.otherBranches()"
+                [needsName]="vm.otherNeedingName()"
                 [lastRuns]="vm.lastRuns()"
                 [disabled]="vm.locked()"
                 (open)="vm.openChange($event.system, $event.change)"

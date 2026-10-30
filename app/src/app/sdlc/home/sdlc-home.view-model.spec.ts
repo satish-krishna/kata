@@ -581,6 +581,23 @@ describe('SdlcHomeViewModel navigation', () => {
     expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-17-product-notes']);
   });
 
+  it('lists the other branches that need a name and checks out their pending branch', async () => {
+    const { vm, transport } = setup();
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({
+      current: 'main',
+      default_base: 'main',
+      others: [
+        { branch: 'change/pending-1730000000', change: '2026-11-02-password-reset', needs_name: true },
+        { branch: 'change/2026-10-17-product-notes', change: '2026-10-17-product-notes', needs_name: false },
+      ],
+    });
+    await vm.init();
+    expect(vm.otherNeedingName()).toEqual(['2026-11-02-password-reset']);
+    const checkout = vi.spyOn(transport, 'sdlcCheckout');
+    await vm.openOtherBranch('2026-11-02-password-reset');
+    expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'change/pending-1730000000');
+  });
+
   it('openOtherBranch shows git message on a dirty refusal and stays put', async () => {
     const { vm, transport, navigate } = setup();
     await vm.init();

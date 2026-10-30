@@ -40,7 +40,7 @@ import { ProgressStore } from '../../core/progress/progress.store';
 import { SdlcStagesStore } from '../../core/sdlc/sdlc-stages.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { progressLabels } from '../../lib/progress-steps';
-import { KataTransport } from '../../core/transport/kata-transport';
+import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
 import {
   DEFAULT_BUILD_SECS,
   actionLabel,
@@ -72,6 +72,7 @@ import { inTauri } from '../../lib/mock';
 import { taskRecord, withRows, type TaskView } from '../../lib/task-view';
 import { shownSection } from '../../lib/sdlc-review';
 import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
+import type { WorkType } from '../../lib/sdlc-naming';
 
 export type ChangeState = 'loading' | 'ready' | 'not-found';
 
@@ -125,6 +126,11 @@ const RUNS: Record<Exclude<StageAction, HandledAction>, StageRun> = {
 /** The fix runs, which need a plugin that has the light track. */
 const FIX_RUNS: readonly StageAction[] = ['finish-fix-draft', 'change-fix', 'reopen-fix', 'accept-fix'];
 const NEEDS_LIGHT_TRACK = 'Needs ai-sdlc 0.13.0 or later.';
+const NEEDS_NAME = 'Name the branch first.';
+/** The actions that start or continue build work: they wait for the branch's name. */
+const NEEDS_BRANCH: readonly StageAction[] = ['start-build', 'continue-build', 'another-round', 'run-review'];
+/** The branch a change is created on, until its name is confirmed. */
+const PENDING_PREFIX = 'change/pending-';
 
 const FILE: Record<Decision, 'intent.md' | 'spec.md' | 'plan.md'> = {
   'accept-intent': 'intent.md',
@@ -314,6 +320,15 @@ export class ChangePageViewModel {
   private pickSeq = 0;
 
   readonly masterBranch = computed(() => this.branches()?.current ?? null);
+  /** The system's naming setting as last read; null before the first load and when it could not be read. */
+  private readonly naming = signal<NamingState | null>(null);
+  /**
+   * The change was created on a pending branch, the system declares naming, and the engineer has not confirmed a name: the master stands on that
+   * pending branch, which a confirmation renames in the same step. A change with a branch record, or one started before the setting existed, is on its own branch.
+   */
+  readonly needsName = computed(() => this.change() !== null && this.naming()?.kind === 'setting' && (this.masterBranch() ?? '').startsWith(PENDING_PREFIX));
+  /** The branch name confirmation on show. */
+  readonly nameRequest = this.runner.nameRequest;
   readonly crumbs = computed(() => (this.changeName() === '' ? [] : [this.changeName()]));
 
   readonly shownDoc = computed<Tab>(() => {
@@ -410,11 +425,15 @@ export class ChangePageViewModel {
   }
   /** Whether an action's button is off: the lock holds it, or it is a fix run the plugin on this machine cannot do. */
   disabledFor(action: StageAction): boolean {
-    return this.locked() || this.needsLightTrack(action);
+    return this.locked() || this.needsLightTrack(action) || this.waitsForName(action);
   }
   /** Why a fix run is unavailable; null for any other action and while it is available. */
   titleFor(action: StageAction): string | null {
+    if (this.waitsForName(action)) return NEEDS_NAME;
     return this.needsLightTrack(action) ? NEEDS_LIGHT_TRACK : null;
+  }
+  private waitsForName(action: StageAction): boolean {
+    return this.needsName() && NEEDS_BRANCH.includes(action);
   }
   private needsLightTrack(action: StageAction): boolean {
     return FIX_RUNS.includes(action) && !this.lightTrack();
@@ -822,6 +841,15 @@ export class ChangePageViewModel {
       this.changeName();
       untracked(() => void this.load());
     });
+    // A confirmation names the branch, whoever opened it (this page, or the start of the change): read the change again.
+    effect(() => {
+      const named = this.runner.named();
+      untracked(() => {
+        if (named === this.seenNamed) return;
+        this.seenNamed = named;
+        void this.load();
+      });
+    });
     // The build page gives the lock back when the build ends or stops; the change is read again then, so its stage, pill and actions follow it.
     effect(() => {
       const building = this.lock.active()?.kind === 'build';
@@ -833,6 +861,9 @@ export class ChangePageViewModel {
     });
   }
 
+  /** The branches named so far, as this page last saw them: the page reads the change again when a confirmation names one. */
+  private seenNamed = this.runner.named();
+
   /** Whether the lock was held for a build the last time it changed. */
   private wasBuilding = false;
 
@@ -843,6 +874,30 @@ export class ChangePageViewModel {
     if (this.state() === 'ready') await this.runStage('continue-spec');
   }
 
+  // --- naming
+
+  /** Open the branch name confirmation of this change. Closing it changes nothing: the page keeps asking. */
+  async openNameDialog(): Promise<void> {
+    const w = this.current();
+    const master = this.scanMaster();
+    const pending = this.masterBranch();
+    const change = this.change();
+    if (w === null || master === null || pending === null || change === null || this.refuseWhileLocked()) return;
+    await this.runner.requestName({ folder: w.folder, masterRepo: master, system: this.system(), change: this.changeName(), pending, workType: null, track: change.track });
+  }
+
+  nameType(type: WorkType): void {
+    void this.runner.setNameType(type);
+  }
+
+  acceptName(name: string): void {
+    void this.runner.confirmName(name);
+  }
+
+  closeName(): void {
+    this.runner.closeName();
+  }
+
   // --- actions
 
   async act(action: StageAction): Promise<void> {
@@ -850,6 +905,10 @@ export class ChangePageViewModel {
     if (action !== 'cancel-build' && this.refuseWhileLocked()) return;
     if (this.needsLightTrack(action)) {
       this.toasts.error(NEEDS_LIGHT_TRACK);
+      return;
+    }
+    if (this.waitsForName(action)) {
+      this.toasts.error(NEEDS_NAME);
       return;
     }
     switch (action) {
@@ -1543,6 +1602,15 @@ export class ChangePageViewModel {
     }
   }
 
+  /** The system's naming setting; null when it cannot be read, which the page treats as no declaration. */
+  private async readNaming(folder: string, repo: string, system: string): Promise<NamingState | null> {
+    try {
+      return await this.transport.sdlcNaming(folder, repo, system);
+    } catch {
+      return null;
+    }
+  }
+
   /** Read the change from disk. A newer call supersedes an older one still in flight. */
   private async load(): Promise<void> {
     const seq = ++this.loadSeq;
@@ -1589,12 +1657,13 @@ export class ChangePageViewModel {
         return;
       }
       const master = masterPath(w.folder, repo);
-      const [branches, own, links, records, catalog] = await Promise.all([
+      const [branches, own, links, records, catalog, naming] = await Promise.all([
         this.transport.sdlcBranches(master),
         this.readOwnChange(master, system, name),
         this.transport.sdlcRunLinks(),
         this.transport.listRuns(),
         this.transport.catalog(w.folder),
+        this.readNaming(w.folder, repo, system),
       ]);
       const found = own.info;
       // A home pass still running shows this stage at once, and this page never waits for that pass.
@@ -1618,6 +1687,7 @@ export class ChangePageViewModel {
       this.checksDir.set(checksDir);
       this.scan.set(scan);
       this.branches.set(branches);
+      this.naming.set(naming);
       this.links.set(links);
       this.records.set(records);
       this.catalog.set(catalog);
