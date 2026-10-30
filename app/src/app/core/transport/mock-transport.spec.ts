@@ -122,7 +122,7 @@ describe('MockTransport', () => {
     await t.sdlcCheckout('/m', 'change/2026-10-17-product-notes');
     expect(await t.sdlcBranches('/m')).toEqual({ current: 'change/2026-10-17-product-notes', others: [], default_base: 'main' });
     await t.sdlcCheckout('/m', 'main');
-    expect((await t.sdlcBranches('/m')).others).toEqual(['2026-10-17-product-notes']);
+    expect((await t.sdlcBranches('/m')).others.map((o) => o.change)).toEqual(['2026-10-17-product-notes']);
   });
 
   it('finishing a change renames it once, then deletes a pending branch that created nothing', async () => {
@@ -132,7 +132,7 @@ describe('MockTransport', () => {
     expect(out).toEqual({ renamed: { branch: 'change/2026-10-18-new-change', change: '2026-10-18-new-change' } });
     const b = await t.sdlcBranches('/m');
     expect(b.current).toBe('main');
-    expect(b.others).toEqual(['2026-10-17-product-notes', '2026-10-18-new-change']);
+    expect(b.others.map((o) => o.change)).toEqual(['2026-10-17-product-notes', '2026-10-18-new-change']);
     expect((await readAllChanges(t))[0].change).toBe('2026-10-18-new-change');
 
     const again = await t.sdlcStartChange('/m', 'main');

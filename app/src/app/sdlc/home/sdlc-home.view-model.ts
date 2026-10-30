@@ -152,7 +152,7 @@ export class SdlcHomeViewModel {
     return m?.kind === 'many' ? m.repos : [];
   });
   readonly masterBranch = computed(() => this.branches()?.current ?? null);
-  readonly otherBranches = computed(() => this.branches()?.others ?? []);
+  readonly otherBranches = computed(() => (this.branches()?.others ?? []).map((o) => o.change));
   readonly systems = computed(() => {
     const s = this.scan();
     return s ? systemNames(s) : [];

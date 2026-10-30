@@ -68,7 +68,7 @@ describe('SdlcHomeViewModel init', () => {
     expect(vm.state()).toBe('ready');
     await settled(vm);
     expect(vm.changes().length).toBe(7);
-    expect(vm.branches()?.others).toEqual(['2026-10-17-product-notes']);
+    expect(vm.branches()?.others.map((o) => o.change)).toEqual(['2026-10-17-product-notes']);
     expect(vm.masterBranch()).toBe('main');
     expect(vm.contexts()['customer-portal']).toEqual({ kind: 'stale', commits: 14 });
     expect(vm.pluginMissing()).toBe(false);
