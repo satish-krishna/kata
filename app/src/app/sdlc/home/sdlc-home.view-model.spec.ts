@@ -13,7 +13,7 @@ import { ProgressStore } from '../../core/progress/progress.store';
 import { PROGRESS_STEPS } from '../../lib/progress-steps';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
-import { KataTransport } from '../../core/transport/kata-transport';
+import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { readAllChanges } from '../../../testing/read-all';
 import { MOCK_WORKSPACE_FOLDER, MOCK_MASTER } from '../../lib/sdlc-mock';
@@ -1081,5 +1081,104 @@ describe('SdlcHomeViewModel stage passes', () => {
     pass.finish(pass.id(), [await infoFor(transport, b, 'plan-ready')]);
     expect(stageOf(vm, a)).toMatchObject({ info: null, error: 'worker panicked' });
     expect(stageOf(vm, b)?.info?.stage).toBe('plan-ready');
+  });
+});
+
+describe('SdlcHomeViewModel naming at the start of a change', () => {
+  const ALL = ['feat', 'fix', 'docs', 'style', 'refactor', 'perf', 'test', 'build', 'ci', 'chore', 'revert'];
+
+  async function opened(naming?: NamingState) {
+    const ctx = setup();
+    if (naming) vi.spyOn(ctx.transport, 'sdlcNaming').mockResolvedValue(naming);
+    await ctx.vm.init();
+    ctx.vm.openNewChange();
+    await vi.waitFor(() => expect(ctx.vm.newChangeNaming()).not.toBeNull());
+    return ctx;
+  }
+
+  it('the picker offers the eleven types with the route default first (R4.1)', async () => {
+    const { vm } = await opened();
+    // The dialog opens on the triage route.
+    expect(vm.workTypes()).toHaveLength(11);
+    expect(vm.workTypes()[0]).toBe('fix');
+    expect(vm.workType()).toBe('fix');
+    expect([...vm.workTypes()].sort()).toEqual([...ALL].sort());
+    vm.pickTrack('full');
+    expect(vm.workTypes()[0]).toBe('feat');
+    expect(vm.workType()).toBe('feat');
+    expect(vm.workTypes()).toHaveLength(11);
+  });
+
+  it('keeps a type the engineer picked when the route stays the same (R4.1)', async () => {
+    const { vm } = await opened();
+    vm.pickWorkType('docs');
+    expect(vm.workType()).toBe('docs');
+  });
+
+  it('offers the system commit scope as the default, else the system name (R4.1)', async () => {
+    const { vm, transport } = await opened();
+    expect(vm.scope()).toBe('commerce');
+    const scan = await transport.sdlcScan(MOCK_WORKSPACE_FOLDER);
+    vi.spyOn(transport, 'sdlcScan').mockResolvedValue({ ...scan, marker: { version: 1, systems: { commerce: { repos: ['customer-portal'], commitScope: 'shop' } } } });
+    vm.closeNewChange();
+    await vm.selectWorkspace(vm.workspaces()[0].id);
+    vm.openNewChange();
+    await vi.waitFor(() => expect(vm.scope()).toBe('shop'));
+  });
+
+  it('shows no type or scope picker without a naming setting (R2.1)', async () => {
+    const { vm, runner } = await opened({ kind: 'none' });
+    expect(vm.workTypes()).toEqual([]);
+    expect(vm.namingError()).toBeNull();
+    expect(vm.namingReady()).toBe(true);
+    const spy = vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'stopped' });
+    await vm.newChange('commerce', 'flag prices', 'full');
+    expect(spy).toHaveBeenCalledWith(expect.anything(), 'commerce', 'flag prices', 'full', expect.any(Function));
+  });
+
+  it.each([
+    ['pluginMissing', 'the ai-sdlc plugin is not installed'],
+    ['pluginTooOld', 'the system naming setting needs ai-sdlc plugin 0.14.0 or later'],
+    ['unusable', 'the naming setting cannot be used: "ticket" is not a known part of a name'],
+    ['unreadable', 'the naming setting cannot be read: .ai-sdlc.json is not committed at the base branch'],
+    ['name', 'not a usable branch name: -D'],
+  ] as const)('starting a change in a system with a broken setting is refused: %s (R3.2)', async (reason, text) => {
+    const { vm, transport } = await opened({ kind: 'error', reason, message: text });
+    const start = vi.spyOn(transport, 'sdlcStartChange');
+    expect(vm.namingReady()).toBe(false);
+    expect(vm.namingError()).toContain(text);
+    expect(vm.namingError()).toContain('fix');
+    expect(vm.workTypes()).toEqual([]);
+    await vm.newChange('commerce', 'flag prices', 'full');
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('refuses a scope with a space and disables start until it is fixed (R5.2)', async () => {
+    const { vm } = await opened();
+    vm.setScope('PROJ 123');
+    await vi.waitFor(() => expect(vm.scopeProblems()).toEqual(['a scope cannot contain a space']));
+    expect(vm.namingReady()).toBe(false);
+    vm.setScope('PROJ-123');
+    await vi.waitFor(() => expect(vm.scopeProblems()).toEqual([]));
+    expect(vm.namingReady()).toBe(true);
+  });
+
+  it('does not start with an empty scope (R4.1)', async () => {
+    const { vm } = await opened();
+    vm.setScope('');
+    expect(vm.namingReady()).toBe(false);
+  });
+
+  it('hands the picked type and scope to the runner (R4.2)', async () => {
+    const { vm, runner, transport } = await opened();
+    const start = vi.spyOn(transport, 'sdlcStartChange');
+    const spy = vi.spyOn(runner, 'newChange').mockResolvedValue({ kind: 'stopped' });
+    vm.pickTrack('full');
+    vm.pickWorkType('refactor');
+    vm.setScope('PROJ-123');
+    await vi.waitFor(() => expect(vm.namingReady()).toBe(true));
+    await vm.newChange('commerce', 'flag prices', 'full');
+    expect(spy).toHaveBeenCalledWith(expect.anything(), 'commerce', 'flag prices', 'full', expect.any(Function), { workType: 'refactor', scope: 'PROJ-123' });
+    expect(start).not.toHaveBeenCalled();
   });
 });

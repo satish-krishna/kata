@@ -121,6 +121,8 @@ export abstract class KataTransport {
   abstract sdlcRenameBranch(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, newName: string): Promise<RenameResult>;
   /** Repositories where the change's branch name is already taken on GitHub by work this machine does not have. */
   abstract sdlcRemoteClashes(touched: PublishRepo[], masterRepo: string, system: string, change: string): Promise<RemoteClash[]>;
+  /** Why the scope is not usable, one reason per entry; empty when it is accepted as typed. */
+  abstract sdlcCheckScope(folder: string, scope: string): Promise<string[]>;
   abstract sdlcCheckout(master: string, branch: string): Promise<void>;
   abstract sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean): Promise<DecideOutcome>;
   abstract sdlcRunLinks(): Promise<RunLink[]>;

@@ -351,6 +351,26 @@ describe('SdlcRunner.newChange', () => {
     expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-18-x']);
   });
 
+  it('passes the picked scope to the intent task and to the triage task (R4.2)', async () => {
+    const naming = { workType: 'feat' as const, scope: 'PROJ-123' };
+    const full = setup();
+    full.fake.finishResults.push(async () => ({ renamed: { branch: 'change/2026-10-18-x', change: '2026-10-18-x' } }));
+    await full.runner.newChange(target, 'commerce', 'flag prices', 'full', undefined, naming);
+    expect(full.lock.runAgent.mock.calls[0][1].task).toBe('Use the ai-sdlc intent skill for system commerce. The idea: flag prices scope:PROJ-123');
+    const triage = setup();
+    triage.fake.scan = { folder: '/ws', repos: [], master: { kind: 'one', repo: 'commerce-docs', committed: true }, marker: null, marker_error: null };
+    triage.fake.finishResults.push(async () => 'deleted');
+    await triage.runner.newChange(target, 'commerce', 'flag prices', 'decide', undefined, { workType: 'fix', scope: 'PROJ-123' });
+    expect(triage.lock.runAgent.mock.calls[0][1].task).toContain('scope:PROJ-123');
+  });
+
+  it('adds no scope to the task without a naming setting (R2.1)', async () => {
+    const { runner, fake, lock } = setup();
+    fake.finishResults.push(async () => ({ renamed: { branch: 'change/2026-10-18-x', change: '2026-10-18-x' } }));
+    await runner.newChange(target, 'commerce', 'flag prices', 'full');
+    expect(lock.runAgent.mock.calls[0][1].task).not.toContain('scope:');
+  });
+
   it('links the new change to the run after the rename', async () => {
     const ctx = setup(async () => {
       ctx.events.set([transcript('/k/runs/sdlc-commerce-new-intent-1.jsonl')]);

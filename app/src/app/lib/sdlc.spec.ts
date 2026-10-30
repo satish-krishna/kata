@@ -807,6 +807,23 @@ describe("triage and fix run-specs (T8)", () => {
     );
   });
 
+  it("the intent and triage task carries scope:<value> (R4.2)", () => {
+    const intent = specFor("intent", null, { folder: WS, system: "commerce", change: null, idea: "photo upload", scope: "PROJ-123" }, bypass, both);
+    expect(intent.task).toBe("Use the ai-sdlc intent skill for system commerce. The idea: photo upload scope:PROJ-123");
+    const triage = specFor("triage", null, { ...startCtx, scope: "PROJ-123" }, bypass, both, undefined, restricted);
+    expect(triage.task).toContain("The change: Photos fail to upload scope:PROJ-123. The person running this");
+  });
+
+  it("the intent and triage task carries no scope without a naming setting (R2.1)", () => {
+    expect(specFor("intent", null, { folder: WS, system: "commerce", change: null, idea: "photo upload" }, bypass, both).task).not.toContain("scope:");
+    expect(specFor("triage", null, startCtx, bypass, both, undefined, restricted).task).not.toContain("scope:");
+  });
+
+  it("the naming setup task names the system (R1.1)", () => {
+    const s = specFor("setup", null, { folder: WS, system: "commerce", change: null, naming: true }, bypass, both);
+    expect(s.task).toBe("Use the ai-sdlc setup skill with --naming. System: commerce");
+  });
+
   it("appends operator feedback as it does for every other kind", () => {
     const s = specFor("fix", null, { ...wsCtx, feedback: "  narrower  " }, bypass, both, undefined, restricted);
     expect(s.task.endsWith("\n\nOperator feedback:\nnarrower")).toBe(true);

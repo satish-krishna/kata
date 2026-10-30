@@ -205,6 +205,10 @@ export type RunContext = {
   feedback?: string;
   /** For setup: write the workspace instructions (`--instructions`). */
   instructions?: boolean;
+  /** For intent and triage: the scope the engineer typed, passed on as `scope:<value>`. */
+  scope?: string;
+  /** For setup: set the team's naming (`--naming`). */
+  naming?: boolean;
 };
 
 /** How a new change starts: the workflow triages the description and decides, or the full pipeline starts at once. */

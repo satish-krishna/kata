@@ -20,7 +20,8 @@ import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
 import { SdlcStagesStore, stageKey, type ChangeRow } from '../../core/sdlc/sdlc-stages.store';
 import { ToastStore } from '../../core/toast/toast.store';
-import { KataTransport } from '../../core/transport/kata-transport';
+import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
+import type { WorkType } from '../../lib/sdlc-naming';
 import { inTauri } from '../../lib/mock';
 import { shownChangeList } from '../../lib/doc-notice';
 import { fixProgramFailed, hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
@@ -198,6 +199,19 @@ export class SdlcHomeViewModel {
     return r.kind === 'ready' && r.lightTrack;
   });
   readonly settingsOpen = signal(false);
+
+  // --- naming at the start of a change
+  readonly newChangeNaming = signal<NamingState | null>(null);
+  readonly workTypes = signal<WorkType[]>([]);
+  readonly workType = signal<WorkType>('feat');
+  readonly scope = signal('');
+  readonly scopeProblems = signal<string[]>([]);
+  readonly namingError = signal<string | null>(null);
+  readonly namingReady = signal(true);
+  pickSystem(_system: string): void {}
+  pickTrack(_track: StartTrack): void {}
+  pickWorkType(_type: WorkType): void {}
+  setScope(_value: string): void {}
   readonly switchPrompt = signal<string | null>(null);
   private switchResolve: ((ok: boolean) => void) | null = null;
   private readonly removeId = signal<string | null>(null);

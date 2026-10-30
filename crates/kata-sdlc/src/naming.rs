@@ -189,6 +189,11 @@ pub fn check_branch_name(plugin: &Readiness, name: &str) -> Result<(), NamingErr
     }
 }
 
+/// Why `scope` cannot be used as a change's scope; empty when it is accepted as typed.
+pub fn check_scope(_plugin: &Readiness, _scope: &str) -> Result<Vec<String>, NamingError> {
+    Ok(Vec::new())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +320,33 @@ mod tests {
             );
         }
         assert_eq!(check_branch_name(&current(), "feat/PROJ-123-reset"), Ok(()));
+    }
+
+    #[test]
+    fn a_scope_is_accepted_or_refused_with_the_reason_r5_2() {
+        for scope in ["PROJ-123", "proj_123", "v2.1", "kata"] {
+            assert_eq!(check_scope(&current(), scope), Ok(Vec::new()), "{scope}");
+        }
+        for (scope, reason) in [
+            ("PROJ 123", "space"),
+            ("-PROJ", "start"),
+            ("PROJ(1)", "parentheses"),
+            ("PROJ/123", "letters, digits"),
+            ("PROJ..123", ".."),
+        ] {
+            let problems = check_scope(&current(), scope).unwrap();
+            assert!(
+                problems.iter().any(|p| p.contains(reason)),
+                "{scope}: {problems:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_scope_cannot_be_checked_without_a_plugin_that_can_name_branches() {
+        assert_eq!(
+            check_scope(&Readiness::Missing, "kata"),
+            Err(NamingError::PluginMissing)
+        );
     }
 }

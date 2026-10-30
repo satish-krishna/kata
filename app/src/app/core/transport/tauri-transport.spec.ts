@@ -79,6 +79,7 @@ const rows: Row[] = [
   ['sdlcStartChange', (t) => t.sdlcStartChange('/m', 'main'), 'sdlc_start_change', { master: '/m', base: 'main' }],
   ['sdlcFinishChange', (t) => t.sdlcFinishChange('/m', 'pending', 'main'), 'sdlc_finish_change', { master: '/m', pending: 'pending', base: 'main' }],
   ['sdlcNaming', (t) => t.sdlcNaming('/w', 'm', 's'), 'sdlc_naming', { folder: '/w', masterRepo: 'm', system: 's' }],
+  ['sdlcCheckScope', (t) => t.sdlcCheckScope('/w', 'PROJ 123'), 'sdlc_check_scope', { folder: '/w', scope: 'PROJ 123' }],
   ['sdlcSuggestBranch', (t) => t.sdlcSuggestBranch('/w', 'm', 's', 'c', 'feat'), 'sdlc_suggest_branch', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', workType: 'feat' }],
   ['sdlcConfirmBranch', (t) => t.sdlcConfirmBranch('/w', 'm', 's', 'c', 'change/pending-1', 'feat/x-c', 'feat'), 'sdlc_confirm_branch', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', pending: 'change/pending-1', name: 'feat/x-c', workType: 'feat' }],
   ['sdlcRenameBranch', (t) => t.sdlcRenameBranch('/w', 'w1', 'm', 's', 'c', 'feat/x-c'), 'sdlc_rename_branch', { folder: '/w', workspaceId: 'w1', masterRepo: 'm', system: 's', change: 'c', newName: 'feat/x-c' }],

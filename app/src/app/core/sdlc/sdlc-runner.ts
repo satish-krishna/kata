@@ -1,3 +1,4 @@
+import type { WorkType } from '../../lib/sdlc-naming';
 import { Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Router } from '@angular/router';
 import type { BuildAction } from '@bindings/BuildAction';
@@ -56,6 +57,9 @@ export type NewChangeOutcome =
   | { kind: 'refused' }
   | { kind: 'stopped' }
   | { kind: 'none'; idea: string; runId: string | null };
+
+/** What the engineer picked when the system has a naming setting. */
+export type PickedNaming = { workType: WorkType; scope: string };
 
 export type ChangeTarget = { workspace: WorkspaceEntry; master: string; productRepos: string[] };
 
@@ -423,7 +427,7 @@ export class SdlcRunner {
    * then rename or delete the branch once the run is over, whatever its outcome. `confirm` is the preview: it gets the built spec and answers with the spec to
    * run, or null when the engineer cancelled, in which case no branch is made.
    */
-  async newChange(target: ChangeTarget, system: string, idea: string, track: StartTrack, confirm?: Confirm): Promise<NewChangeOutcome> {
+  async newChange(target: ChangeTarget, system: string, idea: string, track: StartTrack, confirm?: Confirm, _naming?: PickedNaming): Promise<NewChangeOutcome> {
     const { workspace, master, productRepos } = target;
     if (this.isBusy()) {
       this.toasts.error('Another task is already running.');
