@@ -1,6 +1,6 @@
 use crate::build::program;
 use crate::format::{self, FormatError, ReadResult};
-use crate::{branch, frontmatter, git};
+use crate::{branch, frontmatter, git, naming};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -969,23 +969,81 @@ pub fn read_stages(
 
 pub use crate::branch::current_branch;
 
-/// `change/*` branches other than the current one and `change/pending-*`, without the `change/` prefix.
+/// The first change folder (system, then change name, in sorted order) that `tip` holds and `base` does
+/// not. A branch holding several new folders is listed for the first only.
+fn new_folder_at(
+    repo: &git::Repo,
+    base: &str,
+    tip: &str,
+) -> Option<(String, String, Option<Vec<u8>>)> {
+    for system in repo.folder_names_at(tip, "intent") {
+        for change in repo.folder_names_at(tip, &format!("intent/{system}")) {
+            let folder = format!("intent/{system}/{change}");
+            if !is_change_name(&change) || repo.entry_at(base, &folder).ok().flatten().is_some() {
+                continue;
+            }
+            let record = repo
+                .bytes_at(tip, &format!("{folder}/branch.md"))
+                .ok()
+                .flatten();
+            return Some((system, change, record));
+        }
+    }
+    None
+}
+
+/// The local branches other than the current one that hold a change, read from their tips without
+/// checking anything out. `change/<folder>` names list as that folder; `change/pending-*` lists when it
+/// holds a new change with no record in a system that declares naming; any other name lists when a new
+/// change's committed `branch.md` names exactly that branch.
 pub fn other_change_branches(master: &Path) -> Vec<OtherBranch> {
     let Ok(repo) = git::Repo::open(master) else {
         return Vec::new();
     };
     let current = repo.current_branch();
-    repo.local_branches()
-        .iter()
-        .filter(|b| Some(b.as_str()) != current.as_deref())
-        .filter_map(|b| b.strip_prefix("change/"))
-        .filter(|b| !b.starts_with("pending-"))
-        .map(|c| OtherBranch {
-            branch: format!("change/{c}"),
-            change: c.to_string(),
-            needs_name: false,
-        })
-        .collect()
+    let base = branch::default_base(master);
+    let mut found = Vec::new();
+    for name in repo.local_branches() {
+        if Some(name.as_str()) == current.as_deref() {
+            continue;
+        }
+        if let Some(folder) = name.strip_prefix("change/") {
+            if !folder.starts_with("pending-") {
+                found.push(OtherBranch {
+                    branch: name.clone(),
+                    change: folder.to_string(),
+                    needs_name: false,
+                });
+                continue;
+            }
+        }
+        let Some(base) = base.as_deref() else {
+            continue;
+        };
+        let Some((system, change, record)) = new_folder_at(&repo, base, &name) else {
+            continue;
+        };
+        if name.starts_with("change/pending-") {
+            if record.is_none() && naming::declared(master, &system) {
+                found.push(OtherBranch {
+                    branch: name,
+                    change,
+                    needs_name: true,
+                });
+            }
+        } else if record
+            .and_then(|bytes| frontmatter::field(&String::from_utf8_lossy(&bytes), "branch"))
+            .as_deref()
+            == Some(name.as_str())
+        {
+            found.push(OtherBranch {
+                branch: name,
+                change,
+                needs_name: false,
+            });
+        }
+    }
+    found
 }
 
 /// Read `intent`, `spec`, or `plan` of a change from the working tree.

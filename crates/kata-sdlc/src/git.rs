@@ -265,6 +265,34 @@ impl Repo {
             .collect())
     }
 
+    /// The names directly under the folder `dir` in `rev`'s tree, sorted; empty when `rev` holds no
+    /// such folder or cannot be read.
+    pub(crate) fn folder_names_at(&self, rev: &str, dir: &str) -> Vec<String> {
+        let Ok(root) = self
+            .inner
+            .revparse_single(rev)
+            .and_then(|o| o.peel_to_tree())
+        else {
+            return Vec::new();
+        };
+        let tree = match root.get_path(Path::new(dir)) {
+            Ok(entry) if entry.kind() == Some(ObjectType::Tree) => {
+                match self.inner.find_tree(entry.id()) {
+                    Ok(tree) => tree,
+                    Err(_) => return Vec::new(),
+                }
+            }
+            _ => return Vec::new(),
+        };
+        let mut names: Vec<String> = tree
+            .iter()
+            .filter(|e| e.kind() == Some(ObjectType::Tree))
+            .map(|e| String::from_utf8_lossy(e.name_bytes()).into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
     /// "Committed": in the index and unchanged in both the index and the working tree. The answer of
     /// `ls-files --error-unmatch -- <rel>` together with an empty `status --porcelain -- <rel>`.
     pub fn is_committed(&self, rel: &str) -> bool {
