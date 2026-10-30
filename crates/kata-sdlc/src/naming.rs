@@ -403,6 +403,22 @@ mod tests {
     }
 
     #[test]
+    fn head_is_refused_as_a_branch_name_r12_1() {
+        assert!(matches!(
+            check_branch_name(&current(), "HEAD"),
+            Err(NamingError::Name(_))
+        ));
+    }
+
+    #[test]
+    fn a_scope_git_would_refuse_in_a_branch_is_refused_r5_2() {
+        for scope in ["HEAD", "v2.", "a.lock"] {
+            let problems = check_scope(&current(), scope).unwrap();
+            assert!(!problems.is_empty(), "{scope} was accepted");
+        }
+    }
+
+    #[test]
     fn a_scope_cannot_be_checked_without_a_plugin_that_can_name_branches() {
         assert_eq!(
             check_scope(&Readiness::Missing, "kata"),
