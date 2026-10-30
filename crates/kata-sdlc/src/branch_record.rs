@@ -484,7 +484,7 @@ mod tests {
                 None,
                 Some(("kata", "feat/A")),
             ),
-            // Rows 5 to 7: remote-tracking branches, reported with the remote name stripped.
+            // Rows 5 to 7: remote-tracking branches, reported with the remote name kept.
             (
                 "5",
                 "kata",
@@ -492,7 +492,7 @@ mod tests {
                 "feat/a",
                 "feat/a",
                 None,
-                Some(("kata", "feat/a")),
+                Some(("kata", "origin/feat/a")),
             ),
             (
                 "6",
@@ -501,7 +501,7 @@ mod tests {
                 "feat/a",
                 "feat/A",
                 None,
-                Some(("kata", "feat/a")),
+                Some(("kata", "origin/feat/a")),
             ),
             (
                 "7 existing is folder",
@@ -510,7 +510,7 @@ mod tests {
                 "feat/a",
                 "feat/a/b",
                 None,
-                Some(("kata", "feat/a")),
+                Some(("kata", "origin/feat/a")),
             ),
             (
                 "7 name is folder",
@@ -519,7 +519,7 @@ mod tests {
                 "feat/a/b",
                 "feat/a",
                 None,
-                Some(("kata", "feat/a/b")),
+                Some(("kata", "origin/feat/a/b")),
             ),
             // Row 8: unrelated, including a shared prefix that is not a folder.
             ("8 unrelated", "kata", false, "feat/b", "feat/a", None, None),
@@ -612,7 +612,7 @@ mod tests {
                 "feat/PROJ-123-reset",
                 true,
                 "feat/PROJ-123-reset",
-                "feat/PROJ-123-reset",
+                "origin/feat/PROJ-123-reset",
             ),
         ];
         for (repo, existing, is_remote, name, reported) in examples {
@@ -626,6 +626,22 @@ mod tests {
             }
             let got = clashes(tmp.path(), "ai-sdlc", SYSTEM, name, None).unwrap();
             assert_eq!(got, vec![clash(repo, reported)], "{repo} {existing} {name}");
+        }
+    }
+
+    #[test]
+    fn a_hand_edited_pending_name_is_invalid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (master, _) = workspace(tmp.path());
+        let rel = format!("intent/{SYSTEM}/{CHANGE}/branch.md");
+        testutil::write(
+            &master,
+            &rel,
+            "---\nbranch: change/pending-x\n---\n\ntext\n",
+        );
+        match change_branch(&master, SYSTEM, CHANGE) {
+            Err(RecordError::Invalid(msg)) => assert!(msg.contains("branch.md"), "{msg}"),
+            other => panic!("gave {other:?}"),
         }
     }
 
