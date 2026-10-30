@@ -282,6 +282,55 @@ mod tests {
     }
 
     #[test]
+    fn origin_head_target_wins_over_a_stale_main_r1_2() {
+        let (_tmp, repo) = master_with(NO_NAMING);
+        testutil::checkout(&repo, "develop", true);
+        testutil::commit_file(&repo, ".ai-sdlc.json", SETTING, "setting");
+        testutil::checkout(&repo, "main", false);
+        git::run(
+            &repo,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/develop",
+            ],
+        )
+        .unwrap();
+        assert!(declared(&repo, "kata"));
+        assert_eq!(setting(&current(), &repo, "kata"), Ok(Some(the_patterns())));
+    }
+
+    #[test]
+    fn the_current_branch_is_never_the_base_for_the_setting_r1_2() {
+        let (_tmp, repo) = master_with(NO_NAMING);
+        git::run(&repo, &["branch", "-m", "main", "trunk"]).unwrap();
+        testutil::checkout(&repo, "change/2026-11-02-x", true);
+        testutil::commit_file(&repo, ".ai-sdlc.json", SETTING, "add naming");
+        assert!(!declared(&repo, "kata"));
+        assert_eq!(setting(&current(), &repo, "kata"), Ok(None));
+    }
+
+    #[test]
+    fn no_marker_at_the_base_means_no_setting_yet_r2_1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        assert!(!declared(&repo, "kata"));
+        assert_eq!(setting(&current(), &repo, "kata"), Ok(None));
+    }
+
+    #[test]
+    fn a_marker_at_the_base_that_is_broken_stays_declared_r3_2() {
+        for marker in [
+            "this is not json",
+            r#"{"version":1}"#,
+            r#"{"version":1,"systems":{"kata":"x"}}"#,
+        ] {
+            let (_tmp, repo) = master_with(marker);
+            assert!(declared(&repo, "kata"), "{marker}");
+        }
+    }
+
+    #[test]
     fn setting_with_an_option_like_pattern_is_refused_r12_1() {
         let marker = r#"{"version":1,"systems":{"kata":{"naming":{"branch":"-f/{slug}","pullRequestTitle":"{title}"}}}}"#;
         let (_tmp, repo) = master_with(marker);
