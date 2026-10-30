@@ -88,23 +88,23 @@ fn moved_since_latest(
     let Some(since) = recorded else {
         return Vec::new();
     };
-    match committed_outside(master, system, change, since) {
+    // A rename commits `branch.md` and changes nothing the review looked at, so only this
+    // currency check lets it through; `verify_run` does not.
+    let dir = change_dir(system, change);
+    let allowed = [format!("{dir}/build/review.md"), format!("{dir}/branch.md")];
+    match committed_outside(master, &allowed, since) {
         Ok(files) => files,
         Err(e) => vec![format!("could not check the master repository: {e}")],
     }
 }
 
-/// The files committed in the master since `since` besides the change's `build/review.md`, sorted.
+/// The files committed in the master since `since` other than the `allowed` ones, sorted.
 fn committed_outside(
     master: &Path,
-    system: &str,
-    change: &str,
+    allowed: &[String],
     since: &str,
 ) -> Result<Vec<String>, GitError> {
     let committed = git::Repo::open(master)?.files_changed_since(since)?;
-    // A rename commits `branch.md` and changes nothing the review looked at.
-    let dir = change_dir(system, change);
-    let allowed = [format!("{dir}/build/review.md"), format!("{dir}/branch.md")];
     let files: BTreeSet<String> = committed
         .into_iter()
         .filter(|f| !allowed.contains(f))
@@ -132,11 +132,12 @@ pub fn verify_run(
     before: &BTreeMap<String, String>,
 ) -> Result<(), Vec<String>> {
     let could_not = |e: GitError| vec![format!("could not check the master repository: {e}")];
-    let mut touched: BTreeSet<String> = committed_outside(master, system, change, since)
-        .map_err(could_not)?
-        .into_iter()
-        .collect();
     let allowed = format!("{}/build/review.md", change_dir(system, change));
+    let mut touched: BTreeSet<String> =
+        committed_outside(master, std::slice::from_ref(&allowed), since)
+            .map_err(could_not)?
+            .into_iter()
+            .collect();
     let status = git::Repo::open(master)
         .and_then(|repo| repo.status(""))
         .map_err(could_not)?;
