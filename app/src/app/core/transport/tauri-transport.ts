@@ -42,14 +42,15 @@ import type { PublishRepo } from '@bindings/PublishRepo';
 import type { Offender } from '@bindings/Offender';
 import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { RepoChecks } from '@bindings/RepoChecks';
-import type { PrResult } from '@bindings/PrResult';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
 import type { DoneView } from '@bindings/DoneView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
-import { KataTransport } from './kata-transport';
+import type { PublishSummary } from '@bindings/PublishSummary';
+import type { RemoteClash } from '@bindings/RemoteClash';
+import { KataTransport, type NamingState, type RenameResult } from './kata-transport';
 
 /** The Tauri functions the transport needs, injectable so tests need no module mocking. */
 export interface TauriIpc {
@@ -103,6 +104,11 @@ export class TauriTransport extends KataTransport {
   sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope) { return this.ipc.invoke<void>('sdlc_discard', { master, before, paths, build }); }
   sdlcStartChange(master: string, base: string) { return this.ipc.invoke<string>('sdlc_start_change', { master, base }); }
   sdlcFinishChange(master: string, pending: string, base: string) { return this.ipc.invoke<FinishOutcome>('sdlc_finish_change', { master, pending, base }); }
+  sdlcNaming(_folder: string, _masterRepo: string, _system: string): Promise<NamingState> { throw new Error('not implemented'); }
+  sdlcSuggestBranch(_folder: string, _masterRepo: string, _system: string, _change: string, _workType: string): Promise<string> { throw new Error('not implemented'); }
+  sdlcConfirmBranch(_folder: string, _masterRepo: string, _system: string, _change: string, _pending: string, _name: string, _workType: string): Promise<FinishOutcome> { throw new Error('not implemented'); }
+  sdlcRenameBranch(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, _change: string, _newName: string): Promise<RenameResult> { throw new Error('not implemented'); }
+  sdlcRemoteClashes(_touched: PublishRepo[], _masterRepo: string, _system: string, _change: string): Promise<RemoteClash[]> { throw new Error('not implemented'); }
   sdlcCheckout(master: string, branch: string) { return this.ipc.invoke<void>('sdlc_checkout', { master, branch }); }
   sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean) { return this.ipc.invoke<DecideOutcome>('sdlc_decide', { master, system, change, decision, confirmed }); }
   sdlcRunLinks() { return this.ipc.invoke<RunLink[]>('sdlc_run_links'); }
@@ -124,7 +130,7 @@ export class TauriTransport extends KataTransport {
   sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending: string | null, action: BuildAction) { return this.ipc.invoke<PrepareOutcome>('sdlc_build_prepare', { folder, masterRepo, system, change, action, continueWithLeftovers, pending }); }
   sdlcBuildParticipants(folder: string, masterRepo: string, system: string, change: string, pending: string | null = null) { return this.ipc.invoke<Participant[]>('sdlc_build_participants', { folder, masterRepo, system, change, pending }); }
   sdlcBuildSettle(start: BuildStart) { return this.ipc.invoke<string[]>('sdlc_build_settle', { start }); }
-  sdlcBuildHeads(folder: string, repos: string[], change: string) { return this.ipc.invoke<Record<string, string>>('sdlc_build_heads', { folder, repos, change }); }
+  sdlcBuildHeads(folder: string, masterRepo: string, system: string, repos: string[], change: string) { return this.ipc.invoke<Record<string, string>>('sdlc_build_heads', { folder, masterRepo, system, repos, change }); }
   sdlcReviewVerify(master: string, system: string, change: string, since: string, before: Snapshot['dirty']) { return this.ipc.invoke<string[]>('sdlc_review_verify', { master, system, change, since, before }); }
   sdlcPluginReadiness(workdir: string | null) { return this.ipc.invoke<Readiness>('sdlc_plugin_readiness', { workdir }); }
   sdlcChangeRepos(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<ChangeRepo[]>('sdlc_change_repos', { folder, masterRepo, system, change }); }
@@ -140,10 +146,10 @@ export class TauriTransport extends KataTransport {
   sdlcRunChecks(folder: string, masterRepo: string, system: string, repo: PublishRepo) { return this.ipc.invoke<RepoChecks>('sdlc_run_checks', { folder, masterRepo, system, repo }); }
   sdlcGhSignedIn(repos: PublishRepo[]) { return this.ipc.invoke<string>('sdlc_gh_signed_in', { repos }); }
   sdlcGhOrigins(repos: PublishRepo[]) { return this.ipc.invoke<void>('sdlc_gh_origins', { repos }); }
-  sdlcPublish(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]) { return this.ipc.invoke<PrResult[]>('sdlc_publish', { folder, workspaceId, masterRepo, system, change, repos }); }
+  sdlcPublish(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]) { return this.ipc.invoke<PublishSummary>('sdlc_publish', { folder, workspaceId, masterRepo, system, change, repos }); }
   sdlcDoneView(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean) { return this.ipc.invoke<DoneView>('sdlc_done_view', { folder, masterRepo, workspaceId, system, change, buildFinished }); }
   sdlcRefreshPrStates(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean) { return this.ipc.invoke<DoneView>('sdlc_refresh_pr_states', { folder, masterRepo, workspaceId, system, change, buildFinished }); }
-  sdlcPullRequests(repos: PublishRepo[], change: string) { return this.ipc.invoke<PrState[]>('sdlc_pull_requests', { repos, change }); }
+  sdlcPullRequests(masterRepo: string, system: string, repos: PublishRepo[], change: string) { return this.ipc.invoke<PrState[]>('sdlc_pull_requests', { masterRepo, system, repos, change }); }
   loadBuildLayout() { return this.ipc.invoke<unknown>('load_build_layout'); }
   saveBuildLayout(layout: Record<string, unknown>) { return this.ipc.invoke<void>('save_build_layout', { layout }); }
   openUrl(url: string) { return this.ipc.invoke<void>('open_url', { url }); }

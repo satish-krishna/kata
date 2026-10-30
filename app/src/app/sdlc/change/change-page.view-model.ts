@@ -755,7 +755,7 @@ export class ChangePageViewModel {
           label: 'Open pull requests',
           run: async () => {
             try {
-              results = await this.transport.sdlcPublish(w.folder, w.id, master, this.system(), this.changeName(), this.doneRepos);
+              results = (await this.transport.sdlcPublish(w.folder, w.id, master, this.system(), this.changeName(), this.doneRepos)).results;
             } catch (e) {
               this.progress.fail('lock');
               throw e;
@@ -1257,7 +1257,7 @@ export class ChangePageViewModel {
           const [links, records, heads] = await Promise.all([
             this.transport.sdlcRunLinks(),
             this.transport.listRuns(),
-            this.transport.sdlcBuildHeads(folder, [master, ...productRepos], change),
+            this.transport.sdlcBuildHeads(folder, master, system, [master, ...productRepos], change),
           ]);
           // The review document decides when the change has one; the review run's exit code and words only when it has not.
           const document = await this.transport.sdlcReviewRecord(masterPath(folder, master), system, change);

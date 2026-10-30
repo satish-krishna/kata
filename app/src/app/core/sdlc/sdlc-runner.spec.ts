@@ -680,7 +680,7 @@ describe('SdlcRunner build', () => {
       await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalled());
       end(ctx, 'r1', 'success', 0);
       await drive(done);
-      expect(ctx.fake.sdlcBuildHeads).toHaveBeenCalledWith('/ws', ['commerce-docs', 'commerce-core'], '2026-10-12-photos');
+      expect(ctx.fake.sdlcBuildHeads).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', ['commerce-docs', 'commerce-core'], '2026-10-12-photos');
       expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledWith(expect.objectContaining({ stage: 'review', heads: { 'commerce-core': 'c0ffee' } }));
       expect(ctx.fake.sdlcBuildHeads.mock.invocationCallOrder[0]).toBeLessThan(ctx.startRun.mock.invocationCallOrder[0]);
     });

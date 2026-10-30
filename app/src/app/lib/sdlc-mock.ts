@@ -19,6 +19,8 @@ import type { Part } from '@bindings/Part';
 import type { Participant } from '@bindings/Participant';
 import type { PlanTask } from '@bindings/PlanTask';
 import type { PrResult } from '@bindings/PrResult';
+import type { RemoteClash } from '@bindings/RemoteClash';
+import type { NamingState, RenameResult } from '../core/transport/kata-transport';
 import type { PrState } from '@bindings/PrState';
 import type { DoneView } from '@bindings/DoneView';
 import type { PublishRepo } from '@bindings/PublishRepo';
@@ -615,6 +617,14 @@ export class SdlcMock {
     if (leaving !== branch && leaving.startsWith('change/') && !leaving.startsWith('change/pending-')) this.others.push(bare(leaving));
     this.current = branch;
   }
+
+  /** The demo system declares a naming setting; the patterns are the ones the ai-sdlc plugin documents. */
+  naming(): NamingState { return { kind: 'setting', branch: '{type}/{scope}-{slug}', pullRequestTitle: '{type}({scope}): {title}' }; }
+  /** The branch the pattern gives: the type, the demo scope and the change name without its date. */
+  suggestBranch(changeName: string, workType: string): string { return `${workType}/PROJ-123-${changeName.replace(/^d{4}-d{2}-d{2}-/, '')}`; }
+  confirmBranch(changeName: string, name: string): FinishOutcome { return { renamed: { branch: name, change: changeName } }; }
+  renameBranch(changeName: string, newName: string): RenameResult { return { old: `change/${changeName}`, new: newName, repos: [MOCK_MASTER] }; }
+  remoteClashes(): RemoteClash[] { return []; }
 
   decide(changeName: string, decision: Decision): DecideOutcome {
     this.changes = this.changes.map((c) => (c.change === changeName ? applyDecision(c, decision) : c));

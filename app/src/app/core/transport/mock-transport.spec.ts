@@ -178,8 +178,8 @@ describe('MockTransport', () => {
     const steps: PublishStep[] = [];
     await t.onPublishStep((step) => steps.push(step));
     const repos = await t.sdlcTouchedRepos(MOCK_WORKSPACE_FOLDER, 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE);
-    const results = await t.sdlcPublish(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, repos);
-    expect(results).toHaveLength(repos.length);
+    const summary = await t.sdlcPublish(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, repos);
+    expect(summary.results).toHaveLength(repos.length);
     expect(steps).toEqual(repos.flatMap((r) => [{ kind: 'pushing', repo: r.repo }, { kind: 'opening', repo: r.repo }]));
   });
 

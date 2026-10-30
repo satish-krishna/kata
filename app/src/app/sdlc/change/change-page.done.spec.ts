@@ -60,7 +60,7 @@ async function finished(tweak: (t: MockTransport) => void = () => undefined) {
   tweak(transport);
   const s = setup(transport);
   await ready(s.vm);
-  const heads = await transport.sdlcBuildHeads('', ['commerce-docs', ...REPOS], BUILD);
+  const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
   await transport.sdlcLinkRun({ workspace_id: s.vm.current()!.id, system: 'commerce', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
   const lock = TestBed.inject(LockStore);
   return { ...s, lock, steps: vi.spyOn(lock, 'runSteps') };
@@ -189,7 +189,7 @@ describe('declaring done', () => {
     const { vm, transport } = await finished((t) => {
       vi.spyOn(t, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 1 }]);
     });
-    const heads = await transport.sdlcBuildHeads('', ['commerce-docs', ...REPOS], BUILD);
+    const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
     const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
     const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({
@@ -208,7 +208,7 @@ describe('declaring done', () => {
 
   it('a review run that committed under plugin/ is not current when the change page is opened again (F17)', async () => {
     const { vm, transport } = await finished();
-    const heads = await transport.sdlcBuildHeads('', ['commerce-docs', ...REPOS], BUILD);
+    const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
     const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
     const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
     // The backend reports what the master committed since the head the review recorded; a fresh view model asks again and gets the same answer.
@@ -263,7 +263,7 @@ describe('declaring done', () => {
     const real = transport.sdlcPublish.bind(transport);
     const publish = vi.spyOn(transport, 'sdlcPublish').mockImplementationOnce(async (f, w, m, s, c, repos) => {
       const out = await real(f, w, m, s, c, repos);
-      return out.map((r) => (r.repo === 'customer-portal' ? { repo: r.repo, outcome: { kind: 'failed' as const, error: 'gh: HTTP 502' } } : r));
+      return { ...out, results: out.results.map((r) => (r.repo === 'customer-portal' ? { repo: r.repo, outcome: { kind: 'failed' as const, error: 'gh: HTTP 502' } } : r)) };
     });
     await vm.act('declare-done');
     await vm.confirmDone();
@@ -393,7 +393,7 @@ describe('declaring done from the build page', () => {
       return { ...got, repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })), tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } })), departures: [DEPARTURE] };
     });
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 0 }]);
-    const heads = await transport.sdlcBuildHeads('', ['commerce-docs', ...REPOS], BUILD);
+    const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
     await transport.sdlcLinkRun({ workspace_id: 'acme-commerce', system: 'commerce', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
     const publish = vi.spyOn(transport, 'sdlcPublish');
     const { container, fixture } = await mountPage(BUILD, transport);
@@ -546,10 +546,10 @@ describe('lasting links after a publish or a round', () => {
     );
     const publish = vi.spyOn(transport, 'sdlcPublish').mockImplementation(async () => {
       published = true;
-      return [
+      return { leftBehind: [], results: [
         { repo: 'commerce-core', outcome: { kind: 'opened' as const, url: 'https://github.com/acme/commerce-core/pull/7' } },
         { repo: 'customer-portal', outcome: { kind: 'failed' as const, error: 'push refused' } },
-      ];
+      ] };
     });
     await vm.act('declare-done');
     await vm.confirmDone();

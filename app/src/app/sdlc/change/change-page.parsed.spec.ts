@@ -48,7 +48,7 @@ describe('ChangePage parsed documents', () => {
     });
     vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({ files: [], loc: [] });
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 0 }]);
-    const heads = await transport.sdlcBuildHeads('', ['commerce-docs', ...REPOS], MOCK_BUILD_CHANGE);
+    const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], MOCK_BUILD_CHANGE);
     const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(reviewOfSix(commits));
     const { container, fixture } = await render(ChangePage, {}, [

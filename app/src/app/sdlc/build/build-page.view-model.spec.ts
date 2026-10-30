@@ -796,7 +796,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       const { vm, transport, runner } = setup();
       vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
       const heads = vi.spyOn(transport, 'sdlcBuildHeads');
-      heads.mockImplementation(async (_folder, repos) => Object.fromEntries(repos.map((r) => [r, r === MOCK_MASTER && run.mock.calls.length > 0 ? 'm2' : 'm1'])));
+      heads.mockImplementation(async (_folder, _master, _system, repos) => Object.fromEntries(repos.map((r) => [r, r === MOCK_MASTER && run.mock.calls.length > 0 ? 'm2' : 'm1'])));
       const targets: string[] = [];
       const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
         targets.push(target.kind === 'review' ? 'review' : target.repo);
@@ -1830,7 +1830,7 @@ describe('the layout follows the real build page through a finish, whatever orde
 
   it('R10.5, R16.1: a finished change whose review exists only as a run opens in Review, without a move or an announcement, however late its sessions are read', async () => {
     const { vm, transport, layout, stages, said } = layoutSetup();
-    const heads = await transport.sdlcBuildHeads(FOLDER, [MOCK_MASTER, 'commerce-core', 'customer-portal'], MOCK_BUILD_CHANGE);
+    const heads = await transport.sdlcBuildHeads(FOLDER, MOCK_MASTER, 'commerce', [MOCK_MASTER, 'commerce-core', 'customer-portal'], MOCK_BUILD_CHANGE);
     const review: RunLink = { workspace_id: 'acme-commerce', system: 'commerce', change: MOCK_BUILD_CHANGE, stage: 'review', run_id: 'review-1', started_at: 1, heads };
     const gate = deferred();
     vi.spyOn(transport, 'sdlcRunLinks').mockImplementation(async () => {
