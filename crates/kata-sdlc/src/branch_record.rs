@@ -62,10 +62,12 @@ pub fn change_branch(master: &Path, system: &str, change: &str) -> Result<String
     let Some(branch) = frontmatter::field(&text, "branch").filter(|b| !b.is_empty()) else {
         return Err(RecordError::Invalid(format!("{rel} has no branch")));
     };
-    // A local check is enough here: Kata checked the name through the format program when it wrote
-    // the record, so this only keeps a hand edit from reaching git. The resolver runs on every page
-    // read and has no plugin handle. A pending name is reserved, so a record may not use it.
+    // The record can be hand edited, so the name is checked here before it reaches git. The resolver
+    // runs on every page read and has no plugin handle, so this mirrors only the format program's
+    // refusals that git itself would make (a leading dash, an invalid ref name, HEAD). A pending
+    // name is reserved, so a record may not use it.
     if branch.starts_with('-')
+        || branch == "HEAD"
         || branch.starts_with(PENDING_PREFIX)
         || !git2::Reference::is_valid_name(&format!("refs/heads/{branch}"))
     {
