@@ -1025,6 +1025,10 @@ export class BuildPageViewModel {
             this.refusal.set({ reason: out.message, problems: out.problems });
             return;
           }
+          if (out.kind === 'branchTaken') {
+            this.refusal.set({ reason: `${out.repo} already has a branch ${out.branch} holding work from outside this change`, problems: [] });
+            return;
+          }
           if (out.kind === 'needsConfirm') {
             this.ask(key, out.leftovers.flatMap((r) => r.files.map((f) => `${r.repo}: ${f}`)));
             return;
@@ -1055,7 +1059,7 @@ export class BuildPageViewModel {
     this.progress.begin('preparing-build', progressLabels.preparingBuild(), 'build');
     try {
       const out = await this.transport.sdlcBuildPrepare(folder, master, system, change, withLeftovers, owner, 'continue');
-      if (out.kind === 'refused') this.progress.fail('build');
+      if (out.kind === 'refused' || out.kind === 'branchTaken') this.progress.fail('build');
       else this.progress.end('build');
       return out;
     } catch (e) {

@@ -241,6 +241,7 @@ export class SdlcRunner {
     try {
       const out = await this.transport.sdlcBuildPrepare(req.folder, req.masterRepo, req.system, req.change, req.continueWithLeftovers, req.pending ?? null, req.action);
       if (out.kind === 'refused') return { kind: 'refused', reason: out.message, problems: out.problems };
+      if (out.kind === 'branchTaken') return { kind: 'refused', reason: `${out.repo} already has a branch ${out.branch} holding work from outside this change` };
       if (out.kind === 'ready') {
         this.held = [];
         return { kind: 'ready', start: out.start };

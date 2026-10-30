@@ -3,4 +3,4 @@ import type { BuildStart } from "./BuildStart";
 import type { Problem } from "./Problem";
 import type { RepoFiles } from "./RepoFiles";
 
-export type PrepareOutcome = { "kind": "ready", start: BuildStart, } | { "kind": "needsConfirm", leftovers: Array<RepoFiles>, } | { "kind": "refused", message: string, problems: Array<Problem>, };
+export type PrepareOutcome = { "kind": "ready", start: BuildStart, } | { "kind": "needsConfirm", leftovers: Array<RepoFiles>, } | { "kind": "refused", message: string, problems: Array<Problem>, } | { "kind": "branchTaken", repo: string, branch: string, };

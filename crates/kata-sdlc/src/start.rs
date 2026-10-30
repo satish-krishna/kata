@@ -99,6 +99,9 @@ enum Action {
     Continue,
 }
 
+/// A repository's change branch holds work from outside the change.
+struct Taken;
+
 struct Classified {
     repo: String,
     path: PathBuf,
@@ -107,14 +110,15 @@ struct Classified {
 }
 
 /// Where one product repository stands, per the start table. Changes nothing. `dirty` is what the
-/// participants model read in its working tree.
+/// participants model read in its working tree. `Ok(Err(Taken))` means the branch holds work from
+/// outside the change.
 fn classify(
     path: &Path,
     repo: &str,
     branch: &str,
     scope: &str,
     dirty: &[String],
-) -> Result<(Classified, Option<RepoFiles>), BuildError> {
+) -> Result<Result<(Classified, Option<RepoFiles>), Taken>, BuildError> {
     let Some(base) = base_branch(path) else {
         return refuse(format!(
             "{repo} has no base branch: no origin/HEAD, main or master"
@@ -125,14 +129,12 @@ fn classify(
         let tip = format!("refs/heads/{branch}");
         let revs = build_work_revs(path, &tip)?;
         if !offenders_to(path, repo, &revs, scope)?.is_empty() {
-            return refuse(format!(
-                "{repo} already has a branch {branch} holding work from outside this change"
-            ));
+            return Ok(Err(Taken));
         }
     }
     let current = current_branch(path);
     let done = |action, leftovers| {
-        (
+        Ok(Ok((
             Classified {
                 repo: repo.to_string(),
                 path: path.to_path_buf(),
@@ -140,7 +142,7 @@ fn classify(
                 action,
             },
             leftovers,
-        )
+        )))
     };
     match current.as_deref() {
         Some(c) if c == branch => {
@@ -148,7 +150,7 @@ fn classify(
                 repo: repo.to_string(),
                 files: dirty.to_vec(),
             });
-            Ok(done(Action::Continue, leftovers))
+            done(Action::Continue, leftovers)
         }
         Some(c) if c == base => {
             if !dirty.is_empty() {
@@ -162,7 +164,7 @@ fn classify(
             } else {
                 Action::Create
             };
-            Ok(done(action, None))
+            done(action, None)
         }
         other => refuse(format!(
             "{repo} is on branch {}; switch it to {base} first",
@@ -278,7 +280,13 @@ pub fn prepare(
             take(&p.repo, Vec::new());
             continue;
         }
-        let (c, files) = classify(Path::new(&p.path), &p.repo, &branch, &scope, &p.files)?;
+        let Ok((c, files)) = classify(Path::new(&p.path), &p.repo, &branch, &scope, &p.files)?
+        else {
+            return Ok(PrepareOutcome::BranchTaken {
+                repo: p.repo.clone(),
+                branch,
+            });
+        };
         take(&p.repo, files.map(|f| f.files).unwrap_or_default());
         classified.push(c);
     }
