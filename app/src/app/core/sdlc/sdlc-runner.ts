@@ -477,6 +477,8 @@ export class SdlcRunner {
       }
       return { kind: 'none', idea, runId: out.runId };
     }
+    // A branch that still needs a name is handled by the confirmation step, not here.
+    if (!('renamed' in outcome)) return { kind: 'stopped' };
     const { change, branch: changeBranch } = outcome.renamed;
     if (out.runId) {
       try {

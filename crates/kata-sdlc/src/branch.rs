@@ -1,6 +1,7 @@
+use crate::branch_record::{self, BranchRecord, RecordVerb};
 use crate::changes::is_change_name;
 use crate::git::{self, GitError};
-use crate::naming::NamingError;
+use crate::naming::{self, NamingError};
 use crate::plugin::Readiness;
 use crate::snapshot::status_entries;
 use std::collections::BTreeSet;
@@ -37,6 +38,8 @@ pub enum BranchError {
     PendingHasCommits,
     #[error("invalid branch name: {0}")]
     InvalidName(String),
+    #[error("{0}")]
+    Record(String),
     #[error(transparent)]
     Git(#[from] GitError),
 }
@@ -164,7 +167,15 @@ pub fn finish_pending(
         .into_iter()
         .find(|sc| !existing_on(&repo, base, sc));
     if let Some(sc) = created {
-        let change = sc.rsplit('/').next().unwrap_or(&sc).to_string();
+        let (system, change) = sc.split_once('/').unwrap_or(("", &sc));
+        let (system, change) = (system.to_string(), change.to_string());
+        if naming::declared(master, &system) {
+            return Ok(FinishOutcome::NeedsName {
+                pending: pending.to_string(),
+                system,
+                change,
+            });
+        }
         let branch = format!("change/{change}");
         repo.rename_branch(pending, &branch)?;
         return Ok(FinishOutcome::Renamed { branch, change });
@@ -178,30 +189,75 @@ pub fn finish_pending(
     Ok(FinishOutcome::Deleted)
 }
 
-/// Name a pending branch after the engineer's confirmed `name` and record it.
+/// The conventional work types a branch name may be recorded under.
+const WORK_TYPES: [&str; 11] = [
+    "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
+];
+
+/// Name a pending branch after the engineer's confirmed `name`: record it in `branch.md` and rename the
+/// pending branch to it. Every check runs before the first write.
 #[allow(clippy::too_many_arguments)]
 pub fn confirm_branch(
-    _plugin: &Readiness,
-    _folder: &Path,
-    _master_repo: &str,
-    _system: &str,
-    _change: &str,
-    _pending: &str,
-    _name: &str,
-    _work_type: &str,
+    plugin: &Readiness,
+    folder: &Path,
+    master_repo: &str,
+    system: &str,
+    change: &str,
+    pending: &str,
+    name: &str,
+    work_type: &str,
 ) -> Result<FinishOutcome, BranchError> {
-    todo!()
+    let master = folder.join(master_repo);
+    if !pending.starts_with("change/pending-") {
+        return Err(BranchError::InvalidName(pending.to_string()));
+    }
+    require_local_branch(&master, pending)?;
+    if current_branch(&master).as_deref() != Some(pending) {
+        return Err(BranchError::InvalidName(pending.to_string()));
+    }
+    if !WORK_TYPES.contains(&work_type) {
+        return Err(BranchError::InvalidName(format!(
+            "the work type `{work_type}` is not one of {}",
+            WORK_TYPES.join(", ")
+        )));
+    }
+    naming::check_branch_name(plugin, name).map_err(|e| match e {
+        NamingError::Name(problem) => BranchError::InvalidName(problem),
+        other => BranchError::Record(other.to_string()),
+    })?;
+    let clashes = branch_record::clashes(folder, master_repo, system, name, None)
+        .map_err(|e| BranchError::Record(e.to_string()))?;
+    if !clashes.is_empty() {
+        let text: Vec<String> = clashes
+            .iter()
+            .map(|c| format!("clashes with `{}` in `{}`", c.existing, c.repo))
+            .collect();
+        return Err(BranchError::InvalidName(text.join("; ")));
+    }
+    let record = BranchRecord {
+        branch: name.to_string(),
+        work_type: Some(work_type.to_string()),
+    };
+    branch_record::write(&master, system, change, &record, RecordVerb::Name)
+        .map_err(|e| BranchError::Record(e.to_string()))?;
+    git::Repo::open(&master)?.rename_branch(pending, name)?;
+    Ok(FinishOutcome::Renamed {
+        branch: name.to_string(),
+        change: change.to_string(),
+    })
 }
 
-/// The branch name the system's pattern gives `change`.
+/// The branch name the system's pattern gives `change` as work of type `work_type`.
 pub fn suggest_branch(
-    _plugin: &Readiness,
-    _master: &Path,
-    _system: &str,
-    _change: &str,
-    _work_type: &str,
+    plugin: &Readiness,
+    master: &Path,
+    system: &str,
+    change: &str,
+    work_type: &str,
 ) -> Result<String, NamingError> {
-    todo!()
+    naming::names(plugin, master, system, change, work_type)?
+        .map(|n| n.branch)
+        .ok_or_else(|| NamingError::Unreadable("the system declares no naming setting".into()))
 }
 
 /// Switch branches. Refuses a dirty working tree.
@@ -310,6 +366,7 @@ mod tests {
     fn finish_renames_when_folder_created() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
+        testutil::commit_file(&repo, ".ai-sdlc.json", CLAIMS_MARKER, "marker");
         let pending = start_pending(&repo, "main", 1_792_368_000).unwrap();
         testutil::commit_file(
             &repo,
@@ -336,6 +393,7 @@ mod tests {
     fn finish_renames_for_uncommitted_folder() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
+        testutil::commit_file(&repo, ".ai-sdlc.json", CLAIMS_MARKER, "marker");
         let pending = start_pending(&repo, "main", 1_792_368_000).unwrap();
         let dir = repo.join("intent/claims/2026-10-18-new-thing");
         std::fs::create_dir_all(&dir).unwrap();
@@ -421,6 +479,7 @@ mod tests {
         assert!(lines.iter().all(|l| l.ends_with(" 1")), "{ran}");
     }
 
+    const CLAIMS_MARKER: &str = r#"{"version":1,"systems":{"claims":{"repos":["m"]}}}"#;
     const NAMED: &str = r#"{"version":1,"systems":{"kata":{"repos":["kata"],"naming":{"branch":"{type}/{scope}-{slug}","pullRequestTitle":"{type}({scope}): {title}"}}}}"#;
     const UNNAMED: &str = r#"{"version":1,"systems":{"kata":{"repos":["kata"]}}}"#;
     const CHANGE: &str = "2026-11-02-password-reset";
