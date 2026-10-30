@@ -18,12 +18,12 @@ import { BuildPage } from './build-page';
 import { BuildPageViewModel } from './build-page.view-model';
 import type { BuildChanges, BuildPageView, ShownSession, StatusText, TaskGroupView } from './build-page.view-model';
 
-const CHANGES: BuildChanges = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'claims', change: MOCK_BUILD_CHANGE };
+const CHANGES: BuildChanges = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'commerce', change: MOCK_BUILD_CHANGE };
 
 const NOT_STARTED: StatusText = { tone: 'idle', label: 'Not started' };
 const DONE: StatusText = { tone: 'success', label: 'Done' };
 const RUNNING: StatusText = { tone: 'success', label: 'Running' };
-const WAITING: StatusText = { tone: 'idle', label: 'Waiting for T1 in claims-core' };
+const WAITING: StatusText = { tone: 'idle', label: 'Waiting for T1 in commerce-core' };
 const STOPPED: StatusText = { tone: 'error', label: 'Stopped here' };
 
 const task = (id: string, status: StatusText, extra: { departure?: string | null; picked?: boolean } = {}) => ({
@@ -90,7 +90,7 @@ const base = (over: Partial<BuildPageView> = {}): BuildPageView => ({
 
 const LAYOUT: BuildLayoutState = { mode: 'overview', drawn: defaultArrangement('overview'), onShow: ['tasks', 'activity'], focus: null, flipped: {}, suggested: null };
 
-const done3 = [group('claims-core', { tone: 'success', label: 'Finished' }, null, [task('T1', DONE), task('T2', DONE)]), group('customer-portal', { tone: 'success', label: 'Finished' }, null, [task('T3', DONE)])];
+const done3 = [group('commerce-core', { tone: 'success', label: 'Finished' }, null, [task('T1', DONE), task('T2', DONE)]), group('customer-portal', { tone: 'success', label: 'Finished' }, null, [task('T3', DONE)])];
 
 const FOUND: Finding[] = [
   { severity: 'critical', text: 'The upload limit is duplicated.' },
@@ -189,7 +189,7 @@ describe('the build page at each stage', () => {
     const { area, barActions, el } = await mount(
       stage('not-started', {
         actions: ['start-build', 'reopen-intent'],
-        groups: [group('claims-core', NOT_STARTED, null, [task('T1', NOT_STARTED), task('T2', NOT_STARTED)])],
+        groups: [group('commerce-core', NOT_STARTED, null, [task('T1', NOT_STARTED), task('T2', NOT_STARTED)])],
         areas: { activity: false, files: false },
       }),
     );
@@ -209,21 +209,21 @@ describe('the build page at each stage', () => {
     const v = stage('running', {
       actions: ['cancel-build'],
       groups: [
-        group('claims-core', { tone: 'success', label: 'Working · T2' }, 'cancel', [task('T1', DONE), task('T2', RUNNING, { picked: true })], true),
-        group('customer-portal', { tone: 'idle', label: 'Waiting for T1 in claims-core' }, null, [task('T3', WAITING)]),
+        group('commerce-core', { tone: 'success', label: 'Working · T2' }, 'cancel', [task('T1', DONE), task('T2', RUNNING, { picked: true })], true),
+        group('customer-portal', { tone: 'idle', label: 'Waiting for T1 in commerce-core' }, null, [task('T3', WAITING)]),
       ],
-      pick: { kind: 'repo', repo: 'claims-core' },
+      pick: { kind: 'repo', repo: 'commerce-core' },
       sessions: [session('r1')],
     });
     const { area, barActions, headingButtons, el } = await mount(v);
     const labels = Array.from(area('tasks')!.querySelectorAll('[data-task]')).map((t) => norm(t.textContent));
     expect(labels[0]).toContain('Done');
     expect(labels[1]).toContain('Running');
-    expect(labels[2]).toContain('Waiting for T1 in claims-core');
+    expect(labels[2]).toContain('Waiting for T1 in commerce-core');
     expect(area('activity')!.querySelectorAll('app-observe-pane')).toHaveLength(1);
     expect(area('files')!.querySelector('app-changes-view')).not.toBeNull();
     expect(barActions()).toEqual(['Cancel build']);
-    expect(headingButtons()).toEqual(['claims-core', 'Cancel', 'customer-portal']);
+    expect(headingButtons()).toEqual(['commerce-core', 'Cancel', 'customer-portal']);
     expect(norm(el.querySelector('[data-bar]')!.textContent)).toContain('1/3 tasks');
   });
 
@@ -231,7 +231,7 @@ describe('the build page at each stage', () => {
     const v = stage('running', {
       actions: ['cancel-build'],
       groups: [
-        group('claims-core', { tone: 'warning', label: 'Waiting for you' }, 'cancel', [task('T1', RUNNING)], true, { clock: 'work 0:12:00 of 2:00:00', paused: '1:15 waiting (not counted)', unseen: 4 }),
+        group('commerce-core', { tone: 'warning', label: 'Waiting for you' }, 'cancel', [task('T1', RUNNING)], true, { clock: 'work 0:12:00 of 2:00:00', paused: '1:15 waiting (not counted)', unseen: 4 }),
         group('customer-portal', { tone: 'success', label: 'Working · T2' }, 'cancel', [task('T2', RUNNING)]),
       ],
     });
@@ -250,11 +250,11 @@ describe('the build page at each stage', () => {
     const v = stage('running-one-stopped', {
       actions: ['cancel-build'],
       groups: [
-        group('claims-core', { tone: 'success', label: 'Working · T2' }, 'cancel', [task('T1', DONE), task('T2', RUNNING)]),
+        group('commerce-core', { tone: 'success', label: 'Working · T2' }, 'cancel', [task('T1', DONE), task('T2', RUNNING)]),
         group('customer-portal', { tone: 'error', label: 'Stopped at T3' }, 'continue', [task('T3', STOPPED)]),
       ],
       stops: [{ repo: 'customer-portal', reason }],
-      pick: { kind: 'repo', repo: 'claims-core' },
+      pick: { kind: 'repo', repo: 'commerce-core' },
       sessions: [session('r1')],
     });
     const { area, barActions, headingButtons } = await mount(v, { stopped: ['customer-portal'] });
@@ -263,7 +263,7 @@ describe('the build page at each stage', () => {
     expect(norm(area('activity')!.querySelector('[data-stops]')!.textContent)).toContain(`customer-portal ${reason}`);
     expect(area('files')!.querySelector('app-changes-view')).not.toBeNull();
     expect(barActions()).toEqual(['Cancel build']);
-    expect(headingButtons()).toEqual(['claims-core', 'Cancel', 'customer-portal', 'Continue customer-portal']);
+    expect(headingButtons()).toEqual(['commerce-core', 'Cancel', 'customer-portal', 'Continue customer-portal']);
   });
 
   for (const [name, s, message] of [
@@ -273,19 +273,19 @@ describe('the build page at each stage', () => {
     it(`${name}: each repository's stop, why, leftovers, and continue a repository or ask for another round`, async () => {
       const v = stage(s, {
         actions: ['continue-build', 'another-round'],
-        groups: [group('claims-core', { tone: 'error', label: 'Stopped at T2' }, 'continue', [task('T1', DONE), task('T2', STOPPED)])],
+        groups: [group('commerce-core', { tone: 'error', label: 'Stopped at T2' }, 'continue', [task('T1', DONE), task('T2', STOPPED)])],
         stageMessage: { title: message, lines: [] },
-        stops: [{ repo: 'claims-core', reason: stopMessage(130, null) }],
-        pick: { kind: 'repo', repo: 'claims-core' },
+        stops: [{ repo: 'commerce-core', reason: stopMessage(130, null) }],
+        pick: { kind: 'repo', repo: 'commerce-core' },
         sessions: [],
       });
-      const { area, barActions, headingButtons } = await mount(v, { stopped: ['claims-core'] });
+      const { area, barActions, headingButtons } = await mount(v, { stopped: ['commerce-core'] });
       expect(norm(area('tasks')!.querySelectorAll('[data-task]')[1].textContent)).toContain('Stopped here');
       expect(norm(area('activity')!.textContent)).toContain(message);
-      expect(norm(area('activity')!.querySelector('[data-stops]')!.textContent)).toContain('claims-core');
+      expect(norm(area('activity')!.querySelector('[data-stops]')!.textContent)).toContain('commerce-core');
       expect(area('files')!.querySelector('app-changes-view')).not.toBeNull();
       expect(barActions()).toEqual(['Continue build', 'Another round']);
-      expect(headingButtons()).toContain('Continue claims-core');
+      expect(headingButtons()).toContain('Continue commerce-core');
     });
   }
 
@@ -343,8 +343,8 @@ describe('the build page at each stage', () => {
 describe('the build page, questions and stops', () => {
   it('a question in another repository shows on the page and one step goes to it', async () => {
     const v = base({
-      groups: [group('claims-core', RUNNING, 'cancel', [task('T1', RUNNING)], true), group('customer-portal', RUNNING, 'cancel', [task('T2', RUNNING)])],
-      pick: { kind: 'repo', repo: 'claims-core' },
+      groups: [group('commerce-core', RUNNING, 'cancel', [task('T1', RUNNING)], true), group('customer-portal', RUNNING, 'cancel', [task('T2', RUNNING)])],
+      pick: { kind: 'repo', repo: 'commerce-core' },
       sessions: [session('r1')],
       waiting: [{ repo: 'customer-portal', kind: 'answer', countdown: null, waited: '0:05' }],
     });
@@ -372,7 +372,7 @@ describe('the build page, questions and stops', () => {
     });
     onTestFinished(() => void delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView);
     const v = base({
-      groups: [group('claims-core', RUNNING, 'cancel', [task('T1', RUNNING)]), group('customer-portal', RUNNING, 'cancel', [task('T2', RUNNING)], true)],
+      groups: [group('commerce-core', RUNNING, 'cancel', [task('T1', RUNNING)]), group('customer-portal', RUNNING, 'cancel', [task('T2', RUNNING)], true)],
       pick: { kind: 'repo', repo: 'customer-portal' },
       sessions: [
         session('hidden', { state: 'awaiting', asks: [ask('h1', null)], shown: false }),
@@ -419,21 +419,21 @@ describe('the build page, questions and stops', () => {
     const v = base({
       stage: 'running-one-stopped',
       groups: [
-        group('claims-core', { tone: 'error', label: 'Stopped at T2' }, 'continue', [task('T1', DONE), task('T2', STOPPED)]),
+        group('commerce-core', { tone: 'error', label: 'Stopped at T2' }, 'continue', [task('T1', DONE), task('T2', STOPPED)]),
         group('customer-portal', RUNNING, 'cancel', [task('T3', RUNNING)]),
       ],
-      stops: [{ repo: 'claims-core', reason }],
+      stops: [{ repo: 'commerce-core', reason }],
       pick: { kind: 'repo', repo: 'customer-portal' },
       sessions: [session('r1')],
     });
-    const { el, area, fixture } = await mount(v, { stopped: ['claims-core'] });
+    const { el, area, fixture } = await mount(v, { stopped: ['commerce-core'] });
     const stops = norm(area('activity')!.querySelector('[data-stops]')!.textContent);
-    expect(stops).toContain('claims-core');
+    expect(stops).toContain('commerce-core');
     expect(stops).toContain(reason);
     expect(norm(area('tasks')!.querySelectorAll('[data-task]')[1].textContent)).toContain('Stopped here');
     expect(norm(el.querySelectorAll('[data-group]')[1].textContent)).toContain('Running');
     // The uncommitted file the stopped run left shows in the changed files.
-    const open = Array.from(el.querySelectorAll<HTMLElement>('app-repo-file-list [data-repo]')).find((h) => norm(h.textContent).startsWith('claims-core'));
+    const open = Array.from(el.querySelectorAll<HTMLElement>('app-repo-file-list [data-repo]')).find((h) => norm(h.textContent).startsWith('commerce-core'));
     open?.click();
     await settle();
     fixture.detectChanges();
@@ -460,37 +460,37 @@ describe('the build page, picking and folding', () => {
   it('emits what the engineer picks and the buttons they press', async () => {
     const v = base({
       actions: ['cancel-build'],
-      groups: [group('claims-core', RUNNING, 'cancel', [task('T1', RUNNING)])],
+      groups: [group('commerce-core', RUNNING, 'cancel', [task('T1', RUNNING)])],
       review: { status: { tone: 'idle', label: 'Not run' }, action: null, picked: false },
       sessions: [session('r1')],
     });
     const { host, area, button, bar } = await mount(v);
     (area('tasks')!.querySelector('[data-task]') as HTMLButtonElement).click();
     (area('tasks')!.querySelector('[data-review]') as HTMLButtonElement).click();
-    button(area('tasks')!, 'claims-core')!.click();
+    button(area('tasks')!, 'commerce-core')!.click();
     button(area('tasks')!, 'Cancel')!.click();
     button(bar(), 'Cancel build')!.click();
-    expect(host.picks).toEqual([{ kind: 'task', task: 'T1' }, { kind: 'review' }, { kind: 'repo', repo: 'claims-core' }]);
-    expect(host.repoActions).toEqual([{ repo: 'claims-core', action: 'cancel' }]);
+    expect(host.picks).toEqual([{ kind: 'task', task: 'T1' }, { kind: 'review' }, { kind: 'repo', repo: 'commerce-core' }]);
+    expect(host.repoActions).toEqual([{ repo: 'commerce-core', action: 'cancel' }]);
     expect(host.cancels).toBe(1);
     expect(host.acts).toEqual([]);
   });
 
   it('marks a done task with a departure and says the picked session is not known', async () => {
     const v = base({
-      groups: [group('claims-core', RUNNING, null, [task('T1', DONE, { departure: 'Used a queue instead' })])],
+      groups: [group('commerce-core', RUNNING, null, [task('T1', DONE, { departure: 'Used a queue instead' })])],
       pick: { kind: 'task', task: 'T1' },
-      sessionNote: 'This task was recorded before Kata linked tasks to runs, or on another machine. Showing every session of claims-core.',
+      sessionNote: 'This task was recorded before Kata linked tasks to runs, or on another machine. Showing every session of commerce-core.',
       sessions: [session('r1')],
     });
     const { area } = await mount(v);
     expect(area('tasks')!.querySelector('[data-departure]')).not.toBeNull();
-    expect(norm(area('activity')!.textContent)).toContain('Showing every session of claims-core.');
+    expect(norm(area('activity')!.textContent)).toContain('Showing every session of commerce-core.');
   });
 
   it('folds an earlier session to one line, keeps its pane mounted, and opens it when picked', async () => {
     const v = base({
-      pick: { kind: 'repo', repo: 'claims-core' },
+      pick: { kind: 'repo', repo: 'commerce-core' },
       sessions: [session('r0', { latest: false, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
     });
     const { area, host, el } = await mount(v);
@@ -508,7 +508,7 @@ describe('the build page, picking and folding', () => {
 
   it('lets only a session with a showing pane grow', async () => {
     const v = base({
-      pick: { kind: 'repo', repo: 'claims-core' },
+      pick: { kind: 'repo', repo: 'commerce-core' },
       sessions: [session('r0', { latest: false, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
     });
     const { el } = await mount(v);
@@ -519,7 +519,7 @@ describe('the build page, picking and folding', () => {
 
   it('lets an expanded finished session grow like the live one', async () => {
     const v = base({
-      pick: { kind: 'repo', repo: 'claims-core' },
+      pick: { kind: 'repo', repo: 'commerce-core' },
       sessions: [session('r0', { latest: false, expanded: true, outcome: 'exit 124', startedAt: '08:00:00', live: false }), session('r1')],
     });
     const { el } = await mount(v);
@@ -610,7 +610,7 @@ class ArrangedHost {
   sessionOf: Record<string, string> | null = null;
   view: BuildPageView = base({
     groups: [
-      group('claims-core', RUNNING, 'cancel', [task('T1', DONE), task('T2', RUNNING)]),
+      group('commerce-core', RUNNING, 'cancel', [task('T1', DONE), task('T2', RUNNING)]),
       group('customer-portal', RUNNING, 'cancel', [task('T3', RUNNING)]),
     ],
     sessions: [session('r1')],
@@ -805,10 +805,10 @@ describe('the arranged build page', () => {
     const page = await mountArranged();
     const view = page.el.querySelector<HTMLElement>('app-changes-view')!;
     expect(view).not.toBeNull();
-    await page.click(page.inside(page.area('tasks'), 'button', 'claims-core'));
+    await page.click(page.inside(page.area('tasks'), 'button', 'commerce-core'));
     await page.click(page.area('tasks').querySelectorAll<HTMLElement>('[data-task]')[1]);
     await page.click(page.inside(view, 'button', 'Committed'));
-    const repoHead = Array.from(view.querySelectorAll<HTMLElement>('app-repo-file-list [data-repo]')).find((h) => page.text(h).startsWith('claims-core'));
+    const repoHead = Array.from(view.querySelectorAll<HTMLElement>('app-repo-file-list [data-repo]')).find((h) => page.text(h).startsWith('commerce-core'));
     if (view.querySelector('[data-file="src/store.rs"]') === null && repoHead !== undefined) await page.click(repoHead);
     await page.click(view.querySelector<HTMLElement>('[data-file="src/store.rs"]')!);
     expect(view.querySelector('[data-file="src/store.rs"]')!.getAttribute('aria-current')).toBe('true');
@@ -1247,8 +1247,8 @@ describe('the arranged build page from the keyboard', () => {
 
   it('R13.1: goes to a waiting question with the Go to of the waiting notice', async () => {
     const v = base({
-      groups: [group('claims-core', RUNNING, 'cancel', [task('T1', RUNNING)], true), group('customer-portal', RUNNING, 'cancel', [task('T2', RUNNING)])],
-      pick: { kind: 'repo', repo: 'claims-core' },
+      groups: [group('commerce-core', RUNNING, 'cancel', [task('T1', RUNNING)], true), group('customer-portal', RUNNING, 'cancel', [task('T2', RUNNING)])],
+      pick: { kind: 'repo', repo: 'commerce-core' },
       sessions: [session('r1')],
       waiting: [{ repo: 'customer-portal', kind: 'answer', countdown: null, waited: '0:05' }],
     });
@@ -1378,13 +1378,13 @@ describe('a waiting question on the arranged page', () => {
     onTestFinished(() => void delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView);
     const page = await mountArranged(stage);
     await page.mode('watch');
-    page.host.sessionOf = { 'claims-core': 'mine', 'customer-portal': 'asking' };
+    page.host.sessionOf = { 'commerce-core': 'mine', 'customer-portal': 'asking' };
     page.host.view = {
       ...page.host.view,
       sessions: [session('mine', { shown: true }), session('asking', { state: 'awaiting', asks: [asking], shown: false })],
       waiting: WAIT,
     };
-    page.host.choose({ kind: 'repo', repo: 'claims-core' });
+    page.host.choose({ kind: 'repo', repo: 'commerce-core' });
     page.fixture.debugElement.injector.get(ChangeDetectorRef).markForCheck();
     await page.refresh();
     const goTo = () => page.inside(page.el.querySelector<HTMLElement>('app-waiting-notice')!, 'button', 'Go to customer-portal');
@@ -1451,7 +1451,7 @@ describe('a waiting question on the arranged page', () => {
   it('R11.2: with the activity on show, Go to switches it to the asking repository and focuses its question', async () => {
     const page = await waitingPage();
     const before = page.current();
-    expect(page.pickedRepo()).toBe('claims-core');
+    expect(page.pickedRepo()).toBe('commerce-core');
     await page.click(page.goTo());
     expect(page.where('activity')).toBe('middle');
     expect(page.inert('activity')).toBe(false);
@@ -1526,8 +1526,8 @@ describe('the message box on the build page', () => {
 
   it('R6.1: a build run in one repository offers the box, and sending names that run', async () => {
     const v = base({
-      groups: [group('claims-core', RUNNING, 'cancel', [task('T1', RUNNING)], true)],
-      pick: { kind: 'repo', repo: 'claims-core' },
+      groups: [group('commerce-core', RUNNING, 'cancel', [task('T1', RUNNING)], true)],
+      pick: { kind: 'repo', repo: 'commerce-core' },
       sessions: [session('r1')],
     });
     const { el, host } = await mount(v);

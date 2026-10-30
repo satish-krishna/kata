@@ -3,11 +3,11 @@ import { render } from '../../testing/render';
 import { ReposTable } from './repos-table';
 
 const rows: RepoRow[] = [
-  { name: 'claims-intent', role: 'master', system: 'claims', context: null },
-  { name: 'claims-core', role: 'product', system: 'claims', context: { kind: 'fresh' } },
-  { name: 'customer-portal', role: 'product', system: 'claims', context: { kind: 'stale', commits: 14 } },
-  { name: 'ledger', role: 'product', system: 'claims', context: { kind: 'missing' } },
-  { name: 'billing-api', role: 'not-checked-out', system: 'claims', context: { kind: 'notCheckedOut' } },
+  { name: 'commerce-docs', role: 'master', system: 'commerce', context: null },
+  { name: 'commerce-core', role: 'product', system: 'commerce', context: { kind: 'fresh' } },
+  { name: 'customer-portal', role: 'product', system: 'commerce', context: { kind: 'stale', commits: 14 } },
+  { name: 'ledger', role: 'product', system: 'commerce', context: { kind: 'missing' } },
+  { name: 'billing-api', role: 'not-checked-out', system: 'commerce', context: { kind: 'notCheckedOut' } },
 ];
 const text = (c: HTMLElement) => c.textContent!.replace(/\s+/g, ' ');
 const runButtons = (c: HTMLElement) =>
@@ -17,7 +17,7 @@ describe('ReposTable', () => {
   it('shows each repo with its role and a labelled context state', async () => {
     const { container } = await render(ReposTable, { rows, marker: '.ai-sdlc.json · 1 system' });
     const t = text(container);
-    expect(t).toContain('claims-intent');
+    expect(t).toContain('commerce-docs');
     expect(t).toContain('master');
     expect(t).toContain('fresh');
     expect(t).toContain('stale · 14 commits');
@@ -36,7 +36,7 @@ describe('ReposTable', () => {
   it('offers Refresh context on fresh and stale rows, Run context on missing ones, nothing on the rest', async () => {
     const { container } = await render(ReposTable, { rows, marker: '' });
     expect(runButtons(container).map((b) => b.getAttribute('aria-label'))).toEqual([
-      'Refresh context for claims-core',
+      'Refresh context for commerce-core',
       'Refresh context for customer-portal',
       'Run context for ledger',
     ]);
@@ -48,7 +48,7 @@ describe('ReposTable', () => {
     const got: string[] = [];
     fixture.componentInstance.runContext.subscribe((n) => got.push(n));
     runButtons(container)[0].click();
-    expect(got).toEqual(['claims-core']);
+    expect(got).toEqual(['commerce-core']);
   });
 
   it('disables Run context while the app is locked', async () => {
@@ -60,7 +60,7 @@ describe('ReposTable', () => {
     const { fixture, container } = await render(ReposTable, { rows, marker: '' });
     const views = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter((b) => b.textContent!.trim() === 'View');
     expect(views.map((b) => b.getAttribute('aria-label'))).toEqual([
-      'View context of claims-core',
+      'View context of commerce-core',
       'View context of customer-portal',
       'View context of billing-api',
     ]);

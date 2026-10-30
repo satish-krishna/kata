@@ -5,9 +5,9 @@ import type { RunRecord } from '@bindings/RunRecord';
 import type { Finding } from './sdlc';
 import { canConfirm, checkLabel, checkTone, highFindings, reviewState, type DoneReport } from './sdlc-done';
 
-const SCOPE = { workspaceId: 'w1', system: 'claims', change: 'c1' };
+const SCOPE = { workspaceId: 'w1', system: 'commerce', change: 'c1' };
 const link = (over: Partial<RunLink> = {}): RunLink => ({
-  workspace_id: 'w1', system: 'claims', change: 'c1', stage: 'review', run_id: 'r1', started_at: 100, heads: { a: '1111111' }, ...over,
+  workspace_id: 'w1', system: 'commerce', change: 'c1', stage: 'review', run_id: 'r1', started_at: 100, heads: { a: '1111111' }, ...over,
 });
 const record = (id: string, exit: number | null | undefined): RunRecord => ({ id, kata: 'k', started_at: 100, isolation: 'none', steered: false, exit });
 const HEADS = { a: '1111111' };
@@ -21,7 +21,7 @@ const checks = (...results: CheckResult[]): RepoChecks => ({ repo: 'a', results,
 const report = (over: Partial<DoneReport> = {}): DoneReport => ({
   account: 'demo-user', notReady: null,
   repos: [{ repo: 'a', base: 'main', checks: [], result: checks(result('Passed')) }],
-  offenders: [], departures: [], review: { at: 1, findings: [] }, checksPath: '/k/claims.toml', checksError: null, ...over,
+  offenders: [], departures: [], review: { at: 1, findings: [] }, checksPath: '/k/commerce.toml', checksError: null, ...over,
 });
 
 describe('reviewState', () => {

@@ -32,12 +32,12 @@ describe('SdlcHome', () => {
     const { container } = await mount();
     const read = () => container.textContent!.replace(/\s+/g, ' ');
     // The names come first, each reading; each stage fills in when the scripted pass reads it.
-    expect(read()).toContain('2026-10-12-fnol-photo-upload');
+    expect(read()).toContain('2026-10-12-product-photo-upload');
     expect(read()).toContain('Reading');
     await vi.waitFor(async () => { await settle(); expect(read()).toContain('Spec · awaiting acceptance'); }, { timeout: 4000, interval: 100 });
     const text = read();
     expect(text).toContain('In progress on other branches');
-    expect(text).toContain('2026-10-17-claim-notes');
+    expect(text).toContain('2026-10-17-product-notes');
     expect(text).toContain('customer-portal');
     expect(text).toContain('stale · 14 commits');
     expect(container.querySelector('[data-testid="branch"]')!.textContent!.trim()).toBe('main');
@@ -51,11 +51,11 @@ describe('SdlcHome', () => {
     const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter((b) =>
       / context for /.test(b.getAttribute('aria-label') ?? ''),
     );
-    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual(['Refresh context for claims-core', 'Refresh context for customer-portal']);
+    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual(['Refresh context for commerce-core', 'Refresh context for customer-portal']);
     buttons[1].click();
     await confirmPreview();
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-    expect(run.mock.calls[0][0].name).toBe('sdlc-claims-context');
+    expect(run.mock.calls[0][0].name).toBe('sdlc-commerce-context');
   });
 
   it('crosses the seam: a running agent takes the page with the session view and locks every control outside it', async () => {
@@ -117,7 +117,7 @@ describe('SdlcHome', () => {
   it('lists every master when there is more than one', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcScan').mockResolvedValue({
-      folder: 'D:/Work/acme-claims', repos: ['a', 'b'], master: { kind: 'many', repos: ['a', 'b'] }, marker: null, marker_error: null,
+      folder: 'D:/Work/acme-commerce', repos: ['a', 'b'], master: { kind: 'many', repos: ['a', 'b'] }, marker: null, marker_error: null,
     });
     const { container } = await mount(transport);
     expect(container.textContent).toContain('More than one master repo');
@@ -128,7 +128,7 @@ describe('SdlcHome', () => {
   it('says the master repo is gone when no repo holds the marker', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcScan').mockResolvedValue({
-      folder: 'D:/Work/acme-claims', repos: ['a'], master: { kind: 'none' }, marker: null, marker_error: null,
+      folder: 'D:/Work/acme-commerce', repos: ['a'], master: { kind: 'none' }, marker: null, marker_error: null,
     });
     const { container } = await mount(transport);
     expect(container.textContent).toContain('No master repo found');
@@ -146,16 +146,16 @@ describe('SdlcHome', () => {
     const vm = fixture.debugElement.injector.get(SdlcHomeViewModel);
     const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
     expect(container.querySelector('[data-testid="triage-notice"]')).toBeNull();
-    vm.triageNotice.set({ idea: 'flag fraud', runId: 'sdlc-claims-triage-1' });
+    vm.triageNotice.set({ idea: 'flag prices', runId: 'sdlc-commerce-triage-1' });
     await settle();
     const notice = container.querySelector('[data-testid="triage-notice"]')!;
     expect(notice.textContent).toContain('No change was created.');
     const click = (label: string) => Array.from(notice.querySelectorAll('button')).find((b) => b.textContent!.trim() === label)!.click();
     click('Open run');
-    expect(navigate).toHaveBeenCalledWith(['/library'], { queryParams: { run: 'sdlc-claims-triage-1' } });
+    expect(navigate).toHaveBeenCalledWith(['/library'], { queryParams: { run: 'sdlc-commerce-triage-1' } });
     click('Describe again');
     await settle();
-    expect(document.body.querySelector<HTMLTextAreaElement>('[role="dialog"] textarea')!.value).toBe('flag fraud');
+    expect(document.body.querySelector<HTMLTextAreaElement>('[role="dialog"] textarea')!.value).toBe('flag prices');
   });
 
   it('R6.1: a triage run that is running offers the message box, and sending reaches that run', async () => {
@@ -163,7 +163,7 @@ describe('SdlcHome', () => {
     const vm = fixture.debugElement.injector.get(SdlcHomeViewModel);
     const send = vi.spyOn(transport, 'sendMessage');
     const started = vi.spyOn(transport, 'runSpec');
-    void vm.newChange('claims', 'Flag suspected fraud on intake', 'decide');
+    void vm.newChange('commerce', 'Flag suspicious prices on import', 'decide');
     await confirmPreview();
     // The scripted triage is running until its question; the box is enabled only then.
     const input = () => container.querySelector<HTMLInputElement>('app-message-box [data-message-input]');
@@ -171,13 +171,13 @@ describe('SdlcHome', () => {
       TestBed.tick();
       expect(input() !== null && !input()!.disabled).toBe(true);
     });
-    input()!.value = 'look at intake only';
+    input()!.value = 'look at import only';
     input()!.dispatchEvent(new Event('input'));
     TestBed.tick();
     container.querySelector<HTMLButtonElement>('[data-message-send]')!.click();
     const runId = await started.mock.results[0].value;
     expect(started.mock.calls[0][0].name).toMatch(/-triage$/);
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith(runId, expect.any(String), 'look at intake only');
+    expect(send).toHaveBeenCalledWith(runId, expect.any(String), 'look at import only');
   });
 });

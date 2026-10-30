@@ -19,14 +19,14 @@ import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
 
-const FNOL = '2026-10-12-fnol-photo-upload';
-const FRAUD = '2026-10-16-fraud-flag';
-const REASSIGN = '2026-10-09-adjuster-reassign';
+const PHOTOS_CHANGE = '2026-10-12-product-photo-upload';
+const FRAUD = '2026-10-16-price-flag';
+const REASSIGN = '2026-10-09-merchant-reassign';
 const toastText = () => toastState.toasts().map((t) => String(t.title)).join(' | ');
 
 /** `confirm` (the default) lets the preview confirm every run at once, so a test about something else never meets it; `real` leaves it to the test. */
-function setup(change = FNOL, transport = new MockTransport(), preview: 'confirm' | 'real' = 'confirm') {
-  const params = new BehaviorSubject(convertToParamMap({ system: 'claims', change }));
+function setup(change = PHOTOS_CHANGE, transport = new MockTransport(), preview: 'confirm' | 'real' = 'confirm') {
+  const params = new BehaviorSubject(convertToParamMap({ system: 'commerce', change }));
   TestBed.configureTestingModule({
     providers: [
       provideRouter([]),
@@ -70,7 +70,7 @@ const withStage = (transport: MockTransport, name: string, stage: ChangeInfo['st
 afterEach(() => toastState.reset());
 
 describe('ChangePageViewModel', () => {
-  it.each([FRAUD, FNOL, REASSIGN])('offers exactly the stage actions for %s', async (name) => {
+  it.each([FRAUD, PHOTOS_CHANGE, REASSIGN])('offers exactly the stage actions for %s', async (name) => {
     const { vm } = setup(name);
     await ready(vm);
     expect(vm.state()).toBe('ready');
@@ -81,7 +81,7 @@ describe('ChangePageViewModel', () => {
   });
 
   it('shows the current stage document from the working tree', async () => {
-    const { vm } = setup(FNOL);
+    const { vm } = setup(PHOTOS_CHANGE);
     await ready(vm);
     expect(vm.docName()).toBe('spec.md');
     expect(vm.doc()).toContain('# Spec: photo upload');
@@ -92,19 +92,19 @@ describe('ChangePageViewModel', () => {
   it('asks the backend for the document by its stem, as read_doc expects', async () => {
     const transport = new MockTransport();
     const read = vi.spyOn(transport, 'sdlcReadDoc');
-    const { vm } = setup(FNOL, transport);
+    const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
-    expect(read).toHaveBeenCalledWith(expect.any(String), 'claims', FNOL, 'spec');
+    expect(read).toHaveBeenCalledWith(expect.any(String), 'commerce', PHOTOS_CHANGE, 'spec');
   });
 
   it('shows an earlier document when its tile is picked, and the current one again after a reload', async () => {
-    const { vm } = setup(FNOL);
+    const { vm } = setup(PHOTOS_CHANGE);
     await ready(vm);
     expect(vm.docs()).toEqual({ intent: true, spec: true, plan: false });
     await vm.showDoc('intent');
     expect(vm.shownDoc()).toBe('intent');
     expect(vm.docName()).toBe('intent.md');
-    expect(vm.doc()).toContain('# Photo upload at first notice of loss');
+    expect(vm.doc()).toContain('# Photo upload on the product form');
     await vm.act('accept-spec');
     expect(vm.shownDoc()).toBe('spec');
     expect(vm.doc()).toContain('# Spec: photo upload');
@@ -112,7 +112,7 @@ describe('ChangePageViewModel', () => {
 
   it('a pick during a reload neither cancels the reload nor lands on top of it', async () => {
     const transport = new MockTransport();
-    const { vm } = setup(FNOL, transport);
+    const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     const realChanges = transport.sdlcReadChange.bind(transport);
     let reloading!: () => void;
@@ -127,7 +127,7 @@ describe('ChangePageViewModel', () => {
     const decided = vm.act('accept-spec');
     await started;
     await vm.showDoc('intent');
-    expect(vm.doc()).toContain('# Photo upload at first notice of loss');
+    expect(vm.doc()).toContain('# Photo upload on the product form');
     release();
     await decided;
     expect(vm.change()!.stage).toBe('plan-ready');
@@ -137,7 +137,7 @@ describe('ChangePageViewModel', () => {
 
   it('stays on the shown document and says why when the picked one cannot be read', async () => {
     const transport = new MockTransport();
-    const { vm } = setup(FNOL, transport);
+    const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     vi.spyOn(transport, 'sdlcReadDoc').mockRejectedValue('permission denied');
     await vm.showDoc('intent');
@@ -149,7 +149,7 @@ describe('ChangePageViewModel', () => {
 
   it('keeps the old tab and its document until the picked one has been read, then switches both together', async () => {
     const transport = new MockTransport();
-    const { vm } = setup(FNOL, transport);
+    const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     const old = vm.doc();
     let release!: (text: string) => void;
@@ -166,7 +166,7 @@ describe('ChangePageViewModel', () => {
 
   it('holds the picked tab in pendingDoc while it reads, and clears it on success and on failure', async () => {
     const transport = new MockTransport();
-    const { vm } = setup(FNOL, transport);
+    const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     expect(vm.pendingDoc()).toBeNull();
     let release!: (text: string) => void;
@@ -186,7 +186,7 @@ describe('ChangePageViewModel', () => {
 
   it('lets a click back on the shown tab cancel a pick still reading', async () => {
     const transport = new MockTransport();
-    const { vm } = setup(FNOL, transport);
+    const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     const old = vm.doc();
     let release!: (text: string) => void;
@@ -220,7 +220,7 @@ describe('ChangePageViewModel', () => {
 
   it('ignores a pick for a document that does not exist yet', async () => {
     const transport = new MockTransport();
-    const { vm } = setup(FNOL, transport);
+    const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     const read = vi.spyOn(transport, 'sdlcReadDoc');
     await vm.showDoc('plan');
@@ -230,8 +230,8 @@ describe('ChangePageViewModel', () => {
 
   it('shows the intent while the spec has not been started', async () => {
     const transport = new MockTransport();
-    withStage(transport, FNOL, 'spec-ready', { spec: { exists: false, committed: false, status: null, head_status: null } });
-    const { vm } = setup(FNOL, transport);
+    withStage(transport, PHOTOS_CHANGE, 'spec-ready', { spec: { exists: false, committed: false, status: null, head_status: null } });
+    const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     expect(vm.docName()).toBe('intent.md');
   });
@@ -239,14 +239,14 @@ describe('ChangePageViewModel', () => {
   it('counts the open stage runs from the links plus unlinked history records with the stage name', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcRunLinks').mockResolvedValue([
-      { workspace_id: 'acme-claims', system: 'claims', change: FNOL, stage: 'intent', run_id: 'r1', started_at: 1 },
-      { workspace_id: 'acme-claims', system: 'claims', change: FNOL, stage: 'spec', run_id: 'r2', started_at: 2 },
+      { workspace_id: 'acme-commerce', system: 'commerce', change: PHOTOS_CHANGE, stage: 'intent', run_id: 'r1', started_at: 1 },
+      { workspace_id: 'acme-commerce', system: 'commerce', change: PHOTOS_CHANGE, stage: 'spec', run_id: 'r2', started_at: 2 },
     ]);
     vi.spyOn(transport, 'listRuns').mockResolvedValue([
-      { id: 'r2', kata: `sdlc-claims-${FNOL}-spec`, started_at: 2, isolation: 'none', steered: false },
-      { id: 'r3', kata: `sdlc-claims-${FNOL}-spec`, started_at: 3, isolation: 'none', steered: false },
+      { id: 'r2', kata: `sdlc-commerce-${PHOTOS_CHANGE}-spec`, started_at: 2, isolation: 'none', steered: false },
+      { id: 'r3', kata: `sdlc-commerce-${PHOTOS_CHANGE}-spec`, started_at: 3, isolation: 'none', steered: false },
     ]);
-    const { vm } = setup(FNOL, transport);
+    const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     expect(vm.railRuns().total).toBe(2);
     await vm.showDoc('intent');
@@ -262,20 +262,20 @@ describe('ChangePageViewModel', () => {
   });
 
   it('follows the route when only the change param changes (no snapshot)', async () => {
-    const { vm, params } = setup(FNOL);
+    const { vm, params } = setup(PHOTOS_CHANGE);
     await ready(vm);
-    params.next(convertToParamMap({ system: 'claims', change: FRAUD }));
+    params.next(convertToParamMap({ system: 'commerce', change: FRAUD }));
     await vi.waitFor(() => expect(vm.change()?.change).toBe(FRAUD));
     expect(vm.docName()).toBe('intent.md');
   });
 
   describe('decisions', () => {
     it('accept-spec calls sdlcDecide with accept-spec, not confirmed, and the reloaded stage is plan-ready', async () => {
-      const { vm, transport } = setup(FNOL);
+      const { vm, transport } = setup(PHOTOS_CHANGE);
       const decide = vi.spyOn(transport, 'sdlcDecide');
       await ready(vm);
       await vm.act('accept-spec');
-      expect(decide).toHaveBeenCalledWith(expect.stringContaining('claims-intent'), 'claims', FNOL, 'accept-spec', false);
+      expect(decide).toHaveBeenCalledWith(expect.stringContaining('commerce-docs'), 'commerce', PHOTOS_CHANGE, 'accept-spec', false);
       expect(vm.change()?.stage).toBe('plan-ready');
       expect(vm.actions()).toEqual(actionsFor('plan-ready'));
     });
@@ -286,7 +286,7 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       expect(vm.primary()).toBe('accept-plan');
       await vm.act('accept-plan');
-      expect(decide).toHaveBeenCalledWith(expect.stringContaining('claims-intent'), 'claims', REASSIGN, 'accept-plan', false);
+      expect(decide).toHaveBeenCalledWith(expect.stringContaining('commerce-docs'), 'commerce', REASSIGN, 'accept-plan', false);
       expect(toastText()).toContain('Accepted plan · committed');
       expect(vm.change()?.stage).toBe('build-ready');
     });
@@ -329,7 +329,7 @@ describe('ChangePageViewModel', () => {
     });
 
     it('opens the confirm on NeedsConfirm with the exact copy, and confirming repeats the decision with confirmed true', async () => {
-      const { vm, transport } = setup(FNOL);
+      const { vm, transport } = setup(PHOTOS_CHANGE);
       const decide = vi.spyOn(transport, 'sdlcDecide').mockResolvedValueOnce({ kind: 'needsConfirm', other_edits: true });
       await ready(vm);
       await vm.act('accept-spec');
@@ -337,7 +337,7 @@ describe('ChangePageViewModel', () => {
       expect(decide).toHaveBeenCalledTimes(1);
       await vm.confirmDecision();
       expect(decide).toHaveBeenCalledTimes(2);
-      expect(decide.mock.calls[1]).toEqual([expect.any(String), 'claims', FNOL, 'accept-spec', true]);
+      expect(decide.mock.calls[1]).toEqual([expect.any(String), 'commerce', PHOTOS_CHANGE, 'accept-spec', true]);
       expect(vm.confirmPrompt()).toBeNull();
       expect(vm.change()?.stage).toBe('plan-ready');
     });
@@ -355,7 +355,7 @@ describe('ChangePageViewModel', () => {
     });
 
     it('shows git stderr verbatim in an error toast', async () => {
-      const { vm, transport } = setup(FNOL);
+      const { vm, transport } = setup(PHOTOS_CHANGE);
       vi.spyOn(transport, 'sdlcDecide').mockResolvedValue({ kind: 'gitFailed', stderr: 'error: gpg failed to sign the data' });
       await ready(vm);
       await vm.act('accept-spec');
@@ -363,7 +363,7 @@ describe('ChangePageViewModel', () => {
     });
 
     it('falls back to a plain message when git says nothing', async () => {
-      const { vm, transport } = setup(FNOL);
+      const { vm, transport } = setup(PHOTOS_CHANGE);
       vi.spyOn(transport, 'sdlcDecide').mockResolvedValue({ kind: 'gitFailed', stderr: '  ' });
       await ready(vm);
       await vm.act('accept-spec');
@@ -375,8 +375,8 @@ describe('ChangePageViewModel', () => {
       ['spec-accepted-uncommitted', 'accept-spec'],
     ] as const)('commit-acceptance at %s decides %s', async (stage, decision) => {
       const transport = new MockTransport();
-      withStage(transport, FNOL, stage);
-      const { vm } = setup(FNOL, transport);
+      withStage(transport, PHOTOS_CHANGE, stage);
+      const { vm } = setup(PHOTOS_CHANGE, transport);
       const decide = vi.spyOn(transport, 'sdlcDecide');
       await ready(vm);
       expect(vm.actions()[0]).toBe('commit-acceptance');
@@ -406,14 +406,14 @@ describe('ChangePageViewModel', () => {
       await vm.runWithFeedback('R2 is wrong: supervisors and team leads can reassign.');
       expect(vm.feedbackFor()).toBeNull();
       expect(runAgent).toHaveBeenCalledTimes(1);
-      expect(specOf(runAgent).name).toBe(`sdlc-claims-${REASSIGN}-spec`);
+      expect(specOf(runAgent).name).toBe(`sdlc-commerce-${REASSIGN}-spec`);
       expect(specOf(runAgent).task).toContain('already confirmed reopening this accepted spec');
       expect(specOf(runAgent).task).toContain('Operator feedback:\nR2 is wrong: supervisors and team leads can reassign.');
     });
 
     it("a plan run's preview starts from the spec run's choices", async () => {
       const transport = new MockTransport();
-      const { vm, runAgent, preview } = setup(FNOL, transport, 'real');
+      const { vm, runAgent, preview } = setup(PHOTOS_CHANGE, transport, 'real');
       await ready(vm);
       const writes = [vi.spyOn(transport, 'saveSpec'), vi.spyOn(transport, 'saveKata'), vi.spyOn(transport, 'savePreset'), vi.spyOn(transport, 'sdlcSaveSettings'), vi.spyOn(transport, 'sdlcSaveWorkspaces')];
       const github = () => previewRows(preview).find((r) => r.item.id === 'personal:tool-server:github')!;
@@ -438,7 +438,7 @@ describe('ChangePageViewModel', () => {
 
     it("a plan run's preview starts from the spec run's switched-off project hook", async () => {
       const transport = new MockTransport();
-      const { vm, runAgent, preview } = setup(FNOL, transport, 'real');
+      const { vm, runAgent, preview } = setup(PHOTOS_CHANGE, transport, 'real');
       await ready(vm);
       const writes = [vi.spyOn(transport, 'saveSpec'), vi.spyOn(transport, 'saveKata'), vi.spyOn(transport, 'savePreset'), vi.spyOn(transport, 'sdlcSaveSettings'), vi.spyOn(transport, 'sdlcSaveWorkspaces')];
       const hook = () => previewRows(preview).find((r) => r.item.id === 'project:hook:PostToolUse:Write|Edit:8c1f77e2d3a40b95')!;
@@ -483,7 +483,7 @@ describe('ChangePageViewModel', () => {
     });
 
     it('a cancelled preview starts no run and leaves no lock', async () => {
-      const { vm, runAgent, preview } = setup(FNOL, new MockTransport(), 'real');
+      const { vm, runAgent, preview } = setup(PHOTOS_CHANGE, new MockTransport(), 'real');
       await ready(vm);
       const run = vm.act('start-spec');
       await previewReady(preview);
@@ -502,22 +502,22 @@ describe('ChangePageViewModel', () => {
     });
 
     it('reopen intent starts an intent run whose task says the reopen was already confirmed', async () => {
-      const { vm, runAgent } = setup(FNOL);
+      const { vm, runAgent } = setup(PHOTOS_CHANGE);
       await ready(vm);
       await vm.act('reopen-intent');
       await vm.runWithFeedback('');
       expect(runAgent).toHaveBeenCalledTimes(1);
       expect(specOf(runAgent).task).toContain('already confirmed reopening');
-      expect(specOf(runAgent).name).toBe(`sdlc-claims-${FNOL}-intent`);
+      expect(specOf(runAgent).name).toBe(`sdlc-commerce-${PHOTOS_CHANGE}-intent`);
     });
 
     it('continue spec runs the spec skill on this change', async () => {
-      const { vm, runAgent } = setup(FNOL);
+      const { vm, runAgent } = setup(PHOTOS_CHANGE);
       await ready(vm);
       await vm.act('continue-spec');
       await vm.runWithFeedback('');
-      expect(specOf(runAgent).name).toBe(`sdlc-claims-${FNOL}-spec`);
-      expect(specOf(runAgent).task).toContain(FNOL);
+      expect(specOf(runAgent).name).toBe(`sdlc-commerce-${PHOTOS_CHANGE}-spec`);
+      expect(specOf(runAgent).task).toContain(PHOTOS_CHANGE);
     });
 
     it('re-run plan states the replace was already confirmed', async () => {
@@ -530,7 +530,7 @@ describe('ChangePageViewModel', () => {
     });
 
     it('reloads the change after a run', async () => {
-      const { vm, transport, runAgent } = setup(FNOL);
+      const { vm, transport, runAgent } = setup(PHOTOS_CHANGE);
       await ready(vm);
       const changes = vi.spyOn(transport, 'sdlcReadChange');
       await vm.act('start-spec');
@@ -539,7 +539,7 @@ describe('ChangePageViewModel', () => {
     });
 
     it('refuses a second task while the lock is held', async () => {
-      const { vm, runAgent, transport } = setup(FNOL);
+      const { vm, runAgent, transport } = setup(PHOTOS_CHANGE);
       await ready(vm);
       const decide = vi.spyOn(transport, 'sdlcDecide');
       vi.spyOn(TestBed.inject(LockStore), 'active').mockReturnValue({ kind: 'run', title: 'x', finished: null });
@@ -551,9 +551,9 @@ describe('ChangePageViewModel', () => {
   });
 
   it('goes to the workspace home from the workspace controls', async () => {
-    const { vm, navigate } = setup(FNOL);
+    const { vm, navigate } = setup(PHOTOS_CHANGE);
     await ready(vm);
-    await vm.selectWorkspace('acme-claims');
+    await vm.selectWorkspace('acme-commerce');
     expect(navigate).toHaveBeenCalledWith(['/sdlc']);
     navigate.mockClear();
     await vm.toHome();
@@ -576,7 +576,7 @@ describe('ChangePageViewModel', () => {
       expect(vm.buildMode()).toBeNull();
       await vm.act('another-round');
       expect(vm.buildMode()).toBe('round');
-      expect(vm.buildRepos()).toEqual(['claims-intent', 'claims-core', 'customer-portal']);
+      expect(vm.buildRepos()).toEqual(['commerce-docs', 'commerce-core', 'customer-portal']);
     });
 
     it('Start build opens the dialog and prepares nothing yet', async () => {
@@ -594,23 +594,23 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.act('start-build');
       await vm.submitBuild(REQUEST);
-      expect(prepare).toHaveBeenCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false, null, 'start');
+      expect(prepare).toHaveBeenCalledWith(expect.any(String), 'commerce-docs', 'commerce', BUILD, false, null, 'start');
       expect(vm.buildMode()).toBeNull();
       const h = TestBed.inject(BuildPageViewModel).current()!;
       expect(h.timeoutSecs).toBe(5400);
       expect(h.round).toBeNull();
-      expect(h.start.repos.map((r) => r.repo)).toEqual(['claims-core', 'customer-portal']);
+      expect(h.start.repos.map((r) => r.repo)).toEqual(['commerce-core', 'customer-portal']);
       expect(h.checksDir).toBe(await transport.sdlcChecksDir());
     });
 
     it('the handoff records whether the leftovers were confirmed, so the run is not asked to ask again', async () => {
       const { vm, transport } = setup(BUILD);
       const real = transport.sdlcBuildPrepare.bind(transport);
-      vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['a'] }] }).mockImplementation(real);
+      vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['a'] }] }).mockImplementation(real);
       await ready(vm);
       await vm.submitBuild(REQUEST);
       await vm.confirmLeftovers();
-      expect(TestBed.inject(BuildPageViewModel).current()!.continueOnLeftovers).toEqual(['claims-core']);
+      expect(TestBed.inject(BuildPageViewModel).current()!.continueOnLeftovers).toEqual(['commerce-core']);
       await settleBuild();
       await vm.submitBuild(REQUEST);
       expect(TestBed.inject(BuildPageViewModel).current()!.continueOnLeftovers).toEqual([]);
@@ -622,10 +622,10 @@ describe('ChangePageViewModel', () => {
       const { vm } = setup(BUILD, transport);
       const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
       await ready(vm);
-      for (const repo of ['claims-core', 'claims-intent']) {
+      for (const repo of ['commerce-core', 'commerce-docs']) {
         await vm.act('another-round');
         await vm.submitBuild({ timeoutSecs: 14400, instructions: 'tidy up', repo });
-        expect(prepare).toHaveBeenLastCalledWith(expect.any(String), 'claims-intent', 'claims', BUILD, false, repo, 'round');
+        expect(prepare).toHaveBeenLastCalledWith(expect.any(String), 'commerce-docs', 'commerce', BUILD, false, repo, 'round');
         await settleBuild();
       }
     });
@@ -634,7 +634,7 @@ describe('ChangePageViewModel', () => {
       const { vm, transport } = setup(BUILD);
       await ready(vm);
       const w = (await transport.sdlcWorkspaces())[0];
-      expect(vm.buildContext()).toEqual({ workspaceId: w.id, folder: w.folder, system: 'claims', change: BUILD, systemRepos: ['claims-core', 'customer-portal', 'billing-api'] });
+      expect(vm.buildContext()).toEqual({ workspaceId: w.id, folder: w.folder, system: 'commerce', change: BUILD, systemRepos: ['commerce-core', 'customer-portal', 'billing-api'] });
     });
 
     it('reads the checks folder once, however often the page loads', async () => {
@@ -652,14 +652,14 @@ describe('ChangePageViewModel', () => {
       const { vm } = setup(BUILD, transport);
       await ready(vm);
       await vm.act('another-round');
-      await vm.submitBuild({ timeoutSecs: 14400, instructions: 'rename the status field to state', repo: 'claims-core' });
-      expect(TestBed.inject(BuildPageViewModel).current()!.round).toEqual({ instructions: 'rename the status field to state', repo: 'claims-core' });
+      await vm.submitBuild({ timeoutSecs: 14400, instructions: 'rename the status field to state', repo: 'commerce-core' });
+      expect(TestBed.inject(BuildPageViewModel).current()!.round).toEqual({ instructions: 'rename the status field to state', repo: 'commerce-core' });
       expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(14400);
     });
 
     it('the change page confirms and retries with leftovers (R6.4)', async () => {
       const { vm, transport } = setup(BUILD);
-      const left = [{ repo: 'claims-core', files: ['src/new.rs'] }];
+      const left = [{ repo: 'commerce-core', files: ['src/new.rs'] }];
       const real = transport.sdlcBuildPrepare.bind(transport);
       const prepare = vi
         .spyOn(transport, 'sdlcBuildPrepare')
@@ -668,7 +668,7 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.act('start-build');
       await vm.submitBuild(REQUEST);
-      expect(vm.leftoverPrompt()!.lines).toEqual(['claims-core: src/new.rs']);
+      expect(vm.leftoverPrompt()!.lines).toEqual(['commerce-core: src/new.rs']);
       expect(TestBed.inject(BuildPageViewModel).current()).toBeNull();
       expect(prepare).toHaveBeenCalledTimes(1);
       await vm.confirmLeftovers();
@@ -681,7 +681,7 @@ describe('ChangePageViewModel', () => {
 
     it('declining the leftovers prepares nothing more', async () => {
       const { vm, transport } = setup(BUILD);
-      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValue({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['a'] }] });
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValue({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['a'] }] });
       await ready(vm);
       await vm.submitBuild(REQUEST);
       vm.cancelLeftovers();
@@ -726,7 +726,7 @@ describe('ChangePageViewModel', () => {
     });
 
     it('does not read the build status before there is a plan', async () => {
-      const { vm, transport } = setup(FNOL);
+      const { vm, transport } = setup(PHOTOS_CHANGE);
       const status = vi.spyOn(transport, 'sdlcBuildStatus');
       await ready(vm);
       expect(status).not.toHaveBeenCalled();
@@ -739,12 +739,12 @@ describe('ChangePageViewModel', () => {
     const finished = async () => {
       const transport = new MockTransport();
       withStage(transport, BUILD, 'build-finished');
-      await transport.sdlcPublish('f', 'w1', 'claims-intent', 'claims', BUILD, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', BUILD));
+      await transport.sdlcPublish('f', 'w1', 'commerce-docs', 'commerce', BUILD, await transport.sdlcTouchedRepos('f', 'commerce-docs', 'commerce', BUILD));
       return transport;
     };
 
     it('has no pills before the change is read, then the four from the stage', async () => {
-      const { vm } = setup(FNOL);
+      const { vm } = setup(PHOTOS_CHANGE);
       expect(vm.pills()).toEqual([]);
       await ready(vm);
       expect(vm.pills().map((p) => p.text)).toEqual(['Intent', 'Spec · awaiting acceptance', 'Plan · not started', 'Build · locked']);
@@ -772,7 +772,7 @@ describe('ChangePageViewModel', () => {
       const { vm } = setup(BUILD, await finished());
       await ready(vm);
       const links = vm.pullLinks();
-      expect(links.map((l) => l.repo)).toEqual(['claims-intent', 'claims-core', 'customer-portal']);
+      expect(links.map((l) => l.repo)).toEqual(['commerce-docs', 'commerce-core', 'customer-portal']);
       expect(links.every((l) => l.url.startsWith('https://') && /^\d+$/.test(l.number ?? ''))).toBe(true);
     });
 
@@ -789,28 +789,28 @@ describe('ChangePageViewModel', () => {
     });
 
     it('has no pull request links before any is open', async () => {
-      const { vm } = setup(FNOL);
+      const { vm } = setup(PHOTOS_CHANGE);
       await ready(vm);
       expect(vm.pullLinks()).toEqual([]);
     });
 
     it('shows the branch chip only when the master repository is not on the change branch', async () => {
-      const { vm } = setup(FNOL);
+      const { vm } = setup(PHOTOS_CHANGE);
       await ready(vm);
       expect(vm.branchChip()).toBe('main');
     });
 
     it('hides the branch chip when the master repository is on the change branch', async () => {
       const transport = new MockTransport();
-      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: `change/${FNOL}`, others: [], default_base: 'main' });
-      const { vm } = setup(FNOL, transport);
+      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: `change/${PHOTOS_CHANGE}`, others: [], default_base: 'main' });
+      const { vm } = setup(PHOTOS_CHANGE, transport);
       await ready(vm);
-      expect(vm.masterBranch()).toBe(`change/${FNOL}`);
+      expect(vm.masterBranch()).toBe(`change/${PHOTOS_CHANGE}`);
       expect(vm.branchChip()).toBeNull();
     });
 
     it('reads the strip status from the open document front matter', async () => {
-      const { vm } = setup(FNOL);
+      const { vm } = setup(PHOTOS_CHANGE);
       await ready(vm);
       expect(vm.stripStatus()).toEqual({ text: 'Draft', tone: 'warning' });
       await vm.showDoc('intent');
@@ -867,7 +867,7 @@ describe('ChangePageViewModel', () => {
     });
 
     it('keeps the strip on a document tab, where the status and the file name are always something to say', async () => {
-      const { vm } = setup(FNOL);
+      const { vm } = setup(PHOTOS_CHANGE);
       await ready(vm);
       expect(vm.stripShown()).toBe(true);
     });
@@ -892,14 +892,14 @@ describe('ChangePageViewModel', () => {
     it('gives the rail the front matter fields except the status, which the strip says', async () => {
       const transport = new MockTransport();
       vi.spyOn(transport, 'sdlcReadDoc').mockResolvedValue('---\nauthor: Sam\nstatus: draft\ndate: 2026-10-19\n---\n# Spec\n');
-      const { vm } = setup(FNOL, transport);
+      const { vm } = setup(PHOTOS_CHANGE, transport);
       await ready(vm);
       expect(vm.railFields()).toEqual([['author', 'Sam'], ['date', '2026-10-19']]);
       expect(vm.docParts().body).toBe('# Spec\n');
     });
 
     it('names the document that uses the open one', async () => {
-      const { vm } = setup(FNOL);
+      const { vm } = setup(PHOTOS_CHANGE);
       await ready(vm);
       expect(vm.usedBy()).toBeNull();
       await vm.showDoc('intent');
@@ -908,10 +908,10 @@ describe('ChangePageViewModel', () => {
 
     it('lists the last three runs of the open stage, newest first, and counts them all', async () => {
       const transport = new MockTransport();
-      const link = (run_id: string, stage: string, started_at: number) => ({ workspace_id: 'acme-claims', system: 'claims', change: FNOL, stage, run_id, started_at });
+      const link = (run_id: string, stage: string, started_at: number) => ({ workspace_id: 'acme-commerce', system: 'commerce', change: PHOTOS_CHANGE, stage, run_id, started_at });
       vi.spyOn(transport, 'sdlcRunLinks').mockResolvedValue([link('a', 'spec', 100), link('b', 'spec', 300), link('c', 'spec', 200), link('d', 'spec', 400), link('e', 'intent', 50)]);
       vi.spyOn(transport, 'listRuns').mockResolvedValue([]);
-      const { vm } = setup(FNOL, transport);
+      const { vm } = setup(PHOTOS_CHANGE, transport);
       await ready(vm);
       expect(vm.railRuns().total).toBe(4);
       expect(vm.railRuns().rows.map((r) => r.id)).toEqual(['d', 'b', 'c']);
@@ -924,7 +924,7 @@ describe('ChangePageViewModel', () => {
 
 describe('the build\'s preview', () => {
   const BUILD = MOCK_BUILD_CHANGE;
-  const KEY = `claims/${BUILD}`;
+  const KEY = `commerce/${BUILD}`;
   const GITHUB = 'personal:tool-server:github';
   const ENGINEER = 'set in this preview';
   const flat = (groups: KindGroup[]): PresetRow[] => groups.flatMap((k) => k.groups.flatMap((g) => g.rows.flatMap((e) => [e.row, ...e.followers])));
@@ -955,15 +955,15 @@ describe('the build\'s preview', () => {
     const shared = flat(preview.groups());
     expect(shared.filter((r) => r.item.id === GITHUB)).toHaveLength(1);
     expect(shared.every((r) => r.key === r.item.id)).toBe(true);
-    expect(preview.sections()!.map((s) => s.title)).toEqual(['claims-core', 'customer-portal', 'Review']);
-    for (const title of ['claims-core', 'customer-portal', 'Review']) expect(section(preview, title).every((r) => r.key !== r.item.id)).toBe(true);
+    expect(preview.sections()!.map((s) => s.title)).toEqual(['commerce-core', 'customer-portal', 'Review']);
+    for (const title of ['commerce-core', 'customer-portal', 'Review']) expect(section(preview, title).every((r) => r.key !== r.item.id)).toBe(true);
     // Each repository's project items sit under that repository; the master's sit under the review.
     const ids = (title: string) => section(preview, title).map((r) => r.item.id);
-    expect(ids('claims-core')).toContain('project:tool-server:claims-core-db');
-    expect(ids('claims-core')).not.toContain('project:tool-server:customer-portal-db');
+    expect(ids('commerce-core')).toContain('project:tool-server:commerce-core-db');
+    expect(ids('commerce-core')).not.toContain('project:tool-server:customer-portal-db');
     expect(ids('customer-portal')).toContain('project:tool-server:customer-portal-db');
-    expect(ids('Review')).toContain('project:tool-server:claims-intent-db');
-    expect(ids('Review')).toContain('project:skill:claims-intent-conventions');
+    expect(ids('Review')).toContain('project:tool-server:commerce-docs-db');
+    expect(ids('Review')).toContain('project:skill:commerce-docs-conventions');
   });
 
   it('a switch on a shared row applies to every run; a switch on a project row only to its folder (R11.1, R11.2)', async () => {
@@ -971,11 +971,11 @@ describe('the build\'s preview', () => {
     await vm.act('start-build');
     await previewReady(preview);
     preview.toggle(GITHUB, true);
-    preview.toggle(dbKey(vm, 'claims-core'), true);
+    preview.toggle(dbKey(vm, 'commerce-core'), true);
     await startPreview(preview, vm);
-    expect(TestBed.inject(BuildPageViewModel).current()!.choices!.off).toEqual(new Set([GITHUB, dbKey(vm, 'claims-core')]));
+    expect(TestBed.inject(BuildPageViewModel).current()!.choices!.off).toEqual(new Set([GITHUB, dbKey(vm, 'commerce-core')]));
     // The build keeps them for the runs it starts by itself, and the next build starts from them.
-    expect(givens.build(KEY)!.off).toEqual(new Set([GITHUB, dbKey(vm, 'claims-core')]));
+    expect(givens.build(KEY)!.off).toEqual(new Set([GITHUB, dbKey(vm, 'commerce-core')]));
     expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(7200);
   });
 
@@ -1015,7 +1015,7 @@ describe('the build\'s preview', () => {
     ['a spec run', 'spec-ready', 'start-spec', '6 h', 'Kata itself', false],
     ['a review started by hand', 'build-finished', 'run-review', '2 h', 'Kata itself', false],
   ] as const)('limits are set where they are set today: %s (R17.3)', async (_name, stage, action, value, source, asks) => {
-    const change = stage === 'spec-ready' ? FNOL : BUILD;
+    const change = stage === 'spec-ready' ? PHOTOS_CHANGE : BUILD;
     const { vm, preview } = await staged(stage, change);
     // A document run waits for the engineer's answer to its preview, so the call is not awaited.
     void vm.act(action);
@@ -1073,11 +1073,11 @@ describe('the build\'s preview', () => {
       expect(flat(preview.groups()).find((r) => r.item.id === GITHUB)).toMatchObject({ off: true, mark: 'build' });
       // Only the repository the round is picked for shows its section.
       expect(preview.sections()!.map((s) => s.title)).toEqual([]);
-      preview.buildForm()!.model.update((m) => ({ ...m, instructions: 'tidy up', repo: 'claims-core' }));
-      expect(preview.sections()!.map((s) => s.title)).toEqual(['claims-core']);
+      preview.buildForm()!.model.update((m) => ({ ...m, instructions: 'tidy up', repo: 'commerce-core' }));
+      expect(preview.sections()!.map((s) => s.title)).toEqual(['commerce-core']);
       preview.toggle(GITHUB, false);
       await startPreview(preview, vm);
-      expect(TestBed.inject(BuildPageViewModel).current()!.round).toEqual({ instructions: 'tidy up', repo: 'claims-core' });
+      expect(TestBed.inject(BuildPageViewModel).current()!.round).toEqual({ instructions: 'tidy up', repo: 'commerce-core' });
       expect(givens.build(KEY)!.off.has(GITHUB)).toBe(false);
       expect(TestBed.inject(BuildPageViewModel).current()!.choices!.off.has(GITHUB)).toBe(false);
     });
@@ -1125,13 +1125,13 @@ describe('ChangePageViewModel reads one change', () => {
     const one = vi.spyOn(transport, 'sdlcReadChange');
     const names = vi.spyOn(transport, 'sdlcChangeNames');
     const pass = vi.spyOn(transport, 'sdlcReadStages');
-    const { vm } = setup(FNOL, transport);
+    const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     expect(one).toHaveBeenCalledTimes(1);
-    expect(one).toHaveBeenCalledWith(expect.any(String), 'claims', FNOL);
+    expect(one).toHaveBeenCalledWith(expect.any(String), 'commerce', PHOTOS_CHANGE);
     expect(names).not.toHaveBeenCalled();
     expect(pass).not.toHaveBeenCalled();
-    expect(vm.change()).toEqual(await transport.sdlcReadChange('', 'claims', FNOL));
+    expect(vm.change()).toEqual(await transport.sdlcReadChange('', 'commerce', PHOTOS_CHANGE));
     expect(vm.docName()).toBe('spec.md');
     expect(vm.doc()).toContain('# Spec: photo upload');
     expect(vm.actions()).toEqual(actionsFor(vm.change()!.stage));
@@ -1140,14 +1140,14 @@ describe('ChangePageViewModel reads one change', () => {
   it('reads the change itself while the home pass is still going (R4.2)', async () => {
     const transport = new MockTransport();
     const pass = vi.spyOn(transport, 'sdlcReadStages').mockImplementation(forever);
-    const { vm } = setup(FNOL, transport);
+    const { vm } = setup(PHOTOS_CHANGE, transport);
     const store = TestBed.inject(SdlcStagesStore);
-    store.markChecking('acme-claims');
+    store.markChecking('acme-commerce');
     await ready(vm);
     expect(vm.state()).toBe('ready');
     expect(pass).not.toHaveBeenCalled();
-    const row = store.rows(vm.current()!.id)[stageKey('claims', FNOL)];
-    expect(row?.info?.change).toBe(FNOL);
+    const row = store.rows(vm.current()!.id)[stageKey('commerce', PHOTOS_CHANGE)];
+    expect(row?.info?.change).toBe(PHOTOS_CHANGE);
     expect(row?.info?.stage).toBe(vm.change()!.stage);
     expect(row?.checking).toBe(false);
   });
@@ -1159,13 +1159,13 @@ describe('ChangePageViewModel shows lasting links', () => {
   it('a done change shows its saved links after a restart (R8.1)', async () => {
     const transport = new MockTransport();
     finishedBuild(transport);
-    const done = vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue(view({ links: [link('claims-core'), link('customer-portal')] }));
+    const done = vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue(view({ links: [link('commerce-core'), link('customer-portal')] }));
     vi.spyOn(transport, 'sdlcRefreshPrStates').mockImplementation(forever);
     const { vm } = setup(MOCK_BUILD_CHANGE, transport);
     await ready(vm);
     expect(done.mock.calls[0][5]).toBe(true);
     expect(vm.done()).toBe(true);
-    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['claims-core', 'customer-portal']);
+    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['commerce-core', 'customer-portal']);
     expect(vm.actions()).toEqual([]);
   });
 
@@ -1178,7 +1178,7 @@ describe('ChangePageViewModel shows lasting links', () => {
   ] as const)('updates link states in the background (R8.2): %s', async (_row, states, stale) => {
     const transport = new MockTransport();
     finishedBuild(transport);
-    const saved = [link('claims-core'), link('customer-portal')];
+    const saved = [link('commerce-core'), link('customer-portal')];
     vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue(view({ links: saved }));
     const fresh = saved.map((l, i) => ({ ...l, state: states[i], seenAt: stale ? 1790000000 : Math.floor(Date.now() / 1000) + 60 }));
     let answer!: (v: DoneView) => void;
@@ -1196,7 +1196,7 @@ describe('ChangePageViewModel shows lasting links', () => {
   it('keeps the saved links and says when they were last seen when the refresh fails (R8.2)', async () => {
     const transport = new MockTransport();
     finishedBuild(transport);
-    vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue(view({ links: [link('claims-core')] }));
+    vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue(view({ links: [link('commerce-core')] }));
     vi.spyOn(transport, 'sdlcRefreshPrStates').mockRejectedValue(new Error('offline'));
     const { vm } = setup(MOCK_BUILD_CHANGE, transport);
     await ready(vm);

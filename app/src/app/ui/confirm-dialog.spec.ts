@@ -41,9 +41,9 @@ describe('ConfirmDialog', () => {
   });
 
   it('lists its details under the message', async () => {
-    await render(ConfirmDialog, { open: true, message: 'Continue on top of leftovers?', details: ['claims-core: src/new.rs', 'customer-portal: a.ts'] });
+    await render(ConfirmDialog, { open: true, message: 'Continue on top of leftovers?', details: ['commerce-core: src/new.rs', 'customer-portal: a.ts'] });
     const items = Array.from(document.body.querySelectorAll('[role="alertdialog"] li')).map((li) => li.textContent!.trim());
-    expect(items).toEqual(['claims-core: src/new.rs', 'customer-portal: a.ts']);
+    expect(items).toEqual(['commerce-core: src/new.rs', 'customer-portal: a.ts']);
   });
 
   it('shows no list without details', async () => {

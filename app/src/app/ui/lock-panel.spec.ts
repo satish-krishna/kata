@@ -46,8 +46,8 @@ describe('LockPanel', () => {
 describe('LockPanel progress line', () => {
   const entry = (label: string) => ({ line: 'Working on it…', label, long: false });
   const labels: [string, string][] = [
-    ['the checks of a repository', progressLabels.runningChecks('claims-core')],
-    ['a push', progressLabels.pushing('2026-10-18-photo-limits', 'claims-core')],
+    ['the checks of a repository', progressLabels.runningChecks('commerce-core')],
+    ['a push', progressLabels.pushing('2026-10-18-photo-limits', 'commerce-core')],
     ['a pull request', progressLabels.openingPr('customer-portal')],
   ];
 
@@ -57,8 +57,8 @@ describe('LockPanel progress line', () => {
   });
 
   it('names the repository in each plain label', () => {
-    expect(progressLabels.runningChecks('claims-core')).toBe('Running the checks in claims-core');
-    expect(progressLabels.pushing('2026-10-18-photo-limits', 'claims-core')).toBe('Pushing change/2026-10-18-photo-limits in claims-core');
+    expect(progressLabels.runningChecks('commerce-core')).toBe('Running the checks in commerce-core');
+    expect(progressLabels.pushing('2026-10-18-photo-limits', 'commerce-core')).toBe('Pushing change/2026-10-18-photo-limits in commerce-core');
     expect(progressLabels.openingPr('customer-portal')).toBe('Opening a pull request in customer-portal');
   });
 

@@ -123,7 +123,7 @@ export class RunStore {
       for (const other of this.recs.values()) if (other !== rec && !other.ended && other.id === runId) return;
       // A start still waiting for its id cannot tell whose event this is, not even when it is the only
       // one waiting: a run that already ended (or a late line of one) must not land in it. The oldest
-      // waiting start holds the event until an answer names its owner; claim() folds only that id's.
+      // waiting start holds the event until an answer names its owner; product() folds only that id's.
       const waiting = [...this.recs.values()].filter((r) => r.awaitingId);
       if (waiting[0] === rec) this.early.set(runId, [...(this.early.get(runId) ?? []), ev]);
       return;
@@ -131,7 +131,7 @@ export class RunStore {
     this.fold(rec, ev);
   }
 
-  private claim(rec: Rec, gen: number, id: string): void {
+  private product(rec: Rec, gen: number, id: string): void {
     rec.id = id;
     rec.awaitingId = false;
     if (!this.recs.has(rec.key)) return;
@@ -192,7 +192,7 @@ export class RunStore {
     rec.unlisten = unlisten;
     try {
       const id = group === undefined ? await this.transport.runSpec(spec) : await this.transport.runSpec(spec, group);
-      this.claim(rec, gen, id);
+      this.product(rec, gen, id);
       if (group === undefined && this.soloKey() === rec.key) this.lastId = id;
       // A cancel landed while run_spec was spawning; the backend had no child to signal then.
       if (rec.cancelledGen === gen) void this.transport.cancelRun(id);

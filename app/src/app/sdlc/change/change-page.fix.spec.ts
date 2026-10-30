@@ -12,7 +12,7 @@ import type { StageAction } from '../../lib/sdlc';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
-const FIX = '2026-10-12-fnol-photo-upload';
+const FIX = '2026-10-12-product-photo-upload';
 const NEEDS = 'Needs ai-sdlc 0.13.0 or later.';
 const BUSY = 'Another task is already running.';
 const FIX_ACTIONS: StageAction[] = ['finish-fix-draft', 'accept-fix', 'change-fix', 'reopen-fix'];
@@ -45,7 +45,7 @@ async function mountFix(stage: Stage, lightTrack = true, track: 'fix' | 'full' =
   const out = await render(ChangePage, {}, [
     provideRouter([]),
     { provide: KataTransport, useValue: transport },
-    { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change: FIX })), snapshot: { queryParamMap: convertToParamMap({}) } } },
+    { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'commerce', change: FIX })), snapshot: { queryParamMap: convertToParamMap({}) } } },
   ]);
   await settle();
   const vm = out.fixture.debugElement.injector.get(ChangePageViewModel);

@@ -56,7 +56,7 @@ async function open(setup: Setup) {
   const view = await render(ChangePage, {}, [
     provideRouter([]),
     { provide: KataTransport, useValue: transport },
-    { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change: MOCK_BUILD_CHANGE })), snapshot: { queryParamMap: convertToParamMap({}) } } },
+    { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'commerce', change: MOCK_BUILD_CHANGE })), snapshot: { queryParamMap: convertToParamMap({}) } } },
   ]);
   await settle();
   const tab = async (start: string) => {

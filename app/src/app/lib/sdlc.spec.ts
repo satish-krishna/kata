@@ -15,7 +15,7 @@ const skill = (name: string): CatalogEntry => ({ ...plugin(name), kind: "skill" 
 const both = [plugin("ai-sdlc"), plugin("superpowers")];
 const bypass: Settings = { mode: null, remember: false, permission_mode: "bypass" };
 const prompt: Settings = { ...bypass, permission_mode: "prompt" };
-const ctx: RunContext = { folder: "/ws", system: "claims", change: "2026-10-12-fnol" };
+const ctx: RunContext = { folder: "/ws", system: "commerce", change: "2026-10-12-photos" };
 
 const ACTIONS: Record<Stage, string[]> = {
   "intent-in-progress": ["continue-intent"],
@@ -42,7 +42,7 @@ const ACTIONS: Record<Stage, string[]> = {
 };
 
 const changeAt = (stage: Stage, outOfDate: OutOfDate | null = null): ChangeInfo => ({
-  system: "claims", change: "2026-10-12-fnol", stage, scope: "claims", out_of_date: outOfDate, plan_unreadable: false, plan_unreadable_reason: null, track: 'full', fix_row: null,
+  system: "commerce", change: "2026-10-12-photos", stage, scope: "commerce", out_of_date: outOfDate, plan_unreadable: false, plan_unreadable_reason: null, track: 'full', fix_row: null,
   intent: { exists: true, committed: true, status: "accepted", head_status: "accepted" },
   spec: { exists: true, committed: true, status: "accepted", head_status: "accepted" },
   plan: { exists: true, committed: true, status: "accepted", head_status: "accepted" },
@@ -280,7 +280,7 @@ describe("specFor", () => {
     expect(s.interactive.enabled).toBe(false);
   });
   it("runs outside the empty room, so the operator's claude login applies", () => {
-    const s = specFor("intent", null, { folder: "/ws", system: "claims", change: null, idea: "x" }, bypass, both);
+    const s = specFor("intent", null, { folder: "/ws", system: "commerce", change: null, idea: "x" }, bypass, both);
     expect(s.auth).toEqual({ bare: false, token_env: null });
   });
   it("gets a six-hour wall clock, since a build outlasts the engine's 30-minute default", () => {
@@ -299,62 +299,62 @@ describe("specFor", () => {
     }
   });
   it("setup with a system", () => {
-    const s = specFor("setup", null, { folder: "/ws", system: "claims", change: null }, bypass, both);
-    expect(s.task).toBe("Use the ai-sdlc setup skill. System: claims");
+    const s = specFor("setup", null, { folder: "/ws", system: "commerce", change: null }, bypass, both);
+    expect(s.task).toBe("Use the ai-sdlc setup skill. System: commerce");
   });
   it("context", () => {
     const s = specFor("context", null, { ...ctx, change: null, repos: ["a", "b"] }, bypass, both);
-    expect(s.name).toBe("sdlc-claims-context");
+    expect(s.name).toBe("sdlc-commerce-context");
     expect(s.task).toBe(
-      "Use the ai-sdlc context skill for system claims, repositories: a, b. Refresh each existing context file, even one that is current.",
+      "Use the ai-sdlc context skill for system commerce, repositories: a, b. Refresh each existing context file, even one that is current.",
     );
   });
   it("new intent", () => {
     const s = specFor("intent", null, { ...ctx, change: null, idea: "photo upload" }, bypass, both);
-    expect(s.name).toBe("sdlc-claims-new-intent");
-    expect(s.task).toBe("Use the ai-sdlc intent skill for system claims. The idea: photo upload");
+    expect(s.name).toBe("sdlc-commerce-new-intent");
+    expect(s.task).toBe("Use the ai-sdlc intent skill for system commerce. The idea: photo upload");
   });
   it("continue and reopen intent", () => {
     const c = specFor("intent", "continue-intent", ctx, bypass, both);
-    expect(c.name).toBe("sdlc-claims-2026-10-12-fnol-intent");
+    expect(c.name).toBe("sdlc-commerce-2026-10-12-photos-intent");
     expect(c.task).toBe(
-      "Use the ai-sdlc intent skill for system claims on the existing change folder 2026-10-12-fnol. Resume the draft.",
+      "Use the ai-sdlc intent skill for system commerce on the existing change folder 2026-10-12-photos. Resume the draft.",
     );
     const r = specFor("intent", "reopen-intent", ctx, bypass, both);
     expect(r.task).toBe(c.task + " The user has already confirmed reopening this accepted intent; do not ask again.");
   });
   it("spec", () => {
     const s = specFor("spec", "start-spec", ctx, bypass, both);
-    expect(s.name).toBe("sdlc-claims-2026-10-12-fnol-spec");
-    expect(s.task).toBe("Use the ai-sdlc spec skill for system claims on change folder 2026-10-12-fnol.");
+    expect(s.name).toBe("sdlc-commerce-2026-10-12-photos-spec");
+    expect(s.task).toBe("Use the ai-sdlc spec skill for system commerce on change folder 2026-10-12-photos.");
     expect(Object.keys(s.plugins)).toEqual(["ai-sdlc"]);
   });
   it("plan loads only ai-sdlc, even when superpowers is installed", () => {
     for (const catalog of [both, [plugin("ai-sdlc")]]) {
       const s = specFor("plan", "start-plan", ctx, bypass, catalog);
-      expect(s.name).toBe("sdlc-claims-2026-10-12-fnol-plan");
-      expect(s.task).toBe("Use the ai-sdlc plan skill for system claims on change folder 2026-10-12-fnol.");
+      expect(s.name).toBe("sdlc-commerce-2026-10-12-photos-plan");
+      expect(s.task).toBe("Use the ai-sdlc plan skill for system commerce on change folder 2026-10-12-photos.");
       expect(Object.keys(s.plugins)).toEqual(["ai-sdlc"]);
     }
   });
   it("rerun plan carries the confirmation", () => {
     const s = specFor("plan", "rerun-plan", ctx, bypass, both);
     expect(s.task).toBe(
-      "Use the ai-sdlc plan skill for system claims on change folder 2026-10-12-fnol. " +
+      "Use the ai-sdlc plan skill for system commerce on change folder 2026-10-12-photos. " +
         "The user has already confirmed replacing the existing plan; do not ask again.",
     );
   });
   it("reopen spec carries the confirmation and touches only the spec", () => {
     const s = specFor("spec", "reopen-spec", ctx, bypass, both);
-    expect(s.name).toBe("sdlc-claims-2026-10-12-fnol-spec");
+    expect(s.name).toBe("sdlc-commerce-2026-10-12-photos-spec");
     expect(s.task).toBe(
-      "Use the ai-sdlc spec skill for system claims on change folder 2026-10-12-fnol. " +
+      "Use the ai-sdlc spec skill for system commerce on change folder 2026-10-12-photos. " +
         "The user has already confirmed reopening this accepted spec; do not ask again.",
     );
   });
   it("continue spec carries the confirmation to regenerate", () => {
     expect(specFor("spec", "continue-spec", ctx, bypass, both).task).toBe(
-      "Use the ai-sdlc spec skill for system claims on change folder 2026-10-12-fnol. " +
+      "Use the ai-sdlc spec skill for system commerce on change folder 2026-10-12-photos. " +
         "The user has already confirmed regenerating the spec; do not ask again.",
     );
   });
@@ -393,8 +393,8 @@ describe("specFor", () => {
 describe("transcriptRunId", () => {
   const log = (message: string): KataEvent => ({ type: "log", level: "info", message });
   it("extracts the stem from a Windows path", () => {
-    const evs = [log("other"), log("transcript: C:\\Users\\x\\.kata\\runs\\sdlc-claims-x-spec-20261018T101500Z.jsonl")];
-    expect(transcriptRunId(evs)).toBe("sdlc-claims-x-spec-20261018T101500Z");
+    const evs = [log("other"), log("transcript: C:\\Users\\x\\.kata\\runs\\sdlc-commerce-x-spec-20261018T101500Z.jsonl")];
+    expect(transcriptRunId(evs)).toBe("sdlc-commerce-x-spec-20261018T101500Z");
   });
   it("extracts the stem from a POSIX path", () => {
     expect(transcriptRunId([log("transcript: /home/x/.kata/runs/abc.jsonl")])).toBe("abc");
@@ -434,7 +434,7 @@ describe("build run-specs", () => {
     workspaceFolder: "/home/u/ws",
     masterRepo: "master",
     systemRepos: ["master", "app", "api"],
-    checksDir: "/home/u/.kata/checks/claims",
+    checksDir: "/home/u/.kata/checks/commerce",
     continueOnLeftovers: false,
     ...over,
   });
@@ -447,7 +447,7 @@ describe("build run-specs", () => {
     expect(app.leash.timeout_secs).toBe(14400);
     expect(api.leash.timeout_secs).toBe(14400);
     expect(build(run({ target: { repo: "api" }, timeoutSecs: 600 })).leash.timeout_secs).toBe(600);
-    expect(app.name).toBe("sdlc-claims-2026-10-12-fnol-build-app");
+    expect(app.name).toBe("sdlc-commerce-2026-10-12-photos-build-app");
   });
 
   it("build spec has no turn cap and no budget (R2.3)", () => {
@@ -486,10 +486,10 @@ describe("build run-specs", () => {
   });
 
   it("build spec denies edits to the checks folder (R11.7)", () => {
-    const posix = build(run({ checksDir: "/home/u/.kata/checks/claims" }));
-    expect(posix.permissions.deny).toContain("Edit(//home/u/.kata/checks/claims/**)");
-    const win = build(run({ checksDir: "C:\\Users\\u\\.kata\\checks\\claims", workspaceFolder: "D:\\ws" }));
-    expect(win.permissions.deny).toContain("Edit(//c/Users/u/.kata/checks/claims/**)");
+    const posix = build(run({ checksDir: "/home/u/.kata/checks/commerce" }));
+    expect(posix.permissions.deny).toContain("Edit(//home/u/.kata/checks/commerce/**)");
+    const win = build(run({ checksDir: "C:\\Users\\u\\.kata\\checks\\commerce", workspaceFolder: "D:\\ws" }));
+    expect(win.permissions.deny).toContain("Edit(//c/Users/u/.kata/checks/commerce/**)");
     expect(win.workdir).toBe("D:/ws/app");
     expect(win.permissions.allow).toContain("Read(//d/ws/**)");
     expect((win.permissions.deny ?? []).concat(win.permissions.allow ?? []).some((r) => r.startsWith("Write("))).toBe(false);
@@ -508,8 +508,8 @@ describe("build run-specs", () => {
 
   it("a repository run cannot edit another repository but can write its own log (R18.5)", () => {
     const s = build(run({ target: { repo: "app" } }));
-    const log = "//home/u/ws/master/intent/claims/2026-10-12-fnol/build/app.md";
-    const build_ = "//home/u/ws/master/intent/claims/2026-10-12-fnol/build";
+    const log = "//home/u/ws/master/intent/commerce/2026-10-12-photos/build/app.md";
+    const build_ = "//home/u/ws/master/intent/commerce/2026-10-12-photos/build";
     expect(s.permissions.deny).toContain("Edit(//home/u/ws/api/**)");
     expect(s.permissions.deny).not.toContain("Edit(//home/u/ws/app/**)");
     expect(s.permissions.deny).toEqual(expect.arrayContaining([`Edit(${build_}/api.md)`, `Edit(${build_}/master.md)`]));
@@ -519,13 +519,13 @@ describe("build run-specs", () => {
   });
 
   it("a repository run cannot rewrite the change's review document (F7)", () => {
-    const review = "Edit(//home/u/ws/master/intent/claims/2026-10-12-fnol/build/review.md)";
+    const review = "Edit(//home/u/ws/master/intent/commerce/2026-10-12-photos/build/review.md)";
     expect(build(run({ target: { repo: "app" } })).permissions.deny).toContain(review);
     expect(build(run({ target: { repo: "master" } })).permissions.deny).toContain(review);
     expect(build(run({ target: "review" })).permissions.deny).not.toContain(review);
   });
 
-  const MASTER_LOG_DIR = "//home/u/ws/master/intent/claims/2026-10-12-fnol";
+  const MASTER_LOG_DIR = "//home/u/ws/master/intent/commerce/2026-10-12-photos";
 
   it("the review run may edit only build/review.md", () => {
     const s = build(run({ target: "review" }));
@@ -542,13 +542,13 @@ describe("build run-specs", () => {
 
   it("the review run is named for its change", () => {
     const s = build(run({ target: "review" }));
-    expect(s.name).toBe("sdlc-claims-2026-10-12-fnol-review");
+    expect(s.name).toBe("sdlc-commerce-2026-10-12-photos-review");
   });
 
   it("build task hands the repository run to the ai-sdlc build skill (R5.1)", () => {
     const s = build(run());
-    expect(s.task).toBe("Use the ai-sdlc build skill for system claims on change folder 2026-10-12-fnol with --repo app.");
-    expect(build(run({ target: "review" })).task).toBe("Use the ai-sdlc build skill for system claims on change folder 2026-10-12-fnol with --review.");
+    expect(s.task).toBe("Use the ai-sdlc build skill for system commerce on change folder 2026-10-12-photos with --repo app.");
+    expect(build(run({ target: "review" })).task).toBe("Use the ai-sdlc build skill for system commerce on change folder 2026-10-12-photos with --review.");
     expect(s.task).not.toMatch(/commit|order|log|test/i);
     expect(build(run({ continueOnLeftovers: true })).task).toBe(
       `${s.task} The engineer has already confirmed continuing on top of the uncommitted edits the previous run left; do not ask again.`,
@@ -624,9 +624,9 @@ describe("reviewFindings", () => {
   });
 
   it("splits a numbered closing text into findings, in the order written when none names a severity", () => {
-    const got = reviewFindings(detail("2 findings. 1. The upload limit is duplicated in claims-core and customer-portal. 2. The refusal message has no test."));
+    const got = reviewFindings(detail("2 findings. 1. The upload limit is duplicated in commerce-core and customer-portal. 2. The refusal message has no test."));
     expect(got).toEqual([
-      { severity: null, text: "The upload limit is duplicated in claims-core and customer-portal." },
+      { severity: null, text: "The upload limit is duplicated in commerce-core and customer-portal." },
       { severity: null, text: "The refusal message has no test." },
     ]);
   });
@@ -698,20 +698,20 @@ describe("what a build's preview asks and which runs its choices reach", () => {
   it("the build's choices reach a run as its given section: shared items for every run, a project item only in its own folder", () => {
     const off = new Set([
       "personal:tool-server:github",
-      "d:/ws/claims-core|project:tool-server:claims-core-db",
+      "d:/ws/commerce-core|project:tool-server:commerce-core-db",
       "d:/ws/customer-portal|project:tool-server:customer-portal-db",
       "personal:plugin:superpowers@claude-plugins-official",
       "run-spec:skill:doc-writer",
       "personal:instruction:CLAUDE.md",
     ]);
-    expect(givenFor(off, "D:\\ws\\claims-core\\")).toEqual({
+    expect(givenFor(off, "D:\\ws\\commerce-core\\")).toEqual({
       hooks: [],
       skills: ["run-spec:skill:doc-writer"],
       plugins: ["personal:plugin:superpowers@claude-plugins-official"],
       instructions: ["personal:instruction:CLAUDE.md"],
-      tool_servers: ["personal:tool-server:github", "project:tool-server:claims-core-db"],
+      tool_servers: ["personal:tool-server:github", "project:tool-server:commerce-core-db"],
     });
-    expect(givenFor(new Set(), "D:/ws/claims-core")).toEqual({ hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] });
+    expect(givenFor(new Set(), "D:/ws/commerce-core")).toEqual({ hooks: [], skills: [], plugins: [], instructions: [], tool_servers: [] });
   });
 });
 
@@ -723,7 +723,7 @@ describe("what kind of run a spec is", () => {
     workspaceFolder: "/home/u/ws",
     masterRepo: "master",
     systemRepos: ["master", "app"],
-    checksDir: "/home/u/.kata/checks/claims",
+    checksDir: "/home/u/.kata/checks/commerce",
     continueOnLeftovers: false,
   });
 
@@ -779,18 +779,18 @@ describe("triage and fix run-specs (T8)", () => {
   });
   // The auto setting is not in the generated type yet; the spec must not depend on the setting at all.
   const auto = { ...bypass, permission_mode: "auto" } as unknown as Settings;
-  const wsCtx: RunContext = { folder: WS, system: "claims", change: "2026-10-23-fix-it" };
-  const startCtx: RunContext = { folder: WS, system: "claims", change: null, idea: "Photos fail to upload" };
+  const wsCtx: RunContext = { folder: WS, system: "commerce", change: "2026-10-23-fix-it" };
+  const startCtx: RunContext = { folder: WS, system: "commerce", change: null, idea: "Photos fail to upload" };
 
   it("writes the four task texts out in full", () => {
     expect(specFor("triage", null, startCtx, bypass, both, undefined, restricted).task).toBe(
-      "Use the ai-sdlc start skill for system claims. The change: Photos fail to upload. The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.",
+      "Use the ai-sdlc start skill for system commerce. The change: Photos fail to upload. The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.",
     );
     expect(specFor("fix", "accept-fix", wsCtx, bypass, both, undefined, restricted).task).toBe(
-      "Use the ai-sdlc fix skill for system claims with --accept 2026-10-23-fix-it. The engineer accepted this fix in the Workbench.",
+      "Use the ai-sdlc fix skill for system commerce with --accept 2026-10-23-fix-it. The engineer accepted this fix in the Workbench.",
     );
     expect(specFor("fix", null, wsCtx, bypass, both, undefined, restricted).task).toBe(
-      "Use the ai-sdlc fix skill for system claims on change folder 2026-10-23-fix-it. The engineer accepts the fix later in the Workbench, so do not ask for acceptance.",
+      "Use the ai-sdlc fix skill for system commerce on change folder 2026-10-23-fix-it. The engineer accepts the fix later in the Workbench, so do not ask for acceptance.",
     );
     expect(specFor("setup", null, { folder: WS, system: "", change: null, instructions: true }, bypass, both).task).toBe(
       "Use the ai-sdlc setup skill with --instructions.",
@@ -859,11 +859,11 @@ describe("triage and fix run-specs (T8)", () => {
   it("leaves the permissions of a repository run and a review run as they were", () => {
     const run: BuildRun = {
       target: { repo: "app" }, timeoutSecs: 7200, instructions: null, workspaceFolder: "/home/u/ws", masterRepo: "master",
-      systemRepos: ["master", "app", "api"], checksDir: "/home/u/.kata/checks/claims", continueOnLeftovers: false,
+      systemRepos: ["master", "app", "api"], checksDir: "/home/u/.kata/checks/commerce", continueOnLeftovers: false,
     };
-    const d = "//home/u/ws/master/intent/claims/2026-10-12-fnol";
+    const d = "//home/u/ws/master/intent/commerce/2026-10-12-photos";
     const base = [
-      "Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)", "Edit(//home/u/.kata/checks/claims/**)", "Edit(//home/u/.kata/checks/parse-cache/**)",
+      "Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)", "Edit(//home/u/.kata/checks/commerce/**)", "Edit(//home/u/.kata/checks/parse-cache/**)",
     ];
     const repoRun = specFor("build", null, { ...ctx, folder: run.workspaceFolder }, bypass, both, run).permissions;
     expect([...(repoRun.deny ?? [])].sort()).toEqual(

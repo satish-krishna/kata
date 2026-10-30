@@ -3,7 +3,7 @@ import type { ChangeInfo } from '@bindings/ChangeInfo';
 import { SdlcStagesStore, stageKey } from './sdlc-stages.store';
 
 const doc = { exists: false, committed: false, status: null, head_status: null };
-const info = (change: string, stage: ChangeInfo['stage'] = 'plan-ready', system = 'claims'): ChangeInfo => ({
+const info = (change: string, stage: ChangeInfo['stage'] = 'plan-ready', system = 'commerce'): ChangeInfo => ({
   system, change, intent: doc, spec: doc, plan: doc, stage, build: { tasks: 0, finished: 0, repos: 0 }, scope: system, out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null, track: 'full', fix_row: null,
 });
 
@@ -15,9 +15,9 @@ describe('SdlcStagesStore', () => {
     expect(s.rows('a')).toEqual({});
     s.put('a', info('c1'));
     s.put('b', info('c2'));
-    expect(Object.keys(s.rows('a'))).toEqual([stageKey('claims', 'c1')]);
-    expect(s.rows('a')[stageKey('claims', 'c1')]).toEqual({ info: info('c1'), error: null, checking: false });
-    expect(Object.keys(s.rows('b'))).toEqual([stageKey('claims', 'c2')]);
+    expect(Object.keys(s.rows('a'))).toEqual([stageKey('commerce', 'c1')]);
+    expect(s.rows('a')[stageKey('commerce', 'c1')]).toEqual({ info: info('c1'), error: null, checking: false });
+    expect(Object.keys(s.rows('b'))).toEqual([stageKey('commerce', 'c2')]);
   });
 
   it('marks every stored row as being checked until its fresh value arrives', () => {
@@ -27,8 +27,8 @@ describe('SdlcStagesStore', () => {
     s.markChecking('a');
     expect(Object.values(s.rows('a')).map((r) => r.checking)).toEqual([true, true]);
     s.put('a', info('c1', 'plan-awaiting'));
-    expect(s.rows('a')[stageKey('claims', 'c1')]).toEqual({ info: info('c1', 'plan-awaiting'), error: null, checking: false });
-    expect(s.rows('a')[stageKey('claims', 'c2')].checking).toBe(true);
+    expect(s.rows('a')[stageKey('commerce', 'c1')]).toEqual({ info: info('c1', 'plan-awaiting'), error: null, checking: false });
+    expect(s.rows('a')[stageKey('commerce', 'c2')].checking).toBe(true);
     s.settle('a');
     expect(Object.values(s.rows('a')).map((r) => r.checking)).toEqual([false, false]);
   });
@@ -36,8 +36,8 @@ describe('SdlcStagesStore', () => {
   it('keeps the error of a change that could not be read in place of its stage', () => {
     const s = store();
     s.put('a', info('c1'));
-    s.putError('a', 'claims', 'c1', 'the folder is gone');
-    expect(s.rows('a')[stageKey('claims', 'c1')]).toEqual({ info: null, error: 'the folder is gone', checking: false });
+    s.putError('a', 'commerce', 'c1', 'the folder is gone');
+    expect(s.rows('a')[stageKey('commerce', 'c1')]).toEqual({ info: null, error: 'the folder is gone', checking: false });
   });
 
   it('forgets a workspace that is cleared, and only that one', () => {

@@ -18,13 +18,13 @@ import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
 const BUILD = MOCK_BUILD_CHANGE;
-const RUN = `sdlc-claims-${BUILD}-review-1`;
-const REPOS = ['claims-core', 'customer-portal'];
+const RUN = `sdlc-commerce-${BUILD}-review-1`;
+const REPOS = ['commerce-core', 'customer-portal'];
 const DEPARTURE = { task: 'T2', repo: 'customer-portal', planText: 'Add the photo picker to the report form', departure: 'Reused the existing file picker.' };
 const toastText = () => toastState.toasts().map((t) => String(t.title)).join(' | ');
 
 function setup(transport: MockTransport) {
-  const params = new BehaviorSubject(convertToParamMap({ system: 'claims', change: BUILD }));
+  const params = new BehaviorSubject(convertToParamMap({ system: 'commerce', change: BUILD }));
   TestBed.configureTestingModule({
     providers: [
       provideRouter([]),
@@ -60,8 +60,8 @@ async function finished(tweak: (t: MockTransport) => void = () => undefined) {
   tweak(transport);
   const s = setup(transport);
   await ready(s.vm);
-  const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], BUILD);
-  await transport.sdlcLinkRun({ workspace_id: s.vm.current()!.id, system: 'claims', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
+  const heads = await transport.sdlcBuildHeads('', ['commerce-docs', ...REPOS], BUILD);
+  await transport.sdlcLinkRun({ workspace_id: s.vm.current()!.id, system: 'commerce', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
   const lock = TestBed.inject(LockStore);
   return { ...s, lock, steps: vi.spyOn(lock, 'runSteps') };
 }
@@ -76,9 +76,9 @@ describe('declaring done', () => {
     await vm.act('declare-done');
     expect(steps).toHaveBeenCalledWith('Declaring done', expect.any(Array));
     expect(load).toHaveBeenCalledTimes(1);
-    expect(run.mock.calls.map((c) => c[3].repo)).toEqual(['claims-intent', ...REPOS]);
+    expect(run.mock.calls.map((c) => c[3].repo)).toEqual(['commerce-docs', ...REPOS]);
     const report = vm.doneReport()!;
-    expect(report.repos.map((r) => r.repo)).toEqual(['claims-intent', ...REPOS]);
+    expect(report.repos.map((r) => r.repo)).toEqual(['commerce-docs', ...REPOS]);
     expect(report.repos.every((r) => r.result !== null)).toBe(true);
     expect(canConfirm(report)).toBe(true);
     expect(report.account).toBe('demo-user');
@@ -87,12 +87,12 @@ describe('declaring done', () => {
   it('a failed check blocks confirm and publishes nothing (R11.2)', async () => {
     const { vm, transport } = await finished();
     const failed = { name: 'cargo test', argv: ['cargo', 'test'], outcome: { kind: 'Failed' as const, exit: 101 }, tail: 'assertion failed' };
-    vi.spyOn(transport, 'sdlcRunChecks').mockImplementation(async (_f, _m, _s, repo) => ({ repo: repo.repo, none: false, results: repo.repo === 'claims-core' ? [failed] : [] }));
+    vi.spyOn(transport, 'sdlcRunChecks').mockImplementation(async (_f, _m, _s, repo) => ({ repo: repo.repo, none: false, results: repo.repo === 'commerce-core' ? [failed] : [] }));
     const publish = vi.spyOn(transport, 'sdlcPublish');
     await vm.act('declare-done');
     const report = vm.doneReport()!;
     expect(canConfirm(report)).toBe(false);
-    expect(report.repos.find((r) => r.repo === 'claims-core')!.result!.results[0].tail).toBe('assertion failed');
+    expect(report.repos.find((r) => r.repo === 'commerce-core')!.result!.results[0].tail).toBe('assertion failed');
     expect(publish).not.toHaveBeenCalled();
   });
 
@@ -126,9 +126,9 @@ describe('declaring done', () => {
   });
 
   it('an offending commit blocks confirm (R11.5)', async () => {
-    const { vm } = await finished((t) => vi.spyOn(t, 'sdlcCommitOffenders').mockResolvedValue([{ repo: 'claims-core', hash: 'abc1234def', subject: 'fix stuff' }]));
+    const { vm } = await finished((t) => vi.spyOn(t, 'sdlcCommitOffenders').mockResolvedValue([{ repo: 'commerce-core', hash: 'abc1234def', subject: 'fix stuff' }]));
     await vm.act('declare-done');
-    expect(vm.doneReport()!.offenders).toEqual([{ repo: 'claims-core', hash: 'abc1234def', subject: 'fix stuff' }]);
+    expect(vm.doneReport()!.offenders).toEqual([{ repo: 'commerce-core', hash: 'abc1234def', subject: 'fix stuff' }]);
     expect(canConfirm(vm.doneReport()!)).toBe(false);
   });
 
@@ -156,14 +156,14 @@ describe('declaring done', () => {
   });
 
   it('a bad checks file blocks done and says where (R16.2)', async () => {
-    const message = '/home/demo/.kata/checks/claims.toml:4:1: a check has no time limit';
+    const message = '/home/demo/.kata/checks/commerce.toml:4:1: a check has no time limit';
     const { vm, transport } = await finished((t) => vi.spyOn(t, 'sdlcChecksLoad').mockRejectedValue(new Error(message)));
     const run = vi.spyOn(transport, 'sdlcRunChecks');
     await vm.act('declare-done');
     const report = vm.doneReport()!;
     expect(run).not.toHaveBeenCalled();
     expect(report.checksError).toBe(message);
-    expect(report.checksPath).toContain('claims.toml');
+    expect(report.checksPath).toContain('commerce.toml');
     expect(canConfirm(report)).toBe(false);
   });
 
@@ -171,9 +171,9 @@ describe('declaring done', () => {
     const { vm } = await finished();
     await vm.act('declare-done');
     const report = vm.doneReport()!;
-    expect(report.repos.find((r) => r.repo === 'claims-core')!.checks.map((c) => c.name)).toEqual(['cargo test']);
+    expect(report.repos.find((r) => r.repo === 'commerce-core')!.checks.map((c) => c.name)).toEqual(['cargo test']);
     expect(report.repos.find((r) => r.repo === 'customer-portal')!.checks).toEqual([]);
-    expect(report.checksPath).toBe('C:/Users/demo/.kata/checks/claims.toml');
+    expect(report.checksPath).toBe('C:/Users/demo/.kata/checks/commerce.toml');
     expect(report.repos[0].base).toBe('main');
   });
 
@@ -189,7 +189,7 @@ describe('declaring done', () => {
     const { vm, transport } = await finished((t) => {
       vi.spyOn(t, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 1 }]);
     });
-    const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], BUILD);
+    const heads = await transport.sdlcBuildHeads('', ['commerce-docs', ...REPOS], BUILD);
     const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
     const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({
@@ -208,7 +208,7 @@ describe('declaring done', () => {
 
   it('a review run that committed under plugin/ is not current when the change page is opened again (F17)', async () => {
     const { vm, transport } = await finished();
-    const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], BUILD);
+    const heads = await transport.sdlcBuildHeads('', ['commerce-docs', ...REPOS], BUILD);
     const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
     const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
     // The backend reports what the master committed since the head the review recorded; a fresh view model asks again and gets the same answer.
@@ -230,7 +230,7 @@ describe('declaring done', () => {
     expect(canConfirm(vm.doneReport()!)).toBe(true);
     await vm.confirmDone();
     expect(publish).toHaveBeenCalledTimes(1);
-    expect(publish.mock.calls[0][5].map((r) => r.repo)).toEqual(['claims-intent', ...REPOS]);
+    expect(publish.mock.calls[0][5].map((r) => r.repo)).toEqual(['commerce-docs', ...REPOS]);
     expect(vm.doneReport()).toBeNull();
     expect(vm.prList()!.map((r) => r.outcome.kind)).toEqual(['opened', 'opened', 'opened']);
   });
@@ -279,7 +279,7 @@ describe('declaring done', () => {
   it.each([
     ['none', (t: MockTransport) => vi.spyOn(t, 'sdlcRunLinks').mockResolvedValue([])],
     ['unfinished', (t: MockTransport) => vi.spyOn(t, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 1 }])],
-    ['stale', (t: MockTransport) => vi.spyOn(t, 'sdlcBuildHeads').mockResolvedValue({ 'claims-core': 'ffffffff', 'customer-portal': 'eeeeeee' })],
+    ['stale', (t: MockTransport) => vi.spyOn(t, 'sdlcBuildHeads').mockResolvedValue({ 'commerce-core': 'ffffffff', 'customer-portal': 'eeeeeee' })],
   ] as const)('done needs a finished review of the current heads (R20.3): %s', async (missing, tweak) => {
     const { vm, transport } = await finished();
     tweak(transport);
@@ -292,7 +292,7 @@ describe('declaring done', () => {
     const { vm, transport } = await finished();
     const heads = vi.spyOn(transport, 'sdlcBuildHeads');
     await vm.act('declare-done');
-    expect(heads).toHaveBeenCalledWith(expect.anything(), ['claims-intent', ...REPOS], BUILD);
+    expect(heads).toHaveBeenCalledWith(expect.anything(), ['commerce-docs', ...REPOS], BUILD);
     expect(vm.doneReport()!.review).toMatchObject({ findings: expect.anything() });
   });
 
@@ -367,7 +367,7 @@ describe('declaring done from the build page', () => {
     layout: 2,
     problems: [],
     master_moved: [],
-    reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: { 'claims-intent': '1111111', 'claims-core': '2222222', 'customer-portal': '3333333' }, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: FINDING }] }],
+    reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: { 'commerce-docs': '1111111', 'commerce-core': '2222222', 'customer-portal': '3333333' }, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: FINDING }] }],
   } as unknown as Awaited<ReturnType<MockTransport['sdlcReviewRecord']>>;
 
   afterEach(() => vi.restoreAllMocks());
@@ -376,7 +376,7 @@ describe('declaring done from the build page', () => {
     const out = await render(ChangePage, {}, [
       provideRouter([]),
       { provide: KataTransport, useValue: transport },
-      { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
+      { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'commerce', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
     ]);
     await settle();
     return { ...out, transport };
@@ -393,8 +393,8 @@ describe('declaring done from the build page', () => {
       return { ...got, repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })), tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } })), departures: [DEPARTURE] };
     });
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 0 }]);
-    const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], BUILD);
-    await transport.sdlcLinkRun({ workspace_id: 'acme-claims', system: 'claims', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
+    const heads = await transport.sdlcBuildHeads('', ['commerce-docs', ...REPOS], BUILD);
+    await transport.sdlcLinkRun({ workspace_id: 'acme-commerce', system: 'commerce', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
     const publish = vi.spyOn(transport, 'sdlcPublish');
     const { container, fixture } = await mountPage(BUILD, transport);
     const vm = fixture.debugElement.injector.get(ChangePageViewModel);
@@ -404,7 +404,7 @@ describe('declaring done from the build page', () => {
     const report = vm.doneReport()!;
     expect(report.departures).toEqual([DEPARTURE]);
     expect(report.review).toMatchObject({ findings: [expect.objectContaining({ text: FINDING })] });
-    expect(report.repos.map((r) => r.repo)).toEqual(['claims-intent', ...REPOS]);
+    expect(report.repos.map((r) => r.repo)).toEqual(['commerce-docs', ...REPOS]);
     expect(report.repos.every((r) => r.result !== null)).toBe(true);
     await settle();
     const dialog = document.body.querySelector('app-done-dialog [role="dialog"], [role="dialog"]')!;
@@ -441,8 +441,8 @@ describe('declaring done from the build page', () => {
   });
 
   const PRS = [
-    { repo: 'claims-intent', url: 'https://github.com/acme/claims-intent/pull/11', state: 'open' as const, seenAt: null },
-    { repo: 'claims-core', url: 'https://github.com/acme/claims-core/pull/12', state: 'open' as const, seenAt: null },
+    { repo: 'commerce-docs', url: 'https://github.com/acme/commerce-docs/pull/11', state: 'open' as const, seenAt: null },
+    { repo: 'commerce-core', url: 'https://github.com/acme/commerce-core/pull/12', state: 'open' as const, seenAt: null },
     { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/13', state: 'open' as const, seenAt: null },
   ];
   const click = (a: Element) => {
@@ -507,7 +507,7 @@ describe('declaring done reports progress', () => {
     const end = vi.spyOn(progress, 'end');
     await vm.act('declare-done');
     const checks = begin.mock.calls.filter((c) => c[0] === 'running-checks');
-    expect(checks.map((c) => c[1])).toEqual(['claims-intent', ...REPOS].map((r) => `Running the checks in ${r}`));
+    expect(checks.map((c) => c[1])).toEqual(['commerce-docs', ...REPOS].map((r) => `Running the checks in ${r}`));
     expect(checks.every((c) => c[2] === 'lock')).toBe(true);
     await vm.confirmDone();
     const pushes = begin.mock.calls.filter((c) => c[0] === 'pushing').map((c) => c[1]);
@@ -523,7 +523,7 @@ describe('declaring done reports progress', () => {
     const progress = TestBed.inject(ProgressStore);
     await vm.act('declare-done');
     vi.spyOn(transport, 'sdlcPublish').mockImplementation(async () => {
-      progress.begin('pushing', 'Pushing change/x in claims-core', 'lock');
+      progress.begin('pushing', 'Pushing change/x in commerce-core', 'lock');
       throw new Error('push refused');
     });
     const fail = vi.spyOn(progress, 'fail');
@@ -542,12 +542,12 @@ describe('lasting links after a publish or a round', () => {
     const real = transport.sdlcDoneView.bind(transport);
     let published = false;
     const doneView = vi.spyOn(transport, 'sdlcDoneView').mockImplementation(async (...args) =>
-      published ? { done: false, links: [saved('claims-core')], linksFrom: 'opened', offerDeclare: true, prCheckFailed: false } : real(...args),
+      published ? { done: false, links: [saved('commerce-core')], linksFrom: 'opened', offerDeclare: true, prCheckFailed: false } : real(...args),
     );
     const publish = vi.spyOn(transport, 'sdlcPublish').mockImplementation(async () => {
       published = true;
       return [
-        { repo: 'claims-core', outcome: { kind: 'opened' as const, url: 'https://github.com/acme/claims-core/pull/7' } },
+        { repo: 'commerce-core', outcome: { kind: 'opened' as const, url: 'https://github.com/acme/commerce-core/pull/7' } },
         { repo: 'customer-portal', outcome: { kind: 'failed' as const, error: 'push refused' } },
       ];
     });
@@ -556,7 +556,7 @@ describe('lasting links after a publish or a round', () => {
     expect(publish.mock.calls[0][1]).toBe(vm.current()!.id);
     expect(doneView.mock.calls.length).toBeGreaterThan(1);
     expect(vm.done()).toBe(false);
-    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['claims-core']);
+    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['commerce-core']);
     expect(vm.prList()?.length).toBe(2);
     expect(vm.actions()).toContain('declare-done');
   });
@@ -566,7 +566,7 @@ describe('lasting links after a publish or a round', () => {
     withStage(transport, BUILD, 'build-finished');
     vi.spyOn(transport, 'sdlcDoneView').mockResolvedValue({
       done: false,
-      links: [saved('claims-core'), saved('customer-portal')],
+      links: [saved('commerce-core'), saved('customer-portal')],
       linksFrom: 'earlierDeclaration',
       offerDeclare: true,
       prCheckFailed: false,
@@ -576,7 +576,7 @@ describe('lasting links after a publish or a round', () => {
     await ready(vm);
     expect(vm.done()).toBe(false);
     expect(vm.change()!.stage).toBe('build-finished');
-    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['claims-core', 'customer-portal']);
+    expect(vm.pullLinks().map((l) => l.repo)).toEqual(['commerce-core', 'customer-portal']);
     expect(vm.linksNote()).toBe('from the earlier declaration');
     expect(vm.actions()).toContain('declare-done');
   });

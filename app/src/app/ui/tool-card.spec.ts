@@ -31,12 +31,12 @@ describe('ToolCard', () => {
   it('renders an Edit open, as a diff, with a status label', async () => {
     const { container } = await render(ToolCard, {
       call: callOf([
-        use('Edit', { file_path: 'src/claim.rs', old_string: 'if now > t {', new_string: 'if now >= t {' }),
+        use('Edit', { file_path: 'src/product.rs', old_string: 'if now > t {', new_string: 'if now >= t {' }),
         res('Edit'),
       ]),
     });
     const q = within(container);
-    expect(q.getByText('src/claim.rs')).toBeTruthy();
+    expect(q.getByText('src/product.rs')).toBeTruthy();
     expect(q.getByText('ok')).toBeTruthy();
     expect(container.querySelector('[data-slot=code-block-line][data-variant=removed]')!.textContent).toContain('if now > t {');
     expect(container.querySelector('[data-slot=code-block-line][data-variant=added]')!.textContent).toContain('if now >= t {');

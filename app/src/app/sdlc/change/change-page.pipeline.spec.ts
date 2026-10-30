@@ -9,7 +9,7 @@ import { MockTransport } from '../../core/transport/mock-transport';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
-const FIX = '2026-10-12-fnol-photo-upload';
+const FIX = '2026-10-12-product-photo-upload';
 const FIX_BRANCH = `change/${FIX}`;
 const NEW = '2026-10-25-double-refund';
 const NEW_BRANCH = `change/${NEW}`;
@@ -39,7 +39,7 @@ async function mountFix() {
   vi.spyOn(transport, 'sdlcBranches').mockImplementation(async (m) => ({ ...(await realBranches(m)), current: FIX_BRANCH }));
   const decide = vi.spyOn(transport, 'sdlcDecide');
   const checkout = vi.spyOn(transport, 'sdlcCheckout');
-  const params = new BehaviorSubject(convertToParamMap({ system: 'claims', change: FIX }));
+  const params = new BehaviorSubject(convertToParamMap({ system: 'commerce', change: FIX }));
   const out = await render(ChangePage, {}, [
     provideRouter([]),
     { provide: KataTransport, useValue: transport },
@@ -93,10 +93,10 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
     await start();
     await vi.waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
     expect(newChange).toHaveBeenCalledTimes(1);
-    expect(newChange.mock.calls[0][1]).toBe('claims');
+    expect(newChange.mock.calls[0][1]).toBe('commerce');
     expect(newChange.mock.calls[0][2]).toBe(IDEA);
     expect(newChange.mock.calls[0][3]).toBe('full');
-    expect(decide.mock.calls[0].slice(1)).toEqual(['claims', FIX, 'reject-intent', false]);
+    expect(decide.mock.calls[0].slice(1)).toEqual(['commerce', FIX, 'reject-intent', false]);
     expect(newChange.mock.invocationCallOrder[0]).toBeLessThan(decide.mock.invocationCallOrder[0]);
   });
 
@@ -153,7 +153,7 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
     button(document.body, 'Commit').click();
     await vi.waitFor(() => expect(decide).toHaveBeenCalledTimes(2));
     expect(decide.mock.calls.map((c) => c[4])).toEqual([false, true]);
-    expect(decide.mock.calls[1].slice(1, 4)).toEqual(['claims', FIX, 'reject-intent']);
+    expect(decide.mock.calls[1].slice(1, 4)).toEqual(['commerce', FIX, 'reject-intent']);
   });
 
   // The new change's branch is checked out once it opened, so the fix's documents are on a different branch.
@@ -166,7 +166,7 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
     await vi.waitFor(() => expect(checkout).toHaveBeenCalledTimes(2));
     expect(checkout.mock.calls.map((c) => c[1])).toEqual([FIX_BRANCH, NEW_BRANCH]);
     expect(decide).toHaveBeenCalledTimes(1);
-    expect(decide.mock.calls[0].slice(1)).toEqual(['claims', FIX, 'reject-intent', false]);
+    expect(decide.mock.calls[0].slice(1)).toEqual(['commerce', FIX, 'reject-intent', false]);
     expect(order(newChange, checkout)).toEqual([
       newChange.mock.invocationCallOrder[0],
       checkout.mock.invocationCallOrder[0],
@@ -265,7 +265,7 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
   // The real runner navigates to the new change before it resolves; the page and its ViewModel are reused.
   const navigatesToNew = (m: { newChange: { mockImplementation: (f: () => Promise<{ kind: 'opened'; change: string; branch: string }>) => unknown }; params: BehaviorSubject<ReturnType<typeof convertToParamMap>> }) =>
     m.newChange.mockImplementation(async () => {
-      m.params.next(convertToParamMap({ system: 'claims', change: NEW }));
+      m.params.next(convertToParamMap({ system: 'commerce', change: NEW }));
       return { kind: 'opened', change: NEW, branch: NEW_BRANCH };
     });
 
@@ -276,7 +276,7 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
     await start();
     await vi.waitFor(() => expect(m.checkout).toHaveBeenCalledTimes(2));
     expect(m.decide).toHaveBeenCalledTimes(1);
-    expect(m.decide.mock.calls[0].slice(1)).toEqual(['claims', FIX, 'reject-intent', false]);
+    expect(m.decide.mock.calls[0].slice(1)).toEqual(['commerce', FIX, 'reject-intent', false]);
     expect(m.checkout.mock.invocationCallOrder[0]).toBeLessThan(m.decide.mock.invocationCallOrder[0]);
     expect(m.decide.mock.invocationCallOrder[0]).toBeLessThan(m.checkout.mock.invocationCallOrder[1]);
   });
@@ -291,8 +291,8 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
     button(document.body, 'Commit').click();
     await vi.waitFor(() => expect(m.decide).toHaveBeenCalledTimes(2));
     expect(m.decide.mock.calls.map((c) => c.slice(1))).toEqual([
-      ['claims', FIX, 'reject-intent', false],
-      ['claims', FIX, 'reject-intent', true],
+      ['commerce', FIX, 'reject-intent', false],
+      ['commerce', FIX, 'reject-intent', true],
     ]);
   });
 

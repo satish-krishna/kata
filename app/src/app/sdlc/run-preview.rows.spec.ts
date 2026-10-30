@@ -13,7 +13,7 @@ import { BuildPageViewModel, type BuildContext } from './build/build-page.view-m
 import { ChangePageViewModel } from './change/change-page.view-model';
 import { SdlcHomeViewModel } from './home/sdlc-home.view-model';
 
-const FNOL = '2026-10-12-fnol-photo-upload';
+const PHOTOS_CHANGE = '2026-10-12-product-photo-upload';
 const BUILD = MOCK_BUILD_CHANGE;
 
 /** One way to start a run: how to ask for it, how to tell it has started, and the preview in front of it. */
@@ -66,7 +66,7 @@ async function changePage(change: string, stage: ChangeInfo['stage'] | null, sta
       BuildPageViewModel,
       RunPreviewViewModel,
       { provide: KataTransport, useValue: transport },
-      { provide: ActivatedRoute, useValue: { paramMap: new BehaviorSubject(convertToParamMap({ system: 'claims', change })).asObservable() } },
+      { provide: ActivatedRoute, useValue: { paramMap: new BehaviorSubject(convertToParamMap({ system: 'commerce', change })).asObservable() } },
     ],
   });
   vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
@@ -87,7 +87,7 @@ async function changePage(change: string, stage: ChangeInfo['stage'] | null, sta
   return scenario;
 }
 
-/** A build whose two repositories stopped at the time limit, so Continue is offered on claims-core. */
+/** A build whose two repositories stopped at the time limit, so Continue is offered on commerce-core. */
 async function continuing(): Promise<Scenario> {
   const transport = new MockTransport();
   TestBed.configureTestingModule({ providers: [provideRouter([]), BuildPageViewModel, RunPreviewViewModel, { provide: KataTransport, useValue: transport }] });
@@ -103,13 +103,13 @@ async function continuing(): Promise<Scenario> {
     link.onRun?.(`fake-${target.repo}-again`);
     return { exit: 0, error: null };
   });
-  const out = await transport.sdlcBuildPrepare(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'claims', BUILD, false, null, 'start');
+  const out = await transport.sdlcBuildPrepare(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'commerce', BUILD, false, null, 'start');
   if (out.kind !== 'ready') throw new Error('the mock build did not prepare');
-  const ctx: BuildContext = { workspaceId: 'acme-claims', folder: MOCK_WORKSPACE_FOLDER, system: 'claims', change: BUILD, systemRepos: [] };
+  const ctx: BuildContext = { workspaceId: 'acme-commerce', folder: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: BUILD, systemRepos: [] };
   await vm.start({ start: out.start, timeoutSecs: 5400, round: null, checksDir: await transport.sdlcChecksDir() }, ctx);
   await vi.waitFor(() => {
-    vm.select('claims-core');
-    expect(vm.view().groups.find((g) => g.repo === 'claims-core')?.action).toBe('continue');
+    vm.select('commerce-core');
+    expect(vm.view().groups.find((g) => g.repo === 'commerce-core')?.action).toBe('continue');
   });
   return { transport, preview: TestBed.inject(RunPreviewViewModel), go: () => vm.continueRun(), started: () => continued };
 }
@@ -122,20 +122,20 @@ const ROWS: [string, string, () => Promise<Scenario>][] = [
     'AI-SDLC mode',
     'an intent run',
     () =>
-      changePage(FNOL, null, async (vm) => {
+      changePage(PHOTOS_CHANGE, null, async (vm) => {
         await vm.act('continue-intent');
         await vm.runWithFeedback('');
       }, 'run'),
   ],
-  ['AI-SDLC mode', 'a spec run', () => changePage(FNOL, null, (vm) => vm.act('start-spec'), 'run')],
-  ['AI-SDLC mode', 'a plan run', () => changePage(FNOL, null, (vm) => vm.act('start-plan'), 'run')],
+  ['AI-SDLC mode', 'a spec run', () => changePage(PHOTOS_CHANGE, null, (vm) => vm.act('start-spec'), 'run')],
+  ['AI-SDLC mode', 'a plan run', () => changePage(PHOTOS_CHANGE, null, (vm) => vm.act('start-plan'), 'run')],
   ['AI-SDLC mode', 'a build', () => changePage(BUILD, 'build-ready', (vm) => vm.act('start-build'), 'build')],
   [
     'AI-SDLC mode',
     'another round',
     () =>
       changePage(BUILD, 'build-finished', (vm) => vm.act('another-round'), 'build', (s) =>
-        s.preview.buildForm()!.model.update((m) => ({ ...m, instructions: 'tidy up', repo: 'claims-core' })),
+        s.preview.buildForm()!.model.update((m) => ({ ...m, instructions: 'tidy up', repo: 'commerce-core' })),
       ),
   ],
   ['AI-SDLC mode', 'a review started by hand', () => changePage(BUILD, 'build-finished', (vm) => vm.act('run-review'), 'build')],

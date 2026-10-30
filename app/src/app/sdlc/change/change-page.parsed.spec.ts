@@ -19,8 +19,8 @@ const settle = async () => {
   }
 };
 const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
-const RUN = `sdlc-claims-${MOCK_BUILD_CHANGE}-review-1`;
-const REPOS = ['claims-core', 'customer-portal'];
+const RUN = `sdlc-commerce-${MOCK_BUILD_CHANGE}-review-1`;
+const REPOS = ['commerce-core', 'customer-portal'];
 
 /** The documents are on disk as prose with nothing in them a page could read a requirement or a task from. */
 const PROSE = (title: string) => `---\nstatus: accepted\n---\n# ${title}\n\nWords only.\n`;
@@ -48,17 +48,17 @@ describe('ChangePage parsed documents', () => {
     });
     vi.spyOn(transport, 'sdlcDiffFiles').mockResolvedValue({ files: [], loc: [] });
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 0 }]);
-    const heads = await transport.sdlcBuildHeads('', ['claims-intent', ...REPOS], MOCK_BUILD_CHANGE);
+    const heads = await transport.sdlcBuildHeads('', ['commerce-docs', ...REPOS], MOCK_BUILD_CHANGE);
     const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(reviewOfSix(commits));
     const { container, fixture } = await render(ChangePage, {}, [
       provideRouter([]),
       { provide: KataTransport, useValue: transport },
-      { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change: MOCK_BUILD_CHANGE })), snapshot: { queryParamMap: convertToParamMap({}) } } },
+      { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'commerce', change: MOCK_BUILD_CHANGE })), snapshot: { queryParamMap: convertToParamMap({}) } } },
     ]);
     await settle();
     const vm = fixture.debugElement.injector.get(ChangePageViewModel);
-    await transport.sdlcLinkRun({ workspace_id: vm.current()!.id, system: 'claims', change: MOCK_BUILD_CHANGE, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
+    await transport.sdlcLinkRun({ workspace_id: vm.current()!.id, system: 'commerce', change: MOCK_BUILD_CHANGE, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
 
     const pill = (start: string) => Array.from(container.querySelectorAll<HTMLButtonElement>('header [role="tab"]')).find((t) => text(t).startsWith(start))!;
     pill('Spec').click();

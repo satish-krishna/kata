@@ -83,7 +83,7 @@ const targetRoutes = routes.length ? routes : DEFAULT_ROUTES;
 // An overlay behind a tab is not in the page until the tab is open, so a route listed here is visited a second time with
 // the step done. The change page keeps the Changes view, and its By type popover, on the Build tab.
 const ROUTE_STEPS = {
-  'sdlc/claims/2026-10-19-build-demo': async (page) => {
+  'sdlc/commerce/2026-10-19-build-demo': async (page) => {
     await page.getByRole('tab', { name: /^Build/ }).click();
     // The build page opens in the mode its stage suits, which may keep the changed files out of sight. Ctrl+3 is Changes, the mode that puts them in the middle.
     await page.keyboard.press('Control+3');
@@ -91,7 +91,7 @@ const ROUTE_STEPS = {
   },
 };
 // A trigger a route must carry: one that stops rendering would otherwise leave the route green with that overlay never clicked.
-const EXPECTED_TRIGGERS = { 'sdlc/claims/2026-10-18-photo-limits-shipped': ['[data-testid="pr-menu"]'] };
+const EXPECTED_TRIGGERS = { 'sdlc/commerce/2026-10-18-photo-limits-shipped': ['[data-testid="pr-menu"]'] };
 const visits = targetRoutes.flatMap((route) => [{ route, step: null }, ...(ROUTE_STEPS[route] ? [{ route, step: ROUTE_STEPS[route] }] : [])]);
 
 async function serve() {

@@ -15,7 +15,7 @@ import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE } from '../../lib/sdlc-mock';
 import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
-const FNOL = '2026-10-12-fnol-photo-upload';
+const PHOTOS_CHANGE = '2026-10-12-product-photo-upload';
 const settle = async () => {
   for (let i = 0; i < 4; i++) {
     TestBed.tick();
@@ -35,11 +35,11 @@ const SPEC = [
   '```gherkin',
   'Feature: Demo',
   '',
-  '  Rule: R1 — A policyholder attaches photos (from: Proposed outcome 1, D2)',
+  '  Rule: R1 — A seller attaches photos (from: Proposed outcome 1, D2)',
   '',
   '    Scenario: R1.1 — An eleventh photo is refused',
-  '      Given a claim with 10 photos',
-  '      When the policyholder adds one',
+  '      Given a product with 10 photos',
+  '      When the seller adds one',
   '      Then the upload is refused',
   '',
   '  Rule: R2 — The portal says why (from: D3)',
@@ -60,7 +60,7 @@ const SPEC = [
   '  Rule: R3 — Nothing is lost (from: D4)',
   '',
   '    Scenario: R3.1 — A draft survives',
-  '      Given a draft claim',
+  '      Given a draft product',
   '      Then it is kept',
   '```',
   '',
@@ -75,8 +75,8 @@ const SPEC_NO_REQUIREMENTS = '---\nstatus: accepted\n---\n# Spec: demo\n\n## Rul
 /** What the format program reads from SPEC: three requirements, one of them with a Scenario Outline and its examples. */
 const REQUIREMENTS: ParsedRequirement[] = [
   {
-    id: 'R1', title: 'A policyholder attaches photos', from: ['Proposed outcome 1', 'D2'], line: 9,
-    scenarios: [{ id: 'R1.1', title: 'An eleventh photo is refused', outline: false, examples: null, line: 11, steps: ['Given a claim with 10 photos', 'When the policyholder adds one', 'Then the upload is refused'] }],
+    id: 'R1', title: 'A seller attaches photos', from: ['Proposed outcome 1', 'D2'], line: 9,
+    scenarios: [{ id: 'R1.1', title: 'An eleventh photo is refused', outline: false, examples: null, line: 11, steps: ['Given a product with 10 photos', 'When the seller adds one', 'Then the upload is refused'] }],
   },
   {
     id: 'R2', title: 'The portal says why', from: ['D3'], line: 16,
@@ -90,7 +90,7 @@ const REQUIREMENTS: ParsedRequirement[] = [
   },
   {
     id: 'R3', title: 'Nothing is lost', from: ['D4'], line: 32,
-    scenarios: [{ id: 'R3.1', title: 'A draft survives', outline: false, examples: null, line: 34, steps: ['Given a draft claim', 'Then it is kept'] }],
+    scenarios: [{ id: 'R3.1', title: 'A draft survives', outline: false, examples: null, line: 34, steps: ['Given a draft product', 'Then it is kept'] }],
   },
 ];
 const specOf = (requirements: ParsedRequirement[]): ReadResult => ({ kind: 'spec', layout: 1, document: { requirements }, problems: [] });
@@ -107,7 +107,7 @@ const PLAN = [
   '',
   '## Tasks',
   '',
-  '### T1: Refuse an eleventh photo (`claims-core`)',
+  '### T1: Refuse an eleventh photo (`commerce-core`)',
   '',
 ].join('\n');
 
@@ -119,7 +119,7 @@ const task = (id: string, name: string, repo: string, dependsOn: string[], row: 
 });
 /** What the format program reads from the plan, task by task. */
 const PLANNED: Record<string, ParsedTask> = {
-  T1: planned('T1', 'Refuse an eleventh photo', 'claims-core', [], [
+  T1: planned('T1', 'Refuse an eleventh photo', 'commerce-core', [], [
     { title: 'Depends on', body: 'none' },
     { title: 'Files', body: '`store.rs`' },
     { title: 'Change', body: '- Refuse the eleventh.\n- Keep the first ten.' },
@@ -135,7 +135,7 @@ const PLANNED: Record<string, ParsedTask> = {
   T4: planned('T4', 'Notes only', 'customer-portal', [], [{ title: '', body: 'Just do the thing described here.' }]),
 };
 const TASKS: TaskStatus[] = [
-  task('T1', 'Refuse an eleventh photo', 'claims-core', [], { task: 'T1', repo: 'claims-core', commits: ['aaa1111', 'bbb2222'], departure: null }),
+  task('T1', 'Refuse an eleventh photo', 'commerce-core', [], { task: 'T1', repo: 'commerce-core', commits: ['aaa1111', 'bbb2222'], departure: null }),
   task('T2', 'Add the picker', 'customer-portal', [], { task: 'T2', repo: 'customer-portal', commits: ['ccc3333'], departure: 'Reused the existing picker.' }),
   task('T3', 'Show the message', 'customer-portal', ['T1'], null),
   task('T4', 'Notes only', 'customer-portal', [], null),
@@ -160,7 +160,7 @@ async function mount(change: string, docs: Record<string, string | null>, tasks:
   const out = await render(ChangePage, {}, [
     provideRouter([]),
     { provide: KataTransport, useValue: transport },
-    { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
+    { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'commerce', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
   ]);
   await settle();
   return out;
@@ -187,15 +187,15 @@ describe('ChangePage spec views', () => {
   afterEach(() => draw.mockRestore());
 
   it('puts the view toggle in the strip: Requirements with its count (the default), Design, Whole document', async () => {
-    const { container } = await mount(FNOL, { spec: SPEC });
+    const { container } = await mount(PHOTOS_CHANGE, { spec: SPEC });
     expect(toggle(container).map(text)).toEqual(['Requirements · 3', 'Design', 'Whole document']);
     expect(checked(container)).toEqual(['Requirements · 3']);
   });
 
   it('lists the requirements with id, title and scenario count, and marks the first as picked', async () => {
-    const { container } = await mount(FNOL, { spec: SPEC });
+    const { container } = await mount(PHOTOS_CHANGE, { spec: SPEC });
     expect(reqs(container).map(text)).toEqual([
-      'R1 A policyholder attaches photos 1',
+      'R1 A seller attaches photos 1',
       'R2 The portal says why 2',
       'R3 Nothing is lost 1',
     ]);
@@ -203,18 +203,18 @@ describe('ChangePage spec views', () => {
   });
 
   it('shows the picked requirement: a muted line, the title as a heading, and one card per scenario', async () => {
-    const { container } = await mount(FNOL, { spec: SPEC });
+    const { container } = await mount(PHOTOS_CHANGE, { spec: SPEC });
     const detail = container.querySelector('[data-testid="requirement"]')!;
     expect(text(detail.querySelector('.k-req__meta')!)).toBe('R1 · from Proposed outcome 1, D2 · 1 scenario');
-    expect(text(detail.querySelector('h2')!)).toBe('A policyholder attaches photos');
+    expect(text(detail.querySelector('h2')!)).toBe('A seller attaches photos');
     const cards = Array.from(detail.querySelectorAll('article'));
     expect(cards.map((c) => text(c.querySelector('h3')!))).toEqual(['R1.1 An eleventh photo is refused']);
     expect(Array.from(cards[0].querySelectorAll('.k-gherkin__kw')).map(text)).toEqual(['Given', 'When', 'Then']);
-    expect(text(cards[0])).toContain('Given a claim with 10 photos');
+    expect(text(cards[0])).toContain('Given a product with 10 photos');
   });
 
   it('crosses the seam: clicking a requirement picks it, and a Scenario Outline shows its examples as a table', async () => {
-    const { container } = await mount(FNOL, { spec: SPEC });
+    const { container } = await mount(PHOTOS_CHANGE, { spec: SPEC });
     reqs(container)[1].click();
     await settle();
     expect(pickedOf(reqs(container))).toEqual(['R2']);
@@ -227,21 +227,21 @@ describe('ChangePage spec views', () => {
   });
 
   it('shows the Design section in the document layout, or says the spec has none', async () => {
-    const { container } = await mount(FNOL, { spec: SPEC });
+    const { container } = await mount(PHOTOS_CHANGE, { spec: SPEC });
     toggle(container)[1].click();
     await settle();
     expect(checked(container)).toEqual(['Design']);
     expect(container.querySelector('nav[aria-label="Requirements"]')).toBeNull();
     expect(text(container.querySelector('app-doc-layout article')!)).toBe('Design The design text.');
     TestBed.resetTestingModule();
-    const bare = await mount(FNOL, { spec: SPEC_NO_DESIGN });
+    const bare = await mount(PHOTOS_CHANGE, { spec: SPEC_NO_DESIGN });
     toggle(bare.container)[1].click();
     await settle();
     expect(text(bare.container.querySelector('[data-testid="no-section"]')!)).toBe('This spec has no Design section.');
   });
 
   it('shows the whole document in the document layout', async () => {
-    const { container } = await mount(FNOL, { spec: SPEC });
+    const { container } = await mount(PHOTOS_CHANGE, { spec: SPEC });
     toggle(container)[2].click();
     await settle();
     expect(checked(container)).toEqual(['Whole document']);
@@ -250,7 +250,7 @@ describe('ChangePage spec views', () => {
   });
 
   it('shows only the whole document, with no toggle, for a spec without requirements', async () => {
-    const { container } = await mount(FNOL, { spec: SPEC_NO_REQUIREMENTS });
+    const { container } = await mount(PHOTOS_CHANGE, { spec: SPEC_NO_REQUIREMENTS });
     expect(toggle(container)).toEqual([]);
     expect(container.querySelector('nav[aria-label="Requirements"]')).toBeNull();
     expect(container.querySelector('app-doc-layout article')!.textContent).toContain('Plain numbered rules.');
@@ -258,13 +258,13 @@ describe('ChangePage spec views', () => {
 
   it('lists a requirement that has no scenario with a count of 0, because the list shows what the program read', async () => {
     const bare: ParsedRequirement = { id: 'R1', title: 'A rule', from: ['D1'], line: 5, scenarios: [] };
-    const { container } = await mount(FNOL, { spec: SPEC }, [], { spec: specOf([bare]) });
+    const { container } = await mount(PHOTOS_CHANGE, { spec: SPEC }, [], { spec: specOf([bare]) });
     expect(reqs(container).map(text)).toEqual(['R1 A rule 0']);
     expect(text(container.querySelector('[data-testid="requirement"] .k-req__meta')!)).toBe('R1 · from D1 · 0 scenarios');
   });
 
   it('puts the view back to the default on another tab, and has no toggle on the intent', async () => {
-    const { container } = await mount(FNOL, { spec: SPEC, intent: '# Intent\n\nWords.\n' });
+    const { container } = await mount(PHOTOS_CHANGE, { spec: SPEC, intent: '# Intent\n\nWords.\n' });
     toggle(container)[1].click();
     await settle();
     pill(container, 'Intent').click();
@@ -276,7 +276,7 @@ describe('ChangePage spec views', () => {
   });
 
   it('keeps the not-in-folder message and shows no toggle when the spec is missing', async () => {
-    const { container } = await mount(FNOL, { spec: null });
+    const { container } = await mount(PHOTOS_CHANGE, { spec: null });
     expect(container.textContent).toContain('spec.md is not in this change folder.');
     expect(toggle(container)).toEqual([]);
   });
@@ -314,7 +314,7 @@ describe('ChangePage plan views', () => {
     tasksNav(container)[0].click();
     await settle();
     const detail = container.querySelector('[data-testid="task"]')!;
-    expect(text(detail.querySelector('.k-task__meta')!)).toBe('T1 · claims-core · depends on none');
+    expect(text(detail.querySelector('.k-task__meta')!)).toBe('T1 · commerce-core · depends on none');
     expect(text(detail.querySelector('h2')!)).toBe('Refuse an eleventh photo');
     const sections = Array.from(detail.querySelectorAll('section'));
     expect(sections.map((s) => text(s.querySelector('h3')!))).toEqual(['Files', 'Change', 'Tests', 'Done when']);
@@ -418,8 +418,8 @@ describe('ChangePage plan views', () => {
   });
 
   it('shows the lines between a task heading and its first field above the labeled sections', async () => {
-    const lead = task('T5', 'Lead first', 'claims-core', [], null);
-    const leadPlan = planned('T5', 'Lead first', 'claims-core', [], [
+    const lead = task('T5', 'Lead first', 'commerce-core', [], null);
+    const leadPlan = planned('T5', 'Lead first', 'commerce-core', [], [
       { title: '', body: 'Read this before you start.' },
       { title: 'Depends on', body: 'none' },
       { title: 'Change', body: 'Do it.' },
@@ -486,7 +486,7 @@ describe('ChangePage opens an existing change on the build page', () => {
     layout: 2,
     problems: [],
     master_moved: [],
-    reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: { 'claims-intent': '1111111', 'claims-core': '2222222', 'customer-portal': '3333333' }, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: FINDING }] }],
+    reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: { 'commerce-docs': '1111111', 'commerce-core': '2222222', 'customer-portal': '3333333' }, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: FINDING }] }],
   } as unknown as Awaited<ReturnType<MockTransport['sdlcReviewRecord']>>;
   // The bar also holds the mode switcher and Reset layout; only the stage actions are meant here.
   const actions = (c: HTMLElement) => Array.from(c.querySelectorAll('app-build-page [data-bar] button')).filter((b) => b.closest('app-segmented') === null).map(text).filter((t) => t !== 'Reset layout');
@@ -506,7 +506,7 @@ describe('ChangePage opens an existing change on the build page', () => {
     });
     if (review) vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
     if (built.length > 0) {
-      await transport.sdlcLinkRun({ workspace_id: 'acme-claims', system: 'claims', change: MOCK_BUILD_CHANGE, stage: 'build:claims-core', run_id: EARLIER, started_at: 1790000000, heads: {} });
+      await transport.sdlcLinkRun({ workspace_id: 'acme-commerce', system: 'commerce', change: MOCK_BUILD_CHANGE, stage: 'build:commerce-core', run_id: EARLIER, started_at: 1790000000, heads: {} });
       vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: EARLIER, kata: 'k', started_at: 1790000000, isolation: 'none', steered: false, exit: 0 }]);
     }
     return open(MOCK_BUILD_CHANGE, transport);
@@ -515,7 +515,7 @@ describe('ChangePage opens an existing change on the build page', () => {
     const out = await render(ChangePage, {}, [
       provideRouter([]),
       { provide: KataTransport, useValue: transport },
-      { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
+      { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'commerce', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
     ]);
     await settle();
     return out;
@@ -544,7 +544,7 @@ describe('ChangePage opens an existing change on the build page', () => {
     expect(actions(container)).toEqual(['Declare done', 'Another round', 'Run review']);
     expect(Array.from(container.querySelectorAll('app-build-page [data-task]')).every((t) => text(t).includes('Done'))).toBe(true);
     expect(text(container.querySelector('app-build-page app-findings-list')!)).toContain(FINDING);
-    pickRepo(container, 'claims-core');
+    pickRepo(container, 'commerce-core');
     await settle();
     expect(container.querySelector(`app-build-page [data-session="${EARLIER}"]`)).not.toBeNull();
   });
@@ -552,7 +552,7 @@ describe('ChangePage opens an existing change on the build page', () => {
   it('an existing change done with pull requests open opens on the build page with nothing to do', async () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
-    await transport.sdlcLinkRun({ workspace_id: 'acme-claims', system: 'claims', change: MOCK_DONE_CHANGE, stage: 'build:claims-core', run_id: EARLIER, started_at: 1790000000, heads: {} });
+    await transport.sdlcLinkRun({ workspace_id: 'acme-commerce', system: 'commerce', change: MOCK_DONE_CHANGE, stage: 'build:commerce-core', run_id: EARLIER, started_at: 1790000000, heads: {} });
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: EARLIER, kata: 'k', started_at: 1790000000, isolation: 'none', steered: false, exit: 0 }]);
     const { container } = await open(MOCK_DONE_CHANGE, transport);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
@@ -560,7 +560,7 @@ describe('ChangePage opens an existing change on the build page', () => {
     expect(actions(container)).toEqual([]);
     expect(Array.from(container.querySelectorAll('app-build-page [data-task]')).every((t) => text(t).includes('Done'))).toBe(true);
     expect(text(container.querySelector('app-build-page app-findings-list')!)).toContain(FINDING);
-    pickRepo(container, 'claims-core');
+    pickRepo(container, 'commerce-core');
     await settle();
     expect(container.querySelector(`app-build-page [data-session="${EARLIER}"]`)).not.toBeNull();
     expect(container.querySelector('header [data-testid="pr-menu"]')).not.toBeNull();

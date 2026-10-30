@@ -29,21 +29,21 @@ const settle = async () => {
     await new Promise((r) => setTimeout(r, 0));
   }
 };
-const FNOL = '2026-10-12-fnol-photo-upload';
+const PHOTOS_CHANGE = '2026-10-12-product-photo-upload';
 const labels = (c: HTMLElement) => Array.from(c.querySelectorAll('button')).map((b) => (b.textContent ?? '').replace(/\s+/g, ' ').trim());
 
-async function mount(change = FNOL, transport = new MockTransport(), routes: Routes = []) {
+async function mount(change = PHOTOS_CHANGE, transport = new MockTransport(), routes: Routes = []) {
   const out = await render(ChangePage, {}, [
     provideRouter(routes),
     { provide: KataTransport, useValue: transport },
-    { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'claims', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
+    { provide: ActivatedRoute, useValue: { paramMap: of(convertToParamMap({ system: 'commerce', change })), snapshot: { queryParamMap: convertToParamMap({}) } } },
   ]);
   await settle();
   return { ...out, transport };
 }
 
 describe('ChangePage', () => {
-  // The FNOL spec has a Mermaid diagram. A cold import of Mermaid under full-suite load blocks the
+  // The PHOTOS_CHANGE spec has a Mermaid diagram. A cold import of Mermaid under full-suite load blocks the
   // first mount's settle for seconds, past the 5s test timeout; these tests don't look at diagrams.
   let draw: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
@@ -53,8 +53,8 @@ describe('ChangePage', () => {
 
   it('shows the breadcrumb, the branch, the stage pills and the stage document', async () => {
     const { container } = await mount();
-    expect(container.querySelector('nav')!.textContent).toContain(FNOL);
-    expect(container.textContent).toContain('acme-claims');
+    expect(container.querySelector('nav')!.textContent).toContain(PHOTOS_CHANGE);
+    expect(container.textContent).toContain('acme-commerce');
     expect(container.querySelector('[data-testid="branch"]')!.textContent!.trim()).toBe('main');
     expect(container.querySelectorAll('header [aria-current="step"]').length).toBe(1);
     expect(container.textContent).toContain('Spec · awaiting acceptance');
@@ -68,7 +68,7 @@ describe('ChangePage', () => {
       Array.from(container.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((t) => t.textContent!.trim().startsWith(name))!;
     expect(tab('Plan').disabled).toBe(true);
     tab('Intent').click();
-    await vi.waitFor(() => expect(container.querySelector('app-doc-layout h1')?.textContent).toBe('Photo upload at first notice of loss'));
+    await vi.waitFor(() => expect(container.querySelector('app-doc-layout h1')?.textContent).toBe('Photo upload on the product form'));
     expect(tab('Intent').getAttribute('aria-selected')).toBe('true');
     const panel = container.querySelector('[role="tabpanel"]:not([hidden])')!;
     expect(panel.getAttribute('aria-labelledby')).toBe(tab('Intent').id);
@@ -82,9 +82,9 @@ describe('ChangePage', () => {
     // A plan awaiting acceptance no longer offers Reopen spec; a plan that is ready to start does.
     const real = transport.sdlcReadChange.bind(transport);
     vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-      [await real(m, s, n)].map((c) => (c.change === '2026-10-09-adjuster-reassign' ? { ...c, stage: 'plan-ready' as const } : c))[0],
+      [await real(m, s, n)].map((c) => (c.change === '2026-10-09-merchant-reassign' ? { ...c, stage: 'plan-ready' as const } : c))[0],
     );
-    const { container } = await mount('2026-10-09-adjuster-reassign', transport);
+    const { container } = await mount('2026-10-09-merchant-reassign', transport);
     Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Reopen spec')!.click();
     await settle();
     const dialog = document.body.querySelector('[role="dialog"]')!;
@@ -138,7 +138,7 @@ describe('ChangePage', () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
       tab(container, 'Plan').click();
       await settle();
-      const status = await transport.sdlcBuildStatus('', 'claims', MOCK_BUILD_CHANGE);
+      const status = await transport.sdlcBuildStatus('', 'commerce', MOCK_BUILD_CHANGE);
       const nav = container.querySelector('nav[aria-label="Tasks"]')!;
       expect(nav).not.toBeNull();
       expect(nav.querySelectorAll('button').length).toBe(status.tasks.length);
@@ -202,19 +202,19 @@ describe('ChangePage', () => {
 
     it('leftovers open the confirm dialog titled and listing each repository and file', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
-      vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['src/new.rs'] }] });
+      vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['src/new.rs'] }] });
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
       await settle();
       await confirmPreview();
       await vi.waitFor(() => expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull());
       const confirm = document.body.querySelector('[role="alertdialog"]')!;
       expect(text(confirm)).toContain('Continue on top of leftovers?');
-      expect(Array.from(confirm.querySelectorAll('li')).map((li) => text(li))).toEqual(['claims-core: src/new.rs']);
+      expect(Array.from(confirm.querySelectorAll('li')).map((li) => text(li))).toEqual(['commerce-core: src/new.rs']);
     });
   });
 
   describe('plan tab banners', () => {
-    const REASSIGN = '2026-10-09-adjuster-reassign';
+    const REASSIGN = '2026-10-09-merchant-reassign';
     const staged = (stage: ChangeInfo['stage'], out_of_date: ChangeInfo['out_of_date'] = null) => {
       const transport = new MockTransport();
       const real = transport.sdlcReadChange.bind(transport);
@@ -321,7 +321,7 @@ describe('ChangePage after the pull requests', () => {
     return allBuilt(transport);
   };
   const openAll = async (transport: MockTransport) => {
-    await transport.sdlcPublish('f', 'w1', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE));
+    await transport.sdlcPublish('f', 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE));
   };
 
   it('change page shows Done when every pull request is open (R14.1)', async () => {
@@ -379,7 +379,7 @@ describe('ChangePage build page', () => {
     layout: 2,
     problems: [],
     master_moved: [],
-    reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: { 'claims-intent': '1111111', 'claims-core': '2222222', 'customer-portal': '3333333' }, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: 'The refusal message has no test.' }] }],
+    reviews: [{ number: 1, reviewed_at: '2026-10-19', commits: { 'commerce-docs': '1111111', 'commerce-core': '2222222', 'customer-portal': '3333333' }, findings: [{ id: 'F1', severity: 'medium', file: 'src/upload.ts', line: 10, text: 'The refusal message has no test.' }] }],
   } as unknown as Awaited<ReturnType<MockTransport['sdlcReviewRecord']>>;
 
   let draw: ReturnType<typeof vi.spyOn>;
@@ -439,7 +439,7 @@ describe('ChangePage build page', () => {
     await settle();
     expect(pill(container, 'Build').disabled).toBe(false);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
-    expect(Array.from(page(container).querySelectorAll('[data-heading] .k-bp__name')).map(text)).toEqual(expect.arrayContaining(['claims-core', 'customer-portal']));
+    expect(Array.from(page(container).querySelectorAll('[data-heading] .k-bp__name')).map(text)).toEqual(expect.arrayContaining(['commerce-core', 'customer-portal']));
     expect(area(container, 'tasks')!.querySelectorAll('[data-task]').length).toBe(3);
     // Nothing has run yet, so the activity area is in the grid with nothing to show; the changed files are.
     expect(area(container, 'activity')!.querySelector('app-observe-pane')).toBeNull();
@@ -473,11 +473,11 @@ describe('ChangePage build page', () => {
     const inRepo = (repo: string, path: string) => files().querySelector(`[aria-label="Files changed in ${repo}"] [data-file="${path}"]`);
     const heads = () => Array.from(files().querySelectorAll<HTMLElement>('app-repo-file-list [data-repo]'));
     await vi.waitFor(() => expect(heads().length).toBeGreaterThan(1), { timeout: TOKEN });
-    const core = heads().find((h) => text(h).startsWith('claims-core'))!;
+    const core = heads().find((h) => text(h).startsWith('commerce-core'))!;
     if (core.getAttribute('aria-expanded') !== 'true') core.click();
-    await vi.waitFor(() => expect(inRepo('claims-core', 'src/attachments.rs')).not.toBeNull(), { timeout: TOKEN });
+    await vi.waitFor(() => expect(inRepo('commerce-core', 'src/attachments.rs')).not.toBeNull(), { timeout: TOKEN });
     // Unpicked, a file shows the task whose commit changed it.
-    await vi.waitFor(() => expect(inRepo('claims-core', 'src/attachments.rs')!.querySelector('[data-tasks]')?.textContent?.trim()).toBe('T1'), { timeout: TOKEN });
+    await vi.waitFor(() => expect(inRepo('commerce-core', 'src/attachments.rs')!.querySelector('[data-tasks]')?.textContent?.trim()).toBe('T1'), { timeout: TOKEN });
     fixture.debugElement.injector.get(BuildPageViewModel).choose({ kind: 'task', task: 'T1' });
     await vi.waitFor(
       () => {
@@ -486,7 +486,7 @@ describe('ChangePage build page', () => {
       },
       { timeout: TOKEN },
     );
-    expect(text(heads()[0])).toContain('claims-core');
+    expect(text(heads()[0])).toContain('commerce-core');
     expect(files().querySelector('[data-file="src/limits.rs"]')).toBeNull();
   });
 
@@ -502,16 +502,16 @@ describe('ChangePage build page', () => {
       return real(target, spec, link);
     });
     await startBuild(container);
-    await vi.waitFor(() => expect(button(page(container), 'Continue claims-core')).toBeDefined(), { timeout: TOKEN });
+    await vi.waitFor(() => expect(button(page(container), 'Continue commerce-core')).toBeDefined(), { timeout: TOKEN });
     const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-    prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['src/new.rs'] }] });
-    button(page(container), 'Continue claims-core')!.click();
+    prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['src/new.rs'] }] });
+    button(page(container), 'Continue commerce-core')!.click();
     await settle();
     await confirmPreview();
     await vi.waitFor(() => expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull(), { timeout: TOKEN });
     const confirm = document.body.querySelector('[role="alertdialog"]')!;
     expect(text(confirm)).toContain('Continue on top of leftovers?');
-    expect(Array.from(confirm.querySelectorAll('li')).map(text)).toEqual(['claims-core: src/new.rs']);
+    expect(Array.from(confirm.querySelectorAll('li')).map(text)).toEqual(['commerce-core: src/new.rs']);
     expect(run).toHaveBeenCalledTimes(2);
     button(confirm, 'Continue')!.click();
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3), { timeout: TOKEN });
@@ -553,7 +553,7 @@ describe('ChangePage build page', () => {
     expect(text(dialog().querySelector('[hlmDialogTitle]')!)).toBe('Start round');
     const preview = fixture.debugElement.injector.get(RunPreviewViewModel);
     await vi.waitFor(() => expect(preview.buildForm()).not.toBeNull());
-    preview.buildForm()!.model.update((m) => ({ ...m, instructions: 'tidy up', repo: 'claims-core' }));
+    preview.buildForm()!.model.update((m) => ({ ...m, instructions: 'tidy up', repo: 'commerce-core' }));
     await confirmPreview();
     await vi.waitFor(() => expect(runSpec).toHaveBeenCalled(), { timeout: TOKEN });
     expect(prepare.mock.calls[0][6]).toBe('round');
@@ -673,21 +673,21 @@ describe('ChangePage build page', () => {
       const { container, fixture } = await mount(MOCK_BUILD_CHANGE);
       await startUntilAsked(container);
       alone(container);
-      const heading = Array.from(page(container).querySelectorAll('[data-heading]')).find((h) => text(h.querySelector('.k-bp__name')!) === 'claims-core')!;
+      const heading = Array.from(page(container).querySelectorAll('[data-heading]')).find((h) => text(h.querySelector('.k-bp__name')!) === 'commerce-core')!;
       button(heading, 'Cancel')!.click();
-      await vi.waitFor(() => expect(button(page(container), 'Continue claims-core')).toBeDefined(), { timeout: TOKEN });
+      await vi.waitFor(() => expect(button(page(container), 'Continue commerce-core')).toBeDefined(), { timeout: TOKEN });
       await stopBuild(fixture);
     }, TOKEN);
 
     it('continue a repository', async () => {
       const { container, fixture } = await mount(MOCK_BUILD_CHANGE);
       await startUntilAsked(container);
-      const heading = Array.from(page(container).querySelectorAll('[data-heading]')).find((h) => text(h.querySelector('.k-bp__name')!) === 'claims-core')!;
+      const heading = Array.from(page(container).querySelectorAll('[data-heading]')).find((h) => text(h.querySelector('.k-bp__name')!) === 'commerce-core')!;
       button(heading, 'Cancel')!.click();
-      await vi.waitFor(() => expect(button(page(container), 'Continue claims-core')).toBeDefined(), { timeout: TOKEN });
-      button(page(container), 'Continue claims-core')!.click();
+      await vi.waitFor(() => expect(button(page(container), 'Continue commerce-core')).toBeDefined(), { timeout: TOKEN });
+      button(page(container), 'Continue commerce-core')!.click();
       await settle();
-      expect(text(document.body.querySelector('[role="dialog"] [hlmDialogTitle]')!)).toBe('Continue claims-core');
+      expect(text(document.body.querySelector('[role="dialog"] [hlmDialogTitle]')!)).toBe('Continue commerce-core');
       alone(container);
       await stopBuild(fixture);
     }, TOKEN);
@@ -748,7 +748,7 @@ describe('ChangePage build page', () => {
 
     it('see the pull requests that opened', async () => {
       const transport = finished();
-      await transport.sdlcPublish('f', 'w1', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE));
+      await transport.sdlcPublish('f', 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE));
       const { container } = await mount(MOCK_BUILD_CHANGE, transport);
       alone(container);
       expect(container.querySelector('header nav[aria-label="Pull requests"]')).not.toBeNull();
@@ -770,7 +770,7 @@ describe('ChangePage way back', () => {
   };
   const doneTransport = async () => {
     const transport = allBuilt(staged('build-finished'));
-    await transport.sdlcPublish('f', 'w1', 'claims-intent', 'claims', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'claims-intent', 'claims', MOCK_BUILD_CHANGE));
+    await transport.sdlcPublish('f', 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, await transport.sdlcTouchedRepos('f', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE));
     return transport;
   };
 
@@ -816,7 +816,7 @@ describe('ChangePage way back', () => {
     vi.spyOn(transport, 'sdlcReadChange').mockReturnValue(new Promise(() => undefined));
     // The progress line shows once a read has run for 400 ms.
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
-    const { container, fixture } = await mount(FNOL, transport, routes);
+    const { container, fixture } = await mount(PHOTOS_CHANGE, transport, routes);
     vi.advanceTimersByTime(500);
     TestBed.tick();
     fixture.detectChanges();
@@ -841,7 +841,7 @@ describe('ChangePage way back', () => {
   };
 
   it('R6.1: an intent, spec or plan run that is running offers the message box, and sending reaches that run', async () => {
-    const { container, transport } = await mount(FNOL);
+    const { container, transport } = await mount(PHOTOS_CHANGE);
     const send = vi.spyOn(transport, 'sendMessage');
     const started = vi.spyOn(transport, 'runSpec');
     Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === 'Continue spec')!.click();
@@ -860,25 +860,25 @@ describe('ChangePage way back', () => {
     const transport = new MockTransport();
     const real = transport.sdlcReadChange.bind(transport);
     vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-      [await real(m, s, n)].map((c) => (c.change === FNOL ? { ...c, stage: 'fix-awaiting' as const, track: 'fix' as const } : c))[0],
+      [await real(m, s, n)].map((c) => (c.change === PHOTOS_CHANGE ? { ...c, stage: 'fix-awaiting' as const, track: 'fix' as const } : c))[0],
     );
     const ready = await transport.sdlcPluginReadiness(null);
     vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(ready.kind === 'ready' ? { ...ready, lightTrack: true } : ready);
-    const { container } = await mount(FNOL, transport);
+    const { container } = await mount(PHOTOS_CHANGE, transport);
     const send = vi.spyOn(transport, 'sendMessage');
     const started = vi.spyOn(transport, 'runSpec');
     Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === 'Accept fix')!.click();
     await settle();
     await confirmPreview();
     await vi.waitFor(() => boxReady(container.querySelector('app-sdlc-session')!));
-    say(container.querySelector('app-sdlc-session')!, 'the flag is set in intake');
+    say(container.querySelector('app-sdlc-session')!, 'the flag is set in import');
     const runId = await started.mock.results[0].value;
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith(runId, expect.any(String), 'the flag is set in intake');
+    expect(send).toHaveBeenCalledWith(runId, expect.any(String), 'the flag is set in import');
     TestBed.inject(LockStore).cancel();
   });
   it('the way back is shown but disabled while a run is in progress', async () => {
-    const { container } = await mount(FNOL, new MockTransport(), routes);
+    const { container } = await mount(PHOTOS_CHANGE, new MockTransport(), routes);
     expect(back(container)!.disabled).toBe(false);
     Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === 'Continue spec')!.click();
     await settle();
