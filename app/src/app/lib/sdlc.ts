@@ -351,7 +351,10 @@ function nameFor(kind: SdlcKind, ctx: RunContext): string {
   }
 }
 
-/** ` scope:<value>` when the engineer typed a scope for a system with a naming setting; nothing otherwise. */
+/**
+ * ` scope:<value>` when the engineer typed a scope for a system with a naming setting; nothing otherwise.
+ * The skills keep the value exactly as typed, so the caller must end the text or follow it with whitespace, never punctuation.
+ */
 const scopeArg = (ctx: RunContext): string => (ctx.scope ? ` scope:${ctx.scope}` : "");
 
 function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): string {
@@ -384,7 +387,7 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): s
     case "build":
       throw new Error("a build run-spec is made from its BuildRun");
     case "triage":
-      return `Use the ai-sdlc start skill for system ${system}. The change: ${ctx.idea ?? ""}${scopeArg(ctx)}. The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.`;
+      return `Use the ai-sdlc start skill for system ${system}. The change: ${ctx.idea ?? ""}${ctx.scope ? `${scopeArg(ctx)}\n` : ". "}The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.`;
     case "fix":
       return action === "accept-fix"
         ? `Use the ai-sdlc fix skill for system ${system} with --accept ${change}. The engineer accepted this fix in the Workbench.`
