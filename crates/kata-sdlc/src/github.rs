@@ -507,11 +507,22 @@ impl GitHub for Api {
 
     fn branch_tip(
         &self,
-        _owner: &str,
-        _name: &str,
-        _branch: &str,
+        owner: &str,
+        name: &str,
+        branch: &str,
     ) -> Result<Option<String>, ApiError> {
-        todo!()
+        // A branch name keeps its slashes; each part is encoded.
+        let branch = branch.split('/').map(encode).collect::<Vec<_>>().join("/");
+        let path = format!(
+            "/repos/{}/{}/branches/{branch}",
+            encode(owner),
+            encode(name)
+        );
+        match self.send("GET", &path, None) {
+            Ok((_, v)) => Ok(v["commit"]["sha"].as_str().map(String::from)),
+            Err(ApiError::Status { status: 404, .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 }
 

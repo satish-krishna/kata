@@ -13,6 +13,7 @@ use crate::diff::{changed_files, Part};
 use crate::frontmatter;
 use crate::git;
 use crate::github::{parse_repo_path, ApiError, GitHub, GitHubHosts};
+use crate::naming;
 use crate::plugin::Readiness;
 use crate::prs::{self, PrEntry, PrRecord, PrStateKind};
 use crate::start::{recorded_branch, BuildError};
@@ -345,12 +346,34 @@ pub struct RemoteClash {
 }
 
 /// Repositories whose `branch` is taken on GitHub by work this machine does not have.
+///
+/// GitHub's branch is the engineer's own earlier push, and so no clash, when its tip is the local
+/// branch tip or one of its ancestors. A tip this repository does not have cannot be.
 pub fn remote_clashes(
-    _hosts: &dyn GitHubHosts,
-    _repos: &[PublishRepo],
-    _branch: &str,
+    hosts: &dyn GitHubHosts,
+    repos: &[PublishRepo],
+    branch: &str,
 ) -> Result<Vec<RemoteClash>, NotReady> {
-    Ok(Vec::new())
+    let mut out = Vec::new();
+    for r in repos {
+        let (gh, owner, name, _) = github_target(hosts, r)?;
+        let tip = gh
+            .branch_tip(&owner, &name, branch)
+            .map_err(|_| NotReady::Unreachable)?;
+        let Some(tip) = tip else {
+            continue;
+        };
+        let own = git::Repo::open(Path::new(&r.path))
+            .map(|repo| repo.branch_contains(branch, &tip))
+            .unwrap_or(false);
+        if !own {
+            out.push(RemoteClash {
+                repo: r.repo.clone(),
+                branch: branch.to_string(),
+            });
+        }
+    }
+    Ok(out)
 }
 
 /// What publishing is doing now, for the Workbench's progress line.
@@ -425,9 +448,10 @@ impl<'a> Recorder<'a> {
 /// Open (or reuse) one pull request per repository, in order; `master` names the one last.
 /// `rec` keeps each pull request as soon as it opens. `on_step` hears what each repository is
 /// doing before it does it.
+#[allow(clippy::too_many_arguments)]
 pub fn publish(
     hosts: &dyn GitHubHosts,
-    _plugin: &Readiness,
+    plugin: &Readiness,
     master: &str,
     system: &str,
     change: &str,
@@ -435,31 +459,27 @@ pub fn publish(
     rec: &mut Recorder,
     on_step: &mut dyn FnMut(PublishStep),
 ) -> PublishSummary {
+    let left_behind = rec.record().left_behind.clone();
+    let fail_all = |error: String| PublishSummary {
+        results: repos
+            .iter()
+            .map(|r| PrResult {
+                repo: r.repo.clone(),
+                outcome: PrOutcome::Failed {
+                    error: error.clone(),
+                },
+            })
+            .collect(),
+        left_behind: left_behind.clone(),
+    };
     let branch = match branch_in(repos, master, system, change) {
         Ok(branch) => branch,
-        Err(error) => {
-            let results = repos
-                .iter()
-                .map(|r| PrResult {
-                    repo: r.repo.clone(),
-                    outcome: PrOutcome::Failed {
-                        error: error.clone(),
-                    },
-                })
-                .collect();
-            return PublishSummary {
-                results,
-                left_behind: Vec::new(),
-            };
-        }
+        Err(error) => return fail_all(error),
     };
-    let title = repos
-        .iter()
-        .find(|r| r.repo == master)
-        .and_then(|r| read_doc(Path::new(&r.path), system, change, "intent"))
-        .and_then(|text| frontmatter::field(&text, "title"))
-        .filter(|t| !t.is_empty())
-        .unwrap_or_else(|| change.to_string());
+    let title = match pull_request_title(plugin, repos, master, system, change) {
+        Ok(title) => title,
+        Err(error) => return fail_all(error),
+    };
     let folder = format!("intent/{system}/{change}");
     let mut results = Vec::new();
     let mut product_urls: Vec<(String, String)> = Vec::new();
@@ -507,14 +527,51 @@ pub fn publish(
                 );
             }
         }
+        let clash = matches!(outcome, PrOutcome::Clash { .. });
         results.push(PrResult {
             repo: r.repo.clone(),
             outcome,
         });
+        if clash {
+            // Whatever is pushed after this would split the change further across two histories.
+            break;
+        }
     }
     PublishSummary {
         results,
-        left_behind: Vec::new(),
+        left_behind: rec.record().left_behind.clone(),
+    }
+}
+
+/// The title every pull request of the change carries: the system's pattern filled with the
+/// recorded work type, the scope and the intent title; without a pattern or a recorded type, the
+/// intent title, else the change name.
+fn pull_request_title(
+    plugin: &Readiness,
+    repos: &[PublishRepo],
+    master: &str,
+    system: &str,
+    change: &str,
+) -> Result<String, String> {
+    let master_path = repos
+        .iter()
+        .find(|r| r.repo == master)
+        .map(|r| Path::new(&r.path));
+    let fallback = master_path
+        .and_then(|p| read_doc(p, system, change, "intent"))
+        .and_then(|text| frontmatter::field(&text, "title"))
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| change.to_string());
+    let Some(path) = master_path else {
+        return Ok(fallback);
+    };
+    let Some(work_type) = crate::branch_record::recorded_type(path, system, change) else {
+        return Ok(fallback);
+    };
+    match naming::names(plugin, path, system, change, &work_type) {
+        Ok(Some(names)) => Ok(names.pull_request_title.unwrap_or(fallback)),
+        Ok(None) => Ok(fallback),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -554,6 +611,11 @@ fn open_one(
     let pushed = git::Repo::open(Path::new(&r.path))
         .and_then(|repo| repo.push_branch("origin", branch, hosts.credential(&host).as_ref()));
     if let Err(e) = pushed {
+        if e.rejected_by_remote {
+            return PrOutcome::Clash {
+                branch: branch.to_string(),
+            };
+        }
         return failed(e.to_string());
     }
     on_step(PublishStep::Opening {
@@ -961,8 +1023,7 @@ pub(crate) mod tests {
             &all(&fx),
             &mut Recorder::unsaved(),
             &mut |_| {},
-        )
-        .results;
+        );
         commit_file(&fx.path("app"), "more.txt", "more\n", "another round");
         let head = git::run(&fx.path("app"), &["rev-parse", "HEAD"]).unwrap();
         let gh = FakeGitHub::default()
@@ -1048,8 +1109,7 @@ pub(crate) mod tests {
             &all(&fx),
             &mut Recorder::unsaved(),
             &mut |_| {},
-        )
-        .results;
+        );
         match old {
             Some(v) => std::env::set_var("KATA_HOME", v),
             None => std::env::remove_var("KATA_HOME"),
@@ -1413,8 +1473,7 @@ pub(crate) mod tests {
             &all(&fx),
             &mut Recorder::unsaved(),
             &mut |s| steps.push(s),
-        )
-        .results;
+        );
         let step = |pushing: bool, repo: &str| {
             let repo = repo.to_string();
             if pushing {

@@ -32,6 +32,8 @@ export class PrListDialog {
           return { repo, tone: 'success', label: 'already open, reused', url: outcome.url, error: null };
         case 'failed':
           return { repo, tone: 'error', label: 'failed', url: null, error: outcome.error };
+        case 'clash':
+          return { repo, tone: 'error', label: 'failed', url: null, error: `${outcome.branch} is taken on GitHub` };
       }
     }),
   );

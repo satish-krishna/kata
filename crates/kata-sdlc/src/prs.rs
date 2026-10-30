@@ -757,8 +757,7 @@ mod tests {
             &repos,
             &mut Recorder::stored("w1", "s", CHANGE),
             &mut |_| {},
-        )
-        .results;
+        );
         assert_eq!(gh.creates(), ["api"]);
         let rec = saved();
         let names: Vec<&str> = rec.repos.iter().map(|e| e.repo.as_str()).collect();

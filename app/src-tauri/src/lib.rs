@@ -734,9 +734,10 @@ fn sdlc_publish(
     change: String,
     repos: Vec<sdlc::publish::PublishRepo>,
 ) -> Vec<sdlc::publish::PrResult> {
-    let _ = folder;
+    let plugin = ai_sdlc_readiness(Some(&folder));
     sdlc::publish::publish(
         &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
+        &plugin,
         &master_repo,
         &system,
         &change,
@@ -746,6 +747,7 @@ fn sdlc_publish(
             let _ = app.emit(PUBLISH_STEP_EVENT, step);
         },
     )
+    .results
 }
 
 /// Whether the change shows as done and with which links, from what is saved. GitHub is asked

@@ -1533,7 +1533,35 @@ fn rewritten(config: &git2::Config, url: &str, kind: &str) -> Option<String> {
     best.map(|(_, rewritten)| rewritten)
 }
 
+/// Whether a push refusal says the remote's branch holds work this one does not.
+fn is_remote_rejection(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "fast-forward",
+        "fastforward",
+        "fetch first",
+        "not present locally",
+    ]
+    .iter()
+    .any(|m| message.contains(m))
+}
+
 impl Repo {
+    /// Whether `sha` is the tip of local `branch` or one of its ancestors. A commit this
+    /// repository does not have, or a branch it does not have, is not.
+    pub fn branch_contains(&self, branch: &str, sha: &str) -> bool {
+        let Ok(tip) = self.inner.refname_to_id(&format!("refs/heads/{branch}")) else {
+            return false;
+        };
+        let Ok(id) = Oid::from_str(sha) else {
+            return false;
+        };
+        if self.inner.find_commit(id).is_err() {
+            return false;
+        }
+        id == tip || self.inner.graph_descendant_of(tip, id).unwrap_or(false)
+    }
+
     /// The address a push to `name` goes to: its push URL (or URL) under the `pushInsteadOf`
     /// rewrites, then the `insteadOf` ones when no push rewrite applies, as git reads it.
     fn push_url(&self, name: &str) -> Option<String> {
@@ -1668,11 +1696,15 @@ impl Repo {
                         "Kata could not reach an SSH agent for {host}. Use an HTTPS remote or start the OpenSSH agent."
                     )));
                 }
-                return Err(git_fail(e));
+                let mut err = git_fail(e);
+                err.rejected_by_remote = is_remote_rejection(&err.stderr);
+                return Err(err);
             }
         }
         if let Some(message) = rejected {
-            return Err(fail(message));
+            let mut err = fail(message);
+            err.rejected_by_remote = is_remote_rejection(&err.stderr);
+            return Err(err);
         }
 
         // As `-u` does: the remote-tracking branch moves with the push, and the branch follows it.

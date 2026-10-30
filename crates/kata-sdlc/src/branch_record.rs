@@ -70,6 +70,14 @@ pub fn change_branch(master: &Path, system: &str, change: &str) -> Result<String
     Ok(branch)
 }
 
+/// The work type `branch.md` records; `None` when the change has no record or the record names none.
+pub fn recorded_type(master: &Path, system: &str, change: &str) -> Option<String> {
+    std::fs::read_to_string(master.join(record_rel(system, change)))
+        .ok()
+        .and_then(|t| frontmatter::field(&t, "type"))
+        .filter(|t| !t.is_empty())
+}
+
 /// Write `branch.md` and commit only it, with the change's scope and the `Generated-By` trailer.
 pub fn write(
     master: &Path,
@@ -312,10 +320,7 @@ pub fn rename(
             checked_out = true;
         }
         // A change with no record gets one with no type.
-        let work_type = std::fs::read_to_string(master.join(record_rel(system, change)))
-            .ok()
-            .and_then(|t| frontmatter::field(&t, "type"))
-            .filter(|t| !t.is_empty());
+        let work_type = recorded_type(&master, system, change);
         let record = BranchRecord {
             branch: new_name.to_string(),
             work_type,
