@@ -7,6 +7,7 @@ use crate::branch::{current_branch, PENDING_PREFIX};
 use crate::naming::{self, NamingError};
 use crate::plugin::Readiness;
 use crate::snapshot::status_entries;
+use crate::start::branch_is_foreign;
 use crate::workspace::{self, ScanError};
 use crate::{decide, frontmatter, git};
 use std::path::{Path, PathBuf};
@@ -264,6 +265,7 @@ pub fn rename(
     };
     dirty(master_repo, &master)?;
     let scan = workspace::scan(folder).map_err(|e| RenameError::Record(e.to_string()))?;
+    let scope = crate::decide::change_scope(&master, system, change);
     let mut products: Vec<String> = Vec::new();
     for repo in workspace::system_repos(&scan, system) {
         let dir = folder.join(&repo);
@@ -274,6 +276,12 @@ pub fn rename(
             continue;
         };
         if !opened.branch_exists(&current) {
+            continue;
+        }
+        // R9.2 renames the change's branch only: a branch with other work stays as it is.
+        if branch_is_foreign(&dir, &repo, &current, &scope)
+            .map_err(|e| RenameError::Record(e.to_string()))?
+        {
             continue;
         }
         if current_branch(&dir).as_deref() == Some(current.as_str()) {

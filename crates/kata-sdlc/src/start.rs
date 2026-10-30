@@ -112,6 +112,18 @@ struct Classified {
 /// Where one product repository stands, per the start table. Changes nothing. `dirty` is what the
 /// participants model read in its working tree. `Ok(Err(Taken))` means the branch holds work from
 /// outside the change.
+/// Whether the existing local `branch` holds work that is not the change's: the build refuses it
+/// and a rename leaves it alone.
+pub(crate) fn branch_is_foreign(
+    path: &Path,
+    repo: &str,
+    branch: &str,
+    scope: &str,
+) -> Result<bool, BuildError> {
+    let revs = build_work_revs(path, &format!("refs/heads/{branch}"))?;
+    Ok(!offenders_to(path, repo, &revs, scope)?.is_empty())
+}
+
 fn classify(
     path: &Path,
     repo: &str,
@@ -125,12 +137,8 @@ fn classify(
         ));
     };
     let exists = branch_exists(path, branch);
-    if exists {
-        let tip = format!("refs/heads/{branch}");
-        let revs = build_work_revs(path, &tip)?;
-        if !offenders_to(path, repo, &revs, scope)?.is_empty() {
-            return Ok(Err(Taken));
-        }
+    if exists && branch_is_foreign(path, repo, branch, scope)? {
+        return Ok(Err(Taken));
     }
     let current = current_branch(path);
     let done = |action, leftovers| {
