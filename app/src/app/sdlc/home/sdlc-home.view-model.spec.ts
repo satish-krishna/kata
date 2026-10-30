@@ -537,10 +537,10 @@ describe('SdlcHomeViewModel runs', () => {
 
   it('offers the light track only when the plugin reports it', async () => {
     const { vm, transport } = setup();
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.9.0', layouts: [1], lightTrack: false });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.9.0', layouts: [1], lightTrack: false, naming: false });
     await vm.init();
     expect(vm.lightTrack()).toBe(false);
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true, naming: false });
     await vm.selectWorkspace(vm.workspaces()[0].id);
     expect(vm.lightTrack()).toBe(true);
   });
@@ -748,7 +748,7 @@ describe("SdlcHomeViewModel plan notice (F20)", () => {
 });
 
 describe('SdlcHomeViewModel workspace instructions', () => {
-  const lightReady: Readiness = { kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true };
+  const lightReady: Readiness = { kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true, naming: false };
 
   it('reads the instructions state only when the plugin supports the light track', async () => {
     const { vm, transport } = setup();
@@ -866,7 +866,7 @@ describe('SdlcHomeViewModel stage passes', () => {
     const names = vi.spyOn(transport, 'sdlcChangeNames');
     const health = vi.spyOn(transport, 'sdlcContextHealth');
     const instructions = vi.spyOn(transport, 'sdlcInstructions');
-    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true });
+    vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'ready', dir: '/p', version: '0.13.0', layouts: [1], lightTrack: true, naming: false });
     controlledPass(transport);
     await vm.init();
     expect(health).toHaveBeenCalled();

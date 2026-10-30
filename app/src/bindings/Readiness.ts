@@ -7,4 +7,8 @@ export type Readiness = { "kind": "ready", dir: string, version: string, layouts
 /**
  * Whether the plugin is at least [`LIGHT_TRACK_VERSION`].
  */
-lightTrack: boolean, } | { "kind": "missing" } | { "kind": "tooOld", have: string, need: string, };
+lightTrack: boolean, 
+/**
+ * Whether the plugin is at least [`NAMING_VERSION`].
+ */
+naming: boolean, } | { "kind": "missing" } | { "kind": "tooOld", have: string, need: string, };
