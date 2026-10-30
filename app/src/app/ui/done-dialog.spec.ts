@@ -137,10 +137,10 @@ describe('DoneDialog', () => {
   });
 
   it("done dialog lists departures with the plan's text before confirm (R9.2)", async () => {
-    await open(report({ departures: [{ task: 'T2', repo: 'customer-portal', planText: 'Add the photo picker to the report form', departure: 'Reused the existing file picker.' }] }));
+    await open(report({ departures: [{ task: 'T2', repo: 'customer-portal', planText: 'Add the photo picker to the product form', departure: 'Reused the existing file picker.' }] }));
     expect(text()).toContain('Departures from the plan');
     expect(text()).toContain('T2');
-    expect(text()).toContain('Add the photo picker to the report form');
+    expect(text()).toContain('Add the photo picker to the product form');
     expect(text()).toContain('Reused the existing file picker.');
   });
 

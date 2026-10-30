@@ -251,15 +251,15 @@ const change = (name: string, intent: DocState, spec: DocState, plan: DocState, 
 
 /** A fix's three documents, drafted: what the light track writes before the engineer accepts it. */
 const fixDocs = (name: string, title: string): Record<string, string> => ({
-  [`${name}/intent`]: `---\nstatus: draft\n---\n# ${title}\n\nThe report form shows a retry button after a failed upload.\n`,
+  [`${name}/intent`]: `---\nstatus: draft\n---\n# ${title}\n\nThe product form shows a retry button after a failed upload.\n`,
   [`${name}/spec`]: `---\nstatus: draft\n---\n# Spec: ${title}\n\n## Requirements\n\n1. A failed upload offers a retry.\n2. A retry keeps the photos already chosen.\n`,
-  [`${name}/plan`]: `---\nstatus: draft\n---\n# Plan: ${title}\n\n## Tasks\n\n### T1: Add the retry button to the report form (\`customer-portal\`)\n\n- **Depends on:** none\n`,
+  [`${name}/plan`]: `---\nstatus: draft\n---\n# Plan: ${title}\n\n## Tasks\n\n### T1: Add the retry button to the product form (\`customer-portal\`)\n\n- **Depends on:** none\n`,
 });
 
 /** The demo build's plan: T3 waits for T1, which lives in the other repository. */
 const BUILD_PLAN: PlanTask[] = [
   { id: 'T1', name: 'Refuse an eleventh photo in the attachment store', repo: 'commerce-core', dependsOn: [] },
-  { id: 'T2', name: 'Add the photo picker to the report form', repo: 'customer-portal', dependsOn: [] },
+  { id: 'T2', name: 'Add the photo picker to the product form', repo: 'customer-portal', dependsOn: [] },
   { id: 'T3', name: 'Show the upload limit message', repo: 'customer-portal', dependsOn: ['T1'] },
 ];
 /**
@@ -292,7 +292,7 @@ const TASK_SECTIONS: Record<string, ParsedSection[]> = {
   ],
   T2: [
     { title: 'Files', body: '`src/report/photo-picker.ts`.' },
-    { title: 'Change', body: 'Add a picker to the report form that lists the chosen photos.' },
+    { title: 'Change', body: 'Add a picker to the product form that lists the chosen photos.' },
     { title: 'Tests', body: 'the picker lists what was chosen (covers R1.2).' },
     { title: 'Done when', body: 'a seller can choose and remove photos on the form.' },
   ],
@@ -349,7 +349,7 @@ const BUILD_SPEC: ParsedRequirement[] = [
   {
     id: 'R3', title: 'The limit shows before the first attempt', from: ['D5'], line: 33,
     scenarios: [
-      { id: 'R3.1', title: 'The form states the limit', outline: false, examples: null, line: 35, steps: ['Given the report form', 'Then it says "Up to 10 photos, 10 MB each"'] },
+      { id: 'R3.1', title: 'The form states the limit', outline: false, examples: null, line: 35, steps: ['Given the product form', 'Then it says "Up to 10 photos, 10 MB each"'] },
     ],
   },
 ];
@@ -850,7 +850,7 @@ const LONG_DIFF_PAIRS: Record<string, FilePair> = {
 const buildTranscript = (repo: string) =>
   ({ delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-commerce-${MOCK_BUILD_CHANGE}-build-${repo}-20261019T090000Z.jsonl` } }) as ScriptStep;
 
-const LONG_COMMAND = `cd ../${MOCK_SYSTEM}-intent; C=${MOCK_SYSTEM}/${MOCK_BUILD_CHANGE}; git diff --quiet 150916f8bf1693f32c589f656a3b91c11a716eb0 HEAD -- $C/intent.md; echo intent-pin=$?; git diff --quiet 150916f8bf1693f32c589f656a3b91c11a716eb0 HEAD -- $C/spec.md; echo spec-pin=$?`;
+const LONG_COMMAND = `cd ../${MOCK_MASTER}; C=${MOCK_SYSTEM}/${MOCK_BUILD_CHANGE}; git diff --quiet 150916f8bf1693f32c589f656a3b91c11a716eb0 HEAD -- $C/intent.md; echo intent-pin=$?; git diff --quiet 150916f8bf1693f32c589f656a3b91c11a716eb0 HEAD -- $C/spec.md; echo spec-pin=$?`;
 
 /** The steps for one task: read what it needs, then commit it. */
 const taskSteps = (t: PlanTask): ScriptStep[] => [
@@ -880,7 +880,7 @@ export function buildRunScript(repo: string, tasks: PlanTask[], ask: boolean, pe
   if (permission) return { head: [...read, { delay: 300, ev: { type: 'permission.requested', id: 'p1', ...PENDING_PERMISSION } }], mid: work };
   if (!ask) return { head: [...read, ...work], mid: [] };
   const question: ScriptStep = { delay: 300, ev: { type: 'ask.requested', id: 'q1', questions: [
-    { kind: 'select', header: 'picker', question: 'The report form already has a file picker. Reuse it for photos?',
+    { kind: 'select', header: 'picker', question: 'The product form already has a file picker. Reuse it for photos?',
       options: [ { label: 'Reuse it', description: 'smaller change' }, { label: 'Build a new one', description: 'matches the plan text' } ],
       multi_select: false },
   ] } };
@@ -902,7 +902,7 @@ const LONG_REVIEW_FINDINGS = [
   'The billing summary counts a photo twice when it is replaced and not removed first.',
   'The refusal reason is logged with the file name, which can hold a seller name.',
   'The monthly report export has no test for a product with no photos.',
-  'The limit message is not translated like the other messages on the report form.',
+  'The limit message is not translated like the other messages on the product form.',
   'A product loaded from the cache skips the photo count.',
   'The photo picker keeps a removed photo in the form state until the page is left.',
 ];
