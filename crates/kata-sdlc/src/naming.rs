@@ -7,7 +7,7 @@
 use crate::format::{self, NamingAnswer, NamingPatterns, NamingValues};
 use crate::plugin::{Readiness, NAMING_VERSION};
 use crate::workspace::MARKER;
-use crate::{branch, build, decide, frontmatter, git};
+use crate::{base, build, decide, frontmatter, git};
 use std::path::{Path, PathBuf};
 
 /// The patterns of a usable naming setting.
@@ -43,22 +43,32 @@ pub enum NamingError {
 }
 
 /// The marker as committed at the master's base branch; `None` when there is no such commit or file.
+///
+/// The base is the ai-sdlc skills' default branch: `origin/HEAD`'s target, else `main`, else `master`
+/// (`base::base_branch`). It is never the current branch, so an edit on a pending or change branch cannot
+/// change the setting. A local branch is read when it exists, else its `origin/` copy.
 fn committed_marker(master: &Path) -> Option<Vec<u8>> {
-    let base = branch::default_base(master)?;
-    git::Repo::open(master)
-        .ok()?
-        .bytes_at(&base, MARKER)
-        .ok()
-        .flatten()
+    let base = base::base_branch(master)?;
+    let repo = git::Repo::open(master).ok()?;
+    let local = format!("refs/heads/{base}");
+    let rev = if repo.rev_exists(&local) {
+        local
+    } else {
+        format!("refs/remotes/origin/{base}")
+    };
+    repo.bytes_at(&rev, MARKER).ok().flatten()
 }
 
-/// Whether the shared settings declare a naming setting for `system`. False only when the marker at the
-/// master's base branch parses and the system has no `naming` key; a marker that cannot be read counts as
-/// declared, so a broken marker never falls back to `change/` naming.
+/// Whether the shared settings declare a naming setting for `system`. False when no base branch resolves
+/// or the base holds no `.ai-sdlc.json` (no setting is shared yet, so today's `change/<change>` naming
+/// applies), and when the marker parses and the system has no `naming` key. A marker that is at the base
+/// but cannot be parsed, or whose `systems` or system entry has the wrong shape, counts as declared, so a
+/// broken marker never falls back to `change/` naming.
 pub fn declared(master: &Path, system: &str) -> bool {
-    let Some(marker) = committed_marker(master)
-        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-    else {
+    let Some(bytes) = committed_marker(master) else {
+        return false;
+    };
+    let Ok(marker) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
         return true;
     };
     match marker.get("systems") {
