@@ -672,9 +672,8 @@ fn documents_branch_reads_equal_the_cli() {
                 )
                 .is_ok()
             })
-            .map(str::to_string)
-            .or(cur.clone());
-        assert_eq!(branch::default_base(&fx.path), default, "{name}");
+            .map(str::to_string);
+        assert_eq!(base::base_branch(&fx.path), default, "{name}");
         let listed = cli(
             &fx.path,
             &["branch", "--list", "change/*", "--format=%(refname:short)"],

@@ -2359,7 +2359,7 @@ source_spec_commit: {spec_pin}
         std::fs::create_dir_all(&repo).unwrap();
         git::run(&repo, &["init", "-q", "-b", "main"]).unwrap();
         assert_eq!(current_branch(&repo), None);
-        assert_eq!(branch::default_base(&repo), None);
+        assert_eq!(crate::base::base_branch(&repo), None);
         assert!(other_change_branches(&repo).is_empty());
     }
 

@@ -44,6 +44,10 @@ pub enum BranchError {
     InvalidName(String),
     #[error("{0}")]
     Record(String),
+    #[error("{0} has no base branch: no origin/HEAD, main or master")]
+    NoBase(String),
+    #[error("the base branch `{0}` exists only on origin; check it out locally first")]
+    BaseNotLocal(String),
     #[error(transparent)]
     Git(#[from] GitError),
 }
@@ -111,10 +115,12 @@ pub(crate) fn ensure_clean(master: &Path) -> Result<(), BranchError> {
 }
 
 /// Create and check out `change/pending-<stamp>` from `base`. Refuses a dirty tree or a detached/unborn HEAD.
-pub fn start_pending(master: &Path, base: &str, now_unix: u64) -> Result<String, BranchError> {
+pub fn start_pending(master: &Path, now_unix: u64) -> Result<String, BranchError> {
     if current_branch(master).is_none() {
         return Err(BranchError::Detached);
     }
+    let base = default_base(master).ok_or(BranchError::Detached)?;
+    let base = base.as_str();
     require_local_branch(master, base)?;
     ensure_clean(master)?;
     let name = format!("{PENDING_PREFIX}{}", utc_stamp(now_unix));
@@ -179,14 +185,12 @@ pub fn pending_created(master: &Path) -> Option<String> {
 /// The delete path refuses a dirty tree with `BranchError::Dirty` and leaves the pending branch
 /// checked out and untouched. The caller resolves the leftovers (discard or keep) and calls
 /// `finish_pending` again.
-pub fn finish_pending(
-    master: &Path,
-    pending: &str,
-    base: &str,
-) -> Result<FinishOutcome, BranchError> {
+pub fn finish_pending(master: &Path, pending: &str) -> Result<FinishOutcome, BranchError> {
     if !pending.starts_with(PENDING_PREFIX) {
         return Err(BranchError::InvalidName(pending.to_string()));
     }
+    let base = default_base(master).ok_or(BranchError::Detached)?;
+    let base = base.as_str();
     require_local_branch(master, pending)?;
     require_local_branch(master, base)?;
     let repo = git::Repo::open(master)?;
@@ -300,19 +304,19 @@ pub fn checkout(master: &Path, branch: &str) -> Result<(), BranchError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil;
+    use crate::{base, testutil};
 
     #[test]
-    fn default_base_prefers_main_then_master() {
+    fn base_branch_is_never_the_current_branch() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
-        assert_eq!(default_base(&repo).as_deref(), Some("main"));
+        assert_eq!(base::base_branch(&repo).as_deref(), Some("main"));
 
         git::run(&repo, &["branch", "-m", "main", "master"]).unwrap();
-        assert_eq!(default_base(&repo).as_deref(), Some("master"));
+        assert_eq!(base::base_branch(&repo).as_deref(), Some("master"));
 
         git::run(&repo, &["branch", "-m", "master", "trunk"]).unwrap();
-        assert_eq!(default_base(&repo).as_deref(), Some("trunk"));
+        assert_eq!(base::base_branch(&repo), None);
     }
 
     #[test]
@@ -321,13 +325,6 @@ mod tests {
         let repo = testutil::repo(tmp.path(), "m");
         for bad in ["-b", "--detach", "", "nope"] {
             assert!(
-                matches!(
-                    start_pending(&repo, bad, 0),
-                    Err(BranchError::InvalidName(_))
-                ),
-                "start {bad}"
-            );
-            assert!(
                 matches!(checkout(&repo, bad), Err(BranchError::InvalidName(_))),
                 "checkout {bad}"
             );
@@ -335,18 +332,11 @@ mod tests {
         // Only a pending branch may be settled; a real branch is never deleted or renamed.
         for bad in ["main", "-D", "change/2026-10-18-x"] {
             assert!(
-                matches!(
-                    finish_pending(&repo, bad, "main"),
-                    Err(BranchError::InvalidName(_))
-                ),
+                matches!(finish_pending(&repo, bad), Err(BranchError::InvalidName(_))),
                 "finish {bad}"
             );
         }
-        let pending = start_pending(&repo, "main", 1_792_368_000).unwrap();
-        assert!(matches!(
-            finish_pending(&repo, &pending, "--force"),
-            Err(BranchError::InvalidName(_))
-        ));
+        let pending = start_pending(&repo, 1_792_368_000).unwrap();
         assert!(branch_exists(&repo, "main"));
         assert!(branch_exists(&repo, &pending));
     }
@@ -355,7 +345,7 @@ mod tests {
     fn start_pending_names_branch() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
-        let name = start_pending(&repo, "main", 1_792_368_000).unwrap();
+        let name = start_pending(&repo, 1_792_368_000).unwrap();
         assert_eq!(name, "change/pending-20261019T000000Z");
         assert_eq!(current_branch(&repo).as_deref(), Some(name.as_str()));
     }
@@ -365,7 +355,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
         std::fs::write(repo.join("scratch.txt"), "x").unwrap();
-        let err = start_pending(&repo, "main", 0).unwrap_err();
+        let err = start_pending(&repo, 0).unwrap_err();
         assert!(matches!(&err, BranchError::Dirty(p) if p == &["scratch.txt"]));
         assert_eq!(
             err.to_string(),
@@ -374,7 +364,7 @@ mod tests {
         std::fs::remove_file(repo.join("scratch.txt")).unwrap();
 
         git::run(&repo, &["checkout", "-q", "--detach"]).unwrap();
-        let err = start_pending(&repo, "main", 0).unwrap_err();
+        let err = start_pending(&repo, 0).unwrap_err();
         assert!(matches!(err, BranchError::Detached));
         assert_eq!(err.to_string(), "the master repo is on a detached HEAD");
     }
@@ -386,7 +376,7 @@ mod tests {
         std::fs::create_dir_all(&repo).unwrap();
         git::run(&repo, &["init", "-q", "-b", "main"]).unwrap();
         assert!(matches!(
-            start_pending(&repo, "main", 0),
+            start_pending(&repo, 0),
             Err(BranchError::Detached)
         ));
     }
@@ -396,7 +386,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
         testutil::commit_file(&repo, ".ai-sdlc.json", CLAIMS_MARKER, "marker");
-        let pending = start_pending(&repo, "main", 1_792_368_000).unwrap();
+        let pending = start_pending(&repo, 1_792_368_000).unwrap();
         testutil::commit_file(
             &repo,
             "intent/claims/2026-10-18-new-thing/intent.md",
@@ -404,7 +394,7 @@ mod tests {
 ",
             "add",
         );
-        let out = finish_pending(&repo, &pending, "main").unwrap();
+        let out = finish_pending(&repo, &pending).unwrap();
         assert_eq!(
             out,
             FinishOutcome::Renamed {
@@ -423,7 +413,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
         testutil::commit_file(&repo, ".ai-sdlc.json", CLAIMS_MARKER, "marker");
-        let pending = start_pending(&repo, "main", 1_792_368_000).unwrap();
+        let pending = start_pending(&repo, 1_792_368_000).unwrap();
         let dir = repo.join("intent/claims/2026-10-18-new-thing");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
@@ -432,7 +422,7 @@ mod tests {
 ",
         )
         .unwrap();
-        let out = finish_pending(&repo, &pending, "main").unwrap();
+        let out = finish_pending(&repo, &pending).unwrap();
         assert!(matches!(out, FinishOutcome::Renamed { .. }));
     }
 
@@ -440,9 +430,9 @@ mod tests {
     fn finish_deletes_empty_pending() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
-        let pending = start_pending(&repo, "main", 1_792_368_000).unwrap();
+        let pending = start_pending(&repo, 1_792_368_000).unwrap();
         assert_eq!(
-            finish_pending(&repo, &pending, "main").unwrap(),
+            finish_pending(&repo, &pending).unwrap(),
             FinishOutcome::Deleted
         );
         assert_eq!(current_branch(&repo).as_deref(), Some("main"));
@@ -453,7 +443,7 @@ mod tests {
     fn finish_keeps_pending_with_commits_but_no_change_folder() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
-        let pending = start_pending(&repo, "main", 1_792_368_000).unwrap();
+        let pending = start_pending(&repo, 1_792_368_000).unwrap();
         testutil::commit_file(
             &repo,
             "notes.txt",
@@ -462,7 +452,7 @@ mod tests {
             "stray",
         );
         assert!(matches!(
-            finish_pending(&repo, &pending, "main"),
+            finish_pending(&repo, &pending),
             Err(BranchError::PendingHasCommits)
         ));
         assert!(branch_exists(&repo, &pending));
@@ -472,14 +462,14 @@ mod tests {
     fn finish_refuses_to_leave_dirty_pending() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = testutil::repo(tmp.path(), "m");
-        let pending = start_pending(&repo, "main", 1_792_368_000).unwrap();
+        let pending = start_pending(&repo, 1_792_368_000).unwrap();
         std::fs::write(
             repo.join("README.md"),
             "edited
 ",
         )
         .unwrap();
-        let err = finish_pending(&repo, &pending, "main").unwrap_err();
+        let err = finish_pending(&repo, &pending).unwrap_err();
         assert!(matches!(&err, BranchError::Dirty(p) if p == &["README.md"]));
         assert_eq!(current_branch(&repo).as_deref(), Some(pending.as_str()));
         assert!(branch_exists(&repo, &pending));
@@ -497,7 +487,7 @@ mod tests {
         )
         .unwrap();
 
-        let pending = start_pending(&repo, "main", 1_792_368_000).unwrap();
+        let pending = start_pending(&repo, 1_792_368_000).unwrap();
         assert_eq!(current_branch(&repo).as_deref(), Some(pending.as_str()));
         checkout(&repo, "other").unwrap();
         assert_eq!(current_branch(&repo).as_deref(), Some("other"));
@@ -542,6 +532,158 @@ mod tests {
         }
     }
 
+    /// A workspace whose master has `origin/HEAD` on `develop` and a stale local `main` that lacks
+    /// an older change folder `develop` holds. `develop` is left checked out.
+    fn develop_workspace(tmp: &Path, marker: &str) -> std::path::PathBuf {
+        let master = workspace(tmp, marker);
+        testutil::checkout(&master, "develop", true);
+        testutil::commit_file(
+            &master,
+            "intent/kata/2026-10-01-on-develop/intent.md",
+            "---\nstatus: draft\n---\nx\n",
+            "older change",
+        );
+        testutil::bare_origin(&master, Some("develop"));
+        master
+    }
+
+    #[test]
+    fn origin_head_develop_with_a_stale_main_is_the_base_everywhere() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = develop_workspace(tmp.path(), NAMED);
+        assert_eq!(base::base_branch(&master).as_deref(), Some("develop"));
+        let pending = start_pending(&master, 1_792_368_000).unwrap();
+        intent(&master, true);
+        let new = format!("kata/{CHANGE}");
+        assert_eq!(pending_created(&master).as_deref(), Some(new.as_str()));
+        let info = crate::changes::branch_info(&master);
+        assert_eq!(info.default_base.as_deref(), Some("develop"));
+        assert_eq!(info.pending_change.as_deref(), Some(new.as_str()));
+        // A pending branch cut from develop is listed against develop, not against the stale main.
+        testutil::checkout(&master, "develop", false);
+        let other = start_pending(&master, 1_792_368_100).unwrap();
+        testutil::commit_file(
+            &master,
+            "intent/kata/2026-11-05-other/intent.md",
+            "---\nstatus: draft\n---\nx\n",
+            "other",
+        );
+        testutil::checkout(&master, &pending, false);
+        let listed = crate::changes::other_change_branches(&master);
+        assert_eq!(
+            listed,
+            [crate::changes::OtherBranch {
+                branch: other,
+                change: "2026-11-05-other".into(),
+                needs_name: true
+            }]
+        );
+    }
+
+    #[test]
+    fn confirm_accepts_the_new_change_when_origin_head_is_develop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = develop_workspace(tmp.path(), NAMED);
+        // Cut from develop the way the window did when the workspace base was develop.
+        let pending = "change/pending-20261019T000000Z".to_string();
+        testutil::checkout(&master, &pending, true);
+        intent(&master, true);
+        let out = confirm_branch(
+            &ready(),
+            tmp.path(),
+            "ai-sdlc",
+            "kata",
+            CHANGE,
+            &pending,
+            "feat/PROJ-123-password-reset",
+            "feat",
+        )
+        .unwrap();
+        assert!(matches!(out, FinishOutcome::Renamed { .. }));
+    }
+
+    #[test]
+    fn finish_treats_the_resolved_base_as_the_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = develop_workspace(tmp.path(), UNNAMED);
+        let pending = start_pending(&master, 1_792_368_000).unwrap();
+        intent(&master, true);
+        assert_eq!(
+            finish_pending(&master, &pending).unwrap(),
+            FinishOutcome::Renamed {
+                branch: format!("change/{CHANGE}"),
+                change: CHANGE.into()
+            }
+        );
+        // With no change folder the pending branch is deleted and develop, not main, is checked out.
+        testutil::checkout(&master, "develop", false);
+        let empty = start_pending(&master, 1_792_368_200).unwrap();
+        assert_eq!(
+            finish_pending(&master, &empty).unwrap(),
+            FinishOutcome::Deleted
+        );
+        assert_eq!(current_branch(&master).as_deref(), Some("develop"));
+    }
+
+    #[test]
+    fn a_master_with_only_trunk_can_name_its_change() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = workspace(tmp.path(), NAMED);
+        git::run(&master, &["branch", "-m", "main", "trunk"]).unwrap();
+        testutil::bare_origin(&master, Some("trunk"));
+        assert_eq!(base::base_branch(&master).as_deref(), Some("trunk"));
+        let pending = start_pending(&master, 1_792_368_000).unwrap();
+        intent(&master, true);
+        let new = format!("kata/{CHANGE}");
+        assert_eq!(pending_created(&master).as_deref(), Some(new.as_str()));
+        let out = confirm_branch(
+            &ready(),
+            tmp.path(),
+            "ai-sdlc",
+            "kata",
+            CHANGE,
+            &pending,
+            "feat/PROJ-123-password-reset",
+            "feat",
+        )
+        .unwrap();
+        assert!(matches!(out, FinishOutcome::Renamed { .. }));
+    }
+
+    #[test]
+    fn a_master_with_no_base_refuses_instead_of_using_the_current_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = workspace(tmp.path(), NAMED);
+        git::run(&master, &["branch", "-m", "main", "trunk"]).unwrap();
+        assert!(matches!(
+            start_pending(&master, 0),
+            Err(BranchError::NoBase(_))
+        ));
+        // A pending branch made by hand on such a master cannot be settled or named either.
+        let pending = "change/pending-20261018T000000Z";
+        testutil::checkout(&master, pending, true);
+        intent(&master, true);
+        assert_eq!(pending_created(&master), None);
+        assert!(matches!(
+            finish_pending(&master, pending),
+            Err(BranchError::NoBase(_))
+        ));
+        assert_eq!(crate::changes::branch_info(&master).default_base, None);
+    }
+
+    #[test]
+    fn a_base_that_exists_only_on_origin_refuses_a_local_checkout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = workspace(tmp.path(), UNNAMED);
+        testutil::bare_origin(&master, Some("develop"));
+        assert_eq!(base::base_branch(&master).as_deref(), Some("develop"));
+        assert!(!branch_exists(&master, "develop"));
+        assert!(matches!(
+            start_pending(&master, 0),
+            Err(BranchError::BaseNotLocal(b)) if b == "develop"
+        ));
+    }
+
     #[test]
     fn finish_follows_the_table() {
         let needs = |pending: &str| FinishOutcome::NeedsName {
@@ -558,9 +700,9 @@ mod tests {
             for (row, marker) in [(1, UNNAMED), (2, NAMED)] {
                 let tmp = tempfile::tempdir().unwrap();
                 let master = workspace(tmp.path(), marker);
-                let pending = start_pending(&master, "main", 1_792_368_000).unwrap();
+                let pending = start_pending(&master, 1_792_368_000).unwrap();
                 intent(&master, committed);
-                let out = finish_pending(&master, &pending, "main").unwrap();
+                let out = finish_pending(&master, &pending).unwrap();
                 if row == 1 {
                     assert_eq!(out, renamed, "row 1 committed={committed}");
                     assert_eq!(
@@ -578,20 +720,20 @@ mod tests {
         for marker in [UNNAMED, NAMED] {
             let tmp = tempfile::tempdir().unwrap();
             let master = workspace(tmp.path(), marker);
-            let pending = start_pending(&master, "main", 1_792_368_000).unwrap();
+            let pending = start_pending(&master, 1_792_368_000).unwrap();
             testutil::commit_file(&master, "notes.txt", "x\n", "stray");
             assert!(
                 matches!(
-                    finish_pending(&master, &pending, "main"),
+                    finish_pending(&master, &pending),
                     Err(BranchError::PendingHasCommits)
                 ),
                 "row 3"
             );
             let tmp = tempfile::tempdir().unwrap();
             let master = workspace(tmp.path(), marker);
-            let pending = start_pending(&master, "main", 1_792_368_000).unwrap();
+            let pending = start_pending(&master, 1_792_368_000).unwrap();
             assert_eq!(
-                finish_pending(&master, &pending, "main").unwrap(),
+                finish_pending(&master, &pending).unwrap(),
                 FinishOutcome::Deleted,
                 "row 4"
             );
@@ -604,10 +746,10 @@ mod tests {
     fn finish_without_setting_renames_to_change_folder_r2_1() {
         let tmp = tempfile::tempdir().unwrap();
         let master = workspace(tmp.path(), UNNAMED);
-        let pending = start_pending(&master, "main", 1_792_368_000).unwrap();
+        let pending = start_pending(&master, 1_792_368_000).unwrap();
         intent(&master, true);
         assert_eq!(
-            finish_pending(&master, &pending, "main").unwrap(),
+            finish_pending(&master, &pending).unwrap(),
             FinishOutcome::Renamed {
                 branch: "change/2026-11-02-password-reset".into(),
                 change: CHANGE.into()
@@ -618,7 +760,7 @@ mod tests {
 
     fn pending_with_intent(tmp: &Path) -> (std::path::PathBuf, String) {
         let master = workspace(tmp, NAMED);
-        let pending = start_pending(&master, "main", 1_792_368_000).unwrap();
+        let pending = start_pending(&master, 1_792_368_000).unwrap();
         intent(&master, true);
         (master, pending)
     }
@@ -669,7 +811,7 @@ mod tests {
             "---\nstatus: draft\n---\nx\n",
             "older change",
         );
-        let pending = start_pending(&master, "main", 1_792_368_000).unwrap();
+        let pending = start_pending(&master, 1_792_368_000).unwrap();
         intent(&master, true);
         let head = git::run(&master, &["rev-parse", "HEAD"]).unwrap();
         for other in [on_base, "2026-11-03-never-existed"] {
@@ -699,7 +841,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let master = workspace(tmp.path(), NAMED);
         assert_eq!(crate::changes::branch_info(&master).pending_change, None);
-        start_pending(&master, "main", 1_792_368_000).unwrap();
+        start_pending(&master, 1_792_368_000).unwrap();
         assert_eq!(crate::changes::branch_info(&master).pending_change, None);
         intent(&master, true);
         assert_eq!(

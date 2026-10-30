@@ -141,7 +141,7 @@ describe('SdlcHomeViewModel init', () => {
 });
 
 describe('SdlcHomeViewModel add workspace', () => {
-  it('on a set-up workspace runs the five checks, saves the entry on confirm with the default base branch, and starts no run', async () => {
+  it('on a set-up workspace runs the five checks, saves the entry on confirm with no base branch, and starts no run', async () => {
     const { vm, transport, runSteps, runAgent, saveWorkspaces } = setup();
     vi.spyOn(transport, 'pickDirectory').mockResolvedValue(NEW_FOLDER);
     await vm.init();
@@ -156,7 +156,8 @@ describe('SdlcHomeViewModel add workspace', () => {
 
     await vm.confirmAddWorkspace();
     const saved = saveWorkspaces.mock.calls[0][0];
-    expect(saved.find((w) => w.folder === NEW_FOLDER)).toMatchObject({ name: 'new-ws', base_branch: 'main' });
+    expect(saved.find((w) => w.folder === NEW_FOLDER)).toMatchObject({ name: 'new-ws' });
+    expect(saved.find((w) => w.folder === NEW_FOLDER)).not.toHaveProperty('base_branch');
     expect(vm.current()?.folder).toBe(NEW_FOLDER);
     expect(vm.candidate()).toBeNull();
     expect(runAgent).not.toHaveBeenCalled();
@@ -391,6 +392,17 @@ describe('SdlcHomeViewModel runs', () => {
     expect(checkout).toHaveBeenCalledWith(`${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}`, 'main');
     expect(runAgent).toHaveBeenCalledTimes(1);
     expect(vm.switchPrompt()).toBeNull();
+  });
+
+  it('switches to the base the backend resolves, not a stored one', async () => {
+    const { vm, transport } = setup();
+    await vm.init();
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'develop', pending_change: null });
+    const done = vm.runContext('customer-portal');
+    await flush();
+    expect(vm.switchPrompt()).toBe(`Switch ${MOCK_MASTER} to develop first?`);
+    vm.answerSwitch(false);
+    await done;
   });
 
   it('runs nothing when the switch is declined', async () => {
@@ -663,19 +675,12 @@ describe('SdlcHomeViewModel workspaces and settings', () => {
     expect(vm.settingsOpen()).toBe(false);
   });
 
-  it('saving a different base branch updates the workspace entry', async () => {
+  it('never rewrites the workspaces when the settings are saved: the base branch is not stored', async () => {
     const { vm, saveWorkspaces } = setup();
     await vm.init();
     await vm.saveSettings({ settings: vm.settings()!, baseBranch: 'develop' });
-    expect(saveWorkspaces).toHaveBeenCalledWith([expect.objectContaining({ id: 'acme-commerce', base_branch: 'develop' })]);
-    expect(vm.current()?.base_branch).toBe('develop');
-  });
-
-  it('does not rewrite the workspaces when the base branch is unchanged', async () => {
-    const { vm, saveWorkspaces } = setup();
-    await vm.init();
-    await vm.saveSettings({ settings: vm.settings()!, baseBranch: 'main' });
     expect(saveWorkspaces).not.toHaveBeenCalled();
+    expect(vm.current()).not.toHaveProperty('base_branch', 'develop');
   });
 });
 
@@ -1142,6 +1147,14 @@ describe('SdlcHomeViewModel naming at the start of a change', () => {
     await vm.selectWorkspace(vm.workspaces()[0].id);
     vm.openNewChange();
     await vi.waitFor(() => expect(vm.scope()).toBe('shop'));
+  });
+
+  it('a refusal names the base branch the backend resolves, not a stored one', async () => {
+    const { vm, transport } = await opened({ kind: 'error', reason: 'unusable', message: 'no {slug}' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'main', others: [], default_base: 'develop', pending_change: null });
+    await vm.selectWorkspace(vm.workspaces()[0].id);
+    vm.openNewChange();
+    await vi.waitFor(() => expect(vm.namingError()).toContain('committed to develop;'));
   });
 
   it('shows no type or scope picker without a naming setting (R2.1)', async () => {

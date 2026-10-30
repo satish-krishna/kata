@@ -346,8 +346,8 @@ describe('SdlcRunner.newChange', () => {
     fake.finishResults.push(async () => ({ renamed: { branch: 'change/2026-10-18-x', change: '2026-10-18-x' } }));
     await runner.newChange(target, 'commerce', 'flag prices', 'full');
     expect(fake.calls.filter((c) => c !== 'link')).toEqual(['start', 'snapshot', 'agent', 'wait', 'dismissed', 'finish']);
-    expect(fake.sdlcStartChange).toHaveBeenCalledWith('/ws/commerce-docs', 'main');
-    expect(fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/commerce-docs', 'change/pending-1', 'main');
+    expect(fake.sdlcStartChange).toHaveBeenCalledWith('/ws/commerce-docs');
+    expect(fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/commerce-docs', 'change/pending-1');
     const spec = lock.runAgent.mock.calls[0][1];
     expect(spec.name).toBe('sdlc-commerce-new-intent');
     expect(spec.task).toContain('flag prices');
@@ -567,7 +567,7 @@ describe('SdlcRunner.newChange track', () => {
     const outcome = await ctx.runner.newChange(target, 'commerce', 'flag prices', 'decide');
     expect(outcome).toEqual({ kind: 'none', idea: 'flag prices', runId: 'sdlc-commerce-triage-1' });
     expect(ctx.fake.sdlcFinishChange).toHaveBeenCalledTimes(1);
-    expect(ctx.fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/commerce-docs', 'change/pending-1', 'main');
+    expect(ctx.fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/commerce-docs', 'change/pending-1');
     expect(ctx.fake.sdlcLinkRun).not.toHaveBeenCalled();
     expect(ctx.navigate).not.toHaveBeenCalled();
     expect(ctx.toasts.info).not.toHaveBeenCalled();
