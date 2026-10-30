@@ -505,6 +505,15 @@ describe('MockTransport branch naming demos', () => {
     });
   });
 
+  it('the clash demos have nothing uncommitted, so declaring done gets past its first check', async () => {
+    for (const demo of [null, 'clash', 'clash-push']) {
+      await withDemo(demo, async (t) => {
+        const left = (await t.sdlcDiffFiles('/w', 'uncommitted')).files.length;
+        expect(left > 0).toBe(demo === null);
+      });
+    }
+  });
+
   it('?demo=clash-push finds the branch free, then the push meets another change on it', async () => {
     await withDemo('clash-push', async (t) => {
       expect(await t.sdlcRemoteClashes(REPOS, 'commerce-docs', 'commerce', MOCK_DONE_CHANGE)).toEqual([]);
