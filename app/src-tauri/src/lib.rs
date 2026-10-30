@@ -524,10 +524,21 @@ fn sdlc_build_settle(start: sdlc::start::BuildStart) -> Result<Vec<String>, Stri
 #[tauri::command(async)]
 fn sdlc_build_heads(
     folder: String,
+    master_repo: Option<String>,
+    system: Option<String>,
     repos: Vec<String>,
     change: String,
 ) -> Result<std::collections::BTreeMap<String, String>, String> {
-    sdlc::start::heads(Path::new(&folder), &repos, &change).map_err(|e| e.to_string())
+    // The window does not pass the master and system yet (T12); without them no branch record is
+    // read and the change keeps its `change/<change>` name.
+    sdlc::start::heads(
+        Path::new(&folder),
+        master_repo.as_deref().unwrap_or(""),
+        system.as_deref().unwrap_or(""),
+        &repos,
+        &change,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -782,11 +793,16 @@ fn sdlc_refresh_pr_states(
 
 #[tauri::command(async)]
 fn sdlc_pull_requests(
+    master_repo: Option<String>,
+    system: Option<String>,
     repos: Vec<sdlc::publish::PublishRepo>,
     change: String,
 ) -> Result<Vec<sdlc::publish::PrState>, String> {
+    // As in `sdlc_build_heads`: until T12 the window passes neither, and no record is read.
     sdlc::publish::open_pull_requests(
         &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
+        master_repo.as_deref().unwrap_or(""),
+        system.as_deref().unwrap_or(""),
         &repos,
         &change,
     )

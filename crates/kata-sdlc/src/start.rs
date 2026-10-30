@@ -348,9 +348,12 @@ pub fn settle(start: &BuildStart) -> Result<Vec<String>, BuildError> {
 /// is left out.
 pub fn heads(
     folder: &Path,
+    master_repo: &str,
+    system: &str,
     repos: &[String],
     change: &str,
 ) -> Result<BTreeMap<String, String>, BuildError> {
+    let _ = (master_repo, system);
     if !is_change_name(change) {
         return refuse(format!("invalid change name: {change}"));
     }
@@ -997,13 +1000,13 @@ mod tests {
         let fx = fixture();
         ready(prep(&fx, false));
         testutil::commit_msg(&fx.repo("app"), "a.txt", "a\n", OWN);
-        let got = heads(&fx.folder, &["app".into(), "api".into()], C).unwrap();
+        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
         for r in ["app", "api"] {
             let want = git::run(&fx.repo(r), &["rev-parse", &format!("change/{C}")]).unwrap();
             assert_eq!(got[r], want);
         }
         assert_ne!(got["app"], got["api"]);
-        assert!(heads(&fx.folder, &["../x".into()], C).is_err());
+        assert!(heads(&fx.folder, "m", S, &["../x".into()], C).is_err());
     }
 
     #[test]
@@ -1098,7 +1101,7 @@ mod tests {
         let start = ready(prep(&fx, false));
         testutil::commit_msg(&fx.repo("app"), "a.txt", "a\n", OWN);
         assert_eq!(settle(&start).unwrap(), ["api"]);
-        let got = heads(&fx.folder, &["app".into(), "api".into()], C).unwrap();
+        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
         let want = git::run(&fx.repo("app"), &["rev-parse", &format!("change/{C}")]).unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got["app"], want);
@@ -1112,5 +1115,141 @@ mod tests {
         let gone = settle(&start).unwrap();
         assert_eq!(gone, ["app"]);
         assert!(has_branch(&fx.repo("api")));
+    }
+
+    const RECORDED: &str = "feat/PROJ-123-password-reset";
+
+    /// Commit a `branch.md` naming `branch` on the master and put the master on that branch.
+    fn record_on_master(fx: &Fx, branch: &str) {
+        testutil::commit_file(
+            &fx.master,
+            &format!("intent/{S}/{C}/branch.md"),
+            &format!(
+                "---
+branch: {branch}
+type: feat
+---
+
+Kata writes this file.
+"
+            ),
+            "name branch",
+        );
+        testutil::checkout(&fx.master, branch, true);
+    }
+
+    /// A `change/<C>` branch at the base in each product repository, the name a wrong consumer
+    /// would look for.
+    fn decoys(fx: &Fx) {
+        for r in ["app", "api"] {
+            git::run(&fx.repo(r), &["branch", &format!("change/{C}"), "main"]).unwrap();
+        }
+    }
+
+    #[test]
+    fn resolver_reads_record_else_change_folder_r8_1() {
+        let fx = fixture();
+        let want = |c: &str| crate::branch_record::change_branch(&fx.master, S, c).unwrap();
+        assert_eq!(
+            want("2026-10-19-photo-upload"),
+            "change/2026-10-19-photo-upload"
+        );
+        testutil::commit_file(
+            &fx.master,
+            &format!("intent/{S}/2026-11-02-password-reset/branch.md"),
+            &format!(
+                "---
+branch: {RECORDED}
+---
+
+Kata writes this file.
+"
+            ),
+            "name branch",
+        );
+        assert_eq!(want("2026-11-02-password-reset"), RECORDED);
+    }
+
+    #[test]
+    fn every_consumer_uses_the_recorded_branch_r7_1() {
+        let fx = fixture();
+        record_on_master(&fx, RECORDED);
+        decoys(&fx);
+        let start = ready(prep(&fx, false));
+        assert_eq!(start.master.branch, RECORDED);
+        for r in &start.repos {
+            assert_eq!(r.branch, RECORDED, "{}", r.repo);
+            assert!(r.created, "{}", r.repo);
+            assert_eq!(branch_of(&fx.repo(&r.repo)), RECORDED);
+        }
+        // The decoy was not the branch prepare used.
+        let decoy = git::run(&fx.repo("app"), &["rev-parse", &format!("change/{C}")]).unwrap();
+        let main = git::run(&fx.repo("app"), &["rev-parse", "main"]).unwrap();
+        assert_eq!(decoy, main);
+        testutil::commit_msg(
+            &fx.repo("app"),
+            "a.txt",
+            "a
+",
+            OWN,
+        );
+        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
+        let want = git::run(&fx.repo("app"), &["rev-parse", RECORDED]).unwrap();
+        assert_eq!(got["app"], want);
+        assert_ne!(got["app"], decoy);
+        assert!(crate::participants::missing_change_branches(
+            testutil::plugin_dir(),
+            &fx.folder,
+            "m",
+            S,
+            C
+        )
+        .unwrap()
+        .is_empty());
+    }
+
+    #[test]
+    fn renamed_by_hand_is_reported_missing_not_searched_r8_3() {
+        let fx = fixture();
+        record_on_master(&fx, RECORDED);
+        ready(prep(&fx, false));
+        git::run(
+            &fx.repo("app"),
+            &["branch", "-m", RECORDED, "feat/PROJ-123-other"],
+        )
+        .unwrap();
+        assert_eq!(
+            crate::participants::missing_change_branches(
+                testutil::plugin_dir(),
+                &fx.folder,
+                "m",
+                S,
+                C
+            )
+            .unwrap(),
+            ["app"]
+        );
+    }
+
+    #[test]
+    fn a_refusal_names_the_recorded_branch() {
+        let fx = fixture();
+        testutil::commit_file(
+            &fx.master,
+            &format!("intent/{S}/{C}/branch.md"),
+            &format!(
+                "---
+branch: {RECORDED}
+---
+
+Kata writes this file.
+"
+            ),
+            "name branch",
+        );
+        assert_eq!(
+            refusal(prep(&fx, false)),
+            format!("the master repo has no branch {RECORDED}")
+        );
     }
 }

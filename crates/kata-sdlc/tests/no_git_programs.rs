@@ -163,6 +163,12 @@ impl Fx {
 /// and a review document; a second change with a draft intent), and product repositories `app` (the
 /// change branch with one commit) and `api` (no change branch), each with a bare `origin`.
 fn fixture() -> Fx {
+    fixture_on(&format!("change/{CHG}"), false)
+}
+
+/// The same workspace with the change on `branch`; with `record` the master commits a `branch.md`
+/// naming it first.
+fn fixture_on(branch: &str, record: bool) -> Fx {
     let dir = tempfile::tempdir().unwrap();
     let node = find_program("node");
     let only_node = dir.path().join("only-node");
@@ -222,11 +228,29 @@ fn fixture() -> Fx {
         "---\nstatus: draft\n---\nbody\n",
         "docs(s): draft intent",
     );
+    if record {
+        fx.commit(
+            "m",
+            &format!("{dir}/branch.md"),
+            &format!(
+                "---
+branch: {branch}
+type: feat
+---
+
+Kata writes this file.
+"
+            ),
+            "docs(s): name branch
+
+Generated-By: ai-sdlc",
+        );
+    }
     for name in ["m", "app", "api"] {
         fx.origin(name);
     }
     let master = fx.repo("m");
-    fx.git(&master, &["checkout", "-q", "-b", &format!("change/{CHG}")]);
+    fx.git(&master, &["checkout", "-q", "-b", branch]);
     fx.commit(
         "m",
         &format!("{dir}/plan.md"),
@@ -236,7 +260,7 @@ fn fixture() -> Fx {
 Generated-By: ai-sdlc",
     );
     let app = fx.repo("app");
-    fx.git(&app, &["checkout", "-q", "-b", &format!("change/{CHG}")]);
+    fx.git(&app, &["checkout", "-q", "-b", branch]);
     let work = fx.commit(
         "app",
         "x.txt",
@@ -336,7 +360,17 @@ impl GitHubHosts for Hosts {
 #[test]
 #[serial]
 fn every_flow_runs_with_no_git_or_gh_on_path() {
-    let fx = fixture();
+    every_flow(&format!("change/{CHG}"), false);
+}
+
+#[test]
+#[serial]
+fn every_flow_runs_with_no_git_or_gh_on_path_with_a_branch_record() {
+    every_flow("feat/PROJ-123-password-reset", true);
+}
+
+fn every_flow(branch: &str, record: bool) {
+    let fx = fixture_on(branch, record);
     let _home = KataHome::new(&fx.home);
     let master = fx.repo("m");
     let app = fx.repo("app");
@@ -353,10 +387,7 @@ fn every_flow_runs_with_no_git_or_gh_on_path() {
     );
     assert_eq!(list[1].build.tasks, 3);
     let branches = changes::branch_info(&master);
-    assert_eq!(
-        branches.current.as_deref(),
-        Some(format!("change/{CHG}").as_str())
-    );
+    assert_eq!(branches.current.as_deref(), Some(branch));
     assert!(changes::read_doc(&master, SYS, CHG, "intent")
         .unwrap()
         .contains("Build the thing"));
@@ -399,7 +430,7 @@ fn every_flow_runs_with_no_git_or_gh_on_path() {
     assert!(fx.repo("api").join("README.md").exists());
     let gone = start::settle(&begun).unwrap();
     assert_eq!(gone, ["api"]);
-    start::heads(&fx.folder, &["app".to_string()], CHG).unwrap();
+    start::heads(&fx.folder, "m", SYS, &["app".to_string()], CHG).unwrap();
 
     // What changed.
     let files = diff::changed_files(&app, Part::Whole).unwrap();
@@ -465,7 +496,7 @@ fn every_flow_runs_with_no_git_or_gh_on_path() {
         // The push landed in the bare origin (checked with the git CLI by absolute path).
         fx.git(
             &bare,
-            &["rev-parse", "--verify", &format!("refs/heads/change/{CHG}")],
+            &["rev-parse", "--verify", &format!("refs/heads/{branch}")],
         );
     }
 

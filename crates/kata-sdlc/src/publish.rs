@@ -502,9 +502,12 @@ pub struct PrState {
 /// The open pull request of the change in each repository, if any.
 pub fn open_pull_requests(
     hosts: &dyn GitHubHosts,
+    master: &str,
+    system: &str,
     repos: &[PublishRepo],
     change: &str,
 ) -> Result<Vec<PrState>, String> {
+    let _ = (master, system);
     let branch = format!("change/{change}");
     repos
         .iter()
@@ -1003,7 +1006,7 @@ pub(crate) mod tests {
         let fx = fixture(true);
         on_github(&fx);
         let gh = FakeGitHub::default().open_pull("app", 1);
-        let states = open_pull_requests(&gh, &all(&fx), "2026-10-19-c").unwrap();
+        let states = open_pull_requests(&gh, "m", "s", &all(&fx), "2026-10-19-c").unwrap();
         assert_eq!(
             states,
             [
@@ -1023,7 +1026,7 @@ pub(crate) mod tests {
         );
         let gh = FakeGitHub::default().list_fails(status(500, "boom"));
         assert_eq!(
-            open_pull_requests(&gh, &all(&fx), "2026-10-19-c").unwrap_err(),
+            open_pull_requests(&gh, "m", "s", &all(&fx), "2026-10-19-c").unwrap_err(),
             "GitHub answered 500: boom"
         );
     }
@@ -1325,5 +1328,209 @@ pub(crate) mod tests {
                 step(false, "m")
             ]
         );
+    }
+
+    const RECORDED: &str = "feat/PROJ-123-password-reset";
+    const CHANGE: &str = "2026-10-19-c";
+
+    /// Commit a `branch.md` naming `branch` on the master, rename the change branch of `app` and
+    /// `api` to it, and leave a decoy `change/<change>` branch at the base in each.
+    fn record_branch(fx: &Fx, branch: &str) {
+        let m = fx.path("m");
+        commit_file(
+            &m,
+            &format!("intent/s/{CHANGE}/branch.md"),
+            &format!(
+                "---
+branch: {branch}
+type: feat
+---
+
+Kata writes this file.
+"
+            ),
+            "docs(s): name branch",
+        );
+        for name in ["app", "api"] {
+            let r = fx.path(name);
+            git::run(&r, &["branch", "-m", &format!("change/{CHANGE}"), branch]).unwrap();
+            git::run(&r, &["branch", &format!("change/{CHANGE}"), "main"]).unwrap();
+        }
+    }
+
+    fn commit_as(repo: &Path, file: &str, subject: &str) {
+        crate::testutil::commit_msg(
+            repo,
+            file,
+            "x
+",
+            &format!(
+                "{subject}
+
+Generated-By: ai-sdlc"
+            ),
+        );
+    }
+
+    fn set_scope(fx: &Fx, scope: &str) {
+        commit_file(
+            &fx.path("m"),
+            &format!("intent/s/{CHANGE}/intent.md"),
+            &format!(
+                "---
+title: Build the thing
+scope: {scope}
+---
+body
+"
+            ),
+            "intent scope",
+        );
+    }
+
+    fn subjects(fx: &Fx) -> Vec<String> {
+        change_offenders(fx.dir.path(), "m", "s", CHANGE)
+            .unwrap()
+            .into_iter()
+            .filter(|o| o.repo == "app")
+            .map(|o| o.subject)
+            .collect()
+    }
+
+    #[test]
+    fn publish_consumers_use_the_recorded_branch_r7_1() {
+        let fx = fixture(true);
+        record_branch(&fx, RECORDED);
+        let touched = touched_repos(fx.dir.path(), "m", "s", CHANGE).unwrap();
+        let names: Vec<&str> = touched.iter().map(|r| r.repo.as_str()).collect();
+        assert_eq!(names, ["app", "m"], "the decoy branches hold no work");
+        let repos = change_repos(fx.dir.path(), "m", "s", CHANGE).unwrap();
+        assert!(repos.iter().all(|r| r.branch == RECORDED), "{repos:?}");
+        let offenders = change_offenders(fx.dir.path(), "m", "s", CHANGE).unwrap();
+        assert!(
+            offenders.iter().any(|o| o.subject == "work"),
+            "{offenders:?}"
+        );
+        let facts = crate::prs::branch_facts("m", "s", &touched, CHANGE);
+        let app_tip = git::run(&fx.path("app"), &["rev-parse", RECORDED]).unwrap();
+        assert!(
+            facts.heads.contains(&("app".to_string(), app_tip)),
+            "{facts:?}"
+        );
+        let gh = FakeGitHub::default();
+        on_github(&fx);
+        open_pull_requests(&gh, "m", "s", &touched, CHANGE).unwrap();
+        assert!(
+            gh.calls()
+                .iter()
+                .all(|c| !c.contains(&format!("change/{CHANGE}"))),
+            "{:?}",
+            gh.calls()
+        );
+    }
+
+    #[test]
+    fn a_clone_resolves_the_committed_record_r7_2() {
+        let fx = fixture(false);
+        record_branch(&fx, RECORDED);
+        let m = fx.path("m");
+        git::run(&m, &["push", "-q", "origin", &format!("change/{CHANGE}")]).unwrap();
+        let clone = fx.dir.path().join("teammate");
+        git::run(
+            fx.dir.path(),
+            &[
+                "clone",
+                "-q",
+                fx.origin("m").to_str().unwrap(),
+                clone.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        git::run(&clone, &["checkout", "-q", &format!("change/{CHANGE}")]).unwrap();
+        assert_eq!(
+            crate::branch_record::change_branch(&clone, "s", CHANGE).unwrap(),
+            RECORDED
+        );
+    }
+
+    #[test]
+    fn in_flight_change_keeps_its_name_after_pattern_change_r8_2() {
+        let fx = fixture(true);
+        record_branch(&fx, RECORDED);
+        let m = fx.path("m");
+        git::run(&m, &["checkout", "-q", "main"]).unwrap();
+        commit_file(
+            &m,
+            ".ai-sdlc.json",
+            "{\"version\":1,\"systems\":{\"s\":{\"repos\":[\"app\",\"api\"],\"naming\":{\"branch\":\"{scope}/{slug}\",\"pullRequestTitle\":\"{type}({scope}): {title}\"}}}}
+",
+            "new pattern",
+        );
+        git::run(&m, &["checkout", "-q", &format!("change/{CHANGE}")]).unwrap();
+        assert_eq!(
+            crate::branch_record::change_branch(&m, "s", CHANGE).unwrap(),
+            RECORDED
+        );
+        let names: Vec<String> = all(&fx).into_iter().map(|r| r.repo).collect();
+        assert_eq!(names, ["app", "m"]);
+    }
+
+    #[test]
+    fn renamed_by_hand_is_reported_missing_not_searched_r8_3() {
+        let fx = fixture(true);
+        record_branch(&fx, RECORDED);
+        git::run(
+            &fx.path("app"),
+            &["branch", "-m", RECORDED, "feat/PROJ-123-other"],
+        )
+        .unwrap();
+        let names: Vec<String> = all(&fx).into_iter().map(|r| r.repo).collect();
+        assert_eq!(
+            names,
+            ["m"],
+            "app's work is not searched for under another name"
+        );
+    }
+
+    #[test]
+    fn capital_scope_is_the_change_scope_and_commits_follow_rules_r5_1() {
+        let fx = fixture(false);
+        record_branch(&fx, RECORDED);
+        set_scope(&fx, "PROJ-123");
+        let app = fx.path("app");
+        git::run(&app, &["checkout", "-q", RECORDED]).unwrap();
+        commit_as(&app, "a.txt", "feat(PROJ-123): good");
+        commit_as(&app, "b.txt", "feat(proj-123): wrong case");
+        assert_eq!(subjects(&fx), ["feat(proj-123): wrong case"]);
+    }
+
+    #[test]
+    fn lowercase_scope_change_follows_rules_as_before_r5_4() {
+        let fx = fixture(true);
+        set_scope(&fx, "kata");
+        let app = fx.path("app");
+        commit_as(&app, "a.txt", "feat(kata): good");
+        commit_as(&app, "b.txt", "feat(other): bad");
+        assert_eq!(subjects(&fx), ["feat(other): bad", "work"]);
+    }
+
+    #[test]
+    fn commit_types_differ_from_picked_type_and_still_follow_rules_r11_2() {
+        let fx = fixture(false);
+        record_branch(&fx, RECORDED);
+        set_scope(&fx, "PROJ-123");
+        let app = fx.path("app");
+        git::run(&app, &["checkout", "-q", RECORDED]).unwrap();
+        for (i, t) in ["test", "fix", "docs"].iter().enumerate() {
+            commit_as(
+                &app,
+                &format!("f{i}.txt"),
+                &format!("{t}(PROJ-123): change"),
+            );
+        }
+        let names: Vec<String> = all(&fx).into_iter().map(|r| r.repo).collect();
+        assert_eq!(names, ["app", "m"]);
+        let got = subjects(&fx);
+        assert!(!got.iter().any(|s| s.contains("PROJ-123")), "{got:?}");
     }
 }

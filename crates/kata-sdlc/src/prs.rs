@@ -191,7 +191,13 @@ pub fn done_view(
 }
 
 /// The touched repositories of `repos` and where `change/<change>` points in each.
-pub fn branch_facts(repos: &[PublishRepo], change: &str) -> BranchFacts {
+pub fn branch_facts(
+    master: &str,
+    system: &str,
+    repos: &[PublishRepo],
+    change: &str,
+) -> BranchFacts {
+    let _ = (master, system);
     let tip = format!("refs/heads/change/{change}");
     BranchFacts {
         touched: repos.iter().map(|r| r.repo.clone()).collect(),
@@ -222,13 +228,13 @@ pub fn done_view_for(
     let record = saved_record(workspace_id, system, change);
     let asked = record.as_ref().is_some_and(|r| !r.repos.is_empty());
     let legacy = if !asked && build_finished {
-        open_pull_requests(hosts, &repos, change).ok()
+        open_pull_requests(hosts, master_repo, system, &repos, change).ok()
     } else {
         None
     };
     Ok(done_view(
         record.as_ref(),
-        &branch_facts(&repos, change),
+        &branch_facts(master_repo, system, &repos, change),
         build_finished,
         legacy.as_deref(),
     ))
