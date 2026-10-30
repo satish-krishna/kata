@@ -75,8 +75,14 @@ impl PrRecord {
     /// Move every entry opened from a branch other than `current_branch` into `left_behind`, and
     /// clear `declared_at` when any moved: the change is no longer declared under its new name.
     pub fn retire(&mut self, current_branch: &str) {
-        let _ = current_branch;
-        todo!("T9")
+        let (keep, moved): (Vec<PrEntry>, Vec<PrEntry>) = std::mem::take(&mut self.repos)
+            .into_iter()
+            .partition(|e| e.branch == current_branch);
+        self.repos = keep;
+        if !moved.is_empty() {
+            self.declared_at = None;
+            self.left_behind.extend(moved);
+        }
     }
 }
 

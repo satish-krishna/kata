@@ -150,7 +150,17 @@ pub fn append_task_links(links: &[TaskLink]) -> Result<(), StoreError> {
 
 /// Every saved pull request record, from `pull-requests.json`.
 pub fn load_pr_records() -> Vec<PrRecord> {
-    read_or_default("pull-requests.json")
+    let mut records: Vec<PrRecord> = read_or_default("pull-requests.json");
+    // A record saved before branches could be renamed names no branch: it used `change/<change>`.
+    for record in &mut records {
+        let default = format!("change/{}", record.change);
+        for entry in record.repos.iter_mut().chain(record.left_behind.iter_mut()) {
+            if entry.branch.is_empty() {
+                entry.branch.clone_from(&default);
+            }
+        }
+    }
+    records
 }
 
 /// Save `record`, replacing the entry of the same workspace, system and change.

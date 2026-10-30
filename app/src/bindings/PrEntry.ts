@@ -6,6 +6,11 @@ import type { PrStateKind } from "./PrStateKind";
  */
 export type PrEntry = { repo: string, url: string, number: number, 
 /**
+ * The branch the pull request was opened from; a record saved before branches could be
+ * renamed has none, and `store::load_pr_records` reads it as `change/<change>`.
+ */
+branch: string, 
+/**
  * The commit the change branch was pushed at.
  */
 pushedHead: string, state: PrStateKind, seenAt: number, };

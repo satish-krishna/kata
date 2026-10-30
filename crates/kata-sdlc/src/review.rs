@@ -102,8 +102,13 @@ fn committed_outside(
     since: &str,
 ) -> Result<Vec<String>, GitError> {
     let committed = git::Repo::open(master)?.files_changed_since(since)?;
-    let allowed = format!("{}/build/review.md", change_dir(system, change));
-    let files: BTreeSet<String> = committed.into_iter().filter(|f| *f != allowed).collect();
+    // A rename commits `branch.md` and changes nothing the review looked at.
+    let dir = change_dir(system, change);
+    let allowed = [format!("{dir}/build/review.md"), format!("{dir}/branch.md")];
+    let files: BTreeSet<String> = committed
+        .into_iter()
+        .filter(|f| !allowed.contains(f))
+        .collect();
     Ok(files.into_iter().collect())
 }
 

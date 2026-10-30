@@ -3,10 +3,13 @@
 //! The record lives in `intent/<system>/<change>/branch.md` of the master repository. A change that
 //! has none uses `change/<change>`. This module reads and writes the record and checks a proposed
 //! name against the branches already on the machine; it never fetches.
+use crate::branch::current_branch;
+use crate::naming::{self, NamingError};
 use crate::plugin::Readiness;
+use crate::snapshot::status_entries;
 use crate::workspace::{self, ScanError};
 use crate::{decide, frontmatter, git};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// What `branch.md` holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +192,13 @@ pub enum RenameError {
     Git(String),
 }
 
+/// Make the local branch `name` again at `tip` without switching to it.
+fn restore_branch(dir: &Path, name: &str, tip: &str) -> Result<(), git2::Error> {
+    let repo = git2::Repository::open(dir)?;
+    let commit = repo.find_commit(git2::Oid::from_str(tip)?)?;
+    repo.branch(name, &commit, false).map(|_| ())
+}
+
 /// Rename the change's branch to `new_name` in the master and in every product repository of the
 /// system that has it, and record the new name. Every check runs before the first write; a failed
 /// step puts the renames already made back.
@@ -200,8 +210,130 @@ pub fn rename(
     change: &str,
     new_name: &str,
 ) -> Result<RenameOutcome, RenameError> {
-    let _ = (plugin, folder, master_repo, system, change, new_name);
-    todo!("T9")
+    let master = folder.join(master_repo);
+    let current =
+        change_branch(&master, system, change).map_err(|e| RenameError::Record(e.to_string()))?;
+    if new_name == current {
+        return Err(RenameError::Same);
+    }
+    naming::check_branch_name(plugin, new_name).map_err(|e| match e {
+        NamingError::Name(problem) => RenameError::InvalidName(problem),
+        other => RenameError::Record(other.to_string()),
+    })?;
+    let found = clashes(folder, master_repo, system, new_name, Some(&current))
+        .map_err(|e| RenameError::Record(e.to_string()))?;
+    if !found.is_empty() {
+        return Err(RenameError::Clashes(found));
+    }
+
+    let git_fail = |e: git::GitError| RenameError::Git(e.stderr);
+    let master_git = git::Repo::open(&master).map_err(git_fail)?;
+    if !master_git.branch_exists(&current) {
+        return Err(RenameError::Record(format!(
+            "the master repository `{master_repo}` has no branch `{current}` to rename"
+        )));
+    }
+    let dirty = |repo: &str, dir: &Path| {
+        let files: Vec<String> = status_entries(dir)
+            .map_err(|e| RenameError::Git(e.to_string()))?
+            .into_iter()
+            .map(|e| e.path)
+            .collect();
+        if files.is_empty() {
+            Ok(())
+        } else {
+            Err(RenameError::Dirty {
+                repo: repo.to_string(),
+                files,
+            })
+        }
+    };
+    dirty(master_repo, &master)?;
+    let scan = workspace::scan(folder).map_err(|e| RenameError::Record(e.to_string()))?;
+    let mut products: Vec<String> = Vec::new();
+    for repo in workspace::system_repos(&scan, system) {
+        let dir = folder.join(&repo);
+        if repo == master_repo || products.contains(&repo) || !dir.join(".git").exists() {
+            continue;
+        }
+        let Ok(opened) = git::Repo::open(&dir) else {
+            continue;
+        };
+        if !opened.branch_exists(&current) {
+            continue;
+        }
+        if current_branch(&dir).as_deref() == Some(current.as_str()) {
+            dirty(&repo, &dir)?;
+        }
+        products.push(repo);
+    }
+
+    // Every check passed: the writes start here, and a failure puts the renames back.
+    let original = current_branch(&master);
+    // Each repository whose rename was tried, with the commit the old branch pointed at.
+    let mut tried: Vec<(PathBuf, String)> = Vec::new();
+    let mut checked_out = false;
+    let old_ref = format!("refs/heads/{current}");
+    let undo = |tried: &[(PathBuf, String)], checked_out: bool| {
+        if checked_out {
+            if let Some(original) = &original {
+                let _ = git::Repo::open(&master).and_then(|r| r.checkout_branch(original));
+            }
+        }
+        for (dir, tip) in tried.iter().rev() {
+            let Ok(repo) = git::Repo::open(dir) else {
+                continue;
+            };
+            if repo.branch_exists(new_name) {
+                let _ = repo.rename_branch(new_name, &current);
+            } else if !repo.branch_exists(&current) {
+                // libgit2 drops the old ref before it writes the new one, so a rename that failed
+                // in between leaves neither: make the old branch again where it was.
+                let _ = restore_branch(dir, &current, tip);
+            }
+        }
+    };
+    let step = (|| -> Result<(), RenameError> {
+        for repo in &products {
+            let dir = folder.join(repo);
+            let repo = git::Repo::open(&dir).map_err(git_fail)?;
+            tried.push((dir, repo.resolve(&old_ref).map_err(git_fail)?));
+            repo.rename_branch(&current, new_name).map_err(git_fail)?;
+        }
+        tried.push((
+            master.clone(),
+            master_git.resolve(&old_ref).map_err(git_fail)?,
+        ));
+        master_git
+            .rename_branch(&current, new_name)
+            .map_err(git_fail)?;
+        if original.as_deref() != Some(new_name) && original.as_deref() != Some(current.as_str()) {
+            master_git.checkout_branch(new_name).map_err(git_fail)?;
+            checked_out = true;
+        }
+        // A change with no record gets one with no type.
+        let work_type = std::fs::read_to_string(master.join(record_rel(system, change)))
+            .ok()
+            .and_then(|t| frontmatter::field(&t, "type"))
+            .filter(|t| !t.is_empty());
+        let record = BranchRecord {
+            branch: new_name.to_string(),
+            work_type,
+        };
+        write(&master, system, change, &record, RecordVerb::Rename).map_err(|e| match e {
+            RecordError::Git(m) => RenameError::Git(m),
+            other => RenameError::Record(other.to_string()),
+        })
+    })();
+    if let Err(e) = step {
+        undo(&tried, checked_out);
+        return Err(e);
+    }
+    Ok(RenameOutcome {
+        old: current,
+        new: new_name.to_string(),
+        repos: products,
+    })
 }
 
 #[cfg(test)]
@@ -619,7 +751,8 @@ mod tests {
     fn rename_checks_out_the_new_name_in_a_master_that_was_elsewhere() {
         let tmp = tempfile::tempdir().unwrap();
         let (master, _, _) = renamable(tmp.path());
-        testutil::checkout(&master, "main", false);
+        // The record is read from the working tree, so the other branch must carry it too.
+        testutil::checkout(&master, "elsewhere", true);
         rename(&ready(), tmp.path(), "ai-sdlc", SYSTEM, CHANGE, NEW).unwrap();
         assert_eq!(branch_of(&master), NEW);
         assert_eq!(change_branch(&master, SYSTEM, CHANGE).unwrap(), NEW);
