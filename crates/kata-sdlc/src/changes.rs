@@ -151,6 +151,8 @@ pub struct BranchInfo {
     pub current: Option<String>,
     pub others: Vec<OtherBranch>,
     pub default_base: Option<String>,
+    /// `<system>/<change>` of the change folder the checked-out pending branch created, when one is checked out.
+    pub pending_change: Option<String>,
 }
 
 /// Why the plan cannot be built, or `None` when it can; the first cause in document order.
@@ -1093,6 +1095,7 @@ pub fn branch_info(master: &Path) -> BranchInfo {
         current: current_branch(master),
         others: other_change_branches(master),
         default_base: branch::default_base(master),
+        pending_change: None,
     }
 }
 

@@ -634,6 +634,56 @@ mod tests {
     }
 
     #[test]
+    fn confirm_refuses_a_change_the_pending_branch_did_not_create() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = workspace(tmp.path(), NAMED);
+        let on_base = "2026-10-01-on-base";
+        testutil::commit_file(
+            &master,
+            &format!("intent/kata/{on_base}/intent.md"),
+            "---\nstatus: draft\n---\nx\n",
+            "older change",
+        );
+        let pending = start_pending(&master, "main", 1_792_368_000).unwrap();
+        intent(&master, true);
+        let head = git::run(&master, &["rev-parse", "HEAD"]).unwrap();
+        for other in [on_base, "2026-11-03-never-existed"] {
+            let err = confirm_branch(
+                &ready(),
+                tmp.path(),
+                "ai-sdlc",
+                "kata",
+                other,
+                &pending,
+                "feat/PROJ-123-other",
+                "feat",
+            )
+            .unwrap_err();
+            assert!(err.to_string().contains("did not create"), "{err}");
+            assert!(!master
+                .join(format!("intent/kata/{other}/branch.md"))
+                .exists());
+        }
+        assert_eq!(current_branch(&master).as_deref(), Some(pending.as_str()));
+        assert!(!branch_exists(&master, "feat/PROJ-123-other"));
+        assert_eq!(git::run(&master, &["rev-parse", "HEAD"]).unwrap(), head);
+    }
+
+    #[test]
+    fn branch_info_names_the_change_a_pending_branch_created() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = workspace(tmp.path(), NAMED);
+        assert_eq!(crate::changes::branch_info(&master).pending_change, None);
+        start_pending(&master, "main", 1_792_368_000).unwrap();
+        assert_eq!(crate::changes::branch_info(&master).pending_change, None);
+        intent(&master, true);
+        assert_eq!(
+            crate::changes::branch_info(&master).pending_change,
+            Some(format!("kata/{CHANGE}"))
+        );
+    }
+
+    #[test]
     fn confirm_refuses_a_name_with_a_space_r6_5() {
         let tmp = tempfile::tempdir().unwrap();
         let (master, pending) = pending_with_intent(tmp.path());

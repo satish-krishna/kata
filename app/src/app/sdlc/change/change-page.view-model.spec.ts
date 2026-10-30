@@ -802,11 +802,28 @@ describe('ChangePageViewModel', () => {
 
     it('hides the branch chip when the master repository is on the change branch', async () => {
       const transport = new MockTransport();
-      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: `change/${PHOTOS_CHANGE}`, others: [], default_base: 'main' });
+      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: `change/${PHOTOS_CHANGE}`, others: [], default_base: 'main', pending_change: null });
       const { vm } = setup(PHOTOS_CHANGE, transport);
       await ready(vm);
       expect(vm.masterBranch()).toBe(`change/${PHOTOS_CHANGE}`);
       expect(vm.branchChip()).toBeNull();
+    });
+
+    it('asks for a name only for the change the pending branch created, not for another change opened while it is checked out (R6.6)', async () => {
+      const pending = 'change/pending-20261102T000000Z';
+      const branches = (pending_change: string | null) => ({ current: pending, others: [], default_base: 'main', pending_change });
+      const other = new MockTransport();
+      vi.spyOn(other, 'sdlcBranches').mockResolvedValue(branches('product/2026-11-02-password-reset'));
+      const { vm: otherVm } = setup(PHOTOS_CHANGE, other);
+      await ready(otherVm);
+      expect(otherVm.masterBranch()).toBe(pending);
+      expect(otherVm.needsName()).toBe(false);
+
+      const created = new MockTransport();
+      vi.spyOn(created, 'sdlcBranches').mockResolvedValue(branches(`product/${PHOTOS_CHANGE}`));
+      const { vm: createdVm } = setup(PHOTOS_CHANGE, created);
+      await ready(createdVm);
+      expect(createdVm.needsName()).toBe(true);
     });
 
     it('reads the strip status from the open document front matter', async () => {

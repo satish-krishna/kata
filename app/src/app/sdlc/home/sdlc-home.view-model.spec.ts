@@ -380,7 +380,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('asks to switch to the base branch first, and only then runs', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main', pending_change: null });
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     const done = vm.runContext('customer-portal');
     await flush();
@@ -396,7 +396,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('runs nothing when the switch is declined', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main', pending_change: null });
     const checkout = vi.spyOn(transport, 'sdlcCheckout');
     const done = vm.runContext('customer-portal');
     await flush();
@@ -409,7 +409,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('shows git message and runs nothing when the switch is refused', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: 'change/2026-10-12-x', others: [], default_base: 'main', pending_change: null });
     vi.spyOn(transport, 'sdlcCheckout').mockRejectedValue('the master repo has uncommitted changes: a.md');
     const done = vm.runContext('customer-portal');
     await flush();
@@ -431,7 +431,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('aborts context with an error when the master repo is not on a branch', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main', pending_change: null });
     await vm.runContext('customer-portal');
     expect(toastText()).toContain(`${MOCK_MASTER} is not on a branch`);
     expect(runAgent).not.toHaveBeenCalled();
@@ -440,7 +440,7 @@ describe('SdlcHomeViewModel runs', () => {
   it('aborts setup with an error when the master repo is not on a branch', async () => {
     const { vm, transport, runAgent } = setup();
     await vm.init();
-    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main' });
+    vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: null, others: [], default_base: 'main', pending_change: null });
     await vm.addSystem();
     expect(toastText()).toContain('is not on a branch');
     expect(runAgent).not.toHaveBeenCalled();
@@ -586,6 +586,7 @@ describe('SdlcHomeViewModel navigation', () => {
     vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({
       current: 'main',
       default_base: 'main',
+      pending_change: null,
       others: [
         { branch: 'change/pending-1730000000', change: '2026-11-02-password-reset', needs_name: true },
         { branch: 'change/2026-10-17-product-notes', change: '2026-10-17-product-notes', needs_name: false },
