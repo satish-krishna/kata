@@ -61,6 +61,9 @@ const STAGE_PASS_MS = 1000;
 /** How long the scripted agent takes to read a message the operator sent. */
 const MESSAGE_READ_MS = 600;
 
+/** The `?demo=` value of the address in a plain browser, or null; this class never runs under Tauri. */
+const demoParam = (): string | null => (typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('demo'));
+
 /** One scripted run in flight: what to play after an answer or a decision, and what finishing it does. */
 interface ScriptedRun {
   kind: 'workbench' | 'sdlc-spec' | 'sdlc-setup' | 'sdlc-triage' | 'build';
@@ -90,7 +93,7 @@ export class MockTransport extends KataTransport {
   private readonly runs = new Map<string, ScriptedRun>();
   private nextRun = 0;
   /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
-  private readonly sdlc = new SdlcMock(typeof location !== 'undefined' && new URLSearchParams(location.search).get('demo') === 'build-long');
+  private readonly sdlc = new SdlcMock(demoParam() === 'build-long', demoParam());
   private setupScanned = false;
   /** The build layout a browser session has saved; a fresh session starts with none. */
   private buildLayout: Record<string, unknown> = {};
@@ -234,7 +237,7 @@ export class MockTransport extends KataTransport {
   sdlcSuggestBranch(_folder: string, _masterRepo: string, _system: string, change: string, workType: string): Promise<string> { return Promise.resolve(this.sdlc.suggestBranch(change, workType)); }
   sdlcConfirmBranch(_folder: string, _masterRepo: string, _system: string, change: string, _pending: string, name: string, _workType: string): Promise<FinishOutcome> { return Promise.resolve(this.sdlc.confirmBranch(change, name)); }
   sdlcRenameBranch(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, change: string, newName: string): Promise<RenameResult> { return Promise.resolve(this.sdlc.renameBranch(change, newName)); }
-  sdlcRemoteClashes(_touched: PublishRepo[], _masterRepo: string, _system: string, _change: string): Promise<RemoteClash[]> { return Promise.resolve(this.sdlc.remoteClashes()); }
+  sdlcRemoteClashes(touched: PublishRepo[], _masterRepo: string, _system: string, change: string): Promise<RemoteClash[]> { return Promise.resolve(this.sdlc.remoteClashes(touched, change)); }
   sdlcCheckout(_master: string, branch: string): Promise<void> { this.sdlc.checkout(branch); return Promise.resolve(); }
   sdlcDecide(_master: string, _system: string, change: string, decision: Decision, _confirmed: boolean): Promise<DecideOutcome> { return Promise.resolve(this.sdlc.decide(change, decision)); }
   sdlcRunLinks(): Promise<RunLink[]> { return Promise.resolve(this.sdlc.runLinks()); }
@@ -268,13 +271,13 @@ export class MockTransport extends KataTransport {
   sdlcRunChecks(_folder: string, _masterRepo: string, _system: string, repo: PublishRepo): Promise<RepoChecks> { return Promise.resolve(this.sdlc.runChecks(repo.repo)); }
   sdlcGhSignedIn(_repos: PublishRepo[]): Promise<string> { return Promise.resolve('demo-user'); }
   sdlcGhOrigins(_repos: PublishRepo[]): Promise<void> { return Promise.resolve(); }
-  sdlcPublish(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, _change: string, repos: PublishRepo[]): Promise<PublishSummary> {
+  sdlcPublish(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, change: string, repos: PublishRepo[]): Promise<PublishSummary> {
     for (const r of repos) {
       for (const step of [{ kind: 'pushing', repo: r.repo }, { kind: 'opening', repo: r.repo }] as PublishStep[]) {
         for (const listen of [...this.publishListeners]) listen(step);
       }
     }
-    return Promise.resolve({ results: this.sdlc.publish(repos), leftBehind: [] });
+    return Promise.resolve({ results: this.sdlc.publish(repos, change), leftBehind: [] });
   }
   /** `?demo=pr-fail` makes the read fail, so the browser checks can see the "Could not check pull requests" note; `?demo=one-pr` keeps only the
    *  first pull request, so they can see the single inline link. Browser only; this class never runs under Tauri. */

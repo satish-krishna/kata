@@ -439,7 +439,12 @@ export class SdlcMock {
   /** The long demo's change whose plan the format program cannot read, so the reading rows show a reason. */
   private readonly unreadable: string | null;
 
-  constructor(long = false) {
+  /** `?demo=naming` puts the build demo change on a pending branch that waits for a name; `?demo=clash` and `?demo=clash-push` leave the finished change undeclared with its branch taken on GitHub, found by the readiness check or only by the push. */
+  private readonly demo: string | null;
+
+  constructor(long = false, demo: string | null = null) {
+    this.demo = demo;
+    if (demo === 'naming') this.current = MOCK_PENDING_BRANCH;
     this.unreadable = long ? '2026-10-09-merchant-reassign' : null;
     this.plan = long ? [...BUILD_PLAN, ...LONG_PLAN] : BUILD_PLAN;
     this.repos = long ? [...BUILD_REPOS, 'billing-api'] : BUILD_REPOS;
@@ -546,7 +551,7 @@ export class SdlcMock {
       ? { ...c, plan_unreadable: true, plan_unreadable_reason: 'the plan has a task with no id' }
       : c));
   }
-  branches(): BranchInfo { return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change, needs_name: false })), default_base: MOCK_BASE, pending_change: null }; }
+  branches(): BranchInfo { return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change, needs_name: false })), default_base: MOCK_BASE, pending_change: this.demo === 'naming' ? `${MOCK_SYSTEM}/${MOCK_BUILD_CHANGE}` : null }; }
   /** Like the backend's `read_doc`: the document is named by its stem; anything else is a caller bug. */
   readDoc(changeName: string, docName: string): string | null {
     if (!DOC_STEMS.has(docName)) throw new Error(`read_doc takes a document stem (intent, spec or plan), not "${docName}"`);
@@ -625,7 +630,10 @@ export class SdlcMock {
   suggestBranch(changeName: string, workType: string): string { return `${workType}/PROJ-123-${changeName.replace(/^\d{4}-\d{2}-\d{2}-/, '')}`; }
   confirmBranch(changeName: string, name: string): FinishOutcome { return { renamed: { branch: name, change: changeName } }; }
   renameBranch(changeName: string, newName: string): RenameResult { return { old: `change/${changeName}`, new: newName, repos: [MOCK_MASTER] }; }
-  remoteClashes(): RemoteClash[] { return []; }
+  /** Only `?demo=clash` finds the branch taken before anything is pushed: the first touched repository holds other work on the change's branch. */
+  remoteClashes(repos: PublishRepo[], changeName: string): RemoteClash[] {
+    return this.demo === 'clash' && repos.length > 0 ? [{ repo: repos[0].repo, branch: `change/${changeName}` }] : [];
+  }
 
   decide(changeName: string, decision: Decision): DecideOutcome {
     this.changes = this.changes.map((c) => (c.change === changeName ? applyDecision(c, decision) : c));
@@ -774,9 +782,13 @@ export class SdlcMock {
     return { repo, none: false, results: [{ name: 'cargo test', argv: ['cargo', 'test'], outcome: { kind: 'Passed' }, tail: 'test result: ok. 14 passed; 0 failed' }] };
   }
 
-  publish(repos: PublishRepo[]): PrResult[] {
-    repos.forEach((r) => this.published.add(r.repo));
-    return repos.map((r) => ({ repo: r.repo, outcome: { kind: 'opened', url: prUrl(r.repo) } }));
+  /** Only `?demo=clash-push` finds the branch taken at the push: the first repository refuses it, the others open their pull request. */
+  publish(repos: PublishRepo[], changeName: string): PrResult[] {
+    const taken = this.demo === 'clash-push' ? repos[0]?.repo : undefined;
+    repos.filter((r) => r.repo !== taken).forEach((r) => this.published.add(r.repo));
+    return repos.map((r): PrResult => (r.repo === taken
+      ? { repo: r.repo, outcome: { kind: 'clash', branch: `change/${changeName}` } }
+      : { repo: r.repo, outcome: { kind: 'opened', url: prUrl(r.repo) } }));
   }
 
   /** The done view as the Workbench shows it with nothing saved: done while every touched repository has an open pull request. */
@@ -790,7 +802,8 @@ export class SdlcMock {
   }
 
   pullRequests(repos: PublishRepo[], changeName: string): PrState[] {
-    const open = (repo: string) => changeName === MOCK_DONE_CHANGE || this.published.has(repo);
+    // The clash demos leave the finished change without pull requests, so Declare done is offered.
+    const open = (repo: string) => (changeName === MOCK_DONE_CHANGE && !this.demo?.startsWith('clash')) || this.published.has(repo);
     return repos.map((r) => ({ repo: r.repo, url: open(r.repo) ? prUrl(r.repo) : null }));
   }
 }
