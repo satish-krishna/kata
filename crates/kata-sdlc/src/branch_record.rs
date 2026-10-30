@@ -787,6 +787,33 @@ mod tests {
     }
 
     #[test]
+    fn rename_leaves_a_branch_holding_other_work_alone_r9_2() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (master, kata, api) = renamable(tmp.path());
+        // R9.2's Given: `kata` holds the name with a commit from outside the change.
+        testutil::commit_msg(&kata, "theirs.txt", "x\n", "wip: my own thing");
+        testutil::checkout(&kata, "main", false);
+        testutil::checkout(&api, OLD, true);
+        testutil::checkout(&api, "main", false);
+        let kata_refs = refs(&[&kata]);
+        let out = rename(&ready(), tmp.path(), "ai-sdlc", SYSTEM, CHANGE, NEW).unwrap();
+        assert_eq!(out.repos, vec!["api".to_string()]);
+        assert_eq!(refs(&[&kata]), kata_refs);
+        assert!(git::Repo::open(&api).unwrap().branch_exists(NEW));
+        assert!(!git::Repo::open(&api).unwrap().branch_exists(OLD));
+        assert_eq!(change_branch(&master, SYSTEM, CHANGE).unwrap(), NEW);
+        // The build's reuse rule: no repository holds the new name with other work.
+        let scope = crate::decide::change_scope(&master, SYSTEM, CHANGE);
+        for (repo, dir) in [("kata", &kata), ("api", &api)] {
+            if git::Repo::open(dir).unwrap().branch_exists(NEW) {
+                let revs = crate::base::build_work_revs(dir, &format!("refs/heads/{NEW}")).unwrap();
+                let bad = crate::commits::offenders_to(dir, repo, &revs, &scope).unwrap();
+                assert!(bad.is_empty(), "{repo} would be refused: {bad:?}");
+            }
+        }
+    }
+
+    #[test]
     fn rename_checks_out_the_new_name_in_a_master_that_was_elsewhere() {
         let tmp = tempfile::tempdir().unwrap();
         let (master, _, _) = renamable(tmp.path());
