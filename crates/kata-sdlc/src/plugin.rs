@@ -9,6 +9,9 @@ pub const MIN_VERSION: &str = "0.9.0";
 /// The first plugin version that can decide the track of a change itself (the light track).
 pub const LIGHT_TRACK_VERSION: &str = "0.13.0";
 
+/// The first plugin version whose format program reads a system's naming setting and checks branch names.
+pub const NAMING_VERSION: &str = "0.14.0";
+
 /// Whether the ai-sdlc plugin can be used: where it is and which version, decided once for the whole app.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(
@@ -27,6 +30,8 @@ pub enum Readiness {
         layouts: Vec<u32>,
         /// Whether the plugin is at least [`LIGHT_TRACK_VERSION`].
         light_track: bool,
+        /// Whether the plugin is at least [`NAMING_VERSION`].
+        naming: bool,
     },
     /// Not installed, or its version cannot be read.
     Missing,
@@ -44,6 +49,7 @@ pub fn readiness(plugin_dir: Option<&Path>) -> Readiness {
         Some(have) if at_least(&have, MIN_VERSION) => Readiness::Ready {
             dir: dir.to_path_buf(),
             light_track: light_track(&have),
+            naming: naming(&have),
             version: have,
             layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
         },
@@ -57,6 +63,11 @@ pub fn readiness(plugin_dir: Option<&Path>) -> Readiness {
 /// Whether `version` is at least [`LIGHT_TRACK_VERSION`].
 pub fn light_track(version: &str) -> bool {
     at_least(version, LIGHT_TRACK_VERSION)
+}
+
+/// Whether `version` is at least [`NAMING_VERSION`].
+pub fn naming(_version: &str) -> bool {
+    false
 }
 
 /// The `version` field of `<plugin_dir>/.claude-plugin/plugin.json`.
@@ -143,7 +154,8 @@ mod tests {
                 dir: current.path().to_path_buf(),
                 version: "0.9.0".to_string(),
                 layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
-                light_track: false
+                light_track: false,
+                naming: false
             }
         );
         let old = plugin_with(Some(r#"{"name":"ai-sdlc","version":"0.8.0"}"#));

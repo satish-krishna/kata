@@ -399,6 +399,31 @@ mod tests {
     }
 
     #[test]
+    fn change_scope_keeps_capitals() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        marker(
+            &repo,
+            r#"{"version":1,"systems":{"claims":{"commitScope":"claims-sys"}}}"#,
+        );
+        for (scope, expect) in [("PROJ-123", "PROJ-123"), ("proj 123", "claims-sys")] {
+            testutil::commit_file(
+                &repo,
+                INTENT,
+                &format!(
+                    "---
+status: draft
+scope: \"{scope}\"
+---
+"
+                ),
+                "i",
+            );
+            assert_eq!(change_scope(&repo, "claims", CHANGE), expect, "{scope}");
+        }
+    }
+
+    #[test]
     fn accept_commits_only_the_file() {
         let tmp = tempfile::tempdir().unwrap();
         let repo = seeded(tmp.path());
