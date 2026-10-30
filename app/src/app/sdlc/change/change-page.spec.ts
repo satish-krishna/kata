@@ -907,3 +907,99 @@ describe('ChangePage way back', () => {
     });
   });
 });
+
+describe('ChangePage branch name', () => {
+  const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
+  const NEEDS = 'Branch needs a name';
+  const declared = { kind: 'setting', pullRequestTitle: '{type}({scope}): {title}', branch: '{type}/{scope}-{slug}' } as const;
+
+  let draw: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    draw = vi.spyOn(diagrams, 'render').mockResolvedValue('<svg></svg>');
+  });
+  afterEach(() => {
+    draw.mockRestore();
+    vi.restoreAllMocks();
+  });
+
+  /** One row of the table: whether the system declares naming, and whether the master stands on a pending branch holding the change. */
+  const row = (naming: 'declared' | 'none', current: string, change = MOCK_BUILD_CHANGE) => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcNaming').mockResolvedValue(naming === 'declared' ? declared : { kind: 'none' });
+    const branches = transport.sdlcBranches.bind(transport);
+    vi.spyOn(transport, 'sdlcBranches').mockImplementation(async (m) => ({ ...(await branches(m)), current }));
+    vi.spyOn(transport, 'sdlcSuggestBranch').mockImplementation(async (_f, _m, _s, _c, type) => `${type}/PROJ-123-build-demo`);
+    return mount(change, transport);
+  };
+  const find = (c: ParentNode, label: string) => Array.from(c.querySelectorAll<HTMLButtonElement>('button')).find((b) => text(b) === label);
+
+  it('row 2: a named change shows no prompt', async () => {
+    const { container } = await row('declared', 'feat/PROJ-123-build-demo');
+    expect(container.textContent).not.toContain(NEEDS);
+    expect(find(container, 'Name the branch')).toBeUndefined();
+    expect(find(container, 'Start build')!.disabled).toBe(false);
+  });
+
+  it('row 3: a system without naming keeps change/<change> and shows no prompt', async () => {
+    const { container } = await row('none', `change/${MOCK_BUILD_CHANGE}`);
+    expect(container.textContent).not.toContain(NEEDS);
+    expect(find(container, 'Start build')!.disabled).toBe(false);
+  });
+
+  it('row 4: a declared system on the pending branch asks for a name and holds the build', async () => {
+    const { container } = await row('declared', 'change/pending-1730000000');
+    expect(container.textContent).toContain(NEEDS);
+    expect(find(container, 'Name the branch')).toBeDefined();
+    expect(find(container, 'Start build')!.disabled).toBe(true);
+  });
+
+  it('row 5: a change started before the setting existed keeps change/<change> and shows no prompt (R8.2)', async () => {
+    const { container } = await row('declared', `change/${MOCK_BUILD_CHANGE}`);
+    expect(container.textContent).not.toContain(NEEDS);
+    expect(find(container, 'Start build')!.disabled).toBe(false);
+  });
+
+  it('an unusable naming setting is not a declaration: no prompt', async () => {
+    const transport = new MockTransport();
+    vi.spyOn(transport, 'sdlcNaming').mockResolvedValue({ kind: 'error', reason: 'unusable', message: 'bad' });
+    const branches = transport.sdlcBranches.bind(transport);
+    vi.spyOn(transport, 'sdlcBranches').mockImplementation(async (m) => ({ ...(await branches(m)), current: 'change/pending-1' }));
+    const { container } = await mount(MOCK_BUILD_CHANGE, transport);
+    expect(container.textContent).not.toContain(NEEDS);
+  });
+
+  it('closing the confirmation leaves Branch needs a name and offers it again (R6.6)', async () => {
+    const { container, transport } = await row('declared', 'change/pending-1730000000');
+    const confirm = vi.spyOn(transport, 'sdlcConfirmBranch');
+    find(container, 'Name the branch')!.click();
+    await settle();
+    const dialog = () => document.body.querySelector('[role="dialog"]');
+    expect(dialog()).not.toBeNull();
+    expect(dialog()!.querySelector<HTMLInputElement>('input[aria-label="Branch name"]')!.value).toBe('feat/PROJ-123-build-demo');
+    find(dialog()!, 'Cancel')!.click();
+    await settle();
+    expect(dialog()).toBeNull();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(container.textContent).toContain(NEEDS);
+    find(container, 'Name the branch')!.click();
+    await settle();
+    expect(dialog()).not.toBeNull();
+  });
+
+  it('accepting the name reads the change again and drops the prompt (R6.1)', async () => {
+    const { container, transport } = await row('declared', 'change/pending-1730000000');
+    let current = 'change/pending-1730000000';
+    const branches = transport.sdlcBranches.bind(transport);
+    vi.spyOn(transport, 'sdlcBranches').mockImplementation(async (m) => ({ ...(await branches(m)), current }));
+    vi.spyOn(transport, 'sdlcConfirmBranch').mockImplementation(async (_f, _m, _s, change, _p, name) => {
+      current = name;
+      return { renamed: { branch: name, change } };
+    });
+    find(container, 'Name the branch')!.click();
+    await settle();
+    find(document.body.querySelector('[role="dialog"]')!, 'Accept')!.click();
+    await settle();
+    await vi.waitFor(() => expect(container.textContent).not.toContain(NEEDS));
+    expect(find(container, 'Start build')!.disabled).toBe(false);
+  });
+});

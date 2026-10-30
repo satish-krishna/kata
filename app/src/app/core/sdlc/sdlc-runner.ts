@@ -58,6 +58,30 @@ export type NewChangeOutcome =
   | { kind: 'stopped' }
   | { kind: 'none'; idea: string; runId: string | null };
 
+/** The branch name confirmation of one change: what the dialog shows and the engineer may edit. */
+export type NameRequest = {
+  system: string;
+  change: string;
+  pending: string;
+  workType: WorkType;
+  workTypes: WorkType[];
+  suggestion: string;
+  /** Why the last attempt was refused, or why no name could be suggested; null otherwise. */
+  error: string | null;
+  busy: boolean;
+};
+
+/** What the confirmation needs to name one change's pending branch. `workType` is the start pick, null when there was none; `track` is the change's own. */
+export type NameAsk = {
+  folder: string;
+  masterRepo: string;
+  system: string;
+  change: string;
+  pending: string;
+  workType: WorkType | null;
+  track: 'full' | 'fix';
+};
+
 /** What the engineer picked when the system has a naming setting. */
 export type PickedNaming = { workType: WorkType; scope: string };
 
@@ -167,6 +191,21 @@ export class SdlcRunner {
   private readonly picked = signal<WorkType | null>(null);
   /** The work type picked for the change being started, kept for the confirmation of its branch name; null without a naming setting. */
   readonly pickedWorkType = this.picked.asReadonly();
+
+  private readonly request = signal<NameRequest | null>(null);
+  /** The branch name confirmation on show; null when none is open. */
+  readonly nameRequest = this.request.asReadonly();
+
+  /** Ask the engineer to confirm the name of `change`'s pending branch. Resolves with the renamed branch, or null when the dialog was closed. */
+  async requestName(_ask: NameAsk): Promise<{ branch: string; change: string } | null> {
+    return null;
+  }
+
+  async setNameType(_type: WorkType): Promise<void> {}
+
+  async confirmName(_name: string): Promise<void> {}
+
+  closeName(): void {}
 
   constructor() {
     // Link the transcript the moment its id shows up, not at the end: a run that never ends still gets linked.

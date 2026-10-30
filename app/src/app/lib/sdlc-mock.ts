@@ -621,7 +621,7 @@ export class SdlcMock {
   /** The demo system declares a naming setting; the patterns are the ones the ai-sdlc plugin documents. */
   naming(): NamingState { return { kind: 'setting', branch: '{type}/{scope}-{slug}', pullRequestTitle: '{type}({scope}): {title}' }; }
   /** The branch the pattern gives: the type, the demo scope and the change name without its date. */
-  suggestBranch(changeName: string, workType: string): string { return `${workType}/PROJ-123-${changeName.replace(/^d{4}-d{2}-d{2}-/, '')}`; }
+  suggestBranch(changeName: string, workType: string): string { return `${workType}/PROJ-123-${changeName.replace(/^\d{4}-\d{2}-\d{2}-/, '')}`; }
   confirmBranch(changeName: string, name: string): FinishOutcome { return { renamed: { branch: name, change: changeName } }; }
   renameBranch(changeName: string, newName: string): RenameResult { return { old: `change/${changeName}`, new: newName, repos: [MOCK_MASTER] }; }
   remoteClashes(): RemoteClash[] { return []; }

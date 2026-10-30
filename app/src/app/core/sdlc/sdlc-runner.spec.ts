@@ -56,6 +56,9 @@ class FakeTransport {
   sdlcLinkRun = vi.fn(async (..._a: unknown[]) => { this.calls.push('link'); });
   sdlcStartChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('start'); return 'change/pending-1'; });
   sdlcFinishChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('finish'); return this.finishResults.shift()!(); });
+  sdlcReadChange = vi.fn(async (..._a: unknown[]) => ({ track: 'full' }));
+  sdlcSuggestBranch = vi.fn(async (_f: string, _m: string, _s: string, _c: string, type: string) => `${type}/PROJ-1-password-reset`);
+  sdlcConfirmBranch = vi.fn(async (...a: unknown[]) => ({ renamed: { branch: a[5] as string, change: a[3] as string } }));
   sdlcChecksDir = vi.fn(async () => '/kata/workbench/checks');
   sdlcSettings = vi.fn(async () => ({ mode: null, remember: false, permission_mode: 'bypass' as const }));
   catalog = vi.fn(async (..._a: unknown[]) => seedCatalog);
@@ -592,6 +595,77 @@ describe('SdlcRunner.newChange track', () => {
     expect(outcome).toMatchObject({ kind: 'none', idea: 'idea' });
     expect(toasts.info).toHaveBeenCalledWith('No change was created.');
     expect(navigate).toHaveBeenCalledWith(['/sdlc']);
+  });
+});
+
+describe('SdlcRunner.newChange confirming the branch name', () => {
+  const target = { workspace: WORKSPACE, master: '/ws/commerce-docs', productRepos: [] as string[] };
+  const CHANGE = '2026-11-02-password-reset';
+  const needsName = async () => ({ 'needs-name': { pending: 'change/pending-1', system: 'commerce', change: CHANGE } });
+  const withTrack = (track: 'full' | 'fix') => {
+    const ctx = setup();
+    ctx.fake.finishResults.push(needsName);
+    ctx.fake.sdlcReadChange.mockResolvedValue({ track });
+    return ctx;
+  };
+
+  it('a light-track triage preselects fix in the confirmation (R6.7)', async () => {
+    const { runner, navigate } = withTrack('fix');
+    const done = runner.newChange(target, 'commerce', 'idea', 'decide');
+    await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
+    expect(runner.nameRequest()!.workType).toBe('fix');
+    expect(runner.nameRequest()!.suggestion).toBe('fix/PROJ-1-password-reset');
+    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', CHANGE]);
+    await runner.confirmName('fix/PROJ-1-password-reset');
+    expect(await done).toEqual({ kind: 'opened', change: CHANGE, branch: 'fix/PROJ-1-password-reset' });
+  });
+
+  it('a full start that picked refactor preselects refactor', async () => {
+    const { runner } = withTrack('full');
+    const done = runner.newChange(target, 'commerce', 'idea', 'full', undefined, { workType: 'refactor', scope: 'PROJ-1' });
+    await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
+    expect(runner.nameRequest()!.workType).toBe('refactor');
+    runner.closeName();
+    await done;
+  });
+
+  it('a triage that picked another type keeps the pick', async () => {
+    const { runner } = withTrack('fix');
+    const done = runner.newChange(target, 'commerce', 'idea', 'decide', undefined, { workType: 'perf', scope: 'PROJ-1' });
+    await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
+    expect(runner.nameRequest()!.workType).toBe('perf');
+    runner.closeName();
+    await done;
+  });
+
+  it('a full pipeline change without a pick preselects feat', async () => {
+    const { runner } = withTrack('full');
+    const done = runner.newChange(target, 'commerce', 'idea', 'full');
+    await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
+    expect(runner.nameRequest()!.workType).toBe('feat');
+    runner.closeName();
+    await done;
+  });
+
+  it('closing the confirmation leaves the change waiting for a name (R6.6)', async () => {
+    const { runner, fake } = withTrack('full');
+    const done = runner.newChange(target, 'commerce', 'idea', 'full');
+    await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
+    runner.closeName();
+    expect(await done).toEqual({ kind: 'stopped' });
+    expect(runner.nameRequest()).toBeNull();
+    expect(fake.sdlcConfirmBranch).not.toHaveBeenCalled();
+  });
+
+  it('a refusal is kept on the request and the confirmation stays open (R6.3)', async () => {
+    const { runner, fake } = withTrack('full');
+    fake.sdlcConfirmBranch.mockRejectedValueOnce(new Error('clashes with feat/x in kata'));
+    const done = runner.newChange(target, 'commerce', 'idea', 'full');
+    await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
+    await runner.confirmName('feat/x');
+    expect(runner.nameRequest()!.error).toBe('clashes with feat/x in kata');
+    runner.closeName();
+    await done;
   });
 });
 
