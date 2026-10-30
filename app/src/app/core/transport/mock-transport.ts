@@ -230,7 +230,7 @@ export class MockTransport extends KataTransport {
   sdlcStartChange(_master: string, _base: string): Promise<string> { return Promise.resolve(this.sdlc.startChange()); }
   sdlcFinishChange(_master: string, _pending: string, base: string): Promise<FinishOutcome> { return Promise.resolve(this.sdlc.finishChange(base)); }
   sdlcNaming(_folder: string, _masterRepo: string, _system: string): Promise<NamingState> { return Promise.resolve(this.sdlc.naming()); }
-  sdlcCheckScope(_folder: string, _scope: string): Promise<string[]> { return Promise.resolve([]); }
+  sdlcCheckScope(_folder: string, scope: string): Promise<string[]> { return Promise.resolve(scope.includes(' ') ? ['a scope cannot contain a space'] : []); }
   sdlcSuggestBranch(_folder: string, _masterRepo: string, _system: string, change: string, workType: string): Promise<string> { return Promise.resolve(this.sdlc.suggestBranch(change, workType)); }
   sdlcConfirmBranch(_folder: string, _masterRepo: string, _system: string, change: string, _pending: string, name: string, _workType: string): Promise<FinishOutcome> { return Promise.resolve(this.sdlc.confirmBranch(change, name)); }
   sdlcRenameBranch(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, change: string, newName: string): Promise<RenameResult> { return Promise.resolve(this.sdlc.renameBranch(change, newName)); }

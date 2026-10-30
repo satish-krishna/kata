@@ -351,16 +351,20 @@ function nameFor(kind: SdlcKind, ctx: RunContext): string {
   }
 }
 
+/** ` scope:<value>` when the engineer typed a scope for a system with a naming setting; nothing otherwise. */
+const scopeArg = (ctx: RunContext): string => (ctx.scope ? ` scope:${ctx.scope}` : "");
+
 function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): string {
   const { system, change } = ctx;
   switch (kind) {
     case "setup":
       if (ctx.instructions) return "Use the ai-sdlc setup skill with --instructions.";
+      if (ctx.naming) return `Use the ai-sdlc setup skill with --naming. System: ${system}`;
       return system ? `Use the ai-sdlc setup skill. System: ${system}` : "Use the ai-sdlc setup skill.";
     case "context":
       return `Use the ai-sdlc context skill for system ${system}, repositories: ${(ctx.repos ?? []).join(", ")}. Refresh each existing context file, even one that is current.`;
     case "intent": {
-      if (change === null) return `Use the ai-sdlc intent skill for system ${system}. The idea: ${ctx.idea ?? ""}`;
+      if (change === null) return `Use the ai-sdlc intent skill for system ${system}. The idea: ${ctx.idea ?? ""}${scopeArg(ctx)}`;
       const resume = `Use the ai-sdlc intent skill for system ${system} on the existing change folder ${change}. Resume the draft.`;
       return action === "reopen-intent"
         ? `${resume} The user has already confirmed reopening this accepted intent; do not ask again.`
@@ -380,7 +384,7 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): s
     case "build":
       throw new Error("a build run-spec is made from its BuildRun");
     case "triage":
-      return `Use the ai-sdlc start skill for system ${system}. The change: ${ctx.idea ?? ""}. The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.`;
+      return `Use the ai-sdlc start skill for system ${system}. The change: ${ctx.idea ?? ""}${scopeArg(ctx)}. The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.`;
     case "fix":
       return action === "accept-fix"
         ? `Use the ai-sdlc fix skill for system ${system} with --accept ${change}. The engineer accepted this fix in the Workbench.`

@@ -109,7 +109,7 @@ export class TauriTransport extends KataTransport {
   sdlcConfirmBranch(folder: string, masterRepo: string, system: string, change: string, pending: string, name: string, workType: string) { return this.ipc.invoke<FinishOutcome>('sdlc_confirm_branch', { folder, masterRepo, system, change, pending, name, workType }); }
   sdlcRenameBranch(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, newName: string) { return this.ipc.invoke<RenameResult>('sdlc_rename_branch', { folder, workspaceId, masterRepo, system, change, newName }); }
   sdlcRemoteClashes(touched: PublishRepo[], masterRepo: string, system: string, change: string) { return this.ipc.invoke<RemoteClash[]>('sdlc_remote_clashes', { touched, masterRepo, system, change }); }
-  sdlcCheckScope(_folder: string, _scope: string) { return Promise.resolve<string[]>([]); }
+  sdlcCheckScope(folder: string, scope: string) { return this.ipc.invoke<string[]>('sdlc_check_scope', { folder, scope }); }
   sdlcCheckout(master: string, branch: string) { return this.ipc.invoke<void>('sdlc_checkout', { master, branch }); }
   sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean) { return this.ipc.invoke<DecideOutcome>('sdlc_decide', { master, system, change, decision, confirmed }); }
   sdlcRunLinks() { return this.ipc.invoke<RunLink[]>('sdlc_run_links'); }

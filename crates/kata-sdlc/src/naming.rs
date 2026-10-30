@@ -190,8 +190,9 @@ pub fn check_branch_name(plugin: &Readiness, name: &str) -> Result<(), NamingErr
 }
 
 /// Why `scope` cannot be used as a change's scope; empty when it is accepted as typed.
-pub fn check_scope(_plugin: &Readiness, _scope: &str) -> Result<Vec<String>, NamingError> {
-    Ok(Vec::new())
+pub fn check_scope(plugin: &Readiness, scope: &str) -> Result<Vec<String>, NamingError> {
+    let program = naming_program(plugin)?;
+    format::scope(&program, scope).map_err(|e| NamingError::Unreadable(e.to_string()))
 }
 
 #[cfg(test)]

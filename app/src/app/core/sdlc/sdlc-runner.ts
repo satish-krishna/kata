@@ -164,6 +164,9 @@ export class SdlcRunner {
   private readonly afterRun = signal(false);
   /** A run has ended but its after-run work (engine exit, report) is still going: the session view cannot close yet. */
   readonly settling = this.afterRun.asReadonly();
+  private readonly picked = signal<WorkType | null>(null);
+  /** The work type picked for the change being started, kept for the confirmation of its branch name; null without a naming setting. */
+  readonly pickedWorkType = this.picked.asReadonly();
 
   constructor() {
     // Link the transcript the moment its id shows up, not at the end: a run that never ends still gets linked.
@@ -427,7 +430,7 @@ export class SdlcRunner {
    * then rename or delete the branch once the run is over, whatever its outcome. `confirm` is the preview: it gets the built spec and answers with the spec to
    * run, or null when the engineer cancelled, in which case no branch is made.
    */
-  async newChange(target: ChangeTarget, system: string, idea: string, track: StartTrack, confirm?: Confirm, _naming?: PickedNaming): Promise<NewChangeOutcome> {
+  async newChange(target: ChangeTarget, system: string, idea: string, track: StartTrack, confirm?: Confirm, naming?: PickedNaming): Promise<NewChangeOutcome> {
     const { workspace, master, productRepos } = target;
     if (this.isBusy()) {
       this.toasts.error('Another task is already running.');
@@ -435,10 +438,11 @@ export class SdlcRunner {
     }
     const decide = track === 'decide';
     const base = workspace.base_branch;
+    this.picked.set(naming?.workType ?? null);
     let spec: RunSpec;
     try {
       const [settings, catalog] = await Promise.all([this.transport.sdlcSettings(), this.transport.catalog(workspace.folder)]);
-      const ctx = { folder: workspace.folder, system, change: null, idea };
+      const ctx = { folder: workspace.folder, system, change: null, idea, ...(naming ? { scope: naming.scope } : {}) };
       if (decide) {
         const restricted = restrictedFor(workspace.folder, await this.transport.sdlcScan(workspace.folder), await this.transport.sdlcChecksDir());
         spec = specFor('triage', null, ctx, settings, catalog, undefined, restricted);

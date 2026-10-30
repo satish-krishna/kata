@@ -431,6 +431,13 @@ fn sdlc_naming(folder: String, master_repo: String, system: String) -> NamingSta
     }
 }
 
+/// Why a scope typed at the start of a change cannot be used; empty when it is accepted as typed.
+#[tauri::command(async)]
+fn sdlc_check_scope(folder: String, scope: String) -> Result<Vec<String>, String> {
+    let plugin = ai_sdlc_readiness(Some(&folder));
+    sdlc::naming::check_scope(&plugin, &scope).map_err(|e| e.to_string())
+}
+
 /// The branch name the system's setting gives `change`.
 #[tauri::command(async)]
 fn sdlc_suggest_branch(
@@ -1342,6 +1349,7 @@ pub fn run() {
             sdlc_start_change,
             sdlc_finish_change,
             sdlc_naming,
+            sdlc_check_scope,
             sdlc_suggest_branch,
             sdlc_confirm_branch,
             sdlc_rename_branch,

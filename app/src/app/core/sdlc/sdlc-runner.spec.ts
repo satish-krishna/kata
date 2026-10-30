@@ -351,17 +351,20 @@ describe('SdlcRunner.newChange', () => {
     expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-18-x']);
   });
 
-  it('passes the picked scope to the intent task and to the triage task (R4.2)', async () => {
-    const naming = { workType: 'feat' as const, scope: 'PROJ-123' };
-    const full = setup();
-    full.fake.finishResults.push(async () => ({ renamed: { branch: 'change/2026-10-18-x', change: '2026-10-18-x' } }));
-    await full.runner.newChange(target, 'commerce', 'flag prices', 'full', undefined, naming);
-    expect(full.lock.runAgent.mock.calls[0][1].task).toBe('Use the ai-sdlc intent skill for system commerce. The idea: flag prices scope:PROJ-123');
-    const triage = setup();
-    triage.fake.scan = { folder: '/ws', repos: [], master: { kind: 'one', repo: 'commerce-docs', committed: true }, marker: null, marker_error: null };
-    triage.fake.finishResults.push(async () => 'deleted');
-    await triage.runner.newChange(target, 'commerce', 'flag prices', 'decide', undefined, { workType: 'fix', scope: 'PROJ-123' });
-    expect(triage.lock.runAgent.mock.calls[0][1].task).toContain('scope:PROJ-123');
+  it('passes the picked scope to the intent task (R4.2)', async () => {
+    const { runner, fake, lock } = setup();
+    fake.finishResults.push(async () => ({ renamed: { branch: 'change/2026-10-18-x', change: '2026-10-18-x' } }));
+    await runner.newChange(target, 'commerce', 'flag prices', 'full', undefined, { workType: 'feat', scope: 'PROJ-123' });
+    expect(lock.runAgent.mock.calls[0][1].task).toBe('Use the ai-sdlc intent skill for system commerce. The idea: flag prices scope:PROJ-123');
+    expect(runner.pickedWorkType()).toBe('feat');
+  });
+
+  it('passes the picked scope to the triage task (R4.2)', async () => {
+    const { runner, fake, lock } = setup();
+    fake.scan = { folder: '/ws', repos: [], master: { kind: 'one', repo: 'commerce-docs', committed: true }, marker: null, marker_error: null };
+    fake.finishResults.push(async () => 'deleted');
+    await runner.newChange(target, 'commerce', 'flag prices', 'decide', undefined, { workType: 'fix', scope: 'PROJ-123' });
+    expect(lock.runAgent.mock.calls[0][1].task).toContain('The change: flag prices scope:PROJ-123. The person');
   });
 
   it('adds no scope to the task without a naming setting (R2.1)', async () => {

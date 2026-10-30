@@ -4,7 +4,7 @@
     <div class="k-form">
       @if (systems().length > 1) {
         <app-field label="System" key="system">
-          <hlm-select [(value)]="system">
+          <hlm-select [value]="system()" (valueChange)="onSystem($event)">
             <hlm-select-trigger aria-label="System">
               <hlm-select-value placeholder="Choose a system" />
             </hlm-select-trigger>
@@ -16,6 +16,12 @@
           </hlm-select>
         </app-field>
       }
+      @if (namingReading()) {
+        <p class="k-field__hint" role="status">Reading the team's naming…</p>
+      }
+      @if (namingError(); as e) {
+        <p class="k-field__hint k-field__hint--error" role="alert" data-testid="naming-error">{{ e }}</p>
+      }
       @if (note(); as n) {
         <p class="k-field__hint" data-testid="new-change-note">{{ n }}</p>
       }
@@ -24,7 +30,24 @@
       </app-field>
       @if (!trackFixed()) {
         <app-field label="Track" [hint]="trackHint()">
-          <app-segmented ariaLabel="Track" [options]="tracks()" [(value)]="track" />
+          <app-segmented ariaLabel="Track" [options]="tracks()" [value]="track()" (valueChange)="onTrack($event)" />
+        </app-field>
+      }
+      @if (workTypes().length > 0) {
+        <app-field label="Work type">
+          <hlm-select [value]="workType()" (valueChange)="onWorkType($event)">
+            <hlm-select-trigger aria-label="Work type">
+              <hlm-select-value placeholder="Choose a work type" />
+            </hlm-select-trigger>
+            <hlm-select-content *hlmSelectPortal>
+              @for (t of workTypes(); track t) {
+                <hlm-select-item [value]="t">{{ t }}</hlm-select-item>
+              }
+            </hlm-select-content>
+          </hlm-select>
+        </app-field>
+        <app-field label="Scope" [hint]="scopeHint()" [error]="scopeProblems().length > 0" hintId="new-change-scope-hint" [live]="true">
+          <input hlmInput variant="mono" aria-label="Scope" aria-describedby="new-change-scope-hint" [attr.aria-invalid]="scopeProblems().length > 0" [value]="scope()" (input)="onScope($event)" />
         </app-field>
       }
     </div>

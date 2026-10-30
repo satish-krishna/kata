@@ -17,11 +17,11 @@ import { LockStore } from '../../core/lock/lock.store';
 import { ProgressStore } from '../../core/progress/progress.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
-import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
+import { SdlcRunner, type DiscardChoice, type PickedNaming } from '../../core/sdlc/sdlc-runner';
 import { SdlcStagesStore, stageKey, type ChangeRow } from '../../core/sdlc/sdlc-stages.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
-import type { WorkType } from '../../lib/sdlc-naming';
+import { defaultWorkType, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
 import { inTauri } from '../../lib/mock';
 import { shownChangeList } from '../../lib/doc-notice';
 import { fixProgramFailed, hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
@@ -201,17 +201,110 @@ export class SdlcHomeViewModel {
   readonly settingsOpen = signal(false);
 
   // --- naming at the start of a change
-  readonly newChangeNaming = signal<NamingState | null>(null);
-  readonly workTypes = signal<WorkType[]>([]);
-  readonly workType = signal<WorkType>('feat');
+  private readonly naming = signal<NamingState | null>(null);
+  /** The naming answer for the system the dialog shows; null while it is being read or the dialog is closed. */
+  readonly newChangeNaming = this.naming.asReadonly();
+  private readonly namingSystem = signal<string | null>(null);
+  /** The route the dialog is on: a described change goes to triage ('decide'), the other starts the full pipeline. */
+  private readonly route = signal<StartTrack>('decide');
+  private readonly typePicked = signal<WorkType | null>(null);
+  /** The types the picker offers, the route's default first; empty without a naming setting. */
+  readonly workTypes = computed(() => (this.naming()?.kind === 'setting' ? orderedWorkTypes(this.route()) : []));
+  readonly workType = computed(() => {
+    const picked = this.typePicked();
+    return picked !== null && this.workTypes().includes(picked) ? picked : defaultWorkType(this.route());
+  });
   readonly scope = signal('');
   readonly scopeProblems = signal<string[]>([]);
-  readonly namingError = signal<string | null>(null);
-  readonly namingReady = signal(true);
-  pickSystem(_system: string): void {}
-  pickTrack(_track: StartTrack): void {}
-  pickWorkType(_type: WorkType): void {}
-  setScope(_value: string): void {}
+  /** The scope the last finished check was about. */
+  private readonly scopeChecked = signal<string | null>(null);
+  private scopeCheck = 0;
+  private namingRead = 0;
+  /** Why the system's setting stops a new change, worded for the dialog; null when it does not. */
+  readonly namingError = computed(() => {
+    const n = this.naming();
+    if (n?.kind !== 'error') return null;
+    const base = this.current()?.base_branch ?? 'the base branch';
+    return `Naming for ${this.namingSystem() ?? 'this system'} cannot be used: ${n.message}. The setting must be fixed in .ai-sdlc.json and committed to ${base}; until then no change can start here.`;
+  });
+  /** Whether the naming part of the dialog allows Start: the answer is in, and a setting comes with a scope that passed its check. */
+  readonly namingReady = computed(() => {
+    const n = this.naming();
+    if (n === null || n.kind === 'error') return false;
+    if (n.kind === 'none') return true;
+    const scope = this.scope();
+    return scope.trim() !== '' && this.scopeChecked() === scope && this.scopeProblems().length === 0;
+  });
+
+  pickSystem(system: string): void {
+    void this.readNaming(system);
+  }
+
+  pickTrack(track: StartTrack): void {
+    this.route.set(track);
+    this.typePicked.set(null);
+  }
+
+  pickWorkType(type: WorkType): void {
+    this.typePicked.set(type);
+  }
+
+  setScope(value: string): void {
+    this.scope.set(value);
+    void this.checkScope(value);
+  }
+
+  private async checkScope(value: string): Promise<void> {
+    const run = ++this.scopeCheck;
+    this.scopeChecked.set(null);
+    const folder = this.current()?.folder;
+    if (value.trim() === '' || !folder) {
+      this.scopeProblems.set([]);
+      return;
+    }
+    let problems: string[];
+    try {
+      problems = await this.transport.sdlcCheckScope(folder, value);
+    } catch (e) {
+      problems = [message(e)];
+    }
+    if (run !== this.scopeCheck) return;
+    this.scopeProblems.set(problems);
+    this.scopeChecked.set(value);
+  }
+
+  /** Reads the naming answer for `system` and, for a setting, offers the system's commit scope (else its name) as the scope. */
+  private async readNaming(system: string | null): Promise<void> {
+    const read = ++this.namingRead;
+    this.naming.set(null);
+    this.namingSystem.set(system);
+    this.scopeCheck++;
+    this.scopeChecked.set(null);
+    this.scopeProblems.set([]);
+    this.scope.set('');
+    const folder = this.current()?.folder;
+    const scan = this.scan();
+    const repo = scan ? masterRepo(scan) : null;
+    if (system === null || !folder || !repo) {
+      this.naming.set({ kind: 'none' });
+      return;
+    }
+    let answer: NamingState;
+    try {
+      answer = await this.transport.sdlcNaming(folder, repo, system);
+    } catch (e) {
+      answer = { kind: 'error', reason: 'unreadable', message: message(e) };
+    }
+    if (read !== this.namingRead) return;
+    this.naming.set(answer);
+    if (answer.kind === 'setting') this.setScope(scan?.marker?.systems[system]?.commitScope || system);
+  }
+
+  private clearNaming(): void {
+    this.namingRead++;
+    this.naming.set(null);
+    this.namingSystem.set(null);
+  }
   readonly switchPrompt = signal<string | null>(null);
   private switchResolve: ((ok: boolean) => void) | null = null;
   private readonly removeId = signal<string | null>(null);
@@ -477,6 +570,14 @@ export class SdlcHomeViewModel {
   }
 
   async newChange(system: string, idea: string, track: StartTrack): Promise<void> {
+    const answer = this.naming();
+    // A broken setting never falls back to `change/` naming (R3.2), and a setting needs its checked scope.
+    if (answer?.kind === 'error' || (answer?.kind === 'setting' && !this.namingReady())) {
+      this.toasts.error(this.namingError() ?? 'Pick a work type and a valid scope first.');
+      return;
+    }
+    const picked: PickedNaming | null = answer?.kind === 'setting' ? { workType: this.workType(), scope: this.scope().trim() } : null;
+    this.clearNaming();
     this.newChangeOpen.set(false);
     this.triageNotice.set(null);
     const workspace = this.current();
@@ -485,7 +586,11 @@ export class SdlcHomeViewModel {
     if (!workspace || !scan || !master) return;
     let first: string | null = null;
     try {
-      const outcome = await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, track, (spec) => this.confirm(spec));
+      const target = { workspace, master, productRepos: productRepos(scan) };
+      const confirm = (spec: RunSpec) => this.confirm(spec);
+      const outcome = picked
+        ? await this.runner.newChange(target, system, idea, track, confirm, picked)
+        : await this.runner.newChange(target, system, idea, track, confirm);
       if (outcome.kind === 'none' && track === 'decide') this.triageNotice.set({ idea: outcome.idea, runId: outcome.runId });
       first = outcome.kind === 'opened' ? outcome.change : null;
     } catch (e) {
@@ -499,6 +604,7 @@ export class SdlcHomeViewModel {
     this.newChangeIdea.set('');
     this.newChangeTrack.set('decide');
     this.newChangeNote.set(null);
+    this.beginNaming();
     this.newChangeOpen.set(true);
   }
 
@@ -509,6 +615,7 @@ export class SdlcHomeViewModel {
     this.newChangeIdea.set(notice.idea);
     this.newChangeTrack.set('decide');
     this.newChangeNote.set('The last triage created no change. Change the description and start again.');
+    this.beginNaming();
     this.newChangeOpen.set(true);
   }
 
@@ -524,7 +631,21 @@ export class SdlcHomeViewModel {
   }
 
   closeNewChange(): void {
+    this.clearNaming();
     this.newChangeOpen.set(false);
+  }
+
+  /** The dialog opens on the first system and on the route it will show: triage when the plugin can, else the full pipeline. */
+  private beginNaming(): void {
+    this.route.set(this.lightTrack() ? 'decide' : 'full');
+    this.typePicked.set(null);
+    void this.readNaming(this.systems()[0] ?? null);
+  }
+
+  /** Set the team's branch and pull request title patterns for `system`: a setup run with `--naming`, like the other setup runs. */
+  async setTeamNaming(system: string): Promise<void> {
+    if (this.refuseWhileLocked()) return;
+    await this.runOnBase('Setting team naming', 'Naming', 'setup', { system, naming: true });
   }
 
   async discardLeftovers(choices: DiscardChoice[]): Promise<void> {
@@ -656,7 +777,7 @@ export class SdlcHomeViewModel {
     title: string,
     label: string,
     kind: 'setup' | 'context',
-    ctx: { system: string; repos?: string[]; instructions?: boolean },
+    ctx: { system: string; repos?: string[]; instructions?: boolean; naming?: boolean },
   ): Promise<void> {
     const workspace = this.current();
     const scan = this.scan();
