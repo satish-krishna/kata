@@ -6,7 +6,7 @@ const portal: RepoPaths = {
   committed: ['src/a.ts'],
   uncommitted: ['src/b.ts'],
 };
-const core: RepoPaths = { repo: 'claims-core', whole: ['src/c.cs', 'src/a.ts'], committed: ['src/c.cs', 'src/a.ts'], uncommitted: [] };
+const core: RepoPaths = { repo: 'commerce-core', whole: ['src/c.cs', 'src/a.ts'], committed: ['src/c.cs', 'src/a.ts'], uncommitted: [] };
 
 describe('locateFinding', () => {
   // The precedence rows.
@@ -25,7 +25,7 @@ describe('locateFinding', () => {
   it('row 3: a file in more than one repository asks which', () => {
     expect(locateFinding({ file: 'src/a.ts', line: 7 }, [portal, core], 'whole')).toEqual({
       kind: 'choose',
-      repos: ['customer-portal', 'claims-core'],
+      repos: ['customer-portal', 'commerce-core'],
       path: 'src/a.ts',
       line: 7,
     });
@@ -113,7 +113,7 @@ describe('locateFinding', () => {
   it('R4.1 row 7: a file changed in more than one repository', () => {
     expect(locateFinding({ file: 'src/a.ts', line: 2 }, [portal, core], 'whole')).toEqual({
       kind: 'choose',
-      repos: ['customer-portal', 'claims-core'],
+      repos: ['customer-portal', 'commerce-core'],
       path: 'src/a.ts',
       line: 2,
     });

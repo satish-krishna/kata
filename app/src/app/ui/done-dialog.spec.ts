@@ -8,19 +8,19 @@ import { DoneDialog } from './done-dialog';
 const CHANGE = '2026-10-19-build-demo';
 const passed: CheckResult = { name: 'cargo test', argv: ['cargo', 'test'], outcome: { kind: 'Passed' }, tail: 'ok' };
 const checks = (repo: string, ...results: CheckResult[]): RepoChecks => ({ repo, results, none: results.length === 0 });
-const SPEC = { repo: 'claims-core', name: 'cargo test', argv: ['cargo', 'test'], timeout_secs: 600 };
+const SPEC = { repo: 'commerce-core', name: 'cargo test', argv: ['cargo', 'test'], timeout_secs: 600 };
 
 const report = (over: Partial<DoneReport> = {}): DoneReport => ({
   account: 'demo-user',
   notReady: null,
   repos: [
-    { repo: 'claims-core', base: 'main', checks: [SPEC], result: checks('claims-core', passed) },
+    { repo: 'commerce-core', base: 'main', checks: [SPEC], result: checks('commerce-core', passed) },
     { repo: 'customer-portal', base: 'main', checks: [], result: checks('customer-portal') },
   ],
   offenders: [],
   departures: [],
   review: { at: Date.UTC(2026, 9, 19, 9, 30, 0), findings: [] },
-  checksPath: '/home/demo/.kata/checks/claims.toml',
+  checksPath: '/home/demo/.kata/checks/commerce.toml',
   checksError: null,
   ...over,
 });
@@ -76,11 +76,11 @@ describe('DoneDialog', () => {
   it('lists each repository with its branch and the checks as they will run, and where they are set (R16.3)', async () => {
     await open();
     const rows = Array.from(dialog().querySelectorAll('tbody tr')).map((r) => r.textContent!.replace(/\s+/g, ' '));
-    expect(rows[0]).toContain('claims-core');
+    expect(rows[0]).toContain('commerce-core');
     expect(rows[0]).toContain(`change/${CHANGE} → main`);
     expect(rows[0]).toContain('cargo test');
     expect(rows[0]).toContain('passed');
-    expect(text()).toContain('Checks from /home/demo/.kata/checks/claims.toml');
+    expect(text()).toContain('Checks from /home/demo/.kata/checks/commerce.toml');
   });
 
   it('no checks counts as passing and says so (R11.3)', async () => {
@@ -93,8 +93,8 @@ describe('DoneDialog', () => {
 
   it('a failed check blocks confirm and shows its last lines (R11.2)', async () => {
     const failed: CheckResult = { name: 'cargo test', argv: ['cargo', 'test'], outcome: { kind: 'Failed', exit: 101 }, tail: 'assertion failed: left == right' };
-    await open(report({ repos: [{ repo: 'claims-core', base: 'main', checks: [SPEC], result: checks('claims-core', failed) }] }));
-    expect(text()).toContain('claims-core · cargo test · last 50 lines');
+    await open(report({ repos: [{ repo: 'commerce-core', base: 'main', checks: [SPEC], result: checks('commerce-core', failed) }] }));
+    expect(text()).toContain('commerce-core · cargo test · last 50 lines');
     expect(text()).toContain('assertion failed: left == right');
     expect(text()).toContain('cargo test · exit 101');
     expect(dialog().querySelector('tbody .k-status--error')).not.toBeNull();
@@ -104,7 +104,7 @@ describe('DoneDialog', () => {
 
   it('could not run is amber and says fix the machine (R11.6)', async () => {
     const lost: CheckResult = { name: 'cargo test', argv: ['cargo', 'test'], outcome: { kind: 'CouldNotRun', reason: 'cargo is not on this machine' }, tail: '' };
-    await open(report({ repos: [{ repo: 'claims-core', base: 'main', checks: [SPEC], result: checks('claims-core', lost) }] }));
+    await open(report({ repos: [{ repo: 'commerce-core', base: 'main', checks: [SPEC], result: checks('commerce-core', lost) }] }));
     expect(text()).toContain('cargo is not on this machine');
     expect(text()).toContain('Fix the environment, not the code.');
     expect(dialog().querySelector('tbody .k-status--warning')).not.toBeNull();
@@ -113,9 +113,9 @@ describe('DoneDialog', () => {
   });
 
   it('an offending commit blocks confirm and offers another round (R11.5)', async () => {
-    const { fixture } = await open(report({ offenders: [{ repo: 'claims-core', hash: 'abc1234def', subject: 'fix stuff' }] }));
+    const { fixture } = await open(report({ offenders: [{ repo: 'commerce-core', hash: 'abc1234def', subject: 'fix stuff' }] }));
     expect(text()).toContain('Commits that break the commit rules');
-    expect(text()).toContain('claims-core');
+    expect(text()).toContain('commerce-core');
     expect(text()).toContain('abc1234');
     expect(text()).toContain('fix stuff');
     expect(button('Open pull requests')!.disabled).toBe(true);
@@ -130,17 +130,17 @@ describe('DoneDialog', () => {
     ['app has no GitHub remote'],
     ['GitHub could not be reached. Try again later.'],
   ])('not ready blocks confirm with the reason (R12.1): %s', async (reason) => {
-    await open(report({ account: null, notReady: reason, repos: [{ repo: 'claims-core', base: 'main', checks: [SPEC], result: null }] }));
+    await open(report({ account: null, notReady: reason, repos: [{ repo: 'commerce-core', base: 'main', checks: [SPEC], result: null }] }));
     expect(text()).toContain(reason);
     expect(dialog().querySelector('.k-status--error')).not.toBeNull();
     expect(button('Open pull requests')!.disabled).toBe(true);
   });
 
   it("done dialog lists departures with the plan's text before confirm (R9.2)", async () => {
-    await open(report({ departures: [{ task: 'T2', repo: 'customer-portal', planText: 'Add the photo picker to the report form', departure: 'Reused the existing file picker.' }] }));
+    await open(report({ departures: [{ task: 'T2', repo: 'customer-portal', planText: 'Add the photo picker to the product form', departure: 'Reused the existing file picker.' }] }));
     expect(text()).toContain('Departures from the plan');
     expect(text()).toContain('T2');
-    expect(text()).toContain('Add the photo picker to the report form');
+    expect(text()).toContain('Add the photo picker to the product form');
     expect(text()).toContain('Reused the existing file picker.');
   });
 
@@ -156,10 +156,10 @@ describe('DoneDialog', () => {
 
   it('a bad checks file blocks done and says where (R16.2)', async () => {
     await open(report({
-      checksError: '/home/demo/.kata/checks/claims.toml:4:1: a check has no time limit',
-      repos: [{ repo: 'claims-core', base: 'main', checks: [], result: null }],
+      checksError: '/home/demo/.kata/checks/commerce.toml:4:1: a check has no time limit',
+      repos: [{ repo: 'commerce-core', base: 'main', checks: [], result: null }],
     }));
-    expect(text()).toContain('/home/demo/.kata/checks/claims.toml:4:1: a check has no time limit');
+    expect(text()).toContain('/home/demo/.kata/checks/commerce.toml:4:1: a check has no time limit');
     expect(button('Open pull requests')!.disabled).toBe(true);
   });
 

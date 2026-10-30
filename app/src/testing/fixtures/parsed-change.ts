@@ -9,7 +9,7 @@ import type { TaskStatus } from '@bindings/TaskStatus';
 
 export const NUMBERS = { requirements: 20, scenarios: 76, tasks: 30, buildRecords: 30, findings: 6 } as const;
 
-const REPOS = ['claims-core', 'customer-portal'];
+const REPOS = ['commerce-core', 'customer-portal'];
 
 /** 16 requirements of 4 scenarios and 4 of 3: 76 scenarios in 20 requirements. */
 function requirements(): ParsedRequirement[] {

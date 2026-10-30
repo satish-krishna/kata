@@ -43,9 +43,9 @@ describe('GivenStore', () => {
 
   it('build choices are gone with a new store', () => {
     const s = store();
-    s.setBuild('build:claims/fnol', { off: new Set([givenKey(github.id, WS_A)]) });
-    expect(s.build('build:claims/fnol')?.off.has(givenKey(github.id, WS_A))).toBe(true);
-    expect(store().build('build:claims/fnol')).toBeNull();
+    s.setBuild('build:commerce/photos', { off: new Set([givenKey(github.id, WS_A)]) });
+    expect(s.build('build:commerce/photos')?.off.has(givenKey(github.id, WS_A))).toBe(true);
+    expect(store().build('build:commerce/photos')).toBeNull();
   });
 
   it('locked rows are never remembered', () => {

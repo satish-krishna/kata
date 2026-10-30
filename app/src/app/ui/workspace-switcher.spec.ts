@@ -4,7 +4,7 @@ import { render } from '../../testing/render';
 import { WorkspaceSwitcher } from './workspace-switcher';
 
 const ws = (id: string, folder: string): WorkspaceEntry => ({ id, name: id, folder, base_branch: 'main', last_opened: 1 });
-const A = ws('acme-claims', 'D:/Work/acme-claims');
+const A = ws('acme-commerce', 'D:/Work/acme-commerce');
 const B = ws('old-billing', 'D:/Gone/old-billing');
 
 const settle = async () => {
@@ -36,14 +36,14 @@ describe('WorkspaceSwitcher', () => {
 
   it('names the current workspace on the trigger and keeps the menu closed', async () => {
     const { container } = await render(WorkspaceSwitcher, base);
-    expect(trigger(container).textContent).toContain('acme-claims');
+    expect(trigger(container).textContent).toContain('acme-commerce');
     expect(radios().length).toBe(0);
   });
 
   it('carries the workspace name in its title and its accessible name, since the name can be cut', async () => {
     const { container } = await render(WorkspaceSwitcher, base);
-    expect(trigger(container).getAttribute('aria-label')).toBe('Switch workspace, acme-claims');
-    expect(trigger(container).getAttribute('title')).toBe('acme-claims');
+    expect(trigger(container).getAttribute('aria-label')).toBe('Switch workspace, acme-commerce');
+    expect(trigger(container).getAttribute('title')).toBe('acme-commerce');
   });
 
   it('names the missing workspace the same way', async () => {
@@ -55,9 +55,9 @@ describe('WorkspaceSwitcher', () => {
   it('lists every workspace with its folder, and flags a missing folder', async () => {
     const { container } = await render(WorkspaceSwitcher, { ...base, missing: ['old-billing'] });
     await open(container);
-    const acme = radioWith('acme-claims').textContent!.replace(/\s+/g, ' ');
+    const acme = radioWith('acme-commerce').textContent!.replace(/\s+/g, ' ');
     const billing = radioWith('old-billing').textContent!.replace(/\s+/g, ' ');
-    expect(acme).toContain('D:/Work/acme-claims');
+    expect(acme).toContain('D:/Work/acme-commerce');
     expect(acme).not.toContain('folder missing');
     expect(billing).toContain('folder missing');
   });
@@ -65,7 +65,7 @@ describe('WorkspaceSwitcher', () => {
   it('checks the current workspace', async () => {
     const { container } = await render(WorkspaceSwitcher, base);
     await open(container);
-    expect(radioWith('acme-claims').getAttribute('aria-checked')).toBe('true');
+    expect(radioWith('acme-commerce').getAttribute('aria-checked')).toBe('true');
     expect(radioWith('old-billing').getAttribute('aria-checked')).toBe('false');
   });
 
@@ -74,7 +74,7 @@ describe('WorkspaceSwitcher', () => {
     const picked: string[] = [];
     fixture.componentInstance.select.subscribe((id) => picked.push(id));
     await open(container);
-    radioWith('acme-claims').click();
+    radioWith('acme-commerce').click();
     await open(container);
     radioWith('old-billing').click();
     await settle();

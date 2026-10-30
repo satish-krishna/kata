@@ -4,7 +4,7 @@
 import { installClipping } from './clipping.mjs';
 
 /** A change whose intent has no `##` headings. */
-export const SHORT_INTENT_ROUTE = 'sdlc/claims/2026-10-12-fnol-photo-upload';
+export const SHORT_INTENT_ROUTE = 'sdlc/commerce/2026-10-12-product-photo-upload';
 /** The most the text's left edge may be from the page's left edge, in pixels. */
 const MAX_LEFT = 40;
 

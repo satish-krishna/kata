@@ -19,7 +19,7 @@ afterEach(() => {
   delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
 });
 
-const SHORT = ['# Photo upload at first notice of loss', '', 'Policyholders attach damage photos when they report a claim.', ''].join('\n');
+const SHORT = ['# Photo upload on the product form', '', 'Sellers attach product photos when they list a product.', ''].join('\n');
 
 describe('DocLayout', () => {
   it('draws no outline column for a document with no sections, and the text column comes first', async () => {

@@ -1,6 +1,6 @@
 // The build page in a real browser (`npm run check:build`; run `npm run build` first).
 //
-// Drives the mock's scripted build (`claims-core`, `customer-portal` and `billing-api` run together; `customer-portal` asks one question)
+// Drives the mock's scripted build (`commerce-core`, `customer-portal` and `billing-api` run together; `customer-portal` asks one question)
 // on the production build at 1280 by 800, the smallest window, all on the change page's Build tab:
 //   1. From the plan accepted to the pull requests opened on one page: start the build, answer `customer-portal`'s question, let the
 //      review finish, read the findings, declare done and open the pull requests. At every step the URL stays on the change, the Build
@@ -18,7 +18,7 @@ const { check, done } = reporter('check:build');
 const { page, errors, close } = await open({ width: 1280, height: 800, query: '?demo=build-long' });
 page.setDefaultTimeout(10000);
 
-const REPOS = ['claims-core', 'customer-portal', 'billing-api'];
+const REPOS = ['commerce-core', 'customer-portal', 'billing-api'];
 const AREA_NAMES = { tasks: 'Tasks', activity: 'Activity', files: 'Changed files', findings: 'Findings' };
 const MODES = [
   { key: 1, name: 'Overview' },
@@ -224,8 +224,8 @@ try {
 
   // Stop one repository the way the engineer would, so "continue a stopped repository" can be reached in every mode below.
   const group = (repo) => page.locator('[data-group]', { hasText: repo });
-  await group('claims-core').getByRole('button', { name: 'Cancel', exact: true }).click();
-  await page.getByRole('button', { name: 'Continue claims-core' }).waitFor();
+  await group('commerce-core').getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Continue commerce-core' }).waitFor();
 
   // R14.2, R14.3, R2.2, R2.3, R2.4 and the live half of R15.1, one mode at a time at its default arrangement.
   for (const mode of MODES) {
@@ -295,7 +295,7 @@ try {
     await enter(mode);
     check(await inWindow(page.locator('[data-bar]').getByRole('button', { name: 'Cancel build' })), `R15.1 ${mode.name}: cancel the build is in the bar`);
     await reachable(mode, 'cancel one repository\'s run', 'tasks', '[data-group]:has-text("customer-portal") button:text-is("Cancel")');
-    await reachable(mode, 'continue a stopped repository', 'tasks', 'button:text("Continue claims-core")');
+    await reachable(mode, 'continue a stopped repository', 'tasks', 'button:text("Continue commerce-core")');
     for (const part of ['Whole change', 'Committed', 'Uncommitted']) {
       await reachable(mode, `view ${part === 'Whole change' ? 'the whole change' : part === 'Committed' ? 'only committed work' : 'only uncommitted work'}`, 'files', `[role="radio"]:text-is("${part}")`);
     }
@@ -314,7 +314,7 @@ try {
 
   // R16.2 and R12.1: continuing the stopped repository opens its preview first; the run starts from it.
   await enter(MODES[0]);
-  await page.getByRole('button', { name: 'Continue claims-core' }).click();
+  await page.getByRole('button', { name: 'Continue commerce-core' }).click();
   const preview = page.getByRole('dialog');
   await preview.getByRole('button', { name: /^Start run$/ }).waitFor();
   await eventually(page, () => preview.getByRole('button', { name: /^Start run$/ }).isEnabled(), (on) => on, 'the continue preview resolving');
@@ -322,14 +322,14 @@ try {
   check(dialog !== null && dialog.x >= 0 && dialog.y >= 0 && dialog.x + dialog.width <= 1280 && dialog.y + dialog.height <= 800, `the continue preview fits inside 1280 by 800 (${JSON.stringify(dialog)})`);
   check((await preview.innerText()).includes('No push'), 'the continue preview lists the safety rules');
   await preview.getByRole('button', { name: /^Start run$/ }).click();
-  await stays('claims-core stopped and continued');
+  await stays('commerce-core stopped and continued');
 
   // Every run keeps folding events while its area is hidden, so a hidden run's question is never missed.
   const runs = await countOf('[data-session]');
   check(runs >= REPOS.length && (await countOf('[data-pane]')) >= REPOS.length, `every run's pane stays mounted while its area is not on show (${runs} runs)`);
 
   // Wait until the repositories that are not asking have finished their tasks, so the conversation read below is quiet.
-  for (const repo of ['claims-core', 'billing-api']) {
+  for (const repo of ['commerce-core', 'billing-api']) {
     await attempt(`${repo} finishing its tasks`, async () => {
       await group(repo).waitFor();
       await eventually(page, () => group(repo).locator('[data-heading] .k-status', { hasText: /^Finished$/ }).count(), (n) => n === 1, `${repo} finishing its tasks`, 90000);
@@ -342,10 +342,10 @@ try {
     await scrollsOnItsOwn('tasks', tasksBody, '.k-bp__heading, [data-task]');
   });
 
-  // R1.1 activity: Watch, the turns of claims-core's conversation. R1.2 activity: the area moves to another side and keeps its place.
+  // R1.1 activity: Watch, the turns of commerce-core's conversation. R1.2 activity: the area moves to another side and keeps its place.
   await attempt('R1.1 activity', async () => {
     await enter(MODES[1]);
-    await group('claims-core').locator('.k-bp__name').click();
+    await group('commerce-core').locator('.k-bp__name').click();
     await settle();
     await scrollsOnItsOwn('activity', activityViewport, 'hlm-message-scroller-item');
   });

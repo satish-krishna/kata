@@ -54,8 +54,8 @@ import { PENDING_PERMISSION, type ScriptStep } from './mock';
 export const MOCK_WORKSPACE_FOLDER = DEMO_WORKSPACE_FOLDER;
 /** A folder the demo can add that has repos but no committed `.ai-sdlc.json`, so adding it runs setup. */
 export const MOCK_SETUP_FOLDER = DEMO_SETUP_FOLDER;
-export const MOCK_MASTER = 'claims-intent';
-export const MOCK_SYSTEM = 'claims';
+export const MOCK_MASTER = 'commerce-docs';
+export const MOCK_SYSTEM = 'commerce';
 export const MOCK_PENDING_BRANCH = 'change/pending-20261018T000000Z';
 export const MOCK_NEW_CHANGE = '2026-10-18-new-change';
 
@@ -70,7 +70,7 @@ export const MOCK_FIX_CHANGE = '2026-10-22-photo-retry-fix';
 /** A fix that was rejected, so it is closed. */
 export const MOCK_REJECTED_FIX = '2026-10-21-limit-typo-fix';
 /** The fix folder the scripted triage of `?demo=start` creates when the engineer takes the light track. */
-export const MOCK_STARTED_FIX = '2026-10-24-fraud-flag-fix';
+export const MOCK_STARTED_FIX = '2026-10-24-price-flag-fix';
 /** The layouts the mock plugin reads, as the backend's `Readiness::Ready` sends them. */
 export const MOCK_LAYOUTS = [1, 2];
 
@@ -88,20 +88,20 @@ const TRANSCRIPT_DIR = 'C:/Users/demo/.kata/runs';
 /** Scripted `spec` run for `?demo=sdlc`: reads two files, then pauses on one question; the answer finishes it. */
 export const sdlcSpecScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
   head: [
-    { delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-claims-2026-10-12-fnol-photo-upload-spec-20261018T101500Z.jsonl` } },
+    { delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-commerce-2026-10-12-product-photo-upload-spec-20261018T101500Z.jsonl` } },
     { delay: 350, ev: { type: 'turn', n: 1 } },
-    { delay: 250, ev: { type: 'tool.use', name: 'Read', input_summary: 'claims/2026-10-12-fnol-photo-upload/intent.md', id: 'toolu_s1', input: { file_path: 'claims/2026-10-12-fnol-photo-upload/intent.md' } } },
-    { delay: 300, ev: { type: 'tool.result', name: 'Read', ok: true, summary: 'intent.md - 9 lines', id: 'toolu_s1', output: '# Photo upload at first notice of loss' } },
-    { delay: 300, ev: { type: 'tool.use', name: 'Grep', input_summary: 'upload', id: 'toolu_s2', input: { pattern: 'upload', path: 'claims-core/src' } } },
-    { delay: 300, ev: { type: 'tool.result', name: 'Grep', ok: true, summary: '6 matches', id: 'toolu_s2', output: 'claims-core/src/attachments.rs:12' } },
+    { delay: 250, ev: { type: 'tool.use', name: 'Read', input_summary: 'commerce/2026-10-12-product-photo-upload/intent.md', id: 'toolu_s1', input: { file_path: 'commerce/2026-10-12-product-photo-upload/intent.md' } } },
+    { delay: 300, ev: { type: 'tool.result', name: 'Read', ok: true, summary: 'intent.md - 9 lines', id: 'toolu_s1', output: '# Photo upload on the product form' } },
+    { delay: 300, ev: { type: 'tool.use', name: 'Grep', input_summary: 'upload', id: 'toolu_s2', input: { pattern: 'upload', path: 'commerce-core/src' } } },
+    { delay: 300, ev: { type: 'tool.result', name: 'Grep', ok: true, summary: '6 matches', id: 'toolu_s2', output: 'commerce-core/src/attachments.rs:12' } },
     { delay: 350, ev: { type: 'ask.requested', id: 'q1', questions: [
-      { kind: 'select', header: 'failure', question: 'If an upload fails midway, should the claim still be filed without the photos?',
+      { kind: 'select', header: 'failure', question: 'If an upload fails midway, should the product still be filed without the photos?',
         options: [ { label: 'Yes, file it', description: 'photos can be added later' }, { label: 'No, block filing', description: 'all or nothing' } ],
         multi_select: false },
     ] } },
   ],
   mid: [
-    { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: 'claims/2026-10-12-fnol-photo-upload/spec.md', id: 'toolu_s3', input: { file_path: 'claims/2026-10-12-fnol-photo-upload/spec.md' } } },
+    { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: 'commerce/2026-10-12-product-photo-upload/spec.md', id: 'toolu_s3', input: { file_path: 'commerce/2026-10-12-product-photo-upload/spec.md' } } },
     { delay: 400, ev: { type: 'tool.result', name: 'Write', ok: true, summary: 'spec.md written', id: 'toolu_s3', output: 'ok' } },
     { delay: 400, ev: { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 21000, result: 'Spec drafted in spec.md.' } },
   ],
@@ -118,11 +118,11 @@ export const TRIAGE_STOP = 'Stop here';
  */
 export const sdlcTriageScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
   head: [
-    { delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-claims-new-triage-20261024T090000Z.jsonl` } },
+    { delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-commerce-new-triage-20261024T090000Z.jsonl` } },
     { delay: 350, ev: { type: 'turn', n: 1 } },
-    { delay: 250, ev: { type: 'tool.use', name: 'Grep', input_summary: 'fraud', id: 'toolu_t1', input: { pattern: 'fraud', path: 'claims-core/src' } } },
-    { delay: 300, ev: { type: 'tool.result', name: 'Grep', ok: true, summary: '3 matches', id: 'toolu_t1', output: 'claims-core/src/intake.rs:41' } },
-    { delay: 300, ev: { type: 'assistant.text', text: 'This is a light-track change. It is one repository (`claims-core`), the intake form never sets the flag the fraud queue reads, and the fix needs about 2 tasks.' } },
+    { delay: 250, ev: { type: 'tool.use', name: 'Grep', input_summary: 'price', id: 'toolu_t1', input: { pattern: 'price', path: 'commerce-core/src' } } },
+    { delay: 300, ev: { type: 'tool.result', name: 'Grep', ok: true, summary: '3 matches', id: 'toolu_t1', output: 'commerce-core/src/import.rs:41' } },
+    { delay: 300, ev: { type: 'assistant.text', text: 'This is a light-track change. It is one repository (`commerce-core`), the import form never sets the flag the price review queue reads, and the fix needs about 2 tasks.' } },
     { delay: 350, ev: { type: 'ask.requested', id: 'q1', questions: [
       { kind: 'select', header: 'route', question: 'How should this change go?',
         options: [ { label: TRIAGE_LIGHT, description: 'one repository, about 2 tasks' }, { label: TRIAGE_FULL, description: 'intent, spec and plan first' }, { label: TRIAGE_STOP, description: 'create nothing' } ],
@@ -130,7 +130,7 @@ export const sdlcTriageScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
     ] } },
   ],
   mid: [
-    { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: 'claims/2026-10-24-fraud-flag-fix/intent.md', id: 'toolu_t2', input: { file_path: 'claims/2026-10-24-fraud-flag-fix/intent.md' } } },
+    { delay: 300, ev: { type: 'tool.use', name: 'Write', input_summary: 'commerce/2026-10-24-price-flag-fix/intent.md', id: 'toolu_t2', input: { file_path: 'commerce/2026-10-24-price-flag-fix/intent.md' } } },
     { delay: 400, ev: { type: 'tool.result', name: 'Write', ok: true, summary: 'intent.md written', id: 'toolu_t2', output: 'ok' } },
     { delay: 400, ev: { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 2, cost_usd: 0.03, duration_ms: 18000, result: 'Triage done.' } },
   ],
@@ -159,8 +159,8 @@ export const sdlcSetupScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
 /** What a cancelled demo run leaves behind: a new file, a draft that must not be pre-checked, a file that was already dirty. */
 const LEFTOVERS: Leftovers = {
   new_commits: [],
-  discardable: ['claims/2026-10-12-fnol-photo-upload/notes.tmp', 'claims/2026-10-12-fnol-photo-upload/intent.md'],
-  touched_dirty: ['claims/2026-10-16-fraud-flag/intent.md'],
+  discardable: ['commerce/2026-10-12-product-photo-upload/notes.tmp', 'commerce/2026-10-12-product-photo-upload/intent.md'],
+  touched_dirty: ['commerce/2026-10-16-price-flag/intent.md'],
   created: [],
   product_repos_changed: [],
   product_repos_unchecked: [],
@@ -168,20 +168,20 @@ const LEFTOVERS: Leftovers = {
 
 const MOCK_SETUP_REPOS = ['billing-intent', 'billing-core'];
 
-const MOCK_REPOS = ['claims-intent', 'claims-core', 'customer-portal', 'billing-api'];
+const MOCK_REPOS = ['commerce-docs', 'commerce-core', 'customer-portal', 'billing-api'];
 
 /** The context files of the demo workspace, by repo. billing-api has none. */
 const CONTEXTS: Record<string, string> = {
-  'claims-core': [
+  'commerce-core': [
     '---',
-    'repo: claims-core',
-    'system: claims',
+    'repo: commerce-core',
+    'system: commerce',
     'source_commit: 4f1c9e2a7b3d5e6f8091a2b3c4d5e6f708192a3b',
     'updated: 2026-10-10',
     '---',
-    '# claims-core',
+    '# commerce-core',
     '',
-    'The claims service: first notice of loss intake, claim lifecycle, and the attachment store.',
+    'The commerce service: product import, product lifecycle, and the attachment store.',
     '',
     '## Stack',
     '',
@@ -192,22 +192,22 @@ const CONTEXTS: Record<string, string> = {
     '',
     '| Module | Owns |',
     '| --- | --- |',
-    '| `Intake` | the first notice of loss form and its validation |',
-    '| `Lifecycle` | claim states and the transitions between them |',
-    '| `Attachments` | police reports and other uploaded files |',
+    '| `Import` | the product form and its validation |',
+    '| `Lifecycle` | product states and the transitions between them |',
+    '| `Attachments` | spec sheets and other uploaded files |',
     '',
-    '### Intake',
+    '### Import',
     '',
-    'A notice is validated in `FnolValidator` before it is saved. Attachments are stored first and linked by id.',
+    'A notice is validated in `ProductValidator` before it is saved. Attachments are stored first and linked by id.',
     '',
     '### Lifecycle',
     '',
     '```mermaid',
     'stateDiagram-v2',
     '  [*] --> Open',
-    '  Open --> Assessed',
-    '  Assessed --> Settled',
-    '  Assessed --> Rejected',
+    '  Open --> Reviewed',
+    '  Reviewed --> Published',
+    '  Reviewed --> Rejected',
     '```',
     '',
     '## Conventions',
@@ -219,23 +219,23 @@ const CONTEXTS: Record<string, string> = {
   'customer-portal': [
     '---',
     'repo: customer-portal',
-    'system: claims',
+    'system: commerce',
     'source_commit: 9a8b7c6d5e4f30211203a4b5c6d7e8f901a2b3c4',
     'updated: 2026-09-02',
     '---',
     '# customer-portal',
     '',
-    'The Angular portal policyholders use to report and follow a claim.',
+    'The Angular portal sellers use to list and follow a product.',
     '',
     '## Stack',
     '',
     '- Angular with standalone components and signals',
-    '- Talks to claims-core over its public REST API',
+    '- Talks to commerce-core over its public REST API',
     '',
     '## Screens',
     '',
-    '- **Report a claim**: the first notice of loss form, in three steps.',
-    '- **My claims**: the list and the detail of each claim.',
+    '- **List a product**: the product form, in three steps.',
+    '- **My products**: the list and the detail of each product.',
     '',
   ].join('\n'),
 };
@@ -246,20 +246,20 @@ const doc = (status: string | null, committed = true): DocState =>
 const change = (name: string, intent: DocState, spec: DocState, plan: DocState, stage: Stage, track: Track = 'full'): ChangeInfo =>
   ({
     system: MOCK_SYSTEM, change: name, intent, spec, plan, stage,
-    build: { tasks: 0, finished: 0, repos: 0 }, scope: 'claims', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null, track, fix_row: stage === 'fix-awaiting' && track === 'fix' ? 6 : null,
+    build: { tasks: 0, finished: 0, repos: 0 }, scope: 'commerce', out_of_date: null, plan_unreadable: false, plan_unreadable_reason: null, track, fix_row: stage === 'fix-awaiting' && track === 'fix' ? 6 : null,
   });
 
 /** A fix's three documents, drafted: what the light track writes before the engineer accepts it. */
 const fixDocs = (name: string, title: string): Record<string, string> => ({
-  [`${name}/intent`]: `---\nstatus: draft\n---\n# ${title}\n\nThe report form shows a retry button after a failed upload.\n`,
+  [`${name}/intent`]: `---\nstatus: draft\n---\n# ${title}\n\nThe product form shows a retry button after a failed upload.\n`,
   [`${name}/spec`]: `---\nstatus: draft\n---\n# Spec: ${title}\n\n## Requirements\n\n1. A failed upload offers a retry.\n2. A retry keeps the photos already chosen.\n`,
-  [`${name}/plan`]: `---\nstatus: draft\n---\n# Plan: ${title}\n\n## Tasks\n\n### T1: Add the retry button to the report form (\`customer-portal\`)\n\n- **Depends on:** none\n`,
+  [`${name}/plan`]: `---\nstatus: draft\n---\n# Plan: ${title}\n\n## Tasks\n\n### T1: Add the retry button to the product form (\`customer-portal\`)\n\n- **Depends on:** none\n`,
 });
 
 /** The demo build's plan: T3 waits for T1, which lives in the other repository. */
 const BUILD_PLAN: PlanTask[] = [
-  { id: 'T1', name: 'Refuse an eleventh photo in the attachment store', repo: 'claims-core', dependsOn: [] },
-  { id: 'T2', name: 'Add the photo picker to the report form', repo: 'customer-portal', dependsOn: [] },
+  { id: 'T1', name: 'Refuse an eleventh photo in the attachment store', repo: 'commerce-core', dependsOn: [] },
+  { id: 'T2', name: 'Add the photo picker to the product form', repo: 'customer-portal', dependsOn: [] },
   { id: 'T3', name: 'Show the upload limit message', repo: 'customer-portal', dependsOn: ['T1'] },
 ];
 /**
@@ -267,16 +267,16 @@ const BUILD_PLAN: PlanTask[] = [
  * (the tasks list, the activity of one repository, the changed files). None waits for another, so the scripted build still ends by itself.
  */
 const LONG_PLAN: PlanTask[] = [
-  { id: 'T4', name: 'Count photos per claim when a claim is loaded', repo: 'claims-core', dependsOn: [] },
-  { id: 'T5', name: 'Refuse a photo over ten megabytes', repo: 'claims-core', dependsOn: [] },
-  { id: 'T6', name: 'Refuse a file that is not a JPEG or a PNG', repo: 'claims-core', dependsOn: [] },
-  { id: 'T7', name: 'Keep the first ten photos when the eleventh is refused', repo: 'claims-core', dependsOn: [] },
-  { id: 'T8', name: 'Log every refused photo with its reason', repo: 'claims-core', dependsOn: [] },
+  { id: 'T4', name: 'Count photos per product when a product is loaded', repo: 'commerce-core', dependsOn: [] },
+  { id: 'T5', name: 'Refuse a photo over ten megabytes', repo: 'commerce-core', dependsOn: [] },
+  { id: 'T6', name: 'Refuse a file that is not a JPEG or a PNG', repo: 'commerce-core', dependsOn: [] },
+  { id: 'T7', name: 'Keep the first ten photos when the eleventh is refused', repo: 'commerce-core', dependsOn: [] },
+  { id: 'T8', name: 'Log every refused photo with its reason', repo: 'commerce-core', dependsOn: [] },
   { id: 'T9', name: 'List the chosen photos with a remove button', repo: 'customer-portal', dependsOn: [] },
   { id: 'T10', name: 'Show the limit before the first attempt', repo: 'customer-portal', dependsOn: [] },
   { id: 'T11', name: 'Keep the refusal message until the next attempt', repo: 'customer-portal', dependsOn: [] },
   { id: 'T12', name: 'Add the photo count to the billing summary', repo: 'billing-api', dependsOn: [] },
-  { id: 'T13', name: 'Bill a claim for the photos it keeps', repo: 'billing-api', dependsOn: [] },
+  { id: 'T13', name: 'Bill a product for the photos it keeps', repo: 'billing-api', dependsOn: [] },
   { id: 'T14', name: 'Skip refused photos in the billing summary', repo: 'billing-api', dependsOn: [] },
   { id: 'T15', name: 'Round the photo size to the nearest megabyte', repo: 'billing-api', dependsOn: [] },
   { id: 'T16', name: 'Export the photo count with the monthly report', repo: 'billing-api', dependsOn: [] },
@@ -286,15 +286,15 @@ const LONG_PLAN: PlanTask[] = [
 const TASK_SECTIONS: Record<string, ParsedSection[]> = {
   T1: [
     { title: 'Files', body: '`attachment-store/limits.rs`, `attachment-store/tests/limits.rs`.' },
-    { title: 'Change', body: '- Count the photos already attached to the claim.\n- Refuse the eleventh with a `PhotoLimit` error.' },
-    { title: 'Tests', body: 'a claim with ten photos refuses the eleventh (covers R1.1, supports R2.1).' },
+    { title: 'Change', body: '- Count the photos already attached to the product.\n- Refuse the eleventh with a `PhotoLimit` error.' },
+    { title: 'Tests', body: 'a product with ten photos refuses the eleventh (covers R1.1, supports R2.1).' },
     { title: 'Done when', body: 'the store refuses the eleventh photo and keeps the first ten.' },
   ],
   T2: [
     { title: 'Files', body: '`src/report/photo-picker.ts`.' },
-    { title: 'Change', body: 'Add a picker to the report form that lists the chosen photos.' },
+    { title: 'Change', body: 'Add a picker to the product form that lists the chosen photos.' },
     { title: 'Tests', body: 'the picker lists what was chosen (covers R1.2).' },
-    { title: 'Done when', body: 'a policyholder can choose and remove photos on the form.' },
+    { title: 'Done when', body: 'a seller can choose and remove photos on the form.' },
   ],
   T3: [
     { title: 'Files', body: '`src/report/limit-message.ts`, `src/report/report-form.html`.' },
@@ -331,8 +331,8 @@ const BUILD_SPEC: ParsedRequirement[] = [
   {
     id: 'R1', title: 'The store refuses an eleventh photo', from: ['Proposed outcome 1'], line: 5,
     scenarios: [
-      { id: 'R1.1', title: 'An eleventh photo is refused', outline: false, examples: null, line: 7, steps: ['Given a claim with 10 photos attached', 'When the policyholder adds another', 'Then the upload is refused'] },
-      { id: 'R1.2', title: 'Photos can be removed again', outline: false, examples: null, line: 12, steps: ['Given a claim with 3 photos attached', 'When the policyholder removes one', 'Then 2 photos are attached'] },
+      { id: 'R1.1', title: 'An eleventh photo is refused', outline: false, examples: null, line: 7, steps: ['Given a product with 10 photos attached', 'When the seller adds another', 'Then the upload is refused'] },
+      { id: 'R1.2', title: 'Photos can be removed again', outline: false, examples: null, line: 12, steps: ['Given a product with 3 photos attached', 'When the seller removes one', 'Then 2 photos are attached'] },
     ],
   },
   {
@@ -349,7 +349,7 @@ const BUILD_SPEC: ParsedRequirement[] = [
   {
     id: 'R3', title: 'The limit shows before the first attempt', from: ['D5'], line: 33,
     scenarios: [
-      { id: 'R3.1', title: 'The form states the limit', outline: false, examples: null, line: 35, steps: ['Given the report form', 'Then it says "Up to 10 photos, 10 MB each"'] },
+      { id: 'R3.1', title: 'The form states the limit', outline: false, examples: null, line: 35, steps: ['Given the product form', 'Then it says "Up to 10 photos, 10 MB each"'] },
     ],
   },
 ];
@@ -366,7 +366,7 @@ function gherkinOf(reqs: ParsedRequirement[]): string {
   }
   return [...lines, '```', ''].join('\n');
 }
-const BUILD_REPOS = ['claims-core', 'customer-portal'];
+const BUILD_REPOS = ['commerce-core', 'customer-portal'];
 /** The tasks whose rows record a departure from the plan. */
 const DEPARTED_TASKS = ['T2'];
 /** The long demo's departures: enough, with its findings, to overflow the findings area. */
@@ -377,16 +377,16 @@ const DOC_STEMS = new Set(['intent', 'spec', 'plan']);
 
 /** Document text keyed by `<change>/<stem>`, the way the backend names them. */
 const DOCS: Record<string, string> = {
-  '2026-10-16-fraud-flag/intent': '---\nstatus: draft\n---\n# Flag suspected fraud on intake\n\nAdjusters need a visible fraud flag on a claim so that suspicious submissions are reviewed before payout.\n\n## Outcomes\n\n- A claim can be flagged at intake.\n- Flagged claims are routed to the special investigations queue.\n',
-  '2026-10-12-fnol-photo-upload/intent': '---\nstatus: accepted\n---\n# Photo upload at first notice of loss\n\nPolicyholders attach damage photos when they report a claim.\n',
-  '2026-10-12-fnol-photo-upload/spec': [
+  '2026-10-16-price-flag/intent': '---\nstatus: draft\n---\n# Flag suspicious prices on import\n\nOwners need a visible price flag on a product so that a suspicious price is reviewed before it is published.\n\n## Outcomes\n\n- A product can be flagged at import.\n- Flagged products are routed to the price review queue.\n',
+  '2026-10-12-product-photo-upload/intent': '---\nstatus: accepted\n---\n# Photo upload on the product form\n\nSellers attach product photos when they list a product.\n',
+  '2026-10-12-product-photo-upload/spec': [
     '---\nstatus: draft\n---\n# Spec: photo upload\n',
-    '**Context freshness.** The claims-core context was built two commits ago; neither commit touches intake, so the rules below are written against the current behavior of the first notice of loss form and the attachment store it already uses for police reports.\n',
-    '## Requirements\n\n1. Up to 10 photos per claim, 10 MB each.\n2. JPEG and PNG only.\n3. Photos are virus-scanned before they are attached.\n',
-    '```gherkin\nFeature: Photo upload at first notice of loss\n\n  Rule: R1 - A policyholder attaches up to 10 photos\n\n    Scenario: R1.1 - An eleventh photo is refused\n      Given a claim with 10 photos attached\n      When the policyholder adds "kitchen.jpg"\n      Then the upload is refused # the limit is per claim\n```\n',
-    '## Flow\n\n```mermaid\nflowchart LR\n  A[Policyholder] -->|uploads| B(Virus scan)\n  B -->|clean| C[Claim]\n  B -->|infected| D[Rejected]\n```\n',
+    '**Context freshness.** The commerce-core context was built two commits ago; neither commit touches import, so the rules below are written against the current behavior of the product form and the attachment store it already uses for spec sheets.\n',
+    '## Requirements\n\n1. Up to 10 photos per product, 10 MB each.\n2. JPEG and PNG only.\n3. Photos are virus-scanned before they are attached.\n',
+    '```gherkin\nFeature: Photo upload on the product form\n\n  Rule: R1 - A seller attaches up to 10 photos\n\n    Scenario: R1.1 - An eleventh photo is refused\n      Given a product with 10 photos attached\n      When the seller adds "kitchen.jpg"\n      Then the upload is refused # the limit is per product\n```\n',
+    '## Flow\n\n```mermaid\nflowchart LR\n  A[Seller] -->|uploads| B(Virus scan)\n  B -->|clean| C[Product]\n  B -->|infected| D[Rejected]\n```\n',
   ].join('\n'),
-  [`${MOCK_BUILD_CHANGE}/intent`]: '---\nstatus: accepted\n---\n# Upload limits at first notice of loss\n\nPolicyholders see why a photo is refused.\n',
+  [`${MOCK_BUILD_CHANGE}/intent`]: '---\nstatus: accepted\n---\n# Upload limits on the product form\n\nSellers see why a photo is refused.\n',
   [`${MOCK_BUILD_CHANGE}/spec`]: [
     '---\nstatus: accepted\n---\n# Spec: upload limits\n',
     '## Requirements\n',
@@ -399,14 +399,14 @@ const DOCS: Record<string, string> = {
     '## Tasks\n',
     ...BUILD_PLAN.map((t) => `${taskText(t)}\n`),
   ].join('\n'),
-  [`${MOCK_DONE_CHANGE}/intent`]: '---\nstatus: accepted\n---\n# Photo limits shipped\n\nPolicyholders see why a photo is refused.\n',
+  [`${MOCK_DONE_CHANGE}/intent`]: '---\nstatus: accepted\n---\n# Photo limits shipped\n\nSellers see why a photo is refused.\n',
   [`${MOCK_DONE_CHANGE}/spec`]: '---\nstatus: accepted\n---\n# Spec: photo limits\n\n## Design\n\nThe attachment store owns the count.\n',
   [`${MOCK_DONE_CHANGE}/plan`]: '---\nstatus: accepted\n---\n# Plan: photo limits\n\n## Approach\n\nThe store counts and refuses; the portal explains.\n',
   ...fixDocs(MOCK_FIX_CHANGE, 'Retry a failed photo upload'),
   [`${MOCK_REJECTED_FIX}/intent`]: '---\nstatus: rejected\n---\n# Correct the limit message typo\n\nThe limit message misspells "photos".\n',
-  '2026-10-09-adjuster-reassign/intent': '---\nstatus: accepted\n---\n# Reassign a claim to another adjuster\n\nSupervisors move a claim between adjusters without losing its history.\n',
-  '2026-10-09-adjuster-reassign/spec': '---\nstatus: accepted\n---\n# Spec: reassign\n\n1. Only supervisors can reassign.\n2. Reassignment is recorded in the claim history.\n',
-  '2026-10-09-adjuster-reassign/plan': '---\nstatus: draft\n---\n# Plan: reassign\n\n- [ ] Add the reassign endpoint to claims-core.\n- [ ] Add the reassign action to customer-portal.\n',
+  '2026-10-09-merchant-reassign/intent': '---\nstatus: accepted\n---\n# Reassign a product to another merchant\n\nSupervisors move a product between merchants without losing its history.\n',
+  '2026-10-09-merchant-reassign/spec': '---\nstatus: accepted\n---\n# Spec: reassign\n\n1. Only supervisors can reassign.\n2. Reassignment is recorded in the product history.\n',
+  '2026-10-09-merchant-reassign/plan': '---\nstatus: draft\n---\n# Plan: reassign\n\n- [ ] Add the reassign endpoint to commerce-core.\n- [ ] Add the reassign action to customer-portal.\n',
 };
 
 /** What accepting or rejecting does to a change's documents and stage. */
@@ -437,7 +437,7 @@ export class SdlcMock {
   private readonly unreadable: string | null;
 
   constructor(long = false) {
-    this.unreadable = long ? '2026-10-09-adjuster-reassign' : null;
+    this.unreadable = long ? '2026-10-09-merchant-reassign' : null;
     this.plan = long ? [...BUILD_PLAN, ...LONG_PLAN] : BUILD_PLAN;
     this.repos = long ? [...BUILD_REPOS, 'billing-api'] : BUILD_REPOS;
     this.planTasks = long ? parsedTasks(this.plan) : BUILD_TASKS;
@@ -449,20 +449,20 @@ export class SdlcMock {
 
   private settings: Settings = { mode: 'workbench', remember: true, permission_mode: 'auto' };
   private workspaces: WorkspaceEntry[] = [{
-    id: 'acme-claims', name: 'acme-claims', folder: MOCK_WORKSPACE_FOLDER, base_branch: 'main', last_opened: 1792281600,
+    id: 'acme-commerce', name: 'acme-commerce', folder: MOCK_WORKSPACE_FOLDER, base_branch: 'main', last_opened: 1792281600,
   }];
   private links: RunLink[] = [];
   /** The first demo task is linked to its run; the others are not, so both the known and the unknown session show in the browser. */
   private taskLinksList: TaskLink[] = [{
-    workspace_id: 'acme-claims', system: MOCK_SYSTEM, change: MOCK_BUILD_CHANGE, repo: 'claims-core', task: 'T1', run_id: 'mock-build-claims-core',
+    workspace_id: 'acme-commerce', system: MOCK_SYSTEM, change: MOCK_BUILD_CHANGE, repo: 'commerce-core', task: 'T1', run_id: 'mock-build-commerce-core',
   }];
   private current = 'main';
   /** Other change branches, without the `change/` prefix, like the real `other_change_branches`. */
-  private others = ['2026-10-17-claim-notes'];
+  private others = ['2026-10-17-product-notes'];
   private changes: ChangeInfo[] = [
-    change('2026-10-16-fraud-flag', doc('draft'), doc(null), doc(null), 'intent-awaiting'),
-    change('2026-10-12-fnol-photo-upload', doc('accepted'), doc('draft'), doc(null), 'spec-awaiting'),
-    change('2026-10-09-adjuster-reassign', doc('accepted'), doc('accepted'), doc('draft'), 'plan-awaiting'),
+    change('2026-10-16-price-flag', doc('draft'), doc(null), doc(null), 'intent-awaiting'),
+    change('2026-10-12-product-photo-upload', doc('accepted'), doc('draft'), doc(null), 'spec-awaiting'),
+    change('2026-10-09-merchant-reassign', doc('accepted'), doc('accepted'), doc('draft'), 'plan-awaiting'),
     change(MOCK_BUILD_CHANGE, doc('accepted'), doc('accepted'), doc('accepted'), 'build-ready'),
     change(MOCK_DONE_CHANGE, doc('accepted'), doc('accepted'), doc('accepted'), 'build-finished'),
     change(MOCK_FIX_CHANGE, doc('draft'), doc('draft'), doc('draft'), 'fix-awaiting', 'fix'),
@@ -593,7 +593,7 @@ export class SdlcMock {
       this.fixCreated = false;
       this.others = [...this.others, MOCK_STARTED_FIX];
       this.changes = [change(MOCK_STARTED_FIX, doc('draft', false), doc('draft', false), doc('draft', false), 'fix-awaiting', 'fix'), ...this.changes];
-      Object.assign(this.docs, fixDocs(MOCK_STARTED_FIX, 'Flag suspected fraud on intake'));
+      Object.assign(this.docs, fixDocs(MOCK_STARTED_FIX, 'Flag suspicious prices on import'));
       return { renamed: { branch: `change/${MOCK_STARTED_FIX}`, change: MOCK_STARTED_FIX } };
     }
     // A pending branch whose run created no new change folder is deleted.
@@ -753,13 +753,13 @@ export class SdlcMock {
 
   checksPlan(): ChecksPlan {
     return {
-      path: `${MOCK_CHECKS_DIR}/claims.toml`, exists: true,
-      checks: [{ repo: 'claims-core', name: 'cargo test', argv: ['cargo', 'test'], timeout_secs: 600 }],
+      path: `${MOCK_CHECKS_DIR}/commerce.toml`, exists: true,
+      checks: [{ repo: 'commerce-core', name: 'cargo test', argv: ['cargo', 'test'], timeout_secs: 600 }],
     };
   }
 
   runChecks(repo: string): RepoChecks {
-    if (repo !== 'claims-core') return { repo, results: [], none: true };
+    if (repo !== 'commerce-core') return { repo, results: [], none: true };
     return { repo, none: false, results: [{ name: 'cargo test', argv: ['cargo', 'test'], outcome: { kind: 'Passed' }, tail: 'test result: ok. 14 passed; 0 failed' }] };
   }
 
@@ -848,9 +848,9 @@ const LONG_DIFF_PAIRS: Record<string, FilePair> = {
 // ---- scripted build runs ----
 
 const buildTranscript = (repo: string) =>
-  ({ delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-claims-${MOCK_BUILD_CHANGE}-build-${repo}-20261019T090000Z.jsonl` } }) as ScriptStep;
+  ({ delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-commerce-${MOCK_BUILD_CHANGE}-build-${repo}-20261019T090000Z.jsonl` } }) as ScriptStep;
 
-const LONG_COMMAND = `cd ../${MOCK_SYSTEM}-intent; C=${MOCK_SYSTEM}/${MOCK_BUILD_CHANGE}; git diff --quiet 150916f8bf1693f32c589f656a3b91c11a716eb0 HEAD -- $C/intent.md; echo intent-pin=$?; git diff --quiet 150916f8bf1693f32c589f656a3b91c11a716eb0 HEAD -- $C/spec.md; echo spec-pin=$?`;
+const LONG_COMMAND = `cd ../${MOCK_MASTER}; C=${MOCK_SYSTEM}/${MOCK_BUILD_CHANGE}; git diff --quiet 150916f8bf1693f32c589f656a3b91c11a716eb0 HEAD -- $C/intent.md; echo intent-pin=$?; git diff --quiet 150916f8bf1693f32c589f656a3b91c11a716eb0 HEAD -- $C/spec.md; echo spec-pin=$?`;
 
 /** The steps for one task: read what it needs, then commit it. */
 const taskSteps = (t: PlanTask): ScriptStep[] => [
@@ -880,7 +880,7 @@ export function buildRunScript(repo: string, tasks: PlanTask[], ask: boolean, pe
   if (permission) return { head: [...read, { delay: 300, ev: { type: 'permission.requested', id: 'p1', ...PENDING_PERMISSION } }], mid: work };
   if (!ask) return { head: [...read, ...work], mid: [] };
   const question: ScriptStep = { delay: 300, ev: { type: 'ask.requested', id: 'q1', questions: [
-    { kind: 'select', header: 'picker', question: 'The report form already has a file picker. Reuse it for photos?',
+    { kind: 'select', header: 'picker', question: 'The product form already has a file picker. Reuse it for photos?',
       options: [ { label: 'Reuse it', description: 'smaller change' }, { label: 'Build a new one', description: 'matches the plan text' } ],
       multi_select: false },
   ] } };
@@ -891,26 +891,26 @@ export function buildRunScript(repo: string, tasks: PlanTask[], ask: boolean, pe
 const CONCERNS: Concern[] = ['spec', 'bug', 'convention'];
 
 /** The two findings the scripted review closes with, in the order it lists them. */
-const REVIEW_FINDINGS = ['The upload limit is duplicated in claims-core and customer-portal.', 'The refusal message has no test.'];
+const REVIEW_FINDINGS = ['The upload limit is duplicated in commerce-core and customer-portal.', 'The refusal message has no test.'];
 /** The long demo's review record: the same two findings first, then enough more to overflow the findings area. */
 const LONG_REVIEW_FINDINGS = [
   ...REVIEW_FINDINGS,
-  'The photo count is read twice for one claim, once in the store and once in the billing summary.',
+  'The photo count is read twice for one product, once in the store and once in the billing summary.',
   'A file with an upper-case extension such as PHOTO.JPG is refused as not a JPEG.',
   'The size limit is checked after the whole photo is read into memory instead of while it is read.',
   'The remove button on the picker has no accessible name.',
   'The billing summary counts a photo twice when it is replaced and not removed first.',
-  'The refusal reason is logged with the file name, which can hold a policyholder name.',
-  'The monthly report export has no test for a claim with no photos.',
-  'The limit message is not translated like the other messages on the report form.',
-  'A claim loaded from the cache skips the photo count.',
+  'The refusal reason is logged with the file name, which can hold a seller name.',
+  'The monthly report export has no test for a product with no photos.',
+  'The limit message is not translated like the other messages on the product form.',
+  'A product loaded from the cache skips the photo count.',
   'The photo picker keeps a removed photo in the form state until the page is left.',
 ];
 
 /** The review run: reads the change and closes with two findings. */
 export const reviewRunScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
   head: [
-    { delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-claims-${MOCK_BUILD_CHANGE}-review-20261019T093000Z.jsonl` } },
+    { delay: 250, ev: { type: 'log', level: 'info', message: `transcript: ${TRANSCRIPT_DIR}/sdlc-commerce-${MOCK_BUILD_CHANGE}-review-20261019T093000Z.jsonl` } },
     { delay: 300, ev: { type: 'turn', n: 1 } },
     { delay: 300, ev: { type: 'tool.use', name: 'Bash', input_summary: 'git diff origin/main...HEAD', id: 'toolu_rv1', input: { command: 'git diff origin/main...HEAD' } } },
     { delay: 300, ev: { type: 'tool.result', name: 'Bash', ok: true, summary: '5 files changed', id: 'toolu_rv1', output: '' } },

@@ -12,12 +12,12 @@ describe('BuildRefusalDialog', () => {
   });
 
   it('the refusal dialog names the repository and the reason (R3.1)', async () => {
-    await render(BuildRefusalDialog, { reason: 'claims-core has uncommitted files: a.txt' });
+    await render(BuildRefusalDialog, { reason: 'commerce-core has uncommitted files: a.txt' });
     const text = alert()!.textContent!.replace(/\s+/g, ' ');
     const title = alert()!.querySelector('[data-slot="alert-dialog-title"]')!;
     expect(title.textContent).toContain('The build did not start');
     expect(alert()!.getAttribute('aria-labelledby')).toBe(title.id);
-    expect(text).toContain('claims-core has uncommitted files: a.txt');
+    expect(text).toContain('commerce-core has uncommitted files: a.txt');
     expect(text).toContain('Nothing was created or switched in any repository.');
   });
 

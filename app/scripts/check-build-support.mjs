@@ -10,7 +10,7 @@ import { installClipping } from './clipping.mjs';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = join(ROOT, 'dist', 'angular-jig', 'browser');
 
-export const ROUTE = '/sdlc/claims/2026-10-19-build-demo';
+export const ROUTE = '/sdlc/commerce/2026-10-19-build-demo';
 export const WIDTHS = [375, 768, 1280];
 /** The Tailwind `md` breakpoint the views switch columns at: below it the layout stacks. */
 export const MD = 768;

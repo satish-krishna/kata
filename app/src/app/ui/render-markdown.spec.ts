@@ -54,7 +54,7 @@ describe('renderMarkdown', () => {
   });
 
   it('highlights gherkin blocks, including the Rule keyword', () => {
-    const html = renderMarkdownForDom('```gherkin\nFeature: Upload\n  Rule: R1\n    Scenario: <one>\n      Given a claim # note\n```');
+    const html = renderMarkdownForDom('```gherkin\nFeature: Upload\n  Rule: R1\n    Scenario: <one>\n      Given a product # note\n```');
     expect(html).toContain('<span class="hljs-keyword">Feature</span>');
     expect(html).toContain('<span class="hljs-keyword">Rule</span>');
     expect(html).toContain('<span class="hljs-keyword">Given</span>');

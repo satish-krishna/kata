@@ -5,15 +5,15 @@ import { render } from '../../testing/render';
 import { AddWorkspaceDialog } from './add-workspace-dialog';
 
 const SCAN: WorkspaceScan = {
-  folder: 'D:/Work/acme-claims',
-  repos: ['claims-intent', 'customer-portal'],
-  master: { kind: 'one', repo: 'claims-intent', committed: true },
-  marker: { version: 1, systems: { claims: { repos: ['customer-portal', 'billing-api'] } } },
+  folder: 'D:/Work/acme-commerce',
+  repos: ['commerce-docs', 'customer-portal'],
+  master: { kind: 'one', repo: 'commerce-docs', committed: true },
+  marker: { version: 1, systems: { commerce: { repos: ['customer-portal', 'billing-api'] } } },
   marker_error: null,
 };
 const candidate = (scan: Partial<WorkspaceScan> = {}): WorkspaceCandidate => ({
-  folder: 'D:/Work/acme-claims',
-  name: 'acme-claims',
+  folder: 'D:/Work/acme-commerce',
+  name: 'acme-commerce',
   scan: { ...SCAN, ...scan },
   contexts: { 'customer-portal': { kind: 'stale', commits: 14 }, 'billing-api': { kind: 'notCheckedOut' } },
   baseBranch: 'main',
@@ -38,10 +38,10 @@ describe('AddWorkspaceDialog', () => {
     await render(AddWorkspaceDialog, { candidate: candidate() });
     await settle();
     const t = text();
-    expect(t).toContain('D:/Work/acme-claims');
+    expect(t).toContain('D:/Work/acme-commerce');
     expect(t).toContain('main');
-    expect(t).toContain('claims');
-    expect(t).toContain('claims-intent');
+    expect(t).toContain('commerce');
+    expect(t).toContain('commerce-docs');
     expect(t).toContain('master');
     expect(t).toContain('stale · 14 commits');
     expect(t).toContain('billing-api');

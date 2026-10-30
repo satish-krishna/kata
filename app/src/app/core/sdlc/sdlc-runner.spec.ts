@@ -22,18 +22,18 @@ const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], 
 const WORKSPACE: WorkspaceEntry = { id: 'acme', name: 'acme', folder: '/ws', base_branch: 'main', last_opened: 1 };
 const TARGET: RunTarget = {
   workspaceId: 'acme',
-  master: '/ws/claims-intent',
-  productRepos: ['claims-core'],
-  link: { system: 'claims', change: '2026-10-12-fnol', stage: 'spec' },
+  master: '/ws/commerce-docs',
+  productRepos: ['commerce-core'],
+  link: { system: 'commerce', change: '2026-10-12-photos', stage: 'spec' },
 };
 const transcript = (path: string): KataEvent => ({ type: 'log', level: 'info', message: `transcript: ${path}` }) as KataEvent;
-const repoStart = (repo: string): RepoStart => ({ repo, path: `/ws/${repo}`, base: 'main', branch: 'change/2026-10-12-fnol', created: true });
-const BUILD_START: BuildStart = { master: repoStart('claims-intent'), repos: [repoStart('claims-core')] };
+const repoStart = (repo: string): RepoStart => ({ repo, path: `/ws/${repo}`, base: 'main', branch: 'change/2026-10-12-photos', created: true });
+const BUILD_START: BuildStart = { master: repoStart('commerce-docs'), repos: [repoStart('commerce-core')] };
 const REQUEST: BuildRequest = {
   folder: '/ws',
-  masterRepo: 'claims-intent',
-  system: 'claims',
-  change: '2026-10-12-fnol',
+  masterRepo: 'commerce-docs',
+  system: 'commerce',
+  change: '2026-10-12-photos',
   action: 'start',
   continueWithLeftovers: false,
 };
@@ -69,7 +69,7 @@ class FakeTransport {
   participants: Participant[] = [];
   sdlcBuildParticipants = vi.fn(async (..._a: unknown[]) => this.participants);
   sdlcBuildSettle = vi.fn(async (..._a: unknown[]) => { this.calls.push('settle'); return [] as string[]; });
-  sdlcBuildHeads = vi.fn(async (..._a: unknown[]) => ({ 'claims-core': 'c0ffee' }));
+  sdlcBuildHeads = vi.fn(async (..._a: unknown[]) => ({ 'commerce-core': 'c0ffee' }));
 }
 
 function setup(agent: (spec: RunSpec) => Promise<RunState> | RunState = () => 'success') {
@@ -147,7 +147,7 @@ describe('SdlcRunner.run', () => {
 
   it('links the run once the transcript id appears, and only once', async () => {
     const ctx = setup(async () => {
-      ctx.events.set([transcript('/home/u/.kata/runs/sdlc-claims-context-20261018T000000Z.jsonl')]);
+      ctx.events.set([transcript('/home/u/.kata/runs/sdlc-commerce-context-20261018T000000Z.jsonl')]);
       TestBed.tick();
       ctx.events.update((e) => [...e, { type: 'turn', n: 1 } as KataEvent]);
       TestBed.tick();
@@ -157,8 +157,8 @@ describe('SdlcRunner.run', () => {
     expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledTimes(1);
     expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledWith(
       expect.objectContaining({
-        workspace_id: 'acme', system: 'claims', change: '2026-10-12-fnol', stage: 'spec',
-        run_id: 'sdlc-claims-context-20261018T000000Z',
+        workspace_id: 'acme', system: 'commerce', change: '2026-10-12-photos', stage: 'spec',
+        run_id: 'sdlc-commerce-context-20261018T000000Z',
       }),
     );
   });
@@ -174,7 +174,7 @@ describe('SdlcRunner.run', () => {
     fake.leftovers = { ...EMPTY, new_commits: ['docs: a'], discardable: ['intent.md', 'x.txt'] };
     await runner.run('Running setup', seedSpec(), TARGET);
     expect(fake.calls).toEqual(['snapshot', 'agent', 'wait', 'leftovers', 'dismissed']);
-    expect(fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/claims-intent', SNAPSHOT, ['/ws/claims-core']);
+    expect(fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/commerce-docs', SNAPSHOT, ['/ws/commerce-core']);
     expect(runner.leftovers()?.[0].data.discardable).toEqual(['intent.md', 'x.txt']);
     expect(toasts.error).toHaveBeenCalledWith('Running setup stopped · 1 commit landed, 2 files left uncommitted');
   });
@@ -200,9 +200,9 @@ describe('SdlcRunner.run', () => {
 
   it('opens the dialog when only a product repo could not be checked', async () => {
     const { runner, fake } = setup(() => 'error');
-    fake.leftovers = { ...EMPTY, product_repos_unchecked: ['claims-core'] };
+    fake.leftovers = { ...EMPTY, product_repos_unchecked: ['commerce-core'] };
     await runner.run('Running setup', seedSpec(), TARGET);
-    expect(runner.leftovers()?.[0].data.product_repos_unchecked).toEqual(['claims-core']);
+    expect(runner.leftovers()?.[0].data.product_repos_unchecked).toEqual(['commerce-core']);
   });
 
   it('toasts a failure without a dialog when nothing was left behind', async () => {
@@ -320,8 +320,8 @@ describe('SdlcRunner.run', () => {
     const { runner, fake } = setup(() => 'error');
     fake.leftovers = { ...EMPTY, discardable: ['a.md', 'b.md'] };
     await runner.run('Running setup', seedSpec(), TARGET);
-    await runner.discard('claims-intent', ['b.md']);
-    expect(fake.sdlcDiscard).toHaveBeenCalledWith('/ws/claims-intent', SNAPSHOT, ['b.md']);
+    await runner.discard('commerce-docs', ['b.md']);
+    expect(fake.sdlcDiscard).toHaveBeenCalledWith('/ws/commerce-docs', SNAPSHOT, ['b.md']);
     expect(runner.leftovers()).toBeNull();
   });
 
@@ -336,38 +336,38 @@ describe('SdlcRunner.run', () => {
 });
 
 describe('SdlcRunner.newChange', () => {
-  const target = { workspace: WORKSPACE, master: '/ws/claims-intent', productRepos: [] as string[] };
+  const target = { workspace: WORKSPACE, master: '/ws/commerce-docs', productRepos: [] as string[] };
 
   it('starts the pending branch, runs intent with the idea, finishes, and opens the renamed change', async () => {
     const { runner, fake, lock, navigate } = setup();
     fake.finishResults.push(async () => ({ renamed: { branch: 'change/2026-10-18-x', change: '2026-10-18-x' } }));
-    await runner.newChange(target, 'claims', 'flag fraud', 'full');
+    await runner.newChange(target, 'commerce', 'flag prices', 'full');
     expect(fake.calls.filter((c) => c !== 'link')).toEqual(['start', 'snapshot', 'agent', 'wait', 'dismissed', 'finish']);
-    expect(fake.sdlcStartChange).toHaveBeenCalledWith('/ws/claims-intent', 'main');
-    expect(fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/claims-intent', 'change/pending-1', 'main');
+    expect(fake.sdlcStartChange).toHaveBeenCalledWith('/ws/commerce-docs', 'main');
+    expect(fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/commerce-docs', 'change/pending-1', 'main');
     const spec = lock.runAgent.mock.calls[0][1];
-    expect(spec.name).toBe('sdlc-claims-new-intent');
-    expect(spec.task).toContain('flag fraud');
-    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'claims', '2026-10-18-x']);
+    expect(spec.name).toBe('sdlc-commerce-new-intent');
+    expect(spec.task).toContain('flag prices');
+    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-18-x']);
   });
 
   it('links the new change to the run after the rename', async () => {
     const ctx = setup(async () => {
-      ctx.events.set([transcript('/k/runs/sdlc-claims-new-intent-1.jsonl')]);
+      ctx.events.set([transcript('/k/runs/sdlc-commerce-new-intent-1.jsonl')]);
       TestBed.tick();
       return 'success' as const;
     });
     ctx.fake.finishResults.push(async () => ({ renamed: { branch: 'change/2026-10-18-x', change: '2026-10-18-x' } }));
-    await ctx.runner.newChange(target, 'claims', 'idea', 'full');
+    await ctx.runner.newChange(target, 'commerce', 'idea', 'full');
     expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledWith(
-      expect.objectContaining({ workspace_id: 'acme', system: 'claims', change: '2026-10-18-x', stage: 'intent', run_id: 'sdlc-claims-new-intent-1' }),
+      expect.objectContaining({ workspace_id: 'acme', system: 'commerce', change: '2026-10-18-x', stage: 'intent', run_id: 'sdlc-commerce-new-intent-1' }),
     );
   });
 
   it('returns home with a note when no change folder was created', async () => {
     const { runner, fake, toasts, navigate } = setup();
     fake.finishResults.push(async () => 'deleted');
-    await runner.newChange(target, 'claims', 'idea', 'full');
+    await runner.newChange(target, 'commerce', 'idea', 'full');
     expect(toasts.info).toHaveBeenCalledWith('No change was created.');
     expect(navigate).toHaveBeenCalledWith(['/sdlc']);
   });
@@ -375,14 +375,14 @@ describe('SdlcRunner.newChange', () => {
   it('still finishes the branch when the run is cancelled', async () => {
     const { runner, fake } = setup(() => 'warning');
     fake.finishResults.push(async () => 'deleted');
-    await runner.newChange(target, 'claims', 'idea', 'full');
+    await runner.newChange(target, 'commerce', 'idea', 'full');
     expect(fake.sdlcFinishChange).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the pending branch and finishes nothing while the engine is still stopping', async () => {
     const { runner, fake, toasts, navigate } = setup(() => 'warning');
     fake.exited = false;
-    await runner.newChange(target, 'claims', 'idea', 'full');
+    await runner.newChange(target, 'commerce', 'idea', 'full');
     expect(fake.sdlcFinishChange).not.toHaveBeenCalled();
     expect(fake.sdlcLeftovers).not.toHaveBeenCalled();
     expect(toasts.error).toHaveBeenCalledWith(
@@ -399,10 +399,10 @@ describe('SdlcRunner.newChange', () => {
       () => Promise.reject('the master repo has uncommitted changes: scratch.txt'),
       async () => 'deleted',
     );
-    const done = runner.newChange(target, 'claims', 'idea', 'full');
+    const done = runner.newChange(target, 'commerce', 'idea', 'full');
     await vi.waitFor(() => expect(runner.leftovers()).not.toBeNull());
     expect(fake.sdlcFinishChange).toHaveBeenCalledTimes(1);
-    await runner.discard('claims-intent', ['scratch.txt']);
+    await runner.discard('commerce-docs', ['scratch.txt']);
     await done;
     expect(fake.sdlcFinishChange).toHaveBeenCalledTimes(2);
     expect(toasts.error).not.toHaveBeenCalled();
@@ -415,7 +415,7 @@ describe('SdlcRunner.newChange', () => {
       () => Promise.reject('the master repo has uncommitted changes: scratch.txt'),
       () => Promise.reject('the master repo has uncommitted changes: scratch.txt'),
     );
-    const done = runner.newChange(target, 'claims', 'idea', 'full');
+    const done = runner.newChange(target, 'commerce', 'idea', 'full');
     await vi.waitFor(() => expect(runner.leftovers()).not.toBeNull());
     runner.closeLeftovers();
     await done;
@@ -426,7 +426,7 @@ describe('SdlcRunner.newChange', () => {
   it('creates no pending branch while a run is active', async () => {
     const { runner, fake, toasts, state, lock } = setup();
     state.set('running');
-    await runner.newChange(target, 'claims', 'idea', 'full');
+    await runner.newChange(target, 'commerce', 'idea', 'full');
     expect(fake.sdlcStartChange).not.toHaveBeenCalled();
     expect(lock.runAgent).not.toHaveBeenCalled();
     expect(toasts.error).toHaveBeenCalledWith('Another task is already running.');
@@ -435,7 +435,7 @@ describe('SdlcRunner.newChange', () => {
   it('creates no branch when the preview is cancelled', async () => {
     const { runner, fake, lock, navigate } = setup();
     const confirm = vi.fn(async (_spec: RunSpec) => null);
-    await runner.newChange(target, 'claims', 'idea', 'full', confirm);
+    await runner.newChange(target, 'commerce', 'idea', 'full', confirm);
     expect(confirm).toHaveBeenCalledTimes(1);
     expect(confirm.mock.calls[0][0].task).toContain('idea');
     expect(fake.sdlcStartChange).not.toHaveBeenCalled();
@@ -450,7 +450,7 @@ describe('SdlcRunner.newChange', () => {
       fake.calls.push('preview');
       return { ...spec, name: 'confirmed' };
     });
-    await runner.newChange(target, 'claims', 'idea', 'full', confirm);
+    await runner.newChange(target, 'commerce', 'idea', 'full', confirm);
     expect(fake.calls.slice(0, 2)).toEqual(['preview', 'start']);
     expect((lock.runAgent.mock.calls[0][1] as RunSpec).name).toBe('confirmed');
   });
@@ -458,25 +458,25 @@ describe('SdlcRunner.newChange', () => {
   it('stops before the run when the pending branch cannot be created', async () => {
     const { runner, fake, toasts, lock } = setup();
     fake.sdlcStartChange.mockRejectedValueOnce('the master repo has uncommitted changes: a.txt');
-    await runner.newChange(target, 'claims', 'idea', 'full');
+    await runner.newChange(target, 'commerce', 'idea', 'full');
     expect(lock.runAgent).not.toHaveBeenCalled();
     expect(toasts.error).toHaveBeenCalledWith(expect.stringContaining('uncommitted changes'));
   });
 });
 
 describe('SdlcRunner.newChange track', () => {
-  const target = { workspace: WORKSPACE, master: '/ws/claims-intent', productRepos: ['claims-core'] };
+  const target = { workspace: WORKSPACE, master: '/ws/commerce-docs', productRepos: ['commerce-core'] };
   const SCAN = {
     folder: '/ws',
-    repos: ['claims-intent', 'claims-core'],
-    master: { kind: 'one', repo: 'claims-intent', committed: true },
-    marker: { version: 1, systems: { claims: { repos: ['claims-core'] } } },
+    repos: ['commerce-docs', 'commerce-core'],
+    master: { kind: 'one', repo: 'commerce-docs', committed: true },
+    marker: { version: 1, systems: { commerce: { repos: ['commerce-core'] } } },
     marker_error: null,
   };
   const renamed = (change: string) => async () => ({ renamed: { branch: `change/${change}`, change } });
   const withTranscript = () => {
     const ctx = setup(async () => {
-      ctx.events.set([transcript('/k/runs/sdlc-claims-triage-1.jsonl')]);
+      ctx.events.set([transcript('/k/runs/sdlc-commerce-triage-1.jsonl')]);
       TestBed.tick();
       return 'success' as const;
     });
@@ -487,21 +487,21 @@ describe('SdlcRunner.newChange track', () => {
   it('full runs the intent skill, under the sdlc permission posture, and opens the change', async () => {
     const { runner, fake, lock, navigate } = setup();
     fake.finishResults.push(renamed('2026-10-18-x'));
-    const outcome = await runner.newChange(target, 'claims', 'flag fraud', 'full');
+    const outcome = await runner.newChange(target, 'commerce', 'flag prices', 'full');
     const spec = lock.runAgent.mock.calls[0][1] as RunSpec;
     expect(spec.task.startsWith('Use the ai-sdlc intent skill')).toBe(true);
     expect(outcome).toEqual({ kind: 'opened', change: '2026-10-18-x', branch: 'change/2026-10-18-x' });
-    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'claims', '2026-10-18-x']);
+    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-18-x']);
   });
 
   it('decide runs the start skill in auto mode, held to the change documents', async () => {
     const { runner, fake, lock, toasts } = setup();
     fake.scan = SCAN;
     fake.finishResults.push(renamed('2026-10-18-x'));
-    await runner.newChange(target, 'claims', 'flag fraud', 'decide');
+    await runner.newChange(target, 'commerce', 'flag prices', 'decide');
     const spec = lock.runAgent.mock.calls[0][1] as RunSpec;
     expect(spec.task.startsWith('Use the ai-sdlc start skill')).toBe(true);
-    expect(spec.task).toContain('flag fraud');
+    expect(spec.task).toContain('flag prices');
     expect(spec.permissions.mode).toBe('auto');
     expect(spec.permissions.deny?.length).toBeGreaterThan(0);
     expect(spec.interactive.enabled).toBe(true);
@@ -514,32 +514,32 @@ describe('SdlcRunner.newChange track', () => {
     fake.scan = SCAN;
     fake.finishResults.push(renamed('2026-10-18-x'));
     const confirm = vi.fn(async (spec: RunSpec) => ({ ...spec, name: 'confirmed' }));
-    await runner.newChange(target, 'claims', 'flag fraud', 'decide', confirm);
+    await runner.newChange(target, 'commerce', 'flag prices', 'decide', confirm);
     expect(confirm.mock.calls[0][0].permissions.mode).toBe('auto');
     expect((lock.runAgent.mock.calls[0][1] as RunSpec).name).toBe('confirmed');
   });
 
   it.each([
     ['a fix folder', '2026-10-18-fix-login'],
-    ['an intent folder', '2026-10-18-fraud-flag'],
+    ['an intent folder', '2026-10-18-price-flag'],
   ])('decide that ended with %s links the triage run, opens the change and returns opened', async (_label, change) => {
     const ctx = withTranscript();
     ctx.fake.finishResults.push(renamed(change));
-    const outcome = await ctx.runner.newChange(target, 'claims', 'idea', 'decide');
+    const outcome = await ctx.runner.newChange(target, 'commerce', 'idea', 'decide');
     expect(outcome).toEqual({ kind: 'opened', change, branch: `change/${change}` });
     expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledWith(
-      expect.objectContaining({ workspace_id: 'acme', system: 'claims', change, stage: 'start', run_id: 'sdlc-claims-triage-1' }),
+      expect.objectContaining({ workspace_id: 'acme', system: 'commerce', change, stage: 'start', run_id: 'sdlc-commerce-triage-1' }),
     );
-    expect(ctx.navigate).toHaveBeenCalledWith(['/sdlc', 'claims', change]);
+    expect(ctx.navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', change]);
   });
 
   it('decide that created no change finishes the branch, says nothing and goes nowhere', async () => {
     const ctx = withTranscript();
     ctx.fake.finishResults.push(async () => 'deleted');
-    const outcome = await ctx.runner.newChange(target, 'claims', 'flag fraud', 'decide');
-    expect(outcome).toEqual({ kind: 'none', idea: 'flag fraud', runId: 'sdlc-claims-triage-1' });
+    const outcome = await ctx.runner.newChange(target, 'commerce', 'flag prices', 'decide');
+    expect(outcome).toEqual({ kind: 'none', idea: 'flag prices', runId: 'sdlc-commerce-triage-1' });
     expect(ctx.fake.sdlcFinishChange).toHaveBeenCalledTimes(1);
-    expect(ctx.fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/claims-intent', 'change/pending-1', 'main');
+    expect(ctx.fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/commerce-docs', 'change/pending-1', 'main');
     expect(ctx.fake.sdlcLinkRun).not.toHaveBeenCalled();
     expect(ctx.navigate).not.toHaveBeenCalled();
     expect(ctx.toasts.info).not.toHaveBeenCalled();
@@ -549,7 +549,7 @@ describe('SdlcRunner.newChange track', () => {
     const { runner, fake, toasts, state, lock } = setup();
     fake.scan = SCAN;
     state.set('running');
-    const outcome = await runner.newChange(target, 'claims', 'idea', 'decide');
+    const outcome = await runner.newChange(target, 'commerce', 'idea', 'decide');
     expect(outcome).toEqual({ kind: 'refused' });
     expect(toasts.error).toHaveBeenCalledWith('Another task is already running.');
     expect(fake.sdlcStartChange).not.toHaveBeenCalled();
@@ -559,13 +559,13 @@ describe('SdlcRunner.newChange track', () => {
   it('full while a task is running is refused too', async () => {
     const { runner, state } = setup();
     state.set('running');
-    expect(await runner.newChange(target, 'claims', 'idea', 'full')).toEqual({ kind: 'refused' });
+    expect(await runner.newChange(target, 'commerce', 'idea', 'full')).toEqual({ kind: 'refused' });
   });
 
   it('full that created no change keeps its toast and the return to the list, and returns none', async () => {
     const { runner, fake, toasts, navigate } = setup();
     fake.finishResults.push(async () => 'deleted');
-    const outcome = await runner.newChange(target, 'claims', 'idea', 'full');
+    const outcome = await runner.newChange(target, 'commerce', 'idea', 'full');
     expect(outcome).toMatchObject({ kind: 'none', idea: 'idea' });
     expect(toasts.info).toHaveBeenCalledWith('No change was created.');
     expect(navigate).toHaveBeenCalledWith(['/sdlc']);
@@ -573,12 +573,12 @@ describe('SdlcRunner.newChange track', () => {
 });
 
 describe('SdlcRunner build', () => {
-  const LINK: BuildLink = { workspaceId: 'acme', system: 'claims', change: '2026-10-12-fnol', folder: '/ws', master: '/ws/claims-intent', repos: ['claims-core'] };
-  const CORE = { repo: 'claims-core', path: '/ws/claims-core', kind: 'repo' } as const;
-  const REVIEW = { repo: 'claims-intent', path: '/ws/claims-intent', kind: 'review' } as const;
-  const GROUP = 'build:claims/2026-10-12-fnol';
+  const LINK: BuildLink = { workspaceId: 'acme', system: 'commerce', change: '2026-10-12-photos', folder: '/ws', master: '/ws/commerce-docs', repos: ['commerce-core'] };
+  const CORE = { repo: 'commerce-core', path: '/ws/commerce-core', kind: 'repo' } as const;
+  const REVIEW = { repo: 'commerce-docs', path: '/ws/commerce-docs', kind: 'review' } as const;
+  const GROUP = 'build:commerce/2026-10-12-photos';
   /** A build's leftovers and discards are scoped to its own change: only that change's build log rows are build log data. */
-  const BUILD = { system: 'claims', change: '2026-10-12-fnol' };
+  const BUILD = { system: 'commerce', change: '2026-10-12-photos' };
   const LEFT = (paths: string[]): Leftovers => ({ ...EMPTY, new_commits: ['feat: a task'], discardable: paths });
 
   /** Ticks the root effects until the promise settles: the run end is observed by an effect. */
@@ -595,7 +595,7 @@ describe('SdlcRunner build', () => {
   const end = (ctx: ReturnType<typeof setup>, id: string, state: RunState, exit: number | null, extra: KataEvent[] = []) =>
     ctx.snap(id).set({
       state,
-      events: [transcript(`/home/u/.kata/runs/sdlc-claims-${id}.jsonl`), ...extra],
+      events: [transcript(`/home/u/.kata/runs/sdlc-commerce-${id}.jsonl`), ...extra],
       summary: null,
       asks: [],
       permissions: [],
@@ -626,14 +626,14 @@ describe('SdlcRunner build', () => {
       const ctx = setup();
       const out = await ctx.runner.prepareBuild({ ...REQUEST, continueWithLeftovers: true });
       expect(out).toEqual({ kind: 'ready', start: BUILD_START });
-      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', true, null, 'start');
+      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', true, null, 'start');
     });
 
     it('answers needs-confirm with the files each repository holds', async () => {
       const ctx = setup();
-      ctx.fake.prepared = { kind: 'needsConfirm', leftovers: [{ repo: 'claims-core', files: ['a.txt'] }] };
+      ctx.fake.prepared = { kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['a.txt'] }] };
       const out = await ctx.runner.prepareBuild(REQUEST);
-      expect(out).toEqual({ kind: 'needs-confirm', leftovers: [{ repo: 'claims-core', files: ['a.txt'] }] });
+      expect(out).toEqual({ kind: 'needs-confirm', leftovers: [{ repo: 'commerce-core', files: ['a.txt'] }] });
     });
 
     it.each(['start', 'continue', 'round'] as const)('refuses with the gate message and the problems it lists: %s (R8.1)', async (action) => {
@@ -642,14 +642,14 @@ describe('SdlcRunner build', () => {
       ctx.fake.prepared = { kind: 'refused', message: 'A build log does not pass the check', problems: [problem] };
       const out = await ctx.runner.prepareBuild({ ...REQUEST, action });
       expect(out).toEqual({ kind: 'refused', reason: 'A build log does not pass the check', problems: [problem] });
-      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', false, null, action);
+      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', false, null, action);
     });
 
     it('refuses with the backend text when preparing fails (R3.1)', async () => {
       const ctx = setup();
-      ctx.fake.prepared = () => Promise.reject('claims-core has uncommitted files: a.txt');
+      ctx.fake.prepared = () => Promise.reject('commerce-core has uncommitted files: a.txt');
       const out = await ctx.runner.prepareBuild(REQUEST);
-      expect(out).toEqual({ kind: 'refused', reason: 'claims-core has uncommitted files: a.txt' });
+      expect(out).toEqual({ kind: 'refused', reason: 'commerce-core has uncommitted files: a.txt' });
     });
   });
 
@@ -661,14 +661,14 @@ describe('SdlcRunner build', () => {
       end(ctx, 'r1', 'success', 0);
       const out = await drive(done);
       expect(out).toEqual({ exit: 0, error: null });
-      expect(ctx.fake.sdlcSnapshot).toHaveBeenCalledWith('/ws/claims-core');
+      expect(ctx.fake.sdlcSnapshot).toHaveBeenCalledWith('/ws/commerce-core');
       expect(ctx.startRun).toHaveBeenCalledWith(expect.anything(), GROUP);
       expect(ctx.lock.addRun).toHaveBeenCalledWith('r1', expect.anything());
-      expect(ctx.fake.sdlcSnapshot).toHaveBeenCalledWith('/ws/claims-intent');
+      expect(ctx.fake.sdlcSnapshot).toHaveBeenCalledWith('/ws/commerce-docs');
       expect(ctx.fake.calls.slice(0, 4)).toEqual(['snapshot', 'snapshot', 'startRun', 'addRun']);
       expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledTimes(1);
       const link = ctx.fake.sdlcLinkRun.mock.calls[0][0] as Record<string, unknown>;
-      expect(link).toMatchObject({ workspace_id: 'acme', system: 'claims', change: '2026-10-12-fnol', stage: 'build:claims-core', run_id: 'sdlc-claims-r1' });
+      expect(link).toMatchObject({ workspace_id: 'acme', system: 'commerce', change: '2026-10-12-photos', stage: 'build:commerce-core', run_id: 'sdlc-commerce-r1' });
       expect(link['heads']).toBeUndefined();
       expect(ctx.fake.sdlcBuildHeads).not.toHaveBeenCalled();
       expect(ctx.fake.sdlcWaitRunExit).toHaveBeenCalledWith('r1', 15000);
@@ -680,8 +680,8 @@ describe('SdlcRunner build', () => {
       await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalled());
       end(ctx, 'r1', 'success', 0);
       await drive(done);
-      expect(ctx.fake.sdlcBuildHeads).toHaveBeenCalledWith('/ws', ['claims-intent', 'claims-core'], '2026-10-12-fnol');
-      expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledWith(expect.objectContaining({ stage: 'review', heads: { 'claims-core': 'c0ffee' } }));
+      expect(ctx.fake.sdlcBuildHeads).toHaveBeenCalledWith('/ws', ['commerce-docs', 'commerce-core'], '2026-10-12-photos');
+      expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledWith(expect.objectContaining({ stage: 'review', heads: { 'commerce-core': 'c0ffee' } }));
       expect(ctx.fake.sdlcBuildHeads.mock.invocationCallOrder[0]).toBeLessThan(ctx.startRun.mock.invocationCallOrder[0]);
     });
 
@@ -719,7 +719,7 @@ describe('SdlcRunner build', () => {
   describe('leftovers and finishBuild', () => {
     async function runBoth(ctx: ReturnType<typeof setup>) {
       ctx.fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => { ctx.fake.calls.push('snapshot'); return { head: String(a[0]), dirty: {} }; });
-      ctx.fake.sdlcLeftovers.mockImplementation((async (path: string) => LEFT(path === '/ws/claims-core' ? ['src/x.rs'] : ['notes.md'])) as never);
+      ctx.fake.sdlcLeftovers.mockImplementation((async (path: string) => LEFT(path === '/ws/commerce-core' ? ['src/x.rs'] : ['notes.md'])) as never);
       const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
       await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
       end(ctx, 'r1', 'warning', 124);
@@ -733,18 +733,18 @@ describe('SdlcRunner build', () => {
     it("leftovers are reported per repository and discard touches only that run's files (R6.3)", async () => {
       const ctx = setup();
       await runBoth(ctx);
-      expect(ctx.fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/claims-core', { head: '/ws/claims-core', dirty: {} }, [], BUILD);
+      expect(ctx.fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/commerce-core', { head: '/ws/commerce-core', dirty: {} }, [], BUILD);
       // The build is still going when a repository ends: nothing opens until the build is over.
       expect(ctx.runner.leftovers()).toBeNull();
       const finished = ctx.runner.finishBuild(BUILD_START);
       await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
-      expect(ctx.runner.leftovers()!.map((l) => l.repo)).toEqual(['claims-intent', 'claims-core']);
+      expect(ctx.runner.leftovers()!.map((l) => l.repo)).toEqual(['commerce-docs', 'commerce-core']);
       expect(ctx.runner.leftovers()![1].data.new_commits).toEqual([]);
       expect(ctx.fake.sdlcBuildSettle).not.toHaveBeenCalled();
-      await expect(ctx.runner.discard('claims-core', ['src/x.rs'])).resolves.toBe(true);
+      await expect(ctx.runner.discard('commerce-core', ['src/x.rs'])).resolves.toBe(true);
       expect(ctx.fake.sdlcDiscard).toHaveBeenCalledTimes(1);
-      expect(ctx.fake.sdlcDiscard).toHaveBeenCalledWith('/ws/claims-core', { head: '/ws/claims-core', dirty: {} }, ['src/x.rs'], BUILD);
-      expect(ctx.runner.leftovers()!.map((l) => l.repo)).toEqual(['claims-intent']);
+      expect(ctx.fake.sdlcDiscard).toHaveBeenCalledWith('/ws/commerce-core', { head: '/ws/commerce-core', dirty: {} }, ['src/x.rs'], BUILD);
+      expect(ctx.runner.leftovers()!.map((l) => l.repo)).toEqual(['commerce-docs']);
       expect(ctx.fake.sdlcBuildSettle).not.toHaveBeenCalled();
       ctx.runner.closeLeftovers();
       await finished;
@@ -754,19 +754,19 @@ describe('SdlcRunner build', () => {
 
     it("an unsaved build log row is listed at the end of the build under the repository that owns it, not under the master (R6.6)", async () => {
       const ctx = setup();
-      const row = 'intent/claims/2026-10-12-fnol/build/claims-core.md';
-      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'claims-intent', files: [], rows });
-      ctx.fake.participants = [owned('claims-intent', []), owned('claims-core', [row])];
+      const row = 'intent/commerce/2026-10-12-photos/build/commerce-core.md';
+      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'commerce-docs', files: [], rows });
+      ctx.fake.participants = [owned('commerce-docs', []), owned('commerce-core', [row])];
       const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
       await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
       end(ctx, 'r1', 'warning', 124);
       await drive(core);
-      expect(ctx.fake.sdlcBuildParticipants).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', null);
+      expect(ctx.fake.sdlcBuildParticipants).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', null);
 
       const finished = ctx.runner.finishBuild(BUILD_START);
       await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
       const shown = ctx.runner.leftovers()!;
-      expect(shown.map((l) => l.repo)).toEqual(['claims-core']);
+      expect(shown.map((l) => l.repo)).toEqual(['commerce-core']);
       // The run wrote the row: it is listed as created by this run, not as changed before it too.
       expect(shown[0].data.created).toEqual([row]);
       expect(shown[0].data.touched_dirty).toEqual([]);
@@ -775,20 +775,20 @@ describe('SdlcRunner build', () => {
       await finished;
     });
 
-    it.each(['D:\\ws\\claims-intent', 'D:\\ws\\claims-intent\\'])('a Windows master path %s names its repository in the participants call', async (master) => {
+    it.each(['D:\\ws\\commerce-docs', 'D:\\ws\\commerce-docs\\'])('a Windows master path %s names its repository in the participants call', async (master) => {
       const ctx = setup();
       const core = ctx.runner.runInRepo(CORE, seedSpec(), { ...LINK, master });
       await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
       end(ctx, 'r1', 'warning', 124);
       await drive(core);
-      expect(ctx.fake.sdlcBuildParticipants).toHaveBeenCalledWith('/ws', 'claims-intent', 'claims', '2026-10-12-fnol', null);
+      expect(ctx.fake.sdlcBuildParticipants).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', null);
     });
 
     it('a build log row that was already unsaved before the run is listed as changed before and during it (R6.6)', async () => {
       const ctx = setup();
-      const row = 'intent/claims/2026-10-12-fnol/build/claims-core.md';
-      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'claims-intent', files: [], rows });
-      ctx.fake.participants = [owned('claims-intent', []), owned('claims-core', [row])];
+      const row = 'intent/commerce/2026-10-12-photos/build/commerce-core.md';
+      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'commerce-docs', files: [], rows });
+      ctx.fake.participants = [owned('commerce-docs', []), owned('commerce-core', [row])];
       ctx.fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => ({ head: String(a[0]), dirty: { [row]: 'abc' } }));
       const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
       await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
@@ -805,11 +805,11 @@ describe('SdlcRunner build', () => {
 
     it("a build log row is classified against the master's snapshot, not the repository's (R6.6)", async () => {
       const ctx = setup();
-      const row = 'intent/claims/2026-10-12-fnol/build/claims-core.md';
-      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'claims-intent', files: [], rows });
-      ctx.fake.participants = [owned('claims-intent', []), owned('claims-core', [row])];
+      const row = 'intent/commerce/2026-10-12-photos/build/commerce-core.md';
+      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'commerce-docs', files: [], rows });
+      ctx.fake.participants = [owned('commerce-docs', []), owned('commerce-core', [row])];
       // The row sits in the master's tree and was unsaved before the run; the repository's own tree knows nothing of it.
-      ctx.fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => ({ head: String(a[0]), dirty: a[0] === '/ws/claims-intent' ? { [row]: 'abc' } : {} }));
+      ctx.fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => ({ head: String(a[0]), dirty: a[0] === '/ws/commerce-docs' ? { [row]: 'abc' } : {} }));
       const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
       await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
       end(ctx, 'r1', 'warning', 124);
@@ -825,10 +825,10 @@ describe('SdlcRunner build', () => {
 
     it("a build log row the master did not hold dirty is created by the run, whatever the repository's own tree held (R6.6)", async () => {
       const ctx = setup();
-      const row = 'intent/claims/2026-10-12-fnol/build/claims-core.md';
-      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'claims-intent', files: [], rows });
-      ctx.fake.participants = [owned('claims-intent', []), owned('claims-core', [row])];
-      ctx.fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => ({ head: String(a[0]), dirty: a[0] === '/ws/claims-core' ? { [row]: 'abc' } : {} }));
+      const row = 'intent/commerce/2026-10-12-photos/build/commerce-core.md';
+      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'commerce-docs', files: [], rows });
+      ctx.fake.participants = [owned('commerce-docs', []), owned('commerce-core', [row])];
+      ctx.fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => ({ head: String(a[0]), dirty: a[0] === '/ws/commerce-core' ? { [row]: 'abc' } : {} }));
       const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
       await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
       end(ctx, 'r1', 'warning', 124);
@@ -847,7 +847,7 @@ describe('SdlcRunner build', () => {
       await runBoth(ctx);
       const finished = ctx.runner.finishBuild(BUILD_START);
       await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
-      await expect(ctx.runner.discardAll([{ repo: 'claims-core', paths: ['src/x.rs'] }, { repo: 'claims-intent', paths: [] }])).resolves.toBe(true);
+      await expect(ctx.runner.discardAll([{ repo: 'commerce-core', paths: ['src/x.rs'] }, { repo: 'commerce-docs', paths: [] }])).resolves.toBe(true);
       expect(ctx.fake.sdlcDiscard).toHaveBeenCalledTimes(1);
       await finished;
       expect(ctx.fake.sdlcBuildSettle).toHaveBeenCalledTimes(1);
@@ -859,7 +859,7 @@ describe('SdlcRunner build', () => {
       const finished = ctx.runner.finishBuild(BUILD_START);
       await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
       ctx.fake.sdlcDiscard.mockRejectedValueOnce(new Error('locked'));
-      await expect(ctx.runner.discardAll([{ repo: 'claims-core', paths: ['src/x.rs'] }])).resolves.toBe(false);
+      await expect(ctx.runner.discardAll([{ repo: 'commerce-core', paths: ['src/x.rs'] }])).resolves.toBe(false);
       expect(ctx.toasts.error).toHaveBeenCalledWith('Could not discard: locked');
       expect(ctx.runner.leftovers()).toHaveLength(2);
       expect(ctx.fake.sdlcBuildSettle).not.toHaveBeenCalled();
@@ -890,6 +890,6 @@ describe('SdlcRunner build', () => {
     const { runner, fake } = setup(() => 'warning');
     fake.leftovers = { ...EMPTY, new_commits: ['docs: a'], discardable: ['x.txt'] };
     await runner.run('Running setup', seedSpec(), TARGET);
-    expect(runner.leftovers()).toEqual([{ repo: 'claims-intent', path: '/ws/claims-intent', snapshot: SNAPSHOT, data: fake.leftovers }]);
+    expect(runner.leftovers()).toEqual([{ repo: 'commerce-docs', path: '/ws/commerce-docs', snapshot: SNAPSHOT, data: fake.leftovers }]);
   });
 });

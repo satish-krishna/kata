@@ -21,25 +21,25 @@ const settle = async () => {
 
 describe('NewChangeDialog', () => {
   it('renders nothing while closed', async () => {
-    await render(NewChangeDialog, { open: false, systems: ['claims'] });
+    await render(NewChangeDialog, { open: false, systems: ['commerce'] });
     expect(dialog()).toBeNull();
   });
 
   it('asks only for the idea when there is one system', async () => {
-    await render(NewChangeDialog, { open: true, systems: ['claims'] });
+    await render(NewChangeDialog, { open: true, systems: ['commerce'] });
     await settle();
     expect(dialog()!.querySelector('hlm-select')).toBeNull();
     expect(idea()).not.toBeNull();
   });
 
   it('asks for the system when there is more than one', async () => {
-    await render(NewChangeDialog, { open: true, systems: ['claims', 'billing'] });
+    await render(NewChangeDialog, { open: true, systems: ['commerce', 'billing'] });
     await settle();
     expect(dialog()!.querySelector('hlm-select')).not.toBeNull();
   });
 
   it('cannot start without an idea', async () => {
-    await render(NewChangeDialog, { open: true, systems: ['claims'] });
+    await render(NewChangeDialog, { open: true, systems: ['commerce'] });
     await settle();
     expect((button('Start') as HTMLButtonElement).disabled).toBe(true);
     await type('   ');
@@ -47,27 +47,27 @@ describe('NewChangeDialog', () => {
   });
 
   it('starts with the only system and the trimmed idea', async () => {
-    const { fixture } = await render(NewChangeDialog, { open: true, systems: ['claims'] });
+    const { fixture } = await render(NewChangeDialog, { open: true, systems: ['commerce'] });
     await settle();
     const got: unknown[] = [];
     fixture.componentInstance.start.subscribe((v) => got.push(v));
-    await type('  flag suspected fraud  ');
+    await type('  flag suspicious prices  ');
     button('Start').click();
-    expect(got).toEqual([{ system: 'claims', idea: 'flag suspected fraud', track: 'full' }]);
+    expect(got).toEqual([{ system: 'commerce', idea: 'flag suspicious prices', track: 'full' }]);
   });
 
   it('defaults to the first system when several exist', async () => {
-    const { fixture } = await render(NewChangeDialog, { open: true, systems: ['claims', 'billing'] });
+    const { fixture } = await render(NewChangeDialog, { open: true, systems: ['commerce', 'billing'] });
     await settle();
     const got: { system: string }[] = [];
     fixture.componentInstance.start.subscribe((v) => got.push(v));
     await type('an idea');
     button('Start').click();
-    expect(got[0].system).toBe('claims');
+    expect(got[0].system).toBe('commerce');
   });
 
   it('emits cancel from Cancel', async () => {
-    const { fixture } = await render(NewChangeDialog, { open: true, systems: ['claims'] });
+    const { fixture } = await render(NewChangeDialog, { open: true, systems: ['commerce'] });
     await settle();
     let n = 0;
     fixture.componentInstance.cancel.subscribe(() => n++);
@@ -77,7 +77,7 @@ describe('NewChangeDialog', () => {
 
   describe('track', () => {
     it('opens on letting the workflow decide', async () => {
-      const { fixture } = await render(NewChangeDialog, { open: true, systems: ['claims'], lightTrack: true });
+      const { fixture } = await render(NewChangeDialog, { open: true, systems: ['commerce'], lightTrack: true });
       await settle();
       expect(radio('Let the workflow decide').getAttribute('aria-checked')).toBe('true');
       expect(radio('Full pipeline').getAttribute('aria-checked')).toBe('false');
@@ -89,7 +89,7 @@ describe('NewChangeDialog', () => {
     });
 
     it('starts the full pipeline when it is chosen', async () => {
-      const { fixture } = await render(NewChangeDialog, { open: true, systems: ['claims'], lightTrack: true });
+      const { fixture } = await render(NewChangeDialog, { open: true, systems: ['commerce'], lightTrack: true });
       await settle();
       radio('Full pipeline').click();
       await settle();
@@ -101,7 +101,7 @@ describe('NewChangeDialog', () => {
     });
 
     it('offers only the full pipeline, with the reason, when the plugin cannot triage', async () => {
-      const { fixture } = await render(NewChangeDialog, { open: true, systems: ['claims'], lightTrack: false });
+      const { fixture } = await render(NewChangeDialog, { open: true, systems: ['commerce'], lightTrack: false });
       await settle();
       expect(radio('Let the workflow decide').disabled).toBe(true);
       expect(radio('Full pipeline').getAttribute('aria-checked')).toBe('true');
@@ -114,7 +114,7 @@ describe('NewChangeDialog', () => {
     });
 
     it('hides the Track field and starts on the given track when the track is fixed', async () => {
-      const { fixture } = await render(NewChangeDialog, { open: true, systems: ['claims'], lightTrack: true, initialTrack: 'full', trackFixed: true });
+      const { fixture } = await render(NewChangeDialog, { open: true, systems: ['commerce'], lightTrack: true, initialTrack: 'full', trackFixed: true });
       await settle();
       expect(dialog()!.querySelector('[role="radio"]')).toBeNull();
       expect(dialog()!.textContent).not.toContain('Let the workflow decide');
@@ -126,27 +126,27 @@ describe('NewChangeDialog', () => {
     });
 
     it('opens on the track it was given', async () => {
-      await render(NewChangeDialog, { open: true, systems: ['claims'], lightTrack: true, initialTrack: 'full' });
+      await render(NewChangeDialog, { open: true, systems: ['commerce'], lightTrack: true, initialTrack: 'full' });
       await settle();
       expect(radio('Full pipeline').getAttribute('aria-checked')).toBe('true');
     });
   });
 
   it('labels the description field Description', async () => {
-    await render(NewChangeDialog, { open: true, systems: ['claims'] });
+    await render(NewChangeDialog, { open: true, systems: ['commerce'] });
     await settle();
     expect(idea().getAttribute('aria-label')).toBe('Description');
   });
 
   it('opens with the description it was given', async () => {
-    await render(NewChangeDialog, { open: true, systems: ['claims'], lightTrack: true, initialIdea: 'flag suspected fraud' });
+    await render(NewChangeDialog, { open: true, systems: ['commerce'], lightTrack: true, initialIdea: 'flag suspicious prices' });
     await settle();
-    expect(idea().value).toBe('flag suspected fraud');
+    expect(idea().value).toBe('flag suspicious prices');
     expect((button('Start') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('shows its note above the description', async () => {
-    await render(NewChangeDialog, { open: true, systems: ['claims'], note: 'Describe it again.' });
+    await render(NewChangeDialog, { open: true, systems: ['commerce'], note: 'Describe it again.' });
     await settle();
     const text = dialog()!.textContent!;
     expect(text).toContain('Describe it again.');

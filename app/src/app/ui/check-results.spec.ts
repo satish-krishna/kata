@@ -11,9 +11,9 @@ const text = (c: Element) => c.textContent!.replace(/\s+/g, ' ').trim();
 
 describe('CheckResults', () => {
   it('shows a failed check with its exit code, the last lines and what to do', async () => {
-    const { container } = await render(CheckResults, { repos: [repo('claims-core', result({ kind: 'Failed', exit: 101 }, 'line 1\nthe assertion failed'))] });
+    const { container } = await render(CheckResults, { repos: [repo('commerce-core', result({ kind: 'Failed', exit: 101 }, 'line 1\nthe assertion failed'))] });
     const t = text(container);
-    expect(t).toContain('claims-core · cargo test · last 50 lines');
+    expect(t).toContain('commerce-core · cargo test · last 50 lines');
     expect(t).toContain('cargo test · exit 101');
     expect(t).toContain('The check ran and failed. Ask for another round to fix it.');
     expect(container.querySelector('pre')!.textContent).toBe('line 1\nthe assertion failed');
@@ -21,7 +21,7 @@ describe('CheckResults', () => {
   });
 
   it('shows a check that could not run in amber and says to fix the environment', async () => {
-    const { container } = await render(CheckResults, { repos: [repo('claims-core', result({ kind: 'CouldNotRun', reason: 'ran past its time limit' }, 'partial output'))] });
+    const { container } = await render(CheckResults, { repos: [repo('commerce-core', result({ kind: 'CouldNotRun', reason: 'ran past its time limit' }, 'partial output'))] });
     const t = text(container);
     expect(t).toContain('ran past its time limit');
     expect(t).toContain('The check could not run to completion. Fix the environment, not the code.');

@@ -58,37 +58,37 @@ describe('parseFrontMatter', () => {
 });
 
 describe('stageRuns', () => {
-  const link = (stage: string, run_id: string, started_at: number, change = 'c1', system = 'claims', workspace_id = 'ws'): RunLink =>
+  const link = (stage: string, run_id: string, started_at: number, change = 'c1', system = 'commerce', workspace_id = 'ws'): RunLink =>
     ({ workspace_id, system, change, stage, run_id, started_at });
   const rec = (id: string, kata: string, started_at: number): RunRecord => ({ id, kata, started_at, isolation: 'none', steered: false });
 
   it('lists the stage’s linked runs and its unlinked history records, newest first', () => {
     const links = [link('spec', 'r1', 5), link('spec', 'r3', 9), link('plan', 'p1', 20)];
-    const records = [rec('r1', 'sdlc-claims-c1-spec', 5), rec('r2', 'sdlc-claims-c1-spec', 7), rec('r3', 'sdlc-claims-c1-spec', 9), rec('p1', 'sdlc-claims-c1-plan', 20)];
-    expect(stageRuns(links, records, 'ws', 'claims', 'c1', 'spec').map((r) => r.id)).toEqual(['r3', 'r2', 'r1']);
+    const records = [rec('r1', 'sdlc-commerce-c1-spec', 5), rec('r2', 'sdlc-commerce-c1-spec', 7), rec('r3', 'sdlc-commerce-c1-spec', 9), rec('p1', 'sdlc-commerce-c1-plan', 20)];
+    expect(stageRuns(links, records, 'ws', 'commerce', 'c1', 'spec').map((r) => r.id)).toEqual(['r3', 'r2', 'r1']);
   });
 
   it('names a link whose record is missing by the stage’s deterministic run name', () => {
-    const got = stageRuns([link('intent', 'gone', 4)], [], 'ws', 'claims', 'c1', 'intent');
-    expect(got).toEqual([{ id: 'gone', kata: 'sdlc-claims-c1-intent', started_at: 4, isolation: 'none', steered: false }]);
+    const got = stageRuns([link('intent', 'gone', 4)], [], 'ws', 'commerce', 'c1', 'intent');
+    expect(got).toEqual([{ id: 'gone', kata: 'sdlc-commerce-c1-intent', started_at: 4, isolation: 'none', steered: false }]);
   });
 
   it('leaves out other changes, systems and workspaces', () => {
-    const links = [link('spec', 'a', 1), link('spec', 'b', 2, 'other'), link('spec', 'c', 3, 'c1', 'billing'), link('spec', 'd', 4, 'c1', 'claims', 'ws2')];
-    const records = [rec('e', 'sdlc-claims-other-spec', 5), rec('f', 'sdlc-billing-c1-spec', 6)];
-    expect(stageRuns(links, records, 'ws', 'claims', 'c1', 'spec').map((r) => r.id)).toEqual(['a']);
+    const links = [link('spec', 'a', 1), link('spec', 'b', 2, 'other'), link('spec', 'c', 3, 'c1', 'billing'), link('spec', 'd', 4, 'c1', 'commerce', 'ws2')];
+    const records = [rec('e', 'sdlc-commerce-other-spec', 5), rec('f', 'sdlc-billing-c1-spec', 6)];
+    expect(stageRuns(links, records, 'ws', 'commerce', 'c1', 'spec').map((r) => r.id)).toEqual(['a']);
   });
 
   it('counts every build:<repo> link and every build record as build, and keeps review apart', () => {
     const links = [link('build:app', 'b1', 1), link('build:api', 'b2', 3), link('review', 'v1', 6)];
-    const records = [rec('b3', 'sdlc-claims-c1-build-web', 4), rec('v1', 'sdlc-claims-c1-review', 6), rec('v2', 'sdlc-claims-c1-review', 8)];
-    expect(stageRuns(links, records, 'ws', 'claims', 'c1', 'build').map((r) => r.id)).toEqual(['b3', 'b2', 'b1']);
-    expect(stageRuns(links, records, 'ws', 'claims', 'c1', 'review').map((r) => r.id)).toEqual(['v2', 'v1']);
+    const records = [rec('b3', 'sdlc-commerce-c1-build-web', 4), rec('v1', 'sdlc-commerce-c1-review', 6), rec('v2', 'sdlc-commerce-c1-review', 8)];
+    expect(stageRuns(links, records, 'ws', 'commerce', 'c1', 'build').map((r) => r.id)).toEqual(['b3', 'b2', 'b1']);
+    expect(stageRuns(links, records, 'ws', 'commerce', 'c1', 'review').map((r) => r.id)).toEqual(['v2', 'v1']);
   });
 
   it('lists a run once even when two links name it', () => {
     const links = [link('spec', 'r1', 5), link('spec', 'r1', 5)];
-    expect(stageRuns(links, [rec('r1', 'sdlc-claims-c1-spec', 5)], 'ws', 'claims', 'c1', 'spec')).toHaveLength(1);
+    expect(stageRuns(links, [rec('r1', 'sdlc-commerce-c1-spec', 5)], 'ws', 'commerce', 'c1', 'spec')).toHaveLength(1);
   });
 });
 
