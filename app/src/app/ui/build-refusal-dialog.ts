@@ -5,12 +5,13 @@ import { lucideTriangleAlert } from '@ng-icons/lucide';
 import type { BrnDialogState } from '@spartan-ng/brain/dialog';
 import { HlmAlertImports } from '@spartan-ng/helm/alert';
 import { HlmAlertDialogImports } from '@spartan-ng/helm/alert-dialog';
+import { HlmButtonImports } from '@spartan-ng/helm/button';
 
 /* Why a build did not start. Nothing was created by then, and the dialog says so. */
 @Component({
   selector: 'app-build-refusal-dialog',
   host: { class: 'contents' },
-  imports: [HlmAlertDialogImports, HlmAlertImports, NgIcon],
+  imports: [HlmAlertDialogImports, HlmAlertImports, HlmButtonImports, NgIcon],
   providers: [provideIcons({ lucideTriangleAlert })],
   templateUrl: './build-refusal-dialog.html',
 })

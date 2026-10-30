@@ -17,6 +17,9 @@
     <p hlmAlertDialogDescription>Nothing was created or switched in any repository.</p>
     <hlm-alert-dialog-footer>
       <button hlmAlertDialogCancel size="sm">Close</button>
+      @if (taken() !== null) {
+        <button hlmBtn variant="primary" size="sm" type="button" (click)="rename.emit()">Pick a new branch name</button>
+      }
     </hlm-alert-dialog-footer>
   </hlm-alert-dialog-content>
 </hlm-alert-dialog>

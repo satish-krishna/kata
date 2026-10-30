@@ -272,7 +272,13 @@
     (confirm)="build.confirmContinue()"
     (cancel)="build.cancelContinue()"
   />
-  <app-build-refusal-dialog [reason]="build.refusal()?.reason ?? null" [problems]="build.refusal()?.problems ?? []" (close)="build.closeRefusal()" />
+  <app-build-refusal-dialog
+    [reason]="build.refusal()?.reason ?? null"
+    [problems]="build.refusal()?.problems ?? []"
+    [taken]="build.refusal()?.taken ?? null"
+    (rename)="vm.renameFromRefusal(build.refusal()?.taken?.branch ?? null); build.closeRefusal()"
+    (close)="build.closeRefusal()"
+  />
   <app-done-dialog
     [report]="vm.doneReport()"
     [change]="vm.changeName()"
@@ -280,10 +286,24 @@
     (confirm)="vm.confirmDone()"
     (anotherRound)="vm.doneRound()"
     (runReview)="vm.doneRunReview()"
+    (renameBranch)="vm.renameFromDone($event)"
     (cancel)="vm.cancelDone()"
   />
-  <app-pr-list-dialog [results]="vm.prList()" (openLink)="vm.openPr($event)" (retry)="vm.retryPublish()" (close)="vm.closePrList()" />
-  <app-build-refusal-dialog [reason]="vm.refusal()" [problems]="vm.refusalProblems()" (close)="vm.closeRefusal()" />
+  <app-pr-list-dialog
+    [results]="vm.prList()"
+    [leftBehind]="vm.prLeftBehind()"
+    (openLink)="vm.openPr($event)"
+    (renameBranch)="vm.renameFromPrList($event)"
+    (retry)="vm.retryPublish()"
+    (close)="vm.closePrList()"
+  />
+  <app-build-refusal-dialog
+    [reason]="vm.refusal()"
+    [problems]="vm.refusalProblems()"
+    [taken]="vm.refusalTaken()"
+    (rename)="vm.renameFromRefusal(vm.refusalTaken()?.branch ?? null)"
+    (close)="vm.closeRefusal()"
+  />
   <app-confirm-dialog
     [open]="vm.confirmPrompt() !== null"
     [message]="vm.confirmPrompt() ?? ''"

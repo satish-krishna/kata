@@ -48,7 +48,7 @@
       (showUntied)="vm.showUntied()"
     />
     @for (repo of vm.missingBranches(); track repo) {
-      <p class="k-changes__readonly" data-testid="changes-missing">{{ repo }} has no change/{{ change() }} branch, so its changes are not listed.</p>
+      <p class="k-changes__readonly" data-testid="changes-missing">{{ repo }} has no {{ vm.changeBranch() ?? 'change/' + change() }} branch, so its changes are not listed.</p>
     }
   </ng-template>
   <div class="k-changes__body" [class.k-changes__body--solo]="listOutside()">

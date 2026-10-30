@@ -84,6 +84,9 @@ export type NameAsk = {
   track: 'full' | 'fix';
 };
 
+/** What renaming a change's branch needs: the branch it has now is the starting name. */
+export type RenameAsk = { folder: string; workspaceId: string; masterRepo: string; system: string; change: string; current: string };
+
 /** What the engineer picked when the system has a naming setting. */
 export type PickedNaming = { workType: WorkType; scope: string };
 
@@ -111,6 +114,8 @@ export type BuildRequest = {
 export type PrepareResult =
   | { kind: 'ready'; start: BuildStart }
   | { kind: 'needs-confirm'; leftovers: RepoFiles[] }
+  /** The change's branch holds other work in `repo`; the engineer picks a new name. */
+  | { kind: 'branch-taken'; repo: string; branch: string }
   /** `problems` lists what the check found in the plan or a build log, when that is why the build did not go on. */
   | { kind: 'refused'; reason: string; problems?: Problem[] };
 /** A repository run of the build, or the review of the whole change (which runs in the master repository). */
@@ -201,6 +206,7 @@ export class SdlcRunner {
   /** Counts the branches named so far; a page showing the change reads it again when this moves. */
   readonly named = this.namedCount.asReadonly();
   private ask: NameAsk | null = null;
+  private renameAsk: RenameAsk | null = null;
   private settleName: ((named: { branch: string; change: string } | null) => void) | null = null;
   private nameSeq = 0;
   /** The type picked at the start of the change that is waiting for a name, kept for opening the confirmation again. */
@@ -233,6 +239,29 @@ export class SdlcRunner {
     return named;
   }
 
+  /**
+   * Ask the engineer for a new name for the branch `ask.current`, in every repository that has it. No type is picked and the
+   * current name is the starting point. Resolves with the new branch, or null when the dialog was closed.
+   */
+  async requestRename(ask: RenameAsk): Promise<{ branch: string; change: string } | null> {
+    this.closeName();
+    this.renameAsk = ask;
+    this.request.set({
+      system: ask.system,
+      change: ask.change,
+      pending: ask.current,
+      workType: defaultWorkType('full'),
+      workTypes: [],
+      suggestion: ask.current,
+      error: null,
+      busy: false,
+      rename: true,
+    });
+    return new Promise((resolve) => {
+      this.settleName = resolve;
+    });
+  }
+
   /** The engineer picked another type: the suggestion follows it. */
   async setNameType(type: WorkType): Promise<void> {
     const cur = this.request();
@@ -261,7 +290,9 @@ export class SdlcRunner {
   async confirmName(name: string): Promise<void> {
     const ask = this.ask;
     const cur = this.request();
-    if (ask === null || cur === null || cur.busy) return;
+    if (cur === null || cur.busy) return;
+    if (this.renameAsk !== null) return this.confirmRename(this.renameAsk, name);
+    if (ask === null) return;
     this.request.set({ ...cur, error: null, busy: true });
     let outcome: FinishOutcome;
     try {
@@ -279,6 +310,18 @@ export class SdlcRunner {
     this.namedCount.update((n) => n + 1);
   }
 
+  /** Rename the change's branch everywhere. A refusal stays on the request and the confirmation stays open. */
+  private async confirmRename(ask: RenameAsk, name: string): Promise<void> {
+    this.request.update((r) => (r === null ? r : { ...r, error: null, busy: true }));
+    try {
+      const done = await this.transport.sdlcRenameBranch(ask.folder, ask.workspaceId, ask.masterRepo, ask.system, ask.change, name);
+      this.finishName({ branch: done.new, change: ask.change });
+      this.namedCount.update((n) => n + 1);
+    } catch (e) {
+      this.request.update((r) => (r === null ? r : { ...r, error: message(e), busy: false }));
+    }
+  }
+
   /** Close the confirmation without naming: the change stays on its pending branch and offers the confirmation again. */
   closeName(): void {
     this.finishName(null);
@@ -288,6 +331,7 @@ export class SdlcRunner {
     const settle = this.settleName;
     this.settleName = null;
     this.ask = null;
+    this.renameAsk = null;
     this.nameSeq++;
     this.request.set(null);
     settle?.(named);
@@ -373,7 +417,7 @@ export class SdlcRunner {
     try {
       const out = await this.transport.sdlcBuildPrepare(req.folder, req.masterRepo, req.system, req.change, req.continueWithLeftovers, req.pending ?? null, req.action);
       if (out.kind === 'refused') return { kind: 'refused', reason: out.message, problems: out.problems };
-      if (out.kind === 'branchTaken') return { kind: 'refused', reason: `${out.repo} already has a branch ${out.branch} holding work from outside this change` };
+      if (out.kind === 'branchTaken') return { kind: 'branch-taken', repo: out.repo, branch: out.branch };
       if (out.kind === 'ready') {
         this.held = [];
         return { kind: 'ready', start: out.start };

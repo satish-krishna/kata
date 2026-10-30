@@ -33,7 +33,7 @@ export class BranchNameDialog {
     const req = this.request();
     return req !== null && !req.busy && this.name().trim() !== '';
   });
-  protected readonly hint = computed(() => this.request()?.error ?? 'The branch the change is built on, in every repository.');
+  protected readonly hint = computed(() => this.request()?.error ?? (this.request()?.rename ? 'The change moves to this branch in every repository that has it.' : 'The branch the change is built on, in every repository.'));
 
   protected onName(e: Event): void {
     this.typed.set((e.target as HTMLInputElement).value);

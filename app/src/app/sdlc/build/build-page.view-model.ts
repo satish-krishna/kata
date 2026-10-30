@@ -1026,7 +1026,7 @@ export class BuildPageViewModel {
             return;
           }
           if (out.kind === 'branchTaken') {
-            this.refusal.set({ reason: `${out.repo} already has a branch ${out.branch} holding work from outside this change`, problems: [] });
+            this.refusal.set({ reason: `The branch ${out.branch} in ${out.repo} holds other work`, problems: [], taken: { repo: out.repo, branch: out.branch } });
             return;
           }
           if (out.kind === 'needsConfirm') {
@@ -1083,6 +1083,10 @@ export class BuildPageViewModel {
         const out = await this.prepareBranches(ctx.folder, h.start.master.repo, ctx.system, ctx.change, true, this.ownerOf(key));
         if (out.kind === 'refused') {
           this.refusal.set({ reason: out.message, problems: out.problems });
+          return;
+        }
+        if (out.kind === 'branchTaken') {
+          this.refusal.set({ reason: `The branch ${out.branch} in ${out.repo} holds other work`, problems: [], taken: { repo: out.repo, branch: out.branch } });
           return;
         }
         if (out.kind !== 'ready') {
