@@ -28,6 +28,10 @@ pub struct PrEntry {
     pub url: String,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub number: u64,
+    /// The branch the pull request was opened from; a record saved before branches could be
+    /// renamed has none, and `store::load_pr_records` reads it as `change/<change>`.
+    #[serde(default)]
+    pub branch: String,
     /// The commit the change branch was pushed at.
     pub pushed_head: String,
     pub state: PrStateKind,
@@ -49,6 +53,10 @@ pub struct PrRecord {
     #[cfg_attr(feature = "ts", ts(type = "number | null"))]
     pub declared_at: Option<u64>,
     pub repos: Vec<PrEntry>,
+    /// Pull requests opened under a branch name the change no longer uses. Kata lists them so the
+    /// engineer can close them by hand; it never closes them.
+    #[serde(default)]
+    pub left_behind: Vec<PrEntry>,
 }
 
 impl PrRecord {
@@ -60,7 +68,15 @@ impl PrRecord {
             change: change.into(),
             declared_at: None,
             repos: Vec::new(),
+            left_behind: Vec::new(),
         }
+    }
+
+    /// Move every entry opened from a branch other than `current_branch` into `left_behind`, and
+    /// clear `declared_at` when any moved: the change is no longer declared under its new name.
+    pub fn retire(&mut self, current_branch: &str) {
+        let _ = current_branch;
+        todo!("T9")
     }
 }
 
@@ -364,6 +380,7 @@ mod tests {
             repo: repo.into(),
             url: format!("https://github.com/o/{repo}/pull/1"),
             number: 1,
+            branch: "change/c".into(),
             pushed_head: format!("head-{repo}"),
             state,
             seen_at,
@@ -393,6 +410,7 @@ mod tests {
             change: "c".into(),
             declared_at: declared.then_some(50),
             repos: entries.to_vec(),
+            left_behind: Vec::new(),
         }
     }
 
@@ -427,6 +445,35 @@ mod tests {
             repo: repo.into(),
             url: open.then(|| format!("https://github.com/o/{repo}/pull/1")),
         }
+    }
+
+    #[test]
+    fn retire_moves_old_entries() {
+        let on = |repo: &str, branch: &str| PrEntry {
+            branch: branch.into(),
+            ..entry(repo, PrStateKind::Open, 7)
+        };
+        let mut rec = record(
+            &[
+                on("api", "feat/old"),
+                on("kata", "feat/old"),
+                on("m", "feat/new"),
+            ],
+            true,
+        );
+        rec.retire("feat/new");
+        assert_eq!(rec.repos, vec![on("m", "feat/new")]);
+        assert_eq!(
+            rec.left_behind,
+            vec![on("api", "feat/old"), on("kata", "feat/old")]
+        );
+        assert_eq!(rec.declared_at, None);
+
+        // Nothing to retire leaves a declared change declared.
+        let mut same = record(&[on("m", "feat/new")], true);
+        same.retire("feat/new");
+        assert_eq!(same.declared_at, Some(50));
+        assert!(same.left_behind.is_empty());
     }
 
     #[test]

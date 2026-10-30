@@ -376,6 +376,20 @@ mod tests {
 
     #[test]
     #[serial]
+    fn old_records_load_with_the_change_branch() {
+        let home = with_home();
+        let dir = home.temp.path().join("workbench");
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = r#"[{"workspaceId":"w1","system":"billing","change":"0001-x","declaredAt":5,"repos":[{"repo":"api","url":"https://github.com/o/api/pull/3","number":3,"pushedHead":"abc","state":"open","seenAt":9}]}]"#;
+        std::fs::write(dir.join("pull-requests.json"), old).unwrap();
+        let loaded = load_pr_records();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].repos[0].branch, "change/0001-x");
+        assert!(loaded[0].left_behind.is_empty());
+    }
+
+    #[test]
+    #[serial]
     fn pr_records_replace_the_same_change_and_keep_the_rest() {
         let home = with_home();
         assert!(load_pr_records().is_empty());

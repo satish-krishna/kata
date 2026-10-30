@@ -452,6 +452,7 @@ pub fn publish(
                         repo: r.repo.clone(),
                         url: url.clone(),
                         number: prs::pull_number(url),
+                        branch: branch.clone(),
                         pushed_head: head,
                         state: PrStateKind::Open,
                         seen_at: prs::now_secs(),

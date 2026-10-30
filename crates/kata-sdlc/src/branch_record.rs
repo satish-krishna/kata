@@ -3,6 +3,7 @@
 //! The record lives in `intent/<system>/<change>/branch.md` of the master repository. A change that
 //! has none uses `change/<change>`. This module reads and writes the record and checks a proposed
 //! name against the branches already on the machine; it never fetches.
+use crate::plugin::Readiness;
 use crate::workspace::{self, ScanError};
 use crate::{decide, frontmatter, git};
 use std::path::Path;
@@ -161,6 +162,46 @@ pub fn clashes(
         }
     }
     Ok(found)
+}
+
+/// What a rename did: the old and new names and the product repositories that had the branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameOutcome {
+    pub old: String,
+    pub new: String,
+    pub repos: Vec<String>,
+}
+
+/// Why a rename was refused or failed. Every refusal happens before the first write.
+#[derive(Debug, thiserror::Error)]
+pub enum RenameError {
+    #[error("the change already uses that branch name")]
+    Same,
+    #[error("invalid branch name: {0}")]
+    InvalidName(String),
+    #[error("the name clashes with a branch: {}", .0.iter().map(|c| format!("`{}` in `{}`", c.existing, c.repo)).collect::<Vec<_>>().join(", "))]
+    Clashes(Vec<Clash>),
+    #[error("`{repo}` has uncommitted changes: {}", .files.join(", "))]
+    Dirty { repo: String, files: Vec<String> },
+    #[error("{0}")]
+    Record(String),
+    #[error("{0}")]
+    Git(String),
+}
+
+/// Rename the change's branch to `new_name` in the master and in every product repository of the
+/// system that has it, and record the new name. Every check runs before the first write; a failed
+/// step puts the renames already made back.
+pub fn rename(
+    plugin: &Readiness,
+    folder: &Path,
+    master_repo: &str,
+    system: &str,
+    change: &str,
+    new_name: &str,
+) -> Result<RenameOutcome, RenameError> {
+    let _ = (plugin, folder, master_repo, system, change, new_name);
+    todo!("T9")
 }
 
 #[cfg(test)]
@@ -492,6 +533,155 @@ mod tests {
         let got = clashes(tmp.path(), "ai-sdlc", SYSTEM, "feat/PROJ-123-reset", None).unwrap();
         assert_eq!(got, vec![]);
         assert_eq!(refs(), before);
+    }
+
+    const OLD: &str = "feat/PROJ-123-reset";
+    const NEW: &str = "feat/PROJ-123-password-reset";
+
+    fn ready() -> Readiness {
+        Readiness::Ready {
+            dir: testutil::plugin_dir().to_path_buf(),
+            version: crate::plugin::NAMING_VERSION.to_string(),
+            layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
+            light_track: true,
+            naming: crate::plugin::naming(crate::plugin::NAMING_VERSION),
+        }
+    }
+
+    /// Master `ai-sdlc` and `kata` on `OLD` with the record committed; `api` has no change branch.
+    fn renamable(tmp: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        let master = testutil::repo(tmp, "ai-sdlc");
+        testutil::commit_file(
+            &master,
+            ".ai-sdlc.json",
+            r#"{"version":1,"systems":{"kata":{"repos":["kata","api"]}}}"#,
+            "marker",
+        );
+        testutil::commit_file(
+            &master,
+            &format!("intent/{SYSTEM}/{CHANGE}/intent.md"),
+            "---\nstatus: accepted\nscope: PROJ-123\n---\nbody\n",
+            "intent",
+        );
+        testutil::checkout(&master, OLD, true);
+        let record = BranchRecord {
+            branch: OLD.to_string(),
+            work_type: Some("feat".to_string()),
+        };
+        write(&master, SYSTEM, CHANGE, &record, RecordVerb::Name).unwrap();
+        let kata = testutil::repo(tmp, "kata");
+        testutil::checkout(&kata, OLD, true);
+        let api = testutil::repo(tmp, "api");
+        (master, kata, api)
+    }
+
+    fn refs(repos: &[&Path]) -> Vec<String> {
+        repos
+            .iter()
+            .map(|r| git::run(r, &["for-each-ref", "--format=%(refname) %(objectname)"]).unwrap())
+            .collect()
+    }
+
+    fn branch_of(repo: &Path) -> String {
+        git::run(repo, &["branch", "--show-current"]).unwrap()
+    }
+
+    #[test]
+    fn rename_moves_every_repo_and_the_record_r9_2() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (master, kata, api) = renamable(tmp.path());
+        let api_refs = refs(&[&api]);
+        let out = rename(&ready(), tmp.path(), "ai-sdlc", SYSTEM, CHANGE, NEW).unwrap();
+        assert_eq!(
+            out,
+            RenameOutcome {
+                old: OLD.into(),
+                new: NEW.into(),
+                repos: vec!["kata".into()],
+            }
+        );
+        assert_eq!(branch_of(&master), NEW);
+        assert_eq!(branch_of(&kata), NEW);
+        for repo in [&master, &kata] {
+            assert!(!git::Repo::open(repo).unwrap().branch_exists(OLD));
+        }
+        assert_eq!(refs(&[&api]), api_refs);
+        let subject = git::run(&master, &["log", "-1", "--format=%s"]).unwrap();
+        assert_eq!(subject, format!("docs(PROJ-123): rename branch {CHANGE}"));
+        assert_eq!(change_branch(&master, SYSTEM, CHANGE).unwrap(), NEW);
+        let text =
+            std::fs::read_to_string(master.join(format!("intent/{SYSTEM}/{CHANGE}/branch.md")))
+                .unwrap();
+        assert!(text.contains("type: feat\n"), "{text}");
+    }
+
+    #[test]
+    fn rename_checks_out_the_new_name_in_a_master_that_was_elsewhere() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (master, _, _) = renamable(tmp.path());
+        testutil::checkout(&master, "main", false);
+        rename(&ready(), tmp.path(), "ai-sdlc", SYSTEM, CHANGE, NEW).unwrap();
+        assert_eq!(branch_of(&master), NEW);
+        assert_eq!(change_branch(&master, SYSTEM, CHANGE).unwrap(), NEW);
+    }
+
+    #[test]
+    fn rename_refuses_before_touching_anything() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (master, kata, api) = renamable(tmp.path());
+        let all = [master.as_path(), kata.as_path(), api.as_path()];
+        let before = refs(&all);
+        let head = git::run(&master, &["rev-parse", "HEAD"]).unwrap();
+        let go = |name: &str| rename(&ready(), tmp.path(), "ai-sdlc", SYSTEM, CHANGE, name);
+
+        assert!(matches!(go(OLD), Err(RenameError::Same)));
+        assert!(matches!(go("feat/a b"), Err(RenameError::InvalidName(_))));
+
+        local(&api, NEW);
+        let with_clash = refs(&all);
+        assert!(matches!(go(NEW), Err(RenameError::Clashes(c)) if c == vec![clash("api", NEW)]));
+        assert_eq!(refs(&all), with_clash);
+        git::run(&api, &["branch", "-D", NEW]).unwrap();
+
+        testutil::write(&master, "README.md", "edited\n");
+        assert!(matches!(go(NEW), Err(RenameError::Dirty { repo, .. }) if repo == "ai-sdlc"));
+        testutil::write(&master, "README.md", "init\n");
+
+        testutil::write(&kata, "README.md", "edited\n");
+        assert!(matches!(go(NEW), Err(RenameError::Dirty { repo, .. }) if repo == "kata"));
+        testutil::write(&kata, "README.md", "init\n");
+
+        assert_eq!(refs(&all), before);
+        assert_eq!(git::run(&master, &["rev-parse", "HEAD"]).unwrap(), head);
+        assert_eq!(change_branch(&master, SYSTEM, CHANGE).unwrap(), OLD);
+    }
+
+    #[test]
+    fn a_dirty_product_repo_not_on_the_branch_does_not_refuse() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_, kata, _) = renamable(tmp.path());
+        testutil::checkout(&kata, "main", false);
+        testutil::write(&kata, "README.md", "edited\n");
+        let out = rename(&ready(), tmp.path(), "ai-sdlc", SYSTEM, CHANGE, NEW).unwrap();
+        assert_eq!(out.repos, vec!["kata".to_string()]);
+        assert_eq!(branch_of(&kata), "main");
+    }
+
+    #[test]
+    fn rename_rolls_back_on_a_failed_step() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (master, kata, _) = renamable(tmp.path());
+        // A leftover lock on the new ref makes the master's rename fail after kata's succeeded.
+        let lock = master.join(format!(".git/refs/heads/{NEW}.lock"));
+        std::fs::write(&lock, "").unwrap();
+        let before = refs(&[&master, &kata]);
+        let err = rename(&ready(), tmp.path(), "ai-sdlc", SYSTEM, CHANGE, NEW).unwrap_err();
+        assert!(matches!(err, RenameError::Git(_)), "{err}");
+        std::fs::remove_file(&lock).unwrap();
+        assert_eq!(refs(&[&master, &kata]), before);
+        assert_eq!(branch_of(&kata), OLD);
+        assert_eq!(branch_of(&master), OLD);
+        assert_eq!(change_branch(&master, SYSTEM, CHANGE).unwrap(), OLD);
     }
 
     #[test]
