@@ -524,14 +524,14 @@ describe('ChangePage opens an existing change on the build page', () => {
   it('an existing change accepted but not built opens on the build page at its stage', async () => {
     const { container } = await existing('build-ready', [], false);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
-    expect(actions(container)).toEqual(['Start build', 'Reopen intent']);
+    expect(actions(container)).toEqual(['Start build', 'Reopen spec', 'Reopen intent']);
     expect(taskLine(container, 'T1')).toContain('Not started');
   });
 
   it('an existing change stopped partway opens on the build page with its log and earlier run', async () => {
     const { container } = await existing('build-stopped', ['T1'], false);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
-    expect(actions(container)).toEqual(['Continue build', 'Another round']);
+    expect(actions(container)).toEqual(['Continue build', 'Another round', 'Reopen spec', 'Reopen intent']);
     expect(taskLine(container, 'T1')).toContain('Done');
     expect(taskLine(container, 'T3')).not.toContain('Done');
     expect(container.querySelector(`app-build-page [data-session="${EARLIER}"]`)).not.toBeNull();
@@ -541,7 +541,7 @@ describe('ChangePage opens an existing change on the build page', () => {
   it('an existing finished change opens on the build page with its log, earlier run and review', async () => {
     const { container } = await existing('build-finished', ['T1', 'T2', 'T3'], true);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
-    expect(actions(container)).toEqual(['Declare done', 'Another round', 'Run review']);
+    expect(actions(container)).toEqual(['Declare done', 'Another round', 'Run review', 'Reopen spec', 'Reopen intent']);
     expect(Array.from(container.querySelectorAll('app-build-page [data-task]')).every((t) => text(t).includes('Done'))).toBe(true);
     expect(text(container.querySelector('app-build-page app-findings-list')!)).toContain(FINDING);
     pickRepo(container, 'commerce-core');

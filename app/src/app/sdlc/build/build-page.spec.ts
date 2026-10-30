@@ -188,7 +188,7 @@ describe('the build page at each stage', () => {
   it('not started: every task as not started, the other areas hidden, and start the build offered', async () => {
     const { area, barActions, el } = await mount(
       stage('not-started', {
-        actions: ['start-build', 'reopen-intent'],
+        actions: ['start-build'],
         groups: [group('commerce-core', NOT_STARTED, null, [task('T1', NOT_STARTED), task('T2', NOT_STARTED)])],
         areas: { activity: false, files: false },
       }),

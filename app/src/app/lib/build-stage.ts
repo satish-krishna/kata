@@ -47,7 +47,7 @@ export function buildStage(f: StageFacts): BuildStage {
 }
 
 const STAGE_ACTIONS: Record<BuildStage, StageAction[]> = {
-  'not-started': ['start-build', 'reopen-intent'],
+  'not-started': ['start-build'],
   running: ['cancel-build'],
   'running-one-stopped': ['cancel-build'],
   reviewing: ['cancel-build'],

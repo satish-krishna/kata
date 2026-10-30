@@ -375,14 +375,16 @@ export class ChangePageViewModel {
     return [...this.build.actions(), ...this.barExtras().map((e) => e.action)];
   });
   /**
-   * The actions the build page's bar adds after its own: the build page has no way back to the fix's documents, so a fix's
-   * list contributes the one that reopens it. Each carries whether its button is off and why.
+   * The actions the build page's bar adds after its own: the build page has no way back to the documents, so the bar adds it
+   * for both tracks. A fix's list contributes the one that reopens it; a full-pipeline change's contributes Reopen intent and
+   * Reopen spec, except any the build page already lists. Each carries whether its button is off and why.
    */
   readonly barExtras = computed(() => {
     const c = this.change();
-    if (c === null || this.done() || c.track !== 'fix' || stageLabel(c.stage).step !== 'build') return [];
+    if (c === null || this.done() || stageLabel(c.stage).step !== 'build') return [];
+    const own = this.build.actions();
     return actionsForChange(c)
-      .filter((a) => a === 'reopen-fix')
+      .filter((a) => (c.track === 'fix' ? a === 'reopen-fix' : (a === 'reopen-intent' || a === 'reopen-spec') && !own.includes(a)))
       .map((action) => ({ action, disabled: this.disabledFor(action), title: this.titleFor(action) }));
   });
   /** What blocks the build, shown above the plan; null when nothing does or another document is shown. */
