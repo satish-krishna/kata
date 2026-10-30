@@ -326,9 +326,15 @@ export class ChangePageViewModel {
   private readonly naming = signal<NamingState | null>(null);
   /**
    * The change was created on a pending branch, the system declares naming, and the engineer has not confirmed a name: the master stands on that
-   * pending branch, which a confirmation renames in the same step. A change with a branch record, or one started before the setting existed, is on its own branch.
+   * pending branch (and only that change: another change opened meanwhile is not waiting for a name), which a confirmation renames in the same step. A change with a branch record, or one started before the setting existed, is on its own branch.
    */
-  readonly needsName = computed(() => this.change() !== null && this.naming()?.kind === 'setting' && (this.masterBranch() ?? '').startsWith(PENDING_PREFIX));
+  readonly needsName = computed(
+    () =>
+      this.change() !== null &&
+      this.naming()?.kind === 'setting' &&
+      (this.masterBranch() ?? '').startsWith(PENDING_PREFIX) &&
+      this.branches()?.pending_change === `${this.system()}/${this.changeName()}`,
+  );
   /** The branch name confirmation on show. */
   readonly nameRequest = this.runner.nameRequest;
   readonly crumbs = computed(() => (this.changeName() === '' ? [] : [this.changeName()]));

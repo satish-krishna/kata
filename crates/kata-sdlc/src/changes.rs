@@ -1095,7 +1095,7 @@ pub fn branch_info(master: &Path) -> BranchInfo {
         current: current_branch(master),
         others: other_change_branches(master),
         default_base: branch::default_base(master),
-        pending_change: None,
+        pending_change: branch::pending_created(master),
     }
 }
 

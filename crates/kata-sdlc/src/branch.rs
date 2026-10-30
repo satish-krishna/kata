@@ -143,6 +143,36 @@ fn existing_on(repo: &git::Repo, rev: &str, system_change: &str) -> bool {
         .is_some()
 }
 
+/// The `<system>/<change>` folder the checked-out pending branch created: one changed from `base`
+/// (committed or not) that `base` does not hold.
+fn created_folder(
+    master: &Path,
+    repo: &git::Repo,
+    base: &str,
+) -> Result<Option<String>, BranchError> {
+    let mut paths: Vec<String> = status_entries(master)?
+        .into_iter()
+        .map(|e| e.path)
+        .collect();
+    if let Ok(changed) = repo.files_changed_from_merge_base(base) {
+        paths.extend(changed);
+    }
+    Ok(change_folders(paths.iter().map(String::as_str))
+        .into_iter()
+        .find(|sc| !existing_on(repo, base, sc)))
+}
+
+/// The `<system>/<change>` folder the pending branch checked out in `master` created, if any.
+pub fn pending_created(master: &Path) -> Option<String> {
+    let current = current_branch(master)?;
+    if !current.starts_with(PENDING_PREFIX) {
+        return None;
+    }
+    let base = default_base(master)?;
+    let repo = git::Repo::open(master).ok()?;
+    created_folder(master, &repo, &base).ok().flatten()
+}
+
 /// Settle a pending branch: rename it to `change/<folder>` if the run created a change folder,
 /// otherwise return to `base` and delete it (only when it carries no commits).
 ///
@@ -159,18 +189,8 @@ pub fn finish_pending(
     }
     require_local_branch(master, pending)?;
     require_local_branch(master, base)?;
-    let mut paths: Vec<String> = status_entries(master)?
-        .into_iter()
-        .map(|e| e.path)
-        .collect();
     let repo = git::Repo::open(master)?;
-    if let Ok(changed) = repo.files_changed_from_merge_base(base) {
-        paths.extend(changed);
-    }
-    let created = change_folders(paths.iter().map(String::as_str))
-        .into_iter()
-        .find(|sc| !existing_on(&repo, base, sc));
-    if let Some(sc) = created {
+    if let Some(sc) = created_folder(master, &repo, base)? {
         let (system, change) = sc.split_once('/').unwrap_or(("", &sc));
         let (system, change) = (system.to_string(), change.to_string());
         if naming::declared(master, &system) {
@@ -218,6 +238,11 @@ pub fn confirm_branch(
     require_local_branch(&master, pending)?;
     if current_branch(&master).as_deref() != Some(pending) {
         return Err(BranchError::InvalidName(pending.to_string()));
+    }
+    if pending_created(&master).as_deref() != Some(&format!("{system}/{change}")) {
+        return Err(BranchError::InvalidName(format!(
+            "the pending branch `{pending}` did not create the change `{system}/{change}`"
+        )));
     }
     if !WORK_TYPES.contains(&work_type) {
         return Err(BranchError::InvalidName(format!(

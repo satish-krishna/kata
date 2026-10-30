@@ -927,7 +927,11 @@ describe('ChangePage branch name', () => {
     const transport = new MockTransport();
     vi.spyOn(transport, 'sdlcNaming').mockResolvedValue(naming === 'declared' ? declared : { kind: 'none' });
     const branches = transport.sdlcBranches.bind(transport);
-    vi.spyOn(transport, 'sdlcBranches').mockImplementation(async (m) => ({ ...(await branches(m)), current: onBranch.current }));
+    vi.spyOn(transport, 'sdlcBranches').mockImplementation(async (m) => ({
+      ...(await branches(m)),
+      current: onBranch.current,
+      pending_change: onBranch.current.startsWith('change/pending-') ? `commerce/${change}` : null,
+    }));
     onBranch.current = start;
     vi.spyOn(transport, 'sdlcSuggestBranch').mockImplementation(async (_f, _m, _s, _c, type) => `${type}/PROJ-123-build-demo`);
     return mount(change, transport);
