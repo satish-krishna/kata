@@ -292,7 +292,7 @@ describe('declaring done', () => {
     const { vm, transport } = await finished();
     const heads = vi.spyOn(transport, 'sdlcBuildHeads');
     await vm.act('declare-done');
-    expect(heads).toHaveBeenCalledWith(expect.anything(), ['commerce-docs', ...REPOS], BUILD);
+    expect(heads).toHaveBeenCalledWith(expect.anything(), 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
     expect(vm.doneReport()!.review).toMatchObject({ findings: expect.anything() });
   });
 

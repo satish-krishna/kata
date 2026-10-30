@@ -104,11 +104,11 @@ export class TauriTransport extends KataTransport {
   sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope) { return this.ipc.invoke<void>('sdlc_discard', { master, before, paths, build }); }
   sdlcStartChange(master: string, base: string) { return this.ipc.invoke<string>('sdlc_start_change', { master, base }); }
   sdlcFinishChange(master: string, pending: string, base: string) { return this.ipc.invoke<FinishOutcome>('sdlc_finish_change', { master, pending, base }); }
-  sdlcNaming(_folder: string, _masterRepo: string, _system: string): Promise<NamingState> { throw new Error('not implemented'); }
-  sdlcSuggestBranch(_folder: string, _masterRepo: string, _system: string, _change: string, _workType: string): Promise<string> { throw new Error('not implemented'); }
-  sdlcConfirmBranch(_folder: string, _masterRepo: string, _system: string, _change: string, _pending: string, _name: string, _workType: string): Promise<FinishOutcome> { throw new Error('not implemented'); }
-  sdlcRenameBranch(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, _change: string, _newName: string): Promise<RenameResult> { throw new Error('not implemented'); }
-  sdlcRemoteClashes(_touched: PublishRepo[], _masterRepo: string, _system: string, _change: string): Promise<RemoteClash[]> { throw new Error('not implemented'); }
+  sdlcNaming(folder: string, masterRepo: string, system: string) { return this.ipc.invoke<NamingState>('sdlc_naming', { folder, masterRepo, system }); }
+  sdlcSuggestBranch(folder: string, masterRepo: string, system: string, change: string, workType: string) { return this.ipc.invoke<string>('sdlc_suggest_branch', { folder, masterRepo, system, change, workType }); }
+  sdlcConfirmBranch(folder: string, masterRepo: string, system: string, change: string, pending: string, name: string, workType: string) { return this.ipc.invoke<FinishOutcome>('sdlc_confirm_branch', { folder, masterRepo, system, change, pending, name, workType }); }
+  sdlcRenameBranch(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, newName: string) { return this.ipc.invoke<RenameResult>('sdlc_rename_branch', { folder, workspaceId, masterRepo, system, change, newName }); }
+  sdlcRemoteClashes(touched: PublishRepo[], masterRepo: string, system: string, change: string) { return this.ipc.invoke<RemoteClash[]>('sdlc_remote_clashes', { touched, masterRepo, system, change }); }
   sdlcCheckout(master: string, branch: string) { return this.ipc.invoke<void>('sdlc_checkout', { master, branch }); }
   sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean) { return this.ipc.invoke<DecideOutcome>('sdlc_decide', { master, system, change, decision, confirmed }); }
   sdlcRunLinks() { return this.ipc.invoke<RunLink[]>('sdlc_run_links'); }

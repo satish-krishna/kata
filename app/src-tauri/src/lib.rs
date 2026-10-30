@@ -379,6 +379,174 @@ fn sdlc_start_change(master: String, base: String) -> Result<String, String> {
     sdlc::branch::start_pending(Path::new(&master), &base, now).map_err(|e| e.to_string())
 }
 
+/// A system's naming setting as the window sees it: none declared, the patterns, or why they cannot be
+/// used. `reason` lets the window tell the failures apart.
+#[derive(serde::Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum NamingState {
+    None,
+    Setting {
+        branch: String,
+        pull_request_title: String,
+    },
+    Error {
+        reason: &'static str,
+        message: String,
+    },
+}
+
+impl NamingState {
+    fn from_error(e: sdlc::naming::NamingError) -> Self {
+        use sdlc::naming::NamingError as E;
+        let reason = match &e {
+            E::PluginMissing => "pluginMissing",
+            E::PluginTooOld { .. } => "pluginTooOld",
+            E::Unusable(_) => "unusable",
+            E::Unreadable(_) => "unreadable",
+            E::Name(_) => "name",
+        };
+        NamingState::Error {
+            reason,
+            message: e.to_string(),
+        }
+    }
+}
+
+/// The system's naming setting, read from the master repository's committed marker.
+#[tauri::command(async)]
+fn sdlc_naming(folder: String, master_repo: String, system: String) -> NamingState {
+    let plugin = ai_sdlc_readiness(Some(&folder));
+    let master = Path::new(&folder).join(&master_repo);
+    match sdlc::naming::setting(&plugin, &master, &system) {
+        Ok(None) => NamingState::None,
+        Ok(Some(n)) => NamingState::Setting {
+            branch: n.branch,
+            pull_request_title: n.pull_request_title,
+        },
+        Err(e) => NamingState::from_error(e),
+    }
+}
+
+/// The branch name the system's setting gives `change`.
+#[tauri::command(async)]
+fn sdlc_suggest_branch(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+    work_type: String,
+) -> Result<String, String> {
+    let plugin = ai_sdlc_readiness(Some(&folder));
+    let master = Path::new(&folder).join(&master_repo);
+    sdlc::branch::suggest_branch(&plugin, &master, &system, &change, &work_type)
+        .map_err(|e| e.to_string())
+}
+
+/// Rename the pending branch to the engineer's chosen `name` and record it for the change.
+#[tauri::command(async)]
+fn sdlc_confirm_branch(
+    folder: String,
+    master_repo: String,
+    system: String,
+    change: String,
+    pending: String,
+    name: String,
+    work_type: String,
+) -> Result<sdlc::branch::FinishOutcome, String> {
+    let plugin = ai_sdlc_readiness(Some(&folder));
+    sdlc::branch::confirm_branch(
+        &plugin,
+        Path::new(&folder),
+        &master_repo,
+        &system,
+        &change,
+        &pending,
+        &name,
+        &work_type,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// What a rename did, for the window.
+#[derive(serde::Serialize)]
+struct RenameResult {
+    old: String,
+    new: String,
+    repos: Vec<String>,
+}
+
+/// Rename the change's branch in every repository that has it, then move the pull requests saved
+/// under the old name to the record's left-behind list. Refused while a build run of the change is
+/// live, since a run holds the branch checked out.
+#[tauri::command(async)]
+fn sdlc_rename_branch(
+    control: State<'_, RunControl>,
+    folder: String,
+    workspace_id: String,
+    master_repo: String,
+    system: String,
+    change: String,
+    new_name: String,
+) -> Result<RenameResult, String> {
+    if control
+        .state
+        .lock()
+        .unwrap()
+        .group_live(&format!("build:{system}/{change}"))
+    {
+        return Err("A build run of this change is live. Rename the branch after it ends.".into());
+    }
+    let plugin = ai_sdlc_readiness(Some(&folder));
+    let out = sdlc::branch_record::rename(
+        &plugin,
+        Path::new(&folder),
+        &master_repo,
+        &system,
+        &change,
+        &new_name,
+    )
+    .map_err(|e| e.to_string())?;
+    let found = sdlc::store::load_pr_records()
+        .into_iter()
+        .find(|r| r.workspace_id == workspace_id && r.system == system && r.change == change);
+    if let Some(mut record) = found {
+        record.retire(&out.new);
+        sdlc::store::save_pr_record(&record).map_err(|e| e.to_string())?;
+    }
+    Ok(RenameResult {
+        old: out.old,
+        new: out.new,
+        repos: out.repos,
+    })
+}
+
+/// The repositories whose GitHub branch of the change holds work this machine does not have.
+#[tauri::command(async)]
+fn sdlc_remote_clashes(
+    touched: Vec<sdlc::publish::PublishRepo>,
+    master_repo: String,
+    system: String,
+    change: String,
+) -> Result<Vec<sdlc::publish::RemoteClash>, String> {
+    let Some(master) = touched.iter().find(|r| r.repo == master_repo) else {
+        return Err(format!(
+            "{master_repo} is not among the repositories of the change"
+        ));
+    };
+    let branch = sdlc::branch_record::change_branch(Path::new(&master.path), &system, &change)
+        .map_err(|e| e.to_string())?;
+    sdlc::publish::remote_clashes(
+        &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
+        &touched,
+        &branch,
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command(async)]
 fn sdlc_finish_change(
     master: String,
@@ -524,21 +692,13 @@ fn sdlc_build_settle(start: sdlc::start::BuildStart) -> Result<Vec<String>, Stri
 #[tauri::command(async)]
 fn sdlc_build_heads(
     folder: String,
-    master_repo: Option<String>,
-    system: Option<String>,
+    master_repo: String,
+    system: String,
     repos: Vec<String>,
     change: String,
 ) -> Result<std::collections::BTreeMap<String, String>, String> {
-    // The window does not pass the master and system yet (T12); without them no branch record is
-    // read and the change keeps its `change/<change>` name.
-    sdlc::start::heads(
-        Path::new(&folder),
-        master_repo.as_deref().unwrap_or(""),
-        system.as_deref().unwrap_or(""),
-        &repos,
-        &change,
-    )
-    .map_err(|e| e.to_string())
+    sdlc::start::heads(Path::new(&folder), &master_repo, &system, &repos, &change)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -733,7 +893,7 @@ fn sdlc_publish(
     system: String,
     change: String,
     repos: Vec<sdlc::publish::PublishRepo>,
-) -> Vec<sdlc::publish::PrResult> {
+) -> sdlc::publish::PublishSummary {
     let plugin = ai_sdlc_readiness(Some(&folder));
     sdlc::publish::publish(
         &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
@@ -747,7 +907,6 @@ fn sdlc_publish(
             let _ = app.emit(PUBLISH_STEP_EVENT, step);
         },
     )
-    .results
 }
 
 /// Whether the change shows as done and with which links, from what is saved. GitHub is asked
@@ -795,16 +954,15 @@ fn sdlc_refresh_pr_states(
 
 #[tauri::command(async)]
 fn sdlc_pull_requests(
-    master_repo: Option<String>,
-    system: Option<String>,
+    master_repo: String,
+    system: String,
     repos: Vec<sdlc::publish::PublishRepo>,
     change: String,
 ) -> Result<Vec<sdlc::publish::PrState>, String> {
-    // As in `sdlc_build_heads`: until T12 the window passes neither, and no record is read.
     sdlc::publish::open_pull_requests(
         &sdlc::github::RealHosts::new(&sdlc::github::SystemSource),
-        master_repo.as_deref().unwrap_or(""),
-        system.as_deref().unwrap_or(""),
+        &master_repo,
+        &system,
         &repos,
         &change,
     )
@@ -1183,6 +1341,11 @@ pub fn run() {
             sdlc_discard,
             sdlc_start_change,
             sdlc_finish_change,
+            sdlc_naming,
+            sdlc_suggest_branch,
+            sdlc_confirm_branch,
+            sdlc_rename_branch,
+            sdlc_remote_clashes,
             sdlc_checkout,
             sdlc_decide,
             sdlc_run_links,
