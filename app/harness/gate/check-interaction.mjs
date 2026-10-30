@@ -210,6 +210,84 @@ for (const [path, selectors] of Object.entries(EXPECTED_TRIGGERS)) {
   }
 }
 
+// A dialog the page opens from a button of its own, not from a dialog trigger, is never clicked by the loop above. A route listed
+// here is visited with the demo it names, each step leads to a dialog that must show the text, and Escape must close that dialog.
+const reviewed = async (page) => {
+  await page.getByRole('button', { name: 'Run review' }).first().click();
+  await page.getByRole('button', { name: 'Start run' }).click();
+  // The scripted review takes a few seconds; declaring done again offers the pull requests once it has been recorded.
+  for (let i = 0; i < 20; i++) {
+    await page.waitForTimeout(1000);
+    await page.getByRole('button', { name: 'Declare done' }).click();
+    await page.locator('hlm-dialog-content:visible').first().waitFor();
+    if (await page.getByRole('button', { name: 'Open pull requests' }).isEnabled()) return;
+    await page.keyboard.press('Escape');
+  }
+  throw new Error('the scripted review never made declaring done offer the pull requests');
+};
+const declare = async (page) => {
+  await page.getByRole('button', { name: 'Declare done' }).click();
+  await page.locator('hlm-dialog-content:visible').first().waitFor();
+};
+const DONE = 'sdlc/commerce/2026-10-18-photo-limits-shipped';
+const DIALOG_STEPS = {
+  'sdlc/commerce/2026-10-19-build-demo?demo=naming': [
+    { label: 'branch name dialog, name mode', text: 'Work type', run: (page) => page.getByRole('button', { name: 'Name the branch' }).click() },
+  ],
+  [`${DONE}?demo=clash`]: [
+    { label: 'done dialog, clash row', text: 'Branch is taken on GitHub', run: declare },
+    {
+      label: 'branch name dialog, rename mode',
+      text: 'The change moves to this branch',
+      run: async (page) => {
+        await declare(page);
+        await page.getByRole('button', { name: 'Pick a new branch name' }).click();
+      },
+    },
+  ],
+  [`${DONE}?demo=clash-push`]: [
+    {
+      label: 'pull request list, clash row',
+      text: 'branch taken',
+      run: async (page) => {
+        await reviewed(page);
+        await page.getByRole('button', { name: 'Open pull requests' }).click();
+      },
+    },
+    {
+      label: 'branch name dialog, rename mode, from the pull request list',
+      text: 'The change moves to this branch',
+      run: async (page) => {
+        await reviewed(page);
+        await page.getByRole('button', { name: 'Open pull requests' }).click();
+        await page.getByRole('button', { name: 'Pick a new branch name' }).click();
+      },
+    },
+  ],
+};
+for (const [path, steps] of Object.entries(DIALOG_STEPS)) {
+  if (!targetRoutes.includes(path)) continue;
+  for (const { label, text, run } of steps) {
+    const name = `${path} :: ${label}`;
+    consoleErrors = [];
+    await page.goto(`http://localhost:${port}/${path}`, { waitUntil: 'networkidle' });
+    await page.waitForTimeout(250);
+    const shown = page.locator('hlm-dialog-content:visible', { hasText: text });
+    try {
+      await run(page);
+      await shown.first().waitFor({ timeout: 5000 });
+    } catch (e) {
+      findings.push({ route: path, kind: 'dialog', detail: `${label}: no visible dialog with "${text}" (${String(e.message).split('\n')[0]})` });
+      continue;
+    }
+    checks.push({ label: name, opened: true });
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(350);
+    if ((await shown.count()) > 0) findings.push({ route: path, kind: 'dialog', detail: `${label}: the dialog did not close on Escape` });
+    if (consoleErrors.length) findings.push({ route: path, kind: 'dialog', detail: `${label}: console error: ${consoleErrors[0]}` });
+  }
+}
+
 await browser.close();
 server.close();
 
