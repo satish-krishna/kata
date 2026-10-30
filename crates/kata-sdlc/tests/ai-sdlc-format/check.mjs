@@ -35099,13 +35099,14 @@ function readNaming(markerPath, system) {
 function checkBranchName(name) {
   if (name === "") return ["a branch name cannot be empty"];
   if (name.startsWith("-")) return ["a branch name cannot start with -"];
-  if (name.startsWith("change/pending-")) return ['names starting "change/pending-" are reserved for Kata'];
+  if (name.startsWith("change/pending-")) return ['names starting "change/pending-" are reserved for the tool driving the build'];
   const problems = [];
   if (name.includes(" ")) problems.push("a branch name cannot contain a space");
   if (/[\x00-\x1f\x7f]/.test(name)) problems.push("a branch name cannot contain a control character");
   if (/[~^:?*[\\]/.test(name)) problems.push("a branch name cannot contain any of ~ ^ : ? * [ \\");
   if (name.includes("..")) problems.push('a branch name cannot contain ".."');
   if (name.includes("@{")) problems.push('a branch name cannot contain "@{"');
+  if (name === "HEAD") problems.push('a branch name cannot be "HEAD"');
   if (name === "@") problems.push('a branch name cannot be "@"');
   const segments = name.split("/");
   if (segments.some((s) => s === "")) problems.push("a branch name cannot contain an empty path segment");
@@ -35122,13 +35123,16 @@ function checkScope(scope) {
   if (!/^[A-Za-z0-9]/.test(scope)) return ["a scope must start with a letter or a digit"];
   if (!/^[A-Za-z0-9._-]*$/.test(scope)) return ['a scope can hold only letters, digits, "-", "_" and "."'];
   if (scope.includes("..")) return ['a scope cannot contain ".."'];
+  if (scope === "HEAD") return ['a scope cannot be "HEAD"'];
+  if (scope.endsWith(".")) return ['a scope cannot end in "."'];
+  if (scope.endsWith(".lock")) return ['a scope cannot end in ".lock"'];
   return [];
 }
 function slugOf(change) {
   return change.replace(/^\d{4}-\d{2}-\d{2}-/, "");
 }
 function fill(pattern, parts) {
-  return pattern.replace(/\{([^{}]*)\}/g, (whole, part) => parts[part] ?? whole);
+  return pattern.replace(/\{([^{}]*)\}/g, (whole, part) => Object.hasOwn(parts, part) ? parts[part] : whole);
 }
 function partsOf(values) {
   const parts = {
@@ -35154,6 +35158,9 @@ function checkNaming(setting) {
   }
   for (const part of unknown) problems.push(`"${part}" is not a known part of a name`);
   if (branch && /\{title\}/.test(branch)) problems.push("the title can only be used in the pull request title");
+  if (branch && !/{(slug|change|scope)}/.test(branch)) {
+    problems.push("the branch pattern needs {slug}, {change} or {scope}, so that each change gets its own branch");
+  }
   if (branch) {
     const sample = fill(branch, { ...partsOf(SAMPLE), title: "title" });
     for (const p of checkBranchName(sample)) problems.push(`branch pattern "${branch}": ${p}`);
