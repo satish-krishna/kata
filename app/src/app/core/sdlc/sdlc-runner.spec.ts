@@ -367,7 +367,9 @@ describe('SdlcRunner.newChange', () => {
     fake.scan = { folder: '/ws', repos: [], master: { kind: 'one', repo: 'commerce-docs', committed: true }, marker: null, marker_error: null };
     fake.finishResults.push(async () => 'deleted');
     await runner.newChange(target, 'commerce', 'flag prices', 'decide', undefined, { workType: 'fix', scope: 'PROJ-123' });
-    expect(lock.runAgent.mock.calls[0][1].task).toContain('The change: flag prices scope:PROJ-123. The person');
+    const task: string = lock.runAgent.mock.calls[0][1].task;
+    expect(task).toContain('The change: flag prices scope:PROJ-123\nThe person');
+    expect(task.charAt(task.indexOf('scope:PROJ-123') + 'scope:PROJ-123'.length)).toMatch(/^\s$/);
   });
 
   it('adds no scope to the task without a naming setting (R2.1)', async () => {

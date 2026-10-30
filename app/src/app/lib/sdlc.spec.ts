@@ -811,7 +811,11 @@ describe("triage and fix run-specs (T8)", () => {
     const intent = specFor("intent", null, { folder: WS, system: "commerce", change: null, idea: "photo upload", scope: "PROJ-123" }, bypass, both);
     expect(intent.task).toBe("Use the ai-sdlc intent skill for system commerce. The idea: photo upload scope:PROJ-123");
     const triage = specFor("triage", null, { ...startCtx, scope: "PROJ-123" }, bypass, both, undefined, restricted);
-    expect(triage.task).toContain("The change: Photos fail to upload scope:PROJ-123. The person running this");
+    expect(triage.task).toContain("The change: Photos fail to upload scope:PROJ-123\nThe person running this");
+    for (const task of [intent.task, triage.task]) {
+      const end = task.indexOf("scope:PROJ-123") + "scope:PROJ-123".length;
+      expect(task.charAt(end)).toMatch(/^(\s|)$/);
+    }
   });
 
   it("the intent and triage task carries no scope without a naming setting (R2.1)", () => {
