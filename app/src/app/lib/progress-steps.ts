@@ -104,6 +104,6 @@ export const progressLabels = {
   readingDiff: (repo: string): string => `Reading the changes in ${repo}`,
   preparingBuild: (): string => 'Checking the repositories before building',
   runningChecks: (repo: string): string => `Running the checks in ${repo}`,
-  pushing: (change: string, repo: string, _branch: string | null = null): string => `Pushing change/${change} in ${repo}`,
+  pushing: (change: string, repo: string, branch: string | null = null): string => `Pushing ${branch ?? `change/${change}`} in ${repo}`,
   openingPr: (repo: string): string => `Opening a pull request in ${repo}`,
 };

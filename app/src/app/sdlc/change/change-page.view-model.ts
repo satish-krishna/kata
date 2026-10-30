@@ -375,11 +375,14 @@ export class ChangePageViewModel {
     if (refreshed === null || p.seenAt === null || p.seenAt >= refreshed) return null;
     return `last seen ${new Date(p.seenAt * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
   }
-  readonly expectedBranch = computed<string | null>(() => null);
+  /** The master repository's branch the change records, as the backend resolves it; null until read or when it cannot be. */
+  private readonly recordedBranch = signal<string | null>(null);
+  /** The branch the change lives on: the recorded one, else change/<change>. */
+  readonly expectedBranch = computed(() => this.recordedBranch() ?? `change/${this.changeName()}`);
   /** The master repository's branch, unless it is the change's own branch, which the pills already imply. */
   readonly branchChip = computed(() => {
     const branch = this.masterBranch();
-    return branch === `change/${this.changeName()}` ? null : branch;
+    return branch === this.expectedBranch() ? null : branch;
   });
   /** What the Changes view in the build panel looks at; null until the workspace and master repository are known. */
   readonly changesContext = computed<ChangesContext | null>(() => {
@@ -766,6 +769,8 @@ export class ChangePageViewModel {
   /** The engineer's word, in the done dialog, that the pull requests open with the high-severity findings unresolved. */
   readonly doneAcknowledged = signal(false);
   private doneRepos: PublishRepo[] = [];
+  /** The branch declaring done found for the change, named in the push progress lines. */
+  private doneBranch: string | null = null;
   /** The results of opening the pull requests, shown in a dialog that is open exactly while this is set. */
   readonly prList = signal<PrResult[] | null>(null);
   /** The pull requests an earlier branch name left open on GitHub, shown with the list. */
@@ -804,7 +809,7 @@ export class ChangePageViewModel {
     let leftBehind: PrEntry[] = [];
     // Each push and each pull request the backend reports becomes the lock's progress line, named by its repository.
     const unlisten = await this.transport.onPublishStep((step) => {
-      if (step.kind === 'pushing') this.progress.begin('pushing', progressLabels.pushing(this.changeName(), step.repo), 'lock');
+      if (step.kind === 'pushing') this.progress.begin('pushing', progressLabels.pushing(this.changeName(), step.repo, this.doneBranch), 'lock');
       else this.progress.begin('opening-prs', progressLabels.openingPr(step.repo), 'lock');
     });
     let out: Awaited<ReturnType<LockStore['runSteps']>>;
@@ -1434,6 +1439,7 @@ export class ChangePageViewModel {
     if (out === 'cancelled' || (out === 'failed' && got.notReady === null)) return;
 
     this.doneRepos = touched;
+    this.doneBranch = branch;
     // Each report asks afresh: an acknowledgement covers the findings it was given for, not the next review's.
     this.doneAcknowledged.set(false);
     this.doneReport.set({
@@ -1689,6 +1695,15 @@ export class ChangePageViewModel {
     }
   }
 
+  /** The branch the master repository records for the change; null when it cannot be read, which leaves change/<change>. */
+  private async readRecordedBranch(folder: string, master: string, system: string, name: string): Promise<string | null> {
+    try {
+      return (await this.transport.sdlcChangeRepos(folder, master, system, name)).find((r) => r.repo === master)?.branch ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   /** The system's naming setting; null when it cannot be read, which the page treats as no declaration. */
   private async readNaming(folder: string, repo: string, system: string): Promise<NamingState | null> {
     try {
@@ -1744,13 +1759,14 @@ export class ChangePageViewModel {
         return;
       }
       const master = masterPath(w.folder, repo);
-      const [branches, own, links, records, catalog, naming] = await Promise.all([
+      const [branches, own, links, records, catalog, naming, recorded] = await Promise.all([
         this.transport.sdlcBranches(master),
         this.readOwnChange(master, system, name),
         this.transport.sdlcRunLinks(),
         this.transport.listRuns(),
         this.transport.catalog(w.folder),
         this.readNaming(w.folder, repo, system),
+        this.readRecordedBranch(w.folder, repo, system, name),
       ]);
       const found = own.info;
       // A home pass still running shows this stage at once, and this page never waits for that pass.
@@ -1774,6 +1790,7 @@ export class ChangePageViewModel {
       this.checksDir.set(checksDir);
       this.scan.set(scan);
       this.branches.set(branches);
+      this.recordedBranch.set(recorded);
       this.naming.set(naming);
       this.links.set(links);
       this.records.set(records);
