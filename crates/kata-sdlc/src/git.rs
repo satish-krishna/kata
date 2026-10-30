@@ -11,6 +11,9 @@ use std::path::Path;
 pub struct GitError {
     pub args: String,
     pub stderr: String,
+    /// A push the remote refused because its branch holds work this one does not (non-fast-forward
+    /// or "fetch first"). False for every other failure.
+    pub rejected_by_remote: bool,
 }
 
 impl GitError {
@@ -24,6 +27,7 @@ impl GitError {
         }
         GitError {
             args: action.to_string(),
+            rejected_by_remote: false,
             stderr,
         }
     }
@@ -112,6 +116,7 @@ impl Repo {
         let repo = &self.inner;
         let fail = |stderr: String| GitError {
             args: ACTION.to_string(),
+            rejected_by_remote: false,
             stderr,
         };
         let git_fail = |e: git2::Error| GitError::from_git2(ACTION, e);
@@ -835,6 +840,7 @@ impl Repo {
             .find_branch(name, git2::BranchType::Local)
             .map_err(|_| GitError {
                 args: action.clone(),
+                rejected_by_remote: false,
                 stderr: format!("fatal: invalid reference: {name}"),
             })?;
         let target = branch
@@ -935,12 +941,14 @@ impl Repo {
                 Ok(_) => {
                     return Err(GitError {
                         args: action,
+                        rejected_by_remote: false,
                         stderr: format!("error: {path} is not a file"),
                     })
                 }
                 Err(e) if e.code() == ErrorCode::NotFound => {
                     return Err(GitError {
                         args: action,
+                        rejected_by_remote: false,
                         stderr: format!(
                             "error: pathspec '{path}' did not match any file(s) known to git"
                         ),
@@ -952,6 +960,7 @@ impl Repo {
         if let Some(reason) = kata_core::hooks::needs_external(repo, paths) {
             return Err(GitError {
                 args: action,
+                rejected_by_remote: false,
                 stderr: reason,
             });
         }
@@ -986,6 +995,7 @@ impl Repo {
             .workdir()
             .ok_or_else(|| GitError {
                 args: action.clone(),
+                rejected_by_remote: false,
                 stderr: "this repository has no working folder".to_string(),
             })?
             .to_path_buf();
@@ -995,6 +1005,7 @@ impl Repo {
             if index.get_path(Path::new(path), 0).is_none() {
                 return Err(GitError {
                     args: action,
+                    rejected_by_remote: false,
                     stderr: format!("fatal: pathspec '{path}' did not match any files"),
                 });
             }
@@ -1008,6 +1019,7 @@ impl Repo {
                 Err(e) => {
                     return Err(GitError {
                         args: action,
+                        rejected_by_remote: false,
                         stderr: format!("fatal: git rm: '{path}': {e}"),
                     })
                 }
@@ -1063,6 +1075,7 @@ impl Repo {
         if let Some(reason) = self.needs_external_for(Some(target)) {
             return Err(GitError {
                 args: action.to_string(),
+                rejected_by_remote: false,
                 stderr: reason,
             });
         }
@@ -1094,6 +1107,7 @@ impl Repo {
             }
             return Err(GitError {
                 args: action.to_string(),
+                rejected_by_remote: false,
                 stderr: self.overwrite_refusal(&conflicts),
             });
         }
@@ -1568,6 +1582,7 @@ impl Repo {
         let action = format!("push -u {remote} {branch}");
         let fail = |stderr: String| GitError {
             args: action.clone(),
+            rejected_by_remote: false,
             stderr,
         };
         let git_fail = |e: git2::Error| GitError::from_git2(&action, e);

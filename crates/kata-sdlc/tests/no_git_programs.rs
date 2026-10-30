@@ -7,6 +7,7 @@ use kata_sdlc::build::BuildAction;
 use kata_sdlc::decide::{self, DecideOutcome, Decision};
 use kata_sdlc::diff::{self, Part};
 use kata_sdlc::github::{ApiError, Credential, GitHub, GitHubHosts, Pull, PullState};
+use kata_sdlc::plugin::Readiness;
 use kata_sdlc::publish::{self, PrOutcome, Recorder};
 use kata_sdlc::snapshot::{self, BuildScope};
 use kata_sdlc::start::{self, PrepareOutcome};
@@ -344,6 +345,9 @@ impl GitHub for Hub {
             merged: true,
         })
     }
+    fn branch_tip(&self, _: &str, _: &str, _: &str) -> Result<Option<String>, ApiError> {
+        Ok(None)
+    }
 }
 
 struct Hosts(Hub);
@@ -481,13 +485,15 @@ fn every_flow(branch: &str, record: bool) {
     publish::origins(&hosts, &touched).unwrap();
     let results = publish::publish(
         &hosts,
+        &Readiness::Missing,
         "m",
         SYS,
         CHG,
         &touched,
         &mut Recorder::stored(WS, SYS, CHG),
         &mut |_| {},
-    );
+    )
+    .results;
     for r in &results {
         assert!(matches!(r.outcome, PrOutcome::Opened { .. }), "{results:?}");
     }

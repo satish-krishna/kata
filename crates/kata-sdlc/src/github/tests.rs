@@ -1,4 +1,5 @@
 use super::*;
+use crate::plugin::Readiness;
 use crate::publish::{self, NotReady, PrOutcome, PublishRepo};
 use crate::testutil::{repo, run};
 use std::collections::HashMap;
@@ -480,13 +481,15 @@ fn no_credential_in_errors_logs_or_record() {
     let h = hosts(&src, &server.root());
     let results = publish::publish(
         &h,
+        &Readiness::Missing,
         "app",
         "s",
         "2026-10-19-c",
         &repos,
         &mut publish::Recorder::unsaved(),
         &mut |_| {},
-    );
+    )
+    .results;
     assert!(
         matches!(results[0].outcome, PrOutcome::Failed { .. }),
         "{results:?}"
@@ -530,4 +533,20 @@ fn credential_blobs_decode_as_utf16_or_utf8() {
     assert_eq!(decode_blob(&utf16).as_deref(), Some("gho_abc"));
     assert_eq!(decode_blob(b"gho_abc\n").as_deref(), Some("gho_abc"));
     assert_eq!(decode_blob(b""), None);
+}
+
+#[test]
+fn branch_tip_reads_the_commit_and_treats_404_as_absent() {
+    let server = serve(|r| match r.path.as_str() {
+        "/repos/o/app/branches/feat/PROJ-123-reset" => resp(200, r#"{"commit":{"sha":"abc123"}}"#),
+        "/repos/o/app/branches/boom" => resp(500, r#"{"message":"boom"}"#),
+        _ => resp(404, r#"{"message":"Branch not found"}"#),
+    });
+    let api = Api::with_root(&server.root(), Credential::new("github.com", TOKEN));
+    assert_eq!(
+        api.branch_tip("o", "app", "feat/PROJ-123-reset").unwrap(),
+        Some("abc123".to_string())
+    );
+    assert_eq!(api.branch_tip("o", "app", "gone").unwrap(), None);
+    assert!(api.branch_tip("o", "app", "boom").is_err());
 }

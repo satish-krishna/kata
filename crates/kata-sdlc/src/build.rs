@@ -143,6 +143,7 @@ pub(crate) fn is_unreadable(error: &GitError) -> bool {
 pub(crate) fn unreadable(error: FormatError) -> GitError {
     GitError {
         args: FORMAT_PROGRAM.into(),
+        rejected_by_remote: false,
         stderr: error.to_string(),
     }
 }
@@ -178,6 +179,7 @@ pub(crate) fn put(path: &Path, text: &str) -> Result<(), GitError> {
     };
     write().map_err(|e| GitError {
         args: path.display().to_string(),
+        rejected_by_remote: false,
         stderr: e.to_string(),
     })
 }
@@ -254,6 +256,7 @@ fn read_committed(
     let plan_rel = format!("{}/plan.md", change_dir(system, change));
     let plan = committed_file(&repo, &plan_rel)?.ok_or_else(|| GitError {
         args: format!("show HEAD:{plan_rel}"),
+        rejected_by_remote: false,
         stderr: "path does not exist in HEAD".into(),
     })?;
     let listing = repo.tree_names(&dir)?;
@@ -268,6 +271,7 @@ fn read_committed(
         .map(|p| {
             let text = committed_file(&repo, p)?.ok_or_else(|| GitError {
                 args: format!("show HEAD:{p}"),
+                rejected_by_remote: false,
                 stderr: "path does not exist in HEAD".into(),
             })?;
             Ok((p, text))
@@ -630,6 +634,7 @@ pub fn unsaved_rows(
             if !kept {
                 return Err(GitError {
                     args: rel,
+                    rejected_by_remote: false,
                     stderr: "an uncommitted change to a build log other than added entries".into(),
                 });
             }

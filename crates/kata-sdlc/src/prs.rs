@@ -355,6 +355,7 @@ mod tests {
     use super::*;
     use crate::git;
     use crate::github::FakeGitHub;
+    use crate::plugin::Readiness;
     use crate::publish::tests::{all, fixture, on_github};
     use crate::publish::{publish, PrOutcome, Recorder};
     use crate::store;
@@ -717,13 +718,15 @@ mod tests {
         );
         let results = publish(
             &gh,
+            &Readiness::Missing,
             "m",
             "s",
             CHANGE,
             &repos,
             &mut Recorder::stored("w1", "s", CHANGE),
             &mut |_| {},
-        );
+        )
+        .results;
         assert!(matches!(results[1].outcome, PrOutcome::Failed { .. }));
         let rec = saved();
         let names: Vec<&str> = rec.repos.iter().map(|e| e.repo.as_str()).collect();
@@ -747,13 +750,15 @@ mod tests {
         let gh = FakeGitHub::default().open_pull("app", 1).open_pull("m", 2);
         publish(
             &gh,
+            &Readiness::Missing,
             "m",
             "s",
             CHANGE,
             &repos,
             &mut Recorder::stored("w1", "s", CHANGE),
             &mut |_| {},
-        );
+        )
+        .results;
         assert_eq!(gh.creates(), ["api"]);
         let rec = saved();
         let names: Vec<&str> = rec.repos.iter().map(|e| e.repo.as_str()).collect();
