@@ -19,6 +19,9 @@ export class BuildRefusalDialog {
   readonly reason = input.required<string | null>();
   /** What the check found in the plan or a build log, one line each; empty when the reason says it all. */
   readonly problems = input<Problem[]>([]);
+  /** The branch that holds other work, when that is why the build did not start. */
+  readonly taken = input<{ repo: string; branch: string } | null>(null);
+  readonly rename = output<void>();
   readonly close = output<void>();
 
   /** Close and Escape both close the overlay from inside; surface that as close. */

@@ -7,6 +7,7 @@ import type { Departure } from '@bindings/Departure';
 import type { Offender } from '@bindings/Offender';
 import type { ParsedReviewSection } from '@bindings/ParsedReviewSection';
 import type { RepoChecks } from '@bindings/RepoChecks';
+import type { RemoteClash } from '@bindings/RemoteClash';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
@@ -31,6 +32,10 @@ export type DoneReport = {
   /** Why the repositories are not ready for pull requests; null when they are. */
   notReady: string | null;
   repos: DoneRepo[];
+  /** The change's branch as the repositories have it; null when it could not be read. */
+  branch: string | null;
+  /** The repositories whose GitHub branch holds work this machine's does not; confirming waits until none is listed. */
+  clashes: RemoteClash[];
   offenders: Offender[];
   departures: Departure[];
   review: DoneReview;

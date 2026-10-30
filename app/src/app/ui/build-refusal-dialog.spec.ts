@@ -54,3 +54,24 @@ describe('BuildRefusalDialog', () => {
     expect(closed).toBe(1);
   });
 });
+
+describe('BuildRefusalDialog, a branch that holds other work', () => {
+  const taken = { repo: 'kata', branch: 'feat/PROJ-123-reset' };
+
+  it('a branch-taken refusal offers Pick a new branch name (R9.1)', async () => {
+    const { fixture } = await render(BuildRefusalDialog, { reason: 'The branch feat/PROJ-123-reset in kata holds other work', taken });
+    const text = alert()!.textContent!.replace(/\s+/g, ' ');
+    expect(text).toContain('feat/PROJ-123-reset');
+    expect(text).toContain('kata');
+    expect(text).toContain('Nothing was created or switched in any repository.');
+    let picked = 0;
+    fixture.componentInstance.rename.subscribe(() => picked++);
+    button('Pick a new branch name').click();
+    expect(picked).toBe(1);
+  });
+
+  it('offers no new name for any other refusal', async () => {
+    await render(BuildRefusalDialog, { reason: 'commerce-core has uncommitted files: a.txt' });
+    expect(Array.from(alert()!.querySelectorAll('button')).map((b) => b.textContent!.trim())).toEqual(['Close']);
+  });
+});

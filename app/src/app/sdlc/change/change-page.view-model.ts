@@ -20,6 +20,7 @@ import type { Offender } from '@bindings/Offender';
 import type { PrResult } from '@bindings/PrResult';
 import type { DoneView } from '@bindings/DoneView';
 import type { PrLink } from '@bindings/PrLink';
+import type { PrEntry } from '@bindings/PrEntry';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { BuildAction } from '@bindings/BuildAction';
@@ -738,6 +739,8 @@ export class ChangePageViewModel {
   private doneRepos: PublishRepo[] = [];
   /** The results of opening the pull requests, shown in a dialog that is open exactly while this is set. */
   readonly prList = signal<PrResult[] | null>(null);
+  /** The pull requests an earlier branch name left open on GitHub, shown with the list. */
+  readonly prLeftBehind = signal<PrEntry[]>([]);
 
   /** The operator confirmed: open the pull requests. */
   async confirmDone(): Promise<void> {
@@ -806,6 +809,11 @@ export class ChangePageViewModel {
 
   cancelDone(): void {
     this.doneReport.set(null);
+  }
+
+  /** Pick a new name for the change's branch from the done dialog; declaring done starts again after a rename. */
+  async renameFromDone(_branch: string): Promise<void> {
+    return Promise.resolve();
   }
 
   // --- the lock: Kata's own checks in the overlay, an agent run as the session view
@@ -1362,6 +1370,8 @@ export class ChangePageViewModel {
     this.doneReport.set({
       account: got.account,
       notReady: got.notReady,
+      branch: null,
+      clashes: [],
       repos: touched.map((r) => ({
         repo: r.repo,
         base: r.base,

@@ -69,6 +69,8 @@ export type NameRequest = {
   /** Why the last attempt was refused, or why no name could be suggested; null otherwise. */
   error: string | null;
   busy: boolean;
+  /** The confirmation renames a branch that already has a name: no type to pick, and the suggestion is the current name. */
+  rename?: boolean;
 };
 
 /** What the confirmation needs to name one change's pending branch. `workType` is the start pick, null when there was none; `track` is the change's own. */

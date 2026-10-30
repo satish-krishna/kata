@@ -371,7 +371,7 @@ export class BuildPageViewModel {
   });
 
   /** Why Continue did not go on, with what the check found; the refusal dialog is open exactly while this is set. */
-  readonly refusal = signal<{ reason: string; problems: Problem[] } | null>(null);
+  readonly refusal = signal<{ reason: string; problems: Problem[]; taken?: { repo: string; branch: string } } | null>(null);
 
   readonly tab = signal<BuildTab>('activity');
   readonly announcement = signal('');

@@ -358,6 +358,27 @@ describe('the build page starts, stops and continues the same runs as the build 
     expect(vm.refusal()).toBeNull();
   });
 
+  it('Continue refused because the change branch holds other work names the repository and branch, and offers a new name (R9.1)', async () => {
+    const { vm, transport, runner } = setup();
+    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
+      link.onRun?.(`fake-${target.repo}`);
+      return { exit: 124, error: null };
+    });
+    await vm.start(await handoffFor(transport), CTX);
+    await advance(500);
+    vm.select('commerce-core');
+    prepare.mockResolvedValueOnce({ kind: 'branchTaken', repo: 'kata', branch: 'feat/PROJ-123-reset' });
+    await vm.continueRun();
+    await advance(500);
+    expect(vm.refusal()).toEqual({
+      reason: 'The branch feat/PROJ-123-reset in kata holds other work',
+      problems: [],
+      taken: { repo: 'kata', branch: 'feat/PROJ-123-reset' },
+    });
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
   it('Continue after the branches were settled asks before going on top of leftovers, and starts nothing until confirmed (R6.4)', async () => {
     const { vm, transport, runner } = setup();
     const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');

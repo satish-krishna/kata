@@ -2,10 +2,12 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import { render } from '../../../testing/render';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { PrEntry } from '@bindings/PrEntry';
 import type { PrLink } from '@bindings/PrLink';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject, of } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
+import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { ProgressStore } from '../../core/progress/progress.store';
 import { KataTransport } from '../../core/transport/kata-transport';
@@ -579,5 +581,82 @@ describe('lasting links after a publish or a round', () => {
     expect(vm.pullLinks().map((l) => l.repo)).toEqual(['commerce-core', 'customer-portal']);
     expect(vm.linksNote()).toBe('from the earlier declaration');
     expect(vm.actions()).toContain('declare-done');
+  });
+});
+
+describe('a branch name that is taken on GitHub', () => {
+  const CLASH = { repo: 'commerce-core', branch: 'feat/PROJ-123-reset' };
+  const NEW_NAME = 'feat/PROJ-123-password-reset';
+  const stepLabels = (steps: { mock: { calls: unknown[][] } }) =>
+    (steps.mock.calls.find((c) => c[0] === 'Declaring done')![1] as { label: string }[]).map((s) => s.label);
+
+  it('a GitHub clash holds confirming until renamed (R10.1)', async () => {
+    const { vm, transport, steps } = await finished();
+    const publish = vi.spyOn(transport, 'sdlcPublish');
+    const clashes = vi.spyOn(transport, 'sdlcRemoteClashes').mockResolvedValue([CLASH]);
+    await vm.act('declare-done');
+    const labels = stepLabels(steps);
+    expect(labels.indexOf('Branch is free on GitHub')).toBe(labels.indexOf('Origins are GitHub repositories') + 1);
+    expect(clashes).toHaveBeenCalledTimes(1);
+    expect(vm.doneReport()!.clashes).toEqual([CLASH]);
+    expect(canConfirm(vm.doneReport()!)).toBe(false);
+    await vm.confirmDone();
+    expect(publish).not.toHaveBeenCalled();
+    expect(vm.doneReport()).not.toBeNull();
+  });
+
+  it('with no clash the report lists none and the branch the repositories have (R10.1)', async () => {
+    const { vm } = await finished();
+    await vm.act('declare-done');
+    expect(vm.doneReport()!.clashes).toEqual([]);
+    expect(vm.doneReport()!.branch).toBe(`change/${BUILD}`);
+  });
+
+  it('after a rename the readiness runs again and confirming is offered, the review still current (R10.3)', async () => {
+    const { vm, transport } = await finished();
+    vi.spyOn(transport, 'sdlcRemoteClashes').mockResolvedValueOnce([CLASH]).mockResolvedValue([]);
+    const rename = vi.spyOn(transport, 'sdlcRenameBranch');
+    const runs = vi.spyOn(transport, 'sdlcRunChecks');
+    await vm.act('declare-done');
+    expect(canConfirm(vm.doneReport()!)).toBe(false);
+    const checksBefore = runs.mock.calls.length;
+    const renamed = vm.renameFromDone(CLASH.branch);
+    await vi.waitFor(() => expect(TestBed.inject(SdlcRunner).nameRequest()).not.toBeNull());
+    expect(TestBed.inject(SdlcRunner).nameRequest()!.rename).toBe(true);
+    await TestBed.inject(SdlcRunner).confirmName(NEW_NAME);
+    await renamed;
+    expect(rename).toHaveBeenCalledWith(vm.current()!.folder, vm.current()!.id, 'commerce-docs', 'commerce', BUILD, NEW_NAME);
+    expect(runs.mock.calls.length).toBeGreaterThan(checksBefore);
+    expect(vm.doneReport()!.clashes).toEqual([]);
+    expect(canConfirm(vm.doneReport()!)).toBe(true);
+  });
+
+  it('closing the rename dialog leaves the report as it was, held (R10.1)', async () => {
+    const { vm, transport } = await finished();
+    vi.spyOn(transport, 'sdlcRemoteClashes').mockResolvedValue([CLASH]);
+    await vm.act('declare-done');
+    const asked = vm.renameFromDone(CLASH.branch);
+    await vi.waitFor(() => expect(TestBed.inject(SdlcRunner).nameRequest()).not.toBeNull());
+    TestBed.inject(SdlcRunner).closeName();
+    await asked;
+    expect(vm.doneReport()!.clashes).toEqual([CLASH]);
+  });
+
+  it('a Clash publish result keeps what was pushed and lists what an earlier name left behind (R10.2, R10.4)', async () => {
+    const { vm, transport } = await finished();
+    const old: PrEntry = { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/3', number: 3, branch: 'feat/PROJ-123-reset', pushedHead: 'abc', state: 'open', seenAt: 1 };
+    vi.spyOn(transport, 'sdlcPublish').mockResolvedValue({
+      leftBehind: [old],
+      results: [
+        { repo: 'commerce-docs', outcome: { kind: 'opened', url: 'https://github.com/acme/commerce-docs/pull/9' } },
+        { repo: 'commerce-core', outcome: { kind: 'clash', branch: 'feat/PROJ-123-reset' } },
+      ],
+    });
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    expect(vm.prList()!.map((r) => r.outcome.kind)).toEqual(['opened', 'clash']);
+    expect(vm.prLeftBehind()).toEqual([old]);
+    vm.closePrList();
+    expect(vm.prLeftBehind()).toEqual([]);
   });
 });
