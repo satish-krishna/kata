@@ -73,7 +73,7 @@
                 <span class="k-mono">{{ fold.range }}</span>
                 <span>{{ fold.done }} done</span>
                 @if (fold.departed > 0) {
-                  <span class="k-bp__departed">{{ fold.departed }} departed</span>
+                  <span class="k-bp__departed k-status k-status--warning"><span class="k-status__dot" aria-hidden="true"></span>{{ fold.departed }} departed</span>
                 }
               </button>
             }
@@ -88,7 +88,7 @@
                     <span class="k-bp__task-name">{{ r.line.name }}</span>
                     <span [class]="'k-status k-status--' + r.line.status.tone"><span class="k-status__dot"></span><span class="k-bp__status-label">{{ r.line.status.label }}</span></span>
                     @if (r.line.departure !== null) {
-                      <span class="k-bp__departed" data-departure>departed</span>
+                      <span class="k-bp__departed k-status k-status--warning" data-departure><span class="k-status__dot" aria-hidden="true"></span>departed</span>
                     }
                     @if (r.showDeparture && r.line.departure !== null) {
                       <span class="k-mono k-bp__departure" data-departure-text>{{ r.line.departure }}</span>
