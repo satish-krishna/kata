@@ -197,8 +197,10 @@ pub fn prepare(
     change: &str,
     action: BuildAction,
     continue_with_leftovers: bool,
-    pending: Option<&str>,
+    pending: &[String],
 ) -> Result<PrepareOutcome, BuildError> {
+    // Compile-only shim: the first repository stands for the list until the next commit.
+    let first = pending.first().map(String::as_str);
     if !is_safe_system(master_repo) || !is_safe_system(system) || !is_change_name(change) {
         return refuse(format!(
             "invalid master repository, system or change name: {master_repo}, {system}, {change}"
@@ -221,6 +223,7 @@ pub fn prepare(
 
     let (parts, status) =
         participants::model(plugin, folder, master_repo, system, change, pending)?;
+    let pending = first;
     // A log is a leftover to save only when it is new or only gained rows; any other edit to one is
     // an uncommitted file like any other.
     let saved: Vec<String> = build::unsaved_rows(plugin, &master, system, change)
@@ -488,11 +491,8 @@ mod tests {
         )
     }
 
-    fn prep_pending(
-        fx: &Fx,
-        go: bool,
-        pending: Option<&str>,
-    ) -> Result<PrepareOutcome, BuildError> {
+    fn prep_pending(fx: &Fx, go: bool, pending: &[&str]) -> Result<PrepareOutcome, BuildError> {
+        let pending: Vec<String> = pending.iter().map(|p| p.to_string()).collect();
         prepare(
             testutil::plugin_dir(),
             &fx.folder,
@@ -501,7 +501,7 @@ mod tests {
             C,
             BuildAction::Start,
             go,
-            pending,
+            &pending,
         )
     }
 
@@ -514,7 +514,7 @@ mod tests {
             C,
             BuildAction::Start,
             go,
-            None,
+            &[],
         )
     }
 
@@ -827,12 +827,12 @@ mod tests {
         testutil::write(&fx.master, "src/half.rs", "fn half() {}\n");
         let before = state(&fx);
         // A fresh start, and a run in another repository, still refuse a dirty master (R3.2).
-        for pending in [None, Some("app")] {
+        for pending in [&[][..], &["app"][..]] {
             let msg = refusal(prep_pending(&fx, false, pending));
             assert!(msg.contains("src/half.rs"), "{msg}");
         }
         // A run in the master itself continues on top of what its previous run left, like any repository.
-        match prep_pending(&fx, false, Some("m")).unwrap() {
+        match prep_pending(&fx, false, &["m"]).unwrap() {
             PrepareOutcome::NeedsConfirm { leftovers } => assert_eq!(
                 leftovers,
                 [RepoFiles {
@@ -843,7 +843,7 @@ mod tests {
             other => panic!("expected NeedsConfirm, got {other:?}"),
         }
         assert_eq!(state(&fx), before);
-        let start = ready(prep_pending(&fx, true, Some("m")));
+        let start = ready(prep_pending(&fx, true, &["m"]));
         assert_eq!(start.master.repo, "m");
         assert!(fx.master.join("src/half.rs").is_file());
         assert_eq!(branch_of(&fx.repo("api")), format!("change/{C}"));
@@ -863,7 +863,7 @@ mod tests {
         testutil::commit_msg(&api, "own.txt", "x\n", OWN);
         testutil::write(&api, "src/half.rs", "fn half() {}\n");
         let before = state(&fx);
-        match prep_pending(&fx, false, Some("api")).unwrap() {
+        match prep_pending(&fx, false, &["api"]).unwrap() {
             PrepareOutcome::NeedsConfirm { leftovers } => assert_eq!(
                 leftovers,
                 [RepoFiles {
@@ -876,10 +876,128 @@ mod tests {
         assert_eq!(state(&fx), before);
         // Without a round on it a finished repository is left alone, edits and all.
         let names = |s: &BuildStart| s.repos.iter().map(|r| r.repo.clone()).collect::<Vec<_>>();
-        assert_eq!(names(&ready(prep_pending(&fx, false, None))), ["app"]);
-        let start = ready(prep_pending(&fx, true, Some("api")));
+        assert_eq!(names(&ready(prep_pending(&fx, false, &[]))), ["app"]);
+        let start = ready(prep_pending(&fx, true, &["api"]));
         assert_eq!(names(&start), ["app", "api"]);
         assert!(api.join("src/half.rs").is_file());
+    }
+
+    /// A fixture whose repositories "app" and "api" have all their tasks finished.
+    fn both_finished() -> Fx {
+        let fx = fixture();
+        for (repo, task) in [("app", "T1"), ("api", "T2")] {
+            testutil::commit_file(
+                &fx.master,
+                &format!("intent/{S}/{C}/build/{repo}.md"),
+                &format!(
+                    "# Build log: {repo}
+
+| Task | Commits | Departure |
+|---|---|---|
+| {task} | `abc1234` | none |
+"
+                ),
+                "log",
+            );
+        }
+        fx
+    }
+
+    /// Put `repo` on the change branch holding only this change's work.
+    fn on_own_branch(fx: &Fx, repo: &str) {
+        let path = fx.repo(repo);
+        testutil::checkout(&path, &format!("change/{C}"), true);
+        testutil::commit_msg(
+            &path, "own.txt", "x
+", OWN,
+        );
+    }
+
+    #[test]
+    fn prepare_reports_the_leftovers_of_every_round_repo_in_one_confirmation_and_touches_nothing() {
+        let fx = both_finished();
+        for repo in ["app", "api"] {
+            on_own_branch(&fx, repo);
+            testutil::write(
+                &fx.repo(repo),
+                "src/half.rs",
+                "fn half() {}
+",
+            );
+        }
+        let before = state(&fx);
+        match prep_pending(&fx, false, &["app", "api"]).unwrap() {
+            PrepareOutcome::NeedsConfirm { leftovers } => assert_eq!(
+                leftovers,
+                [
+                    RepoFiles {
+                        repo: "app".into(),
+                        files: vec!["src/half.rs".into()]
+                    },
+                    RepoFiles {
+                        repo: "api".into(),
+                        files: vec!["src/half.rs".into()]
+                    }
+                ]
+            ),
+            other => panic!("expected NeedsConfirm, got {other:?}"),
+        }
+        assert_eq!(state(&fx), before);
+        assert_eq!(branch_of(&fx.master), format!("change/{C}"));
+    }
+
+    #[test]
+    fn prepare_touches_nothing_when_a_later_round_repo_s_branch_is_taken() {
+        let fx = both_finished();
+        let api = fx.repo("api");
+        testutil::checkout(&api, &format!("change/{C}"), true);
+        testutil::commit_file(
+            &api,
+            "theirs.txt",
+            "x
+",
+            "wip: my own thing",
+        );
+        testutil::checkout(&api, "main", false);
+        let before = state(&fx);
+        assert_eq!(
+            taken(prep_pending(&fx, false, &["app", "api"])),
+            ("api".to_string(), format!("change/{C}"))
+        );
+        assert_eq!(state(&fx), before);
+        assert!(!has_branch(&fx.repo("app")));
+    }
+
+    #[test]
+    fn prepare_touches_nothing_when_a_later_round_repo_is_refused() {
+        let fx = both_finished();
+        testutil::checkout(&fx.repo("api"), "other", true);
+        let before = state(&fx);
+        assert_eq!(
+            refusal(prep_pending(&fx, false, &["app", "api"])),
+            "api is on branch other; switch it to main first"
+        );
+        assert_eq!(state(&fx), before);
+        assert!(!has_branch(&fx.repo("app")));
+    }
+
+    #[test]
+    fn prepare_starts_every_round_repo_once_when_the_leftovers_are_continued() {
+        let fx = both_finished();
+        for repo in ["app", "api"] {
+            on_own_branch(&fx, repo);
+            testutil::write(
+                &fx.repo(repo),
+                "src/half.rs",
+                "fn half() {}
+",
+            );
+        }
+        let start = ready(prep_pending(&fx, true, &["app", "api", "app"]));
+        let names: Vec<&str> = start.repos.iter().map(|r| r.repo.as_str()).collect();
+        assert_eq!(names, ["app", "api"]);
+        assert!(fx.repo("app").join("src/half.rs").is_file());
+        assert!(fx.repo("api").join("src/half.rs").is_file());
     }
 
     fn part(fx: &Fx, repo: &str, files: &[&str], rows: &[&str]) -> Participant {
@@ -901,7 +1019,7 @@ mod tests {
         testutil::write(&fx.master, &row("api"), text);
         testutil::write(&fx.master, &row("m"), text);
         testutil::write(&fx.repo("app"), "a.rs", "x");
-        let got = participants(testutil::plugin_dir(), &fx.folder, "m", S, C, None).unwrap();
+        let got = participants(testutil::plugin_dir(), &fx.folder, "m", S, C, &[]).unwrap();
         // A build log row is owned by its repository, never by the master that happens to hold the file.
         assert_eq!(
             got,
@@ -923,7 +1041,7 @@ mod tests {
         testutil::write(&fx.master, "stray.txt", "x");
         testutil::write(&fx.master, &other, text);
         testutil::write(&fx.master, &elsewhere, text);
-        let got = participants(testutil::plugin_dir(), &fx.folder, "m", S, C, None).unwrap();
+        let got = participants(testutil::plugin_dir(), &fx.folder, "m", S, C, &[]).unwrap();
         // Only this change's rows are build log data: another change's row is an ordinary file of
         // the master, whichever repository its name matches.
         let mut files = vec![other.as_str(), elsewhere.as_str(), "stray.txt"];
@@ -943,12 +1061,20 @@ mod tests {
         let fx = fixture_with(&[("T1", "app")], &["app", "api"], &["app", "api"]);
         let names = |p: Vec<Participant>| p.into_iter().map(|p| p.repo).collect::<Vec<_>>();
         assert_eq!(
-            names(participants(testutil::plugin_dir(), &fx.folder, "m", S, C, None).unwrap()),
+            names(participants(testutil::plugin_dir(), &fx.folder, "m", S, C, &[]).unwrap()),
             ["m", "app"]
         );
         assert_eq!(
             names(
-                participants(testutil::plugin_dir(), &fx.folder, "m", S, C, Some("api")).unwrap()
+                participants(
+                    testutil::plugin_dir(),
+                    &fx.folder,
+                    "m",
+                    S,
+                    C,
+                    &["api".to_string()]
+                )
+                .unwrap()
             ),
             ["m", "app", "api"]
         );
@@ -958,9 +1084,24 @@ mod tests {
             "m",
             S,
             C,
-            Some("nowhere"),
+            &["nowhere".to_string()],
         );
         assert!(matches!(out, Err(BuildError::Refused(_))), "{out:?}");
+    }
+
+    #[test]
+    fn participants_list_every_round_repo_outside_the_plan_in_order_once_each() {
+        let fx = fixture_with(
+            &[("T1", "app")],
+            &["app", "api", "web"],
+            &["app", "api", "web"],
+        );
+        let names = |p: Vec<Participant>| p.into_iter().map(|p| p.repo).collect::<Vec<_>>();
+        let pending: Vec<String> = ["web", "api", "web"].map(String::from).to_vec();
+        assert_eq!(
+            names(participants(testutil::plugin_dir(), &fx.folder, "m", S, C, &pending).unwrap()),
+            ["m", "app", "web", "api"]
+        );
     }
 
     #[test]
@@ -1008,10 +1149,17 @@ mod tests {
         let fx = finished_api_missing();
         let names = |p: Vec<Participant>| p.into_iter().map(|p| p.repo).collect::<Vec<_>>();
         assert_eq!(
-            names(participants(testutil::plugin_dir(), &fx.folder, "m", S, C, None).unwrap()),
+            names(participants(testutil::plugin_dir(), &fx.folder, "m", S, C, &[]).unwrap()),
             ["m", "app"]
         );
-        let out = participants(testutil::plugin_dir(), &fx.folder, "m", S, C, Some("api"));
+        let out = participants(
+            testutil::plugin_dir(),
+            &fx.folder,
+            "m",
+            S,
+            C,
+            &["api".to_string()],
+        );
         let Err(BuildError::Refused(msg)) = out else {
             panic!("a round aimed at a repository that is not checked out must be refused: {out:?}")
         };
@@ -1021,10 +1169,10 @@ mod tests {
     #[test]
     fn prepare_refuses_a_round_aimed_at_a_finished_repo_that_is_not_checked_out_r2_4() {
         let fx = finished_api_missing();
-        let start = ready(prep_pending(&fx, false, None));
+        let start = ready(prep_pending(&fx, false, &[]));
         let names: Vec<&str> = start.repos.iter().map(|r| r.repo.as_str()).collect();
         assert_eq!(names, ["app"]);
-        let msg = refusal(prep_pending(&fx, false, Some("api")));
+        let msg = refusal(prep_pending(&fx, false, &["api"]));
         assert!(msg.contains("api"), "{msg}");
     }
 
@@ -1073,7 +1221,7 @@ mod tests {
                 C,
                 action,
                 false,
-                None,
+                &[],
             )
             .unwrap();
             match out {
@@ -1104,7 +1252,7 @@ mod tests {
                 C,
                 BuildAction::Start,
                 false,
-                None
+                &[]
             ),
             Err(BuildError::Refused(_))
         ));
@@ -1117,7 +1265,7 @@ mod tests {
                 C,
                 BuildAction::Start,
                 false,
-                None
+                &[]
             ),
             Err(BuildError::Refused(_))
         ));

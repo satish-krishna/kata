@@ -36,7 +36,7 @@ pub fn participants(
     master_repo: &str,
     system: &str,
     change: &str,
-    pending: Option<&str>,
+    pending: &[String],
 ) -> Result<Vec<Participant>, BuildError> {
     Ok(model(plugin, folder, master_repo, system, change, pending)?.0)
 }
@@ -53,7 +53,7 @@ pub fn missing_change_branches(
 ) -> Result<Vec<String>, BuildError> {
     let branch = recorded_branch(&folder.join(master_repo), system, change)?;
     Ok(
-        participants(plugin, folder, master_repo, system, change, None)?
+        participants(plugin, folder, master_repo, system, change, &[])?
             .into_iter()
             .filter(|p| !p.master && !branch_exists(Path::new(&p.path), &branch))
             .map(|p| p.repo)
@@ -68,8 +68,10 @@ pub(crate) fn model(
     master_repo: &str,
     system: &str,
     change: &str,
-    pending: Option<&str>,
+    pending: &[String],
 ) -> Result<(Vec<Participant>, BuildStatus), BuildError> {
+    // Compile-only shim: the first repository stands for the list until the next commit.
+    let pending = pending.first().map(String::as_str);
     if !is_safe_system(master_repo) || !is_safe_system(system) || !is_change_name(change) {
         return refuse(format!(
             "invalid master repository, system or change name: {master_repo}, {system}, {change}"
