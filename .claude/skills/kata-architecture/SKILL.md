@@ -35,7 +35,7 @@ An operation that touches several repositories (preparing a build, creating bran
 
 ## 5. Existing logic in TypeScript
 
-Some decisions predate this policy and still live in TypeScript: the build driver (`app/src/app/sdlc/build/build-driver.ts`) and helpers under `app/src/app/lib/` such as the build permission rules in `sdlc.ts`. They are debt, recorded here so nobody copies them as precedent. A change may not add a new decision to them. Moving one is a change of its own, unless the change at hand already rewrites that decision. The build driver moves to Rust with the per-change worktree change.
+Some decisions predate this policy and still live in TypeScript: the build driver (`app/src/app/sdlc/build/build-driver.ts`) and helpers under `app/src/app/lib/` such as the build permission rules in `sdlc.ts`. The build tab findings and rounds change (2026-10-30) added more before this policy existed: the round offer, default picks, round plan and finding keys in `app/src/app/lib/build-round.ts`, and the review rows' severity order, counts and low split in `reviewRows` (`app/src/app/lib/build-task-list.ts`). They are debt, recorded here so nobody copies them as precedent. A change may not add a new decision to them. Moving one is a change of its own, unless the change at hand already rewrites that decision. The build driver and the decisions above move to Rust with the per-change worktree change.
 
 ## Checking a document or a diff
 
