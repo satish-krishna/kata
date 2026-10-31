@@ -425,7 +425,7 @@ fn every_flow(branch: &str, record: bool) {
         CHG,
         BuildAction::Continue,
         false,
-        None,
+        &[],
     )
     .unwrap();
     let PrepareOutcome::Ready { start: begun } = begun else {

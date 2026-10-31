@@ -3,11 +3,12 @@ import { ChangeDetectorRef, Component, inject, input, signal } from '@angular/co
 import { TestBed } from '@angular/core/testing';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { Pick } from '../../lib/build-sessions';
+import { filterCounts, reviewRows, taskList, type TaskFilter, type TaskLine } from '../../lib/build-task-list';
 import type { BuildStage } from '../../lib/build-stage';
 import { defaultArrangement, type AreaId, type LayoutMode } from '../../lib/build-layout';
 import type { LayoutStage } from '../../lib/build-layout-stage';
 import { stopMessage, type Finding, type StageAction } from '../../lib/sdlc';
-import type { FindingGroup } from '../../lib/sdlc-findings';
+import { groupFindings, type FindingGroup } from '../../lib/sdlc-findings';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
@@ -19,6 +20,9 @@ import { BuildPageViewModel } from './build-page.view-model';
 import type { BuildChanges, BuildPageView, ShownSession, StatusText, TaskGroupView } from './build-page.view-model';
 
 const CHANGES: BuildChanges = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'commerce', change: MOCK_BUILD_CHANGE };
+
+/** What the review entry says when it lists no findings. */
+const NO_ROWS = { rows: null, stale: null, nothingFound: false, openLow: new Set<string>() };
 
 const NOT_STARTED: StatusText = { tone: 'idle', label: 'Not started' };
 const DONE: StatusText = { tone: 'success', label: 'Done' };
@@ -41,6 +45,13 @@ const group = (repo: string, status: StatusText, action: TaskGroupView['action']
   paused: null,
   unseen: 0,
   stopLine: null,
+  progress: { done: tasks.filter((t) => t.status === DONE).length, total: tasks.length },
+  list: taskList(
+    tasks.map((t) => ({ id: t.id, name: t.name, status: t.status, finished: t.status === DONE, departure: t.departure })),
+    'all',
+    true,
+    null,
+  ),
   ...extra,
   action,
   picked,
@@ -74,7 +85,10 @@ const base = (over: Partial<BuildPageView> = {}): BuildPageView => ({
   facts: { tasks: '1/3 tasks', elapsed: null },
   actions: [],
   groups: [],
-  review: { status: { tone: 'idle', label: 'Not run' }, action: null, picked: false },
+  filter: { value: 'all', counts: { all: 0, open: 0, departed: 0, done: 0 } },
+  noDepartures: false,
+  pickedDeparture: null,
+  review: { status: { tone: 'idle', label: 'Not run' }, action: null, picked: false, ...NO_ROWS },
   pick: null,
   sessions: [],
   sessionNote: null,
@@ -120,7 +134,7 @@ const SHOWN = { message: null, staleNotice: null, review: FINDINGS, departures: 
       [task]="task"
       [stopped]="stopped"
       [focus]="focus()"
-      (pick)="picks.push($event)"
+      (pick)="onPick($event)"
       (repoAction)="repoActions.push($event)"
       (act)="acts.push($event)"
       (cancelBuild)="cancels = cancels + 1"
@@ -128,10 +142,24 @@ const SHOWN = { message: null, staleNotice: null, review: FINDINGS, departures: 
       (say)="says.push($event)"
       (goTo)="goTos.push($event)"
       (toggleRun)="toggles.push($event)"
+      (setFilter)="onFilter($event)"
+      (toggleFold)="onFold($event)"
+      (reveal)="revealed.push($event)"
+      (showFinding)="shownFindings.push($event)"
+      (toggleLow)="onLow($event)"
     />
   `,
 })
 class Host {
+  readonly revealed: AreaId[] = [];
+  readonly shownFindings: Finding[] = [];
+  /** The repositories whose low findings are open, for a test that redraws on a press. */
+  readonly low = new Set<string>();
+  rebuildLow: ((low: Set<string>) => BuildPageView) | null = null;
+  onLow(repo: string) {
+    if (!this.low.delete(repo)) this.low.add(repo);
+    if (this.rebuildLow !== null) this.view = this.rebuildLow(this.low);
+  }
   view: BuildPageView = base();
   readonly layout = LAYOUT;
   task: { id: string; repo: string } | null = null;
@@ -147,6 +175,25 @@ class Host {
   readonly says: { runId: string; text: string }[] = [];
   readonly goTos: string[] = [];
   readonly toggles: string[] = [];
+  /** What the host's view model would hold, so a test can make the page draw again after a press. */
+  state: { filter: TaskFilter; open: Set<string>; picked: string | null } = { filter: 'all', open: new Set(), picked: null };
+  rebuild: ((state: { filter: TaskFilter; open: Set<string>; picked: string | null }) => BuildPageView) | null = null;
+  onFilter(filter: TaskFilter) {
+    this.state.filter = filter;
+    this.redraw();
+  }
+  onFold(repo: string) {
+    if (!this.state.open.delete(repo)) this.state.open.add(repo);
+    this.redraw();
+  }
+  onPick(pick: Pick) {
+    this.picks.push(pick);
+    if (pick.kind === 'task') this.state.picked = pick.task;
+    this.redraw();
+  }
+  private redraw() {
+    if (this.rebuild !== null) this.view = this.rebuild(this.state);
+  }
 }
 
 const settle = async () => {
@@ -293,7 +340,7 @@ describe('the build page at each stage', () => {
     const v = stage('reviewing', {
       actions: ['cancel-build'],
       groups: done3,
-      review: { status: { tone: 'success', label: 'Running' }, action: 'cancel', picked: true },
+      review: { status: { tone: 'success', label: 'Running' }, action: 'cancel', picked: true, ...NO_ROWS },
       pick: { kind: 'review' },
       sessions: [session('rv1')],
       stageMessage: null,
@@ -311,7 +358,7 @@ describe('the build page at each stage', () => {
     const v = stage('review-finished', {
       actions: ['declare-done', 'another-round', 'run-review'],
       groups: done3,
-      review: { status: { tone: 'success', label: 'Finished' }, action: null, picked: true },
+      review: { status: { tone: 'success', label: 'Finished' }, action: null, picked: true, ...NO_ROWS },
       pick: { kind: 'review' },
       findingsArea: SHOWN,
       stageMessage: { title: 'Every task is in the build log.', lines: [] },
@@ -328,7 +375,7 @@ describe('the build page at each stage', () => {
     const v = stage('done', {
       actions: [],
       groups: done3,
-      review: { status: { tone: 'success', label: 'Finished' }, action: null, picked: true },
+      review: { status: { tone: 'success', label: 'Finished' }, action: null, picked: true, ...NO_ROWS },
       pick: { kind: 'review' },
       findingsArea: SHOWN,
     });
@@ -461,7 +508,7 @@ describe('the build page, picking and folding', () => {
     const v = base({
       actions: ['cancel-build'],
       groups: [group('commerce-core', RUNNING, 'cancel', [task('T1', RUNNING)])],
-      review: { status: { tone: 'idle', label: 'Not run' }, action: null, picked: false },
+      review: { status: { tone: 'idle', label: 'Not run' }, action: null, picked: false, ...NO_ROWS },
       sessions: [session('r1')],
     });
     const { host, area, button, bar } = await mount(v);
@@ -486,6 +533,16 @@ describe('the build page, picking and folding', () => {
     const { area } = await mount(v);
     expect(area('tasks')!.querySelector('[data-departure]')).not.toBeNull();
     expect(norm(area('activity')!.textContent)).toContain('Showing every session of commerce-core.');
+  });
+
+  it('pairs the departure marker with a status dot, so the warning is not colour alone', async () => {
+    const v = base({
+      groups: [group('commerce-core', RUNNING, null, [task('T1', DONE, { departure: 'Used a queue instead' })])],
+      pick: { kind: 'task', task: 'T1' },
+      sessions: [session('r1')],
+    });
+    const { area } = await mount(v);
+    expect(area('tasks')!.querySelector('[data-departure]')!.querySelector('.k-status__dot')).not.toBeNull();
   });
 
   it('folds an earlier session to one line, keeps its pane mounted, and opens it when picked', async () => {
@@ -1541,7 +1598,7 @@ describe('the message box on the build page', () => {
       stage: 'reviewing',
       actions: ['cancel-build'],
       groups: done3,
-      review: { status: { tone: 'success', label: 'Running' }, action: 'cancel', picked: true },
+      review: { status: { tone: 'success', label: 'Running' }, action: 'cancel', picked: true, ...NO_ROWS },
       pick: { kind: 'review' },
       sessions: [session('rv1')],
     });
@@ -1560,5 +1617,161 @@ describe('the message box on the build page', () => {
     const { el, host } = await mount(v);
     sayIn(el, 'api-run', 'use the v2 route');
     expect(host.says).toEqual([{ runId: 'api-run', text: 'use the v2 route' }]);
+  });
+});
+
+describe('the build page folds, filters and explains a departure', () => {
+  const DEPARTURE = 'The size limit moved to the shared request limit';
+  const lines = (departed: boolean): TaskLine[] => [
+    { id: 'T1', name: 'Task T1', status: DONE, finished: true, departure: null },
+    { id: 'T2', name: 'Task T2', status: DONE, finished: true, departure: departed ? DEPARTURE : null },
+    { id: 'T3', name: 'Task T3', status: RUNNING, finished: false, departure: null },
+  ];
+  type State = { filter: TaskFilter; open: Set<string>; picked: string | null };
+  const viewFor = (departed: boolean, st: State): BuildPageView => {
+    const ls = lines(departed);
+    const counts = filterCounts(ls);
+    const list = taskList(ls, st.filter, st.open.has('commerce-core'), st.picked);
+    const dep = ls.find((l) => l.id === st.picked && l.departure !== null);
+    return base({
+      groups: [
+        group('commerce-core', RUNNING, null, ls.map((l) => task(l.id, l.status, { departure: l.departure, picked: l.id === st.picked })), false, {
+          list,
+          progress: { done: 2, total: 3 },
+        }),
+      ],
+      filter: { value: st.filter, counts },
+      noDepartures: st.filter === 'departed' && counts.departed === 0,
+      pick: st.picked === null ? null : { kind: 'task', task: st.picked },
+      pickedDeparture: dep === undefined ? null : { task: dep.id, text: dep.departure! },
+      sessions: [session('r1')],
+    });
+  };
+  async function open(departed: boolean, st: Partial<State> = {}) {
+    const state: State = { filter: 'all', open: new Set(), picked: null, ...st };
+    const m = await mount(viewFor(departed, state));
+    m.host.state = state;
+    m.host.rebuild = (s) => viewFor(departed, s);
+    return m;
+  }
+  const rowIds = (el: HTMLElement) => Array.from(el.querySelectorAll('[data-task]')).map((r) => norm(r.querySelector('.k-mono')?.textContent));
+
+  it('R1.1: shows the progress and the fold line, with the open tasks on their own lines', async () => {
+    const { area } = await open(true);
+    const tasks = area('tasks')!;
+    expect(norm(tasks.querySelector('[data-progress]')?.textContent)).toBe('2/3');
+    expect(norm(tasks.querySelector('[data-fold]')?.textContent)).toContain('T1–T2');
+    expect(norm(tasks.querySelector('[data-fold]')?.textContent)).toContain('2 done');
+    expect(norm(tasks.querySelector('[data-fold]')?.textContent)).toContain('1 departed');
+    expect(rowIds(tasks)).toEqual(['T3']);
+  });
+
+  it('pairs the fold line departed count with a status dot, so the warning is not colour alone', async () => {
+    const { area } = await open(true);
+    expect(area('tasks')!.querySelector('[data-fold] .k-bp__departed')!.querySelector('.k-status__dot')).not.toBeNull();
+  });
+
+  it('R1.2: the fold button opens the finished rows and closes them again', async () => {
+    const { fixture, area } = await open(true);
+    const fold = () => area('tasks')!.querySelector<HTMLButtonElement>('[data-fold]')!;
+    expect(fold().getAttribute('aria-expanded')).toBe('false');
+    fold().click();
+    await settle();
+    fixture.detectChanges();
+    expect(fold().getAttribute('aria-expanded')).toBe('true');
+    expect(rowIds(area('tasks')!)).toEqual(['T1', 'T2', 'T3']);
+    fold().click();
+    await settle();
+    fixture.detectChanges();
+    expect(fold().getAttribute('aria-expanded')).toBe('false');
+    expect(rowIds(area('tasks')!)).toEqual(['T3']);
+  });
+
+  it('R2.2: the Departed filter on a build with no departures says so', async () => {
+    const { fixture, area, buttons } = await open(false);
+    const departed = buttons(area('tasks')!).find((b) => norm(b.textContent).startsWith('Departed'))!;
+    departed.click();
+    await settle();
+    fixture.detectChanges();
+    expect(norm(area('tasks')!.textContent)).toContain('No departures from the plan.');
+  });
+
+  it('R3.1: a departed row says departed without the text; picking it shows the text above the session', async () => {
+    const { fixture, area } = await open(true, { open: new Set(['commerce-core']) });
+    const row = () => Array.from(area('tasks')!.querySelectorAll<HTMLElement>('[data-task]')).find((r) => norm(r.textContent).includes('T2'))!;
+    expect(norm(row().textContent)).toContain('departed');
+    expect(norm(area('tasks')!.textContent)).not.toContain(DEPARTURE);
+    expect(area('activity')!.querySelector('[data-pick-departure]')).toBeNull();
+    row().click();
+    await settle();
+    fixture.detectChanges();
+    const block = area('activity')!.querySelector<HTMLElement>('[data-pick-departure]')!;
+    expect(norm(block.textContent)).toContain('Departure from the plan');
+    expect(norm(block.textContent)).toContain(DEPARTURE);
+    const session = area('activity')!.querySelector<HTMLElement>('[data-session]')!;
+    expect(block.compareDocumentPosition(session) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe("the Review group lists the latest review's findings", () => {
+  const UPLOAD: Finding = { id: 'F1', severity: 'high', text: 'The upload is not checked. It should be.', file: 'src/Photos/UploadController.cs', line: 48, repo: 'catalog-api' };
+  const LOW: Finding = { id: 'F4', severity: 'low', text: 'A comment is stale.', repo: 'catalog-api' };
+  const reviewView = (findings: Finding[], low: ReadonlySet<string>, stale: string | null = null): BuildPageView => {
+    const rows = reviewRows(groupFindings(findings, ['catalog-api']), findings);
+    return base({
+      review: { status: { tone: 'success', label: 'Finished' }, action: null, picked: false, rows, stale, nothingFound: rows.total === 0, openLow: low },
+    });
+  };
+  const reviewGroup = (el: HTMLElement) => el.querySelector<HTMLElement>('[data-review-group]');
+  const rowKeys = (el: HTMLElement) => Array.from(el.querySelectorAll('[data-finding-row]')).map((r) => norm(r.querySelector('[data-finding-key]')?.textContent));
+
+  it('R4.2: low findings are one folded line until opened', async () => {
+    const { fixture, host, area } = await mount(reviewView([UPLOAD, LOW], new Set()));
+    host.rebuildLow = (low) => reviewView([UPLOAD, LOW], low);
+    const tasks = area('tasks')!;
+    expect(norm(tasks.querySelector('[data-low-fold]')?.textContent)).toContain('1 low');
+    expect(tasks.querySelector('[data-low-fold]')!.getAttribute('aria-expanded')).toBe('false');
+    expect(rowKeys(tasks)).toEqual(['F1']);
+    tasks.querySelector<HTMLButtonElement>('[data-low-fold]')!.click();
+    await settle();
+    fixture.detectChanges();
+    expect(tasks.querySelector('[data-low-fold]')!.getAttribute('aria-expanded')).toBe('true');
+    expect(rowKeys(tasks)).toEqual(['F1', 'F4']);
+  });
+
+  it('R4.1: the group shows the count of findings, the severity counts and each row', async () => {
+    const { area } = await mount(reviewView([UPLOAD, LOW], new Set()));
+    const group = reviewGroup(area('tasks')!)!;
+    expect(norm(group.textContent)).toContain('2 findings');
+    expect(Array.from(group.querySelectorAll('[data-review-counts] .k-status')).map((c) => norm(c.textContent))).toEqual(['1 high', '1 low']);
+    expect(norm(group.querySelector('[data-repo-heading]')?.textContent)).toContain('catalog-api');
+    expect(norm(group.querySelector('[data-finding-row]')?.textContent)).toContain('The upload is not checked.');
+    expect(norm(group.querySelector('[data-finding-row]')?.textContent)).not.toContain('It should be.');
+  });
+
+  it('R4.3: a review that found nothing says so', async () => {
+    const { area } = await mount(reviewView([], new Set()));
+    expect(norm(area('tasks')!.textContent)).toContain('Reviewed, nothing found.');
+  });
+
+  it('R4.5: a finding naming no repository is listed under "No repository named"', async () => {
+    const { area } = await mount(reviewView([{ id: 'F8', severity: 'medium', text: 'Nobody owns this.' }], new Set()));
+    expect(norm(area('tasks')!.querySelector('[data-repo-heading]')?.textContent)).toContain('No repository named');
+  });
+
+  it('R4.7: the stale notice shows above the rows, which stay', async () => {
+    const { area } = await mount(reviewView([UPLOAD], new Set(), 'The work changed since it was reviewed.'));
+    const group = reviewGroup(area('tasks')!)!;
+    const notice = group.querySelector('[data-review-stale]')!;
+    expect(norm(notice.textContent)).toContain('The work changed since it was reviewed.');
+    expect(notice.compareDocumentPosition(group.querySelector('[data-finding-row]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('R4.4: picking F1 reveals the findings, then the files, and shows its file at its line', async () => {
+    const { area, host } = await mount(reviewView([UPLOAD], new Set()));
+    area('tasks')!.querySelector<HTMLButtonElement>('[data-finding-row]')!.click();
+    expect(host.revealed).toEqual(['findings', 'files']);
+    expect(host.shownFindings).toHaveLength(1);
+    expect(host.shownFindings[0]).toMatchObject({ file: 'src/Photos/UploadController.cs', line: 48 });
   });
 });

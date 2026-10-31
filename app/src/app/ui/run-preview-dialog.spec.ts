@@ -78,6 +78,15 @@ describe('RunPreviewDialog', () => {
     expect(button('Start run').disabled).toBe(true);
   });
 
+  it("the start button's text is the startLabel input", async () => {
+    const { fixture } = await render(RunPreviewDialog, base);
+    expect(button('Start run')).toBeDefined();
+    fixture.componentRef.setInput('startLabel', 'Start 2 agents');
+    await fixture.whenStable();
+    expect(button('Start 2 agents')).toBeDefined();
+    expect(button('Start run')).toBeUndefined();
+  });
+
   it('cancel emits on Escape', async () => {
     const { fixture } = await render(RunPreviewDialog, base);
     let n = 0;

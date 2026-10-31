@@ -243,7 +243,7 @@ describe('ChangePage layout', () => {
       expect(container.querySelectorAll('header [role="tab"]').length).toBe(4);
       expect(container.querySelector('[data-testid="pr-menu"]')).not.toBeNull();
       const vm = fixture.debugElement.injector.get(ChangePageViewModel);
-      await vm.submitBuild({ timeoutSecs: 5400, instructions: null, repo: null });
+      await vm.submitBuild({ timeoutSecs: 5400, rounds: null });
       await settle();
       expect(container.querySelector('app-build-page')).not.toBeNull();
       expect(container.querySelector('app-build-view')).toBeNull();

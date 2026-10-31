@@ -47,6 +47,7 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { Stage } from '@bindings/Stage';
 import type { Track } from '@bindings/Track';
 import type { ParsedFinding } from '@bindings/ParsedFinding';
+import type { Severity } from '@bindings/Severity';
 import type { Concern } from '@bindings/Concern';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
@@ -697,9 +698,11 @@ export class SdlcMock {
     // Each finding names its repository and what it concerns; a convention finding names the rule it breaks.
     const findings = this.reviewFindings.map((text, i): ParsedFinding => {
       const concern = CONCERNS[i % CONCERNS.length];
+      // One finding names no repository, so the round's "Fixed in" choice shows; the others spread over the repositories.
+      const repo = i === NO_REPO_FINDING ? {} : { repo: this.repos[i % this.repos.length] };
       return {
-        id: `F${i + 1}`, severity: 'medium', file: 'src/upload.ts', line: 10 + i, text,
-        repo: this.repos[i % this.repos.length], concern, ...(concern === 'convention' ? { rule: 'tests name the rule they prove' } : {}),
+        id: `F${i + 1}`, severity: SEVERITIES[i % SEVERITIES.length], file: 'src/upload.ts', line: 10 + i, text,
+        ...repo, concern, ...(concern === 'convention' ? { rule: 'tests name the rule they prove' } : {}),
       };
     });
     return {
@@ -888,6 +891,20 @@ const taskSteps = (t: PlanTask): ScriptStep[] => [
 const completed = (result: string): ScriptStep =>
   ({ delay: 350, ev: { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 3, cost_usd: 0.04, duration_ms: 30000, result } });
 
+/** A round's run: it edits to fix the findings it was given and ends. It starts at once, whatever the other repositories do. */
+export function roundRunScript(repo: string): { head: ScriptStep[]; mid: ScriptStep[] } {
+  return {
+    head: [
+      buildTranscript(repo),
+      { delay: 300, ev: { type: 'turn', n: 1 } },
+      { delay: 300, ev: { type: 'tool.use', name: 'Edit', input_summary: `${repo}: fix the review findings`, id: 'toolu_rfix', input: { file_path: `${repo}/src/upload.ts` } } },
+      { delay: 300, ev: { type: 'tool.result', name: 'Edit', ok: true, summary: 'edited', id: 'toolu_rfix', output: 'ok' } },
+      completed(`Fixed the findings in ${repo}.`),
+    ],
+    mid: [],
+  };
+}
+
 /** A repository run: it does `tasks` and commits each. With `ask`, it pauses on one question before the first task; with `permission`, on one permission check. */
 export function buildRunScript(repo: string, tasks: PlanTask[], ask: boolean, permission = false): { head: ScriptStep[]; mid: ScriptStep[] } {
   const read: ScriptStep[] = [
@@ -917,10 +934,14 @@ const CONCERNS: Concern[] = ['spec', 'bug', 'convention'];
 
 /** The two findings the scripted review closes with, in the order it lists them. */
 const REVIEW_FINDINGS = ['The upload limit is duplicated in commerce-core and customer-portal.', 'The refusal message has no test.'];
+/** The severity of each finding, in turn: mostly medium, with a high one and some low ones (the short demo has only the first two findings). */
+const SEVERITIES: Severity[] = ['medium', 'medium', 'high', 'low', 'medium', 'low'];
+/** The finding (by position) that names no repository. */
+const NO_REPO_FINDING = 4;
 /** The long demo's review record: the same two findings first, then enough more to overflow the findings area. */
 const LONG_REVIEW_FINDINGS = [
   ...REVIEW_FINDINGS,
-  'The photo count is read twice for one product, once in the store and once in the billing summary.',
+  'The photo count is read twice for one product, once in the store and once in the billing summary, and the two reads can disagree whenever a photo is replaced while the page is still loading the product.',
   'A file with an upper-case extension such as PHOTO.JPG is refused as not a JPEG.',
   'The size limit is checked after the whole photo is read into memory instead of while it is read.',
   'The remove button on the picker has no accessible name.',

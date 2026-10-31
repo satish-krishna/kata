@@ -30,6 +30,8 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ChangesContext } from '../changes/changes-view.view-model';
 import { BuildPageViewModel, type BuildContext } from '../build/build-page.view-model';
+import { roundOffer, type RoundGroup, type RoundOffer, type RoundRequest } from '../../lib/build-round';
+import { roundGroups } from '../../lib/build-task-list';
 import type { BuildDialogMode, BuildStartRequest } from '../../ui/build-dialog';
 import type { RunSpec } from '@bindings/RunSpec';
 import { GivenStore, type BuildChoices } from '../../core/given/given.store';
@@ -173,7 +175,8 @@ const SUPERSEDED_BANNER = 'The intent was reopened after this plan was written. 
 export type BuildHandoff = {
   start: BuildStart;
   timeoutSecs: number;
-  round: { instructions: string; repo: string } | null;
+  /** One request per repository that gets a round agent; empty for a build that is not a round. */
+  rounds: RoundRequest[];
   checksDir: string;
   /** The build's choices: the keys switched off, for every run the build starts. */
   choices?: BuildChoices;
@@ -508,6 +511,10 @@ export class ChangePageViewModel {
   private readonly checksDir = signal<string | null>(null);
   /** The mode of the open build dialog, or null while it is closed. */
   readonly buildMode = signal<BuildDialogMode | null>(null);
+  /** What the open round may fix, from the latest review; null outside a round. */
+  readonly buildOffer = signal<RoundOffer | null>(null);
+  /** The offer's findings in the Review group's groups and order, for the round dialog. */
+  readonly buildGroups = signal<RoundGroup[]>([]);
   /** The master repository first, then every repository the plan names. */
   readonly buildRepos = computed<string[]>(() => {
     const master = this.scanMaster();
@@ -647,6 +654,8 @@ export class ChangePageViewModel {
   private async beginBuild(req: BuildStartRequest, action: BuildAction, choices: BuildChoices): Promise<void> {
     this.askedAction = action;
     this.buildMode.set(null);
+    this.buildOffer.set(null);
+    this.buildGroups.set([]);
     this.asked = req;
     this.askedChoices = choices;
     await this.prepare(false);
@@ -655,6 +664,8 @@ export class ChangePageViewModel {
   cancelBuild(): void {
     this.buildSeq++;
     this.buildMode.set(null);
+    this.buildOffer.set(null);
+    this.buildGroups.set([]);
     this.preview.cancel();
   }
 
@@ -665,6 +676,10 @@ export class ChangePageViewModel {
    */
   private openBuildPreview(which: 'start' | 'continue' | 'round' | 'review'): void {
     this.buildMode.set(which === 'review' ? null : which);
+    const latest = which === 'round' ? this.build.latestReview() : null;
+    const offer = which === 'round' ? roundOffer(latest, this.buildRepos()) : null;
+    this.buildOffer.set(offer);
+    this.buildGroups.set(offer !== null && latest !== null ? roundGroups(offer, this.build.findingGroups(), latest.findings) : []);
     void this.previewBuild(which);
   }
 
@@ -716,6 +731,7 @@ export class ChangePageViewModel {
         sections,
         from: { session: this.givens.session(), job: null, build: this.givens.build(this.buildKey())?.off ?? null },
         limitSecs: limit,
+        offer: this.buildOffer(),
       });
     } catch (e) {
       this.toasts.error(`Could not preview the build: ${message(e)}`);
@@ -724,7 +740,7 @@ export class ChangePageViewModel {
     if (result === null || stale()) return giveUp();
     const choices: BuildChoices = { off: result.off };
     if (which !== 'review') this.givens.setBuild(this.buildKey(), choices);
-    await this.submitBuild(result.request ?? { timeoutSecs: limit, instructions: null, repo: null }, choices, actions[which]);
+    await this.submitBuild(result.request ?? { timeoutSecs: limit, rounds: null }, choices, actions[which]);
   }
 
   /** The operator accepted the leftovers: prepare the same build again, this time continuing on top of them. */
@@ -1482,7 +1498,7 @@ export class ChangePageViewModel {
         change: this.changeName(),
         action: this.askedAction,
         continueWithLeftovers,
-        pending: asked.repo,
+        pending: asked.rounds?.map((r) => r.repo) ?? [],
       });
     } catch (e) {
       this.progress.fail('build');
@@ -1516,7 +1532,7 @@ export class ChangePageViewModel {
           {
             start: out.start,
             timeoutSecs: asked.timeoutSecs,
-            round: asked.instructions !== null && asked.repo !== null ? { instructions: asked.instructions, repo: asked.repo } : null,
+            rounds: asked.rounds ?? [],
             checksDir,
             choices: this.askedChoices,
             continueOnLeftovers: confirmedRepos,

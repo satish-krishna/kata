@@ -18,8 +18,8 @@ import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
 /** Every document run opens the preview first; confirm it once its rows have resolved. */
-const confirmPreview = async () => {
-  const start = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === 'Start run');
+const confirmPreview = async (label = 'Start run') => {
+  const start = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === label);
   await vi.waitFor(() => expect(start() && !start()!.disabled).toBe(true));
   start()!.click();
 };
@@ -164,7 +164,7 @@ describe('ChangePage', () => {
       const { container, fixture } = await mount(MOCK_BUILD_CHANGE);
       expect(container.querySelector('app-build-view')).toBeNull();
       const vm = fixture.debugElement.injector.get(ChangePageViewModel);
-      await vm.submitBuild({ timeoutSecs: 5400, instructions: null, repo: null });
+      await vm.submitBuild({ timeoutSecs: 5400, rounds: null });
       await settle();
       expect(container.querySelector('app-build-page')).not.toBeNull();
       expect(container.querySelector('app-build-view')).toBeNull();
@@ -553,8 +553,8 @@ describe('ChangePage build page', () => {
     expect(text(dialog().querySelector('[hlmDialogTitle]')!)).toBe('Start round');
     const preview = fixture.debugElement.injector.get(RunPreviewViewModel);
     await vi.waitFor(() => expect(preview.buildForm()).not.toBeNull());
-    preview.buildForm()!.model.update((m) => ({ ...m, instructions: 'tidy up', repo: 'commerce-core' }));
-    await confirmPreview();
+    preview.buildForm()!.model.update((m) => ({ ...m, picked: [], notes: { ...m.notes, 'commerce-core': 'tidy up' } }));
+    await confirmPreview('Start 1 agent');
     await vi.waitFor(() => expect(runSpec).toHaveBeenCalled(), { timeout: TOKEN });
     expect(prepare.mock.calls[0][6]).toBe('round');
     await vi.waitFor(() => expect(page(container).querySelector('[data-session] app-observe-pane')).not.toBeNull(), { timeout: TOKEN });
@@ -737,7 +737,13 @@ describe('ChangePage build page', () => {
       }));
       const { container } = await mount(MOCK_BUILD_CHANGE, transport);
       alone(container);
-      expect(text(page(container).querySelector('[data-departure]')!)).toContain('Reused the existing file picker.');
+      // The row only says departed; the text shows above the activity once the task is picked.
+      for (const f of Array.from(page(container).querySelectorAll<HTMLButtonElement>('[data-fold]'))) f.click();
+      await settle();
+      expect(text(page(container).querySelector('[data-departure]')!)).toBe('departed');
+      Array.from(page(container).querySelectorAll<HTMLButtonElement>('[data-task]')).find((t) => text(t).startsWith('T2'))!.click();
+      await settle();
+      expect(text(page(container).querySelector('[data-pick-departure]')!)).toContain('Reused the existing file picker.');
     });
 
     it('declare done', async () => {

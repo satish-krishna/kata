@@ -108,8 +108,8 @@ export type BuildRequest = {
   /** What the engineer asked for; every action meets the same gate. */
   action: BuildAction;
   continueWithLeftovers: boolean;
-  /** The repository a round is aimed at: its uncommitted files are its own to confirm, even when its tasks are all done or it is the master. */
-  pending?: string | null;
+  /** The repositories a round is aimed at: the uncommitted files of each are its own to confirm, even when its tasks are all done or it is the master. Empty or absent when none. */
+  pending?: string[];
 };
 export type PrepareResult =
   | { kind: 'ready'; start: BuildStart }
@@ -415,7 +415,7 @@ export class SdlcRunner {
     if (readiness.kind === 'tooOld') return { kind: 'refused', reason: updatePlugin(readiness.need) };
     if (readiness.kind === 'missing') return { kind: 'refused', reason: INSTALL_PLUGIN };
     try {
-      const out = await this.transport.sdlcBuildPrepare(req.folder, req.masterRepo, req.system, req.change, req.continueWithLeftovers, req.pending ?? null, req.action);
+      const out = await this.transport.sdlcBuildPrepare(req.folder, req.masterRepo, req.system, req.change, req.continueWithLeftovers, req.pending ?? [], req.action);
       if (out.kind === 'refused') return { kind: 'refused', reason: out.message, problems: out.problems };
       if (out.kind === 'branchTaken') return { kind: 'branch-taken', repo: out.repo, branch: out.branch };
       if (out.kind === 'ready') {
@@ -505,7 +505,7 @@ export class SdlcRunner {
   /** The unsaved build log rows a repository owns, read from the build's participants; none when they cannot be read. */
   private async rowsOwnedBy(repo: string, link: BuildLink): Promise<string[]> {
     try {
-      const parts = await this.transport.sdlcBuildParticipants(link.folder, repoName(link.master), link.system, link.change, null);
+      const parts = await this.transport.sdlcBuildParticipants(link.folder, repoName(link.master), link.system, link.change, []);
       return parts.find((p) => p.repo === repo)?.rows ?? [];
     } catch (e) {
       this.toasts.error(`Could not read the build log rows of ${repo}: ${message(e)}`);

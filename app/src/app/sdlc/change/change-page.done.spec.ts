@@ -312,7 +312,7 @@ describe('declaring done', () => {
     expect(vm.doneReport()).toBeNull();
     expect(prepare).toHaveBeenCalled();
     expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull();
-    expect(TestBed.inject(BuildPageViewModel).current()!.round).toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).current()!.rounds).toEqual([]);
   });
 
   it("the toolbar's Run review starts the review-only build, the same as the done dialog's", async () => {
@@ -326,7 +326,7 @@ describe('declaring done', () => {
     preview.start();
     await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull());
     expect(prepare).toHaveBeenCalled();
-    expect(TestBed.inject(BuildPageViewModel).current()!.round).toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).current()!.rounds).toEqual([]);
   });
 
   it('an action with nothing behind it says so instead of doing nothing', async () => {
@@ -431,6 +431,11 @@ describe('declaring done from the build page', () => {
     const { container } = await mountPage(MOCK_DONE_CHANGE, transport);
     const p = page(container);
     expect(p).not.toBeNull();
+    // Finished tasks fold per repository; the folds say how many are done, and opening them lists every task.
+    const folds = Array.from(p.querySelectorAll<HTMLButtonElement>('[data-fold]'));
+    expect(folds.length).toBeGreaterThan(0);
+    for (const f of folds) f.click();
+    await settle();
     const tasks = Array.from(p.querySelectorAll('[data-task]'));
     expect(tasks.length).toBe(3);
     expect(tasks.every((t) => text(t).includes('Done'))).toBe(true);

@@ -33,6 +33,7 @@ import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { REVIEW_MISSING_TEXT, reviewState } from '../../lib/sdlc-done';
 import { givenFor, reviewFindings, specFor, type BuildRun, type Finding, type StageAction } from '../../lib/sdlc';
 import { groupFindings, type FindingGroup } from '../../lib/sdlc-findings';
+import { filterCounts, reviewRows, taskList, type ReviewRowsView, type TaskFilter, type TaskLine, type TaskListView } from '../../lib/build-task-list';
 import type { ReplacedFindings } from '../../ui/findings-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
 import type { BuildHandoff } from '../change/change-page.view-model';
@@ -125,10 +126,26 @@ export type TaskGroupView = {
   action: 'cancel' | 'continue' | null;
   picked: boolean;
   tasks: TaskRowView[];
+  /** Tasks finished out of all of the repository's. */
+  progress: { done: number; total: number };
+  /** What the repository lists on their own line and what it folds, under the filter. */
+  list: TaskListView;
 };
 
 /** The review's entry under the tasks. */
-export type ReviewEntryView = { status: StatusText; action: 'cancel' | 'continue' | null; picked: boolean };
+export type ReviewEntryView = {
+  status: StatusText;
+  action: 'cancel' | 'continue' | null;
+  picked: boolean;
+  /** The latest review's findings as rows; null while the review is not finished. */
+  rows: ReviewRowsView | null;
+  /** The notice above the rows when the work changed since the review; null otherwise. */
+  stale: string | null;
+  /** The review finished and found nothing. */
+  nothingFound: boolean;
+  /** The repositories (the empty string for findings naming none) whose folded low findings are open. */
+  openLow: ReadonlySet<string>;
+};
 
 /** The review's findings, with the notice above them. */
 export type FindingsView = { notice: DocNotice | null; groups: FindingGroup[]; findings: Finding[]; replaced: ReplacedFindings[]; older: boolean; emptyText: string };
@@ -176,6 +193,12 @@ export type BuildPageView = {
   facts: { tasks: string; elapsed: string | null };
   actions: StageAction[];
   groups: TaskGroupView[];
+  /** The task filter on show and how many tasks each choice holds across the build. */
+  filter: { value: TaskFilter; counts: Record<TaskFilter, number> };
+  /** The Departed filter is on and no task departed. */
+  noDepartures: boolean;
+  /** The picked task's departure from the plan, when it is a finished task that recorded one. */
+  pickedDeparture: { task: string; text: string } | null;
   review: ReviewEntryView;
   pick: Pick | null;
   sessions: ShownSession[];
@@ -205,7 +228,7 @@ type Entry = { id: string; key: string; spec: RunSpec; at: number };
 /** Seconds of a run's work (waiting for the engineer excluded), of all its waiting, and of the wait it is in now. */
 type Clock = { work: number; paused: number; current: number };
 /** A review of the whole change: one section of its review document, or the closing text of its run. */
-type Review = { at: number | null; label: string | null; repos: string[]; findings: Finding[] };
+type Review = { at: number | null; label: string | null; number: number | null; repos: string[]; findings: Finding[] };
 
 const REVIEW = 'review';
 const RUNNING: readonly RunState[] = ['running', 'awaiting'];
@@ -498,6 +521,11 @@ export class BuildPageViewModel {
     const latest = this.reviews().at(-1);
     return groupFindings(latest?.findings ?? [], latest?.repos ?? []);
   });
+  /** The latest review as the rounds and the tasks area read it; null before any review has findings or words to read. */
+  readonly latestReview = computed<{ number: number | null; findings: Finding[]; stale: boolean } | null>(() => {
+    const latest = this.reviews().at(-1);
+    return latest === undefined ? null : { number: latest.number, findings: this.findings(), stale: this.reviewEntry() === 'stale' };
+  });
   /** Earlier reviews, each with the time of the review that replaced it (or its own number and date, from the document), newest first. */
   readonly replaced = computed<ReplacedFindings[]>(() => {
     const all = this.reviews();
@@ -588,11 +616,11 @@ export class BuildPageViewModel {
     try {
       const status = await this.readStatus();
       const master = handoff.start.master.repo;
-      this.productRepos = (await this.readParticipants(handoff.round?.repo ?? null)).filter((p) => !p.master).map((p) => p.repo);
+      this.productRepos = (await this.readParticipants(handoff.rounds.map((r) => r.repo))).filter((p) => !p.master).map((p) => p.repo);
       this.status.set(status);
       this.changes.set({ folder: ctx.folder, masterRepo: master, system: ctx.system, change: ctx.change });
-      if (handoff.round !== null) await this.loadEarlierReview(ctx);
-      await this.driver.begin(handoff.timeoutSecs, handoff.round ?? undefined, handoff.choices);
+      if (handoff.rounds.length > 0) await this.loadEarlierReview(ctx);
+      await this.driver.begin(handoff.timeoutSecs, handoff.rounds, handoff.choices);
     } catch (e) {
       this.toasts.error(`Could not start the build: ${message(e)}`);
       this.broken.set(true);
@@ -852,6 +880,36 @@ export class BuildPageViewModel {
   });
   private heldStage: LayoutStage | null = null;
 
+  /** The task filter on show; it starts at All and is kept for the page visit only. */
+  readonly taskFilter = signal<TaskFilter>('all');
+  /** The repositories whose fold the engineer opened. */
+  readonly openFolds = signal<ReadonlySet<string>>(new Set());
+
+  /** The repositories whose folded low findings the engineer opened. */
+  readonly openLow = signal<ReadonlySet<string>>(new Set());
+
+  /** Open a repository's folded low findings, or close them. */
+  toggleLow(repo: string): void {
+    this.openLow.update((open) => {
+      const next = new Set(open);
+      if (!next.delete(repo)) next.add(repo);
+      return next;
+    });
+  }
+
+  setTaskFilter(filter: TaskFilter): void {
+    this.taskFilter.set(filter);
+  }
+
+  /** Open a repository's fold of finished tasks, or close it. */
+  toggleFold(repo: string): void {
+    this.openFolds.update((open) => {
+      const next = new Set(open);
+      if (!next.delete(repo)) next.add(repo);
+      return next;
+    });
+  }
+
   /** Say something through the page's one assertive live region. */
   say(text: string): void {
     this.announcement.set(text);
@@ -868,6 +926,15 @@ export class BuildPageViewModel {
     const hasSessions = [...this.sessionRefs().values()].some((refs) => refs.length > 0);
     const hasChanges = this.changedFiles();
     const findingsArea = this.findingsAreaView();
+    const filter = this.taskFilter();
+    const openFolds = this.openFolds();
+    const pickedTask = pick?.kind === 'task' ? pick.task : null;
+    const linesOf = (g: TaskArea): TaskLine[] =>
+      g.tasks.map((t) => ({ id: t.id, name: t.name, status: taskStatus(t.state), finished: t.state.kind === 'done', departure: t.state.kind === 'done' ? t.state.departure : null }));
+    const counts = filterCounts(areas.flatMap(linesOf));
+    const pickedDeparture = areas
+      .flatMap((g) => g.tasks)
+      .flatMap((t) => (t.id === pickedTask && t.state.kind === 'done' && t.state.departure !== null ? [{ task: t.id, text: t.state.departure }] : []))[0] ?? null;
     return {
       stage,
       stageMessage: this.stageMessage(),
@@ -882,6 +949,8 @@ export class BuildPageViewModel {
         stopLine: g.heading.stopLine,
         action: g.action,
         picked: pickedRepo === g.repo,
+        progress: { done: linesOf(g).filter((t) => t.finished).length, total: g.tasks.length },
+        list: taskList(linesOf(g), filter, openFolds.has(g.repo), pickedTask),
         tasks: g.tasks.map((t) => ({
           id: t.id,
           name: t.name,
@@ -890,7 +959,10 @@ export class BuildPageViewModel {
           picked: pick?.kind === 'task' && pick.task === t.id,
         })),
       })),
-      review: { status: reviewStatus(entry), action: repoAction({ kind: 'idle' }, REVIEW, review), picked: pick?.kind === 'review' },
+      filter: { value: filter, counts },
+      noDepartures: filter === 'departed' && counts.departed === 0,
+      pickedDeparture,
+      review: { status: reviewStatus(entry), action: repoAction({ kind: 'idle' }, REVIEW, review), picked: pick?.kind === 'review', ...this.reviewList(entry) },
       pick,
       sessions: this.mountedSessions(),
       sessionNote: this.sessionNote(),
@@ -903,6 +975,14 @@ export class BuildPageViewModel {
       counts: { files: this.changedFileTotal(), findings: findingsArea.review === null ? 0 : findingsArea.review.findings.length },
     };
   });
+
+  /** What the Review group lists: the latest review's rows once it is finished or out of date, with the notice for an out-of-date one. */
+  private reviewList(entry: ReviewEntry): Omit<ReviewEntryView, 'status' | 'action' | 'picked'> {
+    const latest = this.latestReview();
+    const listed = latest !== null && (entry === 'finished' || entry === 'stale');
+    const rows = listed ? reviewRows(this.findingGroups(), latest.findings) : null;
+    return { rows, stale: listed && entry === 'stale' ? REVIEW_MISSING_TEXT.stale : null, nothingFound: rows !== null && rows.total === 0, openLow: this.openLow() };
+  }
 
   /** The findings area for the page, from what the review knows. */
   private findingsAreaView(): FindingsAreaView {
@@ -1037,7 +1117,7 @@ export class BuildPageViewModel {
           this.settled = false;
           break;
         }
-        const mine = (await this.readParticipants(owner)).find((p) => p.repo === owner);
+        const mine = (await this.readParticipants([owner])).find((p) => p.repo === owner);
         await this.pendingFinish;
         if (this.settled) continue;
         const left = [...(mine?.files ?? []), ...(mine?.rows ?? [])];
@@ -1058,7 +1138,7 @@ export class BuildPageViewModel {
   private async prepareBranches(folder: string, master: string, system: string, change: string, withLeftovers: boolean, owner: string) {
     this.progress.begin('preparing-build', progressLabels.preparingBuild(), 'build');
     try {
-      const out = await this.transport.sdlcBuildPrepare(folder, master, system, change, withLeftovers, owner, 'continue');
+      const out = await this.transport.sdlcBuildPrepare(folder, master, system, change, withLeftovers, [owner], 'continue');
       if (out.kind === 'refused' || out.kind === 'branchTaken') this.progress.fail('build');
       else this.progress.end('build');
       return out;
@@ -1157,8 +1237,10 @@ export class BuildPageViewModel {
     return key === REVIEW ? this.handoff!.start.master.repo : key;
   }
 
-  /** Ask the backend who takes part in the build now; `pending` is the repository a run is about to start in. */
-  private async readParticipants(pending: string | null): Promise<Participant[]> {
+  /**
+   * Ask the backend who takes part in the build now; `pending` lists the repositories a run is about to start in.
+   */
+  private async readParticipants(pending: string[]): Promise<Participant[]> {
     const h = this.handoff!;
     const ctx = this.ctx!;
     this.participants = await this.transport.sdlcBuildParticipants(ctx.folder, h.start.master.repo, ctx.system, ctx.change, pending);
@@ -1496,17 +1578,18 @@ export class BuildPageViewModel {
     if (shown.kind === 'none') return false;
     if (shown.kind === 'words') {
       this.fromWords.set(true);
-      this.reviews.update((r) => [...r, { at, label: null, repos: [], findings: shown.findings }]);
+      this.reviews.update((r) => [...r, { at, label: null, number: null, repos: [], findings: shown.findings }]);
       return true;
     }
     this.fromWords.set(false);
     const labeled = (r: { number: number; reviewedAt: string; repos: string[]; findings: Finding[] }): Review => ({
       at: null,
       label: `Review ${r.number} of ${r.reviewedAt}`,
+      number: r.number,
       repos: r.repos,
       findings: r.findings,
     });
-    this.reviews.set([...shown.earlier].reverse().map(labeled).concat({ at: null, label: null, repos: shown.latest.repos, findings: shown.latest.findings }));
+    this.reviews.set([...shown.earlier].reverse().map(labeled).concat({ at: null, label: null, number: shown.latest.number, repos: shown.latest.repos, findings: shown.latest.findings }));
     return true;
   }
 

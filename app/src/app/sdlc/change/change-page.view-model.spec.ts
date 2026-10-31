@@ -14,7 +14,8 @@ import { SdlcStagesStore, stageKey } from '../../core/sdlc/sdlc-stages.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
-import { actionsFor, safetyRules, type StageAction } from '../../lib/sdlc';
+import { actionsFor, safetyRules, type Finding, type StageAction } from '../../lib/sdlc';
+import { groupFindings } from '../../lib/sdlc-findings';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
@@ -562,7 +563,7 @@ describe('ChangePageViewModel', () => {
 
   describe('the build', () => {
     const BUILD = MOCK_BUILD_CHANGE;
-    const REQUEST = { timeoutSecs: 5400, instructions: null, repo: null };
+    const REQUEST = { timeoutSecs: 5400, rounds: null };
 
     it('Start build, Continue build and Another round open the dialog in their own mode', async () => {
       const transport = new MockTransport();
@@ -594,11 +595,11 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.act('start-build');
       await vm.submitBuild(REQUEST);
-      expect(prepare).toHaveBeenCalledWith(expect.any(String), 'commerce-docs', 'commerce', BUILD, false, null, 'start');
+      expect(prepare).toHaveBeenCalledWith(expect.any(String), 'commerce-docs', 'commerce', BUILD, false, [], 'start');
       expect(vm.buildMode()).toBeNull();
       const h = TestBed.inject(BuildPageViewModel).current()!;
       expect(h.timeoutSecs).toBe(5400);
-      expect(h.round).toBeNull();
+      expect(h.rounds).toEqual([]);
       expect(h.start.repos.map((r) => r.repo)).toEqual(['commerce-core', 'customer-portal']);
       expect(h.checksDir).toBe(await transport.sdlcChecksDir());
     });
@@ -624,10 +625,26 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       for (const repo of ['commerce-core', 'commerce-docs']) {
         await vm.act('another-round');
-        await vm.submitBuild({ timeoutSecs: 14400, instructions: 'tidy up', repo });
-        expect(prepare).toHaveBeenLastCalledWith(expect.any(String), 'commerce-docs', 'commerce', BUILD, false, repo, 'round');
+        await vm.submitBuild({ timeoutSecs: 14400, rounds: [{ repo, instructions: 'tidy up', summary: repo }] });
+        expect(prepare).toHaveBeenLastCalledWith(expect.any(String), 'commerce-docs', 'commerce', BUILD, false, [repo], 'round');
         await settleBuild();
       }
+    });
+
+    it('a round in two repositories prepares both, so each gets its change branch (R7.1)', async () => {
+      const transport = new MockTransport();
+      withStage(transport, BUILD, 'build-finished');
+      const { vm } = setup(BUILD, transport);
+      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+      await ready(vm);
+      await vm.act('another-round');
+      const rounds = ['commerce-core', 'customer-portal'].map((repo) => ({ repo, instructions: 'tidy up', summary: repo }));
+      await vm.submitBuild({ timeoutSecs: 14400, rounds });
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(prepare.mock.calls[0][5]).toEqual(['commerce-core', 'customer-portal']);
+      const h = TestBed.inject(BuildPageViewModel).current()!;
+      expect(h.rounds).toEqual(rounds);
+      expect(new Set(h.start.repos.map((r) => r.repo)).size).toBe(h.start.repos.length);
     });
 
     it('names the workspace, folder, system, change and every product repository of the system for the build view (R18.5)', async () => {
@@ -646,14 +663,15 @@ describe('ChangePageViewModel', () => {
       expect(checks).toHaveBeenCalledTimes(1);
     });
 
-    it('a round carries its instructions and repository to the build view', async () => {
+    it('a round carries its requests to the build view', async () => {
       const transport = new MockTransport();
       withStage(transport, BUILD, 'build-finished');
       const { vm } = setup(BUILD, transport);
       await ready(vm);
       await vm.act('another-round');
-      await vm.submitBuild({ timeoutSecs: 14400, instructions: 'rename the status field to state', repo: 'commerce-core' });
-      expect(TestBed.inject(BuildPageViewModel).current()!.round).toEqual({ instructions: 'rename the status field to state', repo: 'commerce-core' });
+      const rounds = [{ repo: 'commerce-core', instructions: 'rename the status field to state', summary: 'commerce-core · with a note' }];
+      await vm.submitBuild({ timeoutSecs: 14400, rounds });
+      expect(TestBed.inject(BuildPageViewModel).current()!.rounds).toEqual(rounds);
       expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(14400);
     });
 
@@ -761,7 +779,7 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       expect(vm.pills().length).toBe(4);
       expect(vm.pullLinks().length).toBe(3);
-      await vm.submitBuild({ timeoutSecs: 5400, instructions: null, repo: null });
+      await vm.submitBuild({ timeoutSecs: 5400, rounds: null });
       expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull();
       expect(vm.pills().length).toBe(4);
       expect(vm.pullLinks().length).toBe(3);
@@ -1171,13 +1189,15 @@ describe('the build\'s preview', () => {
       await previewReady(preview);
       expect(preview.title()).toBe('Start round');
       expect(flat(preview.groups()).find((r) => r.item.id === GITHUB)).toMatchObject({ off: true, mark: 'build' });
-      // Only the repository the round is picked for shows its section.
+      // Only a repository that gets an agent shows its section.
       expect(preview.sections()!.map((s) => s.title)).toEqual([]);
-      preview.buildForm()!.model.update((m) => ({ ...m, instructions: 'tidy up', repo: 'commerce-core' }));
+      preview.buildForm()!.model.update((m) => ({ ...m, notes: { ...m.notes, 'commerce-core': 'tidy up' } }));
       expect(preview.sections()!.map((s) => s.title)).toEqual(['commerce-core']);
       preview.toggle(GITHUB, false);
       await startPreview(preview, vm);
-      expect(TestBed.inject(BuildPageViewModel).current()!.round).toEqual({ instructions: 'tidy up', repo: 'commerce-core' });
+      const rounds = TestBed.inject(BuildPageViewModel).current()!.rounds;
+      expect(rounds.map((r) => r.repo)).toEqual(['commerce-core']);
+      expect(rounds[0].instructions).toContain('tidy up');
       expect(givens.build(KEY)!.off.has(GITHUB)).toBe(false);
       expect(TestBed.inject(BuildPageViewModel).current()!.choices!.off.has(GITHUB)).toBe(false);
     });
@@ -1193,7 +1213,62 @@ describe('the build\'s preview', () => {
       await startPreview(preview, vm);
       expect(TestBed.inject(BuildPageViewModel).current()!.choices!.off.has(GITHUB)).toBe(false);
       expect(givens.build(KEY)!.off).toEqual(buildOff());
-      expect(TestBed.inject(BuildPageViewModel).current()!.round).toBeNull();
+      expect(TestBed.inject(BuildPageViewModel).current()!.rounds).toEqual([]);
+    });
+  });
+
+  describe('another round offers the findings of the latest review', () => {
+    const finding = (id: string, repo: string) => ({ id, severity: 'high' as const, text: `${id} is wrong. Fix it.`, repo });
+    /** The build page reads its latest review from its own documents; the round asks it, so the test answers for it. */
+    const reviewing = (findings: ReturnType<typeof finding>[]) =>
+      Object.defineProperty(TestBed.inject(BuildPageViewModel), 'latestReview', { value: () => ({ number: 1, findings, stale: false }) });
+    const ruleFor = (path: string) => '//' + path.replace(/\\/g, '/').replace(/^([A-Za-z]):\//, (_m, d: string) => `${d.toLowerCase()}/`);
+
+    it('a finding that names the master repository can be picked, and an agent starts there with it (R5.7)', async () => {
+      const { vm, preview } = await staged('build-finished');
+      reviewing([finding('F1', 'commerce-docs')]);
+      await vm.act('another-round');
+      await previewReady(preview);
+      expect(vm.buildOffer()!.findings.map((f) => f.repo)).toEqual(['commerce-docs']);
+      preview.buildForm()!.model.update((m) => ({ ...m, picked: ['F1'] }));
+      await startPreview(preview, vm);
+      const rounds = TestBed.inject(BuildPageViewModel).current()!.rounds;
+      expect(rounds.map((r) => r.repo)).toEqual(['commerce-docs']);
+      expect(rounds[0].instructions).toContain('F1');
+    });
+
+    it('hands the dialog the Review group\'s groups and order for the same review (F2)', async () => {
+      const { vm, preview } = await staged('build-finished');
+      const findings: Finding[] = [
+        { id: 'F1', severity: 'medium', text: 'F1 is wrong. Fix it.', repo: 'commerce-core' },
+        { id: 'F2', severity: 'high', text: 'F2 is wrong. Fix it.', repo: 'commerce-core' },
+        { id: 'F3', severity: 'high', text: 'F3 is wrong. Fix it.', repo: 'legacy-api' },
+        { id: 'F4', severity: 'low', text: 'F4 is wrong. Fix it.' },
+      ];
+      const build = TestBed.inject(BuildPageViewModel);
+      Object.defineProperty(build, 'latestReview', { value: () => ({ number: 1, findings, stale: false }) });
+      Object.defineProperty(build, 'findingGroups', { value: () => groupFindings(findings, ['commerce-core']) });
+      await vm.act('another-round');
+      await previewReady(preview);
+      expect(vm.buildGroups().map((g) => ({ repo: g.repo, keys: g.findings.map((f) => f.key) }))).toEqual([
+        { repo: 'commerce-core', keys: ['F2', 'F1'] },
+        { repo: 'legacy-api', keys: ['F3'] },
+        { repo: null, keys: ['F4'] },
+      ]);
+      expect(vm.buildGroups()[1].findings[0].repo).toBeNull();
+    });
+
+    it('a round agent cannot edit another repository or the checks folder (R7.4)', async () => {
+      const { vm, preview, transport } = await staged('build-finished');
+      const previewRun = vi.spyOn(transport, 'previewRun');
+      reviewing([finding('F1', 'commerce-core')]);
+      await vm.act('another-round');
+      await previewReady(preview);
+      const folder = vm.current()!.folder;
+      const spec = previewRun.mock.calls.map((c) => c[0]).find((sp) => sp.workdir === `${folder}/commerce-core`)!;
+      expect(spec.permissions.deny).toContain(`Edit(${ruleFor(folder)}/customer-portal/**)`);
+      expect(spec.permissions.deny).not.toContain(`Edit(${ruleFor(folder)}/commerce-core/**)`);
+      expect(spec.permissions.deny).toContain(`Edit(${ruleFor(await transport.sdlcChecksDir())}/**)`);
     });
   });
 
@@ -1209,7 +1284,7 @@ describe('the build\'s preview', () => {
     expect(prepare).not.toHaveBeenCalled();
     await startPreview(preview, vm);
     expect(prepare).toHaveBeenCalledTimes(1);
-    expect(TestBed.inject(BuildPageViewModel).current()!.round).toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).current()!.rounds).toEqual([]);
     // The review is the stage button's and the done dialog's one path: it runs with Kata's review limit.
     expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(7200);
   });

@@ -62,9 +62,9 @@ function setup(transport = new MockTransport(), preview: 'confirm' | 'real' = 'c
 }
 
 async function handoffFor(transport: MockTransport, over: Partial<BuildHandoff> = {}): Promise<BuildHandoff> {
-  const out = await transport.sdlcBuildPrepare(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, false, null, 'start');
+  const out = await transport.sdlcBuildPrepare(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, false, [], 'start');
   if (out.kind !== 'ready') throw new Error('the mock build did not prepare');
-  return { start: out.start, timeoutSecs: 5400, round: null, checksDir: await transport.sdlcChecksDir(), ...over };
+  return { start: out.start, timeoutSecs: 5400, rounds: [], checksDir: await transport.sdlcChecksDir(), ...over };
 }
 
 /** Advances the fake clock in small steps, flushing effects between them, the way a running app would. */
@@ -672,6 +672,71 @@ describe('the build page starts, stops and continues the same runs as the build 
       expect(vm.findings()).toEqual([]);
     });
 
+    it('R4.1: the Review group lists the findings of the finished review as rows with counts', async () => {
+      const { vm, transport, lock } = setup();
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, finished(vm));
+      const rows = vm.view().review.rows!;
+      expect(rows.total).toBe(2);
+      expect(rows.counts.reduce((n, c) => n + c.n, 0)).toBe(2);
+      expect(rows.groups.flatMap((g) => [...g.rows, ...g.low]).map((r) => r.summary)).toEqual([
+        'The upload limit is duplicated in commerce-core and customer-portal.',
+        'The refusal message has no test.',
+      ]);
+      expect(vm.view().review.stale).toBeNull();
+      expect(vm.view().review.nothingFound).toBe(false);
+    });
+
+    it('R4.3: a review that found nothing reads as reviewed with nothing found', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', []));
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.view().review.nothingFound).toBe(true);
+      expect(vm.view().review.rows).toMatchObject({ total: 0, groups: [] });
+    });
+
+    it('R4.6: only the findings of the second review are listed, and latestReview carries its number', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(
+        transport,
+        section(1, '2026-10-18', [{ id: 'F1', severity: 'high', text: 'one' }]),
+        section(2, '2026-10-19', [{ id: 'F1', severity: 'low', text: 'two' }]),
+      );
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      const rows = vm.view().review.rows!;
+      expect(rows.groups.flatMap((g) => [...g.rows, ...g.low]).map((r) => r.summary)).toEqual(['two']);
+      expect(vm.latestReview()).toEqual({ number: 2, findings: vm.findings(), stale: false });
+    });
+
+    it('R4.7: a review that predates the latest commits keeps its rows and sets the stale notice', async () => {
+      const { vm, transport } = setup();
+      const status = await transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
+      const [found] = (await readAllChanges(transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
+      const document = { layout: 2, reviews: [section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }])], problems: [], master_moved: ['src/a.ts'] };
+      await vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: { ...found, stage: 'build-finished' }, status, done: false, review: document });
+      await advance(300);
+      const review = vm.view().review;
+      expect(review.rows?.total).toBe(1);
+      expect(review.stale).toBe('The work changed since it was reviewed.');
+      expect(vm.latestReview()).toMatchObject({ number: 1, stale: true });
+    });
+
+    it('latestReview is null before any review has findings or words to read', () => {
+      const { vm } = setup();
+      expect(vm.latestReview()).toBeNull();
+      expect(vm.view().review.rows).toBeNull();
+    });
+
+    it('toggleLow opens and closes the low findings of a repository', () => {
+      const { vm } = setup();
+      vm.toggleLow('catalog-api');
+      expect(vm.view().review.openLow.has('catalog-api')).toBe(true);
+      vm.toggleLow('catalog-api');
+      expect(vm.view().review.openLow.has('catalog-api')).toBe(false);
+    });
+
     it('a review run that touched only the review document is the current review (F7)', async () => {
       const { vm, transport, lock } = setup();
       withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
@@ -694,8 +759,8 @@ describe('the build page starts, stops and continues the same runs as the build 
     heads.mockResolvedValue({ 'commerce-core': 'bbbbbbb' });
     const runSpec = vi.spyOn(transport, 'runSpec');
     const next = openHost().debugElement.injector.get(BuildPageViewModel);
-    const round = { instructions: 'rename the status field to state', repo: 'commerce-core' };
-    await next.start(await handoffFor(transport, { round }), CTX);
+    const rounds = [{ ...{ instructions: 'rename the status field to state', repo: 'commerce-core' }, summary: '' }];
+    await next.start(await handoffFor(transport, { rounds }), CTX);
     await drive(next, lock, finished(next));
     const specs = runSpec.mock.calls.map(([spec]) => spec);
     expect(specs.filter((s) => s.name === REVIEW_NAME)).toHaveLength(1);
@@ -713,8 +778,8 @@ describe('the build page starts, stops and continues the same runs as the build 
 
     const runSpec = vi.spyOn(transport, 'runSpec');
     const next = openHost().debugElement.injector.get(BuildPageViewModel);
-    const round = { instructions: 'look at the logging', repo: 'commerce-core' };
-    await next.start(await handoffFor(transport, { round }), CTX);
+    const rounds = [{ ...{ instructions: 'look at the logging', repo: 'commerce-core' }, summary: '' }];
+    await next.start(await handoffFor(transport, { rounds }), CTX);
     await drive(next, lock, () => next.phase() === 'finished');
     expect(runSpec.mock.calls.map(([spec]) => spec.name)).not.toContain(REVIEW_NAME);
     expect(next.replaced()).toEqual([]);
@@ -772,7 +837,7 @@ describe('the build page starts, stops and continues the same runs as the build 
         { repo: 'customer-portal', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
       ],
     };
-    const round = { instructions: 'tidy the notes', repo: MOCK_MASTER };
+    const rounds = [{ ...{ instructions: 'tidy the notes', repo: MOCK_MASTER }, summary: '' }];
 
     it('has a row, shows why it stopped and Continue runs it again (R6.1, R8.1)', async () => {
       const { vm, transport, runner } = setup();
@@ -783,7 +848,7 @@ describe('the build page starts, stops and continues the same runs as the build 
         link.onRun?.(`fake-${targets.length}`);
         return targets.length === 1 ? { exit: 124, error: null } : { exit: 0, error: null };
       });
-      await vm.start(await handoffFor(transport, { round }), CTX);
+      await vm.start(await handoffFor(transport, { rounds }), CTX);
       await advance(500);
       expect(targets).toEqual([MOCK_MASTER]);
       expect(vm.phase()).toBe('stopped');
@@ -807,7 +872,7 @@ describe('the build page starts, stops and continues the same runs as the build 
         link.onRun?.('fake-master');
         return { exit: 0, error: null };
       });
-      await vm.start(await handoffFor(transport, { round }), CTX);
+      await vm.start(await handoffFor(transport, { rounds }), CTX);
       await advance(500);
       expect(group(vm, MOCK_MASTER).status.tone).not.toBe('error');
       expect(stopOf(vm, MOCK_MASTER)).toBeUndefined();
@@ -824,7 +889,7 @@ describe('the build page starts, stops and continues the same runs as the build 
         link.onRun?.(`fake-${targets.length}`);
         return { exit: 0, error: null };
       });
-      await vm.start(await handoffFor(transport, { round }), CTX);
+      await vm.start(await handoffFor(transport, { rounds }), CTX);
       await advance(500);
       expect(heads.mock.calls.every(([, repos]) => repos.includes(MOCK_MASTER))).toBe(true);
       expect(targets).toEqual([MOCK_MASTER, 'review']);
@@ -890,8 +955,8 @@ describe('the build page starts, stops and continues the same runs as the build 
       await gate;
       return { exit: 130, error: null };
     });
-    const round = { instructions: 'rename the status field', repo: 'commerce-core' };
-    await vm.start(await handoffFor(transport, { round }), CTX);
+    const rounds = [{ ...{ instructions: 'rename the status field', repo: 'commerce-core' }, summary: '' }];
+    await vm.start(await handoffFor(transport, { rounds }), CTX);
     await advance(300);
     vm.select('commerce-core');
     vm.cancelRun();
@@ -953,7 +1018,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       const { vm, transport, runner } = setup();
       const asked = vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone({ [MOCK_MASTER]: { files: ['notes/half.md'] } }));
       const run = stopFirstRunOf(runner, MOCK_MASTER, true);
-      await vm.start(await handoffFor(transport, { round: { instructions: 'tidy the notes', repo: MOCK_MASTER } }), CTX);
+      await vm.start(await handoffFor(transport, { rounds: [{ ...{ instructions: 'tidy the notes', repo: MOCK_MASTER }, summary: '' }] }), CTX);
       await advance(500);
       expect(vm.phase()).toBe('building');
       vm.select(MOCK_MASTER);
@@ -961,7 +1026,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       const calls = run.mock.calls.length;
 
       await vm.continueRun();
-      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, MOCK_MASTER);
+      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, [MOCK_MASTER]);
       expect(vm.leftoverPrompt()).toEqual({ lines: [`${MOCK_MASTER}: notes/half.md`] });
       expect(run).toHaveBeenCalledTimes(calls);
 
@@ -976,7 +1041,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
       const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
       const run = stopFirstRunOf(runner, MOCK_MASTER, false);
-      await vm.start(await handoffFor(transport, { round: { instructions: 'tidy the notes', repo: MOCK_MASTER } }), CTX);
+      await vm.start(await handoffFor(transport, { rounds: [{ ...{ instructions: 'tidy the notes', repo: MOCK_MASTER }, summary: '' }] }), CTX);
       await advance(500);
       expect(vm.phase()).toBe('stopped');
       vm.select(MOCK_MASTER);
@@ -984,14 +1049,14 @@ describe('the build page starts, stops and continues the same runs as the build 
 
       await vm.continueRun();
       expect(prepare.mock.calls[1][4]).toBe(false);
-      expect(prepare.mock.calls[1][5]).toBe(MOCK_MASTER);
+      expect(prepare.mock.calls[1][5]).toEqual([MOCK_MASTER]);
       expect(vm.leftoverPrompt()).toEqual({ lines: [`${MOCK_MASTER}: notes/half.md`] });
       expect(run).toHaveBeenCalledTimes(1);
 
       await vm.confirmContinue();
       await advance(100);
       expect(prepare.mock.calls.at(-1)![4]).toBe(true);
-      expect(prepare.mock.calls.at(-1)![5]).toBe(MOCK_MASTER);
+      expect(prepare.mock.calls.at(-1)![5]).toEqual([MOCK_MASTER]);
       expect(told(run, MOCK_MASTER)).toContain('already confirmed');
     });
 
@@ -1006,7 +1071,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       const calls = run.mock.calls.length;
 
       await vm.continueRun();
-      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, 'commerce-core');
+      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, ['commerce-core']);
       expect(vm.leftoverPrompt()).toEqual({ lines: [`commerce-core: ${ROW('commerce-core')}`] });
       expect(run).toHaveBeenCalledTimes(calls);
 
@@ -1021,7 +1086,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(coreDonePortalReady);
       const asked = vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone({ 'commerce-core': { files: ['src/half.rs'] } }));
       const run = stopFirstRunOf(runner, 'commerce-core', true);
-      await vm.start(await handoffFor(transport, { round: { instructions: 'rename the status field', repo: 'commerce-core' } }), CTX);
+      await vm.start(await handoffFor(transport, { rounds: [{ ...{ instructions: 'rename the status field', repo: 'commerce-core' }, summary: '' }] }), CTX);
       await advance(500);
       expect(vm.phase()).toBe('building');
       vm.select('commerce-core');
@@ -1029,7 +1094,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       const calls = run.mock.calls.length;
 
       await vm.continueRun();
-      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, 'commerce-core');
+      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, ['commerce-core']);
       expect(vm.leftoverPrompt()).toEqual({ lines: ['commerce-core: src/half.rs'] });
       expect(run).toHaveBeenCalledTimes(calls);
 
@@ -1044,14 +1109,14 @@ describe('the build page starts, stops and continues the same runs as the build 
       vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
       const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
       const run = stopFirstRunOf(runner, 'commerce-core', false);
-      await vm.start(await handoffFor(transport, { round: { instructions: 'rename the status field', repo: 'commerce-core' } }), CTX);
+      await vm.start(await handoffFor(transport, { rounds: [{ ...{ instructions: 'rename the status field', repo: 'commerce-core' }, summary: '' }] }), CTX);
       await advance(500);
       expect(vm.phase()).toBe('stopped');
       vm.select('commerce-core');
       prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['src/half.rs'] }] });
 
       await vm.continueRun();
-      expect(prepare.mock.calls[1][5]).toBe('commerce-core');
+      expect(prepare.mock.calls[1][5]).toEqual(['commerce-core']);
       expect(vm.leftoverPrompt()).toEqual({ lines: ['commerce-core: src/half.rs'] });
       expect(run).toHaveBeenCalledTimes(1);
 
@@ -1406,8 +1471,8 @@ describe('no leftover is discarded without the engineer\'s choice', () => {
     const { vm, transport, runner, run, discard } = await stoppedWithLeftovers();
     runner.closeLeftovers();
     await advance(300);
-    const round = { instructions: 'tidy up the logging', repo: 'commerce-core' };
-    expect(await vm.start(await handoffFor(transport, { round }), CTX)).toBe(true);
+    const rounds = [{ ...{ instructions: 'tidy up the logging', repo: 'commerce-core' }, summary: '' }];
+    expect(await vm.start(await handoffFor(transport, { rounds }), CTX)).toBe(true);
     await advance(300);
     expect(run).toHaveBeenCalledTimes(2);
     expect(run.mock.calls[1][1].task).toContain('tidy up the logging');
@@ -1882,5 +1947,111 @@ describe('the layout follows the real build page through a finish, whatever orde
     expect(layout.mode()).toBe('review');
     expect(layout.suggested()).toBeNull();
     expect(said.filter((t) => t.startsWith('Layout:'))).toEqual([]);
+  });
+});
+
+describe('the tasks area folds, filters and shows a departure with its task', () => {
+  const row = (task: string, repo: string, departure: string | null = null) => ({ task, repo, commits: ['abc1234'], departure });
+  const taskOf = (id: string, repo: string, finished: boolean, departure: string | null = null, dependsOn: string[] = []) => ({
+    id, name: `Task ${id}`, repo, dependsOn, text: `### ${id}`, row: finished ? row(id, repo, departure) : null,
+  });
+  const CORE = 'commerce-core';
+  const PORTAL = 'customer-portal';
+
+  /** commerce-core: T1 to T5 finished (T1 to T3 departed), T6 to T8 open; customer-portal: T9 waits on T6. */
+  const buildStatus = (departed = true): BuildStatus => ({
+    hasTasks: true,
+    problems: [],
+    logLayouts: [],
+    departures: [],
+    tasks: [
+      ...[1, 2, 3, 4, 5].map((n) => taskOf(`T${n}`, CORE, true, departed && n <= 3 ? `departure ${n}` : null)),
+      taskOf('T6', CORE, false),
+      taskOf('T7', CORE, false, null, ['T6']),
+      taskOf('T8', CORE, false, null, ['T7']),
+      taskOf('T9', PORTAL, false, null, ['T6']),
+    ],
+    repos: [
+      { repo: CORE, firstUnfinished: 'T6', state: { kind: 'ready', task: 'T6' }, tasks: 8, finished: 5 },
+      { repo: PORTAL, firstUnfinished: 'T9', state: { kind: 'waiting', task: 'T9', onTask: 'T6', onRepo: CORE }, tasks: 1, finished: 0 },
+    ],
+  });
+
+  async function openedOn(status: BuildStatus) {
+    const s = setup();
+    vi.spyOn(s.transport, 'sdlcRunLinks').mockResolvedValue([]);
+    vi.spyOn(s.transport, 'sdlcTaskLinks').mockResolvedValue([]);
+    vi.spyOn(s.transport, 'listRuns').mockResolvedValue([]);
+    vi.spyOn(s.transport, 'sdlcBuildStatus').mockResolvedValue(status);
+    const [found] = (await readAllChanges(s.transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
+    await s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null });
+    await advance(300);
+    return s;
+  }
+
+  it('R1.1: a repository with 5 of 8 finished shows its progress, one fold line for the finished and its open tasks on their own lines', async () => {
+    const { vm } = await openedOn(buildStatus());
+    const g = group(vm, CORE);
+    expect(g.progress).toEqual({ done: 5, total: 8 });
+    expect(g.list.fold).toEqual({ range: 'T1–T5', done: 5, departed: 3, open: false });
+    expect(g.list.rows.map((r) => r.line.id)).toEqual(['T6', 'T7', 'T8']);
+  });
+
+  it('R1.4: a task waiting on another repository is a row, never inside the fold', async () => {
+    const { vm } = await openedOn(buildStatus());
+    const g = group(vm, PORTAL);
+    expect(g.list.fold).toBeNull();
+    expect(g.list.rows.map((r) => [r.line.id, r.line.status.label])).toEqual([['T9', `Waiting for T6 in ${CORE}`]]);
+  });
+
+  it('R1.2: opening a fold lists the finished tasks, and closing it folds them again', async () => {
+    const { vm } = await openedOn(buildStatus());
+    vm.toggleFold(CORE);
+    expect(group(vm, CORE).list.fold?.open).toBe(true);
+    expect(group(vm, CORE).list.rows.map((r) => r.line.id)).toEqual(['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8']);
+    vm.toggleFold(CORE);
+    expect(group(vm, CORE).list.fold?.open).toBe(false);
+  });
+
+  it('R1.2: picking a finished task opens its fold', async () => {
+    const { vm } = await openedOn(buildStatus());
+    vm.choose({ kind: 'task', task: 'T2' });
+    expect(group(vm, CORE).list.fold?.open).toBe(true);
+  });
+
+  it('R2.1: the filter starts at All and each choice holds its own count across the build', async () => {
+    const { vm } = await openedOn(buildStatus());
+    expect(vm.view().filter).toEqual({ value: 'all', counts: { all: 9, open: 4, departed: 3, done: 5 } });
+    vm.setTaskFilter('departed');
+    expect(vm.view().filter.value).toBe('departed');
+    expect(group(vm, CORE).list.rows.map((r) => [r.line.id, r.showDeparture])).toEqual([['T1', true], ['T2', true], ['T3', true]]);
+    vm.setTaskFilter('open');
+    expect(group(vm, CORE).list.fold).toBeNull();
+    expect(group(vm, CORE).list.rows.map((r) => r.line.id)).toEqual(['T6', 'T7', 'T8']);
+  });
+
+  it('R2.2: the Departed filter on a build with no departures says so', async () => {
+    const { vm } = await openedOn(buildStatus(false));
+    expect(vm.view().noDepartures).toBe(false);
+    vm.setTaskFilter('departed');
+    expect(vm.view().noDepartures).toBe(true);
+  });
+
+  it('R3.1: the picked task\'s departure is on the view, and only for a finished task that has one', async () => {
+    const { vm } = await openedOn(buildStatus());
+    expect(vm.view().pickedDeparture).toBeNull();
+    vm.choose({ kind: 'task', task: 'T2' });
+    expect(vm.view().pickedDeparture).toEqual({ task: 'T2', text: 'departure 2' });
+    vm.choose({ kind: 'task', task: 'T4' });
+    expect(vm.view().pickedDeparture).toBeNull();
+    vm.choose({ kind: 'repo', repo: CORE });
+    expect(vm.view().pickedDeparture).toBeNull();
+  });
+
+  it('R3.2: a departure from a build log in the older table layout is on the view when its task is picked', async () => {
+    const status = { ...buildStatus(), logLayouts: [{ repo: CORE, layout: 1 }] };
+    const { vm } = await openedOn(status);
+    vm.choose({ kind: 'task', task: 'T3' });
+    expect(vm.view().pickedDeparture).toEqual({ task: 'T3', text: 'departure 3' });
   });
 });

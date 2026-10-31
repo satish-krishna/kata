@@ -5,6 +5,7 @@ import type { RunSettings } from '@bindings/RunSettings';
 import type { RunSpec } from '@bindings/RunSpec';
 import { groupRows, isSwitchable, itemSourceLabel, presetRows, settingSourceLabel, toGiven, toggle, type PresetFrom, type PresetRow } from '../../lib/given';
 import { buildPreviewFor, safetyRules, type BuildPreviewKind, type BuildPreviewPlan } from '../../lib/sdlc';
+import type { RoundOffer } from '../../lib/build-round';
 import { buildRequest, createBuildForm, limitSecs, type BuildFormState, type BuildStartRequest } from '../../ui/build-dialog';
 import type { PreviewEnvRow, PreviewSection, PreviewSettingRow } from '../../ui/run-preview-dialog';
 import { KataTransport } from '../transport/kata-transport';
@@ -28,6 +29,8 @@ export type BuildPreviewRequest = {
   from: Omit<PresetFrom, 'workdir'>;
   /** The limit shown when the preview has no time-limit field of its own: the build's, or Kata's review limit. */
   limitSecs: number;
+  /** What a round may fix; set for a round only. */
+  offer?: RoundOffer | null;
 };
 
 /** What the engineer confirmed: the keys switched off for the build, and the time limit or round the fields asked for. */
@@ -143,18 +146,34 @@ export class RunPreviewViewModel {
     return groupRows(sharedRows(this.parts()));
   });
 
-  /** A build's folders, each with the project items of that folder; null outside a build preview. For a round only the picked repository shows. */
+  /** A build's folders, each with the project items of that folder; null outside a build preview. For a round only the repositories that get an agent show. */
   readonly sections = computed<PreviewSection[] | null>(() => {
     const req = this.buildReq();
     if (!req) return null;
-    const plan = buildPreviewFor(req.kind);
-    const picked = plan.asksRound ? (this.buildForm()?.model().repo ?? '') : null;
+    const rounds = this.roundRequests();
+    const picked = rounds === null ? null : new Set(rounds.map((r) => r.repo));
     return this.parts()
-      .filter((p) => picked === null || p.section.repo === picked)
+      .filter((p) => picked === null || (p.section.repo !== null && picked.has(p.section.repo)))
       .map((p) => {
         const bound = projectBound(p.rows);
         return { title: p.section.title, groups: groupRows(p.rows.filter((r) => bound.has(r.item.id))) };
       });
+  });
+
+  /** What a round starts, one request per repository, as the start sends them; null outside a round. */
+  private readonly roundRequests = computed(() => {
+    const req = this.buildReq();
+    if (!req || !buildPreviewFor(req.kind).asksRound) return null;
+    const form = this.buildForm();
+    return form ? (buildRequest(form, true, req.offer ?? undefined).rounds ?? []) : [];
+  });
+
+  /** The start button's text: "Start run", and for a round the number of agents it starts. */
+  readonly startLabel = computed(() => {
+    const rounds = this.roundRequests();
+    if (rounds === null) return 'Start run';
+    if (rounds.length === 0) return 'Start agents';
+    return rounds.length === 1 ? 'Start 1 agent' : `Start ${rounds.length} agents`;
   });
 
   /** Start run is available once the rows are in and the build's fields hold a valid time limit and round. */
@@ -209,7 +228,7 @@ export class RunPreviewViewModel {
       this.buildPending = { resolve, reject };
     });
     this.buildReq.set(req);
-    this.buildForm.set(plan.asksTimeLimit ? createBuildForm(this.injector, plan.asksRound) : null);
+    this.buildForm.set(plan.asksTimeLimit ? createBuildForm(this.injector, plan.asksRound, req.offer ?? undefined) : null);
     this.safetyRules.set(safetyRules(req.kind === 'manual-review' ? 'review' : 'repo'));
     this.title.set(req.title);
     this.isOpen.set(true);
@@ -275,7 +294,7 @@ export class RunPreviewViewModel {
     // A choice for an item this preview does not list (another repository's, on a one-repository preview) stays as it was.
     for (const key of req.from.build ?? []) if (!listed.has(key)) off.add(key);
     const form = this.buildForm();
-    const request = form ? buildRequest(form, buildPreviewFor(req.kind).asksRound) : null;
+    const request = form ? buildRequest(form, buildPreviewFor(req.kind).asksRound, this.buildReq()?.offer ?? undefined) : null;
     this.buildPending = null;
     this.reset();
     pending.resolve({ off, request });

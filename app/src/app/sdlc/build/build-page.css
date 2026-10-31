@@ -356,3 +356,100 @@
 .k-bp__paused {
   color: var(--warning-text);
 }
+
+.k-bp__progress {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+}
+
+.k-bp__bar-track {
+  display: inline-block;
+  width: var(--space-12);
+  height: var(--space-1);
+  background: var(--surface-inset);
+}
+
+.k-bp__bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--success);
+}
+
+.k-bp__fold {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+}
+
+.k-bp__departed {
+  color: var(--warning-text);
+}
+
+.k-bp__pick-departure {
+  display: grid;
+  gap: var(--space-2);
+  padding: 0 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.k-bp__departure-text {
+  margin: 0;
+  color: var(--warning-text);
+}
+
+.k-bp__review-total {
+  color: var(--text-secondary);
+}
+
+.k-bp__review-stale {
+  margin: 0;
+}
+
+.k-bp__review-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.k-bp__review-group {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.k-bp__review-repo {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  color: var(--text-secondary);
+}
+
+.k-bp__findings {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-bp__finding {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+  text-align: left;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* The row shows one line: a first sentence longer than the row is cut with an ellipsis (the full text is the title and the findings area). */
+.k-bp__finding-text {
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

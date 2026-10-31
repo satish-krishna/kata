@@ -69,7 +69,7 @@
     </div>
     <hlm-dialog-footer>
       <button hlmBtn variant="ghost" size="sm" type="button" (click)="cancel.emit()">Cancel</button>
-      <button hlmBtn variant="primary" size="sm" type="button" [disabled]="busy()" (click)="start.emit()">Start run</button>
+      <button hlmBtn variant="primary" size="sm" type="button" [disabled]="busy()" (click)="start.emit()">{{ startLabel() }}</button>
     </hlm-dialog-footer>
   </hlm-dialog-content>
 </hlm-dialog>

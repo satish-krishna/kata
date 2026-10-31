@@ -478,3 +478,15 @@
 .k-diffbar__file, .k-diffbar__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
 .k-diffbar__rename, .k-diffbar__folder { color: var(--text-muted); }
 .k-diffbar__path { overflow-wrap: anywhere; }
+
+/* The round's findings picker: a group per repository, a row per finding, and the summary of what the round will start. */
+.k-round__group { display: grid; gap: var(--space-3); }
+.k-round__finding { display: grid; grid-template-columns: minmax(0, 1fr); align-items: center; gap: var(--space-1) var(--space-3); }
+/* The field holds the checkbox and its label in one run; the label may shrink so the summary can be cut. */
+.k-round__label { min-width: 0; cursor: pointer; }
+.k-round__finding > app-field { grid-column: 1 / -1; }
+.k-round__text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.k-round__file { padding-inline-start: calc(var(--check-size) + var(--space-4)); color: var(--text-muted); }
+.k-round__summary { display: grid; gap: var(--space-2); color: var(--text-secondary); }
+.k-round__summary > p { margin: 0; }
+.k-round__blocked { color: var(--warning); }

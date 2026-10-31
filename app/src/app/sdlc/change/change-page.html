@@ -219,6 +219,9 @@
                 (decide)="build.decide($event.runId, $event)"
                 (goTo)="build.goTo($event)"
                 (toggleRun)="build.toggleRun($event)"
+                (setFilter)="build.setTaskFilter($event)"
+                (toggleFold)="build.toggleFold($event)"
+                (toggleLow)="build.toggleLow($event)"
                 (pickMode)="layout.pickMode($event)"
                 (arrange)="layout.arrange($event)"
                 (focusOn)="layout.focusOn($event)"
@@ -333,13 +336,14 @@
     [sections]="vm.preview.sections()"
     [warnings]="vm.preview.warnings()"
     [busy]="!vm.preview.canStart()"
+    [startLabel]="vm.preview.startLabel()"
     (toggle)="vm.preview.toggle($event.key, $event.off)"
     (start)="vm.preview.start()"
     (cancel)="vm.preview.cancel()"
   >
     @if (vm.preview.buildForm(); as form) {
       @if (vm.buildMode(); as mode) {
-        <app-build-dialog [mode]="mode" [repos]="vm.buildRepos()" [state]="form" />
+        <app-build-dialog [mode]="mode" [offer]="vm.buildOffer()" [groups]="vm.buildGroups()" [state]="form" />
       }
     }
   </app-run-preview-dialog>

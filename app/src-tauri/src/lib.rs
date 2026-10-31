@@ -654,7 +654,7 @@ fn sdlc_build_prepare(
     change: String,
     action: sdlc::build::BuildAction,
     continue_with_leftovers: bool,
-    pending: Option<String>,
+    pending: Vec<String>,
 ) -> Result<sdlc::start::PrepareOutcome, String> {
     let plugin = ai_sdlc_dir_in(&folder)?;
     sdlc::start::prepare(
@@ -665,7 +665,7 @@ fn sdlc_build_prepare(
         &change,
         action,
         continue_with_leftovers,
-        pending.as_deref(),
+        &pending,
     )
     .map_err(|e| e.to_string())
 }
@@ -676,7 +676,7 @@ fn sdlc_build_participants(
     master_repo: String,
     system: String,
     change: String,
-    pending: Option<String>,
+    pending: Vec<String>,
 ) -> Result<Vec<sdlc::participants::Participant>, String> {
     let plugin = ai_sdlc_dir_in(&folder)?;
     sdlc::participants::participants(
@@ -685,7 +685,7 @@ fn sdlc_build_participants(
         &master_repo,
         &system,
         &change,
-        pending.as_deref(),
+        &pending,
     )
     .map_err(|e| e.to_string())
 }

@@ -48,7 +48,7 @@ import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import { seedCatalog, validateLocal, previewFixture, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
 import { history, runDetailFixture, katasFixture, presetsFixture } from '../../lib/library';
-import { MOCK_LAYOUTS, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import { MOCK_LAYOUTS, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import { KataTransport, NO_BACKEND, type NamingState, type RenameResult } from './kata-transport';
 
@@ -132,6 +132,11 @@ export class MockTransport extends KataTransport {
       }
       const repo = spec.workdir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
       const tasks = this.sdlc.readyTasks(repo);
+      // A round on a repository with nothing left to build: one scripted run per request, so two repositories' agents start together.
+      if (tasks.length === 0 && spec.task.includes('Instructions from the engineer')) {
+        const round = roundRunScript(repo);
+        return { run: make('build', round.mid), head: round.head };
+      }
       const script = buildRunScript(repo, tasks, repo === 'customer-portal' && tasks.length > 0 && tasks[0].id === 'T2', repo === 'billing-api' && tasks.length > 0);
       return { run: make('build', script.mid, () => this.sdlc.commitRows(tasks)), head: script.head };
     }
@@ -251,8 +256,8 @@ export class MockTransport extends KataTransport {
   sdlcReviewRecord(_master: string, _system: string, _change: string): Promise<ReviewRecord | null> { return Promise.resolve(this.sdlc.reviewRecord()); }
   sdlcReviewVerify(_master: string, _system: string, _change: string, _since: string, _before: Snapshot['dirty']): Promise<string[]> { return Promise.resolve([]); }
   sdlcUnsavedRows(_master: string, _system: string, _change: string): Promise<UnsavedRows[]> { return Promise.resolve([]); }
-  sdlcBuildParticipants(folder: string, _masterRepo: string, _system: string, _change: string, _pending?: string | null): Promise<Participant[]> { return Promise.resolve(this.sdlc.participants(folder)); }
-  sdlcBuildPrepare(folder: string, _masterRepo: string, _system: string, change: string, _continueWithLeftovers: boolean, _pending: string | null, _action: BuildAction): Promise<PrepareOutcome> {
+  sdlcBuildParticipants(folder: string, _masterRepo: string, _system: string, _change: string, _pending: string[]): Promise<Participant[]> { return Promise.resolve(this.sdlc.participants(folder)); }
+  sdlcBuildPrepare(folder: string, _masterRepo: string, _system: string, change: string, _continueWithLeftovers: boolean, _pending: string[], _action: BuildAction): Promise<PrepareOutcome> {
     return Promise.resolve({ kind: 'ready', start: this.sdlc.prepare(folder, change) });
   }
   sdlcBuildSettle(_start: BuildStart): Promise<string[]> { return Promise.resolve([]); }

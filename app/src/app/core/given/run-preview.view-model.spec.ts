@@ -153,4 +153,37 @@ describe('RunPreviewViewModel', () => {
       expect([...result.off]).toEqual(expect.arrayContaining([EXTRA, GITHUB]));
     });
   });
+
+  describe('the start button label', () => {
+    const finding = (id: string, repo: string) => ({ key: id, finding: { severity: 'high' as const, text: `fix ${id}`, id, repo }, repo });
+    const offer = { review: 1, repos: ['acme-api', SECOND_REPO], findings: [finding('F1', 'acme-api'), finding('F2', SECOND_REPO)] };
+    function preview(kind: 'round' | 'start') {
+      const { vm, store, spec } = setup();
+      const sections = [
+        { title: 'acme-api', repo: 'acme-api', spec: { ...spec, workdir: 'D:/Repos/acme-api' }, workdir: 'D:/Repos/acme-api' },
+        { title: SECOND_REPO, repo: SECOND_REPO, spec: { ...spec, workdir: `D:/Repos/${SECOND_REPO}` }, workdir: `D:/Repos/${SECOND_REPO}` },
+      ];
+      const req: BuildPreviewRequest = { title: 'Start round', kind, sections, from: { session: store.session(), job: null, build: null }, limitSecs: 1800, offer: kind === 'round' ? offer : null };
+      void vm.openBuild(req);
+      return vm;
+    }
+    const unpick = (vm: RunPreviewViewModel, key: string) =>
+      vm.buildForm()!.model.update((m) => ({ ...m, picked: m.picked.filter((k) => k !== key) }));
+
+    it('counts the agents of a round', async () => {
+      const vm = preview('round');
+      await opened(vm);
+      expect(vm.startLabel()).toBe('Start 2 agents');
+      unpick(vm, 'F2');
+      expect(vm.startLabel()).toBe('Start 1 agent');
+      unpick(vm, 'F1');
+      expect(vm.startLabel()).toBe('Start agents');
+    });
+
+    it('stays Start run for a plain build preview', async () => {
+      const vm = preview('start');
+      await opened(vm);
+      expect(vm.startLabel()).toBe('Start run');
+    });
+  });
 });

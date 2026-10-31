@@ -128,8 +128,8 @@ export class TauriTransport extends KataTransport {
   }
   sdlcReviewRecord(master: string, system: string, change: string) { return this.ipc.invoke<ReviewRecord | null>('sdlc_review_record', { master, system, change }); }
   sdlcUnsavedRows(master: string, system: string, change: string) { return this.ipc.invoke<UnsavedRows[]>('sdlc_unsaved_rows', { master, system, change }); }
-  sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending: string | null, action: BuildAction) { return this.ipc.invoke<PrepareOutcome>('sdlc_build_prepare', { folder, masterRepo, system, change, action, continueWithLeftovers, pending }); }
-  sdlcBuildParticipants(folder: string, masterRepo: string, system: string, change: string, pending: string | null = null) { return this.ipc.invoke<Participant[]>('sdlc_build_participants', { folder, masterRepo, system, change, pending }); }
+  sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending: string[], action: BuildAction) { return this.ipc.invoke<PrepareOutcome>('sdlc_build_prepare', { folder, masterRepo, system, change, action, continueWithLeftovers, pending }); }
+  sdlcBuildParticipants(folder: string, masterRepo: string, system: string, change: string, pending: string[]) { return this.ipc.invoke<Participant[]>('sdlc_build_participants', { folder, masterRepo, system, change, pending }); }
   sdlcBuildSettle(start: BuildStart) { return this.ipc.invoke<string[]>('sdlc_build_settle', { start }); }
   sdlcBuildHeads(folder: string, masterRepo: string, system: string, repos: string[], change: string) { return this.ipc.invoke<Record<string, string>>('sdlc_build_heads', { folder, masterRepo, system, repos, change }); }
   sdlcReviewVerify(master: string, system: string, change: string, since: string, before: Snapshot['dirty']) { return this.ipc.invoke<string[]>('sdlc_review_verify', { master, system, change, since, before }); }

@@ -18,7 +18,8 @@ import {
 } from '../../lib/build-layout';
 import { layoutKeyFor } from '../../lib/build-layout-keys';
 import type { Pick } from '../../lib/build-sessions';
-import { actionLabel, primaryAction, type Finding, type StageAction } from '../../lib/sdlc';
+import type { TaskFilter } from '../../lib/build-task-list';
+import { actionLabel, primaryAction, type Finding, type Severity, type StageAction } from '../../lib/sdlc';
 import { FindingsList } from '../../ui/findings-list';
 import { ObservePane } from '../../ui/observe-pane';
 import { Segmented } from '../../ui/segmented';
@@ -42,6 +43,12 @@ const PLACES: { place: Place; label: string }[] = [
 ];
 const SIDES: Side[] = ['left', 'right', 'bottom'];
 const EDGES: Edge[] = ['left', 'right', 'bottom'];
+const FILTERS: { value: TaskFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'open', label: 'Open' },
+  { value: 'departed', label: 'Departed' },
+  { value: 'done', label: 'Done' },
+];
 const SIZE_VARS: Record<Side, string> = { left: '--k-left', right: '--k-right', bottom: '--k-bottom' };
 
 /* The grid has seven columns (left rail, left, separator, middle, separator, right, right rail) and four rows (the main row, a separator,
@@ -95,6 +102,12 @@ export class BuildPage {
   readonly decide = output<{ runId: string; id: string; allow: boolean; message: string | null }>();
   readonly goTo = output<string>();
   readonly toggleRun = output<string>();
+  /** The engineer chose a task filter. */
+  readonly setFilter = output<TaskFilter>();
+  /** The engineer opened or closed a repository's fold. */
+  readonly toggleFold = output<string>();
+  /** The engineer opened or closed a repository's folded low findings. */
+  readonly toggleLow = output<string>();
   readonly pickMode = output<LayoutMode>();
   readonly arrange = output<ArrangeAction>();
   readonly focusOn = output<AreaId>();
@@ -113,6 +126,12 @@ export class BuildPage {
   protected readonly edgeNames = EDGES;
   protected readonly tuckNote = TUCK_NOTE;
   protected readonly labelOf = actionLabel;
+
+  /** The four task filters, each labeled with how many tasks it holds. */
+  protected filterOptions(): { value: TaskFilter; label: string }[] {
+    const counts = this.view().filter.counts;
+    return FILTERS.map((f) => ({ value: f.value, label: `${f.label} ${counts[f.value]}` }));
+  }
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
   private readonly destroyRef = inject(DestroyRef);
@@ -198,6 +217,17 @@ export class BuildPage {
   protected pickFinding(finding: Finding): void {
     this.reveal.emit('files');
     this.showFinding.emit(finding);
+  }
+
+  /** A finding picked in the tasks area: the findings area comes forward to show it, then the changed files open its place. */
+  protected pickReviewRow(finding: Finding): void {
+    this.reveal.emit('findings');
+    this.pickFinding(finding);
+  }
+
+  /** The status tone a severity takes, the way the findings list shows it. */
+  protected severityTone(severity: Severity | null): string {
+    return severity === 'critical' || severity === 'high' ? 'error' : severity === 'medium' ? 'warning' : 'idle';
   }
 
   protected goToRepo(repo: string): void {

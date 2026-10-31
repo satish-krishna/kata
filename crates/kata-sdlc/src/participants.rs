@@ -28,15 +28,16 @@ pub struct Participant {
 }
 
 /// Every repository that takes part in the change's build: the master first, then each repository
-/// the plan names (finished or not), then `pending`, the repository a run is about to start in on
-/// the engineer's ask (a round, or Continue), when the plan does not name it. Reads, never changes.
+/// the plan names (finished or not), then each of `pending`, the repositories a run is about to
+/// start in on the engineer's ask (a round, or Continue), that the plan does not name, in the order
+/// given and each once. Reads, never changes.
 pub fn participants(
     plugin: &Path,
     folder: &Path,
     master_repo: &str,
     system: &str,
     change: &str,
-    pending: Option<&str>,
+    pending: &[String],
 ) -> Result<Vec<Participant>, BuildError> {
     Ok(model(plugin, folder, master_repo, system, change, pending)?.0)
 }
@@ -53,7 +54,7 @@ pub fn missing_change_branches(
 ) -> Result<Vec<String>, BuildError> {
     let branch = recorded_branch(&folder.join(master_repo), system, change)?;
     Ok(
-        participants(plugin, folder, master_repo, system, change, None)?
+        participants(plugin, folder, master_repo, system, change, &[])?
             .into_iter()
             .filter(|p| !p.master && !branch_exists(Path::new(&p.path), &branch))
             .map(|p| p.repo)
@@ -68,7 +69,7 @@ pub(crate) fn model(
     master_repo: &str,
     system: &str,
     change: &str,
-    pending: Option<&str>,
+    pending: &[String],
 ) -> Result<(Vec<Participant>, BuildStatus), BuildError> {
     if !is_safe_system(master_repo) || !is_safe_system(system) || !is_change_name(change) {
         return refuse(format!(
@@ -86,7 +87,7 @@ pub(crate) fn model(
         .filter(|r| r.repo != master_repo)
         .map(|r| (r.repo.as_str(), true))
         .collect();
-    if let Some(p) = pending {
+    for p in pending {
         if p != master_repo && !names.iter().any(|(n, _)| *n == p) {
             names.push((p, false));
         }
@@ -114,7 +115,7 @@ pub(crate) fn model(
         match problem {
             // A repository whose tasks are all done needs nothing from this workspace, unless a round
             // is about to run in it: that run needs the checkout.
-            Some(_) if finished && pending != Some(name) => {}
+            Some(_) if finished && !pending.iter().any(|p| p == name) => {}
             Some(why) => return refuse(format!("{who}, {why}")),
             None => taking_part.push(name),
         }

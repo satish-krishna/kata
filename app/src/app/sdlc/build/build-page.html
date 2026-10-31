@@ -36,11 +36,19 @@
     >
       <ng-container [ngTemplateOutlet]="head" [ngTemplateOutletContext]="{ $implicit: 'tasks' }" />
       <div class="k-bp__body k-bp__body--stack">
+        <app-segmented [options]="filterOptions()" [value]="view().filter.value" (valueChange)="setFilter.emit($event)" ariaLabel="Show tasks" />
+        @if (view().noDepartures) {
+          <p class="k-state__body" data-no-departures>No departures from the plan.</p>
+        }
         @for (g of view().groups; track g.repo) {
           <div class="k-bp__group" data-group>
             <div class="k-bp__heading" data-heading>
               <button hlmBtn variant="bare" size="bare" type="button" class="k-mono k-bp__name" [attr.aria-current]="g.picked ? 'true' : null" (click)="choose({ kind: 'repo', repo: g.repo })">{{ g.repo }}</button>
               <span [class]="'k-status k-status--' + g.status.tone"><span class="k-status__dot"></span>{{ g.status.label }}</span>
+              <span class="k-bp__progress">
+                <span class="k-mono" data-progress>{{ g.progress.done }}/{{ g.progress.total }}</span>
+                <span class="k-bp__bar-track" aria-hidden="true"><span class="k-bp__bar-fill" [style.width.%]="g.progress.total === 0 ? 0 : (100 * g.progress.done) / g.progress.total"></span></span>
+              </span>
               @if (g.clock) {
                 <span class="k-mono k-bp__clock">{{ g.clock }}</span>
               }
@@ -59,15 +67,31 @@
                 }
               }
             </div>
+            @if (g.list.fold; as fold) {
+              <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__fold" data-fold [attr.aria-expanded]="fold.open" (click)="toggleFold.emit(g.repo)">
+                <ng-icon [name]="fold.open ? 'lucideChevronDown' : 'lucideChevronRight'" size="14" />
+                <span class="k-mono">{{ fold.range }}</span>
+                <span>{{ fold.done }} done</span>
+                @if (fold.departed > 0) {
+                  <span class="k-bp__departed k-status k-status--warning"><span class="k-status__dot" aria-hidden="true"></span>{{ fold.departed }} departed</span>
+                }
+              </button>
+            }
+            @if (g.list.empty; as empty) {
+              <p class="k-state__body">{{ empty }}</p>
+            }
             <ul class="k-bp__tasks">
-              @for (t of g.tasks; track t.id) {
+              @for (r of g.list.rows; track r.line.id) {
                 <li>
-                  <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__task" data-task [attr.aria-current]="t.picked ? 'true' : null" (click)="choose({ kind: 'task', task: t.id })">
-                    <span class="k-mono">{{ t.id }}</span>
-                    <span class="k-bp__task-name">{{ t.name }}</span>
-                    <span [class]="'k-status k-status--' + t.status.tone"><span class="k-status__dot"></span><span class="k-bp__status-label">{{ t.status.label }}</span></span>
-                    @if (t.departure; as departure) {
-                      <span class="k-mono k-bp__departure" data-departure>Departure: {{ departure }}</span>
+                  <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__task" data-task [attr.aria-current]="view().pick?.kind === 'task' && $any(view().pick).task === r.line.id ? 'true' : null" (click)="choose({ kind: 'task', task: r.line.id })">
+                    <span class="k-mono">{{ r.line.id }}</span>
+                    <span class="k-bp__task-name">{{ r.line.name }}</span>
+                    <span [class]="'k-status k-status--' + r.line.status.tone"><span class="k-status__dot"></span><span class="k-bp__status-label">{{ r.line.status.label }}</span></span>
+                    @if (r.line.departure !== null) {
+                      <span class="k-bp__departed k-status k-status--warning" data-departure><span class="k-status__dot" aria-hidden="true"></span>departed</span>
+                    }
+                    @if (r.showDeparture && r.line.departure !== null) {
+                      <span class="k-mono k-bp__departure" data-departure-text>{{ r.line.departure }}</span>
                     }
                   </button>
                 </li>
@@ -75,7 +99,7 @@
             </ul>
           </div>
         }
-        <div class="k-bp__group">
+        <div class="k-bp__group" data-review-group>
           <div class="k-bp__heading">
             <button hlmBtn variant="bare" size="bare" type="button" class="k-mono k-bp__name" data-review [attr.aria-current]="view().review.picked ? 'true' : null" (click)="choose({ kind: 'review' })">Review</button>
             <span [class]="'k-status k-status--' + view().review.status.tone"><span class="k-status__dot"></span>{{ view().review.status.label }}</span>
@@ -87,7 +111,51 @@
                 <button hlmBtn variant="secondary" size="sm" type="button" (click)="repoAction.emit({ repo: 'review', action: 'continue' })">Continue review</button>
               }
             }
+            @if (view().review.rows; as found) {
+              <span class="k-mono k-bp__review-total">· {{ found.total }} {{ found.total === 1 ? 'finding' : 'findings' }}</span>
+            }
           </div>
+          @if (view().review.rows; as found) {
+            @if (view().review.stale; as stale) {
+              <p class="k-bp__review-stale" data-review-stale role="status"><span class="k-status k-status--warning"><span class="k-status__dot"></span>{{ stale }}</span></p>
+            }
+            @if (view().review.nothingFound) {
+              <p class="k-state__body">Reviewed, nothing found.</p>
+            }
+            @if (found.counts.length > 0) {
+              <p class="k-bp__review-counts" data-review-counts>
+                @for (c of found.counts; track c.severity) {
+                  <span [class]="'k-status k-status--' + severityTone(c.severity)"><span class="k-status__dot"></span>{{ c.n }} {{ c.severity }}</span>
+                }
+              </p>
+            }
+            @for (g of found.groups; track g.repo) {
+              <div class="k-bp__review-group">
+                <div class="k-mono k-bp__review-repo" data-repo-heading>
+                  {{ g.repo ?? 'No repository named' }} <span class="k-findings__count">{{ g.rows.length + g.low.length }}</span>
+                </div>
+                <ul class="k-bp__findings">
+                  @for (r of g.rows; track r.key) {
+                    <ng-container [ngTemplateOutlet]="findingRow" [ngTemplateOutletContext]="{ $implicit: r }" />
+                  }
+                  @if (g.low.length > 0) {
+                    @let lowOpen = view().review.openLow.has(g.repo ?? '');
+                    <li>
+                      <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__fold" data-low-fold [attr.aria-expanded]="lowOpen" (click)="toggleLow.emit(g.repo ?? '')">
+                        <ng-icon [name]="lowOpen ? 'lucideChevronDown' : 'lucideChevronRight'" size="14" />
+                        <span>{{ g.low.length }} low</span>
+                      </button>
+                    </li>
+                    @if (lowOpen) {
+                      @for (r of g.low; track r.key) {
+                        <ng-container [ngTemplateOutlet]="findingRow" [ngTemplateOutletContext]="{ $implicit: r }" />
+                      }
+                    }
+                  }
+                </ul>
+              </div>
+            }
+          }
         </div>
       </div>
     </section>
@@ -113,6 +181,12 @@
                   }
                 </ul>
               }
+            </div>
+          }
+          @if (view().pickedDeparture; as departure) {
+            <div class="k-bp__pick-departure" data-pick-departure>
+              <h2 class="k-state__title">Departure from the plan</h2>
+              <p class="k-mono k-bp__departure-text">{{ departure.text }}</p>
             </div>
           }
           @if (view().stops.length > 0) {
@@ -298,6 +372,16 @@
 </section>
 
 <!-- The mark an area's name carries while an agent waits on the engineer: a warning dot, and "waiting" for a screen reader. -->
+<ng-template #findingRow let-r>
+  <li>
+    <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__finding" data-finding-row (click)="pickReviewRow(r.finding)">
+      <span class="k-mono" data-finding-key>{{ r.key }}</span>
+      <span [class]="'k-status k-status--' + severityTone(r.finding.severity)"><span class="k-status__dot"></span>{{ r.finding.severity ?? 'no severity' }}</span>
+      <span class="k-bp__finding-text" [attr.title]="r.summary">{{ r.summary }}</span>
+    </button>
+  </li>
+</ng-template>
+
 <ng-template #mark>
   <span class="k-status k-status--warning k-bp__mark" data-waiting-mark><span class="k-status__dot"></span><span class="sr-only">waiting</span></span>
 </ng-template>

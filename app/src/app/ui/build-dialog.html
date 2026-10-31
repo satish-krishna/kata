@@ -1,19 +1,39 @@
 <div class="k-form">
   @if (round()) {
-    <app-field label="Instructions">
-      <textarea hlmTextarea rows="4" aria-label="Instructions" [formField]="state().form.instructions"></textarea>
-    </app-field>
-    <app-field label="Repository" hint="The agent works on the instructions inside this repository, after any of its unfinished tasks.">
-      <hlm-select [value]="state().form.repo().value() || null" (valueChange)="setRepo($event)">
-        <hlm-select-trigger aria-label="Repository">
-          <hlm-select-value placeholder="Choose a repository" />
-        </hlm-select-trigger>
-        <hlm-select-content *hlmSelectPortal>
-          @for (r of repos(); track r) {
-            <hlm-select-item [value]="r">{{ r }}</hlm-select-item>
-          }
-        </hlm-select-content>
-      </hlm-select>
+    @for (s of sections(); track $index) {
+      <section class="k-round__group" [attr.aria-label]="s.repo === null ? 'Findings that name no repository' : 'Round in ' + s.repo">
+        @if (s.repo === null) {
+          <h3 class="k-left__head">No repository named</h3>
+        } @else {
+          <h3 class="k-left__head k-mono">{{ s.repo }}</h3>
+        }
+        @if (s.findings.length > 0) {
+          <ul class="k-left__list">
+            @for (f of s.findings; track f.key) {
+              <ng-container [ngTemplateOutlet]="findingRow" [ngTemplateOutletContext]="{ $implicit: f }" />
+            }
+          </ul>
+        }
+        @if (s.note && s.repo !== null) {
+          <app-field [label]="'Also tell the ' + s.repo + ' agent (optional)'">
+            <textarea hlmTextarea rows="2" [attr.aria-label]="'Note for the ' + s.repo + ' agent'" [formField]="state().form.notes[s.repo]"></textarea>
+          </app-field>
+        }
+      </section>
+    }
+    <app-field label="This round">
+      <div class="k-round__summary" data-round-summary aria-live="polite">
+        @if (plan().blocked; as blocked) {
+          <p class="k-round__blocked k-status k-status--warning"><span class="k-status__dot" aria-hidden="true"></span>{{ blocked }}</p>
+        } @else {
+          <p>Starts {{ plan().requests.length }} {{ plan().requests.length === 1 ? 'agent' : 'agents' }}</p>
+          <ul class="k-left__list">
+            @for (r of plan().requests; track r.repo) {
+              <li class="k-mono">{{ r.summary }}</li>
+            }
+          </ul>
+        }
+      </div>
     </app-field>
   }
   <app-field label="Time limit" hint="Time limit for each repository's run. Time spent waiting for your answers does not count. There is no spending ceiling.">
@@ -29,3 +49,33 @@
     </div>
   </app-field>
 </div>
+
+<ng-template #findingRow let-f>
+  <li class="k-round__finding" [attr.data-finding]="f.key">
+    <div hlmField orientation="horizontal" class="k-round__field">
+      <hlm-checkbox [inputId]="'round-finding-' + f.key" [checked]="isPicked(f.key)" (checkedChange)="setPicked(f.key, $event)" />
+      <label hlmFieldLabel class="k-round__label" [for]="'round-finding-' + f.key">
+        <span class="k-mono">{{ f.key }}</span>
+        <span [class]="'k-status k-status--' + tone(f.finding.severity)"><span class="k-status__dot"></span>{{ f.finding.severity ?? 'no severity' }}</span>
+        <span class="k-round__text" [attr.title]="summaryOf(f.finding.text)">{{ summaryOf(f.finding.text) }}</span>
+      </label>
+    </div>
+    @if (f.finding.file) {
+      <span class="k-mono k-round__file">{{ f.finding.file }}{{ f.finding.line ? ':' + f.finding.line : '' }}</span>
+    }
+    @if (f.repo === null) {
+      <app-field label="Fixed in">
+        <hlm-select [value]="assignedTo(f.key)" (valueChange)="assign(f.key, $event)">
+          <hlm-select-trigger [attr.aria-label]="'Fixed in, for ' + f.key">
+            <hlm-select-value placeholder="Choose a repository" />
+          </hlm-select-trigger>
+          <hlm-select-content *hlmSelectPortal>
+            @for (r of repos(); track r) {
+              <hlm-select-item [value]="r">{{ r }}</hlm-select-item>
+            }
+          </hlm-select-content>
+        </hlm-select>
+      </app-field>
+    }
+  </li>
+</ng-template>
