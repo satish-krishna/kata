@@ -52,10 +52,14 @@
 
 <ng-template #findingRow let-f>
   <li class="k-round__finding" [attr.data-finding]="f.key">
-    <hlm-checkbox [aria-label]="f.key + ' ' + summaryOf(f.finding.text)" [checked]="isPicked(f.key)" (checkedChange)="setPicked(f.key, $event)" />
-    <span class="k-mono">{{ f.key }}</span>
-    <span [class]="'k-status k-status--' + tone(f.finding.severity)"><span class="k-status__dot"></span>{{ f.finding.severity ?? 'no severity' }}</span>
-    <span class="k-round__text" [attr.title]="summaryOf(f.finding.text)">{{ summaryOf(f.finding.text) }}</span>
+    <div hlmField orientation="horizontal" class="k-round__field">
+      <hlm-checkbox [inputId]="'round-finding-' + f.key" [checked]="isPicked(f.key)" (checkedChange)="setPicked(f.key, $event)" />
+      <label hlmFieldLabel class="k-round__label" [for]="'round-finding-' + f.key">
+        <span class="k-mono">{{ f.key }}</span>
+        <span [class]="'k-status k-status--' + tone(f.finding.severity)"><span class="k-status__dot"></span>{{ f.finding.severity ?? 'no severity' }}</span>
+        <span class="k-round__text" [attr.title]="summaryOf(f.finding.text)">{{ summaryOf(f.finding.text) }}</span>
+      </label>
+    </div>
     @if (f.finding.file) {
       <span class="k-mono k-round__file">{{ f.finding.file }}{{ f.finding.line ? ':' + f.finding.line : '' }}</span>
     }

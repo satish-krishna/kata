@@ -2,6 +2,7 @@ import { Component, Injector, computed, input, signal, type WritableSignal } fro
 import { FormField, REQUIRED, form, metadata, validate, type FieldTree } from '@angular/forms/signals';
 import { NgTemplateOutlet } from '@angular/common';
 import { HlmCheckbox } from '@spartan-ng/helm/checkbox';
+import { HlmField, HlmFieldLabel } from '@spartan-ng/helm/field';
 import { HlmInput } from '@spartan-ng/helm/input';
 import { HlmLabel } from '@spartan-ng/helm/label';
 import { HlmSelectImports } from '@spartan-ng/helm/select';
@@ -75,7 +76,7 @@ export function buildRequest(state: BuildFormState, round: boolean, offer?: Roun
 @Component({
   selector: 'app-build-dialog',
   host: { class: 'contents' },
-  imports: [NgTemplateOutlet, HlmCheckbox, HlmInput, HlmLabel, HlmSelectImports, HlmTextareaImports, FormField, Field],
+  imports: [NgTemplateOutlet, HlmCheckbox, HlmField, HlmFieldLabel, HlmInput, HlmLabel, HlmSelectImports, HlmTextareaImports, FormField, Field],
   templateUrl: './build-dialog.html',
 })
 export class BuildDialog {
