@@ -125,7 +125,7 @@
             @if (found.counts.length > 0) {
               <p class="k-bp__review-counts" data-review-counts>
                 @for (c of found.counts; track c.severity) {
-                  <span [class]="'k-status k-status--' + severityTone(c.severity)"><span class="k-status__dot"></span>{{ c.severity }} {{ c.n }}</span>
+                  <span [class]="'k-status k-status--' + severityTone(c.severity)"><span class="k-status__dot"></span>{{ c.n }} {{ c.severity }}</span>
                 }
               </p>
             }
