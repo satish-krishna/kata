@@ -553,7 +553,7 @@ describe('ChangePage build page', () => {
     expect(text(dialog().querySelector('[hlmDialogTitle]')!)).toBe('Start round');
     const preview = fixture.debugElement.injector.get(RunPreviewViewModel);
     await vi.waitFor(() => expect(preview.buildForm()).not.toBeNull());
-    preview.buildForm()!.model.update((m) => ({ ...m, instructions: 'tidy up', repo: 'commerce-core' }));
+    preview.buildForm()!.model.update((m) => ({ ...m, picked: [], notes: { ...m.notes, 'commerce-core': 'tidy up' } }));
     await confirmPreview();
     await vi.waitFor(() => expect(runSpec).toHaveBeenCalled(), { timeout: TOKEN });
     expect(prepare.mock.calls[0][6]).toBe('round');

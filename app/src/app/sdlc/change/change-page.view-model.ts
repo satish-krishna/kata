@@ -651,6 +651,7 @@ export class ChangePageViewModel {
   private async beginBuild(req: BuildStartRequest, action: BuildAction, choices: BuildChoices): Promise<void> {
     this.askedAction = action;
     this.buildMode.set(null);
+    this.buildOffer.set(null);
     this.asked = req;
     this.askedChoices = choices;
     await this.prepare(false);
@@ -1482,15 +1483,27 @@ export class ChangePageViewModel {
     this.progress.begin('preparing-build', progressLabels.preparingBuild(), 'build');
     let out: Awaited<ReturnType<SdlcRunner['prepareBuild']>>;
     try {
-      out = await this.runner.prepareBuild({
-        folder: w.folder,
-        masterRepo: master,
-        system: this.system(),
-        change: this.changeName(),
-        action: this.askedAction,
-        continueWithLeftovers,
-        pending: asked.rounds?.[0]?.repo ?? null,
-      });
+      // The backend takes one repository a run is about to start in, so a round in several repositories prepares once for each and joins the starts.
+      const pendings = asked.rounds === null || asked.rounds.length === 0 ? [null] : asked.rounds.map((r) => r.repo);
+      const ready: BuildStart[] = [];
+      out = undefined as never;
+      for (const pending of pendings) {
+        out = await this.runner.prepareBuild({
+          folder: w.folder,
+          masterRepo: master,
+          system: this.system(),
+          change: this.changeName(),
+          action: this.askedAction,
+          continueWithLeftovers,
+          pending,
+        });
+        if (out.kind !== 'ready') break;
+        ready.push(out.start);
+      }
+      if (out.kind === 'ready' && ready.length > 1) {
+        const repos = new Map(ready.flatMap((r) => r.repos).map((r) => [r.repo, r]));
+        out = { kind: 'ready', start: { master: ready[0].master, repos: [...repos.values()] } };
+      }
     } catch (e) {
       this.progress.fail('build');
       throw e;

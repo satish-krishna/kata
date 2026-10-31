@@ -1,4 +1,45 @@
 <div class="k-form">
+  @if (round()) {
+    @for (repo of repos(); track repo) {
+      <section class="k-round__group" [attr.aria-label]="'Round in ' + repo">
+        <h3 class="k-left__head k-mono">{{ repo }}</h3>
+        @if (findingsOf(repo).length > 0) {
+          <ul class="k-left__list">
+            @for (f of findingsOf(repo); track f.key) {
+              <ng-container [ngTemplateOutlet]="findingRow" [ngTemplateOutletContext]="{ $implicit: f }" />
+            }
+          </ul>
+        }
+        <app-field [label]="'Also tell the ' + repo + ' agent (optional)'">
+          <textarea hlmTextarea rows="2" [attr.aria-label]="'Note for the ' + repo + ' agent'" [formField]="state().form.notes[repo]"></textarea>
+        </app-field>
+      </section>
+    }
+    @if (unnamed().length > 0) {
+      <section class="k-round__group" aria-label="Findings that name no repository">
+        <h3 class="k-left__head">No repository named</h3>
+        <ul class="k-left__list">
+          @for (f of unnamed(); track f.key) {
+            <ng-container [ngTemplateOutlet]="findingRow" [ngTemplateOutletContext]="{ $implicit: f }" />
+          }
+        </ul>
+      </section>
+    }
+    <app-field label="This round">
+      <div class="k-round__summary" data-round-summary aria-live="polite">
+        @if (plan().blocked; as blocked) {
+          <p class="k-round__blocked">{{ blocked }}</p>
+        } @else {
+          <p>Starts {{ plan().requests.length }} {{ plan().requests.length === 1 ? 'agent' : 'agents' }}</p>
+          <ul class="k-left__list">
+            @for (r of plan().requests; track r.repo) {
+              <li class="k-mono">{{ r.summary }}</li>
+            }
+          </ul>
+        }
+      </div>
+    </app-field>
+  }
   <app-field label="Time limit" hint="Time limit for each repository's run. Time spent waiting for your answers does not count. There is no spending ceiling.">
     <div class="grid grid-cols-2 gap-2">
       <label hlmLabel class="k-duration">
@@ -12,3 +53,29 @@
     </div>
   </app-field>
 </div>
+
+<ng-template #findingRow let-f>
+  <li class="k-round__finding" [attr.data-finding]="f.key">
+    <hlm-checkbox [aria-label]="f.key + ' ' + summaryOf(f.finding.text)" [checked]="isPicked(f.key)" (checkedChange)="setPicked(f.key, $event)" />
+    <span class="k-mono">{{ f.key }}</span>
+    <span [class]="'k-status k-status--' + tone(f.finding.severity)"><span class="k-status__dot"></span>{{ f.finding.severity ?? 'no severity' }}</span>
+    <span>{{ summaryOf(f.finding.text) }}</span>
+    @if (f.finding.file) {
+      <span class="k-mono k-round__file">{{ f.finding.file }}{{ f.finding.line ? ':' + f.finding.line : '' }}</span>
+    }
+    @if (f.repo === null) {
+      <app-field label="Fixed in">
+        <hlm-select [value]="assignedTo(f.key)" (valueChange)="assign(f.key, $event)">
+          <hlm-select-trigger [attr.aria-label]="'Fixed in, for ' + f.key">
+            <hlm-select-value placeholder="Choose a repository" />
+          </hlm-select-trigger>
+          <hlm-select-content *hlmSelectPortal>
+            @for (r of repos(); track r) {
+              <hlm-select-item [value]="r">{{ r }}</hlm-select-item>
+            }
+          </hlm-select-content>
+        </hlm-select>
+      </app-field>
+    }
+  </li>
+</ng-template>

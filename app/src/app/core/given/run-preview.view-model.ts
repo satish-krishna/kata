@@ -146,14 +146,15 @@ export class RunPreviewViewModel {
     return groupRows(sharedRows(this.parts()));
   });
 
-  /** A build's folders, each with the project items of that folder; null outside a build preview. For a round only the picked repository shows. */
+  /** A build's folders, each with the project items of that folder; null outside a build preview. For a round only the repositories that get an agent show. */
   readonly sections = computed<PreviewSection[] | null>(() => {
     const req = this.buildReq();
     if (!req) return null;
     const plan = buildPreviewFor(req.kind);
-    const picked = plan.asksRound ? '' : null;
+    const form = this.buildForm();
+    const picked = plan.asksRound ? new Set(form ? (buildRequest(form, true, req.offer ?? undefined).rounds ?? []).map((r) => r.repo) : []) : null;
     return this.parts()
-      .filter((p) => picked === null || p.section.repo === picked)
+      .filter((p) => picked === null || (p.section.repo !== null && picked.has(p.section.repo)))
       .map((p) => {
         const bound = projectBound(p.rows);
         return { title: p.section.title, groups: groupRows(p.rows.filter((r) => bound.has(r.item.id))) };

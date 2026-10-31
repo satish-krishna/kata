@@ -1,10 +1,14 @@
 import { Component, Injector, computed, input, signal, type WritableSignal } from '@angular/core';
 import { FormField, REQUIRED, form, metadata, validate, type FieldTree } from '@angular/forms/signals';
+import { NgTemplateOutlet } from '@angular/common';
+import { HlmCheckbox } from '@spartan-ng/helm/checkbox';
 import { HlmInput } from '@spartan-ng/helm/input';
 import { HlmLabel } from '@spartan-ng/helm/label';
 import { HlmSelectImports } from '@spartan-ng/helm/select';
 import { HlmTextareaImports } from '@spartan-ng/helm/textarea';
-import type { RoundOffer, RoundRequest } from '../lib/build-round';
+import { defaultPicks, roundPlan, type RoundFinding, type RoundOffer, type RoundPicks, type RoundPlan, type RoundRequest } from '../lib/build-round';
+import { summaryOf } from '../lib/build-task-list';
+import type { Severity } from '../lib/sdlc';
 import { Field } from './field';
 
 export type BuildDialogMode = 'start' | 'continue' | 'round';
@@ -17,12 +21,23 @@ export type BuildModel = { hours: number | null; minutes: number | null; picked:
 export type BuildFormState = { model: WritableSignal<BuildModel>; form: FieldTree<BuildModel> };
 
 const DEFAULT_HOURS = 2;
+const NO_OFFER: RoundOffer = { review: null, repos: [], findings: [] };
+
+/** The picks the form holds, as the round plan reads them. */
+export function picksOf(model: BuildModel): RoundPicks {
+  return { picked: new Set(model.picked), assigned: model.assigned, notes: model.notes };
+}
 
 /** A fresh form for the build's time limit and, for another round, what to do and where. */
 export function createBuildForm(injector: Injector, round: boolean, offer?: RoundOffer): BuildFormState {
-  void round;
-  void offer;
-  const model = signal<BuildModel>({ hours: DEFAULT_HOURS, minutes: 0, picked: [], assigned: {}, notes: {} });
+  const seen = offer ?? NO_OFFER;
+  const model = signal<BuildModel>({
+    hours: DEFAULT_HOURS,
+    minutes: 0,
+    picked: [...defaultPicks(seen).picked],
+    assigned: {},
+    notes: Object.fromEntries(seen.repos.map((r) => [r, ''])),
+  });
   const f = form(
     model,
     (p) => {
@@ -32,6 +47,11 @@ export function createBuildForm(injector: Injector, round: boolean, offer?: Roun
         validate(field, ({ value }) => (value() === null ? { kind: 'required' } : undefined));
         validate(field, ({ value }) => ((value() ?? 0) < 0 ? { kind: 'min' } : undefined));
       }
+      // A round that cannot start reports why as the form's own error, so the preview's Start run stays off with the reason shown beside the picks.
+      validate(p, ({ value }) => {
+        const blocked = round ? roundPlan(seen, picksOf(value())).blocked : null;
+        return blocked === null ? undefined : { kind: 'round', message: blocked };
+      });
       validate(p.minutes, ({ valueOf }) => ((valueOf(p.hours) ?? 0) * 60 + (valueOf(p.minutes) ?? 0) > 0 ? undefined : { kind: 'zero-limit' }));
     },
     { injector },
@@ -47,8 +67,7 @@ export function limitSecs(state: BuildFormState): number {
 
 /** What the form asks for. */
 export function buildRequest(state: BuildFormState, round: boolean, offer?: RoundOffer): BuildStartRequest {
-  void offer;
-  return { timeoutSecs: limitSecs(state), rounds: round ? [] : null };
+  return { timeoutSecs: limitSecs(state), rounds: round ? roundPlan(offer ?? NO_OFFER, picksOf(state.model())).requests : null };
 }
 
 /* The build's fields: the time limit for each repository's run and, for another round, what to do and where.
@@ -56,7 +75,7 @@ export function buildRequest(state: BuildFormState, round: boolean, offer?: Roun
 @Component({
   selector: 'app-build-dialog',
   host: { class: 'contents' },
-  imports: [HlmInput, HlmLabel, HlmSelectImports, HlmTextareaImports, FormField, Field],
+  imports: [NgTemplateOutlet, HlmCheckbox, HlmInput, HlmLabel, HlmSelectImports, HlmTextareaImports, FormField, Field],
   templateUrl: './build-dialog.html',
 })
 export class BuildDialog {
@@ -66,5 +85,40 @@ export class BuildDialog {
   readonly state = input.required<BuildFormState>();
 
   protected readonly round = computed(() => this.mode() === 'round');
+  private readonly seen = computed(() => this.offer() ?? NO_OFFER);
+  protected readonly repos = computed(() => this.seen().repos);
+  /** What the round asks of each repository, or why it cannot start. */
+  protected readonly plan = computed<RoundPlan>(() => roundPlan(this.seen(), picksOf(this.state().model())));
+  /** The findings the review names a repository for, under that repository, then the ones that name none. */
+  protected findingsOf(repo: string): RoundFinding[] {
+    return this.seen().findings.filter((f) => f.repo === repo);
+  }
+  protected readonly unnamed = computed(() => this.seen().findings.filter((f) => f.repo === null));
+
+  protected isPicked(key: string): boolean {
+    return this.state().model().picked.includes(key);
+  }
+
+  protected setPicked(key: string, on: boolean): void {
+    this.state().model.update((m) => ({ ...m, picked: on ? [...m.picked.filter((k) => k !== key), key] : m.picked.filter((k) => k !== key) }));
+  }
+
+  protected assignedTo(key: string): string | null {
+    return this.state().model().assigned[key] ?? null;
+  }
+
+  protected assign(key: string, repo: string | string[] | null | undefined): void {
+    if (typeof repo !== 'string') return;
+    this.state().model.update((m) => ({ ...m, assigned: { ...m.assigned, [key]: repo } }));
+  }
+
+  protected summaryOf(text: string): string {
+    return summaryOf(text);
+  }
+
+  /** The status tone a severity takes, the way the findings list shows it. */
+  protected tone(severity: Severity | null): string {
+    return severity === 'critical' || severity === 'high' ? 'error' : severity === 'medium' ? 'warning' : 'idle';
+  }
 
 }

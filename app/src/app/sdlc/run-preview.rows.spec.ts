@@ -135,7 +135,7 @@ const ROWS: [string, string, () => Promise<Scenario>][] = [
     'another round',
     () =>
       changePage(BUILD, 'build-finished', (vm) => vm.act('another-round'), 'build', (s) =>
-        s.preview.buildForm()!.model.update((m) => ({ ...m, instructions: 'tidy up', repo: 'commerce-core' })),
+        s.preview.buildForm()!.model.update((m) => ({ ...m, notes: { ...m.notes, 'commerce-core': 'tidy up' } })),
       ),
   ],
   ['AI-SDLC mode', 'a review started by hand', () => changePage(BUILD, 'build-finished', (vm) => vm.act('run-review'), 'build')],

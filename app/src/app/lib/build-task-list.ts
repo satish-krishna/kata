@@ -91,7 +91,7 @@ const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low'];
 const rank = (f: Finding): number => (f.severity === null ? SEVERITIES.length : SEVERITIES.indexOf(f.severity));
 
 /** The first sentence of a finding's text (up to the first full stop and space, or line break), the whole text when it has none. */
-function summaryOf(text: string): string {
+export function summaryOf(text: string): string {
   const line = text.split(/\r?\n/)[0];
   const stop = line.indexOf('. ');
   return stop === -1 ? line : line.slice(0, stop + 1);
