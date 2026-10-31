@@ -169,3 +169,31 @@ describe('build round', () => {
     expect(summaries).not.toContain('F4');
   });
 });
+
+describe('build round: a finding naming a repository outside the build (F9)', () => {
+  const outside: Finding = { id: 'F9', severity: 'high', repo: 'legacy-api', text: 'Legacy call is unchecked.' };
+  const o = () => roundOffer({ number: 3, findings: [outside] }, ['ai-sdlc', 'catalog-api']);
+
+  it('is offered with no repository, like a finding that names none, and picked by default', () => {
+    expect(o().findings.map((x) => x.repo)).toEqual([null]);
+    expect([...defaultPicks(o()).picked]).toEqual(['F9']);
+  });
+
+  it('blocks the round until a repository is chosen', () => {
+    const plan = roundPlan(o(), picks(['F9']));
+    expect(plan.blocked).toBe('Choose a repository for F9.');
+    expect(plan.requests).toEqual([]);
+  });
+
+  it('is sent to the repository chosen for it', () => {
+    const plan = roundPlan(o(), picks(['F9'], { assigned: { F9: 'catalog-api' } }));
+    expect(plan.blocked).toBeNull();
+    expect(plan.requests).toEqual([
+      {
+        repo: 'catalog-api',
+        instructions: 'Fix these findings from review 3 of this change in this repository.\n- F9 (high)\n  Legacy call is unchecked.',
+        summary: 'catalog-api · F9',
+      },
+    ]);
+  });
+});

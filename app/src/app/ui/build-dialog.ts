@@ -6,7 +6,7 @@ import { HlmInput } from '@spartan-ng/helm/input';
 import { HlmLabel } from '@spartan-ng/helm/label';
 import { HlmSelectImports } from '@spartan-ng/helm/select';
 import { HlmTextareaImports } from '@spartan-ng/helm/textarea';
-import { defaultPicks, roundPlan, type RoundFinding, type RoundOffer, type RoundPicks, type RoundPlan, type RoundRequest } from '../lib/build-round';
+import { defaultPicks, roundPlan, type RoundFinding, type RoundGroup, type RoundOffer, type RoundPicks, type RoundPlan, type RoundRequest } from '../lib/build-round';
 import { summaryOf } from '../lib/build-task-list';
 import type { Severity } from '../lib/sdlc';
 import { Field } from './field';
@@ -82,6 +82,8 @@ export class BuildDialog {
   readonly mode = input.required<BuildDialogMode>();
   /** What a round may fix, from the latest review; null outside round mode. */
   readonly offer = input<RoundOffer | null>(null);
+  /** The offer's findings in the Review group's groups and order, built by whoever owns the offer. */
+  readonly groups = input<RoundGroup[]>([]);
   readonly state = input.required<BuildFormState>();
 
   protected readonly round = computed(() => this.mode() === 'round');

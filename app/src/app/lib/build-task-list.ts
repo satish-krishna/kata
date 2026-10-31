@@ -1,5 +1,5 @@
 import type { StatusText } from '../sdlc/build/build-page.view-model';
-import { findingKey } from './build-round';
+import { findingKey, type RoundGroup, type RoundOffer } from './build-round';
 import type { Finding, Severity } from './sdlc';
 import type { FindingGroup } from './sdlc-findings';
 
@@ -85,6 +85,14 @@ export function reviewRows(groups: FindingGroup[], all?: Finding[]): ReviewRowsV
       low: g.findings.filter((f) => f.severity === 'low').map(row),
     })),
   };
+}
+
+/** The groups of the round dialog: the Review group's, in its order. */
+export function roundGroups(offer: RoundOffer, groups: FindingGroup[], all: Finding[]): RoundGroup[] {
+  void offer;
+  void groups;
+  void all;
+  return [];
 }
 
 const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low'];

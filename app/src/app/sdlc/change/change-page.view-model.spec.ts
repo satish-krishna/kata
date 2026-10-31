@@ -14,7 +14,8 @@ import { SdlcStagesStore, stageKey } from '../../core/sdlc/sdlc-stages.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
-import { actionsFor, safetyRules, type StageAction } from '../../lib/sdlc';
+import { actionsFor, safetyRules, type Finding, type StageAction } from '../../lib/sdlc';
+import { groupFindings } from '../../lib/sdlc-findings';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
@@ -1234,6 +1235,27 @@ describe('the build\'s preview', () => {
       const rounds = TestBed.inject(BuildPageViewModel).current()!.rounds;
       expect(rounds.map((r) => r.repo)).toEqual(['commerce-docs']);
       expect(rounds[0].instructions).toContain('F1');
+    });
+
+    it('hands the dialog the Review group\'s groups and order for the same review (F2)', async () => {
+      const { vm, preview } = await staged('build-finished');
+      const findings: Finding[] = [
+        { id: 'F1', severity: 'medium', text: 'F1 is wrong. Fix it.', repo: 'commerce-core' },
+        { id: 'F2', severity: 'high', text: 'F2 is wrong. Fix it.', repo: 'commerce-core' },
+        { id: 'F3', severity: 'high', text: 'F3 is wrong. Fix it.', repo: 'legacy-api' },
+        { id: 'F4', severity: 'low', text: 'F4 is wrong. Fix it.' },
+      ];
+      const build = TestBed.inject(BuildPageViewModel);
+      Object.defineProperty(build, 'latestReview', { value: () => ({ number: 1, findings, stale: false }) });
+      Object.defineProperty(build, 'findingGroups', { value: () => groupFindings(findings, ['commerce-core']) });
+      await vm.act('another-round');
+      await previewReady(preview);
+      expect(vm.buildGroups().map((g) => ({ repo: g.repo, keys: g.findings.map((f) => f.key) }))).toEqual([
+        { repo: 'commerce-core', keys: ['F2', 'F1'] },
+        { repo: 'legacy-api', keys: ['F3'] },
+        { repo: null, keys: ['F4'] },
+      ]);
+      expect(vm.buildGroups()[1].findings[0].repo).toBeNull();
     });
 
     it('a round agent cannot edit another repository or the checks folder (R7.4)', async () => {

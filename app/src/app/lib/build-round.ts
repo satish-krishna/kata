@@ -1,6 +1,8 @@
 import type { Finding } from './sdlc';
 
 export type RoundFinding = { key: string; finding: Finding; repo: string | null };
+/** The findings of one repository, or of those naming none when `repo` is null, as the dialog lists them. */
+export type RoundGroup = { repo: string | null; findings: RoundFinding[] };
 export type RoundOffer = { review: number | null; repos: string[]; findings: RoundFinding[] };
 export type RoundPicks = {
   picked: ReadonlySet<string>;

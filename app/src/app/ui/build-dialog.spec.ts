@@ -2,7 +2,9 @@ import { Injector } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import type { Finding } from '../lib/sdlc';
-import type { RoundOffer } from '../lib/build-round';
+import { roundOffer, type RoundOffer } from '../lib/build-round';
+import { roundGroups } from '../lib/build-task-list';
+import { groupFindings } from '../lib/sdlc-findings';
 import { BuildDialog, buildRequest, createBuildForm, type BuildDialogMode, type BuildFormState } from './build-dialog';
 
 let host: HTMLElement;
@@ -54,6 +56,12 @@ const OFFER: RoundOffer = {
 };
 const NO_REVIEW: RoundOffer = { review: null, repos: REPOS, findings: [] };
 
+/** The groups the preview's owner hands the dialog: the Review group's own, from the same owners. */
+const groupsOf = (offer: RoundOffer) => {
+  const all = offer.findings.map((f) => f.finding);
+  return roundGroups(offer, groupFindings(all, offer.repos), all);
+};
+
 /** The form is made by whoever owns the preview; the component only draws it. */
 async function open(mode: BuildDialogMode, offer: RoundOffer | null = null) {
   TestBed.configureTestingModule({ imports: [BuildDialog] });
@@ -62,6 +70,7 @@ async function open(mode: BuildDialogMode, offer: RoundOffer | null = null) {
   host = fixture.nativeElement as HTMLElement;
   fixture.componentRef.setInput('mode', mode);
   fixture.componentRef.setInput('offer', offer);
+  fixture.componentRef.setInput('groups', offer === null ? [] : groupsOf(offer));
   fixture.componentRef.setInput('state', state);
   await fixture.whenStable();
   await settle();
@@ -193,5 +202,29 @@ describe('BuildDialog', () => {
     expect(checked('F1')).toBe(true);
     expect(notes()[0].value).toBe('');
     expect(hours().value).toBe('2');
+  });
+
+  it('lists a finding of a repository outside the build under that repository, with a Fixed in select (F9)', async () => {
+    const outside = { id: 'F9', severity: 'high' as const, text: 'F9 is wrong. It needs a fix.', repo: 'legacy-api' };
+    const { fixture, valid, request } = await open('round', roundOffer({ number: 1, findings: [outside] }, REPOS));
+    const row = root().querySelector('[data-finding="F9"]')!;
+    expect(row).not.toBeNull();
+    expect(checked('F9')).toBe(true);
+    expect(row.closest('section')!.querySelector('h3')!.textContent!.trim()).toBe('legacy-api');
+    expect(row.querySelector('hlm-select')).not.toBeNull();
+    expect(text(row)).toContain('Fixed in');
+    expect(notes()).toHaveLength(3);
+    expect(valid()).toBe(false);
+    expect(summary()).toContain('Choose a repository for F9.');
+    await pickRepo(fixture, 'catalog-api');
+    expect(valid()).toBe(true);
+    expect(request().rounds!.map((r) => r.repo)).toEqual(['catalog-api']);
+  });
+
+  it('lists the findings of a repository in severity order, the way the Review group does', async () => {
+    const mk = (id: string, severity: Finding['severity']) => ({ id, severity, text: `${id} is wrong. It needs a fix.`, repo: 'catalog-api' });
+    await open('round', roundOffer({ number: 1, findings: [mk('F1', 'medium'), mk('F2', 'low'), mk('F3', 'high')] }, REPOS));
+    const keys = Array.from(root().querySelectorAll('[data-finding]')).map((e) => e.getAttribute('data-finding'));
+    expect(keys).toEqual(['F3', 'F1', 'F2']);
   });
 });

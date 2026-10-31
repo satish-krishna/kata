@@ -30,7 +30,7 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ChangesContext } from '../changes/changes-view.view-model';
 import { BuildPageViewModel, type BuildContext } from '../build/build-page.view-model';
-import { roundOffer, type RoundOffer, type RoundRequest } from '../../lib/build-round';
+import { roundOffer, type RoundGroup, type RoundOffer, type RoundRequest } from '../../lib/build-round';
 import type { BuildDialogMode, BuildStartRequest } from '../../ui/build-dialog';
 import type { RunSpec } from '@bindings/RunSpec';
 import { GivenStore, type BuildChoices } from '../../core/given/given.store';
@@ -512,6 +512,8 @@ export class ChangePageViewModel {
   readonly buildMode = signal<BuildDialogMode | null>(null);
   /** What the open round may fix, from the latest review; null outside a round. */
   readonly buildOffer = signal<RoundOffer | null>(null);
+  /** The offer's findings in the Review group's groups and order, for the round dialog. */
+  readonly buildGroups = signal<RoundGroup[]>([]);
   /** The master repository first, then every repository the plan names. */
   readonly buildRepos = computed<string[]>(() => {
     const master = this.scanMaster();
