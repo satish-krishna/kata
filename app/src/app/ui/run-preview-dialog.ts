@@ -33,6 +33,8 @@ export class RunPreviewDialog {
   /** True when the run is in the empty room, which the dialog says at the top of the list. */
   readonly emptyRoom = input<boolean>(false);
   readonly busy = input<boolean>(false);
+  /** The start button's text; a round counts its agents. */
+  readonly startLabel = input<string>('Start run');
 
   readonly toggle = output<GivenToggle>();
   readonly start = output<void>();

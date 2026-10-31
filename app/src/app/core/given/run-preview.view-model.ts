@@ -161,6 +161,9 @@ export class RunPreviewViewModel {
       });
   });
 
+  /** The start button's text: "Start run", and for a round the number of agents it starts. */
+  readonly startLabel = computed(() => 'Start run');
+
   /** Start run is available once the rows are in and the build's fields hold a valid time limit and round. */
   readonly canStart = computed(() => !this.busy() && (this.buildForm()?.form().valid() ?? true));
 
