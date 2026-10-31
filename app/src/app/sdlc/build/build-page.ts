@@ -18,6 +18,7 @@ import {
 } from '../../lib/build-layout';
 import { layoutKeyFor } from '../../lib/build-layout-keys';
 import type { Pick } from '../../lib/build-sessions';
+import type { TaskFilter } from '../../lib/build-task-list';
 import { actionLabel, primaryAction, type Finding, type StageAction } from '../../lib/sdlc';
 import { FindingsList } from '../../ui/findings-list';
 import { ObservePane } from '../../ui/observe-pane';
@@ -95,6 +96,10 @@ export class BuildPage {
   readonly decide = output<{ runId: string; id: string; allow: boolean; message: string | null }>();
   readonly goTo = output<string>();
   readonly toggleRun = output<string>();
+  /** The engineer chose a task filter. */
+  readonly setFilter = output<TaskFilter>();
+  /** The engineer opened or closed a repository's fold. */
+  readonly toggleFold = output<string>();
   readonly pickMode = output<LayoutMode>();
   readonly arrange = output<ArrangeAction>();
   readonly focusOn = output<AreaId>();

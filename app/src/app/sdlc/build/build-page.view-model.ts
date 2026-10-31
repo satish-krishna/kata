@@ -33,6 +33,7 @@ import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { REVIEW_MISSING_TEXT, reviewState } from '../../lib/sdlc-done';
 import { givenFor, reviewFindings, specFor, type BuildRun, type Finding, type StageAction } from '../../lib/sdlc';
 import { groupFindings, type FindingGroup } from '../../lib/sdlc-findings';
+import type { TaskFilter, TaskListView } from '../../lib/build-task-list';
 import type { ReplacedFindings } from '../../ui/findings-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
 import type { BuildHandoff } from '../change/change-page.view-model';
@@ -125,6 +126,10 @@ export type TaskGroupView = {
   action: 'cancel' | 'continue' | null;
   picked: boolean;
   tasks: TaskRowView[];
+  /** Tasks finished out of all of the repository's. */
+  progress: { done: number; total: number };
+  /** What the repository lists on their own line and what it folds, under the filter. */
+  list: TaskListView;
 };
 
 /** The review's entry under the tasks. */
@@ -176,6 +181,12 @@ export type BuildPageView = {
   facts: { tasks: string; elapsed: string | null };
   actions: StageAction[];
   groups: TaskGroupView[];
+  /** The task filter on show and how many tasks each choice holds across the build. */
+  filter: { value: TaskFilter; counts: Record<TaskFilter, number> };
+  /** The Departed filter is on and no task departed. */
+  noDepartures: boolean;
+  /** The picked task's departure from the plan, when it is a finished task that recorded one. */
+  pickedDeparture: { task: string; text: string } | null;
   review: ReviewEntryView;
   pick: Pick | null;
   sessions: ShownSession[];
@@ -852,6 +863,15 @@ export class BuildPageViewModel {
   });
   private heldStage: LayoutStage | null = null;
 
+  /** The task filter on show; it starts at All and is kept for the page visit only. */
+  readonly taskFilter = signal<TaskFilter>('all');
+  /** The repositories whose fold the engineer opened. */
+  readonly openFolds = signal<ReadonlySet<string>>(new Set());
+
+  setTaskFilter(_filter: TaskFilter): void {}
+
+  toggleFold(_repo: string): void {}
+
   /** Say something through the page's one assertive live region. */
   say(text: string): void {
     this.announcement.set(text);
@@ -882,6 +902,8 @@ export class BuildPageViewModel {
         stopLine: g.heading.stopLine,
         action: g.action,
         picked: pickedRepo === g.repo,
+        progress: { done: 0, total: 0 },
+        list: { fold: null, rows: [], empty: null },
         tasks: g.tasks.map((t) => ({
           id: t.id,
           name: t.name,
@@ -890,6 +912,9 @@ export class BuildPageViewModel {
           picked: pick?.kind === 'task' && pick.task === t.id,
         })),
       })),
+      filter: { value: 'all', counts: { all: 0, open: 0, departed: 0, done: 0 } },
+      noDepartures: false,
+      pickedDeparture: null,
       review: { status: reviewStatus(entry), action: repoAction({ kind: 'idle' }, REVIEW, review), picked: pick?.kind === 'review' },
       pick,
       sessions: this.mountedSessions(),

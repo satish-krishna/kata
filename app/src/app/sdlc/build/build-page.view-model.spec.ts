@@ -1884,3 +1884,108 @@ describe('the layout follows the real build page through a finish, whatever orde
     expect(said.filter((t) => t.startsWith('Layout:'))).toEqual([]);
   });
 });
+
+describe('the tasks area folds, filters and shows a departure with its task', () => {
+  const row = (task: string, repo: string, departure: string | null = null) => ({ task, repo, commits: ['abc1234'], departure });
+  const taskOf = (id: string, repo: string, finished: boolean, departure: string | null = null, dependsOn: string[] = []) => ({
+    id, name: `Task ${id}`, repo, dependsOn, text: `### ${id}`, row: finished ? row(id, repo, departure) : null,
+  });
+  const CORE = 'commerce-core';
+  const PORTAL = 'customer-portal';
+
+  /** commerce-core: T1 to T5 finished (T1 to T3 departed), T6 to T8 open; customer-portal: T9 waits on T6. */
+  const buildStatus = (departed = true): BuildStatus => ({
+    hasTasks: true,
+    problems: [],
+    logLayouts: [],
+    departures: [],
+    tasks: [
+      ...[1, 2, 3, 4, 5].map((n) => taskOf(`T${n}`, CORE, true, departed && n <= 3 ? `departure ${n}` : null)),
+      taskOf('T6', CORE, false),
+      taskOf('T7', CORE, false, null, ['T6']),
+      taskOf('T8', CORE, false, null, ['T7']),
+      taskOf('T9', PORTAL, false, null, ['T6']),
+    ],
+    repos: [
+      { repo: CORE, firstUnfinished: 'T6', state: { kind: 'ready', task: 'T6' }, tasks: 8, finished: 5 },
+      { repo: PORTAL, firstUnfinished: 'T9', state: { kind: 'waiting', task: 'T9', onTask: 'T6', onRepo: CORE }, tasks: 1, finished: 0 },
+    ],
+  });
+
+  async function openedOn(status: BuildStatus) {
+    const s = setup();
+    vi.spyOn(s.transport, 'sdlcRunLinks').mockResolvedValue([]);
+    vi.spyOn(s.transport, 'sdlcTaskLinks').mockResolvedValue([]);
+    vi.spyOn(s.transport, 'listRuns').mockResolvedValue([]);
+    const [found] = (await readAllChanges(s.transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
+    await s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null });
+    await advance(300);
+    return s;
+  }
+
+  it('R1.1: a repository with 5 of 8 finished shows its progress, one fold line for the finished and its open tasks on their own lines', async () => {
+    const { vm } = await openedOn(buildStatus());
+    const g = group(vm, CORE);
+    expect(g.progress).toEqual({ done: 5, total: 8 });
+    expect(g.list.fold).toEqual({ range: 'T1–T5', done: 5, departed: 3, open: false });
+    expect(g.list.rows.map((r) => r.line.id)).toEqual(['T6', 'T7', 'T8']);
+  });
+
+  it('R1.4: a task waiting on another repository is a row, never inside the fold', async () => {
+    const { vm } = await openedOn(buildStatus());
+    const g = group(vm, PORTAL);
+    expect(g.list.fold).toBeNull();
+    expect(g.list.rows.map((r) => [r.line.id, r.line.status.label])).toEqual([['T9', `Waiting for T6 in ${CORE}`]]);
+  });
+
+  it('R1.2: opening a fold lists the finished tasks, and closing it folds them again', async () => {
+    const { vm } = await openedOn(buildStatus());
+    vm.toggleFold(CORE);
+    expect(group(vm, CORE).list.fold?.open).toBe(true);
+    expect(group(vm, CORE).list.rows.map((r) => r.line.id)).toEqual(['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8']);
+    vm.toggleFold(CORE);
+    expect(group(vm, CORE).list.fold?.open).toBe(false);
+  });
+
+  it('R1.2: picking a finished task opens its fold', async () => {
+    const { vm } = await openedOn(buildStatus());
+    vm.choose({ kind: 'task', task: 'T2' });
+    expect(group(vm, CORE).list.fold?.open).toBe(true);
+  });
+
+  it('R2.1: the filter starts at All and each choice holds its own count across the build', async () => {
+    const { vm } = await openedOn(buildStatus());
+    expect(vm.view().filter).toEqual({ value: 'all', counts: { all: 9, open: 4, departed: 3, done: 5 } });
+    vm.setTaskFilter('departed');
+    expect(vm.view().filter.value).toBe('departed');
+    expect(group(vm, CORE).list.rows.map((r) => [r.line.id, r.showDeparture])).toEqual([['T1', true], ['T2', true], ['T3', true]]);
+    vm.setTaskFilter('open');
+    expect(group(vm, CORE).list.fold).toBeNull();
+    expect(group(vm, CORE).list.rows.map((r) => r.line.id)).toEqual(['T6', 'T7', 'T8']);
+  });
+
+  it('R2.2: the Departed filter on a build with no departures says so', async () => {
+    const { vm } = await openedOn(buildStatus(false));
+    expect(vm.view().noDepartures).toBe(false);
+    vm.setTaskFilter('departed');
+    expect(vm.view().noDepartures).toBe(true);
+  });
+
+  it('R3.1: the picked task\'s departure is on the view, and only for a finished task that has one', async () => {
+    const { vm } = await openedOn(buildStatus());
+    expect(vm.view().pickedDeparture).toBeNull();
+    vm.choose({ kind: 'task', task: 'T2' });
+    expect(vm.view().pickedDeparture).toEqual({ task: 'T2', text: 'departure 2' });
+    vm.choose({ kind: 'task', task: 'T4' });
+    expect(vm.view().pickedDeparture).toBeNull();
+    vm.choose({ kind: 'repo', repo: CORE });
+    expect(vm.view().pickedDeparture).toBeNull();
+  });
+
+  it('R3.2: a departure from a build log in the older table layout is on the view when its task is picked', async () => {
+    const status = { ...buildStatus(), logLayouts: [{ repo: CORE, layout: 1 }] };
+    const { vm } = await openedOn(status);
+    vm.choose({ kind: 'task', task: 'T3' });
+    expect(vm.view().pickedDeparture).toEqual({ task: 'T3', text: 'departure 3' });
+  });
+});

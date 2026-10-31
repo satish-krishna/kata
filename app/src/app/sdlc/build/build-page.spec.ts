@@ -3,6 +3,7 @@ import { ChangeDetectorRef, Component, inject, input, signal } from '@angular/co
 import { TestBed } from '@angular/core/testing';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { Pick } from '../../lib/build-sessions';
+import { filterCounts, taskList, type TaskFilter, type TaskLine } from '../../lib/build-task-list';
 import type { BuildStage } from '../../lib/build-stage';
 import { defaultArrangement, type AreaId, type LayoutMode } from '../../lib/build-layout';
 import type { LayoutStage } from '../../lib/build-layout-stage';
@@ -41,6 +42,13 @@ const group = (repo: string, status: StatusText, action: TaskGroupView['action']
   paused: null,
   unseen: 0,
   stopLine: null,
+  progress: { done: tasks.filter((t) => t.status === DONE).length, total: tasks.length },
+  list: taskList(
+    tasks.map((t) => ({ id: t.id, name: t.name, status: t.status, finished: t.status === DONE, departure: t.departure })),
+    'all',
+    false,
+    null,
+  ),
   ...extra,
   action,
   picked,
@@ -74,6 +82,9 @@ const base = (over: Partial<BuildPageView> = {}): BuildPageView => ({
   facts: { tasks: '1/3 tasks', elapsed: null },
   actions: [],
   groups: [],
+  filter: { value: 'all', counts: { all: 0, open: 0, departed: 0, done: 0 } },
+  noDepartures: false,
+  pickedDeparture: null,
   review: { status: { tone: 'idle', label: 'Not run' }, action: null, picked: false },
   pick: null,
   sessions: [],
@@ -120,7 +131,7 @@ const SHOWN = { message: null, staleNotice: null, review: FINDINGS, departures: 
       [task]="task"
       [stopped]="stopped"
       [focus]="focus()"
-      (pick)="picks.push($event)"
+      (pick)="onPick($event)"
       (repoAction)="repoActions.push($event)"
       (act)="acts.push($event)"
       (cancelBuild)="cancels = cancels + 1"
@@ -128,6 +139,8 @@ const SHOWN = { message: null, staleNotice: null, review: FINDINGS, departures: 
       (say)="says.push($event)"
       (goTo)="goTos.push($event)"
       (toggleRun)="toggles.push($event)"
+      (setFilter)="onFilter($event)"
+      (toggleFold)="onFold($event)"
     />
   `,
 })
@@ -147,6 +160,25 @@ class Host {
   readonly says: { runId: string; text: string }[] = [];
   readonly goTos: string[] = [];
   readonly toggles: string[] = [];
+  /** What the host's view model would hold, so a test can make the page draw again after a press. */
+  state: { filter: TaskFilter; open: Set<string>; picked: string | null } = { filter: 'all', open: new Set(), picked: null };
+  rebuild: ((state: { filter: TaskFilter; open: Set<string>; picked: string | null }) => BuildPageView) | null = null;
+  onFilter(filter: TaskFilter) {
+    this.state.filter = filter;
+    this.redraw();
+  }
+  onFold(repo: string) {
+    if (!this.state.open.delete(repo)) this.state.open.add(repo);
+    this.redraw();
+  }
+  onPick(pick: Pick) {
+    this.picks.push(pick);
+    if (pick.kind === 'task') this.state.picked = pick.task;
+    this.redraw();
+  }
+  private redraw() {
+    if (this.rebuild !== null) this.view = this.rebuild(this.state);
+  }
 }
 
 const settle = async () => {
@@ -1560,5 +1592,93 @@ describe('the message box on the build page', () => {
     const { el, host } = await mount(v);
     sayIn(el, 'api-run', 'use the v2 route');
     expect(host.says).toEqual([{ runId: 'api-run', text: 'use the v2 route' }]);
+  });
+});
+
+describe('the build page folds, filters and explains a departure', () => {
+  const DEPARTURE = 'The size limit moved to the shared request limit';
+  const lines = (departed: boolean): TaskLine[] => [
+    { id: 'T1', name: 'Task T1', status: DONE, finished: true, departure: null },
+    { id: 'T2', name: 'Task T2', status: DONE, finished: true, departure: departed ? DEPARTURE : null },
+    { id: 'T3', name: 'Task T3', status: RUNNING, finished: false, departure: null },
+  ];
+  type State = { filter: TaskFilter; open: Set<string>; picked: string | null };
+  const viewFor = (departed: boolean, st: State): BuildPageView => {
+    const ls = lines(departed);
+    const counts = filterCounts(ls);
+    const list = taskList(ls, st.filter, st.open.has('commerce-core'), st.picked);
+    const dep = ls.find((l) => l.id === st.picked && l.departure !== null);
+    return base({
+      groups: [
+        group('commerce-core', RUNNING, null, ls.map((l) => task(l.id, l.status, { departure: l.departure, picked: l.id === st.picked })), false, {
+          list,
+          progress: { done: 2, total: 3 },
+        }),
+      ],
+      filter: { value: st.filter, counts },
+      noDepartures: st.filter === 'departed' && counts.departed === 0,
+      pick: st.picked === null ? null : { kind: 'task', task: st.picked },
+      pickedDeparture: dep === undefined ? null : { task: dep.id, text: dep.departure! },
+      sessions: [session('r1')],
+    });
+  };
+  async function open(departed: boolean, st: Partial<State> = {}) {
+    const state: State = { filter: 'all', open: new Set(), picked: null, ...st };
+    const m = await mount(viewFor(departed, state));
+    m.host.state = state;
+    m.host.rebuild = (s) => viewFor(departed, s);
+    return m;
+  }
+  const rowIds = (el: HTMLElement) => Array.from(el.querySelectorAll('[data-task]')).map((r) => norm(r.querySelector('.k-mono')?.textContent));
+
+  it('R1.1: shows the progress and the fold line, with the open tasks on their own lines', async () => {
+    const { area } = await open(true);
+    const tasks = area('tasks')!;
+    expect(norm(tasks.querySelector('[data-progress]')?.textContent)).toBe('2/3');
+    expect(norm(tasks.querySelector('[data-fold]')?.textContent)).toContain('T1–T2');
+    expect(norm(tasks.querySelector('[data-fold]')?.textContent)).toContain('2 done');
+    expect(norm(tasks.querySelector('[data-fold]')?.textContent)).toContain('1 departed');
+    expect(rowIds(tasks)).toEqual(['T3']);
+  });
+
+  it('R1.2: the fold button opens the finished rows and closes them again', async () => {
+    const { fixture, area } = await open(true);
+    const fold = () => area('tasks')!.querySelector<HTMLButtonElement>('[data-fold]')!;
+    expect(fold().getAttribute('aria-expanded')).toBe('false');
+    fold().click();
+    await settle();
+    fixture.detectChanges();
+    expect(fold().getAttribute('aria-expanded')).toBe('true');
+    expect(rowIds(area('tasks')!)).toEqual(['T1', 'T2', 'T3']);
+    fold().click();
+    await settle();
+    fixture.detectChanges();
+    expect(fold().getAttribute('aria-expanded')).toBe('false');
+    expect(rowIds(area('tasks')!)).toEqual(['T3']);
+  });
+
+  it('R2.2: the Departed filter on a build with no departures says so', async () => {
+    const { fixture, area, buttons } = await open(false);
+    const departed = buttons(area('tasks')!).find((b) => norm(b.textContent).startsWith('Departed'))!;
+    departed.click();
+    await settle();
+    fixture.detectChanges();
+    expect(norm(area('tasks')!.textContent)).toContain('No departures from the plan.');
+  });
+
+  it('R3.1: a departed row says departed without the text; picking it shows the text above the session', async () => {
+    const { fixture, area } = await open(true, { open: new Set(['commerce-core']) });
+    const row = () => Array.from(area('tasks')!.querySelectorAll<HTMLElement>('[data-task]')).find((r) => norm(r.textContent).includes('T2'))!;
+    expect(norm(row().textContent)).toContain('departed');
+    expect(norm(area('tasks')!.textContent)).not.toContain(DEPARTURE);
+    expect(area('activity')!.querySelector('[data-pick-departure]')).toBeNull();
+    row().click();
+    await settle();
+    fixture.detectChanges();
+    const block = area('activity')!.querySelector<HTMLElement>('[data-pick-departure]')!;
+    expect(norm(block.textContent)).toContain('Departure from the plan');
+    expect(norm(block.textContent)).toContain(DEPARTURE);
+    const session = area('activity')!.querySelector<HTMLElement>('[data-session]')!;
+    expect(block.compareDocumentPosition(session) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });
