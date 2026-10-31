@@ -535,6 +535,16 @@ describe('the build page, picking and folding', () => {
     expect(norm(area('activity')!.textContent)).toContain('Showing every session of commerce-core.');
   });
 
+  it('pairs the departure marker with a status dot, so the warning is not colour alone', async () => {
+    const v = base({
+      groups: [group('commerce-core', RUNNING, null, [task('T1', DONE, { departure: 'Used a queue instead' })])],
+      pick: { kind: 'task', task: 'T1' },
+      sessions: [session('r1')],
+    });
+    const { area } = await mount(v);
+    expect(area('tasks')!.querySelector('[data-departure]')!.querySelector('.k-status__dot')).not.toBeNull();
+  });
+
   it('folds an earlier session to one line, keeps its pane mounted, and opens it when picked', async () => {
     const v = base({
       pick: { kind: 'repo', repo: 'commerce-core' },
@@ -1654,6 +1664,11 @@ describe('the build page folds, filters and explains a departure', () => {
     expect(norm(tasks.querySelector('[data-fold]')?.textContent)).toContain('2 done');
     expect(norm(tasks.querySelector('[data-fold]')?.textContent)).toContain('1 departed');
     expect(rowIds(tasks)).toEqual(['T3']);
+  });
+
+  it('pairs the fold line departed count with a status dot, so the warning is not colour alone', async () => {
+    const { area } = await open(true);
+    expect(area('tasks')!.querySelector('[data-fold] .k-bp__departed')!.querySelector('.k-status__dot')).not.toBeNull();
   });
 
   it('R1.2: the fold button opens the finished rows and closes them again', async () => {

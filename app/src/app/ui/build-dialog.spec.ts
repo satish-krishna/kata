@@ -174,6 +174,11 @@ describe('BuildDialog', () => {
     expect(request().rounds!.find((r) => r.repo === 'storefront-web')!.summary).toContain('F5, F6, F8');
   });
 
+  it('pairs the blocked reason with a status dot, so the warning is not colour alone', async () => {
+    await open('round', OFFER);
+    expect(root().querySelector('.k-round__blocked')!.querySelector('.k-status__dot')).not.toBeNull();
+  });
+
   it('says exactly which agents will start and what each will fix (R5.4)', async () => {
     const { fixture } = await open('round', OFFER);
     await pickRepo(fixture, 'storefront-web');
