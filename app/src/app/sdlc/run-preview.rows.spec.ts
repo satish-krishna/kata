@@ -103,7 +103,7 @@ async function continuing(): Promise<Scenario> {
     link.onRun?.(`fake-${target.repo}-again`);
     return { exit: 0, error: null };
   });
-  const out = await transport.sdlcBuildPrepare(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'commerce', BUILD, false, null, 'start');
+  const out = await transport.sdlcBuildPrepare(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'commerce', BUILD, false, [], 'start');
   if (out.kind !== 'ready') throw new Error('the mock build did not prepare');
   const ctx: BuildContext = { workspaceId: 'acme-commerce', folder: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: BUILD, systemRepos: [] };
   await vm.start({ start: out.start, timeoutSecs: 5400, rounds: [], checksDir: await transport.sdlcChecksDir() }, ctx);

@@ -1138,7 +1138,7 @@ export class BuildPageViewModel {
   private async prepareBranches(folder: string, master: string, system: string, change: string, withLeftovers: boolean, owner: string) {
     this.progress.begin('preparing-build', progressLabels.preparingBuild(), 'build');
     try {
-      const out = await this.transport.sdlcBuildPrepare(folder, master, system, change, withLeftovers, owner, 'continue');
+      const out = await this.transport.sdlcBuildPrepare(folder, master, system, change, withLeftovers, [owner], 'continue');
       if (out.kind === 'refused' || out.kind === 'branchTaken') this.progress.fail('build');
       else this.progress.end('build');
       return out;
@@ -1238,17 +1238,12 @@ export class BuildPageViewModel {
   }
 
   /**
-   * Ask the backend who takes part in the build now; `pending` lists the repositories a run is about to start in. The backend
-   * counts one pending repository at a time, so each is asked about and the answers are joined, one entry for each repository.
+   * Ask the backend who takes part in the build now; `pending` lists the repositories a run is about to start in.
    */
   private async readParticipants(pending: string[]): Promise<Participant[]> {
     const h = this.handoff!;
     const ctx = this.ctx!;
-    const ask = (repo: string | null) => this.transport.sdlcBuildParticipants(ctx.folder, h.start.master.repo, ctx.system, ctx.change, repo);
-    const answers = await Promise.all((pending.length === 0 ? [null] : pending).map(ask));
-    const joined = new Map<string, Participant>();
-    for (const p of answers.flat()) if (!joined.has(p.repo)) joined.set(p.repo, p);
-    this.participants = [...joined.values()];
+    this.participants = await this.transport.sdlcBuildParticipants(ctx.folder, h.start.master.repo, ctx.system, ctx.change, pending);
     return this.participants;
   }
 

@@ -594,7 +594,7 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.act('start-build');
       await vm.submitBuild(REQUEST);
-      expect(prepare).toHaveBeenCalledWith(expect.any(String), 'commerce-docs', 'commerce', BUILD, false, null, 'start');
+      expect(prepare).toHaveBeenCalledWith(expect.any(String), 'commerce-docs', 'commerce', BUILD, false, [], 'start');
       expect(vm.buildMode()).toBeNull();
       const h = TestBed.inject(BuildPageViewModel).current()!;
       expect(h.timeoutSecs).toBe(5400);
@@ -625,7 +625,7 @@ describe('ChangePageViewModel', () => {
       for (const repo of ['commerce-core', 'commerce-docs']) {
         await vm.act('another-round');
         await vm.submitBuild({ timeoutSecs: 14400, rounds: [{ repo, instructions: 'tidy up', summary: repo }] });
-        expect(prepare).toHaveBeenLastCalledWith(expect.any(String), 'commerce-docs', 'commerce', BUILD, false, repo, 'round');
+        expect(prepare).toHaveBeenLastCalledWith(expect.any(String), 'commerce-docs', 'commerce', BUILD, false, [repo], 'round');
         await settleBuild();
       }
     });
@@ -639,7 +639,8 @@ describe('ChangePageViewModel', () => {
       await vm.act('another-round');
       const rounds = ['commerce-core', 'customer-portal'].map((repo) => ({ repo, instructions: 'tidy up', summary: repo }));
       await vm.submitBuild({ timeoutSecs: 14400, rounds });
-      expect(prepare.mock.calls.map((c) => c[5])).toEqual(['commerce-core', 'customer-portal']);
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(prepare.mock.calls[0][5]).toEqual(['commerce-core', 'customer-portal']);
       const h = TestBed.inject(BuildPageViewModel).current()!;
       expect(h.rounds).toEqual(rounds);
       expect(new Set(h.start.repos.map((r) => r.repo)).size).toBe(h.start.repos.length);

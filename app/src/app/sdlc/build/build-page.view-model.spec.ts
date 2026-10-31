@@ -62,7 +62,7 @@ function setup(transport = new MockTransport(), preview: 'confirm' | 'real' = 'c
 }
 
 async function handoffFor(transport: MockTransport, over: Partial<BuildHandoff> = {}): Promise<BuildHandoff> {
-  const out = await transport.sdlcBuildPrepare(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, false, null, 'start');
+  const out = await transport.sdlcBuildPrepare(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, false, [], 'start');
   if (out.kind !== 'ready') throw new Error('the mock build did not prepare');
   return { start: out.start, timeoutSecs: 5400, rounds: [], checksDir: await transport.sdlcChecksDir(), ...over };
 }
@@ -1026,7 +1026,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       const calls = run.mock.calls.length;
 
       await vm.continueRun();
-      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, MOCK_MASTER);
+      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, [MOCK_MASTER]);
       expect(vm.leftoverPrompt()).toEqual({ lines: [`${MOCK_MASTER}: notes/half.md`] });
       expect(run).toHaveBeenCalledTimes(calls);
 
@@ -1049,14 +1049,14 @@ describe('the build page starts, stops and continues the same runs as the build 
 
       await vm.continueRun();
       expect(prepare.mock.calls[1][4]).toBe(false);
-      expect(prepare.mock.calls[1][5]).toBe(MOCK_MASTER);
+      expect(prepare.mock.calls[1][5]).toEqual([MOCK_MASTER]);
       expect(vm.leftoverPrompt()).toEqual({ lines: [`${MOCK_MASTER}: notes/half.md`] });
       expect(run).toHaveBeenCalledTimes(1);
 
       await vm.confirmContinue();
       await advance(100);
       expect(prepare.mock.calls.at(-1)![4]).toBe(true);
-      expect(prepare.mock.calls.at(-1)![5]).toBe(MOCK_MASTER);
+      expect(prepare.mock.calls.at(-1)![5]).toEqual([MOCK_MASTER]);
       expect(told(run, MOCK_MASTER)).toContain('already confirmed');
     });
 
@@ -1071,7 +1071,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       const calls = run.mock.calls.length;
 
       await vm.continueRun();
-      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, 'commerce-core');
+      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, ['commerce-core']);
       expect(vm.leftoverPrompt()).toEqual({ lines: [`commerce-core: ${ROW('commerce-core')}`] });
       expect(run).toHaveBeenCalledTimes(calls);
 
@@ -1094,7 +1094,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       const calls = run.mock.calls.length;
 
       await vm.continueRun();
-      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, 'commerce-core');
+      expect(asked).toHaveBeenLastCalledWith(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, ['commerce-core']);
       expect(vm.leftoverPrompt()).toEqual({ lines: ['commerce-core: src/half.rs'] });
       expect(run).toHaveBeenCalledTimes(calls);
 
@@ -1116,7 +1116,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['src/half.rs'] }] });
 
       await vm.continueRun();
-      expect(prepare.mock.calls[1][5]).toBe('commerce-core');
+      expect(prepare.mock.calls[1][5]).toEqual(['commerce-core']);
       expect(vm.leftoverPrompt()).toEqual({ lines: ['commerce-core: src/half.rs'] });
       expect(run).toHaveBeenCalledTimes(1);
 

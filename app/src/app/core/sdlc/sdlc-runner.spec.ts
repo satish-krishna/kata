@@ -726,7 +726,7 @@ describe('SdlcRunner build', () => {
       const ctx = setup();
       const out = await ctx.runner.prepareBuild({ ...REQUEST, continueWithLeftovers: true });
       expect(out).toEqual({ kind: 'ready', start: BUILD_START });
-      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', true, null, 'start');
+      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', true, [], 'start');
     });
 
     it('answers needs-confirm with the files each repository holds', async () => {
@@ -742,7 +742,7 @@ describe('SdlcRunner build', () => {
       ctx.fake.prepared = { kind: 'refused', message: 'A build log does not pass the check', problems: [problem] };
       const out = await ctx.runner.prepareBuild({ ...REQUEST, action });
       expect(out).toEqual({ kind: 'refused', reason: 'A build log does not pass the check', problems: [problem] });
-      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', false, null, action);
+      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', false, [], action);
     });
 
     it('refuses with the backend text when preparing fails (R3.1)', async () => {
@@ -861,7 +861,7 @@ describe('SdlcRunner build', () => {
       await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
       end(ctx, 'r1', 'warning', 124);
       await drive(core);
-      expect(ctx.fake.sdlcBuildParticipants).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', null);
+      expect(ctx.fake.sdlcBuildParticipants).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', []);
 
       const finished = ctx.runner.finishBuild(BUILD_START);
       await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
@@ -881,7 +881,7 @@ describe('SdlcRunner build', () => {
       await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
       end(ctx, 'r1', 'warning', 124);
       await drive(core);
-      expect(ctx.fake.sdlcBuildParticipants).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', null);
+      expect(ctx.fake.sdlcBuildParticipants).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', []);
     });
 
     it('a build log row that was already unsaved before the run is listed as changed before and during it (R6.6)', async () => {

@@ -182,12 +182,14 @@ fn classify(
 }
 
 /// Check the build gate and every other precondition of a build, then create or check out `change/<change>` in the master
-/// and in every product repository an unfinished task names, or that `pending` names. Nothing is
-/// touched until all pass.
+/// and in every product repository an unfinished task names, or that `pending` names. Every check
+/// runs for all of those repositories before anything is touched, and the leftovers of all of them
+/// come back together in one `NeedsConfirm`.
 ///
-/// `pending` is the repository a run is about to start in on the engineer's ask: a round, or
-/// Continue. Its uncommitted files are leftovers to confirm, whether it is a finished product
-/// repository (skipped otherwise) or the master (whose uncommitted files refuse a fresh start, R3.2).
+/// `pending` lists the repositories a run is about to start in on the engineer's ask: a round (one
+/// agent in each repository it names), or Continue. A repository listed twice counts once. The
+/// uncommitted files of each are leftovers to confirm, whether it is a finished product repository
+/// (skipped otherwise) or the master (whose uncommitted files refuse a fresh start, R3.2).
 #[allow(clippy::too_many_arguments)]
 pub fn prepare(
     plugin: &Path,
@@ -199,8 +201,6 @@ pub fn prepare(
     continue_with_leftovers: bool,
     pending: &[String],
 ) -> Result<PrepareOutcome, BuildError> {
-    // Compile-only shim: the first repository stands for the list until the next commit.
-    let first = pending.first().map(String::as_str);
     if !is_safe_system(master_repo) || !is_safe_system(system) || !is_change_name(change) {
         return refuse(format!(
             "invalid master repository, system or change name: {master_repo}, {system}, {change}"
@@ -223,7 +223,6 @@ pub fn prepare(
 
     let (parts, status) =
         participants::model(plugin, folder, master_repo, system, change, pending)?;
-    let pending = first;
     // A log is a leftover to save only when it is new or only gained rows; any other edit to one is
     // an uncommitted file like any other.
     let saved: Vec<String> = build::unsaved_rows(plugin, &master, system, change)
@@ -239,7 +238,7 @@ pub fn prepare(
         .partition(|r| saved.contains(r));
     let mut refused = edited_rows;
     let master_part = &parts[0];
-    if pending != Some(master_repo) {
+    if !pending.iter().any(|p| p == master_repo) {
         refused.splice(0..0, master_part.files.iter().cloned());
     }
     if !refused.is_empty() {
@@ -273,7 +272,7 @@ pub fn prepare(
     };
     take(
         master_repo,
-        if pending == Some(master_repo) {
+        if pending.iter().any(|p| p == master_repo) {
             master_part.files.clone()
         } else {
             Vec::new()
@@ -287,7 +286,7 @@ pub fn prepare(
             .repos
             .iter()
             .any(|r| r.repo == p.repo && r.state == RepoState::Done);
-        if finished && pending != Some(p.repo.as_str()) {
+        if finished && !pending.contains(&p.repo) {
             take(&p.repo, Vec::new());
             continue;
         }

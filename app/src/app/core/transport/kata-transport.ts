@@ -142,9 +142,9 @@ export abstract class KataTransport {
   abstract sdlcReviewVerify(master: string, system: string, change: string, since: string, before: Snapshot['dirty']): Promise<string[]>;
   abstract sdlcUnsavedRows(master: string, system: string, change: string): Promise<UnsavedRows[]>;
   /** `pending` names the repository a run is about to start in on the engineer's ask (a round, or Continue): its leftovers are its own to confirm. */
-  abstract sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending: string | null, action: BuildAction): Promise<PrepareOutcome>;
+  abstract sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending: string[], action: BuildAction): Promise<PrepareOutcome>;
   /** Who takes part in the build, where each is checked out and which uncommitted files each one owns. */
-  abstract sdlcBuildParticipants(folder: string, masterRepo: string, system: string, change: string, pending?: string | null): Promise<Participant[]>;
+  abstract sdlcBuildParticipants(folder: string, masterRepo: string, system: string, change: string, pending: string[]): Promise<Participant[]>;
   abstract sdlcBuildSettle(start: BuildStart): Promise<string[]>;
   abstract sdlcBuildHeads(folder: string, masterRepo: string, system: string, repos: string[], change: string): Promise<Record<string, string>>;
   /** Whether the ai-sdlc plugin is installed and new enough, as the backend decides it for the workspace folder. */
