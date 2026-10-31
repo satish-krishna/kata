@@ -154,8 +154,18 @@ describe('build round', () => {
 
   it('leaves an unpicked finding out of every request (R9.1)', () => {
     const plan = roundPlan(offer(), picks(['F1', 'F5'], { notes: { 'catalog-api': 'n' } }));
-    const all = plan.requests.map((r) => r.instructions + r.summary).join('\n');
+    expect(plan.blocked).toBeNull();
+    const catalog = plan.requests.find((r) => r.repo === 'catalog-api');
+    const storefront = plan.requests.find((r) => r.repo === 'storefront-web');
+    expect(catalog).toBeDefined();
+    expect(storefront).toBeDefined();
+    expect(catalog!.instructions).toContain('- F1 (high, bug) src/Upload.cs:12');
+    expect(storefront!.instructions).toContain('- F5 (high, spec) web/cart.ts:7');
+    const all = plan.requests.map((r) => r.instructions).join('\n');
     expect(all).not.toContain('F4');
     expect(all).not.toContain('Name is misspelled.');
+    const summaries = plan.requests.map((r) => r.summary).join('\n');
+    expect(summaries).toBe('catalog-api · F1 · with a note\nstorefront-web · F5');
+    expect(summaries).not.toContain('F4');
   });
 });
