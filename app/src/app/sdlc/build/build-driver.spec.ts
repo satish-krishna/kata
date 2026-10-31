@@ -745,3 +745,187 @@ describe('the build\'s choices', () => {
     expect([...w.of('app')[0].opts.choices.off]).toEqual([]);
   });
 });
+
+describe('BuildDriver rounds, one pending per repository', () => {
+  const API = 'catalog-api';
+  const WEB = 'storefront-web';
+  const both = [
+    { repo: API, instructions: 'fix F1', summary: '' },
+    { repo: WEB, instructions: 'fix F5', summary: '' },
+  ];
+  /** Two finished repositories and a round for each, started and both agents going. */
+  async function twoRounds() {
+    const w = world([{ id: 'T1', repo: API }, { id: 'T2', repo: WEB }], ['T1', 'T2']);
+    w.heads[API] = 'h1';
+    w.heads[WEB] = 'w1';
+    await w.driver.begin(3600, both);
+    await flush();
+    return w;
+  }
+  const pending = (d: BuildDriver) => [...d.rounds().keys()].sort();
+  const reviews = (log: string[]) => log.filter((l) => l === 'review').length;
+
+  it('R7.1: both agents start before either ends, each with its own instructions', async () => {
+    const w = await twoRounds();
+    expect(w.log).toEqual([API, WEB]);
+    expect(w.started).toHaveLength(2);
+    expect(w.of(API)[0].opts.instructions).toBe('fix F1');
+    expect(w.of(WEB)[0].opts.instructions).toBe('fix F5');
+    expect(going(w.driver)).toEqual([API, WEB]);
+  });
+
+  it('R7.3: a repository with T7 unfinished launches once, on T7, carrying the instructions', async () => {
+    const w = world([{ id: 'T7', repo: API }]);
+    await w.driver.begin(3600, [{ repo: API, instructions: 'fix F1', summary: '' }]);
+    await flush();
+    expect(w.of(API)).toHaveLength(1);
+    expect(w.of(API)[0].opts.instructions).toBe('fix F1');
+    expect(pending(w.driver)).toEqual([API]);
+  });
+
+  // R8.1, one test per row of the spec Examples table.
+  type How = 'finished' | 'failed' | 'cancelled';
+  const endBoth = async (w: Awaited<ReturnType<typeof twoRounds>>, api: How, web: How, moved: boolean) => {
+    const end = async (repo: string, how: How) => {
+      if (how === 'cancelled') w.driver.cancel(repo);
+      const result = how === 'finished' ? {} : how === 'failed' ? { exit: 1 } : { exit: 130 };
+      await w.of(repo)[0].end([], result);
+    };
+    if (moved) w.heads[API] = 'h2';
+    await end(API, api);
+    await end(WEB, web);
+  };
+
+  it('R8.1 row 1: finished, finished, moved: one review after both, no round pending', async () => {
+    const w = await twoRounds();
+    await endBoth(w, 'finished', 'finished', true);
+    expect(w.log).toEqual([API, WEB, 'review']);
+    expect(reviews(w.log)).toBe(1);
+    expect(w.driver.phase()).toBe('reviewing');
+    expect(pending(w.driver)).toEqual([]);
+  });
+
+  it('R8.1 row 2: finished, finished, did not move: no review, phase finished, no round pending', async () => {
+    const w = await twoRounds();
+    await endBoth(w, 'finished', 'finished', false);
+    expect(reviews(w.log)).toBe(0);
+    expect(w.driver.phase()).toBe('finished');
+    expect(pending(w.driver)).toEqual([]);
+  });
+
+  it('R8.1 row 3: finished, failed, moved: no review, stopped, the storefront-web round pending', async () => {
+    const w = await twoRounds();
+    await endBoth(w, 'finished', 'failed', true);
+    expect(reviews(w.log)).toBe(0);
+    expect(w.driver.phase()).toBe('stopped');
+    expect(pending(w.driver)).toEqual([WEB]);
+  });
+
+  it('R8.1 row 4: finished, cancelled, moved: no review, stopped, the storefront-web round pending', async () => {
+    const w = await twoRounds();
+    await endBoth(w, 'finished', 'cancelled', true);
+    expect(reviews(w.log)).toBe(0);
+    expect(w.driver.phase()).toBe('stopped');
+    expect(pending(w.driver)).toEqual([WEB]);
+  });
+
+  it('R8.1 row 5: failed, failed, did not move: no review, both rounds pending', async () => {
+    const w = await twoRounds();
+    await endBoth(w, 'failed', 'failed', false);
+    expect(reviews(w.log)).toBe(0);
+    expect(w.driver.phase()).toBe('stopped');
+    expect(pending(w.driver)).toEqual([API, WEB]);
+  });
+
+  it('R8.1 row 6: cancelled, cancelled, did not move: no review, both rounds pending', async () => {
+    const w = await twoRounds();
+    await endBoth(w, 'cancelled', 'cancelled', false);
+    expect(reviews(w.log)).toBe(0);
+    expect(w.driver.phase()).toBe('stopped');
+    expect(pending(w.driver)).toEqual([API, WEB]);
+  });
+
+  it('R8.2: the review waits for the slower agent, then starts once', async () => {
+    const w = await twoRounds();
+    w.heads[API] = 'h2';
+    await w.of(API)[0].end([]);
+    expect(reviews(w.log)).toBe(0);
+    expect(w.driver.phase()).toBe('building');
+    expect(pending(w.driver)).toEqual([WEB]);
+    await w.of(WEB)[0].end([]);
+    expect(reviews(w.log)).toBe(1);
+    expect(w.log).toEqual([API, WEB, 'review']);
+  });
+
+  it('R8.3: continuing the failed repository runs its round again with the same instructions', async () => {
+    const w = await twoRounds();
+    await w.of(API)[0].end([]);
+    await w.of(WEB)[0].end([], { exit: 1 });
+    expect(w.of(WEB)).toHaveLength(1);
+    await w.driver.continueRepo(WEB);
+    await flush();
+    expect(w.of(WEB)).toHaveLength(2);
+    expect(w.of(WEB)[1].opts.instructions).toBe('fix F5');
+    expect(w.of(API)).toHaveLength(1);
+  });
+
+  // The decision table in ended(), one test per row that can happen.
+  it('table: a repository with no pending round is untouched when its run ends', async () => {
+    const w = world([{ id: 'T1', repo: 'app' }, { id: 'T2', repo: API }], ['T2']);
+    await w.driver.begin(3600, [{ repo: API, instructions: 'fix F1', summary: '' }]);
+    await flush();
+    await w.of('app')[0].end(['T1']);
+    expect(pending(w.driver)).toEqual([API]);
+    expect(w.of(API)).toHaveLength(1);
+  });
+
+  it('table: finished removes the round, and the repository does not launch again', async () => {
+    const w = world([{ id: 'T1', repo: API }], ['T1']);
+    await w.driver.begin(3600, [{ repo: API, instructions: 'fix F1', summary: '' }]);
+    await flush();
+    await w.of(API)[0].end([]);
+    await flush();
+    expect(pending(w.driver)).toEqual([]);
+    expect(w.of(API)).toHaveLength(1);
+  });
+
+  it('table: continue keeps the round and launches the repository again with the same instructions', async () => {
+    const w = world([{ id: 'T1', repo: 'app' }, { id: 'T2', repo: 'app' }]);
+    await w.driver.begin(3600, [{ repo: 'app', instructions: 'fix F1', summary: '' }]);
+    await flush();
+    await w.of('app')[0].end(['T1']);
+    expect(pending(w.driver)).toEqual(['app']);
+    expect(w.of('app')).toHaveLength(2);
+    expect(w.of('app')[1].opts.instructions).toBe('fix F1');
+  });
+
+  it('table: stopped keeps the round and does not relaunch until Continue', async () => {
+    const w = world([{ id: 'T1', repo: API }], ['T1']);
+    await w.driver.begin(3600, [{ repo: API, instructions: 'fix F1', summary: '' }]);
+    await flush();
+    await w.of(API)[0].end([], { exit: 1 });
+    await flush();
+    expect(pending(w.driver)).toEqual([API]);
+    expect(w.of(API)).toHaveLength(1);
+    await w.driver.continueRepo(API);
+    await flush();
+    expect(w.of(API)).toHaveLength(2);
+    expect(w.of(API)[1].opts.instructions).toBe('fix F1');
+  });
+
+  it('table: held keeps the round and does not relaunch until Continue', async () => {
+    const w = world([{ id: 'T1', repo: API }], ['T1']);
+    await w.driver.begin(3600, [{ repo: API, instructions: 'fix F1', summary: '' }]);
+    await flush();
+    w.failures.status = 1;
+    await w.of(API)[0].end([]);
+    await flush();
+    expect(w.driver.stopped().get(API)?.held).toBe(true);
+    expect(pending(w.driver)).toEqual([API]);
+    expect(w.of(API)).toHaveLength(1);
+    await w.driver.continueRepo(API);
+    await flush();
+    expect(w.of(API)).toHaveLength(2);
+    expect(w.of(API)[1].opts.instructions).toBe('fix F1');
+  });
+});

@@ -1,6 +1,7 @@
 import { signal } from '@angular/core';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { BuildChoices } from '../../core/given/given.store';
+import type { RoundRequest } from '../../lib/build-round';
 import { stopMessage } from '../../lib/sdlc';
 
 export interface RunEnd {
@@ -65,6 +66,8 @@ export class BuildDriver {
   readonly going = signal<ReadonlySet<string>>(new Set());
   readonly stopped = signal<ReadonlyMap<string, { task: string; reason: string; held?: boolean }>>(new Map());
   readonly round = signal<{ repo: string; instructions: string } | null>(null);
+  /** The pending rounds: repository to instructions. */
+  readonly rounds = signal<ReadonlyMap<string, string>>(new Map());
   readonly phase = signal<BuildPhase>('building');
   readonly waiting = signal<WaitingRepo[]>([]);
   readonly report = signal<StopReport | null>(null);
@@ -87,13 +90,13 @@ export class BuildDriver {
     this.choices = choices;
   }
 
-  async begin(timeoutSecs: number, round?: { repo: string; instructions: string }, choices: BuildChoices = NO_CHOICES): Promise<void> {
+  async begin(timeoutSecs: number, round?: { repo: string; instructions: string } | RoundRequest[], choices: BuildChoices = NO_CHOICES): Promise<void> {
     this.timeoutSecs = timeoutSecs;
     this.choices = choices;
     this.cancelledAll = false;
     this.stopped.set(new Map());
     this.report.set(null);
-    this.round.set(round ?? null);
+    this.round.set(round === undefined || Array.isArray(round) ? null : round);
     this.roundStarted = false;
     this.phase.set('building');
     if (round && this.compare === null) this.compare = await this.deps.heads();
