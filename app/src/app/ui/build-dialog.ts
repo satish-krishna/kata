@@ -91,11 +91,15 @@ export class BuildDialog {
   protected readonly repos = computed(() => this.seen().repos);
   /** What the round asks of each repository, or why it cannot start. */
   protected readonly plan = computed<RoundPlan>(() => roundPlan(this.seen(), picksOf(this.state().model())));
-  /** The findings the review names a repository for, under that repository, then the ones that name none. */
-  protected findingsOf(repo: string): RoundFinding[] {
-    return this.seen().findings.filter((f) => f.repo === repo);
-  }
-  protected readonly unnamed = computed(() => this.seen().findings.filter((f) => f.repo === null));
+  /** The build's repositories first, each with its findings and a note box, then the groups the build has no agent for (no note box). */
+  protected readonly sections = computed<{ repo: string | null; findings: RoundFinding[]; note: boolean }[]>(() => {
+    const groups = this.groups();
+    const repos = this.repos();
+    return [
+      ...repos.map((repo) => ({ repo, findings: groups.find((g) => g.repo === repo)?.findings ?? [], note: true })),
+      ...groups.filter((g) => g.repo === null || !repos.includes(g.repo)).map((g) => ({ repo: g.repo, findings: g.findings, note: false })),
+    ];
+  });
 
   protected isPicked(key: string): boolean {
     return this.state().model().picked.includes(key);

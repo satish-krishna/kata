@@ -31,6 +31,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ChangesContext } from '../changes/changes-view.view-model';
 import { BuildPageViewModel, type BuildContext } from '../build/build-page.view-model';
 import { roundOffer, type RoundGroup, type RoundOffer, type RoundRequest } from '../../lib/build-round';
+import { roundGroups } from '../../lib/build-task-list';
 import type { BuildDialogMode, BuildStartRequest } from '../../ui/build-dialog';
 import type { RunSpec } from '@bindings/RunSpec';
 import { GivenStore, type BuildChoices } from '../../core/given/given.store';
@@ -654,6 +655,7 @@ export class ChangePageViewModel {
     this.askedAction = action;
     this.buildMode.set(null);
     this.buildOffer.set(null);
+    this.buildGroups.set([]);
     this.asked = req;
     this.askedChoices = choices;
     await this.prepare(false);
@@ -663,6 +665,7 @@ export class ChangePageViewModel {
     this.buildSeq++;
     this.buildMode.set(null);
     this.buildOffer.set(null);
+    this.buildGroups.set([]);
     this.preview.cancel();
   }
 
@@ -673,7 +676,10 @@ export class ChangePageViewModel {
    */
   private openBuildPreview(which: 'start' | 'continue' | 'round' | 'review'): void {
     this.buildMode.set(which === 'review' ? null : which);
-    this.buildOffer.set(which === 'round' ? roundOffer(this.build.latestReview(), this.buildRepos()) : null);
+    const latest = which === 'round' ? this.build.latestReview() : null;
+    const offer = which === 'round' ? roundOffer(latest, this.buildRepos()) : null;
+    this.buildOffer.set(offer);
+    this.buildGroups.set(offer !== null && latest !== null ? roundGroups(offer, this.build.findingGroups(), latest.findings) : []);
     void this.previewBuild(which);
   }
 

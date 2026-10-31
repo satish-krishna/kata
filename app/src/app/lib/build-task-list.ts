@@ -89,10 +89,11 @@ export function reviewRows(groups: FindingGroup[], all?: Finding[]): ReviewRowsV
 
 /** The groups of the round dialog: the Review group's, in its order. */
 export function roundGroups(offer: RoundOffer, groups: FindingGroup[], all: Finding[]): RoundGroup[] {
-  void offer;
-  void groups;
-  void all;
-  return [];
+  const offered = new Map(offer.findings.map((f) => [f.key, f]));
+  return reviewRows(groups, all).groups.map((g) => ({
+    repo: g.repo,
+    findings: [...g.rows, ...g.low].flatMap((r) => offered.get(r.key) ?? []),
+  }));
 }
 
 const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low'];

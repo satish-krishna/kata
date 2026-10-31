@@ -28,7 +28,8 @@ export function roundOffer(review: RoundReview | null, repos: string[]): RoundOf
     findings: review.findings.map((finding, i) => ({
       key: findingKey(finding, i),
       finding,
-      repo: finding.repo ?? null,
+      // A repository outside the build has no agent to send the finding to: it is unassigned, like a finding that names none (D1).
+      repo: finding.repo !== undefined && repos.includes(finding.repo) ? finding.repo : null,
     })),
   };
 }
