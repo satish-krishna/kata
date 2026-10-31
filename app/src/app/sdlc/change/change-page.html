@@ -342,7 +342,7 @@
   >
     @if (vm.preview.buildForm(); as form) {
       @if (vm.buildMode(); as mode) {
-        <app-build-dialog [mode]="mode" [repos]="vm.buildRepos()" [state]="form" />
+        <app-build-dialog [mode]="mode" [offer]="vm.buildOffer()" [state]="form" />
       }
     }
   </app-run-preview-dialog>

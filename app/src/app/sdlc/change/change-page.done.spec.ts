@@ -312,7 +312,7 @@ describe('declaring done', () => {
     expect(vm.doneReport()).toBeNull();
     expect(prepare).toHaveBeenCalled();
     expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull();
-    expect(TestBed.inject(BuildPageViewModel).current()!.round).toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).current()!.rounds).toEqual([]);
   });
 
   it("the toolbar's Run review starts the review-only build, the same as the done dialog's", async () => {
@@ -326,7 +326,7 @@ describe('declaring done', () => {
     preview.start();
     await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull());
     expect(prepare).toHaveBeenCalled();
-    expect(TestBed.inject(BuildPageViewModel).current()!.round).toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).current()!.rounds).toEqual([]);
   });
 
   it('an action with nothing behind it says so instead of doing nothing', async () => {

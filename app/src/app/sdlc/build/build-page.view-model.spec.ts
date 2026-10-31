@@ -64,7 +64,7 @@ function setup(transport = new MockTransport(), preview: 'confirm' | 'real' = 'c
 async function handoffFor(transport: MockTransport, over: Partial<BuildHandoff> = {}): Promise<BuildHandoff> {
   const out = await transport.sdlcBuildPrepare(FOLDER, MOCK_MASTER, 'commerce', MOCK_BUILD_CHANGE, false, null, 'start');
   if (out.kind !== 'ready') throw new Error('the mock build did not prepare');
-  return { start: out.start, timeoutSecs: 5400, round: null, checksDir: await transport.sdlcChecksDir(), ...over };
+  return { start: out.start, timeoutSecs: 5400, rounds: [], checksDir: await transport.sdlcChecksDir(), ...over };
 }
 
 /** Advances the fake clock in small steps, flushing effects between them, the way a running app would. */
@@ -759,8 +759,8 @@ describe('the build page starts, stops and continues the same runs as the build 
     heads.mockResolvedValue({ 'commerce-core': 'bbbbbbb' });
     const runSpec = vi.spyOn(transport, 'runSpec');
     const next = openHost().debugElement.injector.get(BuildPageViewModel);
-    const round = { instructions: 'rename the status field to state', repo: 'commerce-core' };
-    await next.start(await handoffFor(transport, { round }), CTX);
+    const rounds = [{ ...{ instructions: 'rename the status field to state', repo: 'commerce-core' }, summary: '' }];
+    await next.start(await handoffFor(transport, { rounds }), CTX);
     await drive(next, lock, finished(next));
     const specs = runSpec.mock.calls.map(([spec]) => spec);
     expect(specs.filter((s) => s.name === REVIEW_NAME)).toHaveLength(1);
@@ -778,8 +778,8 @@ describe('the build page starts, stops and continues the same runs as the build 
 
     const runSpec = vi.spyOn(transport, 'runSpec');
     const next = openHost().debugElement.injector.get(BuildPageViewModel);
-    const round = { instructions: 'look at the logging', repo: 'commerce-core' };
-    await next.start(await handoffFor(transport, { round }), CTX);
+    const rounds = [{ ...{ instructions: 'look at the logging', repo: 'commerce-core' }, summary: '' }];
+    await next.start(await handoffFor(transport, { rounds }), CTX);
     await drive(next, lock, () => next.phase() === 'finished');
     expect(runSpec.mock.calls.map(([spec]) => spec.name)).not.toContain(REVIEW_NAME);
     expect(next.replaced()).toEqual([]);
@@ -837,7 +837,7 @@ describe('the build page starts, stops and continues the same runs as the build 
         { repo: 'customer-portal', firstUnfinished: null, state: { kind: 'done' }, tasks: 1, finished: 1 },
       ],
     };
-    const round = { instructions: 'tidy the notes', repo: MOCK_MASTER };
+    const rounds = [{ ...{ instructions: 'tidy the notes', repo: MOCK_MASTER }, summary: '' }];
 
     it('has a row, shows why it stopped and Continue runs it again (R6.1, R8.1)', async () => {
       const { vm, transport, runner } = setup();
@@ -848,7 +848,7 @@ describe('the build page starts, stops and continues the same runs as the build 
         link.onRun?.(`fake-${targets.length}`);
         return targets.length === 1 ? { exit: 124, error: null } : { exit: 0, error: null };
       });
-      await vm.start(await handoffFor(transport, { round }), CTX);
+      await vm.start(await handoffFor(transport, { rounds }), CTX);
       await advance(500);
       expect(targets).toEqual([MOCK_MASTER]);
       expect(vm.phase()).toBe('stopped');
@@ -872,7 +872,7 @@ describe('the build page starts, stops and continues the same runs as the build 
         link.onRun?.('fake-master');
         return { exit: 0, error: null };
       });
-      await vm.start(await handoffFor(transport, { round }), CTX);
+      await vm.start(await handoffFor(transport, { rounds }), CTX);
       await advance(500);
       expect(group(vm, MOCK_MASTER).status.tone).not.toBe('error');
       expect(stopOf(vm, MOCK_MASTER)).toBeUndefined();
@@ -889,7 +889,7 @@ describe('the build page starts, stops and continues the same runs as the build 
         link.onRun?.(`fake-${targets.length}`);
         return { exit: 0, error: null };
       });
-      await vm.start(await handoffFor(transport, { round }), CTX);
+      await vm.start(await handoffFor(transport, { rounds }), CTX);
       await advance(500);
       expect(heads.mock.calls.every(([, repos]) => repos.includes(MOCK_MASTER))).toBe(true);
       expect(targets).toEqual([MOCK_MASTER, 'review']);
@@ -955,8 +955,8 @@ describe('the build page starts, stops and continues the same runs as the build 
       await gate;
       return { exit: 130, error: null };
     });
-    const round = { instructions: 'rename the status field', repo: 'commerce-core' };
-    await vm.start(await handoffFor(transport, { round }), CTX);
+    const rounds = [{ ...{ instructions: 'rename the status field', repo: 'commerce-core' }, summary: '' }];
+    await vm.start(await handoffFor(transport, { rounds }), CTX);
     await advance(300);
     vm.select('commerce-core');
     vm.cancelRun();
@@ -1018,7 +1018,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       const { vm, transport, runner } = setup();
       const asked = vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone({ [MOCK_MASTER]: { files: ['notes/half.md'] } }));
       const run = stopFirstRunOf(runner, MOCK_MASTER, true);
-      await vm.start(await handoffFor(transport, { round: { instructions: 'tidy the notes', repo: MOCK_MASTER } }), CTX);
+      await vm.start(await handoffFor(transport, { rounds: [{ ...{ instructions: 'tidy the notes', repo: MOCK_MASTER }, summary: '' }] }), CTX);
       await advance(500);
       expect(vm.phase()).toBe('building');
       vm.select(MOCK_MASTER);
@@ -1041,7 +1041,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
       const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
       const run = stopFirstRunOf(runner, MOCK_MASTER, false);
-      await vm.start(await handoffFor(transport, { round: { instructions: 'tidy the notes', repo: MOCK_MASTER } }), CTX);
+      await vm.start(await handoffFor(transport, { rounds: [{ ...{ instructions: 'tidy the notes', repo: MOCK_MASTER }, summary: '' }] }), CTX);
       await advance(500);
       expect(vm.phase()).toBe('stopped');
       vm.select(MOCK_MASTER);
@@ -1086,7 +1086,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(coreDonePortalReady);
       const asked = vi.spyOn(transport, 'sdlcBuildParticipants').mockResolvedValue(everyone({ 'commerce-core': { files: ['src/half.rs'] } }));
       const run = stopFirstRunOf(runner, 'commerce-core', true);
-      await vm.start(await handoffFor(transport, { round: { instructions: 'rename the status field', repo: 'commerce-core' } }), CTX);
+      await vm.start(await handoffFor(transport, { rounds: [{ ...{ instructions: 'rename the status field', repo: 'commerce-core' }, summary: '' }] }), CTX);
       await advance(500);
       expect(vm.phase()).toBe('building');
       vm.select('commerce-core');
@@ -1109,7 +1109,7 @@ describe('the build page starts, stops and continues the same runs as the build 
       vi.spyOn(transport, 'sdlcBuildStatus').mockResolvedValue(allDone);
       const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
       const run = stopFirstRunOf(runner, 'commerce-core', false);
-      await vm.start(await handoffFor(transport, { round: { instructions: 'rename the status field', repo: 'commerce-core' } }), CTX);
+      await vm.start(await handoffFor(transport, { rounds: [{ ...{ instructions: 'rename the status field', repo: 'commerce-core' }, summary: '' }] }), CTX);
       await advance(500);
       expect(vm.phase()).toBe('stopped');
       vm.select('commerce-core');
@@ -1471,8 +1471,8 @@ describe('no leftover is discarded without the engineer\'s choice', () => {
     const { vm, transport, runner, run, discard } = await stoppedWithLeftovers();
     runner.closeLeftovers();
     await advance(300);
-    const round = { instructions: 'tidy up the logging', repo: 'commerce-core' };
-    expect(await vm.start(await handoffFor(transport, { round }), CTX)).toBe(true);
+    const rounds = [{ ...{ instructions: 'tidy up the logging', repo: 'commerce-core' }, summary: '' }];
+    expect(await vm.start(await handoffFor(transport, { rounds }), CTX)).toBe(true);
     await advance(300);
     expect(run).toHaveBeenCalledTimes(2);
     expect(run.mock.calls[1][1].task).toContain('tidy up the logging');

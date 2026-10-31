@@ -616,11 +616,11 @@ export class BuildPageViewModel {
     try {
       const status = await this.readStatus();
       const master = handoff.start.master.repo;
-      this.productRepos = (await this.readParticipants(handoff.round?.repo ?? null)).filter((p) => !p.master).map((p) => p.repo);
+      this.productRepos = (await this.readParticipants(handoff.rounds.map((r) => r.repo))).filter((p) => !p.master).map((p) => p.repo);
       this.status.set(status);
       this.changes.set({ folder: ctx.folder, masterRepo: master, system: ctx.system, change: ctx.change });
-      if (handoff.round !== null) await this.loadEarlierReview(ctx);
-      await this.driver.begin(handoff.timeoutSecs, handoff.round ? [{ ...handoff.round, summary: '' }] : [], handoff.choices);
+      if (handoff.rounds.length > 0) await this.loadEarlierReview(ctx);
+      await this.driver.begin(handoff.timeoutSecs, handoff.rounds, handoff.choices);
     } catch (e) {
       this.toasts.error(`Could not start the build: ${message(e)}`);
       this.broken.set(true);
@@ -1117,7 +1117,7 @@ export class BuildPageViewModel {
           this.settled = false;
           break;
         }
-        const mine = (await this.readParticipants(owner)).find((p) => p.repo === owner);
+        const mine = (await this.readParticipants([owner])).find((p) => p.repo === owner);
         await this.pendingFinish;
         if (this.settled) continue;
         const left = [...(mine?.files ?? []), ...(mine?.rows ?? [])];
@@ -1237,11 +1237,18 @@ export class BuildPageViewModel {
     return key === REVIEW ? this.handoff!.start.master.repo : key;
   }
 
-  /** Ask the backend who takes part in the build now; `pending` is the repository a run is about to start in. */
-  private async readParticipants(pending: string | null): Promise<Participant[]> {
+  /**
+   * Ask the backend who takes part in the build now; `pending` lists the repositories a run is about to start in. The backend
+   * counts one pending repository at a time, so each is asked about and the answers are joined, one entry for each repository.
+   */
+  private async readParticipants(pending: string[]): Promise<Participant[]> {
     const h = this.handoff!;
     const ctx = this.ctx!;
-    this.participants = await this.transport.sdlcBuildParticipants(ctx.folder, h.start.master.repo, ctx.system, ctx.change, pending);
+    const ask = (repo: string | null) => this.transport.sdlcBuildParticipants(ctx.folder, h.start.master.repo, ctx.system, ctx.change, repo);
+    const answers = await Promise.all((pending.length === 0 ? [null] : pending).map(ask));
+    const joined = new Map<string, Participant>();
+    for (const p of answers.flat()) if (!joined.has(p.repo)) joined.set(p.repo, p);
+    this.participants = [...joined.values()];
     return this.participants;
   }
 

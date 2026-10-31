@@ -4,21 +4,25 @@ import { HlmInput } from '@spartan-ng/helm/input';
 import { HlmLabel } from '@spartan-ng/helm/label';
 import { HlmSelectImports } from '@spartan-ng/helm/select';
 import { HlmTextareaImports } from '@spartan-ng/helm/textarea';
+import type { RoundOffer, RoundRequest } from '../lib/build-round';
 import { Field } from './field';
 
 export type BuildDialogMode = 'start' | 'continue' | 'round';
-/** `instructions` and `repo` are set in round mode only. */
-export type BuildStartRequest = { timeoutSecs: number; instructions: string | null; repo: string | null };
+/** `rounds` is set in round mode only: one request per repository that gets an agent. */
+export type BuildStartRequest = { timeoutSecs: number; rounds: RoundRequest[] | null };
 
-export type BuildModel = { hours: number | null; minutes: number | null; instructions: string; repo: string };
+/** The time limit and, in round mode, the keys of the picked findings, the repository chosen for each finding that names none, and a note for each repository. */
+export type BuildModel = { hours: number | null; minutes: number | null; picked: string[]; assigned: Record<string, string>; notes: Record<string, string> };
 /** The build's fields as a signal form; whoever owns the preview makes it and reads the request from it. */
 export type BuildFormState = { model: WritableSignal<BuildModel>; form: FieldTree<BuildModel> };
 
 const DEFAULT_HOURS = 2;
 
 /** A fresh form for the build's time limit and, for another round, what to do and where. */
-export function createBuildForm(injector: Injector, round: boolean): BuildFormState {
-  const model = signal<BuildModel>({ hours: DEFAULT_HOURS, minutes: 0, instructions: '', repo: '' });
+export function createBuildForm(injector: Injector, round: boolean, offer?: RoundOffer): BuildFormState {
+  void round;
+  void offer;
+  const model = signal<BuildModel>({ hours: DEFAULT_HOURS, minutes: 0, picked: [], assigned: {}, notes: {} });
   const f = form(
     model,
     (p) => {
@@ -29,10 +33,6 @@ export function createBuildForm(injector: Injector, round: boolean): BuildFormSt
         validate(field, ({ value }) => ((value() ?? 0) < 0 ? { kind: 'min' } : undefined));
       }
       validate(p.minutes, ({ valueOf }) => ((valueOf(p.hours) ?? 0) * 60 + (valueOf(p.minutes) ?? 0) > 0 ? undefined : { kind: 'zero-limit' }));
-      metadata(p.instructions, REQUIRED, () => round);
-      validate(p.instructions, ({ value }) => (round && value().trim() === '' ? { kind: 'required' } : undefined));
-      metadata(p.repo, REQUIRED, () => round);
-      validate(p.repo, ({ value }) => (round && value() === '' ? { kind: 'required' } : undefined));
     },
     { injector },
   );
@@ -46,9 +46,9 @@ export function limitSecs(state: BuildFormState): number {
 }
 
 /** What the form asks for. */
-export function buildRequest(state: BuildFormState, round: boolean): BuildStartRequest {
-  const m = state.model();
-  return { timeoutSecs: limitSecs(state), instructions: round ? m.instructions.trim() : null, repo: round ? m.repo : null };
+export function buildRequest(state: BuildFormState, round: boolean, offer?: RoundOffer): BuildStartRequest {
+  void offer;
+  return { timeoutSecs: limitSecs(state), rounds: round ? [] : null };
 }
 
 /* The build's fields: the time limit for each repository's run and, for another round, what to do and where.
@@ -61,13 +61,10 @@ export function buildRequest(state: BuildFormState, round: boolean): BuildStartR
 })
 export class BuildDialog {
   readonly mode = input.required<BuildDialogMode>();
-  /** The master repository first, then every repository the plan names. */
-  readonly repos = input.required<string[]>();
+  /** What a round may fix, from the latest review; null outside round mode. */
+  readonly offer = input<RoundOffer | null>(null);
   readonly state = input.required<BuildFormState>();
 
   protected readonly round = computed(() => this.mode() === 'round');
 
-  protected setRepo(repo: string | string[] | null | undefined): void {
-    this.state().form.repo().value.set(typeof repo === 'string' ? repo : '');
-  }
 }

@@ -5,6 +5,7 @@ import type { RunSettings } from '@bindings/RunSettings';
 import type { RunSpec } from '@bindings/RunSpec';
 import { groupRows, isSwitchable, itemSourceLabel, presetRows, settingSourceLabel, toGiven, toggle, type PresetFrom, type PresetRow } from '../../lib/given';
 import { buildPreviewFor, safetyRules, type BuildPreviewKind, type BuildPreviewPlan } from '../../lib/sdlc';
+import type { RoundOffer } from '../../lib/build-round';
 import { buildRequest, createBuildForm, limitSecs, type BuildFormState, type BuildStartRequest } from '../../ui/build-dialog';
 import type { PreviewEnvRow, PreviewSection, PreviewSettingRow } from '../../ui/run-preview-dialog';
 import { KataTransport } from '../transport/kata-transport';
@@ -28,6 +29,8 @@ export type BuildPreviewRequest = {
   from: Omit<PresetFrom, 'workdir'>;
   /** The limit shown when the preview has no time-limit field of its own: the build's, or Kata's review limit. */
   limitSecs: number;
+  /** What a round may fix; set for a round only. */
+  offer?: RoundOffer | null;
 };
 
 /** What the engineer confirmed: the keys switched off for the build, and the time limit or round the fields asked for. */
@@ -148,7 +151,7 @@ export class RunPreviewViewModel {
     const req = this.buildReq();
     if (!req) return null;
     const plan = buildPreviewFor(req.kind);
-    const picked = plan.asksRound ? (this.buildForm()?.model().repo ?? '') : null;
+    const picked = plan.asksRound ? '' : null;
     return this.parts()
       .filter((p) => picked === null || p.section.repo === picked)
       .map((p) => {
@@ -209,7 +212,7 @@ export class RunPreviewViewModel {
       this.buildPending = { resolve, reject };
     });
     this.buildReq.set(req);
-    this.buildForm.set(plan.asksTimeLimit ? createBuildForm(this.injector, plan.asksRound) : null);
+    this.buildForm.set(plan.asksTimeLimit ? createBuildForm(this.injector, plan.asksRound, req.offer ?? undefined) : null);
     this.safetyRules.set(safetyRules(req.kind === 'manual-review' ? 'review' : 'repo'));
     this.title.set(req.title);
     this.isOpen.set(true);
@@ -275,7 +278,7 @@ export class RunPreviewViewModel {
     // A choice for an item this preview does not list (another repository's, on a one-repository preview) stays as it was.
     for (const key of req.from.build ?? []) if (!listed.has(key)) off.add(key);
     const form = this.buildForm();
-    const request = form ? buildRequest(form, buildPreviewFor(req.kind).asksRound) : null;
+    const request = form ? buildRequest(form, buildPreviewFor(req.kind).asksRound, this.buildReq()?.offer ?? undefined) : null;
     this.buildPending = null;
     this.reset();
     pending.resolve({ off, request });
