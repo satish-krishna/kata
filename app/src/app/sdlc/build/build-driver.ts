@@ -65,7 +65,6 @@ interface RunInstance {
 export class BuildDriver {
   readonly going = signal<ReadonlySet<string>>(new Set());
   readonly stopped = signal<ReadonlyMap<string, { task: string; reason: string; held?: boolean }>>(new Map());
-  readonly round = signal<{ repo: string; instructions: string } | null>(null);
   /** The pending rounds: repository to instructions. */
   readonly rounds = signal<ReadonlyMap<string, string>>(new Map());
   readonly phase = signal<BuildPhase>('building');
@@ -74,7 +73,8 @@ export class BuildDriver {
 
   private timeoutSecs = 0;
   private choices: BuildChoices = NO_CHOICES;
-  private roundStarted = false;
+  /** The repositories whose pending round has been launched and has not ended. */
+  private readonly roundsStarted = new Set<string>();
   private reviewing = false;
   private cancelledAll = false;
   private compare: Record<string, string> | null = null;
@@ -90,16 +90,16 @@ export class BuildDriver {
     this.choices = choices;
   }
 
-  async begin(timeoutSecs: number, round?: { repo: string; instructions: string } | RoundRequest[], choices: BuildChoices = NO_CHOICES): Promise<void> {
+  async begin(timeoutSecs: number, rounds: RoundRequest[] = [], choices: BuildChoices = NO_CHOICES): Promise<void> {
     this.timeoutSecs = timeoutSecs;
     this.choices = choices;
     this.cancelledAll = false;
     this.stopped.set(new Map());
     this.report.set(null);
-    this.round.set(round === undefined || Array.isArray(round) ? null : round);
-    this.roundStarted = false;
+    this.rounds.set(new Map(rounds.map((r) => [r.repo, r.instructions])));
+    this.roundsStarted.clear();
     this.phase.set('building');
-    if (round && this.compare === null) this.compare = await this.deps.heads();
+    if (rounds.length > 0 && this.compare === null) this.compare = await this.deps.heads();
     await this.enqueue(() => this.look());
   }
 
@@ -162,9 +162,7 @@ export class BuildDriver {
         continue;
       }
       if (this.going().has(r.repo)) continue;
-      const round = this.round();
-      const picked = round?.repo === r.repo && !this.roundStarted;
-      if (r.state.kind === 'done' && !picked) continue;
+      if (r.state.kind === 'done' && !this.isRoundLaunch(r.repo)) continue;
       const stop = this.stopped().get(r.repo);
       // A held stop (the status could not be read when the run ended) does not know the task the repository is on now.
       if (stop && (stop.held || stop.task === task)) continue;
@@ -173,22 +171,21 @@ export class BuildDriver {
     this.waiting.set(waiting);
 
     // A round for a repository the plan names no task in (the master) has no state row; it still runs.
-    const pending = this.round();
-    if (
-      pending &&
-      !this.roundStarted &&
-      !status.repos.some((r) => r.repo === pending.repo) &&
-      !this.going().has(pending.repo) &&
-      !this.stopped().has(pending.repo)
-    ) {
-      ready.push({ repo: pending.repo, task: '' });
+    for (const repo of this.rounds().keys()) {
+      if (
+        !this.roundsStarted.has(repo) &&
+        !status.repos.some((r) => r.repo === repo) &&
+        !this.going().has(repo) &&
+        !this.stopped().has(repo)
+      ) {
+        ready.push({ repo, task: '' });
+      }
     }
 
     for (const r of ready) {
-      const round = this.round();
-      const picked = round?.repo === r.repo && !this.roundStarted;
-      if (picked) this.roundStarted = true;
-      this.launch(r.repo, r.task, picked ? round.instructions : undefined);
+      const instructions = this.isRoundLaunch(r.repo) ? this.rounds().get(r.repo) : undefined;
+      if (instructions !== undefined) this.roundsStarted.add(r.repo);
+      this.launch(r.repo, r.task, instructions);
     }
     if (ready.length > 0) {
       this.phase.set('building');
@@ -212,6 +209,11 @@ export class BuildDriver {
     this.reviewing = true;
     this.phase.set('reviewing');
     this.launch(REVIEW, REVIEW);
+  }
+
+  /** A pending round that has not been launched: the repository's next run carries its instructions. */
+  private isRoundLaunch(repo: string): boolean {
+    return this.rounds().has(repo) && !this.roundsStarted.has(repo);
   }
 
   private reportFor(status: BuildStatus, waiting: WaitingRepo[]): StopReport {
@@ -269,9 +271,13 @@ export class BuildDriver {
       const outcome = await this.judge(key, task, end, run.cancelled, isRound);
       // The one place a round is cleared: only when it finished. Every other outcome keeps it pending,
       // so its instructions go with the next launch of the repository.
-      if (this.round()?.repo === key && this.roundStarted) {
-        if (outcome.kind === 'finished') this.round.set(null);
-        else this.roundStarted = false;
+      if (this.rounds().has(key) && this.roundsStarted.has(key)) {
+        this.roundsStarted.delete(key);
+        if (outcome.kind === 'finished') {
+          const next = new Map(this.rounds());
+          next.delete(key);
+          this.rounds.set(next);
+        }
       }
     }
     if (this.cancelledAll) return this.settleCancel();

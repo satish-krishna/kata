@@ -258,7 +258,7 @@ describe('BuildDriver', () => {
     expect(w.log).toEqual(['review']);
     expect(w.driver.phase()).toBe('finished');
     // A later round that commits nothing is still not reviewed again: the review's commit is the new baseline.
-    await w.driver.begin(3600, { repo: 'api', instructions: 'look around' });
+    await w.driver.begin(3600, [{ repo: 'api', instructions: 'look around', summary: '' }]);
     await flush();
     await w.started[1].end([]);
     expect(w.log).toEqual(['review', 'api']);
@@ -273,7 +273,7 @@ describe('BuildDriver', () => {
     expect(w.log).toEqual(['review']);
     await w.started[0].end([]);
     expect(w.driver.phase()).toBe('finished');
-    await w.driver.begin(3600, { repo: 'api', instructions: 'rename the status field to state' });
+    await w.driver.begin(3600, [{ repo: 'api', instructions: 'rename the status field to state', summary: '' }]);
     await flush();
     expect(w.log).toEqual(['review', 'api']);
     w.heads['api'] = 'h2';
@@ -289,7 +289,7 @@ describe('BuildDriver', () => {
     await w.driver.begin(3600);
     await flush();
     await w.started[0].end([]);
-    await w.driver.begin(3600, { repo: 'api', instructions: 'look around' });
+    await w.driver.begin(3600, [{ repo: 'api', instructions: 'look around', summary: '' }]);
     await flush();
     await w.started[1].end([]);
     expect(w.log).toEqual(['review', 'api']);
@@ -298,17 +298,17 @@ describe('BuildDriver', () => {
 
   it('a round on a finished repository starts it', async () => {
     const w = world([{ id: 'T1', repo: 'api' }, { id: 'T2', repo: 'app' }], ['T1', 'T2']);
-    await w.driver.begin(7200, { repo: 'api', instructions: 'rename the status field to state' });
+    await w.driver.begin(7200, [{ repo: 'api', instructions: 'rename the status field to state', summary: '' }]);
     await flush();
     expect(w.log).toEqual(['api']);
     expect(w.started[0].opts.instructions).toBe('rename the status field to state');
     expect(w.started[0].opts.timeoutSecs).toBe(7200);
-    expect(w.driver.round()?.repo).toBe('api');
+    expect(w.driver.rounds().has('api')).toBe(true);
   });
 
   it('a round for a repository the plan does not name still runs (R8.1)', async () => {
     const w = world([{ id: 'T1', repo: 'api' }], ['T1']);
-    await w.driver.begin(3600, { repo: 'master', instructions: 'tidy the notes' });
+    await w.driver.begin(3600, [{ repo: 'master', instructions: 'tidy the notes', summary: '' }]);
     await flush();
     expect(w.log).toEqual(['master']);
     expect(w.started[0].opts.instructions).toBe('tidy the notes');
@@ -317,7 +317,7 @@ describe('BuildDriver', () => {
 
   it('a round for the master that fails stops the build instead of finishing it, and Continue runs it again (R6.1, R8.1)', async () => {
     const w = world([{ id: 'T1', repo: 'api' }], ['T1']);
-    await w.driver.begin(3600, { repo: 'master', instructions: 'tidy the notes' });
+    await w.driver.begin(3600, [{ repo: 'master', instructions: 'tidy the notes', summary: '' }]);
     await flush();
     await w.started[0].end([], { exit: 124 });
     expect(w.driver.stopped().get('master')).toEqual({ task: '', reason: stopMessage(124, null) });
@@ -329,13 +329,13 @@ describe('BuildDriver', () => {
     expect(w.started[1].opts.instructions).toBe('tidy the notes');
     await w.started[1].end([]);
     expect(w.driver.stopped().size).toBe(0);
-    expect(w.driver.round()).toBeNull();
+    expect(w.driver.rounds().size).toBe(0);
     expect(w.driver.phase()).toBe('finished');
   });
 
   it('a round on a finished repository that fails stops the build, and Continue runs it again (R6.1, R8.1)', async () => {
     const w = world([{ id: 'T1', repo: 'api' }, { id: 'T2', repo: 'app' }], ['T1', 'T2']);
-    await w.driver.begin(3600, { repo: 'api', instructions: 'rename it' });
+    await w.driver.begin(3600, [{ repo: 'api', instructions: 'rename it', summary: '' }]);
     await flush();
     await w.started[0].end([], { exit: 124 });
     expect(w.driver.phase()).toBe('stopped');
@@ -349,7 +349,7 @@ describe('BuildDriver', () => {
   it('a committing round for the master is reviewed again (R8.4)', async () => {
     const w = world([{ id: 'T1', repo: 'api' }], ['T1']);
     w.heads['master'] = 'm1';
-    await w.driver.begin(3600, { repo: 'master', instructions: 'tidy the notes' });
+    await w.driver.begin(3600, [{ repo: 'master', instructions: 'tidy the notes', summary: '' }]);
     await flush();
     w.heads['master'] = 'm2';
     await w.started[0].end([]);
@@ -358,11 +358,11 @@ describe('BuildDriver', () => {
 
   it('a round for a waiting repository is not dropped silently (R8.3)', async () => {
     const w = world([{ id: 'T1', repo: 'app' }, { id: 'T2', repo: 'api', dependsOn: ['T1'] }]);
-    await w.driver.begin(3600, { repo: 'api', instructions: 'rename it' });
+    await w.driver.begin(3600, [{ repo: 'api', instructions: 'rename it', summary: '' }]);
     await flush();
     await w.started[0].end([], { exit: 1 });
     expect(w.driver.phase()).toBe('stopped');
-    expect(w.driver.round()?.repo).toBe('api');
+    expect(w.driver.rounds().has('api')).toBe(true);
     await w.driver.continueRepo('app');
     await flush();
     await w.started[1].end(['T1']);
@@ -502,7 +502,7 @@ describe('BuildDriver', () => {
       { id: 'T1', repo: 'app' },
       { id: 'T2', repo: 'app' },
     ]);
-    await w.driver.begin(3600, { repo: 'app', instructions: 'finish it' });
+    await w.driver.begin(3600, [{ repo: 'app', instructions: 'finish it', summary: '' }]);
     await flush();
     await w.of('app')[0].end(['T1', 'T2'], { exit: 124 });
     expect(w.driver.stopped().has('app')).toBe(true);
@@ -511,7 +511,7 @@ describe('BuildDriver', () => {
 
   it('a round that ends cleanly with no row for its launch task stops, is not relaunched by itself, and Continue reruns it with its instructions (R8.1)', async () => {
     const w = world([{ id: 'T1', repo: 'app' }]);
-    await w.driver.begin(3600, { repo: 'app', instructions: 'finish it' });
+    await w.driver.begin(3600, [{ repo: 'app', instructions: 'finish it', summary: '' }]);
     await flush();
     expect(w.of('app')).toHaveLength(1);
     expect(w.of('app')[0].opts.instructions).toBe('finish it');
@@ -521,7 +521,7 @@ describe('BuildDriver', () => {
     expect(w.driver.going().has('app')).toBe(false);
     expect(w.driver.stopped().get('app')).toEqual({ task: 'T1', reason: stopMessage(0, null, false, false) });
     expect(w.driver.phase()).toBe('stopped');
-    expect(w.driver.round()).not.toBeNull();
+    expect(w.driver.rounds().size).toBe(1);
     await w.driver.continueRepo('app');
     await flush();
     expect(w.of('app')).toHaveLength(2);
@@ -645,14 +645,14 @@ describe('runOutcome', () => {
 describe('BuildDriver outcomes', () => {
   it('cancelling a round on a finished repository stops it with Continue, never finishing or reviewing (B1)', async () => {
     const w = world([{ id: 'T1', repo: 'api' }, { id: 'T2', repo: 'app' }], ['T1', 'T2']);
-    await w.driver.begin(3600, { repo: 'app', instructions: 'rename it' });
+    await w.driver.begin(3600, [{ repo: 'app', instructions: 'rename it', summary: '' }]);
     await flush();
     w.driver.cancel('app');
     await w.of('app')[0].end([], { exit: 130 });
     expect(w.driver.stopped().get('app')?.reason).toBe(stopMessage(130, null));
     expect(w.driver.phase()).toBe('stopped');
     expect(w.log).toEqual(['app']);
-    expect(w.driver.round()).not.toBeNull();
+    expect(w.driver.rounds().size).toBe(1);
     await w.driver.continueRepo('app');
     await flush();
     expect(w.of('app')).toHaveLength(2);
@@ -683,12 +683,12 @@ describe('BuildDriver outcomes', () => {
       { id: 'T2', repo: 'api' },
       { id: 'T3', repo: 'app', dependsOn: ['T2'] },
     ]);
-    await w.driver.begin(3600, { repo: 'app', instructions: 'another round' });
+    await w.driver.begin(3600, [{ repo: 'app', instructions: 'another round', summary: '' }]);
     await flush();
     expect(w.of('app')[0].opts.instructions).toBe('another round');
     await w.of('app')[0].end(['T1']);
     expect(w.driver.waiting().map((x) => x.repo)).toEqual(['app']);
-    expect(w.driver.round()).not.toBeNull();
+    expect(w.driver.rounds().size).toBe(1);
     expect(w.of('app')).toHaveLength(1);
     await w.of('api')[0].end(['T2']);
     await flush();
@@ -704,7 +704,7 @@ describe('the build\'s choices', () => {
       { id: 'T2', repo: 'api', dependsOn: ['T1'] },
     ]);
     const choices = { off: new Set(['personal:tool-server:github']) };
-    await w.driver.begin(3600, undefined, choices);
+    await w.driver.begin(3600, [], choices);
     await flush();
     // The ready repository starts at once; the one that waited starts as it becomes ready; the review follows by itself.
     await w.of('app')[0].end(['T1']);

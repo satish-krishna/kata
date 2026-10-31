@@ -620,7 +620,7 @@ export class BuildPageViewModel {
       this.status.set(status);
       this.changes.set({ folder: ctx.folder, masterRepo: master, system: ctx.system, change: ctx.change });
       if (handoff.round !== null) await this.loadEarlierReview(ctx);
-      await this.driver.begin(handoff.timeoutSecs, handoff.round ?? undefined, handoff.choices);
+      await this.driver.begin(handoff.timeoutSecs, handoff.round ? [{ ...handoff.round, summary: '' }] : [], handoff.choices);
     } catch (e) {
       this.toasts.error(`Could not start the build: ${message(e)}`);
       this.broken.set(true);
