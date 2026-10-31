@@ -46,7 +46,7 @@ const group = (repo: string, status: StatusText, action: TaskGroupView['action']
   list: taskList(
     tasks.map((t) => ({ id: t.id, name: t.name, status: t.status, finished: t.status === DONE, departure: t.departure })),
     'all',
-    false,
+    true,
     null,
   ),
   ...extra,

@@ -43,6 +43,12 @@ const PLACES: { place: Place; label: string }[] = [
 ];
 const SIDES: Side[] = ['left', 'right', 'bottom'];
 const EDGES: Edge[] = ['left', 'right', 'bottom'];
+const FILTERS: { value: TaskFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'open', label: 'Open' },
+  { value: 'departed', label: 'Departed' },
+  { value: 'done', label: 'Done' },
+];
 const SIZE_VARS: Record<Side, string> = { left: '--k-left', right: '--k-right', bottom: '--k-bottom' };
 
 /* The grid has seven columns (left rail, left, separator, middle, separator, right, right rail) and four rows (the main row, a separator,
@@ -118,6 +124,12 @@ export class BuildPage {
   protected readonly edgeNames = EDGES;
   protected readonly tuckNote = TUCK_NOTE;
   protected readonly labelOf = actionLabel;
+
+  /** The four task filters, each labeled with how many tasks it holds. */
+  protected filterOptions(): { value: TaskFilter; label: string }[] {
+    const counts = this.view().filter.counts;
+    return FILTERS.map((f) => ({ value: f.value, label: `${f.label} ${counts[f.value]}` }));
+  }
   private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
   private readonly destroyRef = inject(DestroyRef);

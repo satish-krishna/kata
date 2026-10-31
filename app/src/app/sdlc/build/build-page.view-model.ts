@@ -33,7 +33,7 @@ import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { REVIEW_MISSING_TEXT, reviewState } from '../../lib/sdlc-done';
 import { givenFor, reviewFindings, specFor, type BuildRun, type Finding, type StageAction } from '../../lib/sdlc';
 import { groupFindings, type FindingGroup } from '../../lib/sdlc-findings';
-import type { TaskFilter, TaskListView } from '../../lib/build-task-list';
+import { filterCounts, taskList, type TaskFilter, type TaskLine, type TaskListView } from '../../lib/build-task-list';
 import type { ReplacedFindings } from '../../ui/findings-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
 import type { BuildHandoff } from '../change/change-page.view-model';
@@ -868,9 +868,18 @@ export class BuildPageViewModel {
   /** The repositories whose fold the engineer opened. */
   readonly openFolds = signal<ReadonlySet<string>>(new Set());
 
-  setTaskFilter(_filter: TaskFilter): void {}
+  setTaskFilter(filter: TaskFilter): void {
+    this.taskFilter.set(filter);
+  }
 
-  toggleFold(_repo: string): void {}
+  /** Open a repository's fold of finished tasks, or close it. */
+  toggleFold(repo: string): void {
+    this.openFolds.update((open) => {
+      const next = new Set(open);
+      if (!next.delete(repo)) next.add(repo);
+      return next;
+    });
+  }
 
   /** Say something through the page's one assertive live region. */
   say(text: string): void {
@@ -888,6 +897,15 @@ export class BuildPageViewModel {
     const hasSessions = [...this.sessionRefs().values()].some((refs) => refs.length > 0);
     const hasChanges = this.changedFiles();
     const findingsArea = this.findingsAreaView();
+    const filter = this.taskFilter();
+    const openFolds = this.openFolds();
+    const pickedTask = pick?.kind === 'task' ? pick.task : null;
+    const linesOf = (g: TaskArea): TaskLine[] =>
+      g.tasks.map((t) => ({ id: t.id, name: t.name, status: taskStatus(t.state), finished: t.state.kind === 'done', departure: t.state.kind === 'done' ? t.state.departure : null }));
+    const counts = filterCounts(areas.flatMap(linesOf));
+    const pickedDeparture = areas
+      .flatMap((g) => g.tasks)
+      .flatMap((t) => (t.id === pickedTask && t.state.kind === 'done' && t.state.departure !== null ? [{ task: t.id, text: t.state.departure }] : []))[0] ?? null;
     return {
       stage,
       stageMessage: this.stageMessage(),
@@ -902,8 +920,8 @@ export class BuildPageViewModel {
         stopLine: g.heading.stopLine,
         action: g.action,
         picked: pickedRepo === g.repo,
-        progress: { done: 0, total: 0 },
-        list: { fold: null, rows: [], empty: null },
+        progress: { done: linesOf(g).filter((t) => t.finished).length, total: g.tasks.length },
+        list: taskList(linesOf(g), filter, openFolds.has(g.repo), pickedTask),
         tasks: g.tasks.map((t) => ({
           id: t.id,
           name: t.name,
@@ -912,9 +930,9 @@ export class BuildPageViewModel {
           picked: pick?.kind === 'task' && pick.task === t.id,
         })),
       })),
-      filter: { value: 'all', counts: { all: 0, open: 0, departed: 0, done: 0 } },
-      noDepartures: false,
-      pickedDeparture: null,
+      filter: { value: filter, counts },
+      noDepartures: filter === 'departed' && counts.departed === 0,
+      pickedDeparture,
       review: { status: reviewStatus(entry), action: repoAction({ kind: 'idle' }, REVIEW, review), picked: pick?.kind === 'review' },
       pick,
       sessions: this.mountedSessions(),

@@ -1917,6 +1917,7 @@ describe('the tasks area folds, filters and shows a departure with its task', ()
     vi.spyOn(s.transport, 'sdlcRunLinks').mockResolvedValue([]);
     vi.spyOn(s.transport, 'sdlcTaskLinks').mockResolvedValue([]);
     vi.spyOn(s.transport, 'listRuns').mockResolvedValue([]);
+    vi.spyOn(s.transport, 'sdlcBuildStatus').mockResolvedValue(status);
     const [found] = (await readAllChanges(s.transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
     await s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null });
     await advance(300);

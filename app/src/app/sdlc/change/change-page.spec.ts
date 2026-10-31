@@ -737,7 +737,13 @@ describe('ChangePage build page', () => {
       }));
       const { container } = await mount(MOCK_BUILD_CHANGE, transport);
       alone(container);
-      expect(text(page(container).querySelector('[data-departure]')!)).toContain('Reused the existing file picker.');
+      // The row only says departed; the text shows above the activity once the task is picked.
+      for (const f of Array.from(page(container).querySelectorAll<HTMLButtonElement>('[data-fold]'))) f.click();
+      await settle();
+      expect(text(page(container).querySelector('[data-departure]')!)).toBe('departed');
+      Array.from(page(container).querySelectorAll<HTMLButtonElement>('[data-task]')).find((t) => text(t).startsWith('T2'))!.click();
+      await settle();
+      expect(text(page(container).querySelector('[data-pick-departure]')!)).toContain('Reused the existing file picker.');
     });
 
     it('declare done', async () => {

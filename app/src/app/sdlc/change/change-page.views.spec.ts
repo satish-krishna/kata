@@ -532,6 +532,8 @@ describe('ChangePage opens an existing change on the build page', () => {
     const { container } = await existing('build-stopped', ['T1'], false);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
     expect(actions(container)).toEqual(['Continue build', 'Another round', 'Reopen spec', 'Reopen intent']);
+    container.querySelector<HTMLButtonElement>('app-build-page [data-fold]')!.click();
+    await settle();
     expect(taskLine(container, 'T1')).toContain('Done');
     expect(taskLine(container, 'T3')).not.toContain('Done');
     expect(container.querySelector(`app-build-page [data-session="${EARLIER}"]`)).not.toBeNull();
@@ -542,6 +544,9 @@ describe('ChangePage opens an existing change on the build page', () => {
     const { container } = await existing('build-finished', ['T1', 'T2', 'T3'], true);
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
     expect(actions(container)).toEqual(['Declare done', 'Another round', 'Run review', 'Reopen spec', 'Reopen intent']);
+    for (const f of Array.from(container.querySelectorAll<HTMLButtonElement>('app-build-page [data-fold]'))) f.click();
+    await settle();
+    expect(container.querySelectorAll('app-build-page [data-task]').length).toBeGreaterThan(0);
     expect(Array.from(container.querySelectorAll('app-build-page [data-task]')).every((t) => text(t).includes('Done'))).toBe(true);
     expect(text(container.querySelector('app-build-page app-findings-list')!)).toContain(FINDING);
     pickRepo(container, 'commerce-core');
@@ -558,6 +563,9 @@ describe('ChangePage opens an existing change on the build page', () => {
     expect(pill(container, 'Build').getAttribute('aria-selected')).toBe('true');
     expect(text(pill(container, 'Build'))).toBe('Build · done');
     expect(actions(container)).toEqual([]);
+    for (const f of Array.from(container.querySelectorAll<HTMLButtonElement>('app-build-page [data-fold]'))) f.click();
+    await settle();
+    expect(container.querySelectorAll('app-build-page [data-task]').length).toBeGreaterThan(0);
     expect(Array.from(container.querySelectorAll('app-build-page [data-task]')).every((t) => text(t).includes('Done'))).toBe(true);
     expect(text(container.querySelector('app-build-page app-findings-list')!)).toContain(FINDING);
     pickRepo(container, 'commerce-core');
