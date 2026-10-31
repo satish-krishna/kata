@@ -77,8 +77,8 @@ const cutOff = () =>
     const clip = window.kataClip;
     const out = [];
     const say = (el) => (el.getAttribute('aria-label') ?? el.textContent ?? el.className).replace(/\s+/g, ' ').trim().slice(0, 40);
-    // A tool call's command and the scroller's button truncate on purpose; a label with a screen-reader-only part has a text range wider than its box.
-    const measured = (el) => !el.closest('app-tool-card, hlm-message-scroller') && !el.querySelector('.sr-only, .k-files__branch') && !el.classList.contains('sr-only');
+    // A tool call's command, the scroller's button and a finding row's one-line summary (cut with an ellipsis on purpose, and checked on its own) truncate on purpose; a label with a screen-reader-only part has a text range wider than its box.
+    const measured = (el) => !el.closest('app-tool-card, hlm-message-scroller') && !el.querySelector('.sr-only, .k-files__branch, .k-bp__finding-text') && !el.classList.contains('sr-only');
     const watch = (container, where, both) => {
       const box = container.getBoundingClientRect();
       for (const el of container.querySelectorAll('button, [role="tab"], [role="radio"], .k-status, .k-lock__count, .k-bp__title, .k-bp__elapsed, .k-bp__fold, [data-finding-row]')) {

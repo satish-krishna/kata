@@ -377,7 +377,7 @@
     <button hlmBtn variant="bare" size="bare" type="button" class="k-bp__finding" data-finding-row (click)="pickReviewRow(r.finding)">
       <span class="k-mono" data-finding-key>{{ r.key }}</span>
       <span [class]="'k-status k-status--' + severityTone(r.finding.severity)"><span class="k-status__dot"></span>{{ r.finding.severity ?? 'no severity' }}</span>
-      <span class="k-bp__finding-text">{{ r.summary }}</span>
+      <span class="k-bp__finding-text" [attr.title]="r.summary">{{ r.summary }}</span>
     </button>
   </li>
 </ng-template>

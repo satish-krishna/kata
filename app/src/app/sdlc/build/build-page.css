@@ -437,13 +437,19 @@
 
 .k-bp__finding {
   display: grid;
-  grid-template-columns: auto auto 1fr;
+  grid-template-columns: auto auto minmax(0, 1fr);
   gap: var(--space-3);
   align-items: baseline;
   text-align: left;
+  min-width: 0;
+  max-width: 100%;
 }
 
+/* The row shows one line: a first sentence longer than the row is cut with an ellipsis (the full text is the title and the findings area). */
 .k-bp__finding-text {
   color: var(--text-primary);
-  overflow-wrap: anywhere;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
