@@ -476,6 +476,10 @@ async function listIsWhole(mode) {
     check(shape.folds === REPOS.length, `R1.1 ${mode.name}: each finished repository folds its finished tasks into one line (${shape.folds})`);
     check(shape.rows > 0 && shape.lows > 0 && shape.counts >= 2, `R4.1 ${mode.name}: the Review group lists finding rows, folds its low ones and counts per severity (${shape.rows} rows, ${shape.lows} low folds, ${shape.counts} counts)`);
     check(shape.wide === 0, `R14.2 ${mode.name}: the filter, the fold rows and the finding rows lie inside the tasks area's width (${shape.wide} outside)`);
+    // A finding row shows one line: a first sentence longer than the row is cut with an ellipsis, not wrapped.
+    const longRow = await area('tasks').locator('[data-finding-row]', { hasText: 'photo count is read twice' }).first().locator('.k-bp__finding-text').evaluate((el) => ({ height: el.clientHeight, lineHeight: parseFloat(getComputedStyle(el).lineHeight) || el.clientHeight, overflow: getComputedStyle(el).textOverflow, cut: el.scrollWidth > el.clientWidth, title: el.getAttribute('title'), text: el.textContent.trim() }));
+    check(longRow.height <= longRow.lineHeight * 1.1 && longRow.cut && longRow.overflow === 'ellipsis', `R4.1 ${mode.name}: a Review group finding whose summary is longer than its row stays on one line and is cut with an ellipsis (height ${longRow.height} of a ${longRow.lineHeight} line, cut ${longRow.cut}, text-overflow ${longRow.overflow})`);
+    check(longRow.title === longRow.text, `R4.1 ${mode.name}: the cut finding row carries its full summary as its title (${JSON.stringify(longRow.title)})`);
     const cut = await cutOff();
     check(cut.length === 0, `R14.2 ${mode.name}: nothing in the task list is cut off${cut.length ? ` (${cut.join('; ')})` : ''}`);
     // The list scrolls on its own, down to the last finding row, with nothing else moving.
@@ -537,6 +541,9 @@ async function listIsWhole(mode) {
     check(box !== null && box.x >= 0 && box.y >= 0 && box.x + box.width <= 1280 && box.y + box.height <= 800, `the round dialog fits inside 1280 by 800 (${JSON.stringify(box)})`);
     check((await round.getByRole('checkbox').count()) > 0, 'the round dialog lists the findings with a checkbox each');
     check((await round.locator('[data-finding]').filter({ has: page.getByText('Fixed in') }).count()) === 1, 'the finding that names no repository offers a Fixed in choice, and only that one');
+    const longItem = await round.locator('[data-finding]', { hasText: 'photo count is read twice' }).getByText('photo count is read twice').evaluate((el) => ({ height: el.clientHeight, lineHeight: parseFloat(getComputedStyle(el).lineHeight) || el.clientHeight, overflow: getComputedStyle(el).textOverflow, cut: el.scrollWidth > el.clientWidth, title: el.getAttribute('title'), text: el.textContent.trim() }));
+    check(longItem.height <= longItem.lineHeight * 1.1 && longItem.cut && longItem.overflow === 'ellipsis', `the round dialog keeps a long finding summary on one line, cut with an ellipsis (height ${longItem.height} of a ${longItem.lineHeight} line, cut ${longItem.cut}, text-overflow ${longItem.overflow})`);
+    check(longItem.title === longItem.text, 'the round dialog gives the cut summary its full text as a title');
     const summary = round.locator('[data-round-summary]');
     // The finding without a repository blocks the round until the engineer says where it is fixed.
     check(/Choose a repository/.test(await summary.innerText()), 'the round says a finding without a repository needs a Fixed in choice before it can start');

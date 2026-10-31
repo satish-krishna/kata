@@ -941,7 +941,7 @@ const NO_REPO_FINDING = 4;
 /** The long demo's review record: the same two findings first, then enough more to overflow the findings area. */
 const LONG_REVIEW_FINDINGS = [
   ...REVIEW_FINDINGS,
-  'The photo count is read twice for one product, once in the store and once in the billing summary.',
+  'The photo count is read twice for one product, once in the store and once in the billing summary, and the two reads can disagree whenever a photo is replaced while the page is still loading the product.',
   'A file with an upper-case extension such as PHOTO.JPG is refused as not a JPEG.',
   'The size limit is checked after the whole photo is read into memory instead of while it is read.',
   'The remove button on the picker has no accessible name.',
