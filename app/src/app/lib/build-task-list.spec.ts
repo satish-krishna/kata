@@ -1,4 +1,6 @@
-import { filterCounts, taskList, type TaskLine } from './build-task-list';
+import { filterCounts, reviewRows, taskList, type TaskLine } from './build-task-list';
+import type { Finding } from './sdlc';
+import { groupFindings } from './sdlc-findings';
 
 const DONE = { tone: 'success', label: 'Done' } as const;
 const RUNNING = { tone: 'success', label: 'Running' } as const;
@@ -171,5 +173,86 @@ describe('filterCounts', () => {
     const a = taskList(first, 'done', false, null);
     const b = taskList(second, 'done', false, null);
     expect([...ids(a), ...ids(b)]).toEqual(['T1', 'T2', 'T3', 'T4', 'T5', 'T1', 'T2', 'T3', 'T4']);
+  });
+});
+
+const f = (id: string, severity: Finding['severity'], repo: string | undefined, text = `Finding ${id}.`): Finding => ({
+  id,
+  severity,
+  text,
+  ...(repo === undefined ? {} : { repo }),
+});
+
+// F1 high and F5 high; F2, F3, F6 and F8 medium; F4 and F7 low. F8 names no repository.
+const REVIEW: Finding[] = [
+  f('F1', 'high', 'catalog-api'),
+  f('F5', 'high', 'storefront-web'),
+  f('F2', 'medium', 'catalog-api'),
+  f('F3', 'medium', 'catalog-api'),
+  f('F6', 'medium', 'storefront-web'),
+  f('F8', 'medium', undefined),
+  f('F4', 'low', 'catalog-api'),
+  f('F7', 'low', 'storefront-web'),
+];
+const keys = (rows: { key: string }[]) => rows.map((r) => r.key);
+
+describe('reviewRows', () => {
+  const view = () => reviewRows(groupFindings(REVIEW, ['catalog-api', 'storefront-web']), REVIEW);
+
+  it('counts the severities present, most serious first, and the total (R4.1)', () => {
+    expect(view().counts).toEqual([
+      { severity: 'high', n: 2 },
+      { severity: 'medium', n: 4 },
+      { severity: 'low', n: 2 },
+    ]);
+    expect(view().total).toBe(8);
+  });
+
+  it('keeps the group order, with the findings naming no repository last (R4.5)', () => {
+    expect(view().groups.map((g) => g.repo)).toEqual(['catalog-api', 'storefront-web', null]);
+    expect(keys(view().groups[2].rows)).toEqual(['F8']);
+  });
+
+  it('lists a group high first, then medium, and sets the low findings apart (R4.1, R4.2)', () => {
+    const catalog = view().groups[0];
+    expect(keys(catalog.rows)).toEqual(['F1', 'F2', 'F3']);
+    expect(keys(catalog.low)).toEqual(['F4']);
+  });
+
+  it('sorts critical first and a finding with no severity after the medium ones, stable within a severity', () => {
+    const list = [f('A', null, 'r'), f('B', 'medium', 'r'), f('C', 'critical', 'r'), f('D', 'medium', 'r'), f('E', 'high', 'r')];
+    const v = reviewRows(groupFindings(list, ['r']), list);
+    expect(keys(v.groups[0].rows)).toEqual(['C', 'E', 'B', 'D', 'A']);
+    expect(v.counts).toEqual([
+      { severity: 'critical', n: 1 },
+      { severity: 'high', n: 1 },
+      { severity: 'medium', n: 2 },
+    ]);
+    expect(v.total).toBe(5);
+  });
+
+  it('summarizes with the first sentence, or the whole text when there is none', () => {
+    const list: Finding[] = [
+      { id: 'A', severity: 'high', text: 'The limit is wrong. It also loops forever.' },
+      { id: 'B', severity: 'high', text: 'No full stop here' },
+      { id: 'C', severity: 'high', text: 'First line\nsecond line' },
+    ];
+    const rows = reviewRows(groupFindings(list, []), list).groups[0].rows;
+    expect(rows.map((r) => r.summary)).toEqual(['The limit is wrong.', 'No full stop here', 'First line']);
+  });
+
+  it('keys a finding by its id, else by its place in the review as #<n>', () => {
+    const list: Finding[] = [
+      { severity: 'low', text: 'one', repo: 'b' },
+      { severity: 'high', text: 'two', repo: 'a' },
+      { id: 'F9', severity: 'high', text: 'three', repo: 'a' },
+    ];
+    const v = reviewRows(groupFindings(list, ['a', 'b']), list);
+    expect(keys(v.groups[0].rows)).toEqual(['#2', 'F9']);
+    expect(keys(v.groups[1].low)).toEqual(['#1']);
+  });
+
+  it('an empty review has no counts and no rows', () => {
+    expect(reviewRows([], [])).toEqual({ counts: [], total: 0, groups: [] });
   });
 });

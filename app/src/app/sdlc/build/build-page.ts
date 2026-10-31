@@ -106,6 +106,8 @@ export class BuildPage {
   readonly setFilter = output<TaskFilter>();
   /** The engineer opened or closed a repository's fold. */
   readonly toggleFold = output<string>();
+  /** The engineer opened or closed a repository's folded low findings. */
+  readonly toggleLow = output<string>();
   readonly pickMode = output<LayoutMode>();
   readonly arrange = output<ArrangeAction>();
   readonly focusOn = output<AreaId>();

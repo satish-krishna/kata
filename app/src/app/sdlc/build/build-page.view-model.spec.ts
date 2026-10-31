@@ -672,6 +672,70 @@ describe('the build page starts, stops and continues the same runs as the build 
       expect(vm.findings()).toEqual([]);
     });
 
+    it('R4.1: the Review group lists the findings of the finished review as rows with counts', async () => {
+      const { vm, transport, lock } = setup();
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, finished(vm));
+      const rows = vm.view().review.rows!;
+      expect(rows.total).toBe(2);
+      expect(rows.counts.reduce((n, c) => n + c.n, 0)).toBe(2);
+      expect(rows.groups.flatMap((g) => [...g.rows, ...g.low]).map((r) => r.summary)).toEqual([
+        'The upload limit is duplicated in commerce-core and customer-portal.',
+        'The refusal message has no test.',
+      ]);
+      expect(vm.view().review.stale).toBeNull();
+      expect(vm.view().review.nothingFound).toBe(false);
+    });
+
+    it('R4.3: a review that found nothing reads as reviewed with nothing found', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', []));
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      expect(vm.view().review.nothingFound).toBe(true);
+      expect(vm.view().review.rows).toMatchObject({ total: 0, groups: [] });
+    });
+
+    it('R4.6: only the findings of the second review are listed, and latestReview carries its number', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(
+        transport,
+        section(1, '2026-10-18', [{ id: 'F1', severity: 'high', text: 'one' }]),
+        section(2, '2026-10-19', [{ id: 'F1', severity: 'low', text: 'two' }]),
+      );
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      const rows = vm.view().review.rows!;
+      expect(rows.groups.flatMap((g) => [...g.rows, ...g.low]).map((r) => r.summary)).toEqual(['two']);
+      expect(vm.latestReview()).toEqual({ number: 2, findings: vm.findings(), stale: false });
+    });
+
+    it('R4.7: a review that predates the latest commits keeps its rows and sets the stale notice', async () => {
+      const { vm, transport, lock } = setup();
+      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
+      vi.spyOn(transport, 'sdlcReviewRecord').mockImplementation(async () => ({ layout: 2, reviews: [section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }])], problems: [], master_moved: ['src/a.ts'] }));
+      await vm.start(await handoffFor(transport), CTX);
+      await drive(vm, lock, shown(vm));
+      const review = vm.view().review;
+      expect(review.rows?.total).toBe(1);
+      expect(review.stale).toBe('The work changed since it was reviewed.');
+      expect(vm.latestReview()).toMatchObject({ number: 1, stale: true });
+    });
+
+    it('latestReview is null before any review has findings or words to read', () => {
+      const { vm } = setup();
+      expect(vm.latestReview()).toBeNull();
+      expect(vm.view().review.rows).toBeNull();
+    });
+
+    it('toggleLow opens and closes the low findings of a repository', () => {
+      const { vm } = setup();
+      vm.toggleLow('catalog-api');
+      expect(vm.view().review.openLow.has('catalog-api')).toBe(true);
+      vm.toggleLow('catalog-api');
+      expect(vm.view().review.openLow.has('catalog-api')).toBe(false);
+    });
+
     it('a review run that touched only the review document is the current review (F7)', async () => {
       const { vm, transport, lock } = setup();
       withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));

@@ -1,4 +1,6 @@
 import type { StatusText } from '../sdlc/build/build-page.view-model';
+import type { Finding, Severity } from './sdlc';
+import type { FindingGroup } from './sdlc-findings';
 
 export type TaskLine = { id: string; name: string; status: StatusText; finished: boolean; departure: string | null };
 
@@ -52,4 +54,18 @@ export function filterCounts(tasks: TaskLine[]): FilterCounts {
     departed: departedOf(finished).length,
     done: finished.length,
   };
+}
+
+export type ReviewRow = { key: string; finding: Finding; summary: string };
+export type ReviewRowsView = {
+  counts: { severity: Severity; n: number }[];
+  total: number;
+  groups: { repo: string | null; rows: ReviewRow[]; low: ReviewRow[] }[];
+};
+
+/** The rows the Review group lists for the latest review's findings. `all` is the review's findings in the order listed, for the `#<n>` key. */
+export function reviewRows(groups: FindingGroup[], all?: Finding[]): ReviewRowsView {
+  void groups;
+  void all;
+  return { counts: [], total: 0, groups: [] };
 }

@@ -33,7 +33,7 @@ import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { REVIEW_MISSING_TEXT, reviewState } from '../../lib/sdlc-done';
 import { givenFor, reviewFindings, specFor, type BuildRun, type Finding, type StageAction } from '../../lib/sdlc';
 import { groupFindings, type FindingGroup } from '../../lib/sdlc-findings';
-import { filterCounts, taskList, type TaskFilter, type TaskLine, type TaskListView } from '../../lib/build-task-list';
+import { filterCounts, taskList, type ReviewRowsView, type TaskFilter, type TaskLine, type TaskListView } from '../../lib/build-task-list';
 import type { ReplacedFindings } from '../../ui/findings-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
 import type { BuildHandoff } from '../change/change-page.view-model';
@@ -133,7 +133,19 @@ export type TaskGroupView = {
 };
 
 /** The review's entry under the tasks. */
-export type ReviewEntryView = { status: StatusText; action: 'cancel' | 'continue' | null; picked: boolean };
+export type ReviewEntryView = {
+  status: StatusText;
+  action: 'cancel' | 'continue' | null;
+  picked: boolean;
+  /** The latest review's findings as rows; null while the review is not finished. */
+  rows: ReviewRowsView | null;
+  /** The notice above the rows when the work changed since the review; null otherwise. */
+  stale: string | null;
+  /** The review finished and found nothing. */
+  nothingFound: boolean;
+  /** The repositories (the empty string for findings naming none) whose folded low findings are open. */
+  openLow: ReadonlySet<string>;
+};
 
 /** The review's findings, with the notice above them. */
 export type FindingsView = { notice: DocNotice | null; groups: FindingGroup[]; findings: Finding[]; replaced: ReplacedFindings[]; older: boolean; emptyText: string };
@@ -216,7 +228,7 @@ type Entry = { id: string; key: string; spec: RunSpec; at: number };
 /** Seconds of a run's work (waiting for the engineer excluded), of all its waiting, and of the wait it is in now. */
 type Clock = { work: number; paused: number; current: number };
 /** A review of the whole change: one section of its review document, or the closing text of its run. */
-type Review = { at: number | null; label: string | null; repos: string[]; findings: Finding[] };
+type Review = { at: number | null; label: string | null; number: number | null; repos: string[]; findings: Finding[] };
 
 const REVIEW = 'review';
 const RUNNING: readonly RunState[] = ['running', 'awaiting'];
@@ -509,6 +521,8 @@ export class BuildPageViewModel {
     const latest = this.reviews().at(-1);
     return groupFindings(latest?.findings ?? [], latest?.repos ?? []);
   });
+  /** The latest review as the rounds and the tasks area read it; null before any review has findings or words to read. */
+  readonly latestReview = computed<{ number: number | null; findings: Finding[]; stale: boolean } | null>(() => null);
   /** Earlier reviews, each with the time of the review that replaced it (or its own number and date, from the document), newest first. */
   readonly replaced = computed<ReplacedFindings[]>(() => {
     const all = this.reviews();
@@ -868,6 +882,14 @@ export class BuildPageViewModel {
   /** The repositories whose fold the engineer opened. */
   readonly openFolds = signal<ReadonlySet<string>>(new Set());
 
+  /** The repositories whose folded low findings the engineer opened. */
+  readonly openLow = signal<ReadonlySet<string>>(new Set());
+
+  /** Open a repository's folded low findings, or close them. */
+  toggleLow(repo: string): void {
+    void repo;
+  }
+
   setTaskFilter(filter: TaskFilter): void {
     this.taskFilter.set(filter);
   }
@@ -933,7 +955,7 @@ export class BuildPageViewModel {
       filter: { value: filter, counts },
       noDepartures: filter === 'departed' && counts.departed === 0,
       pickedDeparture,
-      review: { status: reviewStatus(entry), action: repoAction({ kind: 'idle' }, REVIEW, review), picked: pick?.kind === 'review' },
+      review: { status: reviewStatus(entry), action: repoAction({ kind: 'idle' }, REVIEW, review), picked: pick?.kind === 'review', rows: null, stale: null, nothingFound: false, openLow: this.openLow() },
       pick,
       sessions: this.mountedSessions(),
       sessionNote: this.sessionNote(),
@@ -1539,17 +1561,18 @@ export class BuildPageViewModel {
     if (shown.kind === 'none') return false;
     if (shown.kind === 'words') {
       this.fromWords.set(true);
-      this.reviews.update((r) => [...r, { at, label: null, repos: [], findings: shown.findings }]);
+      this.reviews.update((r) => [...r, { at, label: null, number: null, repos: [], findings: shown.findings }]);
       return true;
     }
     this.fromWords.set(false);
     const labeled = (r: { number: number; reviewedAt: string; repos: string[]; findings: Finding[] }): Review => ({
       at: null,
       label: `Review ${r.number} of ${r.reviewedAt}`,
+      number: null,
       repos: r.repos,
       findings: r.findings,
     });
-    this.reviews.set([...shown.earlier].reverse().map(labeled).concat({ at: null, label: null, repos: shown.latest.repos, findings: shown.latest.findings }));
+    this.reviews.set([...shown.earlier].reverse().map(labeled).concat({ at: null, label: null, number: null, repos: shown.latest.repos, findings: shown.latest.findings }));
     return true;
   }
 

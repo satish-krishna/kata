@@ -3,12 +3,12 @@ import { ChangeDetectorRef, Component, inject, input, signal } from '@angular/co
 import { TestBed } from '@angular/core/testing';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { Pick } from '../../lib/build-sessions';
-import { filterCounts, taskList, type TaskFilter, type TaskLine } from '../../lib/build-task-list';
+import { filterCounts, reviewRows, taskList, type TaskFilter, type TaskLine } from '../../lib/build-task-list';
 import type { BuildStage } from '../../lib/build-stage';
 import { defaultArrangement, type AreaId, type LayoutMode } from '../../lib/build-layout';
 import type { LayoutStage } from '../../lib/build-layout-stage';
 import { stopMessage, type Finding, type StageAction } from '../../lib/sdlc';
-import type { FindingGroup } from '../../lib/sdlc-findings';
+import { groupFindings, type FindingGroup } from '../../lib/sdlc-findings';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
@@ -20,6 +20,9 @@ import { BuildPageViewModel } from './build-page.view-model';
 import type { BuildChanges, BuildPageView, ShownSession, StatusText, TaskGroupView } from './build-page.view-model';
 
 const CHANGES: BuildChanges = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'commerce', change: MOCK_BUILD_CHANGE };
+
+/** What the review entry says when it lists no findings. */
+const NO_ROWS = { rows: null, stale: null, nothingFound: false, openLow: new Set<string>() };
 
 const NOT_STARTED: StatusText = { tone: 'idle', label: 'Not started' };
 const DONE: StatusText = { tone: 'success', label: 'Done' };
@@ -85,7 +88,7 @@ const base = (over: Partial<BuildPageView> = {}): BuildPageView => ({
   filter: { value: 'all', counts: { all: 0, open: 0, departed: 0, done: 0 } },
   noDepartures: false,
   pickedDeparture: null,
-  review: { status: { tone: 'idle', label: 'Not run' }, action: null, picked: false },
+  review: { status: { tone: 'idle', label: 'Not run' }, action: null, picked: false, ...NO_ROWS },
   pick: null,
   sessions: [],
   sessionNote: null,
@@ -141,10 +144,22 @@ const SHOWN = { message: null, staleNotice: null, review: FINDINGS, departures: 
       (toggleRun)="toggles.push($event)"
       (setFilter)="onFilter($event)"
       (toggleFold)="onFold($event)"
+      (reveal)="revealed.push($event)"
+      (showFinding)="shownFindings.push($event)"
+      (toggleLow)="onLow($event)"
     />
   `,
 })
 class Host {
+  readonly revealed: AreaId[] = [];
+  readonly shownFindings: Finding[] = [];
+  /** The repositories whose low findings are open, for a test that redraws on a press. */
+  readonly low = new Set<string>();
+  rebuildLow: ((low: Set<string>) => BuildPageView) | null = null;
+  onLow(repo: string) {
+    if (!this.low.delete(repo)) this.low.add(repo);
+    if (this.rebuildLow !== null) this.view = this.rebuildLow(this.low);
+  }
   view: BuildPageView = base();
   readonly layout = LAYOUT;
   task: { id: string; repo: string } | null = null;
@@ -325,7 +340,7 @@ describe('the build page at each stage', () => {
     const v = stage('reviewing', {
       actions: ['cancel-build'],
       groups: done3,
-      review: { status: { tone: 'success', label: 'Running' }, action: 'cancel', picked: true },
+      review: { status: { tone: 'success', label: 'Running' }, action: 'cancel', picked: true, ...NO_ROWS },
       pick: { kind: 'review' },
       sessions: [session('rv1')],
       stageMessage: null,
@@ -343,7 +358,7 @@ describe('the build page at each stage', () => {
     const v = stage('review-finished', {
       actions: ['declare-done', 'another-round', 'run-review'],
       groups: done3,
-      review: { status: { tone: 'success', label: 'Finished' }, action: null, picked: true },
+      review: { status: { tone: 'success', label: 'Finished' }, action: null, picked: true, ...NO_ROWS },
       pick: { kind: 'review' },
       findingsArea: SHOWN,
       stageMessage: { title: 'Every task is in the build log.', lines: [] },
@@ -360,7 +375,7 @@ describe('the build page at each stage', () => {
     const v = stage('done', {
       actions: [],
       groups: done3,
-      review: { status: { tone: 'success', label: 'Finished' }, action: null, picked: true },
+      review: { status: { tone: 'success', label: 'Finished' }, action: null, picked: true, ...NO_ROWS },
       pick: { kind: 'review' },
       findingsArea: SHOWN,
     });
@@ -493,7 +508,7 @@ describe('the build page, picking and folding', () => {
     const v = base({
       actions: ['cancel-build'],
       groups: [group('commerce-core', RUNNING, 'cancel', [task('T1', RUNNING)])],
-      review: { status: { tone: 'idle', label: 'Not run' }, action: null, picked: false },
+      review: { status: { tone: 'idle', label: 'Not run' }, action: null, picked: false, ...NO_ROWS },
       sessions: [session('r1')],
     });
     const { host, area, button, bar } = await mount(v);
@@ -1573,7 +1588,7 @@ describe('the message box on the build page', () => {
       stage: 'reviewing',
       actions: ['cancel-build'],
       groups: done3,
-      review: { status: { tone: 'success', label: 'Running' }, action: 'cancel', picked: true },
+      review: { status: { tone: 'success', label: 'Running' }, action: 'cancel', picked: true, ...NO_ROWS },
       pick: { kind: 'review' },
       sessions: [session('rv1')],
     });
@@ -1680,5 +1695,68 @@ describe('the build page folds, filters and explains a departure', () => {
     expect(norm(block.textContent)).toContain(DEPARTURE);
     const session = area('activity')!.querySelector<HTMLElement>('[data-session]')!;
     expect(block.compareDocumentPosition(session) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe("the Review group lists the latest review's findings", () => {
+  const UPLOAD: Finding = { id: 'F1', severity: 'high', text: 'The upload is not checked. It should be.', file: 'src/Photos/UploadController.cs', line: 48, repo: 'catalog-api' };
+  const LOW: Finding = { id: 'F4', severity: 'low', text: 'A comment is stale.', repo: 'catalog-api' };
+  const reviewView = (findings: Finding[], low: ReadonlySet<string>, stale: string | null = null): BuildPageView => {
+    const rows = reviewRows(groupFindings(findings, ['catalog-api']), findings);
+    return base({
+      review: { status: { tone: 'success', label: 'Finished' }, action: null, picked: false, rows, stale, nothingFound: rows.total === 0, openLow: low },
+    });
+  };
+  const reviewGroup = (el: HTMLElement) => el.querySelector<HTMLElement>('[data-review-group]');
+  const rowKeys = (el: HTMLElement) => Array.from(el.querySelectorAll('[data-finding-row]')).map((r) => norm(r.querySelector('[data-finding-key]')?.textContent));
+
+  it('R4.2: low findings are one folded line until opened', async () => {
+    const { fixture, host, area } = await mount(reviewView([UPLOAD, LOW], new Set()));
+    host.rebuildLow = (low) => reviewView([UPLOAD, LOW], low);
+    const tasks = area('tasks')!;
+    expect(norm(tasks.querySelector('[data-low-fold]')?.textContent)).toContain('1 low');
+    expect(tasks.querySelector('[data-low-fold]')!.getAttribute('aria-expanded')).toBe('false');
+    expect(rowKeys(tasks)).toEqual(['F1']);
+    tasks.querySelector<HTMLButtonElement>('[data-low-fold]')!.click();
+    await settle();
+    fixture.detectChanges();
+    expect(tasks.querySelector('[data-low-fold]')!.getAttribute('aria-expanded')).toBe('true');
+    expect(rowKeys(tasks)).toEqual(['F1', 'F4']);
+  });
+
+  it('R4.1: the group shows the count of findings, the severity counts and each row', async () => {
+    const { area } = await mount(reviewView([UPLOAD, LOW], new Set()));
+    const group = reviewGroup(area('tasks')!)!;
+    expect(norm(group.textContent)).toContain('2 findings');
+    expect(norm(group.querySelector('[data-review-counts]')?.textContent)).toBe('high 1 low 1');
+    expect(norm(group.querySelector('[data-repo-heading]')?.textContent)).toContain('catalog-api');
+    expect(norm(group.querySelector('[data-finding-row]')?.textContent)).toContain('The upload is not checked.');
+    expect(norm(group.querySelector('[data-finding-row]')?.textContent)).not.toContain('It should be.');
+  });
+
+  it('R4.3: a review that found nothing says so', async () => {
+    const { area } = await mount(reviewView([], new Set()));
+    expect(norm(area('tasks')!.textContent)).toContain('Reviewed, nothing found.');
+  });
+
+  it('R4.5: a finding naming no repository is listed under "No repository named"', async () => {
+    const { area } = await mount(reviewView([{ id: 'F8', severity: 'medium', text: 'Nobody owns this.' }], new Set()));
+    expect(norm(area('tasks')!.querySelector('[data-repo-heading]')?.textContent)).toContain('No repository named');
+  });
+
+  it('R4.7: the stale notice shows above the rows, which stay', async () => {
+    const { area } = await mount(reviewView([UPLOAD], new Set(), 'The work changed since it was reviewed.'));
+    const group = reviewGroup(area('tasks')!)!;
+    const notice = group.querySelector('[data-review-stale]')!;
+    expect(norm(notice.textContent)).toContain('The work changed since it was reviewed.');
+    expect(notice.compareDocumentPosition(group.querySelector('[data-finding-row]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('R4.4: picking F1 reveals the findings, then the files, and shows its file at its line', async () => {
+    const { area, host } = await mount(reviewView([UPLOAD], new Set()));
+    area('tasks')!.querySelector<HTMLButtonElement>('[data-finding-row]')!.click();
+    expect(host.revealed).toEqual(['findings', 'files']);
+    expect(host.shownFindings).toHaveLength(1);
+    expect(host.shownFindings[0]).toMatchObject({ file: 'src/Photos/UploadController.cs', line: 48 });
   });
 });
