@@ -31,6 +31,7 @@ const onShow = (name) => page.locator(`[data-area="${name}"]:not([inert])`);
 const notices = page.locator('[data-waiting]:visible');
 // By CSS, not by role: an open dialog hides the page from the accessibility tree, and the page must be checked behind it too.
 const buildTab = page.locator('[role="tab"]', { hasText: /^Build/ });
+const barButtonOf = (name) => page.locator('[data-bar]').getByRole('button', { name });
 const countOf = (sel) => page.locator(sel).count();
 const settle = () => page.waitForTimeout(350);
 
@@ -80,7 +81,7 @@ const cutOff = () =>
     const measured = (el) => !el.closest('app-tool-card, hlm-message-scroller') && !el.querySelector('.sr-only, .k-files__branch') && !el.classList.contains('sr-only');
     const watch = (container, where, both) => {
       const box = container.getBoundingClientRect();
-      for (const el of container.querySelectorAll('button, [role="tab"], [role="radio"], .k-status, .k-lock__count, .k-bp__title, .k-bp__elapsed')) {
+      for (const el of container.querySelectorAll('button, [role="tab"], [role="radio"], .k-status, .k-lock__count, .k-bp__title, .k-bp__elapsed, .k-bp__fold, [data-finding-row]')) {
         const r = el.getBoundingClientRect();
         if (r.width === 0 || r.height === 0 || !el.checkVisibility()) continue;
         const inside = both ? clip.isInside(el, box) : r.left >= box.left - 0.02 && r.right <= box.right + 0.02;
@@ -210,6 +211,11 @@ function keptPlace(label, before, after) {
 }
 
 const tasksBody = area('tasks').locator('.k-bp__body');
+/** Narrows the task list to one choice of the filter (All, Open, Departed, Done). */
+async function filterTo(name) {
+  await area('tasks').getByRole('radio', { name: new RegExp(`^${name} `) }).click();
+  await settle();
+}
 const activityViewport = area('activity').locator('hlm-message-scroller-viewport:visible').first();
 const filesList = area('files').locator('.k-changes__left');
 const findingsBody = area('findings').locator('.k-bp__body');
@@ -336,12 +342,6 @@ try {
     });
   }
 
-  // R1.1 tasks: Overview, the repositories and tasks.
-  await attempt('R1.1 tasks', async () => {
-    await enter(MODES[0]);
-    await scrollsOnItsOwn('tasks', tasksBody, '.k-bp__heading, [data-task]');
-  });
-
   // R1.1 activity: Watch, the turns of commerce-core's conversation. R1.2 activity: the area moves to another side and keeps its place.
   await attempt('R1.1 activity', async () => {
     await enter(MODES[1]);
@@ -417,24 +417,6 @@ try {
     check(same(beforeDiff, await boxes()), 'R1.1 changed files, the lines of the change: the bar, the waiting notice and the other areas stayed where they were');
   });
 
-  // R1.2 tasks: flip to another area in the same stack and back.
-  await attempt('R1.2 tasks', async () => {
-    await enter(MODES[1]);
-    await page.locator('[data-rail]').getByRole('button', { name: /^Bring back Changed files/ }).click();
-    await settle();
-    await area('tasks').getByRole('button', { name: 'Place Tasks' }).click();
-    await page.getByRole('menuitem', { name: 'Right' }).click();
-    await settle();
-    const stack = { getByRole: (...a) => page.locator('[data-area]:not([inert]) [role="tablist"]').first().getByRole(...a) };
-    await stack.getByRole('tab', { name: /^Tasks/ }).click();
-    await settle();
-    const tasksBefore = await scrollPartWay(tasksBody);
-    await stack.getByRole('tab', { name: /^Changed files/ }).click();
-    await settle();
-    await stack.getByRole('tab', { name: /^Tasks/ }).click();
-    await settle();
-    keptPlace('tasks', tasksBefore, await placeOf(tasksBody));
-  });
   await enter(MODES[0]);
 
   // Answer from the pinned notice, wherever it is on show.
@@ -464,9 +446,45 @@ try {
     check(await inWindow(barButton('Another round')), `R15.1 ${mode.name}: ask for another round is in the bar`);
     await reachable(mode, 'read the review\'s findings', 'findings', 'app-findings-list .k-findings__item');
     await reachable(mode, 'see every departure from the plan', 'findings', '[data-testid="departures"] .k-findings__item');
+    await listIsWhole(mode);
   }
 
-  // R1.1 findings and departures, R1.2 findings: switch to another mode and back.
+  // R1.1, R2.1, R4.1 and R14.2 at the default of each mode, with the review finished: the filter, the fold rows and the Review group's rows.
+async function listIsWhole(mode) {
+  await attempt(`${mode.name}: the task list`, async () => {
+    const tasks = await reach('tasks', '[role="radiogroup"][aria-label="Show tasks"]', 'narrow the task list');
+    check(tasks.ok && tasks.clicks <= 1, `R2.1 ${mode.name}: the filter can be reached without a mode change`);
+    await enter(mode);
+    if ((await onShow('tasks').count()) === 0) return;
+    const shape = await area('tasks').evaluate((el) => {
+      const body = el.querySelector('.k-bp__body');
+      const box = body.getBoundingClientRect();
+      const wide = [...body.querySelectorAll('[role="radio"], .k-bp__fold, [data-finding-row], [data-low-fold], [data-review-counts]')].filter((n) => {
+        const r = n.getBoundingClientRect();
+        return r.width > 0 && (r.left < box.left - 0.5 || r.right > box.right + 0.5);
+      }).length;
+      return {
+        radios: body.querySelectorAll('[role="radio"]').length,
+        folds: body.querySelectorAll('[data-fold]').length,
+        rows: body.querySelectorAll('[data-finding-row]').length,
+        lows: body.querySelectorAll('[data-low-fold]').length,
+        counts: body.querySelectorAll('[data-review-counts] .k-status').length,
+        wide,
+      };
+    });
+    check(shape.radios === 4, `R2.1 ${mode.name}: the filter offers All, Open, Departed and Done (${shape.radios})`);
+    check(shape.folds === REPOS.length, `R1.1 ${mode.name}: each finished repository folds its finished tasks into one line (${shape.folds})`);
+    check(shape.rows > 0 && shape.lows > 0 && shape.counts >= 2, `R4.1 ${mode.name}: the Review group lists finding rows, folds its low ones and counts per severity (${shape.rows} rows, ${shape.lows} low folds, ${shape.counts} counts)`);
+    check(shape.wide === 0, `R14.2 ${mode.name}: the filter, the fold rows and the finding rows lie inside the tasks area's width (${shape.wide} outside)`);
+    const cut = await cutOff();
+    check(cut.length === 0, `R14.2 ${mode.name}: nothing in the task list is cut off${cut.length ? ` (${cut.join('; ')})` : ''}`);
+    // The list scrolls on its own, down to the last finding row, with nothing else moving.
+    // Overview shows the whole folded list inside its room; the narrower strip of Watch overflows, and its end is the last finding row.
+    if (mode.key === 2) await scrollsOnItsOwn(`tasks with the review (${mode.name})`, tasksBody, '.k-bp__heading, [data-fold], [data-task], [data-finding-row], [data-low-fold]');
+  });
+}
+
+// R1.1 findings and departures, R1.2 findings: switch to another mode and back.
   await attempt('R1.1 and R1.2 findings', async () => {
     await enter(MODES[3]);
     const read = await findingsBody.innerText();
@@ -481,6 +499,83 @@ try {
   });
   await stays('the findings read');
 
+  // R1.1 tasks: Overview, the Done filter's list (finished tasks fold at All, so each on its own line is what overflows) once the build and its review are finished.
+  await attempt('R1.1 tasks', async () => {
+    await enter(MODES[0]);
+    // Finished tasks fold into one line per repository, so the list that overflows is the Done filter's: each finished task on its own line.
+    await filterTo('Done');
+    await scrollsOnItsOwn('tasks', tasksBody, '.k-bp__heading, [data-task]');
+  });
+
+  // R1.2 tasks: flip to another area in the same stack and back.
+  await attempt('R1.2 tasks', async () => {
+    await enter(MODES[1]);
+    await page.locator('[data-rail]').getByRole('button', { name: /^Bring back Changed files/ }).click();
+    await settle();
+    await area('tasks').getByRole('button', { name: 'Place Tasks' }).click();
+    await page.getByRole('menuitem', { name: 'Right' }).click();
+    await settle();
+    const stack = { getByRole: (...a) => page.locator('[data-area]:not([inert]) [role="tablist"]').first().getByRole(...a) };
+    await stack.getByRole('tab', { name: /^Tasks/ }).click();
+    await settle();
+    const tasksBefore = await scrollPartWay(tasksBody);
+    await stack.getByRole('tab', { name: /^Changed files/ }).click();
+    await settle();
+    await stack.getByRole('tab', { name: /^Tasks/ }).click();
+    await settle();
+    keptPlace('tasks', tasksBefore, await placeOf(tasksBody));
+    await filterTo('All');
+  });
+  // R5.4 and R7.1: the round dialog's findings picker fits the window, says which agents start, and starts one agent per repository at once.
+  await attempt('the round dialog', async () => {
+    await enter(MODES[3]);
+    await barButtonOf('Another round').click();
+    const round = page.getByRole('dialog');
+    await round.getByRole('button', { name: /^Start run$/ }).waitFor();
+    await eventually(page, () => round.locator('[data-finding]').count(), (n) => n > 0, 'the round listing the findings');
+    const box = await round.boundingBox();
+    check(box !== null && box.x >= 0 && box.y >= 0 && box.x + box.width <= 1280 && box.y + box.height <= 800, `the round dialog fits inside 1280 by 800 (${JSON.stringify(box)})`);
+    check((await round.getByRole('checkbox').count()) > 0, 'the round dialog lists the findings with a checkbox each');
+    check((await round.locator('[data-finding]').filter({ has: page.getByText('Fixed in') }).count()) === 1, 'the finding that names no repository offers a Fixed in choice, and only that one');
+    const summary = round.locator('[data-round-summary]');
+    // The finding without a repository blocks the round until the engineer says where it is fixed.
+    check(/Choose a repository/.test(await summary.innerText()), 'the round says a finding without a repository needs a Fixed in choice before it can start');
+    await round.locator('[aria-label="Fixed in, for F5"]').first().click();
+    await page.getByRole('option', { name: 'customer-portal' }).click();
+    check((await round.getByRole('checkbox').count()) >= 2, 'the round lists a checkbox for each finding');
+    await eventually(page, () => summary.innerText(), (t) => /Starts [0-9]+ agents?/.test(t) && /commerce-core/.test(t) && /customer-portal/.test(t), 'the summary naming the agents');
+    check(true, 'R5.4 the round says which agents will start, with commerce-core and customer-portal among them');
+    check(await inWindow(summary), 'the round summary is inside the window');
+    // Escape closes the dialog and the page behind it is still the build page.
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+    await stays('the round dialog closed');
+    await barButtonOf('Another round').click();
+    await round.getByRole('button', { name: /^Start run$/ }).waitFor();
+    await round.locator('[aria-label="Fixed in, for F5"]').first().click();
+    await page.getByRole('option', { name: 'customer-portal' }).click();
+    await eventually(page, () => round.getByRole('button', { name: /^Start run$/ }).isEnabled(), (on) => on, 'the round being ready to start');
+    await round.getByRole('button', { name: /^Start run$/ }).click();
+    // R7.1: both repositories have their agent running together, neither waiting for the other.
+    await eventually(
+      page,
+      () => page.evaluate(() => [...document.querySelectorAll('[data-group]')].filter((g) => [...g.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Cancel')).length),
+      (n) => n >= 2,
+      'two repositories running at once',
+      20000,
+    );
+    check(true, 'R7.1 an agent runs in each of two repositories at the same time');
+    await stays('the round started');
+    // The round ends by itself. Its commits are not reviewed yet, so the bar offers Run review; the review is what lets the change be declared done.
+    await eventually(page, () => barButtonOf('Cancel build').count(), (n) => n === 0, 'the round ending', 90000);
+    await barButtonOf('Run review').click();
+    await page.getByRole('dialog').getByRole('button', { name: /^Start run$/ }).click();
+    await eventually(page, () => barButtonOf('Run review').count(), (n) => n === 0, 'the review of the round starting', 20000);
+    await eventually(page, () => barButtonOf('Cancel build').count(), (n) => n === 0, 'the review of the round ending', 90000);
+    await declare.waitFor({ timeout: 90000 });
+  });
+  if ((await page.getByRole('dialog').count()) > 0) await page.keyboard.press('Escape');
+
   // R5.1 and R9.2: the largest a separator goes leaves the middle its minimum with the rails drawn (the room is the grid less its rails and separators).
   await attempt('R5.1 the left separator with a rail', async () => {
     await enter(MODES[3]);
@@ -494,6 +589,7 @@ try {
   // The tasks strip below 240 pixels draws its tasks compact: the status dot stays, the label leaves the screen but not the accessibility tree.
   await attempt('the tasks strip draws compact below 240 pixels', async () => {
     await enter(MODES[1]);
+    await filterTo('Done');
     const row = tasksBody.locator('[data-task]').first();
     const dot = row.locator('.k-status__dot');
     const label = row.locator('.k-bp__status-label');
@@ -516,6 +612,7 @@ try {
     const wide = await area('tasks').boundingBox();
     check(wide !== null && wide.width >= 240, `Watch: widening the strip brings it to 240 or more (${Math.round(wide?.width ?? 0)})`);
     check(await label.isVisible(), 'Watch: in a strip of 240 or more a task shows its status label again');
+    await filterTo('All');
     await enter(MODES[1]);
   });
   await attempt('R5.1 the bottom separator with a rail', async () => {
@@ -540,6 +637,9 @@ try {
   await declare.click();
   const doneDialog = page.getByRole('dialog');
   await doneDialog.getByRole('button', { name: 'Open pull requests' }).waitFor();
+  // The long review has high findings, so the pull requests wait for the engineer to accept them as unresolved.
+  const unresolved = doneDialog.getByRole('checkbox', { name: /unresolved/ });
+  if ((await unresolved.count()) > 0) await unresolved.click();
   await stays('done declared');
   await doneDialog.getByRole('button', { name: 'Open pull requests' }).click();
   const prs = page.getByRole('dialog').filter({ hasText: 'github.com/acme/' });
