@@ -11,6 +11,9 @@ use std::path::Path;
 pub struct GitError {
     pub args: String,
     pub stderr: String,
+    /// A push the remote refused because its branch holds work this one does not (non-fast-forward
+    /// or "fetch first"). False for every other failure.
+    pub rejected_by_remote: bool,
 }
 
 impl GitError {
@@ -24,6 +27,7 @@ impl GitError {
         }
         GitError {
             args: action.to_string(),
+            rejected_by_remote: false,
             stderr,
         }
     }
@@ -112,6 +116,7 @@ impl Repo {
         let repo = &self.inner;
         let fail = |stderr: String| GitError {
             args: ACTION.to_string(),
+            rejected_by_remote: false,
             stderr,
         };
         let git_fail = |e: git2::Error| GitError::from_git2(ACTION, e);
@@ -263,6 +268,34 @@ impl Repo {
                 }
             })
             .collect())
+    }
+
+    /// The names directly under the folder `dir` in `rev`'s tree, sorted; empty when `rev` holds no
+    /// such folder or cannot be read.
+    pub(crate) fn folder_names_at(&self, rev: &str, dir: &str) -> Vec<String> {
+        let Ok(root) = self
+            .inner
+            .revparse_single(rev)
+            .and_then(|o| o.peel_to_tree())
+        else {
+            return Vec::new();
+        };
+        let tree = match root.get_path(Path::new(dir)) {
+            Ok(entry) if entry.kind() == Some(ObjectType::Tree) => {
+                match self.inner.find_tree(entry.id()) {
+                    Ok(tree) => tree,
+                    Err(_) => return Vec::new(),
+                }
+            }
+            _ => return Vec::new(),
+        };
+        let mut names: Vec<String> = tree
+            .iter()
+            .filter(|e| e.kind() == Some(ObjectType::Tree))
+            .map(|e| String::from_utf8_lossy(e.name_bytes()).into_owned())
+            .collect();
+        names.sort();
+        names
     }
 
     /// "Committed": in the index and unchanged in both the index and the working tree. The answer of
@@ -807,6 +840,7 @@ impl Repo {
             .find_branch(name, git2::BranchType::Local)
             .map_err(|_| GitError {
                 args: action.clone(),
+                rejected_by_remote: false,
                 stderr: format!("fatal: invalid reference: {name}"),
             })?;
         let target = branch
@@ -907,12 +941,14 @@ impl Repo {
                 Ok(_) => {
                     return Err(GitError {
                         args: action,
+                        rejected_by_remote: false,
                         stderr: format!("error: {path} is not a file"),
                     })
                 }
                 Err(e) if e.code() == ErrorCode::NotFound => {
                     return Err(GitError {
                         args: action,
+                        rejected_by_remote: false,
                         stderr: format!(
                             "error: pathspec '{path}' did not match any file(s) known to git"
                         ),
@@ -924,6 +960,7 @@ impl Repo {
         if let Some(reason) = kata_core::hooks::needs_external(repo, paths) {
             return Err(GitError {
                 args: action,
+                rejected_by_remote: false,
                 stderr: reason,
             });
         }
@@ -958,6 +995,7 @@ impl Repo {
             .workdir()
             .ok_or_else(|| GitError {
                 args: action.clone(),
+                rejected_by_remote: false,
                 stderr: "this repository has no working folder".to_string(),
             })?
             .to_path_buf();
@@ -967,6 +1005,7 @@ impl Repo {
             if index.get_path(Path::new(path), 0).is_none() {
                 return Err(GitError {
                     args: action,
+                    rejected_by_remote: false,
                     stderr: format!("fatal: pathspec '{path}' did not match any files"),
                 });
             }
@@ -980,6 +1019,7 @@ impl Repo {
                 Err(e) => {
                     return Err(GitError {
                         args: action,
+                        rejected_by_remote: false,
                         stderr: format!("fatal: git rm: '{path}': {e}"),
                     })
                 }
@@ -1035,6 +1075,7 @@ impl Repo {
         if let Some(reason) = self.needs_external_for(Some(target)) {
             return Err(GitError {
                 args: action.to_string(),
+                rejected_by_remote: false,
                 stderr: reason,
             });
         }
@@ -1066,6 +1107,7 @@ impl Repo {
             }
             return Err(GitError {
                 args: action.to_string(),
+                rejected_by_remote: false,
                 stderr: self.overwrite_refusal(&conflicts),
             });
         }
@@ -1141,6 +1183,36 @@ impl Repo {
             .filter_map(|(b, _)| b.name().ok().flatten().map(str::to_string))
             .collect();
         names.sort();
+        names
+    }
+
+    /// The remote-tracking branches already on this machine, each as the full name and the name with
+    /// its remote stripped (`origin/feat/a` and `feat/a`), sorted. A symbolic ref such as
+    /// `origin/HEAD` is skipped. Reads the local refs only; it never fetches.
+    pub(crate) fn remote_tracking_branches(&self) -> Vec<(String, String)> {
+        let Ok(branches) = self.inner.branches(Some(git2::BranchType::Remote)) else {
+            return Vec::new();
+        };
+        let remotes: Vec<String> = self
+            .inner
+            .remotes()
+            .map(|r| r.iter().flatten().flatten().map(str::to_string).collect())
+            .unwrap_or_default();
+        let mut names: Vec<(String, String)> = branches
+            .flatten()
+            .filter(|(b, _)| b.get().symbolic_target_bytes().is_none())
+            .filter_map(|(b, _)| {
+                let full = b.name().ok().flatten()?.to_string();
+                let stripped = remotes
+                    .iter()
+                    .find_map(|r| full.strip_prefix(&format!("{r}/")))
+                    .or_else(|| full.split_once('/').map(|(_, rest)| rest))?
+                    .to_string();
+                Some((full, stripped))
+            })
+            .collect();
+        names.sort();
+        names.dedup();
         names
     }
 
@@ -1462,7 +1534,35 @@ fn rewritten(config: &git2::Config, url: &str, kind: &str) -> Option<String> {
     best.map(|(_, rewritten)| rewritten)
 }
 
+/// Whether a push refusal says the remote's branch holds work this one does not.
+fn is_remote_rejection(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    [
+        "fast-forward",
+        "fastforward",
+        "fetch first",
+        "not present locally",
+    ]
+    .iter()
+    .any(|m| message.contains(m))
+}
+
 impl Repo {
+    /// Whether `sha` is the tip of local `branch` or one of its ancestors. A commit this
+    /// repository does not have, or a branch it does not have, is not.
+    pub fn branch_contains(&self, branch: &str, sha: &str) -> bool {
+        let Ok(tip) = self.inner.refname_to_id(&format!("refs/heads/{branch}")) else {
+            return false;
+        };
+        let Ok(id) = Oid::from_str(sha) else {
+            return false;
+        };
+        if self.inner.find_commit(id).is_err() {
+            return false;
+        }
+        id == tip || self.inner.graph_descendant_of(tip, id).unwrap_or(false)
+    }
+
     /// The address a push to `name` goes to: its push URL (or URL) under the `pushInsteadOf`
     /// rewrites, then the `insteadOf` ones when no push rewrite applies, as git reads it.
     fn push_url(&self, name: &str) -> Option<String> {
@@ -1511,6 +1611,7 @@ impl Repo {
         let action = format!("push -u {remote} {branch}");
         let fail = |stderr: String| GitError {
             args: action.clone(),
+            rejected_by_remote: false,
             stderr,
         };
         let git_fail = |e: git2::Error| GitError::from_git2(&action, e);
@@ -1596,11 +1697,15 @@ impl Repo {
                         "Kata could not reach an SSH agent for {host}. Use an HTTPS remote or start the OpenSSH agent."
                     )));
                 }
-                return Err(git_fail(e));
+                let mut err = git_fail(e);
+                err.rejected_by_remote = is_remote_rejection(&err.stderr);
+                return Err(err);
             }
         }
         if let Some(message) = rejected {
-            return Err(fail(message));
+            let mut err = fail(message);
+            err.rejected_by_remote = is_remote_rejection(&err.stderr);
+            return Err(err);
         }
 
         // As `-u` does: the remote-tracking branch moves with the push, and the branch follows it.

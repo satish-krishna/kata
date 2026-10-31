@@ -60,10 +60,13 @@
                 size="bare"
                 class="k-rowlink"
                 type="button"
-                [attr.aria-label]="'Switch to branch change/' + b"
+                [attr.aria-label]="needsName().includes(b) ? 'Switch to the pending branch of ' + b : 'Switch to branch change/' + b"
                 [disabled]="disabled()"
                 (click)="openOther.emit(b)"
               >{{ b }}</button>
+              @if (needsName().includes(b)) {
+                <span class="k-status k-status--warning" data-testid="needs-name"><span class="k-status__dot"></span>Branch needs a name</span>
+              }
             </td>
           </tr>
         }

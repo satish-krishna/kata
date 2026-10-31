@@ -1,6 +1,6 @@
 use crate::build::program;
 use crate::format::{self, FormatError, ReadResult};
-use crate::{branch, frontmatter, git};
+use crate::{base, branch, frontmatter, git, naming};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -131,13 +131,28 @@ pub struct ChangeInfo {
     pub fix_row: Option<u8>,
 }
 
+/// A local branch other than the current one that holds a change.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct OtherBranch {
+    /// The full branch name.
+    pub branch: String,
+    /// The change folder name the branch holds.
+    pub change: String,
+    /// The change was created on a pending branch whose system declares naming and is waiting for a name.
+    pub needs_name: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct BranchInfo {
     pub current: Option<String>,
-    pub others: Vec<String>,
+    pub others: Vec<OtherBranch>,
     pub default_base: Option<String>,
+    /// `<system>/<change>` of the change folder the checked-out pending branch created, when one is checked out.
+    pub pending_change: Option<String>,
 }
 
 /// Why the plan cannot be built, or `None` when it can; the first cause in document order.
@@ -956,19 +971,81 @@ pub fn read_stages(
 
 pub use crate::branch::current_branch;
 
-/// `change/*` branches other than the current one and `change/pending-*`, without the `change/` prefix.
-pub fn other_change_branches(master: &Path) -> Vec<String> {
+/// The first change folder (system, then change name, in sorted order) that `tip` holds and `base` does
+/// not. A branch holding several new folders is listed for the first only.
+fn new_folder_at(
+    repo: &git::Repo,
+    base: &str,
+    tip: &str,
+) -> Option<(String, String, Option<Vec<u8>>)> {
+    for system in repo.folder_names_at(tip, "intent") {
+        for change in repo.folder_names_at(tip, &format!("intent/{system}")) {
+            let folder = format!("intent/{system}/{change}");
+            if !is_change_name(&change) || repo.entry_at(base, &folder).ok().flatten().is_some() {
+                continue;
+            }
+            let record = repo
+                .bytes_at(tip, &format!("{folder}/branch.md"))
+                .ok()
+                .flatten();
+            return Some((system, change, record));
+        }
+    }
+    None
+}
+
+/// The local branches other than the current one that hold a change, read from their tips without
+/// checking anything out. `change/<folder>` names list as that folder; `change/pending-*` lists when it
+/// holds a new change with no record in a system that declares naming; any other name lists when a new
+/// change's committed `branch.md` names exactly that branch.
+pub fn other_change_branches(master: &Path) -> Vec<OtherBranch> {
     let Ok(repo) = git::Repo::open(master) else {
         return Vec::new();
     };
     let current = repo.current_branch();
-    repo.local_branches()
-        .iter()
-        .filter(|b| Some(b.as_str()) != current.as_deref())
-        .filter_map(|b| b.strip_prefix("change/"))
-        .filter(|b| !b.starts_with("pending-"))
-        .map(str::to_string)
-        .collect()
+    let base = base::base_branch(master).and_then(|b| base::compare_ref(master, &b));
+    let mut found = Vec::new();
+    for name in repo.local_branches() {
+        if Some(name.as_str()) == current.as_deref() {
+            continue;
+        }
+        if let Some(folder) = name.strip_prefix("change/") {
+            if !folder.starts_with("pending-") {
+                found.push(OtherBranch {
+                    branch: name.clone(),
+                    change: folder.to_string(),
+                    needs_name: false,
+                });
+                continue;
+            }
+        }
+        let Some(base) = base.as_deref() else {
+            continue;
+        };
+        let Some((system, change, record)) = new_folder_at(&repo, base, &name) else {
+            continue;
+        };
+        if name.starts_with("change/pending-") {
+            if record.is_none() && naming::declared(master, &system) {
+                found.push(OtherBranch {
+                    branch: name,
+                    change,
+                    needs_name: true,
+                });
+            }
+        } else if record
+            .and_then(|bytes| frontmatter::field(&String::from_utf8_lossy(&bytes), "branch"))
+            .as_deref()
+            == Some(name.as_str())
+        {
+            found.push(OtherBranch {
+                branch: name,
+                change,
+                needs_name: false,
+            });
+        }
+    }
+    found
 }
 
 /// Read `intent`, `spec`, or `plan` of a change from the working tree.
@@ -1017,7 +1094,8 @@ pub fn branch_info(master: &Path) -> BranchInfo {
     BranchInfo {
         current: current_branch(master),
         others: other_change_branches(master),
-        default_base: branch::default_base(master),
+        default_base: base::base_branch(master),
+        pending_change: branch::pending_created(master),
     }
 }
 
@@ -2140,9 +2218,130 @@ source_spec_commit: {spec_pin}
         }
         git::run(&repo, &["checkout", "-q", "change/a"]).unwrap();
         assert_eq!(current_branch(&repo).as_deref(), Some("change/a"));
-        assert_eq!(other_change_branches(&repo), ["b"]);
+        assert_eq!(
+            other_change_branches(&repo),
+            [OtherBranch {
+                branch: "change/b".into(),
+                change: "b".into(),
+                needs_name: false
+            }]
+        );
         let info = branch_info(&repo);
         assert_eq!(info.default_base.as_deref(), Some("main"));
+    }
+
+    const NAMED_S: &str = r#"{"version":1,"systems":{"s":{"repos":["m"],"naming":{"branch":"{type}/{slug}","pullRequestTitle":"{title}"}},"u":{"repos":["m"]}}}"#;
+
+    /// Create `name` from `main` holding `files`, then return to `main`.
+    fn branch_holding(repo: &Path, name: &str, files: &[(&str, &str)]) {
+        git::run(repo, &["checkout", "-q", "-b", name, "main"]).unwrap();
+        for (rel, text) in files {
+            testutil::commit_file(repo, rel, text, "tip");
+        }
+        git::run(repo, &["checkout", "-q", "main"]).unwrap();
+    }
+
+    fn other(branch: &str, change: &str, needs_name: bool) -> OtherBranch {
+        OtherBranch {
+            branch: branch.into(),
+            change: change.into(),
+            needs_name,
+        }
+    }
+
+    #[test]
+    fn listing_includes_named_branch_whose_record_names_it_r7_3() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        testutil::commit_file(&repo, ".ai-sdlc.json", NAMED_S, "marker");
+        branch_holding(
+            &repo,
+            "feat/PROJ-123-password-reset",
+            &[
+                ("intent/s/2026-11-02-password-reset/intent.md", "x\n"),
+                (
+                    "intent/s/2026-11-02-password-reset/branch.md",
+                    "---\nbranch: feat/PROJ-123-password-reset\n---\n",
+                ),
+            ],
+        );
+        assert_eq!(current_branch(&repo).as_deref(), Some("main"));
+        assert_eq!(
+            other_change_branches(&repo),
+            [other(
+                "feat/PROJ-123-password-reset",
+                "2026-11-02-password-reset",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn listing_follows_the_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = testutil::repo(tmp.path(), "m");
+        testutil::commit_file(&repo, ".ai-sdlc.json", NAMED_S, "marker");
+        // Row 1: a plain change branch, whatever its tip holds.
+        branch_holding(&repo, "change/2026-11-01-a", &[]);
+        // Row 2: a pending branch holding a new change without a record, in a declaring system.
+        branch_holding(
+            &repo,
+            "change/pending-20261102T000000Z",
+            &[("intent/s/2026-11-02-b/intent.md", "x\n")],
+        );
+        // Row 3: the system declares no naming.
+        branch_holding(
+            &repo,
+            "change/pending-20261102T000001Z",
+            &[("intent/u/2026-11-02-u/intent.md", "x\n")],
+        );
+        // Row 3: the change already has a record.
+        branch_holding(
+            &repo,
+            "change/pending-20261102T000002Z",
+            &[
+                ("intent/s/2026-11-02-r/intent.md", "x\n"),
+                (
+                    "intent/s/2026-11-02-r/branch.md",
+                    "---\nbranch: feat/r\n---\n",
+                ),
+            ],
+        );
+        // Row 3: a pending branch holding nothing.
+        branch_holding(&repo, "change/pending-20261102T000003Z", &[]);
+        // Row 4: another name whose record names exactly it.
+        branch_holding(
+            &repo,
+            "feat/c",
+            &[
+                ("intent/s/2026-11-03-c/intent.md", "x\n"),
+                (
+                    "intent/s/2026-11-03-c/branch.md",
+                    "---\nbranch: feat/c\n---\n",
+                ),
+            ],
+        );
+        // Row 5: another name whose record names a different branch, and one with no change.
+        branch_holding(
+            &repo,
+            "wip/d",
+            &[
+                ("intent/s/2026-11-04-d/intent.md", "x\n"),
+                (
+                    "intent/s/2026-11-04-d/branch.md",
+                    "---\nbranch: feat/other\n---\n",
+                ),
+            ],
+        );
+        branch_holding(&repo, "wip/e", &[]);
+        assert_eq!(
+            other_change_branches(&repo),
+            [
+                other("change/2026-11-01-a", "2026-11-01-a", false),
+                other("change/pending-20261102T000000Z", "2026-11-02-b", true),
+                other("feat/c", "2026-11-03-c", false),
+            ]
+        );
     }
 
     #[test]
@@ -2160,7 +2359,7 @@ source_spec_commit: {spec_pin}
         std::fs::create_dir_all(&repo).unwrap();
         git::run(&repo, &["init", "-q", "-b", "main"]).unwrap();
         assert_eq!(current_branch(&repo), None);
-        assert_eq!(branch::default_base(&repo), None);
+        assert_eq!(base::base_branch(&repo), None);
         assert!(other_change_branches(&repo).is_empty());
     }
 

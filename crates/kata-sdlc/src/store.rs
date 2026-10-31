@@ -50,7 +50,6 @@ pub struct WorkspaceEntry {
     pub id: String,
     pub name: String,
     pub folder: String,
-    pub base_branch: String,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub last_opened: u64,
 }
@@ -150,7 +149,17 @@ pub fn append_task_links(links: &[TaskLink]) -> Result<(), StoreError> {
 
 /// Every saved pull request record, from `pull-requests.json`.
 pub fn load_pr_records() -> Vec<PrRecord> {
-    read_or_default("pull-requests.json")
+    let mut records: Vec<PrRecord> = read_or_default("pull-requests.json");
+    // A record saved before branches could be renamed names no branch: it used `change/<change>`.
+    for record in &mut records {
+        let default = format!("change/{}", record.change);
+        for entry in record.repos.iter_mut().chain(record.left_behind.iter_mut()) {
+            if entry.branch.is_empty() {
+                entry.branch.clone_from(&default);
+            }
+        }
+    }
+    records
 }
 
 /// Save `record`, replacing the entry of the same workspace, system and change.
@@ -333,8 +342,19 @@ mod tests {
             serde_json::from_str(r#"[{"id":"w1","name":"Acme","folder":"D:/acme"}]"#).unwrap();
         assert_eq!(w[0].id, "w1");
         assert_eq!(w[0].folder, "D:/acme");
-        assert_eq!(w[0].base_branch, "");
         assert_eq!(w[0].last_opened, 0);
+    }
+
+    #[test]
+    fn a_workspace_file_with_a_stored_base_branch_still_loads() {
+        let w: Vec<WorkspaceEntry> = serde_json::from_str(
+            r#"[{"id":"w1","name":"Acme","folder":"D:/acme","base_branch":"develop","last_opened":7}]"#,
+        )
+        .unwrap();
+        assert_eq!(w[0].folder, "D:/acme");
+        assert_eq!(w[0].last_opened, 7);
+        let again = serde_json::to_string(&w).unwrap();
+        assert!(!again.contains("base_branch"), "{again}");
     }
 
     #[test]
@@ -372,6 +392,20 @@ mod tests {
         let mut r = PrRecord::new("w1", "billing", change);
         r.declared_at = declared_at;
         r
+    }
+
+    #[test]
+    #[serial]
+    fn old_records_load_with_the_change_branch() {
+        let home = with_home();
+        let dir = home.temp.path().join("workbench");
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = r#"[{"workspaceId":"w1","system":"billing","change":"0001-x","declaredAt":5,"repos":[{"repo":"api","url":"https://github.com/o/api/pull/3","number":3,"pushedHead":"abc","state":"open","seenAt":9}]}]"#;
+        std::fs::write(dir.join("pull-requests.json"), old).unwrap();
+        let loaded = load_pr_records();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].repos[0].branch, "change/0001-x");
+        assert!(loaded[0].left_behind.is_empty());
     }
 
     #[test]

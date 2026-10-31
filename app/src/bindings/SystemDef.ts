@@ -4,4 +4,9 @@ export type SystemDef = { repos: Array<string>,
 /**
  * The Conventional Commits scope for this system's commits; the system name when absent.
  */
-commitScope?: string | null, };
+commitScope?: string | null, 
+/**
+ * The team's naming setting, kept as the marker holds it: the format program is the one place that
+ * reads it, this field only keeps a scan from dropping it when the marker is written back.
+ */
+naming?: unknown, };

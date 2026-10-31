@@ -155,6 +155,7 @@
               <app-changes-table
                 [rows]="vm.rows()"
                 [others]="vm.otherBranches()"
+                [needsName]="vm.otherNeedingName()"
                 [lastRuns]="vm.lastRuns()"
                 [disabled]="vm.locked()"
                 (open)="vm.openChange($event.system, $event.change)"
@@ -175,10 +176,21 @@
                 (runContext)="vm.runContext($event)"
                 (viewContext)="vm.openContext($event)"
               />
-              <div>
+              <div class="k-home__actions">
                 <button hlmBtn variant="secondary" size="sm" type="button" [disabled]="vm.locked()" (click)="vm.addSystem()">
                   <ng-icon name="lucidePlus" size="14" />Add system
                 </button>
+                @for (system of vm.systems(); track system) {
+                  <button
+                    hlmBtn
+                    variant="secondary"
+                    size="sm"
+                    type="button"
+                    [attr.aria-label]="'Set team naming for ' + system"
+                    [disabled]="vm.locked()"
+                    (click)="vm.setTeamNaming(system)"
+                  >Set team naming{{ vm.systems().length > 1 ? ' · ' + system : '' }}</button>
+                }
               </div>
             </div>
           </section>
@@ -200,6 +212,17 @@
     [initialIdea]="vm.newChangeIdea()"
     [initialTrack]="vm.newChangeTrack()"
     [note]="vm.newChangeNote()"
+    [workTypes]="vm.workTypes()"
+    [workType]="vm.workType()"
+    [scope]="vm.scope()"
+    [scopeProblems]="vm.scopeProblems()"
+    [namingError]="vm.namingError()"
+    [namingReady]="vm.namingReady()"
+    [namingReading]="vm.newChangeOpen() && vm.newChangeNaming() === null"
+    (systemChange)="vm.pickSystem($event)"
+    (trackChange)="vm.pickTrack($event)"
+    (workTypeChange)="vm.pickWorkType($event)"
+    (scopeChange)="vm.setScope($event)"
     (start)="vm.newChange($event.system, $event.idea, $event.track)"
     (cancel)="vm.closeNewChange()"
   />
@@ -207,7 +230,6 @@
     <app-sdlc-settings-dialog
       [open]="vm.settingsOpen()"
       [settings]="s"
-      [workspace]="vm.current()"
       (save)="vm.saveSettings($event)"
       (cancel)="vm.closeSettings()"
     />

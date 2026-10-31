@@ -39,7 +39,8 @@ import type { PublishRepo } from '@bindings/PublishRepo';
 import type { Offender } from '@bindings/Offender';
 import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { RepoChecks } from '@bindings/RepoChecks';
-import type { PrResult } from '@bindings/PrResult';
+import type { PublishSummary } from '@bindings/PublishSummary';
+import type { RemoteClash } from '@bindings/RemoteClash';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
 import type { DoneView } from '@bindings/DoneView';
@@ -49,7 +50,7 @@ import { seedCatalog, validateLocal, previewFixture, runScriptHead, runScriptMid
 import { history, runDetailFixture, katasFixture, presetsFixture } from '../../lib/library';
 import { MOCK_LAYOUTS, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
-import { KataTransport, NO_BACKEND } from './kata-transport';
+import { KataTransport, NO_BACKEND, type NamingState, type RenameResult } from './kata-transport';
 
 /** How long the first scan of the demo setup folder takes, long enough to see the checking steps. */
 const SETUP_SCAN_MS = 1800;
@@ -59,6 +60,9 @@ const STAGE_PASS_MS = 1000;
 
 /** How long the scripted agent takes to read a message the operator sent. */
 const MESSAGE_READ_MS = 600;
+
+/** The `?demo=` value of the address in a plain browser, or null; this class never runs under Tauri. */
+const demoParam = (): string | null => (typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('demo'));
 
 /** One scripted run in flight: what to play after an answer or a decision, and what finishing it does. */
 interface ScriptedRun {
@@ -89,7 +93,7 @@ export class MockTransport extends KataTransport {
   private readonly runs = new Map<string, ScriptedRun>();
   private nextRun = 0;
   /** `?demo=build-long` (browser only) widens the build demo to three repositories, seventeen tasks, many files and findings, so every area of the build page overflows at 1280 by 800. */
-  private readonly sdlc = new SdlcMock(typeof location !== 'undefined' && new URLSearchParams(location.search).get('demo') === 'build-long');
+  private readonly sdlc = new SdlcMock(demoParam() === 'build-long', demoParam());
   private setupScanned = false;
   /** The build layout a browser session has saved; a fresh session starts with none. */
   private buildLayout: Record<string, unknown> = {};
@@ -226,8 +230,14 @@ export class MockTransport extends KataTransport {
   sdlcSnapshot(_master: string): Promise<Snapshot> { return Promise.resolve(this.sdlc.snapshot()); }
   sdlcLeftovers(_master: string, _before: Snapshot, _productRepos: string[], _build?: BuildScope): Promise<Leftovers> { return Promise.resolve(this.sdlc.leftovers()); }
   sdlcDiscard(_master: string, _before: Snapshot, paths: string[], _build?: BuildScope): Promise<void> { this.sdlc.discard(paths); return Promise.resolve(); }
-  sdlcStartChange(_master: string, _base: string): Promise<string> { return Promise.resolve(this.sdlc.startChange()); }
-  sdlcFinishChange(_master: string, _pending: string, base: string): Promise<FinishOutcome> { return Promise.resolve(this.sdlc.finishChange(base)); }
+  sdlcStartChange(_master: string): Promise<string> { return Promise.resolve(this.sdlc.startChange()); }
+  sdlcFinishChange(_master: string, _pending: string): Promise<FinishOutcome> { return Promise.resolve(this.sdlc.finishChange()); }
+  sdlcNaming(_folder: string, _masterRepo: string, _system: string): Promise<NamingState> { return Promise.resolve(this.sdlc.naming()); }
+  sdlcCheckScope(_folder: string, scope: string): Promise<string[]> { return Promise.resolve(scope.includes(' ') ? ['a scope cannot contain a space'] : []); }
+  sdlcSuggestBranch(_folder: string, _masterRepo: string, _system: string, change: string, workType: string): Promise<string> { return Promise.resolve(this.sdlc.suggestBranch(change, workType)); }
+  sdlcConfirmBranch(_folder: string, _masterRepo: string, _system: string, change: string, _pending: string, name: string, _workType: string): Promise<FinishOutcome> { return Promise.resolve(this.sdlc.confirmBranch(change, name)); }
+  sdlcRenameBranch(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, change: string, newName: string): Promise<RenameResult> { return Promise.resolve(this.sdlc.renameBranch(change, newName)); }
+  sdlcRemoteClashes(touched: PublishRepo[], _masterRepo: string, _system: string, change: string): Promise<RemoteClash[]> { return Promise.resolve(this.sdlc.remoteClashes(touched, change)); }
   sdlcCheckout(_master: string, branch: string): Promise<void> { this.sdlc.checkout(branch); return Promise.resolve(); }
   sdlcDecide(_master: string, _system: string, change: string, decision: Decision, _confirmed: boolean): Promise<DecideOutcome> { return Promise.resolve(this.sdlc.decide(change, decision)); }
   sdlcRunLinks(): Promise<RunLink[]> { return Promise.resolve(this.sdlc.runLinks()); }
@@ -246,8 +256,8 @@ export class MockTransport extends KataTransport {
     return Promise.resolve({ kind: 'ready', start: this.sdlc.prepare(folder, change) });
   }
   sdlcBuildSettle(_start: BuildStart): Promise<string[]> { return Promise.resolve([]); }
-  sdlcBuildHeads(_folder: string, repos: string[], _change: string): Promise<Record<string, string>> { return Promise.resolve(this.sdlc.heads(repos)); }
-  sdlcPluginReadiness(_workdir: string | null): Promise<Readiness> { return Promise.resolve({ kind: 'ready', dir: '~/.claude/plugins/ai-sdlc', version: MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS, lightTrack: true }); }
+  sdlcBuildHeads(_folder: string, _masterRepo: string, _system: string, repos: string[], _change: string): Promise<Record<string, string>> { return Promise.resolve(this.sdlc.heads(repos)); }
+  sdlcPluginReadiness(_workdir: string | null): Promise<Readiness> { return Promise.resolve({ kind: 'ready', dir: '~/.claude/plugins/ai-sdlc', version: MOCK_PLUGIN_VERSION, layouts: MOCK_LAYOUTS, lightTrack: true, naming: true }); }
   sdlcChangeRepos(folder: string, _masterRepo: string, _system: string, change: string): Promise<ChangeRepo[]> { return Promise.resolve(this.sdlc.changeRepos(folder, change)); }
   sdlcMissingChangeBranches(_folder: string, _masterRepo: string, _system: string, _change: string): Promise<string[]> { return Promise.resolve([]); }
   sdlcDiffFiles(_repoPath: string, part: Part): Promise<DiffListing> { return Promise.resolve(this.sdlc.diffFiles(part)); }
@@ -261,13 +271,13 @@ export class MockTransport extends KataTransport {
   sdlcRunChecks(_folder: string, _masterRepo: string, _system: string, repo: PublishRepo): Promise<RepoChecks> { return Promise.resolve(this.sdlc.runChecks(repo.repo)); }
   sdlcGhSignedIn(_repos: PublishRepo[]): Promise<string> { return Promise.resolve('demo-user'); }
   sdlcGhOrigins(_repos: PublishRepo[]): Promise<void> { return Promise.resolve(); }
-  sdlcPublish(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, _change: string, repos: PublishRepo[]): Promise<PrResult[]> {
+  sdlcPublish(_folder: string, _workspaceId: string, _masterRepo: string, _system: string, change: string, repos: PublishRepo[]): Promise<PublishSummary> {
     for (const r of repos) {
       for (const step of [{ kind: 'pushing', repo: r.repo }, { kind: 'opening', repo: r.repo }] as PublishStep[]) {
         for (const listen of [...this.publishListeners]) listen(step);
       }
     }
-    return Promise.resolve(this.sdlc.publish(repos));
+    return Promise.resolve({ results: this.sdlc.publish(repos, change), leftBehind: [] });
   }
   /** `?demo=pr-fail` makes the read fail, so the browser checks can see the "Could not check pull requests" note; `?demo=one-pr` keeps only the
    *  first pull request, so they can see the single inline link. Browser only; this class never runs under Tauri. */
@@ -281,7 +291,7 @@ export class MockTransport extends KataTransport {
   sdlcRefreshPrStates(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView> {
     return this.sdlcDoneView(folder, masterRepo, workspaceId, system, change, buildFinished);
   }
-  sdlcPullRequests(repos: PublishRepo[], change: string): Promise<PrState[]> {
+  sdlcPullRequests(_masterRepo: string, _system: string, repos: PublishRepo[], change: string): Promise<PrState[]> {
     return Promise.resolve(this.sdlc.pullRequests(repos, change));
   }
   loadBuildLayout(): Promise<unknown> { return Promise.resolve(this.buildLayout); }

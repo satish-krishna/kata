@@ -20,6 +20,8 @@ import type { Offender } from '@bindings/Offender';
 import type { PrResult } from '@bindings/PrResult';
 import type { DoneView } from '@bindings/DoneView';
 import type { PrLink } from '@bindings/PrLink';
+import type { PrEntry } from '@bindings/PrEntry';
+import type { RemoteClash } from '@bindings/RemoteClash';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RepoChecks } from '@bindings/RepoChecks';
 import type { BuildAction } from '@bindings/BuildAction';
@@ -40,7 +42,7 @@ import { ProgressStore } from '../../core/progress/progress.store';
 import { SdlcStagesStore } from '../../core/sdlc/sdlc-stages.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { progressLabels } from '../../lib/progress-steps';
-import { KataTransport } from '../../core/transport/kata-transport';
+import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
 import {
   DEFAULT_BUILD_SECS,
   actionLabel,
@@ -72,6 +74,7 @@ import { inTauri } from '../../lib/mock';
 import { taskRecord, withRows, type TaskView } from '../../lib/task-view';
 import { shownSection } from '../../lib/sdlc-review';
 import { masterPath, masterRepo, productRepos } from '../../lib/sdlc-workspace';
+import { namingRefusal, type WorkType } from '../../lib/sdlc-naming';
 
 export type ChangeState = 'loading' | 'ready' | 'not-found';
 
@@ -125,6 +128,11 @@ const RUNS: Record<Exclude<StageAction, HandledAction>, StageRun> = {
 /** The fix runs, which need a plugin that has the light track. */
 const FIX_RUNS: readonly StageAction[] = ['finish-fix-draft', 'change-fix', 'reopen-fix', 'accept-fix'];
 const NEEDS_LIGHT_TRACK = 'Needs ai-sdlc 0.13.0 or later.';
+const NEEDS_NAME = 'Name the branch first.';
+/** The actions that start or continue build work: they wait for the branch's name. */
+const NEEDS_BRANCH: readonly StageAction[] = ['start-build', 'continue-build', 'another-round', 'run-review'];
+/** The branch a change is created on, until its name is confirmed. */
+const PENDING_PREFIX = 'change/pending-';
 
 const FILE: Record<Decision, 'intent.md' | 'spec.md' | 'plan.md'> = {
   'accept-intent': 'intent.md',
@@ -314,6 +322,21 @@ export class ChangePageViewModel {
   private pickSeq = 0;
 
   readonly masterBranch = computed(() => this.branches()?.current ?? null);
+  /** The system's naming setting as last read; null before the first load and when it could not be read. */
+  private readonly naming = signal<NamingState | null>(null);
+  /**
+   * The change was created on a pending branch, the system declares naming, and the engineer has not confirmed a name: the master stands on that
+   * pending branch (and only that change: another change opened meanwhile is not waiting for a name), which a confirmation renames in the same step. A change with a branch record, or one started before the setting existed, is on its own branch.
+   */
+  readonly needsName = computed(
+    () =>
+      this.change() !== null &&
+      this.naming()?.kind === 'setting' &&
+      (this.masterBranch() ?? '').startsWith(PENDING_PREFIX) &&
+      this.branches()?.pending_change === `${this.system()}/${this.changeName()}`,
+  );
+  /** The branch name confirmation on show. */
+  readonly nameRequest = this.runner.nameRequest;
   readonly crumbs = computed(() => (this.changeName() === '' ? [] : [this.changeName()]));
 
   readonly shownDoc = computed<Tab>(() => {
@@ -352,10 +375,14 @@ export class ChangePageViewModel {
     if (refreshed === null || p.seenAt === null || p.seenAt >= refreshed) return null;
     return `last seen ${new Date(p.seenAt * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}`;
   }
+  /** The master repository's branch the change records, as the backend resolves it; null until read or when it cannot be. */
+  private readonly recordedBranch = signal<string | null>(null);
+  /** The branch the change lives on: the recorded one, else change/<change>. */
+  readonly expectedBranch = computed(() => this.recordedBranch() ?? `change/${this.changeName()}`);
   /** The master repository's branch, unless it is the change's own branch, which the pills already imply. */
   readonly branchChip = computed(() => {
     const branch = this.masterBranch();
-    return branch === `change/${this.changeName()}` ? null : branch;
+    return branch === this.expectedBranch() ? null : branch;
   });
   /** What the Changes view in the build panel looks at; null until the workspace and master repository are known. */
   readonly changesContext = computed<ChangesContext | null>(() => {
@@ -410,11 +437,15 @@ export class ChangePageViewModel {
   }
   /** Whether an action's button is off: the lock holds it, or it is a fix run the plugin on this machine cannot do. */
   disabledFor(action: StageAction): boolean {
-    return this.locked() || this.needsLightTrack(action);
+    return this.locked() || this.needsLightTrack(action) || this.waitsForName(action);
   }
   /** Why a fix run is unavailable; null for any other action and while it is available. */
   titleFor(action: StageAction): string | null {
+    if (this.waitsForName(action)) return NEEDS_NAME;
     return this.needsLightTrack(action) ? NEEDS_LIGHT_TRACK : null;
+  }
+  private waitsForName(action: StageAction): boolean {
+    return this.needsName() && NEEDS_BRANCH.includes(action);
   }
   private needsLightTrack(action: StageAction): boolean {
     return FIX_RUNS.includes(action) && !this.lightTrack();
@@ -576,6 +607,8 @@ export class ChangePageViewModel {
   readonly refusal = signal<string | null>(null);
   /** What the check found in the plan or a build log, when that is why the build did not start. */
   readonly refusalProblems = signal<Problem[]>([]);
+  /** The branch that holds other work, when that is why the build did not start. */
+  readonly refusalTaken = signal<{ repo: string; branch: string } | null>(null);
   private readonly pendingLeftovers = signal<RepoFiles[] | null>(null);
   /** The confirm for continuing on top of the build's own leftovers: one line per repository and file; null while closed. */
   readonly leftoverPrompt = computed(() => {
@@ -709,6 +742,25 @@ export class ChangePageViewModel {
   closeRefusal(): void {
     this.refusal.set(null);
     this.refusalProblems.set([]);
+    this.refusalTaken.set(null);
+  }
+
+  /**
+   * Pick a new name for the change's branch, from a refusal or from the done dialog. The rename covers every repository that has the
+   * branch; the build can be started again after it, and the page reads the change again. Null when the dialog was closed.
+   */
+  async renameBranch(branch: string | null): Promise<string | null> {
+    const w = this.current();
+    const master = this.scanMaster();
+    if (w === null || master === null || branch === null) return null;
+    const named = await this.runner.requestRename({ folder: w.folder, workspaceId: w.id, masterRepo: master, system: this.system(), change: this.changeName(), current: branch });
+    return named?.branch ?? null;
+  }
+
+  /** The build refusal's Pick a new branch name: the refusal closes, the rename dialog opens. */
+  async renameFromRefusal(branch: string | null): Promise<void> {
+    this.closeRefusal();
+    await this.renameBranch(branch);
   }
 
   // --- declaring done: Kata's own checks first, then the confirmation
@@ -717,8 +769,12 @@ export class ChangePageViewModel {
   /** The engineer's word, in the done dialog, that the pull requests open with the high-severity findings unresolved. */
   readonly doneAcknowledged = signal(false);
   private doneRepos: PublishRepo[] = [];
+  /** The branch declaring done found for the change, named in the push progress lines. */
+  private doneBranch: string | null = null;
   /** The results of opening the pull requests, shown in a dialog that is open exactly while this is set. */
   readonly prList = signal<PrResult[] | null>(null);
+  /** The pull requests an earlier branch name left open on GitHub, shown with the list. */
+  readonly prLeftBehind = signal<PrEntry[]>([]);
 
   /** The operator confirmed: open the pull requests. */
   async confirmDone(): Promise<void> {
@@ -736,6 +792,13 @@ export class ChangePageViewModel {
 
   closePrList(): void {
     this.prList.set(null);
+    this.prLeftBehind.set([]);
+  }
+
+  /** Pick a new name from the pull request list after a clash; the engineer declares done again afterward. */
+  async renameFromPrList(branch: string): Promise<void> {
+    this.closePrList();
+    await this.renameBranch(branch);
   }
 
   private async publish(): Promise<void> {
@@ -743,9 +806,10 @@ export class ChangePageViewModel {
     const master = this.scanMaster();
     if (!w || master === null) return;
     let results: PrResult[] = [];
+    let leftBehind: PrEntry[] = [];
     // Each push and each pull request the backend reports becomes the lock's progress line, named by its repository.
     const unlisten = await this.transport.onPublishStep((step) => {
-      if (step.kind === 'pushing') this.progress.begin('pushing', progressLabels.pushing(this.changeName(), step.repo), 'lock');
+      if (step.kind === 'pushing') this.progress.begin('pushing', progressLabels.pushing(this.changeName(), step.repo, this.doneBranch), 'lock');
       else this.progress.begin('opening-prs', progressLabels.openingPr(step.repo), 'lock');
     });
     let out: Awaited<ReturnType<LockStore['runSteps']>>;
@@ -755,7 +819,9 @@ export class ChangePageViewModel {
           label: 'Open pull requests',
           run: async () => {
             try {
-              results = await this.transport.sdlcPublish(w.folder, w.id, master, this.system(), this.changeName(), this.doneRepos);
+              const summary = await this.transport.sdlcPublish(w.folder, w.id, master, this.system(), this.changeName(), this.doneRepos);
+              results = summary.results;
+              leftBehind = summary.leftBehind;
             } catch (e) {
               this.progress.fail('lock');
               throw e;
@@ -769,7 +835,10 @@ export class ChangePageViewModel {
       unlisten();
       this.progress.end('lock');
     }
-    if (out === 'done') this.prList.set(results);
+    if (out === 'done') {
+      this.prLeftBehind.set(leftBehind);
+      this.prList.set(results);
+    }
     await this.load();
   }
 
@@ -787,6 +856,15 @@ export class ChangePageViewModel {
 
   cancelDone(): void {
     this.doneReport.set(null);
+  }
+
+  /** Pick a new name for the change's branch from the done dialog; declaring done starts again after a rename. */
+  async renameFromDone(branch: string): Promise<void> {
+    const before = this.doneReport();
+    this.doneReport.set(null);
+    // A new name starts declaring done again from the first step; a closed dialog brings the report back as it was.
+    if ((await this.renameBranch(branch)) !== null) await this.declareDone();
+    else this.doneReport.set(before);
   }
 
   // --- the lock: Kata's own checks in the overlay, an agent run as the session view
@@ -822,6 +900,15 @@ export class ChangePageViewModel {
       this.changeName();
       untracked(() => void this.load());
     });
+    // A confirmation names the branch, whoever opened it (this page, or the start of the change): read the change again.
+    effect(() => {
+      const named = this.runner.named();
+      untracked(() => {
+        if (named === this.seenNamed) return;
+        this.seenNamed = named;
+        void this.load();
+      });
+    });
     // The build page gives the lock back when the build ends or stops; the change is read again then, so its stage, pill and actions follow it.
     effect(() => {
       const building = this.lock.active()?.kind === 'build';
@@ -833,6 +920,9 @@ export class ChangePageViewModel {
     });
   }
 
+  /** The branches named so far, as this page last saw them: the page reads the change again when a confirmation names one. */
+  private seenNamed = this.runner.named();
+
   /** Whether the lock was held for a build the last time it changed. */
   private wasBuilding = false;
 
@@ -843,6 +933,30 @@ export class ChangePageViewModel {
     if (this.state() === 'ready') await this.runStage('continue-spec');
   }
 
+  // --- naming
+
+  /** Open the branch name confirmation of this change. Closing it changes nothing: the page keeps asking. */
+  async openNameDialog(): Promise<void> {
+    const w = this.current();
+    const master = this.scanMaster();
+    const pending = this.masterBranch();
+    const change = this.change();
+    if (w === null || master === null || pending === null || change === null || this.refuseWhileLocked()) return;
+    await this.runner.requestName({ folder: w.folder, masterRepo: master, system: this.system(), change: this.changeName(), pending, workType: null, track: change.track });
+  }
+
+  nameType(type: WorkType): void {
+    void this.runner.setNameType(type);
+  }
+
+  acceptName(name: string): void {
+    void this.runner.confirmName(name);
+  }
+
+  closeName(): void {
+    this.runner.closeName();
+  }
+
   // --- actions
 
   async act(action: StageAction): Promise<void> {
@@ -850,6 +964,10 @@ export class ChangePageViewModel {
     if (action !== 'cancel-build' && this.refuseWhileLocked()) return;
     if (this.needsLightTrack(action)) {
       this.toasts.error(NEEDS_LIGHT_TRACK);
+      return;
+    }
+    if (this.waitsForName(action)) {
+      this.toasts.error(NEEDS_NAME);
       return;
     }
     switch (action) {
@@ -974,8 +1092,21 @@ export class ChangePageViewModel {
     let outcome;
     let fixBranch: string | null;
     try {
-      fixBranch = (await this.transport.sdlcBranches(master)).current;
+      const branches = await this.transport.sdlcBranches(master);
+      fixBranch = branches.current;
       if (fixBranch === null) throw new Error('the master repository is not on a branch');
+      // A setting that cannot be used stops the start, as on the workspace home; there is no fall back to `change/` naming (R3.2).
+      const repo = masterRepo(scan);
+      let naming: NamingState = { kind: 'none' };
+      try {
+        if (repo) naming = await this.transport.sdlcNaming(workspace.folder, repo, system);
+      } catch (e) {
+        naming = { kind: 'error', reason: 'unreadable', message: message(e) };
+      }
+      if (naming.kind === 'error') {
+        this.toasts.error(namingRefusal(system, branches.default_base, naming.message));
+        return;
+      }
       outcome = await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, 'full', (spec) => this.confirmRun(spec));
     } catch (e) {
       this.toasts.error(`Could not start the change: ${message(e)}`);
@@ -1183,8 +1314,11 @@ export class ChangePageViewModel {
     const system = this.system();
     const change = this.changeName();
     let touched: PublishRepo[];
+    let branch: string | null;
     try {
       touched = await this.transport.sdlcTouchedRepos(folder, master, system, change);
+      // The branch the change really has: it may carry a team name, not change/<change>.
+      branch = (await this.transport.sdlcChangeRepos(folder, master, system, change)).find((r) => r.repo === master)?.branch ?? null;
       for (const r of touched) {
         if ((await this.transport.sdlcDiffFiles(r.path, 'uncommitted')).files.length > 0) {
           this.toasts.error(`Commit or discard the uncommitted edits in ${r.repo} before declaring done.`);
@@ -1204,6 +1338,7 @@ export class ChangePageViewModel {
       review: { missing: 'none' } as DoneReview,
       plan: null as ChecksPlan | null,
       checksError: null as string | null,
+      clashes: [] as RemoteClash[],
       results: new Map<string, RepoChecks>(),
     };
     const refuse = (e: unknown): never => {
@@ -1245,6 +1380,13 @@ export class ChangePageViewModel {
         },
       },
       {
+        label: 'Branch is free on GitHub',
+        run: async () => {
+          got.clashes = await this.transport.sdlcRemoteClashes(touched, master, system, change);
+          return got.clashes.length === 0 ? 'free in every repository' : plural(got.clashes.length, 'repository holds', 'repositories hold') + ' other work on it';
+        },
+      },
+      {
         label: 'Commit rules',
         run: async () => {
           got.offenders = await this.transport.sdlcCommitOffenders(folder, master, system, change);
@@ -1257,7 +1399,7 @@ export class ChangePageViewModel {
           const [links, records, heads] = await Promise.all([
             this.transport.sdlcRunLinks(),
             this.transport.listRuns(),
-            this.transport.sdlcBuildHeads(folder, [master, ...productRepos], change),
+            this.transport.sdlcBuildHeads(folder, master, system, [master, ...productRepos], change),
           ]);
           // The review document decides when the change has one; the review run's exit code and words only when it has not.
           const document = await this.transport.sdlcReviewRecord(masterPath(folder, master), system, change);
@@ -1298,11 +1440,14 @@ export class ChangePageViewModel {
     if (out === 'cancelled' || (out === 'failed' && got.notReady === null)) return;
 
     this.doneRepos = touched;
+    this.doneBranch = branch;
     // Each report asks afresh: an acknowledgement covers the findings it was given for, not the next review's.
     this.doneAcknowledged.set(false);
     this.doneReport.set({
       account: got.account,
       notReady: got.notReady,
+      branch,
+      clashes: got.clashes,
       repos: touched.map((r) => ({
         repo: r.repo,
         base: r.base,
@@ -1344,8 +1489,16 @@ export class ChangePageViewModel {
       throw e;
     }
     // A refusal is the preparation failing: its line goes before the refusal shows where it shows today.
-    if (out.kind === 'refused') this.progress.fail('build');
+    if (out.kind === 'refused' || out.kind === 'branch-taken') this.progress.fail('build');
     else this.progress.end('build');
+    if (out.kind === 'branch-taken') {
+      // Nothing was created or switched; the refusal names the branch and offers a new one.
+      this.asked = null;
+      this.refusal.set(`The branch ${out.branch} in ${out.repo} holds other work`);
+      this.refusalProblems.set([]);
+      this.refusalTaken.set({ repo: out.repo, branch: out.branch });
+      return;
+    }
     switch (out.kind) {
       case 'refused':
         this.asked = null;
@@ -1543,6 +1696,24 @@ export class ChangePageViewModel {
     }
   }
 
+  /** The branch the master repository records for the change; null when it cannot be read, which leaves change/<change>. */
+  private async readRecordedBranch(folder: string, master: string, system: string, name: string): Promise<string | null> {
+    try {
+      return (await this.transport.sdlcChangeRepos(folder, master, system, name)).find((r) => r.repo === master)?.branch ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The system's naming setting; null when it cannot be read, which the page treats as no declaration. */
+  private async readNaming(folder: string, repo: string, system: string): Promise<NamingState | null> {
+    try {
+      return await this.transport.sdlcNaming(folder, repo, system);
+    } catch {
+      return null;
+    }
+  }
+
   /** Read the change from disk. A newer call supersedes an older one still in flight. */
   private async load(): Promise<void> {
     const seq = ++this.loadSeq;
@@ -1589,12 +1760,14 @@ export class ChangePageViewModel {
         return;
       }
       const master = masterPath(w.folder, repo);
-      const [branches, own, links, records, catalog] = await Promise.all([
+      const [branches, own, links, records, catalog, naming, recorded] = await Promise.all([
         this.transport.sdlcBranches(master),
         this.readOwnChange(master, system, name),
         this.transport.sdlcRunLinks(),
         this.transport.listRuns(),
         this.transport.catalog(w.folder),
+        this.readNaming(w.folder, repo, system),
+        this.readRecordedBranch(w.folder, repo, system, name),
       ]);
       const found = own.info;
       // A home pass still running shows this stage at once, and this page never waits for that pass.
@@ -1618,6 +1791,8 @@ export class ChangePageViewModel {
       this.checksDir.set(checksDir);
       this.scan.set(scan);
       this.branches.set(branches);
+      this.recordedBranch.set(recorded);
+      this.naming.set(naming);
       this.links.set(links);
       this.records.set(records);
       this.catalog.set(catalog);

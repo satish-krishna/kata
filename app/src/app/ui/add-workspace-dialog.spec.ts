@@ -16,7 +16,6 @@ const candidate = (scan: Partial<WorkspaceScan> = {}): WorkspaceCandidate => ({
   name: 'acme-commerce',
   scan: { ...SCAN, ...scan },
   contexts: { 'customer-portal': { kind: 'stale', commits: 14 }, 'billing-api': { kind: 'notCheckedOut' } },
-  baseBranch: 'main',
 });
 const dialog = () => document.body.querySelector('[role="dialog"]');
 const button = (label: string) =>
@@ -34,12 +33,12 @@ describe('AddWorkspaceDialog', () => {
     expect(dialog()).toBeNull();
   });
 
-  it('shows the folder, base branch, systems, and each repo with its role and context', async () => {
+  it('shows the folder, systems, and each repo with its role and context', async () => {
     await render(AddWorkspaceDialog, { candidate: candidate() });
     await settle();
     const t = text();
     expect(t).toContain('D:/Work/acme-commerce');
-    expect(t).toContain('main');
+    expect(t).not.toContain('Base branch');
     expect(t).toContain('commerce');
     expect(t).toContain('commerce-docs');
     expect(t).toContain('master');

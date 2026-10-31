@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 fn exec(dir: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
     let fail = |stderr: String| GitError {
         args: args.join(" "),
+        rejected_by_remote: false,
         stderr,
     };
     let mut cmd = std::process::Command::new("git");

@@ -5,7 +5,7 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import { render } from '../../testing/render';
 import { SdlcToolbar } from './sdlc-toolbar';
 
-const WS: WorkspaceEntry = { id: 'acme', name: 'acme-commerce', folder: '/a', base_branch: 'main', last_opened: 1 };
+const WS: WorkspaceEntry = { id: 'acme', name: 'acme-commerce', folder: '/a', last_opened: 1 };
 const inputs = (over: Record<string, unknown> = {}) => ({
   workspaces: [WS], current: WS, missing: [], branch: 'main', locked: false, ...over,
 });
@@ -33,6 +33,14 @@ describe('SdlcToolbar', () => {
     expect(chip.getAttribute('aria-label')).toBe(said);
     expect(chip.querySelector('ng-icon[name="lucideGitBranch"]')).not.toBeNull();
     expect(chip.textContent!.trim()).toBe('main');
+  });
+
+  it('names the recorded branch of the change as the one it should be on (R7.1)', async () => {
+    const { container } = await render(SdlcToolbar, inputs({ branch: 'main', crumbs: ['2026-11-02-password-reset'], changeBranch: 'feat/PROJ-123-password-reset' }));
+    const chip = container.querySelector('[data-testid="branch"]')!;
+    const said = 'Master repository is on main, not feat/PROJ-123-password-reset';
+    expect(chip.getAttribute('title')).toBe(said);
+    expect(chip.getAttribute('aria-label')).toBe(said);
   });
 
   it('names the branch chip without a change when the toolbar has no change crumb', async () => {

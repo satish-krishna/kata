@@ -2,10 +2,12 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Router, convertToParamMap, provideRouter } from '@angular/router';
 import { render } from '../../../testing/render';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { PrEntry } from '@bindings/PrEntry';
 import type { PrLink } from '@bindings/PrLink';
 import { toastState } from '@spartan-ng/brain/sonner';
 import { BehaviorSubject, of } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
+import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { ProgressStore } from '../../core/progress/progress.store';
 import { KataTransport } from '../../core/transport/kata-transport';
@@ -60,7 +62,7 @@ async function finished(tweak: (t: MockTransport) => void = () => undefined) {
   tweak(transport);
   const s = setup(transport);
   await ready(s.vm);
-  const heads = await transport.sdlcBuildHeads('', ['commerce-docs', ...REPOS], BUILD);
+  const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
   await transport.sdlcLinkRun({ workspace_id: s.vm.current()!.id, system: 'commerce', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
   const lock = TestBed.inject(LockStore);
   return { ...s, lock, steps: vi.spyOn(lock, 'runSteps') };
@@ -189,7 +191,7 @@ describe('declaring done', () => {
     const { vm, transport } = await finished((t) => {
       vi.spyOn(t, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 1 }]);
     });
-    const heads = await transport.sdlcBuildHeads('', ['commerce-docs', ...REPOS], BUILD);
+    const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
     const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
     const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue({
@@ -208,7 +210,7 @@ describe('declaring done', () => {
 
   it('a review run that committed under plugin/ is not current when the change page is opened again (F17)', async () => {
     const { vm, transport } = await finished();
-    const heads = await transport.sdlcBuildHeads('', ['commerce-docs', ...REPOS], BUILD);
+    const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
     const commits = Object.fromEntries(Object.entries(heads).map(([repo, sha]) => [repo, sha.slice(0, 7)]));
     const finding = { id: 'F1', severity: 'high' as const, file: 'src/a.ts', line: 4, text: 'The limit is not enforced on retry.' };
     // The backend reports what the master committed since the head the review recorded; a fresh view model asks again and gets the same answer.
@@ -263,7 +265,7 @@ describe('declaring done', () => {
     const real = transport.sdlcPublish.bind(transport);
     const publish = vi.spyOn(transport, 'sdlcPublish').mockImplementationOnce(async (f, w, m, s, c, repos) => {
       const out = await real(f, w, m, s, c, repos);
-      return out.map((r) => (r.repo === 'customer-portal' ? { repo: r.repo, outcome: { kind: 'failed' as const, error: 'gh: HTTP 502' } } : r));
+      return { ...out, results: out.results.map((r) => (r.repo === 'customer-portal' ? { repo: r.repo, outcome: { kind: 'failed' as const, error: 'gh: HTTP 502' } } : r)) };
     });
     await vm.act('declare-done');
     await vm.confirmDone();
@@ -292,7 +294,7 @@ describe('declaring done', () => {
     const { vm, transport } = await finished();
     const heads = vi.spyOn(transport, 'sdlcBuildHeads');
     await vm.act('declare-done');
-    expect(heads).toHaveBeenCalledWith(expect.anything(), ['commerce-docs', ...REPOS], BUILD);
+    expect(heads).toHaveBeenCalledWith(expect.anything(), 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
     expect(vm.doneReport()!.review).toMatchObject({ findings: expect.anything() });
   });
 
@@ -393,7 +395,7 @@ describe('declaring done from the build page', () => {
       return { ...got, repos: got.repos.map((r) => ({ ...r, firstUnfinished: null, state: { kind: 'done' as const }, finished: r.tasks })), tasks: got.tasks.map((t) => ({ ...t, row: { task: t.id, repo: t.repo, commits: [`${t.id.toLowerCase()}c0ffee`], departure: null } })), departures: [DEPARTURE] };
     });
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: RUN, kata: 'k', started_at: 1, isolation: 'none', steered: false, exit: 0 }]);
-    const heads = await transport.sdlcBuildHeads('', ['commerce-docs', ...REPOS], BUILD);
+    const heads = await transport.sdlcBuildHeads('', 'commerce-docs', 'commerce', ['commerce-docs', ...REPOS], BUILD);
     await transport.sdlcLinkRun({ workspace_id: 'acme-commerce', system: 'commerce', change: BUILD, stage: 'review', run_id: RUN, started_at: 1790000000, heads });
     const publish = vi.spyOn(transport, 'sdlcPublish');
     const { container, fixture } = await mountPage(BUILD, transport);
@@ -518,6 +520,20 @@ describe('declaring done reports progress', () => {
     expect(progress.view('lock')()).toBeNull();
   });
 
+  it('names the recorded branch in the push line (R7.1)', async () => {
+    const RECORDED = 'feat/PROJ-123-password-reset';
+    const { vm } = await finished((t) => {
+      const real = t.sdlcChangeRepos.bind(t);
+      vi.spyOn(t, 'sdlcChangeRepos').mockImplementation(async (...args) => (await real(...args)).map((r) => ({ ...r, branch: RECORDED })));
+    });
+    const begin = vi.spyOn(TestBed.inject(ProgressStore), 'begin');
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    const pushes = begin.mock.calls.filter((c) => c[0] === 'pushing').map((c) => c[1]);
+    expect(pushes).toEqual(expect.arrayContaining(REPOS.map((r) => `Pushing ${RECORDED} in ${r}`)));
+    expect(pushes.some((p) => p.includes('change/'))).toBe(false);
+  });
+
   it('a failed publish clears the progress line before it raises its error (R7.3)', async () => {
     const { vm, transport } = await finished();
     const progress = TestBed.inject(ProgressStore);
@@ -546,10 +562,10 @@ describe('lasting links after a publish or a round', () => {
     );
     const publish = vi.spyOn(transport, 'sdlcPublish').mockImplementation(async () => {
       published = true;
-      return [
+      return { leftBehind: [], results: [
         { repo: 'commerce-core', outcome: { kind: 'opened' as const, url: 'https://github.com/acme/commerce-core/pull/7' } },
         { repo: 'customer-portal', outcome: { kind: 'failed' as const, error: 'push refused' } },
-      ];
+      ] };
     });
     await vm.act('declare-done');
     await vm.confirmDone();
@@ -579,5 +595,82 @@ describe('lasting links after a publish or a round', () => {
     expect(vm.pullLinks().map((l) => l.repo)).toEqual(['commerce-core', 'customer-portal']);
     expect(vm.linksNote()).toBe('from the earlier declaration');
     expect(vm.actions()).toContain('declare-done');
+  });
+});
+
+describe('a branch name that is taken on GitHub', () => {
+  const CLASH = { repo: 'commerce-core', branch: 'feat/PROJ-123-reset' };
+  const NEW_NAME = 'feat/PROJ-123-password-reset';
+  const stepLabels = (steps: { mock: { calls: unknown[][] } }) =>
+    (steps.mock.calls.find((c) => c[0] === 'Declaring done')![1] as { label: string }[]).map((s) => s.label);
+
+  it('a GitHub clash holds confirming until renamed (R10.1)', async () => {
+    const { vm, transport, steps } = await finished();
+    const publish = vi.spyOn(transport, 'sdlcPublish');
+    const clashes = vi.spyOn(transport, 'sdlcRemoteClashes').mockResolvedValue([CLASH]);
+    await vm.act('declare-done');
+    const labels = stepLabels(steps);
+    expect(labels.indexOf('Branch is free on GitHub')).toBe(labels.indexOf('Origins are GitHub repositories') + 1);
+    expect(clashes).toHaveBeenCalledTimes(1);
+    expect(vm.doneReport()!.clashes).toEqual([CLASH]);
+    expect(canConfirm(vm.doneReport()!)).toBe(false);
+    await vm.confirmDone();
+    expect(publish).not.toHaveBeenCalled();
+    expect(vm.doneReport()).not.toBeNull();
+  });
+
+  it('with no clash the report lists none and the branch the repositories have (R10.1)', async () => {
+    const { vm } = await finished();
+    await vm.act('declare-done');
+    expect(vm.doneReport()!.clashes).toEqual([]);
+    expect(vm.doneReport()!.branch).toBe(`change/${BUILD}`);
+  });
+
+  it('after a rename the readiness runs again and confirming is offered, the review still current (R10.3)', async () => {
+    const { vm, transport } = await finished();
+    vi.spyOn(transport, 'sdlcRemoteClashes').mockResolvedValueOnce([CLASH]).mockResolvedValue([]);
+    const rename = vi.spyOn(transport, 'sdlcRenameBranch');
+    const runs = vi.spyOn(transport, 'sdlcRunChecks');
+    await vm.act('declare-done');
+    expect(canConfirm(vm.doneReport()!)).toBe(false);
+    const checksBefore = runs.mock.calls.length;
+    const renamed = vm.renameFromDone(CLASH.branch);
+    await vi.waitFor(() => expect(TestBed.inject(SdlcRunner).nameRequest()).not.toBeNull());
+    expect(TestBed.inject(SdlcRunner).nameRequest()!.rename).toBe(true);
+    await TestBed.inject(SdlcRunner).confirmName(NEW_NAME);
+    await renamed;
+    expect(rename).toHaveBeenCalledWith(vm.current()!.folder, vm.current()!.id, 'commerce-docs', 'commerce', BUILD, NEW_NAME);
+    expect(runs.mock.calls.length).toBeGreaterThan(checksBefore);
+    expect(vm.doneReport()!.clashes).toEqual([]);
+    expect(canConfirm(vm.doneReport()!)).toBe(true);
+  });
+
+  it('closing the rename dialog leaves the report as it was, held (R10.1)', async () => {
+    const { vm, transport } = await finished();
+    vi.spyOn(transport, 'sdlcRemoteClashes').mockResolvedValue([CLASH]);
+    await vm.act('declare-done');
+    const asked = vm.renameFromDone(CLASH.branch);
+    await vi.waitFor(() => expect(TestBed.inject(SdlcRunner).nameRequest()).not.toBeNull());
+    TestBed.inject(SdlcRunner).closeName();
+    await asked;
+    expect(vm.doneReport()!.clashes).toEqual([CLASH]);
+  });
+
+  it('a Clash publish result keeps what was pushed and lists what an earlier name left behind (R10.2, R10.4)', async () => {
+    const { vm, transport } = await finished();
+    const old: PrEntry = { repo: 'customer-portal', url: 'https://github.com/acme/customer-portal/pull/3', number: 3, branch: 'feat/PROJ-123-reset', pushedHead: 'abc', state: 'open', seenAt: 1 };
+    vi.spyOn(transport, 'sdlcPublish').mockResolvedValue({
+      leftBehind: [old],
+      results: [
+        { repo: 'commerce-docs', outcome: { kind: 'opened', url: 'https://github.com/acme/commerce-docs/pull/9' } },
+        { repo: 'commerce-core', outcome: { kind: 'clash', branch: 'feat/PROJ-123-reset' } },
+      ],
+    });
+    await vm.act('declare-done');
+    await vm.confirmDone();
+    expect(vm.prList()!.map((r) => r.outcome.kind)).toEqual(['opened', 'clash']);
+    expect(vm.prLeftBehind()).toEqual([old]);
+    vm.closePrList();
+    expect(vm.prLeftBehind()).toEqual([]);
   });
 });

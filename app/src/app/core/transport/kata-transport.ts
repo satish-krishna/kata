@@ -39,13 +39,23 @@ import type { PublishRepo } from '@bindings/PublishRepo';
 import type { Offender } from '@bindings/Offender';
 import type { ChecksPlan } from '@bindings/ChecksPlan';
 import type { RepoChecks } from '@bindings/RepoChecks';
-import type { PrResult } from '@bindings/PrResult';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { PrState } from '@bindings/PrState';
+import type { PublishSummary } from '@bindings/PublishSummary';
+import type { RemoteClash } from '@bindings/RemoteClash';
 import type { DoneView } from '@bindings/DoneView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
+
+/** A system's naming setting as the backend reads it: none declared, the patterns, or why they cannot be used. `reason` tells the failures apart. */
+export type NamingState =
+  | { kind: 'none' }
+  | { kind: 'setting'; branch: string; pullRequestTitle: string }
+  | { kind: 'error'; reason: 'unusable' | 'unreadable' | 'pluginTooOld' | 'pluginMissing' | 'name'; message: string };
+
+/** What a rename did: the old and new branch name and the repositories that had the branch. */
+export interface RenameResult { old: string; new: string; repos: string[] }
 
 /** The one seam between the Workbench and its backend. TauriTransport talks to
  *  the Rust commands; MockTransport stands in with fixtures and a scripted run
@@ -99,8 +109,20 @@ export abstract class KataTransport {
   /** `build` scopes the run to a build: only that change's build log rows are build log data. A run outside a build passes none. */
   abstract sdlcLeftovers(master: string, before: Snapshot, productRepos: string[], build?: BuildScope): Promise<Leftovers>;
   abstract sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope): Promise<void>;
-  abstract sdlcStartChange(master: string, base: string): Promise<string>;
-  abstract sdlcFinishChange(master: string, pending: string, base: string): Promise<FinishOutcome>;
+  abstract sdlcStartChange(master: string): Promise<string>;
+  abstract sdlcFinishChange(master: string, pending: string): Promise<FinishOutcome>;
+  /** The system's naming setting, or why it cannot be used. */
+  abstract sdlcNaming(folder: string, masterRepo: string, system: string): Promise<NamingState>;
+  /** The branch name the setting gives the change, or the reason it cannot be made. */
+  abstract sdlcSuggestBranch(folder: string, masterRepo: string, system: string, change: string, workType: string): Promise<string>;
+  /** Rename the pending branch to the engineer's chosen name and record it. */
+  abstract sdlcConfirmBranch(folder: string, masterRepo: string, system: string, change: string, pending: string, name: string, workType: string): Promise<FinishOutcome>;
+  /** Rename the change's branch in every repository that has it. Rejects while a build run is live. */
+  abstract sdlcRenameBranch(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, newName: string): Promise<RenameResult>;
+  /** Repositories where the change's branch name is already taken on GitHub by work this machine does not have. */
+  abstract sdlcRemoteClashes(touched: PublishRepo[], masterRepo: string, system: string, change: string): Promise<RemoteClash[]>;
+  /** Why the scope is not usable, one reason per entry; empty when it is accepted as typed. */
+  abstract sdlcCheckScope(folder: string, scope: string): Promise<string[]>;
   abstract sdlcCheckout(master: string, branch: string): Promise<void>;
   abstract sdlcDecide(master: string, system: string, change: string, decision: Decision, confirmed: boolean): Promise<DecideOutcome>;
   abstract sdlcRunLinks(): Promise<RunLink[]>;
@@ -124,7 +146,7 @@ export abstract class KataTransport {
   /** Who takes part in the build, where each is checked out and which uncommitted files each one owns. */
   abstract sdlcBuildParticipants(folder: string, masterRepo: string, system: string, change: string, pending?: string | null): Promise<Participant[]>;
   abstract sdlcBuildSettle(start: BuildStart): Promise<string[]>;
-  abstract sdlcBuildHeads(folder: string, repos: string[], change: string): Promise<Record<string, string>>;
+  abstract sdlcBuildHeads(folder: string, masterRepo: string, system: string, repos: string[], change: string): Promise<Record<string, string>>;
   /** Whether the ai-sdlc plugin is installed and new enough, as the backend decides it for the workspace folder. */
   abstract sdlcPluginReadiness(workdir: string | null): Promise<Readiness>;
   abstract sdlcChangeRepos(folder: string, masterRepo: string, system: string, change: string): Promise<ChangeRepo[]>;
@@ -142,12 +164,12 @@ export abstract class KataTransport {
   abstract sdlcRunChecks(folder: string, masterRepo: string, system: string, repo: PublishRepo): Promise<RepoChecks>;
   abstract sdlcGhSignedIn(repos: PublishRepo[]): Promise<string>;
   abstract sdlcGhOrigins(repos: PublishRepo[]): Promise<void>;
-  abstract sdlcPublish(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]): Promise<PrResult[]>;
+  abstract sdlcPublish(folder: string, workspaceId: string, masterRepo: string, system: string, change: string, repos: PublishRepo[]): Promise<PublishSummary>;
   /** Whether the change shows as done and with which pull request links, from what was saved. GitHub is asked only when nothing is saved and the build is finished. */
   abstract sdlcDoneView(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView>;
   /** Ask GitHub for the state of every saved pull request, save the answers, and return the new view. */
   abstract sdlcRefreshPrStates(folder: string, masterRepo: string, workspaceId: string, system: string, change: string, buildFinished: boolean): Promise<DoneView>;
-  abstract sdlcPullRequests(repos: PublishRepo[], change: string): Promise<PrState[]>;
+  abstract sdlcPullRequests(masterRepo: string, system: string, repos: PublishRepo[], change: string): Promise<PrState[]>;
   /** The build page's arrangement, one per mode and shared by every change. `{}` until one is saved. */
   abstract loadBuildLayout(): Promise<unknown>;
   abstract saveBuildLayout(layout: Record<string, unknown>): Promise<void>;

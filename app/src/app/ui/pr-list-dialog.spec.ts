@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import type { PrEntry } from '@bindings/PrEntry';
 import type { PrResult } from '@bindings/PrResult';
 import { render } from '../../testing/render';
 import { PrListDialog } from './pr-list-dialog';
@@ -65,5 +66,32 @@ describe('PrListDialog', () => {
   it('is closed while there are no results', async () => {
     await open(null);
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
+});
+
+describe('PrListDialog, a branch name clash and what was left behind', () => {
+  const entry = (repo: string, branch: string): PrEntry => ({ repo, url: url(repo), number: 7, branch, pushedHead: 'abc', state: 'open', seenAt: 1 });
+
+  it('a clash lists what was pushed with its links, the clashing repository and branch, and offers a new name (R10.2)', async () => {
+    const { fixture } = await render(PrListDialog, {
+      results: [opened('api'), { repo: 'kata', outcome: { kind: 'clash', branch: 'feat/PROJ-123-reset' } }] satisfies PrResult[],
+    });
+    await settle();
+    expect(dialog().querySelector<HTMLAnchorElement>('a')!.getAttribute('href')).toBe(url('api'));
+    expect(text()).toContain('feat/PROJ-123-reset');
+    expect(text()).toContain('kata');
+    expect(button('Retry')).toBeUndefined();
+    let branch: string | null = null;
+    fixture.componentInstance.renameBranch.subscribe((b: string) => (branch = b));
+    button('Pick a new branch name')!.click();
+    expect(branch).toBe('feat/PROJ-123-reset');
+  });
+
+  it('shows what an earlier branch name still holds on GitHub, with its link (R10.4)', async () => {
+    await render(PrListDialog, { results: [opened('api')], leftBehind: [entry('api', 'feat/PROJ-123-reset')] });
+    await settle();
+    expect(text()).toContain('api is still on GitHub under feat/PROJ-123-reset, close by hand');
+    const hrefs = Array.from(dialog().querySelectorAll<HTMLAnchorElement>('a')).map((a) => a.getAttribute('href'));
+    expect(hrefs).toEqual([url('api'), url('api')]);
   });
 });

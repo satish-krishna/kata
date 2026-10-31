@@ -69,6 +69,11 @@ pub enum PrepareOutcome {
         message: String,
         problems: Vec<Problem>,
     },
+    /// The change's branch already holds work from outside this change in `repo`: nothing was created.
+    BranchTaken {
+        repo: String,
+        branch: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -94,6 +99,9 @@ enum Action {
     Continue,
 }
 
+/// A repository's change branch holds work from outside the change.
+struct Taken;
+
 struct Classified {
     repo: String,
     path: PathBuf,
@@ -102,32 +110,39 @@ struct Classified {
 }
 
 /// Where one product repository stands, per the start table. Changes nothing. `dirty` is what the
-/// participants model read in its working tree.
+/// participants model read in its working tree. `Ok(Err(Taken))` means the branch holds work from
+/// outside the change.
+/// Whether the existing local `branch` holds work that is not the change's: the build refuses it
+/// and a rename leaves it alone.
+pub(crate) fn branch_is_foreign(
+    path: &Path,
+    repo: &str,
+    branch: &str,
+    scope: &str,
+) -> Result<bool, BuildError> {
+    let revs = build_work_revs(path, &format!("refs/heads/{branch}"))?;
+    Ok(!offenders_to(path, repo, &revs, scope)?.is_empty())
+}
+
 fn classify(
     path: &Path,
     repo: &str,
     branch: &str,
     scope: &str,
     dirty: &[String],
-) -> Result<(Classified, Option<RepoFiles>), BuildError> {
+) -> Result<Result<(Classified, Option<RepoFiles>), Taken>, BuildError> {
     let Some(base) = base_branch(path) else {
         return refuse(format!(
             "{repo} has no base branch: no origin/HEAD, main or master"
         ));
     };
     let exists = branch_exists(path, branch);
-    if exists {
-        let tip = format!("refs/heads/{branch}");
-        let revs = build_work_revs(path, &tip)?;
-        if !offenders_to(path, repo, &revs, scope)?.is_empty() {
-            return refuse(format!(
-                "{repo} already has a branch {branch} holding work from outside this change"
-            ));
-        }
+    if exists && branch_is_foreign(path, repo, branch, scope)? {
+        return Ok(Err(Taken));
     }
     let current = current_branch(path);
     let done = |action, leftovers| {
-        (
+        Ok(Ok((
             Classified {
                 repo: repo.to_string(),
                 path: path.to_path_buf(),
@@ -135,7 +150,7 @@ fn classify(
                 action,
             },
             leftovers,
-        )
+        )))
     };
     match current.as_deref() {
         Some(c) if c == branch => {
@@ -143,7 +158,7 @@ fn classify(
                 repo: repo.to_string(),
                 files: dirty.to_vec(),
             });
-            Ok(done(Action::Continue, leftovers))
+            done(Action::Continue, leftovers)
         }
         Some(c) if c == base => {
             if !dirty.is_empty() {
@@ -157,7 +172,7 @@ fn classify(
             } else {
                 Action::Create
             };
-            Ok(done(action, None))
+            done(action, None)
         }
         other => refuse(format!(
             "{repo} is on branch {}; switch it to {base} first",
@@ -190,7 +205,7 @@ pub fn prepare(
         ));
     }
     let master = folder.join(master_repo);
-    let branch = format!("change/{change}");
+    let branch = recorded_branch(&master, system, change)?;
     if !branch_exists(&master, &branch) {
         return refuse(format!("the master repo has no branch {branch}"));
     }
@@ -273,7 +288,13 @@ pub fn prepare(
             take(&p.repo, Vec::new());
             continue;
         }
-        let (c, files) = classify(Path::new(&p.path), &p.repo, &branch, &scope, &p.files)?;
+        let Ok((c, files)) = classify(Path::new(&p.path), &p.repo, &branch, &scope, &p.files)?
+        else {
+            return Ok(PrepareOutcome::BranchTaken {
+                repo: p.repo.clone(),
+                branch,
+            });
+        };
         take(&p.repo, files.map(|f| f.files).unwrap_or_default());
         classified.push(c);
     }
@@ -344,16 +365,37 @@ pub fn settle(start: &BuildStart) -> Result<Vec<String>, BuildError> {
     Ok(gone)
 }
 
-/// The commit each repository's `change/<change>` points at. A repository without that branch
-/// is left out.
+/// The change's branch name, from its record or else `change/<change>`, as a refusal.
+pub(crate) fn recorded_branch(
+    master: &Path,
+    system: &str,
+    change: &str,
+) -> Result<String, BuildError> {
+    crate::branch_record::change_branch(master, system, change)
+        .map_err(|e| BuildError::Refused(e.to_string()))
+}
+
+/// The commit each repository's recorded change branch points at. A repository without that
+/// branch is left out.
 pub fn heads(
     folder: &Path,
+    master_repo: &str,
+    system: &str,
     repos: &[String],
     change: &str,
 ) -> Result<BTreeMap<String, String>, BuildError> {
     if !is_change_name(change) {
         return refuse(format!("invalid change name: {change}"));
     }
+    // An empty master or system (a caller that has neither yet) reads no record.
+    if (!master_repo.is_empty() && !is_safe_system(master_repo))
+        || (!system.is_empty() && !is_safe_system(system))
+    {
+        return refuse(format!(
+            "invalid master repository or system name: {master_repo}, {system}"
+        ));
+    }
+    let branch = recorded_branch(&folder.join(master_repo), system, change)?;
     let mut out = BTreeMap::new();
     for repo in repos {
         if !is_safe_system(repo) {
@@ -361,10 +403,10 @@ pub fn heads(
         }
         let path = folder.join(repo);
         // settle removed the branch of a repository the build never changed (R10.1).
-        if !branch_exists(&path, &format!("change/{change}")) {
+        if !branch_exists(&path, &branch) {
             continue;
         }
-        let head = git::Repo::open(&path)?.resolve(&format!("refs/heads/change/{change}"))?;
+        let head = git::Repo::open(&path)?.resolve(&format!("refs/heads/{branch}"))?;
         out.insert(repo.clone(), head);
     }
     Ok(out)
@@ -615,10 +657,9 @@ mod tests {
         let fx = fixture();
         someone_else(&fx);
         let before = state(&fx);
-        let msg = refusal(prep(&fx, false));
         assert_eq!(
-            msg,
-            format!("api already has a branch change/{C} holding work from outside this change")
+            taken(prep(&fx, false)),
+            ("api".to_string(), format!("change/{C}"))
         );
         assert_eq!(state(&fx), before);
 
@@ -627,8 +668,98 @@ mod tests {
         someone_else(&fx);
         testutil::checkout(&fx.repo("api"), &format!("change/{C}"), false);
         let before = state(&fx);
-        assert!(refusal(prep(&fx, false)).contains("holding work from outside this change"));
+        assert_eq!(
+            taken(prep(&fx, false)),
+            ("api".to_string(), format!("change/{C}"))
+        );
         assert_eq!(state(&fx), before);
+    }
+
+    fn taken(out: Result<PrepareOutcome, BuildError>) -> (String, String) {
+        match out {
+            Ok(PrepareOutcome::BranchTaken { repo, branch }) => (repo, branch),
+            other => panic!("expected BranchTaken, got {other:?}"),
+        }
+    }
+
+    /// `kata` holds `feat/PROJ-123-reset` beside the master, which records the same branch.
+    fn kata_fixture(commits: &[(&str, &str)]) -> Fx {
+        let fx = fixture_with(&[("T1", "kata")], &["kata"], &["kata"]);
+        record_on_master(&fx, "feat/PROJ-123-reset");
+        let kata = fx.repo("kata");
+        testutil::checkout(&kata, "feat/PROJ-123-reset", true);
+        for (i, (file, msg)) in commits.iter().enumerate() {
+            testutil::commit_msg(&kata, file, &format!("{i}\n"), msg);
+        }
+        testutil::checkout(&kata, "main", false);
+        fx
+    }
+
+    fn branches(fx: &Fx) -> Vec<(String, String, String)> {
+        ["m", "kata"]
+            .iter()
+            .map(|r| {
+                let p = fx.repo(r);
+                (
+                    r.to_string(),
+                    branch_of(&p),
+                    git::run(&p, &["branch", "--format=%(refname:short) %(objectname)"]).unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn prepare_returns_branch_taken_and_touches_nothing_r9_1() {
+        let fx = kata_fixture(&[("theirs.txt", "wip: my own thing")]);
+        let before = branches(&fx);
+        assert_eq!(
+            taken(prep(&fx, false)),
+            ("kata".to_string(), "feat/PROJ-123-reset".to_string())
+        );
+        assert_eq!(branches(&fx), before);
+    }
+
+    #[test]
+    fn rename_after_a_build_refusal_lets_the_build_start_r9_2() {
+        let fx = kata_fixture(&[("theirs.txt", "wip: my own thing")]);
+        let old = "feat/PROJ-123-reset";
+        let new = "feat/PROJ-123-password-reset";
+        let tip = git::run(&fx.repo("kata"), &["rev-parse", old]).unwrap();
+        assert_eq!(
+            taken(prep(&fx, false)),
+            ("kata".to_string(), old.to_string())
+        );
+
+        let plugin = crate::plugin::Readiness::Ready {
+            dir: testutil::plugin_dir().to_path_buf(),
+            version: crate::plugin::NAMING_VERSION.to_string(),
+            layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
+            light_track: true,
+            naming: crate::plugin::naming(crate::plugin::NAMING_VERSION),
+        };
+        let out = crate::branch_record::rename(&plugin, &fx.folder, "m", S, C, new).unwrap();
+        assert!(out.repos.is_empty());
+
+        // The other work's branch is untouched and no new-name branch appears beside it.
+        let kata = fx.repo("kata");
+        assert_eq!(git::run(&kata, &["rev-parse", old]).unwrap(), tip);
+        assert!(!branch_exists(&kata, new));
+
+        let start = ready(prep(&fx, false));
+        let started = start.repos.iter().find(|r| r.repo == "kata").unwrap();
+        assert!(started.created);
+        assert_eq!(started.branch, new);
+        assert_eq!(git::run(&kata, &["rev-parse", old]).unwrap(), tip);
+    }
+
+    #[test]
+    fn prepare_reuses_a_branch_the_change_owns_r9_3() {
+        let fx = kata_fixture(&[("own.txt", OWN)]);
+        let start = ready(prep(&fx, false));
+        let kata = start.repos.iter().find(|r| r.repo == "kata").unwrap();
+        assert!(!kata.created);
+        assert_eq!(kata.branch, "feat/PROJ-123-reset");
     }
 
     #[test]
@@ -997,13 +1128,13 @@ mod tests {
         let fx = fixture();
         ready(prep(&fx, false));
         testutil::commit_msg(&fx.repo("app"), "a.txt", "a\n", OWN);
-        let got = heads(&fx.folder, &["app".into(), "api".into()], C).unwrap();
+        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
         for r in ["app", "api"] {
             let want = git::run(&fx.repo(r), &["rev-parse", &format!("change/{C}")]).unwrap();
             assert_eq!(got[r], want);
         }
         assert_ne!(got["app"], got["api"]);
-        assert!(heads(&fx.folder, &["../x".into()], C).is_err());
+        assert!(heads(&fx.folder, "m", S, &["../x".into()], C).is_err());
     }
 
     #[test]
@@ -1098,7 +1229,7 @@ mod tests {
         let start = ready(prep(&fx, false));
         testutil::commit_msg(&fx.repo("app"), "a.txt", "a\n", OWN);
         assert_eq!(settle(&start).unwrap(), ["api"]);
-        let got = heads(&fx.folder, &["app".into(), "api".into()], C).unwrap();
+        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
         let want = git::run(&fx.repo("app"), &["rev-parse", &format!("change/{C}")]).unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got["app"], want);
@@ -1112,5 +1243,141 @@ mod tests {
         let gone = settle(&start).unwrap();
         assert_eq!(gone, ["app"]);
         assert!(has_branch(&fx.repo("api")));
+    }
+
+    const RECORDED: &str = "feat/PROJ-123-password-reset";
+
+    /// Commit a `branch.md` naming `branch` on the master and put the master on that branch.
+    fn record_on_master(fx: &Fx, branch: &str) {
+        testutil::commit_file(
+            &fx.master,
+            &format!("intent/{S}/{C}/branch.md"),
+            &format!(
+                "---
+branch: {branch}
+type: feat
+---
+
+Kata writes this file.
+"
+            ),
+            "name branch",
+        );
+        testutil::checkout(&fx.master, branch, true);
+    }
+
+    /// A `change/<C>` branch at the base in each product repository, the name a wrong consumer
+    /// would look for.
+    fn decoys(fx: &Fx) {
+        for r in ["app", "api"] {
+            git::run(&fx.repo(r), &["branch", &format!("change/{C}"), "main"]).unwrap();
+        }
+    }
+
+    #[test]
+    fn resolver_reads_record_else_change_folder_r8_1() {
+        let fx = fixture();
+        let want = |c: &str| crate::branch_record::change_branch(&fx.master, S, c).unwrap();
+        assert_eq!(
+            want("2026-10-19-photo-upload"),
+            "change/2026-10-19-photo-upload"
+        );
+        testutil::commit_file(
+            &fx.master,
+            &format!("intent/{S}/2026-11-02-password-reset/branch.md"),
+            &format!(
+                "---
+branch: {RECORDED}
+---
+
+Kata writes this file.
+"
+            ),
+            "name branch",
+        );
+        assert_eq!(want("2026-11-02-password-reset"), RECORDED);
+    }
+
+    #[test]
+    fn every_consumer_uses_the_recorded_branch_r7_1() {
+        let fx = fixture();
+        record_on_master(&fx, RECORDED);
+        decoys(&fx);
+        let start = ready(prep(&fx, false));
+        assert_eq!(start.master.branch, RECORDED);
+        for r in &start.repos {
+            assert_eq!(r.branch, RECORDED, "{}", r.repo);
+            assert!(r.created, "{}", r.repo);
+            assert_eq!(branch_of(&fx.repo(&r.repo)), RECORDED);
+        }
+        // The decoy was not the branch prepare used.
+        let decoy = git::run(&fx.repo("app"), &["rev-parse", &format!("change/{C}")]).unwrap();
+        let main = git::run(&fx.repo("app"), &["rev-parse", "main"]).unwrap();
+        assert_eq!(decoy, main);
+        testutil::commit_msg(
+            &fx.repo("app"),
+            "a.txt",
+            "a
+",
+            OWN,
+        );
+        let got = heads(&fx.folder, "m", S, &["app".into(), "api".into()], C).unwrap();
+        let want = git::run(&fx.repo("app"), &["rev-parse", RECORDED]).unwrap();
+        assert_eq!(got["app"], want);
+        assert_ne!(got["app"], decoy);
+        assert!(crate::participants::missing_change_branches(
+            testutil::plugin_dir(),
+            &fx.folder,
+            "m",
+            S,
+            C
+        )
+        .unwrap()
+        .is_empty());
+    }
+
+    #[test]
+    fn renamed_by_hand_is_reported_missing_not_searched_r8_3() {
+        let fx = fixture();
+        record_on_master(&fx, RECORDED);
+        ready(prep(&fx, false));
+        git::run(
+            &fx.repo("app"),
+            &["branch", "-m", RECORDED, "feat/PROJ-123-other"],
+        )
+        .unwrap();
+        assert_eq!(
+            crate::participants::missing_change_branches(
+                testutil::plugin_dir(),
+                &fx.folder,
+                "m",
+                S,
+                C
+            )
+            .unwrap(),
+            ["app"]
+        );
+    }
+
+    #[test]
+    fn a_refusal_names_the_recorded_branch() {
+        let fx = fixture();
+        testutil::commit_file(
+            &fx.master,
+            &format!("intent/{S}/{C}/branch.md"),
+            &format!(
+                "---
+branch: {RECORDED}
+---
+
+Kata writes this file.
+"
+            ),
+            "name branch",
+        );
+        assert_eq!(
+            refusal(prep(&fx, false)),
+            format!("the master repo has no branch {RECORDED}")
+        );
     }
 }

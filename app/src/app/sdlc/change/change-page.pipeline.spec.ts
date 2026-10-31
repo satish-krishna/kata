@@ -100,6 +100,55 @@ describe('ChangePage: the full pipeline instead of a drafted fix', () => {
     expect(newChange.mock.invocationCallOrder[0]).toBeLessThan(decide.mock.invocationCallOrder[0]);
   });
 
+  describe('the naming setting is read before the new change starts (R3.2)', () => {
+    it.each([
+      ['unusable', { kind: 'error' as const, reason: 'unusable' as const, message: 'the branch pattern has no {slug}' }, 'the branch pattern has no {slug}'],
+      ['newer plugin', { kind: 'error' as const, reason: 'pluginTooOld' as const, message: 'needs plugin 0.14.0' }, 'needs plugin 0.14.0'],
+    ])('a setting that is %s starts nothing and names the problem', async (_n, answer, text) => {
+      const { container, transport, decide, newChange, error } = await mountFix();
+      vi.spyOn(transport, 'sdlcNaming').mockResolvedValue(answer as never);
+      await take(container);
+      await start();
+      await settle();
+      expect(newChange).not.toHaveBeenCalled();
+      expect(decide).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(`Naming for commerce cannot be used: ${text}`));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('until then no change can start here'));
+    });
+
+    it('names the base branch the backend resolves, not a stored one', async () => {
+      const { container, transport, error } = await mountFix();
+      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: FIX_BRANCH, others: [], default_base: 'develop', pending_change: null });
+      vi.spyOn(transport, 'sdlcNaming').mockResolvedValue({ kind: 'error', reason: 'unusable', message: 'no {slug}' } as never);
+      await take(container);
+      await start();
+      await settle();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('committed to develop;'));
+    });
+
+    it('a setting that cannot be read starts nothing and names the problem', async () => {
+      const { container, transport, newChange, error } = await mountFix();
+      vi.spyOn(transport, 'sdlcNaming').mockRejectedValue(new Error('ipc down'));
+      await take(container);
+      await start();
+      await settle();
+      expect(newChange).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('Naming for commerce cannot be used: ipc down'));
+    });
+
+    it.each([
+      ['no setting', { kind: 'none' as const }],
+      ['a usable setting', { kind: 'setting' as const, pullRequestTitle: '{type}({scope}): {title}', branch: '{type}/{scope}-{slug}' }],
+    ])('%s still starts the change as before', async (_n, answer) => {
+      const { container, transport, decide, newChange } = await mountFix();
+      vi.spyOn(transport, 'sdlcNaming').mockResolvedValue(answer as never);
+      await take(container);
+      await start();
+      await vi.waitFor(() => expect(decide).toHaveBeenCalledTimes(1));
+      expect(newChange).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it.each([
     ['refused', { kind: 'refused' as const }],
     ['stopped', { kind: 'stopped' as const }],

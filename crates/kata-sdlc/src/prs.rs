@@ -2,7 +2,7 @@
 //! shows as done and with which links. Kata keeps no credential here.
 use crate::git;
 use crate::github::{ApiError, GitHubHosts, PullState};
-use crate::publish::{open_pull_requests, touched_repos, PrState, PublishRepo};
+use crate::publish::{branch_in, open_pull_requests, touched_repos, PrState, PublishRepo};
 use crate::store;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -28,6 +28,10 @@ pub struct PrEntry {
     pub url: String,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub number: u64,
+    /// The branch the pull request was opened from; a record saved before branches could be
+    /// renamed has none, and `store::load_pr_records` reads it as `change/<change>`.
+    #[serde(default)]
+    pub branch: String,
     /// The commit the change branch was pushed at.
     pub pushed_head: String,
     pub state: PrStateKind,
@@ -49,6 +53,10 @@ pub struct PrRecord {
     #[cfg_attr(feature = "ts", ts(type = "number | null"))]
     pub declared_at: Option<u64>,
     pub repos: Vec<PrEntry>,
+    /// Pull requests opened under a branch name the change no longer uses. Kata lists them so the
+    /// engineer can close them by hand; it never closes them.
+    #[serde(default)]
+    pub left_behind: Vec<PrEntry>,
 }
 
 impl PrRecord {
@@ -60,6 +68,20 @@ impl PrRecord {
             change: change.into(),
             declared_at: None,
             repos: Vec::new(),
+            left_behind: Vec::new(),
+        }
+    }
+
+    /// Move every entry opened from a branch other than `current_branch` into `left_behind`, and
+    /// clear `declared_at` when any moved: the change is no longer declared under its new name.
+    pub fn retire(&mut self, current_branch: &str) {
+        let (keep, moved): (Vec<PrEntry>, Vec<PrEntry>) = std::mem::take(&mut self.repos)
+            .into_iter()
+            .partition(|e| e.branch == current_branch);
+        self.repos = keep;
+        if !moved.is_empty() {
+            self.declared_at = None;
+            self.left_behind.extend(moved);
         }
     }
 }
@@ -191,8 +213,14 @@ pub fn done_view(
 }
 
 /// The touched repositories of `repos` and where `change/<change>` points in each.
-pub fn branch_facts(repos: &[PublishRepo], change: &str) -> BranchFacts {
-    let tip = format!("refs/heads/change/{change}");
+pub fn branch_facts(
+    master: &str,
+    system: &str,
+    repos: &[PublishRepo],
+    change: &str,
+) -> BranchFacts {
+    let branch = branch_in(repos, master, system, change).unwrap_or_default();
+    let tip = format!("refs/heads/{branch}");
     BranchFacts {
         touched: repos.iter().map(|r| r.repo.clone()).collect(),
         heads: repos
@@ -222,13 +250,13 @@ pub fn done_view_for(
     let record = saved_record(workspace_id, system, change);
     let asked = record.as_ref().is_some_and(|r| !r.repos.is_empty());
     let legacy = if !asked && build_finished {
-        open_pull_requests(hosts, &repos, change).ok()
+        open_pull_requests(hosts, master_repo, system, &repos, change).ok()
     } else {
         None
     };
     Ok(done_view(
         record.as_ref(),
-        &branch_facts(&repos, change),
+        &branch_facts(master_repo, system, &repos, change),
         build_finished,
         legacy.as_deref(),
     ))
@@ -327,6 +355,7 @@ mod tests {
     use super::*;
     use crate::git;
     use crate::github::FakeGitHub;
+    use crate::plugin::Readiness;
     use crate::publish::tests::{all, fixture, on_github};
     use crate::publish::{publish, PrOutcome, Recorder};
     use crate::store;
@@ -358,6 +387,7 @@ mod tests {
             repo: repo.into(),
             url: format!("https://github.com/o/{repo}/pull/1"),
             number: 1,
+            branch: "change/c".into(),
             pushed_head: format!("head-{repo}"),
             state,
             seen_at,
@@ -387,6 +417,7 @@ mod tests {
             change: "c".into(),
             declared_at: declared.then_some(50),
             repos: entries.to_vec(),
+            left_behind: Vec::new(),
         }
     }
 
@@ -421,6 +452,35 @@ mod tests {
             repo: repo.into(),
             url: open.then(|| format!("https://github.com/o/{repo}/pull/1")),
         }
+    }
+
+    #[test]
+    fn retire_moves_old_entries() {
+        let on = |repo: &str, branch: &str| PrEntry {
+            branch: branch.into(),
+            ..entry(repo, PrStateKind::Open, 7)
+        };
+        let mut rec = record(
+            &[
+                on("api", "feat/old"),
+                on("kata", "feat/old"),
+                on("m", "feat/new"),
+            ],
+            true,
+        );
+        rec.retire("feat/new");
+        assert_eq!(rec.repos, vec![on("m", "feat/new")]);
+        assert_eq!(
+            rec.left_behind,
+            vec![on("api", "feat/old"), on("kata", "feat/old")]
+        );
+        assert_eq!(rec.declared_at, None);
+
+        // Nothing to retire leaves a declared change declared.
+        let mut same = record(&[on("m", "feat/new")], true);
+        same.retire("feat/new");
+        assert_eq!(same.declared_at, Some(50));
+        assert!(same.left_behind.is_empty());
     }
 
     #[test]
@@ -658,13 +718,15 @@ mod tests {
         );
         let results = publish(
             &gh,
+            &Readiness::Missing,
             "m",
             "s",
             CHANGE,
             &repos,
             &mut Recorder::stored("w1", "s", CHANGE),
             &mut |_| {},
-        );
+        )
+        .results;
         assert!(matches!(results[1].outcome, PrOutcome::Failed { .. }));
         let rec = saved();
         let names: Vec<&str> = rec.repos.iter().map(|e| e.repo.as_str()).collect();
@@ -688,6 +750,7 @@ mod tests {
         let gh = FakeGitHub::default().open_pull("app", 1).open_pull("m", 2);
         publish(
             &gh,
+            &Readiness::Missing,
             "m",
             "s",
             CHANGE,

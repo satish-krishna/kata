@@ -64,6 +64,13 @@ impl<C> RunTable<C> {
         self.runs.get_mut(&id)
     }
 
+    /// Whether any live run belongs to `group`.
+    pub fn group_live(&self, group: &str) -> bool {
+        self.runs
+            .values()
+            .any(|r| r.group.as_deref() == Some(group))
+    }
+
     pub fn is_live(&self, id: u64) -> bool {
         self.runs.contains_key(&id)
     }
@@ -108,6 +115,14 @@ mod tests {
             group: group.map(str::to_string),
             child: None,
         }
+    }
+
+    #[test]
+    fn group_live_sees_only_runs_of_that_group() {
+        let mut t = RunTable::<()>::default();
+        t.insert(live(1, r"D:wsapp", Some("build:s/c")));
+        assert!(t.group_live("build:s/c"));
+        assert!(!t.group_live("build:s/other"));
     }
 
     #[test]

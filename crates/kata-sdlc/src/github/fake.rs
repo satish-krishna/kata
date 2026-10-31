@@ -13,6 +13,8 @@ struct FakeState {
     repo_answer: Option<ApiError>,
     list_error: Option<ApiError>,
     open: HashMap<String, u64>,
+    tips: HashMap<String, String>,
+    tip_error: Option<ApiError>,
     create_errors: HashMap<String, ApiError>,
     no_credential: Vec<String>,
     calls: Vec<String>,
@@ -40,6 +42,20 @@ impl FakeGitHub {
     /// The repository already has this open pull request for the change branch.
     pub(crate) fn open_pull(self, repo: &str, number: u64) -> Self {
         self.0.lock().unwrap().open.insert(repo.to_string(), number);
+        self
+    }
+    /// GitHub has this branch in the repository, pointing at `sha`.
+    pub(crate) fn branch_at(self, repo: &str, sha: &str) -> Self {
+        self.0
+            .lock()
+            .unwrap()
+            .tips
+            .insert(repo.to_string(), sha.to_string());
+        self
+    }
+    /// Asking GitHub for any branch fails.
+    pub(crate) fn branch_lookup_fails(self, error: ApiError) -> Self {
+        self.0.lock().unwrap().tip_error = Some(error);
         self
     }
     pub(crate) fn create_fails(self, repo: &str, error: ApiError) -> Self {
@@ -137,6 +153,14 @@ impl GitHub for FakeGitHub {
         s.calls.push(format!("edit_pull_body {name} {number}"));
         s.bodies.push((name.to_string(), body.to_string()));
         Ok(())
+    }
+    fn branch_tip(&self, _o: &str, name: &str, branch: &str) -> Result<Option<String>, ApiError> {
+        let mut s = self.0.lock().unwrap();
+        s.calls.push(format!("branch_tip {name} {branch}"));
+        if let Some(e) = s.tip_error.clone() {
+            return Err(e);
+        }
+        Ok(s.tips.get(name).cloned())
     }
     fn pull_state(&self, _o: &str, name: &str, number: u64) -> Result<PullState, ApiError> {
         let mut s = self.0.lock().unwrap();

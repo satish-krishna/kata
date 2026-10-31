@@ -47,6 +47,14 @@ describe('ChangesTable', () => {
     expect(group.querySelectorAll('.k-status').length).toBe(0);
   });
 
+  it('tags an other branch that needs a name', async () => {
+    const { container } = await render(ChangesTable, { rows: [], others: ['2026-11-02-password-reset', '2026-10-17-product-notes'], needsName: ['2026-11-02-password-reset'] });
+    const tags = container.querySelectorAll('[data-testid="needs-name"]');
+    expect(tags.length).toBe(1);
+    expect(tags[0].textContent).toContain('Branch needs a name');
+    expect(tags[0].previousElementSibling!.textContent).toContain('2026-11-02-password-reset');
+  });
+
   it('omits the other-branches group when there are none', async () => {
     const { container } = await render(ChangesTable, { rows: [staged('c1', 'plan-ready')], others: [], lastRuns: {} });
     expect(container.querySelector('[data-testid="other-branches"]')).toBeNull();

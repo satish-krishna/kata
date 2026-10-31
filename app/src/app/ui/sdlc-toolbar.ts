@@ -21,6 +21,8 @@ export class SdlcToolbar {
   readonly missing = input<string[]>([]);
   /** The master repo's checked-out branch, shown in mono so nobody is surprised where a commit lands. */
   readonly branch = input.required<string | null>();
+  /** The branch the change lives on, when it is not change/<change>; the warning names it. */
+  readonly changeBranch = input<string | null>(null);
   /** Crumbs after the workspace name. */
   readonly crumbs = input<string[]>([]);
   /** A tag beside the crumbs, such as `fix` for a change on the light track; none when null. */
@@ -35,7 +37,7 @@ export class SdlcToolbar {
   /** The chip's title and accessible name: the full branch, and on a change page the branch it should be on, so the icon form says all the text does. */
   protected readonly branchLabel = computed(() => {
     const change = this.crumbs()[0];
-    return `Master repository is on ${this.branch()}${change ? `, not change/${change}` : ''}`;
+    return `Master repository is on ${this.branch()}${change ? `, not ${this.changeBranch() ?? `change/${change}`}` : ''}`;
   });
 
   readonly switchMode = output<void>();

@@ -802,11 +802,62 @@ describe('ChangePageViewModel', () => {
 
     it('hides the branch chip when the master repository is on the change branch', async () => {
       const transport = new MockTransport();
-      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: `change/${PHOTOS_CHANGE}`, others: [], default_base: 'main' });
+      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current: `change/${PHOTOS_CHANGE}`, others: [], default_base: 'main', pending_change: null });
       const { vm } = setup(PHOTOS_CHANGE, transport);
       await ready(vm);
       expect(vm.masterBranch()).toBe(`change/${PHOTOS_CHANGE}`);
       expect(vm.branchChip()).toBeNull();
+    });
+
+    describe('a change on a recorded branch (R7.1)', () => {
+      const RECORDED = 'feat/PROJ-123-password-reset';
+      const recorded = (current: string) => {
+        const transport = new MockTransport();
+        vi.spyOn(transport, 'sdlcBranches').mockResolvedValue({ current, others: [], default_base: 'main', pending_change: null });
+        const real = transport.sdlcChangeRepos.bind(transport);
+        vi.spyOn(transport, 'sdlcChangeRepos').mockImplementation(async (...args) => (await real(...args)).map((r) => ({ ...r, branch: RECORDED })));
+        return transport;
+      };
+
+      it('hides the branch chip when the master repository is on the recorded branch', async () => {
+        const { vm } = setup(PHOTOS_CHANGE, recorded(RECORDED));
+        await ready(vm);
+        expect(vm.masterBranch()).toBe(RECORDED);
+        expect(vm.branchChip()).toBeNull();
+        expect(vm.expectedBranch()).toBe(RECORDED);
+      });
+
+      it('names the recorded branch as expected when the master repository is on another branch', async () => {
+        const { vm } = setup(PHOTOS_CHANGE, recorded('main'));
+        await ready(vm);
+        expect(vm.branchChip()).toBe('main');
+        expect(vm.expectedBranch()).toBe(RECORDED);
+      });
+
+      it('expects change/<change> for a change with no record', async () => {
+        const { vm } = setup(PHOTOS_CHANGE);
+        await ready(vm);
+        expect(vm.expectedBranch()).toBe(`change/${PHOTOS_CHANGE}`);
+      });
+    });
+
+    const pendingBranches = (pending_change: string | null) => ({ current: 'change/pending-20261102T000000Z', others: [], default_base: 'main', pending_change });
+
+    it('does not ask another change for a name while the master stands on a pending branch (R6.6)', async () => {
+      const transport = new MockTransport();
+      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue(pendingBranches('commerce/2026-11-02-password-reset'));
+      const { vm } = setup(PHOTOS_CHANGE, transport);
+      await ready(vm);
+      expect(vm.masterBranch()).toBe('change/pending-20261102T000000Z');
+      expect(vm.needsName()).toBe(false);
+    });
+
+    it('asks the change the pending branch created for a name (R6.6)', async () => {
+      const transport = new MockTransport();
+      vi.spyOn(transport, 'sdlcBranches').mockResolvedValue(pendingBranches(`commerce/${PHOTOS_CHANGE}`));
+      const { vm } = setup(PHOTOS_CHANGE, transport);
+      await ready(vm);
+      expect(vm.needsName()).toBe(true);
     });
 
     it('reads the strip status from the open document front matter', async () => {

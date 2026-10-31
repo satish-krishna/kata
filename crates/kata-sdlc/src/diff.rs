@@ -276,6 +276,7 @@ fn show(repo: &Path, rev: &str, rel: &str) -> Result<String, GitError> {
         .map(|bytes| lossy(&bytes))
         .ok_or_else(|| GitError {
             args: format!("show {rev}:{rel}"),
+            rejected_by_remote: false,
             stderr: format!("path '{rel}' does not exist in '{rev}'"),
         })
 }

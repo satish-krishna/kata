@@ -4,7 +4,7 @@
 //! repositories itself.
 #![allow(clippy::disallowed_methods)]
 use kata_sdlc::branch;
-use kata_sdlc::changes::other_change_branches;
+use kata_sdlc::changes::{other_change_branches, OtherBranch};
 use kata_sdlc::git::{Repo, StatusEntry};
 use kata_sdlc::pins;
 use std::path::{Path, PathBuf};
@@ -672,22 +672,25 @@ fn documents_branch_reads_equal_the_cli() {
                 )
                 .is_ok()
             })
-            .map(str::to_string)
-            .or(cur.clone());
-        assert_eq!(branch::default_base(&fx.path), default, "{name}");
+            .map(str::to_string);
+        assert_eq!(base::base_branch(&fx.path), default, "{name}");
         let listed = cli(
             &fx.path,
             &["branch", "--list", "change/*", "--format=%(refname:short)"],
         )
         .map(|o| String::from_utf8_lossy(&o).into_owned())
         .unwrap_or_default();
-        let others: Vec<String> = listed
+        let others: Vec<OtherBranch> = listed
             .lines()
             .map(str::trim)
             .filter(|b| !b.is_empty() && Some(*b) != cur.as_deref())
             .filter_map(|b| b.strip_prefix("change/"))
             .filter(|b| !b.starts_with("pending-"))
-            .map(str::to_string)
+            .map(|c| OtherBranch {
+                branch: format!("change/{c}"),
+                change: c.to_string(),
+                needs_name: false,
+            })
             .collect();
         assert_eq!(other_change_branches(&fx.path), others, "{name}");
     }

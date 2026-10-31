@@ -3,4 +3,4 @@
 /**
  * What became of a pending branch once its run finished.
  */
-export type FinishOutcome = { "renamed": { branch: string, change: string, } } | "deleted";
+export type FinishOutcome = { "renamed": { branch: string, change: string, } } | "deleted" | { "needs-name": { pending: string, system: string, change: string, } };

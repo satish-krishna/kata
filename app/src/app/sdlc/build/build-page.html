@@ -11,7 +11,7 @@
     }
     <span class="k-bp__actions">
       @for (a of view().actions; track a) {
-        <button hlmBtn size="sm" type="button" [variant]="primary() === a ? 'primary' : 'secondary'" (click)="press(a)">{{ labelOf(a) }}</button>
+        <button hlmBtn size="sm" type="button" [variant]="primary() === a ? 'primary' : 'secondary'" [disabled]="holdBuild() && a !== 'cancel-build'" [attr.title]="holdBuild() && a !== 'cancel-build' ? 'Name the branch first.' : null" (click)="press(a)">{{ labelOf(a) }}</button>
       }
       @for (e of extras(); track e.action) {
         <button hlmBtn size="sm" type="button" variant="secondary" [disabled]="e.disabled" [attr.title]="e.title" (click)="press(e.action)">{{ labelOf(e.action) }}</button>

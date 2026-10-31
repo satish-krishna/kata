@@ -184,3 +184,35 @@ fn a_master_that_gained_a_product_commit_after_the_review_lists_its_files() {
         serde_json::json!(["plugin/check.mjs"])
     );
 }
+
+#[test]
+fn review_stays_current_after_a_rename_r10_3() {
+    use kata_sdlc::branch_record::{self, BranchRecord, RecordVerb};
+    let tmp = tempfile::tempdir().unwrap();
+    let master = reviewed_master(tmp.path());
+    // The rename's commit in the master is the record `branch_record::rename` writes.
+    let record = |branch: &str| BranchRecord {
+        branch: branch.to_string(),
+        work_type: Some("feat".to_string()),
+    };
+    branch_record::write(
+        &master,
+        SYS,
+        CHG,
+        &record("feat/PROJ-123-reset"),
+        RecordVerb::Rename,
+    )
+    .unwrap();
+    assert_eq!(
+        moved_since_review(tmp.path(), &master),
+        serde_json::json!([])
+    );
+    // Any other file committed after the review still counts.
+    fs::write(master.join(format!("intent/{SYS}/{CHG}/intent.md")), "x\n").unwrap();
+    git(&master, &["add", "."]);
+    git(&master, &["commit", "-q", "-m", "intent"]);
+    assert_eq!(
+        moved_since_review(tmp.path(), &master),
+        serde_json::json!([format!("intent/{SYS}/{CHG}/intent.md")])
+    );
+}

@@ -263,6 +263,9 @@ pub trait GitHub {
         body: &str,
     ) -> Result<(), ApiError>;
     fn pull_state(&self, owner: &str, name: &str, number: u64) -> Result<PullState, ApiError>;
+    /// The commit `branch` points at on GitHub, `None` when the repository has no such branch.
+    fn branch_tip(&self, owner: &str, name: &str, branch: &str)
+        -> Result<Option<String>, ApiError>;
 }
 
 /// A client for each host, or none where there is no sign-in.
@@ -500,6 +503,26 @@ impl GitHub for Api {
             state: v["state"].as_str().unwrap_or_default().to_string(),
             merged: !v["merged_at"].is_null(),
         })
+    }
+
+    fn branch_tip(
+        &self,
+        owner: &str,
+        name: &str,
+        branch: &str,
+    ) -> Result<Option<String>, ApiError> {
+        // A branch name keeps its slashes; each part is encoded.
+        let branch = branch.split('/').map(encode).collect::<Vec<_>>().join("/");
+        let path = format!(
+            "/repos/{}/{}/branches/{branch}",
+            encode(owner),
+            encode(name)
+        );
+        match self.send("GET", &path, None) {
+            Ok((_, v)) => Ok(v["commit"]["sha"].as_str().map(String::from)),
+            Err(ApiError::Status { status: 404, .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 }
 

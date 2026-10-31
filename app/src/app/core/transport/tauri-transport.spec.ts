@@ -12,7 +12,7 @@ import type { PublishRepo } from '@bindings/PublishRepo';
 
 const spec = seedSpec();
 const settings: Settings = { mode: 'sdlc', remember: true, permission_mode: 'bypass' };
-const entry: WorkspaceEntry = { id: 'w', name: 'w', folder: '/w', base_branch: 'main', last_opened: 1 };
+const entry: WorkspaceEntry = { id: 'w', name: 'w', folder: '/w', last_opened: 1 };
 const snap: Snapshot = { head: 'abc', dirty: {} };
 const link: RunLink = { workspace_id: 'w', system: 's', change: 'c', stage: 'intent', run_id: 'r', started_at: 1 };
 const start: BuildStart = { master: { repo: 'm', path: '/w/m', base: 'main', branch: 'change/c', created: false }, repos: [] };
@@ -76,8 +76,14 @@ const rows: Row[] = [
   ['sdlcDiscard', (t) => t.sdlcDiscard('/m', snap, ['p']), 'sdlc_discard', { master: '/m', before: snap, paths: ['p'] }],
   ['sdlcLeftovers in a build', (t) => t.sdlcLeftovers('/m', snap, ['r'], { system: 's', change: 'c' }), 'sdlc_leftovers', { master: '/m', before: snap, productRepos: ['r'], build: { system: 's', change: 'c' } }],
   ['sdlcDiscard in a build', (t) => t.sdlcDiscard('/m', snap, ['p'], { system: 's', change: 'c' }), 'sdlc_discard', { master: '/m', before: snap, paths: ['p'], build: { system: 's', change: 'c' } }],
-  ['sdlcStartChange', (t) => t.sdlcStartChange('/m', 'main'), 'sdlc_start_change', { master: '/m', base: 'main' }],
-  ['sdlcFinishChange', (t) => t.sdlcFinishChange('/m', 'pending', 'main'), 'sdlc_finish_change', { master: '/m', pending: 'pending', base: 'main' }],
+  ['sdlcStartChange', (t) => t.sdlcStartChange('/m'), 'sdlc_start_change', { master: '/m' }],
+  ['sdlcFinishChange', (t) => t.sdlcFinishChange('/m', 'pending'), 'sdlc_finish_change', { master: '/m', pending: 'pending' }],
+  ['sdlcNaming', (t) => t.sdlcNaming('/w', 'm', 's'), 'sdlc_naming', { folder: '/w', masterRepo: 'm', system: 's' }],
+  ['sdlcCheckScope', (t) => t.sdlcCheckScope('/w', 'PROJ 123'), 'sdlc_check_scope', { folder: '/w', scope: 'PROJ 123' }],
+  ['sdlcSuggestBranch', (t) => t.sdlcSuggestBranch('/w', 'm', 's', 'c', 'feat'), 'sdlc_suggest_branch', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', workType: 'feat' }],
+  ['sdlcConfirmBranch', (t) => t.sdlcConfirmBranch('/w', 'm', 's', 'c', 'change/pending-1', 'feat/x-c', 'feat'), 'sdlc_confirm_branch', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', pending: 'change/pending-1', name: 'feat/x-c', workType: 'feat' }],
+  ['sdlcRenameBranch', (t) => t.sdlcRenameBranch('/w', 'w1', 'm', 's', 'c', 'feat/x-c'), 'sdlc_rename_branch', { folder: '/w', workspaceId: 'w1', masterRepo: 'm', system: 's', change: 'c', newName: 'feat/x-c' }],
+  ['sdlcRemoteClashes', (t) => t.sdlcRemoteClashes([publishRepo], 'm', 's', 'c'), 'sdlc_remote_clashes', { touched: [publishRepo], masterRepo: 'm', system: 's', change: 'c' }],
   ['sdlcCheckout', (t) => t.sdlcCheckout('/m', 'b'), 'sdlc_checkout', { master: '/m', branch: 'b' }],
   ['sdlcDecide', (t) => t.sdlcDecide('/m', 's', 'c', 'accept-spec', true), 'sdlc_decide', { master: '/m', system: 's', change: 'c', decision: 'accept-spec', confirmed: true }],
   ['sdlcRunLinks', (t) => t.sdlcRunLinks(), 'sdlc_run_links', undefined],
@@ -90,7 +96,7 @@ const rows: Row[] = [
   ['sdlcBuildPrepare without a pending repository', (t) => t.sdlcBuildPrepare('/w', 'm', 's', 'c', false, null, 'start'), 'sdlc_build_prepare', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', action: 'start', continueWithLeftovers: false, pending: null }],
   ['sdlcBuildParticipants', (t) => t.sdlcBuildParticipants('/w', 'm', 's', 'c', 'r'), 'sdlc_build_participants', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', pending: 'r' }],
   ['sdlcBuildSettle', (t) => t.sdlcBuildSettle(start), 'sdlc_build_settle', { start }],
-  ['sdlcBuildHeads', (t) => t.sdlcBuildHeads('/w', ['r'], 'c'), 'sdlc_build_heads', { folder: '/w', repos: ['r'], change: 'c' }],
+  ['sdlcBuildHeads', (t) => t.sdlcBuildHeads('/w', 'm', 's', ['r'], 'c'), 'sdlc_build_heads', { folder: '/w', masterRepo: 'm', system: 's', repos: ['r'], change: 'c' }],
   ['sdlcPluginReadiness', (t) => t.sdlcPluginReadiness('/p'), 'sdlc_plugin_readiness', { workdir: '/p' }],
   ['sdlcChangeRepos', (t) => t.sdlcChangeRepos('/w', 'm', 's', 'c'), 'sdlc_change_repos', { folder: '/w', masterRepo: 'm', system: 's', change: 'c' }],
   ['sdlcMissingChangeBranches', (t) => t.sdlcMissingChangeBranches('/w', 'm', 's', 'c'), 'sdlc_missing_change_branches', { folder: '/w', masterRepo: 'm', system: 's', change: 'c' }],
@@ -107,7 +113,7 @@ const rows: Row[] = [
   ['sdlcPublish', (t) => t.sdlcPublish('/w', 'w1', 'm', 's', 'c', [publishRepo]), 'sdlc_publish', { folder: '/w', workspaceId: 'w1', masterRepo: 'm', system: 's', change: 'c', repos: [publishRepo] }],
   ['sdlcDoneView', (t) => t.sdlcDoneView('/w', 'm', 'w1', 's', 'c', true), 'sdlc_done_view', { folder: '/w', masterRepo: 'm', workspaceId: 'w1', system: 's', change: 'c', buildFinished: true }],
   ['sdlcRefreshPrStates', (t) => t.sdlcRefreshPrStates('/w', 'm', 'w1', 's', 'c', false), 'sdlc_refresh_pr_states', { folder: '/w', masterRepo: 'm', workspaceId: 'w1', system: 's', change: 'c', buildFinished: false }],
-  ['sdlcPullRequests', (t) => t.sdlcPullRequests([publishRepo], 'c'), 'sdlc_pull_requests', { repos: [publishRepo], change: 'c' }],
+  ['sdlcPullRequests', (t) => t.sdlcPullRequests('m', 's', [publishRepo], 'c'), 'sdlc_pull_requests', { masterRepo: 'm', system: 's', repos: [publishRepo], change: 'c' }],
 ];
 
 describe('TauriTransport', () => {

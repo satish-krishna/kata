@@ -19,7 +19,7 @@ import { SdlcRunner, type BuildLink, type BuildRequest, type RunTarget } from '.
 
 const SNAPSHOT = { head: 'abc', dirty: {} };
 const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
-const WORKSPACE: WorkspaceEntry = { id: 'acme', name: 'acme', folder: '/ws', base_branch: 'main', last_opened: 1 };
+const WORKSPACE: WorkspaceEntry = { id: 'acme', name: 'acme', folder: '/ws', last_opened: 1 };
 const TARGET: RunTarget = {
   workspaceId: 'acme',
   master: '/ws/commerce-docs',
@@ -56,10 +56,13 @@ class FakeTransport {
   sdlcLinkRun = vi.fn(async (..._a: unknown[]) => { this.calls.push('link'); });
   sdlcStartChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('start'); return 'change/pending-1'; });
   sdlcFinishChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('finish'); return this.finishResults.shift()!(); });
+  sdlcReadChange = vi.fn(async (..._a: unknown[]) => ({ track: 'full' }));
+  sdlcSuggestBranch = vi.fn(async (_f: string, _m: string, _s: string, _c: string, type: string) => `${type}/PROJ-1-password-reset`);
+  sdlcConfirmBranch = vi.fn(async (...a: unknown[]) => ({ renamed: { branch: a[5] as string, change: a[3] as string } }));
   sdlcChecksDir = vi.fn(async () => '/kata/workbench/checks');
   sdlcSettings = vi.fn(async () => ({ mode: null, remember: false, permission_mode: 'bypass' as const }));
   catalog = vi.fn(async (..._a: unknown[]) => seedCatalog);
-  readiness: Readiness = { kind: 'ready', dir: '/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2], lightTrack: false };
+  readiness: Readiness = { kind: 'ready', dir: '/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2], lightTrack: false, naming: false };
   prepared: PrepareOutcome | (() => Promise<PrepareOutcome>) = { kind: 'ready', start: BUILD_START };
   sdlcPluginReadiness = vi.fn(async (..._a: unknown[]) => { this.calls.push('readiness'); return this.readiness; });
   sdlcBuildPrepare = vi.fn(async (..._a: unknown[]) => {
@@ -343,12 +346,37 @@ describe('SdlcRunner.newChange', () => {
     fake.finishResults.push(async () => ({ renamed: { branch: 'change/2026-10-18-x', change: '2026-10-18-x' } }));
     await runner.newChange(target, 'commerce', 'flag prices', 'full');
     expect(fake.calls.filter((c) => c !== 'link')).toEqual(['start', 'snapshot', 'agent', 'wait', 'dismissed', 'finish']);
-    expect(fake.sdlcStartChange).toHaveBeenCalledWith('/ws/commerce-docs', 'main');
-    expect(fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/commerce-docs', 'change/pending-1', 'main');
+    expect(fake.sdlcStartChange).toHaveBeenCalledWith('/ws/commerce-docs');
+    expect(fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/commerce-docs', 'change/pending-1');
     const spec = lock.runAgent.mock.calls[0][1];
     expect(spec.name).toBe('sdlc-commerce-new-intent');
     expect(spec.task).toContain('flag prices');
     expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', '2026-10-18-x']);
+  });
+
+  it('passes the picked scope to the intent task (R4.2)', async () => {
+    const { runner, fake, lock } = setup();
+    fake.finishResults.push(async () => ({ renamed: { branch: 'change/2026-10-18-x', change: '2026-10-18-x' } }));
+    await runner.newChange(target, 'commerce', 'flag prices', 'full', undefined, { workType: 'feat', scope: 'PROJ-123' });
+    expect(lock.runAgent.mock.calls[0][1].task).toBe('Use the ai-sdlc intent skill for system commerce. The idea: flag prices scope:PROJ-123');
+    expect(runner.pickedWorkType()).toBe('feat');
+  });
+
+  it('passes the picked scope to the triage task (R4.2)', async () => {
+    const { runner, fake, lock } = setup();
+    fake.scan = { folder: '/ws', repos: [], master: { kind: 'one', repo: 'commerce-docs', committed: true }, marker: null, marker_error: null };
+    fake.finishResults.push(async () => 'deleted');
+    await runner.newChange(target, 'commerce', 'flag prices', 'decide', undefined, { workType: 'fix', scope: 'PROJ-123' });
+    const task: string = lock.runAgent.mock.calls[0][1].task;
+    expect(task).toContain('The change: flag prices scope:PROJ-123\nThe person');
+    expect(task.charAt(task.indexOf('scope:PROJ-123') + 'scope:PROJ-123'.length)).toMatch(/^\s$/);
+  });
+
+  it('adds no scope to the task without a naming setting (R2.1)', async () => {
+    const { runner, fake, lock } = setup();
+    fake.finishResults.push(async () => ({ renamed: { branch: 'change/2026-10-18-x', change: '2026-10-18-x' } }));
+    await runner.newChange(target, 'commerce', 'flag prices', 'full');
+    expect(lock.runAgent.mock.calls[0][1].task).not.toContain('scope:');
   });
 
   it('links the new change to the run after the rename', async () => {
@@ -539,7 +567,7 @@ describe('SdlcRunner.newChange track', () => {
     const outcome = await ctx.runner.newChange(target, 'commerce', 'flag prices', 'decide');
     expect(outcome).toEqual({ kind: 'none', idea: 'flag prices', runId: 'sdlc-commerce-triage-1' });
     expect(ctx.fake.sdlcFinishChange).toHaveBeenCalledTimes(1);
-    expect(ctx.fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/commerce-docs', 'change/pending-1', 'main');
+    expect(ctx.fake.sdlcFinishChange).toHaveBeenCalledWith('/ws/commerce-docs', 'change/pending-1');
     expect(ctx.fake.sdlcLinkRun).not.toHaveBeenCalled();
     expect(ctx.navigate).not.toHaveBeenCalled();
     expect(ctx.toasts.info).not.toHaveBeenCalled();
@@ -569,6 +597,78 @@ describe('SdlcRunner.newChange track', () => {
     expect(outcome).toMatchObject({ kind: 'none', idea: 'idea' });
     expect(toasts.info).toHaveBeenCalledWith('No change was created.');
     expect(navigate).toHaveBeenCalledWith(['/sdlc']);
+  });
+});
+
+describe('SdlcRunner.newChange confirming the branch name', () => {
+  const target = { workspace: WORKSPACE, master: '/ws/commerce-docs', productRepos: [] as string[] };
+  const CHANGE = '2026-11-02-password-reset';
+  const needsName = async () => ({ 'needs-name': { pending: 'change/pending-1', system: 'commerce', change: CHANGE } });
+  const withTrack = (track: 'full' | 'fix') => {
+    const ctx = setup();
+    ctx.fake.finishResults.push(needsName);
+    ctx.fake.scan = { folder: '/ws', repos: [], master: { kind: 'one', repo: 'commerce-docs', committed: true }, marker: null, marker_error: null };
+    ctx.fake.sdlcReadChange.mockResolvedValue({ track });
+    return ctx;
+  };
+
+  it('a light-track triage preselects fix in the confirmation (R6.7)', async () => {
+    const { runner, navigate } = withTrack('fix');
+    const done = runner.newChange(target, 'commerce', 'idea', 'decide');
+    await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
+    expect(runner.nameRequest()!.workType).toBe('fix');
+    expect(runner.nameRequest()!.suggestion).toBe('fix/PROJ-1-password-reset');
+    expect(navigate).toHaveBeenCalledWith(['/sdlc', 'commerce', CHANGE]);
+    await runner.confirmName('fix/PROJ-1-password-reset');
+    expect(await done).toEqual({ kind: 'opened', change: CHANGE, branch: 'fix/PROJ-1-password-reset' });
+  });
+
+  it('a full start that picked refactor preselects refactor', async () => {
+    const { runner } = withTrack('full');
+    const done = runner.newChange(target, 'commerce', 'idea', 'full', undefined, { workType: 'refactor', scope: 'PROJ-1' });
+    await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
+    expect(runner.nameRequest()!.workType).toBe('refactor');
+    runner.closeName();
+    await done;
+  });
+
+  it('a triage that picked another type keeps the pick', async () => {
+    const { runner } = withTrack('fix');
+    const done = runner.newChange(target, 'commerce', 'idea', 'decide', undefined, { workType: 'perf', scope: 'PROJ-1' });
+    await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
+    expect(runner.nameRequest()!.workType).toBe('perf');
+    runner.closeName();
+    await done;
+  });
+
+  it('a full pipeline change without a pick preselects feat', async () => {
+    const { runner } = withTrack('full');
+    const done = runner.newChange(target, 'commerce', 'idea', 'full');
+    await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
+    expect(runner.nameRequest()!.workType).toBe('feat');
+    runner.closeName();
+    await done;
+  });
+
+  it('closing the confirmation leaves the change waiting for a name (R6.6)', async () => {
+    const { runner, fake } = withTrack('full');
+    const done = runner.newChange(target, 'commerce', 'idea', 'full');
+    await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
+    runner.closeName();
+    expect(await done).toEqual({ kind: 'stopped' });
+    expect(runner.nameRequest()).toBeNull();
+    expect(fake.sdlcConfirmBranch).not.toHaveBeenCalled();
+  });
+
+  it('a refusal is kept on the request and the confirmation stays open (R6.3)', async () => {
+    const { runner, fake } = withTrack('full');
+    fake.sdlcConfirmBranch.mockRejectedValueOnce(new Error('clashes with feat/x in kata'));
+    const done = runner.newChange(target, 'commerce', 'idea', 'full');
+    await vi.waitFor(() => expect(runner.nameRequest()).not.toBeNull());
+    await runner.confirmName('feat/x');
+    expect(runner.nameRequest()!.error).toBe('clashes with feat/x in kata');
+    runner.closeName();
+    await done;
   });
 });
 
@@ -680,7 +780,7 @@ describe('SdlcRunner build', () => {
       await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalled());
       end(ctx, 'r1', 'success', 0);
       await drive(done);
-      expect(ctx.fake.sdlcBuildHeads).toHaveBeenCalledWith('/ws', ['commerce-docs', 'commerce-core'], '2026-10-12-photos');
+      expect(ctx.fake.sdlcBuildHeads).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', ['commerce-docs', 'commerce-core'], '2026-10-12-photos');
       expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledWith(expect.objectContaining({ stage: 'review', heads: { 'commerce-core': 'c0ffee' } }));
       expect(ctx.fake.sdlcBuildHeads.mock.invocationCallOrder[0]).toBeLessThan(ctx.startRun.mock.invocationCallOrder[0]);
     });

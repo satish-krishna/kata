@@ -36,6 +36,11 @@ pub struct SystemDef {
     )]
     #[cfg_attr(feature = "ts", ts(optional = nullable, rename = "commitScope"))]
     pub commit_scope: Option<String>,
+    /// The team's naming setting, kept as the marker holds it: the format program is the one place that
+    /// reads it, this field only keeps a scan from dropping it when the marker is written back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional, type = "unknown"))]
+    pub naming: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

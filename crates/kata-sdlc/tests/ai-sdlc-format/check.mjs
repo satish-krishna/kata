@@ -27466,7 +27466,7 @@ var require_src2 = __commonJS({
 });
 
 // src/cli.ts
-import { readFileSync as readFileSync3 } from "node:fs";
+import { readFileSync as readFileSync4 } from "node:fs";
 import { basename as basename2, dirname as dirname2, resolve as resolve3 } from "node:path";
 
 // src/change.ts
@@ -35070,9 +35070,114 @@ function findMarker(file) {
   }
 }
 
+// src/naming.ts
+import { readFileSync as readFileSync2 } from "node:fs";
+var PARTS = ["type", "scope", "slug", "change", "title"];
+var SAMPLE = { type: "feat", scope: "PROJ-123", change: "2026-01-01-sample" };
+function readNaming(markerPath, system) {
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync2(markerPath, "utf8"));
+  } catch (e) {
+    throw new CouldNotRun(`${markerPath}: cannot read the marker: ${e.message}`);
+  }
+  const systems = raw?.systems;
+  const entry = systems !== null && typeof systems === "object" ? systems[system] : void 0;
+  if (entry === null || typeof entry !== "object") {
+    throw new CouldNotRun(`${markerPath}: the marker lists no system "${system}"`);
+  }
+  if (!("naming" in entry)) return { declared: false };
+  const naming = entry.naming;
+  const setting = {};
+  if (naming !== null && typeof naming === "object") {
+    const { branch, pullRequestTitle } = naming;
+    if (typeof branch === "string") setting.branch = branch;
+    if (typeof pullRequestTitle === "string") setting.pullRequestTitle = pullRequestTitle;
+  }
+  return { declared: true, setting };
+}
+function checkBranchName(name) {
+  if (name === "") return ["a branch name cannot be empty"];
+  if (name.startsWith("-")) return ["a branch name cannot start with -"];
+  if (name.startsWith("change/pending-")) return ['names starting "change/pending-" are reserved for the tool driving the build'];
+  const problems = [];
+  if (name.includes(" ")) problems.push("a branch name cannot contain a space");
+  if (/[\x00-\x1f\x7f]/.test(name)) problems.push("a branch name cannot contain a control character");
+  if (/[~^:?*[\\]/.test(name)) problems.push("a branch name cannot contain any of ~ ^ : ? * [ \\");
+  if (name.includes("..")) problems.push('a branch name cannot contain ".."');
+  if (name.includes("@{")) problems.push('a branch name cannot contain "@{"');
+  if (name === "HEAD") problems.push('a branch name cannot be "HEAD"');
+  if (name === "@") problems.push('a branch name cannot be "@"');
+  const segments = name.split("/");
+  if (segments.some((s) => s === "")) problems.push("a branch name cannot contain an empty path segment");
+  if (segments.some((s) => s.startsWith("."))) problems.push('a branch name cannot have a path segment starting with "."');
+  if (segments.some((s) => s.endsWith(".lock"))) problems.push('a branch name cannot end in ".lock"');
+  if (name.endsWith(".")) problems.push('a branch name cannot end in "."');
+  return problems;
+}
+function checkScope(scope) {
+  if (scope === "") return ["a scope cannot be empty"];
+  if (scope.length > 64) return ["a scope can be at most 64 characters"];
+  if (scope.includes(" ")) return ["a scope cannot contain a space"];
+  if (/[()]/.test(scope)) return ["a scope cannot contain parentheses"];
+  if (!/^[A-Za-z0-9]/.test(scope)) return ["a scope must start with a letter or a digit"];
+  if (!/^[A-Za-z0-9._-]*$/.test(scope)) return ['a scope can hold only letters, digits, "-", "_" and "."'];
+  if (scope.includes("..")) return ['a scope cannot contain ".."'];
+  if (scope === "HEAD") return ['a scope cannot be "HEAD"'];
+  if (scope.endsWith(".")) return ['a scope cannot end in "."'];
+  if (scope.endsWith(".lock")) return ['a scope cannot end in ".lock"'];
+  return [];
+}
+function slugOf(change) {
+  return change.replace(/^\d{4}-\d{2}-\d{2}-/, "");
+}
+function fill(pattern, parts) {
+  return pattern.replace(/\{([^{}]*)\}/g, (whole, part) => Object.hasOwn(parts, part) ? parts[part] : whole);
+}
+function partsOf(values) {
+  const parts = {
+    type: values.type,
+    scope: values.scope,
+    change: values.change,
+    slug: slugOf(values.change)
+  };
+  if (values.title !== void 0) parts.title = values.title;
+  return parts;
+}
+function checkNaming(setting) {
+  const problems = [];
+  const { branch, pullRequestTitle } = setting;
+  if (!branch || !pullRequestTitle) {
+    problems.push("a naming setting needs both a branch pattern and a pull request title pattern");
+  }
+  const unknown = /* @__PURE__ */ new Set();
+  for (const pattern of [branch, pullRequestTitle]) {
+    for (const m of (pattern ?? "").matchAll(/\{([^{}]*)\}/g)) {
+      if (!PARTS.includes(m[1])) unknown.add(m[1]);
+    }
+  }
+  for (const part of unknown) problems.push(`"${part}" is not a known part of a name`);
+  if (branch && /\{title\}/.test(branch)) problems.push("the title can only be used in the pull request title");
+  if (branch && !/{(slug|change|scope)}/.test(branch)) {
+    problems.push("the branch pattern needs {slug}, {change} or {scope}, so that each change gets its own branch");
+  }
+  if (branch) {
+    const sample = fill(branch, { ...partsOf(SAMPLE), title: "title" });
+    for (const p of checkBranchName(sample)) problems.push(`branch pattern "${branch}": ${p}`);
+  }
+  return problems;
+}
+function renderNaming(setting, values) {
+  const parts = partsOf(values);
+  return {
+    branch: fill(setting.branch ?? "", parts),
+    pullRequestTitle: values.title === void 0 ? null : fill(setting.pullRequestTitle ?? "", parts)
+  };
+}
+
 // src/fix-state.ts
 import { execFileSync } from "node:child_process";
-import { existsSync as existsSync2, readFileSync as readFileSync2, statSync } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync3, statSync } from "node:fs";
 import { basename, join as join2, resolve as resolve2 } from "node:path";
 
 // src/plan.ts
@@ -35511,7 +35616,7 @@ function fixState(folderArg) {
   const head = paths.map((p) => inHead(p) ? git(top, ["show", `HEAD:${p}`]) : null);
   const working = DOCUMENTS.map((d) => {
     try {
-      return readFileSync2(join2(folder, `${d}.md`), "utf8");
+      return readFileSync3(join2(folder, `${d}.md`), "utf8");
     } catch {
       return null;
     }
@@ -36749,7 +36854,7 @@ function readSpec(text3, file) {
 }
 
 // src/cli.ts
-var USAGE = "usage: node check.mjs check <file>...\n       node check.mjs read --json <file>\n       node check.mjs fix-state --json <change folder>...";
+var USAGE = "usage: node check.mjs check <file>...\n       node check.mjs read --json <file>\n       node check.mjs fix-state --json <change folder>...\n       node check.mjs naming --json <marker> <system> [--type t --scope s --change c --title t]\n       node check.mjs branch-name --json <name>\n       node check.mjs scope --json <value>";
 function kindOf(file) {
   const parts = file.split(/[\\/]/);
   const name = parts[parts.length - 1] ?? "";
@@ -36766,7 +36871,7 @@ function readDocument(file) {
   const kind = kindOf(file);
   let text3;
   try {
-    text3 = readFileSync3(file, "utf8");
+    text3 = readFileSync4(file, "utf8");
   } catch (e) {
     throw new CouldNotRun(`${file}: cannot read the file: ${e.code ?? e}`);
   }
@@ -36787,6 +36892,28 @@ function changeProblems(docs) {
   }
   return [...groups.values()].flatMap((group) => checkChange(group, findMarker(group[0].file)));
 }
+function namingReport(markerPath, system, options) {
+  const values = {};
+  for (let i = 0; i < options.length; i += 2) {
+    const key = (options[i] ?? "").replace(/^--/, "");
+    const value = options[i + 1];
+    if (!["type", "scope", "change", "title"].includes(key) || value === void 0) throw new CouldNotRun(USAGE);
+    values[key] = value;
+  }
+  const read = readNaming(markerPath, system);
+  if (!read.declared) return { declared: false, setting: null, problems: [] };
+  const problems = checkNaming(read.setting);
+  const out = {
+    declared: true,
+    setting: read.setting,
+    problems
+  };
+  const { type, scope, change, title } = values;
+  if (problems.length === 0 && type !== void 0 && scope !== void 0 && change !== void 0) {
+    out.names = renderNaming(read.setting, title === void 0 ? { type, scope, change } : { type, scope, change, title });
+  }
+  return out;
+}
 function main(argv) {
   const [command, ...rest] = argv;
   if (command === "check" && rest.length > 0) {
@@ -36805,6 +36932,16 @@ function main(argv) {
     const out = folders.length === 1 ? fixState(folders[0]) : fixStates(folders);
     process.stdout.write(JSON.stringify(out) + "\n");
     return EXIT.PASS;
+  }
+  if (command === "naming" && rest.length >= 3 && rest[0] === "--json") {
+    const out = namingReport(rest[1], rest[2], rest.slice(3));
+    process.stdout.write(JSON.stringify(out) + "\n");
+    return out.problems.length === 0 ? EXIT.PASS : EXIT.PROBLEMS;
+  }
+  if ((command === "branch-name" || command === "scope") && rest.length === 2 && rest[0] === "--json") {
+    const problems = (command === "scope" ? checkScope : checkBranchName)(rest[1]);
+    process.stdout.write(JSON.stringify({ problems }) + "\n");
+    return problems.length === 0 ? EXIT.PASS : EXIT.PROBLEMS;
   }
   throw new CouldNotRun(USAGE);
 }

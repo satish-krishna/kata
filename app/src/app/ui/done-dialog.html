@@ -10,6 +10,21 @@
             <span class="k-status__dot"></span>Signed in to github.com as {{ r.account }} · every origin is a GitHub repository
           </p>
         }
+        @if (r.clashes.length > 0) {
+          <section class="k-left__group" aria-labelledby="done-clashes">
+            <h3 id="done-clashes" class="k-left__head">Branch is taken on GitHub</h3>
+            <ul class="k-left__list">
+              @for (c of r.clashes; track c.repo) {
+                <li class="k-left__row">
+                  <span class="k-status k-status--error" role="alert">
+                    <span class="k-status__dot"></span><span class="k-mono">{{ c.branch }}</span> is taken on GitHub in <span class="k-mono">{{ c.repo }}</span>
+                  </span>
+                  <button hlmBtn variant="secondary" size="sm" type="button" (click)="renameBranch.emit(c.branch)">Pick a new branch name</button>
+                </li>
+              }
+            </ul>
+          </section>
+        }
         @if (r.checksError !== null) {
           <p class="k-status k-status--error" role="alert"><span class="k-status__dot"></span>{{ r.checksError }}</p>
         }
@@ -27,7 +42,7 @@
               @for (repo of r.repos; track repo.repo) {
                 <tr hlmTableRow>
                   <td hlmTableCell class="k-mono">{{ repo.repo }}</td>
-                  <td hlmTableCell class="k-mono">change/{{ change() }} → {{ repo.base }}</td>
+                  <td hlmTableCell class="k-mono">{{ r.branch ?? 'change/' + change() }} → {{ repo.base }}</td>
                   <td hlmTableCell>
                     <ul class="k-left__list">
                       @for (spec of repo.checks; track spec.name) {

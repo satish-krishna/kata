@@ -16,8 +16,26 @@
           </li>
         }
       </ul>
+      @if (leftBehind().length > 0) {
+        <section class="k-left__group" aria-labelledby="pr-left-behind">
+          <h3 id="pr-left-behind" class="k-left__head">Left behind under an earlier name</h3>
+          <ul class="k-left__list">
+            @for (e of leftBehind(); track e.url) {
+              <li class="k-left__row">
+                <span class="k-status k-status--warning">
+                  <span class="k-status__dot"></span><span class="k-mono">{{ e.repo }}</span> is still on GitHub under <span class="k-mono">{{ e.branch }}</span>, close by hand
+                </span>
+                <a class="k-mono" [href]="e.url" rel="noopener noreferrer" (click)="$event.preventDefault(); openLink.emit(e.url)">{{ e.url }}</a>
+              </li>
+            }
+          </ul>
+        </section>
+      }
       <hlm-dialog-footer>
-        @if (anyFailed()) {
+        @if (clash(); as branch) {
+          <button hlmBtn variant="ghost" size="sm" type="button" (click)="close.emit()">Close</button>
+          <button hlmBtn variant="primary" size="sm" type="button" (click)="renameBranch.emit(branch)">Pick a new branch name</button>
+        } @else if (anyFailed()) {
           <button hlmBtn variant="ghost" size="sm" type="button" (click)="close.emit()">Close</button>
           <button hlmBtn variant="primary" size="sm" type="button" (click)="retry.emit()">Retry</button>
         } @else {

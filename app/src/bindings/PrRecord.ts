@@ -8,4 +8,9 @@ export type PrRecord = { workspaceId: string, system: string, change: string,
 /**
  * When every touched repository had an entry; none while the set is partial.
  */
-declaredAt: number | null, repos: Array<PrEntry>, };
+declaredAt: number | null, repos: Array<PrEntry>, 
+/**
+ * Pull requests opened under a branch name the change no longer uses. Kata lists them so the
+ * engineer can close them by hand; it never closes them.
+ */
+leftBehind: Array<PrEntry>, };

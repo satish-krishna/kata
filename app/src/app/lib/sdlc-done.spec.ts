@@ -21,7 +21,7 @@ const checks = (...results: CheckResult[]): RepoChecks => ({ repo: 'a', results,
 const report = (over: Partial<DoneReport> = {}): DoneReport => ({
   account: 'demo-user', notReady: null,
   repos: [{ repo: 'a', base: 'main', checks: [], result: checks(result('Passed')) }],
-  offenders: [], departures: [], review: { at: 1, findings: [] }, checksPath: '/k/commerce.toml', checksError: null, ...over,
+  branch: 'feat/PROJ-123-reset', clashes: [], offenders: [], departures: [], review: { at: 1, findings: [] }, checksPath: '/k/commerce.toml', checksError: null, ...over,
 });
 
 describe('reviewState', () => {
@@ -117,6 +117,19 @@ describe('canConfirm', () => {
 
   it('treats no checks as passing', () => {
     expect(canConfirm(report({ repos: [{ repo: 'a', base: 'main', checks: [], result: checks() }] }))).toBe(true);
+  });
+
+  it.each([
+    ['no clash', [], true],
+    ['one clash', [{ repo: 'kata', branch: 'feat/PROJ-123-reset' }], false],
+    ['two clashes', [{ repo: 'kata', branch: 'feat/PROJ-123-reset' }, { repo: 'api', branch: 'feat/PROJ-123-reset' }], false],
+  ] as [string, DoneReport['clashes'], boolean][])('canConfirm with %s (R10.1)', (_name, clashes, expected) => {
+    expect(canConfirm(report({ clashes }))).toBe(expected);
+  });
+
+  it('an acknowledgement never lifts a clash (R10.1)', () => {
+    const findings = [{ severity: 'high' as const, text: 'x' }];
+    expect(canConfirm(report({ clashes: [{ repo: 'kata', branch: 'b' }], review: { at: 1, findings } }), true)).toBe(false);
   });
 
   it.each([

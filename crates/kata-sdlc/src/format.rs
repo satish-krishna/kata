@@ -601,6 +601,98 @@ pub fn fix_state(program: &Path, folder: &Path) -> Result<FixState, FormatError>
         .map_err(|e| FormatError::BadOutput(format!("{e}{}", stderr_note(&output.stderr))))
 }
 
+/// The patterns a marker holds for a system, as the program found them; either may be missing.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NamingPatterns {
+    pub branch: Option<String>,
+    pub pull_request_title: Option<String>,
+}
+
+/// The names the program filled from the patterns; the title is `None` when none was given.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RenderedNames {
+    pub branch: String,
+    pub pull_request_title: Option<String>,
+}
+
+/// What `check.mjs naming --json` prints.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct NamingAnswer {
+    /// The system has a `naming` key.
+    pub declared: bool,
+    /// The patterns found; `None` when not declared.
+    pub setting: Option<NamingPatterns>,
+    /// Every reason the setting is unusable, in the program's order.
+    pub problems: Vec<String>,
+    /// Present only when declared, without problems, and the values said which change to fill for.
+    #[serde(default)]
+    pub names: Option<RenderedNames>,
+}
+
+/// The values the patterns are filled with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NamingValues {
+    pub work_type: String,
+    pub scope: String,
+    pub change: String,
+    pub title: Option<String>,
+}
+
+/// What `branch-name` and `scope` print.
+#[derive(Deserialize)]
+struct Problems {
+    problems: Vec<String>,
+}
+
+/// Reads the naming setting of `system` from `marker_file` (any file holding a marker) and, when
+/// `values` are given, fills the patterns. Always asked of the program, never cached.
+pub fn naming_read(
+    program: &Path,
+    marker_file: &Path,
+    system: &str,
+    values: Option<&NamingValues>,
+) -> Result<NamingAnswer, FormatError> {
+    let marker = marker_file.display().to_string();
+    let mut args = vec!["naming", "--json", marker.as_str(), system];
+    if let Some(v) = values {
+        args.extend([
+            "--type",
+            &v.work_type,
+            "--scope",
+            &v.scope,
+            "--change",
+            &v.change,
+        ]);
+        if let Some(title) = &v.title {
+            args.extend(["--title", title]);
+        }
+    }
+    let cwd = marker_file.parent().unwrap_or(Path::new("."));
+    let output = run(program, cwd, &args)?;
+    serde_json::from_slice(&output.stdout)
+        .map_err(|e| FormatError::BadOutput(format!("{e}{}", stderr_note(&output.stderr))))
+}
+
+fn problems_of(program: &Path, command: &str, value: &str) -> Result<Vec<String>, FormatError> {
+    let cwd = program.parent().unwrap_or(Path::new("."));
+    let output = run(program, cwd, &[command, "--json", value])?;
+    serde_json::from_slice::<Problems>(&output.stdout)
+        .map(|p| p.problems)
+        .map_err(|e| FormatError::BadOutput(format!("{e}{}", stderr_note(&output.stderr))))
+}
+
+/// Why git, or Kata, would refuse `name` as a branch name; empty when it is usable.
+pub fn branch_name(program: &Path, name: &str) -> Result<Vec<String>, FormatError> {
+    problems_of(program, "branch-name", name)
+}
+
+/// Why `value` is not a usable scope; empty when it is accepted as typed.
+pub fn scope(program: &Path, value: &str) -> Result<Vec<String>, FormatError> {
+    problems_of(program, "scope", value)
+}
+
 /// One entry of the program's answer for several folders: the folder as it was given, and either its
 /// result or the error that stopped the program for it.
 #[derive(Deserialize)]

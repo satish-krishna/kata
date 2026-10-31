@@ -8,7 +8,7 @@ import type { RunSpec } from '@bindings/RunSpec';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { StageEvent } from '@bindings/StageEvent';
 import type { Resolved } from '@bindings/Resolved';
-import { MOCK_BUILD_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
 
 const total = (steps: { delay: number }[]) => steps.reduce((a, s) => a + s.delay, 0);
 
@@ -120,23 +120,23 @@ describe('MockTransport', () => {
   it('checkout records the previous change branch without its prefix and drops the target', async () => {
     const t = new MockTransport();
     await t.sdlcCheckout('/m', 'change/2026-10-17-product-notes');
-    expect(await t.sdlcBranches('/m')).toEqual({ current: 'change/2026-10-17-product-notes', others: [], default_base: 'main' });
+    expect(await t.sdlcBranches('/m')).toEqual({ current: 'change/2026-10-17-product-notes', others: [], default_base: 'main', pending_change: null });
     await t.sdlcCheckout('/m', 'main');
-    expect((await t.sdlcBranches('/m')).others).toEqual(['2026-10-17-product-notes']);
+    expect((await t.sdlcBranches('/m')).others.map((o) => o.change)).toEqual(['2026-10-17-product-notes']);
   });
 
   it('finishing a change renames it once, then deletes a pending branch that created nothing', async () => {
     const t = new MockTransport();
-    const pending = await t.sdlcStartChange('/m', 'main');
-    const out = await t.sdlcFinishChange('/m', pending, 'main');
+    const pending = await t.sdlcStartChange('/m');
+    const out = await t.sdlcFinishChange('/m', pending);
     expect(out).toEqual({ renamed: { branch: 'change/2026-10-18-new-change', change: '2026-10-18-new-change' } });
     const b = await t.sdlcBranches('/m');
     expect(b.current).toBe('main');
-    expect(b.others).toEqual(['2026-10-17-product-notes', '2026-10-18-new-change']);
+    expect(b.others.map((o) => o.change)).toEqual(['2026-10-17-product-notes', '2026-10-18-new-change']);
     expect((await readAllChanges(t))[0].change).toBe('2026-10-18-new-change');
 
-    const again = await t.sdlcStartChange('/m', 'main');
-    expect(await t.sdlcFinishChange('/m', again, 'main')).toBe('deleted');
+    const again = await t.sdlcStartChange('/m');
+    expect(await t.sdlcFinishChange('/m', again)).toBe('deleted');
     const after = await t.sdlcBranches('/m');
     expect(after.current).toBe('main');
     expect(after.others).toEqual(b.others);
@@ -178,8 +178,8 @@ describe('MockTransport', () => {
     const steps: PublishStep[] = [];
     await t.onPublishStep((step) => steps.push(step));
     const repos = await t.sdlcTouchedRepos(MOCK_WORKSPACE_FOLDER, 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE);
-    const results = await t.sdlcPublish(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, repos);
-    expect(results).toHaveLength(repos.length);
+    const summary = await t.sdlcPublish(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, repos);
+    expect(summary.results).toHaveLength(repos.length);
     expect(steps).toEqual(repos.flatMap((r) => [{ kind: 'pushing', repo: r.repo }, { kind: 'opening', repo: r.repo }]));
   });
 
@@ -461,6 +461,63 @@ describe('MockTransport previewRun', () => {
       } finally {
         window.history.replaceState({}, '', '/');
       }
+    });
+  });
+});
+
+describe('MockTransport branch naming demos', () => {
+  const REPOS = [{ repo: 'commerce-core', path: 'D:/Work/acme-commerce/commerce-core', base: 'main' }];
+  /** Run `body` with `?demo=<demo>` in the address, the way the browser checks reach a demo. */
+  const withDemo = async (demo: string | null, body: (t: MockTransport) => Promise<void>) => {
+    window.history.replaceState({}, '', demo === null ? '/' : `/?demo=${demo}`);
+    try {
+      await body(new MockTransport());
+    } finally {
+      window.history.replaceState({}, '', '/');
+    }
+  };
+  const publish = (t: MockTransport) => t.sdlcPublish('/w', 'acme-commerce', 'commerce-docs', 'commerce', MOCK_DONE_CHANGE, REPOS);
+
+  it('keeps the default fixtures: no pending change, no clash, the finished change has its pull requests', async () => {
+    await withDemo(null, async (t) => {
+      const b = await t.sdlcBranches('/m');
+      expect(b.current).toBe('main');
+      expect(b.pending_change).toBeNull();
+      expect(await t.sdlcRemoteClashes(REPOS, 'commerce-docs', 'commerce', MOCK_DONE_CHANGE)).toEqual([]);
+      expect((await t.sdlcPullRequests('commerce-docs', 'commerce', REPOS, MOCK_DONE_CHANGE))[0].url).not.toBeNull();
+      expect((await publish(t)).results[0].outcome.kind).toBe('opened');
+    });
+  });
+
+  it('?demo=naming stands the master on a pending branch that holds the build demo change', async () => {
+    await withDemo('naming', async (t) => {
+      const b = await t.sdlcBranches('/m');
+      expect(b.current?.startsWith('change/pending-')).toBe(true);
+      expect(b.pending_change).toBe(`commerce/${MOCK_BUILD_CHANGE}`);
+    });
+  });
+
+  it('?demo=clash leaves the finished change undeclared and reports its branch as taken in a repository', async () => {
+    await withDemo('clash', async (t) => {
+      expect((await t.sdlcPullRequests('commerce-docs', 'commerce', REPOS, MOCK_DONE_CHANGE))[0].url).toBeNull();
+      const clashes = await t.sdlcRemoteClashes(REPOS, 'commerce-docs', 'commerce', MOCK_DONE_CHANGE);
+      expect(clashes).toEqual([{ repo: 'commerce-core', branch: `change/${MOCK_DONE_CHANGE}` }]);
+    });
+  });
+
+  it('the clash demos have nothing uncommitted, so declaring done gets past its first check', async () => {
+    for (const demo of [null, 'clash', 'clash-push']) {
+      await withDemo(demo, async (t) => {
+        const left = (await t.sdlcDiffFiles('/w', 'uncommitted')).files.length;
+        expect(left > 0).toBe(demo === null);
+      });
+    }
+  });
+
+  it('?demo=clash-push finds the branch free, then the push meets another change on it', async () => {
+    await withDemo('clash-push', async (t) => {
+      expect(await t.sdlcRemoteClashes(REPOS, 'commerce-docs', 'commerce', MOCK_DONE_CHANGE)).toEqual([]);
+      expect((await publish(t)).results).toEqual([{ repo: 'commerce-core', outcome: { kind: 'clash', branch: `change/${MOCK_DONE_CHANGE}` } }]);
     });
   });
 });

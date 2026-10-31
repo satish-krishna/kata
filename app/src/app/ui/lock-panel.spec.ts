@@ -59,6 +59,7 @@ describe('LockPanel progress line', () => {
   it('names the repository in each plain label', () => {
     expect(progressLabels.runningChecks('commerce-core')).toBe('Running the checks in commerce-core');
     expect(progressLabels.pushing('2026-10-18-photo-limits', 'commerce-core')).toBe('Pushing change/2026-10-18-photo-limits in commerce-core');
+    expect(progressLabels.pushing('2026-11-02-password-reset', 'kata', 'feat/PROJ-123-password-reset')).toBe('Pushing feat/PROJ-123-password-reset in kata');
     expect(progressLabels.openingPr('customer-portal')).toBe('Opening a pull request in customer-portal');
   });
 

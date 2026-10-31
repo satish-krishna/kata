@@ -371,7 +371,7 @@ export class BuildPageViewModel {
   });
 
   /** Why Continue did not go on, with what the check found; the refusal dialog is open exactly while this is set. */
-  readonly refusal = signal<{ reason: string; problems: Problem[] } | null>(null);
+  readonly refusal = signal<{ reason: string; problems: Problem[]; taken?: { repo: string; branch: string } } | null>(null);
 
   readonly tab = signal<BuildTab>('activity');
   readonly announcement = signal('');
@@ -943,7 +943,7 @@ export class BuildPageViewModel {
     }
     try {
       const repos = [master.repo, ...(this.status()?.repos.map((r) => r.repo) ?? [])];
-      this.heads.set(await this.transport.sdlcBuildHeads(ctx.folder, [...new Set(repos)], ctx.change));
+      this.heads.set(await this.transport.sdlcBuildHeads(ctx.folder, master.repo, ctx.system, [...new Set(repos)], ctx.change));
     } catch {
       this.heads.set({});
     }
@@ -1025,6 +1025,10 @@ export class BuildPageViewModel {
             this.refusal.set({ reason: out.message, problems: out.problems });
             return;
           }
+          if (out.kind === 'branchTaken') {
+            this.refusal.set({ reason: `The branch ${out.branch} in ${out.repo} holds other work`, problems: [], taken: { repo: out.repo, branch: out.branch } });
+            return;
+          }
           if (out.kind === 'needsConfirm') {
             this.ask(key, out.leftovers.flatMap((r) => r.files.map((f) => `${r.repo}: ${f}`)));
             return;
@@ -1055,7 +1059,7 @@ export class BuildPageViewModel {
     this.progress.begin('preparing-build', progressLabels.preparingBuild(), 'build');
     try {
       const out = await this.transport.sdlcBuildPrepare(folder, master, system, change, withLeftovers, owner, 'continue');
-      if (out.kind === 'refused') this.progress.fail('build');
+      if (out.kind === 'refused' || out.kind === 'branchTaken') this.progress.fail('build');
       else this.progress.end('build');
       return out;
     } catch (e) {
@@ -1079,6 +1083,10 @@ export class BuildPageViewModel {
         const out = await this.prepareBranches(ctx.folder, h.start.master.repo, ctx.system, ctx.change, true, this.ownerOf(key));
         if (out.kind === 'refused') {
           this.refusal.set({ reason: out.message, problems: out.problems });
+          return;
+        }
+        if (out.kind === 'branchTaken') {
+          this.refusal.set({ reason: `The branch ${out.branch} in ${out.repo} holds other work`, problems: [], taken: { repo: out.repo, branch: out.branch } });
           return;
         }
         if (out.kind !== 'ready') {
@@ -1291,7 +1299,7 @@ export class BuildPageViewModel {
   private readHeads(): Promise<Record<string, string>> {
     const ctx = this.ctx!;
     // The master is a build participant: a round there that commits makes the review stale like any product repository's.
-    return this.transport.sdlcBuildHeads(ctx.folder, [this.handoff!.start.master.repo, ...this.productRepos], ctx.change);
+    return this.transport.sdlcBuildHeads(ctx.folder, this.handoff!.start.master.repo, ctx.system, [this.handoff!.start.master.repo, ...this.productRepos], ctx.change);
   }
 
   /** Read whether any repository has changed files, the way the Changes view lists them; a failed read counts as none. */

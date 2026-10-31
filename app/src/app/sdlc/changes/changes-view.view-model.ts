@@ -70,6 +70,8 @@ export class ChangesViewModel {
   readonly repos = signal<ChangeRepo[]>([]);
   /** Product repositories in the build with no change branch, which the list cannot show; empty when that could not be read. */
   readonly missingBranches = signal<string[]>([]);
+  /** The branch the change has in the master repository, which names the missing ones; change/<change> until it is read. */
+  readonly changeBranch = signal<string | null>(null);
   readonly loaded = signal(false);
   readonly part = signal<Part>('whole');
   private readonly listings = signal<Record<string, DiffListing>>({});
@@ -382,6 +384,7 @@ export class ChangesViewModel {
       this.progress.end(PROGRESS_OWNER);
       this.repos.set(repos);
       this.missingBranches.set(noBranch);
+      this.changeBranch.set(repos.find((r) => r.repo === ctx.masterRepo)?.branch ?? null);
       this.listings.set(Object.fromEntries(repos.map((r, i) => [r.repo, lists[i]])));
       this.commits.set(Object.fromEntries(repos.map((r, i) => [r.repo, commitLists[i]])));
       this.listedPart.set(part);

@@ -17,10 +17,11 @@ import { LockStore } from '../../core/lock/lock.store';
 import { ProgressStore } from '../../core/progress/progress.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
-import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
+import { SdlcRunner, type DiscardChoice, type PickedNaming } from '../../core/sdlc/sdlc-runner';
 import { SdlcStagesStore, stageKey, type ChangeRow } from '../../core/sdlc/sdlc-stages.store';
 import { ToastStore } from '../../core/toast/toast.store';
-import { KataTransport } from '../../core/transport/kata-transport';
+import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
+import { defaultWorkType, namingRefusal, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
 import { inTauri } from '../../lib/mock';
 import { shownChangeList } from '../../lib/doc-notice';
 import { fixProgramFailed, hasAiSdlcPlugin, specFor, type StartTrack } from '../../lib/sdlc';
@@ -152,7 +153,9 @@ export class SdlcHomeViewModel {
     return m?.kind === 'many' ? m.repos : [];
   });
   readonly masterBranch = computed(() => this.branches()?.current ?? null);
-  readonly otherBranches = computed(() => this.branches()?.others ?? []);
+  readonly otherBranches = computed(() => (this.branches()?.others ?? []).map((o) => o.change));
+  /** The other branches that are pending branches of a change waiting for its name. */
+  readonly otherNeedingName = computed(() => (this.branches()?.others ?? []).filter((o) => o.needs_name).map((o) => o.change));
   readonly systems = computed(() => {
     const s = this.scan();
     return s ? systemNames(s) : [];
@@ -198,6 +201,111 @@ export class SdlcHomeViewModel {
     return r.kind === 'ready' && r.lightTrack;
   });
   readonly settingsOpen = signal(false);
+
+  // --- naming at the start of a change
+  private readonly naming = signal<NamingState | null>(null);
+  /** The naming answer for the system the dialog shows; null while it is being read or the dialog is closed. */
+  readonly newChangeNaming = this.naming.asReadonly();
+  private readonly namingSystem = signal<string | null>(null);
+  /** The route the dialog is on: a described change goes to triage ('decide'), the other starts the full pipeline. */
+  private readonly route = signal<StartTrack>('decide');
+  private readonly typePicked = signal<WorkType | null>(null);
+  /** The types the picker offers, the route's default first; empty without a naming setting. */
+  readonly workTypes = computed(() => (this.naming()?.kind === 'setting' ? orderedWorkTypes(this.route()) : []));
+  readonly workType = computed(() => {
+    const picked = this.typePicked();
+    return picked !== null && this.workTypes().includes(picked) ? picked : defaultWorkType(this.route());
+  });
+  readonly scope = signal('');
+  readonly scopeProblems = signal<string[]>([]);
+  /** The scope the last finished check was about. */
+  private readonly scopeChecked = signal<string | null>(null);
+  private scopeCheck = 0;
+  private namingRead = 0;
+  /** Why the system's setting stops a new change, worded for the dialog; null when it does not. */
+  readonly namingError = computed(() => {
+    const n = this.naming();
+    if (n?.kind !== 'error') return null;
+    return namingRefusal(this.namingSystem() ?? 'this system', this.branches()?.default_base ?? null, n.message);
+  });
+  /** Whether the naming part of the dialog allows Start: the answer is in, and a setting comes with a scope that passed its check. */
+  readonly namingReady = computed(() => {
+    const n = this.naming();
+    if (n === null || n.kind === 'error') return false;
+    if (n.kind === 'none') return true;
+    const scope = this.scope();
+    return scope.trim() !== '' && this.scopeChecked() === scope && this.scopeProblems().length === 0;
+  });
+
+  pickSystem(system: string): void {
+    void this.readNaming(system);
+  }
+
+  pickTrack(track: StartTrack): void {
+    this.route.set(track);
+    this.typePicked.set(null);
+  }
+
+  pickWorkType(type: WorkType): void {
+    this.typePicked.set(type);
+  }
+
+  setScope(value: string): void {
+    this.scope.set(value);
+    void this.checkScope(value);
+  }
+
+  private async checkScope(value: string): Promise<void> {
+    const run = ++this.scopeCheck;
+    this.scopeChecked.set(null);
+    const folder = this.current()?.folder;
+    if (value.trim() === '' || !folder) {
+      this.scopeProblems.set([]);
+      return;
+    }
+    let problems: string[];
+    try {
+      problems = await this.transport.sdlcCheckScope(folder, value);
+    } catch (e) {
+      problems = [message(e)];
+    }
+    if (run !== this.scopeCheck) return;
+    this.scopeProblems.set(problems);
+    this.scopeChecked.set(value);
+  }
+
+  /** Reads the naming answer for `system` and, for a setting, offers the system's commit scope (else its name) as the scope. */
+  private async readNaming(system: string | null): Promise<void> {
+    const read = ++this.namingRead;
+    this.naming.set(null);
+    this.namingSystem.set(system);
+    this.scopeCheck++;
+    this.scopeChecked.set(null);
+    this.scopeProblems.set([]);
+    this.scope.set('');
+    const folder = this.current()?.folder;
+    const scan = this.scan();
+    const repo = scan ? masterRepo(scan) : null;
+    if (system === null || !folder || !repo) {
+      this.naming.set({ kind: 'none' });
+      return;
+    }
+    let answer: NamingState;
+    try {
+      answer = await this.transport.sdlcNaming(folder, repo, system);
+    } catch (e) {
+      answer = { kind: 'error', reason: 'unreadable', message: message(e) };
+    }
+    if (read !== this.namingRead) return;
+    this.naming.set(answer);
+    if (answer.kind === 'setting') this.setScope(scan?.marker?.systems[system]?.commitScope || system);
+  }
+
+  private clearNaming(): void {
+    this.namingRead++;
+    this.naming.set(null);
+    this.namingSystem.set(null);
+  }
   readonly switchPrompt = signal<string | null>(null);
   private switchResolve: ((ok: boolean) => void) | null = null;
   private readonly removeId = signal<string | null>(null);
@@ -380,7 +488,7 @@ export class SdlcHomeViewModel {
 
     const name = folderName(dir);
     if (scan.repos.length === 0 || scan.master.kind === 'many') {
-      this.candidate.set({ folder: dir, name, scan, contexts: {}, baseBranch: '' });
+      this.candidate.set({ folder: dir, name, scan, contexts: {} });
       return;
     }
     if (scan.marker_error !== null) {
@@ -399,17 +507,8 @@ export class SdlcHomeViewModel {
         return;
       }
     }
-    const repo = masterRepo(scan);
-    if (repo === null) return;
-    let baseBranch = 'main';
-    try {
-      const b = await this.transport.sdlcBranches(masterPath(dir, repo));
-      baseBranch = b.default_base ?? b.current ?? baseBranch;
-    } catch (e) {
-      this.toasts.error(`Could not read the master repo's branches: ${message(e)}`);
-      return;
-    }
-    this.candidate.set({ folder: dir, name, scan, contexts, baseBranch });
+    if (masterRepo(scan) === null) return;
+    this.candidate.set({ folder: dir, name, scan, contexts });
   }
 
   async confirmAddWorkspace(): Promise<void> {
@@ -420,7 +519,7 @@ export class SdlcHomeViewModel {
     const slug = c.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'workspace';
     let id = slug;
     for (let n = 2; taken.has(id); n++) id = `${slug}-${n}`;
-    const entry: WorkspaceEntry = { id, name: c.name, folder: c.folder, base_branch: c.baseBranch, last_opened: nowSecs() };
+    const entry: WorkspaceEntry = { id, name: c.name, folder: c.folder, last_opened: nowSecs() };
     const next = [...this.workspaces(), entry];
     this.workspaces.set(next);
     this.currentId.set(id);
@@ -463,6 +562,14 @@ export class SdlcHomeViewModel {
   }
 
   async newChange(system: string, idea: string, track: StartTrack): Promise<void> {
+    const answer = this.naming();
+    // A broken setting never falls back to `change/` naming (R3.2), and a setting needs its checked scope.
+    if (answer?.kind === 'error' || (answer?.kind === 'setting' && !this.namingReady())) {
+      this.toasts.error(this.namingError() ?? 'Pick a work type and a valid scope first.');
+      return;
+    }
+    const picked: PickedNaming | null = answer?.kind === 'setting' ? { workType: this.workType(), scope: this.scope().trim() } : null;
+    this.clearNaming();
     this.newChangeOpen.set(false);
     this.triageNotice.set(null);
     const workspace = this.current();
@@ -471,7 +578,11 @@ export class SdlcHomeViewModel {
     if (!workspace || !scan || !master) return;
     let first: string | null = null;
     try {
-      const outcome = await this.runner.newChange({ workspace, master, productRepos: productRepos(scan) }, system, idea, track, (spec) => this.confirm(spec));
+      const target = { workspace, master, productRepos: productRepos(scan) };
+      const confirm = (spec: RunSpec) => this.confirm(spec);
+      const outcome = picked
+        ? await this.runner.newChange(target, system, idea, track, confirm, picked)
+        : await this.runner.newChange(target, system, idea, track, confirm);
       if (outcome.kind === 'none' && track === 'decide') this.triageNotice.set({ idea: outcome.idea, runId: outcome.runId });
       first = outcome.kind === 'opened' ? outcome.change : null;
     } catch (e) {
@@ -485,6 +596,7 @@ export class SdlcHomeViewModel {
     this.newChangeIdea.set('');
     this.newChangeTrack.set('decide');
     this.newChangeNote.set(null);
+    this.beginNaming();
     this.newChangeOpen.set(true);
   }
 
@@ -495,6 +607,7 @@ export class SdlcHomeViewModel {
     this.newChangeIdea.set(notice.idea);
     this.newChangeTrack.set('decide');
     this.newChangeNote.set('The last triage created no change. Change the description and start again.');
+    this.beginNaming();
     this.newChangeOpen.set(true);
   }
 
@@ -510,7 +623,21 @@ export class SdlcHomeViewModel {
   }
 
   closeNewChange(): void {
+    this.clearNaming();
     this.newChangeOpen.set(false);
+  }
+
+  /** The dialog opens on the first system and on the route it will show: triage when the plugin can, else the full pipeline. */
+  private beginNaming(): void {
+    this.route.set(this.lightTrack() ? 'decide' : 'full');
+    this.typePicked.set(null);
+    void this.readNaming(this.systems()[0] ?? null);
+  }
+
+  /** Set the team's branch and pull request title patterns for `system`: a setup run with `--naming`, like the other setup runs. */
+  async setTeamNaming(system: string): Promise<void> {
+    if (this.refuseWhileLocked()) return;
+    await this.runOnBase('Setting team naming', 'Naming', 'setup', { system, naming: true });
   }
 
   async discardLeftovers(choices: DiscardChoice[]): Promise<void> {
@@ -537,7 +664,9 @@ export class SdlcHomeViewModel {
     const master = this.masterDir();
     if (!master || this.refuseWhileLocked()) return;
     try {
-      await this.transport.sdlcCheckout(master, `change/${change}`);
+      // The branch is the one the list read: a pending branch is not named after its change.
+      const branch = this.branches()?.others.find((o) => o.change === change)?.branch ?? `change/${change}`;
+      await this.transport.sdlcCheckout(master, branch);
     } catch (e) {
       this.toasts.error(message(e));
       return;
@@ -582,10 +711,6 @@ export class SdlcHomeViewModel {
     } catch (e) {
       this.toasts.error(`Could not save the settings: ${message(e)}`);
       return;
-    }
-    const w = this.current();
-    if (w && save.baseBranch !== null && save.baseBranch !== w.base_branch) {
-      await this.saveList(this.workspaces().map((x) => (x.id === w.id ? { ...x, base_branch: save.baseBranch! } : x)), true);
     }
     this.settingsOpen.set(false);
   }
@@ -642,13 +767,13 @@ export class SdlcHomeViewModel {
     title: string,
     label: string,
     kind: 'setup' | 'context',
-    ctx: { system: string; repos?: string[]; instructions?: boolean },
+    ctx: { system: string; repos?: string[]; instructions?: boolean; naming?: boolean },
   ): Promise<void> {
     const workspace = this.current();
     const scan = this.scan();
     const master = this.masterDir();
     if (!workspace || !scan || !master) return;
-    if (!(await this.onBase(master, masterRepo(scan) ?? 'the master repo', workspace.base_branch))) return;
+    if (!(await this.onBase(master, masterRepo(scan) ?? 'the master repo'))) return;
     const built = specFor(kind, null, { folder: workspace.folder, change: null, ...ctx }, await this.currentSettings(), this.catalog() ?? []);
     const spec = await this.confirm(built);
     if (!spec) return;
@@ -666,7 +791,7 @@ export class SdlcHomeViewModel {
   private async runSetup(folder: string, scan: WorkspaceScan): Promise<WorkspaceScan | null> {
     const repo = masterRepo(scan);
     const master = repo ? masterPath(folder, repo) : null;
-    if (master && repo && !(await this.onBase(master, repo, null))) return null;
+    if (master && repo && !(await this.onBase(master, repo))) return null;
     const built = specFor('setup', null, { folder, system: '', change: null }, await this.currentSettings(), this.catalog() ?? []);
     const spec = await this.confirm(built);
     if (!spec) return null;
@@ -695,10 +820,9 @@ export class SdlcHomeViewModel {
   }
 
   /**
-   * Offer to leave a change branch before a run that belongs on the base branch. `base` is null when the
-   * workspace has no recorded base yet, in which case the repo's own default is used.
+   * Offer to leave a change branch before a run that belongs on the base branch, which the backend resolves.
    */
-  private async onBase(master: string, repo: string, base: string | null): Promise<boolean> {
+  private async onBase(master: string, repo: string): Promise<boolean> {
     let info: BranchInfo;
     try {
       info = await this.transport.sdlcBranches(master);
@@ -712,7 +836,7 @@ export class SdlcHomeViewModel {
       this.toasts.error(`${repo} is not on a branch (detached or unknown HEAD). Check out a branch first.`);
       return false;
     }
-    const target = base ?? info.default_base;
+    const target = info.default_base;
     if (target === null || info.current === target) return true;
     if (!(await this.confirmSwitch(`Switch ${repo} to ${target} first?`))) return false;
     try {
