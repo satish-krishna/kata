@@ -150,9 +150,8 @@ export class RunPreviewViewModel {
   readonly sections = computed<PreviewSection[] | null>(() => {
     const req = this.buildReq();
     if (!req) return null;
-    const plan = buildPreviewFor(req.kind);
-    const form = this.buildForm();
-    const picked = plan.asksRound ? new Set(form ? (buildRequest(form, true, req.offer ?? undefined).rounds ?? []).map((r) => r.repo) : []) : null;
+    const rounds = this.roundRequests();
+    const picked = rounds === null ? null : new Set(rounds.map((r) => r.repo));
     return this.parts()
       .filter((p) => picked === null || (p.section.repo !== null && picked.has(p.section.repo)))
       .map((p) => {
@@ -161,8 +160,21 @@ export class RunPreviewViewModel {
       });
   });
 
+  /** What a round starts, one request per repository, as the start sends them; null outside a round. */
+  private readonly roundRequests = computed(() => {
+    const req = this.buildReq();
+    if (!req || !buildPreviewFor(req.kind).asksRound) return null;
+    const form = this.buildForm();
+    return form ? (buildRequest(form, true, req.offer ?? undefined).rounds ?? []) : [];
+  });
+
   /** The start button's text: "Start run", and for a round the number of agents it starts. */
-  readonly startLabel = computed(() => 'Start run');
+  readonly startLabel = computed(() => {
+    const rounds = this.roundRequests();
+    if (rounds === null) return 'Start run';
+    if (rounds.length === 0) return 'Start agents';
+    return rounds.length === 1 ? 'Start 1 agent' : `Start ${rounds.length} agents`;
+  });
 
   /** Start run is available once the rows are in and the build's fields hold a valid time limit and round. */
   readonly canStart = computed(() => !this.busy() && (this.buildForm()?.form().valid() ?? true));

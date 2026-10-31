@@ -336,6 +336,7 @@
     [sections]="vm.preview.sections()"
     [warnings]="vm.preview.warnings()"
     [busy]="!vm.preview.canStart()"
+    [startLabel]="vm.preview.startLabel()"
     (toggle)="vm.preview.toggle($event.key, $event.off)"
     (start)="vm.preview.start()"
     (cancel)="vm.preview.cancel()"

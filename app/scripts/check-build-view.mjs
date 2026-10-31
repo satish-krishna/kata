@@ -535,7 +535,7 @@ async function listIsWhole(mode) {
     await enter(MODES[3]);
     await barButtonOf('Another round').click();
     const round = page.getByRole('dialog');
-    await round.getByRole('button', { name: /^Start run$/ }).waitFor();
+    await round.getByRole('button', { name: /^Start (agents|[0-9]+ agents?)$/ }).waitFor();
     await eventually(page, () => round.locator('[data-finding]').count(), (n) => n > 0, 'the round listing the findings');
     const box = await round.boundingBox();
     check(box !== null && box.x >= 0 && box.y >= 0 && box.x + box.width <= 1280 && box.y + box.height <= 800, `the round dialog fits inside 1280 by 800 (${JSON.stringify(box)})`);
@@ -552,17 +552,20 @@ async function listIsWhole(mode) {
     check((await round.getByRole('checkbox').count()) >= 2, 'the round lists a checkbox for each finding');
     await eventually(page, () => summary.innerText(), (t) => /Starts [0-9]+ agents?/.test(t) && /commerce-core/.test(t) && /customer-portal/.test(t), 'the summary naming the agents');
     check(true, 'R5.4 the round says which agents will start, with commerce-core and customer-portal among them');
+    const startText = await round.getByRole('button', { name: /^Start [0-9]+ agents?$/ }).innerText();
+    const summaryCount = /Starts ([0-9]+) agents?/.exec(await summary.innerText())?.[1];
+    check(summaryCount !== undefined && startText === `Start ${summaryCount} agent${summaryCount === '1' ? '' : 's'}`, `the round's start button counts the agents the summary names (${startText} against ${summaryCount})`);
     check(await inWindow(summary), 'the round summary is inside the window');
     // Escape closes the dialog and the page behind it is still the build page.
     await page.keyboard.press('Escape');
     await page.getByRole('dialog').waitFor({ state: 'detached' });
     await stays('the round dialog closed');
     await barButtonOf('Another round').click();
-    await round.getByRole('button', { name: /^Start run$/ }).waitFor();
+    await round.getByRole('button', { name: /^Start (agents|[0-9]+ agents?)$/ }).waitFor();
     await round.locator('[aria-label="Fixed in, for F5"]').first().click();
     await page.getByRole('option', { name: 'customer-portal' }).click();
-    await eventually(page, () => round.getByRole('button', { name: /^Start run$/ }).isEnabled(), (on) => on, 'the round being ready to start');
-    await round.getByRole('button', { name: /^Start run$/ }).click();
+    await eventually(page, () => round.getByRole('button', { name: /^Start [0-9]+ agents?$/ }).isEnabled(), (on) => on, 'the round being ready to start');
+    await round.getByRole('button', { name: /^Start [0-9]+ agents?$/ }).click();
     // R7.1: both repositories have their agent running together, neither waiting for the other.
     await eventually(
       page,

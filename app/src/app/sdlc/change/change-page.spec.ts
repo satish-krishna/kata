@@ -18,8 +18,8 @@ import { ChangePage } from './change-page';
 import { ChangePageViewModel } from './change-page.view-model';
 
 /** Every document run opens the preview first; confirm it once its rows have resolved. */
-const confirmPreview = async () => {
-  const start = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === 'Start run');
+const confirmPreview = async (label = 'Start run') => {
+  const start = () => Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === label);
   await vi.waitFor(() => expect(start() && !start()!.disabled).toBe(true));
   start()!.click();
 };
@@ -554,7 +554,7 @@ describe('ChangePage build page', () => {
     const preview = fixture.debugElement.injector.get(RunPreviewViewModel);
     await vi.waitFor(() => expect(preview.buildForm()).not.toBeNull());
     preview.buildForm()!.model.update((m) => ({ ...m, picked: [], notes: { ...m.notes, 'commerce-core': 'tidy up' } }));
-    await confirmPreview();
+    await confirmPreview('Start 1 agent');
     await vi.waitFor(() => expect(runSpec).toHaveBeenCalled(), { timeout: TOKEN });
     expect(prepare.mock.calls[0][6]).toBe('round');
     await vi.waitFor(() => expect(page(container).querySelector('[data-session] app-observe-pane')).not.toBeNull(), { timeout: TOKEN });
