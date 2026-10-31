@@ -18,3 +18,4 @@ app/dist/
 app/.angular/
 app/parity/actual/
 app/parity/diff/
+/.angular/cache
