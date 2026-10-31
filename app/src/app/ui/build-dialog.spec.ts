@@ -153,6 +153,23 @@ describe('BuildDialog', () => {
     expect(text(root().querySelector('[data-finding="F8"]')!)).toContain('Fixed in');
   });
 
+  it('puts each finding\'s checkbox in a field, named by a label that holds the finding\'s key (house style: a control belongs in a field)', async () => {
+    await open('round', OFFER);
+    for (const f of OFFER.findings) {
+      const row = root().querySelector(`[data-finding="${f.key}"]`)!;
+      const checkbox = row.querySelector<HTMLElement>('[role="checkbox"]')!;
+      expect(checkbox.closest('[data-slot="field"]'), f.key).not.toBeNull();
+      expect(checkbox.hasAttribute('aria-label'), f.key).toBe(false);
+      expect(checkbox.id, f.key).not.toBe('');
+      const label = row.querySelector<HTMLLabelElement>(`label[for="${checkbox.id}"]`);
+      expect(label, f.key).not.toBeNull();
+      expect(text(label!), f.key).toContain(f.key);
+      expect(text(label!), f.key).toContain(`${f.key} is wrong.`);
+    }
+    const ids = Array.from(root().querySelectorAll('[data-finding] [role="checkbox"]')).map((e) => e.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
   it('picking and unpicking changes what the round fixes (R5.2)', async () => {
     const { fixture, request } = await open('round', OFFER);
     await pickRepo(fixture, 'catalog-api');
