@@ -19,7 +19,7 @@ import {
 import { layoutKeyFor } from '../../lib/build-layout-keys';
 import type { Pick } from '../../lib/build-sessions';
 import type { TaskFilter } from '../../lib/build-task-list';
-import { actionLabel, primaryAction, type Finding, type StageAction } from '../../lib/sdlc';
+import { actionLabel, primaryAction, type Finding, type Severity, type StageAction } from '../../lib/sdlc';
 import { FindingsList } from '../../ui/findings-list';
 import { ObservePane } from '../../ui/observe-pane';
 import { Segmented } from '../../ui/segmented';
@@ -217,6 +217,17 @@ export class BuildPage {
   protected pickFinding(finding: Finding): void {
     this.reveal.emit('files');
     this.showFinding.emit(finding);
+  }
+
+  /** A finding picked in the tasks area: the findings area comes forward to show it, then the changed files open its place. */
+  protected pickReviewRow(finding: Finding): void {
+    this.reveal.emit('findings');
+    this.pickFinding(finding);
+  }
+
+  /** The status tone a severity takes, the way the findings list shows it. */
+  protected severityTone(severity: Severity | null): string {
+    return severity === 'critical' || severity === 'high' ? 'error' : severity === 'medium' ? 'warning' : 'idle';
   }
 
   protected goToRepo(repo: string): void {

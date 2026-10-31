@@ -1728,7 +1728,7 @@ describe("the Review group lists the latest review's findings", () => {
     const { area } = await mount(reviewView([UPLOAD, LOW], new Set()));
     const group = reviewGroup(area('tasks')!)!;
     expect(norm(group.textContent)).toContain('2 findings');
-    expect(norm(group.querySelector('[data-review-counts]')?.textContent)).toBe('high 1 low 1');
+    expect(Array.from(group.querySelectorAll('[data-review-counts] .k-status')).map((c) => norm(c.textContent))).toEqual(['high 1', 'low 1']);
     expect(norm(group.querySelector('[data-repo-heading]')?.textContent)).toContain('catalog-api');
     expect(norm(group.querySelector('[data-finding-row]')?.textContent)).toContain('The upload is not checked.');
     expect(norm(group.querySelector('[data-finding-row]')?.textContent)).not.toContain('It should be.');

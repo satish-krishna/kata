@@ -33,7 +33,7 @@ import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { REVIEW_MISSING_TEXT, reviewState } from '../../lib/sdlc-done';
 import { givenFor, reviewFindings, specFor, type BuildRun, type Finding, type StageAction } from '../../lib/sdlc';
 import { groupFindings, type FindingGroup } from '../../lib/sdlc-findings';
-import { filterCounts, taskList, type ReviewRowsView, type TaskFilter, type TaskLine, type TaskListView } from '../../lib/build-task-list';
+import { filterCounts, reviewRows, taskList, type ReviewRowsView, type TaskFilter, type TaskLine, type TaskListView } from '../../lib/build-task-list';
 import type { ReplacedFindings } from '../../ui/findings-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
 import type { BuildHandoff } from '../change/change-page.view-model';
@@ -522,7 +522,10 @@ export class BuildPageViewModel {
     return groupFindings(latest?.findings ?? [], latest?.repos ?? []);
   });
   /** The latest review as the rounds and the tasks area read it; null before any review has findings or words to read. */
-  readonly latestReview = computed<{ number: number | null; findings: Finding[]; stale: boolean } | null>(() => null);
+  readonly latestReview = computed<{ number: number | null; findings: Finding[]; stale: boolean } | null>(() => {
+    const latest = this.reviews().at(-1);
+    return latest === undefined ? null : { number: latest.number, findings: this.findings(), stale: this.reviewEntry() === 'stale' };
+  });
   /** Earlier reviews, each with the time of the review that replaced it (or its own number and date, from the document), newest first. */
   readonly replaced = computed<ReplacedFindings[]>(() => {
     const all = this.reviews();
@@ -887,7 +890,11 @@ export class BuildPageViewModel {
 
   /** Open a repository's folded low findings, or close them. */
   toggleLow(repo: string): void {
-    void repo;
+    this.openLow.update((open) => {
+      const next = new Set(open);
+      if (!next.delete(repo)) next.add(repo);
+      return next;
+    });
   }
 
   setTaskFilter(filter: TaskFilter): void {
@@ -955,7 +962,7 @@ export class BuildPageViewModel {
       filter: { value: filter, counts },
       noDepartures: filter === 'departed' && counts.departed === 0,
       pickedDeparture,
-      review: { status: reviewStatus(entry), action: repoAction({ kind: 'idle' }, REVIEW, review), picked: pick?.kind === 'review', rows: null, stale: null, nothingFound: false, openLow: this.openLow() },
+      review: { status: reviewStatus(entry), action: repoAction({ kind: 'idle' }, REVIEW, review), picked: pick?.kind === 'review', ...this.reviewList(entry) },
       pick,
       sessions: this.mountedSessions(),
       sessionNote: this.sessionNote(),
@@ -968,6 +975,14 @@ export class BuildPageViewModel {
       counts: { files: this.changedFileTotal(), findings: findingsArea.review === null ? 0 : findingsArea.review.findings.length },
     };
   });
+
+  /** What the Review group lists: the latest review's rows once it is finished or out of date, with the notice for an out-of-date one. */
+  private reviewList(entry: ReviewEntry): Omit<ReviewEntryView, 'status' | 'action' | 'picked'> {
+    const latest = this.latestReview();
+    const listed = latest !== null && (entry === 'finished' || entry === 'stale');
+    const rows = listed ? reviewRows(this.findingGroups(), latest.findings) : null;
+    return { rows, stale: listed && entry === 'stale' ? REVIEW_MISSING_TEXT.stale : null, nothingFound: rows !== null && rows.total === 0, openLow: this.openLow() };
+  }
 
   /** The findings area for the page, from what the review knows. */
   private findingsAreaView(): FindingsAreaView {
@@ -1568,11 +1583,11 @@ export class BuildPageViewModel {
     const labeled = (r: { number: number; reviewedAt: string; repos: string[]; findings: Finding[] }): Review => ({
       at: null,
       label: `Review ${r.number} of ${r.reviewedAt}`,
-      number: null,
+      number: r.number,
       repos: r.repos,
       findings: r.findings,
     });
-    this.reviews.set([...shown.earlier].reverse().map(labeled).concat({ at: null, label: null, number: null, repos: shown.latest.repos, findings: shown.latest.findings }));
+    this.reviews.set([...shown.earlier].reverse().map(labeled).concat({ at: null, label: null, number: shown.latest.number, repos: shown.latest.repos, findings: shown.latest.findings }));
     return true;
   }
 

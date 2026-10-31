@@ -14,6 +14,9 @@ export type RoundReview = { number: number | null; findings: Finding[] };
 
 const DEFAULT_PICKED = new Set<string>(['critical', 'high', 'medium']);
 
+/** A finding's key in the lists of a round and of the Review group: its id, else `#<n>` by its place in the review (`index` counts from 0). */
+export const findingKey = (finding: Finding, index: number): string => finding.id ?? `#${index + 1}`;
+
 /** What a round may fix: every finding of the latest review, none when there is no review. */
 export function roundOffer(review: RoundReview | null, repos: string[]): RoundOffer {
   if (review === null) return { review: null, repos, findings: [] };
@@ -21,7 +24,7 @@ export function roundOffer(review: RoundReview | null, repos: string[]): RoundOf
     review: review.number,
     repos,
     findings: review.findings.map((finding, i) => ({
-      key: finding.id ?? `#${i + 1}`,
+      key: findingKey(finding, i),
       finding,
       repo: finding.repo ?? null,
     })),

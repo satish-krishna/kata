@@ -711,11 +711,12 @@ describe('the build page starts, stops and continues the same runs as the build 
     });
 
     it('R4.7: a review that predates the latest commits keeps its rows and sets the stale notice', async () => {
-      const { vm, transport, lock } = setup();
-      withDocument(transport, section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }]));
-      vi.spyOn(transport, 'sdlcReviewRecord').mockImplementation(async () => ({ layout: 2, reviews: [section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }])], problems: [], master_moved: ['src/a.ts'] }));
-      await vm.start(await handoffFor(transport), CTX);
-      await drive(vm, lock, shown(vm));
+      const { vm, transport } = setup();
+      const status = await transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
+      const [found] = (await readAllChanges(transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
+      const document = { layout: 2, reviews: [section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }])], problems: [], master_moved: ['src/a.ts'] };
+      await vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: { ...found, stage: 'build-finished' }, status, done: false, review: document });
+      await advance(300);
       const review = vm.view().review;
       expect(review.rows?.total).toBe(1);
       expect(review.stale).toBe('The work changed since it was reviewed.');

@@ -1,4 +1,5 @@
 import type { StatusText } from '../sdlc/build/build-page.view-model';
+import { findingKey } from './build-round';
 import type { Finding, Severity } from './sdlc';
 import type { FindingGroup } from './sdlc-findings';
 
@@ -65,7 +66,33 @@ export type ReviewRowsView = {
 
 /** The rows the Review group lists for the latest review's findings. `all` is the review's findings in the order listed, for the `#<n>` key. */
 export function reviewRows(groups: FindingGroup[], all?: Finding[]): ReviewRowsView {
-  void groups;
-  void all;
-  return { counts: [], total: 0, groups: [] };
+  const flat = groups.flatMap((g) => g.findings);
+  const order = all ?? flat;
+  const row = (finding: Finding): ReviewRow => {
+    const at = order.indexOf(finding);
+    return { key: findingKey(finding, at === -1 ? flat.indexOf(finding) : at), finding, summary: summaryOf(finding.text) };
+  };
+  const counts = SEVERITIES.map((severity) => ({ severity, n: flat.filter((f) => f.severity === severity).length })).filter((c) => c.n > 0);
+  return {
+    counts,
+    total: flat.length,
+    groups: groups.filter((g) => g.findings.length > 0).map((g) => ({
+      repo: g.repo,
+      rows: g.findings
+        .filter((f) => f.severity !== 'low')
+        .sort((a, b) => rank(a) - rank(b))
+        .map(row),
+      low: g.findings.filter((f) => f.severity === 'low').map(row),
+    })),
+  };
+}
+
+const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low'];
+const rank = (f: Finding): number => (f.severity === null ? SEVERITIES.length : SEVERITIES.indexOf(f.severity));
+
+/** The first sentence of a finding's text (up to the first full stop and space, or line break), the whole text when it has none. */
+function summaryOf(text: string): string {
+  const line = text.split(/\r?\n/)[0];
+  const stop = line.indexOf('. ');
+  return stop === -1 ? line : line.slice(0, stop + 1);
 }
