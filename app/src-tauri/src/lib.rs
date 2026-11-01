@@ -219,6 +219,7 @@ fn start_run(
                                             .unwrap_or("the run failed")
                                             .to_string()
                                     }),
+                                    history_id: None,
                                 });
                             }
                         }
@@ -246,6 +247,7 @@ fn start_run(
                         end = Some(build_host::RunEnd {
                             exit: Some(code),
                             error: Some(format!("engine exited ({code}) without a result")),
+                            history_id: None,
                         });
                         let ev = json!({
                             "type": "run.error",
@@ -261,6 +263,7 @@ fn start_run(
                     end = Some(build_host::RunEnd {
                         exit: None,
                         error: Some(err.clone()),
+                        history_id: None,
                     });
                     let ev = json!({ "type": "run.error", "message": err });
                     let seq = history.push(id, &ev);
@@ -278,10 +281,14 @@ fn start_run(
             marks.ended(key);
         }
         if let Some(ended) = ended {
-            let end = end.unwrap_or(build_host::RunEnd {
+            let mut end = end.unwrap_or(build_host::RunEnd {
                 exit: None,
                 error: Some("the engine's output ended without a result".into()),
+                history_id: None,
             });
+            // The transcript the run wrote is where its tasks are linked to.
+            let events: Vec<Value> = history.replay(id).into_iter().map(|e| e.event).collect();
+            end.history_id = build_host::transcript_run_id(&events);
             // The host's work is blocking (it runs the plugin and takes locks).
             let _ = tauri::async_runtime::spawn_blocking(move || ended(end)).await;
         }
@@ -395,6 +402,12 @@ impl build_host::Tools for PluginTools {
             .map_err(|e| e.to_string())?
             .review_record(place, system, state)
     }
+    fn workspace_id(&self, folder: &Path) -> Option<String> {
+        build_host::workspace_id_in_store(folder)
+    }
+    fn link_tasks(&self, links: &[sdlc::store::TaskLink]) -> Result<(), String> {
+        sdlc::store::append_task_links(links).map_err(|e| e.to_string())
+    }
     fn head(&self, dir: &Path) -> Result<String, String> {
         sdlc::git::Repo::open(dir)
             .and_then(|r| r.head_sha())
@@ -457,8 +470,9 @@ fn sdlc_build_continue(
     host: State<Arc<build_host::BuildHost>>,
     change: build_host::ChangeRef,
     repo: String,
+    off: Option<Vec<String>>,
 ) -> build_host::StartOutcome {
-    let outcome = host.continue_repo(&change, &repo);
+    let outcome = host.continue_with(&change, &repo, off);
     announce_running(&app);
     outcome
 }
@@ -492,8 +506,9 @@ fn sdlc_run_change(
 fn sdlc_review_start(
     host: State<Arc<build_host::BuildHost>>,
     change: build_host::ChangeRef,
+    off: Option<Vec<String>>,
 ) -> build_host::StartOutcome {
-    host.review_start(&change)
+    host.review_start_with(&change, off)
 }
 
 /// The repositories other changes hold that keep a change's review from starting; none when it is free.

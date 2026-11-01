@@ -4,4 +4,8 @@ import type { RoundRequest } from "./RoundRequest";
 /**
  * What the engineer chose for a build.
  */
-export type StartForm = { timeoutSecs: number, instructions?: string, continueOnLeftovers?: boolean, rounds?: Array<RoundRequest>, };
+export type StartForm = { timeoutSecs: number, instructions?: string, continueOnLeftovers?: boolean, rounds?: Array<RoundRequest>, 
+/**
+ * The keys of the given items the engineer switched off, as the build's given rows carry them.
+ */
+off?: Array<string>, };

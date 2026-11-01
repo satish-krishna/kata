@@ -19,10 +19,10 @@ use kata_sdlc::holds::{needed_repos, review_repos, ChangeKey, HoldTable, Purpose
 use kata_sdlc::permissions::{RunKind, RunPlace};
 use kata_sdlc::review::{self, ReviewCurrency, ReviewRecord};
 use kata_sdlc::round::{self, RoundOffer, RoundPicks, RoundPlan, RoundRequest};
-use kata_sdlc::runspec::{change_spec, RunForm};
+use kata_sdlc::runspec::{change_spec, given_for, RunForm};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -63,6 +63,10 @@ pub struct StartForm {
     #[serde(default)]
     #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<RoundRequest>>"))]
     pub rounds: Vec<RoundRequest>,
+    /// The keys of the given items the engineer switched off, as the build's given rows carry them.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<String>>"))]
+    pub off: Vec<String>,
 }
 
 /// A repository another change holds.
@@ -178,6 +182,35 @@ pub struct BuildView {
 pub struct RunEnd {
     pub exit: Option<i32>,
     pub error: Option<String>,
+    /// The id of the run's transcript in the history (the file stem), when the run wrote one.
+    pub history_id: Option<String>,
+}
+
+/// The id the Workbench's workspace list keeps `folder` under.
+pub fn workspace_id_in_store(folder: &Path) -> Option<String> {
+    let norm = |t: &str| {
+        t.replace('\\', "/")
+            .trim_end_matches('/')
+            .to_ascii_lowercase()
+    };
+    let wanted = norm(&folder.display().to_string());
+    kata_sdlc::store::load_workspaces()
+        .into_iter()
+        .find(|w| norm(&w.folder) == wanted)
+        .map(|w| w.id)
+}
+
+/// The id of a run's transcript: the stem of the path in its first `transcript: <path>` log event.
+pub fn transcript_run_id(events: &[Value]) -> Option<String> {
+    events.iter().find_map(|e| {
+        if e["type"] != "log" {
+            return None;
+        }
+        let path = e["message"].as_str()?.strip_prefix("transcript: ")?.trim();
+        let file = path.rsplit(['\\', '/']).next()?;
+        let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
+        (!stem.is_empty()).then(|| stem.to_string())
+    })
 }
 
 /// One run the coordinator asked for.
@@ -212,6 +245,10 @@ pub trait Tools: Send + Sync {
         system: &str,
         state: &ChangeState,
     ) -> Result<Option<ReviewRecord>, String>;
+    /// The id the Workbench keeps `folder` under, if it is one of its workspaces.
+    fn workspace_id(&self, folder: &Path) -> Option<String>;
+    /// Append task-to-run links to Kata's store.
+    fn link_tasks(&self, links: &[kata_sdlc::store::TaskLink]) -> Result<(), String>;
     /// The commit a repository's `HEAD` is on.
     fn head(&self, dir: &Path) -> Result<String, String>;
 }
@@ -278,6 +315,12 @@ impl Tools for ProgramTools {
             .map_err(|e| e.to_string())
     }
 
+    fn workspace_id(&self, folder: &Path) -> Option<String> {
+        workspace_id_in_store(folder)
+    }
+    fn link_tasks(&self, links: &[kata_sdlc::store::TaskLink]) -> Result<(), String> {
+        kata_sdlc::store::append_task_links(links).map_err(|e| e.to_string())
+    }
     fn head(&self, dir: &Path) -> Result<String, String> {
         git::Repo::open(dir)
             .and_then(|r| r.head_sha())
@@ -492,12 +535,23 @@ impl BuildHost {
     /// Start `change`'s build: nothing starts unless every repository it needs is free and the
     /// plugin's `build.start` passes in all of them.
     pub fn start(self: &Arc<Self>, change: &ChangeRef, form: StartForm) -> StartOutcome {
-        self.begin(change, Some(form), None)
+        self.begin(change, Some(form), None, None)
     }
 
     /// Continue `change`'s build in `repo`; a build with no live run is rebuilt from where the change stands.
     pub fn continue_repo(self: &Arc<Self>, change: &ChangeRef, repo: &str) -> StartOutcome {
-        self.begin(change, None, Some(repo))
+        self.continue_with(change, repo, None)
+    }
+
+    /// Continue `change`'s build in `repo` with the given items the engineer switched off in the preview
+    /// (none: the build's own).
+    pub fn continue_with(
+        self: &Arc<Self>,
+        change: &ChangeRef,
+        repo: &str,
+        off: Option<Vec<String>>,
+    ) -> StartOutcome {
+        self.begin(change, None, Some(repo), off)
     }
 
     /// Start a document run (intent, spec, plan, triage or fix) of an existing change: the change's
@@ -628,6 +682,15 @@ impl BuildHost {
     /// Start `change`'s review by hand. It starts only when every product repository the review reads is
     /// free; the coordinator's own launch takes the hold again and keeps it until the run ends.
     pub fn review_start(self: &Arc<Self>, change: &ChangeRef) -> StartOutcome {
+        self.review_start_with(change, None)
+    }
+
+    /// [`Self::review_start`] with the given items the engineer switched off in the review's preview.
+    pub fn review_start_with(
+        self: &Arc<Self>,
+        change: &ChangeRef,
+        off: Option<Vec<String>>,
+    ) -> StartOutcome {
         let place = match self.tools.resolve(Path::new(&change.workspace)) {
             Ok(p) => p,
             Err(e) => return could_not_run(&e),
@@ -663,7 +726,7 @@ impl BuildHost {
                 held: held_repos(held),
             };
         }
-        let outcome = self.begin(change, None, None);
+        let outcome = self.begin(change, None, None, off);
         // The hold stays only with a review that is running.
         let mut guard = self.inner.lock().unwrap();
         let reviewing = guard
@@ -731,9 +794,10 @@ impl BuildHost {
                 instructions: None,
                 continue_on_leftovers: false,
                 rounds: Vec::new(),
+                off: Vec::new(),
             });
         form.rounds = plan.requests;
-        self.begin(change, Some(form), None)
+        self.begin(change, Some(form), None, None)
     }
 
     /// Take the review hold on every product repository the change's review reads. The lock is held for
@@ -842,6 +906,7 @@ impl BuildHost {
                         instructions: form.instructions.clone(),
                         continue_on_leftovers: form.continue_on_leftovers,
                     },
+                    &form.off,
                 );
                 BuildSection { title, repo, spec }
             })
@@ -849,6 +914,7 @@ impl BuildHost {
     }
 
     /// The run-spec of one run of a build: the one place it is composed, for a launch and for a preview.
+    #[allow(clippy::too_many_arguments)]
     fn build_spec(
         &self,
         exec: &Exec,
@@ -857,6 +923,7 @@ impl BuildHost {
         launch_key: &str,
         instructions: Option<String>,
         choices: BuildChoices,
+        off: &[String],
     ) -> RunSpec {
         let kind = if launch_key == REVIEW {
             RunKind::Review
@@ -875,19 +942,23 @@ impl BuildHost {
             system_repos: system_repos.to_vec(),
             workbench_dir: self.workbench_dir.clone(),
         };
-        change_spec(
-            &place,
-            RunForm {
-                name: String::new(),
-                task: String::new(),
-                bare: false,
-                permission_mode: PermissionMode::Auto,
-                timeout_secs: choices.timeout_secs,
-                instructions: instructions.or(choices.instructions),
-                continue_on_leftovers: choices.continue_on_leftovers,
-                given: None,
-            },
-        )
+        let mut form = RunForm {
+            name: String::new(),
+            task: String::new(),
+            bare: false,
+            permission_mode: PermissionMode::Auto,
+            timeout_secs: choices.timeout_secs,
+            instructions: instructions.or(choices.instructions),
+            continue_on_leftovers: choices.continue_on_leftovers,
+            given: None,
+        };
+        let spec = change_spec(&place, form.clone());
+        if off.is_empty() {
+            return spec;
+        }
+        // A project item is switched off for the run in its own folder only, and the folder is the spec's.
+        form.given = Some(given_for(off, &spec.workdir));
+        change_spec(&place, form)
     }
 
     /// The latest review as the build page lists it: the Review group's rows in the build's repository
@@ -911,6 +982,52 @@ impl BuildHost {
         let offer = round::offer(record.as_ref(), &repos);
         let groups = round::round_groups(&offer, &rows);
         Ok(ReviewView { rows, groups })
+    }
+
+    /// Link the tasks a build run recorded to the run's transcript, in Kata's store. The host does it when
+    /// the run ends, whether or not a page is open; a failed append is reported on stderr and changes nothing else.
+    fn link_tasks_of(
+        &self,
+        key: &ChangeKey,
+        repo: &str,
+        place: &Place,
+        logged_before: &BTreeSet<String>,
+        end: &RunEnd,
+    ) {
+        let Some(run_id) = end.history_id.as_ref().filter(|_| repo != REVIEW) else {
+            return;
+        };
+        let Ok(states) = self.tools.states(place, &key.system) else {
+            return;
+        };
+        let Some(state) = states.iter().find(|s| s.change == key.change) else {
+            return;
+        };
+        let Some(workspace_id) = self.tools.workspace_id(&place.workspace) else {
+            return;
+        };
+        let links: Vec<kata_sdlc::store::TaskLink> = state
+            .tasks
+            .iter()
+            .flatten()
+            .filter(|(r, _)| r.as_str() == repo)
+            .flat_map(|(_, t)| t.logged.iter())
+            .filter(|task| !logged_before.contains(*task))
+            .map(|task| kata_sdlc::store::TaskLink {
+                workspace_id: workspace_id.clone(),
+                system: key.system.clone(),
+                change: key.change.clone(),
+                repo: repo.to_string(),
+                task: task.clone(),
+                run_id: run_id.clone(),
+            })
+            .collect();
+        if links.is_empty() {
+            return;
+        }
+        if let Err(e) = self.tools.link_tasks(&links) {
+            eprintln!("could not link the tasks of {repo} to its run: {e}");
+        }
     }
 
     /// A run of a build ended; called by the launcher once the run has left the run table. A run of an
@@ -952,6 +1069,7 @@ impl BuildHost {
         change: &ChangeRef,
         form: Option<StartForm>,
         only: Option<&str>,
+        off: Option<Vec<String>>,
     ) -> StartOutcome {
         let place = match self.tools.resolve(Path::new(&change.workspace)) {
             Ok(p) => p,
@@ -973,6 +1091,7 @@ impl BuildHost {
                 live_build,
                 generation: existing.map(|b| b.generation),
                 form: existing.map(|b| b.form.clone()),
+                off,
             };
             guard.starting.insert(key.clone());
             before
@@ -995,13 +1114,19 @@ impl BuildHost {
             live_build,
             generation: existing_generation,
             form: existing_form,
+            off,
         } = before;
-        let form = form.or(existing_form).unwrap_or(StartForm {
+        let mut form = form.or(existing_form).unwrap_or(StartForm {
             timeout_secs: DEFAULT_TIMEOUT_SECS,
             instructions: None,
             continue_on_leftovers: false,
             rounds: Vec::new(),
+            off: Vec::new(),
         });
+        // The choices this start was given are the build's from now on.
+        if let Some(off) = off {
+            form.off = off;
+        }
         let (snapshot, plan) = match self.snapshot(place, &change.system, &change.change) {
             Ok(s) => s,
             Err(output) => return StartOutcome::CouldNotRun { output },
@@ -1439,6 +1564,15 @@ impl BuildHost {
             return Err("the change's state was not read".into());
         };
         let review = launch_key == REVIEW;
+        // The build's choices as they stand when the run starts.
+        let off = self
+            .inner
+            .lock()
+            .unwrap()
+            .builds
+            .get(key)
+            .map(|b| b.form.off.clone())
+            .unwrap_or_default();
         let spec = self.build_spec(
             exec,
             &snapshot,
@@ -1446,9 +1580,21 @@ impl BuildHost {
             &launch_key,
             instructions,
             choices,
+            &off,
         );
+        // What the run records is what the build log gains while it runs.
+        let logged_before: BTreeSet<String> = snapshot
+            .state
+            .tasks
+            .iter()
+            .flatten()
+            .filter(|(repo, _)| **repo == launch_key)
+            .flat_map(|(_, t)| t.logged.iter().cloned())
+            .collect();
+        let place = exec.place.clone();
         let host = Arc::clone(self);
         let ended_key = key.clone();
+        let repo_key = launch_key.clone();
         self.launcher.launch(LaunchRequest {
             spec,
             lane: Lane::Change {
@@ -1463,7 +1609,10 @@ impl BuildHost {
             repo: (!review).then(|| launch_key.clone()),
             task,
             group: format!("build:{}/{}", key.system, key.change),
-            ended: Box::new(move |end| host.run_ended(&ended_key, generation, instance, end)),
+            ended: Box::new(move |end| {
+                host.link_tasks_of(&ended_key, &repo_key, &place, &logged_before, &end);
+                host.run_ended(&ended_key, generation, instance, end);
+            }),
         })
     }
 
@@ -1500,6 +1649,8 @@ struct Before {
     live_build: bool,
     generation: Option<u64>,
     form: Option<StartForm>,
+    /// The choices the start was given, which become the build's.
+    off: Option<Vec<String>>,
 }
 
 #[cfg(test)]

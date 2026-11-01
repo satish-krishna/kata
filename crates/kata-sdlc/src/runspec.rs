@@ -38,6 +38,63 @@ pub struct RunForm {
     pub given: Option<Given>,
 }
 
+/// How a switched-off choice is keyed across runs: a project item is qualified by the folder it came from, a
+/// shared one is its own identity. The same key the Workbench's given rows carry.
+pub fn given_key(id: &str, workdir: &str) -> String {
+    let source = id.split(':').next().unwrap_or_default();
+    if source != "project" && source != "project-local" {
+        return id.to_string();
+    }
+    let mut dir = workdir.replace('\\', "/");
+    while dir.ends_with('/') {
+        dir.pop();
+    }
+    let bytes = dir.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        dir = format!("{}{}", dir[..1].to_ascii_lowercase(), &dir[1..]);
+    }
+    format!("{dir}|{id}")
+}
+
+/// The run-spec's given section for the run in `workdir` from the build's switched-off keys: a shared key
+/// applies to every run, a project key only to the run in the folder it was qualified with.
+pub fn given_for(off: &[String], workdir: &str) -> Given {
+    let mut given = Given::default();
+    for key in off {
+        let id = match key.split_once('|') {
+            Some((_, rest))
+                if rest.starts_with("project:") || rest.starts_with("project-local:") =>
+            {
+                rest
+            }
+            _ => key.as_str(),
+        };
+        if given_key(id, workdir) != *key {
+            continue;
+        }
+        let list = match id.split(':').nth(1) {
+            Some("hook") => &mut given.hooks,
+            Some("skill") => &mut given.skills,
+            Some("plugin") => &mut given.plugins,
+            Some("instruction") => &mut given.instructions,
+            Some("tool-server") => &mut given.tool_servers,
+            _ => continue,
+        };
+        list.push(id.to_string());
+    }
+    for list in [
+        &mut given.hooks,
+        &mut given.skills,
+        &mut given.plugins,
+        &mut given.instructions,
+        &mut given.tool_servers,
+    ] {
+        list.sort();
+        list.dedup();
+    }
+    given
+}
+
 const AI_SDLC: &str = "ai-sdlc";
 const GITHUB_TOKENS: [&str; 3] = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"];
 
@@ -158,6 +215,36 @@ mod tests {
             continue_on_leftovers: false,
             given: None,
         }
+    }
+
+    #[test]
+    fn the_builds_choices_reach_a_run_as_its_given_section() {
+        let off: Vec<String> = [
+            "personal:tool-server:github",
+            "d:/ws/commerce-core|project:tool-server:commerce-core-db",
+            "d:/ws/customer-portal|project:tool-server:customer-portal-db",
+            "personal:plugin:superpowers@claude-plugins-official",
+            "run-spec:skill:doc-writer",
+            "personal:instruction:CLAUDE.md",
+        ]
+        .map(String::from)
+        .to_vec();
+        let given = given_for(&off, "D:\\ws\\commerce-core\\");
+        assert_eq!(given.skills, vec!["run-spec:skill:doc-writer"]);
+        assert_eq!(
+            given.plugins,
+            vec!["personal:plugin:superpowers@claude-plugins-official"]
+        );
+        assert_eq!(given.instructions, vec!["personal:instruction:CLAUDE.md"]);
+        assert_eq!(
+            given.tool_servers,
+            vec![
+                "personal:tool-server:github",
+                "project:tool-server:commerce-core-db"
+            ]
+        );
+        assert!(given.hooks.is_empty());
+        assert_eq!(given_for(&[], "D:/ws/commerce-core"), Given::default());
     }
 
     #[test]
