@@ -3956,3 +3956,69 @@ fn real_gate_and_guard_fire_under_kata() {
         "git push was not refused by the hook: ok={ok} output={output:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan T38: a run's kit plugins load, next to its loose kit skills.
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn real_kit_plugin_and_skill_load() {
+    if !build_proof_enabled() {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let work = root.path().join("work");
+    std::fs::create_dir_all(work.join(".claude/skills/kitskill")).unwrap();
+    std::fs::write(
+        work.join(".claude/skills/kitskill/SKILL.md"),
+        "---\nname: kitskill\ndescription: Test fixture only.\n---\n\n# Kit skill\n",
+    )
+    .unwrap();
+    copy_dir_all(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/hook-probe"),
+        &work.join(".claude/plugins/hook-probe"),
+    );
+
+    let mut spec = base_spec(&work.to_string_lossy());
+    spec.name = "kit-load".into();
+    spec.task = "Reply with the single word ok.".into();
+    spec.auth.bare = false;
+    spec.skills = vec!["kitskill".into()];
+    spec.plugins.insert("hook-probe".into(), Default::default());
+    spec.leash.max_turns = Some(3);
+    spec.leash.timeout_secs = Some(120);
+
+    let events = run_real_in(&spec, Some(&work));
+    // Claude's `system` `init` line is not an event of its own; `run.given` is that
+    // line checked against what Kata passed, so `Given` means Claude listed it.
+    let items = events
+        .iter()
+        .find_map(|e| match e {
+            KataEvent::RunGiven { items, .. } => Some(items.clone()),
+            _ => None,
+        })
+        .expect("no run.given event");
+    let status_of = |kind: ItemKind, name: &str| {
+        items
+            .iter()
+            .find(|i| i.kind == kind && i.name == name)
+            .map(|i| i.status)
+    };
+    use kata_core::given::GivenStatus;
+    assert_eq!(
+        status_of(ItemKind::Skill, "kitskill"),
+        Some(GivenStatus::Given),
+        "the loose kit skill (plugindir:kitskill) did not load: {items:?}"
+    );
+    assert_eq!(
+        status_of(ItemKind::Plugin, "hook-probe"),
+        Some(GivenStatus::Given),
+        "the kit plugin did not load: {items:?}"
+    );
+    assert_eq!(
+        status_of(ItemKind::Skill, "probe"),
+        Some(GivenStatus::Given),
+        "the plugin's skill (hook-probe:probe) did not load: {items:?}"
+    );
+}

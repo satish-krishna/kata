@@ -103,6 +103,8 @@ pub fn assemble(
 
     Ok(Assembled {
         plugin_dir,
+        skills_root: None,
+        plugins_root: None,
         system_prompt_file,
         _temp: Some(temp),
     })
@@ -119,6 +121,10 @@ pub struct Assembled {
     /// Path to the assembled `--plugin-dir`, or `None` if no skills/plugins
     /// were selected. Valid only while this `Assembled` is alive.
     pub plugin_dir: Option<String>,
+    /// The folder holding the loose kit skills (`skills/<name>/`), or `None`.
+    pub skills_root: Option<String>,
+    /// The folder holding the kit plugins (`<name>/` each), or `None`.
+    pub plugins_root: Option<String>,
     /// Path to the written `system.txt` (append mode only), or `None`.
     /// Valid only while this `Assembled` is alive.
     pub system_prompt_file: Option<String>,
@@ -132,6 +138,24 @@ impl Assembled {
     pub fn for_test(plugin_dir: Option<String>, system_prompt_file: Option<String>) -> Self {
         Self {
             plugin_dir,
+            skills_root: None,
+            plugins_root: None,
+            system_prompt_file,
+            _temp: None,
+        }
+    }
+
+    /// Like `for_test`, for a kit given as its two roots.
+    #[cfg(test)]
+    pub fn for_test_kit(
+        skills_root: Option<String>,
+        plugins_root: Option<String>,
+        system_prompt_file: Option<String>,
+    ) -> Self {
+        Self {
+            plugin_dir: None,
+            skills_root,
+            plugins_root,
             system_prompt_file,
             _temp: None,
         }
