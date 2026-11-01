@@ -98,6 +98,19 @@ pub struct BuildEvent {
     pub review_waiting: Vec<HeldRepo>,
 }
 
+/// What the running-changes strip reads of one change's build.
+#[derive(Clone, Debug)]
+pub struct BuildView {
+    pub change: ChangeKey,
+    /// None when this session hosts no build of the change (only a held start is remembered).
+    pub state: Option<BuildState>,
+    pub review_waiting: Vec<HeldRepo>,
+    /// The repositories that held the change's last start, until the engineer starts it again.
+    pub held_start: Vec<HeldRepo>,
+    /// When the state last changed, in unix milliseconds.
+    pub changed_ms: u64,
+}
+
 /// How a run ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunEnd {
