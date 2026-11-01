@@ -110,7 +110,7 @@ pub fn change_spec(place: &RunPlace, form: RunForm) -> RunSpec {
         given: Some(Given {
             required_plugins: vec![AI_SDLC.to_string()],
             build,
-            ..Given::default()
+            ..form.given.clone().unwrap_or_default()
         }),
         auth: Auth {
             bare: false,

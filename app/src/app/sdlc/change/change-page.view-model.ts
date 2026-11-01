@@ -1635,7 +1635,7 @@ export class ChangePageViewModel {
       productRepos: productRepos(scan),
       link: { system: this.system(), change: this.changeName(), stage: run.kind },
       label: run.label,
-    });
+    }, { ref: { workspace: workspace.folder, system: this.system(), change: this.changeName() }, kind: run.kind });
     await this.load();
   }
 

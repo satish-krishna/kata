@@ -102,19 +102,19 @@ export class TauriTransport extends KataTransport {
   sdlcSnapshot(master: string) { return this.ipc.invoke<Snapshot>('sdlc_snapshot', { master }); }
   sdlcLeftovers(master: string, before: Snapshot, productRepos: string[], build?: BuildScope) { return this.ipc.invoke<Leftovers>('sdlc_leftovers', { master, before, productRepos, build }); }
   sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope) { return this.ipc.invoke<void>('sdlc_discard', { master, before, paths, build }); }
-  sdlcRunHistory(runId: string) { return Promise.reject<KataEvent[]>(new Error('not wired')); }
-  sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm) { return Promise.reject<string>(new Error('not wired')); }
-  sdlcBuildStart(change: ChangeRef, form: BuildForm) { return Promise.reject<StartOutcome>(new Error('not wired')); }
-  sdlcBuildContinue(change: ChangeRef, repo: string) { return Promise.reject<StartOutcome>(new Error('not wired')); }
-  sdlcBuildState(change: ChangeRef) { return Promise.reject<BuildState | null>(new Error('not wired')); }
-  sdlcReviewStart(change: ChangeRef) { return Promise.reject<StartOutcome>(new Error('not wired')); }
-  sdlcReviewWaiting(change: ChangeRef) { return Promise.reject<HeldRepo[]>(new Error('not wired')); }
-  sdlcRoundOffer(change: ChangeRef) { return Promise.reject<[RoundOffer, RoundPicks]>(new Error('not wired')); }
-  sdlcRoundPlan(change: ChangeRef, picks: RoundPicks) { return Promise.reject<RoundPlan>(new Error('not wired')); }
-  sdlcRoundStart(change: ChangeRef, picks: RoundPicks) { return Promise.reject<StartOutcome>(new Error('not wired')); }
-  sdlcRunning() { return Promise.reject<RunningStrip>(new Error('not wired')); }
-  sdlcMarkOpened(change: ChangeRef) { return Promise.reject<void>(new Error('not wired')); }
-  sdlcCloseAnswer(confirm: boolean) { return Promise.reject<void>(new Error('not wired')); }
+  sdlcRunHistory(runId: string) { return this.ipc.invoke<KataEvent[]>('sdlc_run_history', { runId }); }
+  sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm) { return this.ipc.invoke<string>('sdlc_run_change', { change, kind, form }); }
+  sdlcBuildStart(change: ChangeRef, form: BuildForm) { return this.ipc.invoke<StartOutcome>('sdlc_build_start', { change, form }); }
+  sdlcBuildContinue(change: ChangeRef, repo: string) { return this.ipc.invoke<StartOutcome>('sdlc_build_continue', { change, repo }); }
+  sdlcBuildState(change: ChangeRef) { return this.ipc.invoke<BuildState | null>('sdlc_build_state', { change }); }
+  sdlcReviewStart(change: ChangeRef) { return this.ipc.invoke<StartOutcome>('sdlc_review_start', { change }); }
+  sdlcReviewWaiting(change: ChangeRef) { return this.ipc.invoke<HeldRepo[]>('sdlc_review_waiting', { change }); }
+  sdlcRoundOffer(change: ChangeRef) { return this.ipc.invoke<[RoundOffer, RoundPicks]>('sdlc_round_offer', { change }); }
+  sdlcRoundPlan(change: ChangeRef, picks: RoundPicks) { return this.ipc.invoke<RoundPlan>('sdlc_round_plan', { change, picks }); }
+  sdlcRoundStart(change: ChangeRef, picks: RoundPicks) { return this.ipc.invoke<StartOutcome>('sdlc_round_start', { change, picks }); }
+  sdlcRunning() { return this.ipc.invoke<RunningStrip>('sdlc_running'); }
+  sdlcMarkOpened(change: ChangeRef) { return this.ipc.invoke<void>('sdlc_mark_opened', { change }); }
+  sdlcCloseAnswer(confirm: boolean) { return this.ipc.invoke<void>('sdlc_close_answer', { confirm }); }
   sdlcStartChange(master: string) { return this.ipc.invoke<string>('sdlc_start_change', { master }); }
   sdlcFinishChange(master: string, pending: string) { return this.ipc.invoke<FinishOutcome>('sdlc_finish_change', { master, pending }); }
   sdlcNaming(folder: string, masterRepo: string, system: string) { return this.ipc.invoke<NamingState>('sdlc_naming', { folder, masterRepo, system }); }
@@ -174,9 +174,15 @@ export class TauriTransport extends KataTransport {
   onPublishStep(cb: (step: PublishStep) => void) {
     return this.ipc.listen<PublishStep>('sdlc://publish-step', (e) => cb(e.payload));
   }
-  onBuildState(cb: (event: BuildEvent) => void) { void cb; return Promise.reject<() => void>(new Error('not wired')); }
-  onRunning(cb: (strip: RunningStrip) => void) { void cb; return Promise.reject<() => void>(new Error('not wired')); }
-  onCloseAsked(cb: (ask: CloseOutcome) => void) { void cb; return Promise.reject<() => void>(new Error('not wired')); }
+  onBuildState(cb: (event: BuildEvent) => void) {
+    return this.ipc.listen<BuildEvent>('sdlc://build', (e) => cb(e.payload));
+  }
+  onRunning(cb: (strip: RunningStrip) => void) {
+    return this.ipc.listen<RunningStrip>('sdlc://running', (e) => cb(e.payload));
+  }
+  onCloseAsked(cb: (ask: CloseOutcome) => void) {
+    return this.ipc.listen<CloseOutcome>('sdlc://close-asked', (e) => cb(e.payload));
+  }
   onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
     return this.ipc.listen<{ runId: number; event: KataEvent }>('kata://event', (e) => cb(String(e.payload.runId), e.payload.event));
   }

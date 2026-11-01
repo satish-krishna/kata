@@ -137,6 +137,8 @@ export type RunEnd = { exit: number | null; error: string | null };
 export type DiscardChoice = { repo: string; paths: string[] };
 
 const RESULT_MAX = 120;
+/** The time limit of a document run whose confirmed spec set none: the six hours the run-specs of AI-SDLC runs carry. */
+const DEFAULT_TIMEOUT_SECS = 6 * 60 * 60;
 /** How long to wait for the engine process to exit before touching the repo. */
 const EXIT_WAIT_MS = 15000;
 const TERMINAL: readonly RunState[] = ['success', 'warning', 'error'];
@@ -347,13 +349,24 @@ export class SdlcRunner {
     });
   }
 
+  /** A document run of a change that exists: the backend composes the run-spec (the deny rules, the change's own lane); only what the engineer confirmed in the preview travels. */
+  private launchChangeRun(change: ChangeLaunch, spec: RunSpec): Promise<string> {
+    return this.transport.sdlcRunChange(change.ref, change.kind, {
+      name: spec.name,
+      task: spec.task,
+      permissionMode: spec.permissions.mode,
+      timeoutSecs: spec.leash.timeout_secs ?? DEFAULT_TIMEOUT_SECS,
+      bare: false,
+      given: spec.given,
+    });
+  }
+
   private isBusy(): boolean {
     const busy = this.runs.state();
     return this.lock.active() !== null || busy === 'running' || busy === 'awaiting';
   }
 
   async run(title: string, spec: RunSpec, target: RunTarget, change?: ChangeLaunch): Promise<RunOutcome> {
-    void change;
     if (this.isBusy()) {
       this.toasts.error('Another task is already running.');
       return { state: 'error', runId: null, snapshot: null, exited: true };
@@ -377,7 +390,7 @@ export class SdlcRunner {
     this.afterRun.set(true);
     let state: RunState;
     try {
-      state = await this.lock.runAgent(title, spec);
+      state = await (change ? this.lock.runAgent(title, spec, (confirmed) => this.launchChangeRun(change, confirmed)) : this.lock.runAgent(title, spec));
     } catch (e) {
       this.afterRun.set(false);
       throw e;

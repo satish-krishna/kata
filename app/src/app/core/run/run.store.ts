@@ -163,9 +163,9 @@ export class RunStore {
   }
 
   /** Start a run and answer its backend id, or null when it was refused (the solo run is busy), cancelled
-   *  before it spawned, or failed to spawn. A run started with a group is a build's and never touches the solo view. */
+   *  before it spawned, or failed to spawn. A run started with a group is a build's and never touches the solo view.
+   *  `via` starts the run in place of `runSpec`: a document run of a change the backend composes and launches itself. */
   async startRun(spec: RunSpec, group?: string, via?: (spec: RunSpec) => Promise<string>): Promise<string | null> {
-    void via;
     if (group === undefined && isActive(this.solo())) return null;
     const previous = group === undefined ? this.soloRec() : undefined;
     if (previous) this.drop(previous);
@@ -192,7 +192,7 @@ export class RunStore {
     }
     rec.unlisten = unlisten;
     try {
-      const id = group === undefined ? await this.transport.runSpec(spec) : await this.transport.runSpec(spec, group);
+      const id = via ? await via(spec) : group === undefined ? await this.transport.runSpec(spec) : await this.transport.runSpec(spec, group);
       this.product(rec, gen, id);
       if (group === undefined && this.soloKey() === rec.key) this.lastId = id;
       // A cancel landed while run_spec was spawning; the backend had no child to signal then.
@@ -211,7 +211,54 @@ export class RunStore {
 
   /** Follow a run this store has no snapshot for (one that began while the engineer was elsewhere): fold its whole history, then the live events. */
   async open(runId: string): Promise<void> {
-    void runId;
+    if (this.byId(runId)) return;
+    const rec: Rec = { key: `r${++this.counter}`, gen: 0, cancelledGen: -1, id: runId, awaitingId: false, ended: false, unlisten: null };
+    this.recs.set(rec.key, rec);
+    this.keyById.update((m) => new Map(m).set(runId, rec.key));
+    this.setSnap(rec, { ...IDLE, state: 'running' });
+    const gen = rec.gen;
+    // Events that arrive while the history is being read wait here; some of them are already in the history.
+    let buffered: KataEvent[] | null = [];
+    const unlisten = await this.transport.onRunEvent((id, ev) => {
+      if (id !== runId || gen !== rec.gen) return;
+      if (buffered) buffered.push(ev);
+      else this.fold(rec, ev);
+    });
+    if (gen !== rec.gen) {
+      unlisten();
+      return;
+    }
+    rec.unlisten = unlisten;
+    let history: KataEvent[];
+    try {
+      history = await this.transport.sdlcRunHistory(runId);
+    } catch (e) {
+      if (gen !== rec.gen) return;
+      buffered = null;
+      this.append(rec, 'error', `could not read the run's history: ${e}`);
+      return;
+    }
+    if (gen !== rec.gen) return;
+    for (const ev of history) {
+      if (rec.ended) break;
+      this.fold(rec, ev);
+    }
+    // The buffered events are contiguous and the history ends at the newest event it held, so the ones already in
+    // the history are a prefix of the buffer equal to the history's tail: the longest such overlap is dropped.
+    const live = buffered;
+    buffered = null;
+    let overlap = 0;
+    for (let n = Math.min(live.length, history.length); n > 0; n--) {
+      const tail = history.slice(history.length - n);
+      if (tail.every((ev, i) => JSON.stringify(ev) === JSON.stringify(live[i]))) {
+        overlap = n;
+        break;
+      }
+    }
+    for (const ev of live.slice(overlap)) {
+      if (rec.ended) break;
+      this.fold(rec, ev);
+    }
   }
 
   /** Cancel one run by id; without an id, the solo run. */

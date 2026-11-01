@@ -38,7 +38,7 @@ async function mountFix(stage: Stage, lightTrack = true, track: 'fix' | 'full' =
   transport.patchChange(FIX, { stage, track, ...docs });
   const ready = await transport.sdlcPluginReadiness(null);
   vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(lightTrack ? ready : { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.0.' });
-  const run = vi.spyOn(transport, 'runSpec').mockResolvedValue('1');
+  const run = vi.spyOn(transport, 'sdlcRunChange').mockResolvedValue('1');
   const out = await render(ChangePage, {}, [
     provideRouter([]),
     { provide: KataTransport, useValue: transport },
@@ -60,8 +60,10 @@ describe('ChangePage: the fix runs', () => {
     expect(document.body.querySelector('[role="dialog"] textarea')).toBeNull();
     await confirmPreview();
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-    expect(run.mock.calls[0][0].task).toContain(`--accept ${FIX}`);
-    expect(run.mock.calls[0][0].permissions.mode).toBe('auto');
+    expect(run.mock.calls[0][0]).toEqual({ workspace: expect.any(String), system: 'commerce', change: FIX });
+    expect(run.mock.calls[0][1]).toBe('fix');
+    expect(run.mock.calls[0][2].task).toContain(`--accept ${FIX}`);
+    expect(run.mock.calls[0][2].permissionMode).toBe('auto');
   });
 
   it('a fix whose acceptance stopped reads Finish acceptance', async () => {
@@ -83,7 +85,7 @@ describe('ChangePage: the fix runs', () => {
     button(dialog, 'Run').click();
     await confirmPreview();
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
-    expect(run.mock.calls[0][0].task).toContain('Operator feedback:\nAlso cover the retry button.');
+    expect(run.mock.calls[0][2].task).toContain('Operator feedback:\nAlso cover the retry button.');
   });
 
   it('Change the fix with an empty box runs nothing and shows the error', async () => {

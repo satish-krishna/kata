@@ -2,6 +2,8 @@
  * instance, mutated by mock decisions and branch operations, so the demo
  * reflects what the operator did. Deterministic: no clocks, no randomness. */
 import type { BaseInfo } from '@bindings/BaseInfo';
+import type { BuildState } from '@bindings/BuildState';
+import type { BuildEvent, ChangeKey, ChangeRef, HeldRepo, StartOutcome } from './build-host';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { CommitFiles } from '@bindings/CommitFiles';
 import type { BuildStart } from '@bindings/BuildStart';
@@ -1145,3 +1147,157 @@ export const reviewRunScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
 
 /** The label the plugin's answer gives a change at a stage, for a test that needs one without a change. */
 export const mockLabel = (stage: string): StageLabel => ({ ...LABEL_DATA[stage] });
+
+/** The repositories each demo change builds in: the first builds in two (one of them asks a question), the second in one the first does not use, and the held one needs a repository the first holds. */
+const BUILD_REPOS_OF: Record<string, string[]> = {
+  [MOCK_BUILD_CHANGE]: ['commerce-core', 'customer-portal'],
+  [MOCK_BUILD_SECOND]: ['billing-api'],
+  [MOCK_HELD_CHANGE]: ['commerce-core'],
+};
+
+/** The backend's key of a change, as the scripted host builds it. */
+export function mockChangeKey(ref: ChangeRef): ChangeKey {
+  const key = ref.workspace.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
+  return { workspace: { key, name: key.split('/').pop() ?? key }, system: ref.system, change: ref.change };
+}
+
+const sameChange = (a: ChangeKey, b: ChangeKey): boolean => a.workspace.key === b.workspace.key && a.system === b.system && a.change === b.change;
+
+/** One change's scripted build as the strip reads it. */
+export interface MockBuildView {
+  change: ChangeKey;
+  state: BuildState | null;
+  /** The runs of the build that are live: the repository (or `review`) and the run's id. */
+  going: { repo: string; runId: string }[];
+  reviewWaiting: HeldRepo[];
+  heldStart: HeldRepo[];
+  changedMs: number;
+}
+
+interface MockBuild {
+  key: ChangeKey;
+  going: Map<string, string>;
+  finished: boolean;
+  reviewing: boolean;
+  changedMs: number;
+}
+
+/** What the scripted build host asks of the browser stand-in: start a run, say a build's state. */
+export interface MockBuildIo {
+  /** Start the scripted run of `repo` (`review` for the review) and call `onEnd` when it ends; resolves to the run's id. */
+  launch(change: ChangeRef, repo: string, onEnd: () => void): string;
+  announce(event: BuildEvent): void;
+  now(): number;
+}
+
+/** The browser's stand-in for the backend's build host: several changes build at once, each holding the repositories it works in, and a build that needs a held repository starts held. */
+export class MockBuildHost {
+  private readonly builds = new Map<string, MockBuild>();
+  private readonly holds = new Map<string, ChangeKey>();
+  private readonly heldStarts = new Map<string, { key: ChangeKey; held: HeldRepo[]; at: number }>();
+  private readonly reviewWaits = new Map<string, { key: ChangeKey; held: HeldRepo[]; at: number }>();
+
+  constructor(private readonly io: MockBuildIo) {}
+
+  private id(key: ChangeKey): string { return `${key.workspace.key}|${key.system}|${key.change}`; }
+
+  private heldBy(key: ChangeKey, repos: string[]): HeldRepo[] {
+    return repos.flatMap((repo) => {
+      const holder = this.holds.get(repo);
+      return holder && !sameChange(holder, key) ? [{ repo, holder }] : [];
+    });
+  }
+
+  private stateOf(build: MockBuild): BuildState {
+    const phase = build.going.size > 0 ? (build.reviewing ? 'reviewing' : 'building') : 'finished';
+    return { phase, going: [...build.going.keys()], stopped: {}, rounds: {}, waiting: [], report: null };
+  }
+
+  private announce(build: MockBuild): void {
+    build.changedMs = this.io.now();
+    this.io.announce({ change: build.key, state: this.stateOf(build), reviewWaiting: this.reviewWaits.get(this.id(build.key))?.held ?? [] });
+  }
+
+  private launch(ref: ChangeRef, build: MockBuild, repo: string): void {
+    // The run's id is known once it is launched; a scripted run never ends before that.
+    build.going.set(repo, '');
+    const runId = this.io.launch(ref, repo, () => this.ended(build, repo));
+    if (build.going.has(repo)) build.going.set(repo, runId);
+  }
+
+  private ended(build: MockBuild, repo: string): void {
+    if (!build.going.delete(repo)) return;
+    if (repo !== 'review') {
+      const holder = this.holds.get(repo);
+      if (holder && sameChange(holder, build.key)) this.holds.delete(repo);
+    }
+    if (build.going.size === 0) build.finished = true;
+    this.announce(build);
+  }
+
+  start(ref: ChangeRef): StartOutcome {
+    const key = mockChangeKey(ref);
+    const id = this.id(key);
+    if (this.builds.get(id)?.going.size) return { kind: 'alreadyRunning' };
+    const repos = BUILD_REPOS_OF[ref.change] ?? [];
+    const held = this.heldBy(key, repos);
+    if (held.length > 0) {
+      this.heldStarts.set(id, { key, held, at: this.io.now() });
+      return { kind: 'held', held };
+    }
+    this.heldStarts.delete(id);
+    const build: MockBuild = { key, going: new Map(), finished: false, reviewing: false, changedMs: this.io.now() };
+    this.builds.set(id, build);
+    for (const repo of repos) this.holds.set(repo, key);
+    for (const repo of repos) this.launch(ref, build, repo);
+    this.announce(build);
+    return { kind: 'started', uncommitted: {} };
+  }
+
+  state(ref: ChangeRef): BuildState | null {
+    const build = this.builds.get(this.id(mockChangeKey(ref)));
+    return build ? this.stateOf(build) : null;
+  }
+
+  reviewStart(ref: ChangeRef): StartOutcome {
+    const key = mockChangeKey(ref);
+    const id = this.id(key);
+    const held = this.heldBy(key, BUILD_REPOS_OF[ref.change] ?? []);
+    if (held.length > 0) {
+      this.reviewWaits.set(id, { key, held, at: this.io.now() });
+      return { kind: 'held', held };
+    }
+    this.reviewWaits.delete(id);
+    const build = this.builds.get(id) ?? { key, going: new Map(), finished: false, reviewing: false, changedMs: this.io.now() };
+    this.builds.set(id, build);
+    build.finished = false;
+    build.reviewing = true;
+    this.launch(ref, build, 'review');
+    this.announce(build);
+    return { kind: 'started', uncommitted: {} };
+  }
+
+  reviewWaiting(ref: ChangeRef): HeldRepo[] {
+    return this.reviewWaits.get(this.id(mockChangeKey(ref)))?.held ?? [];
+  }
+
+  /** Every build, review wait and held start, for the running changes. */
+  views(): MockBuildView[] {
+    const out: MockBuildView[] = [...this.builds.values()].map((b) => ({
+      change: b.key,
+      state: this.stateOf(b),
+      going: [...b.going].map(([repo, runId]) => ({ repo, runId })),
+      reviewWaiting: this.reviewWaits.get(this.id(b.key))?.held ?? [],
+      heldStart: [],
+      changedMs: b.changedMs,
+    }));
+    const known = new Set(out.map((v) => this.id(v.change)));
+    for (const w of this.reviewWaits.values()) {
+      if (!known.has(this.id(w.key))) { known.add(this.id(w.key)); out.push({ change: w.key, state: null, going: [], reviewWaiting: w.held, heldStart: [], changedMs: w.at }); }
+    }
+    for (const h of this.heldStarts.values()) {
+      if (!known.has(this.id(h.key))) out.push({ change: h.key, state: null, going: [], reviewWaiting: [], heldStart: h.held, changedMs: h.at });
+    }
+    return out;
+  }
+}

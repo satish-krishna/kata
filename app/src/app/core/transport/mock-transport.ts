@@ -46,9 +46,10 @@ import type { PrState } from '@bindings/PrState';
 import type { DoneView } from '@bindings/DoneView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
-import { seedCatalog, validateLocal, previewFixture, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
+import { seedCatalog, seedSpec, validateLocal, previewFixture, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
 import { history, runDetailFixture, katasFixture, presetsFixture } from '../../lib/library';
-import { MOCK_LAYOUTS, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
+import type { RunningEntry, RunRef } from '../../lib/build-host';
+import { MOCK_LAYOUTS, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
@@ -76,6 +77,10 @@ interface ScriptedRun {
   awaiting?: boolean;
   /** The run has reached a terminal event or been cancelled. */
   ended?: boolean;
+  /** Called once, when the run ends in any way: a build host carries on from it. */
+  onEnd?: () => void;
+  /** The text of the question the run waits on, for the running changes. */
+  question?: string;
   /** The label a scripted triage was answered with. */
   answer?: string;
 }
@@ -96,8 +101,64 @@ export class MockTransport extends KataTransport {
   /** The build layout a browser session has saved; a fresh session starts with none. */
   private buildLayout: Record<string, unknown> = {};
 
+  /** Everything each run said, in order, for a session opened late. */
+  private readonly histories = new Map<string, KataEvent[]>();
+  private readonly buildListeners = new Set<(event: BuildEvent) => void>();
+  private readonly runningListeners = new Set<(strip: RunningStrip) => void>();
+  private readonly closeListeners = new Set<(ask: CloseOutcome) => void>();
+  /** The scripted builds: several changes at once, each holding the repositories it works in. */
+  private readonly host = new MockBuildHost({
+    launch: (change, repo, onEnd) => this.launchBuildRun(change, repo, onEnd),
+    announce: (event) => {
+      for (const listen of [...this.buildListeners]) listen(event);
+      this.announceRunning();
+    },
+    now: () => Date.now(),
+  });
+
   private emit(runId: string, ev: KataEvent): void {
+    this.histories.set(runId, [...(this.histories.get(runId) ?? []), ev]);
     for (const listen of [...this.listeners]) listen(runId, ev);
+    if (ev.type === 'ask.requested' || ev.type === 'ask.answered' || ev.type === 'permission.requested' || ev.type === 'permission.decided') this.announceRunning();
+  }
+
+  private finish(run: ScriptedRun): void {
+    run.ended = true;
+    const onEnd = run.onEnd;
+    run.onEnd = undefined;
+    onEnd?.();
+  }
+
+  private launchBuildRun(change: ChangeRef, repo: string, onEnd: () => void): string {
+    const name = repo === 'review' ? `sdlc-build-${change.change}-review` : `sdlc-build-${repo}`;
+    const spec: RunSpec = { ...seedSpec(), name, workdir: `${MOCK_WORKSPACE_FOLDER}/${repo}` };
+    const id = String(++this.nextRun);
+    const { run, head } = this.begin(spec, `build:${change.system}/${change.change}`);
+    run.onEnd = onEnd;
+    this.runs.set(id, run);
+    this.play(id, head);
+    return id;
+  }
+
+  /** The running changes as the backend would report them, from the scripted builds. */
+  private strip(): RunningStrip {
+    const entries = this.host.views().map((v): RunningEntry => {
+      const asking = v.going.filter((g) => this.runs.get(g.runId)?.awaiting);
+      const waiting: RunRef[] = asking.map((g) => ({ run: Number(g.runId), kind: g.repo === 'review' ? 'review' : 'build', repo: g.repo === 'review' ? null : g.repo }));
+      const base = { change: v.change, since: v.changedMs, waiting };
+      if (asking.length > 0) return { ...base, state: 'needsAnswer', text: this.runs.get(asking[0].runId)?.question ?? 'A question is waiting.', run: Number(asking[0].runId) };
+      if (v.going.length > 0) return { ...base, state: 'working', stage: v.going[0].repo === 'review' ? 'review' : 'build', repo: v.going[0].repo === 'review' ? null : v.going[0].repo, run: Number(v.going[0].runId) };
+      if (v.reviewWaiting.length > 0) return { ...base, state: 'reviewWaiting', holder: v.reviewWaiting[0].holder };
+      if (v.heldStart.length > 0) return { ...base, state: 'held', holder: v.heldStart[0].holder };
+      return { ...base, state: 'finished' };
+    });
+    return { shown: entries.slice(0, 3), all: entries };
+  }
+
+  private announceRunning(): void {
+    if (this.runningListeners.size === 0) return;
+    const strip = this.strip();
+    for (const listen of [...this.runningListeners]) listen(strip);
   }
 
   private play(runId: string, segment: ScriptStep[]): void {
@@ -108,8 +169,10 @@ export class MockTransport extends KataTransport {
       run.timers.push(setTimeout(() => {
         if (step.ev.type === 'run.completed') run.onDone?.();
         if (step.ev.type === 'ask.requested' || step.ev.type === 'permission.requested') run.awaiting = true;
-        if (step.ev.type === 'run.completed' || step.ev.type === 'run.error' || step.ev.type === 'run.cancelled') run.ended = true;
+        const terminal = step.ev.type === 'run.completed' || step.ev.type === 'run.error' || step.ev.type === 'run.cancelled';
+        if (step.ev.type === 'ask.requested') run.question = step.ev.questions[0]?.question;
         this.emit(runId, step.ev);
+        if (terminal) this.finish(run);
       }, acc));
     }
   }
@@ -300,28 +363,49 @@ export class MockTransport extends KataTransport {
     this.play(id, head);
     return id;
   }
-  sdlcRunHistory(runId: string) { return Promise.reject<KataEvent[]>(new Error('not wired')); }
-  sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm) { return Promise.reject<string>(new Error('not wired')); }
-  sdlcBuildStart(change: ChangeRef, form: BuildForm) { return Promise.reject<StartOutcome>(new Error('not wired')); }
-  sdlcBuildContinue(change: ChangeRef, repo: string) { return Promise.reject<StartOutcome>(new Error('not wired')); }
-  sdlcBuildState(change: ChangeRef) { return Promise.reject<BuildState | null>(new Error('not wired')); }
-  sdlcReviewStart(change: ChangeRef) { return Promise.reject<StartOutcome>(new Error('not wired')); }
-  sdlcReviewWaiting(change: ChangeRef) { return Promise.reject<HeldRepo[]>(new Error('not wired')); }
-  sdlcRoundOffer(change: ChangeRef) { return Promise.reject<[RoundOffer, RoundPicks]>(new Error('not wired')); }
-  sdlcRoundPlan(change: ChangeRef, picks: RoundPicks) { return Promise.reject<RoundPlan>(new Error('not wired')); }
-  sdlcRoundStart(change: ChangeRef, picks: RoundPicks) { return Promise.reject<StartOutcome>(new Error('not wired')); }
-  sdlcRunning() { return Promise.reject<RunningStrip>(new Error('not wired')); }
-  sdlcMarkOpened(change: ChangeRef) { return Promise.reject<void>(new Error('not wired')); }
-  sdlcCloseAnswer(confirm: boolean) { return Promise.reject<void>(new Error('not wired')); }
-  async onBuildState(cb: (event: BuildEvent) => void): Promise<() => void> { void cb; return () => undefined; }
-  async onRunning(cb: (strip: RunningStrip) => void): Promise<() => void> { void cb; return () => undefined; }
-  async onCloseAsked(cb: (ask: CloseOutcome) => void): Promise<() => void> { void cb; return () => undefined; }
+  async onBuildState(cb: (event: BuildEvent) => void): Promise<() => void> {
+    this.buildListeners.add(cb);
+    return () => { this.buildListeners.delete(cb); };
+  }
+  async onRunning(cb: (strip: RunningStrip) => void): Promise<() => void> {
+    this.runningListeners.add(cb);
+    return () => { this.runningListeners.delete(cb); };
+  }
+  async onCloseAsked(cb: (ask: CloseOutcome) => void): Promise<() => void> {
+    this.closeListeners.add(cb);
+    return () => { this.closeListeners.delete(cb); };
+  }
+  async sdlcRunHistory(runId: string): Promise<KataEvent[]> { return [...(this.histories.get(runId) ?? [])]; }
+  async sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm): Promise<string> {
+    void kind;
+    return this.runSpec({ ...seedSpec(), name: form.name, task: form.task, workdir: change.workspace });
+  }
+  async sdlcBuildStart(change: ChangeRef, form: BuildForm): Promise<StartOutcome> { void form; return this.host.start(change); }
+  async sdlcBuildContinue(change: ChangeRef, repo: string): Promise<StartOutcome> { void repo; return this.host.start(change); }
+  async sdlcBuildState(change: ChangeRef): Promise<BuildState | null> { return this.host.state(change); }
+  async sdlcReviewStart(change: ChangeRef): Promise<StartOutcome> { return this.host.reviewStart(change); }
+  async sdlcReviewWaiting(change: ChangeRef): Promise<HeldRepo[]> { return this.host.reviewWaiting(change); }
+  async sdlcRoundOffer(change: ChangeRef): Promise<[RoundOffer, RoundPicks]> {
+    void change;
+    return [{ review: null, repos: [], findings: [] }, { picked: [], assigned: {}, notes: {} }];
+  }
+  async sdlcRoundPlan(change: ChangeRef, picks: RoundPicks): Promise<RoundPlan> {
+    void change; void picks;
+    return { blocked: 'The demo has no review to fix.', requests: [] };
+  }
+  async sdlcRoundStart(change: ChangeRef, picks: RoundPicks): Promise<StartOutcome> {
+    void change; void picks;
+    return { kind: 'refused', problems: ['The demo has no review to fix.'] };
+  }
+  async sdlcRunning(): Promise<RunningStrip> { return this.strip(); }
+  async sdlcMarkOpened(change: ChangeRef): Promise<void> { void change; }
+  async sdlcCloseAnswer(confirm: boolean): Promise<void> { void confirm; }
   async cancelRun(runId: string): Promise<void> {
     const run = this.runs.get(runId);
     if (!run) return;
     run.timers.forEach(clearTimeout);
     run.timers = [];
-    run.ended = true;
+    this.finish(run);
     if (run.kind === 'sdlc-spec' || run.kind === 'sdlc-setup' || run.kind === 'sdlc-triage') this.sdlc.cancelRun();
   }
   async submitAnswer(runId: string, id: string, answers: string[][]): Promise<void> {
