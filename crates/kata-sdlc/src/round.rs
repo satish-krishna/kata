@@ -186,22 +186,63 @@ fn latest(record: &ReviewRecord) -> Option<(u32, Vec<ReviewFinding>)> {
 
 /// A finding's key: its id, else `#<n>` by its place in the review (`index` counts from 0).
 pub fn finding_key(finding: &ReviewFinding, index: usize) -> String {
-    todo!()
+    finding
+        .id
+        .clone()
+        .unwrap_or_else(|| format!("#{}", index + 1))
 }
 
 /// What a round may fix, from a review's number and findings.
 pub fn offer_of(review: Option<(Option<u32>, &[ReviewFinding])>, repos: &[String]) -> RoundOffer {
-    todo!()
+    let Some((number, findings)) = review else {
+        return RoundOffer {
+            review: None,
+            repos: repos.to_vec(),
+            findings: Vec::new(),
+        };
+    };
+    RoundOffer {
+        review: number,
+        repos: repos.to_vec(),
+        findings: findings
+            .iter()
+            .enumerate()
+            .map(|(i, finding)| RoundFinding {
+                key: finding_key(finding, i),
+                finding: finding.clone(),
+                // A repository outside the build has no agent to send the finding to: it is
+                // unassigned, like a finding that names none.
+                repo: finding.repo.clone().filter(|r| repos.contains(r)),
+            })
+            .collect(),
+    }
 }
 
 /// What a round may fix: every finding of the latest review, none when there is no review.
 pub fn offer(record: Option<&ReviewRecord>, repos: &[String]) -> RoundOffer {
-    todo!()
+    let latest = record.and_then(latest);
+    offer_of(
+        latest.as_ref().map(|(n, f)| (Some(*n), f.as_slice())),
+        repos,
+    )
 }
 
 /// Critical, high and medium findings picked; a finding with no severity is not.
 pub fn default_picks(offer: &RoundOffer) -> RoundPicks {
-    todo!()
+    RoundPicks {
+        picked: offer
+            .findings
+            .iter()
+            .filter(|f| {
+                matches!(
+                    f.finding.severity,
+                    Some(RoundSeverity::Critical | RoundSeverity::High | RoundSeverity::Medium)
+                )
+            })
+            .map(|f| f.key.clone())
+            .collect(),
+        ..RoundPicks::default()
+    }
 }
 
 fn concern_name(concern: Concern) -> &'static str {
@@ -238,12 +279,86 @@ fn block(f: &RoundFinding) -> String {
 
 /// One request per repository with a picked finding or a note, or the reason the round cannot start.
 pub fn plan(offer: &RoundOffer, picks: &RoundPicks) -> RoundPlan {
-    todo!()
+    let picked: Vec<(&RoundFinding, Option<&String>)> = offer
+        .findings
+        .iter()
+        .filter(|f| picks.picked.contains(&f.key))
+        .map(|f| (f, f.repo.as_ref().or_else(|| picks.assigned.get(&f.key))))
+        .collect();
+    let unassigned: Vec<&str> = picked
+        .iter()
+        .filter(|(_, repo)| repo.is_none())
+        .map(|(f, _)| f.key.as_str())
+        .collect();
+    if !unassigned.is_empty() {
+        return RoundPlan {
+            blocked: Some(format!(
+                "Choose a repository for {}.",
+                unassigned.join(", ")
+            )),
+            requests: Vec::new(),
+        };
+    }
+
+    let mut requests = Vec::new();
+    for repo in &offer.repos {
+        let mine: Vec<&RoundFinding> = picked
+            .iter()
+            .filter(|(_, r)| *r == Some(repo))
+            .map(|(f, _)| *f)
+            .collect();
+        let note = picks.notes.get(repo).map_or("", |n| n.trim());
+        if mine.is_empty() && note.is_empty() {
+            continue;
+        }
+        let mut parts = Vec::new();
+        if !mine.is_empty() {
+            let which = match offer.review {
+                None => "the latest review".to_string(),
+                Some(n) => format!("review {n}"),
+            };
+            let blocks: Vec<String> = mine.iter().map(|f| block(f)).collect();
+            parts.push(format!(
+                "Fix these findings from {which} of this change in this repository.\n{}",
+                blocks.join("\n")
+            ));
+        }
+        if !note.is_empty() {
+            parts.push(format!("Also from the engineer:\n{note}"));
+        }
+        let keys: Vec<&str> = mine.iter().map(|f| f.key.as_str()).collect();
+        let mut summary = vec![repo.clone()];
+        if !keys.is_empty() {
+            summary.push(keys.join(", "));
+        }
+        if !note.is_empty() {
+            summary.push("with a note".into());
+        }
+        requests.push(RoundRequest {
+            repo: repo.clone(),
+            instructions: parts.join("\n\n"),
+            summary: summary.join(" \u{b7} "),
+        });
+    }
+    if requests.is_empty() {
+        return RoundPlan {
+            blocked: Some("Pick a finding or write a note.".into()),
+            requests,
+        };
+    }
+    RoundPlan {
+        blocked: None,
+        requests,
+    }
 }
 
 /// The first sentence of a finding's text (up to the first full stop and space, or line break), the whole text when it has none.
 pub fn summary_of(text: &str) -> String {
-    todo!()
+    let line = text.split('\n').next().unwrap_or("").trim_end_matches('\r');
+    match line.find(". ") {
+        Some(stop) => line[..=stop].to_string(),
+        None => line.to_string(),
+    }
 }
 
 const SEVERITIES: [RoundSeverity; 4] = [
@@ -264,23 +379,114 @@ fn rank(severity: Option<RoundSeverity>) -> usize {
 /// group when no finding names one. Within a group the rows run critical, high, medium, then no
 /// severity, in the order listed within a severity, and the low findings are set apart.
 pub fn rows_of(findings: &[ReviewFinding], repos: &[String]) -> ReviewRows {
-    todo!()
+    let rows: Vec<ReviewRow> = findings
+        .iter()
+        .enumerate()
+        .map(|(i, finding)| ReviewRow {
+            key: finding_key(finding, i),
+            finding: finding.clone(),
+            summary: summary_of(&finding.text),
+        })
+        .collect();
+    let mut named: Vec<&str> = Vec::new();
+    for r in &rows {
+        if let Some(repo) = r.finding.repo.as_deref() {
+            if !named.contains(&repo) {
+                named.push(repo);
+            }
+        }
+    }
+    let mut order: Vec<Option<&str>> = repos
+        .iter()
+        .map(String::as_str)
+        .filter(|r| named.contains(r))
+        .map(Some)
+        .collect();
+    order.extend(
+        named
+            .iter()
+            .filter(|r| !repos.iter().any(|x| x == **r))
+            .map(|r| Some(*r)),
+    );
+    if rows.iter().any(|r| r.finding.repo.is_none()) {
+        order.push(None);
+    }
+
+    let counts = SEVERITIES
+        .iter()
+        .map(|&severity| SeverityCount {
+            severity,
+            n: rows
+                .iter()
+                .filter(|r| r.finding.severity == Some(severity))
+                .count() as u32,
+        })
+        .filter(|c| c.n > 0)
+        .collect();
+    let groups = order
+        .into_iter()
+        .map(|repo| {
+            let mine: Vec<&ReviewRow> = rows
+                .iter()
+                .filter(|r| r.finding.repo.as_deref() == repo)
+                .collect();
+            let mut main: Vec<ReviewRow> = mine
+                .iter()
+                .filter(|r| r.finding.severity != Some(RoundSeverity::Low))
+                .map(|r| (*r).clone())
+                .collect();
+            main.sort_by_key(|r| rank(r.finding.severity));
+            ReviewRowGroup {
+                repo: repo.map(String::from),
+                rows: main,
+                low: mine
+                    .iter()
+                    .filter(|r| r.finding.severity == Some(RoundSeverity::Low))
+                    .map(|r| (*r).clone())
+                    .collect(),
+            }
+        })
+        .collect();
+    ReviewRows {
+        counts,
+        total: rows.len() as u32,
+        groups,
+    }
 }
 
 /// The rows of the Review group for the latest review of `record`, repositories in the order of
 /// the record's commit map (by name). A record with no review has no rows.
 pub fn review_rows(record: &ReviewRecord) -> ReviewRows {
-    todo!()
+    let repos: Vec<String> = record
+        .reviews
+        .last()
+        .map(|s| s.commits.keys().cloned().collect())
+        .unwrap_or_default();
+    review_rows_in(record, &repos)
 }
 
 /// The same rows with the repositories in the order of `repos` (the build's order).
 pub fn review_rows_in(record: &ReviewRecord, repos: &[String]) -> ReviewRows {
-    todo!()
+    let findings = latest(record).map(|(_, f)| f).unwrap_or_default();
+    rows_of(&findings, repos)
 }
 
 /// The groups of the round dialog: the Review group's, in its order.
 pub fn round_groups(offer: &RoundOffer, rows: &ReviewRows) -> Vec<RoundGroup> {
-    todo!()
+    let offered: BTreeMap<&str, &RoundFinding> =
+        offer.findings.iter().map(|f| (f.key.as_str(), f)).collect();
+    rows.groups
+        .iter()
+        .map(|g| RoundGroup {
+            repo: g.repo.clone(),
+            findings: g
+                .rows
+                .iter()
+                .chain(&g.low)
+                .filter_map(|r| offered.get(r.key.as_str()).map(|f| (*f).clone()))
+                .collect(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
