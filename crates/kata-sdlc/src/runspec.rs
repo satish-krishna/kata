@@ -11,23 +11,30 @@ use std::path::Path;
 /// What the engineer chose for this run.
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct RunForm {
     /// The run's name and task; a build or review run composes its own.
     pub name: String,
     pub task: String,
     /// The empty-room setting; a run of a change ignores it (R5.4).
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<bool>"))]
     pub bare: bool,
     /// The app's permission setting, for a document run.
     pub permission_mode: PermissionMode,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub timeout_secs: u64,
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub instructions: Option<String>,
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<bool>"))]
     pub continue_on_leftovers: bool,
     /// The items of a document run the engineer switched off in the preview; the plugins a run cannot do
     /// without and the build flag are the run kind's own and are set over it.
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub given: Option<Given>,
 }
 

@@ -2056,6 +2056,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-shell",
  "tempfile",
+ "ts-rs",
 ]
 
 [[package]]

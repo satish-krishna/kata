@@ -26,6 +26,8 @@ pub enum Lane {
 
 #[derive(Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum RunKind {
     Setup,
     Context,
@@ -134,10 +136,9 @@ impl<C> RunTable<C> {
     }
 }
 
-/// Put the run id around a kata event, leaving the event itself unchanged.
+/// Put the run id and the event's position in the run around a kata event, leaving the event itself unchanged.
 pub fn wrap(run_id: u64, seq: u64, event: Value) -> Value {
-    let _ = seq;
-    serde_json::json!({ "runId": run_id, "event": event })
+    serde_json::json!({ "runId": run_id, "seq": seq, "event": event })
 }
 
 #[cfg(test)]

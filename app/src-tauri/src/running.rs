@@ -19,7 +19,10 @@ pub const SHOWN: usize = 3;
 /// A run of a change that waits on the engineer.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct RunRef {
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub run: u64,
     pub kind: RunKind,
     pub repo: Option<String>,
@@ -32,13 +35,17 @@ pub struct RunRef {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum EntryState {
     NeedsAnswer {
         text: String,
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
         run: u64,
     },
     NeedsPermission {
         action: String,
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
         run: u64,
     },
     Stopped {
@@ -54,6 +61,7 @@ pub enum EntryState {
     Working {
         stage: RunKind,
         repo: Option<String>,
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
         run: u64,
     },
     Finished,
@@ -62,12 +70,15 @@ pub enum EntryState {
 /// One running change.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct RunningEntry {
     pub change: ChangeKey,
     #[serde(flatten)]
     pub state: EntryState,
     /// Orders entries of one row, oldest first: a unix time in milliseconds, or for a finished
     /// change the order in which its last run ended.
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub since: u64,
     /// The runs of this change waiting on the engineer, oldest first.
     pub waiting: Vec<RunRef>,
@@ -75,6 +86,8 @@ pub struct RunningEntry {
 
 /// The strip: the first entries and every entry.
 #[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct RunningStrip {
     pub shown: Vec<RunningEntry>,
     pub all: Vec<RunningEntry>,

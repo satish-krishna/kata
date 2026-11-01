@@ -3,7 +3,11 @@
  * reflects what the operator did. Deterministic: no clocks, no randomness. */
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { BuildState } from '@bindings/BuildState';
-import type { BuildEvent, ChangeKey, ChangeRef, HeldRepo, StartOutcome } from './build-host';
+import type { BuildEvent } from '@bindings/BuildEvent';
+import type { ChangeKey } from '@bindings/ChangeKey';
+import type { ChangeRef } from '@bindings/ChangeRef';
+import type { HeldRepo } from '@bindings/HeldRepo';
+import type { StartOutcome } from '@bindings/StartOutcome';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { CommitFiles } from '@bindings/CommitFiles';
 import type { BuildStart } from '@bindings/BuildStart';

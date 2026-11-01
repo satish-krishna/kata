@@ -13,7 +13,8 @@ import type { RepoFiles } from '@bindings/RepoFiles';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunState } from '../../lib/events';
-import type { ChangeRef, DocumentKind } from '../../lib/build-host';
+import type { ChangeRef } from '@bindings/ChangeRef';
+import type { DocumentKind } from '../../lib/build-host';
 import type { RunSnapshot } from '../run/reduce';
 import { restrictedFor, specFor, transcriptRunId, type StartTrack } from '../../lib/sdlc';
 import { masterPath, masterRepo, productRepos as productReposOf } from '../../lib/sdlc-workspace';
@@ -357,7 +358,7 @@ export class SdlcRunner {
       permissionMode: spec.permissions.mode,
       timeoutSecs: spec.leash.timeout_secs ?? DEFAULT_TIMEOUT_SECS,
       bare: false,
-      given: spec.given,
+      given: spec.given ?? undefined,
     });
   }
 

@@ -18,7 +18,7 @@ thiserror.workspace = true
 ts-rs = { version = "10", optional = true, default-features = false, features = ["serde-compat"] }
 
 [features]
-ts = ["dep:ts-rs"]
+ts = ["dep:ts-rs", "kata-core/ts"]
 
 [dev-dependencies]
 serial_test = "3"

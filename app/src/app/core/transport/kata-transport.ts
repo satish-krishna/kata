@@ -50,7 +50,16 @@ import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
 import type { RoundPicks } from '@bindings/RoundPicks';
 import type { RoundPlan } from '@bindings/RoundPlan';
-import type { BuildEvent, BuildForm, HistoryEntry, ChangeRef, CloseOutcome, DocumentKind, HeldRepo, RunForm, RunningStrip, StartOutcome } from '../../lib/build-host';
+import type { BuildEvent } from '@bindings/BuildEvent';
+import type { StartForm } from '@bindings/StartForm';
+import type { HistoryEntry } from '@bindings/HistoryEntry';
+import type { ChangeRef } from '@bindings/ChangeRef';
+import type { CloseOutcome } from '@bindings/CloseOutcome';
+import type { HeldRepo } from '@bindings/HeldRepo';
+import type { RunForm } from '@bindings/RunForm';
+import type { RunningStrip } from '@bindings/RunningStrip';
+import type { StartOutcome } from '@bindings/StartOutcome';
+import type { DocumentKind } from '../../lib/build-host';
 
 /** A system's naming setting as the backend reads it: none declared, the patterns, or why they cannot be used. `reason` tells the failures apart. */
 export type NamingState =
@@ -82,7 +91,7 @@ export abstract class KataTransport {
   /** Start a document run (intent, spec, plan, triage or fix) of a change that exists. The backend composes the run-spec with the change's deny rules and claims the change's own lane. Resolves to the run id. */
   abstract sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm): Promise<string>;
   /** Start a change's build; nothing starts unless every repository it needs is free. */
-  abstract sdlcBuildStart(change: ChangeRef, form: BuildForm): Promise<StartOutcome>;
+  abstract sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome>;
   /** Continue a change's build in one repository. */
   abstract sdlcBuildContinue(change: ChangeRef, repo: string): Promise<StartOutcome>;
   /** Where a change's build stands, or null when this session hosts no build of it. */

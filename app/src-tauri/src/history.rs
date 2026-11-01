@@ -20,8 +20,12 @@ pub enum Pending {
 
 /// One event of a run with its position in the run.
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct HistoryEntry {
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub seq: u64,
+    #[cfg_attr(feature = "ts", ts(type = "import(\"./kata-events\").KataEvent"))]
     pub event: Value,
 }
 
@@ -44,13 +48,10 @@ impl RunHistory {
     /// Append one event to the run's history, stamped with the time it arrived. The answer is the event's
     /// position in the run, counted from 0: the number the relayed event carries.
     pub fn push(&self, run_id: u64, event: &Value) -> u64 {
-        self.runs
-            .lock()
-            .unwrap()
-            .entry(run_id)
-            .or_default()
-            .push((now_ms(), event.clone()));
-        0
+        let mut runs = self.runs.lock().unwrap();
+        let list = runs.entry(run_id).or_default();
+        list.push((now_ms(), event.clone()));
+        list.len() as u64 - 1
     }
 
     /// Every event of the run, from its start, in the order they were pushed, each with its position.
@@ -59,8 +60,9 @@ impl RunHistory {
         runs.get(&run_id)
             .map(|v| {
                 v.iter()
-                    .map(|(_, e)| HistoryEntry {
-                        seq: 0,
+                    .enumerate()
+                    .map(|(seq, (_, e))| HistoryEntry {
+                        seq: seq as u64,
                         event: e.clone(),
                     })
                     .collect()

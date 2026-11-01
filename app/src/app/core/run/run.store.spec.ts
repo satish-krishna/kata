@@ -3,7 +3,7 @@ import { RunStore } from './run.store';
 import { KataTransport } from '../transport/kata-transport';
 import { seedSpec } from '../../lib/mock';
 import type { KataEvent } from '../../lib/events';
-import type { HistoryEntry } from '../../lib/build-host';
+import type { HistoryEntry } from '@bindings/HistoryEntry';
 
 class FakeTransport {
   listeners: ((ev: KataEvent, seq?: number) => void)[] = [];

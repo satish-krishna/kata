@@ -9,7 +9,11 @@ import type { RunLink } from '@bindings/RunLink';
 import type { BuildStart } from '@bindings/BuildStart';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RoundPicks } from '@bindings/RoundPicks';
-import type { BuildEvent, ChangeRef, CloseOutcome, RunForm, RunningStrip } from '../../lib/build-host';
+import type { BuildEvent } from '@bindings/BuildEvent';
+import type { ChangeRef } from '@bindings/ChangeRef';
+import type { CloseOutcome } from '@bindings/CloseOutcome';
+import type { RunForm } from '@bindings/RunForm';
+import type { RunningStrip } from '@bindings/RunningStrip';
 
 const spec = seedSpec();
 const settings: Settings = { mode: 'sdlc', remember: true, permission_mode: 'bypass' };

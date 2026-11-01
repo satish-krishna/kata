@@ -1,5 +1,6 @@
 import { Injectable, Signal, computed, inject, signal } from '@angular/core';
 import type { RunSpec } from '@bindings/RunSpec';
+import type { HistoryEntry } from '@bindings/HistoryEntry';
 import type { KataEvent } from '../../lib/events';
 import { terminalStateFor } from '../../lib/events';
 import { KataTransport } from '../transport/kata-transport';
@@ -218,10 +219,10 @@ export class RunStore {
     this.setSnap(rec, { ...IDLE, state: 'running' });
     const gen = rec.gen;
     // Events that arrive while the history is being read wait here; some of them are already in the history.
-    let buffered: KataEvent[] | null = [];
-    const unlisten = await this.transport.onRunEvent((id, ev) => {
+    let buffered: { seq: number | undefined; ev: KataEvent }[] | null = [];
+    const unlisten = await this.transport.onRunEvent((id, ev, seq) => {
       if (id !== runId || gen !== rec.gen) return;
-      if (buffered) buffered.push(ev);
+      if (buffered) buffered.push({ seq, ev });
       else this.fold(rec, ev);
     });
     if (gen !== rec.gen) {
@@ -229,9 +230,9 @@ export class RunStore {
       return;
     }
     rec.unlisten = unlisten;
-    let history: KataEvent[];
+    let history: HistoryEntry[];
     try {
-      history = (await this.transport.sdlcRunHistory(runId)).map((e) => e.event);
+      history = await this.transport.sdlcRunHistory(runId);
     } catch (e) {
       if (gen !== rec.gen) return;
       buffered = null;
@@ -239,24 +240,18 @@ export class RunStore {
       return;
     }
     if (gen !== rec.gen) return;
-    for (const ev of history) {
+    for (const entry of history) {
       if (rec.ended) break;
-      this.fold(rec, ev);
+      this.fold(rec, entry.event);
     }
-    // The buffered events are contiguous and the history ends at the newest event it held, so the ones already in
-    // the history are a prefix of the buffer equal to the history's tail: the longest such overlap is dropped.
+    // Every relayed event carries its position in the run, so what the history already holds is exactly the
+    // events up to its last position; only later ones are new.
+    const last = history.length === 0 ? -1 : history[history.length - 1].seq;
     const live = buffered;
     buffered = null;
-    let overlap = 0;
-    for (let n = Math.min(live.length, history.length); n > 0; n--) {
-      const tail = history.slice(history.length - n);
-      if (tail.every((ev, i) => JSON.stringify(ev) === JSON.stringify(live[i]))) {
-        overlap = n;
-        break;
-      }
-    }
-    for (const ev of live.slice(overlap)) {
+    for (const { seq, ev } of live) {
       if (rec.ended) break;
+      if (seq !== undefined && seq <= last) continue;
       this.fold(rec, ev);
     }
   }

@@ -11,6 +11,8 @@ use std::path::Path;
 /// One change of one system in one workspace.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct ChangeKey {
     pub workspace: RepoKey,
     pub system: String,
@@ -20,6 +22,8 @@ pub struct ChangeKey {
 /// A repository by its normalized path. The display name (the folder's name) rides along for
 /// messages; it takes no part in equality or hashing.
 #[derive(Serialize, Clone, Debug)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct RepoKey {
     key: String,
     name: String,

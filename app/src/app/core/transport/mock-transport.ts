@@ -48,14 +48,24 @@ import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import { seedCatalog, seedSpec, validateLocal, previewFixture, runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, type ScriptStep } from '../../lib/mock';
 import { history, runDetailFixture, katasFixture, presetsFixture } from '../../lib/library';
-import type { RunningEntry, RunRef } from '../../lib/build-host';
+import type { RunningEntry } from '@bindings/RunningEntry';
+import type { RunRef } from '@bindings/RunRef';
 import { MOCK_LAYOUTS, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, MockBuildHost, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
 import type { RoundPicks } from '@bindings/RoundPicks';
 import type { RoundPlan } from '@bindings/RoundPlan';
-import type { BuildEvent, BuildForm, HistoryEntry, ChangeRef, CloseOutcome, DocumentKind, HeldRepo, RunForm, RunningStrip, StartOutcome } from '../../lib/build-host';
+import type { BuildEvent } from '@bindings/BuildEvent';
+import type { StartForm } from '@bindings/StartForm';
+import type { HistoryEntry } from '@bindings/HistoryEntry';
+import type { ChangeRef } from '@bindings/ChangeRef';
+import type { CloseOutcome } from '@bindings/CloseOutcome';
+import type { HeldRepo } from '@bindings/HeldRepo';
+import type { RunForm } from '@bindings/RunForm';
+import type { RunningStrip } from '@bindings/RunningStrip';
+import type { StartOutcome } from '@bindings/StartOutcome';
+import type { DocumentKind } from '../../lib/build-host';
 import { KataTransport, NO_BACKEND, type NamingState, type RenameResult } from './kata-transport';
 
 /** How long the first scan of the demo setup folder takes, long enough to see the checking steps. */
@@ -381,7 +391,7 @@ export class MockTransport extends KataTransport {
     void kind;
     return this.runSpec({ ...seedSpec(), name: form.name, task: form.task, workdir: change.workspace });
   }
-  async sdlcBuildStart(change: ChangeRef, form: BuildForm): Promise<StartOutcome> { void form; return this.host.start(change); }
+  async sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome> { void form; return this.host.start(change); }
   async sdlcBuildContinue(change: ChangeRef, repo: string): Promise<StartOutcome> { void repo; return this.host.start(change); }
   async sdlcBuildState(change: ChangeRef): Promise<BuildState | null> { return this.host.state(change); }
   async sdlcReviewStart(change: ChangeRef): Promise<StartOutcome> { return this.host.reviewStart(change); }

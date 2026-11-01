@@ -99,7 +99,7 @@ fn lane_of(group: Option<&str>) -> runs::Lane {
 /// Returns the run id once spawned; an async task drains stdout for the run's
 /// lifetime. `group` (`build:<system>/<change>`) rides next to the spec, never
 /// inside it, so the table can tell which runs belong to a build. Every relayed
-/// event is wrapped as `{ runId, event }`.
+/// event is wrapped as `{ runId, seq, event }`, `seq` being its position in the run, counted from 0.
 #[tauri::command]
 async fn run_spec(
     app: AppHandle,

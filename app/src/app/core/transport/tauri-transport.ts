@@ -53,7 +53,16 @@ import type { BuildState } from '@bindings/BuildState';
 import type { RoundOffer } from '@bindings/RoundOffer';
 import type { RoundPicks } from '@bindings/RoundPicks';
 import type { RoundPlan } from '@bindings/RoundPlan';
-import type { BuildEvent, BuildForm, HistoryEntry, ChangeRef, CloseOutcome, DocumentKind, HeldRepo, RunForm, RunningStrip, StartOutcome } from '../../lib/build-host';
+import type { BuildEvent } from '@bindings/BuildEvent';
+import type { StartForm } from '@bindings/StartForm';
+import type { HistoryEntry } from '@bindings/HistoryEntry';
+import type { ChangeRef } from '@bindings/ChangeRef';
+import type { CloseOutcome } from '@bindings/CloseOutcome';
+import type { HeldRepo } from '@bindings/HeldRepo';
+import type { RunForm } from '@bindings/RunForm';
+import type { RunningStrip } from '@bindings/RunningStrip';
+import type { StartOutcome } from '@bindings/StartOutcome';
+import type { DocumentKind } from '../../lib/build-host';
 import { KataTransport, type NamingState, type RenameResult } from './kata-transport';
 
 /** The Tauri functions the transport needs, injectable so tests need no module mocking. */
@@ -104,7 +113,7 @@ export class TauriTransport extends KataTransport {
   sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope) { return this.ipc.invoke<void>('sdlc_discard', { master, before, paths, build }); }
   sdlcRunHistory(runId: string) { return this.ipc.invoke<HistoryEntry[]>('sdlc_run_history', { runId }); }
   sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm) { return this.ipc.invoke<string>('sdlc_run_change', { change, kind, form }); }
-  sdlcBuildStart(change: ChangeRef, form: BuildForm) { return this.ipc.invoke<StartOutcome>('sdlc_build_start', { change, form }); }
+  sdlcBuildStart(change: ChangeRef, form: StartForm) { return this.ipc.invoke<StartOutcome>('sdlc_build_start', { change, form }); }
   sdlcBuildContinue(change: ChangeRef, repo: string) { return this.ipc.invoke<StartOutcome>('sdlc_build_continue', { change, repo }); }
   sdlcBuildState(change: ChangeRef) { return this.ipc.invoke<BuildState | null>('sdlc_build_state', { change }); }
   sdlcReviewStart(change: ChangeRef) { return this.ipc.invoke<StartOutcome>('sdlc_review_start', { change }); }
@@ -184,6 +193,6 @@ export class TauriTransport extends KataTransport {
     return this.ipc.listen<CloseOutcome>('sdlc://close-asked', (e) => cb(e.payload));
   }
   onRunEvent(cb: (runId: string, ev: KataEvent, seq?: number) => void) {
-    return this.ipc.listen<{ runId: number; seq: number; event: KataEvent }>('kata://event', (e) => cb(String(e.payload.runId), e.payload.event));
+    return this.ipc.listen<{ runId: number; seq: number; event: KataEvent }>('kata://event', (e) => cb(String(e.payload.runId), e.payload.event, e.payload.seq));
   }
 }

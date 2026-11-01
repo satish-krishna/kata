@@ -7,7 +7,8 @@ import { stageName, transcriptRunId } from '../../lib/sdlc';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { Resolved } from '@bindings/Resolved';
-import type { BuildEvent, ChangeRef } from '../../lib/build-host';
+import type { BuildEvent } from '@bindings/BuildEvent';
+import type { ChangeRef } from '@bindings/ChangeRef';
 import { MOCK_BUILD_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
 
 const total = (steps: { delay: number }[]) => steps.reduce((a, s) => a + s.delay, 0);

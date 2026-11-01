@@ -38,6 +38,8 @@ pub const REVIEW: &str = "review";
 /// A change as the webview names it.
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct ChangeRef {
     pub workspace: String,
     pub system: String,
@@ -47,19 +49,27 @@ pub struct ChangeRef {
 /// What the engineer chose for a build.
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct StartForm {
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub timeout_secs: u64,
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub instructions: Option<String>,
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<bool>"))]
     pub continue_on_leftovers: bool,
     #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(optional, as = "Option<Vec<RoundRequest>>"))]
     pub rounds: Vec<RoundRequest>,
 }
 
 /// A repository another change holds.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct HeldRepo {
     pub repo: String,
     pub holder: ChangeKey,
@@ -72,6 +82,8 @@ pub struct HeldRepo {
     rename_all = "camelCase",
     rename_all_fields = "camelCase"
 )]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum StartOutcome {
     /// The build is under way. `uncommitted` names, per repository, the files the plugin found
     /// uncommitted on the change's branch; the build goes on over them.
@@ -91,6 +103,8 @@ pub enum StartOutcome {
 /// A change's build state, announced on [`BUILD_EVENT`].
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct BuildEvent {
     pub change: ChangeKey,
     pub state: BuildState,

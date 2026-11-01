@@ -21,6 +21,8 @@ pub enum CloseAnswer {
 /// One line of the question: a change and what it does, or a run that belongs to no change.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct RunningLine {
     /// The change's name; none for a run outside any change.
     pub change: Option<String>,
@@ -31,13 +33,18 @@ pub struct RunningLine {
 /// What the window does next.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum CloseOutcome {
     /// The window closes.
     Close,
     /// The close is prevented and the question goes to the engineer.
     Ask { running: Vec<RunningLine> },
     /// Cancel these runs, wait for the table to empty, then close.
-    CancelThenClose { ids: Vec<u64> },
+    CancelThenClose {
+        #[cfg_attr(feature = "ts", ts(type = "Array<number>"))]
+        ids: Vec<u64>,
+    },
     /// Nothing changes.
     Stay,
 }
