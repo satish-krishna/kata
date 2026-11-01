@@ -15,6 +15,7 @@ pub mod format;
 pub mod frontmatter;
 pub mod git;
 pub mod github;
+pub mod holds;
 pub mod naming;
 pub mod offer;
 pub mod participants;
