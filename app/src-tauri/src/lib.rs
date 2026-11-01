@@ -111,10 +111,42 @@ async fn run_spec(
     tauri::async_runtime::spawn_blocking(claude_ready)
         .await
         .map_err(|e| e.to_string())??;
+    let lane = lane_of(group.as_deref());
+    let kind = if lane == runs::Lane::Solo {
+        runs::RunKind::Solo
+    } else {
+        runs::RunKind::Build
+    };
+    start_run(
+        &app,
+        &control,
+        history.inner(),
+        spec,
+        group,
+        lane,
+        kind,
+        None,
+        None,
+    )
+}
+
+/// Claim the spec's folder, spawn `kata run` for it and relay its events. `ended` is called once, after
+/// the run has left the table, with how it ended; the build host uses it to carry on.
+#[allow(clippy::too_many_arguments)]
+fn start_run(
+    app: &AppHandle,
+    control: &RunControl,
+    history: &Arc<history::RunHistory>,
+    spec: RunSpec,
+    group: Option<String>,
+    lane: runs::Lane,
+    kind: runs::RunKind,
+    repo: Option<String>,
+    ended: Option<Box<dyn FnOnce(build_host::RunEnd) + Send>>,
+) -> Result<String, String> {
     // Hold the table across claim, spawn and insert so two starts cannot both
     // pass the claim.
     let mut table = control.state.lock().unwrap();
-    let lane = lane_of(group.as_deref());
     table.claim(Path::new(&spec.workdir), &lane)?;
 
     // Each run gets a unique id so its reader task only ever touches its own temp
@@ -147,22 +179,20 @@ async fn run_spec(
     table.insert(LiveRun {
         id,
         workdir: std::path::PathBuf::from(&spec.workdir),
-        kind: if lane == runs::Lane::Solo {
-            runs::RunKind::Solo
-        } else {
-            runs::RunKind::Build
-        },
+        kind,
         group,
         lane,
-        repo: None,
+        repo,
         child: Some(child),
     });
     drop(table);
     let state = control.state.clone();
-    let history = history.inner().clone();
+    let history = history.clone();
+    let app = app.clone();
 
     tauri::async_runtime::spawn(async move {
         let mut terminal_seen = false;
+        let mut end: Option<build_host::RunEnd> = None;
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(bytes) => match serde_json::from_slice::<Value>(&bytes) {
@@ -170,6 +200,19 @@ async fn run_spec(
                         if let Some(t) = v.get("type").and_then(|t| t.as_str()) {
                             if matches!(t, "run.completed" | "run.error" | "run.cancelled") {
                                 terminal_seen = true;
+                                let exit = v
+                                    .get("exit_code")
+                                    .and_then(Value::as_i64)
+                                    .and_then(|c| i32::try_from(c).ok());
+                                end = Some(build_host::RunEnd {
+                                    exit,
+                                    error: (t == "run.error").then(|| {
+                                        v.get("message")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or("the run failed")
+                                            .to_string()
+                                    }),
+                                });
                             }
                         }
                         history.push(id, &v);
@@ -181,6 +224,10 @@ async fn run_spec(
                 CommandEvent::Terminated(payload) => {
                     if !terminal_seen {
                         let code = payload.code.unwrap_or(-1);
+                        end = Some(build_host::RunEnd {
+                            exit: Some(code),
+                            error: Some(format!("engine exited ({code}) without a result")),
+                        });
                         let ev = json!({
                             "type": "run.error",
                             "message": format!("engine exited ({code}) without a result"),
@@ -192,6 +239,10 @@ async fn run_spec(
                 }
                 CommandEvent::Error(err) => {
                     terminal_seen = true;
+                    end = Some(build_host::RunEnd {
+                        exit: None,
+                        error: Some(err.clone()),
+                    });
                     let ev = json!({ "type": "run.error", "message": err });
                     history.push(id, &ev);
                     let _ = app.emit(RUN_EVENT, runs::wrap(id, ev));
@@ -202,6 +253,14 @@ async fn run_spec(
         let _ = std::fs::remove_file(&tmp);
         // Remove only this run; a newer run keeps its own entry.
         state.lock().unwrap().remove(id);
+        if let Some(ended) = ended {
+            let end = end.unwrap_or(build_host::RunEnd {
+                exit: None,
+                error: Some("the engine's output ended without a result".into()),
+            });
+            // The host's work is blocking (it runs the plugin and takes locks).
+            let _ = tauri::async_runtime::spawn_blocking(move || ended(end)).await;
+        }
     });
 
     Ok(id.to_string())
@@ -213,6 +272,133 @@ fn sdlc_run_history(history: State<Arc<history::RunHistory>>, run_id: String) ->
     parse_run_id(&run_id)
         .map(|id| history.replay(id))
         .unwrap_or_default()
+}
+
+/// The ai-sdlc program of the plugin installed for `workspace`, as the build host asks for it.
+struct PluginTools;
+
+impl PluginTools {
+    fn program(workspace: &Path) -> Result<build_host::ProgramTools, sdlc::ai_sdlc::ProgramError> {
+        match state_inputs(&workspace.display().to_string()) {
+            (Some(program), _) => Ok(build_host::ProgramTools::new(program)),
+            (None, sdlc::plugin::Readiness::Blocked { message, .. }) => {
+                Err(sdlc::ai_sdlc::ProgramError::CouldNotRun { message })
+            }
+            (None, _) => Err(sdlc::ai_sdlc::ProgramError::CouldNotRun {
+                message: "the ai-sdlc plugin cannot be used".into(),
+            }),
+        }
+    }
+}
+
+impl build_host::Tools for PluginTools {
+    fn resolve(
+        &self,
+        workspace: &Path,
+    ) -> Result<sdlc::ai_sdlc::Place, sdlc::ai_sdlc::ProgramError> {
+        Self::program(workspace)?.resolve(workspace)
+    }
+    fn run(
+        &self,
+        command: &[&str],
+        place: &sdlc::ai_sdlc::Place,
+    ) -> Result<Value, sdlc::ai_sdlc::ProgramError> {
+        Self::program(&place.workspace)?.run(command, place)
+    }
+    fn states(
+        &self,
+        place: &sdlc::ai_sdlc::Place,
+        system: &str,
+    ) -> Result<Vec<sdlc::ai_sdlc::state::ChangeState>, sdlc::ai_sdlc::ProgramError> {
+        Self::program(&place.workspace)?.states(place, system)
+    }
+    fn plan(
+        &self,
+        place: &sdlc::ai_sdlc::Place,
+        state: &sdlc::ai_sdlc::state::ChangeState,
+    ) -> Result<sdlc::format::ParsedPlan, String> {
+        Self::program(&place.workspace)
+            .map_err(|e| e.to_string())?
+            .plan(place, state)
+    }
+    fn review_record(
+        &self,
+        place: &sdlc::ai_sdlc::Place,
+        system: &str,
+        state: &sdlc::ai_sdlc::state::ChangeState,
+    ) -> Result<Option<sdlc::review::ReviewRecord>, String> {
+        Self::program(&place.workspace)
+            .map_err(|e| e.to_string())?
+            .review_record(place, system, state)
+    }
+    fn head(&self, dir: &Path) -> Result<String, String> {
+        sdlc::git::Repo::open(dir)
+            .and_then(|r| r.head_sha())
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// The run table, the sidecar and the webview, for the build host.
+struct AppLauncher {
+    app: AppHandle,
+}
+
+impl build_host::Launcher for AppLauncher {
+    fn launch(&self, request: build_host::LaunchRequest) -> Result<u64, String> {
+        claude_ready()?;
+        let control = self.app.state::<RunControl>();
+        let history = self.app.state::<Arc<history::RunHistory>>();
+        start_run(
+            &self.app,
+            &control,
+            history.inner(),
+            request.spec,
+            Some(request.group),
+            request.lane,
+            request.kind,
+            request.repo,
+            Some(request.ended),
+        )?
+        .parse()
+        .map_err(|_| "the run id is not a number".to_string())
+    }
+
+    fn cancel(&self, run_id: u64) {
+        cancel_by_id(&self.app.state::<RunControl>(), run_id);
+    }
+
+    fn emit(&self, event: &build_host::BuildEvent) {
+        let _ = self.app.emit(build_host::BUILD_EVENT, event);
+    }
+}
+
+/// Start a change's build. The decision is the host's; see `BuildHost::start`.
+#[tauri::command(async)]
+fn sdlc_build_start(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    form: build_host::StartForm,
+) -> build_host::StartOutcome {
+    host.start(&change, form)
+}
+
+/// Continue a change's build in one repository.
+#[tauri::command(async)]
+fn sdlc_build_continue(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    repo: String,
+) -> build_host::StartOutcome {
+    host.continue_repo(&change, &repo)
+}
+
+/// Where a change's build stands, or none when this session hosts no build of it.
+#[tauri::command]
+fn sdlc_build_state(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+) -> Option<sdlc::coordinator::BuildState> {
+    host.state(&change)
 }
 
 /// Step the window's zoom and remember the new level for the next launch.
@@ -1145,6 +1331,11 @@ fn cancel_run(control: State<RunControl>, run_id: String) {
     let Some(id) = parse_run_id(&run_id) else {
         return;
     };
+    cancel_by_id(&control, id);
+}
+
+/// The write `cancel_run` does, for a run the backend itself holds the id of.
+fn cancel_by_id(control: &RunControl, id: u64) {
     let mut table = control.state.lock().unwrap();
     let Some(run) = table.get_mut(id) else {
         return;
@@ -1396,6 +1587,13 @@ pub fn run() {
         .manage(Arc::new(StagePasses::default()))
         .manage(Arc::new(history::RunHistory::default()))
         .setup(|app| {
+            app.manage(build_host::BuildHost::new(
+                Arc::new(PluginTools),
+                Arc::new(AppLauncher {
+                    app: app.handle().clone(),
+                }),
+                sdlc::store::workbench_dir().unwrap_or_default(),
+            ));
             // Open at the remembered zoom; a failure leaves the window at 100%.
             let saved = zoom::load();
             let applied = app
@@ -1416,6 +1614,9 @@ pub fn run() {
             preview_run,
             run_spec,
             sdlc_run_history,
+            sdlc_build_start,
+            sdlc_build_continue,
+            sdlc_build_state,
             cancel_run,
             submit_answer,
             send_message,

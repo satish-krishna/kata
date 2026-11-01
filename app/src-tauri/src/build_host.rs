@@ -6,17 +6,23 @@
 #![allow(dead_code)]
 
 use crate::runs::{self, Lane};
+use kata_core::spec::PermissionMode;
 use kata_core::RunSpec;
-use kata_sdlc::ai_sdlc::state::ChangeState;
+use kata_sdlc::ai_sdlc::state::{read_state, ChangeState};
 use kata_sdlc::ai_sdlc::{Place, Program, ProgramError};
-use kata_sdlc::coordinator::{BuildState, Coordinator};
-use kata_sdlc::format::ParsedPlan;
-use kata_sdlc::holds::{ChangeKey, HoldTable};
-use kata_sdlc::review::ReviewRecord;
+use kata_sdlc::coordinator::{
+    self, BuildChoices, BuildFacts, BuildPhase, BuildState, Command, Coordinator, Input,
+};
+use kata_sdlc::format::{self, ParsedPlan, ReadResult};
+use kata_sdlc::git;
+use kata_sdlc::holds::{needed_repos, review_repos, ChangeKey, HoldTable, Purpose, RepoKey};
+use kata_sdlc::permissions::{RunKind, RunPlace};
+use kata_sdlc::review::{self, ReviewCurrency, ReviewRecord};
 use kata_sdlc::round::RoundRequest;
+use kata_sdlc::runspec::{change_spec, RunForm};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -152,34 +158,91 @@ impl ProgramTools {
 }
 
 impl Tools for ProgramTools {
-    fn resolve(&self, _workspace: &Path) -> Result<Place, ProgramError> {
-        todo!("stub")
+    fn resolve(&self, workspace: &Path) -> Result<Place, ProgramError> {
+        self.program.resolve(workspace)
     }
-    fn run(&self, _command: &[&str], _place: &Place) -> Result<Value, ProgramError> {
-        todo!("stub")
+
+    fn run(&self, command: &[&str], place: &Place) -> Result<Value, ProgramError> {
+        self.program.run(command, place)
     }
-    fn states(&self, _place: &Place, _system: &str) -> Result<Vec<ChangeState>, ProgramError> {
-        todo!("stub")
+
+    fn states(&self, place: &Place, system: &str) -> Result<Vec<ChangeState>, ProgramError> {
+        let answer = self
+            .program
+            .run(&["state", "--json", "--system", system], place)?;
+        Ok(read_state(answer)?.changes)
     }
-    fn plan(&self, _place: &Place, _state: &ChangeState) -> Result<ParsedPlan, String> {
-        todo!("stub")
+
+    fn plan(&self, _place: &Place, state: &ChangeState) -> Result<ParsedPlan, String> {
+        let file = Path::new(&state.folder).join("plan.md");
+        match format::read(&self.program.entry, &file) {
+            Ok(ReadResult::Plan { document, .. }) => Ok(document),
+            Ok(_) => Err(format!("{} is not a plan", file.display())),
+            Err(e) => Err(e.to_string()),
+        }
     }
+
     fn review_record(
         &self,
         _place: &Place,
-        _system: &str,
-        _state: &ChangeState,
+        system: &str,
+        state: &ChangeState,
     ) -> Result<Option<ReviewRecord>, String> {
-        todo!("stub")
+        let plugin = self
+            .program
+            .entry
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| "the ai-sdlc program has no plugin folder".to_string())?;
+        review::record(plugin, Path::new(&state.master), system, &state.change)
+            .map_err(|e| e.to_string())
     }
-    fn head(&self, _dir: &Path) -> Result<String, String> {
-        todo!("stub")
+
+    fn head(&self, dir: &Path) -> Result<String, String> {
+        git::Repo::open(dir)
+            .and_then(|r| r.head_sha())
+            .map_err(|e| e.to_string())
     }
+}
+
+/// What `states` last said about the change, for the runs the coordinator launches.
+#[derive(Clone)]
+struct Snapshot {
+    state: ChangeState,
+    /// The masters of every other change that lives in a copy.
+    others: Vec<PathBuf>,
+}
+
+/// Where a change's build runs.
+struct Ctx {
+    place: Place,
+    system: String,
+    change: String,
+    /// The folder names of the system's repositories; read once, at the first launch.
+    system_repos: Option<Vec<String>>,
+}
+
+fn master_name(place: &Place) -> String {
+    place
+        .master
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// One change's build.
+struct Build {
+    coord: Coordinator,
+    ctx: Ctx,
+    /// The live runs: coordinator instance to (launch key, run id).
+    live: BTreeMap<u64, (String, u64)>,
+    form: StartForm,
+    last: Option<Snapshot>,
 }
 
 /// The coordinators and the holds, behind one lock.
 struct Inner {
-    builds: HashMap<ChangeKey, Coordinator>,
+    builds: HashMap<ChangeKey, Build>,
     holds: HoldTable,
 }
 
@@ -188,6 +251,53 @@ pub struct BuildHost {
     launcher: Arc<dyn Launcher>,
     workbench_dir: PathBuf,
     inner: Mutex<Inner>,
+}
+
+fn key_of(change: &ChangeRef) -> ChangeKey {
+    ChangeKey {
+        workspace: RepoKey::of(Path::new(&change.workspace)),
+        system: change.system.clone(),
+        change: change.change.clone(),
+    }
+}
+
+fn strings(value: &Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn error_text(e: &ProgramError) -> String {
+    match e {
+        ProgramError::CouldNotRun { message } => message.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn could_not_run(e: &ProgramError) -> StartOutcome {
+    StartOutcome::CouldNotRun {
+        output: error_text(e),
+    }
+}
+
+/// Says what an answer of the plugin that did not pass came to.
+fn failure(answer: &Value) -> StartOutcome {
+    let problems = strings(&answer["problems"]);
+    match answer["outcome"].as_str() {
+        Some("refused") => StartOutcome::Refused { problems },
+        _ => StartOutcome::CouldNotRun {
+            output: if problems.is_empty() {
+                format!("the ai-sdlc program answered {}", answer["outcome"])
+            } else {
+                problems.join("\n")
+            },
+        },
+    }
 }
 
 impl BuildHost {
@@ -209,24 +319,452 @@ impl BuildHost {
 
     /// Start `change`'s build: nothing starts unless every repository it needs is free and the
     /// plugin's `build.start` passes in all of them.
-    pub fn start(self: &Arc<Self>, _change: &ChangeRef, _form: StartForm) -> StartOutcome {
-        todo!("stub")
+    pub fn start(self: &Arc<Self>, change: &ChangeRef, form: StartForm) -> StartOutcome {
+        self.begin(change, Some(form), None)
     }
 
     /// Continue `change`'s build in `repo`; a build with no live run is rebuilt from where the change stands.
-    pub fn continue_repo(self: &Arc<Self>, _change: &ChangeRef, _repo: &str) -> StartOutcome {
-        todo!("stub")
+    pub fn continue_repo(self: &Arc<Self>, change: &ChangeRef, repo: &str) -> StartOutcome {
+        self.begin(change, None, Some(repo))
     }
 
     /// The build state of `change`, or none when this session hosts no build of it.
-    pub fn state(&self, _change: &ChangeRef) -> Option<BuildState> {
-        todo!("stub")
+    pub fn state(&self, change: &ChangeRef) -> Option<BuildState> {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .builds
+            .get(&key_of(change))
+            .map(|b| b.coord.state().clone())
     }
 
     /// Stop every run of `change`'s build.
-    pub fn cancel(self: &Arc<Self>, _change: &ChangeRef) {
-        todo!("stub")
+    pub fn cancel(self: &Arc<Self>, change: &ChangeRef) {
+        let key = key_of(change);
+        let mut guard = self.inner.lock().unwrap();
+        self.drive(&mut guard, &key, Input::CancelAll);
     }
+
+    /// A run of a build ended; called by the launcher once the run has left the run table.
+    fn run_ended(self: &Arc<Self>, key: &ChangeKey, instance: u64, end: RunEnd) {
+        let mut guard = self.inner.lock().unwrap();
+        let Some((launch_key, _)) = guard
+            .builds
+            .get_mut(key)
+            .and_then(|b| b.live.remove(&instance))
+        else {
+            return;
+        };
+        let input = Input::RunEnded {
+            key: launch_key,
+            instance,
+            exit: end.exit,
+            error: end.error,
+            refused: false,
+        };
+        self.drive(&mut guard, key, input);
+    }
+
+    /// The decision of `sdlc_build_start` (`only` is none) and `sdlc_build_continue`.
+    fn begin(
+        self: &Arc<Self>,
+        change: &ChangeRef,
+        form: Option<StartForm>,
+        only: Option<&str>,
+    ) -> StartOutcome {
+        let place = match self.tools.resolve(Path::new(&change.workspace)) {
+            Ok(p) => p,
+            Err(e) => return could_not_run(&e),
+        };
+        let key = key_of(change);
+        let mut guard = self.inner.lock().unwrap();
+        let existing = guard.builds.get(&key);
+        let live_build = existing.is_some_and(|b| !b.live.is_empty());
+        let already = match only {
+            None => live_build,
+            Some(repo) => existing.is_some_and(|b| b.live.values().any(|(k, _)| k == repo)),
+        };
+        if already {
+            return StartOutcome::AlreadyRunning;
+        }
+        let form = form
+            .or_else(|| existing.map(|b| b.form.clone()))
+            .unwrap_or(StartForm {
+                timeout_secs: DEFAULT_TIMEOUT_SECS,
+                instructions: None,
+                continue_on_leftovers: false,
+                rounds: Vec::new(),
+            });
+        let (snapshot, plan) = match self.snapshot(&place, &change.system, &change.change) {
+            Ok(s) => s,
+            Err(output) => return StartOutcome::CouldNotRun { output },
+        };
+        let master = master_name(&place);
+        let rounds: Vec<String> = form.rounds.iter().map(|r| r.repo.clone()).collect();
+        let needed: Vec<String> = match only {
+            Some(repo) if live_build => {
+                if repo == master {
+                    Vec::new()
+                } else {
+                    vec![repo.to_string()]
+                }
+            }
+            _ => needed_repos(&plan, &snapshot.state, &rounds, &master),
+        };
+        let folders: Vec<RepoKey> = needed
+            .iter()
+            .map(|r| RepoKey::of(&place.workspace.join(r)))
+            .collect();
+        if let Err(held) = guard.holds.take(&key, Purpose::Build, &folders) {
+            return StartOutcome::Held {
+                held: held
+                    .held
+                    .into_iter()
+                    .map(|(repo, holder)| HeldRepo { repo, holder })
+                    .collect(),
+            };
+        }
+        let uncommitted = match self.prepare(&place, change, &needed) {
+            Ok(u) => u,
+            Err(outcome) => {
+                if !live_build {
+                    guard.holds.release(&key, Purpose::Build);
+                }
+                return outcome;
+            }
+        };
+        if !live_build {
+            let heads = self.heads(&place, &snapshot.state);
+            let currency = match self
+                .tools
+                .review_record(&place, &change.system, &snapshot.state)
+            {
+                Ok(Some(record)) => review::currency(&record, &heads),
+                _ => ReviewCurrency::None,
+            };
+            guard.builds.insert(
+                key.clone(),
+                Build {
+                    coord: Coordinator::new(currency, heads),
+                    ctx: Ctx {
+                        place,
+                        system: change.system.clone(),
+                        change: change.change.clone(),
+                        system_repos: None,
+                    },
+                    live: BTreeMap::new(),
+                    form: form.clone(),
+                    last: Some(snapshot),
+                },
+            );
+        }
+        let build = guard.builds.get_mut(&key).expect("the build was just made");
+        build.form = form.clone();
+        let input = match only {
+            Some(repo) if live_build => Input::ContinueRepo {
+                repo: repo.to_string(),
+            },
+            _ => Input::Begin {
+                timeout_secs: form.timeout_secs,
+                rounds: form
+                    .rounds
+                    .iter()
+                    .map(|r| coordinator::RoundRequest {
+                        repo: r.repo.clone(),
+                        instructions: r.instructions.clone(),
+                    })
+                    .collect(),
+                choices: BuildChoices {
+                    timeout_secs: form.timeout_secs,
+                    instructions: form.instructions.clone(),
+                    continue_on_leftovers: form.continue_on_leftovers,
+                },
+            },
+        };
+        self.drive(&mut guard, &key, input);
+        StartOutcome::Started { uncommitted }
+    }
+
+    /// The change's state and plan as the plugin reports them now.
+    fn snapshot(
+        &self,
+        place: &Place,
+        system: &str,
+        change: &str,
+    ) -> Result<(Snapshot, ParsedPlan), String> {
+        let states = self
+            .tools
+            .states(place, system)
+            .map_err(|e| error_text(&e))?;
+        let others: Vec<PathBuf> = states
+            .iter()
+            .filter(|s| s.in_copy && s.change != change)
+            .map(|s| PathBuf::from(&s.master))
+            .collect();
+        let state = states
+            .into_iter()
+            .find(|s| s.change == change)
+            .ok_or_else(|| format!("the plugin knows no change {change}"))?;
+        let plan = self.tools.plan(place, &state)?;
+        Ok((Snapshot { state, others }, plan))
+    }
+
+    /// The commit each product repository of the change is on; one that cannot be read is left out.
+    fn heads(&self, place: &Place, state: &ChangeState) -> BTreeMap<String, String> {
+        review_repos(state, &master_name(place))
+            .into_iter()
+            .filter_map(|repo| {
+                let head = self.tools.head(&place.workspace.join(&repo)).ok()?;
+                Some((repo, head))
+            })
+            .collect()
+    }
+
+    /// One `build.start --check` naming every repository, then `build.start` in each in plan order.
+    /// The error is the outcome to give; when the check refused, no repository was changed. The Ok is
+    /// the uncommitted files the plugin named, per repository.
+    fn prepare(
+        &self,
+        place: &Place,
+        change: &ChangeRef,
+        repos: &[String],
+    ) -> Result<BTreeMap<String, Vec<String>>, StartOutcome> {
+        let mut uncommitted = BTreeMap::new();
+        if repos.is_empty() {
+            return Ok(uncommitted);
+        }
+        let base = [
+            "run",
+            "build.start",
+            "--json",
+            "--system",
+            &change.system,
+            "--change",
+            &change.change,
+        ];
+        let mut check: Vec<&str> = base.to_vec();
+        check.push("--check");
+        for repo in repos {
+            check.extend(["--repo", repo]);
+        }
+        let answer = self
+            .tools
+            .run(&check, place)
+            .map_err(|e| could_not_run(&e))?;
+        if answer["outcome"] != "passed" {
+            return Err(failure(&answer));
+        }
+        for repo in repos {
+            let mut command: Vec<&str> = base.to_vec();
+            command.extend(["--repo", repo]);
+            let answer = self
+                .tools
+                .run(&command, place)
+                .map_err(|e| could_not_run(&e))?;
+            if answer["outcome"] != "passed" {
+                return Err(failure(&answer));
+            }
+            let files = strings(&answer["details"]["uncommitted"]);
+            if !files.is_empty() {
+                uncommitted.insert(repo.clone(), files);
+            }
+        }
+        Ok(uncommitted)
+    }
+
+    /// Give the coordinator `first` and carry out what it asks until it asks for nothing more. The
+    /// state is announced once, and the holds are released when the build has stopped with no run live.
+    fn drive(self: &Arc<Self>, inner: &mut Inner, key: &ChangeKey, first: Input) {
+        let Inner { builds, holds } = inner;
+        let Some(build) = builds.get_mut(key) else {
+            return;
+        };
+        let mut queue = VecDeque::from([first]);
+        while let Some(input) = queue.pop_front() {
+            for command in build.coord.step(input) {
+                match command {
+                    Command::ReadStatus => queue.push_back(self.read_status(build)),
+                    Command::ReadHeads => {
+                        let heads = build
+                            .last
+                            .as_ref()
+                            .map(|s| self.heads(&build.ctx.place, &s.state))
+                            .unwrap_or_default();
+                        queue.push_back(Input::Heads(heads));
+                    }
+                    Command::Launch {
+                        key: launch_key,
+                        instance,
+                        task,
+                        instructions,
+                        choices,
+                        ..
+                    } => {
+                        let launched = Launching {
+                            launch_key,
+                            instance,
+                            task,
+                            instructions,
+                            choices,
+                        };
+                        if let Some(failed) = self.launch(build, key, launched) {
+                            queue.push_back(failed);
+                        }
+                    }
+                    Command::CancelRun { instance, .. } => {
+                        if let Some((_, run_id)) = build.live.get(&instance) {
+                            self.launcher.cancel(*run_id);
+                        }
+                    }
+                }
+            }
+        }
+        let state = build.coord.state().clone();
+        let settled = matches!(
+            state.phase,
+            BuildPhase::Stopped | BuildPhase::Finished | BuildPhase::Cancelled
+        );
+        self.launcher.emit(&BuildEvent {
+            change: key.clone(),
+            state,
+        });
+        if settled && build.live.is_empty() {
+            holds.release(key, Purpose::Build);
+        }
+    }
+
+    fn read_status(&self, build: &mut Build) -> Input {
+        let ctx = &build.ctx;
+        match self.snapshot(&ctx.place, &ctx.system, &ctx.change) {
+            Ok((snapshot, plan)) => {
+                let facts = BuildFacts::read(&plan, &snapshot.state, &master_name(&ctx.place));
+                build.last = Some(snapshot);
+                Input::Status(facts)
+            }
+            Err(_) => Input::StatusFailed,
+        }
+    }
+
+    /// Start one run the coordinator asked for. A run that cannot start comes back as an ended run.
+    fn launch(
+        self: &Arc<Self>,
+        build: &mut Build,
+        key: &ChangeKey,
+        asked: Launching,
+    ) -> Option<Input> {
+        let Launching {
+            launch_key,
+            instance,
+            task,
+            instructions,
+            choices,
+        } = asked;
+        let refused = |why: String| {
+            Some(Input::RunEnded {
+                key: launch_key.clone(),
+                instance,
+                exit: None,
+                error: Some(why),
+                refused: true,
+            })
+        };
+        let Some(snapshot) = build.last.clone() else {
+            return refused("the change's state was not read".into());
+        };
+        if build.ctx.system_repos.is_none() {
+            build.ctx.system_repos = Some(self.system_repos(&build.ctx));
+        }
+        let review = launch_key == "review";
+        let kind = if review {
+            RunKind::Review
+        } else {
+            RunKind::Build {
+                repo: launch_key.clone(),
+            }
+        };
+        let place = RunPlace {
+            kind,
+            system: build.ctx.system.clone(),
+            state: snapshot.state,
+            workspace: build.ctx.place.workspace.clone(),
+            checkout: build.ctx.place.master.clone(),
+            other_copies: snapshot.others,
+            system_repos: build.ctx.system_repos.clone().unwrap_or_default(),
+            workbench_dir: self.workbench_dir.clone(),
+        };
+        let spec = change_spec(
+            &place,
+            RunForm {
+                name: String::new(),
+                task: String::new(),
+                bare: false,
+                permission_mode: PermissionMode::Auto,
+                timeout_secs: choices.timeout_secs,
+                instructions: instructions.or(choices.instructions),
+                continue_on_leftovers: choices.continue_on_leftovers,
+            },
+        );
+        let host = Arc::clone(self);
+        let ended_key = key.clone();
+        let request = LaunchRequest {
+            spec,
+            lane: Lane::Change {
+                key: key.clone(),
+                build: true,
+            },
+            kind: if review {
+                runs::RunKind::Review
+            } else {
+                runs::RunKind::Build
+            },
+            repo: (!review).then(|| launch_key.clone()),
+            task,
+            group: format!("build:{}/{}", key.system, key.change),
+            ended: Box::new(move |end| host.run_ended(&ended_key, instance, end)),
+        };
+        match self.launcher.launch(request) {
+            Ok(run_id) => {
+                build.live.insert(instance, (launch_key, run_id));
+                None
+            }
+            Err(why) => refused(why),
+        }
+    }
+
+    /// The folder names of the system's repositories as `change show` lists them (none when it cannot
+    /// say), and the master.
+    fn system_repos(&self, ctx: &Ctx) -> Vec<String> {
+        let master = ctx.place.master.display().to_string();
+        let workspace = ctx.place.workspace.display().to_string();
+        let shown = self.tools.run(
+            &[
+                "change",
+                "show",
+                "--json",
+                "--change",
+                &ctx.change,
+                "--master",
+                &master,
+                "--workspace",
+                &workspace,
+            ],
+            &ctx.place,
+        );
+        let mut repos: Vec<String> = shown
+            .ok()
+            .and_then(|v| v["repos"].as_object().map(|o| o.keys().cloned().collect()))
+            .unwrap_or_default();
+        repos.push(master_name(&ctx.place));
+        repos
+    }
+}
+
+/// A `Launch` command, unpacked.
+struct Launching {
+    launch_key: String,
+    instance: u64,
+    task: String,
+    instructions: Option<String>,
+    choices: BuildChoices,
 }
 
 #[cfg(test)]
@@ -433,7 +971,9 @@ mod tests {
         fn checks(&self, change: &str) -> Vec<Vec<String>> {
             self.calls_for(change)
                 .into_iter()
-                .filter(|c| c.contains(&"build.start".to_string()) && c.contains(&"--check".to_string()))
+                .filter(|c| {
+                    c.contains(&"build.start".to_string()) && c.contains(&"--check".to_string())
+                })
                 .collect()
         }
 
@@ -753,7 +1293,11 @@ mod tests {
                 }
                 A::Finished => {
                     r.tools.log("A", "kata", "T1");
-                    r.tools.heads.lock().unwrap().insert("kata".into(), "abc1234".into());
+                    r.tools
+                        .heads
+                        .lock()
+                        .unwrap()
+                        .insert("kata".into(), "abc1234".into());
                     *r.tools.review.lock().unwrap() = Some(ReviewRecord {
                         layout: 2,
                         reviews: vec![ParsedReviewSection {
@@ -793,14 +1337,20 @@ mod tests {
                         "{label}"
                     );
                     assert_eq!(r.launcher.count(), runs_before, "{label}: no run started");
-                    assert!(r.tools.calls_for("B").is_empty(), "{label}: nothing prepared");
+                    assert!(
+                        r.tools.calls_for("B").is_empty(),
+                        "{label}: nothing prepared"
+                    );
                     assert_eq!(r.holder("bob"), None, "{label}: no hold taken in bob");
                 }
                 Checked => {
                     assert!(matches!(outcome, StartOutcome::Started { .. }), "{label}");
                     let checks = r.tools.checks("B");
                     assert_eq!(checks.len(), 1, "{label}: the plugin checked it");
-                    assert!(checks[0].windows(2).any(|w| w == ["--repo", "kata"]), "{label}");
+                    assert!(
+                        checks[0].windows(2).any(|w| w == ["--repo", "kata"]),
+                        "{label}"
+                    );
                     assert_eq!(r.holder("kata"), Some(key("B")), "{label}");
                 }
             }
@@ -834,8 +1384,15 @@ mod tests {
             r.simple("A", &["kata", "bob"]);
             r.host.start(&cref("A"), form());
             let calls = r.tools.calls.lock().unwrap().len();
-            assert_eq!(r.host.start(&cref("A"), form()), StartOutcome::AlreadyRunning);
-            assert_eq!(r.tools.calls.lock().unwrap().len(), calls, "row 1: nothing prepared");
+            assert_eq!(
+                r.host.start(&cref("A"), form()),
+                StartOutcome::AlreadyRunning
+            );
+            assert_eq!(
+                r.tools.calls.lock().unwrap().len(),
+                calls,
+                "row 1: nothing prepared"
+            );
             assert_eq!(r.launcher.count(), 2, "row 1: no second build");
         }
         // Row 2: held.
@@ -868,27 +1425,37 @@ mod tests {
                     problems: strs(&["bob has uncommitted files: x.txt. Commit or put them away first; nothing was switched."])
                 }
             );
-            assert!(r.tools.real_starts("A").is_empty(), "row 3: build.start never ran");
+            assert!(
+                r.tools.real_starts("A").is_empty(),
+                "row 3: build.start never ran"
+            );
             assert_eq!(r.launcher.count(), 0, "row 3: no run in either repository");
             assert_eq!(r.holder("kata"), None, "row 3: holds released");
             assert_eq!(r.holder("bob"), None);
             let checks = r.tools.checks("A");
             assert_eq!(checks.len(), 1);
             assert!(checks[0].windows(2).any(|w| w == ["--repo", "kata"]));
-            assert!(checks[0].windows(2).any(|w| w == ["--repo", "bob"]), "one check names both");
+            assert!(
+                checks[0].windows(2).any(|w| w == ["--repo", "bob"]),
+                "one check names both"
+            );
         }
         // Row 4 and R4.1 "cannot run": the machine could not run the step.
         {
             let r = rig();
             r.simple("A", &["kata", "bob"]);
-            r.tools.check_cannot_run("ai-sdlc needs Node.js 22.18 or later");
+            r.tools
+                .check_cannot_run("ai-sdlc needs Node.js 22.18 or later");
             assert_eq!(
                 r.host.start(&cref("A"), form()),
                 StartOutcome::CouldNotRun {
                     output: "ai-sdlc needs Node.js 22.18 or later".into()
                 }
             );
-            assert!(r.tools.real_starts("A").is_empty(), "row 4: build.start never ran");
+            assert!(
+                r.tools.real_starts("A").is_empty(),
+                "row 4: build.start never ran"
+            );
             assert_eq!(r.launcher.count(), 0);
             assert_eq!(r.holder("kata"), None);
         }
@@ -906,7 +1473,11 @@ mod tests {
                     problems: strs(&["bob changed since the check"])
                 }
             );
-            assert_eq!(r.tools.real_starts("A"), ["kata", "bob"], "row 5: started in plan order up to the refusal");
+            assert_eq!(
+                r.tools.real_starts("A"),
+                ["kata", "bob"],
+                "row 5: started in plan order up to the refusal"
+            );
             assert_eq!(r.launcher.count(), 0);
             assert_eq!(r.holder("kata"), None, "row 5: holds released");
             assert_eq!(r.holder("bob"), None);
@@ -952,15 +1523,23 @@ mod tests {
     fn a_repository_on_the_branch_with_work_continues() {
         let r = rig();
         r.simple("A", &["kata"]);
-        r.tools.start_answer("kata", passed_start("kata", &["src/a.rs", "src/b.rs"]));
+        r.tools
+            .start_answer("kata", passed_start("kata", &["src/a.rs", "src/b.rs"]));
         let outcome = r.host.continue_repo(&cref("A"), "kata");
         assert_eq!(
             outcome,
             StartOutcome::Started {
-                uncommitted: BTreeMap::from([("kata".to_string(), strs(&["src/a.rs", "src/b.rs"]))])
+                uncommitted: BTreeMap::from([(
+                    "kata".to_string(),
+                    strs(&["src/a.rs", "src/b.rs"])
+                )])
             }
         );
-        assert_eq!(r.launcher.launched("kata").len(), 1, "the build continues in kata");
+        assert_eq!(
+            r.launcher.launched("kata").len(),
+            1,
+            "the build continues in kata"
+        );
     }
 
     // R11.2
@@ -970,16 +1549,24 @@ mod tests {
         r.simple("A", &["kata"]);
         r.simple("B", &["kata"]);
         r.host.start(&cref("A"), form());
-        assert!(matches!(r.host.start(&cref("B"), form()), StartOutcome::Held { .. }));
+        assert!(matches!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Held { .. }
+        ));
         let a_run = r.launcher.launched("kata")[0];
-        r.tools.log("A", "kata", "T1");
-        r.launcher.finish(a_run, 0);
-        assert!(r.host.state(&cref("B")).is_none(), "B was not started by A ending");
+        r.launcher.finish(a_run, 1);
+        assert!(
+            r.host.state(&cref("B")).is_none(),
+            "B was not started by A ending"
+        );
         assert_eq!(r.launcher.launched("kata").len(), 1, "no run for B");
         assert!(r.tools.calls_for("B").is_empty(), "nothing prepared for B");
         assert_eq!(r.holder("kata"), None, "A's hold is gone");
         // The engineer starts it again: a fresh start, checked by the plugin.
-        assert!(matches!(r.host.start(&cref("B"), form()), StartOutcome::Started { .. }));
+        assert!(matches!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Started { .. }
+        ));
         assert_eq!(r.tools.checks("B").len(), 1);
         assert_eq!(r.holder("kata"), Some(key("B")));
     }
@@ -990,7 +1577,10 @@ mod tests {
         let r = rig();
         r.simple("A", &["kata"]);
         r.host.start(&cref("A"), form());
-        assert_eq!(r.host.start(&cref("A"), form()), StartOutcome::AlreadyRunning);
+        assert_eq!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::AlreadyRunning
+        );
         assert_eq!(
             r.host.continue_repo(&cref("A"), "kata"),
             StartOutcome::AlreadyRunning
@@ -1004,7 +1594,10 @@ mod tests {
         let r = rig();
         r.simple("B", &["bob"]);
         r.host.start(&cref("B"), form());
-        assert_eq!(r.launcher.live_dirs(), BTreeSet::from(["D:/ws/bob".to_string()]));
+        assert_eq!(
+            r.launcher.live_dirs(),
+            BTreeSet::from(["D:/ws/bob".to_string()])
+        );
         let calls = r.tools.calls_for("B");
         assert!(
             calls.iter().all(|c| c[0] == "run" || c[0] == "change"),
@@ -1019,7 +1612,10 @@ mod tests {
         r.simple("A", &["kata"]);
         r.simple("B", &["kata"]);
         r.host.start(&cref("A"), form());
-        assert!(matches!(r.host.start(&cref("B"), form()), StartOutcome::Held { .. }));
+        assert!(matches!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Held { .. }
+        ));
         r.launcher.finish(r.launcher.launched("kata")[0], 1);
         r.tools.refuse_check("kata", "kata has uncommitted files: wip.txt. Commit or put them away first; nothing was switched.");
         let outcome = r.host.start(&cref("B"), form());
@@ -1050,7 +1646,11 @@ mod tests {
         // kata's run ends with T1 recorded; nobody looks at a page.
         r.tools.log("A", "kata", "T1");
         r.launcher.finish(r.launcher.launched("kata")[0], 0);
-        assert_eq!(r.launcher.launched("bob").len(), 1, "the ready repository starts by itself");
+        assert_eq!(
+            r.launcher.launched("bob").len(),
+            1,
+            "the ready repository starts by itself"
+        );
         // bob's run ends with the last task recorded: the review starts.
         r.tools.log("A", "bob", "T2");
         r.launcher.finish(r.launcher.launched("bob")[0], 0);
@@ -1063,7 +1663,11 @@ mod tests {
             .filter(|l| l.kind == runs::RunKind::Review)
             .map(|l| l.workdir.clone())
             .collect();
-        assert_eq!(review, [copy_of("A")], "the review runs in the change's master");
+        assert_eq!(
+            review,
+            [copy_of("A")],
+            "the review runs in the change's master"
+        );
         assert_eq!(r.phase("A"), BuildPhase::Reviewing);
         let events = r.launcher.events.lock().unwrap();
         let last = events.last().unwrap();
@@ -1090,8 +1694,14 @@ mod tests {
             &[("T1", "kata", &[])],
         );
         // Both are complete, so each goes straight to its review in its own master.
-        assert!(matches!(r.host.start(&cref("X"), form()), StartOutcome::Started { .. }));
-        assert!(matches!(r.host.start(&cref("Y"), form()), StartOutcome::Started { .. }));
+        assert!(matches!(
+            r.host.start(&cref("X"), form()),
+            StartOutcome::Started { .. }
+        ));
+        assert!(matches!(
+            r.host.start(&cref("Y"), form()),
+            StartOutcome::Started { .. }
+        ));
         assert_eq!(
             r.launcher.live_dirs(),
             BTreeSet::from(["D:/ws/ai-sdlc".to_string(), copy_of("Y")]),
@@ -1141,7 +1751,11 @@ mod tests {
             .args(args)
             .output()
             .unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
@@ -1196,17 +1810,29 @@ mod tests {
             let started = program
                 .run(
                     &[
-                        "change", "start", "--json", "--system", SYSTEM, "--change", change,
-                        "--type", "feat", "--scope", "X-1",
-                        "--master", &place.master.display().to_string(),
-                        "--workspace", &place.workspace.display().to_string(),
+                        "change",
+                        "start",
+                        "--json",
+                        "--system",
+                        SYSTEM,
+                        "--change",
+                        change,
+                        "--type",
+                        "feat",
+                        "--scope",
+                        "X-1",
+                        "--master",
+                        &place.master.display().to_string(),
+                        "--workspace",
+                        &place.workspace.display().to_string(),
                     ],
                     &place,
                 )
                 .unwrap();
             assert_eq!(started["outcome"], "passed", "{started}");
             let copy = started["details"]["copy"].as_str().unwrap().to_string();
-            std::fs::create_dir_all(Path::new(&copy).join(format!("intent/{SYSTEM}/{change}"))).unwrap();
+            std::fs::create_dir_all(Path::new(&copy).join(format!("intent/{SYSTEM}/{change}")))
+                .unwrap();
             std::fs::write(
                 Path::new(&copy).join(format!("intent/{SYSTEM}/{change}/intent.md")),
                 "---\ntitle: T\nstatus: accepted\n---\n\n# Intent\n",
@@ -1302,14 +1928,22 @@ mod tests {
         match outcome {
             StartOutcome::Refused { problems } => {
                 assert!(
-                    problems.iter().any(|p| p.contains("bob has uncommitted files: scratch.txt")),
+                    problems
+                        .iter()
+                        .any(|p| p.contains("bob has uncommitted files: scratch.txt")),
                     "{problems:?}"
                 );
             }
             other => panic!("expected a refusal, got {other:?}"),
         }
-        assert_eq!(git(&real.ws.join("kata"), &["branch", "--show-current"]), "main");
-        assert_eq!(git(&real.ws.join("bob"), &["branch", "--show-current"]), "main");
+        assert_eq!(
+            git(&real.ws.join("kata"), &["branch", "--show-current"]),
+            "main"
+        );
+        assert_eq!(
+            git(&real.ws.join("bob"), &["branch", "--show-current"]),
+            "main"
+        );
         assert_eq!(std::fs::read_to_string(&bob_file).unwrap(), "mine\n");
         assert!(git(&real.ws.join("kata"), &["status", "--porcelain"]).is_empty());
         assert!(
@@ -1330,7 +1964,10 @@ mod tests {
             git(&kata, &["checkout", "-q", "-b", &real.branches[a]]);
             let r = real_rig(&real, &[b]);
             let outcome = r.host.start(&cref_in(&real, b), form());
-            assert!(matches!(outcome, StartOutcome::Started { .. }), "{outcome:?}");
+            assert!(
+                matches!(outcome, StartOutcome::Started { .. }),
+                "{outcome:?}"
+            );
             assert_eq!(git(&kata, &["branch", "--show-current"]), real.branches[b]);
             assert_eq!(r.launcher.launched("kata").len(), 1);
         }
@@ -1344,12 +1981,18 @@ mod tests {
             let outcome = r.host.start(&cref_in(&real, b), form());
             match outcome {
                 StartOutcome::Refused { problems } => {
-                    assert!(problems.iter().any(|p| p.contains("wip.txt")), "{problems:?}");
+                    assert!(
+                        problems.iter().any(|p| p.contains("wip.txt")),
+                        "{problems:?}"
+                    );
                 }
                 other => panic!("expected a refusal, got {other:?}"),
             }
             assert_eq!(git(&kata, &["branch", "--show-current"]), real.branches[a]);
-            assert_eq!(std::fs::read_to_string(kata.join("wip.txt")).unwrap(), "work\n");
+            assert_eq!(
+                std::fs::read_to_string(kata.join("wip.txt")).unwrap(),
+                "work\n"
+            );
             assert_eq!(r.launcher.count(), 0);
         }
     }
