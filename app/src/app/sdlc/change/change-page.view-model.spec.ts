@@ -16,7 +16,7 @@ import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
 import { actionsFor, safetyRules, type Finding, type StageAction } from '../../lib/sdlc';
 import { groupFindings } from '../../lib/sdlc-findings';
-import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
+import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_REFUSED_CHANGE, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
 
@@ -1378,5 +1378,41 @@ describe('ChangePageViewModel shows lasting links', () => {
     await vi.waitFor(() => expect(vm.pullLinks()[0].seen).not.toBeNull());
     expect(vm.done()).toBe(true);
     expect(vm.pullLinks()[0].state).toBe('open');
+  });
+});
+
+describe('ChangePageViewModel shows the plugin report', () => {
+  it('a task shows its commits and untasked commits are departures', async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(MOCK_DONE_CHANGE, transport);
+    await ready(vm);
+    const answer = await transport.sdlcChangeState(MOCK_WORKSPACE_FOLDER, 'commerce', MOCK_DONE_CHANGE);
+    const core = answer.state.tasks!['commerce-core']!;
+    const build = TestBed.inject(BuildPageViewModel);
+    await vi.waitFor(() => {
+      TestBed.tick();
+      expect(build.view().findingsArea.departures).not.toBeNull();
+    });
+    const shown = build.view();
+    const t1 = shown.groups.find((g) => g.repo === 'commerce-core')!.tasks.find((t) => t.id === 'T1')!;
+    expect(core.commits!['T1']).not.toEqual([]);
+    expect(t1.commits).toEqual(core.commits!['T1']);
+    expect(core.untasked).not.toEqual([]);
+    expect(shown.findingsArea.departures).toEqual(core.untasked!.map((sha) => ({ repo: 'commerce-core', task: null, text: `Commit ${sha.slice(0, 7)} names no task.` })));
+  });
+
+  it("a refused action shows the plugin's message as it is", async () => {
+    const transport = new MockTransport();
+    const { vm } = setup(MOCK_REFUSED_CHANGE, transport);
+    await ready(vm);
+    const answer = await transport.sdlcChangeState(MOCK_WORKSPACE_FOLDER, 'commerce', MOCK_REFUSED_CHANGE);
+    const stop = answer.state.ready.build.stop!;
+    const refused = answer.offer.actions.find((a) => !a.enabled)!;
+    expect(refused.reason).toBe(stop);
+    const action = vm.actions().find((a) => a === refused.action);
+    expect(action).toBe(refused.action);
+    expect(vm.disabledFor(action!)).toBe(true);
+    expect(vm.titleFor(action!)).toBe(stop);
+    expect(vm.buildNotice()).toEqual({ tone: 'warning', text: stop, lines: [] });
   });
 });

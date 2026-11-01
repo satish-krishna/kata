@@ -36,6 +36,7 @@ const task = (id: string, status: StatusText, extra: { departure?: string | null
   status,
   departure: extra.departure ?? null,
   picked: extra.picked ?? false,
+  commits: [],
 });
 
 const group = (repo: string, status: StatusText, action: TaskGroupView['action'], tasks: TaskGroupView['tasks'], picked = false, extra: Partial<TaskGroupView> = {}): TaskGroupView => ({

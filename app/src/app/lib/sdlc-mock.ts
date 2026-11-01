@@ -33,7 +33,12 @@ import type { BranchInfo } from '@bindings/BranchInfo';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ChangeName } from '@bindings/ChangeName';
 import type { ChangeView } from '@bindings/ChangeView';
+import type { ChangeOffer } from '@bindings/ChangeOffer';
+import type { ChangeState } from '@bindings/ChangeState';
+import type { FixFacts } from '@bindings/FixFacts';
 import type { LiveFacts } from '@bindings/LiveFacts';
+import type { StageAction } from '@bindings/StageAction';
+import type { StageLabel } from '@bindings/StageLabel';
 import type { OfferStage } from '@bindings/OfferStage';
 import type { Readiness } from '@bindings/Readiness';
 import type { ReadyGate } from '@bindings/ReadyGate';
@@ -60,7 +65,6 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { DEMO_SETUP_FOLDER, DEMO_WORKSPACE_FOLDER } from './demo';
 import { PENDING_PERMISSION, type ScriptStep } from './mock';
-import { actionsForChange, feedbackRequired, fixProgramFailed, revisits, stageLabel } from './sdlc';
 
 export const MOCK_WORKSPACE_FOLDER = DEMO_WORKSPACE_FOLDER;
 /** A folder the demo can add that has repos but no committed `.ai-sdlc.json`, so adding it runs setup. */
@@ -447,21 +451,112 @@ function offerStage(c: ChangeInfo): OfferStage {
   }
 }
 
-/** One fixture change as the backend's `sdlc_state` shows it: the plugin's state, what it offers and its live facts. The offer comes from the same tables the change page still reads, until it reads the offer too. */
-export function changeViewOf(c: ChangeInfo, readiness: Readiness): ChangeView {
+/** The step, words and tone of each stage's label, written out the way the plugin's answer words them. */
+const LABEL_DATA: Record<string, StageLabel> = {
+  'intent-in-progress': { step: 'intent', text: 'Intent · in progress (not committed)', tone: 'muted' },
+  'intent-awaiting': { step: 'intent', text: 'Intent · awaiting acceptance', tone: 'warning' },
+  'intent-accepted-uncommitted': { step: 'intent', text: 'Intent · accepted, not committed', tone: 'warning' },
+  rejected: { step: 'closed', text: 'Closed · rejected', tone: 'error' },
+  'spec-ready': { step: 'spec', text: 'Spec · ready to start', tone: 'muted' },
+  'spec-awaiting': { step: 'spec', text: 'Spec · awaiting acceptance', tone: 'warning' },
+  'spec-accepted-uncommitted': { step: 'spec', text: 'Spec · accepted, not committed', tone: 'warning' },
+  'plan-ready': { step: 'plan', text: 'Plan · ready to start', tone: 'muted' },
+  'plan-awaiting': { step: 'plan', text: 'Plan · awaiting acceptance', tone: 'warning' },
+  'plan-accepted-uncommitted': { step: 'plan', text: 'Plan · accepted, not committed', tone: 'warning' },
+  'plan-out-of-date': { step: 'plan', text: 'Plan · out of date', tone: 'warning' },
+  'plan-unreadable': { step: 'plan', text: 'Plan · could not be read', tone: 'warning' },
+  'plan-superseded': { step: 'plan', text: 'Plan · superseded', tone: 'warning' },
+  'build-ready': { step: 'build', text: 'Build · ready to start', tone: 'muted' },
+  'build-stopped': { step: 'build', text: 'Build · in progress (stopped)', tone: 'warning' },
+  'build-finished': { step: 'build', text: 'Build · finished, not yet done', tone: 'success' },
+  'fix-in-progress': { step: 'intent', text: 'Fix · changes not recorded', tone: 'warning' },
+  'fix-unsettled': { step: 'intent', text: 'Fix · statuses not settled', tone: 'warning' },
+  'fix-awaiting': { step: 'intent', text: 'Fix · awaiting acceptance', tone: 'warning' },
+  'fix-accepting': { step: 'plan', text: 'Fix · acceptance stopped', tone: 'warning' },
+};
+/** What a full-pipeline change at each stage offers, in order, written out as the plugin's answer lists it. */
+const FULL_OFFERS: Record<string, StageAction[]> = {
+  'intent-in-progress': ['continue-intent'],
+  'intent-awaiting': ['continue-intent', 'accept-intent', 'reject-intent'],
+  'intent-accepted-uncommitted': ['commit-acceptance', 'continue-intent'],
+  rejected: [],
+  'spec-ready': ['start-spec', 'reopen-intent'],
+  'spec-awaiting': ['continue-spec', 'accept-spec', 'reopen-intent'],
+  'spec-accepted-uncommitted': ['commit-acceptance', 'continue-spec'],
+  'plan-ready': ['start-plan', 'reopen-spec', 'reopen-intent'],
+  'plan-awaiting': ['accept-plan', 'rerun-plan', 'reopen-intent'],
+  'plan-accepted-uncommitted': ['commit-acceptance', 'rerun-plan'],
+  'plan-out-of-date': ['rerun-plan'],
+  'plan-unreadable': [],
+  'plan-superseded': ['rerun-plan'],
+  'build-ready': ['start-build', 'reopen-spec', 'reopen-intent'],
+  'build-stopped': ['continue-build', 'another-round', 'reopen-spec', 'reopen-intent'],
+  'build-finished': ['declare-done', 'another-round', 'run-review', 'reopen-spec', 'reopen-intent'],
+};
+/** What a change on the light track offers at each stage; a stage not listed offers nothing. */
+const FIX_OFFERS: Record<string, StageAction[]> = {
+  'fix-in-progress': ['finish-fix-draft'],
+  'fix-awaiting': ['accept-fix', 'change-fix'],
+  'fix-accepting': ['accept-fix', 'change-fix'],
+  'build-ready': ['start-build', 'reopen-fix'],
+  'build-stopped': ['continue-build', 'another-round', 'reopen-fix'],
+  'build-finished': ['declare-done', 'another-round', 'run-review', 'reopen-fix'],
+  'plan-out-of-date': ['reopen-fix'],
+};
+/** The actions the plugin's answer marks as regenerating a document that already exists. */
+const REVISITING: readonly StageAction[] = ['continue-intent', 'reopen-intent', 'continue-spec', 'reopen-spec', 'rerun-plan', 'finish-fix-draft', 'change-fix', 'reopen-fix'];
+
+/** The change a test or a demo reaches by name only: it is not in the list, and its start of the build is refused with the plugin's message. */
+/** The commit of the finished change that names no task. */
+export const MOCK_UNTASKED_COMMIT = '5a1ad0c5e7f3b9246d8c0e1a3b5f79d2c4e6a8b0';
+export const MOCK_REFUSED_CHANGE = '2026-10-23-refused-build';
+/** The plugin's stop for the build skill: the grammar's uncommitted-acceptance message with the file filled in. */
+export const MOCK_BUILD_STOP = '`plan.md` has uncommitted changes. Commit the acceptance first, so history shows what was accepted.';
+
+/** What a fixture change offers, as the plugin's answer words it. `refused` holds the plugin's stop text for each action it refuses. */
+function offerOf(c: ChangeInfo, refused: Partial<Record<StageAction, string>> = {}): ChangeOffer {
+  const stage = offerStage(c);
+  const name = typeof stage === 'string' ? stage : 'plan-out-of-date';
+  const unreadableFix = c.track === 'fix' && c.fix_row === null && name === 'fix-unsettled';
+  const label = unreadableFix ? { ...LABEL_DATA[name], text: 'Fix · could not be read' } : LABEL_DATA[name];
+  const listed = c.track === 'fix' ? (FIX_OFFERS[name] ?? []) : (FULL_OFFERS[name] ?? []);
+  // A fix awaiting acceptance may be closed by the full pipeline only at row 6 of the fix-state table.
+  const actions: StageAction[] = c.track === 'fix' && name === 'fix-awaiting' && c.fix_row === 6 ? [...listed, 'full-pipeline-instead'] : listed;
+  // A fix is reopened without feedback only when its plan is out of date.
+  const feedback = (a: StageAction) => a === 'change-fix' || (a === 'reopen-fix' && name !== 'plan-out-of-date');
+  return {
+    stage,
+    label,
+    actions: actions.map((action) => ({ action, enabled: refused[action] === undefined, reason: refused[action] ?? null, feedbackRequired: feedback(action), revisits: REVISITING.includes(action) })),
+  };
+}
+
+const FIX_FACTS: FixFacts = {
+  intent: { inHead: true, headStatus: 'draft', workingStatus: 'draft' },
+  spec: { inHead: true, headStatus: 'draft', workingStatus: 'draft' },
+  plan: { inHead: true, headStatus: 'draft', workingStatus: 'draft' },
+  unrecorded: [], ownLinesOnly: false, accepted: 'none', acceptanceLast: false, built: false,
+};
+
+/** One fixture change as the backend's `sdlc_change_state` shows it: the plugin's state, what it offers and its live facts. */
+export function changeViewOf(
+  c: ChangeInfo,
+  readiness: Readiness,
+  tasks: ChangeState['tasks'] = null,
+  refused: Partial<Record<StageAction, string>> = {},
+): ChangeView {
   const live: LiveFacts = { runLive: false, buildStopped: false, buildLive: false };
-  const stage = c.plan_unreadable ? 'plan-unreadable' : c.stage;
-  const shown = { ...c, stage };
-  const label = fixProgramFailed(shown) ? { ...stageLabel(stage), text: 'Fix · could not be read' } : stageLabel(stage);
-  const actions = actionsForChange(shown).map((action) => ({ action, enabled: true, reason: null, feedbackRequired: feedbackRequired(action, stage, c.out_of_date), revisits: revisits(action) }));
+  const shown: ChangeInfo = c.plan_unreadable ? { ...c, stage: 'plan-unreadable' } : c;
+  const stop = refused['start-build'] ?? refused['continue-build'] ?? null;
   return {
     state: {
       change: c.change, master: '/m', folder: `/m/intent/${c.system}/${c.change}`, inCopy: false, title: null, track: c.track,
       documents: { intent: stateDocument(c.intent), spec: stateDocument(c.spec), plan: stateDocument(c.plan) },
-      scenarios: null, tasks: null, buildLogs: {}, review: { committed: 0, draft: 'none' }, fix: null,
-      ready: { spec: GATE, plan: GATE, build: GATE, review: GATE, done: GATE, reject: GATE },
+      scenarios: null, tasks, buildLogs: {}, review: { committed: 0, draft: 'none' },
+      fix: shown.track === 'fix' && shown.fix_row !== null ? { row: shown.fix_row, facts: FIX_FACTS } : null,
+      ready: { spec: GATE, plan: GATE, build: stop === null ? GATE : { candidate: false, stop, accept: [] }, review: GATE, done: GATE, reject: GATE },
     },
-    offer: { stage: offerStage(shown), label, actions },
+    offer: offerOf(shown, refused),
     live,
     readiness,
   };
@@ -601,9 +696,43 @@ export class SdlcMock {
       readiness,
       canStartChange: !blocked,
       startChangeReason: blocked ? readiness.message : null,
-      changes: found.map((c) => changeViewOf(c, readiness)),
+      changes: found.map((c) => changeViewOf(c, readiness, this.tasksOf(c))),
       problems: found.flatMap((c) => (c.plan_unreadable && c.plan_unreadable_reason !== null ? [c.plan_unreadable_reason] : [])),
     };
+  }
+  /** Like the backend's `sdlc_change_state`: one change from the plugin's answer; refuses a change the workspace does not have. */
+  changeView(changeName: string, readiness: Readiness): ChangeView {
+    if (changeName === MOCK_REFUSED_CHANGE) {
+      const refused = change(MOCK_REFUSED_CHANGE, doc('accepted'), doc('accepted'), doc('accepted'), 'build-ready');
+      return changeViewOf(refused, readiness, null, { 'start-build': MOCK_BUILD_STOP });
+    }
+    const found = this.stagePass().find((c) => c.change === changeName);
+    if (!found) throw new Error(`no change folder named ${changeName}`);
+    return changeViewOf(found, readiness, this.tasksOf(found));
+  }
+  /** What the plugin reports for the build and the finished change: each repository's tasks, the commits that name each, and the commits that name none. Other changes have no plan to report. */
+  private tasksOf(c: ChangeInfo): ChangeState['tasks'] {
+    if (c.change !== MOCK_BUILD_CHANGE && c.change !== MOCK_DONE_CHANGE) return null;
+    const done = c.change === MOCK_DONE_CHANGE;
+    const sha = (id: string) => `${id.toLowerCase()}c0ffee`.padEnd(40, '0');
+    const out: NonNullable<ChangeState['tasks']> = {};
+    for (const repo of new Set(this.plan.map((t) => t.repo))) {
+      const mine = this.plan.filter((t) => t.repo === repo);
+      const logged = mine.filter((t) => done || this.rows.has(t.id));
+      out[repo] = {
+        all: mine.map((t) => t.id),
+        logged: logged.map((t) => t.id),
+        unlogged: mine.filter((t) => !logged.includes(t)).map((t) => t.id),
+        commits: Object.fromEntries(mine.map((t) => [t.id, logged.includes(t) ? [sha(t.id)] : []])),
+        untasked: done && repo === 'commerce-core' ? [MOCK_UNTASKED_COMMIT] : [],
+        uncommitted: [],
+      };
+    }
+    return out;
+  }
+  /** A test or a demo changes what the workspace holds for a change: its stage and the facts the stage rests on. */
+  patch(changeName: string, patch: Partial<ChangeInfo>): void {
+    this.changes = this.changes.map((c) => (c.change === changeName ? { ...c, ...patch } : c));
   }
   branches(): BranchInfo { return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change, needs_name: false })), default_base: MOCK_BASE, pending_change: this.demo === 'naming' ? `${MOCK_SYSTEM}/${MOCK_BUILD_CHANGE}` : null }; }
   /** Like the backend's `read_doc`: the document is named by its stem; anything else is a caller bug. */

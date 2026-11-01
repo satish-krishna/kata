@@ -112,7 +112,7 @@ export type TaskArea = {
 export type StatusText = { tone: 'success' | 'warning' | 'error' | 'idle'; label: string };
 
 /** One task of the tasks area. */
-export type TaskRowView = { id: string; name: string; status: StatusText; departure: string | null; picked: boolean };
+export type TaskRowView = { id: string; name: string; status: StatusText; departure: string | null; picked: boolean; commits: string[] };
 
 /** One repository of the tasks area: its heading (name, situation, the button it offers) and its tasks. */
 export type TaskGroupView = {
@@ -156,7 +156,7 @@ const REVIEW_RUNNING = 'The review is running. Its findings appear here when it 
 const NO_DEPARTURES = 'No departures from the plan.';
 
 /** A task's recorded departure from the plan. */
-export type Departure = { repo: string; task: string; text: string };
+export type Departure = { repo: string; task: string | null; text: string };
 
 /** What the findings area shows: one message in place of the review, or the review with the notice above it, then the departures. */
 export type FindingsAreaView = {
@@ -957,6 +957,7 @@ export class BuildPageViewModel {
           status: taskStatus(t.state),
           departure: t.state.kind === 'done' ? t.state.departure : null,
           picked: pick?.kind === 'task' && pick.task === t.id,
+          commits: [],
         })),
       })),
       filter: { value: filter, counts },

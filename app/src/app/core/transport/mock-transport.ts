@@ -9,6 +9,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeView } from '@bindings/ChangeView';
 import type { SystemView } from '@bindings/SystemView';
 import type { ChangeName } from '@bindings/ChangeName';
 import type { StageEvent } from '@bindings/StageEvent';
@@ -196,6 +197,12 @@ export class MockTransport extends KataTransport {
   async sdlcState(folder: string, system: string): Promise<SystemView> {
     return this.sdlc.systemView(system, await this.sdlcPluginReadiness(folder));
   }
+  /** Scripted from the same fixtures as `sdlcState`; rejects a change the workspace does not have. */
+  async sdlcChangeState(folder: string, _system: string, change: string): Promise<ChangeView> {
+    return this.sdlc.changeView(change, await this.sdlcPluginReadiness(folder));
+  }
+  /** A test or a demo changes what the workspace holds for a change; the next `sdlcChangeState` and `sdlcState` show it. */
+  patchChange(change: string, patch: Partial<ChangeInfo>): void { this.sdlc.patch(change, patch); }
   /** Plays a scripted pass: one `stage` per change and a `progress` after each, spread over about a second, then `done`. A new pass cancels the one before. */
   sdlcReadStages(_master: string, _system: string, first?: string | null): Promise<number> {
     this.stageTimers.forEach(clearTimeout);
