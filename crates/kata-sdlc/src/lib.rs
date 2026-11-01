@@ -27,6 +27,7 @@ mod process;
 pub mod prs;
 pub mod publish;
 pub mod review;
+pub mod round;
 pub mod runspec;
 pub mod snapshot;
 pub mod start;
