@@ -1,0 +1,295 @@
+//! Where a system's changes stand, as the Workbench shows them: the plugin's `state` answer, what each
+//! change shows and offers, and the live facts only the run table knows. The Tauri commands in `lib.rs`
+//! are one-line wrappers over [`system_view`] and [`change_view`], so this module is testable without Tauri.
+use kata_sdlc::ai_sdlc::state::{ChangeState, SystemState};
+use kata_sdlc::ai_sdlc::{Program, ProgramError};
+use kata_sdlc::offer::{ChangeOffer, LiveFacts};
+use kata_sdlc::plugin::Readiness;
+use serde::Serialize;
+use std::path::Path;
+
+/// Where the answer about a system's changes comes from; the plugin's program in the app, a fake in tests.
+pub trait StateSource {
+    fn state(
+        &self,
+        workspace: &Path,
+        system: &str,
+        change: Option<&str>,
+    ) -> Result<SystemState, ProgramError>;
+}
+
+impl StateSource for Program {
+    fn state(
+        &self,
+        workspace: &Path,
+        system: &str,
+        change: Option<&str>,
+    ) -> Result<SystemState, ProgramError> {
+        kata_sdlc::ai_sdlc::state::state(self, workspace, system, change)
+    }
+}
+
+/// One change as the list and the change page show it.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeView {
+    pub state: ChangeState,
+    pub offer: ChangeOffer,
+    pub live: LiveFacts,
+    pub readiness: Readiness,
+}
+
+/// A system's changes, and whether a new one may be started.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemView {
+    pub system: String,
+    pub readiness: Readiness,
+    pub can_start_change: bool,
+    pub start_change_reason: Option<String>,
+    pub changes: Vec<ChangeView>,
+    pub problems: Vec<String>,
+}
+
+/// The view of every change of `system`, from one `state` call. `source` is `None` where the mode cannot
+/// run and there is no program to ask: the view then lists nothing.
+pub fn system_view(
+    source: Option<&dyn StateSource>,
+    readiness: &Readiness,
+    live: &dyn Fn(&str, &str) -> LiveFacts,
+    folder: &Path,
+    system: &str,
+) -> Result<SystemView, String> {
+    let _ = (source, live, folder);
+    Ok(SystemView {
+        system: system.to_string(),
+        readiness: readiness.clone(),
+        can_start_change: true,
+        start_change_reason: None,
+        changes: Vec::new(),
+        problems: Vec::new(),
+    })
+}
+
+/// The view of one change; an error when the plugin's report does not hold it.
+pub fn change_view(
+    source: Option<&dyn StateSource>,
+    readiness: &Readiness,
+    live: &dyn Fn(&str, &str) -> LiveFacts,
+    folder: &Path,
+    system: &str,
+    change: &str,
+) -> Result<ChangeView, String> {
+    let _ = (source, readiness, live, folder, system);
+    Err(format!("{change} is not listed"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kata_sdlc::ai_sdlc::state::read_state;
+    use kata_sdlc::plugin::{GhPresence, Plugin};
+    use std::cell::Cell;
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    fn program() -> Program {
+        Program {
+            node: "node".into(),
+            entry: Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../crates/kata-sdlc/tests/ai-sdlc-tools/ai-sdlc.ts"),
+        }
+    }
+
+    fn ready() -> Readiness {
+        Readiness::Ready {
+            plugin: Plugin {
+                dir: PathBuf::from("plugin"),
+                version: "1.1.0".into(),
+                layouts: vec![],
+            },
+            gh: GhPresence::Present,
+        }
+    }
+
+    fn no_live(_: &str, _: &str) -> LiveFacts {
+        LiveFacts::default()
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// A workspace with a master repository (system `demo`, repository `app`).
+    fn workspace() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_path_buf();
+        let master = ws.join("ai-sdlc");
+        for name in ["ai-sdlc", "app"] {
+            let repo = ws.join(name);
+            std::fs::create_dir_all(&repo).unwrap();
+            git(&repo, &["init", "-q", "-b", "main"]);
+            git(&repo, &["config", "user.name", "Test"]);
+            git(&repo, &["config", "user.email", "test@example.com"]);
+            git(&repo, &["config", "commit.gpgsign", "false"]);
+        }
+        std::fs::write(
+            master.join(".ai-sdlc.json"),
+            r#"{"version":1,"systems":{"demo":{"repos":["app"]}}}"#,
+        )
+        .unwrap();
+        git(&master, &["add", "."]);
+        git(&master, &["commit", "-q", "-m", "marker"]);
+        std::fs::write(ws.join("app").join("a.txt"), "a").unwrap();
+        git(&ws.join("app"), &["add", "."]);
+        git(&ws.join("app"), &["commit", "-q", "-m", "init"]);
+        (dir, ws)
+    }
+
+    #[test]
+    fn sdlc_state_lists_a_change_that_lives_only_in_its_copy() {
+        let (_dir, ws) = workspace();
+        let master = ws.join("ai-sdlc");
+        let change = "2026-11-01-greeting";
+        let started = program()
+            .run(
+                &[
+                    "change", "start", "--json", "--system", "demo", "--change", change, "--type",
+                    "feat", "--scope", "X-1",
+                ],
+                &kata_sdlc::ai_sdlc::Place {
+                    master: master.clone(),
+                    workspace: ws.clone(),
+                },
+            )
+            .unwrap();
+        assert_eq!(started["outcome"], "passed", "{started}");
+        let copy = PathBuf::from(started["details"]["copy"].as_str().unwrap());
+        let folder = copy.join("intent/demo").join(change);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("intent.md"),
+            "---\ntitle: Greeting\nstatus: draft\n---\n\n# Intent\n",
+        )
+        .unwrap();
+
+        let p = program();
+        let view = system_view(Some(&p), &ready(), &no_live, &ws, "demo").unwrap();
+        assert_eq!(view.changes.len(), 1);
+        let c = &view.changes[0];
+        assert_eq!(c.state.change, change);
+        assert!(c.state.in_copy);
+        assert!(!c.offer.label.text.is_empty());
+        let one = change_view(Some(&p), &ready(), &no_live, &ws, "demo", change).unwrap();
+        assert_eq!(one.state.change, change);
+    }
+
+    #[test]
+    fn a_change_only_on_its_branch_is_not_listed() {
+        let (_dir, ws) = workspace();
+        let master = ws.join("ai-sdlc");
+        let change = "2026-10-31-several-changes-at-once";
+        git(
+            &master,
+            &["checkout", "-q", "-b", &format!("change/{change}")],
+        );
+        let folder = master.join("intent/demo").join(change);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("intent.md"),
+            "---\ntitle: Several\nstatus: accepted\n---\n\n# Intent\n",
+        )
+        .unwrap();
+        git(&master, &["add", "."]);
+        git(&master, &["commit", "-q", "-m", "intent"]);
+        git(&master, &["checkout", "-q", "main"]);
+
+        let p = program();
+        let view = system_view(Some(&p), &ready(), &no_live, &ws, "demo").unwrap();
+        assert!(view.changes.is_empty(), "{}", view.changes.len());
+        assert!(change_view(Some(&p), &ready(), &no_live, &ws, "demo", change).is_err());
+    }
+
+    fn change_json(name: &str) -> String {
+        format!(
+            r#"{{"change":"{name}","master":"/ws","folder":"/ws/intent/demo/{name}","inCopy":false,"title":null,"track":"full",
+ "documents":{{"intent":{{"exists":true,"inHead":true,"headStatus":"accepted","workingStatus":"accepted","uncommitted":false}},"spec":{{"exists":false,"inHead":false,"headStatus":null,"workingStatus":null,"uncommitted":false,"pin":null}},"plan":{{"exists":false,"inHead":false,"headStatus":null,"workingStatus":null,"uncommitted":false,"pin":null}}}},
+ "scenarios":null,"tasks":null,"buildLogs":{{}},"review":{{"committed":0,"draft":"none"}},"fix":null,
+ "ready":{{"spec":{{"candidate":true,"stop":null,"accept":["intent.md"]}},"plan":{{"candidate":false,"stop":"no spec","accept":[]}},"build":{{"candidate":false,"stop":"no plan","accept":[]}},"review":{{"candidate":false,"stop":"no build","accept":[]}},"done":{{"candidate":false,"stop":"no review","accept":[]}},"reject":{{"candidate":true,"stop":null,"accept":[]}}}}}}"#
+        )
+    }
+
+    struct Counting {
+        calls: Cell<u32>,
+        names: Vec<String>,
+    }
+
+    impl StateSource for Counting {
+        fn state(
+            &self,
+            _workspace: &Path,
+            system: &str,
+            _change: Option<&str>,
+        ) -> Result<SystemState, ProgramError> {
+            self.calls.set(self.calls.get() + 1);
+            let changes: Vec<String> = self.names.iter().map(|n| change_json(n)).collect();
+            let answer = format!(
+                r#"{{"system":"{system}","changes":[{}],"problems":[]}}"#,
+                changes.join(",")
+            );
+            Ok(read_state(serde_json::from_str(&answer).unwrap()).unwrap())
+        }
+    }
+
+    fn counting(n: usize) -> Counting {
+        Counting {
+            calls: Cell::new(0),
+            names: (0..n)
+                .map(|i| format!("2026-11-01-change-{i:02}"))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn one_state_call_per_system() {
+        let source = counting(20);
+        let view =
+            system_view(Some(&source), &ready(), &no_live, Path::new("/ws"), "demo").unwrap();
+        assert_eq!(view.changes.len(), 20);
+        assert_eq!(source.calls.get(), 1);
+    }
+
+    #[test]
+    fn a_blocked_readiness_offers_nothing() {
+        let source = counting(2);
+        let blocked = Readiness::Blocked {
+            reason: kata_sdlc::plugin::BlockReason::PluginTooOld,
+            message: "The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.0."
+                .into(),
+        };
+        let view =
+            system_view(Some(&source), &blocked, &no_live, Path::new("/ws"), "demo").unwrap();
+        assert_eq!(view.changes.len(), 2);
+        assert!(!view.can_start_change);
+        assert!(view
+            .start_change_reason
+            .as_deref()
+            .unwrap()
+            .contains("1.1.0"));
+        for c in &view.changes {
+            assert!(!c.offer.label.text.is_empty());
+            assert!(!c.offer.actions.is_empty());
+            for a in &c.offer.actions {
+                assert!(!a.enabled, "{:?}", a.action);
+                assert!(a.reason.as_deref().unwrap().contains("1.0.0"));
+            }
+        }
+    }
+}

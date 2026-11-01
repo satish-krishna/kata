@@ -1,5 +1,6 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 mod runs;
+mod sdlc_state;
 mod zoom;
 
 use kata_core::catalog::{self, CatalogEntry};
