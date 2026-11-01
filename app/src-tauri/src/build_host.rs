@@ -18,7 +18,7 @@ use kata_sdlc::git;
 use kata_sdlc::holds::{needed_repos, review_repos, ChangeKey, HoldTable, Purpose, RepoKey};
 use kata_sdlc::permissions::{RunKind, RunPlace};
 use kata_sdlc::review::{self, ReviewCurrency, ReviewRecord};
-use kata_sdlc::round::RoundRequest;
+use kata_sdlc::round::{self, RoundOffer, RoundPicks, RoundPlan, RoundRequest};
 use kata_sdlc::runspec::{change_spec, RunForm};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -91,6 +91,8 @@ pub enum StartOutcome {
 pub struct BuildEvent {
     pub change: ChangeKey,
     pub state: BuildState,
+    /// The repositories another change holds that keep the review from starting; empty when it is not waiting.
+    pub review_waiting: Vec<HeldRepo>,
 }
 
 /// How a run ended.
@@ -382,6 +384,38 @@ impl BuildHost {
             .builds
             .get(&key_of(change))
             .map(|b| b.coord.state().clone())
+    }
+
+    /// Start `change`'s review by hand.
+    pub fn review_start(self: &Arc<Self>, _change: &ChangeRef) -> StartOutcome {
+        StartOutcome::AlreadyRunning
+    }
+
+    /// The repositories another change holds that keep `change`'s review from starting.
+    pub fn review_waiting(&self, _change: &ChangeRef) -> Vec<HeldRepo> {
+        Vec::new()
+    }
+
+    /// What a round may fix, from the change's latest committed review.
+    pub fn round_offer(&self, _change: &ChangeRef) -> Result<RoundOffer, String> {
+        Ok(round::offer(None, &[]))
+    }
+
+    /// The requests a round with these picks would start.
+    pub fn round_plan(
+        &self,
+        _change: &ChangeRef,
+        _picks: &RoundPicks,
+    ) -> Result<RoundPlan, String> {
+        Ok(RoundPlan {
+            blocked: None,
+            requests: Vec::new(),
+        })
+    }
+
+    /// Start the round the picks describe.
+    pub fn round_start(self: &Arc<Self>, _change: &ChangeRef, _picks: RoundPicks) -> StartOutcome {
+        StartOutcome::AlreadyRunning
     }
 
     /// Stop every run of `change`'s build.
@@ -782,6 +816,7 @@ impl BuildHost {
                     self.launcher.emit(&BuildEvent {
                         change: key.clone(),
                         state,
+                        review_waiting: Vec::new(),
                     });
                 }
                 // A start under way has taken the holds for the build it is about to begin.
@@ -1260,6 +1295,7 @@ mod tests {
         repo: Option<String>,
         kind: runs::RunKind,
         task: String,
+        spec: String,
         ended: Option<Box<dyn FnOnce(RunEnd) + Send>>,
         live: bool,
     }
@@ -1290,6 +1326,7 @@ mod tests {
             });
             list.push(Launched {
                 id,
+                spec: serde_json::to_string(&request.spec).unwrap_or_default(),
                 workdir: request.spec.workdir.clone(),
                 repo: request.repo,
                 kind: request.kind,
@@ -1341,6 +1378,27 @@ mod tests {
                 .filter(|r| r.live)
                 .map(|r| r.workdir.clone())
                 .collect()
+        }
+
+        fn reviews(&self) -> Vec<u64> {
+            self.runs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|r| r.kind == runs::RunKind::Review)
+                .map(|r| r.id)
+                .collect()
+        }
+
+        fn spec_of(&self, id: u64) -> String {
+            self.runs
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|r| r.id == id)
+                .unwrap()
+                .spec
+                .clone()
         }
 
         fn count(&self) -> usize {
@@ -1416,6 +1474,38 @@ mod tests {
                 .map(|(r, id)| (id.as_str(), *r, &[][..]))
                 .collect();
             self.change(change, &task_refs, &rows);
+        }
+
+        /// A change with one task in each of `repos`, every one recorded.
+        fn complete(&self, change: &str, repos: &[&str]) {
+            self.simple(change, repos);
+            for (i, repo) in repos.iter().enumerate() {
+                self.tools.log(change, repo, &format!("T{}", i + 1));
+            }
+        }
+
+        /// `change` holds `repo` for a build.
+        fn hold_as(&self, change: &str, repo: &str) {
+            self.host
+                .inner
+                .lock()
+                .unwrap()
+                .holds
+                .take(
+                    &key(change),
+                    Purpose::Build,
+                    &[RepoKey::of(&Path::new(WS).join(repo))],
+                )
+                .unwrap();
+        }
+
+        fn free(&self, change: &str) {
+            self.host
+                .inner
+                .lock()
+                .unwrap()
+                .holds
+                .release(&key(change), Purpose::Build);
         }
 
         fn phase(&self, change: &str) -> BuildPhase {
@@ -1977,6 +2067,205 @@ mod tests {
             Err(e) => panic!("{e}"),
         }
         assert!(matches!(slow.join().unwrap(), StartOutcome::Started { .. }));
+    }
+
+    fn held_kata(holder: &str) -> Vec<HeldRepo> {
+        vec![HeldRepo {
+            repo: "kata".into(),
+            holder: key(holder),
+        }]
+    }
+
+    // R12.1
+    #[test]
+    fn the_automatic_review_waits_for_a_held_repository() {
+        let r = rig();
+        r.complete("A", &["kata"]);
+        r.hold_as("B", "kata");
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        assert!(r.launcher.reviews().is_empty(), "the review did not launch");
+        assert_eq!(r.launcher.count(), 0);
+        assert_eq!(r.host.review_waiting(&cref("A")), held_kata("B"));
+        assert_eq!(r.phase("A"), BuildPhase::Stopped);
+        assert_eq!(r.holder("kata"), Some(key("B")), "B still holds kata");
+        {
+            let events = r.launcher.events.lock().unwrap();
+            assert_eq!(events.last().unwrap().review_waiting, held_kata("B"));
+        }
+        // Nothing restarts it by itself when B lets go.
+        r.free("B");
+        assert_eq!(r.launcher.count(), 0);
+        assert_eq!(r.holder("kata"), None);
+    }
+
+    // R12.2
+    #[test]
+    fn a_review_started_by_hand_waits() {
+        let r = rig();
+        r.complete("A", &["kata"]);
+        r.hold_as("B", "kata");
+        assert_eq!(
+            r.host.review_start(&cref("A")),
+            StartOutcome::Held {
+                held: held_kata("B")
+            }
+        );
+        assert_eq!(r.launcher.count(), 0);
+        assert!(r.host.state(&cref("A")).is_none(), "no build was begun");
+        assert!(r.tools.real_starts("A").is_empty());
+        assert_eq!(r.holder("kata"), Some(key("B")));
+    }
+
+    // R12.3
+    #[test]
+    fn a_running_review_holds_its_repositories() {
+        let r = rig();
+        r.complete("A", &["kata"]);
+        r.simple("B", &["kata"]);
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        let review = r.launcher.reviews();
+        assert_eq!(review.len(), 1, "A's review runs");
+        assert_eq!(r.holder("kata"), Some(key("A")));
+        assert_eq!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Held {
+                held: held_kata("A")
+            }
+        );
+        assert!(r.tools.calls_for("B").is_empty(), "nothing prepared for B");
+        // The hold ends with the review run.
+        r.launcher.finish(review[0], 0);
+        assert_eq!(r.holder("kata"), None);
+        assert!(matches!(
+            r.host.start(&cref("B"), form()),
+            StartOutcome::Started { .. }
+        ));
+    }
+
+    // R12.1, R12.2 and R12.3: the decision table
+    #[test]
+    fn review_start_rows() {
+        // Row 3, by hand: taken, the review launches in the change's master with --review --master.
+        {
+            let r = rig();
+            r.complete("A", &["kata"]);
+            assert!(matches!(
+                r.host.review_start(&cref("A")),
+                StartOutcome::Started { .. }
+            ));
+            let review = r.launcher.reviews();
+            assert_eq!(review.len(), 1);
+            assert!(r.launcher.spec_of(review[0]).contains("--review --master"));
+            assert_eq!(r.holder("kata"), Some(key("A")), "row 3: hold kept");
+            // The hold goes when the run ends, whatever its outcome.
+            r.launcher.finish(review[0], 1);
+            assert_eq!(r.holder("kata"), None, "row 3: released at the run's end");
+        }
+        // Row 1 then row 3: a review that waited starts when the engineer chooses.
+        {
+            let r = rig();
+            r.complete("A", &["kata"]);
+            r.hold_as("B", "kata");
+            r.host.start(&cref("A"), form());
+            assert_eq!(r.host.review_waiting(&cref("A")), held_kata("B"));
+            r.free("B");
+            assert!(matches!(
+                r.host.review_start(&cref("A")),
+                StartOutcome::Started { .. }
+            ));
+            assert_eq!(r.launcher.reviews().len(), 1);
+            assert!(r.host.review_waiting(&cref("A")).is_empty());
+            assert_eq!(r.holder("kata"), Some(key("A")));
+        }
+        // Row 2: by hand and held, nothing launches and nothing is left held by A.
+        {
+            let r = rig();
+            r.complete("A", &["kata", "bob"]);
+            r.hold_as("B", "bob");
+            assert_eq!(
+                r.host.review_start(&cref("A")),
+                StartOutcome::Held {
+                    held: vec![HeldRepo {
+                        repo: "bob".into(),
+                        holder: key("B")
+                    }]
+                }
+            );
+            assert_eq!(r.launcher.count(), 0);
+            assert_eq!(r.holder("kata"), None, "all or none");
+        }
+    }
+
+    // R12.3 and R18.2
+    #[test]
+    fn a_round_starts_the_requests_its_plan_shows() {
+        use kata_sdlc::format::{Concern, ParsedFinding, Severity};
+        let r = rig();
+        r.complete("A", &["kata"]);
+        r.tools
+            .heads
+            .lock()
+            .unwrap()
+            .insert("kata".into(), "abc1234".into());
+        *r.tools.review.lock().unwrap() = Some(ReviewRecord {
+            layout: 2,
+            reviews: vec![ParsedReviewSection {
+                number: 1,
+                reviewed_at: "2026-11-01".into(),
+                commits: BTreeMap::from([("kata".to_string(), "abc1234".to_string())]),
+                findings: vec![ParsedFinding {
+                    id: "F1".into(),
+                    severity: Severity::High,
+                    file: "src/a.rs".into(),
+                    line: 3,
+                    text: "The claim never expires.".into(),
+                    repo: Some("kata".into()),
+                    concern: Some(Concern::Bug),
+                    rule: None,
+                }],
+            }],
+            problems: Vec::new(),
+            master_moved: Vec::new(),
+        });
+        let offer = r.host.round_offer(&cref("A")).unwrap();
+        assert_eq!(offer.review, Some(1));
+        assert_eq!(offer.findings.len(), 1);
+        assert!(offer.repos.contains(&"kata".to_string()));
+        assert_eq!(
+            r.host.round_offer(&cref("A")).unwrap(),
+            offer,
+            "the same on every read"
+        );
+        let picks = round::default_picks(&offer);
+        assert!(picks.picked.contains("F1"));
+        let shown = r.host.round_plan(&cref("A"), &picks).unwrap();
+        assert_eq!(shown, round::plan(&offer, &picks));
+        assert_eq!(shown.requests.len(), 1);
+        // A round with nothing picked is refused with the plan's reason; nothing starts.
+        assert_eq!(
+            r.host.round_start(&cref("A"), RoundPicks::default()),
+            StartOutcome::Refused {
+                problems: vec!["Pick a finding or write a note.".into()]
+            }
+        );
+        assert_eq!(r.launcher.count(), 0);
+        // The start launches exactly the requests the plan showed.
+        assert!(matches!(
+            r.host.round_start(&cref("A"), picks),
+            StartOutcome::Started { .. }
+        ));
+        let launched = r.launcher.launched("kata");
+        assert_eq!(launched.len(), shown.requests.len());
+        assert!(r
+            .launcher
+            .spec_of(launched[0])
+            .contains("Fix these findings from review 1"));
     }
 
     // R20.2
