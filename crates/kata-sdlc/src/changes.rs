@@ -2853,9 +2853,27 @@ source_spec_commit: {spec_pin}
                 }
             });
             let ctx = ReadContext::new(Some(&plugin), &repo);
-            // Far above any ordinary read, even a node start on a loaded machine: only the stalled
-            // read (it never finishes on its own) may reach the limit.
-            ctx.limit_format_calls(std::time::Duration::from_secs(30));
+            // Only the stalled read (it never finishes on its own) may reach the limit, so the limit
+            // has to sit far above what the other eleven reads cost on this machine right now. A
+            // fixed number is a guess about machine speed: it is the floor, and the limit rises to a
+            // multiple of the time a pass over twelve readable changes takes at this moment.
+            let mut limit = std::time::Duration::from_secs(30);
+            if reason == "reading it took longer than allowed" {
+                let base = tempfile::tempdir().unwrap();
+                let (base_repo, base_names) = changes_with_plans(base.path(), 12, &|n, pin| {
+                    plain_plan(pin, "", &format!("baseline {n}"))
+                });
+                let base_plugin = slow_plugin(&base.path().join("plugin"), false);
+                format::forget_memory_cache();
+                let started = std::time::Instant::now();
+                pass_over(
+                    &ReadContext::new(Some(&base_plugin), &base_repo),
+                    &base_names,
+                );
+                limit = limit.max(started.elapsed() * 8);
+                format::forget_memory_cache();
+            }
+            ctx.limit_format_calls(limit);
             // The change that cannot be read goes first, so every other one has to get past it.
             let mut order = names.clone();
             order.rotate_left(4);
