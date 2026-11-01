@@ -1001,7 +1001,8 @@ describe('the build\'s preview', () => {
     await startPreview(preview, prepare);
     // The page keeps the choices for the build, and the next build starts from them.
     expect(givens.build(KEY)!.off).toEqual(new Set([GITHUB, dbKey(vm, 'commerce-core')]));
-    expect(prepare.mock.calls[0][1]).toEqual({ timeoutSecs: 7200 });
+    // and the host starts every run with them off
+    expect(prepare.mock.calls[0][1]).toEqual({ timeoutSecs: 7200, off: expect.arrayContaining([GITHUB, dbKey(vm, 'commerce-core')]) });
   });
 
   it('cancelling the build\'s preview starts nothing and leaves the build\'s choices alone', async () => {

@@ -300,7 +300,6 @@ export class MockTransport extends KataTransport {
   sdlcRunLinks(): Promise<RunLink[]> { return Promise.resolve(this.sdlc.runLinks()); }
   sdlcLinkRun(link: RunLink): Promise<void> { this.sdlc.linkRun(link); return Promise.resolve(); }
   sdlcTaskLinks(): Promise<TaskLink[]> { return Promise.resolve(this.sdlc.taskLinks()); }
-  sdlcLinkTasks(links: TaskLink[]): Promise<void> { this.sdlc.linkTasks(links); return Promise.resolve(); }
   /** The scripted run has no process to wait for. */
   sdlcWaitRunExit(_runId: string, _timeoutMs: number): Promise<boolean> { return Promise.resolve(true); }
   sdlcBuildStatus(_master: string, _system: string, change: string): Promise<BuildStatus> { return Promise.resolve(this.sdlc.buildStatus(change)); }
@@ -387,7 +386,8 @@ export class MockTransport extends KataTransport {
     return this.runSpec({ ...seedSpec(), name: form.name, task: form.task, workdir: change.workspace });
   }
   async sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome> { return this.host.start(change, form); }
-  async sdlcBuildContinue(change: ChangeRef, repo: string): Promise<StartOutcome> { return this.host.continueRepo(change, repo); }
+  // The scripted host runs no agent, so the choices a continue or review carries change nothing it shows.
+  async sdlcBuildContinue(change: ChangeRef, repo: string, _off?: string[]): Promise<StartOutcome> { return this.host.continueRepo(change, repo); }
   async sdlcBuildState(change: ChangeRef): Promise<BuildState | null> { return this.host.state(change); }
   async sdlcBuildCancel(change: ChangeRef, repo: string | null): Promise<void> { this.host.cancel(change, repo); }
   async sdlcBuildRuns(change: ChangeRef): Promise<BuildRunRef[]> { return this.host.runs(change); }
@@ -429,7 +429,7 @@ export class MockTransport extends KataTransport {
   async sdlcReviewView(change: ChangeRef): Promise<ReviewView> {
     return mockReviewView(this.sdlc.reviewRecord(), this.reviewRepos(change));
   }
-  async sdlcReviewStart(change: ChangeRef): Promise<StartOutcome> { return this.host.reviewStart(change); }
+  async sdlcReviewStart(change: ChangeRef, _off?: string[]): Promise<StartOutcome> { return this.host.reviewStart(change); }
   async sdlcReviewWaiting(change: ChangeRef): Promise<HeldRepo[]> { return this.host.reviewWaiting(change); }
   /** The repositories a round may go to: the change's own, then the master. */
   private reviewRepos(change: ChangeRef): string[] {

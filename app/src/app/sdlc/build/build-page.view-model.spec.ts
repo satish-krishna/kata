@@ -218,7 +218,7 @@ describe('the build page follows the build the backend hosts', () => {
   it('runs the backend started are linked to the change once their transcript shows, and each task once', async () => {
     const s = await opened(setup());
     const linkRun = vi.spyOn(s.transport, 'sdlcLinkRun');
-    const linkTasks = vi.spyOn(s.transport, 'sdlcLinkTasks');
+    const before = await s.transport.sdlcTaskLinks();
     await s.load();
     await s.vm.startBuild({ timeoutSecs: 5400 });
     await advance(300);
@@ -228,7 +228,7 @@ describe('the build page follows the build the backend hosts', () => {
     expect(linkRun.mock.calls.map(([l]) => l.stage).sort()).toEqual(['build:commerce-core', 'build:customer-portal']);
     const id = s.vm.groups().find((g) => g.key === 'commerce-core')!.runs[0].id;
     // The host records which run recorded a task; the page never writes a task link.
-    expect(linkTasks).not.toHaveBeenCalled();
+    expect(await s.transport.sdlcTaskLinks()).toEqual(before);
     expect(id).toBeTruthy();
   });
 

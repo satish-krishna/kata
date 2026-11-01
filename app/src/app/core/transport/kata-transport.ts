@@ -92,7 +92,7 @@ export abstract class KataTransport {
   /** Start a change's build; nothing starts unless every repository it needs is free. */
   abstract sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome>;
   /** Continue a change's build in one repository. */
-  abstract sdlcBuildContinue(change: ChangeRef, repo: string): Promise<StartOutcome>;
+  abstract sdlcBuildContinue(change: ChangeRef, repo: string, off?: string[]): Promise<StartOutcome>;
   /** Where a change's build stands, or null when this session hosts no build of it. */
   abstract sdlcBuildState(change: ChangeRef): Promise<BuildState | null>;
   /** Stop the run of one repository (or `review`) of a change's build, or, with none named, every run of it. */
@@ -106,7 +106,7 @@ export abstract class KataTransport {
   /** The latest review as the page lists it: the Review group's rows and the round dialog's groups, in the backend's order. */
   abstract sdlcReviewView(change: ChangeRef): Promise<ReviewView>;
   /** Start a change's review by hand; it waits when another change holds a repository it reads. */
-  abstract sdlcReviewStart(change: ChangeRef): Promise<StartOutcome>;
+  abstract sdlcReviewStart(change: ChangeRef, off?: string[]): Promise<StartOutcome>;
   /** The repositories other changes hold that keep a change's review from starting; empty when it is free. */
   abstract sdlcReviewWaiting(change: ChangeRef): Promise<HeldRepo[]>;
   /** What a round may fix, and the picks that start selected, from the change's latest review. */
@@ -176,7 +176,6 @@ export abstract class KataTransport {
   /** Which run recorded each task, in the order they were linked. */
   abstract sdlcTaskLinks(): Promise<TaskLink[]>;
   /** Append the links for the tasks a run recorded, in one write. */
-  abstract sdlcLinkTasks(links: TaskLink[]): Promise<void>;
   /** Wait until the engine process of run `runId` has exited. False when it is still alive after `timeoutMs`. */
   abstract sdlcWaitRunExit(runId: string, timeoutMs: number): Promise<boolean>;
   abstract sdlcBuildStatus(master: string, system: string, change: string): Promise<BuildStatus>;

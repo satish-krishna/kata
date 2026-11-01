@@ -840,7 +840,6 @@ export class SdlcMock {
   runLinks(): RunLink[] { return this.links.map((l) => ({ ...l })); }
   linkRun(link: RunLink): void { this.links = [...this.links, { ...link }]; }
   taskLinks(): TaskLink[] { return this.taskLinksList.map((l) => ({ ...l })); }
-  linkTasks(links: TaskLink[]): void { this.taskLinksList = [...this.taskLinksList, ...links.map((l) => ({ ...l }))]; }
 
   // ---- the build ----
 

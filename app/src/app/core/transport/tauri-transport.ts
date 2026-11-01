@@ -113,14 +113,14 @@ export class TauriTransport extends KataTransport {
   sdlcRunHistory(runId: string) { return this.ipc.invoke<HistoryEntry[]>('sdlc_run_history', { runId }); }
   sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm) { return this.ipc.invoke<string>('sdlc_run_change', { change, kind, form }); }
   sdlcBuildStart(change: ChangeRef, form: StartForm) { return this.ipc.invoke<StartOutcome>('sdlc_build_start', { change, form }); }
-  sdlcBuildContinue(change: ChangeRef, repo: string) { return this.ipc.invoke<StartOutcome>('sdlc_build_continue', { change, repo }); }
+  sdlcBuildContinue(change: ChangeRef, repo: string, off?: string[]) { return this.ipc.invoke<StartOutcome>('sdlc_build_continue', { change, repo, ...(off === undefined ? {} : { off }) }); }
   sdlcBuildState(change: ChangeRef) { return this.ipc.invoke<BuildState | null>('sdlc_build_state', { change }); }
   sdlcBuildCancel(change: ChangeRef, repo: string | null) { return this.ipc.invoke<void>('sdlc_build_cancel', { change, repo }); }
   sdlcBuildRuns(change: ChangeRef) { return this.ipc.invoke<BuildRunRef[]>('sdlc_build_runs', { change }); }
   sdlcPreviewChangeRun(change: ChangeRef, kind: DocumentKind, form: RunForm) { return this.ipc.invoke<RunSpec>('sdlc_preview_change_run', { change, kind, form }); }
   sdlcPreviewBuild(change: ChangeRef, which: BuildPreviewKind, repo: string | null, form: StartForm) { return this.ipc.invoke<BuildSection[]>('sdlc_preview_build', { change, which, repo, form }); }
   sdlcReviewView(change: ChangeRef) { return this.ipc.invoke<ReviewView>('sdlc_review_view', { change }); }
-  sdlcReviewStart(change: ChangeRef) { return this.ipc.invoke<StartOutcome>('sdlc_review_start', { change }); }
+  sdlcReviewStart(change: ChangeRef, off?: string[]) { return this.ipc.invoke<StartOutcome>('sdlc_review_start', { change, ...(off === undefined ? {} : { off }) }); }
   sdlcReviewWaiting(change: ChangeRef) { return this.ipc.invoke<HeldRepo[]>('sdlc_review_waiting', { change }); }
   sdlcRoundOffer(change: ChangeRef) { return this.ipc.invoke<[RoundOffer, RoundPicks]>('sdlc_round_offer', { change }); }
   sdlcRoundPlan(change: ChangeRef, picks: RoundPicks) { return this.ipc.invoke<RoundPlan>('sdlc_round_plan', { change, picks }); }
@@ -141,7 +141,6 @@ export class TauriTransport extends KataTransport {
   sdlcRunLinks() { return this.ipc.invoke<RunLink[]>('sdlc_run_links'); }
   sdlcLinkRun(link: RunLink) { return this.ipc.invoke<void>('sdlc_link_run', { link }); }
   sdlcTaskLinks() { return this.ipc.invoke<TaskLink[]>('sdlc_task_links'); }
-  sdlcLinkTasks(links: TaskLink[]) { return this.ipc.invoke<void>('sdlc_link_tasks', { links }); }
   sdlcWaitRunExit(runId: string, timeoutMs: number) { return this.ipc.invoke<boolean>('sdlc_wait_run_exit', { runId, timeoutMs }); }
   sdlcBuildStatus(master: string, system: string, change: string) { return this.ipc.invoke<BuildStatus>('sdlc_build_status', { master, system, change }); }
   async sdlcReadParsed(master: string, system: string, change: string, doc: string): Promise<ReadResult | ReadError | null> {

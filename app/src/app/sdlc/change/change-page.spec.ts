@@ -451,7 +451,7 @@ describe('ChangePage build page', () => {
     await settle();
     expect(text(document.body.querySelector('[role="dialog"] [hlmDialogTitle]')!)).toBe('Continue commerce-core');
     await confirmPreview();
-    await vi.waitFor(() => expect(resume).toHaveBeenCalledWith(expect.objectContaining({ change: MOCK_BUILD_CHANGE }), 'commerce-core'), { timeout: TOKEN });
+    await vi.waitFor(() => expect(resume).toHaveBeenCalledWith(expect.objectContaining({ change: MOCK_BUILD_CHANGE }), 'commerce-core', expect.any(Array)), { timeout: TOKEN });
     expect(page(container)).not.toBeNull();
     expect(container.querySelector('app-build-view')).toBeNull();
     await stopBuild(fixture);

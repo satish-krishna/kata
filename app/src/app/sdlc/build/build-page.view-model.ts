@@ -29,7 +29,7 @@ import { ProgressStore } from '../../core/progress/progress.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { type AskRecord, type MessageRecord, type MessageRefusal, type RunGiven, type PermissionRecord, type RunState, type RunSummary, type StreamEvent } from '../../lib/events';
-import { activityFor, newlyRecorded, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Chosen, type LiveRun, type Pick, type SessionRef } from '../../lib/build-sessions';
+import { activityFor, linksOfFollowedRuns, outcomeOf, recordOutcome, repoSessions, sessionsFor, type Chosen, type LiveRun, type Pick, type SessionRef } from '../../lib/build-sessions';
 import { isChange } from '../../lib/build-host';
 import { buildStage, shownAreas, taskGroups, type BuildStage } from '../../lib/build-stage';
 import { hms, ms, situationView, type Situation, type SituationView, type TaskState } from '../../lib/build-state';
@@ -399,12 +399,8 @@ export class BuildPageViewModel {
   private readonly chosen = signal<Chosen | null>(null);
   /** The build log as it stood when each run of a repository was first seen, by run id: what tells the tasks a run recorded. */
   private readonly bases = signal<Readonly<Record<string, BuildStatus>>>({});
-  /** The task links written or being written, as `repo/task/run`, so a task is linked to its run once whether it was seen live or at the run's end. */
-  private readonly linked = new Set<string>();
   /** The transcripts already linked to the change, so a run is linked once. */
   private readonly linkedTranscripts = new Set<string>();
-  /** The runs already reconciled after they left the build. */
-  private readonly finishedRuns = new Set<string>();
   /** The earlier runs the engineer opened in full, by run id. */
   private readonly openedRuns = signal<ReadonlySet<string>>(new Set());
   /** True from the moment the review's run leaves the build until its result is read. */
@@ -457,6 +453,9 @@ export class BuildPageViewModel {
   /** What the engineer picked, else the first repository, or the review once the build is reviewed. Null before the status is read. */
   readonly pick = computed<Pick | null>(() => this.activity().pick);
 
+  /** The transcript id of each run the page follows, to the id the run shows live under. */
+  private readonly followedTranscripts = computed(() => new Map(this.log().flatMap((e) => { const t = transcriptRunId(this.snapOf(e.id).events); return t === null ? [] : [[t, e.id] as const]; })));
+
   /** The repositories whose run is live, each with the run and the build log from before it started. */
   private readonly liveRuns = computed<LiveRun[]>(() => {
     const bases = this.bases();
@@ -475,7 +474,7 @@ export class BuildPageViewModel {
       firstRepo: this.groupKeys()[0] ?? null,
       status: this.status(),
       live: this.liveRuns(),
-      taskLinks: this.taskLinks(),
+      taskLinks: linksOfFollowedRuns(this.taskLinks(), this.followedTranscripts()),
       scope: ctx === null ? null : { workspaceId: ctx.workspaceId, system: ctx.system, change: ctx.change },
     });
   });
@@ -608,15 +607,10 @@ export class BuildPageViewModel {
       this.bashDone();
       untracked(() => void this.refresh());
     });
-    // A run the backend started is followed from its first event, and one that left the build has its tasks linked to it.
+    // A run the backend started is followed from its first event.
     effect(() => {
       const refs = this.runRefs();
       untracked(() => this.followRuns(refs));
-    });
-    // A task a live run just recorded is linked to that run now, so picking it shows that session.
-    effect(() => {
-      const links = this.activity().newLinks;
-      untracked(() => void this.persistLinks(links));
     });
     // A run's transcript is linked to the change as soon as its id shows up in the run's events.
     effect(() => {
@@ -1220,7 +1214,7 @@ export class BuildPageViewModel {
     const ref = this.ref();
     if (ref === null) return 'couldNotRun';
     this.lastForm = form;
-    return this.begin(progressLabels.preparingBuild(), () => this.transport.sdlcBuildStart(ref, form));
+    return this.begin(progressLabels.preparingBuild(), () => this.transport.sdlcBuildStart(ref, this.withOff(form, this.buildOff())));
   }
 
   /** Start the held build again, as a fresh start of the same form. */
@@ -1231,7 +1225,7 @@ export class BuildPageViewModel {
   /** Start the review that waited for other changes again. */
   async startReviewAgain(): Promise<void> {
     const ref = this.ref();
-    if (ref !== null) await this.begin(progressLabels.preparingReview(), () => this.transport.sdlcReviewStart(ref));
+    if (ref !== null) await this.begin(progressLabels.preparingReview(), () => this.transport.sdlcReviewStart(ref, this.buildOff()));
   }
 
   /**
@@ -1293,6 +1287,16 @@ export class BuildPageViewModel {
     return `${ctx.system}/${ctx.change}`;
   }
 
+  /** The given items the build has switched off, as the host takes them. */
+  private buildOff(): string[] {
+    return [...(this.givens.build(this.buildKey())?.off ?? [])];
+  }
+
+  /** The form with the given items switched off; a form of a build that switched none off is sent as it is. */
+  private withOff(form: StartForm, off: readonly string[]): StartForm {
+    return off.length === 0 ? form : { ...form, off: [...off] };
+  }
+
   /** What the preview starts from: the session's choices, and the build's. */
   private previewFrom() {
     return { session: this.givens.session(), job: null, build: this.givens.build(this.buildKey())?.off ?? null };
@@ -1300,7 +1304,9 @@ export class BuildPageViewModel {
 
   /** The run-spec of each folder the preview lists, as the backend composes them. */
   private async sections(which: BuildPreviewKind, repo: string | null, form: StartForm): Promise<BuildSectionRequest[]> {
-    const sections = await this.transport.sdlcPreviewBuild(this.ref()!, which, repo, form);
+    const from = this.previewFrom();
+    const off = [...new Set([...from.session, ...(from.build ?? [])])];
+    const sections = await this.transport.sdlcPreviewBuild(this.ref()!, which, repo, this.withOff(form, off));
     return sections.map((s) => ({ title: s.title, repo: s.repo, spec: s.spec, workdir: s.spec.workdir }));
   }
 
@@ -1333,7 +1339,7 @@ export class BuildPageViewModel {
     this.dialogMode.set(null);
     if (result === null) return false;
     if (which !== 'review') this.givens.setBuild(this.buildKey(), { off: result.off });
-    if (which === 'review') return (await this.begin(progressLabels.preparingReview(), () => this.transport.sdlcReviewStart(ref))) === 'started';
+    if (which === 'review') return (await this.begin(progressLabels.preparingReview(), () => this.transport.sdlcReviewStart(ref, [...result.off]))) === 'started';
     return (await this.startBuild({ ...form, timeoutSecs: result.request?.timeoutSecs ?? limit })) === 'started';
   }
 
@@ -1417,7 +1423,7 @@ export class BuildPageViewModel {
     const choices: BuildChoices = { off: result.off };
     this.givens.setBuild(this.buildKey(), choices);
     await this.begin(key === REVIEW ? progressLabels.preparingReview() : progressLabels.preparingBuild(), () =>
-      key === REVIEW ? this.transport.sdlcReviewStart(ref) : this.transport.sdlcBuildContinue(ref, key),
+      key === REVIEW ? this.transport.sdlcReviewStart(ref, [...choices.off]) : this.transport.sdlcBuildContinue(ref, key, [...choices.off]),
     );
   }
 
@@ -1439,7 +1445,6 @@ export class BuildPageViewModel {
   /** Follow every run the backend names that the page has not seen, and finish with the ones that left the build. */
   private followRuns(refs: BuildRunRef[]): void {
     const known = new Set(this.log().map((e) => e.id));
-    const live = new Set(refs.map((r) => r.run));
     for (const ref of refs) {
       if (known.has(ref.run)) continue;
       this.log.update((l) => [...l, { id: ref.run, key: ref.key, at: Date.now() }]);
@@ -1447,25 +1452,6 @@ export class BuildPageViewModel {
       const before = this.status();
       if (before !== null && ref.key !== REVIEW) this.bases.update((b) => ({ ...b, [ref.run]: before }));
       void this.runs.open(ref.run);
-    }
-    for (const entry of this.log()) {
-      if (live.has(entry.id) || this.finishedRuns.has(entry.id)) continue;
-      this.finishedRuns.add(entry.id);
-      void this.linkEnded(entry);
-    }
-  }
-
-  /** Append a link from the run to each task it recorded in the build log that was not linked while it ran. */
-  private async linkEnded(entry: Entry): Promise<void> {
-    const ctx = this.ctx;
-    const before = this.bases()[entry.id];
-    if (ctx === null || before === undefined || entry.key === REVIEW) return;
-    try {
-      const after = await this.readStatus();
-      const tasks = newlyRecorded(before, after, entry.key);
-      await this.appendLinks(tasks.map((task) => ({ workspace_id: ctx.workspaceId, system: ctx.system, change: ctx.change, repo: entry.key, task, run_id: entry.id })));
-    } catch (e) {
-      this.toasts.error(`Could not link the tasks to the run: ${message(e)}`);
     }
   }
 
@@ -1498,24 +1484,6 @@ export class BuildPageViewModel {
     } catch (e) {
       this.toasts.error(`Could not link the run to the change: ${message(e)}`);
     }
-  }
-
-  /** Persist the links of tasks a live run recorded; a failed append is a toast and changes nothing else. */
-  private async persistLinks(links: TaskLink[]): Promise<void> {
-    try {
-      await this.appendLinks(links);
-    } catch (e) {
-      this.toasts.error(`Could not link the tasks to the run: ${message(e)}`);
-    }
-  }
-
-  /** Write the links not written yet, the one path for a link seen live and one found when the run ends. */
-  private async appendLinks(links: TaskLink[]): Promise<void> {
-    const fresh = links.filter((l) => !this.linked.has(`${l.repo}/${l.task}/${l.run_id}`));
-    if (fresh.length === 0) return;
-    for (const l of fresh) this.linked.add(`${l.repo}/${l.task}/${l.run_id}`);
-    await this.transport.sdlcLinkTasks(fresh);
-    this.taskLinks.update((all) => [...all, ...fresh.filter((f) => !all.some((l) => l.repo === f.repo && l.task === f.task && l.run_id === f.run_id))]);
   }
 
   // --- what the engineer has seen
