@@ -1212,6 +1212,7 @@ impl BuildHost {
                 timeout_secs: choices.timeout_secs,
                 instructions: instructions.or(choices.instructions),
                 continue_on_leftovers: choices.continue_on_leftovers,
+                given: None,
             },
         );
         let host = Arc::clone(self);
@@ -2356,6 +2357,7 @@ mod tests {
             timeout_secs: 900,
             instructions: None,
             continue_on_leftovers: false,
+            given: None,
         };
         let id = r
             .host

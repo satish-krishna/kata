@@ -8,6 +8,8 @@ import type { Snapshot } from '@bindings/Snapshot';
 import type { RunLink } from '@bindings/RunLink';
 import type { BuildStart } from '@bindings/BuildStart';
 import type { PublishRepo } from '@bindings/PublishRepo';
+import type { RoundPicks } from '@bindings/RoundPicks';
+import type { BuildEvent, ChangeRef, CloseOutcome, RunForm, RunningStrip } from '../../lib/build-host';
 
 const spec = seedSpec();
 const settings: Settings = { mode: 'sdlc', remember: true, permission_mode: 'bypass' };
@@ -16,6 +18,9 @@ const snap: Snapshot = { head: 'abc', dirty: {} };
 const link: RunLink = { workspace_id: 'w', system: 's', change: 'c', stage: 'intent', run_id: 'r', started_at: 1 };
 const start: BuildStart = { master: { repo: 'm', path: '/w/m', base: 'main', branch: 'change/c', created: false }, repos: [] };
 const publishRepo: PublishRepo = { repo: 'r', path: '/w/r', base: 'main' };
+const change: ChangeRef = { workspace: '/w', system: 's', change: 'c' };
+const runForm: RunForm = { name: 'n', task: 't', permissionMode: 'auto', timeoutSecs: 600 };
+const picks: RoundPicks = { picked: ['F1'], assigned: {}, notes: {} };
 const layout: Record<string, unknown> = { order: ['T1'] };
 const FILTERS = [{ name: 'Run-spec', extensions: ['toml', 'json'] }];
 
@@ -63,6 +68,19 @@ const rows: Row[] = [
   ['sdlcChangeState', (t) => t.sdlcChangeState('/w', 's', 'c'), 'sdlc_change_state', { folder: '/w', system: 's', change: 'c' }],
   ['sdlcMissingFolders', (t) => t.sdlcMissingFolders(['/a', '/b']), 'sdlc_missing_folders', { folders: ['/a', '/b'] }],
   ['sdlcBranches', (t) => t.sdlcBranches('/m'), 'sdlc_branches', { master: '/m' }],
+  ['sdlcRunHistory', (t) => t.sdlcRunHistory('7'), 'sdlc_run_history', { runId: '7' }],
+  ['sdlcRunChange', (t) => t.sdlcRunChange(change, 'spec', runForm), 'sdlc_run_change', { change, kind: 'spec', form: runForm }],
+  ['sdlcBuildStart', (t) => t.sdlcBuildStart(change, { timeoutSecs: 600 }), 'sdlc_build_start', { change, form: { timeoutSecs: 600 } }],
+  ['sdlcBuildContinue', (t) => t.sdlcBuildContinue(change, 'kata'), 'sdlc_build_continue', { change, repo: 'kata' }],
+  ['sdlcBuildState', (t) => t.sdlcBuildState(change), 'sdlc_build_state', { change }],
+  ['sdlcReviewStart', (t) => t.sdlcReviewStart(change), 'sdlc_review_start', { change }],
+  ['sdlcReviewWaiting', (t) => t.sdlcReviewWaiting(change), 'sdlc_review_waiting', { change }],
+  ['sdlcRoundOffer', (t) => t.sdlcRoundOffer(change), 'sdlc_round_offer', { change }],
+  ['sdlcRoundPlan', (t) => t.sdlcRoundPlan(change, picks), 'sdlc_round_plan', { change, picks }],
+  ['sdlcRoundStart', (t) => t.sdlcRoundStart(change, picks), 'sdlc_round_start', { change, picks }],
+  ['sdlcRunning', (t) => t.sdlcRunning(), 'sdlc_running', undefined],
+  ['sdlcMarkOpened', (t) => t.sdlcMarkOpened(change), 'sdlc_mark_opened', { change }],
+  ['sdlcCloseAnswer', (t) => t.sdlcCloseAnswer(true), 'sdlc_close_answer', { confirm: true }],
   ['sdlcWaitRunExit', (t) => t.sdlcWaitRunExit('7', 15000), 'sdlc_wait_run_exit', { runId: '7', timeoutMs: 15000 }],
   ['zoom', (t) => t.zoom('in'), 'zoom', { step: 'in' }],
   ['loadBuildLayout', (t) => t.loadBuildLayout(), 'load_build_layout', undefined],
@@ -164,6 +182,21 @@ describe('TauriTransport', () => {
     expect(event).toBe('sdlc://publish-step');
     handler({ payload: { kind: 'pushing', repo: 'commerce-core' } });
     expect(seen).toEqual([{ kind: 'pushing', repo: 'commerce-core' }]);
+  });
+
+  it.each([
+    ['onBuildState', 'sdlc://build', { change: { workspace: { key: 'w', name: 'w' }, system: 's', change: 'c' }, state: { phase: 'building', going: [], stopped: {}, rounds: {}, waiting: [], report: null }, reviewWaiting: [] } as BuildEvent],
+    ['onRunning', 'sdlc://running', { shown: [], all: [] } as RunningStrip],
+    ['onCloseAsked', 'sdlc://close-asked', { type: 'ask', running: [{ change: 'c', what: 'building in kata' }] } as CloseOutcome],
+  ] as const)('%s hands the payload of %s over as it is', async (method, channel, payload) => {
+    const ipc = fakeIpc();
+    const t = new TauriTransport(asIpc(ipc));
+    const seen: unknown[] = [];
+    await (t[method] as (cb: (p: unknown) => void) => Promise<() => void>)((p) => seen.push(p));
+    const [event, handler] = ipc.listen.mock.calls[0] as unknown as [string, (e: { payload: unknown }) => void];
+    expect(event).toBe(channel);
+    handler({ payload });
+    expect(seen).toEqual([payload]);
   });
 
   it('runSpec resolves to the run id the backend returned', async () => {

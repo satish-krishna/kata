@@ -50,6 +50,11 @@ import { seedCatalog, validateLocal, previewFixture, runScriptHead, runScriptMid
 import { history, runDetailFixture, katasFixture, presetsFixture } from '../../lib/library';
 import { MOCK_LAYOUTS, MOCK_PLUGIN_VERSION, MOCK_SDLC_CATALOG, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, SdlcMock, TRIAGE_LIGHT, buildRunScript, reviewRunScript, roundRunScript, sdlcSetupScript, sdlcSpecScript, sdlcTriageScript } from '../../lib/sdlc-mock';
 import type { ZoomStep } from '../../lib/zoom-keys';
+import type { BuildState } from '@bindings/BuildState';
+import type { RoundOffer } from '@bindings/RoundOffer';
+import type { RoundPicks } from '@bindings/RoundPicks';
+import type { RoundPlan } from '@bindings/RoundPlan';
+import type { BuildEvent, BuildForm, ChangeRef, CloseOutcome, DocumentKind, HeldRepo, RunForm, RunningStrip, StartOutcome } from '../../lib/build-host';
 import { KataTransport, NO_BACKEND, type NamingState, type RenameResult } from './kata-transport';
 
 /** How long the first scan of the demo setup folder takes, long enough to see the checking steps. */
@@ -295,6 +300,22 @@ export class MockTransport extends KataTransport {
     this.play(id, head);
     return id;
   }
+  sdlcRunHistory(runId: string) { return Promise.reject<KataEvent[]>(new Error('not wired')); }
+  sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm) { return Promise.reject<string>(new Error('not wired')); }
+  sdlcBuildStart(change: ChangeRef, form: BuildForm) { return Promise.reject<StartOutcome>(new Error('not wired')); }
+  sdlcBuildContinue(change: ChangeRef, repo: string) { return Promise.reject<StartOutcome>(new Error('not wired')); }
+  sdlcBuildState(change: ChangeRef) { return Promise.reject<BuildState | null>(new Error('not wired')); }
+  sdlcReviewStart(change: ChangeRef) { return Promise.reject<StartOutcome>(new Error('not wired')); }
+  sdlcReviewWaiting(change: ChangeRef) { return Promise.reject<HeldRepo[]>(new Error('not wired')); }
+  sdlcRoundOffer(change: ChangeRef) { return Promise.reject<[RoundOffer, RoundPicks]>(new Error('not wired')); }
+  sdlcRoundPlan(change: ChangeRef, picks: RoundPicks) { return Promise.reject<RoundPlan>(new Error('not wired')); }
+  sdlcRoundStart(change: ChangeRef, picks: RoundPicks) { return Promise.reject<StartOutcome>(new Error('not wired')); }
+  sdlcRunning() { return Promise.reject<RunningStrip>(new Error('not wired')); }
+  sdlcMarkOpened(change: ChangeRef) { return Promise.reject<void>(new Error('not wired')); }
+  sdlcCloseAnswer(confirm: boolean) { return Promise.reject<void>(new Error('not wired')); }
+  async onBuildState(cb: (event: BuildEvent) => void): Promise<() => void> { void cb; return () => undefined; }
+  async onRunning(cb: (strip: RunningStrip) => void): Promise<() => void> { void cb; return () => undefined; }
+  async onCloseAsked(cb: (ask: CloseOutcome) => void): Promise<() => void> { void cb; return () => undefined; }
   async cancelRun(runId: string): Promise<void> {
     const run = this.runs.get(runId);
     if (!run) return;

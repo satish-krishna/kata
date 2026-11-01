@@ -12,6 +12,7 @@ class FakeTransport {
   submitAnswer = vi.fn((..._a: unknown[]) => Promise.resolve());
   submitDecision = vi.fn((..._a: unknown[]) => Promise.resolve());
   sendMessage = vi.fn((..._a: unknown[]) => Promise.resolve());
+  sdlcRunHistory = vi.fn((_id: string) => Promise.resolve<KataEvent[]>([]));
   onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
     this.listeners.push((ev) => cb('1', ev));
     return Promise.resolve(() => { this.unlistened++; });
@@ -391,5 +392,49 @@ describe('RunStore sendMessage', () => {
     fake.listeners[0]({ type: 'run.completed', exit_code: 0, is_error: false, num_turns: 1, cost_usd: null, duration_ms: 1, result: null });
     await store.sendMessage('after the end');
     expect(fake.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('RunStore opening a run late', () => {
+  it('a run opened late replays its whole history', async () => {
+    const { store, fake } = setup();
+    const read = deferred<KataEvent[]>();
+    fake.sdlcRunHistory.mockImplementation(() => read.promise);
+    const opening = store.open('1');
+    await vi.waitFor(() => expect(fake.sdlcRunHistory).toHaveBeenCalledWith('1'));
+    // Two events arrive while the history is being read; the first is already in it, the second is new.
+    fake.listeners[0](log('b'));
+    fake.listeners[0](log('c'));
+    read.resolve([log('a'), log('b')]);
+    await opening;
+    expect(store.snapshot('1')().events).toEqual([log('a'), log('b'), log('c')]);
+    expect(store.snapshot('1')().state).toBe('running');
+    fake.listeners[0](log('d'));
+    expect(store.snapshot('1')().events).toEqual([log('a'), log('b'), log('c'), log('d')]);
+  });
+
+  it('a run whose history ends in a result opens finished and listens to nothing more', async () => {
+    const { store, fake } = setup();
+    const done: KataEvent = { type: 'run.completed', exit_code: 0, is_error: false, num_turns: 1, cost_usd: 0, duration_ms: 1, result: 'ok' };
+    fake.sdlcRunHistory.mockResolvedValue([log('a'), done]);
+    await store.open('1');
+    expect(store.snapshot('1')().state).toBe('success');
+    expect(fake.unlistened).toBe(1);
+  });
+
+  it('a run the store already follows is not opened twice', async () => {
+    const { store, fake } = setup();
+    await store.startRun(seedSpec());
+    await store.open('1');
+    expect(fake.sdlcRunHistory).not.toHaveBeenCalled();
+  });
+
+  it('a start through a launcher uses it in place of runSpec', async () => {
+    const { store, fake } = setup();
+    const via = vi.fn((_spec: unknown) => Promise.resolve('9'));
+    const id = await store.startRun(seedSpec(), undefined, via);
+    expect(id).toBe('9');
+    expect(via).toHaveBeenCalledTimes(1);
+    expect(fake.runSpec).not.toHaveBeenCalled();
   });
 });

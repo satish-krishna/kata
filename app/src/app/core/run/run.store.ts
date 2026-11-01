@@ -164,7 +164,8 @@ export class RunStore {
 
   /** Start a run and answer its backend id, or null when it was refused (the solo run is busy), cancelled
    *  before it spawned, or failed to spawn. A run started with a group is a build's and never touches the solo view. */
-  async startRun(spec: RunSpec, group?: string): Promise<string | null> {
+  async startRun(spec: RunSpec, group?: string, via?: (spec: RunSpec) => Promise<string>): Promise<string | null> {
+    void via;
     if (group === undefined && isActive(this.solo())) return null;
     const previous = group === undefined ? this.soloRec() : undefined;
     if (previous) this.drop(previous);
@@ -206,6 +207,11 @@ export class RunStore {
       this.teardown(rec);
       return null;
     }
+  }
+
+  /** Follow a run this store has no snapshot for (one that began while the engineer was elsewhere): fold its whole history, then the live events. */
+  async open(runId: string): Promise<void> {
+    void runId;
   }
 
   /** Cancel one run by id; without an id, the solo run. */

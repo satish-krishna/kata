@@ -169,7 +169,7 @@ export class LockStore {
     }
   }
 
-  async runAgent(title: string, spec: RunSpec): Promise<RunState> {
+  async runAgent(title: string, spec: RunSpec, via?: (spec: RunSpec) => Promise<string>): Promise<RunState> {
     const busy = this.runs.state();
     if (this.view() !== null || busy === 'running' || busy === 'awaiting') {
       this.toasts.error('Another task is already running.');
@@ -181,7 +181,7 @@ export class LockStore {
     const done = new Promise<RunState>((resolve) => (this.waiter = resolve));
     let state: RunState | null = null;
     try {
-      await this.runs.startRun(spec);
+      await (via ? this.runs.startRun(spec, undefined, via) : this.runs.startRun(spec));
       this.settle(this.runs.state());
       state = await done;
       return state;

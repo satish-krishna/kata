@@ -25,6 +25,10 @@ pub struct RunForm {
     pub instructions: Option<String>,
     #[serde(default)]
     pub continue_on_leftovers: bool,
+    /// The items of a document run the engineer switched off in the preview; the plugins a run cannot do
+    /// without and the build flag are the run kind's own and are set over it.
+    #[serde(default)]
+    pub given: Option<Given>,
 }
 
 const AI_SDLC: &str = "ai-sdlc";
@@ -145,6 +149,7 @@ mod tests {
             timeout_secs: 7200,
             instructions: None,
             continue_on_leftovers: false,
+            given: None,
         }
     }
 
@@ -190,5 +195,21 @@ mod tests {
         let s = change_spec(&place_in_copies(RunKind::Document), f);
         assert_eq!(s.permissions.mode, PermissionMode::Bypass);
         assert!(s.permissions.deny.is_empty() && s.permissions.allow.is_empty());
+    }
+
+    #[test]
+    fn a_document_run_keeps_the_items_the_engineer_switched_off() {
+        let mut f = form(false);
+        f.given = Some(Given {
+            skills: vec!["brainstorming".into()],
+            required_plugins: vec!["other".into()],
+            build: true,
+            ..Given::default()
+        });
+        let s = change_spec(&place_in_copies(RunKind::Document), f);
+        let given = s.given.unwrap();
+        assert_eq!(given.skills, vec!["brainstorming".to_string()]);
+        assert_eq!(given.required_plugins, vec!["ai-sdlc".to_string()]);
+        assert!(!given.build, "a document run is not a build run");
     }
 }

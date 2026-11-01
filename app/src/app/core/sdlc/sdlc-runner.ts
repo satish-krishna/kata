@@ -13,6 +13,7 @@ import type { RepoFiles } from '@bindings/RepoFiles';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunState } from '../../lib/events';
+import type { ChangeRef, DocumentKind } from '../../lib/build-host';
 import type { RunSnapshot } from '../run/reduce';
 import { restrictedFor, specFor, transcriptRunId, type StartTrack } from '../../lib/sdlc';
 import { masterPath, masterRepo, productRepos as productReposOf } from '../../lib/sdlc-workspace';
@@ -130,6 +131,8 @@ export type BuildLink = {
   /** Called with the run's id as soon as the run has started and joined the build's lock. */
   onRun?: (runId: string) => void;
 };
+/** The change a document run belongs to, when the change exists: the backend then composes the run-spec and claims the change's lane. */
+export type ChangeLaunch = { ref: ChangeRef; kind: DocumentKind };
 export type RunEnd = { exit: number | null; error: string | null };
 export type DiscardChoice = { repo: string; paths: string[] };
 
@@ -349,7 +352,8 @@ export class SdlcRunner {
     return this.lock.active() !== null || busy === 'running' || busy === 'awaiting';
   }
 
-  async run(title: string, spec: RunSpec, target: RunTarget): Promise<RunOutcome> {
+  async run(title: string, spec: RunSpec, target: RunTarget, change?: ChangeLaunch): Promise<RunOutcome> {
+    void change;
     if (this.isBusy()) {
       this.toasts.error('Another task is already running.');
       return { state: 'error', runId: null, snapshot: null, exited: true };

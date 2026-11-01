@@ -46,6 +46,11 @@ import type { DoneView } from '@bindings/DoneView';
 import type { Resolved } from '@bindings/Resolved';
 import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
+import type { BuildState } from '@bindings/BuildState';
+import type { RoundOffer } from '@bindings/RoundOffer';
+import type { RoundPicks } from '@bindings/RoundPicks';
+import type { RoundPlan } from '@bindings/RoundPlan';
+import type { BuildEvent, BuildForm, ChangeRef, CloseOutcome, DocumentKind, HeldRepo, RunForm, RunningStrip, StartOutcome } from '../../lib/build-host';
 
 /** A system's naming setting as the backend reads it: none declared, the patterns, or why they cannot be used. `reason` tells the failures apart. */
 export type NamingState =
@@ -72,6 +77,32 @@ export abstract class KataTransport {
   abstract previewRun(spec: RunSpec): Promise<Resolved>;
   /** Start a run. Resolves to its run id. `group` (`build:<system>/<change>`) tells the backend which runs belong to one build. */
   abstract runSpec(spec: RunSpec, group?: string): Promise<string>;
+  /** Every event of a run from its start, in order, for a session opened after the run began. Empty for a run the backend does not know. */
+  abstract sdlcRunHistory(runId: string): Promise<KataEvent[]>;
+  /** Start a document run (intent, spec, plan, triage or fix) of a change that exists. The backend composes the run-spec with the change's deny rules and claims the change's own lane. Resolves to the run id. */
+  abstract sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm): Promise<string>;
+  /** Start a change's build; nothing starts unless every repository it needs is free. */
+  abstract sdlcBuildStart(change: ChangeRef, form: BuildForm): Promise<StartOutcome>;
+  /** Continue a change's build in one repository. */
+  abstract sdlcBuildContinue(change: ChangeRef, repo: string): Promise<StartOutcome>;
+  /** Where a change's build stands, or null when this session hosts no build of it. */
+  abstract sdlcBuildState(change: ChangeRef): Promise<BuildState | null>;
+  /** Start a change's review by hand; it waits when another change holds a repository it reads. */
+  abstract sdlcReviewStart(change: ChangeRef): Promise<StartOutcome>;
+  /** The repositories other changes hold that keep a change's review from starting; empty when it is free. */
+  abstract sdlcReviewWaiting(change: ChangeRef): Promise<HeldRepo[]>;
+  /** What a round may fix, and the picks that start selected, from the change's latest review. */
+  abstract sdlcRoundOffer(change: ChangeRef): Promise<[RoundOffer, RoundPicks]>;
+  /** The requests a round with these picks would start, or why it cannot. */
+  abstract sdlcRoundPlan(change: ChangeRef, picks: RoundPicks): Promise<RoundPlan>;
+  /** Start the round the picks describe. */
+  abstract sdlcRoundStart(change: ChangeRef, picks: RoundPicks): Promise<StartOutcome>;
+  /** The running changes: the first three and every one. */
+  abstract sdlcRunning(): Promise<RunningStrip>;
+  /** The engineer opened a change; it leaves the running changes once nothing of it needs them. */
+  abstract sdlcMarkOpened(change: ChangeRef): Promise<void>;
+  /** The engineer's answer to the close question. */
+  abstract sdlcCloseAnswer(confirm: boolean): Promise<void>;
   abstract cancelRun(runId: string): Promise<void>;
   abstract submitAnswer(runId: string, id: string, answers: string[][]): Promise<void>;
   abstract sendMessage(runId: string, id: string, text: string): Promise<void>;
@@ -176,6 +207,12 @@ export abstract class KataTransport {
   abstract zoom(step: ZoomStep): Promise<number>;
   /** Register for what publishing is doing (pushing or opening a pull request, per repository). Resolves to the unlisten function. */
   abstract onPublishStep(cb: (step: PublishStep) => void): Promise<() => void>;
+  /** Register for a change's build state each time it changes. Resolves to the unlisten function. */
+  abstract onBuildState(cb: (event: BuildEvent) => void): Promise<() => void>;
+  /** Register for the running changes each time they may have changed. Resolves to the unlisten function. */
+  abstract onRunning(cb: (strip: RunningStrip) => void): Promise<() => void>;
+  /** Register for the question the backend asks when the window is closed while runs are live. Resolves to the unlisten function. */
+  abstract onCloseAsked(cb: (ask: CloseOutcome) => void): Promise<() => void>;
   /** Register for relayed run events, each tagged with the id of the run it came from. Resolves to the unlisten function. */
   abstract onRunEvent(cb: (runId: string, ev: KataEvent) => void): Promise<() => void>;
 }

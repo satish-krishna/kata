@@ -76,6 +76,10 @@ export const MOCK_NEW_CHANGE = '2026-10-18-new-change';
 
 /** The change the browser demo builds: three tasks across two repositories. */
 export const MOCK_BUILD_CHANGE = '2026-10-19-build-demo';
+/** A second change that builds beside the demo build, in a repository the first does not use. */
+export const MOCK_BUILD_SECOND = '2026-10-20-second-build';
+/** A change whose build needs a repository the demo build holds, so it starts held. */
+export const MOCK_HELD_CHANGE = '2026-10-21-held-build';
 /** A change whose build finished and whose three pull requests are open: the toolbar's links and its "Build · done" pill. */
 export const MOCK_DONE_CHANGE = '2026-10-18-photo-limits-shipped';
 /** The version the demo's `ai-sdlc` plugin reports. */

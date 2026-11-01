@@ -49,6 +49,11 @@ import type { KataEvent, RunRecord, RunDetail } from '../../lib/events';
 import type { ZoomStep } from '../../lib/zoom-keys';
 import type { PublishSummary } from '@bindings/PublishSummary';
 import type { RemoteClash } from '@bindings/RemoteClash';
+import type { BuildState } from '@bindings/BuildState';
+import type { RoundOffer } from '@bindings/RoundOffer';
+import type { RoundPicks } from '@bindings/RoundPicks';
+import type { RoundPlan } from '@bindings/RoundPlan';
+import type { BuildEvent, BuildForm, ChangeRef, CloseOutcome, DocumentKind, HeldRepo, RunForm, RunningStrip, StartOutcome } from '../../lib/build-host';
 import { KataTransport, type NamingState, type RenameResult } from './kata-transport';
 
 /** The Tauri functions the transport needs, injectable so tests need no module mocking. */
@@ -97,6 +102,19 @@ export class TauriTransport extends KataTransport {
   sdlcSnapshot(master: string) { return this.ipc.invoke<Snapshot>('sdlc_snapshot', { master }); }
   sdlcLeftovers(master: string, before: Snapshot, productRepos: string[], build?: BuildScope) { return this.ipc.invoke<Leftovers>('sdlc_leftovers', { master, before, productRepos, build }); }
   sdlcDiscard(master: string, before: Snapshot, paths: string[], build?: BuildScope) { return this.ipc.invoke<void>('sdlc_discard', { master, before, paths, build }); }
+  sdlcRunHistory(runId: string) { return Promise.reject<KataEvent[]>(new Error('not wired')); }
+  sdlcRunChange(change: ChangeRef, kind: DocumentKind, form: RunForm) { return Promise.reject<string>(new Error('not wired')); }
+  sdlcBuildStart(change: ChangeRef, form: BuildForm) { return Promise.reject<StartOutcome>(new Error('not wired')); }
+  sdlcBuildContinue(change: ChangeRef, repo: string) { return Promise.reject<StartOutcome>(new Error('not wired')); }
+  sdlcBuildState(change: ChangeRef) { return Promise.reject<BuildState | null>(new Error('not wired')); }
+  sdlcReviewStart(change: ChangeRef) { return Promise.reject<StartOutcome>(new Error('not wired')); }
+  sdlcReviewWaiting(change: ChangeRef) { return Promise.reject<HeldRepo[]>(new Error('not wired')); }
+  sdlcRoundOffer(change: ChangeRef) { return Promise.reject<[RoundOffer, RoundPicks]>(new Error('not wired')); }
+  sdlcRoundPlan(change: ChangeRef, picks: RoundPicks) { return Promise.reject<RoundPlan>(new Error('not wired')); }
+  sdlcRoundStart(change: ChangeRef, picks: RoundPicks) { return Promise.reject<StartOutcome>(new Error('not wired')); }
+  sdlcRunning() { return Promise.reject<RunningStrip>(new Error('not wired')); }
+  sdlcMarkOpened(change: ChangeRef) { return Promise.reject<void>(new Error('not wired')); }
+  sdlcCloseAnswer(confirm: boolean) { return Promise.reject<void>(new Error('not wired')); }
   sdlcStartChange(master: string) { return this.ipc.invoke<string>('sdlc_start_change', { master }); }
   sdlcFinishChange(master: string, pending: string) { return this.ipc.invoke<FinishOutcome>('sdlc_finish_change', { master, pending }); }
   sdlcNaming(folder: string, masterRepo: string, system: string) { return this.ipc.invoke<NamingState>('sdlc_naming', { folder, masterRepo, system }); }
@@ -156,6 +174,9 @@ export class TauriTransport extends KataTransport {
   onPublishStep(cb: (step: PublishStep) => void) {
     return this.ipc.listen<PublishStep>('sdlc://publish-step', (e) => cb(e.payload));
   }
+  onBuildState(cb: (event: BuildEvent) => void) { void cb; return Promise.reject<() => void>(new Error('not wired')); }
+  onRunning(cb: (strip: RunningStrip) => void) { void cb; return Promise.reject<() => void>(new Error('not wired')); }
+  onCloseAsked(cb: (ask: CloseOutcome) => void) { void cb; return Promise.reject<() => void>(new Error('not wired')); }
   onRunEvent(cb: (runId: string, ev: KataEvent) => void) {
     return this.ipc.listen<{ runId: number; event: KataEvent }>('kata://event', (e) => cb(String(e.payload.runId), e.payload.event));
   }

@@ -72,6 +72,7 @@ class FakeTransport {
   sdlcBuildParticipants = vi.fn(async (..._a: unknown[]) => this.participants);
   sdlcBuildSettle = vi.fn(async (..._a: unknown[]) => { this.calls.push('settle'); return [] as string[]; });
   sdlcBuildHeads = vi.fn(async (..._a: unknown[]) => ({ 'commerce-core': 'c0ffee' }));
+  sdlcRunChange = vi.fn(async (..._a: unknown[]) => '41');
 }
 
 function setup(agent: (spec: RunSpec) => Promise<RunState> | RunState = () => 'success') {
@@ -81,7 +82,7 @@ function setup(agent: (spec: RunSpec) => Promise<RunState> | RunState = () => 's
   const active = signal<unknown>(null);
   const lock = {
     active,
-    runAgent: vi.fn(async (_title: string, spec: RunSpec) => {
+    runAgent: vi.fn(async (_title: string, spec: RunSpec, _via?: (s: RunSpec) => Promise<string>) => {
       fake.calls.push('agent');
       return agent(spec);
     }),
@@ -111,6 +112,36 @@ function setup(agent: (spec: RunSpec) => Promise<RunState> | RunState = () => 's
   const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
   return { runner: TestBed.inject(SdlcRunner), fake, lock, toasts, events, summary, active, navigate, state, startRun, snap };
 }
+
+describe('SdlcRunner.run for a change that exists', () => {
+  const ref = { workspace: '/ws', system: 'commerce', change: '2026-10-12-photos' };
+
+  it('launches a spec run through sdlcRunChange, not through run_spec', async () => {
+    const { runner, lock, fake } = setup();
+    const spec: RunSpec = { ...seedSpec(), name: 'sdlc-commerce-photos-spec', task: 'Use the ai-sdlc spec skill.' };
+    spec.permissions = { mode: 'auto', allow: [], deny: [], ask: [], unmatched: 'ask' };
+    spec.leash = { ...spec.leash, timeout_secs: 7200 };
+    spec.given = { hooks: [], skills: ['brainstorming'], plugins: [], instructions: [], tool_servers: [], required_plugins: ['ai-sdlc'] };
+    await runner.run('Starting spec', spec, TARGET, { ref, kind: 'spec' });
+    const via = lock.runAgent.mock.calls[0][2] as ((s: RunSpec) => Promise<string>) | undefined;
+    expect(via).toBeTypeOf('function');
+    expect(await via!(spec)).toBe('41');
+    expect(fake.sdlcRunChange).toHaveBeenCalledWith(ref, 'spec', {
+      name: 'sdlc-commerce-photos-spec',
+      task: 'Use the ai-sdlc spec skill.',
+      permissionMode: 'auto',
+      timeoutSecs: 7200,
+      bare: false,
+      given: spec.given,
+    });
+  });
+
+  it('a run of no change goes the old way', async () => {
+    const { runner, lock } = setup();
+    await runner.run('Running setup', seedSpec(), TARGET);
+    expect(lock.runAgent.mock.calls[0]).toHaveLength(2);
+  });
+});
 
 describe('SdlcRunner.run', () => {
   it('snapshots before the agent run and toasts the result on success', async () => {

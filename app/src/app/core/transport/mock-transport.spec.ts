@@ -7,7 +7,8 @@ import { stageName, transcriptRunId } from '../../lib/sdlc';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { PublishStep } from '@bindings/PublishStep';
 import type { Resolved } from '@bindings/Resolved';
-import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
+import type { BuildEvent, ChangeRef } from '../../lib/build-host';
+import { MOCK_BUILD_CHANGE, MOCK_BUILD_SECOND, MOCK_HELD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
 
 const total = (steps: { delay: number }[]) => steps.reduce((a, s) => a + s.delay, 0);
 
@@ -180,6 +181,77 @@ describe('MockTransport', () => {
     const summary = await t.sdlcPublish(MOCK_WORKSPACE_FOLDER, 'w1', 'commerce-docs', 'commerce', MOCK_BUILD_CHANGE, repos);
     expect(summary.results).toHaveLength(repos.length);
     expect(steps).toEqual(repos.flatMap((r) => [{ kind: 'pushing', repo: r.repo }, { kind: 'opening', repo: r.repo }]));
+  });
+
+  describe('the scripted build host', () => {
+    const ref = (change: string): ChangeRef => ({ workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change });
+    const FORM = { timeoutSecs: 600 };
+
+    it('two scripted builds run at once and both report state', async () => {
+      const t = new MockTransport();
+      const announced: BuildEvent[] = [];
+      await t.onBuildState((e) => announced.push(e));
+      expect((await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM)).kind).toBe('started');
+      expect((await t.sdlcBuildStart(ref(MOCK_BUILD_SECOND), FORM)).kind).toBe('started');
+      expect((await t.sdlcBuildState(ref(MOCK_BUILD_CHANGE)))?.phase).toBe('building');
+      expect((await t.sdlcBuildState(ref(MOCK_BUILD_SECOND)))?.phase).toBe('building');
+      expect(new Set(announced.map((e) => e.change.change))).toEqual(new Set([MOCK_BUILD_CHANGE, MOCK_BUILD_SECOND]));
+      vi.advanceTimersByTime(30000);
+      // The second build ends on its own; the first waits on its question.
+      expect((await t.sdlcBuildState(ref(MOCK_BUILD_SECOND)))?.phase).toBe('finished');
+      expect((await t.sdlcBuildState(ref(MOCK_BUILD_CHANGE)))?.phase).toBe('building');
+      expect(await t.sdlcBuildState(ref('2026-01-01-never-started'))).toBeNull();
+    });
+
+    it('a build that needs a repository another change holds starts held, and says who holds it', async () => {
+      const t = new MockTransport();
+      await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM);
+      const out = await t.sdlcBuildStart(ref(MOCK_HELD_CHANGE), FORM);
+      expect(out.kind).toBe('held');
+      if (out.kind === 'held') expect(out.held.map((h) => [h.repo, h.holder.change])).toEqual([['commerce-core', MOCK_BUILD_CHANGE]]);
+      expect(await t.sdlcBuildState(ref(MOCK_HELD_CHANGE))).toBeNull();
+    });
+
+    it('a review that waits for a held repository names the holder, and the wait is readable later', async () => {
+      const t = new MockTransport();
+      await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM);
+      const out = await t.sdlcReviewStart(ref(MOCK_HELD_CHANGE));
+      expect(out.kind).toBe('held');
+      expect((await t.sdlcReviewWaiting(ref(MOCK_HELD_CHANGE))).map((h) => h.holder.change)).toEqual([MOCK_BUILD_CHANGE]);
+      expect(await t.sdlcReviewWaiting(ref(MOCK_BUILD_SECOND))).toEqual([]);
+    });
+
+    it('the running changes show the question of the build that waits on one', async () => {
+      const t = new MockTransport();
+      await t.sdlcBuildStart(ref(MOCK_BUILD_CHANGE), FORM);
+      await t.sdlcBuildStart(ref(MOCK_BUILD_SECOND), FORM);
+      vi.advanceTimersByTime(30000);
+      const strip = await t.sdlcRunning();
+      const first = strip.all.find((e) => e.change.change === MOCK_BUILD_CHANGE);
+      expect(first?.state).toBe('needsAnswer');
+      expect(strip.all.find((e) => e.change.change === MOCK_BUILD_SECOND)?.state).toBe('finished');
+      expect(strip.shown.length).toBeLessThanOrEqual(3);
+    });
+
+    it('keeps the whole history of a run for a session opened late', async () => {
+      const t = new MockTransport();
+      await t.onRunEvent(() => undefined);
+      const id = await t.runSpec(seedSpec());
+      vi.advanceTimersByTime(30000);
+      const history = await t.sdlcRunHistory(id);
+      expect(history.length).toBeGreaterThan(2);
+      expect(history[0].type).toBe(runScriptHead[0].ev.type);
+      expect(await t.sdlcRunHistory('no-such-run')).toEqual([]);
+    });
+
+    it('launches a document run of a change as a scripted run with an id', async () => {
+      const t = new MockTransport();
+      const seen: [string, KataEvent][] = [];
+      await t.onRunEvent((id, e) => seen.push([id, e]));
+      const id = await t.sdlcRunChange(ref(MOCK_BUILD_CHANGE), 'spec', { name: 'sdlc-spec', task: 'x', permissionMode: 'auto', timeoutSecs: 600 });
+      vi.advanceTimersByTime(30000);
+      expect(seen.some(([i]) => i === id)).toBe(true);
+    });
   });
 
   describe('several scripted runs at once', () => {
