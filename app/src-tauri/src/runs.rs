@@ -78,13 +78,36 @@ impl<C> Default for RunTable<C> {
 
 impl<C> RunTable<C> {
     /// Decide whether a run in `workdir` on `lane` may start.
-    pub fn claim(&self, _workdir: &Path, _lane: &Lane) -> Result<(), String> {
+    pub fn claim(&self, workdir: &Path, lane: &Lane) -> Result<(), String> {
+        let folder = RepoKey::of(workdir);
+        if self
+            .runs
+            .values()
+            .any(|r| RepoKey::of(&r.workdir) == folder)
+        {
+            return Err(format!(
+                "Another run is already working in {}.",
+                workdir.display()
+            ));
+        }
+        if *lane == Lane::Solo && self.runs.values().any(|r| r.lane == Lane::Solo) {
+            return Err("Another task is already running.".into());
+        }
         Ok(())
     }
 
     /// Every live run with its lane, oldest id first.
     pub fn live(&self) -> Vec<LiveSummary> {
-        Vec::new()
+        self.runs
+            .values()
+            .map(|r| LiveSummary {
+                id: r.id,
+                workdir: r.workdir.clone(),
+                lane: r.lane.clone(),
+                kind: r.kind,
+                repo: r.repo.clone(),
+            })
+            .collect()
     }
 
     pub fn insert(&mut self, run: LiveRun<C>) {
