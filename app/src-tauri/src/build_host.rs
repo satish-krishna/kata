@@ -75,6 +75,52 @@ pub struct HeldRepo {
     pub holder: ChangeKey,
 }
 
+/// A run of a build that is live: the coordinator's key for it (a repository's name or `review`) and the run's id.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct BuildRunRef {
+    pub key: String,
+    pub run: String,
+}
+
+/// Which preview of a build is being opened; the run-spec it lists is the one the start composes.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+#[cfg_attr(feature = "ts", ts(rename_all = "kebab-case"))]
+pub enum BuildPreviewKind {
+    Start,
+    ContinueAll,
+    ContinueOne,
+    Round,
+    ManualReview,
+}
+
+/// One folder a build runs in, with the run-spec its run starts with: a product repository, or, with `repo`
+/// none, the master repository for the review.
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct BuildSection {
+    pub title: String,
+    pub repo: Option<String>,
+    pub spec: RunSpec,
+}
+
+/// The latest review as the build page lists it: the Review group's rows, and the round dialog's groups.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub struct ReviewView {
+    pub rows: round::ReviewRows,
+    pub groups: Vec<round::RoundGroup>,
+}
+
 /// What starting or continuing a build came to.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(
@@ -110,6 +156,8 @@ pub struct BuildEvent {
     pub state: BuildState,
     /// The repositories another change holds that keep the review from starting; empty when it is not waiting.
     pub review_waiting: Vec<HeldRepo>,
+    /// The runs of the build that are live, each with its run's id once the launch has answered.
+    pub runs: Vec<BuildRunRef>,
 }
 
 /// What the running-changes strip reads of one change's build.
@@ -674,6 +722,40 @@ impl BuildHost {
         self.drive(&key_of(change), None, Input::CancelAll);
     }
 
+    /// Stop the run of one repository (or `review`) of `change`'s build and nothing else.
+    pub fn cancel_run(self: &Arc<Self>, _change: &ChangeRef, _key: &str) {}
+
+    /// The runs of `change`'s build that are live, with the id of each once its launch has answered.
+    pub fn runs(&self, _change: &ChangeRef) -> Vec<BuildRunRef> {
+        Vec::new()
+    }
+
+    /// The run-spec a document run of `change` would start with; nothing starts.
+    pub fn preview_change_run(
+        &self,
+        _change: &ChangeRef,
+        _kind: runs::RunKind,
+        _form: RunForm,
+    ) -> Result<RunSpec, String> {
+        Err("not yet".into())
+    }
+
+    /// The run-spec each run of a build preview would start with; nothing starts.
+    pub fn preview_build(
+        &self,
+        _change: &ChangeRef,
+        _which: BuildPreviewKind,
+        _repo: Option<&str>,
+        _form: &StartForm,
+    ) -> Result<Vec<BuildSection>, String> {
+        Err("not yet".into())
+    }
+
+    /// The latest review as the build page lists it.
+    pub fn review_view(&self, _change: &ChangeRef) -> Result<ReviewView, String> {
+        Err("not yet".into())
+    }
+
     /// A run of a build ended; called by the launcher once the run has left the run table. A run of an
     /// earlier coordinator of the change (`generation`) is not this build's.
     fn run_ended(self: &Arc<Self>, key: &ChangeKey, generation: u64, instance: u64, end: RunEnd) {
@@ -1084,6 +1166,7 @@ impl BuildHost {
                         change: key.clone(),
                         state: announced.0.clone(),
                         review_waiting: announced.1,
+                        runs: Vec::new(),
                     });
                 }
                 // A start under way has taken the holds for the build it is about to begin.
@@ -2610,6 +2693,229 @@ mod tests {
             .launcher
             .spec_of(launched[0])
             .contains("Fix these findings from review 1"));
+    }
+
+    fn run_form(task: &str) -> RunForm {
+        RunForm {
+            name: "sdlc-demo-B-spec".into(),
+            task: task.into(),
+            bare: false,
+            permission_mode: PermissionMode::Auto,
+            timeout_secs: 900,
+            instructions: None,
+            continue_on_leftovers: false,
+            given: None,
+        }
+    }
+
+    // R11.1: one repository's cancel reaches that repository's run alone.
+    #[test]
+    fn cancelling_one_repository_stops_only_its_run() {
+        let r = rig();
+        r.simple("A", &["kata", "bob"]);
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        let kata = r.launcher.launched("kata")[0];
+        let bob = r.launcher.launched("bob")[0];
+        r.host.cancel_run(&cref("A"), "kata");
+        assert_eq!(*r.launcher.cancelled.lock().unwrap(), vec![kata]);
+        assert!(!r.launcher.cancelled.lock().unwrap().contains(&bob));
+    }
+
+    // The page learns which runs are the build's from the announcement, not from a launch of its own.
+    #[test]
+    fn a_build_announcement_names_the_live_runs() {
+        let r = rig();
+        r.simple("A", &["kata", "bob"]);
+        r.host.start(&cref("A"), form());
+        let kata = r.launcher.launched("kata")[0];
+        let bob = r.launcher.launched("bob")[0];
+        let live = vec![
+            BuildRunRef {
+                key: "bob".into(),
+                run: bob.to_string(),
+            },
+            BuildRunRef {
+                key: "kata".into(),
+                run: kata.to_string(),
+            },
+        ];
+        let mut named = r.host.runs(&cref("A"));
+        named.sort_by(|a, b| a.key.cmp(&b.key));
+        assert_eq!(named, live);
+        let last = r.launcher.events.lock().unwrap().last().cloned().unwrap();
+        let mut announced = last.runs.clone();
+        announced.sort_by(|a, b| a.key.cmp(&b.key));
+        assert_eq!(announced, live, "the announcement carries the run ids");
+        r.launcher.finish(kata, 0);
+        assert_eq!(
+            r.host.runs(&cref("A")),
+            vec![BuildRunRef {
+                key: "bob".into(),
+                run: bob.to_string()
+            }]
+        );
+    }
+
+    // The preview and the run are one computation (kata-architecture, section 2).
+    #[test]
+    fn a_document_preview_is_the_spec_the_run_starts_with() {
+        let r = rig();
+        r.simple("B", &["kata"]);
+        let previewed = r
+            .host
+            .preview_change_run(
+                &cref("B"),
+                runs::RunKind::Spec,
+                run_form("Use the ai-sdlc spec skill."),
+            )
+            .expect("the preview composes the spec");
+        assert_eq!(r.launcher.count(), 0, "a preview starts nothing");
+        let id = r
+            .host
+            .change_run(
+                &cref("B"),
+                runs::RunKind::Spec,
+                run_form("Use the ai-sdlc spec skill."),
+            )
+            .unwrap();
+        assert_eq!(
+            r.launcher.spec_of(id),
+            serde_json::to_string(&previewed).unwrap()
+        );
+        assert!(r
+            .host
+            .preview_change_run(&cref("B"), runs::RunKind::Build, run_form("x"))
+            .is_err());
+    }
+
+    #[test]
+    fn a_build_preview_lists_the_spec_each_run_starts_with() {
+        let r = rig();
+        r.simple("A", &["kata", "bob"]);
+        let sections = r
+            .host
+            .preview_build(&cref("A"), BuildPreviewKind::Start, None, &form())
+            .expect("the preview composes the specs");
+        assert_eq!(r.launcher.count(), 0, "a preview starts nothing");
+        let named: Vec<(String, Option<String>)> = sections
+            .iter()
+            .map(|s| (s.title.clone(), s.repo.clone()))
+            .collect();
+        assert_eq!(
+            named,
+            vec![
+                ("kata".to_string(), Some("kata".to_string())),
+                ("bob".to_string(), Some("bob".to_string())),
+                ("Review".to_string(), None),
+            ]
+        );
+        r.host.start(&cref("A"), form());
+        for section in sections.iter().filter(|s| s.repo.is_some()) {
+            let repo = section.repo.as_deref().unwrap();
+            let run = r.launcher.launched(repo)[0];
+            assert_eq!(
+                r.launcher.spec_of(run),
+                serde_json::to_string(&section.spec).unwrap(),
+                "the {repo} section is the spec its run started with"
+            );
+        }
+    }
+
+    #[test]
+    fn a_build_preview_lists_the_folders_its_kind_runs_in() {
+        let r = rig();
+        r.simple("A", &["kata", "bob"]);
+        let titles = |which, repo: Option<&str>, f: &StartForm| -> Vec<String> {
+            r.host
+                .preview_build(&cref("A"), which, repo, f)
+                .unwrap()
+                .iter()
+                .map(|s| s.title.clone())
+                .collect()
+        };
+        assert_eq!(
+            titles(BuildPreviewKind::ManualReview, None, &form()),
+            vec!["Review"]
+        );
+        assert_eq!(
+            titles(BuildPreviewKind::ContinueOne, Some("bob"), &form()),
+            vec!["bob"]
+        );
+        assert_eq!(
+            titles(BuildPreviewKind::ContinueOne, Some("review"), &form()),
+            vec!["Review"]
+        );
+        let mut round = form();
+        round.rounds = vec![RoundRequest {
+            repo: "bob".into(),
+            instructions: "Fix F1.".into(),
+            summary: "bob".into(),
+        }];
+        assert_eq!(titles(BuildPreviewKind::Round, None, &round), vec!["bob"]);
+        let sections = r
+            .host
+            .preview_build(&cref("A"), BuildPreviewKind::Round, None, &round)
+            .unwrap();
+        assert!(
+            serde_json::to_string(&sections[0].spec)
+                .unwrap()
+                .contains("Fix F1."),
+            "a round's section carries its instructions"
+        );
+    }
+
+    // R18.1
+    #[test]
+    fn the_review_view_is_the_backends_order_counts_and_low_split() {
+        use kata_sdlc::format::{ParsedFinding, Severity};
+        let r = rig();
+        r.complete("A", &["kata"]);
+        let finding = |id: &str, severity: Severity, text: &str| ParsedFinding {
+            id: id.into(),
+            severity,
+            file: "src/a.rs".into(),
+            line: 3,
+            text: text.into(),
+            repo: Some("kata".into()),
+            concern: None,
+            rule: None,
+        };
+        let record = ReviewRecord {
+            layout: 2,
+            reviews: vec![ParsedReviewSection {
+                number: 1,
+                reviewed_at: "2026-11-01".into(),
+                commits: BTreeMap::from([("kata".to_string(), "abc1234".to_string())]),
+                findings: vec![
+                    finding("F1", Severity::Low, "A nit."),
+                    finding("F2", Severity::Medium, "A smell."),
+                    finding("F3", Severity::High, "A bug."),
+                ],
+            }],
+            problems: Vec::new(),
+            master_moved: Vec::new(),
+        };
+        *r.tools.review.lock().unwrap() = Some(record.clone());
+        let view = r.host.review_view(&cref("A")).unwrap();
+        let repos = vec!["kata".to_string(), "ai-sdlc".to_string()];
+        assert_eq!(view.rows, round::review_rows_in(&record, &repos));
+        let group = &view.rows.groups[0];
+        let keys: Vec<&str> = group.rows.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(keys, vec!["F3", "F2"], "most serious first");
+        assert_eq!(group.low.len(), 1, "the low finding is set apart");
+        assert_eq!(view.rows.total, 3);
+        assert_eq!(
+            view.groups,
+            round::round_groups(&r.host.round_offer(&cref("A")).unwrap(), &view.rows)
+        );
+        assert_eq!(
+            r.host.review_view(&cref("A")).unwrap(),
+            view,
+            "the same on every read"
+        );
     }
 
     // R20.2
