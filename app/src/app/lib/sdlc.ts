@@ -3,15 +3,16 @@
  * No Angular, no I/O. */
 
 import type { CatalogEntry } from "@bindings/CatalogEntry";
-import type { ChangeInfo } from "@bindings/ChangeInfo";
-import type { OutOfDate } from "@bindings/OutOfDate";
+import type { OfferStage } from "@bindings/OfferStage";
+import type { OutOfDateCause } from "@bindings/OutOfDateCause";
+import type { StageAction as BindingStageAction } from "@bindings/StageAction";
+import type { StageLabel } from "@bindings/StageLabel";
 import type { Given } from "@bindings/Given";
 import type { PluginConfig } from "@bindings/PluginConfig";
 import type { RunLink } from "@bindings/RunLink";
 import type { RunRecord } from "@bindings/RunRecord";
 import type { RunSpec } from "@bindings/RunSpec";
 import type { Settings } from "@bindings/Settings";
-import type { Stage } from "@bindings/Stage";
 import type { WorkspaceScan } from "@bindings/WorkspaceScan";
 import type { KataEvent, RunDetail } from "./events";
 import { givenKey } from "./given";
@@ -21,179 +22,34 @@ import { defaultSpec } from "./spec";
 /** The plugins an AI-SDLC run cannot work without; passed to `previewRun` so the preview locks them on. */
 export const SDLC_REQUIRED_PLUGINS: readonly string[] = ['ai-sdlc'] as const;
 
-export type StageAction =
-  | "continue-intent"
-  | "accept-intent"
-  | "reject-intent"
-  | "commit-acceptance"
-  | "start-spec"
-  | "continue-spec"
-  | "accept-spec"
-  | "start-plan"
-  | "rerun-plan"
-  | "reopen-spec"
-  | "reopen-intent"
-  | "accept-plan"
-  | "start-build"
-  | "continue-build"
-  | "another-round"
-  | "run-review"
-  | "declare-done"
-  | "cancel-build"
-  | "finish-fix-draft"
-  | "accept-fix"
-  | "change-fix"
-  | "reopen-fix"
-  | "full-pipeline-instead";
+/** An action of the plugin's answer. */
+type OfferedStageAction = BindingStageAction;
 
-const ACTIONS: Record<Stage, StageAction[]> = {
-  "intent-in-progress": ["continue-intent"],
-  "intent-awaiting": ["continue-intent", "accept-intent", "reject-intent"],
-  "intent-accepted-uncommitted": ["commit-acceptance", "continue-intent"],
-  rejected: [],
-  "spec-ready": ["start-spec", "reopen-intent"],
-  "spec-awaiting": ["continue-spec", "accept-spec", "reopen-intent"],
-  "spec-accepted-uncommitted": ["commit-acceptance", "continue-spec"],
-  "plan-ready": ["start-plan", "reopen-spec", "reopen-intent"],
-  "plan-awaiting": ["accept-plan", "rerun-plan", "reopen-intent"],
-  "plan-accepted-uncommitted": ["commit-acceptance", "rerun-plan"],
-  // The actions depend on the cause; see `actionsForChange`.
-  "plan-out-of-date": [],
-  // The plan could not be read, so nothing may be built or rewritten from what is shown; the list says why.
-  "plan-unreadable": [],
-  "plan-superseded": ["rerun-plan"],
-  "build-ready": ["start-build", "reopen-spec", "reopen-intent"],
-  "build-stopped": ["continue-build", "another-round", "reopen-spec", "reopen-intent"],
-  "build-finished": ["declare-done", "another-round", "run-review", "reopen-spec", "reopen-intent"],
-  "fix-in-progress": [],
-  "fix-unsettled": [],
-  "fix-awaiting": [],
-  "fix-accepting": [],
-  "fix-needs-plugin": [],
-};
+/** The actions the change page draws. The answer also lists renaming the branch and rejecting a fix, which have no control on the page yet. */
+export type StageAction = Exclude<OfferedStageAction, "reject-fix" | "rename">;
 
-const REVISITS: readonly StageAction[] = ["continue-intent", "reopen-intent", "continue-spec", "reopen-spec", "rerun-plan", "finish-fix-draft", "change-fix", "reopen-fix"];
-
-/** True for an action that regenerates a document that already exists, so the operator can say what should change. */
-export function revisits(action: StageAction): boolean {
-  return REVISITS.includes(action);
+/** Whether the page has a control for an offered action. */
+export function isPageAction(action: OfferedStageAction): action is StageAction {
+  return action !== "reject-fix" && action !== "rename";
 }
 
-/** The spec's "Stage derivation and actions" table, Actions column, in order. */
-export function actionsFor(stage: Stage): StageAction[] {
-  return [...ACTIONS[stage]];
+/** A stage by name: the plugin's answer words an out-of-date plan as an object that carries its cause. */
+export type StageName = Exclude<OfferStage, object> | "plan-out-of-date";
+
+export function stageName(stage: OfferStage): StageName {
+  return typeof stage === "string" ? stage : "plan-out-of-date";
 }
 
-/**
- * The actions of a change on the light track, by stage. The stages of the intent, spec and plan documents cannot
- * occur for a fix, so they give none; an out-of-date plan has one action whatever the cause.
- */
-function fixActions(c: ChangeInfo): StageAction[] {
-  switch (c.stage) {
-    case "fix-in-progress":
-      return ["finish-fix-draft"];
-    case "fix-awaiting":
-      // Only row 6 of the fix-state table (all three drafted, none accepted, nothing built) may be closed by the full
-      // pipeline: an accepted document or a built task is work it would discard. The program reports the row.
-      return c.fix_row === 6 ? ["accept-fix", "change-fix", "full-pipeline-instead"] : ["accept-fix", "change-fix"];
-    case "fix-accepting":
-      return ["accept-fix", "change-fix"];
-    case "build-ready":
-      return ["start-build", "reopen-fix"];
-    case "build-stopped":
-      return ["continue-build", "another-round", "reopen-fix"];
-    case "build-finished":
-      return ["declare-done", "another-round", "run-review", "reopen-fix"];
-    case "plan-out-of-date":
-      return ["reopen-fix"];
-    default:
-      return [];
-  }
+/** Why an accepted plan cannot be built, when the stage says so. */
+export function outOfDateCause(stage: OfferStage): OutOfDateCause | null {
+  return typeof stage === "string" ? null : stage["plan-out-of-date"].cause;
 }
-
-/**
- * The actions of a change. An out-of-date plan depends on its cause: a broken spec pin means the spec is
- * reopened; a reopened intent or spec keeps its own stage, so it only reaches here from older data and has
- * no action; any other cause means the plan is rewritten.
- */
-export function actionsForChange(c: ChangeInfo): StageAction[] {
-  if (c.track === "fix") return fixActions(c);
-  if (c.stage !== "plan-out-of-date") return actionsFor(c.stage);
-  switch (c.out_of_date) {
-    case "spec-pin":
-      return ["reopen-spec"];
-    case "intent-reopened":
-    case "spec-reopened":
-      return [];
-    default:
-      return ["rerun-plan"];
-  }
-}
-
-/**
- * Whether the feedback box refuses an empty answer for an action at a stage. Reopening a fix whose plan is out of date
- * needs no feedback only when the cause is a pin that no longer holds: the documents did not change, so there is
- * nothing to correct. Any other cause means a document was reopened or the plan has no tasks, and the engineer says why.
- */
-export function feedbackRequired(action: StageAction, stage: Stage, outOfDate: OutOfDate | null): boolean {
-  if (action === "change-fix") return true;
-  if (action !== "reopen-fix") return false;
-  return stage !== "plan-out-of-date" || (outOfDate !== "spec-pin" && outOfDate !== "plan-pin");
-}
-
-export type StageLabel = {
-  step: "intent" | "spec" | "plan" | "build" | "done" | "closed";
-  text: string;
-  tone: "success" | "warning" | "muted" | "error";
-};
-
-const LABELS: Record<Stage, StageLabel> = {
-  "intent-in-progress": { step: "intent", text: "Intent · in progress (not committed)", tone: "muted" },
-  "intent-awaiting": { step: "intent", text: "Intent · awaiting acceptance", tone: "warning" },
-  "intent-accepted-uncommitted": { step: "intent", text: "Intent · accepted, not committed", tone: "warning" },
-  rejected: { step: "closed", text: "Closed · rejected", tone: "error" },
-  "spec-ready": { step: "spec", text: "Spec · ready to start", tone: "muted" },
-  "spec-awaiting": { step: "spec", text: "Spec · awaiting acceptance", tone: "warning" },
-  "spec-accepted-uncommitted": { step: "spec", text: "Spec · accepted, not committed", tone: "warning" },
-  "plan-ready": { step: "plan", text: "Plan · ready to start", tone: "muted" },
-  "plan-awaiting": { step: "plan", text: "Plan · awaiting acceptance", tone: "warning" },
-  "plan-accepted-uncommitted": { step: "plan", text: "Plan · accepted, not committed", tone: "warning" },
-  "plan-out-of-date": { step: "plan", text: "Plan · out of date", tone: "warning" },
-  "plan-unreadable": { step: "plan", text: "Plan · could not be read", tone: "warning" },
-  "plan-superseded": { step: "plan", text: "Plan · superseded", tone: "warning" },
-  "build-ready": { step: "build", text: "Build · ready to start", tone: "muted" },
-  "build-stopped": { step: "build", text: "Build · in progress (stopped)", tone: "warning" },
-  "build-finished": { step: "build", text: "Build · finished, not yet done", tone: "success" },
-  "fix-in-progress": { step: "intent", text: "Fix · changes not recorded", tone: "warning" },
-  "fix-unsettled": { step: "intent", text: "Fix · statuses not settled", tone: "warning" },
-  "fix-awaiting": { step: "intent", text: "Fix · awaiting acceptance", tone: "warning" },
-  "fix-accepting": { step: "plan", text: "Fix · acceptance stopped", tone: "warning" },
-  "fix-needs-plugin": { step: "intent", text: "Fix · needs ai-sdlc 1.1.0", tone: "warning" },
-};
 
 /**
  * The label of a change that is done: its pull requests are open. Not a stage and not stored: the change page asks
  * GitHub each time it opens, and the workspace home list never asks, so it shows "Build · finished, not yet done".
  */
 export const DONE_LABEL: StageLabel = { step: "done", text: "Done · pull requests open", tone: "success" };
-
-export function stageLabel(stage: Stage): StageLabel {
-  return { ...LABELS[stage] };
-}
-
-/**
- * Whether the format program could not say where a fix stands: a fix at `fix-unsettled` with no row. A fix with a
- * row, even 2, was read, and a fix that needs the plugin has its own stage. The one place that decides "program failure".
- */
-export function fixProgramFailed(c: Pick<ChangeInfo, "track" | "stage" | "fix_row">): boolean {
-  return c.track === "fix" && c.stage === "fix-unsettled" && c.fix_row === null;
-}
-
-/** The label of a change: its stage's, except that a program failure says the fix could not be read. */
-export function changeLabel(c: Pick<ChangeInfo, "track" | "stage" | "fix_row">): StageLabel {
-  const label = stageLabel(c.stage);
-  return fixProgramFailed(c) ? { ...label, text: "Fix · could not be read" } : label;
-}
 
 export type RunContext = {
   folder: string;
@@ -519,7 +375,7 @@ export function actionLabel(action: StageAction): string {
 }
 
 /** The label of an action at a stage. A stage reads it the same way except accepting a fix whose acceptance stopped. */
-export function actionLabelAt(action: StageAction, stage: Stage): string {
+export function actionLabelAt(action: StageAction, stage: StageName): string {
   return action === "accept-fix" && stage === "fix-accepting" ? "Finish acceptance" : LABEL[action];
 }
 
@@ -624,20 +480,20 @@ const PILL_STEPS: readonly { step: PillStep; title: string }[] = [
  * on the build step. A document pill is disabled until its document exists. The Build pill is locked until the plan
  * is accepted, then open.
  */
-export function stagePills(stage: Stage, done: boolean, docs: DocsPresent, programFailed = false): StagePill[] {
-  const label = done ? DONE_LABEL : programFailed ? changeLabel({ track: "fix", stage, fix_row: null }) : stageLabel(stage);
-  const accepted = label.step === "build" || label.step === "done";
-  const sitsOn = label.step === "closed" ? "intent" : label.step === "done" ? "build" : label.step;
+export function stagePills(label: StageLabel, done: boolean, docs: DocsPresent): StagePill[] {
+  const shown = done ? DONE_LABEL : label;
+  const accepted = shown.step === "build" || shown.step === "done";
+  const sitsOn = shown.step === "closed" ? "intent" : shown.step === "done" ? "build" : shown.step;
   const at = PILL_STEPS.findIndex((p) => p.step === sitsOn);
-  const tone: PillTone = label.tone === "muted" ? "idle" : label.tone;
+  const tone: PillTone = shown.tone === "muted" ? "idle" : shown.tone;
   return PILL_STEPS.map(({ step, title }, i) => {
     const current = i === at;
     if (step === "build") {
       if (!accepted) return { step, title, text: "Build · locked", tone: "idle", disabled: true, current, ariaLabel: null };
-      return { step, title, text: done ? "Build · done" : label.text, tone: done ? "success" : tone, disabled: false, current, ariaLabel: null };
+      return { step, title, text: done ? "Build · done" : shown.text, tone: done ? "success" : tone, disabled: false, current, ariaLabel: null };
     }
     const disabled = !docs[step];
-    if (current) return { step, title, text: label.text, tone, disabled, current, ariaLabel: null };
+    if (current) return { step, title, text: shown.text, tone, disabled, current, ariaLabel: null };
     if (i < at) return { step, title, text: title, tone: "success", disabled, current, ariaLabel: `${title}, accepted` };
     return { step, title, text: `${title} · not started`, tone: "idle", disabled, current, ariaLabel: null };
   });

@@ -823,16 +823,12 @@ describe('SdlcHomeViewModel changes list', () => {
     const { vm, transport } = setup();
     const answer = systemViewOf(20);
     const read = vi.spyOn(transport, 'sdlcState').mockResolvedValue(answer);
-    const names = vi.spyOn(transport, 'sdlcChangeNames');
-    const stages = vi.spyOn(transport, 'sdlcReadStages');
     // The slow reads never finish: the names must be on screen without them.
     const health = vi.spyOn(transport, 'sdlcContextHealth').mockImplementation(() => new Promise(() => undefined));
     void vm.init();
     await vi.waitFor(() => expect(vm.rows().length).toBe(20));
     expect(health).toHaveBeenCalled();
     expect(read).toHaveBeenCalledTimes(1);
-    expect(names).not.toHaveBeenCalled();
-    expect(stages).not.toHaveBeenCalled();
     expect(vm.rows().map((r) => r.change)).toEqual(answer.changes.map((c) => c.state.change));
     expect(vm.rows().map((r) => r.offer?.label.text)).toEqual(answer.changes.map((c) => c.offer.label.text));
   });

@@ -1,4 +1,3 @@
-import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { Problem } from '@bindings/Problem';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { Readiness } from '@bindings/Readiness';
@@ -36,10 +35,7 @@ type Setup = {
 
 async function open(setup: Setup) {
   const transport = new MockTransport();
-  const real = transport.sdlcReadChange.bind(transport);
-  vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-    [await real(m, s, n)].map((c): ChangeInfo => (c.change === MOCK_BUILD_CHANGE && !setup.logLayouts ? { ...c, stage: 'plan-awaiting' } : c))[0],
-  );
+  if (!setup.logLayouts) transport.patchChange(MOCK_BUILD_CHANGE, { stage: 'plan-awaiting' });
   vi.spyOn(transport, 'sdlcReadDoc').mockImplementation(async (_m, _s, _c, stem) => PROSE(stem));
   vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(setup.readiness ?? READY);
   if (setup.logLayouts) {

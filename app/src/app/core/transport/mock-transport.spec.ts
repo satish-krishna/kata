@@ -3,10 +3,9 @@ import { readAllChanges } from '../../../testing/read-all';
 import { NO_BACKEND } from './kata-transport';
 import { runScriptHead, runScriptMid, runScriptTail, PENDING_PERMISSION, seedSpec } from '../../lib/mock';
 import type { KataEvent } from '../../lib/events';
-import { transcriptRunId } from '../../lib/sdlc';
+import { stageName, transcriptRunId } from '../../lib/sdlc';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { PublishStep } from '@bindings/PublishStep';
-import type { StageEvent } from '@bindings/StageEvent';
 import type { Resolved } from '@bindings/Resolved';
 import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_SETUP_FOLDER, MOCK_WORKSPACE_FOLDER, sdlcSetupScript, sdlcSpecScript } from '../../lib/sdlc-mock';
 
@@ -133,7 +132,7 @@ describe('MockTransport', () => {
     const b = await t.sdlcBranches('/m');
     expect(b.current).toBe('main');
     expect(b.others.map((o) => o.change)).toEqual(['2026-10-17-product-notes', '2026-10-18-new-change']);
-    expect((await readAllChanges(t))[0].change).toBe('2026-10-18-new-change');
+    expect((await readAllChanges(t))[0].state.change).toBe('2026-10-18-new-change');
 
     const again = await t.sdlcStartChange('/m');
     expect(await t.sdlcFinishChange('/m', again)).toBe('deleted');
@@ -145,19 +144,19 @@ describe('MockTransport', () => {
   it('rejecting an intent moves its change to rejected', async () => {
     const t = new MockTransport();
     expect(await t.sdlcDecide('/m', 'commerce', '2026-10-16-price-flag', 'reject-intent', false)).toEqual({ kind: 'committed' });
-    const c = (await readAllChanges(t)).find((x) => x.change === '2026-10-16-price-flag');
-    expect(c?.stage).toBe('rejected');
-    expect(c?.intent.status).toBe('rejected');
+    const c = (await readAllChanges(t)).find((x) => x.state.change === '2026-10-16-price-flag');
+    expect(c && stageName(c.offer.stage)).toBe('rejected');
+    expect(c?.state.documents.intent.workingStatus).toBe('rejected');
   });
 
   it('accepting the photos spec moves its change to plan-ready', async () => {
     const t = new MockTransport();
-    const before = (await readAllChanges(t, 'D:/Work/acme-commerce/commerce-docs')).find((c) => c.change === '2026-10-12-product-photo-upload');
-    expect(before?.stage).toBe('spec-awaiting');
+    const before = (await readAllChanges(t)).find((c) => c.state.change === '2026-10-12-product-photo-upload');
+    expect(before && stageName(before.offer.stage)).toBe('spec-awaiting');
     const out = await t.sdlcDecide('D:/Work/acme-commerce/commerce-docs', 'commerce', '2026-10-12-product-photo-upload', 'accept-spec', false);
     expect(out).toEqual({ kind: 'committed' });
-    const after = (await readAllChanges(t, 'D:/Work/acme-commerce/commerce-docs')).find((c) => c.change === '2026-10-12-product-photo-upload');
-    expect(after?.stage).toBe('plan-ready');
+    const after = (await readAllChanges(t)).find((c) => c.state.change === '2026-10-12-product-photo-upload');
+    expect(after && stageName(after.offer.stage)).toBe('plan-ready');
   });
 
   it('shows a change done once every touched repository has a pull request, and refreshing gives the same view', async () => {
@@ -238,9 +237,12 @@ describe('MockTransport', () => {
     });
 
     it('lists the build-demo change at build-ready', async () => {
-      const c = (await readAllChanges(new MockTransport())).find((x) => x.change === MOCK_BUILD_CHANGE);
-      expect(c?.stage).toBe('build-ready');
-      expect(c?.build).toEqual({ tasks: 3, finished: 0, repos: 2 });
+      const c = (await readAllChanges(new MockTransport())).find((x) => x.state.change === MOCK_BUILD_CHANGE);
+      expect(c && stageName(c.offer.stage)).toBe('build-ready');
+      const repos = Object.values(c?.state.tasks ?? {});
+      expect(repos).toHaveLength(2);
+      expect(repos.flatMap((r) => r?.all ?? [])).toHaveLength(3);
+      expect(repos.flatMap((r) => r?.logged ?? [])).toEqual([]);
     });
   });
 
@@ -369,95 +371,27 @@ describe('MockTransport previewRun', () => {
     expect(b.items.some((i) => i.name.includes('alpha'))).toBe(false);
   });
 
-  describe('the two reading passes', () => {
-    beforeEach(() => vi.useFakeTimers());
-    afterEach(() => vi.useRealTimers());
-
-    const collect = async (t: MockTransport) => {
-      const seen: StageEvent[] = [];
-      await t.onStageEvent((e) => seen.push(e));
-      return seen;
-    };
-
-    it('names every change at once, with no stage read yet', async () => {
-      const t = new MockTransport();
-      const names = await t.sdlcChangeNames('/m', 'commerce');
-      const changes = await readAllChanges(t);
-      expect(names.map((n) => n.change)).toEqual(changes.map((c) => c.change));
-      expect(names.length).toBeGreaterThan(0);
-    });
-
+  describe('reading the changes', () => {
     it('reads one change in full, and refuses a change it does not have', async () => {
       const t = new MockTransport();
-      const [first] = await t.sdlcChangeNames('/m', 'commerce');
-      const info = await t.sdlcReadChange('/m', 'commerce', first.change);
-      expect(info.change).toBe(first.change);
-      expect(info.system).toBe('commerce');
-      await expect(t.sdlcReadChange('/m', 'commerce', 'no-such-change')).rejects.toThrow();
+      const [first] = await readAllChanges(t);
+      const view = await t.sdlcChangeState(MOCK_WORKSPACE_FOLDER, 'commerce', first.state.change);
+      expect(view).toEqual(first);
+      await expect(t.sdlcChangeState(MOCK_WORKSPACE_FOLDER, 'commerce', 'no-such-change')).rejects.toThrow();
     });
 
     it('reports no folder missing', async () => {
       expect(await new MockTransport().sdlcMissingFolders(['/a', '/b'])).toEqual([]);
     });
 
-    it('plays one stage per change, a progress after each, then done, all for the same pass id', async () => {
-      const t = new MockTransport();
-      const seen = await collect(t);
-      const changes = await readAllChanges(t);
-      const pass = await t.sdlcReadStages('/m', 'commerce');
-      expect(seen).toEqual([]);
-      vi.advanceTimersByTime(2000);
-      expect(seen.every((e) => e.pass === pass)).toBe(true);
-      expect(seen.filter((e) => e.kind === 'stage').map((e) => (e.kind === 'stage' ? e.change : ''))).toEqual(changes.map((c) => c.change));
-      expect(seen.filter((e) => e.kind === 'progress')).toEqual(changes.map((_c, i) => ({ kind: 'progress', pass, read: i + 1, total: changes.length })));
-      expect(seen.at(-1)).toEqual({ kind: 'done', pass });
-      expect(seen.filter((e) => e.kind === 'done')).toHaveLength(1);
-    });
-
-    it('reads the change named first before the others', async () => {
-      const t = new MockTransport();
-      const seen = await collect(t);
-      const changes = await readAllChanges(t);
-      const last = changes[changes.length - 1].change;
-      await t.sdlcReadStages('/m', 'commerce', last);
-      vi.advanceTimersByTime(2000);
-      const stages = seen.filter((e) => e.kind === 'stage');
-      expect(stages[0].kind === 'stage' && stages[0].change).toBe(last);
-    });
-
-    it('a second pass supersedes the first, whose events stop', async () => {
-      const t = new MockTransport();
-      const seen = await collect(t);
-      const first = await t.sdlcReadStages('/m', 'commerce');
-      vi.advanceTimersByTime(100);
-      const second = await t.sdlcReadStages('/m', 'commerce');
-      expect(second).not.toBe(first);
-      const before = seen.filter((e) => e.pass === first).length;
-      vi.advanceTimersByTime(2000);
-      expect(seen.filter((e) => e.pass === first)).toHaveLength(before);
-      expect(seen.filter((e) => e.pass === second).at(-1)).toEqual({ kind: 'done', pass: second });
-    });
-
-    it('stops reporting to a listener that left', async () => {
-      const t = new MockTransport();
-      const seen: StageEvent[] = [];
-      const off = await t.onStageEvent((e) => seen.push(e));
-      off();
-      await t.sdlcReadStages('/m', 'commerce');
-      vi.advanceTimersByTime(2000);
-      expect(seen).toEqual([]);
-    });
-
     it('the long demo has one change whose plan cannot be read, shown with its reason', async () => {
       window.history.replaceState({}, '', '/?demo=build-long');
       try {
         const t = new MockTransport();
-        const seen = await collect(t);
-        await t.sdlcReadStages('/m', 'commerce');
-        vi.advanceTimersByTime(2000);
-        const unreadable = seen.flatMap((e) => (e.kind === 'stage' && e.info.plan_unreadable ? [e.info] : []));
+        const system = await t.sdlcState(MOCK_WORKSPACE_FOLDER, 'commerce');
+        const unreadable = system.changes.filter((c) => c.offer.stage === 'plan-unreadable');
         expect(unreadable).toHaveLength(1);
-        expect(unreadable[0].plan_unreadable_reason).toBeTruthy();
+        expect(system.problems.length).toBeGreaterThan(0);
       } finally {
         window.history.replaceState({}, '', '/');
       }

@@ -80,10 +80,7 @@ describe('ChangePage', () => {
     const transport = new MockTransport();
     const run = vi.spyOn(transport, 'runSpec').mockResolvedValue('1');
     // A plan awaiting acceptance no longer offers Reopen spec; a plan that is ready to start does.
-    const real = transport.sdlcReadChange.bind(transport);
-    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-      [await real(m, s, n)].map((c) => (c.change === '2026-10-09-merchant-reassign' ? { ...c, stage: 'plan-ready' as const } : c))[0],
-    );
+    transport.patchChange('2026-10-09-merchant-reassign', { stage: 'plan-ready' as const });
     const { container } = await mount('2026-10-09-merchant-reassign', transport);
     Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Reopen spec')!.click();
     await settle();
@@ -217,10 +214,7 @@ describe('ChangePage', () => {
     const REASSIGN = '2026-10-09-merchant-reassign';
     const staged = (stage: ChangeInfo['stage'], out_of_date: ChangeInfo['out_of_date'] = null) => {
       const transport = new MockTransport();
-      const real = transport.sdlcReadChange.bind(transport);
-      vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-        [await real(m, s, n)].map((c) => (c.change === REASSIGN ? { ...c, stage, out_of_date } : c))[0],
-      );
+      transport.patchChange(REASSIGN, { stage, out_of_date });
       return transport;
     };
     const banner = (c: HTMLElement) => c.querySelector('[data-testid="plan-banner"]')?.textContent?.replace(/\s+/g, ' ').trim() ?? null;
@@ -252,16 +246,6 @@ describe('ChangePage', () => {
     });
 
     it.each([
-      ['intent-reopened', 'The intent was reopened.'],
-      ['spec-reopened', 'The spec was reopened.'],
-    ] as const)('a reopened intent or spec is named and blocks the build (R1.5) %s', async (cause, text) => {
-      const { container } = await mount(REASSIGN, staged('plan-out-of-date', cause));
-      expect(banner(container)).toBe(text);
-      expect(labels(container)).not.toContain('Start build');
-      expect(labels(container)).not.toContain('Continue build');
-    });
-
-    it.each([
       ['intent-awaiting', 'The intent was reopened.', 'Accept intent'],
       ['intent-in-progress', 'The intent was reopened.', 'Continue intent'],
       ['spec-awaiting', 'The spec was reopened.', 'Accept spec'],
@@ -279,12 +263,7 @@ describe('ChangePage', () => {
       ['spec-awaiting', 'The spec was reopened. The plan must be rewritten first.', 'Accept spec'],
     ] as const)('a reopened document over a superseded plan also says the plan must be rewritten first (R1.3) %s', async (stage, text, action) => {
       const transport = new MockTransport();
-      const real = transport.sdlcReadChange.bind(transport);
-      vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-        [await real(m, s, n)].map((c) =>
-          c.change === REASSIGN ? { ...c, stage, out_of_date: null, plan: { ...c.plan, exists: true, status: 'superseded' } } : c,
-        )[0],
-      );
+      transport.patchChange(REASSIGN, { stage, out_of_date: null, plan: { exists: true, committed: true, status: 'superseded', head_status: 'draft' } });
       const { container } = await mount(REASSIGN, transport);
       expect(banner(container)).toBe(text);
       expect(labels(container)).toContain(action);
@@ -293,12 +272,7 @@ describe('ChangePage', () => {
 
     it('a change without a plan has no reopened banner at intent-awaiting', async () => {
       const transport = new MockTransport();
-      const real = transport.sdlcReadChange.bind(transport);
-      vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-        [await real(m, s, n)].map((c) =>
-          c.change === REASSIGN ? { ...c, stage: 'intent-awaiting' as const, plan: { ...c.plan, exists: false } } : c,
-        )[0],
-      );
+      transport.patchChange(REASSIGN, { stage: 'intent-awaiting', plan: { exists: false, committed: false, status: null, head_status: null } });
       const { container } = await mount(REASSIGN, transport);
       expect(banner(container)).toBeNull();
     });
@@ -314,10 +288,7 @@ describe('ChangePage after the pull requests', () => {
 
   const finishedTransport = () => {
     const transport = new MockTransport();
-    const real = transport.sdlcReadChange.bind(transport);
-    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-      [await real(m, s, n)].map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage: 'build-finished' as const } : c))[0],
-    );
+    transport.patchChange(MOCK_BUILD_CHANGE, { stage: 'build-finished' as const });
     return allBuilt(transport);
   };
   const openAll = async (transport: MockTransport) => {
@@ -392,8 +363,7 @@ describe('ChangePage build page', () => {
   });
 
   const staged = (stage: ChangeInfo['stage'], transport = new MockTransport()) => {
-    const real = transport.sdlcReadChange.bind(transport);
-    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) => [await real(m, s, n)].map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage } : c))[0]);
+    transport.patchChange(MOCK_BUILD_CHANGE, { stage });
     return transport;
   };
   /** A finished build: every task has its build log row, as the page requires of a stage past the build. */
@@ -421,16 +391,8 @@ describe('ChangePage build page', () => {
 
   it('accepting the plan offers the Build tab with tasks, activity and changed files', async () => {
     const transport = new MockTransport();
-    const real = transport.sdlcReadChange.bind(transport);
-    const decide = transport.sdlcDecide.bind(transport);
-    let accepted = false;
-    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-      [await real(m, s, n)].map((c) => (c.change === MOCK_BUILD_CHANGE && !accepted ? { ...c, stage: 'plan-awaiting' as const } : c))[0],
-    );
-    vi.spyOn(transport, 'sdlcDecide').mockImplementation(async (m, s, c, d, confirmed) => {
-      accepted = true;
-      return decide(m, s, c, d, confirmed);
-    });
+    // The mock's accept-plan moves the change on to build-ready, replacing the stage patched here.
+    transport.patchChange(MOCK_BUILD_CHANGE, { stage: 'plan-awaiting' });
     const { container } = await mount(MOCK_BUILD_CHANGE, transport);
     expect(page(container)).toBeNull();
     expect(pill(container, 'Build').disabled).toBe(true);
@@ -531,7 +493,7 @@ describe('ChangePage build page', () => {
       },
       { timeout: TOKEN },
     );
-    const changes = vi.spyOn(transport, 'sdlcReadChange');
+    const changes = vi.spyOn(transport, 'sdlcChangeState');
     await stopBuild(fixture);
     await vi.waitFor(
       () => {
@@ -770,8 +732,7 @@ describe('ChangePage way back', () => {
   const text = (e: Element) => e.textContent!.replace(/\s+/g, ' ').trim();
   const routes: Routes = [{ path: 'sdlc', children: [] }];
   const staged = (stage: ChangeInfo['stage'], transport = new MockTransport()) => {
-    const real = transport.sdlcReadChange.bind(transport);
-    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) => [await real(m, s, n)].map((c) => (c.change === MOCK_BUILD_CHANGE ? { ...c, stage } : c))[0]);
+    transport.patchChange(MOCK_BUILD_CHANGE, { stage });
     return transport;
   };
   const doneTransport = async () => {
@@ -819,7 +780,7 @@ describe('ChangePage way back', () => {
 
   it('the way back is shown while the change is being read', async () => {
     const transport = new MockTransport();
-    vi.spyOn(transport, 'sdlcReadChange').mockReturnValue(new Promise(() => undefined));
+    vi.spyOn(transport, 'sdlcChangeState').mockReturnValue(new Promise(() => undefined));
     // The progress line shows once a read has run for 400 ms.
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     const { container, fixture } = await mount(PHOTOS_CHANGE, transport, routes);
@@ -864,10 +825,7 @@ describe('ChangePage way back', () => {
 
   it('R6.1: a fix run that is running offers the message box, and sending reaches that run', async () => {
     const transport = new MockTransport();
-    const real = transport.sdlcReadChange.bind(transport);
-    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-      [await real(m, s, n)].map((c) => (c.change === PHOTOS_CHANGE ? { ...c, stage: 'fix-awaiting' as const, track: 'fix' as const } : c))[0],
-    );
+    transport.patchChange(PHOTOS_CHANGE, { stage: 'fix-awaiting' as const, track: 'fix' as const });
     const ready = await transport.sdlcPluginReadiness(null);
     vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(ready.kind === 'ready' ? ready : ready);
     const { container } = await mount(PHOTOS_CHANGE, transport);

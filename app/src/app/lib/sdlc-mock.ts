@@ -31,7 +31,6 @@ import type { RepoStatus } from '@bindings/RepoStatus';
 import type { TaskStatus } from '@bindings/TaskStatus';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
-import type { ChangeName } from '@bindings/ChangeName';
 import type { ChangeView } from '@bindings/ChangeView';
 import type { ChangeOffer } from '@bindings/ChangeOffer';
 import type { ChangeState } from '@bindings/ChangeState';
@@ -486,6 +485,7 @@ const FULL_OFFERS: Record<string, StageAction[]> = {
   'plan-ready': ['start-plan', 'reopen-spec', 'reopen-intent'],
   'plan-awaiting': ['accept-plan', 'rerun-plan', 'reopen-intent'],
   'plan-accepted-uncommitted': ['commit-acceptance', 'rerun-plan'],
+  // A broken spec pin means the spec is reopened; any other cause means the plan is rewritten.
   'plan-out-of-date': ['rerun-plan'],
   'plan-unreadable': [],
   'plan-superseded': ['rerun-plan'],
@@ -519,7 +519,8 @@ function offerOf(c: ChangeInfo, refused: Partial<Record<StageAction, string>> = 
   const name = typeof stage === 'string' ? stage : 'plan-out-of-date';
   const unreadableFix = c.track === 'fix' && c.fix_row === null && name === 'fix-unsettled';
   const label = unreadableFix ? { ...LABEL_DATA[name], text: 'Fix · could not be read' } : LABEL_DATA[name];
-  const listed = c.track === 'fix' ? (FIX_OFFERS[name] ?? []) : (FULL_OFFERS[name] ?? []);
+  const specPin = typeof stage !== 'string' && stage['plan-out-of-date'].cause === 'spec-pin';
+  const listed = c.track === 'fix' ? (FIX_OFFERS[name] ?? []) : specPin ? (['reopen-spec'] as StageAction[]) : (FULL_OFFERS[name] ?? []);
   // A fix awaiting acceptance may be closed by the full pipeline only at row 6 of the fix-state table.
   const actions: StageAction[] = c.track === 'fix' && name === 'fix-awaiting' && c.fix_row === 6 ? [...listed, 'full-pipeline-instead'] : listed;
   // A fix is reopened without feedback only when its plan is out of date.
@@ -546,7 +547,8 @@ export function changeViewOf(
   refused: Partial<Record<StageAction, string>> = {},
 ): ChangeView {
   const live: LiveFacts = { runLive: false, buildStopped: false, buildLive: false };
-  const shown: ChangeInfo = c.plan_unreadable ? { ...c, stage: 'plan-unreadable' } : c;
+  // A fix stands at the row of its own table whatever its plan reads as; only the full pipeline has a stage for an unreadable plan.
+  const shown: ChangeInfo = c.plan_unreadable && c.track !== 'fix' ? { ...c, stage: 'plan-unreadable' } : c;
   const stop = refused['start-build'] ?? refused['continue-build'] ?? null;
   return {
     state: {
@@ -671,17 +673,7 @@ export class SdlcMock {
       return { ...c };
     });
   }
-  /** Like the backend's `names`: every change folder, before any stage is read. The demo's intents carry no title. */
-  changeNames(): ChangeName[] {
-    return this.changes.map((c) => ({ change: c.change, title: null }));
-  }
-  /** Like the backend's `read_change`; refuses a change the workspace does not have. */
-  readChange(changeName: string): ChangeInfo {
-    const found = this.listChanges().find((c) => c.change === changeName);
-    if (!found) throw new Error(`no change folder named ${changeName}`);
-    return found;
-  }
-  /** What a stage pass reports, change by change. In the long demo one change's plan is unreadable, shown with its reason like the Workbench shows it today. */
+  /** Every change as the plugin reports it. In the long demo one change's plan is unreadable, shown with its reason like the Workbench shows it today. */
   stagePass(): ChangeInfo[] {
     return this.listChanges().map((c) => (c.change === this.unreadable
       ? { ...c, plan_unreadable: true, plan_unreadable_reason: 'the plan has a task with no id' }
@@ -1146,3 +1138,6 @@ export const reviewRunScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
   ],
   mid: [],
 };
+
+/** The label the plugin's answer gives a change at a stage, for a test that needs one without a change. */
+export const mockLabel = (stage: string): StageLabel => ({ ...LABEL_DATA[stage] });

@@ -5,7 +5,7 @@
     [branch]="vm.branchChip()"
     [changeBranch]="vm.expectedBranch()"
     [crumbs]="vm.crumbs()"
-    [tag]="vm.change()?.track === 'fix' ? 'fix' : null"
+    [tag]="vm.change()?.state.track === 'fix' ? 'fix' : null"
     back="Changes"
     [locked]="vm.locked()"
     (switchMode)="vm.switchMode()"

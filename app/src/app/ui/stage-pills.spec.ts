@@ -3,6 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import type { Stage } from '@bindings/Stage';
 import { HlmTabsImports } from '@spartan-ng/helm/tabs';
 import { stagePills, type DocsPresent } from '../lib/sdlc';
+import { mockLabel } from '../lib/sdlc-mock';
 import { StagePills } from './stage-pills';
 
 const ALL_DOCS: DocsPresent = { intent: true, spec: true, plan: true };
@@ -22,7 +23,7 @@ const ALL: Stage[] = [
 })
 class Host {
   readonly tab = signal('spec');
-  readonly pills = signal(stagePills('spec-awaiting', false, ALL_DOCS));
+  readonly pills = signal(stagePills(mockLabel('spec-awaiting'), false, ALL_DOCS));
   readonly activated: string[] = [];
 }
 
@@ -30,7 +31,7 @@ async function mount(over: { stage?: Stage; docs?: DocsPresent; done?: boolean; 
   TestBed.configureTestingModule({ imports: [Host] });
   const fixture = TestBed.createComponent(Host);
   const host = fixture.componentInstance;
-  host.pills.set(stagePills(over.stage ?? 'spec-awaiting', over.done ?? false, over.docs ?? ALL_DOCS));
+  host.pills.set(stagePills(mockLabel(over.stage ?? 'spec-awaiting'), over.done ?? false, over.docs ?? ALL_DOCS));
   if (over.tab) host.tab.set(over.tab);
   await fixture.whenStable();
   const container = fixture.nativeElement as HTMLElement;

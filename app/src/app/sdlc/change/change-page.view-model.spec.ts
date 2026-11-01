@@ -10,11 +10,10 @@ import { BehaviorSubject } from 'rxjs';
 import { LockStore } from '../../core/lock/lock.store';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
-import { SdlcStagesStore, stageKey } from '../../core/sdlc/sdlc-stages.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
-import { actionsFor, safetyRules, type Finding, type StageAction } from '../../lib/sdlc';
+import { safetyRules, type Finding, type StageAction } from '../../lib/sdlc';
 import { groupFindings } from '../../lib/sdlc-findings';
 import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_REFUSED_CHANGE, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
@@ -62,21 +61,26 @@ const settleBuild = async () => {
   });
 };
 const withStage = (transport: MockTransport, name: string, stage: ChangeInfo['stage'], extra: Partial<ChangeInfo> = {}) => {
-  const real = transport.sdlcReadChange.bind(transport);
-  vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-    [await real(m, s, n)].map((c) => (c.change === name ? { ...c, stage, ...extra } : c))[0],
-  );
+  transport.patchChange(name, { stage, ...extra });
+};
+
+/** The reassign change at plan-ready, where the plugin offers Reopen spec. */
+const planReady = () => {
+  const transport = new MockTransport();
+  withStage(transport, REASSIGN, 'plan-ready');
+  return transport;
 };
 
 afterEach(() => toastState.reset());
 
 describe('ChangePageViewModel', () => {
-  it.each([FRAUD, PHOTOS_CHANGE, REASSIGN])('offers exactly the stage actions for %s', async (name) => {
-    const { vm } = setup(name);
+  it.each([FRAUD, PHOTOS_CHANGE, REASSIGN])('offers exactly the actions the plugin lists for %s', async (name) => {
+    const { vm, transport } = setup(name);
     await ready(vm);
     expect(vm.state()).toBe('ready');
-    expect(vm.change()?.change).toBe(name);
-    expect(vm.actions()).toEqual(actionsFor(vm.change()!.stage));
+    expect(vm.change()?.state.change).toBe(name);
+    const answer = await transport.sdlcChangeState(MOCK_WORKSPACE_FOLDER, 'commerce', name);
+    expect(vm.actions()).toEqual(answer.offer.actions.map((a) => a.action));
     expect(vm.crumbs()).toEqual([name]);
     expect(vm.masterBranch()).toBe('main');
   });
@@ -115,12 +119,12 @@ describe('ChangePageViewModel', () => {
     const transport = new MockTransport();
     const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
-    const realChanges = transport.sdlcReadChange.bind(transport);
+    const realChanges = transport.sdlcChangeState.bind(transport);
     let reloading!: () => void;
     const started = new Promise<void>((r) => (reloading = r));
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, sys, n) => {
+    vi.spyOn(transport, 'sdlcChangeState').mockImplementation(async (m, sys, n) => {
       reloading();
       await gate;
       return realChanges(m, sys, n);
@@ -131,7 +135,7 @@ describe('ChangePageViewModel', () => {
     expect(vm.doc()).toContain('# Photo upload on the product form');
     release();
     await decided;
-    expect(vm.change()!.stage).toBe('plan-ready');
+    expect(vm.change()!.offer.stage).toBe('plan-ready');
     expect(vm.shownDoc()).toBe('spec');
     expect(vm.doc()).toContain('# Spec: photo upload');
   });
@@ -266,7 +270,7 @@ describe('ChangePageViewModel', () => {
     const { vm, params } = setup(PHOTOS_CHANGE);
     await ready(vm);
     params.next(convertToParamMap({ system: 'commerce', change: FRAUD }));
-    await vi.waitFor(() => expect(vm.change()?.change).toBe(FRAUD));
+    await vi.waitFor(() => expect(vm.change()?.state.change).toBe(FRAUD));
     expect(vm.docName()).toBe('intent.md');
   });
 
@@ -277,8 +281,8 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.act('accept-spec');
       expect(decide).toHaveBeenCalledWith(expect.stringContaining('commerce-docs'), 'commerce', PHOTOS_CHANGE, 'accept-spec', false);
-      expect(vm.change()?.stage).toBe('plan-ready');
-      expect(vm.actions()).toEqual(actionsFor('plan-ready'));
+      expect(vm.change()?.offer.stage).toBe('plan-ready');
+      expect(vm.actions()).toEqual(['start-plan', 'reopen-spec', 'reopen-intent']);
     });
 
     it('accept plan commits through sdlcDecide and opens the build (R1.2)', async () => {
@@ -289,7 +293,7 @@ describe('ChangePageViewModel', () => {
       await vm.act('accept-plan');
       expect(decide).toHaveBeenCalledWith(expect.stringContaining('commerce-docs'), 'commerce', REASSIGN, 'accept-plan', false);
       expect(toastText()).toContain('Accepted plan · committed');
-      expect(vm.change()?.stage).toBe('build-ready');
+      expect(vm.change()?.offer.stage).toBe('build-ready');
     });
 
     it('commit-acceptance on a plan accepted but not committed decides accept-plan', async () => {
@@ -316,7 +320,7 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.act('accept-intent');
       expect(decide.mock.calls[0][3]).toBe('accept-intent');
-      expect(vm.change()?.stage).toBe('spec-ready');
+      expect(vm.change()?.offer.stage).toBe('spec-ready');
     });
 
     it('reject-intent closes the change', async () => {
@@ -325,7 +329,7 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.act('reject-intent');
       expect(decide.mock.calls[0][3]).toBe('reject-intent');
-      expect(vm.change()?.stage).toBe('rejected');
+      expect(vm.change()?.offer.stage).toBe('rejected');
       expect(vm.actions()).toEqual([]);
     });
 
@@ -340,7 +344,7 @@ describe('ChangePageViewModel', () => {
       expect(decide).toHaveBeenCalledTimes(2);
       expect(decide.mock.calls[1]).toEqual([expect.any(String), 'commerce', PHOTOS_CHANGE, 'accept-spec', true]);
       expect(vm.confirmPrompt()).toBeNull();
-      expect(vm.change()?.stage).toBe('plan-ready');
+      expect(vm.change()?.offer.stage).toBe('plan-ready');
     });
 
     it('names intent.md in the confirm for an intent decision, and cancelling decides nothing', async () => {
@@ -352,7 +356,7 @@ describe('ChangePageViewModel', () => {
       vm.cancelConfirm();
       expect(vm.confirmPrompt()).toBeNull();
       expect(decide).toHaveBeenCalledTimes(1);
-      expect(vm.change()?.stage).toBe('intent-awaiting');
+      expect(vm.change()?.offer.stage).toBe('intent-awaiting');
     });
 
     it('shows git stderr verbatim in an error toast', async () => {
@@ -390,7 +394,7 @@ describe('ChangePageViewModel', () => {
     const specOf = (runAgent: { mock: { calls: unknown[][] } }) => runAgent.mock.calls[0][1] as RunSpec;
 
     it('a revisit asks for feedback first and runs nothing until the operator confirms', async () => {
-      const { vm, runAgent } = setup(REASSIGN);
+      const { vm, runAgent } = setup(REASSIGN, planReady());
       await ready(vm);
       await vm.act('reopen-spec');
       expect(vm.feedbackFor()).toBe('Reopen spec');
@@ -401,7 +405,7 @@ describe('ChangePageViewModel', () => {
     });
 
     it('reopen spec runs the spec skill with the confirmation and the operator feedback', async () => {
-      const { vm, runAgent } = setup(REASSIGN);
+      const { vm, runAgent } = setup(REASSIGN, planReady());
       await ready(vm);
       await vm.act('reopen-spec');
       await vm.runWithFeedback('R2 is wrong: supervisors and team leads can reassign.');
@@ -468,7 +472,7 @@ describe('ChangePageViewModel', () => {
     });
 
     it('a revisit opens the preview after the feedback dialog', async () => {
-      const { vm, runAgent, preview } = setup(REASSIGN, new MockTransport(), 'real');
+      const { vm, runAgent, preview } = setup(REASSIGN, planReady(), 'real');
       await ready(vm);
       await vm.act('reopen-spec');
       expect(vm.feedbackFor()).toBe('Reopen spec');
@@ -533,7 +537,7 @@ describe('ChangePageViewModel', () => {
     it('reloads the change after a run', async () => {
       const { vm, transport, runAgent } = setup(PHOTOS_CHANGE);
       await ready(vm);
-      const changes = vi.spyOn(transport, 'sdlcReadChange');
+      const changes = vi.spyOn(transport, 'sdlcChangeState');
       await vm.act('start-spec');
       expect(runAgent).toHaveBeenCalled();
       expect(changes).toHaveBeenCalled();
@@ -801,7 +805,7 @@ describe('ChangePageViewModel', () => {
       vi.spyOn(lock, 'spec').mockReturnValue({} as RunSpec);
       await ready(vm);
       expect(vm.session()).not.toBeNull();
-      expect(vm.change()?.stage).toBe('build-finished');
+      expect(vm.change()?.offer.stage).toBe('build-finished');
       expect(vm.pills()).toEqual([]);
       expect(vm.pullLinks()).toEqual([]);
     });
@@ -940,7 +944,7 @@ describe('ChangePageViewModel', () => {
     it('leaves the reopen actions to the change page at build-ready, offering each once in the change\'s order (R1.2)', async () => {
       const { vm } = setup(BUILD);
       await ready(vm);
-      expect(vm.change()!.stage).toBe('build-ready');
+      expect(vm.change()!.offer.stage).toBe('build-ready');
       expect(TestBed.inject(BuildPageViewModel).actions()).not.toContain('reopen-intent');
       expect(vm.actions()).toEqual(['start-build', 'reopen-spec', 'reopen-intent']);
       expect(vm.barExtras().map((e) => e.action)).toEqual(['reopen-spec', 'reopen-intent']);
@@ -949,7 +953,7 @@ describe('ChangePageViewModel', () => {
     it('turns both reopen actions off at build-ready while a live build run holds the lock (R1.3)', async () => {
       const { vm } = setup(BUILD);
       await ready(vm);
-      expect(vm.change()!.stage).toBe('build-ready');
+      expect(vm.change()!.offer.stage).toBe('build-ready');
       expect(vm.disabledFor('reopen-intent')).toBe(false);
       expect(vm.disabledFor('reopen-spec')).toBe(false);
       expect(TestBed.inject(LockStore).beginBuild('Building')).toBe(true);
@@ -1295,36 +1299,20 @@ const view = (over: Partial<DoneView> = {}): DoneView => ({ done: true, links: [
 const forever = () => new Promise<never>(() => undefined);
 
 describe('ChangePageViewModel reads one change', () => {
-  it('reads only its own change (R4.1)', async () => {
+  it('reads only its own change from the plugin (R4.1)', async () => {
     const transport = new MockTransport();
-    const one = vi.spyOn(transport, 'sdlcReadChange');
-    const names = vi.spyOn(transport, 'sdlcChangeNames');
-    const pass = vi.spyOn(transport, 'sdlcReadStages');
+    const one = vi.spyOn(transport, 'sdlcChangeState');
+    const everything = vi.spyOn(transport, 'sdlcState');
     const { vm } = setup(PHOTOS_CHANGE, transport);
     await ready(vm);
     expect(one).toHaveBeenCalledTimes(1);
-    expect(one).toHaveBeenCalledWith(expect.any(String), 'commerce', PHOTOS_CHANGE);
-    expect(names).not.toHaveBeenCalled();
-    expect(pass).not.toHaveBeenCalled();
-    expect(vm.change()).toEqual(await transport.sdlcReadChange('', 'commerce', PHOTOS_CHANGE));
+    expect(one).toHaveBeenCalledWith(MOCK_WORKSPACE_FOLDER, 'commerce', PHOTOS_CHANGE);
+    expect(everything).not.toHaveBeenCalled();
+    const answer = await transport.sdlcChangeState(MOCK_WORKSPACE_FOLDER, 'commerce', PHOTOS_CHANGE);
+    expect(vm.change()).toEqual(answer);
     expect(vm.docName()).toBe('spec.md');
     expect(vm.doc()).toContain('# Spec: photo upload');
-    expect(vm.actions()).toEqual(actionsFor(vm.change()!.stage));
-  });
-
-  it('reads the change itself while the home pass is still going (R4.2)', async () => {
-    const transport = new MockTransport();
-    const pass = vi.spyOn(transport, 'sdlcReadStages').mockImplementation(forever);
-    const { vm } = setup(PHOTOS_CHANGE, transport);
-    const store = TestBed.inject(SdlcStagesStore);
-    store.markChecking('acme-commerce');
-    await ready(vm);
-    expect(vm.state()).toBe('ready');
-    expect(pass).not.toHaveBeenCalled();
-    const row = store.rows(vm.current()!.id)[stageKey('commerce', PHOTOS_CHANGE)];
-    expect(row?.info?.change).toBe(PHOTOS_CHANGE);
-    expect(row?.info?.stage).toBe(vm.change()!.stage);
-    expect(row?.checking).toBe(false);
+    expect(vm.actions()).toEqual(answer.offer.actions.map((a) => a.action));
   });
 });
 

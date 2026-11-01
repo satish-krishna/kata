@@ -3,7 +3,7 @@ import { findingKey, type RoundGroup, type RoundOffer } from './build-round';
 import type { Finding, Severity } from './sdlc';
 import type { FindingGroup } from './sdlc-findings';
 
-export type TaskLine = { id: string; name: string; status: StatusText; finished: boolean; departure: string | null };
+export type TaskLine = { id: string; name: string; status: StatusText; finished: boolean; departure: string | null; commits: string[] };
 
 export type TaskFilter = 'all' | 'open' | 'departed' | 'done';
 

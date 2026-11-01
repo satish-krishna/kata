@@ -55,7 +55,7 @@ class FakeTransport {
   sdlcLinkRun = vi.fn(async (..._a: unknown[]) => { this.calls.push('link'); });
   sdlcStartChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('start'); return 'change/pending-1'; });
   sdlcFinishChange = vi.fn(async (..._a: unknown[]) => { this.calls.push('finish'); return this.finishResults.shift()!(); });
-  sdlcReadChange = vi.fn(async (..._a: unknown[]) => ({ track: 'full' }));
+  sdlcChangeState = vi.fn(async (..._a: unknown[]) => ({ state: { track: 'full' } }));
   sdlcSuggestBranch = vi.fn(async (_f: string, _m: string, _s: string, _c: string, type: string) => `${type}/PROJ-1-password-reset`);
   sdlcConfirmBranch = vi.fn(async (...a: unknown[]) => ({ renamed: { branch: a[5] as string, change: a[3] as string } }));
   sdlcChecksDir = vi.fn(async () => '/kata/workbench/checks');
@@ -607,7 +607,7 @@ describe('SdlcRunner.newChange confirming the branch name', () => {
     const ctx = setup();
     ctx.fake.finishResults.push(needsName);
     ctx.fake.scan = { folder: '/ws', repos: [], master: { kind: 'one', repo: 'commerce-docs', committed: true }, marker: null, marker_error: null };
-    ctx.fake.sdlcReadChange.mockResolvedValue({ track });
+    ctx.fake.sdlcChangeState.mockResolvedValue({ state: { track } });
     return ctx;
   };
 

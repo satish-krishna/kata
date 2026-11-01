@@ -1,4 +1,3 @@
-import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { RunRecord } from '@bindings/RunRecord';
 
 /* What the change page's document strip and rail say about a document: its status in words, what uses it and its
@@ -51,7 +50,7 @@ export function recentRuns(runs: readonly RunRecord[], kind: string): { rows: Ru
 }
 
 /** The document built from this one: the intent is used by the spec and the spec by the plan; the plan by none. */
-export function usedBy(stem: 'intent' | 'spec' | 'plan', c: Pick<ChangeInfo, 'spec' | 'plan'>): UsedBy | null {
+export function usedBy(stem: 'intent' | 'spec' | 'plan', c: { spec: { exists: boolean; status: string | null }; plan: { exists: boolean; status: string | null } }): UsedBy | null {
   const next = stem === 'intent' ? { name: 'spec.md', doc: c.spec } : stem === 'spec' ? { name: 'plan.md', doc: c.plan } : null;
   return next !== null && next.doc.exists ? { name: next.name, status: docStatus(next.doc.status) } : null;
 }

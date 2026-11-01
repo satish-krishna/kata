@@ -12,6 +12,7 @@ const line = (id: string, finished: boolean, departure: string | null = null): T
   status: finished ? DONE : id === 'T6' ? RUNNING : NOT_STARTED,
   finished,
   departure,
+  commits: [],
 });
 
 // T1..T5 finished (T2 and T4 departed), T6 running, T7 and T8 not started.

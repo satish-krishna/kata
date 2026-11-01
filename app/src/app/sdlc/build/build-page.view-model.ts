@@ -1,7 +1,7 @@
 import { Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { BuildStatus } from '@bindings/BuildStatus';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeView } from '@bindings/ChangeView';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { TaskLink } from '@bindings/TaskLink';
@@ -31,7 +31,7 @@ import { progressLabels } from '../../lib/progress-steps';
 import { shownPart, type DocNotice } from '../../lib/doc-notice';
 import { shownReview, type ReviewShown } from '../../lib/sdlc-review';
 import { REVIEW_MISSING_TEXT, reviewState } from '../../lib/sdlc-done';
-import { givenFor, reviewFindings, specFor, type BuildRun, type Finding, type StageAction } from '../../lib/sdlc';
+import { givenFor, reviewFindings, specFor, stageName, type BuildRun, type Finding, type StageAction } from '../../lib/sdlc';
 import { groupFindings, type FindingGroup } from '../../lib/sdlc-findings';
 import { filterCounts, reviewRows, taskList, type ReviewRowsView, type TaskFilter, type TaskLine, type TaskListView } from '../../lib/build-task-list';
 import type { ReplacedFindings } from '../../ui/findings-list';
@@ -92,7 +92,7 @@ export type StageMessage = { title: string; lines: string[] };
 export type BuildPageInput = {
   ctx: BuildContext;
   master: { repo: string; path: string };
-  change: ChangeInfo;
+  change: ChangeView;
   status: BuildStatus | null;
   done: boolean;
   review: ReviewRecord | null;
@@ -105,7 +105,9 @@ export type TaskArea = {
   situation: Situation | null;
   heading: SituationView;
   action: 'cancel' | 'continue' | null;
-  tasks: { id: string; name: string; state: TaskState }[];
+  tasks: { id: string; name: string; state: TaskState; commits: string[] }[];
+  /** The commits the plugin reports in this repository that name no task. */
+  untasked: string[];
 };
 
 /** A status as the page shows it: an andon tone, drawn as a dot, and its label. */
@@ -663,7 +665,8 @@ export class BuildPageViewModel {
 
   /** The change's stage as the change page last read it; a page that was never loaded counts as ready to build. */
   private readonly changeStage = computed<'build-ready' | 'build-stopped' | 'build-finished'>(() => {
-    const stage = this.loaded()?.change.stage;
+    const loaded = this.loaded();
+    const stage = loaded === null ? null : stageName(loaded.change.offer.stage);
     return stage === 'build-stopped' || stage === 'build-finished' ? stage : 'build-ready';
   });
 
@@ -814,6 +817,8 @@ export class BuildPageViewModel {
     const review = this.reviewSituation();
     return this.groupKeys().map((repo) => {
       const repoStatus = status.repos.find((r) => r.repo === repo);
+      // The plugin's report of this repository: the commits that name each task and the ones that name none.
+      const reported = this.loaded()?.change.state.tasks?.[repo];
       const stop = this.driver.stopped().get(repo);
       const going = this.driver.going().has(repo);
       const entry = this.latest(repo);
@@ -840,7 +845,8 @@ export class BuildPageViewModel {
         situation,
         heading,
         action: repoAction(situation ?? { kind: 'idle' }, repo, review),
-        tasks: status.tasks.filter((t) => t.repo === repo).map((t) => ({ id: t.id, name: t.name, state: this.stateOfTask(t, situation) })),
+        tasks: status.tasks.filter((t) => t.repo === repo).map((t) => ({ id: t.id, name: t.name, state: this.stateOfTask(t, situation), commits: reported?.commits?.[t.id] ?? [] })),
+        untasked: reported?.untasked ?? [],
       };
     });
   });
@@ -930,7 +936,7 @@ export class BuildPageViewModel {
     const openFolds = this.openFolds();
     const pickedTask = pick?.kind === 'task' ? pick.task : null;
     const linesOf = (g: TaskArea): TaskLine[] =>
-      g.tasks.map((t) => ({ id: t.id, name: t.name, status: taskStatus(t.state), finished: t.state.kind === 'done', departure: t.state.kind === 'done' ? t.state.departure : null }));
+      g.tasks.map((t) => ({ id: t.id, name: t.name, status: taskStatus(t.state), finished: t.state.kind === 'done', departure: t.state.kind === 'done' ? t.state.departure : null, commits: t.commits }));
     const counts = filterCounts(areas.flatMap(linesOf));
     const pickedDeparture = areas
       .flatMap((g) => g.tasks)
@@ -957,7 +963,7 @@ export class BuildPageViewModel {
           status: taskStatus(t.state),
           departure: t.state.kind === 'done' ? t.state.departure : null,
           picked: pick?.kind === 'task' && pick.task === t.id,
-          commits: [],
+          commits: t.commits,
         })),
       })),
       filter: { value: filter, counts },
@@ -988,9 +994,11 @@ export class BuildPageViewModel {
   /** The findings area for the page, from what the review knows. */
   private findingsAreaView(): FindingsAreaView {
     const review: FindingsView = { notice: this.reviewNotice(), groups: this.findingGroups(), findings: this.findings(), replaced: this.replaced(), older: this.older(), emptyText: this.emptyText() };
-    const departures = this.taskAreas().flatMap((g) =>
-      g.tasks.flatMap((t) => (t.state.kind === 'done' && t.state.departure !== null ? [{ repo: g.repo, task: t.id, text: t.state.departure }] : [])),
-    );
+    // A commit the plugin finds that names no task is a departure from the plan, listed after its repository's tasks.
+    const departures = this.taskAreas().flatMap((g): Departure[] => [
+      ...g.tasks.flatMap((t) => (t.state.kind === 'done' && t.state.departure !== null ? [{ repo: g.repo, task: t.id, text: t.state.departure }] : [])),
+      ...g.untasked.map((sha) => ({ repo: g.repo, task: null, text: `Commit ${sha.slice(0, 7)} names no task.` })),
+    ]);
     return findingsAreaOf({ reading: this.reading(), entry: this.reviewEntry(), review, departures });
   }
 

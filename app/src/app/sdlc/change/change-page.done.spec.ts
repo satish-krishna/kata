@@ -47,8 +47,7 @@ const ready = async (vm: ChangePageViewModel) => {
   });
 };
 const withStage = (transport: MockTransport, name: string, stage: ChangeInfo['stage']) => {
-  const real = transport.sdlcReadChange.bind(transport);
-  vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) => [await real(m, s, n)].map((c) => (c.change === name ? { ...c, stage } : c))[0]);
+  transport.patchChange(name, { stage });
 };
 
 /** A finished build whose review ran against the current heads and whose repositories have nothing uncommitted. */
@@ -596,7 +595,7 @@ describe('lasting links after a publish or a round', () => {
     const { vm } = setup(transport);
     await ready(vm);
     expect(vm.done()).toBe(false);
-    expect(vm.change()!.stage).toBe('build-finished');
+    expect(vm.change()!.offer.stage).toBe('build-finished');
     expect(vm.pullLinks().map((l) => l.repo)).toEqual(['commerce-core', 'customer-portal']);
     expect(vm.linksNote()).toBe('from the earlier declaration');
     expect(vm.actions()).toContain('declare-done');

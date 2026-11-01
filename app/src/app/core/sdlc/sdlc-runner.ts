@@ -679,15 +679,15 @@ export class SdlcRunner {
       change,
       pending: outcome['needs-name'].pending,
       workType: naming?.workType ?? null,
-      track: await this.trackOf(master, system, change, decide),
+      track: await this.trackOf(workspace.folder, system, change, decide),
     });
     return named === null ? { kind: 'stopped' } : { kind: 'opened', change: named.change, branch: named.branch };
   }
 
   /** The track the change ended on, for the type the confirmation preselects; the start's own track when it cannot be read. */
-  private async trackOf(master: string, system: string, change: string, decide: boolean): Promise<'full' | 'fix'> {
+  private async trackOf(folder: string, system: string, change: string, decide: boolean): Promise<'full' | 'fix'> {
     try {
-      return (await this.transport.sdlcReadChange(master, system, change)).track;
+      return (await this.transport.sdlcChangeState(folder, system, change)).state.track;
     } catch {
       return decide ? 'fix' : 'full';
     }

@@ -35,10 +35,7 @@ const confirmPreview = async () => {
 /** A fix at a stage, with the plugin supporting the light track or not, until the mock has its own fixture. */
 async function mountFix(stage: Stage, lightTrack = true, track: 'fix' | 'full' = 'fix', docs: Partial<ChangeInfo> = {}) {
   const transport = new MockTransport();
-  const real = transport.sdlcReadChange.bind(transport);
-  vi.spyOn(transport, 'sdlcReadChange').mockImplementation(async (m, s, n) =>
-    [await real(m, s, n)].map((c) => (c.change === FIX ? { ...c, stage, track, ...docs } : c))[0],
-  );
+  transport.patchChange(FIX, { stage, track, ...docs });
   const ready = await transport.sdlcPluginReadiness(null);
   vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue(lightTrack ? ready : { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 1.0.0.' });
   const run = vi.spyOn(transport, 'runSpec').mockResolvedValue('1');
@@ -147,38 +144,16 @@ describe('ChangePage: the fix runs', () => {
     expect(text).not.toContain('plan: missing (HEAD');
   });
 
-  it('shows the format program message when the program could not run', async () => {
-    const { container } = await mountFix('fix-unsettled', true, 'fix', {
-      fix_row: null,
-      plan_unreadable: true,
-      plan_unreadable_reason: 'Node.js 20 or later is required to read the documents.',
-    });
-    const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
-    expect(text).toContain('Node.js 20 or later is required to read the documents.');
-  });
-
-  it('a program failure shows its message alone, with no status lines', async () => {
-    const { container } = await mountFix('fix-unsettled', true, 'fix', {
-      fix_row: null,
-      plan_unreadable: true,
-      plan_unreadable_reason: 'Node.js 20 or later is required to read the documents.',
-    });
-    const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
-    expect(text).toContain('Node.js 20 or later is required to read the documents.');
-    expect(text).not.toContain('HEAD:');
-    expect(text).not.toContain('intent:');
-  });
-
   it('a program failure says it could not read the fix, not that the statuses are unsettled', async () => {
     const { container } = await mountFix('fix-unsettled', true, 'fix', {
       fix_row: null,
       plan_unreadable: true,
-      plan_unreadable_reason: 'Node.js 20 or later is required to read the documents.',
     });
     const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
     expect(text).not.toContain('does not leave a fix');
     expect(text).toContain('Kata could not read where this fix stands.');
-    expect(text).toContain('Node.js 20 or later is required to read the documents.');
+    expect(text).not.toContain('HEAD:');
+    expect(text).not.toContain('intent:');
   });
 
   it('a program that ran keeps the headline and the status lines at row 2', async () => {
@@ -214,18 +189,6 @@ describe('ChangePage: the fix runs', () => {
   it('a row 2 fix keeps statuses not settled on the stage pill (F5)', async () => {
     const { container } = await mountFix('fix-unsettled', true, 'fix', { fix_row: 2 });
     expect(container.textContent).toContain('Fix · statuses not settled');
-  });
-
-  it('a fix that needs the plugin shows the reason and offers nothing', async () => {
-    const { container } = await mountFix('fix-needs-plugin', true, 'fix', {
-      plan_unreadable: true,
-      plan_unreadable_reason: NEEDS,
-    });
-    const text = container.querySelector('[data-testid="doc-notice"]')!.textContent!;
-    expect(text).toContain(NEEDS);
-    expect(text).not.toContain('HEAD:');
-    expect(button(container, 'Accept fix')).toBeUndefined();
-    expect(button(container, 'Change the fix')).toBeUndefined();
   });
 
   it('a fix whose acceptance stopped offers Change the fix after Finish acceptance', async () => {

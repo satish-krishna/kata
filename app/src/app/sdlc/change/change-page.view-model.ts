@@ -10,7 +10,10 @@ import type { ReadResult } from '@bindings/ReadResult';
 import type { Readiness } from '@bindings/Readiness';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { ChangeView } from '@bindings/ChangeView';
+import type { OfferedAction } from '@bindings/OfferedAction';
+import type { OutOfDateCause } from '@bindings/OutOfDateCause';
+import type { StateDocument } from '@bindings/StateDocument';
 import type { Decision } from '@bindings/Decision';
 import type { RepoFiles } from '@bindings/RepoFiles';
 import type { RunLink } from '@bindings/RunLink';
@@ -41,7 +44,6 @@ import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
 import { ProgressStore } from '../../core/progress/progress.store';
-import { SdlcStagesStore } from '../../core/sdlc/sdlc-stages.store';
 import { ToastStore } from '../../core/toast/toast.store';
 import { progressLabels } from '../../lib/progress-steps';
 import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
@@ -49,16 +51,14 @@ import {
   DEFAULT_BUILD_SECS,
   actionLabel,
   actionLabelAt,
-  actionsForChange,
   restrictedFor,
   primaryAction,
   reviewFindings,
   parseFrontMatter,
-  revisits,
-  feedbackRequired,
   specFor,
-  stageLabel,
-  fixProgramFailed,
+  isPageAction,
+  outOfDateCause,
+  stageName,
   stagePills,
   stageRuns,
   type BuildRun,
@@ -157,12 +157,11 @@ const ACCEPTED_UNCOMMITTED: Partial<Record<string, Decision>> = {
 };
 
 /** Why the plan cannot be built, in the words the plan tab shows. */
-const OUT_OF_DATE_BANNER: Record<NonNullable<ChangeInfo['out_of_date']>, string> = {
-  'intent-reopened': 'The intent was reopened.',
-  'spec-reopened': 'The spec was reopened.',
+const INTENT_REOPENED = 'The intent was reopened.';
+const SPEC_REOPENED = 'The spec was reopened.';
+const OUT_OF_DATE_BANNER: Record<OutOfDateCause, string> = {
   'spec-pin': 'This spec was not written from the intent accepted now. Rewrite the spec, then the plan.',
   'plan-pin': 'This plan was not written from the spec accepted now. Rewrite the plan before building.',
-  'no-tasks': 'This plan has no tasks. Rewrite the plan before building.',
 };
 /** The time limit of a review started from the done dialog: the build dialog's default. */
 const REVIEW_TIMEOUT_SECS = 2 * 60 * 60;
@@ -188,22 +187,26 @@ type DocStem = 'intent' | 'spec' | 'plan';
 /** What the stage tiles select: a document, or what the build changed. */
 type Tab = DocStem | 'build';
 
+/** A change's stage by name; empty before the change is read. */
+const stageNameOf = (c: ChangeView | null): string => (c === null ? '' : stageName(c.offer.stage));
+
 /**
  * The document the page shows for a change: the current stage's, falling back to the last one that exists.
  * A stem, because that is what the backend's `read_doc` accepts; the page shows it as `<stem>.md`.
  */
 const isDocStem = (s: string): s is DocStem => s === 'intent' || s === 'spec' || s === 'plan';
 
-function stemFor(c: ChangeInfo): DocStem {
-  const step = stageLabel(c.stage).step;
-  if (step === 'plan' || step === 'build' || step === 'done') return c.plan.exists ? 'plan' : c.spec.exists ? 'spec' : 'intent';
-  if (step === 'spec') return c.spec.exists ? 'spec' : 'intent';
+function stemFor(c: ChangeView): DocStem {
+  const step = c.offer.label.step;
+  const { spec, plan } = c.state.documents;
+  if (step === 'plan' || step === 'build' || step === 'done') return plan.exists ? 'plan' : spec.exists ? 'spec' : 'intent';
+  if (step === 'spec') return spec.exists ? 'spec' : 'intent';
   return 'intent';
 }
 
 /** What the change opens on: its Build tab once the plan is accepted, else the current stage's document. */
-function docFor(c: ChangeInfo): Tab {
-  const step = stageLabel(c.stage).step;
+function docFor(c: ChangeView): Tab {
+  const step = c.offer.label.step;
   return step === 'build' || step === 'done' ? 'build' : stemFor(c);
 }
 
@@ -225,7 +228,6 @@ export class ChangePageViewModel {
   private readonly modes = inject(ModeStore);
   private readonly toasts = inject(ToastStore);
   private readonly progress = inject(ProgressStore);
-  private readonly stages = inject(SdlcStagesStore);
   /** Reading the change, reading a picked document, preparing a build, and the lock's long step: one progress entry for each place on the page. */
   readonly readingChange = this.progress.view('page');
   readonly readingDoc = this.progress.view('doc');
@@ -245,7 +247,7 @@ export class ChangePageViewModel {
   private readonly catalog = signal<CatalogEntry[]>([]);
   private readonly links = signal<RunLink[]>([]);
   private readonly records = signal<RunRecord[]>([]);
-  readonly change = signal<ChangeInfo | null>(null);
+  readonly change = signal<ChangeView | null>(null);
   /** The pull request links the backend gave, saved or opened or from GitHub; the page never decides what they mean. */
   readonly pullRequests = signal<PrLink[]>([]);
   /** GitHub could not be asked about the pull requests, so the finished label stays. */
@@ -264,29 +266,22 @@ export class ChangePageViewModel {
   /** The review document as the format program reads it; null when the change has none or it could not be read. */
   private readonly reviewRecord = signal<ReviewRecord | null>(null);
   /** The notice above the open spec or plan; null when it needs none. */
-  readonly docNotice = computed<DocNotice | null>(() => this.unsettledNotice() ?? this.shown()?.notice ?? null);
+  readonly docNotice = computed<DocNotice | null>(() => this.unsettledNotice() ?? this.shown()?.notice ?? this.refusalNotice());
   /** A fix whose documents carry statuses the workflow never leaves on a fix: the page lists them, on every tab. */
   private readonly unsettledNotice = computed<DocNotice | null>(() => {
     const c = this.change();
-    if (c === null) return null;
-    // An older plugin or a program failure: the reason alone, since no status was read.
-    if (c.stage === 'fix-needs-plugin') {
-      return { tone: 'warning', text: c.plan_unreadable_reason ?? 'Needs ai-sdlc 1.1.0 or later.', lines: [] };
-    }
-    if (c.stage !== 'fix-unsettled') return null;
+    if (c === null || stageName(c.offer.stage) !== 'fix-unsettled') return null;
     const text = 'The workflow does not leave a fix in these statuses, so nothing can be run on it.';
-    // When the format program could not run, no status was read, so the headline about statuses would be false: say
-    // what happened, with the program's own message, and show no status line.
-    if (fixProgramFailed(c)) {
-      return { tone: 'warning', text: 'Kata could not read where this fix stands.', lines: c.plan_unreadable_reason === null ? [] : [c.plan_unreadable_reason] };
-    }
+    // When the plugin could not say where the fix stands, no status was read, so the headline about statuses would be false.
+    if (c.state.fix === null) return { tone: 'warning', text: 'Kata could not read where this fix stands.', lines: [] };
     // Each document shows the status HEAD holds, whether or not the working file exists: a deleted document is
     // "missing (HEAD: draft)", and one not in HEAD says so.
-    const status = (d: { status: string | null; head_status: string | null }) => {
-      if (d.status === null) return d.head_status === null ? 'missing' : `missing (HEAD: ${d.head_status})`;
-      return `${d.status} (HEAD: ${d.head_status ?? 'not committed'})`;
+    const status = (d: StateDocument) => {
+      if (d.workingStatus === null) return d.headStatus === null ? 'missing' : `missing (HEAD: ${d.headStatus})`;
+      return `${d.workingStatus} (HEAD: ${d.headStatus ?? 'not committed'})`;
     };
-    const lines = [`intent: ${status(c.intent)} · spec: ${status(c.spec)} · plan: ${status(c.plan)}`];
+    const { intent, spec, plan } = c.state.documents;
+    const lines = [`intent: ${status(intent)} · spec: ${status(spec)} · plan: ${status(plan)}`];
     return { tone: 'warning', text, lines };
   });
   /** What the open spec or plan shows, decided by the one owner of that table; null for the other tabs and before the first load. */
@@ -309,7 +304,7 @@ export class ChangePageViewModel {
         ...(review === null ? [] : [{ layout: review.layout, problems: review.problems }]),
       ],
       readiness,
-    ).notice;
+    ).notice ?? this.refusalNotice();
   });
   /** The shown spec or plan as the format program read it, unless a notice says the document is shown as plain text. */
   private readonly parsed = computed<ReadResult | null>(() => {
@@ -348,7 +343,8 @@ export class ChangePageViewModel {
   });
   readonly docs = computed<DocsPresent>(() => {
     const c = this.change();
-    return { intent: c?.intent.exists ?? false, spec: c?.spec.exists ?? false, plan: c?.plan.exists ?? false };
+    const d = c?.state.documents;
+    return { intent: d?.intent.exists ?? false, spec: d?.spec.exists ?? false, plan: d?.plan.exists ?? false };
   });
   /** A build or a skill run holds the page: its view stands in for the change's tabs, so nothing here may be clicked. */
   private readonly held = computed(() => this.session() !== null);
@@ -358,7 +354,7 @@ export class ChangePageViewModel {
    */
   readonly pills = computed<StagePill[]>(() => {
     const c = this.change();
-    return c === null || this.held() ? [] : stagePills(c.stage, this.done(), this.docs(), fixProgramFailed(c));
+    return c === null || this.held() ? [] : stagePills(c.offer.label, this.done(), this.docs());
   });
   /** The pull requests that have an address, for the toolbar's links; none while a build or a skill run holds the page. */
   readonly pullLinks = computed(() =>
@@ -401,8 +397,24 @@ export class ChangePageViewModel {
   readonly actions = computed(() => {
     const c = this.change();
     if (c === null || this.done()) return [];
-    if (stageLabel(c.stage).step !== 'build') return actionsForChange(c);
+    if (c.offer.label.step !== 'build') return this.offeredActions();
     return [...this.build.actions(), ...this.barExtras().map((e) => e.action)];
+  });
+  /** The actions the plugin's answer offers that the page has a control for, in the answer's order. */
+  private readonly offeredActions = computed<StageAction[]>(() => (this.change()?.offer.actions ?? []).map((a) => a.action).filter(isPageAction));
+  /** What the answer says about an action: may it be used now, and if not why. Null for an action the answer does not list. */
+  private offered(action: StageAction): OfferedAction | null {
+    return this.change()?.offer.actions.find((a) => a.action === action) ?? null;
+  }
+  /** The plugin's message for an action it refuses; null when the action is not refused. */
+  private refusedWith(action: StageAction): string | null {
+    const o = this.offered(action);
+    return o !== null && !o.enabled ? o.reason : null;
+  }
+  /** The messages of the refused actions on show, as the plugin worded them: the first as the text, the rest as lines. */
+  private readonly refusalNotice = computed<DocNotice | null>(() => {
+    const reasons = [...new Set(this.actions().flatMap((a) => this.refusedWith(a) ?? []))];
+    return reasons.length === 0 ? null : { tone: 'warning', text: reasons[0], lines: reasons.slice(1) };
   });
   /**
    * The actions the build page's bar adds after its own: the build page has no way back to the documents, so the bar adds it
@@ -411,10 +423,10 @@ export class ChangePageViewModel {
    */
   readonly barExtras = computed(() => {
     const c = this.change();
-    if (c === null || this.done() || stageLabel(c.stage).step !== 'build') return [];
+    if (c === null || this.done() || c.offer.label.step !== 'build') return [];
     const own = this.build.actions();
-    return actionsForChange(c)
-      .filter((a) => (c.track === 'fix' ? a === 'reopen-fix' : (a === 'reopen-intent' || a === 'reopen-spec') && !own.includes(a)))
+    return this.offeredActions()
+      .filter((a) => (c.state.track === 'fix' ? a === 'reopen-fix' : (a === 'reopen-intent' || a === 'reopen-spec') && !own.includes(a)))
       .map((action) => ({ action, disabled: this.disabledFor(action), title: this.titleFor(action) }));
   });
   /** What blocks the build, shown above the plan; null when nothing does or another document is shown. */
@@ -423,29 +435,33 @@ export class ChangePageViewModel {
     if (c === null) return null;
     // A reopened intent or spec keeps its own stage once a plan exists (R1.5); name it on whichever tab is shown.
     // A superseded plan must also be rewritten once the document is accepted again (R1.3), so say so now.
-    if (c.plan.exists) {
-      const rewrite = c.plan.status === 'superseded' ? ' The plan must be rewritten first.' : '';
-      if (c.stage === 'intent-awaiting' || c.stage === 'intent-in-progress') return OUT_OF_DATE_BANNER['intent-reopened'] + rewrite;
-      if (c.stage === 'spec-awaiting') return OUT_OF_DATE_BANNER['spec-reopened'] + rewrite;
+    const stage = stageName(c.offer.stage);
+    const plan = c.state.documents.plan;
+    if (plan.exists) {
+      const rewrite = plan.workingStatus === 'superseded' ? ' The plan must be rewritten first.' : '';
+      if (stage === 'intent-awaiting' || stage === 'intent-in-progress') return INTENT_REOPENED + rewrite;
+      if (stage === 'spec-awaiting') return SPEC_REOPENED + rewrite;
     }
     if (this.shownDoc() !== 'plan') return null;
-    if (c.stage === 'plan-superseded') return SUPERSEDED_BANNER;
-    return c.stage === 'plan-out-of-date' && c.out_of_date !== null ? OUT_OF_DATE_BANNER[c.out_of_date] : null;
+    if (stage === 'plan-superseded') return SUPERSEDED_BANNER;
+    const cause = outOfDateCause(c.offer.stage);
+    return cause === null ? null : OUT_OF_DATE_BANNER[cause];
   });
   readonly primary = computed(() => primaryAction(this.actions()));
   /** An action's label at the change's stage: accepting a fix whose acceptance stopped reads differently. */
   labelOf(action: StageAction): string {
     const c = this.change();
-    return c === null ? actionLabel(action) : actionLabelAt(action, c.stage);
+    return c === null ? actionLabel(action) : actionLabelAt(action, stageName(c.offer.stage));
   }
   /** Whether an action's button is off: the lock holds it, or it is a fix run the plugin on this machine cannot do. */
   disabledFor(action: StageAction): boolean {
-    return this.locked() || this.needsLightTrack(action) || this.waitsForName(action);
+    return this.locked() || this.needsLightTrack(action) || this.waitsForName(action) || this.refusedWith(action) !== null;
   }
   /** Why a fix run is unavailable; null for any other action and while it is available. */
   titleFor(action: StageAction): string | null {
     if (this.waitsForName(action)) return NEEDS_NAME;
-    return this.needsLightTrack(action) ? NEEDS_LIGHT_TRACK : null;
+    if (this.needsLightTrack(action)) return NEEDS_LIGHT_TRACK;
+    return this.refusedWith(action);
   }
   private waitsForName(action: StageAction): boolean {
     return this.needsName() && NEEDS_BRANCH.includes(action);
@@ -470,7 +486,9 @@ export class ChangePageViewModel {
   readonly usedBy = computed<UsedBy | null>(() => {
     const c = this.change();
     const stem = this.shownDoc();
-    return c === null || stem === 'build' ? null : usedBy(stem, c);
+    if (c === null || stem === 'build') return null;
+    const { spec, plan } = c.state.documents;
+    return usedBy(stem, { spec: { exists: spec.exists, status: spec.workingStatus }, plan: { exists: plan.exists, status: plan.workingStatus } });
   });
   /** The latest runs of the open document's stage for the rail, and how many the stage has had. */
   readonly railRuns = computed<{ rows: RunRow[]; total: number }>(() => {
@@ -502,8 +520,7 @@ export class ChangePageViewModel {
   /** The waiting action cannot run with an empty box. */
   readonly feedbackRequired = computed(() => {
     const a = this.pendingRevisit();
-    const c = this.change();
-    return a !== null && c !== null && feedbackRequired(a, c.stage, c.out_of_date);
+    return a !== null && (this.offered(a)?.feedbackRequired ?? false);
   });
 
   // --- the build: its dialog, the leftovers confirm, the refusal, and what is handed to the build view
@@ -958,7 +975,7 @@ export class ChangePageViewModel {
     const pending = this.masterBranch();
     const change = this.change();
     if (w === null || master === null || pending === null || change === null || this.refuseWhileLocked()) return;
-    await this.runner.requestName({ folder: w.folder, masterRepo: master, system: this.system(), change: this.changeName(), pending, workType: null, track: change.track });
+    await this.runner.requestName({ folder: w.folder, masterRepo: master, system: this.system(), change: this.changeName(), pending, workType: null, track: change.state.track });
   }
 
   nameType(type: WorkType): void {
@@ -994,7 +1011,7 @@ export class ChangePageViewModel {
         await this.commitDecision(action, false);
         return;
       case 'commit-acceptance':
-        await this.commitDecision(ACCEPTED_UNCOMMITTED[this.change()?.stage ?? ''] ?? 'accept-spec', false);
+        await this.commitDecision(ACCEPTED_UNCOMMITTED[stageNameOf(this.change())] ?? 'accept-spec', false);
         return;
       case 'start-build':
         this.openBuildPreview('start');
@@ -1019,7 +1036,7 @@ export class ChangePageViewModel {
         return;
       default:
         // Regenerating an existing document first asks what should change; a first draft just runs.
-        if (revisits(action)) this.pendingRevisit.set(action);
+        if (this.offered(action)?.revisits === true) this.pendingRevisit.set(action);
         else await this.runStage(action);
     }
   }
@@ -1325,7 +1342,7 @@ export class ChangePageViewModel {
   private async declareDone(): Promise<void> {
     const w = this.current();
     const master = this.scanMaster();
-    if (this.change()?.stage !== 'build-finished' || !w || master === null) return;
+    if (stageNameOf(this.change()) !== 'build-finished' || !w || master === null) return;
     const folder = w.folder;
     const system = this.system();
     const change = this.changeName();
@@ -1703,9 +1720,9 @@ export class ChangePageViewModel {
   }
 
   /** Read this one change; a change the workspace does not have is none, any other failure is raised. */
-  private async readOwnChange(master: string, system: string, name: string): Promise<{ info: ChangeInfo | null }> {
+  private async readOwnChange(folder: string, system: string, name: string): Promise<{ info: ChangeView | null }> {
     try {
-      return { info: await this.transport.sdlcReadChange(master, system, name) };
+      return { info: await this.transport.sdlcChangeState(folder, system, name) };
     } catch (e) {
       if (/there is no change|no change folder/.test(message(e))) return { info: null };
       throw e;
@@ -1740,7 +1757,7 @@ export class ChangePageViewModel {
     const failRead = () => {
       if (seq === this.loadSeq) this.progress.fail('page');
     };
-    const finish = (state: ChangeState, change: ChangeInfo | null, doc: string | null, read: ReadResult | ReadError | null = null) => {
+    const finish = (state: ChangeState, change: ChangeView | null, doc: string | null, read: ReadResult | ReadError | null = null) => {
       if (seq !== this.loadSeq) return;
       this.progress.end('page');
       this.progress.end('doc');
@@ -1778,7 +1795,7 @@ export class ChangePageViewModel {
       const master = masterPath(w.folder, repo);
       const [branches, own, links, records, catalog, naming, recorded] = await Promise.all([
         this.transport.sdlcBranches(master),
-        this.readOwnChange(master, system, name),
+        this.readOwnChange(w.folder, system, name),
         this.transport.sdlcRunLinks(),
         this.transport.listRuns(),
         this.transport.catalog(w.folder),
@@ -1786,16 +1803,14 @@ export class ChangePageViewModel {
         this.readRecordedBranch(w.folder, repo, system, name),
       ]);
       const found = own.info;
-      // A home pass still running shows this stage at once, and this page never waits for that pass.
-      if (found) this.stages.put(w.id, found);
       const doc = found ? await this.transport.sdlcReadDoc(master, system, name, stemFor(found)) : null;
       const read = found ? await this.readParsed(master, system, name, stemFor(found)) : null;
-      const status = found?.plan.exists ? await this.readStatus(master, system, name) : null;
+      const status = found?.state.documents.plan.exists ? await this.readStatus(master, system, name) : null;
       const readiness = await this.readReadiness(w.folder);
-      const review = found?.plan.exists ? await this.readReviewRecord(master, system, name) : null;
+      const review = found?.state.documents.plan.exists ? await this.readReviewRecord(master, system, name) : null;
       const checksDir = this.checksDir() ?? (await this.readChecksDir());
-      const buildFinished = found?.stage === 'build-finished';
-      const doneView: DoneView = found?.plan.exists
+      const buildFinished = stageNameOf(found ?? null) === 'build-finished';
+      const doneView: DoneView = found?.state.documents.plan.exists
         ? await this.readDoneView(w.folder, repo, w.id, system, name, buildFinished)
         : { done: false, links: [], linksFrom: 'none', offerDeclare: false, prCheckFailed: false };
       if (seq !== this.loadSeq) return;

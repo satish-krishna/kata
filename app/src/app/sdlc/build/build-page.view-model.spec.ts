@@ -2,7 +2,7 @@ import { Component, effect } from '@angular/core';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { BuildStatus } from '@bindings/BuildStatus';
-import type { ChangeInfo } from '@bindings/ChangeInfo';
+import type { OfferStage } from '@bindings/OfferStage';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { Participant } from '@bindings/Participant';
 import type { RunLink } from '@bindings/RunLink';
@@ -22,7 +22,7 @@ import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib
 import type { BuildHandoff } from '../change/change-page.view-model';
 import { BuildLayoutViewModel } from './build-layout.view-model';
 import { BuildPageViewModel, findingsAreaOf, type BuildContext, type Departure, type FindingsView, type ReviewEntry } from './build-page.view-model';
-import { readAllChanges } from '../../../testing/read-all';
+import { atStage, readAllChanges } from '../../../testing/read-all';
 
 const FOLDER = MOCK_WORKSPACE_FOLDER;
 const CTX: BuildContext = { workspaceId: 'acme-commerce', folder: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE, systemRepos: [] };
@@ -713,9 +713,9 @@ describe('the build page starts, stops and continues the same runs as the build 
     it('R4.7: a review that predates the latest commits keeps its rows and sets the stale notice', async () => {
       const { vm, transport } = setup();
       const status = await transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
-      const [found] = (await readAllChanges(transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
+      const [found] = (await readAllChanges(transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
       const document = { layout: 2, reviews: [section(1, '2026-10-19', [{ id: 'F1', severity: 'high', text: 'one' }])], problems: [], master_moved: ['src/a.ts'] };
-      await vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: { ...found, stage: 'build-finished' }, status, done: false, review: document });
+      await vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: atStage(found, 'build-finished'), status, done: false, review: document });
       await advance(300);
       const review = vm.view().review;
       expect(review.rows?.total).toBe(1);
@@ -1497,15 +1497,15 @@ describe('the build page shows tasks and sessions from the build log, the run li
   const T1_ROW = { task: 'T1', repo: 'commerce-core', commits: ['aaaaaaa'], departure: null };
 
   /** A page opened on a change with nothing running; T1 is in the build log when `built`. */
-  async function opened(over: { links?: RunLink[]; taskLinks?: TaskLink[]; records?: RunRecord[]; built?: boolean; stage?: ChangeInfo['stage'] } = {}) {
+  async function opened(over: { links?: RunLink[]; taskLinks?: TaskLink[]; records?: RunRecord[]; built?: boolean; stage?: OfferStage } = {}) {
     const s = setup();
     vi.spyOn(s.transport, 'sdlcRunLinks').mockResolvedValue(over.links ?? []);
     vi.spyOn(s.transport, 'sdlcTaskLinks').mockResolvedValue(over.taskLinks ?? []);
     vi.spyOn(s.transport, 'listRuns').mockResolvedValue(over.records ?? []);
     const status = await s.transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
     if (over.built ?? true) status.tasks = status.tasks.map((t) => (t.id === 'T1' ? { ...t, row: T1_ROW } : t));
-    const [found] = (await readAllChanges(s.transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
-    const change = over.stage === undefined ? found : { ...found, stage: over.stage };
+    const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
+    const change = over.stage === undefined ? found : atStage(found, over.stage);
     const load = () => s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change, status, done: false, review: null });
     return { ...s, load, status };
   }
@@ -1926,11 +1926,11 @@ describe('the layout follows the real build page through a finish, whatever orde
     vi.spyOn(transport, 'sdlcTaskLinks').mockResolvedValue([]);
     vi.spyOn(transport, 'listRuns').mockResolvedValue([{ id: 'review-1', kata: 'review', started_at: 0, isolation: 'none', steered: false, exit: 0, turns: 1, cost_usd: 0 }]);
     const status = await transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
-    const [found] = (await readAllChanges(transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
+    const [found] = (await readAllChanges(transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
     const loading = vm.load({
       ctx: CTX,
       master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` },
-      change: { ...found, stage: 'build-finished' },
+      change: atStage(found, 'build-finished'),
       status,
       done: false,
       review: null,
@@ -1983,7 +1983,7 @@ describe('the tasks area folds, filters and shows a departure with its task', ()
     vi.spyOn(s.transport, 'sdlcTaskLinks').mockResolvedValue([]);
     vi.spyOn(s.transport, 'listRuns').mockResolvedValue([]);
     vi.spyOn(s.transport, 'sdlcBuildStatus').mockResolvedValue(status);
-    const [found] = (await readAllChanges(s.transport, `${FOLDER}/${MOCK_MASTER}`)).filter((c) => c.change === MOCK_BUILD_CHANGE);
+    const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
     await s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null });
     await advance(300);
     return s;

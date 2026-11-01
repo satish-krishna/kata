@@ -48,7 +48,7 @@ const group = (repo: string, status: StatusText, action: TaskGroupView['action']
   stopLine: null,
   progress: { done: tasks.filter((t) => t.status === DONE).length, total: tasks.length },
   list: taskList(
-    tasks.map((t) => ({ id: t.id, name: t.name, status: t.status, finished: t.status === DONE, departure: t.departure })),
+    tasks.map((t) => ({ id: t.id, name: t.name, status: t.status, finished: t.status === DONE, departure: t.departure, commits: t.commits })),
     'all',
     true,
     null,
@@ -1624,9 +1624,9 @@ describe('the message box on the build page', () => {
 describe('the build page folds, filters and explains a departure', () => {
   const DEPARTURE = 'The size limit moved to the shared request limit';
   const lines = (departed: boolean): TaskLine[] => [
-    { id: 'T1', name: 'Task T1', status: DONE, finished: true, departure: null },
-    { id: 'T2', name: 'Task T2', status: DONE, finished: true, departure: departed ? DEPARTURE : null },
-    { id: 'T3', name: 'Task T3', status: RUNNING, finished: false, departure: null },
+    { id: 'T1', name: 'Task T1', status: DONE, finished: true, departure: null, commits: [] },
+    { id: 'T2', name: 'Task T2', status: DONE, finished: true, departure: departed ? DEPARTURE : null, commits: [] },
+    { id: 'T3', name: 'Task T3', status: RUNNING, finished: false, departure: null, commits: [] },
   ];
   type State = { filter: TaskFilter; open: Set<string>; picked: string | null };
   const viewFor = (departed: boolean, st: State): BuildPageView => {

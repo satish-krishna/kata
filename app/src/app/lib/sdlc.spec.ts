@@ -1,12 +1,10 @@
 import type { CatalogEntry } from "@bindings/CatalogEntry";
-import type { ChangeInfo } from "@bindings/ChangeInfo";
-import type { OutOfDate } from "@bindings/OutOfDate";
 import type { Settings } from "@bindings/Settings";
 import type { Stage } from "@bindings/Stage";
 import type { WorkspaceScan } from "@bindings/WorkspaceScan";
 import type { KataEvent, RunDetail } from "./events";
 import { validateLocal } from "./mock";
-import { DONE_LABEL, changeLabel, fixProgramFailed, actionLabel, actionLabelAt,buildPreviewFor, givenFor, safetyRules, actionsFor, actionsForChange, feedbackRequired, hasAiSdlcPlugin, isBuildRun, primaryAction, restrictedFor, reviewFindings, revisits, specFor, stageLabel, stopMessage, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type BuildRun, type Restricted, type RunContext, type StageAction } from "./sdlc";
+import { actionLabel, actionLabelAt, buildPreviewFor, givenFor, safetyRules, hasAiSdlcPlugin, isBuildRun, primaryAction, restrictedFor, reviewFindings, specFor, stopMessage, transcriptRunId, type BuildPreviewKind, type BuildPreviewPlan, type BuildRun, type Restricted, type RunContext, type StageAction } from "./sdlc";
 
 const plugin = (name: string): CatalogEntry => ({
   kind: "plugin", name, description: "", source: "user", path: `/p/${name}`, provides: [], mcp_servers: [],
@@ -41,161 +39,7 @@ const ACTIONS: Record<Stage, string[]> = {
   "fix-needs-plugin": [],
 };
 
-const changeAt = (stage: Stage, outOfDate: OutOfDate | null = null): ChangeInfo => ({
-  system: "commerce", change: "2026-10-12-photos", stage, scope: "commerce", out_of_date: outOfDate, plan_unreadable: false, plan_unreadable_reason: null, track: 'full', fix_row: null,
-  intent: { exists: true, committed: true, status: "accepted", head_status: "accepted" },
-  spec: { exists: true, committed: true, status: "accepted", head_status: "accepted" },
-  plan: { exists: true, committed: true, status: "accepted", head_status: "accepted" },
-  build: { tasks: 2, finished: 0, repos: 1 },
-});
-
-describe("actionsFor", () => {
-  for (const [stage, actions] of Object.entries(ACTIONS)) {
-    it(stage, () => expect(actionsFor(stage as Stage)).toEqual(actions));
-  }
-});
-
-describe("plan and build actions", () => {
-  it("plan-awaiting offers accept, rerun, reopen and no build (R1.1)", () => {
-    const got = actionsFor("plan-awaiting");
-    expect(got).toEqual(["accept-plan", "rerun-plan", "reopen-intent"]);
-    expect(got).not.toContain("start-build");
-    expect(got).not.toContain("continue-build");
-  });
-
-  it("declare-done only in build-finished (R11.4)", () => {
-    for (const stage of Object.keys(ACTIONS) as Stage[]) {
-      expect(actionsFor(stage).includes("declare-done")).toBe(stage === "build-finished");
-    }
-    expect(actionsForChange(changeAt("build-stopped"))).not.toContain("declare-done");
-  });
-
-  it("out-of-date actions follow the cause", () => {
-    expect(actionsForChange(changeAt("plan-out-of-date", "spec-pin"))).toEqual(["reopen-spec"]);
-    expect(actionsForChange(changeAt("plan-out-of-date", "intent-reopened"))).toEqual([]);
-    expect(actionsForChange(changeAt("plan-out-of-date", "spec-reopened"))).toEqual([]);
-    expect(actionsForChange(changeAt("plan-out-of-date", "plan-pin"))).toEqual(["rerun-plan"]);
-    expect(actionsForChange(changeAt("plan-out-of-date", "no-tasks"))).toEqual(["rerun-plan"]);
-    expect(actionsForChange(changeAt("build-ready"))).toEqual(["start-build", "reopen-spec", "reopen-intent"]);
-  });
-});
-
-const fixAt = (stage: Stage, outOfDate: OutOfDate | null = null, finished = 0): ChangeInfo => ({
-  ...changeAt(stage, outOfDate),
-  track: "fix",
-  build: { tasks: 2, finished, repos: 1 },
-});
-
-const FIX_RESTRICTED = ["continue-intent", "accept-intent", "reject-intent", "commit-acceptance", "start-spec", "continue-spec", "accept-spec", "reopen-spec", "reopen-intent", "start-plan", "rerun-plan", "accept-plan"];
-
-describe("actions of a fix (R4.1, R7.3)", () => {
-  const rows: [Stage, OutOfDate | null, string[]][] = [
-    ["fix-in-progress", null, ["finish-fix-draft"]],
-    ["fix-unsettled", null, []],
-    ["fix-awaiting", null, ["accept-fix", "change-fix"]],
-    ["fix-accepting", null, ["accept-fix", "change-fix"]],
-    ["fix-needs-plugin", null, []],
-    ["rejected", null, []],
-    ["build-ready", null, ["start-build", "reopen-fix"]],
-    ["build-ready", "plan-pin", ["start-build", "reopen-fix"]],
-    ["build-stopped", null, ["continue-build", "another-round", "reopen-fix"]],
-    ["build-finished", null, ["declare-done", "another-round", "run-review", "reopen-fix"]],
-    ["plan-out-of-date", "spec-pin", ["reopen-fix"]],
-    ["plan-out-of-date", "intent-reopened", ["reopen-fix"]],
-    ["plan-out-of-date", "spec-reopened", ["reopen-fix"]],
-    ["plan-out-of-date", "plan-pin", ["reopen-fix"]],
-    ["plan-out-of-date", "no-tasks", ["reopen-fix"]],
-    ["plan-unreadable", null, []],
-    ["plan-superseded", null, []],
-    ["intent-in-progress", null, []],
-    ["intent-awaiting", null, []],
-    ["intent-accepted-uncommitted", null, []],
-    ["spec-ready", null, []],
-    ["spec-awaiting", null, []],
-    ["spec-accepted-uncommitted", null, []],
-    ["plan-ready", null, []],
-    ["plan-awaiting", null, []],
-    ["plan-accepted-uncommitted", null, []],
-  ];
-  for (const [stage, outOfDate, expected] of rows) {
-    it(`${stage} ${outOfDate ?? "-"}`, () => {
-      const got = actionsForChange(drafted(fixAt(stage, outOfDate)));
-      expect(got).toEqual(expected);
-      for (const banned of FIX_RESTRICTED) expect(got).not.toContain(banned);
-    });
-  }
-
-  const drafted = (c: ChangeInfo): ChangeInfo => ({ ...c, intent: { ...c.intent, status: "draft", head_status: "draft" } });
-
-  const awaiting = (row: number | null, finished = 0, intentStatus = "draft"): ChangeInfo => ({
-    ...fixAt("fix-awaiting", null, finished),
-    fix_row: row,
-    intent: { exists: true, committed: true, status: intentStatus, head_status: intentStatus },
-  });
-
-  it("a fix awaiting acceptance offers the full pipeline at row 6 alone", () => {
-    expect(actionsForChange(awaiting(6))).toEqual(["accept-fix", "change-fix", "full-pipeline-instead"]);
-    expect(actionsForChange(awaiting(7))).toEqual(["accept-fix", "change-fix"]);
-    expect(actionsForChange(awaiting(null))).toEqual(["accept-fix", "change-fix"]);
-  });
-
-  it("the row decides, whatever the build count or the intent status say", () => {
-    expect(actionsForChange(awaiting(6, 1))).toEqual(["accept-fix", "change-fix", "full-pipeline-instead"]);
-    expect(actionsForChange(awaiting(6, 0, "accepted"))).toEqual(["accept-fix", "change-fix", "full-pipeline-instead"]);
-    expect(actionsForChange(awaiting(7, 0, "draft"))).toEqual(["accept-fix", "change-fix"]);
-  });
-
-  it("a fix that needs the plugin is labelled so, as a warning, with no actions", () => {
-    expect(stageLabel("fix-needs-plugin")).toEqual({ step: "intent", text: "Fix · needs ai-sdlc 1.1.0", tone: "warning" });
-    expect(actionsForChange(fixAt("fix-needs-plugin"))).toEqual([]);
-  });
-
-  it("feedback is required for changing a fix, and for reopening one except when its plan is out of date on a broken pin", () => {
-    for (const stage of Object.keys(ACTIONS) as Stage[]) {
-      for (const action of actionsForChange(fixAt(stage, "spec-pin"))) {
-        const expected = action === "change-fix" || (action === "reopen-fix" && stage !== "plan-out-of-date");
-        expect(feedbackRequired(action, stage, "spec-pin"), `${action} at ${stage}`).toBe(expected);
-      }
-    }
-    expect(feedbackRequired("change-fix", "fix-awaiting", null)).toBe(true);
-    expect(feedbackRequired("change-fix", "fix-accepting", null)).toBe(true);
-    expect(feedbackRequired("accept-fix", "fix-accepting", null)).toBe(false);
-    expect(feedbackRequired("reopen-fix", "build-ready", null)).toBe(true);
-    expect(feedbackRequired("finish-fix-draft", "fix-in-progress", null)).toBe(false);
-    expect(feedbackRequired("continue-spec", "spec-awaiting", null)).toBe(false);
-  });
-
-  it.each<[OutOfDate, boolean]>([
-    ["intent-reopened", true],
-    ["spec-reopened", true],
-    ["spec-pin", false],
-    ["plan-pin", false],
-    ["no-tasks", true],
-  ])("reopening a fix at plan-out-of-date because of %s requires feedback: %s", (cause, expected) => {
-    expect(feedbackRequired("reopen-fix", "plan-out-of-date", cause)).toBe(expected);
-  });
-
-  it("a closed fix is labeled as closed (R7.3)", () => {
-    expect(stageLabel("rejected").text).toBe("Closed · rejected");
-  });
-
-  it("the fix stages are labeled and sort with early work", () => {
-    expect(stageLabel("fix-in-progress")).toEqual({ step: "intent", text: "Fix · changes not recorded", tone: "warning" });
-    expect(stageLabel("fix-unsettled")).toEqual({ step: "intent", text: "Fix · statuses not settled", tone: "warning" });
-    expect(stageLabel("fix-awaiting")).toEqual({ step: "intent", text: "Fix · awaiting acceptance", tone: "warning" });
-    expect(stageLabel("fix-accepting")).toEqual({ step: "plan", text: "Fix · acceptance stopped", tone: "warning" });
-  });
-
-  it("a program failure at fix-unsettled reads could not be read; row 2 keeps not settled (F5)", () => {
-    const at = (fix_row: number | null) => ({ track: "fix" as const, stage: "fix-unsettled" as const, fix_row });
-    expect(fixProgramFailed(at(null))).toBe(true);
-    expect(fixProgramFailed(at(2))).toBe(false);
-    expect(fixProgramFailed({ track: "full", stage: "fix-unsettled", fix_row: null })).toBe(false);
-    expect(fixProgramFailed({ track: "fix", stage: "fix-needs-plugin", fix_row: null })).toBe(false);
-    expect(changeLabel(at(null))).toEqual({ step: "intent", text: "Fix · could not be read", tone: "warning" });
-    expect(changeLabel(at(2)).text).toBe("Fix · statuses not settled");
-  });
-
+describe("action labels of a fix", () => {
   it("labels the fix actions", () => {
     expect(actionLabel("accept-fix")).toBe("Accept fix");
     expect(actionLabelAt("accept-fix", "fix-accepting")).toBe("Finish acceptance");
@@ -207,66 +51,10 @@ describe("actions of a fix (R4.1, R7.3)", () => {
     expect(actionLabel("full-pipeline-instead")).toBe("Take the full pipeline instead");
   });
 
-  it("finishing the draft, changing and reopening open the feedback box", () => {
-    for (const a of ["finish-fix-draft", "change-fix", "reopen-fix"] as const) expect(revisits(a)).toBe(true);
-    for (const a of ["accept-fix", "full-pipeline-instead"] as const) expect(revisits(a)).toBe(false);
-  });
-
   it("the primary action is the first of the list that fits", () => {
     expect(primaryAction(["finish-fix-draft"])).toBe("finish-fix-draft");
     expect(primaryAction(["accept-fix", "change-fix", "full-pipeline-instead"])).toBe("accept-fix");
     expect(primaryAction(["reopen-fix"])).toBeNull();
-  });
-});
-
-describe("the build-step stages offer both reopen actions (R1.1)", () => {
-  for (const stage of ["build-ready", "build-stopped", "build-finished"] as Stage[]) {
-    it(stage, () => {
-      const got = actionsForChange({ ...changeAt(stage), track: "full" });
-      expect(got).toContain("reopen-intent");
-      expect(got).toContain("reopen-spec");
-    });
-  }
-});
-
-describe("actions of a full-pipeline change are unchanged (R13.1)", () => {
-  const rows: [Stage, OutOfDate | null, string[]][] = [
-    ["intent-awaiting", null, ["continue-intent", "accept-intent", "reject-intent"]],
-    ["spec-awaiting", null, ["continue-spec", "accept-spec", "reopen-intent"]],
-    ["plan-awaiting", null, ["accept-plan", "rerun-plan", "reopen-intent"]],
-    ["build-ready", null, ["start-build", "reopen-spec", "reopen-intent"]],
-    ["build-stopped", null, ["continue-build", "another-round", "reopen-spec", "reopen-intent"]],
-    ["build-finished", null, ["declare-done", "another-round", "run-review", "reopen-spec", "reopen-intent"]],
-    ["rejected", null, []],
-    ["plan-superseded", null, ["rerun-plan"]],
-    ["plan-unreadable", null, []],
-    ["plan-out-of-date", "spec-pin", ["reopen-spec"]],
-    ["plan-out-of-date", "plan-pin", ["rerun-plan"]],
-  ];
-  for (const [stage, outOfDate, expected] of rows) {
-    it(`${stage} ${outOfDate ?? "-"}`, () => expect(actionsForChange(changeAt(stage, outOfDate))).toEqual(expected));
-  }
-});
-
-describe("stageLabel", () => {
-  it("build stage labels (R14.1)", () => {
-    expect(stageLabel("build-ready")).toMatchObject({ step: "build", text: "Build · ready to start" });
-    expect(stageLabel("build-stopped")).toMatchObject({ step: "build", text: "Build · in progress (stopped)" });
-    expect(stageLabel("build-finished")).toMatchObject({ step: "build", text: "Build · finished, not yet done" });
-    expect(stageLabel("plan-awaiting").text).toBe("Plan · awaiting acceptance");
-    expect(stageLabel("plan-accepted-uncommitted").text).toBe("Plan · accepted, not committed");
-    expect(stageLabel("plan-out-of-date").text).toBe("Plan · out of date");
-    expect(DONE_LABEL).toEqual({ step: "done", text: "Done · pull requests open", tone: "success" });
-  });
-
-  it("gives every stage non-empty text", () => {
-    for (const s of Object.keys(ACTIONS)) expect(stageLabel(s as Stage).text.length).toBeGreaterThan(0);
-  });
-  it("maps representative stages", () => {
-    expect(stageLabel("rejected")).toMatchObject({ step: "closed", tone: "error" });
-    expect(stageLabel("plan-awaiting")).toMatchObject({ step: "plan", tone: "warning" });
-    expect(stageLabel("spec-awaiting")).toMatchObject({ step: "spec", tone: "warning" });
-    expect(stageLabel("intent-in-progress").step).toBe("intent");
   });
 });
 
@@ -374,10 +162,6 @@ describe("specFor", () => {
     expect(withFeedback.task).toBe(`${plain.task}\n\nOperator feedback:\nR3 is wrong: compress, do not refuse.\nKeep R1.`);
     expect(specFor("spec", "reopen-spec", { ...ctx, feedback: "   " }, bypass, both).task).toBe(plain.task);
   });
-  it("names the actions that revisit a document", () => {
-    const all = Object.values(ACTIONS).flat().filter((a, i, xs) => xs.indexOf(a) === i) as StageAction[];
-    expect(all.filter(revisits).sort()).toEqual(["continue-intent", "continue-spec", "reopen-intent", "reopen-spec", "rerun-plan"]);
-  });
   it("prompt mode enables interactive and asks on unmatched", () => {
     const s = specFor("spec", "start-spec", ctx, prompt, both);
     expect(s.permissions.mode).toBe("prompt");
@@ -417,22 +201,22 @@ describe("transcriptRunId", () => {
 
 describe("actionLabel and primaryAction", () => {
   it("labels every action in sentence case", () => {
-    expect(actionsFor("spec-awaiting").map(actionLabel)).toEqual(["Continue spec", "Accept spec", "Reopen intent"]);
+    expect((ACTIONS["spec-awaiting"] as StageAction[]).map(actionLabel)).toEqual(["Continue spec", "Accept spec", "Reopen intent"]);
     expect(actionLabel("commit-acceptance")).toBe("Commit acceptance");
     expect(actionLabel("rerun-plan")).toBe("Re-run plan");
     expect(actionLabel("reopen-spec")).toBe("Reopen spec");
   });
 
   it("picks one primary: accept, then commit, then start, then continue; never reopen or re-run", () => {
-    expect(primaryAction(actionsFor("intent-awaiting"))).toBe("accept-intent");
-    expect(primaryAction(actionsFor("spec-accepted-uncommitted"))).toBe("commit-acceptance");
-    expect(primaryAction(actionsFor("spec-ready"))).toBe("start-spec");
-    expect(primaryAction(actionsFor("intent-in-progress"))).toBe("continue-intent");
-    expect(primaryAction(actionsFor("plan-awaiting"))).toBe("accept-plan");
-    expect(primaryAction(actionsFor("build-finished"))).toBe("declare-done");
-    expect(primaryAction(actionsFor("build-stopped"))).toBe("continue-build");
-    expect(primaryAction(actionsFor("plan-superseded"))).toBeNull();
-    expect(primaryAction(actionsFor("rejected"))).toBeNull();
+    expect(primaryAction(ACTIONS["intent-awaiting"] as StageAction[])).toBe("accept-intent");
+    expect(primaryAction(ACTIONS["spec-accepted-uncommitted"] as StageAction[])).toBe("commit-acceptance");
+    expect(primaryAction(ACTIONS["spec-ready"] as StageAction[])).toBe("start-spec");
+    expect(primaryAction(ACTIONS["intent-in-progress"] as StageAction[])).toBe("continue-intent");
+    expect(primaryAction(ACTIONS["plan-awaiting"] as StageAction[])).toBe("accept-plan");
+    expect(primaryAction(ACTIONS["build-finished"] as StageAction[])).toBe("declare-done");
+    expect(primaryAction(ACTIONS["build-stopped"] as StageAction[])).toBe("continue-build");
+    expect(primaryAction(ACTIONS["plan-superseded"] as StageAction[])).toBeNull();
+    expect(primaryAction(ACTIONS["rejected"] as StageAction[])).toBeNull();
   });
 });
 
@@ -677,15 +461,6 @@ describe("reviewFindings", () => {
   });
 });
 
-describe("the unreadable plan stage (F20)", () => {
-  it("offers no action, so no build can start from it", () => {
-    expect(actionsFor("plan-unreadable" as Stage)).toEqual([]);
-  });
-  it("is labeled as a plan that could not be read, in the warning tone", () => {
-    expect(stageLabel("plan-unreadable" as Stage)).toEqual({ step: "plan", text: "Plan · could not be read", tone: "warning" });
-  });
-});
-
 describe("what a build's preview asks and which runs its choices reach", () => {
   const TABLE: [BuildPreviewKind, BuildPreviewPlan][] = [
     ["start", { asksTimeLimit: true, asksRound: false, sections: "all-repos-and-review", appliesTo: "build", limitSource: "engineer" }],
@@ -917,9 +692,9 @@ describe("triage and fix run-specs (T8)", () => {
       target: { repo: "kata" }, timeoutSecs: 7200, instructions: null, workspaceFolder: WS, masterRepo: "intent-repo",
       systemRepos: ["intent-repo", "kata", "api"], checksDir: CHECKS, continueOnLeftovers: false,
     };
-    const full = { ...changeAt("build-ready"), track: "full" as const };
-    const fix = { ...changeAt("build-ready"), track: "fix" as const };
-    const forChange = (c: ChangeInfo) => specFor("build", null, { folder: WS, system: c.system, change: c.change }, bypass, both, run);
+    const full = { system: "commerce", change: "2026-10-12-photos", track: "full" as const };
+    const fix = { ...full, track: "fix" as const };
+    const forChange = (c: { system: string; change: string }) => specFor("build", null, { folder: WS, system: c.system, change: c.change }, bypass, both, run);
     expect(forChange(fix)).toEqual(forChange(full));
   });
 });
