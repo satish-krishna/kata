@@ -156,6 +156,9 @@
               </div>
             }
             <div class="k-home__body">
+              @if (vm.readingProgress(); as entry) {
+                <div data-testid="reading-progress"><app-progress-line [entry]="entry" /></div>
+              }
               <app-changes-table
                 [rows]="vm.rows()"
                 [others]="vm.otherBranches()"

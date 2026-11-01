@@ -12,6 +12,7 @@ import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { RunSpec } from '@bindings/RunSpec';
 import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
+import { ProgressStore } from '../../core/progress/progress.store';
 import { LockStore } from '../../core/lock/lock.store';
 import { RunStore } from '../../core/run/run.store';
 import { ModeStore } from '../../core/mode/mode.store';
@@ -50,6 +51,9 @@ export type HomeState =
   | 'not-set-up'
   | 'ready';
 
+/** The home page's progress entry, kept apart from the change page's. */
+const PROGRESS_OWNER = 'home';
+
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 const nowSecs = (): number => Math.floor(Date.now() / 1000);
@@ -75,6 +79,7 @@ export class SdlcHomeViewModel {
   private readonly modes = inject(ModeStore);
   private readonly toasts = inject(ToastStore);
   private readonly router = inject(Router);
+  private readonly progress = inject(ProgressStore);
 
   // --- workspaces
   readonly workspaces = signal<WorkspaceEntry[]>([]);
@@ -94,6 +99,10 @@ export class SdlcHomeViewModel {
   readonly branches = signal<BranchInfo | null>(null);
   /** The plugin's answer for each system of the workspace, from one read per system. */
   private readonly views = signal<SystemView[]>([]);
+  /** The reading-changes progress line while the plugin is being asked, or null while nothing should show. */
+  readonly readingProgress = this.progress.view(PROGRESS_OWNER);
+  /** How many plugin reads are in flight; the line shows from the first start to the last end. */
+  private reads = 0;
   /** The list the page shows: every change of every system, each with the label the plugin's answer gave it. */
   readonly rows = computed<ChangeRow[]>(() =>
     this.views().flatMap((v) => v.changes.map((c) => ({ system: v.system, change: c.state.change, title: c.state.title, offer: c.offer }))),
@@ -858,6 +867,16 @@ export class SdlcHomeViewModel {
     return Promise.all(systemNames(scan).map((system) => this.transport.sdlcState(folder, system)));
   }
 
+  /** `readViews` with the progress line shown while it runs. */
+  private async readViewsShown(folder: string, scan: WorkspaceScan): Promise<SystemView[]> {
+    if (this.reads++ === 0) this.progress.begin('reading-stages', 'Reading changes', PROGRESS_OWNER);
+    try {
+      return await this.readViews(folder, scan);
+    } finally {
+      if (--this.reads === 0) this.progress.end(PROGRESS_OWNER);
+    }
+  }
+
   /** Read the change list again for the current workspace. A newer read, or a reload of the workspace, supersedes it. */
   private async refreshViews(): Promise<void> {
     const seq = ++this.viewSeq;
@@ -865,7 +884,7 @@ export class SdlcHomeViewModel {
     const scan = this.scan();
     if (!w || !scan) return;
     try {
-      const views = await this.readViews(w.folder, scan);
+      const views = await this.readViewsShown(w.folder, scan);
       if (seq === this.viewSeq) this.views.set(views);
     } catch (e) {
       if (seq === this.viewSeq) this.toasts.error(`Could not read the changes: ${message(e)}`);
@@ -933,7 +952,7 @@ export class SdlcHomeViewModel {
         const master = masterPath(w.folder, repo);
         [branches, views, lastRuns] = await Promise.all([
           this.transport.sdlcBranches(master),
-          this.readViews(w.folder, scan),
+          this.readViewsShown(w.folder, scan),
           this.transport.sdlcRunLinks().then((links) => lastRunTimes(links, w.id)),
         ]);
       } catch (e) {

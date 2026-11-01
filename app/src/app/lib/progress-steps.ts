@@ -18,7 +18,7 @@ export type ProgressStepId = (typeof PROGRESS_STEP_IDS)[number];
  */
 export const PROGRESS_STEPS: Record<ProgressStepId, { usualMs: number; lines: readonly string[] }> = {
   'reading-stages': {
-    usualMs: 2_000,
+    usualMs: 8_000,
     lines: [
       'Reading every change on the shelf…',
       'Reading how far each change has come…',
