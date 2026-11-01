@@ -481,7 +481,7 @@ fn no_credential_in_errors_logs_or_record() {
     let h = hosts(&src, &server.root());
     let results = publish::publish(
         &h,
-        &Readiness::Missing,
+        &Readiness::missing(),
         "app",
         "s",
         "2026-10-19-c",

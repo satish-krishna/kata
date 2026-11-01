@@ -721,7 +721,9 @@ fn ai_sdlc_readiness(workdir: Option<&str>) -> sdlc::plugin::Readiness {
             && e.name == "ai-sdlc"
             && e.provides.iter().any(|p| p == "skill:build")
     });
-    sdlc::plugin::readiness(plugin.map(|e| e.path.as_path()))
+    sdlc::plugin::readiness(&sdlc::plugin::Machine::detect(
+        plugin.map(|e| e.path.as_path()),
+    ))
 }
 
 /// The ai-sdlc plugin folder the format program is read from, or why the build cannot be read. It is
@@ -738,11 +740,8 @@ fn ai_sdlc_dir(master: &str) -> Result<std::path::PathBuf, String> {
 /// [`ai_sdlc_dir`] for a command that is given the workspace folder itself.
 fn ai_sdlc_dir_in(folder: &str) -> Result<std::path::PathBuf, String> {
     match ai_sdlc_readiness(Some(folder)) {
-        sdlc::plugin::Readiness::Ready { dir, .. } => Ok(dir),
-        sdlc::plugin::Readiness::Missing => Err("the ai-sdlc plugin is not installed".into()),
-        sdlc::plugin::Readiness::TooOld { have, need } => Err(format!(
-            "the ai-sdlc plugin is version {have}; version {need} or later is needed"
-        )),
+        sdlc::plugin::Readiness::Ready { plugin, .. } => Ok(plugin.dir),
+        sdlc::plugin::Readiness::Blocked { message, .. } => Err(message),
     }
 }
 
@@ -1651,10 +1650,10 @@ name: build
             }
         }
         let _ = std::fs::remove_dir_all(&root);
-        let sdlc::plugin::Readiness::Ready { dir, .. } = readiness else {
+        let sdlc::plugin::Readiness::Ready { plugin: found, .. } = readiness else {
             panic!("the workspace's own plugin should be ready, got {readiness:?}");
         };
-        assert_eq!(resolved, Ok(dir));
+        assert_eq!(resolved, Ok(found.dir));
     }
 
     #[test]

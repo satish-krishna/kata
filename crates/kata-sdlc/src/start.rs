@@ -212,7 +212,7 @@ pub fn prepare(
         return refuse(format!("the master repo has no branch {branch}"));
     }
     if let Gate::Refuse { message, problems } = build::gate(
-        &plugin::readiness(Some(plugin)),
+        &plugin::readiness(&plugin::Machine::detect(Some(plugin))),
         &master,
         system,
         change,
@@ -731,11 +731,12 @@ mod tests {
         );
 
         let plugin = crate::plugin::Readiness::Ready {
-            dir: testutil::plugin_dir().to_path_buf(),
-            version: crate::plugin::NAMING_VERSION.to_string(),
-            layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
-            light_track: true,
-            naming: crate::plugin::naming(crate::plugin::NAMING_VERSION),
+            plugin: crate::plugin::Plugin {
+                dir: testutil::plugin_dir().to_path_buf(),
+                version: crate::plugin::MIN_VERSION.to_string(),
+                layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
+            },
+            gh: crate::plugin::GhPresence::Present,
         };
         let out = crate::branch_record::rename(&plugin, &fx.folder, "m", S, C, new).unwrap();
         assert!(out.repos.is_empty());

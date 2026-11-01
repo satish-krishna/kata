@@ -719,11 +719,12 @@ mod tests {
 
     fn ready() -> Readiness {
         Readiness::Ready {
-            dir: testutil::plugin_dir().to_path_buf(),
-            version: crate::plugin::NAMING_VERSION.to_string(),
-            layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
-            light_track: true,
-            naming: crate::plugin::naming(crate::plugin::NAMING_VERSION),
+            plugin: crate::plugin::Plugin {
+                dir: testutil::plugin_dir().to_path_buf(),
+                version: crate::plugin::MIN_VERSION.to_string(),
+                layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
+            },
+            gh: crate::plugin::GhPresence::Present,
         }
     }
 

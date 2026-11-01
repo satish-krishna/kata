@@ -35,7 +35,7 @@ pub enum Stage {
     FixUnsettled,
     FixAwaiting,
     FixAccepting,
-    /// A fix on a machine whose ai-sdlc plugin is older than 0.13.0: it is a fix, and where it stands
+    /// A fix on a machine whose ai-sdlc plugin is older than 1.1.0: it is a fix, and where it stands
     /// cannot be read.
     FixNeedsPlugin,
 }
@@ -420,8 +420,8 @@ fn plan_facts(
     (facts, counts, reason)
 }
 
-/// Why a fix cannot be read on a plugin older than [`crate::plugin::LIGHT_TRACK_VERSION`].
-const NEEDS_PLUGIN: &str = "Needs ai-sdlc 0.13.0 or later.";
+/// Why a fix cannot be read on a plugin older than [`crate::plugin::MIN_VERSION`].
+const NEEDS_PLUGIN: &str = "Needs ai-sdlc 1.1.0 or later.";
 
 /// The folder of one change in the master repo.
 fn change_dir(master: &Path, system: &str, change: &str) -> std::path::PathBuf {
@@ -492,7 +492,8 @@ impl ReadContext {
             master: master.to_path_buf(),
             status,
             needs_plugin: plugin.is_some_and(|p| {
-                !crate::plugin::version(p).is_some_and(|v| crate::plugin::light_track(&v))
+                !crate::plugin::version(p)
+                    .is_some_and(|v| crate::plugin::at_least(&v, crate::plugin::MIN_VERSION))
             }),
             pass: format::Pass::new(),
         }
@@ -1686,7 +1687,7 @@ mod tests {
     #[test]
     fn one_program_process_reads_every_fix_of_a_system_r4_1() {
         let tmp = tempfile::tempdir().unwrap();
-        let plugin = testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
+        let plugin = testutil::fake_fix_plugin(&tmp.path().join("p"), "1.1.0");
         let repo = repo_of_intents(
             tmp.path(),
             &[
@@ -1722,7 +1723,7 @@ mod tests {
             assert_eq!(info.fix_row, None);
             assert_eq!(
                 info.plan_unreadable_reason.as_deref(),
-                Some("Needs ai-sdlc 0.13.0 or later.")
+                Some("Needs ai-sdlc 1.1.0 or later.")
             );
         }
         assert!(calls(&plugin).is_empty());
@@ -1731,7 +1732,7 @@ mod tests {
     #[test]
     fn a_row_the_workbench_does_not_know_and_a_failed_folder_read_as_unsettled() {
         let tmp = tempfile::tempdir().unwrap();
-        let plugin = testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
+        let plugin = testutil::fake_fix_plugin(&tmp.path().join("p"), "1.1.0");
         let repo = repo_of_intents(
             tmp.path(),
             &[
@@ -1788,7 +1789,7 @@ mod tests {
     #[test]
     fn the_fix_state_reason_wins_over_an_unreadable_plan_reason_f5() {
         let tmp = tempfile::tempdir().unwrap();
-        let plugin = testutil::fake_fix_plugin(&tmp.path().join("p"), "0.13.0");
+        let plugin = testutil::fake_fix_plugin(&tmp.path().join("p"), "1.1.0");
         let old = testutil::fake_fix_plugin(&tmp.path().join("old"), "0.12.0");
         let make = |name: &str| {
             let repo = testutil::repo(&tmp.path().join(name), "m");
@@ -1823,7 +1824,7 @@ mod tests {
         assert_eq!(needs_plugin.stage, Stage::FixNeedsPlugin);
         assert_eq!(
             needs_plugin.plan_unreadable_reason.as_deref(),
-            Some("Needs ai-sdlc 0.13.0 or later.")
+            Some("Needs ai-sdlc 1.1.0 or later.")
         );
     }
 
@@ -2733,7 +2734,7 @@ source_spec_commit: {spec_pin}
             dir.join(".claude-plugin/plugin.json"),
             format!(
                 r#"{{"name":"ai-sdlc","version":"{}"}}"#,
-                crate::plugin::LIGHT_TRACK_VERSION
+                crate::plugin::MIN_VERSION
             ),
         )
         .unwrap();

@@ -541,14 +541,8 @@ pub fn gate(
     _action: BuildAction,
 ) -> Result<Gate, GitError> {
     let dir = match plugin {
-        Readiness::Missing => return Ok(refuse("Install the ai-sdlc plugin", Vec::new())),
-        Readiness::TooOld { need, .. } => {
-            return Ok(refuse(
-                format!("Update the ai-sdlc plugin to {need} or later"),
-                Vec::new(),
-            ))
-        }
-        Readiness::Ready { dir, .. } => dir,
+        Readiness::Blocked { message, .. } => return Ok(refuse(message.clone(), Vec::new())),
+        Readiness::Ready { plugin, .. } => &plugin.dir,
     };
     let committed = read_committed(dir, master, system, change, format::Reads::Gate)?;
     let newer = |layout: &u32| !format::ACCEPTED_LAYOUTS.contains(layout);
@@ -1305,11 +1299,12 @@ mod tests {
 
     fn ready(dir: &Path) -> Readiness {
         Readiness::Ready {
-            dir: dir.to_path_buf(),
-            version: "0.9.0".into(),
-            layouts: format::ACCEPTED_LAYOUTS.to_vec(),
-            light_track: false,
-            naming: false,
+            plugin: crate::plugin::Plugin {
+                dir: dir.to_path_buf(),
+                version: "1.1.0".into(),
+                layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
+            },
+            gh: crate::plugin::GhPresence::Present,
         }
     }
 
@@ -1347,24 +1342,29 @@ mod tests {
         let rows: Vec<GateRow> = vec![
             (
                 "plugin missing",
-                Readiness::Missing,
+                Readiness::missing(),
                 VALID_PLAN,
                 vec![],
                 refuse("Install the ai-sdlc plugin", vec![]),
             ),
             (
                 "plugin too old",
-                Readiness::TooOld {
-                    have: "0.7.9".into(),
-                    need: "0.9.0".into(),
+                Readiness::Blocked {
+                    reason: crate::plugin::BlockReason::PluginTooOld,
+                    message:
+                        "The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9."
+                            .into(),
                 },
                 VALID_PLAN,
                 vec![],
-                refuse("Update the ai-sdlc plugin to 0.9.0 or later", vec![]),
+                refuse(
+                    "The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.",
+                    vec![],
+                ),
             ),
             (
                 "plugin missing wins over a failing plan and log",
-                Readiness::Missing,
+                Readiness::missing(),
                 PLAN_WITHOUT_TESTS,
                 vec![("app", LOG_WITH_TWICE)],
                 refuse("Install the ai-sdlc plugin", vec![]),

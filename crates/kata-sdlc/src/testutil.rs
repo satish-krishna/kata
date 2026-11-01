@@ -164,7 +164,7 @@ pub fn plugin_dir() -> &'static Path {
             meta.join("plugin.json"),
             format!(
                 r#"{{"name":"ai-sdlc","version":"{}"}}"#,
-                crate::plugin::LIGHT_TRACK_VERSION
+                crate::plugin::MIN_VERSION
             ),
         )
         .unwrap();

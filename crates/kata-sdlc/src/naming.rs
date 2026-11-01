@@ -5,7 +5,7 @@
 //! changed on one machine. The ai-sdlc plugin's format program holds every rule about what a usable
 //! setting is and how the patterns are filled; this module only asks it.
 use crate::format::{self, NamingAnswer, NamingPatterns, NamingValues};
-use crate::plugin::{Readiness, NAMING_VERSION};
+use crate::plugin::{BlockReason, Readiness, MIN_VERSION};
 use crate::workspace::MARKER;
 use crate::{base, build, decide, frontmatter, git};
 use std::path::{Path, PathBuf};
@@ -84,20 +84,15 @@ pub fn declared(master: &Path, system: &str) -> bool {
 /// The plugin folder, when it can run the naming commands.
 fn naming_program(plugin: &Readiness) -> Result<PathBuf, NamingError> {
     match plugin {
-        Readiness::Missing => Err(NamingError::PluginMissing),
-        Readiness::TooOld { have, .. } => Err(NamingError::PluginTooOld {
-            have: have.clone(),
-            need: NAMING_VERSION.to_string(),
-        }),
-        Readiness::Ready {
-            version,
-            naming: false,
+        Readiness::Blocked {
+            reason: BlockReason::PluginTooOld,
             ..
         } => Err(NamingError::PluginTooOld {
-            have: version.clone(),
-            need: NAMING_VERSION.to_string(),
+            have: "an older version".to_string(),
+            need: MIN_VERSION.to_string(),
         }),
-        Readiness::Ready { dir, .. } => Ok(build::program(dir)),
+        Readiness::Blocked { .. } => Err(NamingError::PluginMissing),
+        Readiness::Ready { plugin, .. } => Ok(build::program(&plugin.dir)),
     }
 }
 
@@ -214,17 +209,24 @@ mod tests {
     const NO_NAMING: &str = r#"{"version":1,"systems":{"kata":{"repos":["kata"]}}}"#;
 
     fn ready(version: &str) -> Readiness {
+        if !plugin::at_least(version, plugin::MIN_VERSION) {
+            return Readiness::Blocked {
+                reason: BlockReason::PluginTooOld,
+                message: String::new(),
+            };
+        }
         Readiness::Ready {
-            dir: testutil::plugin_dir().to_path_buf(),
-            version: version.to_string(),
-            layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
-            light_track: true,
-            naming: plugin::naming(version),
+            plugin: crate::plugin::Plugin {
+                dir: testutil::plugin_dir().to_path_buf(),
+                version: version.to_string(),
+                layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
+            },
+            gh: crate::plugin::GhPresence::Present,
         }
     }
 
     fn current() -> Readiness {
-        ready(plugin::NAMING_VERSION)
+        ready(plugin::MIN_VERSION)
     }
 
     fn master_with(marker: &str) -> (tempfile::TempDir, std::path::PathBuf) {
@@ -267,10 +269,10 @@ mod tests {
         let bad_branch = r#"{"version":1,"systems":{"kata":{"naming":{"branch":"{type}/{ticket}-{slug}","pullRequestTitle":"{title}"}}}}"#;
         // marker, plugin version, declared, what `setting` gives
         let rows: [(&str, &str, bool, &str); 4] = [
-            (NO_NAMING, "0.14.0", false, "none"),
-            (bad_branch, "0.14.0", true, "unusable"),
-            ("this is not json", "0.14.0", true, "unreadable"),
-            (SETTING, "0.13.3", true, "too old"),
+            (NO_NAMING, "1.1.0", false, "none"),
+            (bad_branch, "1.1.0", true, "unusable"),
+            ("this is not json", "1.1.0", true, "unreadable"),
+            (SETTING, "1.0.0", true, "too old"),
         ];
         for (marker, version, is_declared, expect) in rows {
             let (_tmp, repo) = master_with(marker);
@@ -421,7 +423,7 @@ mod tests {
     #[test]
     fn a_scope_cannot_be_checked_without_a_plugin_that_can_name_branches() {
         assert_eq!(
-            check_scope(&Readiness::Missing, "kata"),
+            check_scope(&Readiness::missing(), "kata"),
             Err(NamingError::PluginMissing)
         );
     }

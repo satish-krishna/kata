@@ -195,7 +195,7 @@ fn fixture_on(branch: &str, record: bool) -> Fx {
         fx.plugin.join(".claude-plugin/plugin.json"),
         format!(
             r#"{{"name":"ai-sdlc","version":"{}"}}"#,
-            kata_sdlc::plugin::LIGHT_TRACK_VERSION
+            kata_sdlc::plugin::MIN_VERSION
         ),
     )
     .unwrap();
@@ -485,7 +485,7 @@ fn every_flow(branch: &str, record: bool) {
     publish::origins(&hosts, &touched).unwrap();
     let results = publish::publish(
         &hosts,
-        &Readiness::Missing,
+        &Readiness::missing(),
         "m",
         SYS,
         CHG,

@@ -83,7 +83,7 @@ fn node_missing_is_reported_on_every_change_that_needs_it() {
         plugin.join(".claude-plugin/plugin.json"),
         format!(
             r#"{{"name":"ai-sdlc","version":"{}"}}"#,
-            kata_sdlc::plugin::LIGHT_TRACK_VERSION
+            kata_sdlc::plugin::MIN_VERSION
         ),
     )
     .unwrap();

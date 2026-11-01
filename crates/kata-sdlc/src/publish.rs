@@ -909,7 +909,7 @@ pub(crate) mod tests {
         let gh = FakeGitHub::default();
         let results = publish(
             &gh,
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             "2026-10-19-c",
@@ -959,7 +959,7 @@ pub(crate) mod tests {
         let gh = FakeGitHub::default().create_fails("api", status(403, "forbidden"));
         let results = publish(
             &gh,
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             "2026-10-19-c",
@@ -990,7 +990,7 @@ pub(crate) mod tests {
         let gh = FakeGitHub::default().open_pull("app", 1);
         let results = publish(
             &gh,
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             "2026-10-19-c",
@@ -1017,7 +1017,7 @@ pub(crate) mod tests {
         on_github(&fx);
         publish(
             &FakeGitHub::default(),
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             "2026-10-19-c",
@@ -1033,7 +1033,7 @@ pub(crate) mod tests {
             .open_pull("m", 3);
         let results = publish(
             &gh,
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             "2026-10-19-c",
@@ -1059,7 +1059,7 @@ pub(crate) mod tests {
         let gh = FakeGitHub::default().open_pull("app", 1).open_pull("m", 3);
         let results = publish(
             &gh,
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             "2026-10-19-c",
@@ -1103,7 +1103,7 @@ pub(crate) mod tests {
         let gh = FakeGitHub::default();
         publish(
             &gh,
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             "2026-10-19-c",
@@ -1214,7 +1214,7 @@ pub(crate) mod tests {
         origins(h, &repos)?;
         Ok(publish(
             h,
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             "2026-10-19-c",
@@ -1356,7 +1356,7 @@ pub(crate) mod tests {
         );
         let results = publish(
             &FakeGitHub::default(),
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             "2026-10-19-c",
@@ -1396,7 +1396,7 @@ pub(crate) mod tests {
         let gh = FakeGitHub::default();
         let results = publish(
             &gh,
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             "2026-10-19-c",
@@ -1467,7 +1467,7 @@ pub(crate) mod tests {
         let mut steps = Vec::new();
         publish(
             &FakeGitHub::default(),
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             "2026-10-19-c",
@@ -1700,11 +1700,12 @@ body
 
     fn naming_plugin() -> Readiness {
         Readiness::Ready {
-            dir: crate::testutil::plugin_dir().to_path_buf(),
-            version: crate::plugin::NAMING_VERSION.to_string(),
-            layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
-            light_track: true,
-            naming: true,
+            plugin: crate::plugin::Plugin {
+                dir: crate::testutil::plugin_dir().to_path_buf(),
+                version: crate::plugin::MIN_VERSION.to_string(),
+                layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
+            },
+            gh: crate::plugin::GhPresence::Present,
         }
     }
 
@@ -1854,7 +1855,7 @@ body
         assert_eq!(remote_clashes(&h, &repos, branch).unwrap(), []);
         let results = publish(
             &h,
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             "2026-10-19-c",
@@ -1885,7 +1886,7 @@ body
         let gh = FakeGitHub::default();
         let results = publish(
             &gh,
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             "2026-10-19-c",
@@ -1916,7 +1917,7 @@ body
         let gh = FakeGitHub::default();
         let results = publish(
             &gh,
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             "2026-10-19-c",
@@ -2040,7 +2041,7 @@ body
         let gh = FakeGitHub::default();
         let summary = publish(
             &gh,
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             CHANGE,

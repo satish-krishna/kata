@@ -718,7 +718,7 @@ mod tests {
         );
         let results = publish(
             &gh,
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             CHANGE,
@@ -750,7 +750,7 @@ mod tests {
         let gh = FakeGitHub::default().open_pull("app", 1).open_pull("m", 2);
         publish(
             &gh,
-            &Readiness::Missing,
+            &Readiness::missing(),
             "m",
             "s",
             CHANGE,
