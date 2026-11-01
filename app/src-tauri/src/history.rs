@@ -36,22 +36,73 @@ fn str_of<'a>(event: &'a Value, key: &str) -> &'a str {
 impl RunHistory {
     /// Append one event to the run's history, stamped with the time it arrived.
     pub fn push(&self, run_id: u64, event: &Value) {
-        todo!()
+        self.runs
+            .lock()
+            .unwrap()
+            .entry(run_id)
+            .or_default()
+            .push((now_ms(), event.clone()));
     }
 
     /// Every event of the run, from its start, in the order they were pushed.
     pub fn replay(&self, run_id: u64) -> Vec<Value> {
-        todo!()
+        let runs = self.runs.lock().unwrap();
+        runs.get(&run_id)
+            .map(|v| v.iter().map(|(_, e)| e.clone()).collect())
+            .unwrap_or_default()
     }
 
     /// The question or permission the run is waiting on, if its last request has no answer or decision.
     pub fn pending(&self, run_id: u64) -> Option<Pending> {
-        todo!()
+        let runs = self.runs.lock().unwrap();
+        let mut open: Option<(String, Pending)> = None;
+        for (at, event) in runs.get(&run_id)? {
+            let id = str_of(event, "id");
+            match str_of(event, "type") {
+                "ask.requested" => {
+                    let text = event
+                        .get("questions")
+                        .and_then(Value::as_array)
+                        .and_then(|q| q.first())
+                        .map_or("", |q| str_of(q, "question"))
+                        .to_string();
+                    open = Some((
+                        id.to_string(),
+                        Pending::Question {
+                            text,
+                            since_ms: *at,
+                        },
+                    ));
+                }
+                "permission.requested" => {
+                    let action = format!(
+                        "{}: {}",
+                        str_of(event, "tool"),
+                        str_of(event, "input_summary")
+                    );
+                    open = Some((
+                        id.to_string(),
+                        Pending::Permission {
+                            action,
+                            since_ms: *at,
+                        },
+                    ));
+                }
+                "ask.answered" | "permission.decided"
+                    if open.as_ref().is_some_and(|(open_id, _)| open_id == id) =>
+                {
+                    open = None;
+                }
+                "run.completed" | "run.error" | "run.cancelled" => open = None,
+                _ => {}
+            }
+        }
+        open.map(|(_, p)| p)
     }
 
     /// Drop the run's history.
     pub fn forget(&self, run_id: u64) {
-        todo!()
+        self.runs.lock().unwrap().remove(&run_id);
     }
 }
 

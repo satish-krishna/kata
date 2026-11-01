@@ -101,6 +101,7 @@ fn lane_of(group: Option<&str>) -> runs::Lane {
 async fn run_spec(
     app: AppHandle,
     control: State<'_, RunControl>,
+    history: State<'_, Arc<history::RunHistory>>,
     spec: RunSpec,
     group: Option<String>,
 ) -> Result<String, String> {
@@ -157,6 +158,7 @@ async fn run_spec(
     });
     drop(table);
     let state = control.state.clone();
+    let history = history.inner().clone();
 
     tauri::async_runtime::spawn(async move {
         let mut terminal_seen = false;
@@ -169,6 +171,7 @@ async fn run_spec(
                                 terminal_seen = true;
                             }
                         }
+                        history.push(id, &v);
                         let _ = app.emit(RUN_EVENT, runs::wrap(id, v));
                     }
                     Err(_) => relay_log(&app, id, &bytes),
@@ -177,25 +180,20 @@ async fn run_spec(
                 CommandEvent::Terminated(payload) => {
                     if !terminal_seen {
                         let code = payload.code.unwrap_or(-1);
-                        let _ = app.emit(
-                            RUN_EVENT,
-                            runs::wrap(
-                                id,
-                                json!({
-                                    "type": "run.error",
-                                    "message": format!("engine exited ({code}) without a result"),
-                                }),
-                            ),
-                        );
+                        let ev = json!({
+                            "type": "run.error",
+                            "message": format!("engine exited ({code}) without a result"),
+                        });
+                        history.push(id, &ev);
+                        let _ = app.emit(RUN_EVENT, runs::wrap(id, ev));
                     }
                     break;
                 }
                 CommandEvent::Error(err) => {
                     terminal_seen = true;
-                    let _ = app.emit(
-                        RUN_EVENT,
-                        runs::wrap(id, json!({ "type": "run.error", "message": err })),
-                    );
+                    let ev = json!({ "type": "run.error", "message": err });
+                    history.push(id, &ev);
+                    let _ = app.emit(RUN_EVENT, runs::wrap(id, ev));
                 }
                 _ => {}
             }
@@ -206,6 +204,14 @@ async fn run_spec(
     });
 
     Ok(id.to_string())
+}
+
+/// Every event of a run from its start, in order, for a session opened after the run began.
+#[tauri::command]
+fn sdlc_run_history(history: State<Arc<history::RunHistory>>, run_id: String) -> Vec<Value> {
+    parse_run_id(&run_id)
+        .map(|id| history.replay(id))
+        .unwrap_or_default()
 }
 
 /// Step the window's zoom and remember the new level for the next launch.
@@ -1387,6 +1393,7 @@ pub fn run() {
         )
         .manage(RunControl::default())
         .manage(Arc::new(StagePasses::default()))
+        .manage(Arc::new(history::RunHistory::default()))
         .setup(|app| {
             // Open at the remembered zoom; a failure leaves the window at 100%.
             let saved = zoom::load();
@@ -1407,6 +1414,7 @@ pub fn run() {
             validate_spec,
             preview_run,
             run_spec,
+            sdlc_run_history,
             cancel_run,
             submit_answer,
             send_message,
