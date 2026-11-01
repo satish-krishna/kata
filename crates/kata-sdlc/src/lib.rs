@@ -16,6 +16,7 @@ pub mod frontmatter;
 pub mod git;
 pub mod github;
 pub mod naming;
+pub mod offer;
 pub mod participants;
 pub mod pins;
 pub mod plugin;
