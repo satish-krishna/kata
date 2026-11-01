@@ -2,6 +2,7 @@ import { Injectable, Injector, computed, inject, signal } from '@angular/core';
 import type { Mode } from '@bindings/Mode';
 import type { RunSetting } from '@bindings/RunSetting';
 import type { RunSettings } from '@bindings/RunSettings';
+import type { RoundPlan } from '@bindings/RoundPlan';
 import type { RunSpec } from '@bindings/RunSpec';
 import { groupRows, isSwitchable, itemSourceLabel, presetRows, settingSourceLabel, toGiven, toggle, type PresetFrom, type PresetRow } from '../../lib/given';
 import { buildPreviewFor, safetyRules, type BuildPreviewKind, type BuildPreviewPlan } from '../../lib/sdlc';
@@ -124,6 +125,8 @@ export class RunPreviewViewModel {
   /** True when the resolver left the setup out: the run is in the empty room. */
   readonly emptyRoom = signal(false);
 
+  /** What the backend says the round would start for the picks now made; null until it has answered, and outside a round. */
+  readonly roundPlan = signal<RoundPlan | null>(null);
   /** A build's time-limit and round fields; null when the preview asks for neither. */
   readonly buildForm = signal<BuildFormState | null>(null);
   /** The build's safety rules, read-only; null for a run that has none. */

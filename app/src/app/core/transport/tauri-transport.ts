@@ -58,6 +58,10 @@ import type { StartForm } from '@bindings/StartForm';
 import type { HistoryEntry } from '@bindings/HistoryEntry';
 import type { ChangeRef } from '@bindings/ChangeRef';
 import type { CloseOutcome } from '@bindings/CloseOutcome';
+import type { BuildRunRef } from '@bindings/BuildRunRef';
+import type { BuildPreviewKind } from '@bindings/BuildPreviewKind';
+import type { BuildSection } from '@bindings/BuildSection';
+import type { ReviewView } from '@bindings/ReviewView';
 import type { HeldRepo } from '@bindings/HeldRepo';
 import type { RunForm } from '@bindings/RunForm';
 import type { RunningStrip } from '@bindings/RunningStrip';
@@ -116,6 +120,11 @@ export class TauriTransport extends KataTransport {
   sdlcBuildStart(change: ChangeRef, form: StartForm) { return this.ipc.invoke<StartOutcome>('sdlc_build_start', { change, form }); }
   sdlcBuildContinue(change: ChangeRef, repo: string) { return this.ipc.invoke<StartOutcome>('sdlc_build_continue', { change, repo }); }
   sdlcBuildState(change: ChangeRef) { return this.ipc.invoke<BuildState | null>('sdlc_build_state', { change }); }
+  sdlcBuildCancel(_change: ChangeRef, _repo: string | null): Promise<void> { return Promise.reject(new Error('not yet')); }
+  sdlcBuildRuns(_change: ChangeRef): Promise<BuildRunRef[]> { return Promise.reject(new Error('not yet')); }
+  sdlcPreviewChangeRun(_change: ChangeRef, _kind: DocumentKind, _form: RunForm): Promise<RunSpec> { return Promise.reject(new Error('not yet')); }
+  sdlcPreviewBuild(_change: ChangeRef, _which: BuildPreviewKind, _repo: string | null, _form: StartForm): Promise<BuildSection[]> { return Promise.reject(new Error('not yet')); }
+  sdlcReviewView(_change: ChangeRef): Promise<ReviewView> { return Promise.reject(new Error('not yet')); }
   sdlcReviewStart(change: ChangeRef) { return this.ipc.invoke<StartOutcome>('sdlc_review_start', { change }); }
   sdlcReviewWaiting(change: ChangeRef) { return this.ipc.invoke<HeldRepo[]>('sdlc_review_waiting', { change }); }
   sdlcRoundOffer(change: ChangeRef) { return this.ipc.invoke<[RoundOffer, RoundPicks]>('sdlc_round_offer', { change }); }

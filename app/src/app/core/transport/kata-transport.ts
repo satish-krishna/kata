@@ -58,6 +58,10 @@ import type { CloseOutcome } from '@bindings/CloseOutcome';
 import type { HeldRepo } from '@bindings/HeldRepo';
 import type { RunForm } from '@bindings/RunForm';
 import type { RunningStrip } from '@bindings/RunningStrip';
+import type { BuildRunRef } from '@bindings/BuildRunRef';
+import type { BuildPreviewKind } from '@bindings/BuildPreviewKind';
+import type { BuildSection } from '@bindings/BuildSection';
+import type { ReviewView } from '@bindings/ReviewView';
 import type { StartOutcome } from '@bindings/StartOutcome';
 import type { DocumentKind } from '../../lib/build-host';
 
@@ -96,6 +100,16 @@ export abstract class KataTransport {
   abstract sdlcBuildContinue(change: ChangeRef, repo: string): Promise<StartOutcome>;
   /** Where a change's build stands, or null when this session hosts no build of it. */
   abstract sdlcBuildState(change: ChangeRef): Promise<BuildState | null>;
+  /** Stop the run of one repository (or `review`) of a change's build, or, with none named, every run of it. */
+  abstract sdlcBuildCancel(change: ChangeRef, repo: string | null): Promise<void>;
+  /** The runs of a change's build that are live, each with its run's id. */
+  abstract sdlcBuildRuns(change: ChangeRef): Promise<BuildRunRef[]>;
+  /** The run-spec a document run of a change would start with: the backend's composition, the one `sdlcRunChange` launches. Nothing starts. */
+  abstract sdlcPreviewChangeRun(change: ChangeRef, kind: DocumentKind, form: RunForm): Promise<RunSpec>;
+  /** The run-spec each run of a build preview would start with, one section per folder the kind runs in. Nothing starts. */
+  abstract sdlcPreviewBuild(change: ChangeRef, which: BuildPreviewKind, repo: string | null, form: StartForm): Promise<BuildSection[]>;
+  /** The latest review as the page lists it: the Review group's rows and the round dialog's groups, in the backend's order. */
+  abstract sdlcReviewView(change: ChangeRef): Promise<ReviewView>;
   /** Start a change's review by hand; it waits when another change holds a repository it reads. */
   abstract sdlcReviewStart(change: ChangeRef): Promise<StartOutcome>;
   /** The repositories other changes hold that keep a change's review from starting; empty when it is free. */

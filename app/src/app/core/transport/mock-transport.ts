@@ -64,6 +64,10 @@ import type { CloseOutcome } from '@bindings/CloseOutcome';
 import type { HeldRepo } from '@bindings/HeldRepo';
 import type { RunForm } from '@bindings/RunForm';
 import type { RunningStrip } from '@bindings/RunningStrip';
+import type { BuildRunRef } from '@bindings/BuildRunRef';
+import type { BuildPreviewKind } from '@bindings/BuildPreviewKind';
+import type { BuildSection } from '@bindings/BuildSection';
+import type { ReviewView } from '@bindings/ReviewView';
 import type { StartOutcome } from '@bindings/StartOutcome';
 import type { DocumentKind } from '../../lib/build-host';
 import { KataTransport, NO_BACKEND, type NamingState, type RenameResult } from './kata-transport';
@@ -394,6 +398,11 @@ export class MockTransport extends KataTransport {
   async sdlcBuildStart(change: ChangeRef, form: StartForm): Promise<StartOutcome> { void form; return this.host.start(change); }
   async sdlcBuildContinue(change: ChangeRef, repo: string): Promise<StartOutcome> { void repo; return this.host.start(change); }
   async sdlcBuildState(change: ChangeRef): Promise<BuildState | null> { return this.host.state(change); }
+  sdlcBuildCancel(_change: ChangeRef, _repo: string | null): Promise<void> { return Promise.reject(new Error('not yet')); }
+  sdlcBuildRuns(_change: ChangeRef): Promise<BuildRunRef[]> { return Promise.reject(new Error('not yet')); }
+  sdlcPreviewChangeRun(_change: ChangeRef, _kind: DocumentKind, _form: RunForm): Promise<RunSpec> { return Promise.reject(new Error('not yet')); }
+  sdlcPreviewBuild(_change: ChangeRef, _which: BuildPreviewKind, _repo: string | null, _form: StartForm): Promise<BuildSection[]> { return Promise.reject(new Error('not yet')); }
+  sdlcReviewView(_change: ChangeRef): Promise<ReviewView> { return Promise.reject(new Error('not yet')); }
   async sdlcReviewStart(change: ChangeRef): Promise<StartOutcome> { return this.host.reviewStart(change); }
   async sdlcReviewWaiting(change: ChangeRef): Promise<HeldRepo[]> { return this.host.reviewWaiting(change); }
   async sdlcRoundOffer(change: ChangeRef): Promise<[RoundOffer, RoundPicks]> {

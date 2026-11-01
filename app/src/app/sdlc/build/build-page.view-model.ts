@@ -1,5 +1,7 @@
 import { Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
 import type { BuildRow } from '@bindings/BuildRow';
+import type { RoundGroup } from '@bindings/RoundGroup';
+import type { StartForm } from '@bindings/StartForm';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ChangeView } from '@bindings/ChangeView';
 import type { RunLink } from '@bindings/RunLink';
@@ -37,6 +39,7 @@ import { filterCounts, reviewRows, taskList, type ReviewRowsView, type TaskFilte
 import type { ReplacedFindings } from '../../ui/findings-list';
 import type { WaitingItem } from '../../ui/waiting-notice';
 import type { BuildHandoff } from '../change/change-page.view-model';
+import type { HeldView } from '../../ui/held-panel';
 import { BuildDriver, NotCheckedOut, type BuildPhase, type RunEnd, type RunOptions, type RunTarget } from './build-driver';
 
 /** What the build runs against: the workspace, the system and the change. */
@@ -208,7 +211,9 @@ export type BuildPageView = {
   /** Each repository that stopped and why, for the activity area. */
   stops: { repo: string; reason: string }[];
   /** The findings area. */
-  findingsArea: FindingsAreaView;
+  findingsArea: FindingsAreaShown;
+  /** The panel for a build that waits for another change's repositories; null when it does not. */
+  held?: HeldView | null;
   /** The finding last picked, for the changed files to show. */
   findingPlace: FindingPlace | null;
   waiting: WaitingItem[];
@@ -218,6 +223,12 @@ export type BuildPageView = {
   /** The counts the area tabs show: changed files and findings. */
   counts: { files: number; findings: number };
 };
+
+/** The findings area as the page shows it: the review's own states, and the panel when the review waits for another change. */
+export type FindingsAreaShown = FindingsAreaView & { waiting?: HeldView | null };
+
+/** What starting a build came to, as the page needs to tell it. */
+export type StartKind = 'started' | 'alreadyRunning' | 'held' | 'refused' | 'couldNotRun';
 
 /** The two views of a running build: what the agents say and do, and what they changed. */
 export type BuildTab = 'activity' | 'changes';
@@ -650,6 +661,25 @@ export class BuildPageViewModel {
     else await this.reviewFromWords(input.ctx);
   }
 
+  /** The groups of the open round dialog, in the Review group's order. */
+  readonly roundGroups = signal<RoundGroup[]>([]);
+
+  /** Start the build the form describes through the backend; what it came to. */
+  async startBuild(_form: StartForm): Promise<StartKind> {
+    return 'couldNotRun';
+  }
+
+  /** Start the held build again, as a fresh start. */
+  async startAgain(): Promise<void> {}
+
+  /** Start the review that waited for another change again. */
+  async startReviewAgain(): Promise<void> {}
+
+  /** Open the round dialog from the backend's offer; true when a round was started. */
+  async openRound(): Promise<boolean> {
+    return false;
+  }
+
   /** Show a repository, a task or the review. */
   choose(pick: Pick): void {
     this.chosen.set({ pick, stage: this.stage(), seq: ++this.pickCount, goTo: null });
@@ -974,7 +1004,8 @@ export class BuildPageViewModel {
       sessions: this.mountedSessions(),
       sessionNote: this.sessionNote(),
       stops: areas.flatMap((g) => (g.heading.stopLine === null ? [] : [{ repo: g.repo, reason: g.heading.stopLine }])),
-      findingsArea,
+      findingsArea: { ...findingsArea, waiting: null },
+      held: null,
       findingPlace: this.findingPlace(),
       waiting: this.waitingNotices(),
       announcement: this.announcement(),

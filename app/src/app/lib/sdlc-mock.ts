@@ -1219,7 +1219,7 @@ export class MockBuildHost {
 
   private announce(build: MockBuild): void {
     build.changedMs = this.io.now();
-    this.io.announce({ change: build.key, state: this.stateOf(build), reviewWaiting: this.reviewWaits.get(this.id(build.key))?.held ?? [] });
+    this.io.announce({ change: build.key, state: this.stateOf(build), reviewWaiting: this.reviewWaits.get(this.id(build.key))?.held ?? [], runs: [...build.going].flatMap(([key, run]) => (run === '' ? [] : [{ key, run }])) });
   }
 
   private launch(ref: ChangeRef, build: MockBuild, repo: string): void {

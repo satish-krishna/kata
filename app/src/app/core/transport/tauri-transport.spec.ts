@@ -77,6 +77,12 @@ const rows: Row[] = [
   ['sdlcBuildStart', (t) => t.sdlcBuildStart(change, { timeoutSecs: 600 }), 'sdlc_build_start', { change, form: { timeoutSecs: 600 } }],
   ['sdlcBuildContinue', (t) => t.sdlcBuildContinue(change, 'kata'), 'sdlc_build_continue', { change, repo: 'kata' }],
   ['sdlcBuildState', (t) => t.sdlcBuildState(change), 'sdlc_build_state', { change }],
+  ['sdlcBuildCancel one run', (t) => t.sdlcBuildCancel(change, 'kata'), 'sdlc_build_cancel', { change, repo: 'kata' }],
+  ['sdlcBuildCancel every run', (t) => t.sdlcBuildCancel(change, null), 'sdlc_build_cancel', { change, repo: null }],
+  ['sdlcBuildRuns', (t) => t.sdlcBuildRuns(change), 'sdlc_build_runs', { change }],
+  ['sdlcPreviewChangeRun', (t) => t.sdlcPreviewChangeRun(change, 'spec', runForm), 'sdlc_preview_change_run', { change, kind: 'spec', form: runForm }],
+  ['sdlcPreviewBuild', (t) => t.sdlcPreviewBuild(change, 'continue-one', 'kata', { timeoutSecs: 600 }), 'sdlc_preview_build', { change, which: 'continue-one', repo: 'kata', form: { timeoutSecs: 600 } }],
+  ['sdlcReviewView', (t) => t.sdlcReviewView(change), 'sdlc_review_view', { change }],
   ['sdlcReviewStart', (t) => t.sdlcReviewStart(change), 'sdlc_review_start', { change }],
   ['sdlcReviewWaiting', (t) => t.sdlcReviewWaiting(change), 'sdlc_review_waiting', { change }],
   ['sdlcRoundOffer', (t) => t.sdlcRoundOffer(change), 'sdlc_round_offer', { change }],
@@ -200,7 +206,7 @@ describe('TauriTransport', () => {
   });
 
   it.each([
-    ['onBuildState', 'sdlc://build', { change: { workspace: { key: 'w', name: 'w' }, system: 's', change: 'c' }, state: { phase: 'building', going: [], stopped: {}, rounds: {}, waiting: [], report: null }, reviewWaiting: [] } as BuildEvent],
+    ['onBuildState', 'sdlc://build', { change: { workspace: { key: 'w', name: 'w' }, system: 's', change: 'c' }, state: { phase: 'building', going: [], stopped: {}, rounds: {}, waiting: [], report: null }, reviewWaiting: [], runs: [] } as BuildEvent],
     ['onRunning', 'sdlc://running', { shown: [], all: [] } as RunningStrip],
     ['onCloseAsked', 'sdlc://close-asked', { type: 'ask', running: [{ change: 'c', what: 'building in kata' }] } as CloseOutcome],
   ] as const)('%s hands the payload of %s over as it is', async (method, channel, payload) => {

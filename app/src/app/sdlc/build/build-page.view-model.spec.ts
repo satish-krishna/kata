@@ -1,7 +1,14 @@
 import { Component, effect } from '@angular/core';
 import { type ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
+import type { BuildEvent } from '@bindings/BuildEvent';
+import type { BuildState } from '@bindings/BuildState';
 import type { BuildStatus } from '@bindings/BuildStatus';
+import type { ChangeKey } from '@bindings/ChangeKey';
+import type { RoundOffer } from '@bindings/RoundOffer';
+import type { RoundPicks } from '@bindings/RoundPicks';
+import type { RoundPlan } from '@bindings/RoundPlan';
+import type { StartForm } from '@bindings/StartForm';
 import type { OfferStage } from '@bindings/OfferStage';
 import type { Leftovers } from '@bindings/Leftovers';
 import type { Participant } from '@bindings/Participant';
@@ -2053,5 +2060,128 @@ describe('the tasks area folds, filters and shows a departure with its task', ()
     const { vm } = await openedOn(status);
     vm.choose({ kind: 'task', task: 'T3' });
     expect(vm.view().pickedDeparture).toEqual({ task: 'T3', text: 'departure 3' });
+  });
+});
+
+describe('the build page reads the backend\'s build and starts it through the host\'s commands', () => {
+  const REF = { workspace: FOLDER, system: 'commerce', change: MOCK_BUILD_CHANGE };
+  const keyOf = (change: string): ChangeKey => ({ workspace: { key: FOLDER.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase(), name: 'ws' }, system: 'commerce', change });
+  const state = (over: Partial<BuildState> = {}): BuildState => ({ phase: 'building', going: ['commerce-core'], stopped: {}, rounds: {}, waiting: [], report: null, ...over });
+  const heldBy = (change: string) => [{ repo: 'commerce-core', holder: keyOf(change) }];
+
+  /** A page opened on the mock build change, with nothing hosted by the backend yet. */
+  async function opened() {
+    const s = setup();
+    const status = await s.transport.sdlcBuildStatus(FOLDER, 'commerce', MOCK_BUILD_CHANGE);
+    const [found] = (await readAllChanges(s.transport, FOLDER)).filter((c) => c.state.change === MOCK_BUILD_CHANGE);
+    const load = () => s.vm.load({ ctx: CTX, master: { repo: MOCK_MASTER, path: `${FOLDER}/${MOCK_MASTER}` }, change: found, status, done: false, review: null });
+    return { ...s, load, status };
+  }
+
+  it('the page shows the state the backend sends', async () => {
+    const { vm, transport, load } = await opened();
+    let push: (e: BuildEvent) => void = () => undefined;
+    vi.spyOn(transport, 'onBuildState').mockImplementation(async (cb) => {
+      push = cb;
+      return () => undefined;
+    });
+    vi.spyOn(transport, 'sdlcBuildState').mockResolvedValue(state());
+    await load();
+    await advance(50);
+    expect(vm.phase()).toBe('building');
+    expect(vm.view().actions).toEqual(['cancel-build']);
+    expect(group(vm, 'commerce-core')).toMatchObject({ status: { tone: 'success' }, action: 'cancel' });
+
+    const stopped = state({
+      phase: 'stopped',
+      going: [],
+      stopped: { 'commerce-core': { task: 'T1', reason: 'Stopped: the agent failed', held: false } },
+      report: { unfinished: [{ repo: 'commerce-core', tasks: ['T1'] }], waiting: [] },
+    });
+    push({ change: keyOf(MOCK_BUILD_CHANGE), state: stopped, reviewWaiting: [], runs: [] });
+    await advance(50);
+    expect(vm.phase()).toBe('stopped');
+    expect(group(vm, 'commerce-core')).toMatchObject({ status: { tone: 'error', label: 'Stopped at T1' }, action: 'continue', stopLine: 'stopped: the agent failed' });
+    expect(vm.stageMessage()?.lines).toContain('commerce-core has unfinished tasks: T1');
+
+    // Another change's announcement is not this page's.
+    push({ change: keyOf('2026-11-02-other'), state: state({ phase: 'finished', going: [] }), reviewWaiting: [], runs: [] });
+    await advance(50);
+    expect(vm.phase()).toBe('stopped');
+  });
+
+  it('a held start shows the panel with the holder and Start build again', async () => {
+    const { vm, transport, load } = await opened();
+    await load();
+    const form: StartForm = { timeoutSecs: 5400 };
+    const start = vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'held', held: heldBy('2026-11-02-other') });
+    expect(await vm.startBuild(form)).toBe('held');
+    expect(vm.view().held).toMatchObject({
+      repos: [{ repo: 'commerce-core', holder: '2026-11-02-other', link: ['/sdlc', 'commerce', '2026-11-02-other'] }],
+      action: 'Start build again',
+    });
+    expect(vm.view().findingsArea.waiting).toBeNull();
+    // Starting again is a fresh start of the same form; the panel goes once the build starts.
+    start.mockResolvedValue({ kind: 'started', uncommitted: {} });
+    await vm.startAgain();
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(start).toHaveBeenLastCalledWith(REF, form);
+    expect(vm.view().held).toBeNull();
+  });
+
+  it('a waiting review shows the panel in the review area', async () => {
+    const { vm, transport, load } = await opened();
+    vi.spyOn(transport, 'sdlcReviewWaiting').mockResolvedValue(heldBy('2026-11-02-other'));
+    await load();
+    await advance(50);
+    expect(vm.view().findingsArea.waiting).toMatchObject({
+      repos: [{ repo: 'commerce-core', holder: '2026-11-02-other', link: ['/sdlc', 'commerce', '2026-11-02-other'] }],
+      action: 'Start review again',
+    });
+    expect(vm.view().held).toBeNull();
+    const review = vi.spyOn(transport, 'sdlcReviewStart').mockResolvedValue({ kind: 'started', uncommitted: {} });
+    await vm.startReviewAgain();
+    expect(review).toHaveBeenCalledWith(REF);
+  });
+
+  it('a refused start lists the plugin\'s problems for every repository', async () => {
+    const { vm, transport, load } = await opened();
+    await load();
+    const problems = ['commerce-core: the plan is not accepted', 'customer-portal: uncommitted files: src/a.ts'];
+    vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'refused', problems });
+    expect(await vm.startBuild({ timeoutSecs: 60 })).toBe('refused');
+    expect(vm.refusal()).toMatchObject({ problems });
+    expect(vm.view().held).toBeNull();
+  });
+
+  it('the round dialog shows the backend\'s plan for the picks', async () => {
+    const { vm, transport, preview, load } = await opened();
+    await load();
+    const finding = (key: string, repo: string | null) => ({ key, repo, finding: { severity: 'high' as const, text: `Finding ${key}.`, ...(repo === null ? {} : { repo }) } });
+    const offer: RoundOffer = { review: 1, repos: ['commerce-core', 'customer-portal'], findings: [finding('F1', 'commerce-core'), finding('F2', null)] };
+    const picks: RoundPicks = { picked: ['F1'], assigned: {}, notes: {} };
+    const groups = [{ repo: 'commerce-core', findings: [offer.findings[0]] }, { repo: null, findings: [offer.findings[1]] }];
+    vi.spyOn(transport, 'sdlcRoundOffer').mockResolvedValue([offer, picks]);
+    vi.spyOn(transport, 'sdlcReviewView').mockResolvedValue({ rows: { counts: [], total: 2, groups: [] }, groups });
+    vi.spyOn(transport, 'sdlcPreviewBuild').mockResolvedValue([]);
+    const plan: RoundPlan = { blocked: null, requests: [{ repo: 'commerce-core', instructions: 'Fix F1.', summary: 'commerce-core · F1' }] };
+    const planned = vi.spyOn(transport, 'sdlcRoundPlan').mockResolvedValue(plan);
+    vi.spyOn(preview, 'openBuild').mockImplementation(() => new Promise(() => undefined));
+
+    void vm.openRound();
+    await advance(100);
+    const sent = { ...picks, notes: { 'commerce-core': '', 'customer-portal': '' } };
+    expect(planned).toHaveBeenCalledWith(REF, sent);
+    expect(vm.roundGroups()).toEqual(groups);
+    expect(preview.roundPlan()).toEqual(plan);
+
+    // Picking another finding asks the backend again, and what it answers is what the dialog shows.
+    const blocked: RoundPlan = { blocked: 'Choose a repository for F2.', requests: [] };
+    planned.mockResolvedValue(blocked);
+    preview.buildForm()!.model.update((m) => ({ ...m, picked: [...m.picked, 'F2'] }));
+    await advance(100);
+    expect(planned).toHaveBeenLastCalledWith(REF, { ...sent, picked: ['F1', 'F2'] });
+    expect(preview.roundPlan()).toEqual(blocked);
+    expect(preview.canStart()).toBe(false);
   });
 });

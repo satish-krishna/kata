@@ -250,3 +250,23 @@ describe('BuildDialog', () => {
     expect(keys).toEqual(['F3', 'F1', 'F2']);
   });
 });
+
+describe('BuildDialog shows the backend\'s plan', () => {
+  it('draws the plan it is given instead of making one', async () => {
+    const offer: RoundOffer = { review: 1, repos: ['api'], findings: [] };
+    const plan = { blocked: null, requests: [{ repo: 'api', instructions: 'Fix F1.', summary: 'api · F1' }] };
+    TestBed.configureTestingModule({ imports: [BuildDialog] });
+    const fixture = TestBed.createComponent(BuildDialog);
+    fixture.componentRef.setInput('mode', 'round');
+    fixture.componentRef.setInput('offer', offer);
+    fixture.componentRef.setInput('state', createBuildForm(TestBed.inject(Injector), true, offer));
+    fixture.componentRef.setInput('plan', plan);
+    await fixture.whenStable();
+    const summary = fixture.nativeElement.querySelector('[data-round-summary]') as HTMLElement;
+    expect(summary.textContent).toContain('Starts 1 agent');
+    expect(summary.textContent).toContain('api · F1');
+    fixture.componentRef.setInput('plan', { blocked: 'Pick a finding or write a note.', requests: [] });
+    await fixture.whenStable();
+    expect(summary.textContent).toContain('Pick a finding or write a note.');
+  });
+});
