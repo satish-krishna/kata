@@ -8,7 +8,6 @@ import { ChangesTable } from '../../ui/changes-table';
 import { ConfirmDialog } from '../../ui/confirm-dialog';
 import { LeftoverDialog } from '../../ui/leftover-dialog';
 import { LockOverlay } from '../../ui/lock-overlay';
-import { ProgressLine } from '../../ui/progress-line';
 import { SdlcSession } from '../../ui/sdlc-session';
 import { NewChangeDialog } from '../../ui/new-change-dialog';
 import { InstructionsRow } from '../../ui/instructions-row';
@@ -26,7 +25,6 @@ import { SdlcHomeViewModel } from './sdlc-home.view-model';
     NgIcon,
     HlmButtonImports,
     SdlcToolbar,
-    ProgressLine,
     SdlcSession,
     ChangesTable,
     InstructionsRow,

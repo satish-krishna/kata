@@ -32,6 +32,13 @@ import type { TaskStatus } from '@bindings/TaskStatus';
 import type { BranchInfo } from '@bindings/BranchInfo';
 import type { ChangeInfo } from '@bindings/ChangeInfo';
 import type { ChangeName } from '@bindings/ChangeName';
+import type { ChangeView } from '@bindings/ChangeView';
+import type { LiveFacts } from '@bindings/LiveFacts';
+import type { OfferStage } from '@bindings/OfferStage';
+import type { Readiness } from '@bindings/Readiness';
+import type { ReadyGate } from '@bindings/ReadyGate';
+import type { StateDocument } from '@bindings/StateDocument';
+import type { SystemView } from '@bindings/SystemView';
 import type { ContextState } from '@bindings/ContextState';
 import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
@@ -53,6 +60,7 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { DEMO_SETUP_FOLDER, DEMO_WORKSPACE_FOLDER } from './demo';
 import { PENDING_PERMISSION, type ScriptStep } from './mock';
+import { actionsForChange, feedbackRequired, fixProgramFailed, revisits, stageLabel } from './sdlc';
 
 export const MOCK_WORKSPACE_FOLDER = DEMO_WORKSPACE_FOLDER;
 /** A folder the demo can add that has repos but no committed `.ai-sdlc.json`, so adding it runs setup. */
@@ -427,6 +435,38 @@ function applyDecision(c: ChangeInfo, decision: Decision): ChangeInfo {
   }
 }
 
+const GATE: ReadyGate = { candidate: false, stop: null, accept: [] };
+const stateDocument = (d: DocState): StateDocument => ({ exists: d.exists, inHead: d.exists && d.committed, headStatus: d.head_status, workingStatus: d.status, uncommitted: d.exists && !d.committed, pin: null });
+
+/** The stage the plugin's answer would carry for a fixture stage; the fixtures still know a stage the plugin does not. */
+function offerStage(c: ChangeInfo): OfferStage {
+  switch (c.stage) {
+    case 'plan-out-of-date': return { 'plan-out-of-date': { cause: c.out_of_date === 'plan-pin' ? 'plan-pin' : 'spec-pin' } };
+    case 'fix-needs-plugin': return 'fix-unsettled';
+    default: return c.stage;
+  }
+}
+
+/** One fixture change as the backend's `sdlc_state` shows it: the plugin's state, what it offers and its live facts. The offer comes from the same tables the change page still reads, until it reads the offer too. */
+export function changeViewOf(c: ChangeInfo, readiness: Readiness): ChangeView {
+  const live: LiveFacts = { runLive: false, buildStopped: false, buildLive: false };
+  const stage = c.plan_unreadable ? 'plan-unreadable' : c.stage;
+  const shown = { ...c, stage };
+  const label = fixProgramFailed(shown) ? { ...stageLabel(stage), text: 'Fix · could not be read' } : stageLabel(stage);
+  const actions = actionsForChange(shown).map((action) => ({ action, enabled: true, reason: null, feedbackRequired: feedbackRequired(action, stage, c.out_of_date), revisits: revisits(action) }));
+  return {
+    state: {
+      change: c.change, master: '/m', folder: `/m/intent/${c.system}/${c.change}`, inCopy: false, title: null, track: c.track,
+      documents: { intent: stateDocument(c.intent), spec: stateDocument(c.spec), plan: stateDocument(c.plan) },
+      scenarios: null, tasks: null, buildLogs: {}, review: { committed: 0, draft: 'none' }, fix: null,
+      ready: { spec: GATE, plan: GATE, build: GATE, review: GATE, done: GATE, reject: GATE },
+    },
+    offer: { stage: offerStage(shown), label, actions },
+    live,
+    readiness,
+  };
+}
+
 export class SdlcMock {
   /** What the demo builds. `?demo=build-long` (browser only) widens it so every area of the build page overflows; unit tests keep the short one. */
   private readonly plan: PlanTask[];
@@ -551,6 +591,19 @@ export class SdlcMock {
     return this.listChanges().map((c) => (c.change === this.unreadable
       ? { ...c, plan_unreadable: true, plan_unreadable_reason: 'the plan has a task with no id' }
       : c));
+  }
+  /** Like the backend's `sdlc_state`: every change of the system from one answer. In the long demo one change's plan is unreadable, and the answer says why. */
+  systemView(system: string, readiness: Readiness): SystemView {
+    const blocked = readiness.kind === 'blocked';
+    const found = this.stagePass();
+    return {
+      system,
+      readiness,
+      canStartChange: !blocked,
+      startChangeReason: blocked ? readiness.message : null,
+      changes: found.map((c) => changeViewOf(c, readiness)),
+      problems: found.flatMap((c) => (c.plan_unreadable && c.plan_unreadable_reason !== null ? [c.plan_unreadable_reason] : [])),
+    };
   }
   branches(): BranchInfo { return { current: this.current, others: this.others.map((change) => ({ branch: `change/${change}`, change, needs_name: false })), default_base: MOCK_BASE, pending_change: this.demo === 'naming' ? `${MOCK_SYSTEM}/${MOCK_BUILD_CHANGE}` : null }; }
   /** Like the backend's `read_doc`: the document is named by its stem; anything else is a caller bug. */

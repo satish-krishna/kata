@@ -28,11 +28,8 @@
             </td>
             <td hlmTableCell>
               <span class="k-status" [class]="'k-status k-status--' + tone(c)">
-                <span class="k-status__dot"></span>{{ label(c) }}
+                <span class="k-status__dot"></span>{{ c.offer.label.text }}
               </span>
-              @if (c.info !== null && c.checking) {
-                <span class="k-faint" data-testid="checking"> · checking</span>
-              }
             </td>
             <td hlmTableCell class="k-mono">{{ lastRun(c) }}</td>
           </tr>

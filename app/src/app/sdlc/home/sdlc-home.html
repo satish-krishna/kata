@@ -13,7 +13,14 @@
     (openSettings)="vm.openSettings()"
   >
     @if (vm.canWork()) {
-      <button hlmBtn variant="primary" type="button" [disabled]="vm.locked()" (click)="vm.openNewChange()">
+      <button
+        hlmBtn
+        variant="primary"
+        type="button"
+        [disabled]="vm.locked() || !vm.canStartChange()"
+        [attr.title]="vm.startChangeReason()"
+        (click)="vm.openNewChange()"
+      >
         <ng-icon name="lucidePlus" size="14" />New change
       </button>
     }
@@ -149,9 +156,6 @@
               </div>
             }
             <div class="k-home__body">
-              @if (vm.readingProgress(); as entry) {
-                <div data-testid="reading-progress"><app-progress-line [entry]="entry" /></div>
-              }
               <app-changes-table
                 [rows]="vm.rows()"
                 [others]="vm.otherBranches()"
