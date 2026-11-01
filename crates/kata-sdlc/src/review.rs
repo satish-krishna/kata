@@ -163,6 +163,29 @@ pub fn verify_run(
     }
 }
 
+/// Whether the latest review still covers the change (see `currency`).
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
+pub enum ReviewCurrency {
+    /// There is no review to judge.
+    None,
+    /// The document has problems, so nothing in it can be trusted.
+    Invalid,
+    /// The master or a product repository moved since the latest review.
+    Stale,
+    /// The latest review covers the change as it stands; `review` is its index in `reviews`.
+    Current { review: usize },
+}
+
+/// The currency of the review record against where the product repositories stand now. `heads` holds
+/// the product repositories only; the master's own movement is `record.master_moved`.
+pub fn currency(record: &ReviewRecord, heads: &BTreeMap<String, String>) -> ReviewCurrency {
+    let _ = (record, heads);
+    ReviewCurrency::None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,6 +202,71 @@ mod tests {
         testutil::commit_file(&master, "plugin/tools/ai-sdlc.ts", "// program\n", "plugin");
         let since = git::run(&master, &["rev-parse", "HEAD"]).unwrap();
         (dir, master, since)
+    }
+
+    fn section(commits: &[(&str, &str)]) -> ParsedReviewSection {
+        ParsedReviewSection {
+            number: 1,
+            reviewed_at: "2026-11-01".into(),
+            commits: commits
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            findings: Vec::new(),
+        }
+    }
+
+    fn record_of(
+        reviews: Vec<ParsedReviewSection>,
+        problems: usize,
+        moved: &[&str],
+    ) -> ReviewRecord {
+        ReviewRecord {
+            layout: 2,
+            reviews,
+            problems: (0..problems)
+                .map(|_| Problem {
+                    file: "review.md".into(),
+                    line: 1,
+                    message: "bad".into(),
+                })
+                .collect(),
+            master_moved: moved.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn heads(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn currency_rows() {
+        let h = heads(&[("kata", "abcdef123"), ("ai-sdlc", "99887766")]);
+        let good = section(&[("kata", "abcdef1"), ("ai-sdlc", "9988")]);
+        // 1: problems
+        let r = record_of(vec![good.clone()], 1, &[]);
+        assert_eq!(currency(&r, &h), ReviewCurrency::Invalid);
+        // 2: no review
+        let r = record_of(vec![], 0, &[]);
+        assert_eq!(currency(&r, &h), ReviewCurrency::None);
+        // 3: a head does not match (differs, missing, or a recorded commit under four characters), or
+        // the master moved
+        for bad in [
+            section(&[("kata", "ffffff"), ("ai-sdlc", "9988")]),
+            section(&[("ai-sdlc", "9988")]),
+            section(&[("kata", "abc"), ("ai-sdlc", "9988")]),
+        ] {
+            let r = record_of(vec![bad], 0, &[]);
+            assert_eq!(currency(&r, &h), ReviewCurrency::Stale);
+        }
+        let r = record_of(vec![good.clone()], 0, &["notes.md"]);
+        assert_eq!(currency(&r, &h), ReviewCurrency::Stale);
+        // 4: all match, the master did not move; the latest review is judged
+        let r = record_of(vec![section(&[("kata", "zzzz")]), good], 0, &[]);
+        assert_eq!(currency(&r, &h), ReviewCurrency::Current { review: 1 });
     }
 
     #[test]
