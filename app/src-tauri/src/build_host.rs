@@ -22,7 +22,7 @@ use kata_sdlc::round::RoundRequest;
 use kata_sdlc::runspec::{change_spec, RunForm};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -230,20 +230,38 @@ fn master_name(place: &Place) -> String {
         .unwrap_or_default()
 }
 
-/// One change's build.
-struct Build {
-    coord: Coordinator,
-    ctx: Ctx,
-    /// The live runs: coordinator instance to (launch key, run id).
-    live: BTreeMap<u64, (String, u64)>,
-    form: StartForm,
-    last: Option<Snapshot>,
+/// One live run of a build. A run is listed before it is launched, so a build with a launch under way
+/// is not idle; `run_id` is known once the launch has answered.
+struct LiveRun {
+    /// The coordinator's key for it: a repository's name or `review`.
+    key: String,
+    run_id: Option<u64>,
+    /// A cancel arrived while the launch was under way.
+    cancel_asked: bool,
 }
 
-/// The coordinators and the holds, behind one lock.
+/// One change's build.
+struct Build {
+    /// Which coordinator this is. An answer meant for an earlier coordinator of the change is dropped.
+    generation: u64,
+    coord: Coordinator,
+    ctx: Ctx,
+    /// The live runs by the coordinator's instance id.
+    live: BTreeMap<u64, LiveRun>,
+    form: StartForm,
+    last: Option<Snapshot>,
+    /// The state last announced, so only a change is announced.
+    emitted: Option<BuildState>,
+}
+
+/// The coordinators and the holds, behind one lock. The lock is held only to read or change this
+/// table, never across a call of the plugin, a read of a repository or the start of a run.
 struct Inner {
     builds: HashMap<ChangeKey, Build>,
     holds: HoldTable,
+    /// The changes whose build is being started or continued: a second start waits for none.
+    starting: HashSet<ChangeKey>,
+    next_generation: u64,
 }
 
 pub struct BuildHost {
@@ -300,6 +318,33 @@ fn failure(answer: &Value) -> StartOutcome {
     }
 }
 
+/// What the commands of a step need, copied out of the build so they run without the lock.
+struct Exec {
+    place: Place,
+    system: String,
+    change: String,
+    last: Option<Snapshot>,
+    system_repos: Option<Vec<String>>,
+}
+
+/// What a batch of commands found out, to be applied under the lock at the next step.
+#[derive(Default)]
+struct Update {
+    last: Option<Snapshot>,
+    system_repos: Option<Vec<String>>,
+    /// Each launch by its instance: the run id, or why it did not start.
+    launched: Vec<(u64, Result<u64, String>)>,
+}
+
+/// A `Launch` command, unpacked.
+struct Launching {
+    launch_key: String,
+    instance: u64,
+    task: String,
+    instructions: Option<String>,
+    choices: BuildChoices,
+}
+
 impl BuildHost {
     pub fn new(
         tools: Arc<dyn Tools>,
@@ -313,6 +358,8 @@ impl BuildHost {
             inner: Mutex::new(Inner {
                 builds: HashMap::new(),
                 holds: HoldTable::default(),
+                starting: HashSet::new(),
+                next_generation: 0,
             }),
         })
     }
@@ -328,7 +375,7 @@ impl BuildHost {
         self.begin(change, None, Some(repo))
     }
 
-    /// The build state of `change`, or none when this session hosts no build of it.
+    /// The build state of `change`, or none when this session hosts no build of it. It only reads.
     pub fn state(&self, change: &ChangeRef) -> Option<BuildState> {
         let inner = self.inner.lock().unwrap();
         inner
@@ -339,32 +386,41 @@ impl BuildHost {
 
     /// Stop every run of `change`'s build.
     pub fn cancel(self: &Arc<Self>, change: &ChangeRef) {
-        let key = key_of(change);
-        let mut guard = self.inner.lock().unwrap();
-        self.drive(&mut guard, &key, Input::CancelAll);
+        self.drive(&key_of(change), None, Input::CancelAll);
     }
 
-    /// A run of a build ended; called by the launcher once the run has left the run table.
-    fn run_ended(self: &Arc<Self>, key: &ChangeKey, instance: u64, end: RunEnd) {
-        let mut guard = self.inner.lock().unwrap();
-        let Some((launch_key, _)) = guard
-            .builds
-            .get_mut(key)
-            .and_then(|b| b.live.remove(&instance))
-        else {
-            return;
+    /// A run of a build ended; called by the launcher once the run has left the run table. A run of an
+    /// earlier coordinator of the change (`generation`) is not this build's.
+    fn run_ended(self: &Arc<Self>, key: &ChangeKey, generation: u64, instance: u64, end: RunEnd) {
+        let launch_key = {
+            let mut guard = self.inner.lock().unwrap();
+            let Some(build) = guard
+                .builds
+                .get_mut(key)
+                .filter(|b| b.generation == generation)
+            else {
+                return;
+            };
+            let Some(run) = build.live.remove(&instance) else {
+                return;
+            };
+            run.key
         };
-        let input = Input::RunEnded {
-            key: launch_key,
-            instance,
-            exit: end.exit,
-            error: end.error,
-            refused: false,
-        };
-        self.drive(&mut guard, key, input);
+        self.drive(
+            key,
+            Some(generation),
+            Input::RunEnded {
+                key: launch_key,
+                instance,
+                exit: end.exit,
+                error: end.error,
+                refused: false,
+            },
+        );
     }
 
-    /// The decision of `sdlc_build_start` (`only` is none) and `sdlc_build_continue`.
+    /// The decision of `sdlc_build_start` (`only` is none) and `sdlc_build_continue`. Only one start of a
+    /// change goes on at a time; a second is refused as a build already under way.
     fn begin(
         self: &Arc<Self>,
         change: &ChangeRef,
@@ -376,29 +432,55 @@ impl BuildHost {
             Err(e) => return could_not_run(&e),
         };
         let key = key_of(change);
-        let mut guard = self.inner.lock().unwrap();
-        let existing = guard.builds.get(&key);
-        let live_build = existing.is_some_and(|b| !b.live.is_empty());
-        let already = match only {
-            None => live_build,
-            Some(repo) => existing.is_some_and(|b| b.live.values().any(|(k, _)| k == repo)),
+        let before = {
+            let mut guard = self.inner.lock().unwrap();
+            let existing = guard.builds.get(&key);
+            let live_build = existing.is_some_and(|b| !b.live.is_empty());
+            let already = match only {
+                None => live_build,
+                Some(repo) => existing.is_some_and(|b| b.live.values().any(|r| r.key == repo)),
+            };
+            if already || guard.starting.contains(&key) {
+                return StartOutcome::AlreadyRunning;
+            }
+            let before = Before {
+                live_build,
+                generation: existing.map(|b| b.generation),
+                form: existing.map(|b| b.form.clone()),
+            };
+            guard.starting.insert(key.clone());
+            before
         };
-        if already {
-            return StartOutcome::AlreadyRunning;
-        }
-        let form = form
-            .or_else(|| existing.map(|b| b.form.clone()))
-            .unwrap_or(StartForm {
-                timeout_secs: DEFAULT_TIMEOUT_SECS,
-                instructions: None,
-                continue_on_leftovers: false,
-                rounds: Vec::new(),
-            });
-        let (snapshot, plan) = match self.snapshot(&place, &change.system, &change.change) {
+        let outcome = self.begin_marked(&place, change, &key, form, only, before);
+        self.inner.lock().unwrap().starting.remove(&key);
+        outcome
+    }
+
+    fn begin_marked(
+        self: &Arc<Self>,
+        place: &Place,
+        change: &ChangeRef,
+        key: &ChangeKey,
+        form: Option<StartForm>,
+        only: Option<&str>,
+        before: Before,
+    ) -> StartOutcome {
+        let Before {
+            live_build,
+            generation: existing_generation,
+            form: existing_form,
+        } = before;
+        let form = form.or(existing_form).unwrap_or(StartForm {
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
+            instructions: None,
+            continue_on_leftovers: false,
+            rounds: Vec::new(),
+        });
+        let (snapshot, plan) = match self.snapshot(place, &change.system, &change.change) {
             Ok(s) => s,
             Err(output) => return StartOutcome::CouldNotRun { output },
         };
-        let master = master_name(&place);
+        let master = master_name(place);
         let rounds: Vec<String> = form.rounds.iter().map(|r| r.repo.clone()).collect();
         let needed: Vec<String> = match only {
             Some(repo) if live_build => {
@@ -414,7 +496,14 @@ impl BuildHost {
             .iter()
             .map(|r| RepoKey::of(&place.workspace.join(r)))
             .collect();
-        if let Err(held) = guard.holds.take(&key, Purpose::Build, &folders) {
+        // The one step that must be atomic: the first change to ask for a repository gets it.
+        let taken = self
+            .inner
+            .lock()
+            .unwrap()
+            .holds
+            .take(key, Purpose::Build, &folders);
+        if let Err(held) = taken {
             return StartOutcome::Held {
                 held: held
                     .held
@@ -423,42 +512,66 @@ impl BuildHost {
                     .collect(),
             };
         }
-        let uncommitted = match self.prepare(&place, change, &needed) {
-            Ok(u) => u,
-            Err(outcome) => {
-                if !live_build {
-                    guard.holds.release(&key, Purpose::Build);
-                }
-                return outcome;
+        let release = |outcome: StartOutcome| {
+            let mut guard = self.inner.lock().unwrap();
+            if guard.builds.get(key).is_none_or(|b| b.live.is_empty()) {
+                guard.holds.release(key, Purpose::Build);
             }
+            outcome
         };
-        if !live_build {
-            let heads = self.heads(&place, &snapshot.state);
+        let uncommitted = match self.prepare(place, change, &needed) {
+            Ok(u) => u,
+            Err(outcome) => return release(outcome),
+        };
+        let fresh = if live_build {
+            None
+        } else {
+            let heads = self.heads(place, &snapshot.state);
             let currency = match self
                 .tools
-                .review_record(&place, &change.system, &snapshot.state)
+                .review_record(place, &change.system, &snapshot.state)
             {
                 Ok(Some(record)) => review::currency(&record, &heads),
                 _ => ReviewCurrency::None,
             };
-            guard.builds.insert(
-                key.clone(),
-                Build {
-                    coord: Coordinator::new(currency, heads),
-                    ctx: Ctx {
-                        place,
-                        system: change.system.clone(),
-                        change: change.change.clone(),
-                        system_repos: None,
+            Some(Coordinator::new(currency, heads))
+        };
+        let generation = {
+            let mut guard = self.inner.lock().unwrap();
+            if live_build {
+                match guard.builds.get(key) {
+                    Some(b) if Some(b.generation) == existing_generation => b.generation,
+                    _ => return StartOutcome::AlreadyRunning,
+                }
+            } else {
+                if guard.builds.get(key).is_some_and(|b| !b.live.is_empty()) {
+                    return StartOutcome::AlreadyRunning;
+                }
+                let Some(coord) = fresh else {
+                    return StartOutcome::AlreadyRunning;
+                };
+                guard.next_generation += 1;
+                let generation = guard.next_generation;
+                guard.builds.insert(
+                    key.clone(),
+                    Build {
+                        generation,
+                        coord,
+                        ctx: Ctx {
+                            place: place.clone(),
+                            system: change.system.clone(),
+                            change: change.change.clone(),
+                            system_repos: None,
+                        },
+                        live: BTreeMap::new(),
+                        form: form.clone(),
+                        last: Some(snapshot),
+                        emitted: None,
                     },
-                    live: BTreeMap::new(),
-                    form: form.clone(),
-                    last: Some(snapshot),
-                },
-            );
-        }
-        let build = guard.builds.get_mut(&key).expect("the build was just made");
-        build.form = form.clone();
+                );
+                generation
+            }
+        };
         let input = match only {
             Some(repo) if live_build => Input::ContinueRepo {
                 repo: repo.to_string(),
@@ -480,7 +593,10 @@ impl BuildHost {
                 },
             },
         };
-        self.drive(&mut guard, &key, input);
+        if let Some(build) = self.inner.lock().unwrap().builds.get_mut(key) {
+            build.form = form;
+        }
+        self.drive(key, Some(generation), input);
         StartOutcome::Started { uncommitted }
     }
 
@@ -571,25 +687,146 @@ impl BuildHost {
         Ok(uncommitted)
     }
 
-    /// Give the coordinator `first` and carry out what it asks until it asks for nothing more. The
-    /// state is announced once, and the holds are released when the build has stopped with no run live.
-    fn drive(self: &Arc<Self>, inner: &mut Inner, key: &ChangeKey, first: Input) {
-        let Inner { builds, holds } = inner;
-        let Some(build) = builds.get_mut(key) else {
-            return;
-        };
-        let mut queue = VecDeque::from([first]);
-        while let Some(input) = queue.pop_front() {
-            for command in build.coord.step(input) {
+    /// Give the coordinator `first` and carry out what it asks until it asks for nothing more. Each step
+    /// is taken under the lock; the commands (reading the plugin and the repositories, starting runs) run
+    /// with the lock released, and what they found is applied at the next step. A step of a coordinator
+    /// that has been replaced since `generation` is dropped.
+    fn drive(self: &Arc<Self>, key: &ChangeKey, generation: Option<u64>, first: Input) {
+        let mut inputs = VecDeque::from([first]);
+        let mut update = Update::default();
+        let mut generation = generation;
+        loop {
+            let (commands, cancels, mut exec) = {
+                let mut guard = self.inner.lock().unwrap();
+                let Inner {
+                    builds,
+                    holds,
+                    starting,
+                    ..
+                } = &mut *guard;
+                let Some(build) = builds.get_mut(key) else {
+                    return;
+                };
+                if generation.is_some_and(|g| g != build.generation) {
+                    return;
+                }
+                generation = Some(build.generation);
+                let mut cancels: Vec<u64> = Vec::new();
+                if let Some(last) = update.last.take() {
+                    build.last = Some(last);
+                }
+                if let Some(repos) = update.system_repos.take() {
+                    build.ctx.system_repos = Some(repos);
+                }
+                for (instance, result) in update.launched.drain(..) {
+                    match result {
+                        Ok(run_id) => {
+                            if let Some(run) = build.live.get_mut(&instance) {
+                                run.run_id = Some(run_id);
+                                if run.cancel_asked {
+                                    cancels.push(run_id);
+                                }
+                            }
+                        }
+                        Err(why) => {
+                            if let Some(run) = build.live.remove(&instance) {
+                                inputs.push_back(Input::RunEnded {
+                                    key: run.key,
+                                    instance,
+                                    exit: None,
+                                    error: Some(why),
+                                    refused: true,
+                                });
+                            }
+                        }
+                    }
+                }
+                let mut commands: Vec<Command> = Vec::new();
+                while let Some(input) = inputs.pop_front() {
+                    commands.extend(build.coord.step(input));
+                }
+                for command in &commands {
+                    match command {
+                        Command::Launch {
+                            key: launch_key,
+                            instance,
+                            ..
+                        } => {
+                            build.live.insert(
+                                *instance,
+                                LiveRun {
+                                    key: launch_key.clone(),
+                                    run_id: None,
+                                    cancel_asked: false,
+                                },
+                            );
+                        }
+                        Command::CancelRun { instance, .. } => {
+                            if let Some(run) = build.live.get_mut(instance) {
+                                match run.run_id {
+                                    Some(id) => cancels.push(id),
+                                    None => run.cancel_asked = true,
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                let state = build.coord.state().clone();
+                let settled = matches!(
+                    state.phase,
+                    BuildPhase::Stopped | BuildPhase::Finished | BuildPhase::Cancelled
+                );
+                if build.emitted.as_ref() != Some(&state) {
+                    build.emitted = Some(state.clone());
+                    self.launcher.emit(&BuildEvent {
+                        change: key.clone(),
+                        state,
+                    });
+                }
+                // A start under way has taken the holds for the build it is about to begin.
+                if settled && build.live.is_empty() && !starting.contains(key) {
+                    holds.release(key, Purpose::Build);
+                }
+                let exec = Exec {
+                    place: build.ctx.place.clone(),
+                    system: build.ctx.system.clone(),
+                    change: build.ctx.change.clone(),
+                    last: build.last.clone(),
+                    system_repos: build.ctx.system_repos.clone(),
+                };
+                (commands, cancels, exec)
+            };
+            if commands.is_empty() && cancels.is_empty() {
+                return;
+            }
+            for run_id in cancels {
+                self.launcher.cancel(run_id);
+            }
+            for command in commands {
                 match command {
-                    Command::ReadStatus => queue.push_back(self.read_status(build)),
+                    Command::ReadStatus => {
+                        match self.snapshot(&exec.place, &exec.system, &exec.change) {
+                            Ok((snapshot, plan)) => {
+                                let facts = BuildFacts::read(
+                                    &plan,
+                                    &snapshot.state,
+                                    &master_name(&exec.place),
+                                );
+                                exec.last = Some(snapshot.clone());
+                                update.last = Some(snapshot);
+                                inputs.push_back(Input::Status(facts));
+                            }
+                            Err(_) => inputs.push_back(Input::StatusFailed),
+                        }
+                    }
                     Command::ReadHeads => {
-                        let heads = build
+                        let heads = exec
                             .last
                             .as_ref()
-                            .map(|s| self.heads(&build.ctx.place, &s.state))
+                            .map(|s| self.heads(&exec.place, &s.state))
                             .unwrap_or_default();
-                        queue.push_back(Input::Heads(heads));
+                        inputs.push_back(Input::Heads(heads));
                     }
                     Command::Launch {
                         key: launch_key,
@@ -599,58 +836,39 @@ impl BuildHost {
                         choices,
                         ..
                     } => {
-                        let launched = Launching {
-                            launch_key,
-                            instance,
-                            task,
-                            instructions,
-                            choices,
-                        };
-                        if let Some(failed) = self.launch(build, key, launched) {
-                            queue.push_back(failed);
+                        if exec.system_repos.is_none() {
+                            let repos = self.system_repos(&exec);
+                            exec.system_repos = Some(repos.clone());
+                            update.system_repos = Some(repos);
                         }
+                        let result = self.launch(
+                            &exec,
+                            key,
+                            generation.unwrap_or_default(),
+                            Launching {
+                                launch_key,
+                                instance,
+                                task,
+                                instructions,
+                                choices,
+                            },
+                        );
+                        update.launched.push((instance, result));
                     }
-                    Command::CancelRun { instance, .. } => {
-                        if let Some((_, run_id)) = build.live.get(&instance) {
-                            self.launcher.cancel(*run_id);
-                        }
-                    }
+                    Command::CancelRun { .. } => {}
                 }
             }
         }
-        let state = build.coord.state().clone();
-        let settled = matches!(
-            state.phase,
-            BuildPhase::Stopped | BuildPhase::Finished | BuildPhase::Cancelled
-        );
-        self.launcher.emit(&BuildEvent {
-            change: key.clone(),
-            state,
-        });
-        if settled && build.live.is_empty() {
-            holds.release(key, Purpose::Build);
-        }
     }
 
-    fn read_status(&self, build: &mut Build) -> Input {
-        let ctx = &build.ctx;
-        match self.snapshot(&ctx.place, &ctx.system, &ctx.change) {
-            Ok((snapshot, plan)) => {
-                let facts = BuildFacts::read(&plan, &snapshot.state, &master_name(&ctx.place));
-                build.last = Some(snapshot);
-                Input::Status(facts)
-            }
-            Err(_) => Input::StatusFailed,
-        }
-    }
-
-    /// Start one run the coordinator asked for. A run that cannot start comes back as an ended run.
+    /// Start one run the coordinator asked for; the run id, or why it did not start.
     fn launch(
         self: &Arc<Self>,
-        build: &mut Build,
+        exec: &Exec,
         key: &ChangeKey,
+        generation: u64,
         asked: Launching,
-    ) -> Option<Input> {
+    ) -> Result<u64, String> {
         let Launching {
             launch_key,
             instance,
@@ -658,21 +876,9 @@ impl BuildHost {
             instructions,
             choices,
         } = asked;
-        let refused = |why: String| {
-            Some(Input::RunEnded {
-                key: launch_key.clone(),
-                instance,
-                exit: None,
-                error: Some(why),
-                refused: true,
-            })
+        let Some(snapshot) = exec.last.clone() else {
+            return Err("the change's state was not read".into());
         };
-        let Some(snapshot) = build.last.clone() else {
-            return refused("the change's state was not read".into());
-        };
-        if build.ctx.system_repos.is_none() {
-            build.ctx.system_repos = Some(self.system_repos(&build.ctx));
-        }
         let review = launch_key == "review";
         let kind = if review {
             RunKind::Review
@@ -683,12 +889,12 @@ impl BuildHost {
         };
         let place = RunPlace {
             kind,
-            system: build.ctx.system.clone(),
+            system: exec.system.clone(),
             state: snapshot.state,
-            workspace: build.ctx.place.workspace.clone(),
-            checkout: build.ctx.place.master.clone(),
+            workspace: exec.place.workspace.clone(),
+            checkout: exec.place.master.clone(),
             other_copies: snapshot.others,
-            system_repos: build.ctx.system_repos.clone().unwrap_or_default(),
+            system_repos: exec.system_repos.clone().unwrap_or_default(),
             workbench_dir: self.workbench_dir.clone(),
         };
         let spec = change_spec(
@@ -705,7 +911,7 @@ impl BuildHost {
         );
         let host = Arc::clone(self);
         let ended_key = key.clone();
-        let request = LaunchRequest {
+        self.launcher.launch(LaunchRequest {
             spec,
             lane: Lane::Change {
                 key: key.clone(),
@@ -719,52 +925,43 @@ impl BuildHost {
             repo: (!review).then(|| launch_key.clone()),
             task,
             group: format!("build:{}/{}", key.system, key.change),
-            ended: Box::new(move |end| host.run_ended(&ended_key, instance, end)),
-        };
-        match self.launcher.launch(request) {
-            Ok(run_id) => {
-                build.live.insert(instance, (launch_key, run_id));
-                None
-            }
-            Err(why) => refused(why),
-        }
+            ended: Box::new(move |end| host.run_ended(&ended_key, generation, instance, end)),
+        })
     }
 
     /// The folder names of the system's repositories as `change show` lists them (none when it cannot
     /// say), and the master.
-    fn system_repos(&self, ctx: &Ctx) -> Vec<String> {
-        let master = ctx.place.master.display().to_string();
-        let workspace = ctx.place.workspace.display().to_string();
+    fn system_repos(&self, exec: &Exec) -> Vec<String> {
+        let master = exec.place.master.display().to_string();
+        let workspace = exec.place.workspace.display().to_string();
         let shown = self.tools.run(
             &[
                 "change",
                 "show",
                 "--json",
                 "--change",
-                &ctx.change,
+                &exec.change,
                 "--master",
                 &master,
                 "--workspace",
                 &workspace,
             ],
-            &ctx.place,
+            &exec.place,
         );
         let mut repos: Vec<String> = shown
             .ok()
             .and_then(|v| v["repos"].as_object().map(|o| o.keys().cloned().collect()))
             .unwrap_or_default();
-        repos.push(master_name(&ctx.place));
+        repos.push(master_name(&exec.place));
         repos
     }
 }
 
-/// A `Launch` command, unpacked.
-struct Launching {
-    launch_key: String,
-    instance: u64,
-    task: String,
-    instructions: Option<String>,
-    choices: BuildChoices,
+/// What `begin` read under the lock before it called out.
+struct Before {
+    live_build: bool,
+    generation: Option<u64>,
+    form: Option<StartForm>,
 }
 
 #[cfg(test)]
