@@ -1,8 +1,8 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
 mod build_host;
 mod history;
-mod runs;
 mod running;
+mod runs;
 mod sdlc_state;
 mod zoom;
 
@@ -177,6 +177,10 @@ fn start_run(
         }
     };
 
+    let change_key = match &lane {
+        runs::Lane::Change { key, .. } => Some(key.clone()),
+        _ => None,
+    };
     table.insert(LiveRun {
         id,
         workdir: std::path::PathBuf::from(&spec.workdir),
@@ -190,6 +194,7 @@ fn start_run(
     let state = control.state.clone();
     let history = history.clone();
     let app = app.clone();
+    announce_running(&app);
 
     tauri::async_runtime::spawn(async move {
         let mut terminal_seen = false;
@@ -217,7 +222,19 @@ fn start_run(
                             }
                         }
                         history.push(id, &v);
+                        let announce = matches!(
+                            v.get("type").and_then(Value::as_str),
+                            Some(
+                                "ask.requested"
+                                    | "ask.answered"
+                                    | "permission.requested"
+                                    | "permission.decided"
+                            )
+                        );
                         let _ = app.emit(RUN_EVENT, runs::wrap(id, v));
+                        if announce {
+                            announce_running(&app);
+                        }
                     }
                     Err(_) => relay_log(&app, id, &bytes),
                 },
@@ -254,6 +271,11 @@ fn start_run(
         let _ = std::fs::remove_file(&tmp);
         // Remove only this run; a newer run keeps its own entry.
         state.lock().unwrap().remove(id);
+        if let (Some(key), Some(marks)) =
+            (&change_key, app.try_state::<Arc<running::OpenedMarks>>())
+        {
+            marks.ended(key);
+        }
         if let Some(ended) = ended {
             let end = end.unwrap_or(build_host::RunEnd {
                 exit: None,
@@ -262,9 +284,46 @@ fn start_run(
             // The host's work is blocking (it runs the plugin and takes locks).
             let _ = tauri::async_runtime::spawn_blocking(move || ended(end)).await;
         }
+        announce_running(&app);
     });
 
     Ok(id.to_string())
+}
+
+/// The running changes, computed from the run table, the builds, the histories and the opened marks.
+fn running_strip(app: &AppHandle) -> running::RunningStrip {
+    let live = app.state::<RunControl>().state.lock().unwrap().live();
+    let builds = app
+        .try_state::<Arc<build_host::BuildHost>>()
+        .map(|h| h.views())
+        .unwrap_or_default();
+    let history = app.state::<Arc<history::RunHistory>>();
+    let marks = app.state::<Arc<running::OpenedMarks>>();
+    running::entries(&live, &builds, &history, &marks)
+}
+
+/// Tell the webview the running changes may have changed.
+fn announce_running(app: &AppHandle) {
+    if app.try_state::<Arc<running::OpenedMarks>>().is_some() {
+        let _ = app.emit(running::RUNNING_EVENT, running_strip(app));
+    }
+}
+
+/// The running changes: the first three and every one.
+#[tauri::command]
+fn sdlc_running(app: AppHandle) -> running::RunningStrip {
+    running_strip(&app)
+}
+
+/// The engineer opened a change; it leaves the running changes once nothing of it needs them.
+#[tauri::command]
+fn sdlc_mark_opened(
+    app: AppHandle,
+    marks: State<Arc<running::OpenedMarks>>,
+    change: build_host::ChangeRef,
+) {
+    marks.open(&build_host::key_of(&change));
+    announce_running(&app);
 }
 
 /// Every event of a run from its start, in order, for a session opened after the run began.
@@ -370,27 +429,34 @@ impl build_host::Launcher for AppLauncher {
 
     fn emit(&self, event: &build_host::BuildEvent) {
         let _ = self.app.emit(build_host::BUILD_EVENT, event);
+        announce_running(&self.app);
     }
 }
 
 /// Start a change's build. The decision is the host's; see `BuildHost::start`.
 #[tauri::command(async)]
 fn sdlc_build_start(
+    app: AppHandle,
     host: State<Arc<build_host::BuildHost>>,
     change: build_host::ChangeRef,
     form: build_host::StartForm,
 ) -> build_host::StartOutcome {
-    host.start(&change, form)
+    let outcome = host.start(&change, form);
+    announce_running(&app);
+    outcome
 }
 
 /// Continue a change's build in one repository.
 #[tauri::command(async)]
 fn sdlc_build_continue(
+    app: AppHandle,
     host: State<Arc<build_host::BuildHost>>,
     change: build_host::ChangeRef,
     repo: String,
 ) -> build_host::StartOutcome {
-    host.continue_repo(&change, &repo)
+    let outcome = host.continue_repo(&change, &repo);
+    announce_running(&app);
+    outcome
 }
 
 /// Where a change's build stands, or none when this session hosts no build of it.
@@ -1636,6 +1702,7 @@ pub fn run() {
         .manage(RunControl::default())
         .manage(Arc::new(StagePasses::default()))
         .manage(Arc::new(history::RunHistory::default()))
+        .manage(Arc::new(running::OpenedMarks::default()))
         .setup(|app| {
             app.manage(build_host::BuildHost::new(
                 Arc::new(PluginTools),
@@ -1669,6 +1736,8 @@ pub fn run() {
             sdlc_build_state,
             sdlc_review_start,
             sdlc_review_waiting,
+            sdlc_running,
+            sdlc_mark_opened,
             sdlc_round_offer,
             sdlc_round_plan,
             sdlc_round_start,

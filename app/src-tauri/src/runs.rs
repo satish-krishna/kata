@@ -1,8 +1,7 @@
 //! The table of live runs behind the Workbench's `run_spec`. Pure and generic over
 //! the child handle so tests can use a fake; the app uses `CommandChild`.
 
-// The strip and the close guard (T18, T19) read `live`, `LiveSummary`, `kind` and `repo`; the
-// lane-aware commands construct the other lanes and kinds.
+// The lane-aware commands construct the other lanes and kinds; the strip (T18) reads `live`.
 #![allow(dead_code)]
 
 use kata_sdlc::holds::{ChangeKey, RepoKey};

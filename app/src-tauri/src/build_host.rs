@@ -33,7 +33,7 @@ pub const BUILD_EVENT: &str = "sdlc://build";
 pub const DEFAULT_TIMEOUT_SECS: u64 = 3600;
 
 /// The coordinator's key for the review run.
-const REVIEW: &str = "review";
+pub const REVIEW: &str = "review";
 
 /// A change as the webview names it.
 #[derive(Deserialize, Clone, Debug)]
@@ -272,6 +272,8 @@ struct Build {
     emitted: Option<(BuildState, Vec<HeldRepo>)>,
     /// What keeps the review from starting: the repositories other changes hold. Empty when it is not waiting.
     review_waiting: Vec<HeldRepo>,
+    /// When the announced state last changed, in unix milliseconds.
+    changed_ms: u64,
 }
 
 /// The coordinators and the holds, behind one lock. The lock is held only to read or change this
@@ -281,6 +283,9 @@ struct Inner {
     holds: HoldTable,
     /// The changes whose build is being started or continued: a second start waits for none.
     starting: HashSet<ChangeKey>,
+    /// The last start of each change that another change held, with when; cleared when the change
+    /// is started again and gets its repositories.
+    held_starts: HashMap<ChangeKey, (Vec<HeldRepo>, u64)>,
     next_generation: u64,
 }
 
@@ -291,7 +296,7 @@ pub struct BuildHost {
     inner: Mutex<Inner>,
 }
 
-fn key_of(change: &ChangeRef) -> ChangeKey {
+pub fn key_of(change: &ChangeRef) -> ChangeKey {
     ChangeKey {
         workspace: RepoKey::of(Path::new(&change.workspace)),
         system: change.system.clone(),
@@ -316,6 +321,12 @@ fn review_folders(place: &Place, state: &ChangeState) -> Vec<RepoKey> {
         .iter()
         .map(|r| RepoKey::of(&place.workspace.join(r)))
         .collect()
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 fn held_repos(held: kata_sdlc::holds::Held) -> Vec<HeldRepo> {
@@ -396,6 +407,7 @@ impl BuildHost {
                 builds: HashMap::new(),
                 holds: HoldTable::default(),
                 starting: HashSet::new(),
+                held_starts: HashMap::new(),
                 next_generation: 0,
             }),
         })
@@ -419,6 +431,39 @@ impl BuildHost {
             .builds
             .get(&key_of(change))
             .map(|b| b.coord.state().clone())
+    }
+
+    /// What the running-changes strip reads of every build this session hosts and of every start
+    /// another change held. It only reads.
+    pub fn views(&self) -> Vec<BuildView> {
+        let inner = self.inner.lock().unwrap();
+        let mut views: Vec<BuildView> = inner
+            .builds
+            .iter()
+            .map(|(key, b)| BuildView {
+                change: key.clone(),
+                state: Some(b.coord.state().clone()),
+                review_waiting: b.review_waiting.clone(),
+                held_start: inner
+                    .held_starts
+                    .get(key)
+                    .map(|(h, _)| h.clone())
+                    .unwrap_or_default(),
+                changed_ms: b.changed_ms,
+            })
+            .collect();
+        for (key, (held, at)) in &inner.held_starts {
+            if !inner.builds.contains_key(key) {
+                views.push(BuildView {
+                    change: key.clone(),
+                    state: None,
+                    review_waiting: Vec::new(),
+                    held_start: held.clone(),
+                    changed_ms: *at,
+                });
+            }
+        }
+        views
     }
 
     /// Start `change`'s review by hand. It starts only when every product repository the review reads is
@@ -663,19 +708,23 @@ impl BuildHost {
             .map(|r| RepoKey::of(&place.workspace.join(r)))
             .collect();
         // The one step that must be atomic: the first change to ask for a repository gets it.
-        let taken = self
-            .inner
-            .lock()
-            .unwrap()
-            .holds
-            .take(key, Purpose::Build, &folders);
+        let taken = {
+            let mut guard = self.inner.lock().unwrap();
+            let taken = guard.holds.take(key, Purpose::Build, &folders);
+            match &taken {
+                Ok(_) => {
+                    guard.held_starts.remove(key);
+                }
+                Err(held) => {
+                    let held = held_repos(held.clone());
+                    guard.held_starts.insert(key.clone(), (held, now_ms()));
+                }
+            }
+            taken
+        };
         if let Err(held) = taken {
             return StartOutcome::Held {
-                held: held
-                    .held
-                    .into_iter()
-                    .map(|(repo, holder)| HeldRepo { repo, holder })
-                    .collect(),
+                held: held_repos(held),
             };
         }
         let release = |outcome: StartOutcome| {
@@ -734,6 +783,7 @@ impl BuildHost {
                         last: Some(snapshot),
                         emitted: None,
                         review_waiting: Vec::new(),
+                        changed_ms: now_ms(),
                     },
                 );
                 generation
@@ -953,6 +1003,7 @@ impl BuildHost {
                 let announced = (state, build.review_waiting.clone());
                 if build.emitted.as_ref() != Some(&announced) {
                     build.emitted = Some(announced.clone());
+                    build.changed_ms = now_ms();
                     self.launcher.emit(&BuildEvent {
                         change: key.clone(),
                         state: announced.0.clone(),

@@ -1,6 +1,6 @@
 //! Every live run's events, kept by the backend so a session opened later shows the whole run.
 
-// `pending`, `forget` and `Pending` are read by the running-changes list, a later task.
+// `forget` is called when a run leaves the table, a later task (the close guard).
 #![allow(dead_code)]
 
 use serde::Serialize;

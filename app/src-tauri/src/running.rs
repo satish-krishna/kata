@@ -1,11 +1,9 @@
 //! What the running-changes strip shows: one entry per change that needs the engineer or works,
 //! computed as a pure function of snapshots (live runs, builds, run histories, opened marks) so it
 //! needs no Tauri app. The entry a change gets is the first row of the table in `entries` that holds.
-// The Tauri commands and the emit hooks that read this module arrive in the green commit.
-#![allow(dead_code)]
-
 use crate::build_host::BuildView;
-use crate::history::RunHistory;
+use crate::build_host::REVIEW;
+use crate::history::{Pending, RunHistory};
 use crate::runs::{Lane, LiveSummary, RunKind};
 use kata_sdlc::holds::ChangeKey;
 use serde::Serialize;
@@ -98,24 +96,196 @@ struct Marks {
 
 impl OpenedMarks {
     /// The engineer opened `change`.
-    pub fn open(&self, _change: &ChangeKey) {
-        todo!("not implemented")
+    pub fn open(&self, change: &ChangeKey) {
+        let mut m = self.inner.lock().unwrap();
+        m.seq += 1;
+        let at = m.seq;
+        m.opened.insert(change.clone(), at);
     }
 
     /// A run of `change` ended.
-    pub fn ended(&self, _change: &ChangeKey) {
-        todo!("not implemented")
+    pub fn ended(&self, change: &ChangeKey) {
+        let mut m = self.inner.lock().unwrap();
+        m.seq += 1;
+        let at = m.seq;
+        m.ended.insert(change.clone(), at);
+    }
+
+    /// The changes whose last run ended after the engineer last opened them, with when it ended.
+    fn unseen(&self) -> Vec<(ChangeKey, u64)> {
+        let m = self.inner.lock().unwrap();
+        m.ended
+            .iter()
+            .filter(|(k, at)| m.opened.get(*k).is_none_or(|o| o < *at))
+            .map(|(k, at)| (k.clone(), *at))
+            .collect()
+    }
+}
+
+/// What the strip reads of one change before it picks a row.
+#[derive(Default)]
+struct Facts<'a> {
+    /// Live runs of the change, oldest id first, with what each waits on.
+    runs: Vec<(&'a LiveSummary, Option<Pending>)>,
+    build: Option<&'a BuildView>,
+    unseen_end: Option<u64>,
+}
+
+fn pending_since(p: &Pending) -> u64 {
+    match p {
+        Pending::Question { since_ms, .. } | Pending::Permission { since_ms, .. } => *since_ms,
+    }
+}
+
+/// The entry for one change: the first row that holds, or none (rows 7 and 8).
+fn entry_of(change: &ChangeKey, f: &Facts) -> Option<RunningEntry> {
+    let waiting: Vec<RunRef> = f
+        .runs
+        .iter()
+        .filter(|(_, p)| p.is_some())
+        .map(|(r, _)| RunRef {
+            run: r.id,
+            kind: r.kind,
+            repo: r.repo.clone(),
+        })
+        .collect();
+    let oldest = |want_question: bool| {
+        f.runs
+            .iter()
+            .filter_map(|(r, p)| p.as_ref().map(|p| (r.id, p)))
+            .filter(|(_, p)| matches!(p, Pending::Question { .. }) == want_question)
+            .min_by_key(|(_, p)| pending_since(p))
+    };
+    let entry = |state: EntryState, since: u64| {
+        Some(RunningEntry {
+            change: change.clone(),
+            state,
+            since,
+            waiting: waiting.clone(),
+        })
+    };
+    let build = f.build;
+    // Rows 1 and 2.
+    if let Some((run, Pending::Question { text, since_ms })) = oldest(true) {
+        return entry(
+            EntryState::NeedsAnswer {
+                text: text.clone(),
+                run,
+            },
+            *since_ms,
+        );
+    }
+    if let Some((run, Pending::Permission { action, since_ms })) = oldest(false) {
+        return entry(
+            EntryState::NeedsPermission {
+                action: action.clone(),
+                run,
+            },
+            *since_ms,
+        );
+    }
+    let changed = build.map_or(0, |b| b.changed_ms);
+    // Row 3: a stopped product repository. A held review is also marked stopped under the review's
+    // own key; it shows as row 5, so that key is skipped while the review waits for a hold.
+    if let Some(b) = build {
+        let review_waits = !b.review_waiting.is_empty();
+        let stopped = b
+            .state
+            .iter()
+            .flat_map(|s| s.stopped.iter())
+            .find(|(repo, _)| !(review_waits && repo.as_str() == REVIEW));
+        if let Some((repo, stop)) = stopped {
+            return entry(
+                EntryState::Stopped {
+                    repo: repo.clone(),
+                    reason: stop.reason.clone(),
+                },
+                changed,
+            );
+        }
+        // Row 4.
+        if let Some(h) = b.held_start.first() {
+            return entry(
+                EntryState::Held {
+                    holder: h.holder.clone(),
+                },
+                changed,
+            );
+        }
+        // Row 5.
+        if let Some(h) = b.review_waiting.first() {
+            return entry(
+                EntryState::ReviewWaiting {
+                    holder: h.holder.clone(),
+                },
+                changed,
+            );
+        }
+    }
+    // Row 6.
+    if let Some((r, _)) = f.runs.first() {
+        return entry(
+            EntryState::Working {
+                stage: r.kind,
+                repo: r.repo.clone(),
+                run: r.id,
+            },
+            changed,
+        );
+    }
+    // Rows 7 and 8.
+    f.unseen_end.and_then(|at| entry(EntryState::Finished, at))
+}
+
+fn row(state: &EntryState) -> u8 {
+    match state {
+        EntryState::NeedsAnswer { .. } => 1,
+        EntryState::NeedsPermission { .. } => 2,
+        EntryState::Stopped { .. } => 3,
+        EntryState::Held { .. } => 4,
+        EntryState::ReviewWaiting { .. } => 5,
+        EntryState::Working { .. } => 6,
+        EntryState::Finished => 7,
     }
 }
 
 /// The running changes. See the table in the plan's T18.
 pub fn entries(
-    _live: &[LiveSummary],
-    _builds: &[BuildView],
-    _history: &RunHistory,
-    _marks: &OpenedMarks,
+    live: &[LiveSummary],
+    builds: &[BuildView],
+    history: &RunHistory,
+    marks: &OpenedMarks,
 ) -> RunningStrip {
-    RunningStrip::default()
+    let mut facts: HashMap<ChangeKey, Facts> = HashMap::new();
+    for run in live {
+        if let Lane::Change { key, .. } = &run.lane {
+            facts
+                .entry(key.clone())
+                .or_default()
+                .runs
+                .push((run, history.pending(run.id)));
+        }
+    }
+    for build in builds {
+        facts.entry(build.change.clone()).or_default().build = Some(build);
+    }
+    for (change, at) in marks.unseen() {
+        facts.entry(change).or_default().unseen_end = Some(at);
+    }
+    let mut all: Vec<RunningEntry> = facts
+        .iter()
+        .filter_map(|(change, f)| entry_of(change, f))
+        .collect();
+    all.sort_by(|a, b| {
+        (row(&a.state), a.since, &a.change.system, &a.change.change).cmp(&(
+            row(&b.state),
+            b.since,
+            &b.change.system,
+            &b.change.change,
+        ))
+    });
+    let shown = all.iter().take(SHOWN).cloned().collect();
+    RunningStrip { shown, all }
 }
 
 #[cfg(test)]
@@ -267,7 +437,8 @@ mod tests {
         assert_eq!(e.state, EntryState::Held { holder: key("B") });
         // A review waiting for a held repository: names the holder, not a stop.
         let mut s = state(BuildPhase::Stopped);
-        s.stopped.insert("review".into(), stop("change B holds app"));
+        s.stopped
+            .insert("review".into(), stop("change B holds app"));
         let mut v = view("A", Some(s));
         v.review_waiting = held("app", "B");
         let e = only(strip(&[], &[v], &RunHistory::default()));
