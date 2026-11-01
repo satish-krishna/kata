@@ -51,8 +51,32 @@ pub struct SystemView {
     pub problems: Vec<String>,
 }
 
+/// The offer of a change on a machine where the mode cannot run: the stage and label stay, and every
+/// action is refused with the readiness message.
+fn refused(mut offer: ChangeOffer, message: &str) -> ChangeOffer {
+    for action in &mut offer.actions {
+        action.enabled = false;
+        action.reason = Some(message.to_string());
+    }
+    offer
+}
+
+fn view_of(state: ChangeState, readiness: &Readiness, live: LiveFacts) -> ChangeView {
+    let mut offer = kata_sdlc::offer::of(&state, &live);
+    if let Readiness::Blocked { message, .. } = readiness {
+        offer = refused(offer, message);
+    }
+    ChangeView {
+        state,
+        offer,
+        live,
+        readiness: readiness.clone(),
+    }
+}
+
 /// The view of every change of `system`, from one `state` call. `source` is `None` where the mode cannot
-/// run and there is no program to ask: the view then lists nothing.
+/// run and there is no program to ask: the view then lists nothing. A blocked readiness offers nothing,
+/// and starting a change is not offered.
 pub fn system_view(
     source: Option<&dyn StateSource>,
     readiness: &Readiness,
@@ -60,14 +84,41 @@ pub fn system_view(
     folder: &Path,
     system: &str,
 ) -> Result<SystemView, String> {
-    let _ = (source, live, folder);
+    let empty = SystemState {
+        system: system.to_string(),
+        changes: Vec::new(),
+        problems: Vec::new(),
+    };
+    let found = match source {
+        Some(source) => match source.state(folder, system, None) {
+            Ok(found) => found,
+            Err(e) if matches!(readiness, Readiness::Blocked { .. }) => SystemState {
+                problems: vec![e.to_string()],
+                ..empty
+            },
+            Err(e) => return Err(e.to_string()),
+        },
+        None => empty,
+    };
+    let (can_start_change, start_change_reason) = match readiness {
+        Readiness::Blocked { message, .. } => (false, Some(message.clone())),
+        Readiness::Ready { .. } => (true, None),
+    };
+    let changes = found
+        .changes
+        .into_iter()
+        .map(|state| {
+            let facts = live(system, &state.change);
+            view_of(state, readiness, facts)
+        })
+        .collect();
     Ok(SystemView {
         system: system.to_string(),
         readiness: readiness.clone(),
-        can_start_change: true,
-        start_change_reason: None,
-        changes: Vec::new(),
-        problems: Vec::new(),
+        can_start_change,
+        start_change_reason,
+        changes,
+        problems: found.problems,
     })
 }
 
@@ -80,8 +131,18 @@ pub fn change_view(
     system: &str,
     change: &str,
 ) -> Result<ChangeView, String> {
-    let _ = (source, readiness, live, folder, system);
-    Err(format!("{change} is not listed"))
+    let not_listed = || format!("{change} is not listed");
+    let source = source.ok_or_else(not_listed)?;
+    let found = source
+        .state(folder, system, Some(change))
+        .map_err(|e| e.to_string())?;
+    let state = found
+        .changes
+        .into_iter()
+        .find(|c| c.change == change)
+        .ok_or_else(not_listed)?;
+    let facts = live(system, change);
+    Ok(view_of(state, readiness, facts))
 }
 
 #[cfg(test)]

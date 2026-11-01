@@ -708,6 +708,72 @@ fn sdlc_build_heads(
         .map_err(|e| e.to_string())
 }
 
+/// What the run table knows about a change. Only a build run carries its change (`group`); a document run
+/// has none, so it is not attributed to a change. No build host exists yet to know a stopped build
+/// (T16), so `build_stopped` is false.
+fn live_facts(control: &RunControl, system: &str, change: &str) -> sdlc::offer::LiveFacts {
+    let live = control
+        .state
+        .lock()
+        .unwrap()
+        .group_live(&format!("build:{system}/{change}"));
+    sdlc::offer::LiveFacts {
+        run_live: live,
+        build_stopped: false,
+        build_live: live,
+    }
+}
+
+/// The program to ask, and the readiness, for a workspace folder. Only a ready mode has a program.
+fn state_inputs(folder: &str) -> (Option<sdlc::ai_sdlc::Program>, sdlc::plugin::Readiness) {
+    let readiness = ai_sdlc_readiness(Some(folder));
+    let program = match &readiness {
+        sdlc::plugin::Readiness::Ready { plugin, .. } => {
+            Some(sdlc::ai_sdlc::Program::locate(&plugin.dir))
+        }
+        sdlc::plugin::Readiness::Blocked { .. } => None,
+    };
+    (program, readiness)
+}
+
+/// Every change of a system, with its stage, what it offers and its live facts, from one `state` call.
+#[tauri::command(async)]
+fn sdlc_state(
+    control: State<'_, RunControl>,
+    folder: String,
+    system: String,
+) -> Result<sdlc_state::SystemView, String> {
+    let (program, readiness) = state_inputs(&folder);
+    let source = program.as_ref().map(|p| p as &dyn sdlc_state::StateSource);
+    sdlc_state::system_view(
+        source,
+        &readiness,
+        &|s, c| live_facts(&control, s, c),
+        Path::new(&folder),
+        &system,
+    )
+}
+
+/// One change of a system, as [`sdlc_state`] shows it.
+#[tauri::command(async)]
+fn sdlc_change_state(
+    control: State<'_, RunControl>,
+    folder: String,
+    system: String,
+    change: String,
+) -> Result<sdlc_state::ChangeView, String> {
+    let (program, readiness) = state_inputs(&folder);
+    let source = program.as_ref().map(|p| p as &dyn sdlc_state::StateSource);
+    sdlc_state::change_view(
+        source,
+        &readiness,
+        &|s, c| live_facts(&control, s, c),
+        Path::new(&folder),
+        &system,
+        &change,
+    )
+}
+
 #[tauri::command(async)]
 fn sdlc_plugin_readiness(workdir: Option<String>) -> sdlc::plugin::Readiness {
     ai_sdlc_readiness(workdir.as_deref())
@@ -1369,6 +1435,8 @@ pub fn run() {
             sdlc_review_record,
             sdlc_review_verify,
             sdlc_plugin_readiness,
+            sdlc_state,
+            sdlc_change_state,
             sdlc_change_repos,
             sdlc_missing_change_branches,
             sdlc_diff_files,
