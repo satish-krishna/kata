@@ -71,6 +71,25 @@ fn validate_spec(spec: RunSpec) -> Vec<String> {
     spec::validate(&spec).err().unwrap_or_default()
 }
 
+/// The lane a `group` stands for until the commands pass lanes directly: a
+/// `build:<system>/<change>` group is a build run of that change, no group is a Workbench run.
+fn lane_of(group: Option<&str>) -> runs::Lane {
+    let Some((system, change)) = group
+        .and_then(|g| g.strip_prefix("build:"))
+        .and_then(|g| g.split_once('/'))
+    else {
+        return runs::Lane::Solo;
+    };
+    runs::Lane::Change {
+        key: kata_sdlc::holds::ChangeKey {
+            workspace: kata_sdlc::holds::RepoKey::of(Path::new("")),
+            system: system.to_string(),
+            change: change.to_string(),
+        },
+        build: true,
+    }
+}
+
 /// Start a run: write the spec to a temp file, spawn `kata run` in the spec's
 /// workdir as a sidecar, and relay its JSON-line KataEvents over `kata://event`.
 /// Returns the run id once spawned; an async task drains stdout for the run's
@@ -92,7 +111,8 @@ async fn run_spec(
     // Hold the table across claim, spawn and insert so two starts cannot both
     // pass the claim.
     let mut table = control.state.lock().unwrap();
-    table.claim(Path::new(&spec.workdir), group.as_deref())?;
+    let lane = lane_of(group.as_deref());
+    table.claim(Path::new(&spec.workdir), &lane)?;
 
     // Each run gets a unique id so its reader task only ever touches its own temp
     // file and child handle. A new run can begin the moment a terminal event
@@ -124,7 +144,14 @@ async fn run_spec(
     table.insert(LiveRun {
         id,
         workdir: std::path::PathBuf::from(&spec.workdir),
+        kind: if lane == runs::Lane::Solo {
+            runs::RunKind::Solo
+        } else {
+            runs::RunKind::Build
+        },
         group,
+        lane,
+        repo: None,
         child: Some(child),
     });
     drop(table);
@@ -1555,6 +1582,9 @@ mod tests {
             id,
             workdir: std::path::PathBuf::from(format!("D:/ws/repo{id}")),
             group: Some("build:s/c".into()),
+            lane: lane_of(Some("build:s/c")),
+            kind: runs::RunKind::Build,
+            repo: None,
             child: Some(FakeInput::default()),
         }
     }
@@ -1613,6 +1643,9 @@ mod tests {
             id,
             workdir: std::path::PathBuf::from("D:/ws/app"),
             group: None,
+            lane: runs::Lane::Solo,
+            kind: runs::RunKind::Solo,
+            repo: None,
             child: None,
         }
     }
