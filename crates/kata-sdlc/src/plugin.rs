@@ -98,8 +98,58 @@ fn blocked(reason: BlockReason, message: impl Into<String>) -> Readiness {
 }
 
 /// Whether the AI-SDLC mode can run on `env`; the first row of the table that matches decides.
-pub fn readiness(_env: &Machine) -> Readiness {
-    Readiness::missing()
+pub fn readiness(env: &Machine) -> Readiness {
+    let Some(plugin) = &env.plugin else {
+        return Readiness::missing();
+    };
+    if !at_least(&plugin.version, MIN_VERSION) {
+        return blocked(
+            BlockReason::PluginTooOld,
+            format!(
+                "The AI-SDLC mode needs ai-sdlc {MIN_VERSION} or later; this machine has {}.",
+                plugin.version
+            ),
+        );
+    }
+    match &env.node {
+        None => {
+            return blocked(
+                BlockReason::NodeMissing,
+                format!(
+                    "The AI-SDLC mode needs Node.js {MIN_NODE} or later; install it and reopen."
+                ),
+            )
+        }
+        Some(printed) => {
+            let have = printed.trim().trim_start_matches('v');
+            if !at_least(have, MIN_NODE) {
+                return blocked(
+                    BlockReason::NodeTooOld,
+                    format!(
+                        "The AI-SDLC mode needs Node.js {MIN_NODE} or later; this machine has {have}."
+                    ),
+                );
+            }
+        }
+    }
+    if !env.git {
+        return blocked(
+            BlockReason::GitMissing,
+            "The AI-SDLC mode needs git. Install it from https://git-scm.com and reopen.",
+        );
+    }
+    Readiness::Ready {
+        plugin: Plugin {
+            dir: plugin.dir.clone(),
+            version: plugin.version.clone(),
+            layouts: crate::format::ACCEPTED_LAYOUTS.to_vec(),
+        },
+        gh: if env.gh {
+            GhPresence::Present
+        } else {
+            GhPresence::Missing
+        },
+    }
 }
 
 impl Machine {
@@ -124,12 +174,19 @@ impl Machine {
 
 /// Whether a file named `program` (or `program` plus one of the `pathext` extensions, as Windows resolves
 /// a command) is in a folder of `path`. It only looks at the file system and starts nothing.
-pub fn on_path(
-    _program: &str,
-    _path: &std::ffi::OsStr,
-    _pathext: Option<&std::ffi::OsStr>,
-) -> bool {
-    false
+pub fn on_path(program: &str, path: &std::ffi::OsStr, pathext: Option<&std::ffi::OsStr>) -> bool {
+    let exts: Vec<String> = pathext
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default()
+        .split(';')
+        .filter(|e| !e.is_empty())
+        .flat_map(|e| [e.to_string(), e.to_lowercase()])
+        .collect();
+    std::env::split_paths(path).any(|dir| {
+        std::iter::once(program.to_string())
+            .chain(exts.iter().map(|e| format!("{program}{e}")))
+            .any(|name| dir.join(name).is_file())
+    })
 }
 
 /// What `node --version` prints, or `None` when `node` is not on this machine or does not answer.
