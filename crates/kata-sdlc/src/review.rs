@@ -182,8 +182,26 @@ pub enum ReviewCurrency {
 /// The currency of the review record against where the product repositories stand now. `heads` holds
 /// the product repositories only; the master's own movement is `record.master_moved`.
 pub fn currency(record: &ReviewRecord, heads: &BTreeMap<String, String>) -> ReviewCurrency {
-    let _ = (record, heads);
-    ReviewCurrency::None
+    // A finding that failed its schema is dropped from the list, so "nothing found" would be a guess.
+    if !record.problems.is_empty() {
+        return ReviewCurrency::Invalid;
+    }
+    let Some(latest) = record.reviews.last() else {
+        return ReviewCurrency::None;
+    };
+    let moved = heads
+        .iter()
+        .any(|(repo, head)| match latest.commits.get(repo) {
+            Some(sha) => sha.len() < 4 || !head.starts_with(sha.as_str()),
+            None => true,
+        });
+    if moved || !record.master_moved.is_empty() {
+        ReviewCurrency::Stale
+    } else {
+        ReviewCurrency::Current {
+            review: record.reviews.len() - 1,
+        }
+    }
 }
 
 #[cfg(test)]

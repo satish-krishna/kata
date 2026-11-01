@@ -26,7 +26,7 @@ pub struct BuildChoices {
 #[serde(tag = "kind", rename_all = "camelCase")]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
-pub enum Readiness {
+pub enum BuildReadiness {
     /// Its next task can start.
     Ready,
     /// Its next task depends on these unlogged tasks of other repositories.
@@ -42,7 +42,7 @@ pub enum Readiness {
 #[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct RepoReadiness {
     pub repo: String,
-    pub state: Readiness,
+    pub state: BuildReadiness,
 }
 
 /// One task of the plan and whether the build log has its row.
@@ -68,6 +68,20 @@ pub struct BuildFacts {
     pub repos: Vec<RepoReadiness>,
     /// Every task of the plan, in document order.
     pub tasks: Vec<TaskFact>,
+}
+
+/// Where a repository stands, with the task the coordinator launches and shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RepoState {
+    Ready {
+        task: String,
+    },
+    Waiting {
+        task: String,
+        on_task: String,
+        on_repo: String,
+    },
+    Done,
 }
 
 /// Where the build stands as a whole.
@@ -142,24 +156,130 @@ pub struct BuildState {
     pub report: Option<StopReport>,
 }
 
+/// A repository with the state the coordinator reads it in.
+struct Standing {
+    repo: String,
+    state: RepoState,
+}
+
 /// Which product repositories of the build are ready, waiting or done. `master_name` is the master
 /// repository's folder name; the master is never a build repository. A repository is done when every
 /// task of it in `change.tasks` is logged, waiting when its first unlogged task (in plan order) depends
 /// on an unlogged task of another repository, and ready otherwise.
 pub fn readiness(plan: &ParsedPlan, change: &ChangeState, master_name: &str) -> Vec<RepoReadiness> {
-    let _ = (plan, change, master_name);
-    Vec::new()
+    // Every unlogged task id with the repository it belongs to.
+    let unlogged: BTreeMap<&str, &str> = change
+        .tasks
+        .iter()
+        .flatten()
+        .flat_map(|(repo, t)| {
+            t.unlogged
+                .iter()
+                .map(move |id| (id.as_str(), repo.as_str()))
+        })
+        .collect();
+    let mut repos: Vec<&str> = Vec::new();
+    for t in &plan.tasks {
+        if t.repo != master_name && !repos.contains(&t.repo.as_str()) {
+            repos.push(&t.repo);
+        }
+    }
+    repos
+        .into_iter()
+        .map(|repo| {
+            let first = plan
+                .tasks
+                .iter()
+                .find(|t| t.repo == repo && unlogged.contains_key(t.id.as_str()));
+            let state = match first {
+                None => BuildReadiness::Done,
+                Some(f) => {
+                    let on: Vec<String> = f
+                        .depends_on
+                        .iter()
+                        .filter(|d| unlogged.get(d.as_str()).is_some_and(|r| *r != repo))
+                        .cloned()
+                        .collect();
+                    if on.is_empty() {
+                        BuildReadiness::Ready
+                    } else {
+                        BuildReadiness::Waiting { on }
+                    }
+                }
+            };
+            RepoReadiness {
+                repo: repo.to_string(),
+                state,
+            }
+        })
+        .collect()
 }
 
 impl BuildFacts {
     /// The facts from the parsed plan and where the change stands.
     pub fn read(plan: &ParsedPlan, change: &ChangeState, master_name: &str) -> BuildFacts {
-        let _ = (plan, change, master_name);
+        let unlogged: BTreeSet<&str> = change
+            .tasks
+            .iter()
+            .flatten()
+            .flat_map(|(_, t)| t.unlogged.iter().map(String::as_str))
+            .collect();
+        let known = change.tasks.is_some();
+        let tasks: Vec<TaskFact> = plan
+            .tasks
+            .iter()
+            .map(|t| TaskFact {
+                id: t.id.clone(),
+                repo: t.repo.clone(),
+                logged: known && !unlogged.contains(t.id.as_str()),
+            })
+            .collect();
         BuildFacts {
-            has_tasks: false,
-            repos: Vec::new(),
-            tasks: Vec::new(),
+            has_tasks: known && !tasks.is_empty(),
+            repos: readiness(plan, change, master_name),
+            tasks,
         }
+    }
+
+    /// Each repository with the task it is on: the first unlogged one in plan order.
+    fn standing(&self) -> Vec<Standing> {
+        self.repos
+            .iter()
+            .map(|r| {
+                let first = self
+                    .tasks
+                    .iter()
+                    .find(|t| t.repo == r.repo && !t.logged)
+                    .map(|t| t.id.clone())
+                    .unwrap_or_default();
+                let state = match &r.state {
+                    BuildReadiness::Done => RepoState::Done,
+                    BuildReadiness::Ready => RepoState::Ready { task: first },
+                    BuildReadiness::Waiting { on } => {
+                        let on_task = on.first().cloned().unwrap_or_default();
+                        let on_repo = self
+                            .tasks
+                            .iter()
+                            .find(|t| t.id == on_task)
+                            .map(|t| t.repo.clone())
+                            .unwrap_or_default();
+                        RepoState::Waiting {
+                            task: first,
+                            on_task,
+                            on_repo,
+                        }
+                    }
+                };
+                Standing {
+                    repo: r.repo.clone(),
+                    state,
+                }
+            })
+            .collect()
+    }
+
+    fn is_logged(&self, task: &str) -> bool {
+        self.tasks.iter().any(|t| t.id == task && t.logged)
     }
 }
 
@@ -275,8 +395,41 @@ pub struct Impossible(pub Facts);
 /// A round is cleared only on `Finished`: every other outcome keeps it pending, so the next launch
 /// of the repository carries its instructions.
 pub fn run_outcome(facts: &Facts) -> Result<Outcome, Impossible> {
-    let _ = facts;
-    todo!("run_outcome")
+    use FactKind::{Round, Task};
+    use StateAfter::{Done, Unknown};
+    let stop = Outcome::Stop { held: false };
+    let held = Outcome::Stop { held: true };
+    let no = Err(Impossible(*facts));
+    let clean = !facts.cancelled && !facts.failed;
+    match (facts.kind, facts.state_after, facts.recorded) {
+        (Task, Done, true) => Ok(Outcome::Finished),
+        (Task, Done, false) => no,
+        (Task, Unknown, true) => no,
+        (Task, Unknown, false) => Ok(held),
+        (Task, state, recorded) => {
+            // Ready or waiting.
+            if !clean {
+                Ok(stop)
+            } else if recorded || state == StateAfter::Waiting {
+                Ok(Outcome::Continue)
+            } else {
+                Ok(stop)
+            }
+        }
+        (Round, Done, false) => no,
+        (Round, Unknown, _) => Ok(held),
+        (Round, state, recorded) => {
+            if clean && recorded {
+                Ok(if state == Done {
+                    Outcome::Finished
+                } else {
+                    Outcome::Continue
+                })
+            } else {
+                Ok(stop)
+            }
+        }
+    }
 }
 
 /// The text of a repository's stop. The cancelled fact decides first, and a cancelled stop carries
@@ -287,8 +440,20 @@ pub fn stop_message(
     cancelled: bool,
     recorded: bool,
 ) -> String {
-    let _ = (exit, error, cancelled, recorded);
-    todo!("stop_message")
+    if cancelled {
+        return "Stopped: cancelled".to_string();
+    }
+    let base = match exit {
+        Some(124) => "Stopped: reached the time limit",
+        Some(130) => "Stopped: cancelled",
+        Some(123) => "Stopped: nobody answered",
+        Some(0) if !recorded => "Stopped: ended without its task being recorded",
+        _ => "Stopped: the agent failed",
+    };
+    match error {
+        Some(e) if !e.is_empty() => format!("{base} · {e}"),
+        _ => base.to_string(),
+    }
 }
 
 const REVIEW: &str = "review";
@@ -382,8 +547,429 @@ impl Coordinator {
     }
 
     pub fn step(&mut self, input: Input) -> Vec<Command> {
-        let _ = input;
-        Vec::new()
+        let mut out = Vec::new();
+        match input {
+            Input::Begin {
+                timeout_secs,
+                rounds,
+                choices,
+            } => {
+                self.timeout_secs = timeout_secs;
+                self.choices = choices;
+                self.cancelled_all = false;
+                self.state.stopped.clear();
+                self.state.report = None;
+                self.state.rounds = rounds
+                    .into_iter()
+                    .map(|r| (r.repo, r.instructions))
+                    .collect();
+                self.rounds_started.clear();
+                self.state.phase = BuildPhase::Building;
+                let need_heads = !self.state.rounds.is_empty() && self.compare.is_none();
+                self.queue.push_back(Job::Look { need_heads });
+            }
+            Input::ContinueRepo { repo } => {
+                self.release(&[repo]);
+                self.queue.push_back(Job::Look { need_heads: false });
+            }
+            Input::ContinueAll => {
+                let all: Vec<String> = self.state.stopped.keys().cloned().collect();
+                self.release(&all);
+                self.queue.push_back(Job::Look { need_heads: false });
+            }
+            Input::Cancel { key } => {
+                if let Some(&id) = self.instances.get(&key) {
+                    self.cancel_instance(id, &mut out);
+                }
+            }
+            Input::CancelAll => {
+                self.cancelled_all = true;
+                let ids: Vec<u64> = self.instances.values().copied().collect();
+                for id in ids {
+                    self.cancel_instance(id, &mut out);
+                }
+                if self.instances.is_empty() {
+                    self.state.phase = BuildPhase::Cancelled;
+                }
+            }
+            Input::Status(s) => self.on_status(Some(s), &mut out),
+            Input::StatusFailed => self.on_status(None, &mut out),
+            Input::Heads(h) => self.on_heads(h, &mut out),
+            Input::RunEnded {
+                instance,
+                exit,
+                error,
+                refused,
+                ..
+            } => self.queue.push_back(Job::Ended {
+                instance,
+                end: RunEnd {
+                    exit,
+                    error,
+                    refused,
+                },
+            }),
+            Input::SetChoices(c) => self.choices = c,
+        }
+        while self.busy.is_none() {
+            let Some(job) = self.queue.pop_front() else {
+                break;
+            };
+            self.start_job(job, &mut out);
+        }
+        out
+    }
+
+    fn cancel_instance(&mut self, id: u64, out: &mut Vec<Command>) {
+        if let Some(run) = self.live.get_mut(&id) {
+            run.cancelled = true;
+            out.push(Command::CancelRun {
+                key: run.key.clone(),
+                instance: id,
+            });
+        }
+    }
+
+    fn release(&mut self, repos: &[String]) {
+        for r in repos {
+            self.state.stopped.remove(r);
+        }
+        self.cancelled_all = false;
+        self.state.report = None;
+        if matches!(
+            self.state.phase,
+            BuildPhase::Stopped | BuildPhase::Cancelled
+        ) {
+            self.state.phase = BuildPhase::Building;
+        }
+    }
+
+    fn start_job(&mut self, job: Job, out: &mut Vec<Command>) {
+        match job {
+            Job::Look { need_heads: true } => {
+                self.busy = Some(Busy::HeadsForBegin);
+                out.push(Command::ReadHeads);
+            }
+            Job::Look { need_heads: false } => self.start_look(false, out),
+            Job::Ended { instance, end } => {
+                let Some(run) = self.live.remove(&instance) else {
+                    return;
+                };
+                if self.instances.get(&run.key) == Some(&instance) {
+                    self.instances.remove(&run.key);
+                }
+                self.state.going.remove(&run.key);
+                if run.key == REVIEW {
+                    self.reviewing = false;
+                    let failed =
+                        end.exit != Some(0) || end.error.as_deref().is_some_and(|e| !e.is_empty());
+                    if failed {
+                        self.compare = None;
+                        let reason =
+                            stop_message(end.exit, end.error.as_deref(), run.cancelled, true);
+                        self.mark_stopped(REVIEW, REVIEW, reason, false);
+                        self.start_look(true, out);
+                    } else {
+                        // The review records its findings in a commit of its own in the master. That is not new
+                        // work to review: later rounds are compared with the heads as the review left them.
+                        self.busy = Some(Busy::HeadsForReviewEnd);
+                        out.push(Command::ReadHeads);
+                    }
+                } else {
+                    self.busy = Some(Busy::StatusForJudge { run, end });
+                    out.push(Command::ReadStatus);
+                }
+            }
+        }
+    }
+
+    /// Ask for the status, unless the build was cancelled: then it only settles.
+    fn start_look(&mut self, from_end: bool, out: &mut Vec<Command>) {
+        if self.cancelled_all {
+            self.settle_cancel();
+            return;
+        }
+        self.busy = Some(Busy::StatusForLook { from_end });
+        out.push(Command::ReadStatus);
+    }
+
+    fn settle_cancel(&mut self) {
+        if self.instances.is_empty() {
+            self.state.phase = BuildPhase::Cancelled;
+        }
+    }
+
+    fn on_status(&mut self, status: Option<BuildFacts>, out: &mut Vec<Command>) {
+        match self.busy.take() {
+            Some(Busy::StatusForLook { from_end }) => match status {
+                Some(s) => self.look(&s, out),
+                None => {
+                    // Other runs still going end through a look and settle the phase then; stopping now would
+                    // end the build under them. A look the engineer asked for reports its failure to the engineer.
+                    if from_end && self.state.going.is_empty() && !self.reviewing {
+                        self.state.phase = BuildPhase::Stopped;
+                    }
+                }
+            },
+            Some(Busy::StatusForJudge { run, end }) => {
+                self.judge(&run, &end, status.as_ref());
+                self.start_look(true, out);
+            }
+            other => self.busy = other,
+        }
+    }
+
+    fn on_heads(&mut self, heads: BTreeMap<String, String>, out: &mut Vec<Command>) {
+        match self.busy.take() {
+            Some(Busy::HeadsForBegin) => {
+                self.compare = Some(heads);
+                self.start_look(false, out);
+            }
+            Some(Busy::HeadsForReview) => {
+                if self.compare.as_ref() == Some(&heads) {
+                    self.state.phase = BuildPhase::Finished;
+                } else {
+                    self.compare = Some(heads);
+                    self.reviewing = true;
+                    self.state.phase = BuildPhase::Reviewing;
+                    self.launch(REVIEW, REVIEW, None, out);
+                }
+            }
+            Some(Busy::HeadsForReviewEnd) => {
+                self.compare = Some(heads);
+                self.start_look(true, out);
+            }
+            other => self.busy = other,
+        }
+    }
+
+    /// A pending round that has not been launched: the repository's next run carries its instructions.
+    fn is_round_launch(&self, repo: &str) -> bool {
+        self.state.rounds.contains_key(repo) && !self.rounds_started.contains(repo)
+    }
+
+    fn look(&mut self, status: &BuildFacts, out: &mut Vec<Command>) {
+        if self.cancelled_all {
+            self.settle_cancel();
+            return;
+        }
+        let mut waiting: Vec<WaitingRepo> = Vec::new();
+        let mut ready: Vec<(String, String)> = Vec::new();
+        let standing = status.standing();
+        for r in &standing {
+            let task = match &r.state {
+                RepoState::Ready { task } => task.clone(),
+                _ => String::new(),
+            };
+            if let RepoState::Waiting {
+                task,
+                on_task,
+                on_repo,
+            } = &r.state
+            {
+                waiting.push(WaitingRepo {
+                    repo: r.repo.clone(),
+                    task: task.clone(),
+                    on_task: on_task.clone(),
+                    on_repo: on_repo.clone(),
+                });
+                continue;
+            }
+            if self.state.going.contains(&r.repo) {
+                continue;
+            }
+            if r.state == RepoState::Done && !self.is_round_launch(&r.repo) {
+                continue;
+            }
+            // A held stop (the status could not be read when the run ended) does not know the task the
+            // repository is on now.
+            if let Some(stop) = self.state.stopped.get(&r.repo) {
+                if stop.held || stop.task == task {
+                    continue;
+                }
+            }
+            ready.push((r.repo.clone(), task));
+        }
+        self.state.waiting = waiting.clone();
+
+        // A round for a repository the plan names no task in (the master) has no state row; it still runs.
+        for repo in self.state.rounds.keys() {
+            if !self.rounds_started.contains(repo)
+                && !standing.iter().any(|r| &r.repo == repo)
+                && !self.state.going.contains(repo)
+                && !self.state.stopped.contains_key(repo)
+            {
+                ready.push((repo.clone(), String::new()));
+            }
+        }
+
+        let launched = !ready.is_empty();
+        for (repo, task) in ready {
+            let instructions = if self.is_round_launch(&repo) {
+                self.state.rounds.get(&repo).cloned()
+            } else {
+                None
+            };
+            if instructions.is_some() {
+                self.rounds_started.insert(repo.clone());
+            }
+            self.launch(&repo, &task, instructions, out);
+        }
+        if launched {
+            self.state.phase = BuildPhase::Building;
+            return;
+        }
+        if !self.state.going.is_empty() || self.reviewing {
+            return;
+        }
+
+        let complete = status.has_tasks && status.tasks.iter().all(|t| t.logged);
+        // A repository that stopped (a round on a finished one, or on the master, has no unfinished task)
+        // is never "finished".
+        if !complete || !self.state.stopped.is_empty() {
+            self.state.phase = BuildPhase::Stopped;
+            self.state.report = Some(report_for(status, waiting));
+            return;
+        }
+        self.busy = Some(Busy::HeadsForReview);
+        out.push(Command::ReadHeads);
+    }
+
+    fn launch(
+        &mut self,
+        key: &str,
+        task: &str,
+        instructions: Option<String>,
+        out: &mut Vec<Command>,
+    ) {
+        self.seq += 1;
+        let id = self.seq;
+        self.instances.insert(key.to_string(), id);
+        self.live.insert(
+            id,
+            Run {
+                key: key.to_string(),
+                task: task.to_string(),
+                is_round: instructions.is_some(),
+                cancelled: false,
+            },
+        );
+        if key != REVIEW {
+            self.state.going.insert(key.to_string());
+        }
+        out.push(Command::Launch {
+            key: key.to_string(),
+            instance: id,
+            task: task.to_string(),
+            instructions,
+            timeout_secs: self.timeout_secs,
+            choices: self.choices.clone(),
+        });
+    }
+
+    fn mark_stopped(&mut self, key: &str, task: &str, reason: String, held: bool) {
+        self.state.stopped.insert(
+            key.to_string(),
+            Stop {
+                task: task.to_string(),
+                reason,
+                held,
+            },
+        );
+    }
+
+    /// Reads the status, looks the outcome up and acts on it. A status that cannot be read is
+    /// `Unknown`; it never loses the result.
+    fn judge(&mut self, run: &Run, end: &RunEnd, status: Option<&BuildFacts>) {
+        let repo = run.key.as_str();
+        let task = run.task.as_str();
+        let standing = status.map(BuildFacts::standing).unwrap_or_default();
+        let now = standing.iter().find(|r| r.repo == repo).map(|r| &r.state);
+        let facts = Facts {
+            kind: if run.is_round {
+                FactKind::Round
+            } else {
+                FactKind::Task
+            },
+            cancelled: run.cancelled,
+            failed: end.exit != Some(0) || end.error.is_some(),
+            // A launch task of "" (the master, or a repository with every task recorded) has nothing to
+            // record; any other needs its committed row.
+            recorded: task.is_empty() || status.is_some_and(|s| s.is_logged(task)),
+            state_after: match status {
+                None => StateAfter::Unknown,
+                // A repository the plan names no task in (the master) has no state row and nothing unfinished.
+                Some(_) => match now {
+                    Some(RepoState::Ready { .. }) => StateAfter::Ready,
+                    Some(RepoState::Waiting { .. }) => StateAfter::Waiting,
+                    Some(RepoState::Done) | None => StateAfter::Done,
+                },
+            },
+        };
+        let mut why = if facts.state_after == StateAfter::Unknown {
+            " · could not read build status"
+        } else {
+            ""
+        };
+        let outcome = match run_outcome(&facts) {
+            Ok(o) => o,
+            Err(_) => {
+                // A combination the table calls impossible happened anyway: hold the stop rather than guess.
+                why = " · could not tell where the build stands";
+                Outcome::Stop { held: true }
+            }
+        };
+        if let Outcome::Stop { held } = outcome {
+            // Record the stop at the task the repository is on now (ready or waiting), so it never relaunches
+            // by itself when that task becomes ready. A repository with every task recorded has no task:
+            // `look` sees "" for it, so the stop must match that.
+            let current = match now {
+                Some(RepoState::Ready { task }) | Some(RepoState::Waiting { task, .. }) => {
+                    task.clone()
+                }
+                Some(RepoState::Done) => String::new(),
+                None => task.to_string(),
+            };
+            let text = if end.refused && !run.cancelled {
+                format!("Stopped: {}", end.error.as_deref().unwrap_or_default())
+            } else {
+                stop_message(
+                    end.exit,
+                    end.error.as_deref(),
+                    run.cancelled,
+                    facts.recorded,
+                )
+            };
+            self.mark_stopped(repo, &current, format!("{text}{why}"), held);
+        }
+        // The one place a round is cleared: only when it finished. Every other outcome keeps it pending,
+        // so its instructions go with the next launch of the repository.
+        if self.state.rounds.contains_key(repo) && self.rounds_started.contains(repo) {
+            self.rounds_started.remove(repo);
+            if outcome == Outcome::Finished {
+                self.state.rounds.remove(repo);
+            }
+        }
+    }
+}
+
+fn report_for(status: &BuildFacts, waiting: Vec<WaitingRepo>) -> StopReport {
+    let mut unfinished: Vec<UnfinishedRepo> = Vec::new();
+    for t in &status.tasks {
+        if t.logged {
+            continue;
+        }
+        match unfinished.iter_mut().find(|u| u.repo == t.repo) {
+            Some(entry) => entry.tasks.push(t.id.clone()),
+            None => unfinished.push(UnfinishedRepo {
+                repo: t.repo.clone(),
+                tasks: vec![t.id.clone()],
+            }),
+        }
+    }
+    StopReport {
+        unfinished,
+        waiting,
     }
 }
 
@@ -1708,7 +2294,7 @@ mod tests {
         readiness(&p, &c, "master")
     }
 
-    fn rr(repo: &str, state: Readiness) -> RepoReadiness {
+    fn rr(repo: &str, state: BuildReadiness) -> RepoReadiness {
         RepoReadiness {
             repo: repo.into(),
             state,
@@ -1729,14 +2315,14 @@ mod tests {
         assert_eq!(
             readiness_of(&plan, &[]),
             vec![
-                rr("api", Readiness::Ready),
+                rr("api", BuildReadiness::Ready),
                 rr(
                     "app",
-                    Readiness::Waiting {
+                    BuildReadiness::Waiting {
                         on: vec!["T1".into()]
                     }
                 ),
-                rr("docs", Readiness::Ready),
+                rr("docs", BuildReadiness::Ready),
             ]
         );
         // Waiting on another repository's unlogged task: T3 logged, docs' next is T4 on api's T1.
@@ -1744,7 +2330,7 @@ mod tests {
             readiness_of(&plan, &["T3"])[2],
             rr(
                 "docs",
-                Readiness::Waiting {
+                BuildReadiness::Waiting {
                     on: vec!["T1".into()]
                 }
             )
@@ -1753,17 +2339,17 @@ mod tests {
         assert_eq!(
             readiness_of(&plan, &["T1"]),
             vec![
-                rr("api", Readiness::Done),
-                rr("app", Readiness::Ready),
-                rr("docs", Readiness::Ready),
+                rr("api", BuildReadiness::Done),
+                rr("app", BuildReadiness::Ready),
+                rr("docs", BuildReadiness::Ready),
             ]
         );
         assert_eq!(
             readiness_of(&plan, &["T1", "T2", "T3", "T4"]),
             vec![
-                rr("api", Readiness::Done),
-                rr("app", Readiness::Done),
-                rr("docs", Readiness::Done),
+                rr("api", BuildReadiness::Done),
+                rr("app", BuildReadiness::Done),
+                rr("docs", BuildReadiness::Done),
             ]
         );
     }
