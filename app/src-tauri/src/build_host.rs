@@ -428,11 +428,62 @@ impl BuildHost {
     /// master is its folder, the run claims the change's own lane and gets the deny rules of R19.1.
     pub fn change_run(
         &self,
-        _change: &ChangeRef,
-        _kind: runs::RunKind,
-        _form: RunForm,
+        change: &ChangeRef,
+        kind: runs::RunKind,
+        form: RunForm,
     ) -> Result<u64, String> {
-        Err("not implemented".into())
+        let run_kind = match kind {
+            runs::RunKind::Intent | runs::RunKind::Spec | runs::RunKind::Plan => RunKind::Document,
+            runs::RunKind::Triage => RunKind::Triage,
+            runs::RunKind::Fix => RunKind::Fix,
+            other => return Err(format!("{other:?} is not a document run")),
+        };
+        // Everything is read before the run starts and under no lock.
+        let place = self
+            .tools
+            .resolve(Path::new(&change.workspace))
+            .map_err(|e| error_text(&e))?;
+        let states = self
+            .tools
+            .states(&place, &change.system)
+            .map_err(|e| error_text(&e))?;
+        let others: Vec<PathBuf> = states
+            .iter()
+            .filter(|s| s.in_copy && s.change != change.change)
+            .map(|s| PathBuf::from(&s.master))
+            .collect();
+        let state = states
+            .into_iter()
+            .find(|s| s.change == change.change)
+            .ok_or_else(|| format!("the plugin knows no change {}", change.change))?;
+        let exec = Exec {
+            place,
+            system: change.system.clone(),
+            change: change.change.clone(),
+            last: None,
+            system_repos: None,
+        };
+        let run_place = RunPlace {
+            kind: run_kind,
+            system: change.system.clone(),
+            state,
+            workspace: exec.place.workspace.clone(),
+            checkout: exec.place.master.clone(),
+            other_copies: others,
+            system_repos: self.system_repos(&exec),
+            workbench_dir: self.workbench_dir.clone(),
+        };
+        let spec = change_spec(&run_place, form);
+        let key = key_of(change);
+        self.launcher.launch(LaunchRequest {
+            spec,
+            lane: Lane::Change { key, build: false },
+            kind,
+            repo: None,
+            task: String::new(),
+            group: format!("document:{}/{}", change.system, change.change),
+            ended: Box::new(|_| {}),
+        })
     }
 
     /// The build state of `change`, or none when this session hosts no build of it. It only reads.

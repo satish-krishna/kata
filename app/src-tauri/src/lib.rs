@@ -469,6 +469,21 @@ fn sdlc_build_state(
     host.state(&change)
 }
 
+/// Start a document run (intent, spec, plan, triage or fix) of a change that exists. The host composes
+/// the spec, with the deny rules of every run of a change, and the run claims the change's own lane.
+#[tauri::command(async)]
+fn sdlc_run_change(
+    app: AppHandle,
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    kind: runs::RunKind,
+    form: sdlc::runspec::RunForm,
+) -> Result<String, String> {
+    let id = host.change_run(&change, kind, form)?;
+    announce_running(&app);
+    Ok(id.to_string())
+}
+
 /// Start a change's review by hand; it waits when another change holds a repository it reads.
 #[tauri::command(async)]
 fn sdlc_review_start(
@@ -1799,6 +1814,7 @@ pub fn run() {
             sdlc_build_start,
             sdlc_build_continue,
             sdlc_build_state,
+            sdlc_run_change,
             sdlc_review_start,
             sdlc_review_waiting,
             sdlc_running,

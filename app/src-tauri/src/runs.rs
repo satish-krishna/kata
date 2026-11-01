@@ -24,7 +24,7 @@ pub enum Lane {
     Change { key: ChangeKey, build: bool },
 }
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum RunKind {
     Setup,

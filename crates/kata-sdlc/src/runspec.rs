@@ -9,17 +9,21 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 /// What the engineer chose for this run.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunForm {
     /// The run's name and task; a build or review run composes its own.
     pub name: String,
     pub task: String,
     /// The empty-room setting; a run of a change ignores it (R5.4).
+    #[serde(default)]
     pub bare: bool,
     /// The app's permission setting, for a document run.
     pub permission_mode: PermissionMode,
     pub timeout_secs: u64,
+    #[serde(default)]
     pub instructions: Option<String>,
+    #[serde(default)]
     pub continue_on_leftovers: bool,
 }
 
