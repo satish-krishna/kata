@@ -1727,24 +1727,7 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
     }
 }
 
-/// Mirrors `slashes` and `rulePath` in `app/src/app/lib/sdlc.ts`: claude's
-/// absolute-path rule form is `//` then the path with forward slashes, and on
-/// Windows the drive is a lowercase letter without a colon (`D:\ws` is `//d/ws`).
-/// A change to those functions must change this one.
-fn rule_path(p: &std::path::Path) -> String {
-    let s = p.to_string_lossy().replace('\\', "/");
-    let s = s.trim_end_matches('/');
-    let b = s.as_bytes();
-    if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b.len() == 2 || b[2] == b'/')
-    {
-        return format!(
-            "//{}/{}",
-            s[..1].to_lowercase(),
-            s[2..].trim_start_matches('/')
-        );
-    }
-    format!("//{}", s.trim_start_matches('/'))
-}
+use kata_sdlc::permissions::rule_path;
 
 /// A workspace copied from the build-proof fixture: `app`, `api`, and the
 /// `master` repository, plus a separate checks folder outside the workspace.
@@ -1784,9 +1767,9 @@ impl ProofWorkspace {
             .join(format!("{repo}.md"))
     }
 
-    /// The rules T41's `buildPermissions` generates for a repository run of `app`
+    /// The rules `kata_sdlc::permissions::rules` generates for a repository run of `app`
     /// (api and master are the other repositories). Copied from
-    /// `app/src/app/lib/sdlc.ts`: `BUILD_DENY`, the checks and other-repository
+    /// `kata_sdlc::permissions`: `BUILD_DENY`, the checks and other-repository
     /// `Edit` denies, the other repositories' build logs (not `build/**`: deny
     /// beats allow, which would block the run's own log), the allows. Only `Edit`
     /// path rules exist; claude ignores `Write(path)`.

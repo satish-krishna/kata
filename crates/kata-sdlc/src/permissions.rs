@@ -48,15 +48,27 @@ pub struct Rules {
     pub allow: Vec<String>,
 }
 
+const BUILD_DENY: [&str; 3] = ["Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)"];
+
 /// The path with forward slashes and no trailing slash.
-pub(crate) fn slashes(_path: &Path) -> String {
-    String::new()
+pub(crate) fn slashes(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string()
 }
 
 /// A path in claude's absolute-path rule form: `//` then the path with forward slashes. On Windows
 /// claude matches only the colon-less, lowercase-drive form (`D:\ws` becomes `//d/ws`).
-pub fn rule_path(_path: &Path) -> String {
-    String::new()
+pub fn rule_path(path: &Path) -> String {
+    let s = slashes(path);
+    let b = s.as_bytes();
+    if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b.len() == 2 || b[2] == b'/')
+    {
+        let rest = if b.len() == 2 { "" } else { &s[3..] };
+        return format!("//{}/{}", s[..1].to_lowercase(), rest);
+    }
+    format!("//{}", s.trim_start_matches('/'))
 }
 
 impl RunPlace {
@@ -64,11 +76,115 @@ impl RunPlace {
     pub fn master_path(&self) -> PathBuf {
         PathBuf::from(&self.state.master)
     }
+
+    /// The folder name of the master repository's checkout.
+    pub fn master_name(&self) -> String {
+        self.checkout
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// The system's repositories and the master, once each, in order.
+    fn all_repos(&self) -> Vec<String> {
+        let mut seen: Vec<String> = Vec::new();
+        for r in self
+            .system_repos
+            .iter()
+            .cloned()
+            .chain(std::iter::once(self.master_name()))
+        {
+            if !seen.contains(&r) {
+                seen.push(r);
+            }
+        }
+        seen
+    }
+}
+
+fn edit_tree(path: &Path) -> String {
+    format!("Edit({}/**)", rule_path(path))
 }
 
 /// The rules of a run.
-pub fn rules(_place: &RunPlace) -> Rules {
-    Rules::default()
+pub fn rules(place: &RunPlace) -> Rules {
+    let mut deny: Vec<String> = Vec::new();
+    let mut allow: Vec<String> = Vec::new();
+    if place.kind != RunKind::Document {
+        let root = slashes(&place.workspace);
+        deny.extend(BUILD_DENY.iter().map(|s| s.to_string()));
+        let master_name = place.master_name();
+        // Every product repository: a system repository other than the master.
+        let mut product: Vec<(&str, String)> = Vec::new();
+        for repo in &place.system_repos {
+            if *repo != master_name && !product.iter().any(|(r, _)| r == repo) {
+                product.push((repo, edit_tree(&Path::new(&root).join(repo))));
+            }
+        }
+        allow.push(format!("Read({}/**)", rule_path(Path::new(&root))));
+        // An agent that edited a parse cache entry would change what the page shows.
+        let parse_cache = edit_tree(&place.workbench_dir.join("parse-cache"));
+        let change_dir = slashes(Path::new(&place.state.folder));
+        let doc = |name: &str| {
+            format!(
+                "Edit({})",
+                rule_path(Path::new(&format!("{change_dir}/{name}.md")))
+            )
+        };
+        let log = |name: &str| doc(&format!("build/{name}"));
+        match &place.kind {
+            RunKind::Review => {
+                // The review records its findings in the change's review document and edits nothing else.
+                // Deny beats allow in claude, so the workspace cannot be denied as a whole: every product
+                // repository and every other document of the change is denied by name instead.
+                deny.extend(product.into_iter().map(|(_, rule)| rule));
+                deny.push(parse_cache);
+                for other in place.all_repos() {
+                    deny.push(log(&other));
+                }
+                for name in ["intent", "spec", "plan"] {
+                    deny.push(doc(name));
+                }
+                allow.push(log("review"));
+            }
+            RunKind::Build { repo } => {
+                // The shared rules deny every product repository; this run's own is the one it works in.
+                deny.extend(
+                    product
+                        .into_iter()
+                        .filter(|(r, _)| *r != repo)
+                        .map(|(_, rule)| rule),
+                );
+                deny.push(parse_cache);
+                // Deny beats allow in claude, so a `build/**` deny would block this run's own log.
+                for other in place.all_repos() {
+                    if other != *repo {
+                        deny.push(log(&other));
+                    }
+                }
+                // Earlier reviews are the review run's record; a build run does not rewrite them.
+                deny.push(log("review"));
+                allow.push(log(repo));
+            }
+            _ => {
+                deny.extend(product.into_iter().map(|(_, rule)| rule));
+                deny.push(parse_cache);
+            }
+        }
+    }
+    // No run of a change edits the engineer's own checkout or another change's copy (R19.1). When the
+    // change is not in a copy its master is the checkout, and the checkout is not denied.
+    let own = rule_path(&place.master_path());
+    if place.state.in_copy {
+        deny.push(edit_tree(&place.checkout));
+    }
+    for copy in &place.other_copies {
+        let rule = edit_tree(copy);
+        if rule_path(copy) != own && !deny.contains(&rule) {
+            deny.push(rule);
+        }
+    }
+    Rules { deny, allow }
 }
 
 #[cfg(test)]

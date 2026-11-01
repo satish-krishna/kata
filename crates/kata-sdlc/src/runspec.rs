@@ -1,8 +1,12 @@
 //! The run-spec of a run of a change.
 
-use crate::permissions::RunPlace;
-use kata_core::spec::PermissionMode;
+use crate::permissions::{rules, slashes, Rules, RunKind, RunPlace};
+use kata_core::spec::{
+    Auth, Given, Interactive, Leash, PermissionMode, Permissions, PluginConfig, UnmatchedPolicy,
+};
 use kata_core::RunSpec;
+use std::collections::BTreeMap;
+use std::path::Path;
 
 /// What the engineer chose for this run.
 #[derive(Clone, Debug)]
@@ -19,9 +23,107 @@ pub struct RunForm {
     pub continue_on_leftovers: bool,
 }
 
-/// The run-spec of a run of a change.
-pub fn change_spec(_place: &RunPlace, _form: RunForm) -> RunSpec {
-    RunSpec::default()
+const AI_SDLC: &str = "ai-sdlc";
+const GITHUB_TOKENS: [&str; 3] = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"];
+
+/// The run-spec of a run of a change. It is never bare (R5.4): the empty room would drop the plugin's
+/// gate and guard. A build or review run is always auto, since bypass forbids the deny rules that keep an
+/// agent from publishing; it has no turn cap and no budget, and the time limit is per run. A repository's
+/// run works in the engineer's checkout of it (the master repository's own run, and the review, work in
+/// the change's master) and carries `--master <the change's master>`. A triage or fix run is held to the
+/// change's documents the same way. A document run follows the form's permission mode, and a bypass one
+/// keeps bypass and gets no rules: the posture is never switched here.
+pub fn change_spec(place: &RunPlace, form: RunForm) -> RunSpec {
+    let master = slashes(&place.master_path());
+    let workspace = slashes(&place.workspace);
+    let (name, task, workdir) = match &place.kind {
+        RunKind::Build { .. } | RunKind::Review => {
+            let (flag, name, workdir) = match &place.kind {
+                RunKind::Build { repo } => (
+                    format!("--repo {repo}"),
+                    format!("sdlc-{}-{}-build-{repo}", place.system, place.state.change),
+                    if *repo == place.master_name() {
+                        master.clone()
+                    } else {
+                        format!("{workspace}/{repo}")
+                    },
+                ),
+                _ => (
+                    "--review".to_string(),
+                    format!("sdlc-{}-{}-review", place.system, place.state.change),
+                    master.clone(),
+                ),
+            };
+            let mut task = format!(
+                "Use the ai-sdlc build skill for system {} on change folder {} with {flag} --master {master}.",
+                place.system, place.state.change
+            );
+            if form.continue_on_leftovers {
+                task.push_str(" The engineer has already confirmed continuing on top of the uncommitted edits the previous run left; do not ask again.");
+            }
+            let instructions = form.instructions.as_deref().unwrap_or("").trim();
+            if matches!(place.kind, RunKind::Build { .. }) && !instructions.is_empty() {
+                task.push_str(&format!(
+                    "\n\nInstructions from the engineer for this run:\n{instructions}"
+                ));
+            }
+            (name, task, workdir)
+        }
+        _ => (
+            form.name.clone(),
+            form.task.clone(),
+            slashes(Path::new(&place.state.folder)),
+        ),
+    };
+    let held = !matches!(place.kind, RunKind::Document);
+    let mode = if held {
+        PermissionMode::Auto
+    } else {
+        form.permission_mode
+    };
+    let mut permissions = Permissions {
+        mode,
+        allow: Vec::new(),
+        deny: Vec::new(),
+        ask: Vec::new(),
+        unmatched: UnmatchedPolicy::Ask,
+    };
+    if mode != PermissionMode::Bypass {
+        let Rules { deny, allow } = rules(place);
+        permissions.deny = deny;
+        permissions.allow = allow;
+    }
+    let build = matches!(place.kind, RunKind::Build { .. } | RunKind::Review);
+    RunSpec {
+        name,
+        task,
+        workdir,
+        plugins: BTreeMap::from([(AI_SDLC.to_string(), PluginConfig::default())]),
+        given: Some(Given {
+            required_plugins: vec![AI_SDLC.to_string()],
+            build,
+            ..Given::default()
+        }),
+        auth: Auth {
+            bare: false,
+            token_env: None,
+        },
+        interactive: Interactive {
+            enabled: mode != PermissionMode::Bypass,
+            answer_timeout_secs: Some(3600),
+        },
+        leash: Leash {
+            timeout_secs: Some(form.timeout_secs),
+            ..Leash::default()
+        },
+        env_remove: if held {
+            GITHUB_TOKENS.iter().map(|s| s.to_string()).collect()
+        } else {
+            Vec::new()
+        },
+        permissions,
+        ..RunSpec::default()
+    }
 }
 
 #[cfg(test)]

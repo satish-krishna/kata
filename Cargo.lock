@@ -2076,6 +2076,7 @@ name = "kata-core"
 version = "3.3.0"
 dependencies = [
  "git2",
+ "kata-sdlc",
  "libgit2-sys",
  "process-wrap",
  "regex",

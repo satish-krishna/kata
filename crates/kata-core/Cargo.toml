@@ -40,3 +40,4 @@ schema = ["dep:schemars"]
 
 [dev-dependencies]
 serial_test = "3"
+kata-sdlc = { path = "../kata-sdlc" }
