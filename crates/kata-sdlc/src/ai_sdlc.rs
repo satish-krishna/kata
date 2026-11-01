@@ -3,6 +3,8 @@
 //! Every call Kata makes to the program goes through [`execute`]: it starts Node.js hidden, with a time
 //! limit, and kills the whole process tree on a timeout. [`Program::run`] adds the workspace options and
 //! reads the JSON the command prints on its last line.
+pub mod state;
+
 use crate::process::CapturedExit;
 use kata_core::proc::{run_limited, Limited, Outcome, StartError};
 use serde_json::Value;
