@@ -32,6 +32,9 @@ pub const BUILD_EVENT: &str = "sdlc://build";
 /// The time limit of a run when a build is continued with nothing the engineer chose.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 3600;
 
+/// The coordinator's key for the review run.
+const REVIEW: &str = "review";
+
 /// A change as the webview names it.
 #[derive(Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -253,7 +256,9 @@ struct Build {
     form: StartForm,
     last: Option<Snapshot>,
     /// The state last announced, so only a change is announced.
-    emitted: Option<BuildState>,
+    emitted: Option<(BuildState, Vec<HeldRepo>)>,
+    /// What keeps the review from starting: the repositories other changes hold. Empty when it is not waiting.
+    review_waiting: Vec<HeldRepo>,
 }
 
 /// The coordinators and the holds, behind one lock. The lock is held only to read or change this
@@ -290,6 +295,21 @@ fn strings(value: &Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The folders of the product repositories a change's review reads.
+fn review_folders(place: &Place, state: &ChangeState) -> Vec<RepoKey> {
+    review_repos(state, &master_name(place))
+        .iter()
+        .map(|r| RepoKey::of(&place.workspace.join(r)))
+        .collect()
+}
+
+fn held_repos(held: kata_sdlc::holds::Held) -> Vec<HeldRepo> {
+    held.held
+        .into_iter()
+        .map(|(repo, holder)| HeldRepo { repo, holder })
+        .collect()
 }
 
 fn error_text(e: &ProgramError) -> String {
@@ -334,6 +354,8 @@ struct Exec {
 struct Update {
     last: Option<Snapshot>,
     system_repos: Option<Vec<String>>,
+    /// What the last attempt to start the review found: the repositories held (empty when it was free).
+    review_waiting: Option<Vec<HeldRepo>>,
     /// Each launch by its instance: the run id, or why it did not start.
     launched: Vec<(u64, Result<u64, String>)>,
 }
@@ -386,36 +408,131 @@ impl BuildHost {
             .map(|b| b.coord.state().clone())
     }
 
-    /// Start `change`'s review by hand.
-    pub fn review_start(self: &Arc<Self>, _change: &ChangeRef) -> StartOutcome {
-        StartOutcome::AlreadyRunning
+    /// Start `change`'s review by hand. It starts only when every product repository the review reads is
+    /// free; the coordinator's own launch takes the hold again and keeps it until the run ends.
+    pub fn review_start(self: &Arc<Self>, change: &ChangeRef) -> StartOutcome {
+        let place = match self.tools.resolve(Path::new(&change.workspace)) {
+            Ok(p) => p,
+            Err(e) => return could_not_run(&e),
+        };
+        let key = key_of(change);
+        let (snapshot, _) = match self.snapshot(&place, &change.system, &change.change) {
+            Ok(s) => s,
+            Err(output) => return StartOutcome::CouldNotRun { output },
+        };
+        let unrecorded = snapshot
+            .state
+            .tasks
+            .iter()
+            .flatten()
+            .any(|(_, t)| !t.unlogged.is_empty());
+        if unrecorded {
+            return StartOutcome::Refused {
+                problems: vec![format!(
+                    "Change {} has tasks with no build log row; its review starts once the last task is recorded.",
+                    change.change
+                )],
+            };
+        }
+        let folders = review_folders(&place, &snapshot.state);
+        let taken = self
+            .inner
+            .lock()
+            .unwrap()
+            .holds
+            .take(&key, Purpose::Review, &folders);
+        if let Err(held) = taken {
+            return StartOutcome::Held {
+                held: held_repos(held),
+            };
+        }
+        let outcome = self.begin(change, None, None);
+        // The hold stays only with a review that is running.
+        let mut guard = self.inner.lock().unwrap();
+        let reviewing = guard
+            .builds
+            .get(&key)
+            .is_some_and(|b| b.live.values().any(|r| r.key == REVIEW));
+        if !reviewing {
+            guard.holds.release(&key, Purpose::Review);
+        }
+        outcome
     }
 
     /// The repositories another change holds that keep `change`'s review from starting.
-    pub fn review_waiting(&self, _change: &ChangeRef) -> Vec<HeldRepo> {
-        Vec::new()
+    pub fn review_waiting(&self, change: &ChangeRef) -> Vec<HeldRepo> {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .builds
+            .get(&key_of(change))
+            .map(|b| b.review_waiting.clone())
+            .unwrap_or_default()
     }
 
-    /// What a round may fix, from the change's latest committed review.
-    pub fn round_offer(&self, _change: &ChangeRef) -> Result<RoundOffer, String> {
-        Ok(round::offer(None, &[]))
+    /// What a round may fix, from the change's latest committed review. The repositories it may go to
+    /// are the change's product repositories and the master.
+    pub fn round_offer(&self, change: &ChangeRef) -> Result<RoundOffer, String> {
+        let place = self
+            .tools
+            .resolve(Path::new(&change.workspace))
+            .map_err(|e| error_text(&e))?;
+        let (snapshot, _) = self.snapshot(&place, &change.system, &change.change)?;
+        let record = self
+            .tools
+            .review_record(&place, &change.system, &snapshot.state)?;
+        let master = master_name(&place);
+        let mut repos = review_repos(&snapshot.state, &master);
+        repos.push(master);
+        Ok(round::offer(record.as_ref(), &repos))
     }
 
     /// The requests a round with these picks would start.
-    pub fn round_plan(
-        &self,
-        _change: &ChangeRef,
-        _picks: &RoundPicks,
-    ) -> Result<RoundPlan, String> {
-        Ok(RoundPlan {
-            blocked: None,
-            requests: Vec::new(),
-        })
+    pub fn round_plan(&self, change: &ChangeRef, picks: &RoundPicks) -> Result<RoundPlan, String> {
+        Ok(round::plan(&self.round_offer(change)?, picks))
     }
 
-    /// Start the round the picks describe.
-    pub fn round_start(self: &Arc<Self>, _change: &ChangeRef, _picks: RoundPicks) -> StartOutcome {
-        StartOutcome::AlreadyRunning
+    /// Start the round the picks describe, through the same rows as a build's start.
+    pub fn round_start(self: &Arc<Self>, change: &ChangeRef, picks: RoundPicks) -> StartOutcome {
+        let plan = match self.round_plan(change, &picks) {
+            Ok(p) => p,
+            Err(output) => return StartOutcome::CouldNotRun { output },
+        };
+        if let Some(blocked) = plan.blocked {
+            return StartOutcome::Refused {
+                problems: vec![blocked],
+            };
+        }
+        let mut form = self
+            .inner
+            .lock()
+            .unwrap()
+            .builds
+            .get(&key_of(change))
+            .map(|b| b.form.clone())
+            .unwrap_or(StartForm {
+                timeout_secs: DEFAULT_TIMEOUT_SECS,
+                instructions: None,
+                continue_on_leftovers: false,
+                rounds: Vec::new(),
+            });
+        form.rounds = plan.requests;
+        self.begin(change, Some(form), None)
+    }
+
+    /// Take the review hold on every product repository the change's review reads. The lock is held for
+    /// the take alone.
+    fn take_review(&self, exec: &Exec, key: &ChangeKey) -> Result<(), Vec<HeldRepo>> {
+        let Some(last) = &exec.last else {
+            return Ok(());
+        };
+        let folders = review_folders(&exec.place, &last.state);
+        let taken = self
+            .inner
+            .lock()
+            .unwrap()
+            .holds
+            .take(key, Purpose::Review, &folders);
+        taken.map_err(held_repos)
     }
 
     /// Stop every run of `change`'s build.
@@ -428,16 +545,18 @@ impl BuildHost {
     fn run_ended(self: &Arc<Self>, key: &ChangeKey, generation: u64, instance: u64, end: RunEnd) {
         let launch_key = {
             let mut guard = self.inner.lock().unwrap();
-            let Some(build) = guard
+            let removed = guard
                 .builds
                 .get_mut(key)
                 .filter(|b| b.generation == generation)
-            else {
+                .and_then(|b| b.live.remove(&instance));
+            let Some(run) = removed else {
                 return;
             };
-            let Some(run) = build.live.remove(&instance) else {
-                return;
-            };
+            // A review's holds end with its run, whatever the outcome.
+            if run.key == REVIEW {
+                guard.holds.release(key, Purpose::Review);
+            }
             run.key
         };
         self.drive(
@@ -601,6 +720,7 @@ impl BuildHost {
                         form: form.clone(),
                         last: Some(snapshot),
                         emitted: None,
+                        review_waiting: Vec::new(),
                     },
                 );
                 generation
@@ -752,6 +872,9 @@ impl BuildHost {
                 if let Some(repos) = update.system_repos.take() {
                     build.ctx.system_repos = Some(repos);
                 }
+                if let Some(waiting) = update.review_waiting.take() {
+                    build.review_waiting = waiting;
+                }
                 for (instance, result) in update.launched.drain(..) {
                     match result {
                         Ok(run_id) => {
@@ -764,6 +887,9 @@ impl BuildHost {
                         }
                         Err(why) => {
                             if let Some(run) = build.live.remove(&instance) {
+                                if run.key == REVIEW {
+                                    holds.release(key, Purpose::Review);
+                                }
                                 inputs.push_back(Input::RunEnded {
                                     key: run.key,
                                     instance,
@@ -811,12 +937,13 @@ impl BuildHost {
                     state.phase,
                     BuildPhase::Stopped | BuildPhase::Finished | BuildPhase::Cancelled
                 );
-                if build.emitted.as_ref() != Some(&state) {
-                    build.emitted = Some(state.clone());
+                let announced = (state, build.review_waiting.clone());
+                if build.emitted.as_ref() != Some(&announced) {
+                    build.emitted = Some(announced.clone());
                     self.launcher.emit(&BuildEvent {
                         change: key.clone(),
-                        state,
-                        review_waiting: Vec::new(),
+                        state: announced.0.clone(),
+                        review_waiting: announced.1,
                     });
                 }
                 // A start under way has taken the holds for the build it is about to begin.
@@ -871,6 +998,23 @@ impl BuildHost {
                         choices,
                         ..
                     } => {
+                        if launch_key == REVIEW {
+                            // The review reads every product repository of the change: all or none.
+                            match self.take_review(&exec, key) {
+                                Ok(()) => update.review_waiting = Some(Vec::new()),
+                                Err(held) => {
+                                    let names: Vec<String> = held
+                                        .iter()
+                                        .map(|h| {
+                                            format!("change {} holds {}", h.holder.change, h.repo)
+                                        })
+                                        .collect();
+                                    update.review_waiting = Some(held);
+                                    update.launched.push((instance, Err(names.join(", "))));
+                                    continue;
+                                }
+                            }
+                        }
                         if exec.system_repos.is_none() {
                             let repos = self.system_repos(&exec);
                             exec.system_repos = Some(repos.clone());
@@ -914,7 +1058,7 @@ impl BuildHost {
         let Some(snapshot) = exec.last.clone() else {
             return Err("the change's state was not read".into());
         };
-        let review = launch_key == "review";
+        let review = launch_key == REVIEW;
         let kind = if review {
             RunKind::Review
         } else {

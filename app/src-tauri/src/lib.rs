@@ -401,6 +401,55 @@ fn sdlc_build_state(
     host.state(&change)
 }
 
+/// Start a change's review by hand; it waits when another change holds a repository it reads.
+#[tauri::command(async)]
+fn sdlc_review_start(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+) -> build_host::StartOutcome {
+    host.review_start(&change)
+}
+
+/// The repositories other changes hold that keep a change's review from starting; none when it is free.
+#[tauri::command]
+fn sdlc_review_waiting(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+) -> Vec<build_host::HeldRepo> {
+    host.review_waiting(&change)
+}
+
+/// What a round may fix, and the picks that start selected, from the change's latest review.
+#[tauri::command(async)]
+fn sdlc_round_offer(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+) -> Result<(sdlc::round::RoundOffer, sdlc::round::RoundPicks), String> {
+    let offer = host.round_offer(&change)?;
+    let picks = sdlc::round::default_picks(&offer);
+    Ok((offer, picks))
+}
+
+/// The requests a round with these picks would start.
+#[tauri::command(async)]
+fn sdlc_round_plan(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    picks: sdlc::round::RoundPicks,
+) -> Result<sdlc::round::RoundPlan, String> {
+    host.round_plan(&change, &picks)
+}
+
+/// Start the round the picks describe.
+#[tauri::command(async)]
+fn sdlc_round_start(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    picks: sdlc::round::RoundPicks,
+) -> build_host::StartOutcome {
+    host.round_start(&change, picks)
+}
+
 /// Step the window's zoom and remember the new level for the next launch.
 #[tauri::command]
 fn zoom(
@@ -1617,6 +1666,11 @@ pub fn run() {
             sdlc_build_start,
             sdlc_build_continue,
             sdlc_build_state,
+            sdlc_review_start,
+            sdlc_review_waiting,
+            sdlc_round_offer,
+            sdlc_round_plan,
+            sdlc_round_start,
             cancel_run,
             submit_answer,
             send_message,
