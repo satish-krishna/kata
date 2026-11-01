@@ -1,4 +1,5 @@
 #![cfg_attr(test, allow(clippy::disallowed_methods))]
+mod build_host;
 mod history;
 mod runs;
 mod sdlc_state;
