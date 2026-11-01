@@ -60,7 +60,12 @@ pub fn build_invocation_with(
         }
     }
 
-    if let Some(dir) = &assembled.plugin_dir {
+    // Claude loads each `--plugin-dir` as one plugin, or a folder of plugins as
+    // each child: the loose kit skills and the kit plugins need one flag each.
+    for dir in [&assembled.skills_root, &assembled.plugins_root]
+        .into_iter()
+        .flatten()
+    {
         args.push("--plugin-dir".into());
         args.push(dir.clone());
     }

@@ -86,7 +86,8 @@ pub fn assemble(
     let plugin_root = root.join("plugindir");
     let mut resolved = resolve(spec, catalog)?;
     resolved.retain(|r| !skip.contains(&r.name));
-    let any = !resolved.is_empty();
+    let has = |kind: EntryKind| resolved.iter().any(|r| r.kind == kind);
+    let (has_skills, has_plugins) = (has(EntryKind::Skill), has(EntryKind::Plugin));
     for r in &resolved {
         let sub = match r.kind {
             EntryKind::Skill => "skills",
@@ -95,16 +96,16 @@ pub fn assemble(
         copy_dir(&r.path, &plugin_root.join(sub).join(&r.name))?;
     }
 
-    let plugin_dir = if any {
-        Some(plugin_root.to_string_lossy().into_owned())
-    } else {
-        None
-    };
+    // Claude loads a `--plugin-dir` folder as one plugin (its `skills/` become
+    // `<folder>:<skill>`) and ignores nested `plugins/`; a folder of plugins needs
+    // its own `--plugin-dir`, which loads each child.
+    let skills_root = has_skills.then(|| plugin_root.to_string_lossy().into_owned());
+    let plugins_root =
+        has_plugins.then(|| plugin_root.join("plugins").to_string_lossy().into_owned());
 
     Ok(Assembled {
-        plugin_dir,
-        skills_root: None,
-        plugins_root: None,
+        skills_root,
+        plugins_root,
         system_prompt_file,
         _temp: Some(temp),
     })
@@ -112,18 +113,17 @@ pub fn assemble(
 
 /// The disposable kit assembled for one run.
 ///
-/// IMPORTANT: `plugin_dir` and `system_prompt_file` are paths INTO an owned
+/// IMPORTANT: `skills_root`, `plugins_root` and `system_prompt_file` are paths INTO an owned
 /// temporary directory that is deleted when this value is dropped. They are
 /// only valid for the lifetime of this `Assembled`. Do not copy these paths
 /// out and use them after the value is dropped, or they will dangle.
 #[derive(Debug)]
 pub struct Assembled {
-    /// Path to the assembled `--plugin-dir`, or `None` if no skills/plugins
-    /// were selected. Valid only while this `Assembled` is alive.
-    pub plugin_dir: Option<String>,
-    /// The folder holding the loose kit skills (`skills/<name>/`), or `None`.
+    /// The `--plugin-dir` holding the loose kit skills (`skills/<name>/`), or
+    /// `None` if no skill was selected. Valid only while this `Assembled` is alive.
     pub skills_root: Option<String>,
-    /// The folder holding the kit plugins (`<name>/` each), or `None`.
+    /// The `--plugin-dir` holding the kit plugins (one folder each), or `None`
+    /// if no plugin was selected. Valid only while this `Assembled` is alive.
     pub plugins_root: Option<String>,
     /// Path to the written `system.txt` (append mode only), or `None`.
     /// Valid only while this `Assembled` is alive.
@@ -135,10 +135,9 @@ pub struct Assembled {
 impl Assembled {
     /// Construct without a backing temp dir, for tests of pure consumers.
     #[cfg(test)]
-    pub fn for_test(plugin_dir: Option<String>, system_prompt_file: Option<String>) -> Self {
+    pub fn for_test(skills_root: Option<String>, system_prompt_file: Option<String>) -> Self {
         Self {
-            plugin_dir,
-            skills_root: None,
+            skills_root,
             plugins_root: None,
             system_prompt_file,
             _temp: None,
@@ -153,7 +152,6 @@ impl Assembled {
         system_prompt_file: Option<String>,
     ) -> Self {
         Self {
-            plugin_dir: None,
             skills_root,
             plugins_root,
             system_prompt_file,
@@ -202,7 +200,7 @@ mod tests {
         spec.skills = vec!["triage".into()];
 
         let a = assemble(&spec, std::slice::from_ref(&entry), &BTreeSet::new()).unwrap();
-        let dir = PathBuf::from(a.plugin_dir.as_ref().unwrap());
+        let dir = PathBuf::from(a.skills_root.as_ref().unwrap());
         assert!(dir.join("skills").join("triage").join("SKILL.md").is_file());
         assert!(a.system_prompt_file.is_none());
     }
@@ -222,7 +220,7 @@ mod tests {
         let a = assemble(&spec, &[], &BTreeSet::new()).unwrap();
         let f = a.system_prompt_file.as_ref().unwrap();
         assert_eq!(fs::read_to_string(f).unwrap(), "you triage");
-        assert!(a.plugin_dir.is_none());
+        assert!(a.skills_root.is_none());
     }
 
     #[test]
@@ -267,7 +265,7 @@ mod tests {
         spec.skills = vec!["triage".into()];
         let dir = {
             let a = assemble(&spec, std::slice::from_ref(&entry), &BTreeSet::new()).unwrap();
-            PathBuf::from(a.plugin_dir.as_ref().unwrap())
+            PathBuf::from(a.skills_root.as_ref().unwrap())
         }; // a dropped here
         assert!(
             !dir.exists(),
@@ -316,8 +314,7 @@ mod tests {
         spec.plugins.insert("kata".into(), PluginConfig::default());
 
         let a = assemble(&spec, &catalog, &BTreeSet::new()).unwrap();
-        let dir = PathBuf::from(a.plugin_dir.as_ref().unwrap());
-        let kit = dir.join("plugins").join("kata");
+        let kit = PathBuf::from(a.plugins_root.as_ref().unwrap()).join("kata");
         assert!(kit.join(".claude-plugin").join("plugin.json").is_file());
         assert!(kit.join("skills").join("prd").join("SKILL.md").is_file());
         assert!(kit.join("agents").join("kata-scout.md").is_file());
@@ -338,14 +335,14 @@ mod tests {
         spec.skills = vec!["keep".into(), "drop".into()];
         let skip: BTreeSet<String> = ["drop".to_string()].into();
         let a = assemble(&spec, &[keep.clone(), drop.clone()], &skip).unwrap();
-        let dir = PathBuf::from(a.plugin_dir.as_ref().unwrap());
+        let dir = PathBuf::from(a.skills_root.as_ref().unwrap());
         assert!(dir.join("skills").join("keep").join("SKILL.md").is_file());
         assert!(!dir.join("skills").join("drop").exists());
 
         // Skipping every entry leaves no plugin folder at all.
         let all: BTreeSet<String> = ["keep".to_string(), "drop".to_string()].into();
         let a = assemble(&spec, &[keep, drop], &all).unwrap();
-        assert!(a.plugin_dir.is_none());
+        assert!(a.skills_root.is_none());
     }
 
     #[test]

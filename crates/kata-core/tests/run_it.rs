@@ -3028,8 +3028,9 @@ fn a_switched_off_project_hook_never_fires_the_rest_is_carried_over_and_the_setu
     );
 
     // The project skill is in a generated plugin next to the kit's.
-    assert_eq!(seen.plugin_dirs.len(), 2, "{:?}", seen.plugin_dirs);
-    let carried = &seen.plugin_dirs[1];
+    // (the kit is now two folders, its skills and its plugins, so the carried one is third)
+    assert_eq!(seen.plugin_dirs.len(), 3, "{:?}", seen.plugin_dirs);
+    let carried = &seen.plugin_dirs[2];
     assert!(
         carried.contains(&"skills/projskill/SKILL.md".to_string()),
         "{carried:?}"
@@ -3156,7 +3157,11 @@ fn nothing_switched_off_passes_none_of_the_new_flags() {
     ] {
         assert!(!seen.has(flag), "{flag} in {:?}", seen.argv);
     }
-    assert_eq!(seen.plugin_dirs.len(), 1, "only the kit's plugin folder");
+    assert_eq!(
+        seen.plugin_dirs.len(),
+        2,
+        "only the kit's skills and plugins folders"
+    );
     assert_eq!(seen.mcp_servers(), vec!["kata-ask".to_string()]);
     assert_eq!(seen.add_dir_md, "");
 }
