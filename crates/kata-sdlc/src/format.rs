@@ -544,6 +544,8 @@ pub fn check_change(
 /// What the program found out about one document of a fix.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct FixDocumentFacts {
     /// The document's file is in `HEAD`.
     pub in_head: bool,
@@ -556,6 +558,8 @@ pub struct FixDocumentFacts {
 /// How many of a fix's documents are accepted in `HEAD`.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum FixAccepted {
     /// None of the three documents is accepted in `HEAD`.
     None,
@@ -570,6 +574,8 @@ pub enum FixAccepted {
 /// The facts behind a row of the fix-state table.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct FixFacts {
     /// The intent's facts.
     pub intent: FixDocumentFacts,
@@ -592,6 +598,8 @@ pub struct FixFacts {
 /// What `ai-sdlc.ts fix-state --json <change folder>` prints: the row of the fix-state table (1 to 8)
 /// and the facts it was decided on.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct FixState {
     /// The row of the fix-state table, 1 to 8.
     pub row: u8,

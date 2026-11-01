@@ -1,19 +1,26 @@
 //! Where a change stands: `state --json`, typed field for field as the program's GRAMMAR.md ("Where a
 //! change stands") defines it. Kata reads the answer; the program decides every gate in it.
 use super::{Program, ProgramError};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Whether a change takes the full pipeline or the light fix track.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum ChangeTrack {
     Full,
     Fix,
 }
 
 /// Whether a document's source pin still matches the document above it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum SourcePin {
     Missing,
     Broken,
@@ -21,7 +28,10 @@ pub enum SourcePin {
 }
 
 /// What the program found out about one of the intent, the spec and the plan.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct StateDocument {
     pub exists: bool,
     pub in_head: bool,
@@ -32,7 +42,10 @@ pub struct StateDocument {
 }
 
 /// The three documents of a change.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct StateDocuments {
     pub intent: StateDocument,
     pub spec: StateDocument,
@@ -40,7 +53,10 @@ pub struct StateDocuments {
 }
 
 /// One repository's share of the plan.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct RepoTasks {
     pub all: Vec<String>,
     pub logged: Vec<String>,
@@ -51,7 +67,10 @@ pub struct RepoTasks {
 }
 
 /// How a build log differs from `HEAD`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum BuildLogState {
     Clean,
     AddedEntries,
@@ -59,7 +78,10 @@ pub enum BuildLogState {
 }
 
 /// How the working review document differs from `HEAD`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub enum ReviewDraft {
     None,
     NextSection,
@@ -67,14 +89,20 @@ pub enum ReviewDraft {
 }
 
 /// The review document's standing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct ReviewState {
     pub committed: u32,
     pub draft: ReviewDraft,
 }
 
 /// One skill's gate for a change.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct ReadyGate {
     pub candidate: bool,
     pub stop: Option<String>,
@@ -82,7 +110,10 @@ pub struct ReadyGate {
 }
 
 /// Every skill's gate for a change.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct Ready {
     pub spec: ReadyGate,
     pub plan: ReadyGate,
@@ -93,7 +124,10 @@ pub struct Ready {
 }
 
 /// Where one change stands.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct ChangeState {
     pub change: String,
     pub master: String,
@@ -111,32 +145,38 @@ pub struct ChangeState {
 }
 
 /// Where every change of a system stands.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export, export_to = "../../../app/src/bindings/"))]
 pub struct SystemState {
     pub system: String,
     pub changes: Vec<ChangeState>,
     pub problems: Vec<String>,
 }
 
-/// Reads the program's `state --json` answer.
-pub fn read_state(_answer: Value) -> Result<SystemState, ProgramError> {
-    Err(not_implemented())
+/// Reads the program's `state --json` answer. Fields this version does not know are ignored.
+pub fn read_state(answer: Value) -> Result<SystemState, ProgramError> {
+    serde_json::from_value(answer).map_err(|e| ProgramError::CouldNotRun {
+        message: format!("the state answer is not what this version reads: {e}"),
+    })
 }
 
-/// Where the changes of `system` stand in `workspace`; with `change`, only that one.
+/// Where the changes of `system` stand in `workspace`; with `change`, only that one. The master is the
+/// one the program finds in the workspace (`resolve`); a change that lives in a copy reports the copy as
+/// its `master`.
 pub fn state(
-    _program: &Program,
-    _workspace: &Path,
-    _system: &str,
-    _change: Option<&str>,
+    program: &Program,
+    workspace: &Path,
+    system: &str,
+    change: Option<&str>,
 ) -> Result<SystemState, ProgramError> {
-    Err(not_implemented())
-}
-
-fn not_implemented() -> ProgramError {
-    ProgramError::CouldNotRun {
-        message: "not implemented".into(),
+    let place = program.resolve(workspace)?;
+    let mut command = vec!["state", "--json", "--system", system];
+    if let Some(change) = change {
+        command.extend(["--change", change]);
     }
+    read_state(program.run(&command, &place)?)
 }
 
 #[cfg(test)]

@@ -128,7 +128,39 @@ impl Program {
         let master = place.master.display().to_string();
         let workspace = place.workspace.display().to_string();
         let args = with_place(command, &master, &workspace);
-        let exit = match execute(&self.node, &self.entry, &place.workspace, &args, TIMEOUT) {
+        self.call(&args, &place.workspace)
+    }
+
+    /// Finds the master repository of `workspace` as the program's `resolve` does, with no master given.
+    /// A workspace with no master, or with several, is `CouldNotRun` with the program's reason.
+    pub fn resolve(&self, workspace: &Path) -> Result<Place, ProgramError> {
+        let ws = workspace.display().to_string();
+        let found = self.call(&["resolve", "--json", "--workspace", &ws], workspace)?;
+        let path = |key: &str| {
+            found[key]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+        };
+        match (path("master"), path("workspace")) {
+            (Some(master), Some(workspace)) => Ok(Place { master, workspace }),
+            _ => {
+                let problems: Vec<&str> = found["problems"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(Value::as_str).collect())
+                    .unwrap_or_default();
+                Err(could_not_run(if problems.is_empty() {
+                    "the program found no master repository".to_string()
+                } else {
+                    problems.join(" ")
+                }))
+            }
+        }
+    }
+
+    /// Runs the program with `args` as given, in `cwd`, and reads the answer as `run` does.
+    fn call(&self, args: &[&str], cwd: &Path) -> Result<Value, ProgramError> {
+        let exit = match execute(&self.node, &self.entry, cwd, args, TIMEOUT) {
             Ok(exit) => exit,
             Err(Failure::NodeMissing) => return Err(could_not_run(NEEDS_NODE)),
             Err(Failure::Other(message)) => return Err(could_not_run(message)),
