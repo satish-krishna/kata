@@ -3,19 +3,15 @@ import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { Leftovers } from '@bindings/Leftovers';
-import type { Participant } from '@bindings/Participant';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
-import type { BuildStart } from '@bindings/BuildStart';
-import type { PrepareOutcome } from '@bindings/PrepareOutcome';
 import type { Readiness } from '@bindings/Readiness';
-import type { RepoStart } from '@bindings/RepoStart';
 import type { KataEvent, RunState } from '../../lib/events';
 import { seedCatalog, seedSpec } from '../../lib/mock';
 import { LockStore } from '../lock/lock.store';
 import { RunStore } from '../run/run.store';
 import { ToastStore } from '../toast/toast.store';
 import { KataTransport } from '../transport/kata-transport';
-import { SdlcRunner, type BuildLink, type BuildRequest, type RunTarget } from './sdlc-runner';
+import { SdlcRunner, type RunTarget } from './sdlc-runner';
 
 const SNAPSHOT = { head: 'abc', dirty: {} };
 const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
@@ -27,17 +23,6 @@ const TARGET: RunTarget = {
   link: { system: 'commerce', change: '2026-10-12-photos', stage: 'spec' },
 };
 const transcript = (path: string): KataEvent => ({ type: 'log', level: 'info', message: `transcript: ${path}` }) as KataEvent;
-const repoStart = (repo: string): RepoStart => ({ repo, path: `/ws/${repo}`, base: 'main', branch: 'change/2026-10-12-photos', created: true });
-const BUILD_START: BuildStart = { master: repoStart('commerce-docs'), repos: [repoStart('commerce-core')] };
-const REQUEST: BuildRequest = {
-  folder: '/ws',
-  masterRepo: 'commerce-docs',
-  system: 'commerce',
-  change: '2026-10-12-photos',
-  action: 'start',
-  continueWithLeftovers: false,
-};
-const INSTALL_PLUGIN = 'Install the ai-sdlc plugin, then start the build again.';
 
 type FakeSnapshot = { state: RunState; events: KataEvent[]; summary: null; asks: []; permissions: []; exit?: number | null };
 
@@ -62,15 +47,7 @@ class FakeTransport {
   sdlcSettings = vi.fn(async () => ({ mode: null, remember: false, permission_mode: 'bypass' as const }));
   catalog = vi.fn(async (..._a: unknown[]) => seedCatalog);
   readiness: Readiness = { kind: 'ready', plugin: { dir: '/plugins/ai-sdlc', version: '0.9.0', layouts: [1, 2] }, gh: 'present' };
-  prepared: PrepareOutcome | (() => Promise<PrepareOutcome>) = { kind: 'ready', start: BUILD_START };
   sdlcPluginReadiness = vi.fn(async (..._a: unknown[]) => { this.calls.push('readiness'); return this.readiness; });
-  sdlcBuildPrepare = vi.fn(async (..._a: unknown[]) => {
-    this.calls.push('prepare');
-    return typeof this.prepared === 'function' ? this.prepared() : this.prepared;
-  });
-  participants: Participant[] = [];
-  sdlcBuildParticipants = vi.fn(async (..._a: unknown[]) => this.participants);
-  sdlcBuildSettle = vi.fn(async (..._a: unknown[]) => { this.calls.push('settle'); return [] as string[]; });
   sdlcBuildHeads = vi.fn(async (..._a: unknown[]) => ({ 'commerce-core': 'c0ffee' }));
   sdlcRunChange = vi.fn(async (..._a: unknown[]) => '41');
 }
@@ -702,320 +679,7 @@ describe('SdlcRunner.newChange confirming the branch name', () => {
   });
 });
 
-describe('SdlcRunner build', () => {
-  const LINK: BuildLink = { workspaceId: 'acme', system: 'commerce', change: '2026-10-12-photos', folder: '/ws', master: '/ws/commerce-docs', repos: ['commerce-core'] };
-  const CORE = { repo: 'commerce-core', path: '/ws/commerce-core', kind: 'repo' } as const;
-  const REVIEW = { repo: 'commerce-docs', path: '/ws/commerce-docs', kind: 'review' } as const;
-  const GROUP = 'build:commerce/2026-10-12-photos';
-  /** A build's leftovers and discards are scoped to its own change: only that change's build log rows are build log data. */
-  const BUILD = { system: 'commerce', change: '2026-10-12-photos' };
-  const LEFT = (paths: string[]): Leftovers => ({ ...EMPTY, new_commits: ['feat: a task'], discardable: paths });
-
-  /** Ticks the root effects until the promise settles: the run end is observed by an effect. */
-  async function drive<T>(p: Promise<T>): Promise<T> {
-    let done = false;
-    void p.then(() => (done = true), () => (done = true));
-    for (let i = 0; i < 200 && !done; i++) {
-      TestBed.tick();
-      await new Promise((r) => setTimeout(r, 0));
-    }
-    return p;
-  }
-
-  const end = (ctx: ReturnType<typeof setup>, id: string, state: RunState, exit: number | null, extra: KataEvent[] = []) =>
-    ctx.snap(id).set({
-      state,
-      events: [transcript(`/home/u/.kata/runs/sdlc-commerce-${id}.jsonl`), ...extra],
-      summary: null,
-      asks: [],
-      permissions: [],
-      exit,
-    });
-
-  describe('prepareBuild', () => {
-    it('start refuses a plugin the backend finds too old before preparing (R2.5, R10.1)', async () => {
-      const ctx = setup();
-      ctx.fake.readiness = { kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.' };
-      const out = await ctx.runner.prepareBuild(REQUEST);
-      expect(out).toEqual({ kind: 'refused', reason: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.' });
-      expect(ctx.fake.sdlcPluginReadiness).toHaveBeenCalledWith(REQUEST.folder);
-      expect(ctx.fake.sdlcBuildPrepare).not.toHaveBeenCalled();
-      expect(ctx.startRun).not.toHaveBeenCalled();
-      expect(ctx.fake.calls).toEqual(['readiness']);
-    });
-
-    it('refuses when the backend finds the plugin missing', async () => {
-      const ctx = setup();
-      ctx.fake.readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
-      const out = await ctx.runner.prepareBuild(REQUEST);
-      expect(out).toEqual({ kind: 'refused', reason: INSTALL_PLUGIN });
-      expect(ctx.fake.sdlcBuildPrepare).not.toHaveBeenCalled();
-    });
-
-    it('answers ready with the start the backend made', async () => {
-      const ctx = setup();
-      const out = await ctx.runner.prepareBuild({ ...REQUEST, continueWithLeftovers: true });
-      expect(out).toEqual({ kind: 'ready', start: BUILD_START });
-      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', true, [], 'start');
-    });
-
-    it('answers needs-confirm with the files each repository holds', async () => {
-      const ctx = setup();
-      ctx.fake.prepared = { kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['a.txt'] }] };
-      const out = await ctx.runner.prepareBuild(REQUEST);
-      expect(out).toEqual({ kind: 'needs-confirm', leftovers: [{ repo: 'commerce-core', files: ['a.txt'] }] });
-    });
-
-    it.each(['start', 'continue', 'round'] as const)('refuses with the gate message and the problems it lists: %s (R8.1)', async (action) => {
-      const problem = { file: 'build/app.md', line: 14, message: 'entry T1 is recorded twice, first on line 7' };
-      const ctx = setup();
-      ctx.fake.prepared = { kind: 'refused', message: 'A build log does not pass the check', problems: [problem] };
-      const out = await ctx.runner.prepareBuild({ ...REQUEST, action });
-      expect(out).toEqual({ kind: 'refused', reason: 'A build log does not pass the check', problems: [problem] });
-      expect(ctx.fake.sdlcBuildPrepare).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', false, [], action);
-    });
-
-    it('refuses with the backend text when preparing fails (R3.1)', async () => {
-      const ctx = setup();
-      ctx.fake.prepared = () => Promise.reject('commerce-core has uncommitted files: a.txt');
-      const out = await ctx.runner.prepareBuild(REQUEST);
-      expect(out).toEqual({ kind: 'refused', reason: 'commerce-core has uncommitted files: a.txt' });
-    });
-  });
-
-  describe('runInRepo', () => {
-    it('runInRepo snapshots before the run and links build:<repo>', async () => {
-      const ctx = setup();
-      const done = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
-      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalled());
-      end(ctx, 'r1', 'success', 0);
-      const out = await drive(done);
-      expect(out).toEqual({ exit: 0, error: null });
-      expect(ctx.fake.sdlcSnapshot).toHaveBeenCalledWith('/ws/commerce-core');
-      expect(ctx.startRun).toHaveBeenCalledWith(expect.anything(), GROUP);
-      expect(ctx.lock.addRun).toHaveBeenCalledWith('r1', expect.anything());
-      expect(ctx.fake.sdlcSnapshot).toHaveBeenCalledWith('/ws/commerce-docs');
-      expect(ctx.fake.calls.slice(0, 4)).toEqual(['snapshot', 'snapshot', 'startRun', 'addRun']);
-      expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledTimes(1);
-      const link = ctx.fake.sdlcLinkRun.mock.calls[0][0] as Record<string, unknown>;
-      expect(link).toMatchObject({ workspace_id: 'acme', system: 'commerce', change: '2026-10-12-photos', stage: 'build:commerce-core', run_id: 'sdlc-commerce-r1' });
-      expect(link['heads']).toBeUndefined();
-      expect(ctx.fake.sdlcBuildHeads).not.toHaveBeenCalled();
-      expect(ctx.fake.sdlcWaitRunExit).toHaveBeenCalledWith('r1', 15000);
-    });
-
-    it("a review run's link records the heads", async () => {
-      const ctx = setup();
-      const done = ctx.runner.runInRepo(REVIEW, seedSpec(), LINK);
-      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalled());
-      end(ctx, 'r1', 'success', 0);
-      await drive(done);
-      expect(ctx.fake.sdlcBuildHeads).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', ['commerce-docs', 'commerce-core'], '2026-10-12-photos');
-      expect(ctx.fake.sdlcLinkRun).toHaveBeenCalledWith(expect.objectContaining({ stage: 'review', heads: { 'commerce-core': 'c0ffee' } }));
-      expect(ctx.fake.sdlcBuildHeads.mock.invocationCallOrder[0]).toBeLessThan(ctx.startRun.mock.invocationCallOrder[0]);
-    });
-
-    it('answers the exit code and the last engine error of a stopped run', async () => {
-      const ctx = setup();
-      const done = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
-      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalled());
-      end(ctx, 'r1', 'warning', 124, [{ type: 'log', level: 'error', message: 'the wall clock ran out' } as KataEvent]);
-      expect(await drive(done)).toEqual({ exit: 124, error: 'the wall clock ran out' });
-    });
-
-    it('answers a failed start without reading anything afterwards', async () => {
-      const ctx = setup();
-      ctx.startRun.mockResolvedValueOnce(null as never);
-      const out = await ctx.runner.runInRepo(CORE, seedSpec(), LINK);
-      expect(out.exit).toBeNull();
-      expect(out.error).toBe('The run did not start');
-      expect(ctx.lock.addRun).not.toHaveBeenCalled();
-      expect(ctx.fake.sdlcLeftovers).not.toHaveBeenCalled();
-    });
-
-    it('touches nothing while the engine is still stopping', async () => {
-      const ctx = setup();
-      ctx.fake.exited = false;
-      const done = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
-      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalled());
-      end(ctx, 'r1', 'warning', 130);
-      const out = await drive(done);
-      expect(out.exit).toBe(130);
-      expect(out.error).toBe('The engine is still stopping');
-      expect(ctx.fake.sdlcLeftovers).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('leftovers and finishBuild', () => {
-    async function runBoth(ctx: ReturnType<typeof setup>) {
-      ctx.fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => { ctx.fake.calls.push('snapshot'); return { head: String(a[0]), dirty: {} }; });
-      ctx.fake.sdlcLeftovers.mockImplementation((async (path: string) => LEFT(path === '/ws/commerce-core' ? ['src/x.rs'] : ['notes.md'])) as never);
-      const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
-      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
-      end(ctx, 'r1', 'warning', 124);
-      await drive(core);
-      const review = ctx.runner.runInRepo(REVIEW, seedSpec(), LINK);
-      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(2));
-      end(ctx, 'r2', 'warning', 130);
-      await drive(review);
-    }
-
-    it("leftovers are reported per repository and discard touches only that run's files (R6.3)", async () => {
-      const ctx = setup();
-      await runBoth(ctx);
-      expect(ctx.fake.sdlcLeftovers).toHaveBeenCalledWith('/ws/commerce-core', { head: '/ws/commerce-core', dirty: {} }, [], BUILD);
-      // The build is still going when a repository ends: nothing opens until the build is over.
-      expect(ctx.runner.leftovers()).toBeNull();
-      const finished = ctx.runner.finishBuild(BUILD_START);
-      await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
-      expect(ctx.runner.leftovers()!.map((l) => l.repo)).toEqual(['commerce-docs', 'commerce-core']);
-      expect(ctx.runner.leftovers()![1].data.new_commits).toEqual([]);
-      expect(ctx.fake.sdlcBuildSettle).not.toHaveBeenCalled();
-      await expect(ctx.runner.discard('commerce-core', ['src/x.rs'])).resolves.toBe(true);
-      expect(ctx.fake.sdlcDiscard).toHaveBeenCalledTimes(1);
-      expect(ctx.fake.sdlcDiscard).toHaveBeenCalledWith('/ws/commerce-core', { head: '/ws/commerce-core', dirty: {} }, ['src/x.rs'], BUILD);
-      expect(ctx.runner.leftovers()!.map((l) => l.repo)).toEqual(['commerce-docs']);
-      expect(ctx.fake.sdlcBuildSettle).not.toHaveBeenCalled();
-      ctx.runner.closeLeftovers();
-      await finished;
-      expect(ctx.fake.sdlcBuildSettle).toHaveBeenCalledWith(BUILD_START);
-      expect(ctx.runner.leftovers()).toBeNull();
-    });
-
-    it("an unsaved build log row is listed at the end of the build under the repository that owns it, not under the master (R6.6)", async () => {
-      const ctx = setup();
-      const row = 'intent/commerce/2026-10-12-photos/build/commerce-core.md';
-      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'commerce-docs', files: [], rows });
-      ctx.fake.participants = [owned('commerce-docs', []), owned('commerce-core', [row])];
-      const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
-      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
-      end(ctx, 'r1', 'warning', 124);
-      await drive(core);
-      expect(ctx.fake.sdlcBuildParticipants).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', []);
-
-      const finished = ctx.runner.finishBuild(BUILD_START);
-      await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
-      const shown = ctx.runner.leftovers()!;
-      expect(shown.map((l) => l.repo)).toEqual(['commerce-core']);
-      // The run wrote the row: it is listed as created by this run, not as changed before it too.
-      expect(shown[0].data.created).toEqual([row]);
-      expect(shown[0].data.touched_dirty).toEqual([]);
-      expect(shown[0].data.discardable).toEqual([]);
-      ctx.runner.closeLeftovers();
-      await finished;
-    });
-
-    it.each(['D:\\ws\\commerce-docs', 'D:\\ws\\commerce-docs\\'])('a Windows master path %s names its repository in the participants call', async (master) => {
-      const ctx = setup();
-      const core = ctx.runner.runInRepo(CORE, seedSpec(), { ...LINK, master });
-      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
-      end(ctx, 'r1', 'warning', 124);
-      await drive(core);
-      expect(ctx.fake.sdlcBuildParticipants).toHaveBeenCalledWith('/ws', 'commerce-docs', 'commerce', '2026-10-12-photos', []);
-    });
-
-    it('a build log row that was already unsaved before the run is listed as changed before and during it (R6.6)', async () => {
-      const ctx = setup();
-      const row = 'intent/commerce/2026-10-12-photos/build/commerce-core.md';
-      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'commerce-docs', files: [], rows });
-      ctx.fake.participants = [owned('commerce-docs', []), owned('commerce-core', [row])];
-      ctx.fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => ({ head: String(a[0]), dirty: { [row]: 'abc' } }));
-      const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
-      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
-      end(ctx, 'r1', 'warning', 124);
-      await drive(core);
-      const finished = ctx.runner.finishBuild(BUILD_START);
-      await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
-      const shown = ctx.runner.leftovers()!;
-      expect(shown[0].data.touched_dirty).toEqual([row]);
-      expect(shown[0].data.created).toEqual([]);
-      ctx.runner.closeLeftovers();
-      await finished;
-    });
-
-    it("a build log row is classified against the master's snapshot, not the repository's (R6.6)", async () => {
-      const ctx = setup();
-      const row = 'intent/commerce/2026-10-12-photos/build/commerce-core.md';
-      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'commerce-docs', files: [], rows });
-      ctx.fake.participants = [owned('commerce-docs', []), owned('commerce-core', [row])];
-      // The row sits in the master's tree and was unsaved before the run; the repository's own tree knows nothing of it.
-      ctx.fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => ({ head: String(a[0]), dirty: a[0] === '/ws/commerce-docs' ? { [row]: 'abc' } : {} }));
-      const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
-      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
-      end(ctx, 'r1', 'warning', 124);
-      await drive(core);
-      const finished = ctx.runner.finishBuild(BUILD_START);
-      await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
-      const shown = ctx.runner.leftovers()!;
-      expect(shown[0].data.touched_dirty).toEqual([row]);
-      expect(shown[0].data.created).toEqual([]);
-      ctx.runner.closeLeftovers();
-      await finished;
-    });
-
-    it("a build log row the master did not hold dirty is created by the run, whatever the repository's own tree held (R6.6)", async () => {
-      const ctx = setup();
-      const row = 'intent/commerce/2026-10-12-photos/build/commerce-core.md';
-      const owned = (repo: string, rows: string[]): Participant => ({ repo, path: `/ws/${repo}`, master: repo === 'commerce-docs', files: [], rows });
-      ctx.fake.participants = [owned('commerce-docs', []), owned('commerce-core', [row])];
-      ctx.fake.sdlcSnapshot.mockImplementation(async (...a: unknown[]) => ({ head: String(a[0]), dirty: a[0] === '/ws/commerce-core' ? { [row]: 'abc' } : {} }));
-      const core = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
-      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalledTimes(1));
-      end(ctx, 'r1', 'warning', 124);
-      await drive(core);
-      const finished = ctx.runner.finishBuild(BUILD_START);
-      await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
-      const shown = ctx.runner.leftovers()!;
-      expect(shown[0].data.created).toEqual([row]);
-      expect(shown[0].data.touched_dirty).toEqual([]);
-      ctx.runner.closeLeftovers();
-      await finished;
-    });
-
-    it('discardAll discards every chosen repository, then closes and keeps the rest', async () => {
-      const ctx = setup();
-      await runBoth(ctx);
-      const finished = ctx.runner.finishBuild(BUILD_START);
-      await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
-      await expect(ctx.runner.discardAll([{ repo: 'commerce-core', paths: ['src/x.rs'] }, { repo: 'commerce-docs', paths: [] }])).resolves.toBe(true);
-      expect(ctx.fake.sdlcDiscard).toHaveBeenCalledTimes(1);
-      await finished;
-      expect(ctx.fake.sdlcBuildSettle).toHaveBeenCalledTimes(1);
-    });
-
-    it('a failed discard keeps the dialog open', async () => {
-      const ctx = setup();
-      await runBoth(ctx);
-      const finished = ctx.runner.finishBuild(BUILD_START);
-      await vi.waitFor(() => expect(ctx.runner.leftovers()).not.toBeNull());
-      ctx.fake.sdlcDiscard.mockRejectedValueOnce(new Error('locked'));
-      await expect(ctx.runner.discardAll([{ repo: 'commerce-core', paths: ['src/x.rs'] }])).resolves.toBe(false);
-      expect(ctx.toasts.error).toHaveBeenCalledWith('Could not discard: locked');
-      expect(ctx.runner.leftovers()).toHaveLength(2);
-      expect(ctx.fake.sdlcBuildSettle).not.toHaveBeenCalled();
-      ctx.runner.closeLeftovers();
-      await finished;
-    });
-
-    it('settles at once when no repository left anything', async () => {
-      const ctx = setup();
-      const done = ctx.runner.runInRepo(CORE, seedSpec(), LINK);
-      await vi.waitFor(() => expect(ctx.startRun).toHaveBeenCalled());
-      end(ctx, 'r1', 'success', 0);
-      await drive(done);
-      await ctx.runner.finishBuild(BUILD_START);
-      expect(ctx.fake.sdlcBuildSettle).toHaveBeenCalledWith(BUILD_START);
-      expect(ctx.runner.leftovers()).toBeNull();
-    });
-
-    it('a settle error toasts and does not throw', async () => {
-      const ctx = setup();
-      ctx.fake.sdlcBuildSettle.mockRejectedValueOnce(new Error('git is busy'));
-      await expect(ctx.runner.finishBuild(BUILD_START)).resolves.toBeUndefined();
-      expect(ctx.toasts.error).toHaveBeenCalledWith(expect.stringContaining('git is busy'));
-    });
-  });
-
+describe('SdlcRunner leftovers', () => {
   it('part 1 runs still report master leftovers as one entry', async () => {
     const { runner, fake } = setup(() => 'warning');
     fake.leftovers = { ...EMPTY, new_commits: ['docs: a'], discardable: ['x.txt'] };

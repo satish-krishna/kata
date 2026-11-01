@@ -11,7 +11,6 @@ import type { InstructionsState } from '@bindings/InstructionsState';
 import type { SystemView } from '@bindings/SystemView';
 import type { ChangeView } from '@bindings/ChangeView';
 import type { BranchInfo } from '@bindings/BranchInfo';
-import type { BuildAction } from '@bindings/BuildAction';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
@@ -24,10 +23,6 @@ import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { ReadError } from '../../lib/doc-notice';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
-import type { UnsavedRows } from '@bindings/UnsavedRows';
-import type { Participant } from '@bindings/Participant';
-import type { PrepareOutcome } from '@bindings/PrepareOutcome';
-import type { BuildStart } from '@bindings/BuildStart';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { Part } from '@bindings/Part';
 import type { CommitFiles } from '@bindings/CommitFiles';
@@ -189,14 +184,6 @@ export abstract class KataTransport {
   abstract sdlcReadParsed(master: string, system: string, change: string, doc: string): Promise<ReadResult | ReadError | null>;
   /** The change's review document as committed, or null when it has none. */
   abstract sdlcReviewRecord(master: string, system: string, change: string): Promise<ReviewRecord | null>;
-  /** The files a review run changed in the master besides the change's review document, since the head `since`; empty when it kept to the document. */
-  abstract sdlcReviewVerify(master: string, system: string, change: string, since: string, before: Snapshot['dirty']): Promise<string[]>;
-  abstract sdlcUnsavedRows(master: string, system: string, change: string): Promise<UnsavedRows[]>;
-  /** `pending` names the repository a run is about to start in on the engineer's ask (a round, or Continue): its leftovers are its own to confirm. */
-  abstract sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending: string[], action: BuildAction): Promise<PrepareOutcome>;
-  /** Who takes part in the build, where each is checked out and which uncommitted files each one owns. */
-  abstract sdlcBuildParticipants(folder: string, masterRepo: string, system: string, change: string, pending: string[]): Promise<Participant[]>;
-  abstract sdlcBuildSettle(start: BuildStart): Promise<string[]>;
   abstract sdlcBuildHeads(folder: string, masterRepo: string, system: string, repos: string[], change: string): Promise<Record<string, string>>;
   /** Whether the ai-sdlc plugin is installed and new enough, as the backend decides it for the workspace folder. */
   abstract sdlcPluginReadiness(workdir: string | null): Promise<Readiness>;

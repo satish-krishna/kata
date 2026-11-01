@@ -3,21 +3,22 @@ import { ChangeDetectorRef, Component, inject, input, signal } from '@angular/co
 import { TestBed } from '@angular/core/testing';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { Pick } from '../../lib/build-sessions';
-import { filterCounts, reviewRows, taskList, type TaskFilter, type TaskLine } from '../../lib/build-task-list';
+import { filterCounts, summaryOf, taskList, type TaskFilter, type TaskLine } from '../../lib/build-task-list';
 import type { BuildStage } from '../../lib/build-stage';
 import { defaultArrangement, type AreaId, type LayoutMode } from '../../lib/build-layout';
 import type { LayoutStage } from '../../lib/build-layout-stage';
-import { stopMessage, type Finding, type StageAction } from '../../lib/sdlc';
-import { groupFindings, type FindingGroup } from '../../lib/sdlc-findings';
+import type { Finding, StageAction } from '../../lib/sdlc';
+import type { FindingGroup } from '../../lib/sdlc-findings';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { By } from '@angular/platform-browser';
+import { provideRouter } from '@angular/router';
 import { ChangesView } from '../changes/changes-view';
 import { BuildLayoutViewModel, type ArrangeAction, type BuildLayoutState } from './build-layout.view-model';
 import { BuildPage } from './build-page';
 import { BuildPageViewModel } from './build-page.view-model';
-import type { BuildChanges, BuildPageView, ShownSession, StatusText, TaskGroupView } from './build-page.view-model';
+import type { BuildChanges, BuildPageView, ReviewRowsShown, ShownSession, StatusText, TaskGroupView } from './build-page.view-model';
 
 const CHANGES: BuildChanges = { folder: MOCK_WORKSPACE_FOLDER, masterRepo: MOCK_MASTER, system: 'commerce', change: MOCK_BUILD_CHANGE };
 
@@ -94,7 +95,8 @@ const base = (over: Partial<BuildPageView> = {}): BuildPageView => ({
   sessions: [],
   sessionNote: null,
   stops: [],
-  findingsArea: { message: 'The review runs by itself once the last task is recorded.', staleNotice: null, review: null, departures: [], noDepartures: 'No departures from the plan.' },
+  findingsArea: { message: 'The review runs by itself once the last task is recorded.', staleNotice: null, review: null, departures: [], noDepartures: 'No departures from the plan.', waiting: null },
+  held: null,
   findingPlace: null,
   waiting: [],
   announcement: '',
@@ -121,7 +123,17 @@ const FINDINGS = {
   emptyText: 'Reviewed, nothing found.',
 };
 
-const SHOWN = { message: null, staleNotice: null, review: FINDINGS, departures: [], noDepartures: 'No departures from the plan.' };
+const SHOWN = { message: null, staleNotice: null, review: FINDINGS, departures: [], noDepartures: 'No departures from the plan.', waiting: null };
+
+/** The stop texts the backend words; the page shows them as it was told. */
+const STOP_TEXT: Record<number, string> = {
+  0: 'Stopped: ended without its task being recorded',
+  1: 'Stopped: the agent failed',
+  123: 'Stopped: nobody answered',
+  124: 'Stopped: reached the time limit',
+  130: 'Stopped: cancelled',
+};
+const stopMessage = (exit: number, _error: null, _cancelled = false, _recorded = true): string => STOP_TEXT[exit];
 
 @Component({
   imports: [BuildPage],
@@ -139,6 +151,8 @@ const SHOWN = { message: null, staleNotice: null, review: FINDINGS, departures: 
       (repoAction)="repoActions.push($event)"
       (act)="acts.push($event)"
       (cancelBuild)="cancels = cancels + 1"
+      (startAgain)="startAgains = startAgains + 1"
+      (startReviewAgain)="reviewAgains = reviewAgains + 1"
       (answer)="answers.push($event)"
       (say)="says.push($event)"
       (goTo)="goTos.push($event)"
@@ -172,6 +186,8 @@ class Host {
   readonly repoActions: { repo: string; action: 'cancel' | 'continue' }[] = [];
   readonly acts: StageAction[] = [];
   cancels = 0;
+  startAgains = 0;
+  reviewAgains = 0;
   readonly answers: unknown[] = [];
   readonly says: { runId: string; text: string }[] = [];
   readonly goTos: string[] = [];
@@ -206,7 +222,7 @@ const settle = async () => {
 const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').trim();
 
 async function mount(view: BuildPageView, extra: { stopped?: string[] } = {}) {
-  TestBed.configureTestingModule({ imports: [Host], providers: [{ provide: KataTransport, useValue: new MockTransport() }] });
+  TestBed.configureTestingModule({ imports: [Host], providers: [provideRouter([]), { provide: KataTransport, useValue: new MockTransport() }] });
   const fixture = TestBed.createComponent(Host);
   fixture.componentInstance.view = view;
   fixture.componentInstance.stopped = extra.stopped ?? [];
@@ -1714,11 +1730,56 @@ describe('the build page folds, filters and explains a departure', () => {
   });
 });
 
+describe('the held panel', () => {
+  const held = { title: 'This build waits for other changes', action: 'Start build again', repos: [{ repo: 'commerce-core', holder: '2026-11-02-other', link: ['/sdlc', 'commerce', '2026-11-02-other'] }] };
+
+  it('shows on the Build tab above the bar, names the holder with a link, and asks to start again', async () => {
+    const { el, host } = await mount(base({ held }));
+    const panel = el.querySelector<HTMLElement>('[data-held-build]')!;
+    expect(norm(panel.textContent)).toContain('commerce-core is held by 2026-11-02-other');
+    expect(panel.querySelector('a[data-holder]')!.getAttribute('href')).toBe('/sdlc/commerce/2026-11-02-other');
+    expect(panel.compareDocumentPosition(el.querySelector('[data-bar]')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    panel.querySelector<HTMLButtonElement>('[data-act]')!.click();
+    expect(host.startAgains).toBe(1);
+  });
+
+  it('shows nothing when the build is not held', async () => {
+    const { el } = await mount(base());
+    expect(el.querySelector('[data-held-build]')).toBeNull();
+    expect(el.querySelector('[data-held-review]')).toBeNull();
+  });
+
+  it('shows in the review area when the review waits, and asks to start the review again', async () => {
+    const waiting = { ...held, title: 'The review waits for other changes', action: 'Start review again' };
+    const { el, host } = await mount(base({ findingsArea: { ...SHOWN, message: 'The review runs by itself once the last task is recorded.', review: null, waiting } }));
+    const panel = el.querySelector<HTMLElement>('[data-area="findings"] [data-held-review]')!;
+    expect(norm(panel.textContent)).toContain('The review waits for other changes');
+    panel.querySelector<HTMLButtonElement>('[data-act]')!.click();
+    expect(host.reviewAgains).toBe(1);
+    expect(host.startAgains).toBe(0);
+  });
+});
+
+/** Rows as the backend lists them: the findings of one repository in the order given, the low ones apart, counted by severity. */
+function rowsOf(findings: Finding[]): ReviewRowsShown {
+  const row = (f: Finding) => ({ key: f.id ?? `#${findings.indexOf(f) + 1}`, finding: f, summary: summaryOf(f.text) });
+  const repos = [...new Set(findings.map((f) => f.repo ?? null))];
+  const counts = (['critical', 'high', 'medium', 'low'] as const).map((severity) => ({ severity, n: findings.filter((f) => f.severity === severity).length })).filter((c) => c.n > 0);
+  return {
+    counts,
+    total: findings.length,
+    groups: repos.map((repo) => {
+      const mine = findings.filter((f) => (f.repo ?? null) === repo);
+      return { repo, rows: mine.filter((f) => f.severity !== 'low').map(row), low: mine.filter((f) => f.severity === 'low').map(row) };
+    }),
+  };
+}
+
 describe("the Review group lists the latest review's findings", () => {
   const UPLOAD: Finding = { id: 'F1', severity: 'high', text: 'The upload is not checked. It should be.', file: 'src/Photos/UploadController.cs', line: 48, repo: 'catalog-api' };
   const LOW: Finding = { id: 'F4', severity: 'low', text: 'A comment is stale.', repo: 'catalog-api' };
   const reviewView = (findings: Finding[], low: ReadonlySet<string>, stale: string | null = null): BuildPageView => {
-    const rows = reviewRows(groupFindings(findings, ['catalog-api']), findings);
+    const rows = rowsOf(findings);
     return base({
       review: { status: { tone: 'success', label: 'Finished' }, action: null, picked: false, rows, stale, nothingFound: rows.total === 0, openLow: low },
     });

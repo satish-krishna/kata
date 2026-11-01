@@ -3,6 +3,11 @@
   <div class="k-bp__notice">
     <app-waiting-notice [items]="view().waiting" (goTo)="goToRepo($event)" />
   </div>
+  @if (view().held; as held) {
+    <div class="k-bp__held" data-held-build>
+      <app-held-panel [title]="held.title" [repos]="held.repos" [action]="held.action" (act)="startAgain.emit()" />
+    </div>
+  }
   <div class="k-bp__bar" data-bar>
     <app-segmented [options]="modes()" [value]="layout().mode" (valueChange)="pickMode.emit($event)" ariaLabel="Layout mode" />
     <span class="k-lock__count">{{ view().facts.tasks }}</span>
@@ -289,6 +294,11 @@
       <ng-container [ngTemplateOutlet]="head" [ngTemplateOutletContext]="{ $implicit: 'findings' }" />
       <div class="k-bp__body k-bp__body--stack">
         @let area = view().findingsArea;
+        @if (area.waiting; as waiting) {
+          <div data-held-review>
+            <app-held-panel [title]="waiting.title" [repos]="waiting.repos" [action]="waiting.action" (act)="startReviewAgain.emit()" />
+          </div>
+        }
         @if (area.message; as message) {
           <p class="k-state__body">{{ message }}</p>
         } @else if (area.review; as found) {

@@ -1,20 +1,15 @@
 import { defaultWorkType, orderedWorkTypes, type WorkType } from '../../lib/sdlc-naming';
 import { Injectable, Injector, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Router } from '@angular/router';
-import type { BuildAction } from '@bindings/BuildAction';
 import type { BuildScope } from '@bindings/BuildScope';
-import type { BuildStart } from '@bindings/BuildStart';
 import type { FinishOutcome } from '@bindings/FinishOutcome';
 import type { Leftovers } from '@bindings/Leftovers';
-import type { Problem } from '@bindings/Problem';
-import type { Readiness } from '@bindings/Readiness';
 import type { RunSpec } from '@bindings/RunSpec';
-import type { RepoFiles } from '@bindings/RepoFiles';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunState } from '../../lib/events';
 import type { ChangeRef } from '@bindings/ChangeRef';
-import type { DocumentKind } from '../../lib/build-host';
+import { documentForm, type DocumentKind } from '../../lib/build-host';
 import type { RunSnapshot } from '../run/reduce';
 import { restrictedFor, specFor, transcriptRunId, type StartTrack } from '../../lib/sdlc';
 import { masterPath, masterRepo, productRepos as productReposOf } from '../../lib/sdlc-workspace';
@@ -101,54 +96,19 @@ type PendingLink = { workspace_id: string; system: string; change: string; stage
 /** One repository's uncommitted edits left by a run, with the snapshot that run started from. */
 /** What one repository's run left behind. `build` is set when the run belonged to a build: only that change's build log rows are build log data. */
 export type RepoLeftovers = { repo: string; path: string; snapshot: Snapshot; data: Leftovers; build?: BuildScope };
-/** What the engine needs to start the build: the change and the plugin that can run it. */
-export type BuildRequest = {
-  folder: string;
-  masterRepo: string;
-  system: string;
-  change: string;
-  /** What the engineer asked for; every action meets the same gate. */
-  action: BuildAction;
-  continueWithLeftovers: boolean;
-  /** The repositories a round is aimed at: the uncommitted files of each are its own to confirm, even when its tasks are all done or it is the master. Empty or absent when none. */
-  pending?: string[];
-};
-export type PrepareResult =
-  | { kind: 'ready'; start: BuildStart }
-  | { kind: 'needs-confirm'; leftovers: RepoFiles[] }
-  /** The change's branch holds other work in `repo`; the engineer picks a new name. */
-  | { kind: 'branch-taken'; repo: string; branch: string }
-  /** `problems` lists what the check found in the plan or a build log, when that is why the build did not go on. */
-  | { kind: 'refused'; reason: string; problems?: Problem[] };
-/** A repository run of the build, or the review of the whole change (which runs in the master repository). */
-export type BuildRunTarget = { repo: string; path: string; kind: 'repo' | 'review' };
-export type BuildLink = {
-  workspaceId: string;
-  system: string;
-  change: string;
-  folder: string;
-  master: string;
-  repos: string[];
-  /** Called with the run's id as soon as the run has started and joined the build's lock. */
-  onRun?: (runId: string) => void;
-};
 /** The change a document run belongs to, when the change exists: the backend then composes the run-spec and claims the change's lane. */
 export type ChangeLaunch = { ref: ChangeRef; kind: DocumentKind };
-export type RunEnd = { exit: number | null; error: string | null };
 export type DiscardChoice = { repo: string; paths: string[] };
 
 const RESULT_MAX = 120;
 /** The time limit of a document run whose confirmed spec set none: the six hours the run-specs of AI-SDLC runs carry. */
-const DEFAULT_TIMEOUT_SECS = 6 * 60 * 60;
 /** How long to wait for the engine process to exit before touching the repo. */
 const EXIT_WAIT_MS = 15000;
 const TERMINAL: readonly RunState[] = ['success', 'warning', 'error'];
-const INSTALL_PLUGIN = 'Install the ai-sdlc plugin, then start the build again.';
 const DIRTY = 'uncommitted changes';
 const EMPTY: Leftovers = { new_commits: [], discardable: [], touched_dirty: [], created: [], product_repos_changed: [], product_repos_unchecked: [] };
 
 const repoName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path;
-const sameDir = (a: string, b: string): boolean => a.replace(/[\\/]+$/, '') === b.replace(/[\\/]+$/, '');
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 /** Product repos are named by folder; they sit next to the master repo in the workspace folder. */
@@ -171,8 +131,6 @@ const hasLeftovers = (l: Leftovers): boolean =>
   [l.new_commits, l.discardable, l.touched_dirty, l.created, l.product_repos_changed, l.product_repos_unchecked].some((xs) => xs.length > 0);
 
 /** Commits are what a build is for, so only uncommitted edits count as left behind. */
-const uncommittedOnly = (l: Leftovers): Leftovers => ({ ...EMPTY, discardable: l.discardable, touched_dirty: l.touched_dirty, created: l.created });
-const hasUncommitted = (l: Leftovers): boolean => l.discardable.length > 0 || l.touched_dirty.length > 0 || l.created.length > 0;
 
 /**
  * Runs AI-SDLC agent work end to end: snapshot the master repo, hold the lock, link the transcript to its
@@ -189,8 +147,6 @@ export class SdlcRunner {
 
   private readonly injector = inject(Injector);
   private readonly pending = signal<RepoLeftovers[]>([]);
-  /** What the build's runs left, held until the build is over: the dialog must not open under a live build. */
-  private held: RepoLeftovers[] = [];
   private closeWaiters: (() => void)[] = [];
   private linkTarget: PendingLink | null = null;
 
@@ -352,14 +308,7 @@ export class SdlcRunner {
 
   /** A document run of a change that exists: the backend composes the run-spec (the deny rules, the change's own lane); only what the engineer confirmed in the preview travels. */
   private launchChangeRun(change: ChangeLaunch, spec: RunSpec): Promise<string> {
-    return this.transport.sdlcRunChange(change.ref, change.kind, {
-      name: spec.name,
-      task: spec.task,
-      permissionMode: spec.permissions.mode,
-      timeoutSecs: spec.leash.timeout_secs ?? DEFAULT_TIMEOUT_SECS,
-      bare: false,
-      given: spec.given ?? undefined,
-    });
+    return this.transport.sdlcRunChange(change.ref, change.kind, documentForm(spec));
   }
 
   private isBusy(): boolean {
@@ -418,129 +367,6 @@ export class SdlcRunner {
     } finally {
       this.afterRun.set(false);
       await this.lock.dismissed();
-    }
-  }
-
-  /** Check the build can start and ask the backend to prepare it. Nothing else is touched before the plugin check passes (R2.5); the backend then refuses a plan or build log that fails the check (R8.1). */
-  async prepareBuild(req: BuildRequest): Promise<PrepareResult> {
-    let readiness: Readiness;
-    try {
-      readiness = await this.transport.sdlcPluginReadiness(req.folder);
-    } catch {
-      readiness = { kind: 'blocked', reason: 'pluginMissing', message: 'Install the ai-sdlc plugin' };
-    }
-    if (readiness.kind === 'blocked') return { kind: 'refused', reason: readiness.reason === 'pluginMissing' ? INSTALL_PLUGIN : readiness.message };
-    try {
-      const out = await this.transport.sdlcBuildPrepare(req.folder, req.masterRepo, req.system, req.change, req.continueWithLeftovers, req.pending ?? [], req.action);
-      if (out.kind === 'refused') return { kind: 'refused', reason: out.message, problems: out.problems };
-      if (out.kind === 'branchTaken') return { kind: 'branch-taken', repo: out.repo, branch: out.branch };
-      if (out.kind === 'ready') {
-        this.held = [];
-        return { kind: 'ready', start: out.start };
-      }
-      return { kind: 'needs-confirm', leftovers: out.leftovers };
-    } catch (e) {
-      return { kind: 'refused', reason: message(e) };
-    }
-  }
-
-  /**
-   * One run of the build inside one repository. Snapshots the repository first, joins the run to the build's
-   * lock, links its transcript, and once the run and its engine are gone keeps whatever it left uncommitted.
-   */
-  async runInRepo(target: BuildRunTarget, spec: RunSpec, link: BuildLink): Promise<RunEnd> {
-    let snapshot: Snapshot;
-    try {
-      snapshot = await this.transport.sdlcSnapshot(target.path);
-    } catch (e) {
-      return { exit: null, error: `Could not read ${target.repo} before the run: ${message(e)}` };
-    }
-    // A build log row sits in the master's tree, so it is classified against the master's snapshot; a repository's own covers only its own tree.
-    let masterSnapshot = snapshot;
-    if (!sameDir(target.path, link.master)) {
-      try {
-        masterSnapshot = await this.transport.sdlcSnapshot(link.master);
-      } catch (e) {
-        return { exit: null, error: `Could not read ${repoName(link.master)} before the run: ${message(e)}` };
-      }
-    }
-    const review = target.kind === 'review';
-    let heads: Record<string, string> | undefined;
-    if (review) {
-      try {
-        heads = await this.transport.sdlcBuildHeads(link.folder, repoName(link.master), link.system, [target.repo, ...link.repos], link.change);
-      } catch (e) {
-        this.toasts.error(`Could not record where each repository stood: ${message(e)}`);
-      }
-    }
-    const id = await this.runs.startRun(spec, `build:${link.system}/${link.change}`);
-    if (id === null) return { exit: null, error: 'The run did not start' };
-    this.lock.addRun(id, spec);
-    link.onRun?.(id);
-    const startedAt = Math.floor(Date.now() / 1000);
-    let linked = false;
-    const end = await this.untilEnded(id, (runId) => {
-      if (linked) return;
-      linked = true;
-      this.transport
-        .sdlcLinkRun({
-          workspace_id: link.workspaceId,
-          system: link.system,
-          change: link.change,
-          stage: review ? 'review' : `build:${target.repo}`,
-          run_id: runId,
-          started_at: startedAt,
-          ...(heads ? { heads } : {}),
-        })
-        .catch((e: unknown) => this.toasts.error(`Could not link the run to the change: ${message(e)}`));
-    });
-    const exit = end.exit ?? (end.state === 'success' ? 0 : null);
-    const error = this.lastError(end);
-    if (!(await this.engineExited(id))) {
-      this.toasts.error(`${target.repo}: the engine is still stopping. Nothing was cleaned up.`);
-      return { exit, error: 'The engine is still stopping' };
-    }
-    const build: BuildScope = { system: link.system, change: link.change };
-    let data = EMPTY;
-    try {
-      data = await this.transport.sdlcLeftovers(target.path, snapshot, [], build);
-    } catch (e) {
-      this.toasts.error(`Could not read what the run left in ${target.repo}: ${message(e)}`);
-    }
-    // A build log row sits in the master's tree but belongs to the repository it records: it is listed there.
-    const rows = await this.rowsOwnedBy(target.repo, link);
-    const kept = uncommittedOnly(data);
-    // A row that was already unsaved before the run changed before and during it; any other row, this run wrote.
-    const unsaved = rows.filter((r) => !kept.touched_dirty.includes(r) && !kept.created.includes(r));
-    kept.touched_dirty = [...kept.touched_dirty, ...unsaved.filter((r) => r in masterSnapshot.dirty)];
-    kept.created = [...kept.created, ...unsaved.filter((r) => !(r in masterSnapshot.dirty))];
-    if (hasUncommitted(kept)) this.held = [...this.held.filter((h) => h.repo !== target.repo), { repo: target.repo, path: target.path, snapshot, data: kept, build }];
-    return { exit, error };
-  }
-
-  /** The unsaved build log rows a repository owns, read from the build's participants; none when they cannot be read. */
-  private async rowsOwnedBy(repo: string, link: BuildLink): Promise<string[]> {
-    try {
-      const parts = await this.transport.sdlcBuildParticipants(link.folder, repoName(link.master), link.system, link.change, []);
-      return parts.find((p) => p.repo === repo)?.rows ?? [];
-    } catch (e) {
-      this.toasts.error(`Could not read the build log rows of ${repo}: ${message(e)}`);
-      return [];
-    }
-  }
-
-  /** The build is over: show what its runs left uncommitted, wait for the engine's operator to decide, then settle the branches. */
-  async finishBuild(start: BuildStart): Promise<void> {
-    const held = this.held;
-    this.held = [];
-    if (held.length > 0) {
-      this.setPending([...held.filter((h) => h.repo === start.master.repo), ...held.filter((h) => h.repo !== start.master.repo)]);
-      await this.leftoversClosed();
-    }
-    try {
-      await this.transport.sdlcBuildSettle(start);
-    } catch (e) {
-      this.toasts.error(`Could not settle the build's branches: ${message(e)}`);
     }
   }
 
@@ -629,7 +455,7 @@ export class SdlcRunner {
       const ctx = { folder: workspace.folder, system, change: null, idea, ...(naming ? { scope: naming.scope } : {}) };
       if (decide) {
         const restricted = restrictedFor(workspace.folder, await this.transport.sdlcScan(workspace.folder), await this.transport.sdlcChecksDir());
-        spec = specFor('triage', null, ctx, settings, catalog, undefined, restricted);
+        spec = specFor('triage', null, ctx, settings, catalog, restricted);
       } else {
         spec = specFor('intent', null, ctx, settings, catalog);
       }

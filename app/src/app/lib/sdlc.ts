@@ -82,36 +82,9 @@ export function restrictedFor(workspaceFolder: string, scan: WorkspaceScan, chec
   return { workspaceFolder, masterRepo: master, systemRepos: productReposOf(scan), checksDir };
 }
 
-/** One build run: a repository's run or the whole-change review, with everything its run-spec needs. */
-export type BuildRun = {
-  target: { repo: string } | "review";
-  timeoutSecs: number;
-  instructions: string | null;
-  workspaceFolder: string;
-  /** Folder name of the master repository, inside the workspace folder. */
-  masterRepo: string;
-  /** Folder names of the system's product repositories, inside the workspace folder. */
-  systemRepos: string[];
-  /** Absolute path of Kata's checks folder; no build run may edit it. */
-  checksDir: string;
-  continueOnLeftovers: boolean;
-};
-
 export const DEFAULT_BUILD_SECS = 7200;
 
 const AI_SDLC = "ai-sdlc";
-
-/** The text of a repository's stop (R6.1). The cancelled fact decides first, and a cancelled stop carries no error text; the exit code, and for exit 0 whether the task was recorded, tell the other stops apart. */
-export function stopMessage(exit: number | null, error: string | null, cancelled = false, recorded = true): string {
-  if (cancelled) return "Stopped: cancelled";
-  const base =
-    exit === 124 ? "Stopped: reached the time limit"
-    : exit === 130 ? "Stopped: cancelled"
-    : exit === 123 ? "Stopped: nobody answered"
-    : exit === 0 && !recorded ? "Stopped: ended without its task being recorded"
-    : "Stopped: the agent failed";
-  return error ? `${base} · ${error}` : base;
-}
 
 const BUILD_DENY = ["Bash(git push:*)", "Bash(gh:*)", "Bash(git remote:*)"];
 const GITHUB_TOKENS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"];
@@ -140,53 +113,6 @@ export function productRepoRules(ws: string, systemRepos: readonly string[], mas
     if (repo !== masterRepo) deny.push(`Edit(${rulePath(`${root}/${repo}`)}/**)`);
   }
   return { deny, allow: [`Read(${rulePath(root)}/**)`] };
-}
-
-/** Only `Edit(path)` rules are checked by claude's file permissions; they cover Write and every other editing tool. */
-function buildPermissions(run: BuildRun, ctx: RunContext) {
-  const ws = slashes(run.workspaceFolder);
-  const { deny, allow } = productRepoRules(ws, run.systemRepos, run.masterRepo, run.checksDir);
-  // The parse cache folder sits beside the checks folder; an agent that edited an entry would change what the page shows.
-  const workbenchDir = slashes(run.checksDir).replace(/\/[^/]*\/?$/, "");
-  deny.push(`Edit(${rulePath(`${workbenchDir}/parse-cache`)}/**)`);
-  const changeDir = `${ws}/${run.masterRepo}/intent/${ctx.system}/${ctx.change}`;
-  const buildDir = `${changeDir}/build`;
-  if (run.target === "review") {
-    // The review records its findings in the change's review document and edits nothing else. Deny beats allow in
-    // claude, so the workspace cannot be denied as a whole: every product repository and every other document of
-    // the change is denied by name instead.
-    const repos = new Set([...run.systemRepos, run.masterRepo]);
-    for (const other of repos) deny.push(`Edit(${rulePath(`${buildDir}/${other}.md`)})`);
-    for (const doc of ["intent.md", "spec.md", "plan.md"]) deny.push(`Edit(${rulePath(`${changeDir}/${doc}`)})`);
-    allow.push(`Edit(${rulePath(`${buildDir}/review.md`)})`);
-  } else {
-    const repo = run.target.repo;
-    // Deny beats allow in claude, so a `build/**` deny would block this run's own log; deny the others by name.
-    const repos = new Set([...run.systemRepos, run.masterRepo]);
-    for (const other of repos) {
-      if (other === repo) continue;
-      deny.push(`Edit(${rulePath(`${buildDir}/${other}.md`)})`);
-    }
-    // The shared rules deny every product repository; this run's own is the one it works in.
-    const own = `Edit(${rulePath(`${ws}/${repo}`)}/**)`;
-    const at = deny.indexOf(own);
-    if (at >= 0 && repo !== run.masterRepo) deny.splice(at, 1);
-    // Earlier reviews are the review run's record; a build run does not rewrite them.
-    deny.push(`Edit(${rulePath(`${buildDir}/review.md`)})`);
-    allow.push(`Edit(${rulePath(`${buildDir}/${repo}.md`)})`);
-  }
-  return { deny, allow };
-}
-
-function buildTask(run: BuildRun, ctx: RunContext): string {
-  const flag = run.target === "review" ? "--review" : `--repo ${run.target.repo}`;
-  let task = `Use the ai-sdlc build skill for system ${ctx.system} on change folder ${ctx.change} with ${flag}.`;
-  if (run.continueOnLeftovers) {
-    task += " The engineer has already confirmed continuing on top of the uncommitted edits the previous run left; do not ask again.";
-  }
-  const instructions = run.instructions?.trim() ?? "";
-  if (run.target !== "review" && instructions) task += `\n\nInstructions from the engineer for this run:\n${instructions}`;
-  return task;
 }
 
 const hasPlugin = (catalog: CatalogEntry[], name: string): boolean =>
@@ -241,7 +167,7 @@ function taskFor(kind: SdlcKind, action: StageAction | null, ctx: RunContext): s
       return task;
     }
     case "build":
-      throw new Error("a build run-spec is made from its BuildRun");
+      throw new Error("a build run-spec is composed by the backend");
     case "triage":
       return `Use the ai-sdlc start skill for system ${system}. The change: ${ctx.idea ?? ""}${ctx.scope ? `${scopeArg(ctx)}\n` : ". "}The person running this is both the engineer and the product owner and may take either route. If the route is the light track and the person takes it, run the fix skill in this session; the engineer accepts the fix later in the Workbench, so do not ask for acceptance.`;
     case "fix":
@@ -259,30 +185,6 @@ function sdlcGiven(kind: SdlcKind): Given {
 
 const SDLC_TIMEOUT_SECS = 6 * 60 * 60;
 
-/**
- * The run-spec of one build run. Always auto: bypass forbids the deny rules that keep an agent from publishing,
- * and `settings.permission_mode` does not apply. No turn cap and no budget; the time limit is per run.
- */
-function buildSpec(ctx: RunContext, run: BuildRun): RunSpec {
-  const spec = defaultSpec();
-  const ws = slashes(run.workspaceFolder);
-  const repo = run.target === "review" ? run.masterRepo : run.target.repo;
-  spec.name = `sdlc-${ctx.system}-${ctx.change}-${run.target === "review" ? "review" : `build-${run.target.repo}`}`;
-  spec.task = buildTask(run, ctx);
-  spec.workdir = `${ws}/${repo}`;
-  spec.plugins = { [AI_SDLC]: {} };
-  spec.given = sdlcGiven("build");
-  spec.auth = { bare: false, token_env: null };
-  spec.interactive = { enabled: true, answer_timeout_secs: 3600 };
-  spec.leash.timeout_secs = run.timeoutSecs;
-  spec.leash.max_turns = null;
-  spec.leash.max_budget_usd = null;
-  spec.env_remove = [...GITHUB_TOKENS];
-  const { allow, deny } = buildPermissions(run, ctx);
-  spec.permissions = { mode: "auto", allow, deny, ask: [], unmatched: "ask" };
-  return spec;
-}
-
 /** Build the run-spec for one AI-SDLC run. Always bypass-valid: allow/deny/ask stay empty. */
 export function specFor(
   kind: SdlcKind,
@@ -290,13 +192,9 @@ export function specFor(
   ctx: RunContext,
   settings: Settings,
   catalog: CatalogEntry[],
-  run?: BuildRun,
   restricted?: Restricted,
 ): RunSpec {
-  if (kind === "build") {
-    if (!run) throw new Error("a build run-spec needs its BuildRun");
-    return buildSpec(ctx, run);
-  }
+  if (kind === "build") throw new Error("a build run-spec is composed by the backend");
   const spec = defaultSpec();
   const plugins: Record<string, PluginConfig> = { [AI_SDLC]: {} };
   spec.name = nameFor(kind, ctx);

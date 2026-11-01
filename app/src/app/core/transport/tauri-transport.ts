@@ -14,7 +14,6 @@ import type { InstructionsState } from '@bindings/InstructionsState';
 import type { ChangeView } from '@bindings/ChangeView';
 import type { SystemView } from '@bindings/SystemView';
 import type { BranchInfo } from '@bindings/BranchInfo';
-import type { BuildAction } from '@bindings/BuildAction';
 import type { BuildScope } from '@bindings/BuildScope';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { Leftovers } from '@bindings/Leftovers';
@@ -27,10 +26,6 @@ import type { BuildStatus } from '@bindings/BuildStatus';
 import type { ReadResult } from '@bindings/ReadResult';
 import type { ReadError } from '../../lib/doc-notice';
 import type { ReviewRecord } from '@bindings/ReviewRecord';
-import type { UnsavedRows } from '@bindings/UnsavedRows';
-import type { Participant } from '@bindings/Participant';
-import type { PrepareOutcome } from '@bindings/PrepareOutcome';
-import type { BuildStart } from '@bindings/BuildStart';
 import type { ChangeRepo } from '@bindings/ChangeRepo';
 import type { Part } from '@bindings/Part';
 import type { CommitFiles } from '@bindings/CommitFiles';
@@ -120,11 +115,11 @@ export class TauriTransport extends KataTransport {
   sdlcBuildStart(change: ChangeRef, form: StartForm) { return this.ipc.invoke<StartOutcome>('sdlc_build_start', { change, form }); }
   sdlcBuildContinue(change: ChangeRef, repo: string) { return this.ipc.invoke<StartOutcome>('sdlc_build_continue', { change, repo }); }
   sdlcBuildState(change: ChangeRef) { return this.ipc.invoke<BuildState | null>('sdlc_build_state', { change }); }
-  sdlcBuildCancel(_change: ChangeRef, _repo: string | null): Promise<void> { return Promise.reject(new Error('not yet')); }
-  sdlcBuildRuns(_change: ChangeRef): Promise<BuildRunRef[]> { return Promise.reject(new Error('not yet')); }
-  sdlcPreviewChangeRun(_change: ChangeRef, _kind: DocumentKind, _form: RunForm): Promise<RunSpec> { return Promise.reject(new Error('not yet')); }
-  sdlcPreviewBuild(_change: ChangeRef, _which: BuildPreviewKind, _repo: string | null, _form: StartForm): Promise<BuildSection[]> { return Promise.reject(new Error('not yet')); }
-  sdlcReviewView(_change: ChangeRef): Promise<ReviewView> { return Promise.reject(new Error('not yet')); }
+  sdlcBuildCancel(change: ChangeRef, repo: string | null) { return this.ipc.invoke<void>('sdlc_build_cancel', { change, repo }); }
+  sdlcBuildRuns(change: ChangeRef) { return this.ipc.invoke<BuildRunRef[]>('sdlc_build_runs', { change }); }
+  sdlcPreviewChangeRun(change: ChangeRef, kind: DocumentKind, form: RunForm) { return this.ipc.invoke<RunSpec>('sdlc_preview_change_run', { change, kind, form }); }
+  sdlcPreviewBuild(change: ChangeRef, which: BuildPreviewKind, repo: string | null, form: StartForm) { return this.ipc.invoke<BuildSection[]>('sdlc_preview_build', { change, which, repo, form }); }
+  sdlcReviewView(change: ChangeRef) { return this.ipc.invoke<ReviewView>('sdlc_review_view', { change }); }
   sdlcReviewStart(change: ChangeRef) { return this.ipc.invoke<StartOutcome>('sdlc_review_start', { change }); }
   sdlcReviewWaiting(change: ChangeRef) { return this.ipc.invoke<HeldRepo[]>('sdlc_review_waiting', { change }); }
   sdlcRoundOffer(change: ChangeRef) { return this.ipc.invoke<[RoundOffer, RoundPicks]>('sdlc_round_offer', { change }); }
@@ -158,12 +153,7 @@ export class TauriTransport extends KataTransport {
     }
   }
   sdlcReviewRecord(master: string, system: string, change: string) { return this.ipc.invoke<ReviewRecord | null>('sdlc_review_record', { master, system, change }); }
-  sdlcUnsavedRows(master: string, system: string, change: string) { return this.ipc.invoke<UnsavedRows[]>('sdlc_unsaved_rows', { master, system, change }); }
-  sdlcBuildPrepare(folder: string, masterRepo: string, system: string, change: string, continueWithLeftovers: boolean, pending: string[], action: BuildAction) { return this.ipc.invoke<PrepareOutcome>('sdlc_build_prepare', { folder, masterRepo, system, change, action, continueWithLeftovers, pending }); }
-  sdlcBuildParticipants(folder: string, masterRepo: string, system: string, change: string, pending: string[]) { return this.ipc.invoke<Participant[]>('sdlc_build_participants', { folder, masterRepo, system, change, pending }); }
-  sdlcBuildSettle(start: BuildStart) { return this.ipc.invoke<string[]>('sdlc_build_settle', { start }); }
   sdlcBuildHeads(folder: string, masterRepo: string, system: string, repos: string[], change: string) { return this.ipc.invoke<Record<string, string>>('sdlc_build_heads', { folder, masterRepo, system, repos, change }); }
-  sdlcReviewVerify(master: string, system: string, change: string, since: string, before: Snapshot['dirty']) { return this.ipc.invoke<string[]>('sdlc_review_verify', { master, system, change, since, before }); }
   sdlcPluginReadiness(workdir: string | null) { return this.ipc.invoke<Readiness>('sdlc_plugin_readiness', { workdir }); }
   sdlcChangeRepos(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<ChangeRepo[]>('sdlc_change_repos', { folder, masterRepo, system, change }); }
   sdlcMissingChangeBranches(folder: string, masterRepo: string, system: string, change: string) { return this.ipc.invoke<string[]>('sdlc_missing_change_branches', { folder, masterRepo, system, change }); }

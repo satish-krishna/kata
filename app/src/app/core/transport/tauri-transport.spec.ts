@@ -6,7 +6,6 @@ import type { Settings } from '@bindings/Settings';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { Snapshot } from '@bindings/Snapshot';
 import type { RunLink } from '@bindings/RunLink';
-import type { BuildStart } from '@bindings/BuildStart';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RoundPicks } from '@bindings/RoundPicks';
 import type { BuildEvent } from '@bindings/BuildEvent';
@@ -20,7 +19,6 @@ const settings: Settings = { mode: 'sdlc', remember: true, permission_mode: 'byp
 const entry: WorkspaceEntry = { id: 'w', name: 'w', folder: '/w', last_opened: 1 };
 const snap: Snapshot = { head: 'abc', dirty: {} };
 const link: RunLink = { workspace_id: 'w', system: 's', change: 'c', stage: 'intent', run_id: 'r', started_at: 1 };
-const start: BuildStart = { master: { repo: 'm', path: '/w/m', base: 'main', branch: 'change/c', created: false }, repos: [] };
 const publishRepo: PublishRepo = { repo: 'r', path: '/w/r', base: 'main' };
 const change: ChangeRef = { workspace: '/w', system: 's', change: 'c' };
 const runForm: RunForm = { name: 'n', task: 't', permissionMode: 'auto', timeoutSecs: 600 };
@@ -116,11 +114,6 @@ const rows: Row[] = [
   ['sdlcBuildStatus', (t) => t.sdlcBuildStatus('/m', 's', 'c'), 'sdlc_build_status', { master: '/m', system: 's', change: 'c' }],
   ['sdlcReadParsed', (t) => t.sdlcReadParsed('/m', 's', 'c', 'plan'), 'sdlc_read_parsed', { master: '/m', system: 's', change: 'c', doc: 'plan' }],
   ['sdlcReviewRecord', (t) => t.sdlcReviewRecord('/m', 's', 'c'), 'sdlc_review_record', { master: '/m', system: 's', change: 'c' }],
-  ['sdlcUnsavedRows', (t) => t.sdlcUnsavedRows('/m', 's', 'c'), 'sdlc_unsaved_rows', { master: '/m', system: 's', change: 'c' }],
-  ['sdlcBuildPrepare', (t) => t.sdlcBuildPrepare('/w', 'm', 's', 'c', true, ['r', 'q'], 'round'), 'sdlc_build_prepare', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', action: 'round', continueWithLeftovers: true, pending: ['r', 'q'] }],
-  ['sdlcBuildPrepare without a pending repository', (t) => t.sdlcBuildPrepare('/w', 'm', 's', 'c', false, [], 'start'), 'sdlc_build_prepare', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', action: 'start', continueWithLeftovers: false, pending: [] }],
-  ['sdlcBuildParticipants', (t) => t.sdlcBuildParticipants('/w', 'm', 's', 'c', ['r', 'q']), 'sdlc_build_participants', { folder: '/w', masterRepo: 'm', system: 's', change: 'c', pending: ['r', 'q'] }],
-  ['sdlcBuildSettle', (t) => t.sdlcBuildSettle(start), 'sdlc_build_settle', { start }],
   ['sdlcBuildHeads', (t) => t.sdlcBuildHeads('/w', 'm', 's', ['r'], 'c'), 'sdlc_build_heads', { folder: '/w', masterRepo: 'm', system: 's', repos: ['r'], change: 'c' }],
   ['sdlcPluginReadiness', (t) => t.sdlcPluginReadiness('/p'), 'sdlc_plugin_readiness', { workdir: '/p' }],
   ['sdlcChangeRepos', (t) => t.sdlcChangeRepos('/w', 'm', 's', 'c'), 'sdlc_change_repos', { folder: '/w', masterRepo: 'm', system: 's', change: 'c' }],

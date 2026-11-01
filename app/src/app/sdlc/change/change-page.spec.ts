@@ -7,7 +7,7 @@ import { of } from 'rxjs';
 import { render } from '../../../testing/render';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
-import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
+import { RunStore } from '../../core/run/run.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { diagrams } from '../../lib/mermaid';
@@ -15,7 +15,6 @@ import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { BuildPage } from '../build/build-page';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePage } from './change-page';
-import { ChangePageViewModel } from './change-page.view-model';
 
 /** Every document run opens the preview first; confirm it once its rows have resolved. */
 const confirmPreview = async (label = 'Start run') => {
@@ -157,11 +156,10 @@ describe('ChangePage', () => {
       vi.restoreAllMocks();
     });
 
-    it('keeps the build page on show once a build is prepared, never the session view or the build view', async () => {
+    it('keeps the build page on show once a build is started, never the session view or the build view', async () => {
       const { container, fixture } = await mount(MOCK_BUILD_CHANGE);
       expect(container.querySelector('app-build-view')).toBeNull();
-      const vm = fixture.debugElement.injector.get(ChangePageViewModel);
-      await vm.submitBuild({ timeoutSecs: 5400, rounds: null });
+      await fixture.debugElement.injector.get(BuildPageViewModel).startBuild({ timeoutSecs: 5400 });
       await settle();
       expect(container.querySelector('app-build-page')).not.toBeNull();
       expect(container.querySelector('app-build-view')).toBeNull();
@@ -173,9 +171,9 @@ describe('ChangePage', () => {
       expect(container.querySelector('nav[aria-label="Tasks"]')).toBeNull();
     });
 
-    it('crosses the seam: clicking the rendered Start build opens the preview of the build, and Start run prepares the build', async () => {
+    it('crosses the seam: clicking the rendered Start build opens the preview of the build, and Start run starts the build through the backend', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
-      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+      const prepare = vi.spyOn(transport, 'sdlcBuildStart');
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
       await settle();
       const dialog = document.body.querySelector('[role="dialog"]')!;
@@ -184,30 +182,19 @@ describe('ChangePage', () => {
       expect(prepare).not.toHaveBeenCalled();
       await confirmPreview();
       await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
-      expect(prepare.mock.calls[0][4]).toBe(false);
     });
 
     it('a refused build opens the refusal dialog', async () => {
       const { container, transport } = await mount(MOCK_BUILD_CHANGE);
-      vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.' });
+      vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'refused', problems: ['The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.', 'customer-portal: uncommitted files: a.txt'] });
       Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
       await settle();
       await confirmPreview();
       await vi.waitFor(() => expect(document.body.textContent).toContain('The build did not start'));
       expect(document.body.textContent).toContain('The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.');
+      expect(document.body.textContent).toContain('customer-portal: uncommitted files: a.txt');
     });
 
-    it('leftovers open the confirm dialog titled and listing each repository and file', async () => {
-      const { container, transport } = await mount(MOCK_BUILD_CHANGE);
-      vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['src/new.rs'] }] });
-      Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent!.trim() === 'Start build')!.click();
-      await settle();
-      await confirmPreview();
-      await vi.waitFor(() => expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull());
-      const confirm = document.body.querySelector('[role="alertdialog"]')!;
-      expect(text(confirm)).toContain('Continue on top of leftovers?');
-      expect(Array.from(confirm.querySelectorAll('li')).map((li) => text(li))).toEqual(['commerce-core: src/new.rs']);
-    });
   });
 
   describe('plan tab banners', () => {
@@ -372,13 +359,13 @@ describe('ChangePage build page', () => {
     vi.spyOn(transport, 'sdlcReviewRecord').mockResolvedValue(REVIEW);
     return transport;
   };
-  /** Stop the build the test started and wait until the page has given the lock back. */
+  /** Stop the build the test started and wait until the backend says it has stopped. */
   const stopBuild = async (fixture: { debugElement: { injector: { get: <T>(t: new (...a: never[]) => T) => T } } }) => {
     fixture.debugElement.injector.get(BuildPageViewModel).cancelBuild();
     await vi.waitFor(
       () => {
         TestBed.tick();
-        expect(TestBed.inject(LockStore).active()).toBeNull();
+        expect(fixture.debugElement.injector.get(BuildPageViewModel).active()).toBe(false);
       },
       { timeout: TOKEN },
     );
@@ -452,32 +439,19 @@ describe('ChangePage build page', () => {
     expect(files().querySelector('[data-file="src/limits.rs"]')).toBeNull();
   });
 
-  it('continuing a stopped repository confirms the leftovers and runs on the same page', async () => {
+  it('continuing a stopped repository opens its preview and runs on the same page', async () => {
     const { container, fixture, transport } = await mount(MOCK_BUILD_CHANGE);
-    const runner = TestBed.inject(SdlcRunner);
-    const real = runner.runInRepo.bind(runner);
-    const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, spec, link) => {
-      if (run.mock.calls.length <= 2) {
-        link.onRun?.(`fake-${target.repo}`);
-        return { exit: 124, error: null };
-      }
-      return real(target, spec, link);
-    });
     await startBuild(container);
+    const heading = () => Array.from(page(container).querySelectorAll('[data-heading]')).find((h) => text(h.querySelector('.k-bp__name')!) === 'commerce-core')!;
+    await vi.waitFor(() => expect(button(heading(), 'Cancel')).toBeDefined(), { timeout: TOKEN });
+    button(heading(), 'Cancel')!.click();
     await vi.waitFor(() => expect(button(page(container), 'Continue commerce-core')).toBeDefined(), { timeout: TOKEN });
-    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-    prepare.mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['src/new.rs'] }] });
+    const resume = vi.spyOn(transport, 'sdlcBuildContinue');
     button(page(container), 'Continue commerce-core')!.click();
     await settle();
+    expect(text(document.body.querySelector('[role="dialog"] [hlmDialogTitle]')!)).toBe('Continue commerce-core');
     await confirmPreview();
-    await vi.waitFor(() => expect(document.body.querySelector('[role="alertdialog"]')).not.toBeNull(), { timeout: TOKEN });
-    const confirm = document.body.querySelector('[role="alertdialog"]')!;
-    expect(text(confirm)).toContain('Continue on top of leftovers?');
-    expect(Array.from(confirm.querySelectorAll('li')).map(text)).toEqual(['commerce-core: src/new.rs']);
-    expect(run).toHaveBeenCalledTimes(2);
-    button(confirm, 'Continue')!.click();
-    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(3), { timeout: TOKEN });
-    expect(prepare.mock.calls.at(-1)![4]).toBe(true);
+    await vi.waitFor(() => expect(resume).toHaveBeenCalledWith(expect.objectContaining({ change: MOCK_BUILD_CHANGE }), 'commerce-core'), { timeout: TOKEN });
     expect(page(container)).not.toBeNull();
     expect(container.querySelector('app-build-view')).toBeNull();
     await stopBuild(fixture);
@@ -489,7 +463,7 @@ describe('ChangePage build page', () => {
     await vi.waitFor(
       () => {
         TestBed.tick();
-        expect(TestBed.inject(LockStore).active()?.kind).toBe('build');
+        expect(fixture.debugElement.injector.get(BuildPageViewModel).active()).toBe(true);
       },
       { timeout: TOKEN },
     );
@@ -507,8 +481,7 @@ describe('ChangePage build page', () => {
 
   it('a round runs and is watched on the same page', async () => {
     const { container, fixture, transport } = await mount(MOCK_BUILD_CHANGE, finished());
-    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-    const runSpec = vi.spyOn(transport, 'runSpec');
+    const prepare = vi.spyOn(transport, 'sdlcBuildStart');
     button(page(container), 'Another round')!.click();
     await settle();
     const dialog = () => document.body.querySelector('[role="dialog"]')!;
@@ -517,8 +490,8 @@ describe('ChangePage build page', () => {
     await vi.waitFor(() => expect(preview.buildForm()).not.toBeNull());
     preview.buildForm()!.model.update((m) => ({ ...m, picked: [], notes: { ...m.notes, 'commerce-core': 'tidy up' } }));
     await confirmPreview('Start 1 agent');
-    await vi.waitFor(() => expect(runSpec).toHaveBeenCalled(), { timeout: TOKEN });
-    expect(prepare.mock.calls[0][6]).toBe('round');
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalled(), { timeout: TOKEN });
+    expect(prepare.mock.calls[0][1].rounds!.map((r) => r.repo)).toEqual(['commerce-core']);
     await vi.waitFor(() => expect(page(container).querySelector('[data-session] app-observe-pane')).not.toBeNull(), { timeout: TOKEN });
     expect(page(container)).not.toBeNull();
     expect(container.querySelector('app-build-view')).toBeNull();
@@ -566,8 +539,7 @@ describe('ChangePage build page', () => {
       const { container, fixture } = await mount(MOCK_BUILD_CHANGE);
       await startUntilAsked(container);
       alone(container);
-      const lock = TestBed.inject(LockStore);
-      const answer = vi.spyOn(lock, 'answer');
+      const answer = vi.spyOn(TestBed.inject(RunStore), 'submitAnswer');
       pageOf(fixture).answer.emit({ runId: 'r1', id: 'q1', answers: [['Reuse it']] });
       expect(answer).toHaveBeenCalledWith('r1', 'q1', [['Reuse it']]);
       await stopBuild(fixture);
@@ -577,7 +549,7 @@ describe('ChangePage build page', () => {
       const { container, fixture } = await mount(MOCK_BUILD_CHANGE);
       await startUntilAsked(container);
       alone(container);
-      const decide = vi.spyOn(TestBed.inject(LockStore), 'decide');
+      const decide = vi.spyOn(TestBed.inject(RunStore), 'submitDecision');
       pageOf(fixture).decide.emit({ runId: 'r1', id: 'p1', allow: false, message: 'not that' });
       expect(decide).toHaveBeenCalledWith('r1', 'p1', false, 'not that');
       await stopBuild(fixture);
@@ -625,7 +597,7 @@ describe('ChangePage build page', () => {
       await startUntilAsked(container);
       alone(container);
       button(page(container), 'Cancel build')!.click();
-      await vi.waitFor(() => expect(TestBed.inject(LockStore).active()).toBeNull(), { timeout: TOKEN });
+      await vi.waitFor(() => expect(fixture.debugElement.injector.get(BuildPageViewModel).active()).toBe(false), { timeout: TOKEN });
       await settle();
       expect(text(page(container).querySelector('[data-stage]')!)).toContain('The build was cancelled.');
       expect(fixture.debugElement.injector.get(BuildPageViewModel).stage()).toBe('cancelled');

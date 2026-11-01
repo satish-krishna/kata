@@ -21,6 +21,7 @@ import type { Pick } from '../../lib/build-sessions';
 import type { TaskFilter } from '../../lib/build-task-list';
 import { actionLabel, primaryAction, type Finding, type Severity, type StageAction } from '../../lib/sdlc';
 import { FindingsList } from '../../ui/findings-list';
+import { HeldPanel } from '../../ui/held-panel';
 import { ObservePane } from '../../ui/observe-pane';
 import { Segmented } from '../../ui/segmented';
 import { WaitingNotice } from '../../ui/waiting-notice';
@@ -72,7 +73,7 @@ const TUCK_NOTE = 'The page always shows at least one area.';
   selector: 'app-build-page',
   host: { class: 'block h-full min-h-0' },
   providers: [provideIcons({ lucideCheck, lucideChevronDown, lucideChevronRight, lucideEllipsis, lucideMaximize2, lucideMinus })],
-  imports: [HlmButtonImports, HlmDropdownMenuImports, NgIcon, NgTemplateOutlet, FindingsList, ObservePane, Segmented, WaitingNotice, ChangesView],
+  imports: [HlmButtonImports, HlmDropdownMenuImports, NgIcon, NgTemplateOutlet, FindingsList, HeldPanel, ObservePane, Segmented, WaitingNotice, ChangesView],
   templateUrl: './build-page.html',
   styleUrl: './build-page.css',
 })
@@ -97,6 +98,10 @@ export class BuildPage {
   readonly act = output<StageAction>();
   /** The bar's Cancel build: stops every run, which needs no preview and no confirmation. */
   readonly cancelBuild = output<void>();
+  /** The engineer asked to start the held build again. */
+  readonly startAgain = output<void>();
+  /** The engineer asked to start the review that waited for other changes again. */
+  readonly startReviewAgain = output<void>();
   readonly answer = output<{ runId: string; id: string; answers: string[][] }>();
   readonly say = output<{ runId: string; text: string }>();
   readonly decide = output<{ runId: string; id: string; allow: boolean; message: string | null }>();

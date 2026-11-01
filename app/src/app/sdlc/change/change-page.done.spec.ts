@@ -297,9 +297,9 @@ describe('declaring done', () => {
     expect(vm.doneReport()!.review).toMatchObject({ findings: expect.anything() });
   });
 
-  it('Run review prepares a build with no round, which runs the review only', async () => {
+  it('Run review starts the review only, through the backend', async () => {
     const { vm, transport } = await finished();
-    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    const prepare = vi.spyOn(transport, 'sdlcReviewStart');
     await vm.act('declare-done');
     await vm.doneRunReview();
     // The review goes through its preview first (R1.1); Start run hands the build over.
@@ -307,25 +307,20 @@ describe('declaring done', () => {
     await vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
     expect(prepare).not.toHaveBeenCalled();
     preview.start();
-    await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull());
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalled());
     expect(vm.doneReport()).toBeNull();
-    expect(prepare).toHaveBeenCalled();
-    expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull();
-    expect(TestBed.inject(BuildPageViewModel).current()!.rounds).toEqual([]);
   });
 
-  it("the toolbar's Run review starts the review-only build, the same as the done dialog's", async () => {
+  it("the toolbar's Run review starts the review, the same as the done dialog's", async () => {
     const { vm, transport } = await finished();
-    const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    const prepare = vi.spyOn(transport, 'sdlcReviewStart');
     await vm.act('run-review');
     // The review goes through its preview first (R1.1); Start run hands the build over.
     const preview = TestBed.inject(RunPreviewViewModel);
     await vi.waitFor(() => expect(preview.isOpen() && !preview.busy()).toBe(true));
     expect(prepare).not.toHaveBeenCalled();
     preview.start();
-    await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull());
-    expect(prepare).toHaveBeenCalled();
-    expect(TestBed.inject(BuildPageViewModel).current()!.rounds).toEqual([]);
+    await vi.waitFor(() => expect(prepare).toHaveBeenCalled());
   });
 
   it('an action with nothing behind it says so instead of doing nothing', async () => {
@@ -340,7 +335,7 @@ describe('declaring done', () => {
     await vm.act('declare-done');
     vm.doneRound();
     expect(vm.doneReport()).toBeNull();
-    expect(vm.buildMode()).toBe('round');
+    await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).dialogMode()).toBe('round'));
   });
 
   it('Cancel closes the dialog and publishes nothing', async () => {

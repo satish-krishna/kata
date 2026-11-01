@@ -13,8 +13,7 @@ import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
 import { givenKey, markLabel, type KindGroup, type PresetRow } from '../../lib/given';
-import { safetyRules, type Finding, type StageAction } from '../../lib/sdlc';
-import { groupFindings } from '../../lib/sdlc-findings';
+import { safetyRules, type StageAction } from '../../lib/sdlc';
 import { MOCK_BUILD_CHANGE, MOCK_DONE_CHANGE, MOCK_REFUSED_CHANGE, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePageViewModel } from './change-page.view-model';
@@ -52,12 +51,12 @@ const ready = async (vm: ChangePageViewModel) => {
     expect(vm.state()).not.toBe('loading');
   });
 };
-/** The build the page started keeps running after the engineer goes back to the change; stop it and wait for the page to give the lock back. */
+/** The build the backend hosts keeps running after the engineer goes back to the change; stop it and wait for the backend to say it stopped. */
 const settleBuild = async () => {
   TestBed.inject(BuildPageViewModel).cancelBuild();
   await vi.waitFor(() => {
     TestBed.tick();
-    expect(TestBed.inject(LockStore).active()).toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).active()).toBe(false);
   });
 };
 const withStage = (transport: MockTransport, name: string, stage: ChangeInfo['stage'], extra: Partial<ChangeInfo> = {}) => {
@@ -567,88 +566,64 @@ describe('ChangePageViewModel', () => {
 
   describe('the build', () => {
     const BUILD = MOCK_BUILD_CHANGE;
-    const REQUEST = { timeoutSecs: 5400, rounds: null };
+    const REF = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: BUILD };
+    const build = () => TestBed.inject(BuildPageViewModel);
 
     it('Start build, Continue build and Another round open the dialog in their own mode', async () => {
       const transport = new MockTransport();
       withStage(transport, BUILD, 'build-stopped');
       const { vm } = setup(BUILD, transport);
       await ready(vm);
-      expect(vm.buildMode()).toBeNull();
+      expect(build().dialogMode()).toBeNull();
       await vm.act('continue-build');
-      expect(vm.buildMode()).toBe('continue');
-      vm.cancelBuild();
-      expect(vm.buildMode()).toBeNull();
+      expect(build().dialogMode()).toBe('continue');
+      build().cancelPreview();
+      await vi.waitFor(() => expect(build().dialogMode()).toBeNull());
       await vm.act('another-round');
-      expect(vm.buildMode()).toBe('round');
-      expect(vm.buildRepos()).toEqual(['commerce-docs', 'commerce-core', 'customer-portal']);
+      await vi.waitFor(() => expect(build().dialogMode()).toBe('round'));
+      expect(build().roundOffer()?.repos).toEqual(['commerce-core', 'customer-portal', 'commerce-docs']);
+      build().cancelPreview();
     });
 
-    it('Start build opens the dialog and prepares nothing yet', async () => {
+    it('Start build opens the preview of what the backend would run and starts nothing yet', async () => {
       const { vm, transport } = setup(BUILD);
-      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+      const start = vi.spyOn(transport, 'sdlcBuildStart');
+      const previewed = vi.spyOn(transport, 'sdlcPreviewBuild');
       await ready(vm);
       await vm.act('start-build');
-      expect(vm.buildMode()).toBe('start');
-      expect(prepare).not.toHaveBeenCalled();
+      expect(build().dialogMode()).toBe('start');
+      await vi.waitFor(() => expect(previewed).toHaveBeenCalledWith(REF, 'start', null, { timeoutSecs: 7200 }));
+      expect(start).not.toHaveBeenCalled();
+      build().cancelPreview();
     });
 
-    it('a ready preparation hands the start, the time limit and the checks folder to the build view', async () => {
-      const { vm, transport } = setup(BUILD);
-      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    it('a confirmed Start build sends the form to the backend and shows the Build tab', async () => {
+      const { vm, transport, preview } = setup(BUILD, new MockTransport(), 'real');
+      const start = vi.spyOn(transport, 'sdlcBuildStart');
       await ready(vm);
       await vm.act('start-build');
-      await vm.submitBuild(REQUEST);
-      expect(prepare).toHaveBeenCalledWith(expect.any(String), 'commerce-docs', 'commerce', BUILD, false, [], 'start');
-      expect(vm.buildMode()).toBeNull();
-      const h = TestBed.inject(BuildPageViewModel).current()!;
-      expect(h.timeoutSecs).toBe(5400);
-      expect(h.rounds).toEqual([]);
-      expect(h.start.repos.map((r) => r.repo)).toEqual(['commerce-core', 'customer-portal']);
-      expect(h.checksDir).toBe(await transport.sdlcChecksDir());
-    });
-
-    it('the handoff records whether the leftovers were confirmed, so the run is not asked to ask again', async () => {
-      const { vm, transport } = setup(BUILD);
-      const real = transport.sdlcBuildPrepare.bind(transport);
-      vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['a'] }] }).mockImplementation(real);
-      await ready(vm);
-      await vm.submitBuild(REQUEST);
-      await vm.confirmLeftovers();
-      expect(TestBed.inject(BuildPageViewModel).current()!.continueOnLeftovers).toEqual(['commerce-core']);
+      await previewReady(preview);
+      preview.start();
+      await vi.waitFor(() => expect(start).toHaveBeenCalledWith(REF, { timeoutSecs: 7200 }));
+      await vi.waitFor(() => expect(vm.shownDoc()).toBe('build'));
+      expect(build().started()).toBe(true);
       await settleBuild();
-      await vm.submitBuild(REQUEST);
-      expect(TestBed.inject(BuildPageViewModel).current()!.continueOnLeftovers).toEqual([]);
     });
 
-    it('Another round names its repository, so the backend counts it as taking part even when its tasks are all done or it is the master (R6.4)', async () => {
-      const transport = new MockTransport();
-      withStage(transport, BUILD, 'build-finished');
-      const { vm } = setup(BUILD, transport);
-      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+    it('a refusal by the plugin lists its problems for every repository, starts nothing and leaves the tab alone (R8.1)', async () => {
+      const { vm, transport, preview } = setup(BUILD, new MockTransport(), 'real');
+      const problems = ['commerce-core: a build log does not pass the check', 'customer-portal: uncommitted files: a.txt'];
+      vi.spyOn(transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'refused', problems });
       await ready(vm);
-      for (const repo of ['commerce-core', 'commerce-docs']) {
-        await vm.act('another-round');
-        await vm.submitBuild({ timeoutSecs: 14400, rounds: [{ repo, instructions: 'tidy up', summary: repo }] });
-        expect(prepare).toHaveBeenLastCalledWith(expect.any(String), 'commerce-docs', 'commerce', BUILD, false, [repo], 'round');
-        await settleBuild();
-      }
-    });
-
-    it('a round in two repositories prepares both, so each gets its change branch (R7.1)', async () => {
-      const transport = new MockTransport();
-      withStage(transport, BUILD, 'build-finished');
-      const { vm } = setup(BUILD, transport);
-      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
-      await ready(vm);
-      await vm.act('another-round');
-      const rounds = ['commerce-core', 'customer-portal'].map((repo) => ({ repo, instructions: 'tidy up', summary: repo }));
-      await vm.submitBuild({ timeoutSecs: 14400, rounds });
-      expect(prepare).toHaveBeenCalledTimes(1);
-      expect(prepare.mock.calls[0][5]).toEqual(['commerce-core', 'customer-portal']);
-      const h = TestBed.inject(BuildPageViewModel).current()!;
-      expect(h.rounds).toEqual(rounds);
-      expect(new Set(h.start.repos.map((r) => r.repo)).size).toBe(h.start.repos.length);
+      const tab = vm.shownDoc();
+      await vm.act('start-build');
+      await previewReady(preview);
+      preview.start();
+      await vi.waitFor(() => expect(build().refusal()).toMatchObject({ problems }));
+      expect(build().started()).toBe(false);
+      expect(vm.shownDoc()).toBe(tab);
+      build().closeRefusal();
+      expect(build().refusal()).toBeNull();
     });
 
     it('names the workspace, folder, system, change and every product repository of the system for the build view (R18.5)', async () => {
@@ -665,78 +640,6 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       await vm.discardLeftovers([]);
       expect(checks).toHaveBeenCalledTimes(1);
-    });
-
-    it('a round carries its requests to the build view', async () => {
-      const transport = new MockTransport();
-      withStage(transport, BUILD, 'build-finished');
-      const { vm } = setup(BUILD, transport);
-      await ready(vm);
-      await vm.act('another-round');
-      const rounds = [{ repo: 'commerce-core', instructions: 'rename the status field to state', summary: 'commerce-core · with a note' }];
-      await vm.submitBuild({ timeoutSecs: 14400, rounds });
-      expect(TestBed.inject(BuildPageViewModel).current()!.rounds).toEqual(rounds);
-      expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(14400);
-    });
-
-    it('the change page confirms and retries with leftovers (R6.4)', async () => {
-      const { vm, transport } = setup(BUILD);
-      const left = [{ repo: 'commerce-core', files: ['src/new.rs'] }];
-      const real = transport.sdlcBuildPrepare.bind(transport);
-      const prepare = vi
-        .spyOn(transport, 'sdlcBuildPrepare')
-        .mockResolvedValueOnce({ kind: 'needsConfirm', leftovers: left })
-        .mockImplementation(real);
-      await ready(vm);
-      await vm.act('start-build');
-      await vm.submitBuild(REQUEST);
-      expect(vm.leftoverPrompt()!.lines).toEqual(['commerce-core: src/new.rs']);
-      expect(TestBed.inject(BuildPageViewModel).current()).toBeNull();
-      expect(prepare).toHaveBeenCalledTimes(1);
-      await vm.confirmLeftovers();
-      expect(prepare).toHaveBeenCalledTimes(2);
-      expect(prepare.mock.calls[0][4]).toBe(false);
-      expect(prepare.mock.calls[1][4]).toBe(true);
-      expect(vm.leftoverPrompt()).toBeNull();
-      expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(5400);
-    });
-
-    it('declining the leftovers prepares nothing more', async () => {
-      const { vm, transport } = setup(BUILD);
-      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValue({ kind: 'needsConfirm', leftovers: [{ repo: 'commerce-core', files: ['a'] }] });
-      await ready(vm);
-      await vm.submitBuild(REQUEST);
-      vm.cancelLeftovers();
-      expect(vm.leftoverPrompt()).toBeNull();
-      expect(prepare).toHaveBeenCalledTimes(1);
-      expect(TestBed.inject(BuildPageViewModel).current()).toBeNull();
-    });
-
-    it.each([['start-build', 'start'], ['continue-build', 'continue'], ['another-round', 'round']] as const)('a refusal by the gate lists its problems and starts nothing: %s asks for %s (R8.1)', async (act, action) => {
-      const problem = { file: 'build/app.md', line: 14, message: 'entry T1 is recorded twice, first on line 7' };
-      const { vm, transport } = setup(BUILD);
-      const prepare = vi.spyOn(transport, 'sdlcBuildPrepare').mockResolvedValue({ kind: 'refused', message: 'A build log does not pass the check', problems: [problem] });
-      await ready(vm);
-      await vm.act(act);
-      await vm.submitBuild(REQUEST);
-      expect(prepare.mock.calls[0][6]).toBe(action);
-      expect(vm.refusal()).toBe('A build log does not pass the check');
-      expect(vm.refusalProblems()).toEqual([problem]);
-      expect(TestBed.inject(BuildPageViewModel).current()).toBeNull();
-      vm.closeRefusal();
-      expect(vm.refusal()).toBeNull();
-      expect(vm.refusalProblems()).toEqual([]);
-    });
-
-    it('a refusal is shown and starts nothing', async () => {
-      const { vm, transport } = setup(BUILD);
-      vi.spyOn(transport, 'sdlcPluginReadiness').mockResolvedValue({ kind: 'blocked', reason: 'pluginTooOld', message: 'The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.' });
-      await ready(vm);
-      await vm.submitBuild(REQUEST);
-      expect(vm.refusal()).toBe('The AI-SDLC mode needs ai-sdlc 1.1.0 or later; this machine has 0.7.9.');
-      expect(TestBed.inject(BuildPageViewModel).current()).toBeNull();
-      vm.closeRefusal();
-      expect(vm.refusal()).toBeNull();
     });
 
     it('reads the build status once the plan exists and lists its tasks', async () => {
@@ -783,8 +686,8 @@ describe('ChangePageViewModel', () => {
       await ready(vm);
       expect(vm.pills().length).toBe(4);
       expect(vm.pullLinks().length).toBe(3);
-      await vm.submitBuild({ timeoutSecs: 5400, rounds: null });
-      expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull();
+      await TestBed.inject(BuildPageViewModel).startBuild({ timeoutSecs: 5400 });
+      expect(TestBed.inject(BuildPageViewModel).started()).toBe(true);
       expect(vm.pills().length).toBe(4);
       expect(vm.pullLinks().length).toBe(3);
       await settleBuild();
@@ -1058,13 +961,14 @@ describe('the build\'s preview', () => {
     withStage(transport, change, stage);
     const s = setup(change, transport, 'real');
     await ready(s.vm);
-    return { ...s, givens: TestBed.inject(GivenStore), prepare: vi.spyOn(transport, 'sdlcBuildPrepare') };
+    return { ...s, givens: TestBed.inject(GivenStore), prepare: vi.spyOn(transport, 'sdlcBuildStart'), reviewStart: vi.spyOn(transport, 'sdlcReviewStart') };
   };
-  /** Wait for the preview, press Start run, and wait for the build to be handed over. */
-  const startPreview = async (preview: RunPreviewViewModel, _vm: ChangePageViewModel) => {
+  /** Wait for the preview and for the backend's plan of a round, press Start run, and wait for the start to reach the backend. */
+  const startPreview = async (preview: RunPreviewViewModel, started: { mock: { calls: unknown[] } }) => {
     await previewReady(preview);
+    await vi.waitFor(() => expect(preview.canStart()).toBe(true));
     preview.start();
-    await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).current()).not.toBeNull());
+    await vi.waitFor(() => expect(started.mock.calls.length).toBeGreaterThan(0));
   };
 
   it('Start build opens one preview for the whole build: shared items once, a section per repository, one for the review (R11.2, R11.3)', async () => {
@@ -1089,28 +993,27 @@ describe('the build\'s preview', () => {
   });
 
   it('a switch on a shared row applies to every run; a switch on a project row only to its folder (R11.1, R11.2)', async () => {
-    const { vm, preview, givens } = await staged('build-ready');
+    const { vm, preview, givens, prepare } = await staged('build-ready');
     await vm.act('start-build');
     await previewReady(preview);
     preview.toggle(GITHUB, true);
     preview.toggle(dbKey(vm, 'commerce-core'), true);
-    await startPreview(preview, vm);
-    expect(TestBed.inject(BuildPageViewModel).current()!.choices!.off).toEqual(new Set([GITHUB, dbKey(vm, 'commerce-core')]));
-    // The build keeps them for the runs it starts by itself, and the next build starts from them.
+    await startPreview(preview, prepare);
+    // The page keeps the choices for the build, and the next build starts from them.
     expect(givens.build(KEY)!.off).toEqual(new Set([GITHUB, dbKey(vm, 'commerce-core')]));
-    expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(7200);
+    expect(prepare.mock.calls[0][1]).toEqual({ timeoutSecs: 7200 });
   });
 
-  it('cancelling the build\'s preview prepares nothing and leaves the build\'s choices alone', async () => {
+  it('cancelling the build\'s preview starts nothing and leaves the build\'s choices alone', async () => {
     const { vm, preview, prepare, givens } = await staged('build-ready');
     await vm.act('start-build');
     await previewReady(preview);
     preview.toggle(GITHUB, true);
     preview.cancel();
-    await vi.waitFor(() => expect(vm.buildMode()).toBeNull());
+    await vi.waitFor(() => expect(TestBed.inject(BuildPageViewModel).dialogMode()).toBeNull());
     expect(prepare).not.toHaveBeenCalled();
     expect(givens.build(KEY)).toBeNull();
-    expect(TestBed.inject(BuildPageViewModel).current()).toBeNull();
+    expect(TestBed.inject(BuildPageViewModel).started()).toBe(false);
   });
 
   it('a first build starts from the session\'s choices, marked as kept from an earlier run (R9.1)', async () => {
@@ -1150,44 +1053,43 @@ describe('the build\'s preview', () => {
   });
 
   it('the time limit the engineer sets in the preview is the limit shown and the one the build gets', async () => {
-    const { vm, preview } = await staged('build-ready');
+    const { vm, preview, prepare } = await staged('build-ready');
     await vm.act('start-build');
     await previewReady(preview);
     preview.buildForm()!.model.update((m) => ({ ...m, hours: 1, minutes: 30 }));
     expect(limit(preview)).toMatchObject({ value: '1 h 30 min' });
-    await startPreview(preview, vm);
-    expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(5400);
+    await startPreview(preview, prepare);
+    expect(prepare.mock.calls[0][1]).toEqual({ timeoutSecs: 5400 });
   });
 
   it('Start run waits while the time limit is zero', async () => {
-    const { vm, preview } = await staged('build-ready');
+    const { vm, preview, prepare } = await staged('build-ready');
     await vm.act('start-build');
     await previewReady(preview);
     preview.buildForm()!.model.update((m) => ({ ...m, hours: 0, minutes: 0 }));
     expect(preview.canStart()).toBe(false);
     preview.start();
     expect(preview.isOpen()).toBe(true);
-    expect(TestBed.inject(BuildPageViewModel).current()).toBeNull();
+    expect(prepare).not.toHaveBeenCalled();
   });
 
   describe('runs started during a build open pre-set to the build\'s choices (R12.1)', () => {
     const buildOff = () => new Set([GITHUB]);
 
     it('continuing every stopped repository: those repositories\' next runs and every run the build then starts by itself', async () => {
-      const { vm, preview, givens } = await staged('build-stopped');
+      const { vm, preview, givens, prepare } = await staged('build-stopped');
       givens.setBuild(KEY, { off: buildOff() });
       await vm.act('continue-build');
       await previewReady(preview);
       expect(preview.title()).toBe('Continue build');
       expect(flat(preview.groups()).find((r) => r.item.id === GITHUB)).toMatchObject({ off: true, mark: 'build' });
       preview.toggle(GITHUB, false);
-      await startPreview(preview, vm);
+      await startPreview(preview, prepare);
       expect(givens.build(KEY)!.off.has(GITHUB)).toBe(false);
-      expect(TestBed.inject(BuildPageViewModel).current()!.choices!.off.has(GITHUB)).toBe(false);
     });
 
     it('another round in one repository: that round and every run the build then starts by itself', async () => {
-      const { vm, preview, givens } = await staged('build-finished');
+      const { vm, preview, givens, prepare } = await staged('build-finished');
       givens.setBuild(KEY, { off: buildOff() });
       await vm.act('another-round');
       await previewReady(preview);
@@ -1196,88 +1098,65 @@ describe('the build\'s preview', () => {
       // Only a repository that gets an agent shows its section.
       expect(preview.sections()!.map((s) => s.title)).toEqual([]);
       preview.buildForm()!.model.update((m) => ({ ...m, notes: { ...m.notes, 'commerce-core': 'tidy up' } }));
-      expect(preview.sections()!.map((s) => s.title)).toEqual(['commerce-core']);
+      await vi.waitFor(() => expect(preview.sections()!.map((s) => s.title)).toEqual(['commerce-core']));
       preview.toggle(GITHUB, false);
-      await startPreview(preview, vm);
-      const rounds = TestBed.inject(BuildPageViewModel).current()!.rounds;
+      await startPreview(preview, prepare);
+      const rounds = prepare.mock.calls[0][1].rounds!;
       expect(rounds.map((r) => r.repo)).toEqual(['commerce-core']);
       expect(rounds[0].instructions).toContain('tidy up');
       expect(givens.build(KEY)!.off.has(GITHUB)).toBe(false);
-      expect(TestBed.inject(BuildPageViewModel).current()!.choices!.off.has(GITHUB)).toBe(false);
     });
 
     it('a review started by hand: that review only, the build\'s choices are not changed', async () => {
-      const { vm, preview, givens } = await staged('build-finished');
+      const { vm, preview, givens, reviewStart } = await staged('build-finished');
       givens.setBuild(KEY, { off: buildOff() });
       await vm.act('run-review');
       await previewReady(preview);
       expect(preview.title()).toBe('Run review');
       expect(flat(preview.groups()).find((r) => r.item.id === GITHUB)).toMatchObject({ off: true, mark: 'build' });
       preview.toggle(GITHUB, false);
-      await startPreview(preview, vm);
-      expect(TestBed.inject(BuildPageViewModel).current()!.choices!.off.has(GITHUB)).toBe(false);
+      await startPreview(preview, reviewStart);
       expect(givens.build(KEY)!.off).toEqual(buildOff());
-      expect(TestBed.inject(BuildPageViewModel).current()!.rounds).toEqual([]);
     });
   });
 
   describe('another round offers the findings of the latest review', () => {
-    const finding = (id: string, repo: string) => ({ id, severity: 'high' as const, text: `${id} is wrong. Fix it.`, repo });
-    /** The build page reads its latest review from its own documents; the round asks it, so the test answers for it. */
-    const reviewing = (findings: ReturnType<typeof finding>[]) =>
-      Object.defineProperty(TestBed.inject(BuildPageViewModel), 'latestReview', { value: () => ({ number: 1, findings, stale: false }) });
-    const ruleFor = (path: string) => '//' + path.replace(/\\/g, '/').replace(/^([A-Za-z]):\//, (_m, d: string) => `${d.toLowerCase()}/`);
+    const finding = (key: string, repo: string) => ({ key, repo, finding: { id: key, severity: 'high' as const, text: `${key} is wrong. Fix it.`, repo } });
+    const offering = (transport: MockTransport, findings: ReturnType<typeof finding>[], groups = [{ repo: null as string | null, findings }]) => {
+      const offer = { review: 1, repos: ['commerce-core', 'commerce-docs'], findings };
+      vi.spyOn(transport, 'sdlcRoundOffer').mockResolvedValue([offer, { picked: findings.map((f) => f.key), assigned: {}, notes: {} }]);
+      vi.spyOn(transport, 'sdlcReviewView').mockResolvedValue({ rows: { counts: [], total: findings.length, groups: [] }, groups });
+    };
 
     it('a finding that names the master repository can be picked, and an agent starts there with it (R5.7)', async () => {
-      const { vm, preview } = await staged('build-finished');
-      reviewing([finding('F1', 'commerce-docs')]);
+      const { vm, preview, transport, prepare } = await staged('build-finished');
+      offering(transport, [finding('F1', 'commerce-docs')]);
+      vi.spyOn(transport, 'sdlcRoundPlan').mockResolvedValue({ blocked: null, requests: [{ repo: 'commerce-docs', instructions: 'Fix F1.', summary: 'commerce-docs · F1' }] });
       await vm.act('another-round');
       await previewReady(preview);
-      expect(vm.buildOffer()!.findings.map((f) => f.repo)).toEqual(['commerce-docs']);
-      preview.buildForm()!.model.update((m) => ({ ...m, picked: ['F1'] }));
-      await startPreview(preview, vm);
-      const rounds = TestBed.inject(BuildPageViewModel).current()!.rounds;
+      expect(TestBed.inject(BuildPageViewModel).roundOffer()!.findings.map((f) => f.repo)).toEqual(['commerce-docs']);
+      await startPreview(preview, prepare);
+      const rounds = prepare.mock.calls[0][1].rounds!;
       expect(rounds.map((r) => r.repo)).toEqual(['commerce-docs']);
       expect(rounds[0].instructions).toContain('F1');
     });
 
-    it('hands the dialog the Review group\'s groups and order for the same review (F2)', async () => {
-      const { vm, preview } = await staged('build-finished');
-      const findings: Finding[] = [
-        { id: 'F1', severity: 'medium', text: 'F1 is wrong. Fix it.', repo: 'commerce-core' },
-        { id: 'F2', severity: 'high', text: 'F2 is wrong. Fix it.', repo: 'commerce-core' },
-        { id: 'F3', severity: 'high', text: 'F3 is wrong. Fix it.', repo: 'legacy-api' },
-        { id: 'F4', severity: 'low', text: 'F4 is wrong. Fix it.' },
-      ];
-      const build = TestBed.inject(BuildPageViewModel);
-      Object.defineProperty(build, 'latestReview', { value: () => ({ number: 1, findings, stale: false }) });
-      Object.defineProperty(build, 'findingGroups', { value: () => groupFindings(findings, ['commerce-core']) });
-      await vm.act('another-round');
-      await previewReady(preview);
-      expect(vm.buildGroups().map((g) => ({ repo: g.repo, keys: g.findings.map((f) => f.key) }))).toEqual([
-        { repo: 'commerce-core', keys: ['F2', 'F1'] },
-        { repo: 'legacy-api', keys: ['F3'] },
-        { repo: null, keys: ['F4'] },
-      ]);
-      expect(vm.buildGroups()[1].findings[0].repo).toBeNull();
-    });
-
-    it('a round agent cannot edit another repository or the checks folder (R7.4)', async () => {
+    it('hands the dialog the groups the backend lists for the same review (F2)', async () => {
       const { vm, preview, transport } = await staged('build-finished');
-      const previewRun = vi.spyOn(transport, 'previewRun');
-      reviewing([finding('F1', 'commerce-core')]);
+      const findings = [finding('F2', 'commerce-core'), finding('F1', 'commerce-core'), finding('F3', 'legacy-api')];
+      const groups = [
+        { repo: 'commerce-core', findings: [findings[0], findings[1]] },
+        { repo: 'legacy-api', findings: [findings[2]] },
+      ];
+      offering(transport, findings, groups);
       await vm.act('another-round');
       await previewReady(preview);
-      const folder = vm.current()!.folder;
-      const spec = previewRun.mock.calls.map((c) => c[0]).find((sp) => sp.workdir === `${folder}/commerce-core`)!;
-      expect(spec.permissions.deny).toContain(`Edit(${ruleFor(folder)}/customer-portal/**)`);
-      expect(spec.permissions.deny).not.toContain(`Edit(${ruleFor(folder)}/commerce-core/**)`);
-      expect(spec.permissions.deny).toContain(`Edit(${ruleFor(await transport.sdlcChecksDir())}/**)`);
+      expect(TestBed.inject(BuildPageViewModel).roundGroups()).toEqual(groups);
     });
   });
 
-  it('the stage Run review button opens the review preview and prepares nothing until Start run', async () => {
-    const { vm, preview, prepare } = await staged('build-finished');
+  it('the stage Run review button opens the review preview and starts nothing until Start run', async () => {
+    const { vm, preview, reviewStart } = await staged('build-finished');
     expect(vm.actions()).toContain('run-review');
     await vm.act('run-review');
     await previewReady(preview);
@@ -1285,12 +1164,9 @@ describe('the build\'s preview', () => {
     expect(preview.sections()!.map((s) => s.title)).toEqual(['Review']);
     expect(preview.safetyRules()).toEqual(safetyRules('review'));
     expect(preview.buildForm()).toBeNull();
-    expect(prepare).not.toHaveBeenCalled();
-    await startPreview(preview, vm);
-    expect(prepare).toHaveBeenCalledTimes(1);
-    expect(TestBed.inject(BuildPageViewModel).current()!.rounds).toEqual([]);
-    // The review is the stage button's and the done dialog's one path: it runs with Kata's review limit.
-    expect(TestBed.inject(BuildPageViewModel).current()!.timeoutSecs).toBe(7200);
+    expect(reviewStart).not.toHaveBeenCalled();
+    await startPreview(preview, reviewStart);
+    expect(reviewStart).toHaveBeenCalledTimes(1);
   });
 });
 

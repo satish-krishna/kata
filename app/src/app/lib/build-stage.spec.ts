@@ -1,10 +1,7 @@
 import type { BuildStatus } from '@bindings/BuildStatus';
-import type { BuildPhase } from '../sdlc/build/build-driver';
-import type { Situation } from './build-state';
+import type { BuildPhase } from '@bindings/BuildPhase';
 import {
-  buildActions,
   buildStage,
-  repoAction,
   shownAreas,
   taskGroups,
   type BuildStage,
@@ -39,40 +36,8 @@ describe('build-stage', () => {
       [facts(false, 'none', true, 'build-finished'), 'review-finished'],
     ];
     for (const [f, expected] of rows) expect(buildStage(f), JSON.stringify(f)).toBe(expected);
-    // impossible rows
-    expect(() => buildStage(facts(true, 'none', false, 'build-ready'))).toThrow();
-    expect(() => buildStage(facts(true, 'none', true, 'build-stopped'))).toThrow();
-    for (const phase of ['building', 'reviewing', 'stopped', 'finished', 'cancelled'] as const) {
-      expect(() => buildStage(facts(true, phase, false, 'build-finished')), phase).toThrow();
-    }
-  });
-
-  it('buildActions gives each stage its actions', () => {
-    expect(buildActions('not-started')).toEqual(['start-build']);
-    expect(buildActions('running')).toEqual(['cancel-build']);
-    expect(buildActions('running-one-stopped')).toEqual(['cancel-build']);
-    expect(buildActions('reviewing')).toEqual(['cancel-build']);
-    expect(buildActions('stopped')).toEqual(['continue-build', 'another-round']);
-    expect(buildActions('cancelled')).toEqual(['continue-build', 'another-round']);
-    expect(buildActions('review-finished')).toEqual(['declare-done', 'another-round', 'run-review']);
-    expect(buildActions('done')).toEqual([]);
-  });
-
-  it('repoAction decides every row of the repository action table', () => {
-    const none = { live: false, stopped: false };
-    const rows: Array<[Situation, 'cancel' | 'continue' | null]> = [
-      [{ kind: 'working', task: 'T1' }, 'cancel'],
-      [{ kind: 'stopped', task: 'T1', reason: null, from: 'driver' }, 'continue'],
-      [{ kind: 'stopped', task: 'T1', reason: null, from: 'records' }, null],
-      [{ kind: 'waiting', task: 'T2', onTask: 'T1', onRepo: 'a' }, null],
-      [{ kind: 'not-started', task: 'T1' }, null],
-      [{ kind: 'finished' }, null],
-      [{ kind: 'idle' }, null],
-    ];
-    for (const [s, expected] of rows) expect(repoAction(s, 'api', none), s.kind).toBe(expected);
-    expect(repoAction({ kind: 'idle' }, 'review', { live: true, stopped: false })).toBe('cancel');
-    expect(repoAction({ kind: 'idle' }, 'review', { live: false, stopped: true })).toBe('continue');
-    expect(repoAction({ kind: 'idle' }, 'review', none)).toBeNull();
+    // A change declared done is done whatever the build session still says.
+    for (const phase of ['building', 'reviewing', 'stopped', 'finished', 'cancelled'] as const) expect(buildStage(facts(true, phase, false, 'build-finished')), phase).toBe('done');
   });
 
   it('shownAreas decides every row of the area table', () => {

@@ -12,7 +12,6 @@ import { diagrams } from '../../lib/mermaid';
 import { MOCK_BUILD_CHANGE } from '../../lib/sdlc-mock';
 import { BuildPageViewModel } from '../build/build-page.view-model';
 import { ChangePage } from './change-page';
-import { ChangePageViewModel } from './change-page.view-model';
 
 const PHOTOS_CHANGE = '2026-10-12-product-photo-upload';
 const settle = async () => {
@@ -236,8 +235,7 @@ describe('ChangePage layout', () => {
       const { container, fixture } = await mount(MOCK_BUILD_CHANGE, await finished());
       expect(container.querySelectorAll('header [role="tab"]').length).toBe(4);
       expect(container.querySelector('[data-testid="pr-menu"]')).not.toBeNull();
-      const vm = fixture.debugElement.injector.get(ChangePageViewModel);
-      await vm.submitBuild({ timeoutSecs: 5400, rounds: null });
+      await fixture.debugElement.injector.get(BuildPageViewModel).startBuild({ timeoutSecs: 5400 });
       await settle();
       expect(container.querySelector('app-build-page')).not.toBeNull();
       expect(container.querySelector('app-build-view')).toBeNull();

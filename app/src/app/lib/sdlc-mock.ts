@@ -3,6 +3,20 @@
  * reflects what the operator did. Deterministic: no clocks, no randomness. */
 import type { BaseInfo } from '@bindings/BaseInfo';
 import type { BuildState } from '@bindings/BuildState';
+import type { BuildPhase } from '@bindings/BuildPhase';
+import type { StopReport } from '@bindings/StopReport';
+import type { WaitingRepo } from '@bindings/WaitingRepo';
+import type { StartForm } from '@bindings/StartForm';
+import type { BuildRunRef } from '@bindings/BuildRunRef';
+import type { RoundOffer } from '@bindings/RoundOffer';
+import type { RoundPicks } from '@bindings/RoundPicks';
+import type { RoundPlan } from '@bindings/RoundPlan';
+import type { RoundRequest } from '@bindings/RoundRequest';
+import type { RoundSeverity } from '@bindings/RoundSeverity';
+import type { ReviewFinding } from '@bindings/ReviewFinding';
+import type { ReviewRow } from '@bindings/ReviewRow';
+import type { ReviewRowGroup } from '@bindings/ReviewRowGroup';
+import type { ReviewView } from '@bindings/ReviewView';
 import type { BuildEvent } from '@bindings/BuildEvent';
 import type { ChangeKey } from '@bindings/ChangeKey';
 import type { ChangeRef } from '@bindings/ChangeRef';
@@ -10,7 +24,6 @@ import type { HeldRepo } from '@bindings/HeldRepo';
 import type { StartOutcome } from '@bindings/StartOutcome';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { CommitFiles } from '@bindings/CommitFiles';
-import type { BuildStart } from '@bindings/BuildStart';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { CatalogEntry } from '@bindings/CatalogEntry';
 import type { ChangedFile } from '@bindings/ChangedFile';
@@ -22,7 +35,6 @@ import type { ParsedRequirement } from '@bindings/ParsedRequirement';
 import type { ParsedSection } from '@bindings/ParsedSection';
 import type { ParsedTask } from '@bindings/ParsedTask';
 import type { Part } from '@bindings/Part';
-import type { Participant } from '@bindings/Participant';
 import type { PlanTask } from '@bindings/PlanTask';
 import type { PrResult } from '@bindings/PrResult';
 import type { RemoteClash } from '@bindings/RemoteClash';
@@ -906,16 +918,6 @@ export class SdlcMock {
     }
   }
 
-  prepare(folder: string, changeName: string): BuildStart {
-    const at = (repo: string) => ({ repo, path: `${folder}/${repo}`, base: 'main', branch: `change/${changeName}`, created: false });
-    return { master: at(MOCK_MASTER), repos: this.repos.map(at) };
-  }
-
-  /** The master and the plan's repositories, each checked out beside the master with nothing left uncommitted. */
-  participants(folder: string): Participant[] {
-    return [MOCK_MASTER, ...this.repos].map((repo) => ({ repo, path: `${folder}/${repo}`, master: repo === MOCK_MASTER, files: [], rows: [] }));
-  }
-
   heads(repos: string[]): Record<string, string> {
     return Object.fromEntries(repos.map((r, i) => [r, `${String(i + 1).repeat(7)}`]));
   }
@@ -1153,7 +1155,7 @@ export const reviewRunScript: { head: ScriptStep[]; mid: ScriptStep[] } = {
 export const mockLabel = (stage: string): StageLabel => ({ ...LABEL_DATA[stage] });
 
 /** The repositories each demo change builds in: the first builds in two (one of them asks a question), the second in one the first does not use, and the held one needs a repository the first holds. */
-const BUILD_REPOS_OF: Record<string, string[]> = {
+export const BUILD_REPOS_OF: Record<string, string[]> = {
   [MOCK_BUILD_CHANGE]: ['commerce-core', 'customer-portal'],
   [MOCK_BUILD_SECOND]: ['billing-api'],
   [MOCK_HELD_CHANGE]: ['commerce-core'],
@@ -1180,21 +1182,42 @@ export interface MockBuildView {
 
 interface MockBuild {
   key: ChangeKey;
+  ref: ChangeRef;
+  /** The live runs: a repository's name (or `review`) to the run's id, empty until the launch has answered. */
   going: Map<string, string>;
-  finished: boolean;
+  stopped: Map<string, { task: string; reason: string; held: boolean }>;
+  /** The rounds asked for and not finished: repository to instructions. */
+  rounds: Map<string, string>;
+  phase: BuildPhase;
   reviewing: boolean;
+  /** The repositories whose cancel was asked for, so their run's end reads as a cancel. */
+  cancelling: Set<string>;
+  cancelledAll: boolean;
+  /** The build log rows when the review last ran, and whether a round committed since. */
+  reviewedRows: number | null;
+  changed: boolean;
+  waiting: WaitingRepo[];
+  report: StopReport | null;
   changedMs: number;
+  /** The form the build started with, for a start again. */
+  form: StartForm;
 }
 
-/** What the scripted build host asks of the browser stand-in: start a run, say a build's state. */
+/** What the scripted build host asks of the browser stand-in: start a run, stop one, read the build log, say a build's state. */
 export interface MockBuildIo {
-  /** Start the scripted run of `repo` (`review` for the review) and call `onEnd` when it ends; resolves to the run's id. */
-  launch(change: ChangeRef, repo: string, onEnd: () => void): string;
+  /** Start the scripted run of `repo` (`review` for the review) and call `onEnd` when it ends; resolves to the run's id. `instructions` is a round's. */
+  launch(change: ChangeRef, repo: string, onEnd: () => void, instructions?: string): string;
+  /** Stop a live run. */
+  cancel(runId: string): void;
+  /** The build log of a change the scripted host sequences by it; null for a change that only runs its repositories once. */
+  status(change: ChangeRef): BuildStatus | null;
   announce(event: BuildEvent): void;
   now(): number;
 }
 
-/** The browser's stand-in for the backend's build host: several changes build at once, each holding the repositories it works in, and a build that needs a held repository starts held. */
+const NO_FORM: StartForm = { timeoutSecs: 7200 };
+
+/** The browser's stand-in for the backend's build host: several changes build at once, each holding the repositories it works in, and a build that needs a held repository starts held. A change with a build log is sequenced by it, the way the coordinator does. */
 export class MockBuildHost {
   private readonly builds = new Map<string, MockBuild>();
   private readonly holds = new Map<string, ChangeKey>();
@@ -1213,54 +1236,212 @@ export class MockBuildHost {
   }
 
   private stateOf(build: MockBuild): BuildState {
-    const phase = build.going.size > 0 ? (build.reviewing ? 'reviewing' : 'building') : 'finished';
-    return { phase, going: [...build.going.keys()], stopped: {}, rounds: {}, waiting: [], report: null };
+    return {
+      phase: build.phase,
+      going: [...build.going.keys()].sort(),
+      stopped: Object.fromEntries(build.stopped),
+      rounds: Object.fromEntries(build.rounds),
+      waiting: build.waiting,
+      report: build.report,
+    };
   }
 
   private announce(build: MockBuild): void {
     build.changedMs = this.io.now();
-    this.io.announce({ change: build.key, state: this.stateOf(build), reviewWaiting: this.reviewWaits.get(this.id(build.key))?.held ?? [], runs: [...build.going].flatMap(([key, run]) => (run === '' ? [] : [{ key, run }])) });
+    this.io.announce({
+      change: build.key,
+      state: this.stateOf(build),
+      reviewWaiting: this.reviewWaits.get(this.id(build.key))?.held ?? [],
+      runs: this.runsOf(build),
+    });
   }
 
-  private launch(ref: ChangeRef, build: MockBuild, repo: string): void {
+  private runsOf(build: MockBuild): BuildRunRef[] {
+    return [...build.going].flatMap(([key, run]) => (run === '' ? [] : [{ key, run }]));
+  }
+
+  private launch(build: MockBuild, repo: string): void {
     // The run's id is known once it is launched; a scripted run never ends before that.
     build.going.set(repo, '');
-    const runId = this.io.launch(ref, repo, () => this.ended(build, repo));
+    const instructions = build.rounds.get(repo);
+    const runId = this.io.launch(build.ref, repo, () => this.ended(build, repo), instructions);
     if (build.going.has(repo)) build.going.set(repo, runId);
+  }
+
+  private releaseHolds(build: MockBuild): void {
+    for (const [repo, holder] of [...this.holds]) if (sameChange(holder, build.key)) this.holds.delete(repo);
   }
 
   private ended(build: MockBuild, repo: string): void {
     if (!build.going.delete(repo)) return;
-    if (repo !== 'review') {
-      const holder = this.holds.get(repo);
-      if (holder && sameChange(holder, build.key)) this.holds.delete(repo);
+    const cancelled = build.cancelling.delete(repo);
+    const status = this.io.status(build.ref);
+    if (status === null) {
+      if (build.going.size === 0) {
+        build.phase = 'finished';
+        this.releaseHolds(build);
+      }
+      this.announce(build);
+      return;
     }
-    if (build.going.size === 0) build.finished = true;
+    if (repo === 'review') {
+      build.reviewing = false;
+      if (cancelled) build.stopped.set('review', { task: 'review', reason: 'Stopped: cancelled', held: false });
+      else build.reviewedRows = status.tasks.filter((t) => t.row !== null).length;
+    } else if (cancelled) {
+      build.stopped.set(repo, { task: this.taskOf(status, repo), reason: 'Stopped: cancelled', held: false });
+    } else if (build.rounds.delete(repo)) {
+      // A round commits its fixes, which makes the last review out of date.
+      build.changed = true;
+    }
+    this.look(build, status);
+  }
+
+  private taskOf(status: BuildStatus, repo: string): string {
+    const state = status.repos.find((r) => r.repo === repo)?.state;
+    return state?.kind === 'done' || state === undefined ? '' : state.task;
+  }
+
+  /** Start what is ready, or settle the build: the coordinator's loop in miniature. */
+  private look(build: MockBuild, status: BuildStatus): void {
+    if (build.cancelledAll) {
+      if (build.going.size === 0) build.phase = 'cancelled';
+      this.announce(build);
+      return;
+    }
+    const waiting: WaitingRepo[] = [];
+    const ready: string[] = [];
+    for (const r of status.repos) {
+      if (r.state.kind === 'waiting') {
+        waiting.push({ repo: r.repo, task: r.state.task, onTask: r.state.onTask, onRepo: r.state.onRepo });
+        continue;
+      }
+      if (build.going.has(r.repo)) continue;
+      if (r.state.kind === 'done' && !build.rounds.has(r.repo)) continue;
+      const task = r.state.kind === 'ready' ? r.state.task : '';
+      const stop = build.stopped.get(r.repo);
+      if (stop && stop.task === task) continue;
+      ready.push(r.repo);
+    }
+    build.waiting = waiting;
+    for (const repo of ready) this.launch(build, repo);
+    if (ready.length > 0) {
+      build.phase = 'building';
+      this.announce(build);
+      return;
+    }
+    if (build.going.size > 0 || build.reviewing) {
+      this.announce(build);
+      return;
+    }
+    const rows = status.tasks.filter((t) => t.row !== null).length;
+    const complete = status.hasTasks && rows === status.tasks.length;
+    if (!complete || build.stopped.size > 0) {
+      build.phase = 'stopped';
+      build.report = {
+        unfinished: [...new Set(status.tasks.filter((t) => t.row === null).map((t) => t.repo))].map((repo) => ({ repo, tasks: status.tasks.filter((t) => t.repo === repo && t.row === null).map((t) => t.id) })),
+        waiting,
+      };
+      this.releaseHolds(build);
+      this.announce(build);
+      return;
+    }
+    if (build.reviewedRows === rows && !build.changed) {
+      build.phase = 'finished';
+      this.releaseHolds(build);
+      this.announce(build);
+      return;
+    }
+    build.changed = false;
+    build.reviewing = true;
+    build.phase = 'reviewing';
+    this.launch(build, 'review');
     this.announce(build);
   }
 
-  start(ref: ChangeRef): StartOutcome {
+  private fresh(ref: ChangeRef, key: ChangeKey, form: StartForm): MockBuild {
+    const rounds = new Map((form.rounds ?? []).map((r) => [r.repo, r.instructions]));
+    return {
+      key, ref, going: new Map(), stopped: new Map(), rounds, phase: 'building', reviewing: false, cancelling: new Set(), cancelledAll: false,
+      reviewedRows: null, changed: false, waiting: [], report: null, changedMs: this.io.now(), form,
+    };
+  }
+
+  start(ref: ChangeRef, form: StartForm = NO_FORM): StartOutcome {
     const key = mockChangeKey(ref);
     const id = this.id(key);
     if (this.builds.get(id)?.going.size) return { kind: 'alreadyRunning' };
-    const repos = BUILD_REPOS_OF[ref.change] ?? [];
+    const status = this.io.status(ref);
+    const repos = [...new Set([...(BUILD_REPOS_OF[ref.change] ?? []), ...(form.rounds ?? []).map((r) => r.repo)])];
     const held = this.heldBy(key, repos);
     if (held.length > 0) {
       this.heldStarts.set(id, { key, held, at: this.io.now() });
       return { kind: 'held', held };
     }
     this.heldStarts.delete(id);
-    const build: MockBuild = { key, going: new Map(), finished: false, reviewing: false, changedMs: this.io.now() };
+    const previous = this.builds.get(id);
+    const build = this.fresh(ref, key, form);
+    // A build started again keeps what it already reviewed: nothing new to review means no new review.
+    if (previous) build.reviewedRows = previous.reviewedRows;
     this.builds.set(id, build);
     for (const repo of repos) this.holds.set(repo, key);
-    for (const repo of repos) this.launch(ref, build, repo);
-    this.announce(build);
+    if (status === null) {
+      for (const repo of repos) this.launch(build, repo);
+      this.announce(build);
+    } else {
+      this.look(build, status);
+    }
     return { kind: 'started', uncommitted: {} };
+  }
+
+  /** Run one repository (or the review) of a build again after it stopped. */
+  continueRepo(ref: ChangeRef, repo: string): StartOutcome {
+    const key = mockChangeKey(ref);
+    const build = this.builds.get(this.id(key));
+    if (!build) return this.start(ref);
+    if (build.going.has(repo)) return { kind: 'alreadyRunning' };
+    build.stopped.delete(repo);
+    build.cancelledAll = false;
+    for (const r of repoKeys(build)) this.holds.set(r, key);
+    const status = this.io.status(ref);
+    if (status === null) {
+      this.launch(build, repo);
+      this.announce(build);
+    } else if (repo === 'review') {
+      build.reviewing = true;
+      build.phase = 'reviewing';
+      this.launch(build, 'review');
+      this.announce(build);
+    } else {
+      this.look(build, status);
+    }
+    return { kind: 'started', uncommitted: {} };
+  }
+
+  /** Stop one run of a build, or every run when no repository is named. */
+  cancel(ref: ChangeRef, repo: string | null): void {
+    const build = this.builds.get(this.id(mockChangeKey(ref)));
+    if (!build) return;
+    if (repo === null) build.cancelledAll = true;
+    const keys = repo === null ? [...build.going.keys()] : build.going.has(repo) ? [repo] : [];
+    for (const key of keys) {
+      build.cancelling.add(key);
+      this.io.cancel(build.going.get(key) ?? '');
+    }
+    if (repo === null && keys.length === 0) {
+      build.phase = 'cancelled';
+      this.announce(build);
+    }
   }
 
   state(ref: ChangeRef): BuildState | null {
     const build = this.builds.get(this.id(mockChangeKey(ref)));
     return build ? this.stateOf(build) : null;
+  }
+
+  runs(ref: ChangeRef): BuildRunRef[] {
+    const build = this.builds.get(this.id(mockChangeKey(ref)));
+    return build ? this.runsOf(build) : [];
   }
 
   reviewStart(ref: ChangeRef): StartOutcome {
@@ -1272,11 +1453,11 @@ export class MockBuildHost {
       return { kind: 'held', held };
     }
     this.reviewWaits.delete(id);
-    const build = this.builds.get(id) ?? { key, going: new Map(), finished: false, reviewing: false, changedMs: this.io.now() };
+    const build = this.builds.get(id) ?? this.fresh(ref, key, NO_FORM);
     this.builds.set(id, build);
-    build.finished = false;
     build.reviewing = true;
-    this.launch(ref, build, 'review');
+    build.phase = 'reviewing';
+    this.launch(build, 'review');
     this.announce(build);
     return { kind: 'started', uncommitted: {} };
   }
@@ -1304,4 +1485,86 @@ export class MockBuildHost {
     }
     return out;
   }
+}
+
+const repoKeys = (build: MockBuild): string[] => BUILD_REPOS_OF[build.ref.change] ?? [];
+
+// ---- the review and the round, as the backend answers them
+
+const RANK: Record<RoundSeverity, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+const DEFAULT_PICKED: RoundSeverity[] = ['critical', 'high', 'medium'];
+
+/** The first sentence of a finding's text. */
+const firstSentence = (text: string): string => {
+  const line = text.split(/\r?\n/)[0];
+  const stop = line.indexOf('. ');
+  return stop === -1 ? line : line.slice(0, stop + 1);
+};
+
+/** A finding of the review record as the offer and the rows carry it. */
+const toReviewFinding = (f: ParsedFinding): ReviewFinding => ({
+  id: f.id, severity: f.severity, text: f.text, file: f.file, line: f.line, ...(f.repo === undefined ? {} : { repo: f.repo }),
+  ...(f.concern === undefined ? {} : { concern: f.concern }), ...(f.rule === undefined ? {} : { rule: f.rule }),
+});
+
+/** What a round may fix, from the review record: every finding of the latest review, in the order listed. */
+export function mockRoundOffer(record: ReviewRecord | null, repos: string[]): RoundOffer {
+  const latest = record?.reviews.at(-1);
+  if (!latest) return { review: null, repos, findings: [] };
+  return {
+    review: latest.number,
+    repos,
+    findings: latest.findings.map((f, i) => {
+      const finding = toReviewFinding(f);
+      return { key: f.id || `#${i + 1}`, finding, repo: finding.repo !== undefined && repos.includes(finding.repo) ? finding.repo : null };
+    }),
+  };
+}
+
+/** The findings picked when the dialog opens: critical, high and medium. */
+export const mockDefaultPicks = (offer: RoundOffer): RoundPicks => ({
+  picked: offer.findings.filter((f) => f.finding.severity !== null && DEFAULT_PICKED.includes(f.finding.severity)).map((f) => f.key),
+  assigned: {},
+  notes: {},
+});
+
+/** One request per repository with a picked finding or a note, or why the round cannot start. */
+export function mockRoundPlan(offer: RoundOffer, picks: RoundPicks): RoundPlan {
+  const picked = offer.findings.filter((f) => picks.picked.includes(f.key)).map((f) => ({ f, repo: f.repo ?? picks.assigned[f.key] ?? null }));
+  const unassigned = picked.filter((p) => p.repo === null).map((p) => p.f.key);
+  if (unassigned.length > 0) return { blocked: `Choose a repository for ${unassigned.join(', ')}.`, requests: [] };
+  const requests: RoundRequest[] = [];
+  for (const repo of offer.repos) {
+    const mine = picked.filter((p) => p.repo === repo).map((p) => p.f);
+    const note = (picks.notes[repo] ?? '').trim();
+    if (mine.length === 0 && note === '') continue;
+    const keys = mine.map((f) => f.key).join(', ');
+    const text = mine.length === 0 ? '' : `Fix these findings from review ${offer.review ?? ''} of this change in this repository.\n${mine.map((f) => `- ${f.key} ${f.finding.text}`).join('\n')}`;
+    requests.push({ repo, instructions: [text, note === '' ? '' : `Also from the engineer:\n${note}`].filter((p) => p !== '').join('\n\n'), summary: [repo, ...(keys === '' ? [] : [keys]), ...(note === '' ? [] : ['with a note'])].join(' · ') });
+  }
+  if (requests.length === 0) return { blocked: 'Pick a finding or write a note.', requests: [] };
+  return { blocked: null, requests };
+}
+
+/** The Review group for the latest review: most serious first, the low findings apart, counts by severity. */
+export function mockReviewView(record: ReviewRecord | null, repos: string[]): ReviewView {
+  const offer = mockRoundOffer(record, repos);
+  const row = (f: RoundOffer['findings'][number]): ReviewRow => ({ key: f.key, finding: f.finding, summary: firstSentence(f.finding.text) });
+  const named = [...repos, ...offer.findings.flatMap((f) => (f.finding.repo !== undefined && !repos.includes(f.finding.repo) ? [f.finding.repo] : []))];
+  const places: (string | null)[] = [...new Set(named), null];
+  const groups: ReviewRowGroup[] = places.flatMap((repo) => {
+    const mine = offer.findings.filter((f) => (f.finding.repo ?? null) === repo);
+    if (mine.length === 0) return [];
+    return [{
+      repo,
+      rows: mine.filter((f) => f.finding.severity !== 'low').sort((a, b) => (a.finding.severity === null ? 4 : RANK[a.finding.severity]) - (b.finding.severity === null ? 4 : RANK[b.finding.severity])).map(row),
+      low: mine.filter((f) => f.finding.severity === 'low').map(row),
+    }];
+  });
+  const counts = (['critical', 'high', 'medium', 'low'] as const).map((severity) => ({ severity, n: offer.findings.filter((f) => f.finding.severity === severity).length })).filter((c) => c.n > 0);
+  const byKey = new Map(offer.findings.map((f) => [f.key, f]));
+  return {
+    rows: { counts, total: offer.findings.length, groups },
+    groups: groups.map((g) => ({ repo: g.repo, findings: [...g.rows, ...g.low].flatMap((r) => byKey.get(r.key) ?? []) })),
+  };
 }

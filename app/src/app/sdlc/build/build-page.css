@@ -12,6 +12,10 @@
   grid-row: 1;
 }
 
+.k-bp__held {
+  grid-row: 3;
+}
+
 .k-bp__bar {
   grid-row: 2;
   display: flex;

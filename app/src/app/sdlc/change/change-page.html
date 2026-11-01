@@ -214,6 +214,8 @@
                 (repoAction)="build.repoAction($event)"
                 (act)="vm.act($event)"
                 (cancelBuild)="build.cancelBuild()"
+                (startAgain)="build.startAgain()"
+                (startReviewAgain)="build.startReviewAgain()"
                 (answer)="build.answer($event.runId, $event)"
                 (say)="build.sendMessage($event.runId, $event.text)"
                 (decide)="build.decide($event.runId, $event)"
@@ -260,29 +262,7 @@
   <app-branch-name-dialog [request]="vm.nameRequest()" (typeChange)="vm.nameType($event)" (accept)="vm.acceptName($event)" (cancel)="vm.closeName()" />
   <app-leftover-dialog [leftovers]="vm.leftovers()" (discard)="vm.discardLeftovers($event)" (close)="vm.closeLeftovers()" />
   <app-feedback-dialog [action]="vm.feedbackFor()" [required]="vm.feedbackRequired()" (run)="vm.runWithFeedback($event)" (cancel)="vm.cancelFeedback()" />
-  <app-confirm-dialog
-    [open]="vm.leftoverPrompt() !== null"
-    message="Continue on top of leftovers?"
-    [details]="vm.leftoverPrompt()?.lines ?? []"
-    confirmLabel="Continue"
-    (confirm)="vm.confirmLeftovers()"
-    (cancel)="vm.cancelLeftovers()"
-  />
-  <app-confirm-dialog
-    [open]="build.leftoverPrompt() !== null"
-    message="Continue on top of leftovers?"
-    [details]="build.leftoverPrompt()?.lines ?? []"
-    confirmLabel="Continue"
-    (confirm)="build.confirmContinue()"
-    (cancel)="build.cancelContinue()"
-  />
-  <app-build-refusal-dialog
-    [reason]="build.refusal()?.reason ?? null"
-    [problems]="build.refusal()?.problems ?? []"
-    [taken]="build.refusal()?.taken ?? null"
-    (rename)="vm.renameFromRefusal(build.refusal()?.taken?.branch ?? null); build.closeRefusal()"
-    (close)="build.closeRefusal()"
-  />
+  <app-build-refusal-dialog [reason]="build.refusal()?.reason ?? null" [problems]="build.refusal()?.problems ?? []" (close)="build.closeRefusal()" />
   <app-done-dialog
     [report]="vm.doneReport()"
     [change]="vm.changeName()"
@@ -300,13 +280,6 @@
     (renameBranch)="vm.renameFromPrList($event)"
     (retry)="vm.retryPublish()"
     (close)="vm.closePrList()"
-  />
-  <app-build-refusal-dialog
-    [reason]="vm.refusal()"
-    [problems]="vm.refusalProblems()"
-    [taken]="vm.refusalTaken()"
-    (rename)="vm.renameFromRefusal(vm.refusalTaken()?.branch ?? null)"
-    (close)="vm.closeRefusal()"
   />
   <app-confirm-dialog
     [open]="vm.confirmPrompt() !== null"
@@ -339,11 +312,11 @@
     [startLabel]="vm.preview.startLabel()"
     (toggle)="vm.preview.toggle($event.key, $event.off)"
     (start)="vm.preview.start()"
-    (cancel)="vm.preview.cancel()"
+    (cancel)="build.cancelPreview()"
   >
     @if (vm.preview.buildForm(); as form) {
-      @if (vm.buildMode(); as mode) {
-        <app-build-dialog [mode]="mode" [offer]="vm.buildOffer()" [groups]="vm.buildGroups()" [state]="form" />
+      @if (build.dialogMode(); as mode) {
+        <app-build-dialog [mode]="mode" [offer]="build.roundOffer()" [groups]="build.roundGroups()" [plan]="vm.preview.plannedRound()" [state]="form" />
       }
     }
   </app-run-preview-dialog>

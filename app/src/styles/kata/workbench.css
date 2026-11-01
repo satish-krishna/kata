@@ -314,6 +314,11 @@
 .k-waiting { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-5); padding: var(--space-3) var(--space-5); border-bottom: 1px solid var(--border-subtle); background: var(--warning-subtle); color: var(--warning-text); font: var(--font-code-sm); }
 .k-waiting--line { padding-block: var(--space-2); }
 .k-waiting__stop { color: var(--text-secondary); }
+/* The panel for a build or a review that waits for another change's repositories. */
+.k-held { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); padding: var(--space-4) var(--space-5); border-bottom: 1px solid var(--border-subtle); background: var(--warning-subtle); color: var(--text-primary); }
+.k-held .k-status { color: var(--warning-text); }
+.k-held__list { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.k-held__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); color: var(--text-secondary); }
 /* Where the engineer stopped looking in a pane that kept running. */
 .k-unseen { padding: var(--space-1) 0; border-top: 1px solid var(--accent); font: var(--font-code-sm); color: var(--text-secondary); }
 .k-findings { display: grid; gap: var(--space-3); }

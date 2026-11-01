@@ -4,10 +4,10 @@ import type { ChangeInfo } from '@bindings/ChangeInfo';
 import { BehaviorSubject } from 'rxjs';
 import { RunPreviewViewModel } from '../core/given/run-preview.view-model';
 import { LockStore } from '../core/lock/lock.store';
-import { SdlcRunner } from '../core/sdlc/sdlc-runner';
 import { KataTransport } from '../core/transport/kata-transport';
 import { MockTransport } from '../core/transport/mock-transport';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../lib/sdlc-mock';
+import { readAllChanges } from '../../testing/read-all';
 import { WorkbenchViewModel } from '../workbench/workbench.view-model';
 import { BuildPageViewModel, type BuildContext } from './build/build-page.view-model';
 import { ChangePageViewModel } from './change/change-page.view-model';
@@ -70,7 +70,8 @@ async function changePage(change: string, stage: ChangeInfo['stage'] | null, sta
   });
   vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true);
   const runAgent = vi.spyOn(TestBed.inject(LockStore), 'runAgent').mockResolvedValue('success');
-  const prepare = vi.spyOn(transport, 'sdlcBuildPrepare');
+  const buildStart = vi.spyOn(transport, 'sdlcBuildStart');
+  const reviewStart = vi.spyOn(transport, 'sdlcReviewStart');
   const vm = TestBed.inject(ChangePageViewModel);
   await vi.waitFor(() => {
     TestBed.tick();
@@ -80,37 +81,30 @@ async function changePage(change: string, stage: ChangeInfo['stage'] | null, sta
     transport,
     preview: TestBed.inject(RunPreviewViewModel),
     go: () => start(vm),
-    started: () => (kind === 'run' ? runAgent.mock.calls.length > 0 : prepare.mock.calls.length > 0 && TestBed.inject(BuildPageViewModel).current() !== null),
+    started: () => (kind === 'run' ? runAgent.mock.calls.length > 0 : buildStart.mock.calls.length > 0 || reviewStart.mock.calls.length > 0),
   };
   if (fill) scenario.fill = () => fill(scenario);
   return scenario;
 }
 
-/** A build whose two repositories stopped at the time limit, so Continue is offered on commerce-core. */
+/** A build whose first repository was cancelled, so Continue is offered on commerce-core. */
 async function continuing(): Promise<Scenario> {
   const transport = new MockTransport();
   TestBed.configureTestingModule({ providers: [provideRouter([]), BuildPageViewModel, RunPreviewViewModel, { provide: KataTransport, useValue: transport }] });
   const vm = TestBed.inject(BuildPageViewModel);
-  const runner = TestBed.inject(SdlcRunner);
-  let continued = false;
-  const run = vi.spyOn(runner, 'runInRepo').mockImplementation(async (target, _spec, link) => {
-    if (run.mock.calls.length <= 2) {
-      link.onRun?.(`fake-${target.repo}`);
-      return { exit: 124, error: null };
-    }
-    continued = true;
-    link.onRun?.(`fake-${target.repo}-again`);
-    return { exit: 0, error: null };
-  });
-  const out = await transport.sdlcBuildPrepare(MOCK_WORKSPACE_FOLDER, MOCK_MASTER, 'commerce', BUILD, false, [], 'start');
-  if (out.kind !== 'ready') throw new Error('the mock build did not prepare');
   const ctx: BuildContext = { workspaceId: 'acme-commerce', folder: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: BUILD, systemRepos: [] };
-  await vm.start({ start: out.start, timeoutSecs: 5400, rounds: [], checksDir: await transport.sdlcChecksDir() }, ctx);
+  const status = await transport.sdlcBuildStatus(MOCK_WORKSPACE_FOLDER, 'commerce', BUILD);
+  const [change] = (await readAllChanges(transport)).filter((c) => c.state.change === BUILD);
+  await vm.load({ ctx, master: { repo: MOCK_MASTER, path: `${MOCK_WORKSPACE_FOLDER}/${MOCK_MASTER}` }, change, status, done: false, review: null });
+  const ref = { workspace: MOCK_WORKSPACE_FOLDER, system: 'commerce', change: BUILD };
+  await transport.sdlcBuildStart(ref, { timeoutSecs: 5400 });
+  await transport.sdlcBuildCancel(ref, 'commerce-core');
+  const continued = vi.spyOn(transport, 'sdlcBuildContinue');
   await vi.waitFor(() => {
     vm.select('commerce-core');
     expect(vm.view().groups.find((g) => g.repo === 'commerce-core')?.action).toBe('continue');
   });
-  return { transport, preview: TestBed.inject(RunPreviewViewModel), go: () => vm.continueRun(), started: () => continued };
+  return { transport, preview: TestBed.inject(RunPreviewViewModel), go: () => vm.continueRun(), started: () => continued.mock.calls.length > 0 };
 }
 
 const ROWS: [string, string, () => Promise<Scenario>][] = [
@@ -151,6 +145,8 @@ describe('every Workbench run start opens the preview first (R1.1)', () => {
     expect(previewRun).toHaveBeenCalled();
     expect(s.started()).toBe(false);
     s.fill?.();
+    // A round's plan is the backend's answer to the picks, so Start waits for it.
+    await vi.waitFor(() => expect(s.preview.canStart()).toBe(true));
     s.preview.start();
     await vi.waitFor(() => expect(s.started()).toBe(true));
     await going;

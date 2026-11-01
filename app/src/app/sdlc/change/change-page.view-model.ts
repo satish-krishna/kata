@@ -2,7 +2,6 @@ import { Injectable, computed, effect, inject, linkedSignal, signal, untracked }
 import { toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Router } from '@angular/router';
 import type { BranchInfo } from '@bindings/BranchInfo';
-import type { BuildStart } from '@bindings/BuildStart';
 import type { BuildStatus } from '@bindings/BuildStatus';
 import type { BuildRow } from '@bindings/BuildRow';
 import type { ParsedRequirement } from '@bindings/ParsedRequirement';
@@ -15,7 +14,6 @@ import type { OfferedAction } from '@bindings/OfferedAction';
 import type { OutOfDateCause } from '@bindings/OutOfDateCause';
 import type { StateDocument } from '@bindings/StateDocument';
 import type { Decision } from '@bindings/Decision';
-import type { RepoFiles } from '@bindings/RepoFiles';
 import type { RunLink } from '@bindings/RunLink';
 import type { RunRecord } from '@bindings/RunRecord';
 import type { ChecksPlan } from '@bindings/ChecksPlan';
@@ -27,17 +25,12 @@ import type { PrEntry } from '@bindings/PrEntry';
 import type { RemoteClash } from '@bindings/RemoteClash';
 import type { PublishRepo } from '@bindings/PublishRepo';
 import type { RepoChecks } from '@bindings/RepoChecks';
-import type { BuildAction } from '@bindings/BuildAction';
-import type { Problem } from '@bindings/Problem';
 import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import type { ChangesContext } from '../changes/changes-view.view-model';
 import { BuildPageViewModel, type BuildContext } from '../build/build-page.view-model';
-import { roundOffer, type RoundGroup, type RoundOffer, type RoundRequest } from '../../lib/build-round';
-import { roundGroups } from '../../lib/build-task-list';
-import type { BuildDialogMode, BuildStartRequest } from '../../ui/build-dialog';
 import type { RunSpec } from '@bindings/RunSpec';
-import { GivenStore, type BuildChoices } from '../../core/given/given.store';
+import { GivenStore } from '../../core/given/given.store';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
 import { LockStore } from '../../core/lock/lock.store';
 import { RunStore } from '../../core/run/run.store';
@@ -45,10 +38,10 @@ import { ModeStore } from '../../core/mode/mode.store';
 import { SdlcRunner, type DiscardChoice } from '../../core/sdlc/sdlc-runner';
 import { ProgressStore } from '../../core/progress/progress.store';
 import { ToastStore } from '../../core/toast/toast.store';
+import { documentForm } from '../../lib/build-host';
 import { progressLabels } from '../../lib/progress-steps';
 import { KataTransport, type NamingState } from '../../core/transport/kata-transport';
 import {
-  DEFAULT_BUILD_SECS,
   actionLabel,
   actionLabelAt,
   restrictedFor,
@@ -61,7 +54,6 @@ import {
   stageName,
   stagePills,
   stageRuns,
-  type BuildRun,
   type DocsPresent,
   type StageAction,
   type StagePill,
@@ -163,25 +155,10 @@ const OUT_OF_DATE_BANNER: Record<OutOfDateCause, string> = {
   'spec-pin': 'This spec was not written from the intent accepted now. Rewrite the spec, then the plan.',
   'plan-pin': 'This plan was not written from the spec accepted now. Rewrite the plan before building.',
 };
-/** The time limit of a review started from the done dialog: the build dialog's default. */
-const REVIEW_TIMEOUT_SECS = 2 * 60 * 60;
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 /** A task is built once the build log has a row for it; the record is the one reader of that. */
 const isBuilt = (t: { row: BuildRow | null }): boolean => taskRecord(t).kind !== 'unbuilt';
 const SUPERSEDED_BANNER = 'The intent was reopened after this plan was written. Rewrite the plan before building.';
-
-/** What the build view starts from: the prepared branches, the time limit, the round if one was asked for, and Kata's checks folder. */
-export type BuildHandoff = {
-  start: BuildStart;
-  timeoutSecs: number;
-  /** One request per repository that gets a round agent; empty for a build that is not a round. */
-  rounds: RoundRequest[];
-  checksDir: string;
-  /** The build's choices: the keys switched off, for every run the build starts. */
-  choices?: BuildChoices;
-  /** The repositories whose leftovers the engineer confirmed continuing on top of: only their first run is told not to ask again. */
-  continueOnLeftovers?: string[];
-};
 
 type DocStem = 'intent' | 'spec' | 'plan';
 /** What the stage tiles select: a document, or what the build changed. */
@@ -526,18 +503,6 @@ export class ChangePageViewModel {
   // --- the build: its dialog, the leftovers confirm, the refusal, and what is handed to the build view
   private readonly status = signal<BuildStatus | null>(null);
   private readonly checksDir = signal<string | null>(null);
-  /** The mode of the open build dialog, or null while it is closed. */
-  readonly buildMode = signal<BuildDialogMode | null>(null);
-  /** What the open round may fix, from the latest review; null outside a round. */
-  readonly buildOffer = signal<RoundOffer | null>(null);
-  /** The offer's findings in the Review group's groups and order, for the round dialog. */
-  readonly buildGroups = signal<RoundGroup[]>([]);
-  /** The master repository first, then every repository the plan names. */
-  readonly buildRepos = computed<string[]>(() => {
-    const master = this.scanMaster();
-    const planned = (this.status()?.repos ?? []).map((r) => r.repo);
-    return [...new Set([...(master === null ? [] : [master]), ...planned])];
-  });
   /** The plan's tasks with their build rows, for the plan tab's Tasks view; empty when there is no plan. */
   readonly buildTasks = computed(() => this.status()?.tasks ?? []);
   // --- the spec and plan views: which one is shown and what is picked in it; all of it starts over with the tab or the change
@@ -627,18 +592,6 @@ export class ChangePageViewModel {
     }
   }
 
-  /** Why the build did not start, or null. */
-  readonly refusal = signal<string | null>(null);
-  /** What the check found in the plan or a build log, when that is why the build did not start. */
-  readonly refusalProblems = signal<Problem[]>([]);
-  /** The branch that holds other work, when that is why the build did not start. */
-  readonly refusalTaken = signal<{ repo: string; branch: string } | null>(null);
-  private readonly pendingLeftovers = signal<RepoFiles[] | null>(null);
-  /** The confirm for continuing on top of the build's own leftovers: one line per repository and file; null while closed. */
-  readonly leftoverPrompt = computed(() => {
-    const left = this.pendingLeftovers();
-    return left === null ? null : { lines: left.flatMap((r) => r.files.map((f) => `${r.repo}: ${f}`)) };
-  });
   /** What the build view runs against: the workspace, the system and the change; null until the workspace is known. */
   readonly buildContext = computed<BuildContext | null>(() => {
     const w = this.current();
@@ -649,135 +602,6 @@ export class ChangePageViewModel {
     const systemRepos = (scan?.marker?.systems[system]?.repos ?? []).filter((r) => r !== master);
     return { workspaceId: w.id, folder: w.folder, system, change: this.changeName(), systemRepos };
   });
-  /** What the preview asked for, kept so confirming the leftovers prepares the same build again. */
-  private asked: BuildStartRequest | null = null;
-  /** The build's choices that go with `asked`. */
-  private askedChoices: BuildChoices = { off: new Set() };
-  /** Which build preview is the current one; a preview that is no longer current neither opens nor changes the page. */
-  private buildSeq = 0;
-  /** What the engineer asked for, kept with `asked`. */
-  private askedAction: BuildAction = 'start';
-
-  /** The key the build's choices are kept under. */
-  private buildKey(): string {
-    return `${this.system()}/${this.changeName()}`;
-  }
-
-  /** The build's request is in: prepare the build, never continuing on top of leftovers yet. */
-  async submitBuild(req: BuildStartRequest, choices?: BuildChoices, action?: BuildAction): Promise<void> {
-    await this.beginBuild(req, action ?? this.buildMode() ?? 'start', choices ?? { off: this.givens.build(this.buildKey())?.off ?? new Set() });
-  }
-
-  private async beginBuild(req: BuildStartRequest, action: BuildAction, choices: BuildChoices): Promise<void> {
-    this.askedAction = action;
-    this.buildMode.set(null);
-    this.buildOffer.set(null);
-    this.buildGroups.set([]);
-    this.asked = req;
-    this.askedChoices = choices;
-    await this.prepare(false);
-  }
-
-  cancelBuild(): void {
-    this.buildSeq++;
-    this.buildMode.set(null);
-    this.buildOffer.set(null);
-    this.buildGroups.set([]);
-    this.preview.cancel();
-  }
-
-  /**
-   * Open the build's preview, pre-set to the build's choices (the session's when it has none yet). A preview is
-   * never awaited by its caller: the engineer answers it. What they confirm is the build's from then on, except for a
-   * review started by hand, whose choices are that review's alone.
-   */
-  private openBuildPreview(which: 'start' | 'continue' | 'round' | 'review'): void {
-    this.buildMode.set(which === 'review' ? null : which);
-    const latest = which === 'round' ? this.build.latestReview() : null;
-    const offer = which === 'round' ? roundOffer(latest, this.buildRepos()) : null;
-    this.buildOffer.set(offer);
-    this.buildGroups.set(offer !== null && latest !== null ? roundGroups(offer, this.build.findingGroups(), latest.findings) : []);
-    void this.previewBuild(which);
-  }
-
-  private async previewBuild(which: 'start' | 'continue' | 'round' | 'review'): Promise<void> {
-    const seq = ++this.buildSeq;
-    const w = this.current();
-    const master = this.scanMaster();
-    const context = this.buildContext();
-    const checksDir = this.checksDir();
-    const stale = () => seq !== this.buildSeq;
-    const giveUp = () => {
-      if (!stale()) this.cancelBuild();
-    };
-    if (!w || master === null || context === null) return giveUp();
-    if (checksDir === null) {
-      this.toasts.error("Could not read Kata's checks folder.");
-      return giveUp();
-    }
-    const kind = { start: 'start', continue: 'continue-all', round: 'round', review: 'manual-review' } as const;
-    const titles = { start: 'Start build', continue: 'Continue build', round: 'Start round', review: 'Run review' } as const;
-    const actions: Record<typeof which, BuildAction> = { start: 'start', continue: 'continue', round: 'round', review: 'round' };
-    const limit = which === 'review' ? REVIEW_TIMEOUT_SECS : DEFAULT_BUILD_SECS;
-    let result;
-    try {
-      const settings = this.modes.settings() ?? (await this.modes.load());
-      const sectionFor = (repo: string | null) => {
-        const run: BuildRun = {
-          target: repo === null ? 'review' : { repo },
-          timeoutSecs: limit,
-          instructions: null,
-          workspaceFolder: w.folder,
-          masterRepo: master,
-          systemRepos: context.systemRepos,
-          checksDir,
-          continueOnLeftovers: false,
-        };
-        const spec = specFor('build', null, { folder: w.folder, system: context.system, change: context.change }, settings, [], run);
-        return { title: repo ?? 'Review', repo, spec, workdir: spec.workdir };
-      };
-      const status = this.status()?.repos ?? [];
-      const planned = status.map((r) => r.repo).filter((r) => r !== master);
-      const unfinished = status.filter((r) => r.repo !== master && r.state.kind !== 'done').map((r) => r.repo);
-      const repos = { start: planned, continue: unfinished.length > 0 ? unfinished : planned, round: this.buildRepos(), review: [] as string[] }[which];
-      const sections = [...repos.map((r) => sectionFor(r)), ...(which === 'round' ? [] : [sectionFor(null)])];
-      if (stale()) return;
-      result = await this.preview.openBuild({
-        title: titles[which],
-        kind: kind[which],
-        sections,
-        from: { session: this.givens.session(), job: null, build: this.givens.build(this.buildKey())?.off ?? null },
-        limitSecs: limit,
-        offer: this.buildOffer(),
-      });
-    } catch (e) {
-      this.toasts.error(`Could not preview the build: ${message(e)}`);
-      return giveUp();
-    }
-    if (result === null || stale()) return giveUp();
-    const choices: BuildChoices = { off: result.off };
-    if (which !== 'review') this.givens.setBuild(this.buildKey(), choices);
-    await this.submitBuild(result.request ?? { timeoutSecs: limit, rounds: null }, choices, actions[which]);
-  }
-
-  /** The operator accepted the leftovers: prepare the same build again, this time continuing on top of them. */
-  async confirmLeftovers(): Promise<void> {
-    const confirmed = (this.pendingLeftovers() ?? []).map((r) => r.repo);
-    this.pendingLeftovers.set(null);
-    if (this.asked !== null) await this.prepare(true, confirmed);
-  }
-
-  cancelLeftovers(): void {
-    this.pendingLeftovers.set(null);
-    this.asked = null;
-  }
-
-  closeRefusal(): void {
-    this.refusal.set(null);
-    this.refusalProblems.set([]);
-    this.refusalTaken.set(null);
-  }
-
   /**
    * Pick a new name for the change's branch, from a refusal or from the done dialog. The rename covers every repository that has the
    * branch; the build can be started again after it, and the page reads the change again. Null when the dialog was closed.
@@ -788,12 +612,6 @@ export class ChangePageViewModel {
     if (w === null || master === null || branch === null) return null;
     const named = await this.runner.requestRename({ folder: w.folder, workspaceId: w.id, masterRepo: master, system: this.system(), change: this.changeName(), current: branch });
     return named?.branch ?? null;
-  }
-
-  /** The build refusal's Pick a new branch name: the refusal closes, the rename dialog opens. */
-  async renameFromRefusal(branch: string | null): Promise<void> {
-    this.closeRefusal();
-    await this.renameBranch(branch);
   }
 
   // --- declaring done: Kata's own checks first, then the confirmation
@@ -878,13 +696,18 @@ export class ChangePageViewModel {
   /** Ask for another round instead of opening the pull requests. */
   doneRound(): void {
     this.doneReport.set(null);
-    this.openBuildPreview('round');
+    void this.startBuild(this.build.openRound());
   }
 
   /** Open the review's preview; Start run hands the build view a review only: every task has a row, so nothing else runs. */
   async doneRunReview(): Promise<void> {
     this.doneReport.set(null);
-    this.openBuildPreview('review');
+    void this.startBuild(this.build.openPreview('review'));
+  }
+
+  /** Show the Build tab once the build the engineer asked for has started. */
+  private async startBuild(started: Promise<boolean>): Promise<void> {
+    if (await started) this.picked.set('build');
   }
 
   cancelDone(): void {
@@ -942,9 +765,9 @@ export class ChangePageViewModel {
         void this.load();
       });
     });
-    // The build page gives the lock back when the build ends or stops; the change is read again then, so its stage, pill and actions follow it.
+    // The change is read again when the backend's build ends or stops, so its stage, pill and actions follow it.
     effect(() => {
-      const building = this.lock.active()?.kind === 'build';
+      const building = this.build.active();
       untracked(() => {
         const ended = this.wasBuilding && !building;
         this.wasBuilding = building;
@@ -956,7 +779,7 @@ export class ChangePageViewModel {
   /** The branches named so far, as this page last saw them: the page reads the change again when a confirmation names one. */
   private seenNamed = this.runner.named();
 
-  /** Whether the lock was held for a build the last time it changed. */
+  /** Whether the backend's build was going the last time it changed. */
   private wasBuilding = false;
 
   /** `?demo=sdlc` starts the scripted spec run once the change has loaded. Browser only, never under Tauri. */
@@ -1014,13 +837,13 @@ export class ChangePageViewModel {
         await this.commitDecision(ACCEPTED_UNCOMMITTED[stageNameOf(this.change())] ?? 'accept-spec', false);
         return;
       case 'start-build':
-        this.openBuildPreview('start');
+        void this.startBuild(this.build.openPreview('start'));
         return;
       case 'continue-build':
-        this.openBuildPreview('continue');
+        void this.startBuild(this.build.openPreview('continue'));
         return;
       case 'another-round':
-        this.openBuildPreview('round');
+        void this.startBuild(this.build.openRound());
         return;
       case 'run-review':
         await this.doneRunReview();
@@ -1495,73 +1318,6 @@ export class ChangePageViewModel {
     });
   }
 
-  private async prepare(continueWithLeftovers: boolean, confirmedRepos: string[] = []): Promise<void> {
-    const w = this.current();
-    const master = this.scanMaster();
-    const asked = this.asked;
-    const checksDir = this.checksDir();
-    if (!w || master === null || asked === null) return;
-    if (checksDir === null) {
-      this.toasts.error("Could not read Kata's checks folder.");
-      return;
-    }
-    this.progress.begin('preparing-build', progressLabels.preparingBuild(), 'build');
-    let out: Awaited<ReturnType<SdlcRunner['prepareBuild']>>;
-    try {
-      out = await this.runner.prepareBuild({
-        folder: w.folder,
-        masterRepo: master,
-        system: this.system(),
-        change: this.changeName(),
-        action: this.askedAction,
-        continueWithLeftovers,
-        pending: asked.rounds?.map((r) => r.repo) ?? [],
-      });
-    } catch (e) {
-      this.progress.fail('build');
-      throw e;
-    }
-    // A refusal is the preparation failing: its line goes before the refusal shows where it shows today.
-    if (out.kind === 'refused' || out.kind === 'branch-taken') this.progress.fail('build');
-    else this.progress.end('build');
-    if (out.kind === 'branch-taken') {
-      // Nothing was created or switched; the refusal names the branch and offers a new one.
-      this.asked = null;
-      this.refusal.set(`The branch ${out.branch} in ${out.repo} holds other work`);
-      this.refusalProblems.set([]);
-      this.refusalTaken.set({ repo: out.repo, branch: out.branch });
-      return;
-    }
-    switch (out.kind) {
-      case 'refused':
-        this.asked = null;
-        this.refusal.set(out.reason);
-        this.refusalProblems.set(out.problems ?? []);
-        return;
-      case 'needs-confirm':
-        this.pendingLeftovers.set(out.leftovers);
-        return;
-      case 'ready': {
-        this.asked = null;
-        const context = this.buildContext();
-        if (context === null) return;
-        const started = await this.build.start(
-          {
-            start: out.start,
-            timeoutSecs: asked.timeoutSecs,
-            rounds: asked.rounds ?? [],
-            checksDir,
-            choices: this.askedChoices,
-            continueOnLeftovers: confirmedRepos,
-          },
-          context,
-        );
-        if (started) this.picked.set('build');
-        return;
-      }
-    }
-  }
-
   private masterDir(): string | null {
     const w = this.current();
     const scan = this.scan();
@@ -1613,7 +1369,7 @@ export class ChangePageViewModel {
       if (run.kind === 'fix') {
         const checksDir = this.checksDir() ?? (await this.readChecksDir());
         if (checksDir === null) throw new Error('the checks folder is not known');
-        built = specFor(run.kind, action, ctx, settings, this.catalog(), undefined, restrictedFor(workspace.folder, scan, checksDir));
+        built = specFor(run.kind, action, ctx, settings, this.catalog(), restrictedFor(workspace.folder, scan, checksDir));
       } else {
         built = specFor(run.kind, action, ctx, settings, this.catalog());
       }
@@ -1622,8 +1378,11 @@ export class ChangePageViewModel {
       return;
     }
     let spec: RunSpec | null;
+    const ref = { workspace: workspace.folder, system: this.system(), change: this.changeName() };
     try {
-      spec = await this.preview.open({ spec: built, mode: 'sdlc', workdir: built.workdir, from: { session: this.givens.session(), job: null, build: null } });
+      // The preview shows the run-spec the backend composes for this form, the one `sdlcRunChange` launches.
+      const shown = await this.transport.sdlcPreviewChangeRun(ref, run.kind, documentForm(built));
+      spec = await this.preview.open({ spec: shown, mode: 'sdlc', workdir: shown.workdir, from: { session: this.givens.session(), job: null, build: null } });
     } catch (e) {
       this.toasts.error(`Could not preview the run: ${message(e)}`);
       return;
@@ -1635,7 +1394,7 @@ export class ChangePageViewModel {
       productRepos: productRepos(scan),
       link: { system: this.system(), change: this.changeName(), stage: run.kind },
       label: run.label,
-    }, { ref: { workspace: workspace.folder, system: this.system(), change: this.changeName() }, kind: run.kind });
+    }, { ref, kind: run.kind });
     await this.load();
   }
 
