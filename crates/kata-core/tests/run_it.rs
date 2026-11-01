@@ -1832,6 +1832,12 @@ impl ProofWorkspace {
 /// calls `run` must itself be `kata`; this test binary is not, which is why the
 /// proofs spawn the CLI instead of calling `run_with` in process.
 fn run_real(spec: &RunSpec) -> Vec<KataEvent> {
+    run_real_in(spec, None)
+}
+
+/// `run_real` with the CLI started in `cwd`: the `kata` binary discovers project-scope
+/// skills and plugins from its own working directory, not from the spec's `workdir`.
+fn run_real_in(spec: &RunSpec, cwd: Option<&std::path::Path>) -> Vec<KataEvent> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let st = std::process::Command::new(cargo)
         .args(["build", "-q", "-p", "kata-cli", "--bin", "kata"])
@@ -1850,7 +1856,11 @@ fn run_real(spec: &RunSpec) -> Vec<KataEvent> {
     let dir = tempfile::tempdir().unwrap();
     let spec_path = dir.path().join("proof.kata.toml");
     kata_core::spec::save(&spec_path, spec).unwrap();
-    let out = std::process::Command::new(kata)
+    let mut cmd = std::process::Command::new(kata);
+    if let Some(cwd) = cwd {
+        cmd.current_dir(cwd);
+    }
+    let out = cmd
         .args(["run", "--full-payloads"])
         .arg(&spec_path)
         .env_remove("KATA_CLAUDE_BIN")
@@ -3877,4 +3887,72 @@ fn steer_totals_cover_work_on_messages() {
         }
         other => panic!("expected run.completed, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Plan T1: a skill's Stop and PreToolUse hooks fire under Kata's own invocation
+// (streamed input, disposable --plugin-dir, auto permission mode, bare off).
+// ---------------------------------------------------------------------------
+
+#[test]
+#[serial]
+fn real_gate_and_guard_fire_under_kata() {
+    if !build_proof_enabled() {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let work = root.path().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let st = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&work)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    // A project-scope plugin is part of the catalog, so `[plugins.hook-probe]` resolves.
+    copy_dir_all(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/hook-probe"),
+        &work.join(".claude/plugins/hook-probe"),
+    );
+    let log = root.path().join("hooks.log");
+    std::env::set_var("HOOK_PROBE_LOG", &log);
+
+    let mut spec = base_spec(&work.to_string_lossy());
+    spec.name = "hook-probe".into();
+    spec.task = "Invoke the hook-probe:probe skill. Then run the shell command `echo allowed`. \
+        Then run the shell command `git push origin HEAD`. Report each command's result verbatim."
+        .into();
+    spec.auth.bare = false;
+    spec.permissions.mode = kata_core::spec::PermissionMode::Auto;
+    spec.plugins.insert("hook-probe".into(), Default::default());
+    spec.leash.max_turns = Some(20);
+    spec.leash.timeout_secs = Some(300);
+
+    let events = run_real_in(&spec, Some(&work));
+    std::env::remove_var("HOOK_PROBE_LOG");
+
+    let logged = std::fs::read_to_string(&log).unwrap_or_default();
+    eprintln!("hook log:\n{logged}");
+    assert!(
+        logged
+            .lines()
+            .any(|l| l.starts_with("PreToolUse") && l.contains("echo allowed")),
+        "no PreToolUse line for `echo allowed`"
+    );
+    assert!(
+        logged
+            .lines()
+            .any(|l| l.starts_with("PreToolUse") && l.contains("git push origin HEAD")),
+        "no PreToolUse line for `git push`"
+    );
+    assert!(
+        logged.lines().any(|l| l.starts_with("Stop")),
+        "no Stop line"
+    );
+    let (ok, output, _) =
+        result_of_call(&events, "git push origin HEAD").expect("git push was never attempted");
+    assert!(
+        !ok && output.contains("refused by the probe guard"),
+        "git push was not refused by the hook: ok={ok} output={output:?}"
+    );
 }
