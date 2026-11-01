@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ai-sdlc.local/format/shared-decision.schema.json",
+  "title": "One entry of the shared decisions list of a layout 2 plan",
+  "type": "object",
+  "required": ["question", "owner", "function"],
+  "properties": {
+    "question": { "type": "string", "minLength": 1 },
+    "owner": { "type": "string", "pattern": "^T[0-9]+$" },
+    "function": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false
+}

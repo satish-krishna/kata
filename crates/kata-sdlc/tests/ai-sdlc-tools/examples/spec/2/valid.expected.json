@@ -1,0 +1,53 @@
+{
+  "kind": "spec",
+  "layout": 2,
+  "document": {
+    "requirements": [
+      {
+        "id": "R1",
+        "title": "The engineer sees what changed",
+        "from": [
+          "outcome-1",
+          "D2"
+        ],
+        "scenarios": [
+          {
+            "id": "R1.1",
+            "title": "What changed after a build",
+            "outline": false,
+            "steps": [
+              "Given a build",
+              "When it ends",
+              "Then the engineer sees the diff"
+            ],
+            "examples": null,
+            "line": 13
+          },
+          {
+            "id": "R1.2",
+            "title": "A payment of <amount>",
+            "outline": true,
+            "steps": [
+              "Given a bill of <amount>",
+              "Then it is paid"
+            ],
+            "examples": [
+              [
+                "amount"
+              ],
+              [
+                "5"
+              ],
+              [
+                "10"
+              ]
+            ],
+            "line": 19
+          }
+        ],
+        "line": 11
+      }
+    ]
+  },
+  "problems": []
+}

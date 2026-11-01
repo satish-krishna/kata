@@ -1,0 +1,27 @@
+{
+  "kind": "build-log",
+  "layout": 2,
+  "document": {
+    "repo": "valid",
+    "entries": [
+      {
+        "task": "T1",
+        "commits": [
+          "abc1234"
+        ],
+        "departure": null,
+        "line": 7
+      },
+      {
+        "task": "T2",
+        "commits": [
+          "2408179",
+          "0123456"
+        ],
+        "departure": "used a | in the header; see note\nthe second line has a | too\nand a third line",
+        "line": 14
+      }
+    ]
+  },
+  "problems": []
+}

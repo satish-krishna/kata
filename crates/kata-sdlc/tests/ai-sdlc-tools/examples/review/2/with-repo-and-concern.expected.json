@@ -1,0 +1,45 @@
+{
+  "kind": "review",
+  "layout": 2,
+  "document": {
+    "reviews": [
+      {
+        "number": 1,
+        "reviewed_at": "2026-10-23",
+        "commits": {
+          "app": "840fa0c",
+          "api": "1234567"
+        },
+        "findings": [
+          {
+            "id": "F1",
+            "severity": "high",
+            "repo": "api",
+            "concern": "spec",
+            "file": "src/limits.ts",
+            "line": 42,
+            "text": "The limit is not enforced on retry, so R2.1's second request goes through."
+          },
+          {
+            "id": "F2",
+            "severity": "low",
+            "repo": "app",
+            "concern": "convention",
+            "rule": "CONTRIBUTING.md:18",
+            "file": "src/greet.ts",
+            "line": 7,
+            "text": "Exported functions need a doc comment; `greet` has none."
+          },
+          {
+            "id": "F3",
+            "severity": "medium",
+            "file": "README.md",
+            "line": 3,
+            "text": "A finding from before repositories and concerns were recorded still reads."
+          }
+        ]
+      }
+    ]
+  },
+  "problems": []
+}

@@ -1,0 +1,83 @@
+---
+layout: 2
+system: demo
+---
+
+# Plan: New shape
+
+## Shared decisions
+
+```yaml
+- question: How a problem is reported
+  owner: T1
+  function: formatProblem(p)
+```
+
+## Tasks
+
+### T1: First task
+
+```yaml
+id: T1
+repo: app
+depends_on: []
+files: [src/a.ts]
+covers: [R1.1]
+```
+
+#### Change
+
+Write it.
+
+#### Tests
+
+Test it first.
+
+#### Done when
+
+It passes.
+
+### T2: Second task
+
+```yaml
+id: T2
+repo: app
+depends_on: [T1]
+uses: [How a problem is reported]
+supports: [R1.1]
+```
+
+#### Change
+
+Use it:
+
+```ts
+const a = 1;
+
+#### Tests
+
+Test it too.
+
+#### Done when
+
+It passes.
+
+### T3: Third task
+
+```yaml
+id: T3
+repo: app
+depends_on: [T2]
+```
+
+#### Change
+
+Finish it.
+
+#### Tests
+
+Test it last.
+
+#### Done when
+
+It passes.

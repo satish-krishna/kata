@@ -1,0 +1,48 @@
+{
+  "kind": "plan",
+  "layout": 2,
+  "document": {
+    "tasks": [
+      {
+        "id": "T1",
+        "name": "Confused task",
+        "repo": "app",
+        "depends_on": [],
+        "uses": [],
+        "files": [],
+        "covers": [],
+        "supports": [],
+        "sections": [
+          {
+            "title": "Change",
+            "body": "Write it."
+          },
+          {
+            "title": "Tests",
+            "body": "Test it first."
+          },
+          {
+            "title": "Done when",
+            "body": "It passes."
+          }
+        ],
+        "text": "### T1: Confused task\n\n```yaml\nid: T2\nrepo: app\n```\n\n#### Change\n\nWrite it.\n\n#### Tests\n\nTest it first.\n\n#### Done when\n\nIt passes.",
+        "line": 18
+      }
+    ],
+    "shared_decisions": [
+      {
+        "question": "How a problem is reported",
+        "owner": "T1",
+        "function": "formatProblem(p)"
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "plan.md",
+      "line": 21,
+      "message": "heading says T1, fields say T2"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "kind": "plan",
+  "layout": 2,
+  "document": {
+    "tasks": [
+      {
+        "id": "T1",
+        "name": "First task",
+        "repo": "app",
+        "depends_on": [],
+        "uses": [],
+        "files": [],
+        "covers": [],
+        "supports": [],
+        "sections": [
+          {
+            "title": "Tests",
+            "body": "Test it first."
+          }
+        ],
+        "text": "### T1: First task\n\n```yaml\nid: T1\nrepo: app\n```\n\n#### Tests\n\nTest it first.",
+        "line": 15
+      }
+    ],
+    "shared_decisions": []
+  },
+  "problems": [
+    {
+      "file": "plan.md",
+      "line": 8,
+      "message": "shared decision 1 lacks function"
+    }
+  ]
+}

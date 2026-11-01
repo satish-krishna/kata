@@ -1,0 +1,14 @@
+{
+  "kind": "spec",
+  "layout": 2,
+  "document": {
+    "requirements": []
+  },
+  "problems": [
+    {
+      "file": "spec.md",
+      "line": 1,
+      "message": "no gherkin requirements block found"
+    }
+  ]
+}

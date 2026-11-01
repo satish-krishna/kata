@@ -1,0 +1,28 @@
+{
+  "kind": "review",
+  "layout": 2,
+  "document": {
+    "reviews": [
+      {
+        "number": 1,
+        "reviewed_at": "2026-10-22",
+        "commits": {
+          "kata": "840fa0c"
+        },
+        "findings": []
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "build/review.md",
+      "line": 15,
+      "message": "heading \"### F1: first\" is not a finding heading"
+    },
+    {
+      "file": "build/review.md",
+      "line": 17,
+      "message": "yaml block is not part of any record"
+    }
+  ]
+}

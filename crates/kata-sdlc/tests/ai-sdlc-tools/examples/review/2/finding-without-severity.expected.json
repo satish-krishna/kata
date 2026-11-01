@@ -1,0 +1,23 @@
+{
+  "kind": "review",
+  "layout": 2,
+  "document": {
+    "reviews": [
+      {
+        "number": 1,
+        "reviewed_at": "2026-10-22",
+        "commits": {
+          "kata": "840fa0c"
+        },
+        "findings": []
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "build/review.md",
+      "line": 15,
+      "message": "finding F3 has no severity"
+    }
+  ]
+}

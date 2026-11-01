@@ -1,0 +1,59 @@
+{
+  "kind": "spec",
+  "layout": 1,
+  "document": {
+    "requirements": [
+      {
+        "id": "R1",
+        "title": "Hyphen separator",
+        "from": [
+          "D1"
+        ],
+        "scenarios": [
+          {
+            "id": "R1.1",
+            "title": "En dash separator",
+            "outline": false,
+            "steps": [
+              "Given a thing",
+              "Then it is read"
+            ],
+            "examples": null,
+            "line": 11
+          }
+        ],
+        "line": 10
+      },
+      {
+        "id": "R2",
+        "title": "Em dash separator",
+        "from": [
+          "Proposed outcome 1–2",
+          "D3"
+        ],
+        "scenarios": [
+          {
+            "id": "R2.1",
+            "title": "Pays <amount>",
+            "outline": true,
+            "steps": [
+              "Given a bill of <amount>",
+              "Then it is paid"
+            ],
+            "examples": [
+              [
+                "amount"
+              ],
+              [
+                "5"
+              ]
+            ],
+            "line": 16
+          }
+        ],
+        "line": 15
+      }
+    ]
+  },
+  "problems": []
+}

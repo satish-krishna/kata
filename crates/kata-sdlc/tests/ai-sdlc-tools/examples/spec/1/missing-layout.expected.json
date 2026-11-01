@@ -1,0 +1,35 @@
+{
+  "kind": "spec",
+  "layout": 1,
+  "document": {
+    "requirements": [
+      {
+        "id": "R1",
+        "title": "Written with tags",
+        "from": [
+          "D1"
+        ],
+        "scenarios": [
+          {
+            "id": "R1.1",
+            "title": "Reads",
+            "outline": false,
+            "steps": [
+              "Given a thing"
+            ],
+            "examples": null,
+            "line": 10
+          }
+        ],
+        "line": 8
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "spec.md",
+      "line": 1,
+      "message": "no layout version"
+    }
+  ]
+}

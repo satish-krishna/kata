@@ -1,0 +1,24 @@
+{
+  "kind": "review",
+  "layout": 2,
+  "document": {
+    "reviews": []
+  },
+  "problems": [
+    {
+      "file": "build/review.md",
+      "line": 1,
+      "message": "review document has no review section"
+    },
+    {
+      "file": "build/review.md",
+      "line": 7,
+      "message": "heading \"## Review: 1\" is not a review heading"
+    },
+    {
+      "file": "build/review.md",
+      "line": 9,
+      "message": "yaml block is not part of any record"
+    }
+  ]
+}

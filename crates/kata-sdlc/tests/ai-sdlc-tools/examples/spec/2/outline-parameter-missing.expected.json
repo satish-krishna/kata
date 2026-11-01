@@ -1,0 +1,42 @@
+{
+  "kind": "spec",
+  "layout": 2,
+  "document": {
+    "requirements": [
+      {
+        "id": "R2",
+        "title": "Two",
+        "from": [
+          "D1"
+        ],
+        "scenarios": [
+          {
+            "id": "R2.2",
+            "title": "Pays",
+            "outline": true,
+            "steps": [
+              "Given <amount> and <who>"
+            ],
+            "examples": [
+              [
+                "who"
+              ],
+              [
+                "me"
+              ]
+            ],
+            "line": 13
+          }
+        ],
+        "line": 11
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "spec.md",
+      "line": 13,
+      "message": "scenario R2.2 uses <amount> but its examples lack it"
+    }
+  ]
+}

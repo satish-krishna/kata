@@ -1,0 +1,31 @@
+{
+  "kind": "review",
+  "layout": 2,
+  "document": {
+    "reviews": [
+      {
+        "number": 1,
+        "reviewed_at": "2026-10-22",
+        "commits": {
+          "kata": "840fa0c"
+        },
+        "findings": []
+      },
+      {
+        "number": 3,
+        "reviewed_at": "2026-10-23",
+        "commits": {
+          "kata": "aaa1111"
+        },
+        "findings": []
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "build/review.md",
+      "line": 15,
+      "message": "review 3 is out of order, expected review 2"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "kind": "spec",
+  "layout": 2,
+  "document": {
+    "requirements": [
+      {
+        "id": "R1",
+        "title": "One",
+        "from": [
+          "D1"
+        ],
+        "scenarios": [
+          {
+            "id": "R1.1",
+            "title": "First",
+            "outline": false,
+            "steps": [
+              "Given a thing"
+            ],
+            "examples": null,
+            "line": 13
+          }
+        ],
+        "line": 11
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "spec.md",
+      "line": 21,
+      "message": "requirement R2 is not part of the requirements the reader found"
+    },
+    {
+      "file": "spec.md",
+      "line": 23,
+      "message": "scenario R2.1 is not part of the requirements the reader found"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "kind": "build-log",
+  "layout": 2,
+  "document": {
+    "repo": "entry-heading-unread-fields",
+    "entries": [
+      {
+        "task": "T1",
+        "commits": [
+          "abc1234"
+        ],
+        "departure": null,
+        "line": 7
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "build/entry-heading-unread-fields.md",
+      "line": 16,
+      "message": "yaml block is not part of any record"
+    }
+  ]
+}

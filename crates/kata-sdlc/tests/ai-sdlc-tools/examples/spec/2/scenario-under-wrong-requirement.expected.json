@@ -1,0 +1,35 @@
+{
+  "kind": "spec",
+  "layout": 2,
+  "document": {
+    "requirements": [
+      {
+        "id": "R4",
+        "title": "Four",
+        "from": [
+          "D1"
+        ],
+        "scenarios": [
+          {
+            "id": "R3.2",
+            "title": "Stray",
+            "outline": false,
+            "steps": [
+              "Given x"
+            ],
+            "examples": null,
+            "line": 13
+          }
+        ],
+        "line": 11
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "spec.md",
+      "line": 13,
+      "message": "scenario R3.2 sits under requirement R4"
+    }
+  ]
+}

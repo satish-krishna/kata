@@ -1,0 +1,24 @@
+{
+  "kind": "build-log",
+  "layout": 1,
+  "document": {
+    "repo": "missing-layout",
+    "entries": [
+      {
+        "task": "T1",
+        "commits": [
+          "abc1234"
+        ],
+        "departure": null,
+        "line": 3
+      }
+    ]
+  },
+  "problems": [
+    {
+      "file": "build/missing-layout.md",
+      "line": 1,
+      "message": "no layout version"
+    }
+  ]
+}

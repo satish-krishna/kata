@@ -1,0 +1,62 @@
+{
+  "kind": "plan",
+  "layout": 1,
+  "document": {
+    "tasks": [
+      {
+        "id": "T1",
+        "name": "First task",
+        "repo": "app",
+        "depends_on": [],
+        "uses": [],
+        "files": [],
+        "covers": [],
+        "supports": [],
+        "sections": [
+          {
+            "title": "Depends on",
+            "body": "none"
+          },
+          {
+            "title": "Files",
+            "body": "src/a.ts"
+          },
+          {
+            "title": "Tests",
+            "body": "a failing test first"
+          }
+        ],
+        "text": "### T1: First task (`app`)\n\n- **Depends on:** none\n- **Files:** src/a.ts\n- **Tests:** a failing test first",
+        "line": 15
+      },
+      {
+        "id": "T2",
+        "name": "Second task",
+        "repo": "app",
+        "depends_on": [
+          "T1"
+        ],
+        "uses": [],
+        "files": [],
+        "covers": [],
+        "supports": [],
+        "sections": [
+          {
+            "title": "Change",
+            "body": "no Depends on line, so it depends on every task above"
+          }
+        ],
+        "text": "### T2: Second task (`app`)\n\n- **Change:** no Depends on line, so it depends on every task above",
+        "line": 21
+      }
+    ],
+    "shared_decisions": [
+      {
+        "question": "How a problem is reported",
+        "owner": "T1",
+        "function": "`formatProblem(p)`"
+      }
+    ]
+  },
+  "problems": []
+}

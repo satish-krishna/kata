@@ -1,0 +1,14 @@
+{
+  "kind": "review",
+  "layout": 2,
+  "document": {
+    "reviews": []
+  },
+  "problems": [
+    {
+      "file": "build/review.md",
+      "line": 1,
+      "message": "review document has no review section"
+    }
+  ]
+}
