@@ -424,6 +424,17 @@ impl BuildHost {
         self.begin(change, None, Some(repo))
     }
 
+    /// Start a document run (intent, spec, plan, triage or fix) of an existing change: the change's
+    /// master is its folder, the run claims the change's own lane and gets the deny rules of R19.1.
+    pub fn change_run(
+        &self,
+        _change: &ChangeRef,
+        _kind: runs::RunKind,
+        _form: RunForm,
+    ) -> Result<u64, String> {
+        Err("not implemented".into())
+    }
+
     /// The build state of `change`, or none when this session hosts no build of it. It only reads.
     pub fn state(&self, change: &ChangeRef) -> Option<BuildState> {
         let inner = self.inner.lock().unwrap();
@@ -2275,6 +2286,64 @@ mod tests {
             Err(e) => panic!("{e}"),
         }
         assert!(matches!(slow.join().unwrap(), StartOutcome::Started { .. }));
+    }
+
+    #[test]
+    fn a_spec_run_claims_its_change_and_gets_the_denies() {
+        let r = rig();
+        r.simple("A", &["api"]);
+        r.simple("B", &["kata"]);
+        assert!(matches!(
+            r.host.start(&cref("A"), form()),
+            StartOutcome::Started { .. }
+        ));
+        let run_form = RunForm {
+            name: "sdlc-demo-B-spec".into(),
+            task: "Use the ai-sdlc spec skill.".into(),
+            bare: true,
+            permission_mode: PermissionMode::Auto,
+            timeout_secs: 900,
+            instructions: None,
+            continue_on_leftovers: false,
+        };
+        let id = r
+            .host
+            .change_run(&cref("B"), runs::RunKind::Spec, run_form)
+            .expect("a spec run of B starts beside A's build");
+        let spec = r.launcher.spec_of(id);
+        let deny = |p: &str| {
+            format!(
+                "Edit({}/**)",
+                kata_sdlc::permissions::rule_path(Path::new(p))
+            )
+        };
+        assert!(
+            spec.contains(&deny("D:/ws/ai-sdlc")),
+            "the engineer's checkout is denied"
+        );
+        assert!(
+            spec.contains(&deny(&copy_of("A"))),
+            "another change's copy is denied"
+        );
+        assert!(
+            !spec.contains(&deny(&copy_of("B"))),
+            "its own master is not denied"
+        );
+        let live = r.launcher.table.lock().unwrap().live();
+        let run = live.iter().find(|l| l.id == id).unwrap();
+        assert_eq!(
+            run.lane,
+            Lane::Change {
+                key: key("B"),
+                build: false
+            }
+        );
+        assert_eq!(run.kind, runs::RunKind::Spec);
+        assert!(
+            !r.launcher.table.lock().unwrap().group_live("build:demo/B"),
+            "a document run is not part of B's build"
+        );
+        assert!(r.host.state(&cref("A")).is_some());
     }
 
     fn held_kata(holder: &str) -> Vec<HeldRepo> {
