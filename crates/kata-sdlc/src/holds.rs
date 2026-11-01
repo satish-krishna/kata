@@ -46,15 +46,29 @@ impl RepoKey {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.to_string_lossy().into_owned());
         RepoKey {
-            key: String::new(),
+            key: Self::normalize(&path.to_string_lossy(), cfg!(windows)),
             name,
         }
     }
 
     /// The same normalization as `of`, as a bare string.
     pub(crate) fn normalize(path: &str, fold_case: bool) -> String {
-        let _ = (path, fold_case);
-        String::new()
+        let unified = path.replace('\\', "/");
+        let parts: Vec<&str> = unified
+            .split('/')
+            .filter(|p| !p.is_empty() && *p != ".")
+            .collect();
+        let joined = parts.join("/");
+        let key = if unified.starts_with('/') {
+            format!("/{joined}")
+        } else {
+            joined
+        };
+        if fold_case {
+            key.to_lowercase()
+        } else {
+            key
+        }
     }
 
     /// The repository's folder name, for messages.
@@ -95,17 +109,44 @@ impl HoldTable {
         purpose: Purpose,
         repos: &[RepoKey],
     ) -> Result<(), Held> {
-        let _ = (change, purpose, repos);
+        let held: Vec<(String, ChangeKey)> = repos
+            .iter()
+            .filter_map(|r| match self.holds.get(r) {
+                Some(h) if h.change != *change => Some((r.name.clone(), h.change.clone())),
+                _ => None,
+            })
+            .collect();
+        if !held.is_empty() {
+            return Err(Held { held });
+        }
+        for r in repos {
+            let hold = self.holds.entry(r.clone()).or_insert_with(|| Hold {
+                change: change.clone(),
+                build: false,
+                review: false,
+            });
+            match purpose {
+                Purpose::Build => hold.build = true,
+                Purpose::Review => hold.review = true,
+            }
+        }
         Ok(())
     }
 
     pub fn release(&mut self, change: &ChangeKey, purpose: Purpose) {
-        let _ = (change, purpose);
+        self.holds.retain(|_, h| {
+            if h.change == *change {
+                match purpose {
+                    Purpose::Build => h.build = false,
+                    Purpose::Review => h.review = false,
+                }
+            }
+            h.build || h.review
+        });
     }
 
     pub fn holder(&self, repo: &RepoKey) -> Option<&ChangeKey> {
-        let _ = repo;
-        None
+        self.holds.get(repo).map(|h| &h.change)
     }
 }
 
@@ -117,24 +158,51 @@ pub fn needed_repos(
     rounds: &[String],
     master_name: &str,
 ) -> Vec<String> {
-    let _ = (plan, change, rounds, master_name);
-    todo!()
+    let unlogged = |repo: &str| {
+        change
+            .tasks
+            .as_ref()
+            .and_then(|t| t.get(repo))
+            .is_some_and(|t| !t.unlogged.is_empty())
+    };
+    let mut plan_repos: Vec<&str> = Vec::new();
+    for t in &plan.tasks {
+        if !plan_repos.contains(&t.repo.as_str()) {
+            plan_repos.push(&t.repo);
+        }
+    }
+    let mut out: Vec<String> = plan_repos
+        .iter()
+        .filter(|r| **r != master_name && (unlogged(r) || rounds.iter().any(|x| x == **r)))
+        .map(|r| r.to_string())
+        .collect();
+    for r in rounds {
+        if r != master_name && !plan_repos.contains(&r.as_str()) && !out.contains(r) {
+            out.push(r.clone());
+        }
+    }
+    out
 }
 
 /// Every product repository the change has tasks in, other than the master.
 pub fn review_repos(change: &ChangeState, master_name: &str) -> Vec<String> {
-    let _ = (change, master_name);
-    todo!()
+    change
+        .tasks
+        .iter()
+        .flat_map(|t| t.keys())
+        .filter(|r| *r != master_name)
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Barrier, Mutex};
     use crate::ai_sdlc::state::RepoTasks;
     use crate::format::ParsedTask;
     use crate::permissions::fixtures::change_state;
     use std::collections::BTreeMap;
+    use std::sync::{Arc, Barrier, Mutex};
 
     fn task(id: &str, repo: &str) -> ParsedTask {
         ParsedTask {
@@ -219,7 +287,6 @@ mod tests {
         let s = state(&[("master", &[]), ("kata", &[]), ("app", &[])]);
         assert_eq!(review_repos(&s, "master"), names(&["app", "kata"]));
     }
-
 
     fn key(change: &str) -> ChangeKey {
         ChangeKey {
