@@ -1540,6 +1540,7 @@ mod tests {
             instructions: None,
             continue_on_leftovers: false,
             rounds: Vec::new(),
+            off: Vec::new(),
         }
     }
 
@@ -1632,6 +1633,8 @@ mod tests {
         calls: Mutex<Vec<Vec<String>>>,
         /// The next `states` call announces itself on `.0` and waits for `.1`.
         gate: Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
+        /// The task links the host recorded.
+        links: Mutex<Vec<kata_sdlc::store::TaskLink>>,
     }
 
     impl FakeTools {
@@ -1647,6 +1650,7 @@ mod tests {
                 starts: Mutex::new(HashMap::new()),
                 calls: Mutex::new(Vec::new()),
                 gate: Mutex::new(None),
+                links: Mutex::new(Vec::new()),
             })
         }
 
@@ -1780,6 +1784,13 @@ mod tests {
         ) -> Result<Option<ReviewRecord>, String> {
             Ok(self.review.lock().unwrap().clone())
         }
+        fn workspace_id(&self, _folder: &Path) -> Option<String> {
+            Some("ws-id".to_string())
+        }
+        fn link_tasks(&self, links: &[kata_sdlc::store::TaskLink]) -> Result<(), String> {
+            self.links.lock().unwrap().extend_from_slice(links);
+            Ok(())
+        }
         fn head(&self, dir: &Path) -> Result<String, String> {
             let name = dir.file_name().unwrap().to_string_lossy().into_owned();
             Ok(self
@@ -1848,8 +1859,8 @@ mod tests {
     }
 
     impl FakeLauncher {
-        /// The run ends with `exit`, the way the reader task reports it.
-        fn finish(&self, id: u64, exit: i32) {
+        /// The run ends with `exit`; `history_id` is the transcript the run wrote, if it wrote one.
+        fn finish_with(&self, id: u64, exit: i32, history_id: Option<&str>) {
             let ended = {
                 let mut list = self.runs.lock().unwrap();
                 let run = list.iter_mut().find(|r| r.id == id).unwrap();
@@ -1860,7 +1871,13 @@ mod tests {
             ended(RunEnd {
                 exit: Some(exit),
                 error: None,
+                history_id: history_id.map(str::to_string),
             });
+        }
+
+        /// The run ends with its exit code, the way the reader task reports it.
+        fn finish(&self, id: u64, exit: i32) {
+            self.finish_with(id, exit, None);
         }
 
         fn launched(&self, repo: &str) -> Vec<u64> {
@@ -3002,6 +3019,105 @@ mod tests {
         );
     }
 
+    // The build page's switched-off given items reach the previewed spec and the launched run alike.
+    #[test]
+    fn a_switched_off_item_is_off_in_the_preview_and_in_the_run() {
+        let r = rig();
+        r.simple("A", &["kata"]);
+        let mut f = form();
+        f.off = vec!["run-spec:skill:doc-writer".to_string()];
+        let skills = |spec: &str| -> Value {
+            serde_json::from_str::<Value>(spec).unwrap()["given"]["skills"].clone()
+        };
+        let sections = r
+            .host
+            .preview_build(&cref("A"), BuildPreviewKind::Start, None, &f)
+            .unwrap();
+        for s in &sections {
+            assert_eq!(
+                skills(&serde_json::to_string(&s.spec).unwrap()),
+                json!(["run-spec:skill:doc-writer"]),
+                "the {} section previews it off",
+                s.title
+            );
+        }
+        r.host.start(&cref("A"), f);
+        let run = r.launcher.launched("kata")[0];
+        assert_eq!(
+            skills(&r.launcher.spec_of(run)),
+            json!(["run-spec:skill:doc-writer"]),
+            "the run starts with it off"
+        );
+        assert_eq!(
+            r.launcher.spec_of(run),
+            serde_json::to_string(&sections[0].spec).unwrap(),
+            "and the preview is the spec the run started with"
+        );
+    }
+
+    #[test]
+    fn a_continue_and_a_manual_review_carry_the_choices_they_were_given() {
+        let r = rig();
+        r.simple("A", &["kata"]);
+        let off = vec!["run-spec:skill:doc-writer".to_string()];
+        r.host.continue_with(&cref("A"), "kata", Some(off.clone()));
+        let run = r.launcher.launched("kata")[0];
+        let given = |id| {
+            serde_json::from_str::<Value>(&r.launcher.spec_of(id)).unwrap()["given"]["skills"]
+                .clone()
+        };
+        assert_eq!(given(run), json!(["run-spec:skill:doc-writer"]));
+        r.launcher.finish(run, 0);
+        r.tools.log("A", "kata", "T1");
+        r.host.review_start_with(&cref("A"), Some(Vec::new()));
+        let review = r.launcher.reviews()[0];
+        assert_eq!(given(review), json!([]), "a review's own choices apply");
+    }
+
+    // R13.5: the host keeps going with no page open, and the links are the host's to write.
+    #[test]
+    fn a_run_that_ends_with_no_page_leaves_its_task_links() {
+        let r = rig();
+        r.simple("A", &["kata", "bob"]);
+        r.host.start(&cref("A"), form());
+        let run = r.launcher.launched("kata")[0];
+        r.tools.log("A", "kata", "T1");
+        r.launcher
+            .finish_with(run, 0, Some("sdlc-kata-build-20261101T180000Z"));
+        assert_eq!(
+            *r.tools.links.lock().unwrap(),
+            vec![kata_sdlc::store::TaskLink {
+                workspace_id: "ws-id".into(),
+                system: SYSTEM.into(),
+                change: "A".into(),
+                repo: "kata".into(),
+                task: "T1".into(),
+                run_id: "sdlc-kata-build-20261101T180000Z".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_run_that_wrote_no_transcript_links_nothing() {
+        let r = rig();
+        r.simple("A", &["kata"]);
+        r.host.start(&cref("A"), form());
+        let run = r.launcher.launched("kata")[0];
+        r.tools.log("A", "kata", "T1");
+        r.launcher.finish_with(run, 0, None);
+        assert!(r.tools.links.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_transcript_of_a_run_is_the_stem_of_its_first_transcript_log() {
+        let events = vec![
+            json!({"type": "log", "level": "warn", "message": "other"}),
+            json!({"type": "log", "level": "warn", "message": r"transcript: C:\Users\x\.kata\runs\abc-1.jsonl"}),
+        ];
+        assert_eq!(transcript_run_id(&events), Some("abc-1".to_string()));
+        assert_eq!(transcript_run_id(&events[..1]), None);
+    }
+
     // R18.1
     #[test]
     fn the_review_view_is_the_backends_order_counts_and_low_split() {
@@ -3211,6 +3327,12 @@ mod tests {
             state: &ChangeState,
         ) -> Result<Option<ReviewRecord>, String> {
             self.fake.review_record(place, system, state)
+        }
+        fn workspace_id(&self, folder: &Path) -> Option<String> {
+            self.fake.workspace_id(folder)
+        }
+        fn link_tasks(&self, links: &[kata_sdlc::store::TaskLink]) -> Result<(), String> {
+            self.fake.link_tasks(links)
         }
         fn head(&self, dir: &Path) -> Result<String, String> {
             self.fake.head(dir)
