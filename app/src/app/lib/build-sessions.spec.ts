@@ -4,7 +4,7 @@ import type { RunRecord } from '@bindings/RunRecord';
 import type { TaskLink } from '@bindings/TaskLink';
 import type { TaskStatus } from '@bindings/TaskStatus';
 import type { BuildStage } from './build-stage';
-import { activityFor, newlyRecorded, recordOutcome, repoSessions, sessionsFor, type ActivityInput, type Pick, type SessionRef } from './build-sessions';
+import { activityFor, linksOfFollowedRuns, newlyRecorded, recordOutcome, repoSessions, sessionsFor, type ActivityInput, type Pick, type SessionRef } from './build-sessions';
 
 const scope = { workspaceId: 'w1', system: 'shop', change: 'c1' };
 const link = (stage: string, runId: string, startedAt: number, over: Partial<RunLink> = {}): RunLink => ({
@@ -194,5 +194,16 @@ describe('activityFor', () => {
       expect(activityFor(input({ status: now })).newLinks).toEqual([]);
       expect(activityFor(input({ status: now, live, scope: null })).newLinks).toEqual([]);
     });
+  });
+});
+
+describe('linksOfFollowedRuns', () => {
+  const tl = (task: string, runId: string): TaskLink => ({ workspace_id: 'w1', system: 'shop', change: 'c1', repo: 'api', task, run_id: runId });
+
+  it('names a run the page follows by the id it shows live, and leaves any other link as it is', () => {
+    const links = [tl('T1', 'sdlc-shop-c1-build-api-20261101T180000Z'), tl('T2', 'earlier-run')];
+    const followed = new Map([['sdlc-shop-c1-build-api-20261101T180000Z', '7']]);
+    expect(linksOfFollowedRuns(links, followed)).toEqual([tl('T1', '7'), tl('T2', 'earlier-run')]);
+    expect(linksOfFollowedRuns(links, new Map())).toEqual(links);
   });
 });

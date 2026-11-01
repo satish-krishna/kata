@@ -21,6 +21,7 @@ import { ProgressStore } from '../../core/progress/progress.store';
 import { RunStore } from '../../core/run/run.store';
 import { KataTransport } from '../../core/transport/kata-transport';
 import { MockTransport } from '../../core/transport/mock-transport';
+import { GivenStore } from '../../core/given/given.store';
 import { MOCK_BUILD_CHANGE, MOCK_MASTER, MOCK_WORKSPACE_FOLDER } from '../../lib/sdlc-mock';
 import { BuildLayoutViewModel } from './build-layout.view-model';
 import { BuildPageViewModel, findingsAreaOf, type BuildContext, type Departure, type FindingsView, type ReviewEntry } from './build-page.view-model';
@@ -178,7 +179,7 @@ describe('the build page follows the build the backend hosts', () => {
     vi.spyOn(s.preview, 'openBuild').mockImplementation(async (req) => ({ off: new Set(req.from.build ?? []), request: null, picks: null, plan: null }));
     s.vm.select('commerce-core');
     await s.vm.continueRun();
-    expect(resume).toHaveBeenCalledWith(REF, 'commerce-core');
+    expect(resume).toHaveBeenCalledWith(REF, 'commerce-core', []);
     await advance(500);
     expect(group(s.vm, 'commerce-core').action).toBe('cancel');
   });
@@ -226,9 +227,29 @@ describe('the build page follows the build the backend hosts', () => {
     await advance(2500);
     expect(linkRun.mock.calls.map(([l]) => l.stage).sort()).toEqual(['build:commerce-core', 'build:customer-portal']);
     const id = s.vm.groups().find((g) => g.key === 'commerce-core')!.runs[0].id;
-    expect(linkTasks.mock.calls.flat(2)).toContainEqual(expect.objectContaining({ repo: 'commerce-core', task: 'T1', run_id: id }));
-    const written = linkTasks.mock.calls.flatMap(([links]) => links.map((l) => `${l.repo}/${l.task}/${l.run_id}`));
-    expect(new Set(written).size).toBe(written.length);
+    // The host records which run recorded a task; the page never writes a task link.
+    expect(linkTasks).not.toHaveBeenCalled();
+    expect(id).toBeTruthy();
+  });
+
+  it('the switched-off given items of the build go to the host with a start, a preview, a continue and a review', async () => {
+    const s = await opened(setup());
+    await s.load();
+    const key = `commerce/${MOCK_BUILD_CHANGE}`;
+    const off = ['personal:plugin:superpowers@claude-plugins-official', 'run-spec:skill:doc-writer'];
+    TestBed.inject(GivenStore).setBuild(key, { off: new Set(off) });
+    const start = vi.spyOn(s.transport, 'sdlcBuildStart').mockResolvedValue({ kind: 'started', uncommitted: {} });
+    await s.vm.startBuild({ timeoutSecs: 60 });
+    expect(start).toHaveBeenCalledWith(REF, { timeoutSecs: 60, off });
+    const previewed = vi.spyOn(s.transport, 'sdlcPreviewBuild');
+    vi.spyOn(s.preview, 'openBuild').mockResolvedValue(null);
+    await s.vm.openPreview('start');
+    expect(previewed.mock.calls[0][3].off).toEqual(off);
+    vi.spyOn(s.preview, 'openBuild').mockImplementation(async (req) => ({ off: new Set(req.from.build ?? []), request: null, picks: null, plan: null }));
+    const resume = vi.spyOn(s.transport, 'sdlcBuildContinue').mockResolvedValue({ kind: 'started', uncommitted: {} });
+    s.vm.select('commerce-core');
+    await s.vm.continueRun();
+    expect(resume).toHaveBeenCalledWith(REF, 'commerce-core', off);
   });
 
   it('answers and messages go to the run store by run id', async () => {
@@ -992,7 +1013,7 @@ describe('the build page reads the backend\'s build and starts it through the ho
     expect(vm.view().held).toBeNull();
     const review = vi.spyOn(transport, 'sdlcReviewStart').mockResolvedValue({ kind: 'started', uncommitted: {} });
     await vm.startReviewAgain();
-    expect(review).toHaveBeenCalledWith(REF);
+    expect(review).toHaveBeenCalledWith(REF, []);
   });
 
   it('a refused start lists the plugin\'s problems for every repository', async () => {
