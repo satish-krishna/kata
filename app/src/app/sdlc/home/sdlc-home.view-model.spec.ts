@@ -8,6 +8,8 @@ import type { WorkspaceEntry } from '@bindings/WorkspaceEntry';
 import type { RunSpec } from '@bindings/RunSpec';
 import type { WorkspaceScan } from '@bindings/WorkspaceScan';
 import { toastState } from '@spartan-ng/brain/sonner';
+import { ProgressStore } from '../../core/progress/progress.store';
+import { PROGRESS_STEPS } from '../../lib/progress-steps';
 import { LockStore } from '../../core/lock/lock.store';
 import { SdlcRunner } from '../../core/sdlc/sdlc-runner';
 import { RunPreviewViewModel } from '../../core/given/run-preview.view-model';
@@ -909,6 +911,29 @@ describe('SdlcHomeViewModel changes list', () => {
     vm.workspaces.set([...vm.workspaces(), second]);
     await vm.selectWorkspace('second');
     expect(state.mock.calls.at(-1)![0]).toBe('/second');
+  });
+
+  describe('progress while the plugin is asked', () => {
+    afterEach(() => vi.useRealTimers());
+
+    it('a slow state read shows a progress line naming the step', async () => {
+      vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+      const { vm, transport } = setup();
+      const state = vi.spyOn(transport, 'sdlcState');
+      const line = TestBed.inject(ProgressStore).view('home');
+      await vm.init();
+      expect(line()).toBeNull();
+      let answer: (v: SystemView) => void = () => undefined;
+      state.mockImplementation(() => new Promise<SystemView>((ok) => (answer = ok)));
+      vm.windowFocused();
+      vi.advanceTimersByTime(300);
+      expect(line()).toBeNull();
+      vi.advanceTimersByTime(200);
+      expect(line()?.label).toBe('Reading changes');
+      expect(PROGRESS_STEPS['reading-stages'].lines).toContain(line()!.line);
+      answer(systemViewOf(1));
+      await vi.waitFor(() => expect(line()).toBeNull());
+    });
   });
 
   describe('reads the state again on each trigger (R5.1)', () => {
