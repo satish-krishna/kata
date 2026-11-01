@@ -5,7 +5,7 @@ use kata_sdlc::ai_sdlc::state::{ChangeState, SystemState};
 use kata_sdlc::ai_sdlc::{Program, ProgramError};
 use kata_sdlc::offer::{ChangeOffer, LiveFacts};
 use kata_sdlc::plugin::Readiness;
-use serde::Serialize;
+pub use kata_sdlc::view::{ChangeView, SystemView};
 use std::path::Path;
 
 /// Where the answer about a system's changes comes from; the plugin's program in the app, a fake in tests.
@@ -27,28 +27,6 @@ impl StateSource for Program {
     ) -> Result<SystemState, ProgramError> {
         kata_sdlc::ai_sdlc::state::state(self, workspace, system, change)
     }
-}
-
-/// One change as the list and the change page show it.
-#[derive(Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct ChangeView {
-    pub state: ChangeState,
-    pub offer: ChangeOffer,
-    pub live: LiveFacts,
-    pub readiness: Readiness,
-}
-
-/// A system's changes, and whether a new one may be started.
-#[derive(Serialize, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct SystemView {
-    pub system: String,
-    pub readiness: Readiness,
-    pub can_start_change: bool,
-    pub start_change_reason: Option<String>,
-    pub changes: Vec<ChangeView>,
-    pub problems: Vec<String>,
 }
 
 /// The offer of a change on a machine where the mode cannot run: the stage and label stay, and every

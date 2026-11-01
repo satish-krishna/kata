@@ -27,6 +27,7 @@ pub mod review;
 pub mod snapshot;
 pub mod start;
 pub mod store;
+pub mod view;
 pub mod workspace;
 
 #[cfg(test)]
