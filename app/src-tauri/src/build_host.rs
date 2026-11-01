@@ -302,6 +302,20 @@ struct Ctx {
     system_repos: Option<Vec<String>>,
 }
 
+/// The runs of a build that are live and whose launch has answered, in the order they were asked for.
+fn live_runs(build: &Build) -> Vec<BuildRunRef> {
+    build
+        .live
+        .values()
+        .filter_map(|r| {
+            r.run_id.map(|id| BuildRunRef {
+                key: r.key.clone(),
+                run: id.to_string(),
+            })
+        })
+        .collect()
+}
+
 fn master_name(place: &Place) -> String {
     place
         .master
@@ -331,7 +345,7 @@ struct Build {
     form: StartForm,
     last: Option<Snapshot>,
     /// The state last announced, so only a change is announced.
-    emitted: Option<(BuildState, Vec<HeldRepo>)>,
+    emitted: Option<(BuildState, Vec<HeldRepo>, Vec<BuildRunRef>)>,
     /// What keeps the review from starting: the repositories other changes hold. Empty when it is not waiting.
     review_waiting: Vec<HeldRepo>,
     /// When the announced state last changed, in unix milliseconds.
@@ -494,6 +508,37 @@ impl BuildHost {
         kind: runs::RunKind,
         form: RunForm,
     ) -> Result<u64, String> {
+        let spec = self.document_spec(change, kind, form)?;
+        let key = key_of(change);
+        self.launcher.launch(LaunchRequest {
+            spec,
+            lane: Lane::Change { key, build: false },
+            kind,
+            repo: None,
+            task: String::new(),
+            group: format!("document:{}/{}", change.system, change.change),
+            ended: Box::new(|_| {}),
+        })
+    }
+
+    /// The run-spec a document run of `change` would start with; nothing starts. It is the composition
+    /// `change_run` launches, so a preview shows what the run will be.
+    pub fn preview_change_run(
+        &self,
+        change: &ChangeRef,
+        kind: runs::RunKind,
+        form: RunForm,
+    ) -> Result<RunSpec, String> {
+        self.document_spec(change, kind, form)
+    }
+
+    /// The run-spec of a document run: the one place it is composed.
+    fn document_spec(
+        &self,
+        change: &ChangeRef,
+        kind: runs::RunKind,
+        form: RunForm,
+    ) -> Result<RunSpec, String> {
         let run_kind = match kind {
             runs::RunKind::Intent | runs::RunKind::Spec | runs::RunKind::Plan => RunKind::Document,
             runs::RunKind::Triage => RunKind::Triage,
@@ -535,17 +580,7 @@ impl BuildHost {
             system_repos: self.system_repos(&exec),
             workbench_dir: self.workbench_dir.clone(),
         };
-        let spec = change_spec(&run_place, form);
-        let key = key_of(change);
-        self.launcher.launch(LaunchRequest {
-            spec,
-            lane: Lane::Change { key, build: false },
-            kind,
-            repo: None,
-            task: String::new(),
-            group: format!("document:{}/{}", change.system, change.change),
-            ended: Box::new(|_| {}),
-        })
+        Ok(change_spec(&run_place, form))
     }
 
     /// The build state of `change`, or none when this session hosts no build of it. It only reads.
@@ -723,37 +758,159 @@ impl BuildHost {
     }
 
     /// Stop the run of one repository (or `review`) of `change`'s build and nothing else.
-    pub fn cancel_run(self: &Arc<Self>, _change: &ChangeRef, _key: &str) {}
+    pub fn cancel_run(self: &Arc<Self>, change: &ChangeRef, key: &str) {
+        self.drive(
+            &key_of(change),
+            None,
+            Input::Cancel {
+                key: key.to_string(),
+            },
+        );
+    }
 
     /// The runs of `change`'s build that are live, with the id of each once its launch has answered.
-    pub fn runs(&self, _change: &ChangeRef) -> Vec<BuildRunRef> {
-        Vec::new()
+    pub fn runs(&self, change: &ChangeRef) -> Vec<BuildRunRef> {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .builds
+            .get(&key_of(change))
+            .map(live_runs)
+            .unwrap_or_default()
     }
 
-    /// The run-spec a document run of `change` would start with; nothing starts.
-    pub fn preview_change_run(
-        &self,
-        _change: &ChangeRef,
-        _kind: runs::RunKind,
-        _form: RunForm,
-    ) -> Result<RunSpec, String> {
-        Err("not yet".into())
-    }
-
-    /// The run-spec each run of a build preview would start with; nothing starts.
+    /// The run-spec each run of a build preview would start with; nothing starts. The sections are the
+    /// folders the kind runs in, and each spec is composed by the call a launch makes.
     pub fn preview_build(
         &self,
-        _change: &ChangeRef,
-        _which: BuildPreviewKind,
-        _repo: Option<&str>,
-        _form: &StartForm,
+        change: &ChangeRef,
+        which: BuildPreviewKind,
+        repo: Option<&str>,
+        form: &StartForm,
     ) -> Result<Vec<BuildSection>, String> {
-        Err("not yet".into())
+        let place = self
+            .tools
+            .resolve(Path::new(&change.workspace))
+            .map_err(|e| error_text(&e))?;
+        let (snapshot, plan) = self.snapshot(&place, &change.system, &change.change)?;
+        let master = master_name(&place);
+        let rounds: Vec<String> = form.rounds.iter().map(|r| r.repo.clone()).collect();
+        let review = || ("Review".to_string(), None::<String>);
+        let folders: Vec<(String, Option<String>)> = match which {
+            BuildPreviewKind::Start | BuildPreviewKind::ContinueAll => {
+                needed_repos(&plan, &snapshot.state, &[], &master)
+                    .into_iter()
+                    .map(|r| (r.clone(), Some(r)))
+                    .chain([review()])
+                    .collect()
+            }
+            BuildPreviewKind::ContinueOne => match repo {
+                Some(r) if r != REVIEW => vec![(r.to_string(), Some(r.to_string()))],
+                _ => vec![review()],
+            },
+            BuildPreviewKind::Round => rounds
+                .iter()
+                .map(|r| (r.clone(), Some(r.clone())))
+                .collect(),
+            BuildPreviewKind::ManualReview => vec![review()],
+        };
+        let exec = Exec {
+            place,
+            system: change.system.clone(),
+            change: change.change.clone(),
+            last: Some(snapshot.clone()),
+            system_repos: None,
+        };
+        let system_repos = self.system_repos(&exec);
+        Ok(folders
+            .into_iter()
+            .map(|(title, repo)| {
+                let key = repo.clone().unwrap_or_else(|| REVIEW.to_string());
+                let instructions = form
+                    .rounds
+                    .iter()
+                    .find(|r| r.repo == key)
+                    .map(|r| r.instructions.clone())
+                    .or_else(|| form.instructions.clone());
+                let spec = self.build_spec(
+                    &exec,
+                    &snapshot,
+                    &system_repos,
+                    &key,
+                    instructions,
+                    BuildChoices {
+                        timeout_secs: form.timeout_secs,
+                        instructions: form.instructions.clone(),
+                        continue_on_leftovers: form.continue_on_leftovers,
+                    },
+                );
+                BuildSection { title, repo, spec }
+            })
+            .collect())
     }
 
-    /// The latest review as the build page lists it.
-    pub fn review_view(&self, _change: &ChangeRef) -> Result<ReviewView, String> {
-        Err("not yet".into())
+    /// The run-spec of one run of a build: the one place it is composed, for a launch and for a preview.
+    fn build_spec(
+        &self,
+        exec: &Exec,
+        snapshot: &Snapshot,
+        system_repos: &[String],
+        launch_key: &str,
+        instructions: Option<String>,
+        choices: BuildChoices,
+    ) -> RunSpec {
+        let kind = if launch_key == REVIEW {
+            RunKind::Review
+        } else {
+            RunKind::Build {
+                repo: launch_key.to_string(),
+            }
+        };
+        let place = RunPlace {
+            kind,
+            system: exec.system.clone(),
+            state: snapshot.state.clone(),
+            workspace: exec.place.workspace.clone(),
+            checkout: exec.place.master.clone(),
+            other_copies: snapshot.others.clone(),
+            system_repos: system_repos.to_vec(),
+            workbench_dir: self.workbench_dir.clone(),
+        };
+        change_spec(
+            &place,
+            RunForm {
+                name: String::new(),
+                task: String::new(),
+                bare: false,
+                permission_mode: PermissionMode::Auto,
+                timeout_secs: choices.timeout_secs,
+                instructions: instructions.or(choices.instructions),
+                continue_on_leftovers: choices.continue_on_leftovers,
+                given: None,
+            },
+        )
+    }
+
+    /// The latest review as the build page lists it: the Review group's rows in the build's repository
+    /// order, and the round dialog's groups in the same order.
+    pub fn review_view(&self, change: &ChangeRef) -> Result<ReviewView, String> {
+        let place = self
+            .tools
+            .resolve(Path::new(&change.workspace))
+            .map_err(|e| error_text(&e))?;
+        let (snapshot, _) = self.snapshot(&place, &change.system, &change.change)?;
+        let record = self
+            .tools
+            .review_record(&place, &change.system, &snapshot.state)?;
+        let master = master_name(&place);
+        let mut repos = review_repos(&snapshot.state, &master);
+        repos.push(master);
+        let rows = match &record {
+            Some(r) => round::review_rows_in(r, &repos),
+            None => round::rows_of(&[], &repos),
+        };
+        let offer = round::offer(record.as_ref(), &repos);
+        let groups = round::round_groups(&offer, &rows);
+        Ok(ReviewView { rows, groups })
     }
 
     /// A run of a build ended; called by the launcher once the run has left the run table. A run of an
@@ -1158,7 +1315,7 @@ impl BuildHost {
                     state.phase,
                     BuildPhase::Stopped | BuildPhase::Finished | BuildPhase::Cancelled
                 );
-                let announced = (state, build.review_waiting.clone());
+                let announced = (state, build.review_waiting.clone(), live_runs(build));
                 if build.emitted.as_ref() != Some(&announced) {
                     build.emitted = Some(announced.clone());
                     build.changed_ms = now_ms();
@@ -1166,7 +1323,7 @@ impl BuildHost {
                         change: key.clone(),
                         state: announced.0.clone(),
                         review_waiting: announced.1,
-                        runs: Vec::new(),
+                        runs: announced.2,
                     });
                 }
                 // A start under way has taken the holds for the build it is about to begin.
@@ -1282,35 +1439,13 @@ impl BuildHost {
             return Err("the change's state was not read".into());
         };
         let review = launch_key == REVIEW;
-        let kind = if review {
-            RunKind::Review
-        } else {
-            RunKind::Build {
-                repo: launch_key.clone(),
-            }
-        };
-        let place = RunPlace {
-            kind,
-            system: exec.system.clone(),
-            state: snapshot.state,
-            workspace: exec.place.workspace.clone(),
-            checkout: exec.place.master.clone(),
-            other_copies: snapshot.others,
-            system_repos: exec.system_repos.clone().unwrap_or_default(),
-            workbench_dir: self.workbench_dir.clone(),
-        };
-        let spec = change_spec(
-            &place,
-            RunForm {
-                name: String::new(),
-                task: String::new(),
-                bare: false,
-                permission_mode: PermissionMode::Auto,
-                timeout_secs: choices.timeout_secs,
-                instructions: instructions.or(choices.instructions),
-                continue_on_leftovers: choices.continue_on_leftovers,
-                given: None,
-            },
+        let spec = self.build_spec(
+            exec,
+            &snapshot,
+            &exec.system_repos.clone().unwrap_or_default(),
+            &launch_key,
+            instructions,
+            choices,
         );
         let host = Arc::clone(self);
         let ended_key = key.clone();

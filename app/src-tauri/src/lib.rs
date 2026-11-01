@@ -536,6 +536,62 @@ fn sdlc_round_start(
     host.round_start(&change, picks)
 }
 
+/// Stop the run of one repository (or `review`) of a change's build, or, with none named, every run of it.
+#[tauri::command(async)]
+fn sdlc_build_cancel(
+    app: AppHandle,
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    repo: Option<String>,
+) {
+    match repo {
+        Some(key) => host.cancel_run(&change, &key),
+        None => host.cancel(&change),
+    }
+    announce_running(&app);
+}
+
+/// The runs of a change's build that are live, each with its run's id.
+#[tauri::command]
+fn sdlc_build_runs(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+) -> Vec<build_host::BuildRunRef> {
+    host.runs(&change)
+}
+
+/// The run-spec a document run of a change would start with: the call `sdlc_run_change` composes it with. Nothing starts.
+#[tauri::command(async)]
+fn sdlc_preview_change_run(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    kind: runs::RunKind,
+    form: sdlc::runspec::RunForm,
+) -> Result<RunSpec, String> {
+    host.preview_change_run(&change, kind, form)
+}
+
+/// The run-spec of each run a build's preview lists: the call a start composes them with. Nothing starts.
+#[tauri::command(async)]
+fn sdlc_preview_build(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+    which: build_host::BuildPreviewKind,
+    repo: Option<String>,
+    form: build_host::StartForm,
+) -> Result<Vec<build_host::BuildSection>, String> {
+    host.preview_build(&change, which, repo.as_deref(), &form)
+}
+
+/// The latest review as the build page lists it: the Review group's rows and the round dialog's groups.
+#[tauri::command(async)]
+fn sdlc_review_view(
+    host: State<Arc<build_host::BuildHost>>,
+    change: build_host::ChangeRef,
+) -> Result<build_host::ReviewView, String> {
+    host.review_view(&change)
+}
+
 /// Step the window's zoom and remember the new level for the next launch.
 #[tauri::command]
 fn zoom(
@@ -969,17 +1025,6 @@ fn sdlc_build_status(
 }
 
 #[tauri::command(async)]
-fn sdlc_unsaved_rows(
-    master: String,
-    system: String,
-    change: String,
-) -> Result<Vec<sdlc::build::UnsavedRows>, String> {
-    let plugin = ai_sdlc_dir(&master)?;
-    sdlc::build::unsaved_rows(&plugin, Path::new(&master), &system, &change)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command(async)]
 fn sdlc_review_record(
     master: String,
     system: String,
@@ -987,69 +1032,6 @@ fn sdlc_review_record(
 ) -> Result<Option<sdlc::review::ReviewRecord>, String> {
     let plugin = ai_sdlc_dir(&master)?;
     sdlc::review::record(&plugin, Path::new(&master), &system, &change).map_err(|e| e.to_string())
-}
-
-/// The files a review run changed besides the change's review document (none when it kept to it); `before` is the master's dirty files when the run started.
-#[tauri::command(async)]
-fn sdlc_review_verify(
-    master: String,
-    system: String,
-    change: String,
-    since: String,
-    before: std::collections::BTreeMap<String, String>,
-) -> Vec<String> {
-    sdlc::review::verify_run(Path::new(&master), &system, &change, &since, &before)
-        .err()
-        .unwrap_or_default()
-}
-
-#[tauri::command(async)]
-fn sdlc_build_prepare(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-    action: sdlc::build::BuildAction,
-    continue_with_leftovers: bool,
-    pending: Vec<String>,
-) -> Result<sdlc::start::PrepareOutcome, String> {
-    let plugin = ai_sdlc_dir_in(&folder)?;
-    sdlc::start::prepare(
-        &plugin,
-        Path::new(&folder),
-        &master_repo,
-        &system,
-        &change,
-        action,
-        continue_with_leftovers,
-        &pending,
-    )
-    .map_err(|e| e.to_string())
-}
-
-#[tauri::command(async)]
-fn sdlc_build_participants(
-    folder: String,
-    master_repo: String,
-    system: String,
-    change: String,
-    pending: Vec<String>,
-) -> Result<Vec<sdlc::participants::Participant>, String> {
-    let plugin = ai_sdlc_dir_in(&folder)?;
-    sdlc::participants::participants(
-        &plugin,
-        Path::new(&folder),
-        &master_repo,
-        &system,
-        &change,
-        &pending,
-    )
-    .map_err(|e| e.to_string())
-}
-
-#[tauri::command(async)]
-fn sdlc_build_settle(start: sdlc::start::BuildStart) -> Result<Vec<String>, String> {
-    sdlc::start::settle(&start).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -1813,6 +1795,11 @@ pub fn run() {
             sdlc_build_start,
             sdlc_build_continue,
             sdlc_build_state,
+            sdlc_build_cancel,
+            sdlc_build_runs,
+            sdlc_preview_change_run,
+            sdlc_preview_build,
+            sdlc_review_view,
             sdlc_run_change,
             sdlc_review_start,
             sdlc_review_waiting,
@@ -1870,13 +1857,8 @@ pub fn run() {
             sdlc_link_run,
             sdlc_wait_run_exit,
             sdlc_build_status,
-            sdlc_unsaved_rows,
-            sdlc_build_prepare,
-            sdlc_build_participants,
-            sdlc_build_settle,
             sdlc_build_heads,
             sdlc_review_record,
-            sdlc_review_verify,
             sdlc_plugin_readiness,
             sdlc_state,
             sdlc_change_state,
